@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { BlockAttachment, HorizontalFacing } from '../blocks';
 
 export type RedstoneSourceKind = 'torch' | 'lever' | 'button' | 'pressure_plate';
 
@@ -8,6 +9,10 @@ export interface RedstoneSourceSnapshot {
   readonly active: boolean;
   /** Present only for an active timed button. */
   readonly remainingSeconds?: number;
+  /** Version 2: lever attachment survives save/reload. */
+  readonly attachment?: BlockAttachment;
+  /** Version 2: outward support-face direction for a lever. */
+  readonly facing?: HorizontalFacing;
 }
 
 export interface SerializedPrimedTnt {
@@ -17,7 +22,7 @@ export interface SerializedPrimedTnt {
 }
 
 export interface SerializedRedstoneState {
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly sources: readonly RedstoneSourceSnapshot[];
   readonly primedTnt: readonly SerializedPrimedTnt[];
 }

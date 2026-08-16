@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import { BlockId, getBlockDefinition } from '../blocks';
+import {
+  BlockId,
+  getBlockDefinition,
+  type BlockAttachment,
+  type BlockRenderState,
+  type HorizontalFacing,
+} from '../blocks';
 import { blockKey } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
 import type {
@@ -24,6 +30,8 @@ interface MutableSourceState {
   readonly z: number;
   active: boolean;
   remainingSeconds: number;
+  attachment: BlockAttachment;
+  facing: HorizontalFacing;
 }
 
 export interface RedstoneSystemOptions {
@@ -37,6 +45,7 @@ export interface RedstoneSystemOptions {
   readonly tntFuseSeconds?: number;
   readonly onTntPrimed?: (entity: Readonly<PrimedTnt>) => void;
   readonly onExplosion?: (event: RedstoneExplosionEvent) => void;
+  readonly onSourceChanged?: (x: number, y: number, z: number) => void;
 }
 
 export class PrimedTnt {
@@ -187,6 +196,40 @@ export class RedstoneSystem {
     return this.snapshotSource(source);
   }
 
+  getBlockRenderState(x: number, y: number, z: number): BlockRenderState | undefined {
+    const block = this.world.getBlock(x, y, z, false);
+    if (block === BlockId.RedstoneWire) {
+      return { power: this.wirePower.get(blockKey(x, y, z)) ?? 0 };
+    }
+    const source = this.sources.get(blockKey(x, y, z));
+    if (!source) return undefined;
+    return {
+      powered: source.active,
+      ...(source.kind === 'lever'
+        ? { attachment: source.attachment, facing: source.facing }
+        : {}),
+    };
+  }
+
+  setLeverOrientation(
+    x: number,
+    y: number,
+    z: number,
+    attachment: BlockAttachment,
+    facing: HorizontalFacing,
+  ): boolean {
+    this.assertActive();
+    if (this.world.getBlock(x, y, z) !== BlockId.Lever) return false;
+    const source = this.ensureSource(x, y, z, 'lever');
+    if (!source) return false;
+    if (source.attachment !== attachment || source.facing !== facing) {
+      source.attachment = attachment;
+      source.facing = facing;
+      this.options.onSourceChanged?.(x, y, z);
+    }
+    return true;
+  }
+
   toggleLever(x: number, y: number, z: number): boolean | undefined {
     this.assertActive();
     if (this.world.getBlock(x, y, z) !== BlockId.Lever) return undefined;
@@ -296,7 +339,7 @@ export class RedstoneSystem {
 
   serialize(): SerializedRedstoneState {
     return {
-      version: 1,
+      version: 2,
       sources: [...this.sources.values()].map((source) => this.snapshotSource(source)),
       primedTnt: [...this.primedById.values()].map((entity): SerializedPrimedTnt => ({
         id: entity.id,
@@ -308,7 +351,9 @@ export class RedstoneSystem {
 
   restore(serialized: SerializedRedstoneState, clearExisting = true): number {
     this.assertActive();
-    if (serialized.version !== 1) throw new RangeError(`Unsupported redstone state version: ${serialized.version}`);
+    if (serialized.version !== 1 && serialized.version !== 2) {
+      throw new RangeError(`Unsupported redstone state version: ${serialized.version}`);
+    }
     if (clearExisting) this.clear();
     let restored = 0;
     for (const snapshot of serialized.sources.slice(-this.maxSources)) {
@@ -322,6 +367,10 @@ export class RedstoneSystem {
       source.remainingSeconds = snapshot.kind === 'button' && source.active
         ? Math.max(0, snapshot.remainingSeconds ?? this.defaultButtonPulseSeconds)
         : 0;
+      if (snapshot.kind === 'lever') {
+        source.attachment = snapshot.attachment ?? 'floor';
+        source.facing = snapshot.facing ?? 'north';
+      }
       this.sourceOutputChanged(source);
       restored += 1;
     }
@@ -425,6 +474,7 @@ export class RedstoneSystem {
       if (nextPower !== previousPower) {
         if (nextPower > 0) this.wirePower.set(key, nextPower);
         else this.wirePower.delete(key);
+        this.options.onSourceChanged?.(x, y, z);
         this.enqueueNeighbours(x, y, z);
       }
       if (nextPower > 0) this.primeAdjacentTnt(x, y, z);
@@ -460,6 +510,7 @@ export class RedstoneSystem {
   }
 
   private sourceOutputChanged(source: MutableSourceState): void {
+    this.options.onSourceChanged?.(source.x, source.y, source.z);
     this.enqueue(source.x, source.y, source.z);
     this.enqueueNeighbours(source.x, source.y, source.z);
     if (source.active) this.primeAdjacentTnt(source.x, source.y, source.z);
@@ -507,6 +558,8 @@ export class RedstoneSystem {
       z,
       active: kind === 'torch',
       remainingSeconds: 0,
+      attachment: 'floor',
+      facing: 'north',
     };
     this.sources.set(key, source);
     return source;
@@ -599,6 +652,9 @@ export class RedstoneSystem {
       active: source.active,
       ...(source.kind === 'button' && source.active
         ? { remainingSeconds: source.remainingSeconds }
+        : {}),
+      ...(source.kind === 'lever'
+        ? { attachment: source.attachment, facing: source.facing }
         : {}),
     };
   }

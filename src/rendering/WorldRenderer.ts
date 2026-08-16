@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { chunkKey } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
-import { ChunkMesher } from './ChunkMesher';
+import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import type { TextureAtlas } from './TextureAtlas';
 
 interface ChunkVisual {
@@ -16,18 +16,42 @@ export class WorldRenderer {
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
   private readonly opaqueMaterial: THREE.MeshLambertMaterial;
-  private readonly transparentMaterial: THREE.MeshLambertMaterial;
+  private readonly cutoutMaterial: THREE.MeshLambertMaterial;
+  private readonly glassMaterial: THREE.MeshLambertMaterial;
+  private readonly waterMaterial: THREE.MeshLambertMaterial;
 
-  constructor(private readonly world: VoxelWorld, atlas: TextureAtlas) {
+  constructor(
+    private readonly world: VoxelWorld,
+    atlas: TextureAtlas,
+    resolveState?: BlockRenderStateResolver,
+  ) {
     this.group.name = 'voxel-world';
-    this.mesher = new ChunkMesher(atlas);
-    this.opaqueMaterial = new THREE.MeshLambertMaterial({ map: atlas.texture, vertexColors: true, alphaTest: 0.1 });
-    this.transparentMaterial = new THREE.MeshLambertMaterial({
+    this.mesher = new ChunkMesher(atlas, resolveState);
+    this.opaqueMaterial = new THREE.MeshLambertMaterial({ map: atlas.texture, vertexColors: true });
+    this.cutoutMaterial = new THREE.MeshLambertMaterial({
+      map: atlas.texture,
+      vertexColors: true,
+      alphaTest: 0.42,
+      transparent: false,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.DoubleSide,
+    });
+    this.glassMaterial = new THREE.MeshLambertMaterial({
       map: atlas.texture,
       vertexColors: true,
       transparent: true,
-      opacity: 0.76,
+      opacity: 0.52,
       alphaTest: 0.03,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.waterMaterial = new THREE.MeshLambertMaterial({
+      map: atlas.texture,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.7,
+      alphaTest: 0.02,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
@@ -56,11 +80,21 @@ export class WorldRenderer {
     group.name = `chunk-${key}`;
     if (meshed.opaque.getAttribute('position').count > 0) group.add(new THREE.Mesh(meshed.opaque, this.opaqueMaterial));
     else meshed.opaque.dispose();
-    if (meshed.transparent.getAttribute('position').count > 0) {
-      const mesh = new THREE.Mesh(meshed.transparent, this.transparentMaterial);
+    if (meshed.cutout.getAttribute('position').count > 0) {
+      const mesh = new THREE.Mesh(meshed.cutout, this.cutoutMaterial);
+      mesh.renderOrder = 1;
+      group.add(mesh);
+    } else meshed.cutout.dispose();
+    if (meshed.translucent.getAttribute('position').count > 0) {
+      const mesh = new THREE.Mesh(meshed.translucent, this.glassMaterial);
       mesh.renderOrder = 2;
       group.add(mesh);
-    } else meshed.transparent.dispose();
+    } else meshed.translucent.dispose();
+    if (meshed.water.getAttribute('position').count > 0) {
+      const mesh = new THREE.Mesh(meshed.water, this.waterMaterial);
+      mesh.renderOrder = 3;
+      group.add(mesh);
+    } else meshed.water.dispose();
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces });
     chunk.dirty = false;
@@ -86,7 +120,9 @@ export class WorldRenderer {
     this.selection.geometry.dispose();
     (this.selection.material as THREE.Material).dispose();
     this.opaqueMaterial.dispose();
-    this.transparentMaterial.dispose();
+    this.cutoutMaterial.dispose();
+    this.glassMaterial.dispose();
+    this.waterMaterial.dispose();
   }
 
   private removeChunk(key: string): void {

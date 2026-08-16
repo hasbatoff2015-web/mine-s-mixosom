@@ -15,7 +15,7 @@
 | Boot/menu/world list | Готово | Loading screen, главное меню, создание, загрузка и удаление миров, Survival/Creative |
 | Main loop | Готово | Fixed update `20 TPS`, render interpolation, delta clamp, pause/background state |
 | Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus |
-| Rendering | Alpha approximation | Three.js, runtime texture atlas, culled visible faces, opaque/transparent passes, fog, biome tint |
+| Rendering | Готово для alpha | Three.js, runtime atlas, independent opaque/cutout/glass/water passes, special block geometry, fog, biome tint |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, step `0.6`, collision, fall damage, water/lava |
 | Mining/building | Готово для alpha | Raycast, break progress, hardness/tool/tier, durability, drops, placement collision guard |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor/off-hand, cursor clicks, 2×2/3×3 recipes, Creative catalog |
@@ -23,7 +23,7 @@
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, powered TNT fuse/explosion/chain, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
 | Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, shield, bow and player arrows |
-| Entities | Готово для alpha | Dropped items plus 8 mob kinds, simple AI, loot, ranged skeleton, creeper explosion |
+| Entities | Готово для alpha | 8 articulated mobs with local legacy UV sheets, simple AI, loot, ranged skeleton, creeper explosion |
 | Day/night | Alpha approximation | 24,000-tick clock, sky/light/fog transition, sun and moon meshes; no block light propagation |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone restore, memory fallback |
 | Desktop input | Готово | Pointer lock, keyboard, mouse buttons and wheel, F3 debug |
@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 52 unit/component tests in 9 files; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 60 unit/component tests in 10 files plus visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -54,9 +54,10 @@
 - Нет greedy meshing: каждый видимый face становится отдельным quad. Dirty chunks перестраиваются с ограничением количества за tick.
 - Нет worker generation/meshing, LOD, occlusion system и полноценного frustum-aware scheduler.
 - «Освещение пещер» — высотный коэффициент vertex color, а не flood-fill block light/skylight.
-- Прозрачные blocks объединены в один упрощённый pass; нет корректной сортировки отдельных water/glass faces.
+- Render classification независима от face occlusion/light semantics: opaque, alpha-tested cutout, glass translucent и water translucent имеют отдельные geometry/material paths. Leaves используют `alphaTest=0.42`, `transparent=false`, `depthWrite=true` и сохраняют biome RGB tint.
+- Water и glass разделены по opacity/render order, однако отдельные translucent faces внутри pass всё ещё не сортируются по глубине.
 - Slab имеет half-height collision, но chunk renderer пока рисует обычный cube. Stairs физически остаются full cube.
-- Door, ladder, torch и bed не имеют полных specialized block states/meshes. Lever, button, pressure plate, wire и TNT имеют runtime behavior, но визуально остаются упрощёнными block meshes.
+- Lever, torch/redstone torch, wire, button и pressure plate больше не рисуются full cubes. Door, ladder, bed, stairs/slabs и containers всё ещё не имеют полного набора specialized visual states/meshes.
 - Bed — один блок с установкой spawn point и простым пропуском ночи.
 - Basic redstone намеренно ограничен шестисоседней передачей сигнала и не моделирует directional connection shapes, quasi-connectivity или advanced components.
 - Fluid simulation только локальная и нисходящая; нет уровня жидкости, бокового потока, смешивания, бесконечных источников и обновлений vanilla-класса.
@@ -120,7 +121,8 @@
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
 - Skeleton стреляет, creeper имеет fuse и radial explosion, hostile hits передаются в shield/armor/survival, смерть моба создаёт loot drops.
 - Player knockback применяется только если `SurvivalSystem.damage()` реально нанёс damage; shield/armor/i-frame ignored hit не сдвигает игрока.
-- Визуалы — собственные procedural low-poly box models; legacy entity sheets из исходных assets не включены в production runtime.
+- Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. Sheep имеет отдельный `sheep_fur` layer, spider — emissive-style `spider_eyes` overlay; gameplay hitboxes остаются независимыми от visuals.
+- Generic `TexturedCuboidGeometry` строит шесть независимых UV faces из logical texture offset/size; 2× sheets нормализуются так же, как 1×. Pixel art загружается sRGB/nearest без mipmaps.
 
 ### Alpha approximation
 
@@ -140,7 +142,9 @@
 - Redstone torch является постоянным source; lever переключается use action; stone button даёт timed pulse; oak pressure plate реагирует на игрока, мобов и dropped items.
 - Powered TNT превращается в отдельную visual primed entity, исчезает как block и взрывается после `4 s`.
 - TNT explosion использует общий radial damage/block destruction pipeline. Разрушенный взрывом TNT получает короткий случайный fuse, поэтому возможна chain reaction.
-- Active sources, остаток button pulse и primed TNT с оставшимся fuse сохраняются/восстанавливаются. Derived wire power не хранится и пересчитывается после restore.
+- Active sources, остаток button pulse и primed TNT с оставшимся fuse сохраняются/восстанавливаются. Redstone state v2 также хранит lever attachment/facing; v1 получает fallback `floor/north`. Derived wire power не хранится и пересчитывается после restore.
+- Lever состоит из stone base и отдельной handle с pivot/rotation; placement поддерживает floor/wall/ceiling и четыре wall facings. Powered change инвалидирует chunk mesh.
+- Torch/redstone torch используют crossed planes, dust — ground quad с power tint, button — малый выступ, pressure plate — тонкую горизонтальную plate.
 - Propagation bounded: queue и число шагов за update ограничены; отдельный test проверяет budget.
 
 ### Alpha approximation
@@ -198,10 +202,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     9 files, 52 tests — PASS
-Vite build: 53 modules — PASS
-Size/archive: 0.82 MiB / 143 files — PASS
-Main JS: 650.98 kB / 172.48 kB gzip; CSS: 13.81 kB
+Vitest:     10 files, 60 tests — PASS
+Vite build: 54 modules — PASS
+Size/archive: 0.86 MiB / 153 files — PASS
+Main JS: 666.52 kB / 176.91 kB gzip; CSS: 13.81 kB
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, takeoff-only jump event, voxel player physics, placement guard, deterministic generation/ore bands/negative chunk coordinates, world modifications/containers restore, dropped items, Creative non-targetability/3D mob melee, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

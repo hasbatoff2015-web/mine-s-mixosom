@@ -107,9 +107,23 @@ const items = {
   diamond_helmet: 'diamond_helmet.png', diamond_chestplate: 'diamond_chestplate.png', diamond_leggings: 'diamond_leggings.png', diamond_boots: 'diamond_boots.png',
 };
 
+const entities = {
+  cow: join('cow', 'cow.png'),
+  pig: join('pig', 'pig.png'),
+  chicken: 'chicken.png',
+  sheep: join('sheep', 'sheep.png'),
+  sheep_fur: join('sheep', 'sheep_fur.png'),
+  zombie: join('zombie', 'zombie.png'),
+  skeleton: join('skeleton', 'skeleton.png'),
+  creeper: join('creeper', 'creeper.png'),
+  spider: join('spider', 'spider.png'),
+  spider_eyes: 'spider_eyes.png',
+};
+
 const copies = [];
 for (const [target, source] of Object.entries(blocks)) copies.push([join('blocks', source), join('block', `${target}.png`)]);
 for (const [target, source] of Object.entries(items)) copies.push([join('items', source), join('item', `${target}.png`)]);
+for (const [target, source] of Object.entries(entities)) copies.push([join('entity', source), join('entity', `${target}.png`)]);
 copies.push([join('entity', 'shield_base_nopattern.png'), join('item', 'shield.png')]);
 copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);

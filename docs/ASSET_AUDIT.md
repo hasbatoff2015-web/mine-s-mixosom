@@ -6,7 +6,7 @@
 
 Публичный Git-репозиторий намеренно не содержит исходную папку `assets/`: она
 исключена через `.gitignore`, чтобы не распространять высокорисковые файлы без
-подтверждённой лицензии. В репозиторий входят только 140 выбранных runtime-файлов
+подтверждённой лицензии. В репозиторий входят только 150 выбранных runtime-файлов
 в `public/textures`; их происхождение всё равно нужно подтвердить до релиза.
 
 ## Короткий вывод
@@ -248,7 +248,7 @@ Hoe и gold tools в наборе есть, но в текущий scope не в
 | Creeper | `minecraft/textures/entity/creeper/creeper.png` | 128×64 |
 | Spider | `minecraft/textures/entity/spider/spider.png`, опциональный слой `entity/spider_eyes.png` | 128×64 |
 
-Это legacy UV sheets, а не готовые модели. Для игры всё равно нужны кодовые box models, UV mapping, skeleton hierarchy и анимации ходьбы/атаки/смерти. Текстуры визуально стилизованы/перерисованы, но происхождение полного набора должно быть подтверждено владельцем.
+Все 10 перечисленных sheets/layers теперь входят в runtime whitelist и копируются в `public/textures/entity`. Игра использует собственные `TexturedCuboidGeometry`, articulated pivot rigs и анимации; физические hitboxes по-прежнему задаются отдельно. Текстуры визуально стилизованы/перерисованы, но происхождение полного набора должно быть подтверждено владельцем.
 
 ### Environment и particles
 
@@ -279,7 +279,7 @@ Hoe и gold tools в наборе есть, но в текущий scope не в
 | Лицензия/credits/история происхождения | Нельзя документально подтвердить права на отдельные файлы | Получить от владельца подтверждение авторства/источника; до этого исключить high-risk assets из публичной сборки |
 | `pack.mcmeta` и `pack.png` | Нельзя точно определить pack format/версию | Использовать набор как raw source, не как устанавливаемый resource pack |
 | JSON block models и blockstates | Нельзя автоматически восстановить геометрию slabs/stairs/door/torch/chest/bed | Собственные data-driven block definitions и geometry builders |
-| Entity models/rigs/animations | UV sheets сами по себе не рисуют моба | Собственные low-poly box rigs и animation state machine |
+| Entity models/rigs/animations | В source pack есть только UV sheets | Реализованы собственные textured cuboid rigs и pivot animation state machine |
 | Собственный логотип/название игры | Имеющийся logo — Minecraft и непригоден | Оригинальный текстовый CSS logo/нейтральный wordmark |
 | Облачная текстура overworld | `clouds.png` отсутствует | Процедурные плоские облака или временно без облаков |
 | Mobile/touch icons и rotate-device art | Старый Java pack этого не покрывает | CSS/inline SVG из простых геометрических форм или текстовые labels |
@@ -333,7 +333,7 @@ Hoe и gold tools в наборе есть, но в текущий scope не в
 ## Итоговое решение
 
 - Для P0/P1 импортировать только перечисленные core block/item/environment файлы и, после подтверждения владельца, нужные GUI regions.
-- Для P2 использовать восемь перечисленных mob sheets с собственными box models.
+- Для текущей alpha использовать только 10 whitelisted mob sheets/layers с собственными textured cuboid models; остальные entity assets не импортировать.
 - Не использовать Minecraft/Realms logos, panorama, paintings, Mojang patterns и сторонние namespace UI.
 - Недостающие branding, touch UI, clouds, geometry и audio закрывать собственным кодом/нейтральными placeholders, не скачивая Minecraft assets.
 - Перед публичным релизом получить короткое письменное подтверждение происхождения пользовательского texture pack и отдельно пройти high-risk список.

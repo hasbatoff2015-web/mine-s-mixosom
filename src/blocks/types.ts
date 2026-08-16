@@ -2,6 +2,28 @@ export type ToolType = 'pickaxe' | 'axe' | 'shovel' | 'hoe' | 'shears';
 
 export type ToolTier = 'hand' | 'wood' | 'stone' | 'iron' | 'diamond';
 
+export type BlockRenderLayer = 'opaque' | 'cutout' | 'translucent';
+
+export type BlockRenderShape =
+  | 'cube'
+  | 'torch'
+  | 'wire'
+  | 'lever'
+  | 'button'
+  | 'pressure_plate';
+
+export type TranslucentMaterial = 'glass' | 'water';
+export type BlockAttachment = 'floor' | 'wall' | 'ceiling';
+export type HorizontalFacing = 'north' | 'south' | 'east' | 'west';
+
+/** Runtime-only visual state resolved independently from the numeric block ID. */
+export interface BlockRenderState {
+  readonly powered?: boolean;
+  readonly power?: number;
+  readonly attachment?: BlockAttachment;
+  readonly facing?: HorizontalFacing;
+}
+
 export interface BlockTextures {
   readonly all?: string;
   readonly top?: string;
@@ -38,7 +60,13 @@ export interface BlockDefinition {
   readonly category: BlockCategory;
   readonly hardness: number;
   readonly solid: boolean;
+  /** Light/visibility property retained independently from material selection. */
   readonly opaque: boolean;
+  /** Whether a full cube face behind this block may be culled. */
+  readonly occludesFaces: boolean;
+  readonly renderLayer: BlockRenderLayer;
+  readonly renderShape: BlockRenderShape;
+  readonly translucentMaterial?: TranslucentMaterial;
   readonly tool?: ToolType;
   readonly tier?: ToolTier;
   readonly drop?: BlockDrop;

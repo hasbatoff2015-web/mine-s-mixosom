@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
 import { RedstoneSystem } from '../src/redstone';
+import { leverHandleAngle } from '../src/rendering/ChunkMesher';
 import { VoxelWorld } from '../src/world/World';
 
 function place(world: VoxelWorld, x: number, y: number, z: number, block: BlockId): void {
@@ -103,6 +104,47 @@ describe('RedstoneSystem', () => {
     expect(restored.getSource(5, y, 5)?.active).toBe(true);
     expect(restored.getPower(6, y, 5)).toBe(15);
     expect(restored.primedTnt[0]?.fuseSeconds).toBeCloseTo(3.5);
+    restored.dispose();
+  });
+
+  it('changes lever handle angle and round-trips attachment, facing and power', () => {
+    const world = new VoxelWorld('oriented-lever');
+    const y = 76;
+    place(world, 5, y, 5, BlockId.Lever);
+    const original = new RedstoneSystem(world);
+    expect(original.setLeverOrientation(5, y, 5, 'wall', 'east')).toBe(true);
+    expect(original.toggleLever(5, y, 5)).toBe(true);
+    expect(leverHandleAngle(true)).not.toBe(leverHandleAngle(false));
+    expect(leverHandleAngle(true)).toBeLessThan(0);
+
+    const saved = original.serialize();
+    expect(saved.version).toBe(2);
+    original.dispose();
+
+    const restored = new RedstoneSystem(world);
+    expect(restored.restore(saved)).toBe(1);
+    expect(restored.getSource(5, y, 5)).toMatchObject({
+      kind: 'lever', active: true, attachment: 'wall', facing: 'east',
+    });
+    expect(restored.getBlockRenderState(5, y, 5)).toMatchObject({
+      powered: true, attachment: 'wall', facing: 'east',
+    });
+    restored.dispose();
+  });
+
+  it('restores version-one levers with stable default orientation', () => {
+    const world = new VoxelWorld('legacy-lever');
+    const y = 76;
+    place(world, 5, y, 5, BlockId.Lever);
+    const restored = new RedstoneSystem(world);
+    expect(restored.restore({
+      version: 1,
+      sources: [{ kind: 'lever', position: [5, y, 5], active: false }],
+      primedTnt: [],
+    })).toBe(1);
+    expect(restored.getSource(5, y, 5)).toMatchObject({
+      attachment: 'floor', facing: 'north',
+    });
     restored.dispose();
   });
 

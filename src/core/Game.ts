@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { BlockId, getBlockDefinition } from '../blocks';
+import {
+  BlockId,
+  getBlockDefinition,
+  type BlockAttachment,
+  type HorizontalFacing,
+} from '../blocks';
 import { CombatSystem, PlayerArrowManager } from '../combat';
 import { AudioManager } from './AudioManager';
 import {
@@ -243,7 +248,31 @@ export class Game {
       onDeath: () => this.handleDeath(),
     });
     survival.setSpawnPoint(restored?.player.spawnPoint ?? spawn);
-    const worldRenderer = new WorldRenderer(world, atlas);
+    const redstone = new RedstoneSystem(world, {
+      root: this.scene,
+      onSourceChanged: (x, _y, z) => world.markBlockDirty(x, z),
+    });
+    const activePressurePlates = new Set<string>();
+    if (restored?.redstone) {
+      try {
+        const redstoneState = restored.redstone as SerializedRedstoneState;
+        redstone.restore(redstoneState);
+        for (const source of redstoneState.sources) {
+          if (source.kind === 'pressure_plate' && source.active) {
+            activePressurePlates.add(blockKey(...source.position));
+          }
+        }
+      } catch (error) {
+        console.warn('Redstone save was invalid; resetting redstone runtime state.', error);
+        redstone.clear();
+        activePressurePlates.clear();
+      }
+    }
+    const worldRenderer = new WorldRenderer(
+      world,
+      atlas,
+      (x, y, z) => redstone.getBlockRenderState(x, y, z),
+    );
     this.scene.add(worldRenderer.group);
     const drops = new DroppedItemManager(this.scene, world, {
       onPickup: (stack) => {
@@ -271,23 +300,6 @@ export class Game {
       offhandItemId: inventory.offhand?.itemId,
     });
     const arrows = new PlayerArrowManager(this.scene, world, mobs);
-    const redstone = new RedstoneSystem(world, { root: this.scene });
-    const activePressurePlates = new Set<string>();
-    if (restored?.redstone) {
-      try {
-        const redstoneState = restored.redstone as SerializedRedstoneState;
-        redstone.restore(redstoneState);
-        for (const source of redstoneState.sources) {
-          if (source.kind === 'pressure_plate' && source.active) {
-            activePressurePlates.add(blockKey(...source.position));
-          }
-        }
-      } catch (error) {
-        console.warn('Redstone save was invalid; resetting redstone runtime state.', error);
-        redstone.clear();
-        activePressurePlates.clear();
-      }
-    }
 
     this.session = {
       summary,
@@ -744,9 +756,26 @@ export class Game {
     }
     if (session.world.setBlock(x, y, z, item.placesBlockId)) {
       session.redstone.notifyBlockChanged(x, y, z);
+      if (item.placesBlockId === BlockId.Lever) {
+        const orientation = this.leverPlacement(hit);
+        session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
+      }
       this.audio.playTone(230, 0.04, 0.025);
       if (session.summary.mode === 'survival') this.consumeSelected(1);
     }
+  }
+
+  private leverPlacement(hit: VoxelHit): { attachment: BlockAttachment; facing: HorizontalFacing } {
+    const attachment: BlockAttachment = hit.normal.y > 0.5
+      ? 'floor'
+      : hit.normal.y < -0.5
+        ? 'ceiling'
+        : 'wall';
+    const direction = attachment === 'wall' ? hit.normal : this.session!.player.viewDirection();
+    const facing: HorizontalFacing = Math.abs(direction.x) > Math.abs(direction.z)
+      ? direction.x >= 0 ? 'east' : 'west'
+      : direction.z >= 0 ? 'south' : 'north';
+    return { attachment, facing };
   }
 
   private updateFoodUse(): void {

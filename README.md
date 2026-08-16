@@ -14,8 +14,10 @@ Frontier Cubes — браузерная voxel/survival-игра от перво�
 - инвентарь на 36 ячеек, hotbar, off-hand, четыре armor slots, 2×2 и 3×3 crafting, сундук и печь с единым smelting registry, включая glass/charcoal;
 - melee cooldown/critical/knockback, щит с first-person HUD overlay, лук и стрелы как alpha-реализация механик 1.9;
 - basic redstone: signal `0–15`, dust attenuation, torch/lever/button/pressure plate и powered TNT с визуальным четырёхсекундным fuse;
-- восемь типов мобов: cow, pig, chicken, sheep, zombie, skeleton, creeper и spider;
-- локальные low-poly модели, простая AI-логика, 3D/voxel-LOS hostile attacks, Creative non-targetable mode, skeleton arrows, creeper explosions и loot;
+- восемь articulated мобов на локальных legacy UV sheets: cow, pig, chicken, sheep с fur layer, zombie, skeleton, creeper и spider с eyes overlay;
+- независимые opaque/cutout/glass/water render layers: зелёные pixels листвы depth-writing и полностью непрозрачны, alpha holes сохраняются;
+- special geometry для lever, torch/redstone torch, wire, button и pressure plate; lever поддерживает floor/wall/ceiling, on/off rotation и save/reload orientation;
+- простая AI-логика, 3D/voxel-LOS hostile attacks, Creative non-targetable mode, skeleton arrows, creeper explosions и loot;
 - day/night lighting, HUD, F3-панель, меню миров, настройки, desktop и touch controls;
 - IndexedDB-сохранения, autosave, восстановление изменённых блоков, контейнеров, dropped items, мобов, redstone sources и primed TNT;
 - базовая интеграция Yandex Games SDK с local no-op fallback.
@@ -79,7 +81,7 @@ npm run check:archive
 npm run check
 ```
 
-Финальный срез: typecheck green, `9` test files / `52` tests green, Vite преобразовал `53` модуля; production output — `0.82 MiB` и `143` файла.
+Финальный срез: typecheck green, `10` test files / `60` tests green, Vite преобразовал `54` модуля; production output — `0.86 MiB` и `153` файла.
 
 Production-файлы появляются в `dist/`. Vite использует относительный `base: './'`, sourcemaps отключены. Скрипт размера проверяет наличие корневого `index.html`, допустимые имена файлов и официальный uncompressed-лимит архива Яндекс Игр; перед загрузкой всё равно нужно пройти draft/debug-panel QA.
 
@@ -101,11 +103,11 @@ Cloud save, экспорт/импорт мира и миграции стары�
 - `tests` — unit/component tests;
 - `docs` — состояние, архитектура, roadmap, QA и исследования.
 
-Подробнее: [архитектура](docs/ARCHITECTURE.md), [тестирование](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [отчёт текущего прохода](docs/reports/2026-08-16_playable-voxel-alpha.md).
+Подробнее: [архитектура](docs/ARCHITECTURE.md), [тестирование](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [отчёт visual parity pass](docs/reports/2026-08-16_visual-parity-pass.md).
 
 ## Важные ограничения
 
-- специальные формы блоков визуально и физически покрыты не полностью: slabs частично поддержаны физикой, а stairs, doors, ladders, torch, bed и redstone-компоненты пока в основном используют упрощённую кубическую геометрию;
+- специальные формы блоков покрыты не полностью: lever/torch/wire/button/plate имеют non-cube visuals, но stairs, doors, ladders, bed, chest и часть collision/state semantics всё ещё упрощены;
 - жидкости, освещение, pathfinding, spawning и explosion exposure существенно проще больших sandbox-игр;
 - нет multiplayer, облачных сохранений, погоды, enchantments, farming, Nether/End и advanced redstone;
 - UI русскоязычный; полноценная локализация не подключена;

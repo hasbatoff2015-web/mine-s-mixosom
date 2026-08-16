@@ -730,11 +730,32 @@ export class MobManager {
       mob.walkPhase += delta * Math.max(3, speed * 4.5);
     }
     const swing = Math.sin(mob.walkPhase) * Math.min(0.65, speed * 0.22);
-    mob.model.legs.forEach((leg, index) => {
-      leg.rotation.x = index % 2 === 0 ? swing : -swing;
-    });
-    if (mob.kind === 'skeleton') {
-      for (const arm of mob.model.arms) arm.rotation.x = mob.state === 'attack' ? -1.15 : swing * 0.5;
+    if (mob.kind === 'spider') {
+      mob.model.legs.forEach((leg, index) => {
+        const side = index < 4 ? -1 : 1;
+        const pair = index % 4;
+        const phase = Math.sin(mob.walkPhase + pair * 0.85);
+        leg.rotation.x = 0;
+        leg.rotation.y = Number(leg.userData.baseRotationY ?? 0) + phase * 0.18;
+        leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0)
+          + Math.cos(mob.walkPhase + pair * 0.7) * 0.08 * side;
+      });
+    } else {
+      mob.model.legs.forEach((leg, index) => {
+        leg.rotation.x = index % 2 === 0 ? swing : -swing;
+      });
+    }
+    if (mob.kind === 'zombie') {
+      const pose = mob.state === 'attack' ? -1.55 : -1.2;
+      mob.model.arms.forEach((arm, index) => {
+        arm.rotation.x = pose + (index % 2 === 0 ? swing : -swing) * 0.25;
+      });
+    } else if (mob.kind === 'skeleton') {
+      mob.model.arms.forEach((arm, index) => {
+        arm.rotation.x = mob.state === 'attack'
+          ? -1.15
+          : (index % 2 === 0 ? swing : -swing) * 0.5;
+      });
     }
     if (mob.kind === 'creeper') {
       const fuseProgress = THREE.MathUtils.clamp(mob.fuseSeconds / 1.5, 0, 1);

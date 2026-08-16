@@ -4,6 +4,9 @@ import {
   type BlockDefinition,
   type BlockDrop,
   type BlockTextures,
+  type BlockRenderLayer,
+  type BlockRenderShape,
+  type TranslucentMaterial,
   type ToolTier,
   type ToolType,
 } from './types';
@@ -13,6 +16,10 @@ interface BlockOptions {
   hardness?: number;
   solid?: boolean;
   opaque?: boolean;
+  occludesFaces?: boolean;
+  renderLayer?: BlockRenderLayer;
+  renderShape?: BlockRenderShape;
+  translucentMaterial?: TranslucentMaterial;
   tool?: ToolType;
   tier?: ToolTier;
   drop?: BlockDrop | false;
@@ -46,6 +53,9 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     hardness: options.hardness ?? 1,
     solid: options.solid ?? true,
     opaque: options.opaque ?? true,
+    occludesFaces: options.occludesFaces ?? options.opaque ?? true,
+    renderLayer: options.renderLayer ?? 'opaque',
+    renderShape: options.renderShape ?? 'cube',
     textures: Object.freeze(options.textures ?? { all: `block/${key}` }),
     ...(options.tool === undefined ? {} : { tool: options.tool }),
     ...(options.tier === undefined ? {} : { tier: options.tier }),
@@ -59,6 +69,7 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     ...(options.hasItem === undefined ? {} : { hasItem: options.hasItem }),
     ...(options.redstonePower === undefined ? {} : { redstonePower: options.redstonePower }),
     ...(options.contactDamage === undefined ? {} : { contactDamage: options.contactDamage }),
+    ...(options.translucentMaterial === undefined ? {} : { translucentMaterial: options.translucentMaterial }),
   });
 }
 
@@ -160,10 +171,12 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.SnowBlock, 'snow_block', { category: 'terrain', hardness: 0.2, tool: 'shovel', tier: 'hand' }),
   block(BlockId.Ice, 'ice', {
     category: 'terrain', hardness: 0.5, opaque: false, drop: false,
+    renderLayer: 'translucent', translucentMaterial: 'glass',
   }),
   block(BlockId.Water, 'water', {
     category: 'liquid', hardness: -1, solid: false, opaque: false, drop: false,
     liquid: true, replaceable: true, breakable: false, hasItem: false,
+    renderLayer: 'translucent', translucentMaterial: 'water',
   }),
   block(BlockId.Lava, 'lava', {
     category: 'liquid', hardness: -1, solid: false, opaque: false, drop: false,
@@ -182,9 +195,9 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   wood(BlockId.OakLog, 'oak_log', { top: 'block/oak_log_top', bottom: 'block/oak_log_top', side: 'block/oak_log' }),
   wood(BlockId.BirchLog, 'birch_log', { top: 'block/birch_log_top', bottom: 'block/birch_log_top', side: 'block/birch_log' }),
   wood(BlockId.SpruceLog, 'spruce_log', { top: 'block/spruce_log_top', bottom: 'block/spruce_log_top', side: 'block/spruce_log' }),
-  block(BlockId.OakLeaves, 'oak_leaves', { category: 'wood', hardness: 0.2, opaque: false, tool: 'shears', tier: 'hand', flammable: true }),
-  block(BlockId.BirchLeaves, 'birch_leaves', { category: 'wood', hardness: 0.2, opaque: false, tool: 'shears', tier: 'hand', flammable: true }),
-  block(BlockId.SpruceLeaves, 'spruce_leaves', { category: 'wood', hardness: 0.2, opaque: false, tool: 'shears', tier: 'hand', flammable: true }),
+  block(BlockId.OakLeaves, 'oak_leaves', { category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true }),
+  block(BlockId.BirchLeaves, 'birch_leaves', { category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true }),
+  block(BlockId.SpruceLeaves, 'spruce_leaves', { category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true }),
   wood(BlockId.OakPlanks, 'oak_planks'),
   wood(BlockId.BirchPlanks, 'birch_planks'),
   wood(BlockId.SprucePlanks, 'spruce_planks'),
@@ -195,7 +208,10 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   ore(BlockId.DiamondOre, 'diamond_ore', 'iron', 3, 1, 1, 'diamond'),
   ore(BlockId.RedstoneOre, 'redstone_ore', 'iron', 3, 4, 5, 'redstone_dust'),
 
-  block(BlockId.Glass, 'glass', { category: 'building', hardness: 0.3, opaque: false, drop: false }),
+  block(BlockId.Glass, 'glass', {
+    category: 'building', hardness: 0.3, opaque: false, drop: false,
+    renderLayer: 'translucent', translucentMaterial: 'glass',
+  }),
   stone(BlockId.Bricks, 'bricks', 2, 'wood', 'building'),
   stone(BlockId.StoneBricks, 'stone_bricks', 1.5, 'wood', 'building'),
   block(BlockId.Bookshelf, 'bookshelf', { category: 'decoration', hardness: 1.5, tool: 'axe', tier: 'hand', flammable: true, drop: { item: 'book', count: 3 } }),
@@ -211,12 +227,15 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     drop: { item: 'furnace', count: 1, requiresCorrectTool: true },
     textures: { top: 'block/furnace_top', bottom: 'block/furnace_top', side: 'block/furnace_side', front: 'block/furnace_front_off' },
   }),
-  block(BlockId.Torch, 'torch', { category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14 }),
-  block(BlockId.Ladder, 'ladder', { category: 'utility', hardness: 0.4, solid: false, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
+  block(BlockId.Torch, 'torch', {
+    category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14,
+    renderLayer: 'cutout', renderShape: 'torch',
+  }),
+  block(BlockId.Ladder, 'ladder', { category: 'utility', hardness: 0.4, solid: false, opaque: false, renderLayer: 'cutout', tool: 'axe', tier: 'hand', flammable: true }),
   block(BlockId.WhiteBed, 'white_bed', { category: 'utility', hardness: 0.2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
   block(BlockId.OakDoor, 'oak_door', {
     category: 'utility', hardness: 3, opaque: false, tool: 'axe', tier: 'hand',
-    flammable: true, textures: { all: 'block/oak_door' },
+    flammable: true, renderLayer: 'cutout', textures: { all: 'block/oak_door' },
   }),
 
   ...woolBlocks,
@@ -224,13 +243,24 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.RedstoneWire, 'redstone_wire', {
     category: 'redstone', hardness: 0, solid: false, opaque: false,
     drop: { item: 'redstone_dust' }, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'wire',
   }),
   block(BlockId.RedstoneTorch, 'redstone_torch', {
     category: 'redstone', hardness: 0, solid: false, opaque: false, emission: 7, redstonePower: 15,
+    renderLayer: 'cutout', renderShape: 'torch',
   }),
-  block(BlockId.Lever, 'lever', { category: 'redstone', hardness: 0.5, solid: false, opaque: false, redstonePower: 15 }),
-  block(BlockId.StoneButton, 'stone_button', { category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'pickaxe', tier: 'hand', redstonePower: 15 }),
-  block(BlockId.OakPressurePlate, 'oak_pressure_plate', { category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'axe', tier: 'hand', flammable: true, redstonePower: 15 }),
+  block(BlockId.Lever, 'lever', {
+    category: 'redstone', hardness: 0.5, solid: false, opaque: false, redstonePower: 15,
+    renderLayer: 'cutout', renderShape: 'lever',
+  }),
+  block(BlockId.StoneButton, 'stone_button', {
+    category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'pickaxe', tier: 'hand', redstonePower: 15,
+    renderShape: 'button',
+  }),
+  block(BlockId.OakPressurePlate, 'oak_pressure_plate', {
+    category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'axe', tier: 'hand', flammable: true, redstonePower: 15,
+    renderShape: 'pressure_plate',
+  }),
   block(BlockId.Tnt, 'tnt', {
     category: 'redstone', hardness: 0, flammable: true,
     textures: { all: 'block/tnt' },

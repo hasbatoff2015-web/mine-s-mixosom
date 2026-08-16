@@ -123,6 +123,12 @@ export class VoxelWorld {
     return true;
   }
 
+  /** Invalidates geometry when runtime visual state changes without changing BlockId. */
+  markBlockDirty(x: number, z: number): void {
+    const chunk = this.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), false);
+    if (chunk) chunk.dirty = true;
+  }
+
   ensureChunks(centerX: number, centerZ: number, radius: number, maxNew = Infinity): Chunk[] {
     const centerChunkX = floorDiv(centerX, CHUNK_SIZE);
     const centerChunkZ = floorDiv(centerZ, CHUNK_SIZE);

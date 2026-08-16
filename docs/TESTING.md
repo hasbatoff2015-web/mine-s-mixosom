@@ -43,7 +43,7 @@ npm run check
 npm run assets:import
 ```
 
-Команда должна завершиться отчётом о 140 выбранных runtime assets. В clean clone
+Команда должна завершиться отчётом о 150 выбранных runtime assets. В clean clone
 без локального source pack этот шаг нужно пропустить: готовый whitelist уже
 закоммичен в `public/textures`, а importer завершится до очистки output.
 
@@ -53,15 +53,15 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       9 test files, 52 tests, 52 passed
-Vite build:   PASS, 53 modules transformed
-Size/archive: PASS, 0.82 MiB uncompressed, 143 files
-Main assets:  JS 650.98 kB / 172.48 kB gzip; CSS 13.81 kB
+Vitest:       10 test files, 60 tests, 60 passed
+Vite build:   PASS, 54 modules transformed
+Size/archive: PASS, 0.86 MiB uncompressed, 153 files
+Main assets:  JS 666.52 kB / 176.91 kB gzip; CSS 13.81 kB
 ```
 
 | Test file | Tests | Что проверяется |
 | --- | ---: | --- |
-| `tests/block-registry.test.ts` | 7 | Unique IDs/keys, core terrain, five ores, 16 wool colors, block items, item categories и исключённый scope |
+| `tests/block-registry.test.ts` | 9 | Registry invariants plus independent render layers and special-shape classification |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
 | `tests/crafting.test.ts` | 8 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs, smelting/fuel data |
 | `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, shield timing/reduction, axe chance, bow curve, armor formula, survival drowning/food/death/respawn |
@@ -69,7 +69,8 @@ Main assets:  JS 650.98 kB / 172.48 kB gzip; CSS 13.81 kB
 | `tests/entities.test.ts` | 8 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability и vertical melee guard |
 | `tests/world-generation.test.ts` | 3 | Negative chunk coordinates, seed determinism, five ore vertical bands и relative rarity sanity |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
-| `tests/redstone.test.ts` | 5 | Power `0–15`, attenuation, button/plate timing, powered TNT 4 s fuse/event, save/restore и bounded propagation |
+| `tests/redstone.test.ts` | 7 | Power `0–15`, timed sources/TNT, lever angle, v2 orientation round-trip, v1 fallback и bounded propagation |
+| `tests/visual-models.test.ts` | 4 | 8 mob descriptors, 10 imported sheets/layers, 1×/2× logical UV normalization, UV bounds and articulated textured rigs |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -114,6 +115,13 @@ Targeted regression pass также подтвердил кодовые fixes:
 - inventory/pause controls suppression;
 - отсутствие console warnings/errors (`[]`) в финальном smoke;
 - возврат viewport к исходному размеру после matrix.
+
+Visual parity pass дополнительно использовал три детерминированные WebGL-сцены:
+
+- Forest: пять перекрывающихся крон подтвердили полностью непрозрачные зелёные pixels leaves, сохранённые alpha holes и отдельную translucent water surface;
+- Mobs: одновременно проверены cow, pig, chicken, sheep, zombie, skeleton, creeper и spider с локальными sheets, fur/eyes overlays и pivot hierarchy;
+- Lever: floor/wall/ceiling pairs подтвердили неподвижную base, противоположные on/off handle angles и non-cube torch/wire/button/plate;
+- после этих сцен в browser log не было runtime/WebGL warning/error, кроме служебных debug-сообщений Vite.
 
 Responsive pass дополнительно выполнен на всех заданных размерах:
 
@@ -256,7 +264,7 @@ Failure signs: монотонный рост scene children после pruning/l
 
 ## Production/archive validation
 
-Финальный production check после RedstoneSystem пройден: `53` модуля, `143` файла, `0.82 MiB` uncompressed; main JS `650.98 kB` (`172.48 kB` gzip), CSS `13.81 kB`. После каждого следующего `npm run build` повторно проверить:
+Финальный production check после visual parity pass пройден: `54` модуля, `153` файла, `0.86 MiB` uncompressed; main JS `666.52 kB` (`176.91 kB` gzip), CSS `13.81 kB`. После каждого следующего `npm run build` повторно проверить:
 
 - `dist/index.html` существует в корне;
 - paths relative и работают при размещении не в `/`;

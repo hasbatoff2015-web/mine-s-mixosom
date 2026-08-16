@@ -13,7 +13,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 ### P0.1 Воспроизводимая поставка
 
 - [ ] На чистом clone выполнить `npm ci`, `npm run assets:import`, `npm run check` и `npm run check:archive`.
-- [x] Финальный локальный `npm run check` после regression fixes: typecheck, 52 tests, build и size/archive green.
+- [x] Финальный локальный `npm run check` после visual parity pass: typecheck, 60 tests, build и size/archive green.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -85,14 +85,15 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [ ] Перенести chunk generation/meshing в Web Workers с cancellable priority queue.
 - [ ] Внедрить greedy meshing или эквивалентное объединение coplanar faces.
 - [ ] Добавить frustum/distance priority, budgets по миллисекундам и telemetry для chunk rebuild.
-- [ ] Разделить water/glass/leaves passes и улучшить transparency sorting.
+- [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
+- [ ] Улучшить сортировку отдельных translucent water/glass faces.
 - [ ] Добавить skylight/block-light propagation и emissive updates для torch/lava.
 - [ ] Устранить atlas bleeding через padding/extrusion, если появятся mipmaps/scale variants.
 
 ### P1.2 Block states и geometry
 
-- [ ] Отдельные meshes/collision для stairs, slabs, door, ladder, torch, bed, chest, wire, lever, button и pressure plate.
-- [ ] Ориентация при placement и компактное хранение state bits.
+- [ ] Отдельные meshes/collision для stairs, slabs, door, ladder, bed и chest; torch, wire, lever, button и pressure plate уже получили простые non-cube visuals.
+- [ ] Расширить compact block states beyond lever; lever floor/wall/ceiling orientation и v1→v2 redstone fallback уже реализованы.
 - [ ] Door open/close, ladder climbing, корректный two-block bed и sleeping checks.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Минимальная bounded propagation `0–15` для wire/torch/lever/button/plate/TNT реализована и покрыта unit tests.
@@ -155,6 +156,6 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 | New-world time to control | измерить desktop/mobile | progressive generation без длинного freeze |
 | Runtime JS errors | `0` в smoke/soak | `0` в release regression |
 | Save round-trip loss | `0` для schema 1 fields | migrations + backup |
-| Unit/component tests | текущие 52 + P0 browser/storage integration coverage | regression grows with features |
+| Unit/component tests | текущие 60 + P0 browser/storage integration coverage | regression grows with features |
 | Production archive | значительно ниже 20 MiB target | budget per asset/system |
 | Asset provenance | 100% production manifest | автоматическая проверка manifest |

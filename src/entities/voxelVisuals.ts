@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
 import { getItemDefinition } from '../items';
+import { TextureAtlas } from '../rendering/TextureAtlas';
+import {
+  createTexturedCuboidGeometry,
+  type TexturedCuboidDefinition,
+} from '../rendering/TexturedCuboid';
 
 const CATEGORY_COLORS: Readonly<Record<string, number>> = {
   air: 0xbfdfff,
@@ -65,6 +70,9 @@ function itemColor(itemId: string): number {
 export class VoxelVisualFactory {
   private readonly cube = new THREE.BoxGeometry(1, 1, 1);
   private readonly materials = new Map<number, THREE.MeshLambertMaterial>();
+  private readonly texturedMaterials = new Map<string, THREE.Material>();
+  private readonly entityTextures = new Map<string, THREE.Texture>();
+  private readonly cuboidGeometries = new Map<string, THREE.BufferGeometry>();
 
   material(color: number): THREE.MeshLambertMaterial {
     let material = this.materials.get(color);
@@ -96,6 +104,39 @@ export class VoxelVisualFactory {
     return mesh;
   }
 
+  addTexturedCuboid(
+    parent: THREE.Object3D,
+    definition: TexturedCuboidDefinition,
+    position: readonly [number, number, number],
+    texturePath: string,
+    options: { readonly glow?: boolean } = {},
+  ): THREE.Mesh {
+    const mesh = new THREE.Mesh(
+      this.texturedCuboidGeometry(definition),
+      this.texturedMaterial(texturePath, options.glow === true),
+    );
+    mesh.position.set(...position);
+    mesh.castShadow = !options.glow;
+    mesh.receiveShadow = !options.glow;
+    parent.add(mesh);
+    return mesh;
+  }
+
+  addPivotCuboid(
+    parent: THREE.Object3D,
+    definition: TexturedCuboidDefinition,
+    pivot: readonly [number, number, number],
+    offset: readonly [number, number, number],
+    texturePath: string,
+    options: { readonly glow?: boolean } = {},
+  ): THREE.Group {
+    const group = new THREE.Group();
+    group.position.set(...pivot);
+    this.addTexturedCuboid(group, definition, offset, texturePath, options);
+    parent.add(group);
+    return group;
+  }
+
   createDroppedItem(itemId: string): THREE.Group {
     const definition = getItemDefinition(itemId);
     const group = new THREE.Group();
@@ -116,5 +157,51 @@ export class VoxelVisualFactory {
     this.cube.dispose();
     for (const material of this.materials.values()) material.dispose();
     this.materials.clear();
+    for (const material of this.texturedMaterials.values()) material.dispose();
+    this.texturedMaterials.clear();
+    for (const texture of this.entityTextures.values()) texture.dispose();
+    this.entityTextures.clear();
+    for (const geometry of this.cuboidGeometries.values()) geometry.dispose();
+    this.cuboidGeometries.clear();
+  }
+
+  private texturedCuboidGeometry(definition: TexturedCuboidDefinition): THREE.BufferGeometry {
+    const key = JSON.stringify(definition);
+    let geometry = this.cuboidGeometries.get(key);
+    if (!geometry) {
+      geometry = createTexturedCuboidGeometry(definition);
+      this.cuboidGeometries.set(key, geometry);
+    }
+    return geometry;
+  }
+
+  private texturedMaterial(texturePath: string, glow: boolean): THREE.Material {
+    const key = `${texturePath}:${glow ? 'glow' : 'lit'}`;
+    let material = this.texturedMaterials.get(key);
+    if (!material) {
+      const map = this.entityTexture(texturePath);
+      material = glow
+        ? new THREE.MeshBasicMaterial({ map, alphaTest: 0.45, transparent: false })
+        : new THREE.MeshLambertMaterial({ map, alphaTest: 0.1, transparent: false, flatShading: true });
+      this.texturedMaterials.set(key, material);
+    }
+    return material;
+  }
+
+  private entityTexture(texturePath: string): THREE.Texture {
+    let texture = this.entityTextures.get(texturePath);
+    if (!texture) {
+      texture = typeof document === 'undefined'
+        ? new THREE.Texture()
+        : new THREE.TextureLoader().load(TextureAtlas.url(texturePath));
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestFilter;
+      texture.generateMipmaps = false;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      this.entityTextures.set(texturePath, texture);
+    }
+    return texture;
   }
 }

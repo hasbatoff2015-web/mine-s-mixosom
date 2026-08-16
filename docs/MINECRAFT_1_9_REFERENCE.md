@@ -10,7 +10,7 @@
 - Урон ниже указан в HP: `1 HP = половина сердца`, у игрока `20 HP`.
 - Симуляция Minecraft и проекта работает с частотой `20 TPS`; один tick равен `0.05 s`.
 
-Самые важные несовпадения уже сейчас: alpha использует sneak AABB `0.6 × 1.5` вместо 1.9-высоты `1.65`, sneak eye `1.27` вместо примерно `1.54`, terminal fall speed `50 b/s` вместо `78.4 b/s`, единый reach `5` вместо `4.5` для блоков и `3` для сущностей, упрощённый cooldown без vanilla-смещения `+0.5 tick`, а armor toughness относится к **1.9.1**, не к чистой 1.9.
+Самые важные несовпадения уже сейчас: alpha использует sneak AABB `0.6 × 1.5` вместо 1.9-высоты `1.65`, sneak eye `1.27` вместо примерно `1.54`, terminal fall speed `50 b/s` вместо `78.4 b/s`, единый reach `5` вместо `4.5` для блоков и `3` для сущностей, а armor toughness относится к **1.9.1**, не к чистой 1.9. Combat cooldown уже учитывает vanilla-смещение `+0.5 tick`.
 
 ## Подтверждённые значения Java Edition 1.9
 
@@ -249,7 +249,7 @@ launchSpeed = 3 × power blocks/tick
 | Reach | единый `5 blocks` | Увеличенный и объединённый; vanilla `4.5` block / `3` entity |
 | Mining | `S/H/30`, иначе `S/H/100`; speeds wood `2`, stone `4`, iron `6`, diamond `8` | Core formula совпадает; эффекты и post-break delay могут быть частичными |
 | Gold tools | speed `12`, tier `0`, durability `32`, если включены | Exact values; gold можно исключить из раннего UI, но не подменять tier |
-| Cooldown | `charge = min(1, elapsedSeconds × AS)`; `damage = base × (0.2 + 0.8 × charge²)` | Упрощение: нет vanilla `+0.5 tick` |
+| Cooldown | `charge = clamp((ticksSinceAttack + 0.5) / (20 / AS), 0, 1)`; `damage = base × (0.2 + 0.8 × charge²)` | Совпадает с используемым partial-tick offset Java 1.9 |
 | Attack speeds | sword `1.6`, pickaxe `1.2`, shovel `1.0`, axes `0.8/0.8/0.9/1.0/1.0` | Совпадают |
 | Axe damage в текущем registry | wood `6`, stone `7`, iron `8`, diamond `9`, gold `6` | Approximation; exact 1.9: `7/9/9/9/7` |
 | Critical | `×1.5` при падении и full charge | Упрощены environmental conditions; exact threshold допускает charge `>0.9` |

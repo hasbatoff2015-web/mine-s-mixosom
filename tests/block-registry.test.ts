@@ -34,6 +34,36 @@ describe('block registry', () => {
     expect(getBlockDefinition(BlockId.Bedrock).drop).toBeUndefined();
   });
 
+  it('classifies cutout and blended materials independently from face occlusion', () => {
+    for (const id of [BlockId.OakLeaves, BlockId.BirchLeaves, BlockId.SpruceLeaves]) {
+      expect(getBlockDefinition(id)).toMatchObject({
+        opaque: false,
+        occludesFaces: false,
+        renderLayer: 'cutout',
+        renderShape: 'cube',
+      });
+    }
+    expect(getBlockDefinition(BlockId.Water)).toMatchObject({
+      renderLayer: 'translucent', translucentMaterial: 'water',
+    });
+    expect(getBlockDefinition(BlockId.Glass)).toMatchObject({
+      renderLayer: 'translucent', translucentMaterial: 'glass',
+    });
+    expect(getBlockDefinition(BlockId.Stone)).toMatchObject({
+      opaque: true, occludesFaces: true, renderLayer: 'opaque',
+    });
+  });
+
+  it('uses dedicated geometry for the lever and obvious thin redstone blocks', () => {
+    expect(getBlockDefinition(BlockId.Lever).renderShape).toBe('lever');
+    expect(getBlockDefinition(BlockId.Lever).renderShape).not.toBe('cube');
+    expect(getBlockDefinition(BlockId.Torch).renderShape).toBe('torch');
+    expect(getBlockDefinition(BlockId.RedstoneTorch).renderShape).toBe('torch');
+    expect(getBlockDefinition(BlockId.RedstoneWire).renderShape).toBe('wire');
+    expect(getBlockDefinition(BlockId.StoneButton).renderShape).toBe('button');
+    expect(getBlockDefinition(BlockId.OakPressurePlate).renderShape).toBe('pressure_plate');
+  });
+
   it('contains exactly the intended five ores with 1.9-style iron and gold drops', () => {
     const ores = BLOCKS.filter((block) => block.category === 'ore');
     expect(ores.map((block) => block.key).sort()).toEqual([

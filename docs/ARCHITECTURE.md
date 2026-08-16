@@ -92,7 +92,7 @@ PLAYING → AD / BACKGROUND → controlled resume
 
 ### Blocks
 
-`src/blocks/types.ts` определяет stable numeric `BlockId` и data contract: hardness, solid/opaque, tool, tier, drops, textures, emission, flammability, gravity, liquid, replaceability, redstone power и contact damage.
+`src/blocks/types.ts` определяет stable numeric `BlockId` и data contract: hardness, collision/light `opaque`, independent `occludesFaces`, `renderLayer`, `renderShape`, tool, tier, drops, textures, emission, flammability, gravity, liquid, replaceability, redstone power и contact damage.
 
 `src/blocks/registry.ts` является canonical block catalog. Он строит индексы по numeric ID и string key, валидирует uniqueness и автоматически создаёт block items для definitions, которые не отключили `hasItem`.
 
@@ -142,18 +142,20 @@ Scheduled block queue ограничена, за tick обрабатываетс
 
 ## Rendering
 
-`TextureAtlas.create()` собирает нужные block textures в canvas atlas по 32 px tiles. Pixel art использует `NearestFilter`, mipmaps отключены, color space — sRGB. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 140 whitelist-файлов в `public/textures`.
+`TextureAtlas.create()` собирает нужные block textures в canvas atlas по 32 px tiles. Pixel art использует `NearestFilter`, mipmaps отключены, color space — sRGB. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 150 whitelist-файлов в `public/textures`, включая 10 entity sheets/layers.
 
-`ChunkMesher` проходит все voxels и добавляет только faces, у которых сосед не opaque. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome tint; приблизительная cave light и face-direction shade также записаны в vertex color.
+`ChunkMesher` проходит все voxels и добавляет только faces, у которых сосед не `occludesFaces`. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint; приблизительная cave light и face-direction shade также записаны в vertex color. `opaque` больше не выбирает render material.
 
-`WorldRenderer` создаёт два материала:
+`WorldRenderer` создаёт независимые material paths:
 
-- opaque `MeshLambertMaterial`;
-- transparent double-sided material для water/glass/leaves и других non-opaque blocks.
+- opaque `MeshLambertMaterial` без blending;
+- cutout material с `alphaTest=0.42`, `transparent=false`, depth test/write для leaves и alpha sprites;
+- translucent glass material с opacity `0.52`;
+- отдельный translucent water material с opacity `0.70` и более поздним render order.
 
 Dirty chunks перестраиваются с per-tick budget, дальние chunk visuals освобождают geometry. Selection outline — отдельный line mesh.
 
-Текущий mesher не объединяет faces и не знает специальных block models/states. Это главный P1 performance/visual extension point.
+`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Сейчас lever строится из stone base и pivoted handle; torch/redstone torch — crossed planes, wire — ground quad, button — малый cuboid, pressure plate — тонкая plate. Mesher всё ещё не объединяет faces; stairs/doors/beds/containers остаются следующим geometry extension point.
 
 ## Player, survival и combat
 
@@ -201,7 +203,9 @@ MobManager владеет mob entities и skeleton projectiles. Definitions за
 
 Caps зависят от coarse pointer profile. Restore может принудительно создать сохранённых мобов в пределах общего hard cap.
 
-Procedural `VoxelVisualFactory` и code-defined box rigs не требуют entity textures и освобождают shared materials/geometries через `dispose()`.
+`VoxelVisualFactory` разделяет простые colored item/projectile boxes и textured entity cuboids. `TexturedCuboidGeometry` вычисляет legacy cross-layout UV для всех шести faces из logical offset/width/height/depth; normalized UV одинаковы для 1× и 2× physical sheets. Entity materials используют nearest, sRGB, no mipmaps и alpha test.
+
+Code-defined articulated rigs строятся как `Group pivot → textured mesh`: cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отдельные descriptors/proportions. Sheep добавляет inflated fur layer, spider — eyes overlay. Legs/arms/spider legs вращаются вокруг pivots, а physics AABB остаётся в `MobDefinition` и не зависит от visual mesh. Factory кэширует и освобождает textures/materials/geometries через `dispose()`.
 
 ## Basic redstone
 
@@ -219,7 +223,7 @@ Dust распространяет сигнал по шести voxel-сосед�
 
 Powered TNT удаляется из мира и становится отдельным Three.js visual с default fuse `4 s`. После fuse RedstoneSystem выдаёт typed explosion event; `Game` применяет radial damage/block destruction и коротко primes TNT, затронутый взрывом, создавая chain reaction.
 
-Serialization version 1 хранит active sources, остаток timed button и primed TNT с оставшимся fuse. Wire power намеренно не сохраняется как производное состояние.
+Serialization version 2 хранит active sources, lever attachment/facing, остаток timed button и primed TNT с оставшимся fuse. Restore принимает version 1 и назначает старому lever безопасную ориентацию `floor/north`. Wire power намеренно не сохраняется как производное состояние.
 
 Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation steps за update и `8,192` queued updates. Это basic redstone approximation без directional dust shapes, quasi-connectivity и advanced components.
 
