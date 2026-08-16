@@ -1,0 +1,1120 @@
+import * as THREE from 'three';
+import { BlockId, getBlockDefinition } from '../blocks';
+import { CombatSystem, PlayerArrowManager } from '../combat';
+import { AudioManager } from './AudioManager';
+import {
+  AUTOSAVE_INTERVAL_SECONDS,
+  DEFAULT_RENDER_DISTANCE_DESKTOP,
+  DEFAULT_RENDER_DISTANCE_MOBILE,
+  FIXED_DT,
+  MAX_FRAME_DELTA,
+  PLAYER_REACH,
+  TICK_RATE,
+  WORLD_HEIGHT,
+  blockKey,
+  clamp,
+  floorDiv,
+} from './constants';
+import { GameLifecycleManager } from './Lifecycle';
+import {
+  DroppedItemManager,
+  MobManager,
+  type MobPlayerDamageEvent,
+  type SerializedDroppedItem,
+  type SerializedMob,
+} from '../entities';
+import { InputManager } from '../input/InputManager';
+import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
+import { ITEMS, ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
+import { PlayerController } from '../player';
+import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
+import { TextureAtlas } from '../rendering/TextureAtlas';
+import { WorldRenderer } from '../rendering/WorldRenderer';
+import { SaveService } from '../save/SaveService';
+import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
+import { SurvivalSystem } from '../survival';
+import { GameUI } from '../ui/GameUI';
+import { VoxelWorld, type VoxelHit } from '../world/World';
+import { YandexGamesService } from '../yandex/YandexGamesService';
+
+interface GameSession {
+  summary: WorldSummary;
+  world: VoxelWorld;
+  worldRenderer: WorldRenderer;
+  player: PlayerController;
+  survival: SurvivalSystem;
+  combat: CombatSystem;
+  inventory: Inventory;
+  drops: DroppedItemManager;
+  mobs: MobManager;
+  arrows: PlayerArrowManager;
+  redstone: RedstoneSystem;
+  activePressurePlates: Set<string>;
+  selectedSlot: number;
+  target?: VoxelHit;
+  miningTarget?: string;
+  miningProgress: number;
+  foodUseTicks: number;
+  bowUseTicks: number;
+  playTicks: number;
+  lastAutosaveTick: number;
+}
+
+interface RuntimeSettings {
+  volume: number;
+  sensitivity: number;
+  renderDistance: number;
+  fov: number;
+}
+
+const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
+
+export class Game {
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ui: GameUI;
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.05, 650);
+  private readonly lifecycle = new GameLifecycleManager();
+  private readonly audio = new AudioManager();
+  private readonly saves = new SaveService();
+  private readonly yandex = new YandexGamesService();
+  private readonly input: InputManager;
+  private readonly ambient = new THREE.HemisphereLight(0xcceeff, 0x17201f, 0.9);
+  private readonly sunlight = new THREE.DirectionalLight(0xfff1cf, 1.15);
+  private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
+  private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
+  private atlas?: TextureAtlas;
+  private session?: GameSession;
+  private settings: RuntimeSettings = {
+    volume: 0.7,
+    sensitivity: 0.0022,
+    renderDistance: isCoarsePointer() ? DEFAULT_RENDER_DISTANCE_MOBILE : DEFAULT_RENDER_DISTANCE_DESKTOP,
+    fov: 75,
+  };
+  private accumulator = 0;
+  private previousTime = performance.now();
+  private frameHandle = 0;
+  private fps = 0;
+  private fpsFrames = 0;
+  private fpsTimer = 0;
+  private debugVisible = false;
+  private screenBeforeSettings: 'main' | 'pause' = 'main';
+  private lastSavePromise: Promise<void> = Promise.resolve();
+  private deathShown = false;
+
+  constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
+    this.canvas = canvas;
+    this.ui = new GameUI(uiRoot);
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
+    this.scene.background = new THREE.Color(0x7fb6d5);
+    this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
+    this.sunlight.position.set(40, 70, 25);
+    this.scene.add(this.ambient, this.sunlight, this.sun, this.moon);
+
+    this.input = new InputManager(this.canvas, {
+      canCapture: () => this.lifecycle.state === 'PLAYING' && !this.ui.isInventoryOpen(),
+      toggleInventory: () => this.toggleInventory(),
+      togglePause: () => this.togglePause(),
+      dropItem: () => this.dropSelectedItem(),
+      selectHotbar: (index) => this.selectHotbar(index),
+    });
+    this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
+    this.bindLifecycle();
+    this.bindWindowEvents();
+  }
+
+  async initialize(): Promise<void> {
+    this.ui.showLoading('Загружаем текстуры и сохранения…');
+    this.resize();
+    this.frameHandle = requestAnimationFrame((time) => this.frame(time));
+    await Promise.all([
+      this.saves.initialize().catch((error) => console.warn('IndexedDB unavailable, saves remain in memory.', error)),
+      this.yandex.initialize(
+        () => this.pauseForPlatform(),
+        () => this.resumeFromPlatform(),
+      ),
+      TextureAtlas.create().then((atlas) => { this.atlas = atlas; }),
+    ]);
+    this.showMainMenu();
+    await this.yandex.loadingReady();
+  }
+
+  dispose(): void {
+    cancelAnimationFrame(this.frameHandle);
+    this.disposeSession();
+    this.atlas?.dispose();
+    this.renderer.dispose();
+    this.saves.close();
+    this.yandex.dispose();
+  }
+
+  private showMainMenu(): void {
+    this.lifecycle.setState('MENU');
+    this.ui.showMainMenu({
+      play: () => void this.showWorldList(),
+      settings: () => {
+        this.screenBeforeSettings = 'main';
+        this.showSettings();
+      },
+      controls: () => this.ui.showControls(() => this.showMainMenu()),
+    });
+  }
+
+  private async showWorldList(): Promise<void> {
+    const worlds = await this.saves.listWorlds();
+    this.ui.showWorldList(worlds, {
+      load: (id) => void this.loadWorld(id),
+      create: () => this.ui.showCreateWorld({
+        create: (name, seed, mode) => void this.createWorld(name, seed, mode),
+        back: () => void this.showWorldList(),
+      }),
+      delete: async (id) => {
+        await this.saves.deleteWorld(id);
+        await this.showWorldList();
+      },
+      back: () => this.showMainMenu(),
+    });
+  }
+
+  private async createWorld(name: string, seed: string, mode: GameMode): Promise<void> {
+    const summary = this.saves.createSummary(name, seed, mode);
+    const world = new VoxelWorld(summary.seed);
+    const inventory = new Inventory();
+    if (mode === 'survival') inventory.addItem('apple', 3);
+    await this.startSession(summary, world, inventory);
+    await this.saveSession();
+  }
+
+  private async loadWorld(id: string): Promise<void> {
+    this.ui.showLoading('Читаем сохранённый мир…');
+    const state = await this.saves.loadWorld(id);
+    if (!state) {
+      this.ui.toast('Сохранение не найдено');
+      await this.showWorldList();
+      return;
+    }
+    const world = new VoxelWorld(state.summary.seed);
+    world.restore(state);
+    let inventory: Inventory;
+    try {
+      inventory = Inventory.deserialize(state.player.inventory);
+    } catch (error) {
+      console.warn('Inventory save was invalid; starting with an empty inventory.', error);
+      inventory = new Inventory();
+    }
+    await this.startSession(state.summary, world, inventory, state);
+  }
+
+  private async startSession(
+    summary: WorldSummary,
+    world: VoxelWorld,
+    inventory: Inventory,
+    restored?: SerializedWorldState,
+  ): Promise<void> {
+    this.disposeSession();
+    this.ui.showLoading(restored ? 'Восстанавливаем чанки…' : 'Генерируем новый мир…');
+    const atlas = this.atlas;
+    if (!atlas) throw new Error('Texture atlas is not ready.');
+
+    const player = new PlayerController();
+    const spawn = restored?.player.position ?? this.findSpawn(world);
+    player.teleport(spawn);
+    if (restored) {
+      player.restore({
+        position: restored.player.position,
+        velocity: restored.player.velocity,
+        yaw: restored.player.yaw,
+        pitch: restored.player.pitch,
+      });
+      this.input.yaw = restored.player.yaw;
+      this.input.pitch = restored.player.pitch;
+    } else {
+      this.input.yaw = 0;
+      this.input.pitch = 0;
+    }
+
+    const survival = new SurvivalSystem({
+      health: restored?.player.health ?? 20,
+      hunger: restored?.player.hunger ?? 20,
+      saturation: restored?.player.saturation ?? 5,
+      onDeath: () => this.handleDeath(),
+    });
+    survival.setSpawnPoint(restored?.player.spawnPoint ?? spawn);
+    const worldRenderer = new WorldRenderer(world, atlas);
+    this.scene.add(worldRenderer.group);
+    const drops = new DroppedItemManager(this.scene, world, {
+      onPickup: (stack) => {
+        const remainder = inventory.add(stack as ItemStack);
+        const accepted = stack.count - (remainder?.count ?? 0);
+        if (accepted > 0) {
+          this.audio.playTone(660, 0.05, 0.025);
+          this.ui.toast(`Подобрано: ${getItemDefinition(stack.itemId).name}`);
+        }
+        return accepted;
+      },
+    });
+    if (restored?.droppedItems) drops.restore(restored.droppedItems as SerializedDroppedItem[]);
+
+    const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
+    const mobs = new MobManager(this.scene, world, {
+      maxMobs: isCoarsePointer() ? 24 : 40,
+      passiveCap: isCoarsePointer() ? 10 : 16,
+      hostileCap: isCoarsePointer() ? 14 : 24,
+      maxProjectiles: isCoarsePointer() ? 20 : 40,
+    });
+    if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
+    const combat = new CombatSystem({
+      heldItemId: inventory.getSlot(selectedSlot)?.itemId,
+      offhandItemId: inventory.offhand?.itemId,
+    });
+    const arrows = new PlayerArrowManager(this.scene, world, mobs);
+    const redstone = new RedstoneSystem(world, { root: this.scene });
+    const activePressurePlates = new Set<string>();
+    if (restored?.redstone) {
+      try {
+        const redstoneState = restored.redstone as SerializedRedstoneState;
+        redstone.restore(redstoneState);
+        for (const source of redstoneState.sources) {
+          if (source.kind === 'pressure_plate' && source.active) {
+            activePressurePlates.add(blockKey(...source.position));
+          }
+        }
+      } catch (error) {
+        console.warn('Redstone save was invalid; resetting redstone runtime state.', error);
+        redstone.clear();
+        activePressurePlates.clear();
+      }
+    }
+
+    this.session = {
+      summary,
+      world,
+      worldRenderer,
+      player,
+      survival,
+      combat,
+      inventory,
+      drops,
+      mobs,
+      arrows,
+      redstone,
+      activePressurePlates,
+      selectedSlot,
+      miningProgress: 0,
+      foodUseTicks: 0,
+      bowUseTicks: 0,
+      playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
+      lastAutosaveTick: 0,
+    };
+    this.canvas.dataset.hotbar = String(this.session.selectedSlot);
+    world.ensureChunks(Math.floor(player.position.x), Math.floor(player.position.z), 2);
+    let rebuilt = 0;
+    for (const chunk of [...world.chunks.values()]) {
+      worldRenderer.rebuild(chunk);
+      rebuilt += 1;
+      if (rebuilt % 4 === 0) await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    this.deathShown = false;
+    this.enterPlaying();
+  }
+
+  private findSpawn(world: VoxelWorld): [number, number, number] {
+    for (let radius = 0; radius <= 24; radius += 1) {
+      for (let z = -radius; z <= radius; z += 1) {
+        for (let x = -radius; x <= radius; x += 1) {
+          if (radius > 0 && Math.abs(x) !== radius && Math.abs(z) !== radius) continue;
+          const surface = world.surfaceY(x, z);
+          const floor = world.getBlock(x, surface, z);
+          if ((floor === BlockId.GrassBlock || floor === BlockId.Sand)
+            && !world.isSolid(x, surface + 1, z) && !world.isSolid(x, surface + 2, z)) {
+            return [x + 0.5, surface + 1.01, z + 0.5];
+          }
+        }
+      }
+    }
+    return [0.5, world.generator.columnAt(0, 0).height + 2, 0.5];
+  }
+
+  private enterPlaying(): void {
+    this.ui.closeInventory();
+    this.ui.enterGame();
+    this.lifecycle.setState('PLAYING');
+    this.previousTime = performance.now();
+    this.accumulator = 0;
+  }
+
+  private toggleInventory(): void {
+    const session = this.session;
+    if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
+    if (this.ui.isInventoryOpen()) {
+      this.ui.closeInventory();
+      this.enterPlaying();
+      return;
+    }
+    this.lifecycle.setState('PAUSED');
+    this.ui.openInventory({
+      inventory: session.inventory,
+      mode: session.summary.mode,
+      kind: 'inventory',
+      onClose: () => {
+        this.ui.closeInventory();
+        this.enterPlaying();
+      },
+      onDrop: (stack) => this.spawnDroppedStack(stack),
+      onChanged: () => this.refreshHud(),
+    });
+  }
+
+  private openBlockInventory(kind: 'crafting-table' | 'chest' | 'furnace', hit: VoxelHit): void {
+    const session = this.session!;
+    this.lifecycle.setState('PAUSED');
+    this.ui.openInventory({
+      inventory: session.inventory,
+      mode: session.summary.mode,
+      kind,
+      ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
+      ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
+      onClose: () => {
+        this.ui.closeInventory();
+        this.enterPlaying();
+        void this.saveSession();
+      },
+      onDrop: (stack) => this.spawnDroppedStack(stack),
+      onChanged: () => this.refreshHud(),
+    });
+  }
+
+  private togglePause(): void {
+    if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING') return;
+    if (this.ui.isInventoryOpen()) {
+      this.ui.closeInventory();
+      this.enterPlaying();
+      return;
+    }
+    if (this.lifecycle.state === 'PLAYING') {
+      this.lifecycle.setState('PAUSED');
+      document.exitPointerLock?.();
+      void this.saveSession();
+      this.ui.showPause({
+        resume: () => this.enterPlaying(),
+        settings: () => {
+          this.screenBeforeSettings = 'pause';
+          this.showSettings();
+        },
+        saveAndQuit: () => void this.saveAndQuit(),
+      });
+    } else if (this.lifecycle.state === 'PAUSED') this.enterPlaying();
+  }
+
+  private showSettings(): void {
+    this.ui.showSettings((settings) => {
+      this.settings = settings;
+      this.audio.setVolume(settings.volume);
+      this.input.setSensitivity(settings.sensitivity);
+      this.camera.fov = settings.fov;
+      this.camera.updateProjectionMatrix();
+      if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
+    }, () => {
+      if (this.screenBeforeSettings === 'pause' && this.session) {
+        this.ui.showPause({
+          resume: () => this.enterPlaying(),
+          settings: () => this.showSettings(),
+          saveAndQuit: () => void this.saveAndQuit(),
+        });
+      } else this.showMainMenu();
+    });
+  }
+
+  private async saveAndQuit(): Promise<void> {
+    await this.saveSession();
+    this.disposeSession();
+    this.showMainMenu();
+  }
+
+  private async saveSession(): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+    const state: SerializedWorldState = {
+      schemaVersion: 1,
+      summary: {
+        ...session.summary,
+        playTimeSeconds: session.playTicks / TICK_RATE,
+        updatedAt: Date.now(),
+      },
+      timeOfDay: session.world.timeOfDay,
+      weather: 'clear',
+      player: {
+        position: session.player.position.toArray() as [number, number, number],
+        velocity: session.player.velocity.toArray() as [number, number, number],
+        yaw: session.player.yaw,
+        pitch: session.player.pitch,
+        health: session.survival.health,
+        hunger: session.survival.hunger,
+        saturation: session.survival.saturation,
+        selectedSlot: session.selectedSlot,
+        spawnPoint: [...session.survival.spawnPoint],
+        inventory: session.inventory.serialize(),
+      },
+      modifications: session.world.serializeModifications(),
+      chests: Object.fromEntries(session.world.chests),
+      furnaces: Object.fromEntries(session.world.furnaces),
+      droppedItems: session.drops.serialize(),
+      mobs: session.mobs.serialize(),
+      redstone: session.redstone.serialize(),
+    };
+    session.summary = state.summary;
+    this.lastSavePromise = this.lastSavePromise.then(() => this.saves.saveWorld(state)).catch((error) => {
+      console.error('Autosave failed.', error);
+      this.ui.toast('Не удалось сохранить мир');
+    });
+    await this.lastSavePromise;
+  }
+
+  private frame(now: number): void {
+    const elapsed = Math.min(MAX_FRAME_DELTA, Math.max(0, (now - this.previousTime) / 1000));
+    this.previousTime = now;
+    this.fpsFrames += 1;
+    this.fpsTimer += elapsed;
+    if (this.fpsTimer >= 0.5) {
+      this.fps = Math.round(this.fpsFrames / this.fpsTimer);
+      this.fpsFrames = 0;
+      this.fpsTimer = 0;
+    }
+    if (this.lifecycle.simulating) {
+      this.accumulator += elapsed;
+      while (this.accumulator >= FIXED_DT) {
+        this.tick();
+        this.accumulator -= FIXED_DT;
+      }
+    } else this.accumulator = 0;
+    this.render(this.accumulator / FIXED_DT);
+    this.frameHandle = requestAnimationFrame((time) => this.frame(time));
+  }
+
+  private tick(): void {
+    const session = this.session;
+    if (!session) return;
+    session.playTicks += 1;
+    session.world.tick();
+
+    const selected = this.selectedStack();
+    session.combat.setHeldItem(selected?.itemId);
+    session.combat.setOffhand(session.inventory.offhand?.itemId);
+    const holdingShield = selected?.itemId === ItemId.Shield || session.inventory.offhand?.itemId === ItemId.Shield;
+    session.combat.setUsingShield(
+      this.input.using && holdingShield && session.foodUseTicks <= 0 && session.bowUseTicks <= 0,
+    );
+    session.combat.tick(FIXED_DT);
+
+    const movementBefore = this.input.movement();
+    const movementMultiplier = session.combat.movementMultiplier;
+    const playerInput = {
+      yaw: this.input.yaw,
+      pitch: this.input.pitch,
+      movement: () => ({
+        ...movementBefore,
+        forward: movementBefore.forward * movementMultiplier,
+        right: movementBefore.right * movementMultiplier,
+        sprint: movementBefore.sprint
+          && movementMultiplier === 1
+          && (session.summary.mode === 'creative' || session.survival.hunger > 6),
+      }),
+    };
+    const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
+      if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
+    });
+    if (session.summary.mode === 'survival') {
+      const survivalResult = session.survival.tick(FIXED_DT, {
+        player: session.player,
+        world: session.world,
+        armor: session.inventory,
+        horizontalDistance: playerResult.horizontalDistance,
+        sprinting: session.player.sprinting,
+        swimming: session.player.inWater,
+        jumped: playerResult.jumped,
+        onDeath: () => this.handleDeath(),
+      });
+      if (survivalResult.dead) {
+        this.handleDeath();
+        return;
+      }
+    }
+
+    session.world.ensureChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance, 1);
+    if (session.playTicks % 80 === 0) {
+      const removed = session.world.pruneChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance);
+      session.worldRenderer.removeChunks(removed);
+    }
+    session.worldRenderer.rebuildDirty(isCoarsePointer() ? 1 : 2);
+    this.updateTargetAndActions();
+    this.updateFoodUse();
+    session.arrows.tick(FIXED_DT);
+    session.mobs.update(FIXED_DT, {
+      playerPosition: session.player.position,
+      playerEyePosition: session.player.eyePosition(),
+      playerAlive: !session.survival.dead,
+      playerTargetable: session.summary.mode === 'survival',
+      daylight: this.daylightFactor(session.world.timeOfDay),
+    });
+    this.processMobEvents();
+    if (session.summary.mode === 'survival' && session.survival.dead) {
+      this.handleDeath();
+      return;
+    }
+    session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
+    this.updateRedstone();
+    if (session.summary.mode === 'survival' && session.survival.dead) {
+      this.handleDeath();
+      return;
+    }
+
+    if (session.playTicks - session.lastAutosaveTick >= AUTOSAVE_INTERVAL_SECONDS * TICK_RATE) {
+      session.lastAutosaveTick = session.playTicks;
+      void this.saveSession();
+    }
+    this.refreshHud();
+  }
+
+  private updateTargetAndActions(): void {
+    const session = this.session!;
+    const origin = session.player.eyePosition();
+    const direction = session.player.viewDirection();
+    session.target = session.world.raycast(origin, direction, PLAYER_REACH);
+    session.worldRenderer.setTarget(session.target);
+    const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
+    const attackPressed = this.input.consumeAttackPressed();
+    const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
+    if (mobTarget) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      if (attackPressed) {
+        const stack = this.selectedStack();
+        const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
+        const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
+          critical: {
+            fallDistance: session.player.fallDistance,
+            onGround: session.player.onGround,
+            sprinting: session.player.sprinting,
+            inWater: session.player.inWater,
+          },
+          attackerSprinting: session.player.sprinting,
+          attackerYaw: session.player.yaw,
+        });
+        session.mobs.damage(mobTarget.mob, result.damage, {
+          source: 'player',
+          attackerPosition: origin,
+          knockback: result.knockback.length(),
+        });
+        if (session.summary.mode === 'survival') {
+          if (stack && (item?.kind === 'tool' || (item?.kind === 'weapon' && item.weapon === 'sword'))) {
+            session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
+          }
+          session.survival.addExhaustion(0.1);
+        }
+        this.audio.playTone(result.critical ? 520 : 310, 0.055, result.critical ? 0.055 : 0.035);
+      }
+    } else if (!this.input.mining || !session.target) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+    } else {
+      if (session.miningTarget !== targetKey) {
+        session.miningTarget = targetKey;
+        session.miningProgress = 0;
+      }
+      const definition = getBlockDefinition(session.target.block);
+      if (definition.breakable !== false && definition.hardness >= 0) {
+        session.miningProgress += session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
+        if (session.miningProgress >= 1) this.breakTarget();
+      }
+    }
+    if (attackPressed) this.ui.swingHand();
+    if (this.input.consumeUsePressed()) this.useTargetOrItem();
+  }
+
+  private miningDelta(definition: ReturnType<typeof getBlockDefinition>, tool: ItemStack | null): number {
+    if (definition.hardness <= 0) return 1;
+    const item = tool ? tryGetItemDefinition(tool.itemId) : undefined;
+    const correctType = !definition.tool || (item?.kind === 'tool' && item.tool === definition.tool);
+    const tierRanks = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 } as const;
+    const toolTier = item?.kind === 'tool' ? tierRanks[item.tier] : 0;
+    const required = tierRanks[definition.tier ?? 'hand'];
+    const correctTier = toolTier >= required;
+    const harvestable = correctType && correctTier;
+    const speed = correctType && item?.kind === 'tool' ? item.miningSpeed : 1;
+    return speed / definition.hardness / (harvestable ? 30 : 100);
+  }
+
+  private breakTarget(): void {
+    const session = this.session!;
+    const hit = session.target;
+    if (!hit) return;
+    const definition = getBlockDefinition(hit.block);
+    const toolStack = this.selectedStack();
+    const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
+    const correctType = !definition.tool || (item?.kind === 'tool' && item.tool === definition.tool);
+    const tierRanks = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 } as const;
+    const correctTier = (item?.kind === 'tool' ? tierRanks[item.tier] : 0) >= tierRanks[definition.tier ?? 'hand'];
+    session.world.setBlock(hit.x, hit.y, hit.z, BlockId.Air);
+    session.redstone.notifyBlockChanged(hit.x, hit.y, hit.z);
+    session.miningProgress = 0;
+    session.miningTarget = undefined;
+    this.audio.playTone(145 + (hit.block % 9) * 12, 0.045, 0.035);
+    this.ui.swingHand();
+
+    if (session.summary.mode === 'survival') {
+      const drop = definition.drop;
+      if (drop && (!drop.requiresCorrectTool || (correctType && correctTier))) {
+        const count = drop.count ?? (drop.min !== undefined ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
+        this.spawnDroppedStack(createItemStack(drop.item, count), new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5));
+      }
+      if (toolStack && (item?.kind === 'tool' || item?.kind === 'weapon')) {
+        session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
+      }
+      session.survival.addExhaustion(0.005);
+    }
+    this.releaseBlockEntityContents(hit);
+  }
+
+  private releaseBlockEntityContents(hit: VoxelHit): void {
+    const session = this.session!;
+    const key = `${hit.x},${hit.y},${hit.z}`;
+    if (hit.block === BlockId.Chest) {
+      const chest = session.world.chests.get(key);
+      if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
+      session.world.chests.delete(key);
+    } else if (hit.block === BlockId.Furnace) {
+      const furnace = session.world.furnaces.get(key);
+      if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
+      session.world.furnaces.delete(key);
+    }
+  }
+
+  private useTargetOrItem(): void {
+    const session = this.session!;
+    const hit = session.target;
+    if (hit) {
+      if (hit.block === BlockId.CraftingTable) return this.openBlockInventory('crafting-table', hit);
+      if (hit.block === BlockId.Chest) return this.openBlockInventory('chest', hit);
+      if (hit.block === BlockId.Furnace) return this.openBlockInventory('furnace', hit);
+      if (hit.block === BlockId.Lever) {
+        const active = session.redstone.toggleLever(hit.x, hit.y, hit.z);
+        if (active !== undefined) {
+          this.audio.playTone(active ? 480 : 260, 0.045, 0.03);
+          this.ui.toast(active ? 'Рычаг включён' : 'Рычаг выключен');
+        }
+        return;
+      }
+      if (hit.block === BlockId.StoneButton) {
+        if (session.redstone.pressButton(hit.x, hit.y, hit.z)) this.audio.playTone(420, 0.035, 0.025);
+        return;
+      }
+      if (hit.block === BlockId.WhiteBed) {
+        session.survival.setSpawnPoint([hit.x + 0.5, hit.y + 1.01, hit.z + 0.5]);
+        if (session.world.timeOfDay > 12_500 && session.world.timeOfDay < 23_500) {
+          session.world.timeOfDay = 1_000;
+          this.ui.toast('Ночь пропущена. Точка возрождения установлена.');
+        } else this.ui.toast('Точка возрождения установлена');
+        void this.saveSession();
+        return;
+      }
+    }
+    const stack = this.selectedStack();
+    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
+    if (item?.kind === 'food') {
+      session.foodUseTicks = 1;
+      return;
+    }
+    if (stack?.itemId === ItemId.Bow) {
+      session.bowUseTicks = 1;
+      return;
+    }
+    if (!hit || !stack || item?.placesBlockId === undefined) return;
+    const x = hit.x + hit.normal.x;
+    const y = hit.y + hit.normal.y;
+    const z = hit.z + hit.normal.z;
+    const existing = getBlockDefinition(session.world.getBlock(x, y, z));
+    if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
+    const placed = getBlockDefinition(item.placesBlockId);
+    if (placed.solid && session.player.intersectsBlock(x, y, z)) {
+      this.ui.toast('Нельзя поставить блок внутри игрока');
+      return;
+    }
+    if (session.world.setBlock(x, y, z, item.placesBlockId)) {
+      session.redstone.notifyBlockChanged(x, y, z);
+      this.audio.playTone(230, 0.04, 0.025);
+      if (session.summary.mode === 'survival') this.consumeSelected(1);
+    }
+  }
+
+  private updateFoodUse(): void {
+    const session = this.session!;
+    if (session.bowUseTicks > 0) {
+      const stack = this.selectedStack();
+      if (this.input.using && stack?.itemId === ItemId.Bow) session.bowUseTicks += 1;
+      else {
+        if (stack?.itemId === ItemId.Bow) this.releaseBow(stack);
+        session.bowUseTicks = 0;
+      }
+    }
+    if (session.foodUseTicks <= 0) return;
+    const stack = this.selectedStack();
+    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
+    if (!this.input.using || item?.kind !== 'food' || !session.survival.canConsumeFood(item.id)) {
+      session.foodUseTicks = 0;
+      return;
+    }
+    session.foodUseTicks += 1;
+    if (session.foodUseTicks >= 32) {
+      if (session.survival.consumeFood(item, session.inventory)) {
+        this.audio.playTone(420, 0.08, 0.035);
+        this.ui.toast(`Съедено: ${item.name}`);
+      }
+      session.foodUseTicks = 0;
+    }
+  }
+
+  private releaseBow(stack: ItemStack): void {
+    const session = this.session!;
+    const charge = session.combat.bowCharge(session.bowUseTicks);
+    if (!charge.canFire) return;
+    if (session.summary.mode === 'survival' && session.inventory.remove(ItemId.Arrow, 1) !== 1) {
+      this.ui.toast('Нужна стрела');
+      return;
+    }
+    const direction = session.player.viewDirection();
+    const origin = session.player.eyePosition().addScaledVector(direction, 0.35);
+    session.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical);
+    if (session.summary.mode === 'survival') {
+      session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
+    }
+    this.audio.playTone(charge.critical ? 760 : 540, 0.07, 0.035);
+    this.ui.swingHand();
+  }
+
+  private processMobEvents(): void {
+    const session = this.session!;
+    for (const drop of session.mobs.consumeDrops()) {
+      session.drops.spawn(drop.stack, drop.position, { velocity: drop.velocity });
+    }
+    for (const event of session.mobs.consumePlayerDamage()) this.damagePlayerFromMob(event);
+    for (const event of session.mobs.consumeExplosions()) this.explode(event);
+  }
+
+  private updateRedstone(): void {
+    const session = this.session!;
+    const occupied = new Set<string>();
+    const positions: Readonly<THREE.Vector3>[] = [
+      session.player.position,
+      ...session.mobs.entities.map((mob) => mob.position),
+      ...session.drops.entities.map((drop) => drop.position),
+    ];
+    for (const position of positions) {
+      const x = Math.floor(position.x);
+      const z = Math.floor(position.z);
+      const feetY = Math.floor(position.y + 0.05);
+      for (const y of [feetY, feetY - 1]) {
+        if (session.world.getBlock(x, y, z) !== BlockId.OakPressurePlate) continue;
+        const key = blockKey(x, y, z);
+        if (occupied.has(key)) continue;
+        occupied.add(key);
+        session.redstone.setPressurePlateOccupied(x, y, z, true);
+      }
+    }
+    for (const key of session.activePressurePlates) {
+      if (occupied.has(key)) continue;
+      const [x, y, z] = key.split(',').map(Number) as [number, number, number];
+      session.redstone.setPressurePlateOccupied(x, y, z, false);
+    }
+    session.activePressurePlates = occupied;
+    session.redstone.update(FIXED_DT);
+    for (const event of session.redstone.consumeExplosionEvents()) this.explode(event);
+  }
+
+  private damagePlayerFromMob(event: MobPlayerDamageEvent): void {
+    const session = this.session!;
+    if (session.summary.mode === 'creative') return;
+    const directionToAttacker = new THREE.Vector3().subVectors(event.position, session.player.position);
+    const shield = session.combat.resolveShieldHit({
+      damage: event.amount,
+      directionToAttacker,
+      defenderYaw: session.player.yaw,
+      projectile: event.source === 'arrow',
+    });
+    if (shield.shieldDurabilityDamage > 0) this.damageEquippedShield(shield.shieldDurabilityDamage);
+    if (shield.receivedDamage > 0) {
+      const damage = session.survival.damage(shield.receivedDamage, event.source === 'arrow' ? 'projectile' : 'melee', {
+        armor: session.inventory,
+      });
+      if (damage.dealt > 0) {
+        const knockbackScale = event.amount > 0 ? shield.receivedDamage / event.amount : 0;
+        session.player.velocity.addScaledVector(event.knockback, knockbackScale);
+      }
+    } else if (shield.blocked) {
+      this.audio.playTone(185, 0.06, 0.045);
+    }
+  }
+
+  private damageEquippedShield(amount: number): void {
+    const session = this.session!;
+    if (session.summary.mode === 'creative') return;
+    const offhand = session.inventory.getSlot({ section: 'offhand' });
+    if (offhand?.itemId === ItemId.Shield) {
+      session.inventory.setSlot({ section: 'offhand' }, damageItem(offhand, amount));
+      return;
+    }
+    const selected = this.selectedStack();
+    if (selected?.itemId === ItemId.Shield) {
+      session.inventory.setSlot(session.selectedSlot, damageItem(selected, amount));
+    }
+  }
+
+  private explode(event: Readonly<{ position: THREE.Vector3; radius: number; power: number }>): void {
+    const session = this.session!;
+    this.audio.playTone(72, 0.18, 0.09);
+    const playerCenter = session.player.position.clone().add(new THREE.Vector3(0, session.player.height * 0.5, 0));
+    const distanceToPlayer = playerCenter.distanceTo(event.position);
+    const playerExposure = clamp(1 - distanceToPlayer / (event.radius * 1.7), 0, 1);
+    if (session.summary.mode === 'survival' && playerExposure > 0) {
+      session.survival.damage(Math.ceil(playerExposure * event.power * 5), 'explosion', { armor: session.inventory });
+      const push = playerCenter.sub(event.position);
+      if (push.lengthSq() > 1e-6) {
+        push.normalize();
+        session.player.velocity.addScaledVector(push, playerExposure * 8);
+        session.player.velocity.y += playerExposure * 4;
+      }
+    }
+    for (const mob of session.mobs.entities) {
+      const distance = mob.position.distanceTo(event.position);
+      const exposure = clamp(1 - distance / (event.radius * 1.5), 0, 1);
+      if (exposure > 0) {
+        session.mobs.damage(mob, exposure * event.power * 5, {
+          source: 'explosion',
+          attackerPosition: event.position,
+          knockback: exposure * 8,
+        });
+      }
+    }
+
+    const radius = Math.ceil(event.radius);
+    const centerX = Math.floor(event.position.x);
+    const centerY = Math.floor(event.position.y);
+    const centerZ = Math.floor(event.position.z);
+    for (let y = Math.max(0, centerY - radius); y <= Math.min(WORLD_HEIGHT - 1, centerY + radius); y += 1) {
+      for (let z = centerZ - radius; z <= centerZ + radius; z += 1) {
+        for (let x = centerX - radius; x <= centerX + radius; x += 1) {
+          const distance = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5).distanceTo(event.position);
+          if (distance > event.radius) continue;
+          const block = session.world.getBlock(x, y, z);
+          const definition = getBlockDefinition(block);
+          if (block === BlockId.Air || definition.breakable === false || definition.hardness > event.power * 3) continue;
+          if (distance + definition.hardness * 0.3 > event.radius * (0.75 + Math.random() * 0.35)) continue;
+          if (block === BlockId.Tnt) {
+            session.redstone.primeTnt(x, y, z, 0.5 + Math.random());
+            continue;
+          }
+          this.releaseBlockEntityContents({
+            x, y, z, block, distance,
+            normal: new THREE.Vector3(),
+          });
+          session.world.setBlock(x, y, z, BlockId.Air);
+          session.redstone.notifyBlockChanged(x, y, z);
+        }
+      }
+    }
+  }
+
+  private dropSelectedItem(): void {
+    const session = this.session;
+    if (!session || this.lifecycle.state !== 'PLAYING') return;
+    const stack = this.selectedStack();
+    if (!stack) return;
+    const dropped = { ...stack, count: 1 };
+    session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+    session.drops.drop(dropped, session.player.eyePosition(), session.player.viewDirection());
+    this.refreshHud();
+  }
+
+  private spawnDroppedStack(stack: ItemStack, position?: THREE.Vector3): void {
+    const session = this.session;
+    if (!session) return;
+    session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
+      velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2.2, (Math.random() - 0.5) * 1.4),
+    });
+  }
+
+  private consumeSelected(count: number): void {
+    const session = this.session!;
+    const stack = this.selectedStack();
+    if (!stack) return;
+    session.inventory.setSlot(session.selectedSlot, stack.count <= count ? null : { ...stack, count: stack.count - count });
+  }
+
+  private selectedStack(): ItemStack | null {
+    return this.session?.inventory.getSlot(this.session.selectedSlot) ?? null;
+  }
+
+  private selectHotbar(index: number): void {
+    if (!this.session) return;
+    this.session.selectedSlot = clamp(Math.floor(index), 0, 8);
+    this.canvas.dataset.hotbar = String(this.session.selectedSlot);
+    this.session.miningProgress = 0;
+    this.session.miningTarget = undefined;
+    this.session.foodUseTicks = 0;
+    this.session.bowUseTicks = 0;
+    this.session.combat.setHeldItem(this.selectedStack()?.itemId);
+    this.refreshHud();
+  }
+
+  private handleDeath(): void {
+    const session = this.session;
+    if (!session || this.deathShown) return;
+    this.deathShown = true;
+    this.lifecycle.setState('DEAD');
+    document.exitPointerLock?.();
+    if (session.summary.mode === 'survival') {
+      for (const stack of session.inventory.slots) if (stack) this.spawnDroppedStack(stack);
+      for (const stack of Object.values(session.inventory.armor)) if (stack) this.spawnDroppedStack(stack);
+      if (session.inventory.offhand) this.spawnDroppedStack(session.inventory.offhand);
+      session.inventory.clear();
+    }
+    void this.saveSession();
+    this.ui.showDeath(
+      () => {
+        session.survival.respawn(session.player, session.survival.spawnPoint);
+        this.deathShown = false;
+        this.enterPlaying();
+      },
+      () => void this.saveAndQuit(),
+    );
+  }
+
+  private render(alpha: number): void {
+    const session = this.session;
+    if (session) {
+      const position = session.player.previousPosition.clone().lerp(session.player.position, clamp(alpha, 0, 1));
+      const eyeHeight = session.player.eyeHeight;
+      this.camera.position.set(position.x, position.y + eyeHeight, position.z);
+      this.camera.rotation.set(session.player.pitch, session.player.yaw, 0, 'YXZ');
+      const sprintFov = session.player.sprinting ? 7 : 0;
+      this.camera.fov += ((this.settings.fov + sprintFov) - this.camera.fov) * 0.12;
+      this.camera.updateProjectionMatrix();
+      this.updateEnvironment(session.world.timeOfDay);
+    }
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private updateEnvironment(time: number): void {
+    const phase = (time / 24_000) * Math.PI * 2;
+    const sunHeight = Math.sin(phase);
+    const daylight = this.daylightFactor(time);
+    const dayColor = new THREE.Color(0x7fb9dc);
+    const duskColor = new THREE.Color(0xd9785a);
+    const nightColor = new THREE.Color(0x071426);
+    const sky = sunHeight > -0.18
+      ? duskColor.clone().lerp(dayColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
+      : nightColor.clone().lerp(duskColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
+    this.scene.background = sky;
+    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
+    this.ambient.intensity = 0.12 + daylight * 0.78;
+    this.sunlight.intensity = daylight * 1.15;
+    const session = this.session!;
+    const center = session.player.position;
+    this.sun.position.set(center.x + Math.cos(phase) * 70, center.y + sunHeight * 70, center.z + 15);
+    this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
+    this.sun.visible = sunHeight > -0.25;
+    this.moon.visible = sunHeight < 0.25;
+  }
+
+  private daylightFactor(time: number): number {
+    const phase = (time / 24_000) * Math.PI * 2;
+    return clamp((Math.sin(phase) + 0.22) / 0.75, 0.08, 1);
+  }
+
+  private refreshHud(): void {
+    const session = this.session;
+    if (!session) return;
+    const target = session.target ? getBlockDefinition(session.target.block).name : '—';
+    const chunkX = floorDiv(Math.floor(session.player.position.x), 16);
+    const chunkZ = floorDiv(Math.floor(session.player.position.z), 16);
+    const debug = this.debugVisible
+      ? `FPS ${this.fps} · TPS ${TICK_RATE}\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nTarget ${target} · Loaded ${session.world.chunks.size} · Faces ${session.worldRenderer.faceCount}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`
+      : undefined;
+    this.ui.updateHud({
+      inventory: session.inventory,
+      selectedSlot: session.selectedSlot,
+      health: session.summary.mode === 'creative' ? 20 : session.survival.health,
+      hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
+      miningProgress: session.miningProgress,
+      attackStrength: session.combat.getAttackStrength(this.selectedStack()?.itemId ?? null),
+      shieldRaised: session.combat.shieldActive,
+      ...(debug ? { debug } : {}),
+    });
+  }
+
+  private disposeSession(): void {
+    if (!this.session) return;
+    this.scene.remove(this.session.worldRenderer.group);
+    this.session.worldRenderer.dispose();
+    this.session.arrows.dispose();
+    this.session.mobs.dispose();
+    this.session.redstone.dispose();
+    this.session.drops.dispose();
+    this.session = undefined;
+    this.input.releaseActions();
+  }
+
+  private bindLifecycle(): void {
+    this.lifecycle.changed.subscribe((state) => {
+      if (state === 'PLAYING') {
+        this.audio.resume();
+        this.yandex.gameplayStart();
+      } else {
+        this.audio.pause();
+        this.yandex.gameplayStop();
+      }
+      if (state === 'BACKGROUND') void this.saveSession();
+    });
+  }
+
+  private pauseForPlatform(): void {
+    if (this.lifecycle.state === 'PLAYING') {
+      this.lifecycle.setState('AD');
+      this.input.releaseActions();
+      void this.saveSession();
+    }
+  }
+
+  private resumeFromPlatform(): void {
+    if (this.lifecycle.state === 'AD' && this.session) this.enterPlaying();
+  }
+
+  private bindWindowEvents(): void {
+    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('pagehide', () => void this.saveSession());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) void this.saveSession();
+    });
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === null && this.lifecycle.state === 'PLAYING' && !isCoarsePointer()) this.togglePause();
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'F3' && !event.repeat) {
+        event.preventDefault();
+        this.debugVisible = !this.debugVisible;
+        this.refreshHud();
+      }
+    });
+    document.addEventListener('contextmenu', (event) => event.preventDefault());
+  }
+
+  private resize(): void {
+    const width = Math.max(1, window.innerWidth);
+    const height = Math.max(1, window.innerHeight);
+    this.renderer.setSize(width, height, false);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+  }
+}

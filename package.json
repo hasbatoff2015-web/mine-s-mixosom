@@ -1,0 +1,25 @@
+{
+  "name": "frontier-cubes-alpha",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "assets:import": "node scripts/import-assets.mjs",
+    "dev": "vite --host 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit && vite build",
+    "check:size": "node scripts/check-build.mjs",
+    "check:archive": "node scripts/check-build.mjs --archive",
+    "check": "npm run typecheck && npm run test && npm run build && npm run check:size && npm run check:archive"
+  },
+  "dependencies": {
+    "three": "^0.179.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.179.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.2",
+    "vitest": "^3.2.4"
+  }
+}

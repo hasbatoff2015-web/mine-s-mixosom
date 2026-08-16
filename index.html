@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#101820" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Frontier Cubes — Survival Alpha</title>
+    <script src="/sdk.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas" aria-label="Игровой мир"></canvas>
+      <div id="ui-root"></div>
+      <div id="rotate-overlay" role="status">
+        <div class="rotate-card">
+          <div class="rotate-phone">↻</div>
+          <strong>Поверните устройство</strong>
+          <span>Игра рассчитана на альбомную ориентацию</span>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

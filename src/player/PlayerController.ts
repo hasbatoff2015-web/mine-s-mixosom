@@ -1,0 +1,527 @@
+import * as THREE from 'three';
+import { BlockId } from '../blocks';
+import {
+  GRAVITY,
+  JUMP_VELOCITY,
+  PLAYER_EYE_HEIGHT,
+  PLAYER_HEIGHT,
+  PLAYER_SNEAK_EYE_HEIGHT,
+  PLAYER_SNEAK_HEIGHT,
+  PLAYER_WIDTH,
+  SNEAK_SPEED,
+  SPRINT_SPEED,
+  TERMINAL_VELOCITY,
+  WALK_SPEED,
+  WATER_GRAVITY,
+  WATER_SPEED,
+  clamp,
+} from '../core/constants';
+import type { MoveInput } from '../input/InputManager';
+import type { VoxelWorld } from '../world/World';
+
+const COLLISION_EPSILON = 1e-7;
+const GROUND_PROBE = 0.075;
+const STEP_HEIGHT = 0.6;
+const SNEAK_TRIM_INCREMENT = 0.05;
+
+export interface PlayerInputSource {
+  readonly yaw: number;
+  readonly pitch: number;
+  movement(): MoveInput;
+}
+
+export interface PlayerAABB {
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+}
+
+export type PlayerDamageCause = 'fall';
+export type PlayerDamageHandler = (amount: number, cause: PlayerDamageCause) => void;
+
+export interface PlayerControllerOptions {
+  readonly position?: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>;
+  readonly yaw?: number;
+  readonly pitch?: number;
+}
+
+export interface SerializedPlayerController {
+  readonly position: [number, number, number];
+  readonly velocity: [number, number, number];
+  readonly yaw: number;
+  readonly pitch: number;
+}
+
+export interface PlayerTickResult {
+  readonly movedDistance: number;
+  readonly horizontalDistance: number;
+  readonly jumped: boolean;
+  readonly landed: boolean;
+  readonly fallDistance: number;
+  readonly fallDamage: number;
+  readonly inWater: boolean;
+  readonly inLava: boolean;
+  readonly headSubmerged: boolean;
+}
+
+interface CollisionBox extends PlayerAABB {}
+
+interface MoveResult {
+  readonly actual: number;
+  readonly collided: boolean;
+}
+
+function vectorFrom(
+  value: PlayerControllerOptions['position'],
+  fallback = new THREE.Vector3(0.5, 64, 0.5),
+): THREE.Vector3 {
+  if (value === undefined) return fallback.clone();
+  if ('x' in value) return new THREE.Vector3(value.x, value.y, value.z);
+  return new THREE.Vector3(value[0], value[1], value[2]);
+}
+
+function finite(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function reduceTowardsZero(value: number, amount: number): number {
+  if (Math.abs(value) <= amount) return 0;
+  return value - Math.sign(value) * amount;
+}
+
+/**
+ * Fixed-step, voxel AABB controller. `position` is the centre of the player's
+ * feet (not the eye or the centre of the hitbox), and velocities are blocks/s.
+ */
+export class PlayerController {
+  readonly position: THREE.Vector3;
+  readonly previousPosition = new THREE.Vector3();
+  readonly velocity = new THREE.Vector3();
+  yaw = 0;
+  pitch = 0;
+  onGround = false;
+  sneaking = false;
+  sprinting = false;
+  inWater = false;
+  inLava = false;
+  headSubmerged = false;
+  fallDistance = 0;
+  lastFallDistance = 0;
+  lastFallDamage = 0;
+
+  constructor(options: PlayerControllerOptions | PlayerControllerOptions['position'] = {}) {
+    const normalized: PlayerControllerOptions = options instanceof THREE.Vector3 || Array.isArray(options)
+      || ('x' in options && 'y' in options && 'z' in options && !('position' in options))
+      ? { position: options as Exclude<PlayerControllerOptions['position'], undefined> }
+      : options as PlayerControllerOptions;
+    this.position = vectorFrom(normalized.position);
+    this.previousPosition.copy(this.position);
+    this.yaw = finite(normalized.yaw ?? 0, 0);
+    this.pitch = clamp(finite(normalized.pitch ?? 0, 0), -Math.PI / 2, Math.PI / 2);
+  }
+
+  get width(): number {
+    return PLAYER_WIDTH;
+  }
+
+  get height(): number {
+    return this.sneaking ? PLAYER_SNEAK_HEIGHT : PLAYER_HEIGHT;
+  }
+
+  get eyeHeight(): number {
+    return this.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
+  }
+
+  get aabb(): PlayerAABB {
+    return this.aabbAt(this.position, this.height);
+  }
+
+  eyePosition(target = new THREE.Vector3()): THREE.Vector3 {
+    return target.set(this.position.x, this.position.y + this.eyeHeight, this.position.z);
+  }
+
+  viewDirection(target = new THREE.Vector3()): THREE.Vector3 {
+    const horizontal = Math.cos(this.pitch);
+    return target.set(
+      -Math.sin(this.yaw) * horizontal,
+      Math.sin(this.pitch),
+      -Math.cos(this.yaw) * horizontal,
+    ).normalize();
+  }
+
+  /** True when a full unit block at the supplied cell would overlap the player. */
+  intersectsBlock(x: number, y: number, z: number): boolean {
+    const box = this.aabb;
+    return box.maxX > x + COLLISION_EPSILON && box.minX < x + 1 - COLLISION_EPSILON
+      && box.maxY > y + COLLISION_EPSILON && box.minY < y + 1 - COLLISION_EPSILON
+      && box.maxZ > z + COLLISION_EPSILON && box.minZ < z + 1 - COLLISION_EPSILON;
+  }
+
+  intersectsBlockType(world: VoxelWorld, block: BlockId, padding = 0): boolean {
+    const box = this.aabb;
+    const minX = Math.floor(box.minX - padding);
+    const maxX = Math.floor(box.maxX + padding - COLLISION_EPSILON);
+    const minY = Math.floor(box.minY - padding);
+    const maxY = Math.floor(box.maxY + padding - COLLISION_EPSILON);
+    const minZ = Math.floor(box.minZ - padding);
+    const maxZ = Math.floor(box.maxZ + padding - COLLISION_EPSILON);
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          if (world.getBlock(x, y, z) === block) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  teleport(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
+    this.position.copy(vectorFrom(position));
+    this.previousPosition.copy(this.position);
+    this.velocity.set(0, 0, 0);
+    this.onGround = false;
+    this.fallDistance = 0;
+    this.lastFallDistance = 0;
+    this.lastFallDamage = 0;
+  }
+
+  respawn(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
+    this.teleport(position);
+  }
+
+  tick(
+    world: VoxelWorld,
+    input: PlayerInputSource,
+    dt: number,
+    onDamage?: PlayerDamageHandler,
+  ): PlayerTickResult {
+    if (!Number.isFinite(dt) || dt <= 0) return this.tickResult(false, 0, 0, 0, false);
+    // A generous cap keeps a paused tab from tunnelling through the terrain. The
+    // main loop normally calls this with exactly 0.05 s.
+    const stepDt = Math.min(dt, 0.1);
+    this.previousPosition.copy(this.position);
+    this.yaw = finite(input.yaw, this.yaw);
+    this.pitch = clamp(finite(input.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
+
+    const movement = input.movement();
+    const wasOnGround = this.onGround || this.hasGroundSupport(world, this.position);
+    this.updateFluidState(world);
+    this.updateStance(world, movement.sneak);
+    this.sprinting = movement.sprint && movement.forward > 0.05 && !this.sneaking && !this.inWater && !this.inLava;
+    const jumped = movement.jump && wasOnGround && !this.inWater && !this.inLava;
+
+    this.updateHorizontalVelocity(movement, stepDt, wasOnGround);
+    if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
+    else if (movement.jump && wasOnGround) this.velocity.y = JUMP_VELOCITY;
+
+    let dx = this.velocity.x * stepDt;
+    let dy = this.velocity.y * stepDt;
+    let dz = this.velocity.z * stepDt;
+    if (this.sneaking && wasOnGround) [dx, dz] = this.trimSneakMovement(world, dx, dz);
+
+    const vertical = this.moveAxis(world, 'y', dy);
+    const afterVertical = this.position.clone();
+    const horizontalStart = this.position.clone();
+    const xMove = this.moveAxis(world, 'x', dx);
+    const zMove = this.moveAxis(world, 'z', dz);
+    let actualX = xMove.actual;
+    let actualZ = zMove.actual;
+    let collidedX = xMove.collided;
+    let collidedZ = zMove.collided;
+
+    if ((collidedX || collidedZ) && wasOnGround && !this.sneaking) {
+      const baseline = this.position.clone();
+      const baselineDistanceSq = actualX * actualX + actualZ * actualZ;
+      this.position.copy(afterVertical);
+      const up = this.moveAxis(world, 'y', STEP_HEIGHT);
+      const stepX = this.moveAxis(world, 'x', dx);
+      const stepZ = this.moveAxis(world, 'z', dz);
+      this.moveAxis(world, 'y', -(up.actual + GROUND_PROBE));
+      const steppedDistanceSq = stepX.actual * stepX.actual + stepZ.actual * stepZ.actual;
+      if (up.actual > COLLISION_EPSILON && steppedDistanceSq > baselineDistanceSq + COLLISION_EPSILON) {
+        actualX = stepX.actual;
+        actualZ = stepZ.actual;
+        collidedX = stepX.collided;
+        collidedZ = stepZ.collided;
+      } else {
+        this.position.copy(baseline);
+      }
+    }
+
+    const landed = dy < 0 && vertical.collided;
+    const actualDrop = Math.max(0, this.previousPosition.y - this.position.y);
+    this.updateFluidState(world);
+    const supported = this.hasGroundSupport(world, this.position);
+    this.onGround = !this.inWater && !this.inLava && (landed || (this.velocity.y <= 0 && supported));
+
+    if (collidedX) this.velocity.x = 0;
+    if (collidedZ) this.velocity.z = 0;
+    if (vertical.collided) this.velocity.y = 0;
+
+    let fallDamage = 0;
+    if (this.inWater || this.inLava) {
+      this.fallDistance = 0;
+    } else if (!this.onGround) {
+      if (actualDrop > 0) this.fallDistance += actualDrop;
+    } else if (landed) {
+      this.lastFallDistance = this.fallDistance + actualDrop;
+      fallDamage = Math.max(0, Math.ceil(this.lastFallDistance - 3));
+      this.lastFallDamage = fallDamage;
+      this.fallDistance = 0;
+      if (fallDamage > 0) onDamage?.(fallDamage, 'fall');
+    }
+
+    if (!this.inWater && !this.inLava) {
+      if (this.onGround && this.velocity.y <= 0) this.velocity.y = 0;
+      else this.velocity.y = Math.max(-TERMINAL_VELOCITY, (this.velocity.y - GRAVITY * stepDt) * Math.pow(0.98, stepDt / 0.05));
+    }
+
+    // Avoid keeping tiny floating point momentum forever.
+    if (Math.abs(this.velocity.x) < 1e-5) this.velocity.x = 0;
+    if (Math.abs(this.velocity.z) < 1e-5) this.velocity.z = 0;
+    const movedX = this.position.x - this.previousPosition.x;
+    const movedY = this.position.y - this.previousPosition.y;
+    const movedZ = this.position.z - this.previousPosition.z;
+    return this.tickResult(
+      landed,
+      fallDamage,
+      Math.hypot(movedX, movedY, movedZ),
+      Math.hypot(movedX, movedZ),
+      jumped,
+    );
+  }
+
+  serialize(): SerializedPlayerController {
+    return {
+      position: this.position.toArray() as [number, number, number],
+      velocity: this.velocity.toArray() as [number, number, number],
+      yaw: this.yaw,
+      pitch: this.pitch,
+    };
+  }
+
+  restore(state: Partial<SerializedPlayerController>): void {
+    if (state.position && state.position.length === 3 && state.position.every(Number.isFinite)) {
+      this.position.fromArray(state.position);
+      this.previousPosition.copy(this.position);
+    }
+    if (state.velocity && state.velocity.length === 3 && state.velocity.every(Number.isFinite)) {
+      this.velocity.fromArray(state.velocity);
+    } else this.velocity.set(0, 0, 0);
+    if (state.yaw !== undefined) this.yaw = finite(state.yaw, this.yaw);
+    if (state.pitch !== undefined) this.pitch = clamp(finite(state.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
+    this.onGround = false;
+    this.fallDistance = 0;
+  }
+
+  static deserialize(state: SerializedPlayerController): PlayerController {
+    const player = new PlayerController({ position: state.position, yaw: state.yaw, pitch: state.pitch });
+    player.restore(state);
+    return player;
+  }
+
+  private tickResult(
+    landed: boolean,
+    fallDamage: number,
+    movedDistance: number,
+    horizontalDistance = 0,
+    jumped = false,
+  ): PlayerTickResult {
+    return {
+      movedDistance,
+      horizontalDistance,
+      jumped,
+      landed,
+      fallDistance: this.fallDistance,
+      fallDamage,
+      inWater: this.inWater,
+      inLava: this.inLava,
+      headSubmerged: this.headSubmerged,
+    };
+  }
+
+  private updateStance(world: VoxelWorld, wantsSneak: boolean): void {
+    if (wantsSneak) {
+      this.sneaking = true;
+      return;
+    }
+    this.sneaking = this.collidesAt(world, this.position, PLAYER_HEIGHT);
+  }
+
+  private updateHorizontalVelocity(movement: MoveInput, dt: number, wasOnGround: boolean): void {
+    const forwardX = -Math.sin(this.yaw);
+    const forwardZ = -Math.cos(this.yaw);
+    const rightX = Math.cos(this.yaw);
+    const rightZ = -Math.sin(this.yaw);
+    let wishX = forwardX * movement.forward + rightX * movement.right;
+    let wishZ = forwardZ * movement.forward + rightZ * movement.right;
+    const wishLength = Math.hypot(wishX, wishZ);
+    if (wishLength > 1) {
+      wishX /= wishLength;
+      wishZ /= wishLength;
+    }
+    const speed = this.inWater || this.inLava
+      ? WATER_SPEED * (this.inLava ? 0.55 : 1)
+      : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
+    const desiredX = wishX * speed;
+    const desiredZ = wishZ * speed;
+    const response = this.inWater || this.inLava ? 7 : wasOnGround ? 22 : 3.5;
+    const blend = 1 - Math.exp(-response * dt);
+    this.velocity.x += (desiredX - this.velocity.x) * blend;
+    this.velocity.z += (desiredZ - this.velocity.z) * blend;
+    if (wishLength < 1e-4 && wasOnGround && !this.inWater && !this.inLava) {
+      const braking = Math.exp(-18 * dt);
+      this.velocity.x *= braking;
+      this.velocity.z *= braking;
+    }
+  }
+
+  private updateFluidVerticalVelocity(movement: MoveInput, dt: number): void {
+    const gravity = this.inLava ? WATER_GRAVITY * 0.45 : WATER_GRAVITY;
+    this.velocity.y -= gravity * dt;
+    if (movement.jump) this.velocity.y += (this.inLava ? 6 : 10) * dt;
+    if (movement.sneak) this.velocity.y -= (this.inLava ? 4 : 7) * dt;
+    const drag = Math.pow(this.inLava ? 0.5 : 0.8, dt / 0.05);
+    this.velocity.y = clamp(this.velocity.y * drag, -4, 3.5);
+    this.velocity.x *= Math.pow(this.inLava ? 0.5 : 0.8, dt / 0.05);
+    this.velocity.z *= Math.pow(this.inLava ? 0.5 : 0.8, dt / 0.05);
+  }
+
+  private updateFluidState(world: VoxelWorld): void {
+    this.inWater = this.overlapsBlock(world, BlockId.Water);
+    this.inLava = this.overlapsBlock(world, BlockId.Lava);
+    const eye = this.eyePosition();
+    const eyeBlock = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
+    this.headSubmerged = eyeBlock === BlockId.Water || eyeBlock === BlockId.Lava;
+  }
+
+  private overlapsBlock(world: VoxelWorld, block: BlockId): boolean {
+    const box = this.aabb;
+    for (let y = Math.floor(box.minY + COLLISION_EPSILON); y <= Math.floor(box.maxY - COLLISION_EPSILON); y += 1) {
+      for (let z = Math.floor(box.minZ + COLLISION_EPSILON); z <= Math.floor(box.maxZ - COLLISION_EPSILON); z += 1) {
+        for (let x = Math.floor(box.minX + COLLISION_EPSILON); x <= Math.floor(box.maxX - COLLISION_EPSILON); x += 1) {
+          if (world.getBlock(x, y, z) === block) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private trimSneakMovement(world: VoxelWorld, initialX: number, initialZ: number): [number, number] {
+    let dx = initialX;
+    let dz = initialZ;
+    while (Math.abs(dx) > COLLISION_EPSILON && !this.hasGroundSupport(world, this.position, dx, 0)) {
+      dx = reduceTowardsZero(dx, SNEAK_TRIM_INCREMENT);
+    }
+    while (Math.abs(dz) > COLLISION_EPSILON && !this.hasGroundSupport(world, this.position, 0, dz)) {
+      dz = reduceTowardsZero(dz, SNEAK_TRIM_INCREMENT);
+    }
+    while ((Math.abs(dx) > COLLISION_EPSILON || Math.abs(dz) > COLLISION_EPSILON)
+      && !this.hasGroundSupport(world, this.position, dx, dz)) {
+      dx = reduceTowardsZero(dx, SNEAK_TRIM_INCREMENT);
+      dz = reduceTowardsZero(dz, SNEAK_TRIM_INCREMENT);
+    }
+    return [dx, dz];
+  }
+
+  private hasGroundSupport(world: VoxelWorld, position: THREE.Vector3, offsetX = 0, offsetZ = 0): boolean {
+    const probe = position.clone();
+    probe.x += offsetX;
+    probe.y -= GROUND_PROBE;
+    probe.z += offsetZ;
+    return this.collidesAt(world, probe, this.height);
+  }
+
+  private collidesAt(world: VoxelWorld, position: THREE.Vector3, height: number): boolean {
+    const box = this.aabbAt(position, height);
+    for (let y = Math.floor(box.minY + COLLISION_EPSILON); y <= Math.floor(box.maxY - COLLISION_EPSILON); y += 1) {
+      for (let z = Math.floor(box.minZ + COLLISION_EPSILON); z <= Math.floor(box.maxZ - COLLISION_EPSILON); z += 1) {
+        for (let x = Math.floor(box.minX + COLLISION_EPSILON); x <= Math.floor(box.maxX - COLLISION_EPSILON); x += 1) {
+          const collision = this.blockCollisionBox(world, x, y, z);
+          if (collision && this.boxesOverlap(box, collision)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private moveAxis(world: VoxelWorld, axis: 'x' | 'y' | 'z', requested: number): MoveResult {
+    if (Math.abs(requested) <= COLLISION_EPSILON) return { actual: 0, collided: false };
+    const player = this.aabb;
+    const minX = Math.floor(Math.min(player.minX, player.minX + (axis === 'x' ? requested : 0)) + COLLISION_EPSILON);
+    const maxX = Math.floor(Math.max(player.maxX, player.maxX + (axis === 'x' ? requested : 0)) - COLLISION_EPSILON);
+    const minY = Math.floor(Math.min(player.minY, player.minY + (axis === 'y' ? requested : 0)) + COLLISION_EPSILON);
+    const maxY = Math.floor(Math.max(player.maxY, player.maxY + (axis === 'y' ? requested : 0)) - COLLISION_EPSILON);
+    const minZ = Math.floor(Math.min(player.minZ, player.minZ + (axis === 'z' ? requested : 0)) + COLLISION_EPSILON);
+    const maxZ = Math.floor(Math.max(player.maxZ, player.maxZ + (axis === 'z' ? requested : 0)) - COLLISION_EPSILON);
+    let allowed = requested;
+
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          const block = this.blockCollisionBox(world, x, y, z);
+          if (!block || !this.overlapsOtherAxes(player, block, axis)) continue;
+          if (requested > 0) {
+            const playerMax = axis === 'x' ? player.maxX : axis === 'y' ? player.maxY : player.maxZ;
+            const blockMin = axis === 'x' ? block.minX : axis === 'y' ? block.minY : block.minZ;
+            if (playerMax <= blockMin + COLLISION_EPSILON && playerMax + allowed > blockMin) {
+              allowed = Math.min(allowed, blockMin - playerMax);
+            }
+          } else {
+            const playerMin = axis === 'x' ? player.minX : axis === 'y' ? player.minY : player.minZ;
+            const blockMax = axis === 'x' ? block.maxX : axis === 'y' ? block.maxY : block.maxZ;
+            if (playerMin >= blockMax - COLLISION_EPSILON && playerMin + allowed < blockMax) {
+              allowed = Math.max(allowed, blockMax - playerMin);
+            }
+          }
+        }
+      }
+    }
+
+    this.position[axis] += allowed;
+    return { actual: allowed, collided: Math.abs(allowed - requested) > COLLISION_EPSILON };
+  }
+
+  private blockCollisionBox(world: VoxelWorld, x: number, y: number, z: number): CollisionBox | undefined {
+    if (!world.isSolid(x, y, z)) return undefined;
+    const block = world.getBlock(x, y, z);
+    if (block === BlockId.OakSlab || block === BlockId.StoneSlab || block === BlockId.CobblestoneSlab) {
+      return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 0.5, maxZ: z + 1 };
+    }
+    if (block === BlockId.Cactus) {
+      return {
+        minX: x + 1 / 16, minY: y, minZ: z + 1 / 16,
+        maxX: x + 15 / 16, maxY: y + 1, maxZ: z + 15 / 16,
+      };
+    }
+    return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
+  }
+
+  private overlapsOtherAxes(player: PlayerAABB, block: CollisionBox, movementAxis: 'x' | 'y' | 'z'): boolean {
+    const x = movementAxis === 'x' || (player.maxX > block.minX + COLLISION_EPSILON && player.minX < block.maxX - COLLISION_EPSILON);
+    const y = movementAxis === 'y' || (player.maxY > block.minY + COLLISION_EPSILON && player.minY < block.maxY - COLLISION_EPSILON);
+    const z = movementAxis === 'z' || (player.maxZ > block.minZ + COLLISION_EPSILON && player.minZ < block.maxZ - COLLISION_EPSILON);
+    return x && y && z;
+  }
+
+  private boxesOverlap(a: PlayerAABB, b: CollisionBox): boolean {
+    return a.maxX > b.minX + COLLISION_EPSILON && a.minX < b.maxX - COLLISION_EPSILON
+      && a.maxY > b.minY + COLLISION_EPSILON && a.minY < b.maxY - COLLISION_EPSILON
+      && a.maxZ > b.minZ + COLLISION_EPSILON && a.minZ < b.maxZ - COLLISION_EPSILON;
+  }
+
+  private aabbAt(position: THREE.Vector3, height: number): PlayerAABB {
+    const halfWidth = PLAYER_WIDTH / 2;
+    return {
+      minX: position.x - halfWidth,
+      minY: position.y,
+      minZ: position.z - halfWidth,
+      maxX: position.x + halfWidth,
+      maxY: position.y + height,
+      maxZ: position.z + halfWidth,
+    };
+  }
+}
