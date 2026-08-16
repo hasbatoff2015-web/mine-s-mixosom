@@ -27,6 +27,7 @@ npm test
 npm run build
 npm run check:size
 npm run check:archive
+npm run benchmark:performance
 ```
 
 Полный локальный pipeline:
@@ -49,14 +50,15 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-16**:
+Срез локального запуска **2026-08-17**:
 
 ```text
 tsc --noEmit: PASS
-Vitest:       10 test files, 60 tests, 60 passed
-Vite build:   PASS, 54 modules transformed
+Vitest:       12 test files, 68 tests, 68 passed
+Vite build:   PASS
 Size/archive: PASS, 0.86 MiB uncompressed, 153 files
-Main assets:  JS 666.52 kB / 176.91 kB gzip; CSS 13.81 kB
+Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
+Main assets:  JS 674.39 kB / 179.47 kB gzip; CSS 13.81 kB / 4.05 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -66,11 +68,13 @@ Main assets:  JS 666.52 kB / 176.91 kB gzip; CSS 13.81 kB
 | `tests/crafting.test.ts` | 8 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs, smelting/fuel data |
 | `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, shield timing/reduction, axe chance, bow curve, armor formula, survival drowning/food/death/respawn |
 | `tests/player-physics.test.ts` | 4 | Floor/wall sliding, fall damage, slab collision/step-up и takeoff-only jump event |
-| `tests/entities.test.ts` | 8 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability и vertical melee guard |
+| `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
 | `tests/world-generation.test.ts` | 3 | Negative chunk coordinates, seed determinism, five ore vertical bands и relative rarity sanity |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
-| `tests/redstone.test.ts` | 7 | Power `0–15`, timed sources/TNT, lever angle, v2 orientation round-trip, v1 fallback и bounded propagation |
-| `tests/visual-models.test.ts` | 4 | 8 mob descriptors, 10 imported sheets/layers, 1×/2× logical UV normalization, UV bounds and articulated textured rigs |
+| `tests/redstone.test.ts` | 8 | Power `0–15`, timed sources/TNT, all 24 lever attachment/facing/power geometry combinations, v2 orientation round-trip, v1 fallback и bounded propagation |
+| `tests/visual-models.test.ts` | 8 | Atlas layout, 8 descriptors/10 sheets, logical UVs, model-space conversion, sheep layers, spider constants, bounds and articulated textured rigs |
+| `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
+| `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -264,7 +268,7 @@ Failure signs: монотонный рост scene children после pruning/l
 
 ## Production/archive validation
 
-Финальный production check после visual parity pass пройден: `54` модуля, `153` файла, `0.86 MiB` uncompressed; main JS `666.52 kB` (`176.91 kB` gzip), CSS `13.81 kB`. После каждого следующего `npm run build` повторно проверить:
+Финальный production check после legacy-model/performance pass пройден: `56` модулей, `153` файла, `0.86 MiB` uncompressed; main JS `674.39 kB` (`179.47 kB` gzip), CSS `13.81 kB` (`4.05 kB` gzip). После каждого следующего `npm run build` повторно проверить:
 
 - `dist/index.html` существует в корне;
 - paths relative и работают при размещении не в `/`;

@@ -64,7 +64,10 @@ export function logicalUvToNormalized(
 ): readonly [number, number] {
   const scaleX = actualTextureSize[0] / logicalTextureSize[0];
   const scaleY = actualTextureSize[1] / logicalTextureSize[1];
-  return [point[0] * scaleX / actualTextureSize[0], point[1] * scaleY / actualTextureSize[1]];
+  return [
+    point[0] * scaleX / actualTextureSize[0],
+    1 - point[1] * scaleY / actualTextureSize[1],
+  ];
 }
 
 function rectUvs(

@@ -49,6 +49,10 @@ interface LayerBuffers {
 }
 
 const createBuffers = (): GeometryBuffers => ({ positions: [], normals: [], colors: [], uvs: [], indices: [] });
+const WHITE_TINT = [1, 1, 1] as const;
+const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
+const FOREST_TINT = [0.42, 0.78, 0.36] as const;
+const DESERT_TINT = [0.74, 0.78, 0.4] as const;
 
 export interface MeshedChunk {
   opaque: THREE.BufferGeometry;
@@ -58,6 +62,11 @@ export interface MeshedChunk {
   faces: number;
 }
 
+export interface ChunkMeshProfile {
+  readonly scanMs: number;
+  readonly geometryMs: number;
+}
+
 export type BlockRenderStateResolver = (x: number, y: number, z: number) => BlockRenderState | undefined;
 
 export function leverHandleAngle(powered: boolean): number {
@@ -65,23 +74,41 @@ export function leverHandleAngle(powered: boolean): number {
 }
 
 export class ChunkMesher {
+  private readonly columnHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+  private readonly columnBiomes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+  private readonly scratchColor: [number, number, number] = [1, 1, 1];
+  private columnOriginX = 0;
+  private columnOriginZ = 0;
+  lastProfile: ChunkMeshProfile = { scanMs: 0, geometryMs: 0 };
+
   constructor(
     private readonly atlas: TextureAtlas,
     private readonly resolveState: BlockRenderStateResolver = () => undefined,
   ) {}
 
   build(chunk: Chunk, world: VoxelWorld): MeshedChunk {
+    const buildStart = performance.now();
     const layers: LayerBuffers = {
       opaque: createBuffers(),
       cutout: createBuffers(),
       translucent: createBuffers(),
       water: createBuffers(),
     };
+    this.cacheColumns(chunk, world);
     let faces = 0;
-    for (let y = 0; y < chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE); y += 1) {
+    const chunkHeight = chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE);
+    const blocks = chunk.blocks;
+    const eastChunk = world.getChunk(chunk.x + 1, chunk.z, false);
+    const westChunk = world.getChunk(chunk.x - 1, chunk.z, false);
+    const southChunk = world.getChunk(chunk.x, chunk.z + 1, false);
+    const northChunk = world.getChunk(chunk.x, chunk.z - 1, false);
+    for (let y = 0; y < chunkHeight; y += 1) {
+      const yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
       for (let z = 0; z < CHUNK_SIZE; z += 1) {
+        const rowOffset = yOffset + z * CHUNK_SIZE;
         for (let x = 0; x < CHUNK_SIZE; x += 1) {
-          const block = chunk.get(x, y, z) as BlockId;
+          const blockIndex = rowOffset + x;
+          const block = blocks[blockIndex] as BlockId;
           if (block === BlockId.Air) continue;
           const definition = getBlockDefinition(block);
           const worldX = chunk.x * CHUNK_SIZE + x;
@@ -91,24 +118,65 @@ export class ChunkMesher {
             faces += this.addSpecial(target, definition, this.resolveState(worldX, y, worldZ), world, worldX, y, worldZ);
             continue;
           }
-          for (const face of FACES) {
-            const adjacent = world.getBlock(worldX + face.normal[0], y + face.normal[1], worldZ + face.normal[2], false);
-            const adjacentDefinition = getBlockDefinition(adjacent);
-            if (adjacent !== BlockId.Air && adjacentDefinition.occludesFaces) continue;
-            if (adjacent === block && adjacentDefinition.renderShape === 'cube') continue;
-            this.addCubeFace(target, definition, face, world, worldX, y, worldZ);
+          const east = x < CHUNK_SIZE - 1
+            ? blocks[blockIndex + 1] as BlockId
+            : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
+          if (this.faceVisible(east, block)) {
+            this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
+            faces += 1;
+          }
+          const west = x > 0
+            ? blocks[blockIndex - 1] as BlockId
+            : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
+          if (this.faceVisible(west, block)) {
+            this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
+            faces += 1;
+          }
+          const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
+          if (this.faceVisible(above, block)) {
+            this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
+            faces += 1;
+          }
+          const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
+          if (this.faceVisible(below, block)) {
+            this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
+            faces += 1;
+          }
+          const south = z < CHUNK_SIZE - 1
+            ? blocks[blockIndex + CHUNK_SIZE] as BlockId
+            : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
+          if (this.faceVisible(south, block)) {
+            this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
+            faces += 1;
+          }
+          const north = z > 0
+            ? blocks[blockIndex - CHUNK_SIZE] as BlockId
+            : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
+          if (this.faceVisible(north, block)) {
+            this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
             faces += 1;
           }
         }
       }
     }
-    return {
+    const scanEnd = performance.now();
+    const result = {
       opaque: this.toGeometry(layers.opaque),
       cutout: this.toGeometry(layers.cutout),
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       faces,
     };
+    const buildEnd = performance.now();
+    this.lastProfile = { scanMs: scanEnd - buildStart, geometryMs: buildEnd - scanEnd };
+    return result;
+  }
+
+  private faceVisible(adjacent: BlockId, block: BlockId): boolean {
+    if (adjacent === BlockId.Air) return true;
+    const adjacentDefinition = getBlockDefinition(adjacent);
+    return !adjacentDefinition.occludesFaces
+      && (adjacent !== block || adjacentDefinition.renderShape !== 'cube');
   }
 
   private buffersFor(layers: LayerBuffers, definition: BlockDefinition): GeometryBuffers {
@@ -128,9 +196,23 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): void {
-    const corners = face.corners.map((corner) => [x + corner[0], y + corner[1], z + corner[2]] as const);
     const textureKey = this.textureForFace(definition, face.texture);
-    this.addQuad(buffers, textureKey, corners, face.normal, this.colorFor(world, definition, textureKey, x, y, z, face.normal, face.shade));
+    const color = this.colorFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
+    const tile = this.atlas.tile(textureKey);
+    const base = buffers.positions.length / 3;
+    for (let index = 0; index < 4; index += 1) {
+      const corner = face.corners[index]!;
+      buffers.positions.push(x + corner[0], y + corner[1], z + corner[2]);
+      buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
+      buffers.colors.push(color[0], color[1], color[2]);
+    }
+    buffers.uvs.push(
+      tile.u0, tile.v0,
+      tile.u1, tile.v0,
+      tile.u1, tile.v1,
+      tile.u0, tile.v1,
+    );
+    buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
   private addSpecial(
@@ -335,12 +417,21 @@ export class ChunkMesher {
     normal: readonly [number, number, number],
     shade: number,
   ): readonly [number, number, number] {
-    const surface = world.generator.columnAt(x, z).height;
+    const localX = x - this.columnOriginX;
+    const localZ = z - this.columnOriginZ;
+    const inCachedChunk = localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE;
+    const columnIndex = inCachedChunk ? localZ * CHUNK_SIZE + localX : -1;
+    const column = columnIndex >= 0 ? undefined : world.generator.columnAt(x, z);
+    const surface = columnIndex >= 0 ? this.columnHeights[columnIndex]! : column!.height;
     const caveLight = y + normal[1] >= surface - 1 ? 1 : 0.34 + Math.max(0, y / 200);
     const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
     const light = Math.max(caveLight, emission) * shade;
-    const tint = this.tintFor(textureKey, world.biomeAt(x, z));
-    return [tint[0] * light, tint[1] * light, tint[2] * light];
+    const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
+    const tint = this.tintFor(textureKey, biome);
+    this.scratchColor[0] = tint[0] * light;
+    this.scratchColor[1] = tint[1] * light;
+    this.scratchColor[2] = tint[2] * light;
+    return this.scratchColor;
   }
 
   private textureForFace(definition: BlockDefinition, face: Face['texture']): string {
@@ -351,11 +442,33 @@ export class ChunkMesher {
     return textures.side ?? textures.all ?? textures.top ?? 'block/missing';
   }
 
-  private tintFor(texture: string, biome: string): readonly [number, number, number] {
-    if (!texture.includes('grass_block_top') && !texture.includes('leaves')) return [1, 1, 1];
-    if (biome === 'forest') return [0.42, 0.78, 0.36];
-    if (biome === 'desert') return [0.74, 0.78, 0.4];
-    return [0.54, 0.9, 0.42];
+  private tintFor(texture: string, biome: number): readonly [number, number, number] {
+    if (!texture.includes('grass_block_top') && !texture.includes('leaves')) return WHITE_TINT;
+    if (biome === 1) return FOREST_TINT;
+    if (biome === 2) return DESERT_TINT;
+    return PLAINS_TINT;
+  }
+
+  private cacheColumns(chunk: Chunk, world: VoxelWorld): void {
+    this.columnOriginX = chunk.x * CHUNK_SIZE;
+    this.columnOriginZ = chunk.z * CHUNK_SIZE;
+    if (chunk.generated) {
+      this.columnHeights.set(chunk.surfaceHeights);
+      this.columnBiomes.set(chunk.biomeCodes);
+      return;
+    }
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      for (let x = 0; x < CHUNK_SIZE; x += 1) {
+        const index = z * CHUNK_SIZE + x;
+        const column = world.generator.columnAt(this.columnOriginX + x, this.columnOriginZ + z);
+        this.columnHeights[index] = column.height;
+        this.columnBiomes[index] = this.biomeCode(column.biome);
+      }
+    }
+  }
+
+  private biomeCode(biome: string): number {
+    return biome === 'forest' ? 1 : biome === 'desert' ? 2 : 0;
   }
 
   private facingVector(facing: HorizontalFacing): THREE.Vector3 {

@@ -124,7 +124,7 @@ index = y × 16 × 16 + z × 16 + x
 
 ### Generation
 
-`TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers. Column generation выбирает biome и height; chunk pass заполняет bedrock/stone/top layers/water, затем вырезает caves, размещает ores и decor.
+`TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers. Column generation выбирает biome и height; chunk pass заполняет bedrock/stone/top layers/water, затем вырезает caves, размещает ores и decor. Итоговые height/biome каждого столбца сохраняются в `Chunk.surfaceHeights`/`biomeCodes`, чтобы mesher не повторял noise sampling для каждого видимого face.
 
 Генератор не читает browser state или wall clock, поэтому базовый terrain воспроизводим по seed. Loot, часть explosions и некоторые runtime decisions используют `Math.random()` и не являются replay-deterministic.
 
@@ -142,9 +142,9 @@ Scheduled block queue ограничена, за tick обрабатываетс
 
 ## Rendering
 
-`TextureAtlas.create()` собирает нужные block textures в canvas atlas по 32 px tiles. Pixel art использует `NearestFilter`, mipmaps отключены, color space — sRGB. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 150 whitelist-файлов в `public/textures`, включая 10 entity sheets/layers.
+`TextureAtlas.create()` собирает нужные block textures в power-of-two canvas atlas. Содержимое tile — `32×32`, вокруг него экструдируется gutter `4 px`; UV указывают только на content. Pixel art использует nearest magnification, `NearestMipmapLinearFilter`, mipmaps, ограниченную renderer-capability anisotropy и sRGB. Это снижает shimmer и не даёт mip levels смешивать соседние tiles. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 150 whitelist-файлов в `public/textures`, включая 10 entity sheets/layers.
 
-`ChunkMesher` проходит все voxels и добавляет только faces, у которых сосед не `occludesFaces`. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint; приблизительная cave light и face-direction shade также записаны в vertex color. `opaque` больше не выбирает render material.
+`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; приблизительная cave light и face-direction shade также записаны в vertex color. `opaque` больше не выбирает render material.
 
 `WorldRenderer` создаёт независимые material paths:
 
@@ -153,7 +153,7 @@ Scheduled block queue ограничена, за tick обрабатываетс
 - translucent glass material с opacity `0.52`;
 - отдельный translucent water material с opacity `0.70` и более поздним render order.
 
-Dirty chunks перестраиваются с per-tick budget, дальние chunk visuals освобождают geometry. Selection outline — отдельный line mesh.
+Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; generation и meshing не совмещаются в один fixed tick, а repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry. Selection outline — отдельный line mesh.
 
 `BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Сейчас lever строится из stone base и pivoted handle; torch/redstone torch — crossed planes, wire — ground quad, button — малый cuboid, pressure plate — тонкая plate. Mesher всё ещё не объединяет faces; stairs/doors/beds/containers остаются следующим geometry extension point.
 
@@ -205,7 +205,9 @@ Caps зависят от coarse pointer profile. Restore может принуд
 
 `VoxelVisualFactory` разделяет простые colored item/projectile boxes и textured entity cuboids. `TexturedCuboidGeometry` вычисляет legacy cross-layout UV для всех шести faces из logical offset/width/height/depth; normalized UV одинаковы для 1× и 2× physical sheets. Entity materials используют nearest, sRGB, no mipmaps и alpha test.
 
-Code-defined articulated rigs строятся как `Group pivot → textured mesh`: cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отдельные descriptors/proportions. Sheep добавляет inflated fur layer, spider — eyes overlay. Legs/arms/spider legs вращаются вокруг pivots, а physics AABB остаётся в `MobDefinition` и не зависит от visual mesh. Factory кэширует и освобождает textures/materials/geometries через `dispose()`.
+`LegacyModel` является единым adapter для code-defined rigs: `16 model units = 1 block`, legacy Y направлен вниз, default ground plane равен `Y=24`. `rotationPoint` создаёт `Group pivot`, а `addBox origin` остаётся локальным центром cuboid; Euler X/Z меняют знак после отражения Y. Несколько definitions могут добавлять boxes в parts с одинаковыми именами — так base sheep и wool остаются разными слоями на общих pivots.
+
+Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отдельные legacy definitions. Sheep добавляет inflated fur layer, spider — eyes overlay. Animation всегда вычисляет `baseRotation + bounded offset`, поэтому pose не накапливает ошибку. Soft horizontal mob separation использует не более `1024` unordered pair checks за update. Physics AABB остаётся в `MobDefinition` и не зависит от visual mesh. Числовой reference и честные пометки exact/approx находятся в `MOB_MODEL_REFERENCE.md`.
 
 ## Basic redstone
 
@@ -238,6 +240,8 @@ HUD получает фактический attack strength и `shieldRaised`; �
 CSS применяет safe-area insets, compact landscape layouts и portrait rotation overlay. UI не должен менять simulation напрямую: callbacks возвращаются в `Game`.
 
 `GameUI` также переключает `#app.controls-suppressed`, поэтому touch look/joystick/actions скрыты на menus и modals и не перехватывают pointer input поверх UI.
+
+HUD обновляется с частотой `10 Hz` и меняет DOM только при изменившемся значении. F3 собирает rolling frame/tick average, p95/spike, chunk generation/mesh jobs и timings, dirty/rendered/loaded chunks, faces/triangles/draw calls и entity counts; текст пересобирается примерно `2.9 Hz`, а не каждый render frame.
 
 ## Persistence
 
@@ -276,15 +280,15 @@ Ads, authorization, cloud saves, leaderboards и payments находятся в�
 
 - frame delta cap `0.25 s`;
 - один новый chunk за normal gameplay tick;
-- один или два dirty chunk rebuild за tick в зависимости от pointer profile;
+- один или два dirty chunk rebuild за tick в зависимости от pointer profile плюс `4/7 ms` soft budget;
 - periodic chunk pruning;
 - scheduled block queue max `4096`, processing max `64/tick`;
 - dropped item cap default `128`;
-- desktop/mobile mob and projectile caps;
+- desktop/mobile mob and projectile caps, separation до `1024` pairs/update;
 - player arrow cap `48`, lifetime `8 s`.
 - redstone source/TNT/queue/steps caps.
 
-Эти ограничения защищают main thread от неограниченного роста, но не заменяют profiling. Главные будущие hotspots: mesh generation, transparent overdraw, entity AI/line-of-sight и serialization больших modification maps.
+Эти ограничения защищают main thread от неограниченного роста, но не заменяют profiling. Воспроизводимый `npm run benchmark:performance` отдельно измеряет 81 chunk generation/meshing и 600 updates для 24 mobs. Текущий профиль не оправдывает worker migration в этом проходе: сначала устранён подтверждённый synchronous mesh hot path; worker остаётся архитектурным следующим шагом для слабых устройств и больших render distances.
 
 ## Правила расширения
 

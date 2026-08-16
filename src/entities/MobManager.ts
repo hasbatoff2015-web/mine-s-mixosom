@@ -19,6 +19,7 @@ const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spi
 const PASSIVE_KINDS: readonly MobKind[] = ['cow', 'pig', 'chicken', 'sheep'];
 const UP = new THREE.Vector3(0, 1, 0);
 const PROJECTILE_FORWARD = new THREE.Vector3(0, 0, -1);
+const MAX_SEPARATION_PAIRS = 1_024;
 
 export type MobRemovalReason = 'death' | 'explosion' | 'despawn' | 'removed' | 'cleared' | 'capacity';
 export type MobDamageSource = 'player' | 'projectile' | 'fire' | 'explosion' | 'environment';
@@ -313,6 +314,8 @@ export class MobManager {
       }
     }
 
+    this.applyBoundedSeparation(delta);
+
     for (const mob of [...this.mobsById.values()]) {
       mob.ageSeconds += delta;
       mob.attackCooldownSeconds = Math.max(0, mob.attackCooldownSeconds - delta);
@@ -345,6 +348,40 @@ export class MobManager {
     }
 
     this.updateProjectiles(delta, targetPosition, context);
+  }
+
+  /**
+   * The hard mob cap keeps this allocation-free pair pass below 1,024 checks.
+   * It is intentionally a soft horizontal steering approximation, not rigid-body collision.
+   */
+  private applyBoundedSeparation(delta: number): void {
+    let checked = 0;
+    for (const first of this.mobsById.values()) {
+      if (!first.alive) continue;
+      for (const second of this.mobsById.values()) {
+        if (second === first) break;
+        if (!second.alive || checked >= MAX_SEPARATION_PAIRS) return;
+        checked += 1;
+        const verticalOverlap = Math.min(
+          first.position.y + first.definition.height,
+          second.position.y + second.definition.height,
+        ) - Math.max(first.position.y, second.position.y);
+        if (verticalOverlap <= 0) continue;
+        const dx = first.position.x - second.position.x;
+        const dz = first.position.z - second.position.z;
+        const minimumDistance = (first.definition.width + second.definition.width) * 0.48;
+        const distanceSquared = dx * dx + dz * dz;
+        if (distanceSquared >= minimumDistance * minimumDistance) continue;
+        const distance = Math.sqrt(distanceSquared);
+        const directionX = distance > 1e-5 ? dx / distance : (first.id < second.id ? -1 : 1);
+        const directionZ = distance > 1e-5 ? dz / distance : 0;
+        const impulse = Math.min(1.8, (minimumDistance - distance) * 7.5) * delta;
+        first.velocity.x += directionX * impulse;
+        first.velocity.z += directionZ * impulse;
+        second.velocity.x -= directionX * impulse;
+        second.velocity.z -= directionZ * impulse;
+      }
+    }
   }
 
   damage(
@@ -732,29 +769,45 @@ export class MobManager {
     const swing = Math.sin(mob.walkPhase) * Math.min(0.65, speed * 0.22);
     if (mob.kind === 'spider') {
       mob.model.legs.forEach((leg, index) => {
-        const side = index < 4 ? -1 : 1;
-        const pair = index % 4;
+        const side = index % 2 === 0 ? -1 : 1;
+        const pair = Math.floor(index / 2);
         const phase = Math.sin(mob.walkPhase + pair * 0.85);
-        leg.rotation.x = 0;
-        leg.rotation.y = Number(leg.userData.baseRotationY ?? 0) + phase * 0.18;
+        leg.rotation.x = Number(leg.userData.baseRotationX ?? 0);
+        leg.rotation.y = Number(leg.userData.baseRotationY ?? 0) - phase * 0.18 * side;
         leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0)
-          + Math.cos(mob.walkPhase + pair * 0.7) * 0.08 * side;
+          - Math.abs(Math.cos(mob.walkPhase + pair * 0.7)) * 0.08 * side;
       });
     } else {
       mob.model.legs.forEach((leg, index) => {
-        leg.rotation.x = index % 2 === 0 ? swing : -swing;
+        leg.rotation.x = Number(leg.userData.baseRotationX ?? 0)
+          + swing * (mob.model.legSwingSigns[index] ?? (index % 2 === 0 ? 1 : -1));
+        leg.rotation.y = Number(leg.userData.baseRotationY ?? 0);
+        leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0);
+      });
+    }
+    if (mob.kind === 'chicken') {
+      const flap = Math.sin(mob.ageSeconds * (speed > 0.1 ? 14 : 4)) * (speed > 0.1 ? 0.35 : 0.08);
+      mob.model.wings.forEach((wing, index) => {
+        wing.rotation.x = Number(wing.userData.baseRotationX ?? 0);
+        wing.rotation.y = Number(wing.userData.baseRotationY ?? 0);
+        wing.rotation.z = Number(wing.userData.baseRotationZ ?? 0) + (index === 0 ? flap : -flap);
       });
     }
     if (mob.kind === 'zombie') {
       const pose = mob.state === 'attack' ? -1.55 : -1.2;
       mob.model.arms.forEach((arm, index) => {
-        arm.rotation.x = pose + (index % 2 === 0 ? swing : -swing) * 0.25;
+        arm.rotation.x = Number(arm.userData.baseRotationX ?? 0)
+          + pose + (index % 2 === 0 ? swing : -swing) * 0.25;
+        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
+        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
       });
     } else if (mob.kind === 'skeleton') {
       mob.model.arms.forEach((arm, index) => {
-        arm.rotation.x = mob.state === 'attack'
+        arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) + (mob.state === 'attack'
           ? -1.15
-          : (index % 2 === 0 ? swing : -swing) * 0.5;
+          : (index % 2 === 0 ? swing : -swing) * 0.5);
+        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
+        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
       });
     }
     if (mob.kind === 'creeper') {

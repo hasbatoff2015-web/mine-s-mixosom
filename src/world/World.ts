@@ -43,6 +43,9 @@ export class VoxelWorld {
   readonly generator: TerrainGenerator;
   timeOfDay = 1_000;
   tickNumber = 0;
+  generationSamples = 0;
+  generationTotalMs = 0;
+  generationMaximumMs = 0;
   private readonly scheduled: ScheduledBlockTick[] = [];
 
   constructor(readonly seed: string) {
@@ -64,11 +67,16 @@ export class VoxelWorld {
     const key = chunkKey(chunkX, chunkZ);
     let chunk = this.chunks.get(key);
     if (!chunk && generate) {
+      const generationStart = performance.now();
       chunk = new Chunk(chunkX, chunkZ);
       this.generator.generate(chunk);
       const delta = this.modifications.get(key);
       if (delta) for (const [index, block] of delta) chunk.blocks[index] = block;
       this.chunks.set(key, chunk);
+      const generationMilliseconds = performance.now() - generationStart;
+      this.generationSamples += 1;
+      this.generationTotalMs += generationMilliseconds;
+      this.generationMaximumMs = Math.max(this.generationMaximumMs, generationMilliseconds);
       for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
         const neighbor = this.chunks.get(chunkKey(chunkX + dx, chunkZ + dz));
         if (neighbor) neighbor.dirty = true;
@@ -76,6 +84,16 @@ export class VoxelWorld {
     }
     if (chunk) chunk.lastTouched = performance.now();
     return chunk;
+  }
+
+  get dirtyChunkCount(): number {
+    let count = 0;
+    for (const chunk of this.chunks.values()) if (chunk.dirty) count += 1;
+    return count;
+  }
+
+  get generationAverageMs(): number {
+    return this.generationTotalMs / Math.max(1, this.generationSamples);
   }
 
   getBlock(x: number, y: number, z: number, generate = true): BlockId {

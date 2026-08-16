@@ -134,4 +134,18 @@ describe('MobManager', () => {
     expect(manager.consumePlayerDamage()).toHaveLength(0);
     manager.dispose();
   });
+
+  it('softly separates overlapping mobs with a bounded neighbor pass', () => {
+    const world = new VoxelWorld('mob-separation');
+    const manager = new MobManager(new THREE.Scene(), world, { automaticSpawning: false });
+    const y = world.surfaceY(0, 0) + 1.01;
+    const first = manager.spawn('cow', new THREE.Vector3(0.45, y, 0.5), { force: true })!;
+    const second = manager.spawn('cow', new THREE.Vector3(0.55, y, 0.5), { force: true })!;
+    const before = first.position.distanceTo(second.position);
+    for (let index = 0; index < 20; index += 1) {
+      manager.update(0.05, { playerTargetable: false });
+    }
+    expect(first.position.distanceTo(second.position)).toBeGreaterThan(before + 0.2);
+    manager.dispose();
+  });
 });

@@ -21,6 +21,7 @@ import {
   floorDiv,
 } from './constants';
 import { GameLifecycleManager } from './Lifecycle';
+import { RollingTimingWindow } from './PerformanceStats';
 import {
   DroppedItemManager,
   MobManager,
@@ -89,6 +90,11 @@ export class Game {
   private readonly sunlight = new THREE.DirectionalLight(0xfff1cf, 1.15);
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
+  private readonly interpolatedPlayerPosition = new THREE.Vector3();
+  private readonly daySkyColor = new THREE.Color(0x7fb9dc);
+  private readonly duskSkyColor = new THREE.Color(0xd9785a);
+  private readonly nightSkyColor = new THREE.Color(0x071426);
+  private readonly currentSkyColor = new THREE.Color(0x7fb6d5);
   private atlas?: TextureAtlas;
   private session?: GameSession;
   private settings: RuntimeSettings = {
@@ -103,7 +109,13 @@ export class Game {
   private fps = 0;
   private fpsFrames = 0;
   private fpsTimer = 0;
+  private readonly frameTimings = new RollingTimingWindow(600);
+  private readonly tickTimings = new RollingTimingWindow(200);
+  private lastChunkGenerationJobs = 0;
+  private lastChunkMeshJobs = 0;
   private debugVisible = false;
+  private debugNextTick = 0;
+  private cachedDebugText = '';
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
@@ -114,7 +126,7 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
-    this.scene.background = new THREE.Color(0x7fb6d5);
+    this.scene.background = this.currentSkyColor;
     this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
     this.sunlight.position.set(40, 70, 25);
     this.scene.add(this.ambient, this.sunlight, this.sun, this.moon);
@@ -141,7 +153,10 @@ export class Game {
         () => this.pauseForPlatform(),
         () => this.resumeFromPlatform(),
       ),
-      TextureAtlas.create().then((atlas) => { this.atlas = atlas; }),
+      TextureAtlas.create(Math.min(
+        this.renderer.capabilities.getMaxAnisotropy(),
+        isCoarsePointer() ? 4 : 8,
+      )).then((atlas) => { this.atlas = atlas; }),
     ]);
     this.showMainMenu();
     await this.yandex.loadingReady();
@@ -486,8 +501,10 @@ export class Game {
   }
 
   private frame(now: number): void {
-    const elapsed = Math.min(MAX_FRAME_DELTA, Math.max(0, (now - this.previousTime) / 1000));
+    const rawElapsed = Math.max(0, (now - this.previousTime) / 1000);
+    const elapsed = Math.min(MAX_FRAME_DELTA, rawElapsed);
     this.previousTime = now;
+    this.frameTimings.add(rawElapsed * 1000);
     this.fpsFrames += 1;
     this.fpsTimer += elapsed;
     if (this.fpsTimer >= 0.5) {
@@ -498,7 +515,9 @@ export class Game {
     if (this.lifecycle.simulating) {
       this.accumulator += elapsed;
       while (this.accumulator >= FIXED_DT) {
+        const tickStart = performance.now();
         this.tick();
+        this.tickTimings.add(performance.now() - tickStart);
         this.accumulator -= FIXED_DT;
       }
     } else this.accumulator = 0;
@@ -555,12 +574,21 @@ export class Game {
       }
     }
 
-    session.world.ensureChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance, 1);
+    this.lastChunkGenerationJobs = session.world.ensureChunks(
+      Math.floor(session.player.position.x),
+      Math.floor(session.player.position.z),
+      this.settings.renderDistance,
+      1,
+    ).length;
     if (session.playTicks % 80 === 0) {
       const removed = session.world.pruneChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance);
       session.worldRenderer.removeChunks(removed);
     }
-    session.worldRenderer.rebuildDirty(isCoarsePointer() ? 1 : 2);
+    // Never combine a synchronous generation job with a mesh job in one fixed tick.
+    // Dirty flags coalesce repeated changes, and the time budget prevents a two-mesh burst.
+    this.lastChunkMeshJobs = this.lastChunkGenerationJobs > 0
+      ? 0
+      : session.worldRenderer.rebuildDirty(isCoarsePointer() ? 1 : 2, isCoarsePointer() ? 4 : 7);
     this.updateTargetAndActions();
     this.updateFoodUse();
     session.arrows.tick(FIXED_DT);
@@ -587,7 +615,7 @@ export class Game {
       session.lastAutosaveTick = session.playTicks;
       void this.saveSession();
     }
-    this.refreshHud();
+    if (session.playTicks % 2 === 0) this.refreshHud();
   }
 
   private updateTargetAndActions(): void {
@@ -1023,13 +1051,18 @@ export class Game {
   private render(alpha: number): void {
     const session = this.session;
     if (session) {
-      const position = session.player.previousPosition.clone().lerp(session.player.position, clamp(alpha, 0, 1));
+      const position = this.interpolatedPlayerPosition
+        .copy(session.player.previousPosition)
+        .lerp(session.player.position, clamp(alpha, 0, 1));
       const eyeHeight = session.player.eyeHeight;
       this.camera.position.set(position.x, position.y + eyeHeight, position.z);
       this.camera.rotation.set(session.player.pitch, session.player.yaw, 0, 'YXZ');
       const sprintFov = session.player.sprinting ? 7 : 0;
-      this.camera.fov += ((this.settings.fov + sprintFov) - this.camera.fov) * 0.12;
-      this.camera.updateProjectionMatrix();
+      const nextFov = this.camera.fov + ((this.settings.fov + sprintFov) - this.camera.fov) * 0.12;
+      if (Math.abs(nextFov - this.camera.fov) >= 0.02) {
+        this.camera.fov = nextFov;
+        this.camera.updateProjectionMatrix();
+      }
       this.updateEnvironment(session.world.timeOfDay);
     }
     this.renderer.render(this.scene, this.camera);
@@ -1039,13 +1072,9 @@ export class Game {
     const phase = (time / 24_000) * Math.PI * 2;
     const sunHeight = Math.sin(phase);
     const daylight = this.daylightFactor(time);
-    const dayColor = new THREE.Color(0x7fb9dc);
-    const duskColor = new THREE.Color(0xd9785a);
-    const nightColor = new THREE.Color(0x071426);
     const sky = sunHeight > -0.18
-      ? duskColor.clone().lerp(dayColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
-      : nightColor.clone().lerp(duskColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
-    this.scene.background = sky;
+      ? this.currentSkyColor.copy(this.duskSkyColor).lerp(this.daySkyColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
+      : this.currentSkyColor.copy(this.nightSkyColor).lerp(this.duskSkyColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
     this.ambient.intensity = 0.12 + daylight * 0.78;
     this.sunlight.intensity = daylight * 1.15;
@@ -1068,9 +1097,14 @@ export class Game {
     const target = session.target ? getBlockDefinition(session.target.block).name : '—';
     const chunkX = floorDiv(Math.floor(session.player.position.x), 16);
     const chunkZ = floorDiv(Math.floor(session.player.position.z), 16);
-    const debug = this.debugVisible
-      ? `FPS ${this.fps} · TPS ${TICK_RATE}\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nTarget ${target} · Loaded ${session.world.chunks.size} · Faces ${session.worldRenderer.faceCount}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`
-      : undefined;
+    if (this.debugVisible && (session.playTicks >= this.debugNextTick || this.cachedDebugText.length === 0)) {
+      this.debugNextTick = session.playTicks + 7;
+      const frameTiming = this.frameTimings.snapshot();
+      const tickTiming = this.tickTimings.snapshot();
+      const renderInfo = this.renderer.info.render;
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+    }
+    const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
       inventory: session.inventory,
       selectedSlot: session.selectedSlot,
@@ -1133,6 +1167,8 @@ export class Game {
       if (event.code === 'F3' && !event.repeat) {
         event.preventDefault();
         this.debugVisible = !this.debugVisible;
+        this.debugNextTick = 0;
+        if (!this.debugVisible) this.cachedDebugText = '';
         this.refreshHud();
       }
     });

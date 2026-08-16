@@ -82,6 +82,16 @@ export class GameUI {
   private craftSlots: Array<ItemStack | null> = [];
   private inventoryContext?: InventoryContext;
   private hotbarHtml = '';
+  private selectedItemText = '';
+  private heartsHtml = '';
+  private hungerHtml = '';
+  private miningWidth = '';
+  private miningVisible = false;
+  private attackTransform = '';
+  private debugText = '';
+  private debugVisible = false;
+  private handSource = '';
+  private shieldVisible = false;
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
 
   constructor(private readonly root: HTMLElement) {
@@ -109,6 +119,7 @@ export class GameUI {
     this.toasts = this.root.querySelector('#toast-stack')!;
     this.hand = this.root.querySelector('#hand-item')!;
     this.shield = this.root.querySelector('#shield-overlay')!;
+    this.shield.src = TextureAtlas.url('item/shield');
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -268,23 +279,62 @@ export class GameUI {
       }
     }
     const selected = slots[state.selectedSlot] ?? null;
-    this.selectedItem.textContent = selected ? getItemDefinition(selected.itemId).name : '';
-    this.hearts.innerHTML = this.pips('♥', Math.ceil(state.health / 2), 10);
-    this.hunger.innerHTML = this.pips('◆', Math.ceil(state.hunger / 2), 10);
-    this.mining.classList.toggle('hidden', state.miningProgress <= 0);
+    const selectedItemText = selected ? getItemDefinition(selected.itemId).name : '';
+    if (selectedItemText !== this.selectedItemText) {
+      this.selectedItemText = selectedItemText;
+      this.selectedItem.textContent = selectedItemText;
+    }
+    const heartsHtml = this.pips('♥', Math.ceil(state.health / 2), 10);
+    if (heartsHtml !== this.heartsHtml) {
+      this.heartsHtml = heartsHtml;
+      this.hearts.innerHTML = heartsHtml;
+    }
+    const hungerHtml = this.pips('◆', Math.ceil(state.hunger / 2), 10);
+    if (hungerHtml !== this.hungerHtml) {
+      this.hungerHtml = hungerHtml;
+      this.hunger.innerHTML = hungerHtml;
+    }
+    const miningVisible = state.miningProgress > 0;
+    if (miningVisible !== this.miningVisible) {
+      this.miningVisible = miningVisible;
+      this.mining.classList.toggle('hidden', !miningVisible);
+    }
     const miningBar = this.mining.querySelector<HTMLElement>('span')!;
-    miningBar.style.width = `${Math.max(0, Math.min(1, state.miningProgress)) * 100}%`;
-    this.attack.style.transform = `scaleX(${Math.max(0, Math.min(1, state.attackStrength))})`;
-    this.debug.textContent = state.debug ?? '';
-    this.debug.classList.toggle('hidden', !state.debug);
+    const miningWidth = `${Math.max(0, Math.min(1, state.miningProgress)) * 100}%`;
+    if (miningWidth !== this.miningWidth) {
+      this.miningWidth = miningWidth;
+      miningBar.style.width = miningWidth;
+    }
+    const attackTransform = `scaleX(${Math.max(0, Math.min(1, state.attackStrength))})`;
+    if (attackTransform !== this.attackTransform) {
+      this.attackTransform = attackTransform;
+      this.attack.style.transform = attackTransform;
+    }
+    const debugText = state.debug ?? '';
+    if (debugText !== this.debugText) {
+      this.debugText = debugText;
+      this.debug.textContent = debugText;
+    }
+    const debugVisible = debugText.length > 0;
+    if (debugVisible !== this.debugVisible) {
+      this.debugVisible = debugVisible;
+      this.debug.classList.toggle('hidden', !debugVisible);
+    }
     if (selected) {
-      this.hand.src = this.itemIcon(selected.itemId);
+      const handSource = this.itemIcon(selected.itemId);
+      if (handSource !== this.handSource) {
+        this.handSource = handSource;
+        this.hand.src = handSource;
+      }
       this.hand.classList.remove('hidden');
-    } else this.hand.classList.add('hidden');
-    if (state.shieldRaised) {
-      this.shield.src = TextureAtlas.url('item/shield');
-      this.shield.classList.remove('hidden');
-    } else this.shield.classList.add('hidden');
+    } else {
+      this.handSource = '';
+      this.hand.classList.add('hidden');
+    }
+    if (state.shieldRaised !== this.shieldVisible) {
+      this.shieldVisible = state.shieldRaised;
+      this.shield.classList.toggle('hidden', !state.shieldRaised);
+    }
   }
 
   onHotbarSelect?: (index: number) => void;

@@ -13,7 +13,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 ### P0.1 Воспроизводимая поставка
 
 - [ ] На чистом clone выполнить `npm ci`, `npm run assets:import`, `npm run check` и `npm run check:archive`.
-- [x] Финальный локальный `npm run check` после visual parity pass: typecheck, 60 tests, build и size/archive green.
+- [x] Финальный локальный pipeline после legacy-model/performance pass: typecheck, 68 tests, build и size/archive green.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -82,13 +82,13 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 ### P1.1 Rendering и world performance
 
-- [ ] Перенести chunk generation/meshing в Web Workers с cancellable priority queue.
+- [ ] Перенести chunk generation/meshing в Web Workers с cancellable priority queue, если device profiling после текущего CPU pass подтвердит необходимость.
 - [ ] Внедрить greedy meshing или эквивалентное объединение coplanar faces.
-- [ ] Добавить frustum/distance priority, budgets по миллисекундам и telemetry для chunk rebuild.
+- [x] Добавить budgets по jobs/миллисекундам, generation/mesh scheduling и F3 telemetry для chunk rebuild; frustum/distance priority остаётся следующим этапом.
 - [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
 - [ ] Улучшить сортировку отдельных translucent water/glass faces.
 - [ ] Добавить skylight/block-light propagation и emissive updates для torch/lava.
-- [ ] Устранить atlas bleeding через padding/extrusion, если появятся mipmaps/scale variants.
+- [x] Добавить power-of-two atlas, mipmaps, `4 px` padding/extrusion и ограниченную anisotropy для снижения bleeding/shimmer.
 
 ### P1.2 Block states и geometry
 
@@ -110,7 +110,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 ### P1.4 Combat, AI и feedback
 
 - [ ] Лёгкий voxel-aware pathfinding с ограниченным search budget.
-- [ ] Улучшить spawn/despawn/light rules, obstacle recovery и avoidance между мобами.
+- [ ] Улучшить spawn/despawn/light rules и obstacle recovery; bounded soft separation между мобами уже реализована.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback и собственные SFX; first-person shield HUD уже подключён.
 - [ ] Выверить projectile sweep и explosion exposure без дорогой полной физики.
 - [ ] Расширить поведение существ: spider climbing, passive flee, burning drops, sheep shearing — только после core stability.
@@ -156,6 +156,6 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 | New-world time to control | измерить desktop/mobile | progressive generation без длинного freeze |
 | Runtime JS errors | `0` в smoke/soak | `0` в release regression |
 | Save round-trip loss | `0` для schema 1 fields | migrations + backup |
-| Unit/component tests | текущие 60 + P0 browser/storage integration coverage | regression grows with features |
+| Unit/component tests | текущие 68 + P0 browser/storage integration coverage | regression grows with features |
 | Production archive | значительно ниже 20 MiB target | budget per asset/system |
 | Asset provenance | 100% production manifest | автоматическая проверка manifest |

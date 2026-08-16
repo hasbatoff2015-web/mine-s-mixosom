@@ -292,9 +292,14 @@ function buildRegistry<K>(keyOf: (definition: BlockDefinition) => K): ReadonlyMa
 
 export const BLOCK_REGISTRY = buildRegistry((definition) => definition.id);
 export const BLOCKS_BY_KEY = buildRegistry((definition) => definition.key);
+const BLOCK_DEFINITIONS_BY_ID: readonly (BlockDefinition | undefined)[] = (() => {
+  const definitions: Array<BlockDefinition | undefined> = [];
+  for (const definition of BLOCKS) definitions[definition.id] = definition;
+  return definitions;
+})();
 
 export function getBlockDefinition(id: BlockId): BlockDefinition {
-  const definition = BLOCK_REGISTRY.get(id);
+  const definition = BLOCK_DEFINITIONS_BY_ID[id];
   if (definition === undefined) throw new RangeError(`Unknown block id: ${id}`);
   return definition;
 }

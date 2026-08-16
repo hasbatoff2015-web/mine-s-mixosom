@@ -2,11 +2,23 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
 import { RedstoneSystem } from '../src/redstone';
-import { leverHandleAngle } from '../src/rendering/ChunkMesher';
+import { ChunkMesher, leverHandleAngle } from '../src/rendering/ChunkMesher';
+import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { VoxelWorld } from '../src/world/World';
 
 function place(world: VoxelWorld, x: number, y: number, z: number, block: BlockId): void {
   expect(world.setBlock(x, y, z, block)).toBe(true);
+}
+
+const atlasStub = {
+  tile: () => ({ u0: 0, v0: 0, u1: 1, v1: 1 }),
+} as unknown as TextureAtlas;
+
+function disposeMeshed(result: ReturnType<ChunkMesher['build']>): void {
+  result.opaque.dispose();
+  result.cutout.dispose();
+  result.translucent.dispose();
+  result.water.dispose();
 }
 
 describe('RedstoneSystem', () => {
@@ -130,6 +142,40 @@ describe('RedstoneSystem', () => {
       powered: true, attachment: 'wall', facing: 'east',
     });
     restored.dispose();
+  });
+
+  it('builds bounded non-cube geometry for every lever attachment and facing in both states', () => {
+    const world = new VoxelWorld('lever-geometry');
+    const chunk = world.getChunk(0, 0)!;
+    chunk.blocks.fill(BlockId.Air);
+    chunk.set(8, 76, 8, BlockId.Lever);
+    const attachments = ['floor', 'wall', 'ceiling'] as const;
+    const facings = ['north', 'south', 'east', 'west'] as const;
+
+    for (const attachment of attachments) {
+      for (const facing of facings) {
+        const centroids: number[] = [];
+        for (const powered of [false, true]) {
+          const meshed = new ChunkMesher(atlasStub, () => ({ attachment, facing, powered })).build(chunk, world);
+          const positions = meshed.cutout.getAttribute('position');
+          expect(positions.count, `${attachment}/${facing}/${powered}`).toBe(48);
+          const bounds = new THREE.Box3().setFromBufferAttribute(positions as THREE.BufferAttribute);
+          expect(bounds.min.x).toBeGreaterThanOrEqual(7.95);
+          expect(bounds.max.x).toBeLessThanOrEqual(9.05);
+          expect(bounds.min.y).toBeGreaterThanOrEqual(75.95);
+          expect(bounds.max.y).toBeLessThanOrEqual(77.05);
+          expect(bounds.min.z).toBeGreaterThanOrEqual(7.95);
+          expect(bounds.max.z).toBeLessThanOrEqual(9.05);
+          let sum = 0;
+          for (let index = 24; index < positions.count; index += 1) {
+            sum += positions.getX(index) + positions.getY(index) + positions.getZ(index);
+          }
+          centroids.push(sum);
+          disposeMeshed(meshed);
+        }
+        expect(centroids[0], `${attachment}/${facing} handle state`).not.toBeCloseTo(centroids[1]!, 5);
+      }
+    }
   });
 
   it('restores version-one levers with stable default orientation', () => {

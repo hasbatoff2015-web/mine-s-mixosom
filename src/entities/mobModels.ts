@@ -1,13 +1,22 @@
 import * as THREE from 'three';
-import type { TexturedCuboidDefinition } from '../rendering/TexturedCuboid';
 import type { MobKind } from './mobDefinitions';
+import {
+  buildLegacyModel,
+  type LegacyModelBox,
+  type LegacyModelDefinition,
+  type LegacyModelPart,
+  type LegacyVector,
+} from './LegacyModel';
 import { VoxelVisualFactory } from './voxelVisuals';
 
 export interface MobModel {
   readonly root: THREE.Group;
+  readonly parts: ReadonlyMap<string, THREE.Group>;
   readonly head?: THREE.Object3D;
   readonly legs: readonly THREE.Object3D[];
+  readonly legSwingSigns: readonly number[];
   readonly arms: readonly THREE.Object3D[];
+  readonly wings: readonly THREE.Object3D[];
 }
 
 export interface MobModelDescriptor {
@@ -21,226 +30,195 @@ export const MOB_MODEL_DESCRIPTORS: Readonly<Record<MobKind, MobModelDescriptor>
   cow: Object.freeze({ kind: 'cow', texturePath: 'entity/cow', logicalTextureSize: [64, 32] as const }),
   pig: Object.freeze({ kind: 'pig', texturePath: 'entity/pig', logicalTextureSize: [64, 32] as const }),
   chicken: Object.freeze({ kind: 'chicken', texturePath: 'entity/chicken', logicalTextureSize: [64, 32] as const }),
-  sheep: Object.freeze({
-    kind: 'sheep', texturePath: 'entity/sheep', logicalTextureSize: [64, 32] as const,
-    overlayTexturePaths: Object.freeze(['entity/sheep_fur']),
-  }),
+  sheep: Object.freeze({ kind: 'sheep', texturePath: 'entity/sheep', logicalTextureSize: [64, 32] as const, overlayTexturePaths: Object.freeze(['entity/sheep_fur']) }),
   zombie: Object.freeze({ kind: 'zombie', texturePath: 'entity/zombie', logicalTextureSize: [64, 64] as const }),
   skeleton: Object.freeze({ kind: 'skeleton', texturePath: 'entity/skeleton', logicalTextureSize: [64, 32] as const }),
   creeper: Object.freeze({ kind: 'creeper', texturePath: 'entity/creeper', logicalTextureSize: [64, 32] as const }),
-  spider: Object.freeze({
-    kind: 'spider', texturePath: 'entity/spider', logicalTextureSize: [64, 32] as const,
-    overlayTexturePaths: Object.freeze(['entity/spider_eyes']),
-  }),
+  spider: Object.freeze({ kind: 'spider', texturePath: 'entity/spider', logicalTextureSize: [64, 32] as const, overlayTexturePaths: Object.freeze(['entity/spider_eyes']) }),
 });
 
-const p = (pixels: number): number => pixels / 16;
-
-function cuboid(
-  size: readonly [number, number, number],
+const box = (
+  origin: LegacyVector,
+  size: LegacyVector,
   textureOffset: readonly [number, number],
-  logicalTextureSize: readonly [number, number],
-  options: Pick<TexturedCuboidDefinition, 'mirror' | 'inflate'> = {},
-): TexturedCuboidDefinition {
-  return { size, textureOffset, logicalTextureSize, ...options };
-}
+  options: Omit<LegacyModelBox, 'origin' | 'size' | 'textureOffset'> = {},
+): LegacyModelBox => ({ origin, size, textureOffset, ...options });
 
-function part(
-  visuals: VoxelVisualFactory,
-  parent: THREE.Object3D,
+const modelPart = (
   name: string,
-  texture: string,
-  definition: TexturedCuboidDefinition,
-  pivot: readonly [number, number, number],
-  offset: readonly [number, number, number] = [0, 0, 0],
-): THREE.Group {
-  const group = visuals.addPivotCuboid(parent, definition, pivot, offset, texture);
-  group.name = name;
-  return group;
-}
+  rotationPoint: LegacyVector,
+  boxes: readonly LegacyModelBox[],
+  rotation?: LegacyVector,
+): LegacyModelPart => ({ name, rotationPoint, boxes, ...(rotation ? { rotation } : {}) });
 
-function createCow(visuals: VoxelVisualFactory): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS.cow;
-  const root = new THREE.Group();
-  root.name = 'mob:cow';
-  const body = part(visuals, root, 'cow:body', descriptor.texturePath,
-    cuboid([12, 18, 10], [18, 4], descriptor.logicalTextureSize), [0, 0.98, 0.08]);
-  body.rotation.x = Math.PI / 2;
-  const head = part(visuals, root, 'cow:head', descriptor.texturePath,
-    cuboid([8, 8, 6], [0, 0], descriptor.logicalTextureSize), [0, 1.17, -0.64]);
-  visuals.addTexturedCuboid(head, cuboid([1, 3, 1], [22, 0], descriptor.logicalTextureSize), [-0.25, 0.33, -0.12], descriptor.texturePath);
-  visuals.addTexturedCuboid(head, cuboid([1, 3, 1], [22, 0], descriptor.logicalTextureSize, { mirror: true }), [0.25, 0.33, -0.12], descriptor.texturePath);
-  const legs = [
-    [-0.27, 0.75, -0.35], [0.27, 0.75, -0.35],
-    [-0.27, 0.75, 0.36], [0.27, 0.75, 0.36],
-  ].map((pivot, index) => part(
-    visuals, root, `cow:leg:${index}`, descriptor.texturePath,
-    cuboid([4, 12, 4], [0, 16], descriptor.logicalTextureSize, { mirror: index % 2 === 1 }),
-    pivot as [number, number, number], [0, -p(6), 0],
-  ));
-  return { root, head, legs, arms: [] };
-}
+const quadrupedLegParts = (
+  height: number,
+  pivots: readonly LegacyVector[],
+  options: { readonly inflate?: number; readonly texturePath?: string } = {},
+): readonly LegacyModelPart[] => pivots.map((pivot, index) => modelPart(`leg${index + 1}`, pivot, [
+  box([-2, 0, -2], [4, height, 4], [0, 16], { mirror: index % 2 === 1, ...options }),
+]));
 
-function createPig(visuals: VoxelVisualFactory): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS.pig;
-  const root = new THREE.Group();
-  root.name = 'mob:pig';
-  const body = part(visuals, root, 'pig:body', descriptor.texturePath,
-    cuboid([10, 16, 8], [28, 8], descriptor.logicalTextureSize), [0, 0.73, 0.08]);
-  body.rotation.x = Math.PI / 2;
-  const head = part(visuals, root, 'pig:head', descriptor.texturePath,
-    cuboid([8, 8, 8], [0, 0], descriptor.logicalTextureSize), [0, 0.93, -0.5]);
-  visuals.addTexturedCuboid(head, cuboid([4, 3, 1], [16, 16], descriptor.logicalTextureSize), [0, -0.03, -0.28], descriptor.texturePath);
-  const legs = [
-    [-0.23, 0.46, -0.3], [0.23, 0.46, -0.3],
-    [-0.23, 0.46, 0.31], [0.23, 0.46, 0.31],
-  ].map((pivot, index) => part(
-    visuals, root, `pig:leg:${index}`, descriptor.texturePath,
-    cuboid([4, 6, 4], [0, 16], descriptor.logicalTextureSize, { mirror: index % 2 === 1 }),
-    pivot as [number, number, number], [0, -p(3), 0],
-  ));
-  return { root, head, legs, arms: [] };
-}
+export const COW_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/cow', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 4, -8], [
+      box([-4, -4, -6], [8, 8, 6], [0, 0]),
+      box([-5, -5, -4], [1, 3, 1], [22, 0]),
+      box([4, -5, -4], [1, 3, 1], [22, 0], { mirror: true }),
+    ]),
+    modelPart('body', [0, 5, 2], [
+      box([-6, -10, -7], [12, 18, 10], [18, 4]),
+      box([-2, 2, -8], [4, 6, 1], [52, 0]),
+    ], [Math.PI / 2, 0, 0]),
+    ...quadrupedLegParts(12, [[-4, 12, 7], [4, 12, 7], [-4, 12, -6], [4, 12, -6]]),
+  ],
+};
 
-function createChicken(visuals: VoxelVisualFactory): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS.chicken;
-  const root = new THREE.Group();
-  root.name = 'mob:chicken';
-  const body = part(visuals, root, 'chicken:body', descriptor.texturePath,
-    cuboid([6, 8, 6], [0, 9], descriptor.logicalTextureSize), [0, 0.45, 0.02]);
-  body.rotation.x = Math.PI / 2;
-  const head = part(visuals, root, 'chicken:head', descriptor.texturePath,
-    cuboid([4, 6, 3], [0, 0], descriptor.logicalTextureSize), [0, 0.76, -0.27]);
-  visuals.addTexturedCuboid(head, cuboid([4, 2, 2], [14, 0], descriptor.logicalTextureSize), [0, 0, -0.15], descriptor.texturePath);
-  visuals.addTexturedCuboid(head, cuboid([2, 2, 2], [14, 4], descriptor.logicalTextureSize), [0, -0.13, -0.13], descriptor.texturePath);
-  part(visuals, root, 'chicken:left-wing', descriptor.texturePath,
-    cuboid([1, 4, 6], [24, 13], descriptor.logicalTextureSize), [-0.22, 0.49, 0]);
-  part(visuals, root, 'chicken:right-wing', descriptor.texturePath,
-    cuboid([1, 4, 6], [24, 13], descriptor.logicalTextureSize, { mirror: true }), [0.22, 0.49, 0]);
-  const legs = [-0.12, 0.12].map((x, index) => part(
-    visuals, root, `chicken:leg:${index}`, descriptor.texturePath,
-    cuboid([3, 5, 3], [26, 0], descriptor.logicalTextureSize, { mirror: index === 1 }),
-    [x, 0.32, 0.03], [0, -p(2.5), 0],
-  ));
-  return { root, head, legs, arms: [] };
-}
+export const PIG_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/pig', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 12, -6], [
+      box([-4, -4, -8], [8, 8, 8], [0, 0]),
+      box([-2, 0, -9], [4, 3, 1], [16, 16]),
+    ]),
+    modelPart('body', [0, 11, 2], [box([-5, -10, -7], [10, 16, 8], [28, 8])], [Math.PI / 2, 0, 0]),
+    ...quadrupedLegParts(6, [[-3, 18, 7], [3, 18, 7], [-3, 18, -5], [3, 18, -5]]),
+  ],
+};
 
-function createSheep(visuals: VoxelVisualFactory): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS.sheep;
-  const fur = descriptor.overlayTexturePaths![0]!;
-  const root = new THREE.Group();
-  root.name = 'mob:sheep';
-  const bodyDefinition = cuboid([8, 16, 6], [28, 8], descriptor.logicalTextureSize);
-  const body = part(visuals, root, 'sheep:body', descriptor.texturePath, bodyDefinition, [0, 0.86, 0.06]);
-  body.rotation.x = Math.PI / 2;
-  visuals.addTexturedCuboid(body, { ...bodyDefinition, inflate: 0.075 }, [0, 0, 0], fur);
-  const headDefinition = cuboid([6, 6, 8], [0, 0], descriptor.logicalTextureSize);
-  const head = part(visuals, root, 'sheep:head', descriptor.texturePath, headDefinition, [0, 1.05, -0.52]);
-  visuals.addTexturedCuboid(head, { ...headDefinition, inflate: 0.04 }, [0, 0, 0], fur);
-  const legs = [
-    [-0.22, 0.54, -0.3], [0.22, 0.54, -0.3],
-    [-0.22, 0.54, 0.3], [0.22, 0.54, 0.3],
-  ].map((pivot, index) => {
-    const definition = cuboid([4, 6, 4], [0, 16], descriptor.logicalTextureSize, { mirror: index % 2 === 1 });
-    const leg = part(visuals, root, `sheep:leg:${index}`, descriptor.texturePath, definition,
-      pivot as [number, number, number], [0, -p(3), 0]);
-    visuals.addTexturedCuboid(leg, { ...definition, inflate: 0.025 }, [0, -p(3), 0], fur);
-    return leg;
-  });
-  return { root, head, legs, arms: [] };
-}
+export const SHEEP_BASE_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/sheep', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 6, -8], [box([-3, -4, -6], [6, 6, 8], [0, 0])]),
+    modelPart('body', [0, 5, 2], [box([-4, -10, -7], [8, 16, 6], [28, 8])], [Math.PI / 2, 0, 0]),
+    ...quadrupedLegParts(6, [[-3, 12, 7], [3, 12, 7], [-3, 12, -5], [3, 12, -5]]),
+  ],
+};
 
-function createHumanoid(visuals: VoxelVisualFactory, kind: 'zombie' | 'skeleton'): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS[kind];
-  const root = new THREE.Group();
-  root.name = `mob:${kind}`;
-  const head = part(visuals, root, `${kind}:head`, descriptor.texturePath,
-    cuboid([8, 8, 8], [0, 0], descriptor.logicalTextureSize), [0, 1.52, 0]);
-  part(visuals, root, `${kind}:torso`, descriptor.texturePath,
-    cuboid([8, 12, 4], [16, 16], descriptor.logicalTextureSize), [0, 1.02, 0]);
-  const limbWidth = kind === 'skeleton' ? 2 : 4;
-  const leftLegUv: readonly [number, number] = kind === 'zombie' ? [16, 48] : [0, 16];
-  const leftArmUv: readonly [number, number] = kind === 'zombie' ? [32, 48] : [40, 16];
-  const legs = [
-    part(visuals, root, `${kind}:right-leg`, descriptor.texturePath,
-      cuboid([limbWidth, 12, limbWidth], [0, 16], descriptor.logicalTextureSize), [-0.125, 0.75, 0], [0, -0.375, 0]),
-    part(visuals, root, `${kind}:left-leg`, descriptor.texturePath,
-      cuboid([limbWidth, 12, limbWidth], leftLegUv, descriptor.logicalTextureSize, { mirror: true }), [0.125, 0.75, 0], [0, -0.375, 0]),
-  ];
-  const shoulder = kind === 'skeleton' ? 0.31 : 0.375;
-  const arms = [
-    part(visuals, root, `${kind}:right-arm`, descriptor.texturePath,
-      cuboid([limbWidth, 12, limbWidth], [40, 16], descriptor.logicalTextureSize), [-shoulder, 1.37, 0], [0, -0.375, 0]),
-    part(visuals, root, `${kind}:left-arm`, descriptor.texturePath,
-      cuboid([limbWidth, 12, limbWidth], leftArmUv, descriptor.logicalTextureSize, { mirror: true }), [shoulder, 1.37, 0], [0, -0.375, 0]),
-  ];
-  return { root, head, legs, arms };
-}
+export const SHEEP_WOOL_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/sheep_fur', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 6, -8], [box([-3, -4, -4], [6, 6, 6], [0, 0], { inflate: 0.6 })]),
+    modelPart('body', [0, 5, 2], [box([-4, -10, -7], [8, 16, 6], [28, 8], { inflate: 1.75 })], [Math.PI / 2, 0, 0]),
+    ...quadrupedLegParts(6, [[-3, 12, 7], [3, 12, 7], [-3, 12, -5], [3, 12, -5]], { inflate: 0.5, texturePath: 'entity/sheep_fur' }),
+  ],
+};
 
-function createCreeper(visuals: VoxelVisualFactory): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS.creeper;
-  const root = new THREE.Group();
-  root.name = 'mob:creeper';
-  const head = part(visuals, root, 'creeper:head', descriptor.texturePath,
-    cuboid([8, 8, 8], [0, 0], descriptor.logicalTextureSize), [0, 1.4, 0]);
-  part(visuals, root, 'creeper:body', descriptor.texturePath,
-    cuboid([8, 12, 4], [16, 16], descriptor.logicalTextureSize), [0, 0.85, 0]);
-  const legs = [
-    [-0.18, 0.375, -0.14], [0.18, 0.375, -0.14],
-    [-0.18, 0.375, 0.14], [0.18, 0.375, 0.14],
-  ].map((pivot, index) => part(
-    visuals, root, `creeper:leg:${index}`, descriptor.texturePath,
-    cuboid([4, 6, 4], [0, 16], descriptor.logicalTextureSize, { mirror: index % 2 === 1 }),
-    pivot as [number, number, number], [0, -p(3), 0],
-  ));
-  return { root, head, legs, arms: [] };
-}
+export const CHICKEN_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/chicken', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 15, -4], [
+      box([-2, -6, -2], [4, 6, 3], [0, 0]),
+      box([-2, -4, -4], [4, 2, 2], [14, 0]),
+      box([-1, -2, -3], [2, 2, 2], [14, 4]),
+    ]),
+    modelPart('body', [0, 16, 0], [box([-3, -4, -3], [6, 8, 6], [0, 9])], [Math.PI / 2, 0, 0]),
+    modelPart('rightLeg', [-2, 19, 1], [box([-1, 0, -3], [3, 5, 3], [26, 0])]),
+    modelPart('leftLeg', [1, 19, 1], [box([-1, 0, -3], [3, 5, 3], [26, 0], { mirror: true })]),
+    modelPart('rightWing', [-4, 13, 0], [box([0, 0, -3], [1, 4, 6], [24, 13])]),
+    modelPart('leftWing', [4, 13, 0], [box([-1, 0, -3], [1, 4, 6], [24, 13], { mirror: true })]),
+  ],
+};
 
-function createSpider(visuals: VoxelVisualFactory): MobModel {
-  const descriptor = MOB_MODEL_DESCRIPTORS.spider;
-  const root = new THREE.Group();
-  root.name = 'mob:spider';
-  part(visuals, root, 'spider:thorax', descriptor.texturePath,
-    cuboid([6, 6, 6], [0, 0], descriptor.logicalTextureSize), [0, 0.48, -0.05]);
-  part(visuals, root, 'spider:abdomen', descriptor.texturePath,
-    cuboid([10, 8, 12], [0, 12], descriptor.logicalTextureSize), [0, 0.48, 0.43]);
-  const headDefinition = cuboid([8, 8, 8], [32, 4], descriptor.logicalTextureSize);
-  const head = part(visuals, root, 'spider:head', descriptor.texturePath, headDefinition, [0, 0.48, -0.48]);
-  visuals.addTexturedCuboid(
-    head,
-    { ...headDefinition, inflate: 0.006 },
-    [0, 0, 0],
-    descriptor.overlayTexturePaths![0]!,
-    { glow: true },
-  );
-  const legs: THREE.Object3D[] = [];
-  for (const side of [-1, 1] as const) {
-    for (let index = 0; index < 4; index += 1) {
-      const pivot: [number, number, number] = [side * 0.24, 0.45, (index - 1.5) * 0.13];
-      const leg = part(
-        visuals, root, `spider:leg:${side}:${index}`, descriptor.texturePath,
-        cuboid([16, 2, 2], [18, 0], descriptor.logicalTextureSize, { mirror: side === 1 }),
-        pivot, [side * 0.5, 0, 0],
-      );
-      leg.rotation.y = side * (0.16 + index * 0.055);
-      leg.rotation.z = side * -0.34;
-      leg.userData.baseRotationY = leg.rotation.y;
-      leg.userData.baseRotationZ = leg.rotation.z;
-      legs.push(leg);
-    }
-  }
-  return { root, head, legs, arms: [] };
-}
+export const ZOMBIE_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/zombie', logicalTextureSize: [64, 64],
+  parts: [
+    modelPart('head', [0, 0, 0], [
+      box([-4, -8, -4], [8, 8, 8], [0, 0]),
+      box([-4, -8, -4], [8, 8, 8], [32, 0], { inflate: 0.5 }),
+    ]),
+    modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16])]),
+    modelPart('rightArm', [-5, 2, 0], [box([-3, -2, -2], [4, 12, 4], [40, 16])]),
+    modelPart('leftArm', [5, 2, 0], [box([-1, -2, -2], [4, 12, 4], [32, 48], { mirror: true })]),
+    modelPart('rightLeg', [-1.9, 12, 0], [box([-2, 0, -2], [4, 12, 4], [0, 16])]),
+    modelPart('leftLeg', [1.9, 12, 0], [box([-2, 0, -2], [4, 12, 4], [16, 48], { mirror: true })]),
+  ],
+};
+
+export const SKELETON_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/skeleton', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 0, 0], [box([-4, -8, -4], [8, 8, 8], [0, 0])]),
+    modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16])]),
+    modelPart('rightArm', [-5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16])]),
+    modelPart('leftArm', [5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16], { mirror: true })]),
+    modelPart('rightLeg', [-2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16])]),
+    modelPart('leftLeg', [2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16], { mirror: true })]),
+  ],
+};
+
+export const CREEPER_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/creeper', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 6, 0], [box([-4, -8, -4], [8, 8, 8], [0, 0])]),
+    modelPart('body', [0, 6, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16])]),
+    ...quadrupedLegParts(6, [[-2, 18, 4], [2, 18, 4], [-2, 18, -4], [2, 18, -4]]),
+  ],
+};
+
+const SPIDER_LEG_PIVOTS: readonly LegacyVector[] = [
+  [-4, 15, 2], [4, 15, 2], [-4, 15, 1], [4, 15, 1],
+  [-4, 15, 0], [4, 15, 0], [-4, 15, -1], [4, 15, -1],
+];
+const SPIDER_LEG_ROTATIONS: readonly LegacyVector[] = [
+  [0, Math.PI / 4, -Math.PI / 4], [0, -Math.PI / 4, Math.PI / 4],
+  [0, Math.PI / 8, -Math.PI / 4 * 0.74], [0, -Math.PI / 8, Math.PI / 4 * 0.74],
+  [0, -Math.PI / 8, -Math.PI / 4 * 0.74], [0, Math.PI / 8, Math.PI / 4 * 0.74],
+  [0, -Math.PI / 4, -Math.PI / 4], [0, Math.PI / 4, Math.PI / 4],
+];
+
+export const SPIDER_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/spider', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 15, -3], [
+      box([-4, -4, -8], [8, 8, 8], [32, 4]),
+      box([-4, -4, -8], [8, 8, 8], [32, 4], { texturePath: 'entity/spider_eyes', inflate: 0.1, glow: true }),
+    ]),
+    modelPart('neck', [0, 15, 0], [box([-3, -3, -3], [6, 6, 6], [0, 0])]),
+    modelPart('body', [0, 15, 9], [box([-5, -4, -6], [10, 8, 12], [0, 12])]),
+    ...SPIDER_LEG_PIVOTS.map((pivot, index) => modelPart(
+      `leg${index + 1}`,
+      pivot,
+      [box(index % 2 === 0 ? [-15, -1, -1] : [-1, -1, -1], [16, 2, 2], [18, 0], { mirror: index % 2 === 1 })],
+      SPIDER_LEG_ROTATIONS[index],
+    )),
+  ],
+};
+
+export const MOB_LEGACY_MODELS: Readonly<Record<MobKind, readonly LegacyModelDefinition[]>> = {
+  cow: [COW_MODEL], pig: [PIG_MODEL], sheep: [SHEEP_BASE_MODEL, SHEEP_WOOL_MODEL],
+  chicken: [CHICKEN_MODEL], zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL],
+  creeper: [CREEPER_MODEL], spider: [SPIDER_MODEL],
+};
+
+const PART_NAMES: Readonly<Record<MobKind, {
+  readonly head?: string;
+  readonly legs: readonly string[];
+  readonly legSwingSigns: readonly number[];
+  readonly arms?: readonly string[];
+  readonly wings?: readonly string[];
+}>> = {
+  cow: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
+  pig: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
+  sheep: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
+  chicken: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], wings: ['rightWing', 'leftWing'] },
+  zombie: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
+  skeleton: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
+  creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
+  spider: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4', 'leg5', 'leg6', 'leg7', 'leg8'], legSwingSigns: [] },
+};
 
 export function createMobModel(visuals: VoxelVisualFactory, kind: MobKind): MobModel {
-  switch (kind) {
-    case 'cow': return createCow(visuals);
-    case 'pig': return createPig(visuals);
-    case 'chicken': return createChicken(visuals);
-    case 'sheep': return createSheep(visuals);
-    case 'zombie': return createHumanoid(visuals, 'zombie');
-    case 'skeleton': return createHumanoid(visuals, 'skeleton');
-    case 'creeper': return createCreeper(visuals);
-    case 'spider': return createSpider(visuals);
-  }
+  const built = buildLegacyModel(visuals, `mob:${kind}`, MOB_LEGACY_MODELS[kind]);
+  const names = PART_NAMES[kind];
+  return {
+    root: built.root,
+    parts: built.parts,
+    ...(names.head ? { head: built.parts.get(names.head) } : {}),
+    legs: names.legs.map((name) => built.parts.get(name)!),
+    legSwingSigns: names.legSwingSigns,
+    arms: (names.arms ?? []).map((name) => built.parts.get(name)!),
+    wings: (names.wings ?? []).map((name) => built.parts.get(name)!),
+  };
 }

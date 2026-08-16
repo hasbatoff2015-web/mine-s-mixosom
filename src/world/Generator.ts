@@ -54,6 +54,9 @@ export class TerrainGenerator {
         const x = worldX + localX;
         const z = worldZ + localZ;
         const column = this.columnAt(x, z);
+        const columnIndex = localZ * CHUNK_SIZE + localX;
+        chunk.surfaceHeights[columnIndex] = column.height;
+        chunk.biomeCodes[columnIndex] = column.biome === 'forest' ? 1 : column.biome === 'desert' ? 2 : 0;
         for (let y = 0; y < WORLD_HEIGHT; y += 1) {
           let block = BlockId.Air;
           if (y <= this.bedrockHeight(x, z)) block = BlockId.Bedrock;

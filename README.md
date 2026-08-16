@@ -103,7 +103,7 @@ Cloud save, экспорт/импорт мира и миграции стары�
 - `tests` — unit/component tests;
 - `docs` — состояние, архитектура, roadmap, QA и исследования.
 
-Подробнее: [архитектура](docs/ARCHITECTURE.md), [тестирование](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [отчёт visual parity pass](docs/reports/2026-08-16_visual-parity-pass.md).
+Подробнее: [архитектура](docs/ARCHITECTURE.md), [тестирование](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [числовой reference моделей мобов](docs/MOB_MODEL_REFERENCE.md), [отчёт visual parity pass](docs/reports/2026-08-16_visual-parity-pass.md) и [отчёт legacy-model/performance pass](docs/reports/2026-08-17_mob-models-performance-pass.md).
 
 ## Важные ограничения
 

@@ -19,6 +19,9 @@ export class WorldRenderer {
   private readonly cutoutMaterial: THREE.MeshLambertMaterial;
   private readonly glassMaterial: THREE.MeshLambertMaterial;
   private readonly waterMaterial: THREE.MeshLambertMaterial;
+  meshSamples = 0;
+  meshTotalMs = 0;
+  meshMaximumMs = 0;
 
   constructor(
     private readonly world: VoxelWorld,
@@ -62,17 +65,20 @@ export class WorldRenderer {
     this.group.add(this.selection);
   }
 
-  rebuildDirty(maxChunks = 2): number {
+  rebuildDirty(maxChunks = 2, timeBudgetMs = 7): number {
+    const start = performance.now();
     let rebuilt = 0;
     for (const chunk of this.world.chunks.values()) {
       if (!chunk.dirty || rebuilt >= maxChunks) continue;
       this.rebuild(chunk);
       rebuilt += 1;
+      if (performance.now() - start >= timeBudgetMs) break;
     }
     return rebuilt;
   }
 
   rebuild(chunk: Chunk): void {
+    const meshStart = performance.now();
     const key = chunkKey(chunk.x, chunk.z);
     this.removeChunk(key);
     const meshed = this.mesher.build(chunk, this.world);
@@ -98,6 +104,10 @@ export class WorldRenderer {
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces });
     chunk.dirty = false;
+    const meshMilliseconds = performance.now() - meshStart;
+    this.meshSamples += 1;
+    this.meshTotalMs += meshMilliseconds;
+    this.meshMaximumMs = Math.max(this.meshMaximumMs, meshMilliseconds);
   }
 
   removeChunks(keys: readonly string[]): void {
@@ -113,6 +123,14 @@ export class WorldRenderer {
     let faces = 0;
     for (const chunk of this.chunks.values()) faces += chunk.faces;
     return faces;
+  }
+
+  get chunkCount(): number {
+    return this.chunks.size;
+  }
+
+  get meshAverageMs(): number {
+    return this.meshTotalMs / Math.max(1, this.meshSamples);
   }
 
   dispose(): void {
