@@ -1,12 +1,12 @@
 # Аудит локальных ассетов
 
-Дата аудита: 2026-08-16
+Дата аудита: 2026-08-16; runtime whitelist пересверен 2026-08-17
 Источник: `assets/`
 Исходная папка во время аудита не изменялась.
 
 Публичный Git-репозиторий намеренно не содержит исходную папку `assets/`: она
 исключена через `.gitignore`, чтобы не распространять высокорисковые файлы без
-подтверждённой лицензии. В репозиторий входят только 150 выбранных runtime-файлов
+подтверждённой лицензии. В репозиторий входят только 161 выбранный runtime-файл
 в `public/textures`; их происхождение всё равно нужно подтвердить до релиза.
 
 ## Короткий вывод
@@ -217,6 +217,10 @@ assets/
 
 Hoe и gold tools в наборе есть, но в текущий scope не входят.
 
+Runtime whitelist после feel/polish pass включает все три `bow_pulling_*` стадии и отдельный `entity/projectiles/arrow.png`. Bow variants используются только готовыми cached item meshes; projectile sheet обрезается до legacy arrow region общим `ArrowVisualFactory` для player и skeleton.
+
+Для generated held/dropped items импортируются исходные PNG, а объёмная форма строится в runtime из alpha mask. Это не добавляет новых производных bitmap-файлов и не меняет provenance исходного sprite.
+
 ### GUI/HUD
 
 Функционально подходят следующие sheets:
@@ -248,7 +252,11 @@ Hoe и gold tools в наборе есть, но в текущий scope не в
 | Creeper | `minecraft/textures/entity/creeper/creeper.png` | 128×64 |
 | Spider | `minecraft/textures/entity/spider/spider.png`, опциональный слой `entity/spider_eyes.png` | 128×64 |
 
-Все 10 перечисленных sheets/layers теперь входят в runtime whitelist и копируются в `public/textures/entity`. Игра использует собственные `TexturedCuboidGeometry`, articulated pivot rigs и анимации; физические hitboxes по-прежнему задаются отдельно. Текстуры визуально стилизованы/перерисованы, но происхождение полного набора должно быть подтверждено владельцем.
+Все 10 перечисленных sheets/layers теперь входят в runtime whitelist и копируются в `public/textures/entity`. Дополнительно импортируются `entity/steve.png` для empty-hand arm и `entity/projectiles/arrow.png` для общего projectile visual. Игра использует собственные `TexturedCuboidGeometry`, articulated pivot rigs и анимации; физические hitboxes по-прежнему задаются отдельно. Текстуры визуально стилизованы/перерисованы, но происхождение полного набора должно быть подтверждено владельцем.
+
+### Растительность
+
+В runtime whitelist добавлены шесть block sprites: `tall_grass.png`, `fern.png`, `dandelion.png`, `poppy.png`, `oxeye_daisy.png`, `dead_bush.png`. Они рендерятся crossed quads внутри chunk cutout geometry. Отдельные flower/grass item drops, dyes и farming chain намеренно не подключены.
 
 ### Environment и particles
 
@@ -333,7 +341,7 @@ Hoe и gold tools в наборе есть, но в текущий scope не в
 ## Итоговое решение
 
 - Для P0/P1 импортировать только перечисленные core block/item/environment файлы и, после подтверждения владельца, нужные GUI regions.
-- Для текущей alpha использовать только 10 whitelisted mob sheets/layers с собственными textured cuboid models; остальные entity assets не импортировать.
+- Для текущей alpha использовать только перечисленные mob sheets/layers плюс явно нужные Steve arm/arrow projectile assets с собственными geometry adapters; остальные entity assets не импортировать.
 - Не использовать Minecraft/Realms logos, panorama, paintings, Mojang patterns и сторонние namespace UI.
 - Недостающие branding, touch UI, clouds, geometry и audio закрывать собственным кодом/нейтральными placeholders, не скачивая Minecraft assets.
 - Перед публичным релизом получить короткое письменное подтверждение происхождения пользовательского texture pack и отдельно пройти high-risk список.

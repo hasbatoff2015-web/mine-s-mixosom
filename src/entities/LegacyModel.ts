@@ -17,6 +17,8 @@ export interface LegacyModelBox {
   readonly inflate?: number;
   readonly texturePath?: string;
   readonly glow?: boolean;
+  readonly doubleSided?: boolean;
+  readonly alphaTest?: number;
 }
 
 export interface LegacyModelPart {
@@ -99,7 +101,11 @@ export function buildLegacyModel(
           logicalTextureSize: definition.logicalTextureSize,
           ...(box.mirror === undefined ? {} : { mirror: box.mirror }),
           ...(box.inflate === undefined ? {} : { inflate: box.inflate / LEGACY_MODEL_UNITS_PER_BLOCK }),
-        }, legacyBoxCenterToLocal(box), box.texturePath ?? definition.texturePath, { glow: box.glow === true });
+        }, legacyBoxCenterToLocal(box), box.texturePath ?? definition.texturePath, {
+          glow: box.glow === true,
+          doubleSided: box.doubleSided === true,
+          ...(box.alphaTest === undefined ? {} : { alphaTest: box.alphaTest }),
+        });
       }
     }
   }

@@ -225,7 +225,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.Furnace, 'furnace', {
     category: 'utility', hardness: 3.5, tool: 'pickaxe', tier: 'wood',
     drop: { item: 'furnace', count: 1, requiresCorrectTool: true },
-    textures: { top: 'block/furnace_top', bottom: 'block/furnace_top', side: 'block/furnace_side', front: 'block/furnace_front_off' },
+    textures: { top: 'block/furnace_top', bottom: 'block/furnace_top', side: 'block/furnace_side', front: 'block/furnace_front' },
   }),
   block(BlockId.Torch, 'torch', {
     category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14,
@@ -278,6 +278,31 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.OakStairs, 'oak_stairs', { category: 'building', hardness: 2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
   block(BlockId.StoneStairs, 'stone_stairs', { category: 'building', hardness: 2, opaque: false, tool: 'pickaxe', tier: 'wood' }),
   block(BlockId.CobblestoneStairs, 'cobblestone_stairs', { category: 'building', hardness: 2, opaque: false, tool: 'pickaxe', tier: 'wood' }),
+
+  block(BlockId.TallGrass, 'tall_grass', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+  }),
+  block(BlockId.Fern, 'fern', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+  }),
+  block(BlockId.Dandelion, 'dandelion', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+  }),
+  block(BlockId.Poppy, 'poppy', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+  }),
+  block(BlockId.OxeyeDaisy, 'oxeye_daisy', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+  }),
+  block(BlockId.DeadBush, 'dead_bush', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+  }),
 ]);
 
 function buildRegistry<K>(keyOf: (definition: BlockDefinition) => K): ReadonlyMap<K, BlockDefinition> {

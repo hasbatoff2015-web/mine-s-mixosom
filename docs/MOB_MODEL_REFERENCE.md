@@ -47,7 +47,7 @@ Base skin и fleece — две отдельные definitions, которые д
 |---|---|---|---|
 | Base head | `(0,6,-8)` | `(-3,-4,-6); 6×6×8; 0,0` | Cross-version approximation |
 | Base body | `(0,5,2)`, `rx=π/2` | `(-4,-10,-7); 8×16×6; 28,8` | Legacy match |
-| Base legs | `±3,12,7/-5` | `(-2,0,-2); 4×6×4; 0,16` | Legacy match |
+| Base legs | `±3,12,7/-5` | `(-2,0,-2); 4×12×4; 0,16` | Alpha visual correction: skin legs reach ground below fleece |
 | Wool head | same head pivot | `(-3,-4,-4); 6×6×6`, inflate `0.6` | Cross-version approximation |
 | Wool body | same body pivot | `8×16×6`, inflate `1.75` | Legacy match |
 | Wool legs | same leg pivots | `4×6×4`, inflate `0.5` | Cross-version approximation |
@@ -71,6 +71,8 @@ Base skin и fleece — две отдельные definitions, которые д
 | Legs | `(-1.9,12,0)`, `(1.9,12,0)` | `4×12×4` | Legacy match |
 | Forward arm pose | idle `-1.2`, attack `-1.55` plus small walk offset | Alpha approximation |
 
+Zombie cuboid dimensions, pivots and UV offsets were retained after direct sheet/QA comparison. The visible regression was alpha fringe in the inflated headwear layer, fixed locally with `alphaTest=0.45`; no guessed global offsets were introduced.
+
 ## Skeleton
 
 | Part | Pivot | Boxes | Статус |
@@ -79,6 +81,8 @@ Base skin и fleece — две отдельные definitions, которые д
 | Arms | `(-5,2,0)`, `(5,2,0)` | `(-1,-2,-1); 2×12×2; 40,16` | Legacy match |
 | Legs | `(-2,12,0)`, `(2,12,0)` | `(-1,0,-1); 2×12×2` | Legacy match |
 | Ranged arm pose | attack `rx=-1.15` | Alpha approximation; not full vanilla bow pose |
+
+Skeleton torso alone renders `DoubleSide`, so thin ribs/spine remain readable from front and rear. Zombie and other ordinary cuboids remain `FrontSide`; this is a targeted rendering approximation, not a global material change.
 
 ## Creeper
 

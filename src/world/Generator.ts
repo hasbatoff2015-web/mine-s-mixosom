@@ -126,6 +126,36 @@ export class TerrainGenerator {
         this.placeOak(chunk, x, column.height + 1, z, 4 + Math.floor(rng() * 2));
       }
     }
+    this.decoratePlants(chunk, rng);
+  }
+
+  private decoratePlants(chunk: Chunk, rng: () => number): void {
+    for (let attempt = 0; attempt < 52; attempt += 1) {
+      const x = Math.floor(rng() * CHUNK_SIZE);
+      const z = Math.floor(rng() * CHUNK_SIZE);
+      const worldX = chunk.x * CHUNK_SIZE + x;
+      const worldZ = chunk.z * CHUNK_SIZE + z;
+      const column = this.columnAt(worldX, worldZ);
+      if (column.height <= SEA_LEVEL || column.height >= WORLD_HEIGHT - 2) continue;
+      const plantY = column.height + 1;
+      if (chunk.get(x, plantY, z) !== BlockId.Air) continue;
+      const roll = rng();
+      if (column.biome === 'desert') {
+        if (chunk.get(x, column.height, z) === BlockId.Sand && roll < 0.08) {
+          chunk.set(x, plantY, z, BlockId.DeadBush);
+        }
+        continue;
+      }
+      if (chunk.get(x, column.height, z) !== BlockId.GrassBlock) continue;
+      const density = column.biome === 'forest' ? 0.76 : 0.50;
+      if (roll >= density) continue;
+      const kind = rng();
+      if (column.biome === 'forest' && kind < 0.34) chunk.set(x, plantY, z, BlockId.Fern);
+      else if (kind < 0.82) chunk.set(x, plantY, z, BlockId.TallGrass);
+      else if (kind < 0.89) chunk.set(x, plantY, z, BlockId.Dandelion);
+      else if (kind < 0.96) chunk.set(x, plantY, z, BlockId.Poppy);
+      else chunk.set(x, plantY, z, BlockId.OxeyeDaisy);
+    }
   }
 
   private placeOak(chunk: Chunk, x: number, y: number, z: number, height: number): void {

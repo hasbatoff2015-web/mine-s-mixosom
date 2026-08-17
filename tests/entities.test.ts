@@ -25,6 +25,10 @@ describe('DroppedItemManager', () => {
     expect(second).toBe(first);
     expect(manager.count).toBe(1);
     expect(first.stack.count).toBe(5);
+    expect(first.visual.userData.visualCopies).toBe(2);
+    const texturedMesh = first.visual.getObjectByName('item-model:dirt:block') as THREE.Mesh;
+    expect(texturedMesh).toBeInstanceOf(THREE.Mesh);
+    expect((texturedMesh.material as THREE.MeshLambertMaterial).map).toBeInstanceOf(THREE.Texture);
     expect(manager.collectNearby(position, () => 2)).toBe(2);
     expect(first.stack.count).toBe(3);
     expect(manager.collectNearby(position, () => true)).toBe(3);
@@ -104,10 +108,14 @@ describe('MobManager', () => {
 
   it('spawns a lightweight skeleton arrow while attacking at range', () => {
     const world = new VoxelWorld('skeleton-arrow');
-    const manager = new MobManager(new THREE.Scene(), world, { automaticSpawning: false });
+    const scene = new THREE.Scene();
+    const manager = new MobManager(scene, world, { automaticSpawning: false });
     manager.spawn('skeleton', new THREE.Vector3(0, 72, 8), { force: true });
     manager.update(0.05, { playerPosition: new THREE.Vector3(0, 72, 0) });
     expect(manager.projectileCount).toBe(1);
+    const projectile = scene.getObjectByName('arrow-projectile') as THREE.Mesh;
+    expect(projectile).toBeInstanceOf(THREE.Mesh);
+    expect((projectile.material as THREE.MeshLambertMaterial).map).toBeInstanceOf(THREE.Texture);
     manager.dispose();
   });
 

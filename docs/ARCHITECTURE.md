@@ -23,6 +23,7 @@ flowchart TD
   Game --> UI["GameUI"]
   Game --> World["VoxelWorld + TerrainGenerator"]
   Game --> Render["WorldRenderer + ChunkMesher + TextureAtlas"]
+  Game --> Items3D["ItemVisualFactory + FirstPersonRenderer"]
   Game --> Player["PlayerController"]
   Game --> Survival["SurvivalSystem"]
   Game --> Combat["CombatSystem + PlayerArrowManager"]
@@ -142,9 +143,9 @@ Scheduled block queue ограничена, за tick обрабатываетс
 
 ## Rendering
 
-`TextureAtlas.create()` собирает нужные block textures в power-of-two canvas atlas. Содержимое tile — `32×32`, вокруг него экструдируется gutter `4 px`; UV указывают только на content. Pixel art использует nearest magnification, `NearestMipmapLinearFilter`, mipmaps, ограниченную renderer-capability anisotropy и sRGB. Это снижает shimmer и не даёт mip levels смешивать соседние tiles. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 150 whitelist-файлов в `public/textures`, включая 10 entity sheets/layers.
+`TextureAtlas.create()` собирает нужные block textures в power-of-two canvas atlas. Содержимое tile — `32×32`, вокруг него экструдируется gutter `4 px`; UV указывают только на content. Pixel art использует nearest magnification, `NearestMipmapLinearFilter`, mipmaps, ограниченную renderer-capability anisotropy и sRGB. Это снижает shimmer и не даёт mip levels смешивать соседние tiles. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 161 whitelist-файла в `public/textures`, включая entity sheets/layers, Steve arm, arrow projectile, bow stages и шесть vegetation sprites.
 
-`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; приблизительная cave light и face-direction shade также записаны в vertex color. `opaque` больше не выбирает render material.
+`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; приблизительная cave light и face-direction shade также записаны в vertex color. `opaque` больше не выбирает render material. `cross`-растения добавляют две диагональные двусторонне читаемые плоскости прямо в общий cutout buffer чанка: один plant не создаёт отдельный `Object3D` или material.
 
 `WorldRenderer` создаёт независимые material paths:
 
@@ -155,7 +156,13 @@ Scheduled block queue ограничена, за tick обрабатываетс
 
 Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; generation и meshing не совмещаются в один fixed tick, а repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry. Selection outline — отдельный line mesh.
 
-`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Сейчас lever строится из stone base и pivoted handle; torch/redstone torch — crossed planes, wire — ground quad, button — малый cuboid, pressure plate — тонкая plate. Mesher всё ещё не объединяет faces; stairs/doors/beds/containers остаются следующим geometry extension point.
+`itemRenderProfiles` — data-only слой классификации `block/generated/handheld/bow/shield`. Для `firstPersonRightHand`, `ground` и `gui` он возвращает явные position/rotation/scale presets. `ItemVisualFactory` является общим adapter поверх registry и atlas: block item получает UV-cube из шести block textures, а non-block item проходит через `GeneratedItemGeometry`. Она читает alpha mask, создаёт front/back и только граничные side strips, объединяя соседние horizontal/vertical spans вместо кубика на каждый пиксель. Геометрии, материалы и textures, включая bow pull variants, загружаются заранее и кэшируются по item/block key; во frame loop меняются только transform или ссылка на уже готовый variant mesh.
+
+`FirstPersonRenderer` владеет отдельными scene и perspective camera. После world render `Game` очищает только depth buffer и рисует руку/предмет поверх мира; renderer info сбрасывается один раз перед обоими проходами, поэтому F3 учитывает полную сцену. Textured Steve arm — UV-cuboid и показывается только при пустом main slot; при любом held item она скрыта. Frame state содержит движение, землю, sprint, mining, swing, food/bow progress и shield state. Bow выбирает standby/pulling texture по progress, замедляет игрока и плавно сужает world FOV. Каждая поза вычисляется от неизменяемого preset, а не от предыдущего кадра, что исключает накопление transform drift. Модель меняется только при смене item id или дискретной bow stage.
+
+Render camera не ждёт следующего fixed tick: `applyImmediateRenderLook()` каждый `requestAnimationFrame` применяет текущие `InputManager.yaw/pitch`. `PlayerController` по-прежнему потребляет тот же input на границе simulation tick для физики и сериализации. Такое разделение убирает ступенчатое вращение при сохранении детерминированного `20 TPS` gameplay loop.
+
+`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Сейчас lever строится из stone base и pivoted handle; torch/redstone torch — crossed planes, vegetation — batched crossed quads, wire — ground quad, button — малый cuboid, pressure plate — тонкая plate. Mesher всё ещё не объединяет cube faces; stairs/doors/beds/containers остаются следующим geometry extension point.
 
 ## Player, survival и combat
 
@@ -187,27 +194,27 @@ Orchestrator применяет mob knockback только когда возвр
 
 CombatSystem хранит attack cooldown и shield state. Melee result вычисляет strength/damage/critical/knockback, но не изменяет health цели — это делает orchestrator через MobManager/SurvivalSystem.
 
-`PlayerArrowManager` владеет ограниченным набором player arrows, выполняет sub-step movement, gravity и выбирает ближайшее block/mob intersection.
+`ArrowPhysics` задаёт общий для player и skeleton контракт в блоках на tick: launch velocity, Gaussian inaccuracy с сохранением длины вектора, `0.99` air drag, `0.6` water drag и `0.05 block/tick²` gravity. `ArrowVisualFactory` кэширует общий crossed-plane mesh из локального projectile sheet. `PlayerArrowManager` владеет ограниченным набором player arrows, за tick выполняет continuous segment raycast до ближайшего block/mob intersection, считает damage из текущей скорости и оставляет block-hit projectile в `inGround` до bounded timeout.
 
 ## Entities
 
 ### DroppedItemManager
 
-Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира.
+Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Менеджер получает тот же `ItemVisualFactory`, что и first-person renderer: настоящие item textures/atlas cubes bob-ятся и медленно вращаются, а thresholds `1/2/17/33` показывают `1/2/3/4` bounded visual copies.
 
 ### MobManager
 
-MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die.
+MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Skeleton projectiles используют те же `ArrowPhysics` и переданный Game-owned `ArrowVisualFactory`, поэтому их scale, orientation, drag, gravity, collision и cleanup не расходятся с player arrows.
 
 Вместо тяжёлого pathfinding используется direct steering плюс voxel collision/line of sight. Hostile melee сравнивает 3D distance между eye positions и требует voxel LOS. `playerTargetable: false` сохраняет player-centred spawning/despawn для Creative, но убирает игрока из hostile target selection. Events `playerDamage`, `explosion` и `drop` накапливаются и потребляются `Game`, что сохраняет границу между entity simulation и player inventory/health/world destruction.
 
 Caps зависят от coarse pointer profile. Restore может принудительно создать сохранённых мобов в пределах общего hard cap.
 
-`VoxelVisualFactory` разделяет простые colored item/projectile boxes и textured entity cuboids. `TexturedCuboidGeometry` вычисляет legacy cross-layout UV для всех шести faces из logical offset/width/height/depth; normalized UV одинаковы для 1× и 2× physical sheets. Entity materials используют nearest, sRGB, no mipmaps и alpha test.
+`VoxelVisualFactory` обслуживает projectiles и textured entity cuboids; item visuals вынесены в `ItemVisualFactory`. `TexturedCuboidGeometry` вычисляет legacy cross-layout UV для всех шести faces из logical offset/width/height/depth; normalized UV одинаковы для 1× и 2× physical sheets. Entity materials используют nearest, sRGB, no mipmaps и alpha test.
 
 `LegacyModel` является единым adapter для code-defined rigs: `16 model units = 1 block`, legacy Y направлен вниз, default ground plane равен `Y=24`. `rotationPoint` создаёт `Group pivot`, а `addBox origin` остаётся локальным центром cuboid; Euler X/Z меняют знак после отражения Y. Несколько definitions могут добавлять boxes в parts с одинаковыми именами — так base sheep и wool остаются разными слоями на общих pivots.
 
-Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отдельные legacy definitions. Sheep добавляет inflated fur layer, spider — eyes overlay. Animation всегда вычисляет `baseRotation + bounded offset`, поэтому pose не накапливает ошибку. Soft horizontal mob separation использует не более `1024` unordered pair checks за update. Physics AABB остаётся в `MobDefinition` и не зависит от visual mesh. Числовой reference и честные пометки exact/approx находятся в `MOB_MODEL_REFERENCE.md`.
+Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отдельные legacy definitions. Sheep добавляет inflated fur layer поверх более длинных base legs, чтобы шерсть не заменяла видимые ноги. Только skeleton torso материал получает `DoubleSide`, сохраняя читаемость тонкой грудной клетки; zombie outer headwear использует локальный `alphaTest=0.45`, а остальные mob materials остаются на базовом threshold/front side. Spider имеет eyes overlay. Animation всегда вычисляет `baseRotation + bounded offset`, поэтому pose не накапливает ошибку. Soft horizontal mob separation использует не более `1024` unordered pair checks за update. Physics AABB остаётся в `MobDefinition` и не зависит от visual mesh. Числовой reference и честные пометки exact/approx находятся в `MOB_MODEL_REFERENCE.md`.
 
 ## Basic redstone
 
@@ -233,7 +240,7 @@ Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation 
 
 `GameUI` строит screens/modals как DOM, а не рисует интерфейс в WebGL. Это упрощает responsive layout и debugging. Inventory UI оперирует теми же `ItemStack`/matcher APIs, что и tests.
 
-HUD получает фактический attack strength и `shieldRaised`; при активном shield отдельный first-person overlay показывает blocking state.
+HUD получает фактический attack strength. Shield blocking state уходит в `FirstPersonRenderer`, а DOM остаётся для интерфейса, не для руки или held item.
 
 `InputManager` нормализует desktop и touch в общий `MoveInput` плюс edge-triggered attack/use flags. Desktop использует pointer lock; touch создаёт joystick, look zone и action buttons.
 

@@ -80,6 +80,12 @@ const blocks = {
   oak_stairs: 'planks_oak.png',
   stone_stairs: 'stone.png',
   cobblestone_stairs: 'cobblestone.png',
+  tall_grass: 'tallgrass.png',
+  fern: 'fern.png',
+  dandelion: 'flower_dandelion.png',
+  poppy: 'flower_rose.png',
+  oxeye_daisy: 'flower_oxeye_daisy.png',
+  dead_bush: 'deadbush.png',
 };
 
 for (const color of ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black']) {
@@ -101,6 +107,7 @@ const items = {
   iron_pickaxe: 'iron_pickaxe.png', iron_axe: 'iron_axe.png', iron_shovel: 'iron_shovel.png', iron_sword: 'iron_sword.png',
   diamond_pickaxe: 'diamond_pickaxe.png', diamond_axe: 'diamond_axe.png', diamond_shovel: 'diamond_shovel.png', diamond_sword: 'diamond_sword.png',
   bow: 'bow_standby.png',
+  bow_pulling_0: 'bow_pulling_0.png', bow_pulling_1: 'bow_pulling_1.png', bow_pulling_2: 'bow_pulling_2.png',
   leather_helmet: 'leather_helmet.png', leather_chestplate: 'leather_chestplate.png', leather_leggings: 'leather_leggings.png', leather_boots: 'leather_boots.png',
   iron_helmet: 'iron_helmet.png', iron_chestplate: 'iron_chestplate.png', iron_leggings: 'iron_leggings.png', iron_boots: 'iron_boots.png',
   gold_helmet: 'gold_helmet.png', gold_chestplate: 'gold_chestplate.png', gold_leggings: 'gold_leggings.png', gold_boots: 'gold_boots.png',
@@ -118,6 +125,8 @@ const entities = {
   creeper: join('creeper', 'creeper.png'),
   spider: join('spider', 'spider.png'),
   spider_eyes: 'spider_eyes.png',
+  steve: 'steve.png',
+  arrow: join('projectiles', 'arrow.png'),
 };
 
 const copies = [];

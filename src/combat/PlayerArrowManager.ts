@@ -1,42 +1,54 @@
 import * as THREE from 'three';
+import { BlockId } from '../blocks';
 import type { MobManager } from '../entities';
+import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import type { VoxelWorld } from '../world/World';
+import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 
 interface PlayerArrow {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  visual: THREE.Mesh;
+  readonly position: THREE.Vector3;
+  readonly velocity: THREE.Vector3;
+  readonly visual: THREE.Object3D;
   age: number;
-  damage: number;
   critical: boolean;
+  inGround: boolean;
 }
+
+const FORWARD = new THREE.Vector3(0, 0, -1);
 
 export class PlayerArrowManager {
   private readonly arrows: PlayerArrow[] = [];
-  private readonly geometry = new THREE.BoxGeometry(0.06, 0.06, 0.55);
-  private readonly material = new THREE.MeshLambertMaterial({ color: 0xdac99a });
+  private readonly visuals: ArrowVisualFactory;
+  private readonly ownsVisuals: boolean;
+  private readonly random: () => number;
 
   constructor(
     private readonly scene: THREE.Object3D,
     private readonly world: VoxelWorld,
     private readonly mobs: MobManager,
-  ) {}
+    options: { readonly visualFactory?: ArrowVisualFactory; readonly random?: () => number } = {},
+  ) {
+    this.visuals = options.visualFactory ?? new ArrowVisualFactory();
+    this.ownsVisuals = options.visualFactory === undefined;
+    this.random = options.random ?? Math.random;
+  }
 
   get count(): number {
     return this.arrows.length;
   }
 
-  spawn(origin: THREE.Vector3, direction: THREE.Vector3, speedBlocksPerTick: number, damage: number, critical: boolean): void {
+  spawn(origin: THREE.Vector3, direction: THREE.Vector3, speedBlocksPerTick: number, _damage: number, critical: boolean): void {
     if (this.arrows.length >= 48) this.remove(0);
-    const velocity = direction.clone().normalize().multiplyScalar(speedBlocksPerTick * 20);
-    const visual = new THREE.Mesh(this.geometry, this.material);
+    const velocity = inaccurateArrowDirection(direction, this.random).multiplyScalar(speedBlocksPerTick);
+    const visual = this.visuals.create();
     visual.position.copy(origin);
-    visual.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), velocity.clone().normalize());
+    this.orient(visual, velocity);
     this.scene.add(visual);
-    this.arrows.push({ position: origin.clone(), velocity, visual, age: 0, damage, critical });
+    this.arrows.push({ position: origin.clone(), velocity, visual, age: 0, critical, inGround: false });
   }
 
   tick(dt: number): void {
+    const tickSteps = Math.max(1, Math.round(dt * 20));
     for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
       const arrow = this.arrows[index]!;
       arrow.age += dt;
@@ -44,19 +56,17 @@ export class PlayerArrowManager {
         this.remove(index);
         continue;
       }
-      const substeps = Math.max(1, Math.ceil(dt / 0.0125));
-      const step = dt / substeps;
+      if (arrow.inGround) continue;
       let removed = false;
-      for (let substep = 0; substep < substeps; substep += 1) {
-        arrow.velocity.y -= 5.5 * step;
-        const movement = arrow.velocity.clone().multiplyScalar(step);
+      for (let step = 0; step < tickSteps; step += 1) {
+        const movement = arrow.velocity.clone();
         const distance = movement.length();
-        if (distance <= 0) continue;
-        const direction = movement.clone().normalize();
+        if (distance <= 1e-8) continue;
+        const direction = movement.clone().multiplyScalar(1 / distance);
         const blockHit = this.world.raycast(arrow.position, direction, distance);
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
         if (mobHit && (!blockHit || mobHit.distance < blockHit.distance)) {
-          this.mobs.damage(mobHit.mob, arrow.damage, {
+          this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
             source: 'projectile',
             attackerPosition: arrow.position,
             knockback: arrow.critical ? 4.2 : 2.4,
@@ -66,22 +76,32 @@ export class PlayerArrowManager {
           break;
         }
         if (blockHit) {
-          this.remove(index);
-          removed = true;
+          arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
+          arrow.inGround = true;
+          arrow.velocity.set(0, 0, 0);
+          arrow.visual.position.copy(arrow.position);
           break;
         }
         arrow.position.add(movement);
+        const inWater = this.world.getBlock(
+          Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z),
+        ) === BlockId.Water;
+        applyArrowDragAndGravity(arrow.velocity, inWater);
       }
-      if (removed) continue;
+      if (removed || arrow.inGround) continue;
       arrow.visual.position.copy(arrow.position);
-      if (arrow.velocity.lengthSq() > 0) arrow.visual.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), arrow.velocity.clone().normalize());
+      this.orient(arrow.visual, arrow.velocity);
     }
   }
 
   dispose(): void {
     while (this.arrows.length) this.remove(this.arrows.length - 1);
-    this.geometry.dispose();
-    this.material.dispose();
+    if (this.ownsVisuals) this.visuals.dispose();
+  }
+
+  private orient(visual: THREE.Object3D, velocity: Readonly<THREE.Vector3>): void {
+    if (velocity.lengthSq() <= 1e-8) return;
+    visual.quaternion.setFromUnitVectors(FORWARD, new THREE.Vector3(velocity.x, velocity.y, velocity.z).normalize());
   }
 
   private remove(index: number): void {

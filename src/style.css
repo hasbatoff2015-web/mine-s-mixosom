@@ -617,36 +617,6 @@ button {
   transform: translate(8px, 8px);
 }
 
-#hand-item {
-  position: absolute;
-  right: clamp(4px, 9vw, 130px);
-  bottom: clamp(-24px, -2vw, -5px);
-  width: clamp(92px, 19vw, 260px);
-  height: clamp(92px, 19vw, 260px);
-  transform: rotate(-18deg);
-  transform-origin: bottom right;
-  object-fit: contain;
-  image-rendering: pixelated;
-  filter: drop-shadow(0 12px 8px rgba(0, 0, 0, 0.45));
-  transition: transform 90ms ease;
-}
-
-#hand-item.swing { transform: translate(-30px, 32px) rotate(-65deg); }
-
-#shield-overlay {
-  position: absolute;
-  left: clamp(8px, 7vw, 96px);
-  bottom: clamp(-20px, -1.5vw, -4px);
-  width: clamp(105px, 18vw, 235px);
-  height: clamp(105px, 18vw, 235px);
-  object-fit: contain;
-  image-rendering: pixelated;
-  transform: rotate(10deg);
-  transform-origin: bottom left;
-  filter: drop-shadow(0 12px 8px rgba(0, 0, 0, 0.48));
-  pointer-events: none;
-}
-
 #touch-look-zone,
 #touch-joystick,
 #touch-actions {
@@ -771,8 +741,6 @@ button {
   }
 
   #selected-item { display: none; }
-  #hand-item { width: min(22vw, 150px); height: min(22vw, 150px); right: 16vw; }
-  #shield-overlay { width: min(19vw, 125px); height: min(19vw, 125px); left: 17vw; }
 }
 
 @media (max-width: 700px) and (orientation: landscape) {
@@ -813,6 +781,4 @@ button {
   #touch-actions { bottom: 47px; grid-template-columns: repeat(3, 45px); gap: 5px; }
   #hotbar { grid-template-columns: repeat(9, 34px); }
   #status-bars { bottom: 43px; max-width: 340px; font-size: 12px; }
-  #hand-item { width: 104px; height: 104px; }
-  #shield-overlay { width: 86px; height: 86px; }
 }

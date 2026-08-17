@@ -44,7 +44,7 @@ npm run check
 npm run assets:import
 ```
 
-Команда должна завершиться отчётом о 150 выбранных runtime assets. В clean clone
+Команда должна завершиться отчётом о 161 выбранном runtime asset. В clean clone
 без локального source pack этот шаг нужно пропустить: готовый whitelist уже
 закоммичен в `public/textures`, а importer завершится до очистки output.
 
@@ -54,27 +54,30 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       12 test files, 68 tests, 68 passed
+Vitest:       15 test files, 83 tests, 83 passed
 Vite build:   PASS
-Size/archive: PASS, 0.86 MiB uncompressed, 153 files
+Size/archive: PASS, 0.90 MiB uncompressed, 164 files
 Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
-Main assets:  JS 674.39 kB / 179.47 kB gzip; CSS 13.81 kB / 4.05 kB gzip
+Main assets:  JS 693.81 kB / 184.82 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
 | --- | ---: | --- |
-| `tests/block-registry.test.ts` | 9 | Registry invariants plus independent render layers and special-shape classification |
+| `tests/block-registry.test.ts` | 10 | Registry invariants, independent render layers, special shapes и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
 | `tests/crafting.test.ts` | 8 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs, smelting/fuel data |
 | `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, shield timing/reduction, axe chance, bow curve, armor formula, survival drowning/food/death/respawn |
 | `tests/player-physics.test.ts` | 4 | Floor/wall sliding, fall damage, slab collision/step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
-| `tests/world-generation.test.ts` | 3 | Negative chunk coordinates, seed determinism, five ore vertical bands и relative rarity sanity |
+| `tests/world-generation.test.ts` | 4 | Negative chunk coordinates, seed determinism, five ore vertical bands/rarity и deterministic biome vegetation across real chunks |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
 | `tests/redstone.test.ts` | 8 | Power `0–15`, timed sources/TNT, all 24 lever attachment/facing/power geometry combinations, v2 orientation round-trip, v1 fallback и bounded propagation |
-| `tests/visual-models.test.ts` | 8 | Atlas layout, 8 descriptors/10 sheets, logical UVs, model-space conversion, sheep layers, spider constants, bounds and articulated textured rigs |
+| `tests/visual-models.test.ts` | 9 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
+| `tests/item-rendering.test.ts` | 8 | Render categories/presets, texture coverage, cube/silhouette generated geometry, cache reuse, stack-copy thresholds, empty-hand visibility и pose reset |
+| `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
+| `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -127,6 +130,36 @@ Visual parity pass дополнительно использовал три де
 - Lever: floor/wall/ceiling pairs подтвердили неподвижную base, противоположные on/off handle angles и non-cube torch/wire/button/plate;
 - после этих сцен в browser log не было runtime/WebGL warning/error, кроме служебных debug-сообщений Vite.
 
+First-person/items pass добавил dev-only `?qaItem=` harness и реальный Survival smoke:
+
+- пустая рука, apple, stone block, iron pickaxe, bow и shield визуально проверены как отдельная WebGL geometry, а не DOM-картинка;
+- drops-сцена подтвердила textured generated items, atlas-cube block item и bounded stack copies;
+- Q-drop в Survival уменьшил hotbar stack и создал тот же textured world visual;
+- F3 после world + viewmodel passes показал `180 FPS`, frame `5.56 ms`, fixed `20 TPS`, `112290` triangles и `88` calls; item cache сохранил один generated texture;
+- pointer-lock вызвал `WrongDocumentError` только при управляемом automation click в in-app browser; это ограничение среды автоматизации, не воспроизведённый runtime defect игры.
+
+Feel/polish pass повторно проверен во встроенном браузере на локальном dev server:
+
+- в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
+- `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
+- bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, позу, movement slowdown и плавный FOV zoom;
+- `?qaArrow=1` показал три real-texture arrow visuals на разных траекториях с общей physics update;
+- mob QA спереди/сзади/сбоку подтвердил длинные base sheep legs под коротким wool overlay, readable two-sided skeleton ribs и чистый zombie headwear cutout;
+- `?qaBiome=plains|forest|desert` подтвердил tall grass/цветы, fern undergrowth и dead bushes/cactus в нужных биомах; растения входят в один chunk cutout mesh, а не создают scene object на каждый блок;
+- F3 в реальном forest-мире: около `178–180 FPS`, frame `5.56 ms`, p95 `5.70 ms`, fixed `20 TPS`, tick примерно `0.94–1.16 ms`, `81/81` chunks, `137358` faces, `125852` triangles, `96` calls и `16` mobs;
+- browser automation не смог синтетически отправить pointer-lock movement через доступный locator API. Camera regression поэтому отдельно доказан unit test: изменение input между fixed ticks сразу меняет render camera; физический fast-mouse smoke на целевом устройстве остаётся обязательным.
+
+Последний CPU benchmark после vegetation/projectile pass:
+
+```text
+generation: avg 15.400 ms, p95 18.375 ms, max 22.401 ms
+meshing:    avg 18.222 ms, p95 23.071 ms, max 47.373 ms
+scan:       avg 16.728 ms, p95 21.610 ms, max 27.269 ms
+geometry:   avg  1.479 ms, p95  2.041 ms, max 19.774 ms
+mob tick:   avg  0.896 ms, p95  1.650 ms, max  2.643 ms (24 mobs)
+faces:      233331 across the benchmark world
+```
+
 Responsive pass дополнительно выполнен на всех заданных размерах:
 
 - desktop: `1920×1080`, `1366×768`, `1280×720`, `1024×768` и малое окно;
@@ -165,7 +198,7 @@ Browser viewport matrix закрывает layout baseline, но не замен
 10. melee cooldown/crit, shield front/back, bow with/without arrow;
 11. passive/hostile spawn, skeleton shot, creeper fuse/explosion, loot pickup;
 12. lever/button/plate → dust levels → primed TNT visual fuse/explosion/chain;
-13. F3 overlay, shield overlay, settings FOV/sensitivity/render distance/volume;
+13. F3 overlay, 3D shield/viewmodel, settings FOV/sensitivity/render distance/volume;
 14. pause/background/resume without hidden simulation;
 15. save/quit/reload and world/redstone state comparison.
 
@@ -268,7 +301,7 @@ Failure signs: монотонный рост scene children после pruning/l
 
 ## Production/archive validation
 
-Финальный production check после legacy-model/performance pass пройден: `56` модулей, `153` файла, `0.86 MiB` uncompressed; main JS `674.39 kB` (`179.47 kB` gzip), CSS `13.81 kB` (`4.05 kB` gzip). После каждого следующего `npm run build` повторно проверить:
+Финальный production check после feel/polish pass пройден: `63` модуля, `164` файла, `0.90 MiB` uncompressed; main JS `693.81 kB` (`184.82 kB` gzip), CSS `12.90 kB` (`3.82 kB` gzip). Dev-only item/arrow/biome QA harness symbols в `dist` отсутствуют. После каждого следующего `npm run build` повторно проверить:
 
 - `dist/index.html` существует в корне;
 - paths relative и работают при размещении не в `/`;

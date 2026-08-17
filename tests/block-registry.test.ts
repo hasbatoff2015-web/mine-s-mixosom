@@ -64,6 +64,18 @@ describe('block registry', () => {
     expect(getBlockDefinition(BlockId.OakPressurePlate).renderShape).toBe('pressure_plate');
   });
 
+  it('registers non-solid replaceable cutout cross plants', () => {
+    for (const id of [
+      BlockId.TallGrass, BlockId.Fern, BlockId.Dandelion,
+      BlockId.Poppy, BlockId.OxeyeDaisy, BlockId.DeadBush,
+    ]) {
+      expect(getBlockDefinition(id)).toMatchObject({
+        solid: false, opaque: false, occludesFaces: false,
+        renderLayer: 'cutout', renderShape: 'cross', replaceable: true,
+      });
+    }
+  });
+
   it('contains exactly the intended five ores with 1.9-style iron and gold drops', () => {
     const ores = BLOCKS.filter((block) => block.category === 'ore');
     expect(ores.map((block) => block.key).sort()).toEqual([

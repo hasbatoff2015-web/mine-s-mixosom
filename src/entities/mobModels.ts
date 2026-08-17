@@ -92,7 +92,7 @@ export const SHEEP_BASE_MODEL: LegacyModelDefinition = {
   parts: [
     modelPart('head', [0, 6, -8], [box([-3, -4, -6], [6, 6, 8], [0, 0])]),
     modelPart('body', [0, 5, 2], [box([-4, -10, -7], [8, 16, 6], [28, 8])], [Math.PI / 2, 0, 0]),
-    ...quadrupedLegParts(6, [[-3, 12, 7], [3, 12, 7], [-3, 12, -5], [3, 12, -5]]),
+    ...quadrupedLegParts(12, [[-3, 12, 7], [3, 12, 7], [-3, 12, -5], [3, 12, -5]]),
   ],
 };
 
@@ -126,7 +126,7 @@ export const ZOMBIE_MODEL: LegacyModelDefinition = {
   parts: [
     modelPart('head', [0, 0, 0], [
       box([-4, -8, -4], [8, 8, 8], [0, 0]),
-      box([-4, -8, -4], [8, 8, 8], [32, 0], { inflate: 0.5 }),
+      box([-4, -8, -4], [8, 8, 8], [32, 0], { inflate: 0.5, alphaTest: 0.45 }),
     ]),
     modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16])]),
     modelPart('rightArm', [-5, 2, 0], [box([-3, -2, -2], [4, 12, 4], [40, 16])]),
@@ -140,7 +140,7 @@ export const SKELETON_MODEL: LegacyModelDefinition = {
   texturePath: 'entity/skeleton', logicalTextureSize: [64, 32],
   parts: [
     modelPart('head', [0, 0, 0], [box([-4, -8, -4], [8, 8, 8], [0, 0])]),
-    modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16])]),
+    modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16], { doubleSided: true })]),
     modelPart('rightArm', [-5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16])]),
     modelPart('leftArm', [5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16], { mirror: true })]),
     modelPart('rightLeg', [-2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16])]),

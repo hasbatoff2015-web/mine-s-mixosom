@@ -49,6 +49,29 @@ describe('chunk coordinates and seeded generation', () => {
     expect(first.generated).toBe(true);
   });
 
+  it('places deterministic biome vegetation as real blocks', () => {
+    const vegetation = new Set<BlockId>([
+      BlockId.TallGrass, BlockId.Fern, BlockId.Dandelion,
+      BlockId.Poppy, BlockId.OxeyeDaisy, BlockId.DeadBush,
+    ]);
+    const generator = new TerrainGenerator('vegetation-determinism');
+    const first: Chunk[] = [];
+    const repeated: Chunk[] = [];
+    for (let z = -2; z <= 2; z += 1) {
+      for (let x = -2; x <= 2; x += 1) {
+        const a = new Chunk(x, z);
+        const b = new Chunk(x, z);
+        generator.generate(a);
+        generator.generate(b);
+        first.push(a);
+        repeated.push(b);
+      }
+    }
+    const count = first.reduce((sum, chunk) => sum + [...chunk.blocks].filter((block) => vegetation.has(block as BlockId)).length, 0);
+    expect(count).toBeGreaterThan(0);
+    expect(first.every((chunk, index) => chunk.blocks.every((block, blockIndex) => block === repeated[index]!.blocks[blockIndex]))).toBe(true);
+  });
+
   it('places every compact-world ore in its configured vertical band', () => {
     const bands = new Map<BlockId, readonly [number, number]>([
       [BlockId.CoalOre, [18, 46]],

@@ -7,9 +7,9 @@ import {
   type ItemStack,
 } from '../inventory';
 import { getItemDefinition } from '../items';
+import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import type { VoxelWorld } from '../world/World';
 import { moveVoxelBody } from './voxelPhysics';
-import { VoxelVisualFactory } from './voxelVisuals';
 
 const ITEM_WIDTH = 0.28;
 const ITEM_HEIGHT = 0.28;
@@ -57,6 +57,8 @@ export interface DroppedItemManagerOptions {
   readonly mergeRadius?: number;
   readonly pickupRadius?: number;
   readonly gravity?: number;
+  /** Shared with the first-person renderer in the game runtime. */
+  readonly visualFactory?: ItemVisualFactory;
   readonly onSpawn?: (entity: Readonly<DroppedItemEntity>) => void;
   readonly onPickup?: DroppedItemPickupHandler;
   readonly onRemove?: (
@@ -98,7 +100,8 @@ export class DroppedItemEntity {
 /** Lightweight, capped item-entity simulation suitable for the fixed 20 TPS game loop. */
 export class DroppedItemManager {
   private readonly itemsById = new Map<string, DroppedItemEntity>();
-  private readonly visuals = new VoxelVisualFactory();
+  private readonly visuals: ItemVisualFactory;
+  private readonly ownsVisuals: boolean;
   private readonly maxItems: number;
   private readonly defaultPickupDelay: number;
   private readonly despawnSeconds: number;
@@ -114,6 +117,8 @@ export class DroppedItemManager {
     private readonly world: VoxelWorld,
     private readonly options: DroppedItemManagerOptions = {},
   ) {
+    this.visuals = options.visualFactory ?? new ItemVisualFactory();
+    this.ownsVisuals = options.visualFactory === undefined;
     this.maxItems = Math.max(1, Math.floor(options.maxItems ?? 128));
     this.defaultPickupDelay = Math.max(0, options.pickupDelaySeconds ?? 0.6);
     this.despawnSeconds = Math.max(1, options.despawnSeconds ?? 300);
@@ -149,7 +154,7 @@ export class DroppedItemManager {
 
     if (this.itemsById.size >= this.maxItems) this.evictOldest();
     const id = this.allocateId(spawnOptions.id);
-    const visual = this.visuals.createDroppedItem(clonedStack.itemId);
+    const visual = this.visuals.createDroppedItemVisual(clonedStack.itemId, clonedStack.count);
     visual.userData.entityId = id;
     this.scene.add(visual);
     const velocity = spawnOptions.velocity ?? new THREE.Vector3();
@@ -288,7 +293,7 @@ export class DroppedItemManager {
   dispose(): void {
     if (this.disposed) return;
     this.clear();
-    this.visuals.dispose();
+    if (this.ownsVisuals) this.visuals.dispose();
     this.disposed = true;
   }
 
@@ -381,6 +386,7 @@ export class DroppedItemManager {
   }
 
   private updateCountScale(entity: DroppedItemEntity): void {
+    this.visuals.updateDroppedItemVisual(entity.visual, entity.stack.itemId, entity.stack.count);
     const maximum = getItemDefinition(entity.stack.itemId).maxStack;
     const fullness = maximum <= 1 ? 0 : entity.stack.count / maximum;
     entity.visual.scale.setScalar(0.9 + Math.min(0.22, fullness * 0.22));

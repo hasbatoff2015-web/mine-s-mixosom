@@ -10,7 +10,8 @@ export type BlockRenderShape =
   | 'wire'
   | 'lever'
   | 'button'
-  | 'pressure_plate';
+  | 'pressure_plate'
+  | 'cross';
 
 export type TranslucentMaterial = 'glass' | 'water';
 export type BlockAttachment = 'floor' | 'wall' | 'ceiling';
@@ -161,4 +162,11 @@ export enum BlockId {
   OakStairs = 123,
   StoneStairs = 124,
   CobblestoneStairs = 125,
+
+  TallGrass = 130,
+  Fern = 131,
+  Dandelion = 132,
+  Poppy = 133,
+  OxeyeDaisy = 134,
+  DeadBush = 135,
 }

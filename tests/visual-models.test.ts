@@ -80,6 +80,8 @@ describe('legacy textured mob models', () => {
       .toEqual(SHEEP_WOOL_MODEL.parts.map((part) => part.name));
     expect(SHEEP_WOOL_MODEL.parts.flatMap((part) => part.boxes).some((entry) => (entry.inflate ?? 0) > 1))
       .toBe(true);
+    expect(SHEEP_BASE_MODEL.parts.find((part) => part.name === 'leg1')?.boxes[0]?.size[1]).toBe(12);
+    expect(SHEEP_WOOL_MODEL.parts.find((part) => part.name === 'leg1')?.boxes[0]?.size[1]).toBe(6);
   });
 
   it('preserves the eight asymmetric legacy spider leg pivots and base angles', () => {
@@ -132,6 +134,17 @@ describe('legacy textured mob models', () => {
       expect(bounds.min.y, `${kind} model must not float far above its origin`).toBeLessThan(0.55);
       expect(bounds.getSize(new THREE.Vector3()).y, `${kind} model height`).toBeGreaterThan(0.4);
     }
+    visuals.dispose();
+  });
+
+  it('uses a targeted double-sided material only for the skeleton torso cutout', () => {
+    const visuals = new VoxelVisualFactory();
+    const skeleton = createMobModel(visuals, 'skeleton');
+    const zombie = createMobModel(visuals, 'zombie');
+    const skeletonBody = skeleton.parts.get('body')?.children[0] as THREE.Mesh;
+    const zombieBody = zombie.parts.get('body')?.children[0] as THREE.Mesh;
+    expect((skeletonBody.material as THREE.Material).side).toBe(THREE.DoubleSide);
+    expect((zombieBody.material as THREE.Material).side).toBe(THREE.FrontSide);
     visuals.dispose();
   });
 });

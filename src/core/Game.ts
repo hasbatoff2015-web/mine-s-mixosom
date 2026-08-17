@@ -34,6 +34,10 @@ import { Inventory, createItemStack, damageItem, type ItemStack } from '../inven
 import { ITEMS, ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { PlayerController } from '../player';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
+import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
+import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
+import { applyImmediateRenderLook } from '../rendering/cameraLook';
+import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { SaveService } from '../save/SaveService';
@@ -95,7 +99,20 @@ export class Game {
   private readonly duskSkyColor = new THREE.Color(0xd9785a);
   private readonly nightSkyColor = new THREE.Color(0x071426);
   private readonly currentSkyColor = new THREE.Color(0x7fb6d5);
+  private readonly firstPersonFrameState: FirstPersonFrameState = {
+    visible: false,
+    movementSpeed: 0,
+    onGround: false,
+    sprinting: false,
+    mining: false,
+    foodUseProgress: 0,
+    bowCharge: 0,
+    shieldRaised: false,
+  };
   private atlas?: TextureAtlas;
+  private itemVisuals?: ItemVisualFactory;
+  private arrowVisuals?: ArrowVisualFactory;
+  private firstPerson?: FirstPersonRenderer;
   private session?: GameSession;
   private settings: RuntimeSettings = {
     volume: 0.7,
@@ -125,6 +142,8 @@ export class Game {
     this.ui = new GameUI(uiRoot);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Two render passes share one frame; reset once so F3 counts world + viewmodel.
+    this.renderer.info.autoReset = false;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
     this.scene.background = this.currentSkyColor;
     this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
@@ -158,6 +177,11 @@ export class Game {
         isCoarsePointer() ? 4 : 8,
       )).then((atlas) => { this.atlas = atlas; }),
     ]);
+    this.itemVisuals = new ItemVisualFactory({ atlas: this.atlas });
+    await this.itemVisuals.preload();
+    this.arrowVisuals = new ArrowVisualFactory();
+    this.firstPerson = new FirstPersonRenderer(this.itemVisuals);
+    this.resize();
     this.showMainMenu();
     await this.yandex.loadingReady();
   }
@@ -165,6 +189,9 @@ export class Game {
   dispose(): void {
     cancelAnimationFrame(this.frameHandle);
     this.disposeSession();
+    this.firstPerson?.dispose();
+    this.itemVisuals?.dispose();
+    this.arrowVisuals?.dispose();
     this.atlas?.dispose();
     this.renderer.dispose();
     this.saves.close();
@@ -238,6 +265,10 @@ export class Game {
     this.ui.showLoading(restored ? 'Восстанавливаем чанки…' : 'Генерируем новый мир…');
     const atlas = this.atlas;
     if (!atlas) throw new Error('Texture atlas is not ready.');
+    const itemVisuals = this.itemVisuals;
+    if (!itemVisuals) throw new Error('Item visual factory is not ready.');
+    const arrowVisuals = this.arrowVisuals;
+    if (!arrowVisuals) throw new Error('Arrow visual factory is not ready.');
 
     const player = new PlayerController();
     const spawn = restored?.player.position ?? this.findSpawn(world);
@@ -290,6 +321,7 @@ export class Game {
     );
     this.scene.add(worldRenderer.group);
     const drops = new DroppedItemManager(this.scene, world, {
+      visualFactory: itemVisuals,
       onPickup: (stack) => {
         const remainder = inventory.add(stack as ItemStack);
         const accepted = stack.count - (remainder?.count ?? 0);
@@ -308,13 +340,14 @@ export class Game {
       passiveCap: isCoarsePointer() ? 10 : 16,
       hostileCap: isCoarsePointer() ? 14 : 24,
       maxProjectiles: isCoarsePointer() ? 20 : 40,
+      arrowVisualFactory: arrowVisuals,
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
     const combat = new CombatSystem({
       heldItemId: inventory.getSlot(selectedSlot)?.itemId,
       offhandItemId: inventory.offhand?.itemId,
     });
-    const arrows = new PlayerArrowManager(this.scene, world, mobs);
+    const arrows = new PlayerArrowManager(this.scene, world, mobs, { visualFactory: arrowVisuals });
 
     this.session = {
       summary,
@@ -337,6 +370,10 @@ export class Game {
       lastAutosaveTick: 0,
     };
     this.canvas.dataset.hotbar = String(this.session.selectedSlot);
+    this.firstPerson?.setHeldItems(
+      inventory.getSlot(this.session.selectedSlot)?.itemId,
+      inventory.offhand?.itemId,
+    );
     world.ensureChunks(Math.floor(player.position.x), Math.floor(player.position.z), 2);
     let rebuilt = 0;
     for (const chunk of [...world.chunks.values()]) {
@@ -521,6 +558,7 @@ export class Game {
         this.accumulator -= FIXED_DT;
       }
     } else this.accumulator = 0;
+    this.updateFirstPerson(elapsed);
     this.render(this.accumulator / FIXED_DT);
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
   }
@@ -534,6 +572,7 @@ export class Game {
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     session.combat.setOffhand(session.inventory.offhand?.itemId);
+    this.firstPerson?.setHeldItems(selected?.itemId, session.inventory.offhand?.itemId);
     const holdingShield = selected?.itemId === ItemId.Shield || session.inventory.offhand?.itemId === ItemId.Shield;
     session.combat.setUsingShield(
       this.input.using && holdingShield && session.foodUseTicks <= 0 && session.bowUseTicks <= 0,
@@ -541,7 +580,8 @@ export class Game {
     session.combat.tick(FIXED_DT);
 
     const movementBefore = this.input.movement();
-    const movementMultiplier = session.combat.movementMultiplier;
+    const drawingBow = session.bowUseTicks > 0;
+    const movementMultiplier = drawingBow ? Math.min(0.2, session.combat.movementMultiplier) : session.combat.movementMultiplier;
     const playerInput = {
       yaw: this.input.yaw,
       pitch: this.input.pitch,
@@ -549,7 +589,7 @@ export class Game {
         ...movementBefore,
         forward: movementBefore.forward * movementMultiplier,
         right: movementBefore.right * movementMultiplier,
-        sprint: movementBefore.sprint
+        sprint: !drawingBow && movementBefore.sprint
           && movementMultiplier === 1
           && (session.summary.mode === 'creative' || session.survival.hunger > 6),
       }),
@@ -670,7 +710,7 @@ export class Game {
         if (session.miningProgress >= 1) this.breakTarget();
       }
     }
-    if (attackPressed) this.ui.swingHand();
+    if (attackPressed) this.firstPerson?.swing();
     if (this.input.consumeUsePressed()) this.useTargetOrItem();
   }
 
@@ -702,7 +742,7 @@ export class Game {
     session.miningProgress = 0;
     session.miningTarget = undefined;
     this.audio.playTone(145 + (hit.block % 9) * 12, 0.045, 0.035);
-    this.ui.swingHand();
+    this.firstPerson?.swing();
 
     if (session.summary.mode === 'survival') {
       const drop = definition.drop;
@@ -744,11 +784,15 @@ export class Game {
         if (active !== undefined) {
           this.audio.playTone(active ? 480 : 260, 0.045, 0.03);
           this.ui.toast(active ? 'Рычаг включён' : 'Рычаг выключен');
+          this.firstPerson?.swing();
         }
         return;
       }
       if (hit.block === BlockId.StoneButton) {
-        if (session.redstone.pressButton(hit.x, hit.y, hit.z)) this.audio.playTone(420, 0.035, 0.025);
+        if (session.redstone.pressButton(hit.x, hit.y, hit.z)) {
+          this.audio.playTone(420, 0.035, 0.025);
+          this.firstPerson?.swing();
+        }
         return;
       }
       if (hit.block === BlockId.WhiteBed) {
@@ -772,9 +816,11 @@ export class Game {
       return;
     }
     if (!hit || !stack || item?.placesBlockId === undefined) return;
-    const x = hit.x + hit.normal.x;
-    const y = hit.y + hit.normal.y;
-    const z = hit.z + hit.normal.z;
+    const hitDefinition = getBlockDefinition(hit.block);
+    const replaceHit = hitDefinition.replaceable === true;
+    const x = replaceHit ? hit.x : hit.x + hit.normal.x;
+    const y = replaceHit ? hit.y : hit.y + hit.normal.y;
+    const z = replaceHit ? hit.z : hit.z + hit.normal.z;
     const existing = getBlockDefinition(session.world.getBlock(x, y, z));
     if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
     const placed = getBlockDefinition(item.placesBlockId);
@@ -789,6 +835,7 @@ export class Game {
         session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
       }
       this.audio.playTone(230, 0.04, 0.025);
+      this.firstPerson?.swing();
       if (session.summary.mode === 'survival') this.consumeSelected(1);
     }
   }
@@ -848,7 +895,7 @@ export class Game {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
     this.audio.playTone(charge.critical ? 760 : 540, 0.07, 0.035);
-    this.ui.swingHand();
+    this.firstPerson?.swing();
   }
 
   private processMobEvents(): void {
@@ -1056,16 +1103,49 @@ export class Game {
         .lerp(session.player.position, clamp(alpha, 0, 1));
       const eyeHeight = session.player.eyeHeight;
       this.camera.position.set(position.x, position.y + eyeHeight, position.z);
-      this.camera.rotation.set(session.player.pitch, session.player.yaw, 0, 'YXZ');
+      applyImmediateRenderLook(this.camera, this.input);
       const sprintFov = session.player.sprinting ? 7 : 0;
-      const nextFov = this.camera.fov + ((this.settings.fov + sprintFov) - this.camera.fov) * 0.12;
+      const bowZoom = session.bowUseTicks > 0
+        ? session.combat.bowCharge(session.bowUseTicks).power * 8
+        : 0;
+      const nextFov = this.camera.fov + ((this.settings.fov + sprintFov - bowZoom) - this.camera.fov) * 0.18;
       if (Math.abs(nextFov - this.camera.fov) >= 0.02) {
         this.camera.fov = nextFov;
         this.camera.updateProjectionMatrix();
       }
       this.updateEnvironment(session.world.timeOfDay);
     }
+    this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
+    this.firstPerson?.render(this.renderer);
+  }
+
+  private updateFirstPerson(deltaSeconds: number): void {
+    const viewmodel = this.firstPerson;
+    if (!viewmodel) return;
+    const session = this.session;
+    const state = this.firstPersonFrameState;
+    state.visible = session !== undefined
+      && this.lifecycle.state === 'PLAYING'
+      && !this.ui.isInventoryOpen();
+    if (session) {
+      state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
+      state.onGround = session.player.onGround;
+      state.sprinting = session.player.sprinting;
+      state.mining = this.input.mining && session.target !== undefined;
+      state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
+      state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
+      state.shieldRaised = session.combat.shieldActive;
+    } else {
+      state.movementSpeed = 0;
+      state.onGround = false;
+      state.sprinting = false;
+      state.mining = false;
+      state.foodUseProgress = 0;
+      state.bowCharge = 0;
+      state.shieldRaised = false;
+    }
+    viewmodel.update(deltaSeconds, state);
   }
 
   private updateEnvironment(time: number): void {
@@ -1102,7 +1182,8 @@ export class Game {
       const frameTiming = this.frameTimings.snapshot();
       const tickTiming = this.tickTimings.snapshot();
       const renderInfo = this.renderer.info.render;
-      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      const itemCache = this.itemVisuals?.cacheStats;
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
@@ -1112,7 +1193,6 @@ export class Game {
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
       miningProgress: session.miningProgress,
       attackStrength: session.combat.getAttackStrength(this.selectedStack()?.itemId ?? null),
-      shieldRaised: session.combat.shieldActive,
       ...(debug ? { debug } : {}),
     });
   }
@@ -1126,6 +1206,7 @@ export class Game {
     this.session.redstone.dispose();
     this.session.drops.dispose();
     this.session = undefined;
+    this.firstPerson?.setHeldItems();
     this.input.releaseActions();
   }
 
@@ -1181,5 +1262,6 @@ export class Game {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.firstPerson?.resize(width, height);
   }
 }

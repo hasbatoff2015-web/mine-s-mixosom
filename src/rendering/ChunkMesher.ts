@@ -230,8 +230,31 @@ export class ChunkMesher {
       case 'lever': return this.addLever(buffers, definition, state, world, x, y, z);
       case 'button': return this.addButton(buffers, definition, state, world, x, y, z);
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
+      case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
       case 'cube': return 0;
     }
+  }
+
+  private addCrossPlant(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const inset = 0.08;
+    this.addQuad(buffers, texture, [
+      [x + inset, y, z + inset], [x + 1 - inset, y, z + 1 - inset],
+      [x + 1 - inset, y + 0.9, z + 1 - inset], [x + inset, y + 0.9, z + inset],
+    ], [-0.707, 0, 0.707], color);
+    this.addQuad(buffers, texture, [
+      [x + 1 - inset, y, z + inset], [x + inset, y, z + 1 - inset],
+      [x + inset, y + 0.9, z + 1 - inset], [x + 1 - inset, y + 0.9, z + inset],
+    ], [0.707, 0, 0.707], color);
+    return 2;
   }
 
   private addTorch(buffers: GeometryBuffers, definition: BlockDefinition, world: VoxelWorld, x: number, y: number, z: number): number {
@@ -443,7 +466,10 @@ export class ChunkMesher {
   }
 
   private tintFor(texture: string, biome: number): readonly [number, number, number] {
-    if (!texture.includes('grass_block_top') && !texture.includes('leaves')) return WHITE_TINT;
+    if (!texture.includes('grass_block_top')
+      && !texture.includes('leaves')
+      && !texture.includes('tall_grass')
+      && !texture.includes('fern')) return WHITE_TINT;
     if (biome === 1) return FOREST_TINT;
     if (biome === 2) return DESERT_TINT;
     return PLAINS_TINT;

@@ -216,7 +216,7 @@ export class VoxelWorld {
     while (distance <= maxDistance) {
       const block = this.getBlock(x, y, z);
       const definition = getBlockDefinition(block);
-      if (block !== BlockId.Air && !definition.replaceable && !definition.liquid) return { x, y, z, block, normal: normal.clone(), distance };
+      if (block !== BlockId.Air && !definition.liquid) return { x, y, z, block, normal: normal.clone(), distance };
       if (maxX < maxY && maxX < maxZ) {
         x += stepX;
         distance = maxX;

@@ -45,7 +45,6 @@ export interface HudState {
   hunger: number;
   miningProgress: number;
   attackStrength: number;
-  shieldRaised: boolean;
   debug?: string;
 }
 
@@ -75,8 +74,6 @@ export class GameUI {
   private attack: HTMLElement;
   private debug: HTMLElement;
   private toasts: HTMLElement;
-  private hand: HTMLImageElement;
-  private shield: HTMLImageElement;
   private modal?: HTMLElement;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
@@ -90,8 +87,6 @@ export class GameUI {
   private attackTransform = '';
   private debugText = '';
   private debugVisible = false;
-  private handSource = '';
-  private shieldVisible = false;
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
 
   constructor(private readonly root: HTMLElement) {
@@ -103,8 +98,6 @@ export class GameUI {
         <div id="status-bars"><div class="hearts"></div><div class="hunger"></div></div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
-        <img id="hand-item" class="hidden" alt="" />
-        <img id="shield-overlay" class="hidden" alt="Поднятый щит" />
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>`;
@@ -117,9 +110,6 @@ export class GameUI {
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
-    this.hand = this.root.querySelector('#hand-item')!;
-    this.shield = this.root.querySelector('#shield-overlay')!;
-    this.shield.src = TextureAtlas.url('item/shield');
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -320,30 +310,9 @@ export class GameUI {
       this.debugVisible = debugVisible;
       this.debug.classList.toggle('hidden', !debugVisible);
     }
-    if (selected) {
-      const handSource = this.itemIcon(selected.itemId);
-      if (handSource !== this.handSource) {
-        this.handSource = handSource;
-        this.hand.src = handSource;
-      }
-      this.hand.classList.remove('hidden');
-    } else {
-      this.handSource = '';
-      this.hand.classList.add('hidden');
-    }
-    if (state.shieldRaised !== this.shieldVisible) {
-      this.shieldVisible = state.shieldRaised;
-      this.shield.classList.toggle('hidden', !state.shieldRaised);
-    }
   }
 
   onHotbarSelect?: (index: number) => void;
-
-  swingHand(): void {
-    this.hand.classList.remove('swing');
-    requestAnimationFrame(() => this.hand.classList.add('swing'));
-    window.setTimeout(() => this.hand.classList.remove('swing'), 120);
-  }
 
   toast(message: string, timeout = 1900): void {
     const toast = document.createElement('div');

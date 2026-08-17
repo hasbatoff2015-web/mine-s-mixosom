@@ -41,6 +41,15 @@ export function startMobQaHarness(
   scene.add(ground);
   const visuals = new VoxelVisualFactory();
   const model = createMobModel(visuals, kind);
+  if (kind === 'zombie') {
+    for (const arm of model.arms) arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) - 1.2;
+  }
+  if (kind === 'skeleton') {
+    model.arms.forEach((arm, index) => {
+      arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) - 1.15;
+      arm.rotation.y = index === 0 ? -0.12 : 0.12;
+    });
+  }
   scene.add(model.root);
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">${kind} · ${view}</div>`;
 

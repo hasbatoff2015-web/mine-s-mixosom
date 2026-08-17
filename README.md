@@ -7,17 +7,18 @@ Frontier Cubes — браузерная voxel/survival-игра от перво�
 ## Что работает
 
 - фиксированная симуляция `20 TPS`, отдельный render loop и pause/background lifecycle;
-- чанки `16×16`, высота мира `80`, процедурные plains/forest/desert, пещеры, вода, лава, деревья, кактусы и пять типов руды;
+- чанки `16×16`, высота мира `80`, процедурные plains/forest/desert, пещеры, вода, лава, деревья, кактусы, biome-specific grass/flowers/ferns/dead bushes и пять типов руды;
 - voxel AABB игрока: ходьба, sprint, sneak, прыжок, падение, step height, столкновения, вода и лава;
 - Survival и Creative, здоровье, голод, насыщение, hunger-gated sprint, броня, еда, урон среды, смерть и respawn;
-- добыча по hardness/tool/tier, прочность инструментов, drops, Q-drop, подбор и объединение предметов;
+- добыча по hardness/tool/tier, прочность инструментов, Q-drop, подбор и объединение предметов;
+- отдельный WebGL first-person pass: textured Steve arm только для пустой руки, block/generated/handheld/bow/shield модели, alpha-silhouette depth для обычных предметов, swing/walk/eat/bow/shield poses и textured dropped items со stack-копиями;
 - инвентарь на 36 ячеек, hotbar, off-hand, четыре armor slots, 2×2 и 3×3 crafting, сундук и печь с единым smelting registry, включая glass/charcoal;
-- melee cooldown/critical/knockback, щит с first-person HUD overlay, лук и стрелы как alpha-реализация механик 1.9;
+- melee cooldown/critical/knockback, 3D-поза щита, три стадии натяжения лука и общий player/skeleton projectile pipeline с 1.9-style drag/gravity;
 - basic redstone: signal `0–15`, dust attenuation, torch/lever/button/pressure plate и powered TNT с визуальным четырёхсекундным fuse;
 - восемь articulated мобов на локальных legacy UV sheets: cow, pig, chicken, sheep с fur layer, zombie, skeleton, creeper и spider с eyes overlay;
 - независимые opaque/cutout/glass/water render layers: зелёные pixels листвы depth-writing и полностью непрозрачны, alpha holes сохраняются;
 - special geometry для lever, torch/redstone torch, wire, button и pressure plate; lever поддерживает floor/wall/ceiling, on/off rotation и save/reload orientation;
-- простая AI-логика, 3D/voxel-LOS hostile attacks, Creative non-targetable mode, skeleton arrows, creeper explosions и loot;
+- простая AI-логика, 3D/voxel-LOS hostile attacks, Creative non-targetable mode, textured skeleton arrows, creeper explosions и loot;
 - day/night lighting, HUD, F3-панель, меню миров, настройки, desktop и touch controls;
 - IndexedDB-сохранения, autosave, восстановление изменённых блоков, контейнеров, dropped items, мобов, redstone sources и primed TNT;
 - базовая интеграция Yandex Games SDK с local no-op fallback.
@@ -81,7 +82,7 @@ npm run check:archive
 npm run check
 ```
 
-Финальный срез: typecheck green, `10` test files / `60` tests green, Vite преобразовал `54` модуля; production output — `0.86 MiB` и `153` файла.
+Финальный срез: typecheck green, `15` test files / `83` tests green, Vite преобразовал `63` модуля; production output — `0.90 MiB` и `164` файла.
 
 Production-файлы появляются в `dist/`. Vite использует относительный `base: './'`, sourcemaps отключены. Скрипт размера проверяет наличие корневого `index.html`, допустимые имена файлов и официальный uncompressed-лимит архива Яндекс Игр; перед загрузкой всё равно нужно пройти draft/debug-panel QA.
 
@@ -95,7 +96,7 @@ Cloud save, экспорт/импорт мира и миграции стары�
 
 - `src/core` — главный цикл, lifecycle и WebAudio;
 - `src/world` — чанки, генератор, block updates, контейнеры и сериализация изменений;
-- `src/rendering` — runtime atlas и chunk meshing;
+- `src/rendering` — runtime atlas, chunk meshing, generated-item silhouette geometry, общие item/arrow visual caches и first-person renderer;
 - `src/player`, `src/survival`, `src/combat`, `src/entities` — игровые системы;
 - `src/blocks`, `src/items`, `src/inventory`, `src/crafting` — data-first registries и правила;
 - `src/ui`, `src/input` — DOM/CSS UI и desktop/touch input;
@@ -103,7 +104,7 @@ Cloud save, экспорт/импорт мира и миграции стары�
 - `tests` — unit/component tests;
 - `docs` — состояние, архитектура, roadmap, QA и исследования.
 
-Подробнее: [архитектура](docs/ARCHITECTURE.md), [тестирование](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [числовой reference моделей мобов](docs/MOB_MODEL_REFERENCE.md), [отчёт visual parity pass](docs/reports/2026-08-16_visual-parity-pass.md) и [отчёт legacy-model/performance pass](docs/reports/2026-08-17_mob-models-performance-pass.md).
+Подробнее: [архитектура](docs/ARCHITECTURE.md), [тестирование](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [числовой reference моделей мобов](docs/MOB_MODEL_REFERENCE.md), [отчёт legacy-model/performance pass](docs/reports/2026-08-17_mob-models-performance-pass.md), [отчёт first-person/items pass](docs/reports/2026-08-17_first-person-items-pass.md) и [итоговый feel/polish pass](docs/reports/2026-08-17_first-person-arrow-vegetation-polish.md).
 
 ## Важные ограничения
 

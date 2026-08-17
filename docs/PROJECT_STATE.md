@@ -14,16 +14,16 @@
 | --- | --- | --- |
 | Boot/menu/world list | Готово | Loading screen, главное меню, создание, загрузка и удаление миров, Survival/Creative |
 | Main loop | Готово | Fixed update `20 TPS`, render interpolation, delta clamp, pause/background state |
-| Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus |
-| Rendering | Готово для alpha | Three.js, mip-safe padded runtime atlas, independent opaque/cutout/glass/water passes, budgeted chunk meshing, special block geometry, fog, biome tint |
+| Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus и biome-specific cross-plants |
+| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes, budgeted chunk meshing, special/cross geometry, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, step `0.6`, collision, fall damage, water/lava |
 | Mining/building | Готово для alpha | Raycast, break progress, hardness/tool/tier, durability, drops, placement collision guard |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor/off-hand, cursor clicks, 2×2/3×3 recipes, Creative catalog |
 | Chest/furnace/bed | Alpha approximation | 27-slot chest, three-slot furnace, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, powered TNT fuse/explosion/chain, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
-| Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, shield, bow and player arrows |
-| Entities | Готово для alpha | 8 legacy model-space articulated rigs, local UV sheets, bounded soft separation, simple AI, loot, ranged skeleton, creeper explosion |
+| Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, shield, staged bow draw and shared player/skeleton arrow physics |
+| Entities | Готово для alpha | 8 legacy model-space articulated rigs, local UV sheets, targeted zombie/skeleton/sheep fixes, bounded soft separation, simple AI, loot, ranged skeleton, creeper explosion |
 | Day/night | Alpha approximation | 24,000-tick clock, sky/light/fog transition, sun and moon meshes; no block light propagation |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone restore, memory fallback |
 | Desktop input | Готово | Pointer lock, keyboard, mouse buttons and wheel, F3 debug |
@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 68 unit/component tests in 12 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 83 unit/component tests in 15 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -44,8 +44,8 @@
 - Реализованы три биома: `plains`, `forest`, `desert`.
 - Высота поверхности варьируется примерно от `38` до `68`, sea level — `48`.
 - Есть bedrock floor, 3D-noise caves, редкая lava на глубине и veins для coal, iron, gold, redstone и diamond.
-- Terrain decor включает oak trees и cactus.
-- Реестр содержит 69 block definitions, включая air/liquids, terrain, три вида древесины, пять руд, utility/building blocks, 16 цветов wool, basic redstone и slabs/stairs.
+- Terrain decor включает oak trees, cactus и детерминированные растения: tall grass/flowers в plains, tall grass/fern/flowers в forest, dead bush в desert.
+- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone и slabs/stairs.
 - Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком.
 - Sand и gravel имеют простой scheduled gravity update; water/lava умеют ограниченно течь вниз.
 
@@ -74,7 +74,8 @@
 - 2×2 и 3×3 matcher поддерживает shaped, mirrored и shapeless recipes, tags и детерминированный consumption plan.
 - Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows/shield, tools, swords, armor, slabs/stairs и basic redstone/TNT items.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table.
-- Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore.
+- Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Block items рисуются atlas-cube, остальные используют общую generated alpha-silhouette geometry с front/back и объединёнными boundary sides; stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
+- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield` и используют раздельные transform presets. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, три bow texture stages и blocking pose подключены к фактическому runtime state.
 
 ### Alpha approximation
 
@@ -82,6 +83,7 @@
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют.
 - Печь обновляется только во время симуляции мира; открытие container UI ставит игру на паузу.
 - Нет recipe book, подсказок неизвестных рецептов и массового craft по shift-click.
+- Трансформации и анимации ориентированы на читаемость alpha и Java 1.9 display contexts, но ещё не являются точной копией vanilla JSON transforms; off-hand кроме щита требует дополнительной полировки.
 
 ## Игрок и survival
 
@@ -90,6 +92,7 @@
 - Feet-anchored AABB `0.6 × 1.8`, sneak height `1.5`, step height `0.6`.
 - Скорости walk/sprint/sneak, jump velocity и основные формулы ориентированы на reference; точные отличия перечислены в `MINECRAFT_1_9_REFERENCE.md`.
 - Collision resolver двигает по осям, поддерживает wall sliding, step-up и защиту от схода с края в sneak.
+- Render camera получает текущие yaw/pitch непосредственно из input каждый animation frame; физика и gameplay остаются на fixed `20 TPS`, поэтому mouse-look не квантуется simulation ticks.
 - Есть water/lava state, плавучесть/drag, утопление, lava/fire/cactus damage и fall damage после трёх блоков.
 - Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance.
 - Sprint в Survival доступен только при hunger выше `6`; удержание jump начисляет jump exhaustion только в tick фактического отрыва от земли.
@@ -113,15 +116,15 @@
 - CombatSystem реализует quadratic attack cooldown с `+0.5 tick`, item attack profiles, critical conditions и sprint knockback.
 - Melee target выбирается raycast по mob AABB и не проходит сквозь voxels; entity reach ограничен тремя блоками в runtime.
 - Shield активируется после 5 ticks, замедляет движение, проверяет фронтальную дугу, снижает melee damage на 66% и полностью блокирует фронтальный projectile damage в рамках alpha.
-- Bow использует 20-tick charge curve, расходует arrows в Survival, повреждает bow и создаёт projectile с gravity/block/mob collision.
+- Bow использует 20-tick charge curve, три pulling textures, плавный FOV zoom и movement slowdown, расходует arrows в Survival, повреждает bow и создаёт projectile с gravity/block/mob collision.
 - MobManager подключён к main tick и save/restore.
 - Passive: cow, pig, chicken, sheep. Hostile: zombie, skeleton, creeper, spider.
 - AI имеет idle/wander/chase/attack/hurt/die states, caps, distance spawning/despawn, line of sight и voxel collision.
 - Hostile melee использует реальную 3D-дистанцию между eye positions и voxel line of sight, поэтому не бьёт игрока на другом этаже или через стену.
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
-- Skeleton стреляет, creeper имеет fuse и radial explosion, hostile hits передаются в shield/armor/survival, смерть моба создаёт loot drops.
+- Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. Creeper имеет fuse/radial explosion, hostile hits передаются в shield/armor/survival, смерть моба создаёт loot drops.
 - Player knockback применяется только если `SurvivalSystem.damage()` реально нанёс damage; shield/armor/i-frame ignored hit не сдвигает игрока.
-- Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. Sheep имеет отдельный `sheep_fur` layer, spider — emissive-style `spider_eyes` overlay; gameplay hitboxes остаются независимыми от visuals.
+- Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie headwear получил локальный cutout threshold без смещения корректных pivots. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.
 - Generic `TexturedCuboidGeometry` строит шесть независимых UV faces из logical texture offset/size; 2× sheets нормализуются так же, как 1×. Entity sheets используют sRGB/nearest; block atlas использует mipmaps, четырёхпиксельную extrusion-зону и ограниченную anisotropy.
 
@@ -159,8 +162,8 @@
 ### Готово
 
 - DOM/CSS screens: loading, main menu, world list, create world, settings, controls, pause, death.
-- HUD: crosshair, hotbar, selected item, health/hunger, mining progress, attack meter container, hand animation, toasts и F3 debug.
-- При активном щите HUD показывает отдельный first-person shield overlay.
+- HUD: crosshair, hotbar, selected item, health/hunger, mining progress, attack meter container, toasts и F3 debug.
+- Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`.
 - Desktop pointer lock и keyboard/mouse controls.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
@@ -203,13 +206,13 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     12 files, 68 tests — PASS
-Vite build: 56 modules — PASS
-Size/archive: 0.86 MiB / 153 files — PASS
-Main JS: 674.39 kB / 179.47 kB gzip; CSS: 13.81 kB / 4.05 kB gzip
+Vitest:     15 files, 83 tests — PASS
+Vite build: 63 modules — PASS
+Size/archive: 0.90 MiB / 164 files — PASS
+Main JS: 693.81 kB / 184.82 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
-Покрыты registries, excluded item scope, stack/inventory operations, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, takeoff-only jump event, voxel player physics, placement guard, deterministic generation/ore bands/negative chunk coordinates, world modifications/containers restore, dropped items, Creative non-targetability/3D mob melee, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
+Покрыты registries, excluded item scope, stack/inventory operations, item render categories/presets/texture coverage/cache/poses/stack copies, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 
 ## За пределами текущей alpha
 

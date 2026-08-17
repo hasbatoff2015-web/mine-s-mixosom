@@ -13,7 +13,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 ### P0.1 Воспроизводимая поставка
 
 - [ ] На чистом clone выполнить `npm ci`, `npm run assets:import`, `npm run check` и `npm run check:archive`.
-- [x] Финальный локальный pipeline после legacy-model/performance pass: typecheck, 68 tests, build и size/archive green.
+- [x] Локальный pipeline после feel/polish pass: asset import `161/161`, typecheck, 83 tests, production build, size и archive green.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -111,7 +111,13 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 - [ ] Лёгкий voxel-aware pathfinding с ограниченным search budget.
 - [ ] Улучшить spawn/despawn/light rules и obstacle recovery; bounded soft separation между мобами уже реализована.
-- [ ] Добавить damage flash, hit particles, расширенный bow feedback и собственные SFX; first-person shield HUD уже подключён.
+- [x] Подключить базовые first-person arm/item poses для swing/mining, walk, еды, bow charge и shield block.
+- [x] Убрать 20 TPS quantization из render camera, разделив live input look и fixed simulation state.
+- [x] Добавить cached alpha-silhouette depth geometry для generated held/dropped items и три стадии bow texture.
+- [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
+- [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
+- [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.
+- [ ] Довести off-hand, все item categories и transforms до более точного vanilla parity без потери общего cache pipeline.
 - [ ] Выверить projectile sweep и explosion exposure без дорогой полной физики.
 - [ ] Расширить поведение существ: spider climbing, passive flee, burning drops, sheep shearing — только после core stability.
 - [ ] Интеграционные combat scenarios: melee cooldown, crit, shield front/back, skeleton projectile, creeper chain damage.
@@ -156,6 +162,6 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 | New-world time to control | измерить desktop/mobile | progressive generation без длинного freeze |
 | Runtime JS errors | `0` в smoke/soak | `0` в release regression |
 | Save round-trip loss | `0` для schema 1 fields | migrations + backup |
-| Unit/component tests | текущие 68 + P0 browser/storage integration coverage | regression grows with features |
+| Unit/component tests | текущие 83 + P0 browser/storage integration coverage | regression grows with features |
 | Production archive | значительно ниже 20 MiB target | budget per asset/system |
 | Asset provenance | 100% production manifest | автоматическая проверка manifest |

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition } from '../blocks';
+import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
 import { createItemStack, type ItemStack } from '../inventory';
+import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import type { VoxelWorld } from '../world/World';
 import {
   MOB_DEFINITIONS,
@@ -95,6 +97,7 @@ export interface MobManagerOptions {
   readonly minimumSpawnDistance?: number;
   readonly maximumSpawnDistance?: number;
   readonly random?: () => number;
+  readonly arrowVisualFactory?: ArrowVisualFactory;
   readonly onSpawn?: (mob: Readonly<MobEntity>) => void;
   readonly onRemove?: (mob: Readonly<MobEntity>, reason: MobRemovalReason) => void;
   readonly onDrop?: (drop: MobDrop) => void;
@@ -129,6 +132,7 @@ interface MobProjectile {
   readonly velocity: THREE.Vector3;
   ageSeconds: number;
   damage: number;
+  inGround: boolean;
 }
 
 export class MobEntity {
@@ -192,6 +196,8 @@ export class MobManager {
   private readonly mobsById = new Map<string, MobEntity>();
   private readonly projectiles = new Map<string, MobProjectile>();
   private readonly visuals = new VoxelVisualFactory();
+  private readonly arrowVisuals: ArrowVisualFactory;
+  private readonly ownsArrowVisuals: boolean;
   private readonly pendingDrops: MobDrop[] = [];
   private readonly pendingPlayerDamage: MobPlayerDamageEvent[] = [];
   private readonly pendingExplosions: MobExplosionEvent[] = [];
@@ -226,6 +232,8 @@ export class MobManager {
       options.maximumSpawnDistance ?? 34,
     );
     this.random = options.random ?? Math.random;
+    this.arrowVisuals = options.arrowVisualFactory ?? new ArrowVisualFactory();
+    this.ownsArrowVisuals = options.arrowVisualFactory === undefined;
   }
 
   get count(): number {
@@ -554,6 +562,7 @@ export class MobManager {
     if (this.disposed) return;
     this.clear();
     this.visuals.dispose();
+    if (this.ownsArrowVisuals) this.arrowVisuals.dispose();
     this.disposed = true;
   }
 
@@ -914,14 +923,14 @@ export class MobManager {
     this.projectileIdCounter += 1;
     const id = `projectile-${this.projectileIdCounter}`;
     const position = owner.eyePosition;
-    const velocity = new THREE.Vector3().subVectors(target, position);
-    const distance = velocity.length();
+    const aim = new THREE.Vector3().subVectors(target, position);
+    const distance = aim.length();
     if (distance <= 1e-6) return;
-    velocity.y += distance * 0.035;
-    velocity.normalize().multiplyScalar(11);
-    const visual = new THREE.Group();
-    this.visuals.addBox(visual, [0.06, 0.06, 0.55], [0, 0, 0], 0x7c684a);
+    aim.y += distance * 0.025;
+    const velocity = inaccurateArrowDirection(aim, this.random, 0.028).multiplyScalar(1.6);
+    const visual = this.arrowVisuals.create();
     visual.position.copy(position);
+    visual.quaternion.setFromUnitVectors(PROJECTILE_FORWARD, velocity.clone().normalize());
     this.scene.add(visual);
     const projectile: MobProjectile = {
       id,
@@ -932,6 +941,7 @@ export class MobManager {
       velocity,
       ageSeconds: 0,
       damage: owner.definition.attackDamage,
+      inGround: false,
     };
     this.projectiles.set(id, projectile);
     const event: MobProjectileSpawnEvent = {
@@ -955,18 +965,25 @@ export class MobManager {
         this.removeProjectile(projectile.id);
         continue;
       }
+      if (projectile.inGround) continue;
       const previous = projectile.position.clone();
-      projectile.velocity.y -= 5.5 * delta;
-      const movement = projectile.velocity.clone().multiplyScalar(delta);
+      const movement = projectile.velocity.clone();
       const distance = movement.length();
       const blockHit = distance > 0
-        ? this.world.raycast(previous, movement, distance)
+        ? this.world.raycast(previous, movement.clone().normalize(), distance)
         : undefined;
       if (blockHit) {
-        this.removeProjectile(projectile.id);
+        projectile.position.addScaledVector(movement.clone().normalize(), Math.max(0, blockHit.distance - 0.035));
+        projectile.visual.position.copy(projectile.position);
+        projectile.velocity.set(0, 0, 0);
+        projectile.inGround = true;
         continue;
       }
       projectile.position.add(movement);
+      const inWater = this.world.getBlock(
+        Math.floor(projectile.position.x), Math.floor(projectile.position.y), Math.floor(projectile.position.z),
+      ) === BlockId.Water;
+      applyArrowDragAndGravity(projectile.velocity, inWater);
       projectile.visual.position.copy(projectile.position);
       if (projectile.velocity.lengthSq() > 0) {
         projectile.visual.quaternion.setFromUnitVectors(
@@ -976,11 +993,12 @@ export class MobManager {
       }
       if (playerPosition && this.projectileHitsPlayer(previous, projectile.position, playerPosition)) {
         const source = this.mobsById.get(projectile.ownerId);
-        if (source) this.emitPlayerDamage(source, playerPosition, projectile.damage, 'arrow', context);
+        const damage = Math.max(projectile.damage, arrowDamageFromVelocity(projectile.velocity));
+        if (source) this.emitPlayerDamage(source, playerPosition, damage, 'arrow', context);
         else {
           const knockback = projectile.velocity.clone().setY(0).normalize().multiplyScalar(2.4);
           const event: MobPlayerDamageEvent = {
-            amount: projectile.damage,
+            amount: damage,
             source: 'arrow',
             mobId: projectile.ownerId,
             mobKind: projectile.ownerKind,
