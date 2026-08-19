@@ -15,23 +15,23 @@
 | Boot/menu/world list | Готово | Loading screen, главное меню, создание, загрузка и удаление миров, Survival/Creative |
 | Main loop | Готово | Fixed update `20 TPS`, render interpolation, delta clamp, pause/background state |
 | Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus и biome-specific cross-plants |
-| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes, budgeted chunk meshing, special/cross geometry, shared item/arrow visuals и отдельный first-person pass |
+| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, step `0.6`, collision, fall damage, water/lava |
 | Mining/building | Готово для alpha | Raycast, 1.9 harvest formula, hardness/tool/tier, durability, drops, thin door/torch/button placement |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor/off-hand, cursor clicks, 2×2/3×3 recipes, Creative catalog |
 | Chest/furnace/bed | Alpha approximation | 27-slot chest, three-slot furnace, spawn point and simple night skip |
-| Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT, save/restore |
+| Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
 | Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, shield, staged bow draw and shared player/skeleton arrow physics |
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI |
-| Day/night | Alpha approximation | 24,000-tick clock, stronger directional sun, compact per-chunk sky/block light baked into vertex colors |
+| Day/night | Alpha approximation | 24,000-tick clock, stronger directional sun, compact per-chunk sky/block light baked into vertex colors; cross-plants use a vegetation lighting profile so they match grass instead of silhouetting |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
 | Desktop input | Готово | Pointer lock, WASD, Shift sprint, C sneak, mouse, F3 debug |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 95 unit/component tests in 17 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 108 unit/component tests in 19 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -45,7 +45,7 @@
 - Высота поверхности варьируется примерно от `38` до `68`, sea level — `48`.
 - Есть bedrock floor, 3D-noise caves, редкая lava на глубине и veins для coal, iron, gold, redstone и diamond.
 - Terrain decor включает oak trees, cactus и детерминированные растения: tall grass/flowers в plains, tall grass/fern/flowers в forest, dead bush в desert.
-- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone и slabs/stairs.
+- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone и slabs/stairs. Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint.
 - Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком.
 - Chunk дополнительно хранит компактные `Uint8Array` skyLight/blockLight (`0–15`) того же размера, что и blocks.
 - Sand и gravel при потере опоры удаляются из сетки и становятся falling-block entity с gravity/mesh, затем возвращаются в world.
@@ -57,7 +57,7 @@
 - Нет worker generation/meshing, LOD, occlusion system и полноценного frustum-aware scheduler. Main-thread generation и meshing не запускаются в один fixed tick; rebuild ограничен числом jobs и бюджетом времени.
 - Sky/block light — bounded column+spread/flood approximation, не vanilla light engine: нет dedicated sky-light time remesh, нет RGB colored lights и нет quasi-connectivity.
 - «Освещение пещер» больше не высотный fake: occluding blocks гасят sky light, torch/lava дают локальный block light в vertex colors.
-- Render classification независима от face occlusion/light semantics: opaque, alpha-tested cutout, glass translucent и water translucent имеют отдельные geometry/material paths. Leaves используют `alphaTest=0.42`, `transparent=false`, `depthWrite=true` и сохраняют biome RGB tint.
+- Render classification независима от face occlusion/light semantics: opaque, alpha-tested cutout, vegetation cutout, glass translucent и water translucent имеют отдельные geometry/material paths. Leaves используют `alphaTest=0.42`, `transparent=false`, `depthWrite=true`, `DoubleSide` и сохраняют biome RGB tint. Cross-plants (`lightingMode: vegetation`) пишутся отдельным batched mesh с `FrontSide` и lighting normals `(0,1,0)`.
 - Water и glass разделены по opacity/render order, однако отдельные translucent faces внутри pass всё ещё не сортируются по глубине.
 - Slab имеет half-height collision, но chunk renderer пока рисует обычный cube. Stairs физически остаются full cube.
 - Lever, torch/redstone torch, wire, button, pressure plate и oak door больше не рисуются full cubes. Torch ставится на пол и стену; button — на пол, стену и потолок. Ladder, bed, stairs/slabs и containers всё ещё не имеют полного набора specialized visual states/meshes.
@@ -148,7 +148,7 @@
 - Dust переносит мощность `15 → 0` по шести соседям с затуханием на единицу за wire cell.
 - Redstone torch является постоянным source; lever переключается use action; stone button даёт timed pulse; oak pressure plate реагирует на игрока, мобов и dropped items.
 - Powered TNT превращается в отдельную visual primed entity с gravity/voxel collision, исчезает как block и взрывается после `4 s`.
-- TNT explosion использует общий radial damage/block destruction pipeline. Разрушенный взрывом TNT получает короткий случайный fuse, поэтому возможна chain reaction.
+- TNT explosion использует общий radial pipeline, но apply идёт batch: один lighting pass на slice, chain TNT без повторного `setBlock`. Mass TNT стоит в `ExplosionQueue` с time/job/voxel budget.
 - Active sources, остаток button pulse и primed TNT с оставшимся fuse сохраняются/восстанавливаются. Redstone state v2 также хранит lever attachment/facing; v1 получает fallback `floor/north`. Derived wire power не хранится и пересчитывается после restore.
 - Lever состоит из stone base и отдельной handle с pivot/rotation; placement поддерживает floor/wall/ceiling и четыре wall facings. Powered change инвалидирует chunk mesh.
 - Torch/redstone torch используют crossed planes с wall tilt, dust — ground quad с power tint, button — малый выступ на любой стороне, pressure plate — тонкую горизонтальную plate.
@@ -209,10 +209,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     17 files, 95 tests — PASS
-Vite build: 68 modules — PASS
-Size/archive: 0.91 MiB / 165 files — PASS
-Main JS: 708.13 kB / 189.02 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Vitest:     19 files, 108 tests — PASS
+Vite build: 70 modules — PASS
+Size/archive: 0.92 MiB / 165 files — PASS
+Main JS: 713.58 kB / 190.94 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render categories/presets/texture coverage/cache/poses/stack copies, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

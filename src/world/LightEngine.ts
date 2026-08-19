@@ -11,6 +11,25 @@ const NEIGHBOURS = [
 
 const MAX_PROPAGATION_NODES = 8_192;
 
+export interface LightRegion {
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+}
+
+export const lightEngineStats = {
+  skyRecomputes: 0,
+  blockPropagations: 0,
+};
+
+export function resetLightEngineStats(): void {
+  lightEngineStats.skyRecomputes = 0;
+  lightEngineStats.blockPropagations = 0;
+}
+
 function loadedChunk(world: VoxelWorld, x: number, z: number): Chunk | undefined {
   return world.chunks.get(chunkKey(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE)));
 }
@@ -54,6 +73,7 @@ export function ensureChunkSky(world: VoxelWorld, chunk: Chunk): void {
 }
 
 export function recomputeChunkSky(world: VoxelWorld, chunk: Chunk): void {
+  lightEngineStats.skyRecomputes += 1;
   chunk.skyReady = true;
   for (let z = 0; z < CHUNK_SIZE; z += 1) {
     for (let x = 0; x < CHUNK_SIZE; x += 1) {
@@ -110,12 +130,25 @@ function sampleSky(world: VoxelWorld, x: number, y: number, z: number): number {
 }
 
 export function relightAround(world: VoxelWorld, x: number, y: number, z: number, radius = 14, recomputeSky = true): void {
-  const minX = x - radius;
-  const maxX = x + radius;
-  const minY = Math.max(0, y - radius);
-  const maxY = Math.min(WORLD_HEIGHT - 1, y + radius);
-  const minZ = z - radius;
-  const maxZ = z + radius;
+  relightRegion(world, {
+    minX: x - radius,
+    minY: y - radius,
+    minZ: z - radius,
+    maxX: x + radius,
+    maxY: y + radius,
+    maxZ: z + radius,
+  }, recomputeSky);
+}
+
+/** Relights a bounding region once: each loaded chunk sky at most one recompute. */
+export function relightRegion(world: VoxelWorld, region: LightRegion, recomputeSky = true): void {
+  const minX = Math.floor(region.minX);
+  const maxX = Math.floor(region.maxX);
+  const minY = Math.max(0, Math.floor(region.minY));
+  const maxY = Math.min(WORLD_HEIGHT - 1, Math.floor(region.maxY));
+  const minZ = Math.floor(region.minZ);
+  const maxZ = Math.floor(region.maxZ);
+  if (maxY < minY) return;
 
   if (recomputeSky) {
     const minChunkX = floorDiv(minX, CHUNK_SIZE);
@@ -132,6 +165,7 @@ export function relightAround(world: VoxelWorld, x: number, y: number, z: number
     }
   }
   propagateBlockLight(world, minX, minY, minZ, maxX, maxY, maxZ);
+  lightEngineStats.blockPropagations += 1;
 }
 
 export function seedChunkBlockLight(world: VoxelWorld, chunk: Chunk): void {

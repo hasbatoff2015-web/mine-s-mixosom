@@ -17,6 +17,7 @@ const atlasStub = {
 function disposeMeshed(result: ReturnType<ChunkMesher['build']>): void {
   result.opaque.dispose();
   result.cutout.dispose();
+  result.vegetation.dispose();
   result.translucent.dispose();
   result.water.dispose();
 }

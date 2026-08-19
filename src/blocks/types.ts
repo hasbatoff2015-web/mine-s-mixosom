@@ -4,6 +4,12 @@ export type ToolTier = 'hand' | 'wood' | 'stone' | 'iron' | 'diamond';
 
 export type BlockRenderLayer = 'opaque' | 'cutout' | 'translucent';
 
+/** How Lambert/scene lights should treat this block's mesh normals. */
+export type BlockLightingMode = 'standard' | 'vegetation';
+
+/** Optional biome grass-color multiply, independent of texture-name heuristics. */
+export type BlockBiomeTint = 'grass';
+
 export type BlockRenderShape =
   | 'cube'
   | 'torch'
@@ -74,6 +80,8 @@ export interface BlockDefinition {
   readonly occludesFaces: boolean;
   readonly renderLayer: BlockRenderLayer;
   readonly renderShape: BlockRenderShape;
+  readonly lightingMode?: BlockLightingMode;
+  readonly biomeTint?: BlockBiomeTint;
   readonly translucentMaterial?: TranslucentMaterial;
   readonly tool?: ToolType;
   readonly tier?: ToolTier;
@@ -89,6 +97,12 @@ export interface BlockDefinition {
   readonly redstonePower?: number;
   /** Damage dealt by contact; consumed by the survival/collision system. */
   readonly contactDamage?: number;
+}
+
+export function blockLightingMode(
+  definition: Pick<BlockDefinition, 'lightingMode' | 'renderShape'>,
+): BlockLightingMode {
+  return definition.lightingMode ?? (definition.renderShape === 'cross' ? 'vegetation' : 'standard');
 }
 
 /** Stable numeric IDs intended for compact chunk storage and network saves. */

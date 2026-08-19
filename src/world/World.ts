@@ -11,8 +11,9 @@ import {
   ensureChunkSky,
   getBlockLight,
   getSkyLight,
-  relightAround,
+  relightRegion,
   seedChunkBlockLight,
+  lightEngineStats,
 } from './LightEngine';
 
 export interface VoxelHit {
@@ -29,6 +30,27 @@ export interface FallingBlockSpawn {
   y: number;
   z: number;
   block: BlockId;
+}
+
+export interface BlockMutation {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly block: BlockId;
+}
+
+export interface BlockBatchOptions {
+  readonly record?: boolean;
+  readonly updateLighting?: boolean;
+  readonly scheduleNeighbors?: boolean;
+}
+
+export interface BlockBatchStats {
+  readonly applied: number;
+  readonly chunksDirtied: number;
+  readonly skyRecomputes: number;
+  readonly mutationMs: number;
+  readonly relightMs: number;
 }
 
 export interface ChestState {
@@ -62,6 +84,7 @@ export class VoxelWorld {
   generationTotalMs = 0;
   generationMaximumMs = 0;
   private readonly scheduled: ScheduledBlockTick[] = [];
+  private readonly scheduledKeys = new Set<string>();
   private readonly pendingFalls: FallingBlockSpawn[] = [];
 
   constructor(readonly seed: string) {
@@ -149,14 +172,104 @@ export class VoxelWorld {
   }
 
   setBlock(x: number, y: number, z: number, block: BlockId, record = true): boolean {
-    if (y < 0 || y >= WORLD_HEIGHT) return false;
+    const result = this.applyBlockBatch([{ x, y, z, block }], {
+      record,
+      updateLighting: true,
+      scheduleNeighbors: true,
+    });
+    return result.applied > 0;
+  }
+
+  /**
+   * Applies many voxel writes as one logical operation: one dirty per chunk,
+   * one sky recompute per affected chunk, one block-light pass for the union region.
+   */
+  applyBlockBatch(mutations: readonly BlockMutation[], options: BlockBatchOptions = {}): BlockBatchStats {
+    const record = options.record !== false;
+    const updateLighting = options.updateLighting !== false;
+    const scheduleNeighbors = options.scheduleNeighbors !== false;
+    const mutationStart = performance.now();
+    const dirtyChunks = new Set<string>();
+    let applied = 0;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    let occlusionChanged = false;
+    let emissionChanged = false;
+    let lightRadius = 8;
+
+    const unique = new Map<string, BlockMutation>();
+    for (const mutation of mutations) {
+      unique.set(blockKey(mutation.x, mutation.y, mutation.z), mutation);
+    }
+
+    for (const mutation of unique.values()) {
+      const wrote = this.writeBlockRaw(mutation.x, mutation.y, mutation.z, mutation.block, record, dirtyChunks);
+      if (!wrote) continue;
+      applied += 1;
+      minX = Math.min(minX, mutation.x);
+      minY = Math.min(minY, mutation.y);
+      minZ = Math.min(minZ, mutation.z);
+      maxX = Math.max(maxX, mutation.x);
+      maxY = Math.max(maxY, mutation.y);
+      maxZ = Math.max(maxZ, mutation.z);
+      if (wrote.occlusionChanged) occlusionChanged = true;
+      if (wrote.emissionChanged) emissionChanged = true;
+      lightRadius = Math.max(lightRadius, wrote.lightRadius);
+      if (scheduleNeighbors) {
+        this.schedule(mutation.x, mutation.y, mutation.z, 1);
+        this.schedule(mutation.x, mutation.y + 1, mutation.z, 1);
+      }
+    }
+
+    const mutationMs = performance.now() - mutationStart;
+    let relightMs = 0;
+    const skyBefore = this.skyRecomputeSnapshot();
+    if (applied > 0 && updateLighting && (occlusionChanged || emissionChanged)) {
+      const relightStart = performance.now();
+      relightRegion(this, {
+        minX: minX - lightRadius,
+        minY: minY - lightRadius,
+        minZ: minZ - lightRadius,
+        maxX: maxX + lightRadius,
+        maxY: maxY + lightRadius,
+        maxZ: maxZ + lightRadius,
+      }, occlusionChanged);
+      relightMs = performance.now() - relightStart;
+    }
+
+    return {
+      applied,
+      chunksDirtied: dirtyChunks.size,
+      skyRecomputes: lightEngineStats.skyRecomputes - skyBefore,
+      mutationMs,
+      relightMs,
+    };
+  }
+
+  private skyRecomputeSnapshot(): number {
+    return lightEngineStats.skyRecomputes;
+  }
+
+  private writeBlockRaw(
+    x: number,
+    y: number,
+    z: number,
+    block: BlockId,
+    record: boolean,
+    dirtyChunks: Set<string>,
+  ): { occlusionChanged: boolean; emissionChanged: boolean; lightRadius: number } | undefined {
+    if (y < 0 || y >= WORLD_HEIGHT) return undefined;
     const chunkX = floorDiv(x, CHUNK_SIZE);
     const chunkZ = floorDiv(z, CHUNK_SIZE);
     const localX = positiveMod(x, CHUNK_SIZE);
     const localZ = positiveMod(z, CHUNK_SIZE);
     const chunk = this.getChunk(chunkX, chunkZ)!;
     const previous = chunk.get(localX, y, localZ) as BlockId;
-    if (previous === block) return false;
+    if (previous === block) return undefined;
     const previousDefinition = getBlockDefinition(previous);
     chunk.set(localX, y, localZ, block);
     if (block === BlockId.Air) this.blockStates.delete(blockKey(x, y, z));
@@ -169,36 +282,28 @@ export class VoxelWorld {
       }
       delta.set(Chunk.index(localX, y, localZ), block);
     }
-    if (localX === 0) {
-      const neighbor = this.getChunk(chunkX - 1, chunkZ, false);
-      if (neighbor) neighbor.dirty = true;
-    }
-    if (localX === CHUNK_SIZE - 1) {
-      const neighbor = this.getChunk(chunkX + 1, chunkZ, false);
-      if (neighbor) neighbor.dirty = true;
-    }
-    if (localZ === 0) {
-      const neighbor = this.getChunk(chunkX, chunkZ - 1, false);
-      if (neighbor) neighbor.dirty = true;
-    }
-    if (localZ === CHUNK_SIZE - 1) {
-      const neighbor = this.getChunk(chunkX, chunkZ + 1, false);
-      if (neighbor) neighbor.dirty = true;
-    }
-    this.schedule(x, y, z, 1);
-    this.schedule(x, y + 1, z, 1);
+    chunk.dirty = true;
+    dirtyChunks.add(chunkKey(chunkX, chunkZ));
+    if (localX === 0) this.dirtyNeighbor(chunkX - 1, chunkZ, dirtyChunks);
+    if (localX === CHUNK_SIZE - 1) this.dirtyNeighbor(chunkX + 1, chunkZ, dirtyChunks);
+    if (localZ === 0) this.dirtyNeighbor(chunkX, chunkZ - 1, dirtyChunks);
+    if (localZ === CHUNK_SIZE - 1) this.dirtyNeighbor(chunkX, chunkZ + 1, dirtyChunks);
     const nextDefinition = getBlockDefinition(block);
     const occlusionChanged = previousDefinition.occludesFaces !== nextDefinition.occludesFaces;
     const emissionChanged = (previousDefinition.emission ?? 0) !== (nextDefinition.emission ?? 0);
-    const lightRadius = Math.max(
+    const lightRadius = Math.min(15, Math.max(
       previousDefinition.emission ?? 0,
       nextDefinition.emission ?? 0,
       occlusionChanged ? 8 : 0,
-    );
-    if (emissionChanged || occlusionChanged) {
-      relightAround(this, x, y, z, Math.min(15, Math.max(8, lightRadius)), occlusionChanged);
-    }
-    return true;
+    ));
+    return { occlusionChanged, emissionChanged, lightRadius };
+  }
+
+  private dirtyNeighbor(chunkX: number, chunkZ: number, dirtyChunks: Set<string>): void {
+    const neighbor = this.getChunk(chunkX, chunkZ, false);
+    if (!neighbor) return;
+    neighbor.dirty = true;
+    dirtyChunks.add(chunkKey(chunkX, chunkZ));
   }
 
   /** Invalidates geometry when runtime visual state changes without changing BlockId. */
@@ -338,8 +443,10 @@ export class VoxelWorld {
 
   private schedule(x: number, y: number, z: number, delay: number): void {
     if (y < 0 || y >= WORLD_HEIGHT) return;
+    const key = blockKey(x, y, z);
+    if (this.scheduledKeys.has(key) || this.scheduled.length >= 4096) return;
+    this.scheduledKeys.add(key);
     this.scheduled.push({ x, y, z, due: this.tickNumber + delay });
-    if (this.scheduled.length > 4096) this.scheduled.splice(0, this.scheduled.length - 4096);
   }
 
   private processScheduledTicks(): void {
@@ -351,6 +458,7 @@ export class VoxelWorld {
         continue;
       }
       this.scheduled.splice(index, 1);
+      this.scheduledKeys.delete(blockKey(scheduled.x, scheduled.y, scheduled.z));
       processed += 1;
       const block = this.getBlock(scheduled.x, scheduled.y, scheduled.z);
       const definition = getBlockDefinition(block);

@@ -71,9 +71,16 @@ describe('block registry', () => {
     ]) {
       expect(getBlockDefinition(id)).toMatchObject({
         solid: false, opaque: false, occludesFaces: false,
-        renderLayer: 'cutout', renderShape: 'cross', replaceable: true,
+        renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+        replaceable: true,
       });
     }
+    expect(getBlockDefinition(BlockId.TallGrass).biomeTint).toBe('grass');
+    expect(getBlockDefinition(BlockId.Fern).biomeTint).toBe('grass');
+    expect(getBlockDefinition(BlockId.Dandelion).biomeTint).toBeUndefined();
+    expect(getBlockDefinition(BlockId.Poppy).biomeTint).toBeUndefined();
+    expect(getBlockDefinition(BlockId.OxeyeDaisy).biomeTint).toBeUndefined();
+    expect(getBlockDefinition(BlockId.DeadBush).biomeTint).toBeUndefined();
   });
 
   it('contains exactly the intended five ores with 1.9-style iron and gold drops', () => {

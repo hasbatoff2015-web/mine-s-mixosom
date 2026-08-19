@@ -17,6 +17,7 @@ export class WorldRenderer {
   private readonly mesher: ChunkMesher;
   private readonly opaqueMaterial: THREE.MeshLambertMaterial;
   private readonly cutoutMaterial: THREE.MeshLambertMaterial;
+  private readonly vegetationMaterial: THREE.MeshLambertMaterial;
   private readonly glassMaterial: THREE.MeshLambertMaterial;
   private readonly waterMaterial: THREE.MeshLambertMaterial;
   meshSamples = 0;
@@ -39,6 +40,15 @@ export class WorldRenderer {
       depthWrite: true,
       depthTest: true,
       side: THREE.DoubleSide,
+    });
+    this.vegetationMaterial = new THREE.MeshLambertMaterial({
+      map: atlas.texture,
+      vertexColors: true,
+      alphaTest: 0.42,
+      transparent: false,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.FrontSide,
     });
     this.glassMaterial = new THREE.MeshLambertMaterial({
       map: atlas.texture,
@@ -63,6 +73,14 @@ export class WorldRenderer {
     this.selection.visible = false;
     this.selection.renderOrder = 10;
     this.group.add(this.selection);
+  }
+
+  get cutoutSide(): THREE.Side {
+    return this.cutoutMaterial.side;
+  }
+
+  get vegetationSide(): THREE.Side {
+    return this.vegetationMaterial.side;
   }
 
   rebuildDirty(maxChunks = 2, timeBudgetMs = 7): number {
@@ -91,6 +109,11 @@ export class WorldRenderer {
       mesh.renderOrder = 1;
       group.add(mesh);
     } else meshed.cutout.dispose();
+    if (meshed.vegetation.getAttribute('position').count > 0) {
+      const mesh = new THREE.Mesh(meshed.vegetation, this.vegetationMaterial);
+      mesh.renderOrder = 1;
+      group.add(mesh);
+    } else meshed.vegetation.dispose();
     if (meshed.translucent.getAttribute('position').count > 0) {
       const mesh = new THREE.Mesh(meshed.translucent, this.glassMaterial);
       mesh.renderOrder = 2;
@@ -139,6 +162,7 @@ export class WorldRenderer {
     (this.selection.material as THREE.Material).dispose();
     this.opaqueMaterial.dispose();
     this.cutoutMaterial.dispose();
+    this.vegetationMaterial.dispose();
     this.glassMaterial.dispose();
     this.waterMaterial.dispose();
   }

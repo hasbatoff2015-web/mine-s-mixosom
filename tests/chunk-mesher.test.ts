@@ -19,6 +19,7 @@ describe('ChunkMesher hot path', () => {
     expect(meshed.opaque.getAttribute('position').count).toBeGreaterThan(0);
     meshed.opaque.dispose();
     meshed.cutout.dispose();
+    meshed.vegetation.dispose();
     meshed.translucent.dispose();
     meshed.water.dispose();
   });

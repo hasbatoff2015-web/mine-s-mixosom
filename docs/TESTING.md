@@ -50,13 +50,13 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-17**:
+Срез локального запуска **2026-08-19**:
 
 ```text
 tsc --noEmit: PASS
-Vitest:       17 test files, 95 tests, 95 passed
+Vitest:       19 test files, 108 tests, 108 passed
 Vite build:   PASS
-Size/archive: PASS, 0.90 MiB uncompressed, 164 files
+Size/archive: PASS, 0.92 MiB uncompressed, 165 files
 Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
 Main assets:  JS 693.81 kB / 184.82 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
@@ -80,6 +80,8 @@ Main assets:  JS 693.81 kB / 184.82 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
 | `tests/lighting-physics-interaction.test.ts` | 8 | Block light, mob step-up, falling sand, primed TNT gravity, torch/button/door placement, door collision/geometry |
+| `tests/vegetation-lighting.test.ts` | 8 | Vegetation lighting profile, grass-compatible tint, upward normals, FrontSide cutout, torch block light |
+| `tests/explosion-performance.test.ts` | 5 | Batch relight dedupe, redstone notify dedupe, chain TNT once, 32-job budget drain, single TNT in one slice |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -147,7 +149,8 @@ Feel/polish pass повторно проверен во встроенном б�
 - bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, позу, movement slowdown и плавный FOV zoom;
 - `?qaArrow=1` показал три real-texture arrow visuals на разных траекториях с общей physics update;
 - mob QA спереди/сзади/сбоку подтвердил длинные base sheep legs под коротким wool overlay, readable two-sided skeleton ribs и чистый zombie headwear cutout;
-- `?qaBiome=plains|forest|desert` подтвердил tall grass/цветы, fern undergrowth и dead bushes/cactus в нужных биомах; растения входят в один chunk cutout mesh, а не создают scene object на каждый блок;
+- `?qaTime=night` ставит факел, соседние plants и каменный навес, чтобы был виден block light.
+- Mass TNT: F3 строка `boom Q pending/processed vx destroyed · cpu/relight ms sky N`. Одиночный TNT должен закрыться за один tick; 32/64 — очередь дренируется без зависания вкладки. Radius/power/cap не уменьшались.
 - F3 в реальном forest-мире: около `178–180 FPS`, frame `5.56 ms`, p95 `5.70 ms`, fixed `20 TPS`, tick примерно `0.94–1.16 ms`, `81/81` chunks, `137358` faces, `125852` triangles, `96` calls и `16` mobs;
 - browser automation не смог синтетически отправить pointer-lock movement через доступный locator API. Camera regression поэтому отдельно доказан unit test: изменение input между fixed ticks сразу меняет render camera; физический fast-mouse smoke на целевом устройстве остаётся обязательным.
 

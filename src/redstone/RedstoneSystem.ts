@@ -134,10 +134,17 @@ export class RedstoneSystem {
 
   /** Registers/reconciles a changed coordinate and its six neighbours. */
   notifyBlockChanged(x: number, y: number, z: number): void {
+    this.notifyBlocksChanged([{ x, y, z }]);
+  }
+
+  /** Dedupes coordinates and neighbours so one explosion does not enqueue the same cell hundreds of times. */
+  notifyBlocksChanged(changes: ReadonlyArray<Readonly<{ x: number; y: number; z: number }>>): void {
     this.assertActive();
-    this.reconcileSource(x, y, z);
-    this.enqueue(x, y, z);
-    this.enqueueNeighbours(x, y, z);
+    for (const change of changes) {
+      this.reconcileSource(change.x, change.y, change.z);
+      this.enqueue(change.x, change.y, change.z);
+      this.enqueueNeighbours(change.x, change.y, change.z);
+    }
   }
 
   registerBlock(x: number, y: number, z: number): void {
@@ -326,17 +333,24 @@ export class RedstoneSystem {
     return this.setPressurePlate(x, y, z, occupied);
   }
 
+  get primedCapacityRemaining(): number {
+    return Math.max(0, this.maxPrimedTnt - this.primedById.size);
+  }
+
   primeTnt(
     x: number,
     y: number,
     z: number,
     fuseSeconds = this.defaultTntFuseSeconds,
+    options: { readonly blockAlreadyRemoved?: boolean } = {},
   ): PrimedTnt | undefined {
     this.assertActive();
     if (this.primedById.size >= this.maxPrimedTnt) return undefined;
-    if (this.world.getBlock(x, y, z) !== BlockId.Tnt) return undefined;
-    if (!this.world.setBlock(x, y, z, BlockId.Air)) return undefined;
-    this.notifyBlockChanged(x, y, z);
+    if (!options.blockAlreadyRemoved) {
+      if (this.world.getBlock(x, y, z) !== BlockId.Tnt) return undefined;
+      if (!this.world.setBlock(x, y, z, BlockId.Air)) return undefined;
+      this.notifyBlockChanged(x, y, z);
+    }
     return this.createPrimedTnt(
       undefined,
       new THREE.Vector3(x + 0.5, y, z + 0.5),

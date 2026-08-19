@@ -159,6 +159,7 @@ describe('lighting, physics and interaction polish', () => {
     expect(meshed.cutout.getAttribute('position').count).toBeGreaterThan(0);
     meshed.opaque.dispose();
     meshed.cutout.dispose();
+    meshed.vegetation.dispose();
     meshed.translucent.dispose();
     meshed.water.dispose();
   });

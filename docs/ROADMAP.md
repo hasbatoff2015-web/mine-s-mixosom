@@ -14,6 +14,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 
 - [ ] На чистом clone выполнить `npm ci`, `npm run assets:import`, `npm run check` и `npm run check:archive`.
 - [x] Локальный pipeline после lighting/physics/interaction polish: asset import `162/162`, typecheck, 95 tests, production build, size и archive green.
+- [x] Локальный pipeline после TNT explosion batching: typecheck, 108 tests, production build 70 modules, 0.92 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -96,6 +97,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation; v1→v2 redstone fallback уже реализован.
 - [x] Door open/close на use; ladder climbing, корректный two-block bed и sleeping checks ещё нет.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
+- [x] Mass TNT больше не вызывает per-block `relightAround`; `ExplosionQueue` + `applyBlockBatch` держат chain в budgeted ticks.
 - [x] Минимальная bounded propagation `0–15` для wire/torch/lever/button/plate/TNT реализована и покрыта unit tests.
 - [ ] Добавить корректные redstone connection meshes, orientation/support rules и более точную vertical topology без расширения в advanced components.
 

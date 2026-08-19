@@ -69,7 +69,7 @@ Simulation продвигается только в lifecycle state `PLAYING`. �
 7. mob AI/physics/projectiles;
 8. mob damage, drops и explosion events;
 9. dropped-item physics/pickup;
-10. pressure-plate occupancy, bounded redstone propagation, primed TNT fuse и explosion events;
+10. pressure-plate occupancy, bounded redstone propagation, primed TNT fuse, explosion queue (budgeted batch apply) и explosion events;
 11. autosave check и HUD refresh.
 
 Такой порядок даёт простой детерминированный каркас, но не заявляет bit-exact vanilla ordering.
@@ -141,18 +141,19 @@ Map<chunkKey, Map<linearBlockIndex, BlockId>>
 
 Scheduled block queue ограничена, за tick обрабатывается bounded число updates. Gravity-блоки ставят falling-block spawn вместо телепорта; liquids сохраняют минимальный downward path.
 
-Каждый chunk хранит два `Uint8Array` света. Sky light заполняется сверху вниз по столбцу и коротко растекается по соседям; block light flood идёт от emissive блоков (torch 14, redstone torch 7, lava 15) с лимитом `8192` узлов. `relightAround` ограничен радиусом источника: смена emission не пересчитывает sky, смена occlusion пересчитывает sky только у загруженных чанков в радиусе. Mesher читает соседнюю ячейку face и пишет `max(sky, block, emission)` в vertex color. Three.js hemisphere/directional sun даёт суточный объём поверх baked light.
+Каждый chunk хранит два `Uint8Array` света. Sky light заполняется сверху вниз по столбцу и коротко растекается по соседям; block light flood идёт от emissive блоков (torch 14, redstone torch 7, lava 15) с лимитом `8192` узлов. Одиночная смена блока вызывает `relightAround` (через `relightRegion`). Массовые записи идут через `VoxelWorld.applyBlockBatch`: каждый загруженный chunk в регионе получает `recomputeChunkSky` максимум один раз, затем один `propagateBlockLight` по union AABB. Mesher читает соседнюю ячейку face и пишет baked sky/block/emission в vertex color. Three.js hemisphere/directional sun даёт суточный объём поверх baked light.
 
 ## Rendering
 
 `TextureAtlas.create()` собирает нужные block textures в power-of-two canvas atlas. Содержимое tile — `32×32`, вокруг него экструдируется gutter `4 px`; UV указывают только на content. Pixel art использует nearest magnification, `NearestMipmapLinearFilter`, mipmaps, ограниченную renderer-capability anisotropy и sRGB. Это снижает shimmer и не даёт mip levels смешивать соседние tiles. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 162 whitelist-файлов в `public/textures`, включая `oak_door_upper`, entity sheets/layers, Steve arm, arrow projectile, bow stages и шесть vegetation sprites.
 
-`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; sky/block light и face-direction shade записаны в vertex color. `opaque` больше не выбирает render material. `cross`-растения добавляют две диагональные двусторонне читаемые плоскости прямо в общий cutout buffer чанка: один plant не создаёт отдельный `Object3D` или material.
+`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; sky/block light и face-direction shade записаны в vertex color. `opaque` больше не выбирает render material. `cross`-растения с `lightingMode: vegetation` пишут две диагональные плоскости × две намотки в отдельный vegetation buffer чанка: lighting normal всегда `(0,1,0)`, чтобы Lambert совпадал с grass top. Отдельных `Object3D` на растение нет. Leaves/torch/door остаются в общем DoubleSide cutout.
 
 `WorldRenderer` создаёт независимые material paths:
 
 - opaque `MeshLambertMaterial` без blending;
-- cutout material с `alphaTest=0.42`, `transparent=false`, depth test/write для leaves и alpha sprites;
+- cutout material с `alphaTest=0.42`, `transparent=false`, depth test/write и `DoubleSide` для leaves и alpha sprites;
+- vegetation cutout material с тем же atlas/`alphaTest`, но `FrontSide`, потому что растения уже имеют двустороннюю геометрию и upward lighting normals;
 - translucent glass material с opacity `0.52`;
 - отдельный translucent water material с opacity `0.70` и более поздним render order.
 
@@ -164,7 +165,7 @@ Dirty chunks перестраиваются с лимитом jobs и бюдже
 
 Render camera не ждёт следующего fixed tick: `applyImmediateRenderLook()` каждый `requestAnimationFrame` применяет текущие `InputManager.yaw/pitch`. `PlayerController` по-прежнему потребляет тот же input на границе simulation tick для физики и сериализации. Такое разделение убирает ступенчатое вращение при сохранении детерминированного `20 TPS` gameplay loop.
 
-`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Lever — stone base и pivoted handle; torch — crossed planes с wall tilt; vegetation — batched crossed quads; wire — ground quad; button — малый cuboid на floor/wall/ceiling; pressure plate — тонкая plate; oak door — вертикальная панель толщиной `3/16` на occupied face. Stairs/slabs/beds/containers остаются следующим geometry extension point.
+`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Lever — stone base и pivoted handle; torch — crossed planes с wall tilt; vegetation — batched crossed quads с `lightingMode`/`biomeTint` на definition; wire — ground quad; button — малый cuboid на floor/wall/ceiling; pressure plate — тонкая plate; oak door — вертикальная панель толщиной `3/16` на occupied face. Stairs/slabs/beds/containers остаются следующим geometry extension point.
 
 ## Player, survival и combat
 
@@ -232,11 +233,11 @@ Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отд�
 - derived `wirePower` map со значениями `0–15`;
 - dirty queue/set для ленивого распространения;
 - bounded collection primed TNT;
-- очередь explosion events для общего `Game.explode()` pipeline.
+- очередь explosion events, которую `Game` сливает в `ExplosionQueue`;
 
 Dust распространяет сигнал по шести voxel-соседям, уменьшая уровень на единицу. Torch постоянна, lever переключается use action, button хранит оставшееся pulse time, pressure plate получает occupancy из positions игрока, мобов и dropped items.
 
-Powered TNT удаляется из мира и становится отдельной Three.js entity с fuse `4 s`, gravity и voxel AABB. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event; `Game` применяет radial damage/block destruction и коротко primes TNT, затронутый взрывом, создавая chain reaction.
+Powered TNT удаляется из мира и становится отдельной Three.js entity с fuse `4 s`, gravity и voxel AABB. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event. `Game` кладёт event в `ExplosionQueue`: resolve (скан без мутаций, scalar distance) → `applyBlockBatch` → один `relightRegion` на union bounds → `notifyBlocksChanged` с Set-dedupe → chain TNT через `primeTnt(..., { blockAlreadyRemoved: true })`. За tick обрабатывается ограниченный budget (jobs + voxels + ~2–3.5 ms). Одиночный TNT обычно укладывается в один tick; mass chain растягивается, не блокируя render. Explosion не вызывает immediate mesh rebuild.
 
 Serialization version 2 хранит active sources, lever/button attachment/facing, остаток timed button и primed TNT с fuse и velocity. Restore принимает version 1. Wire power намеренно не сохраняется. Optional `blockStates` и `fallingBlocks` лежат в том же schema 1 snapshot.
 

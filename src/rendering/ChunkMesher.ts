@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   BlockId,
+  blockLightingMode,
   getBlockDefinition,
   type BlockDefinition,
   type BlockRenderState,
@@ -45,6 +46,7 @@ const LEVER_HANDLE_UV: TextureUvRect = [7 / 16, 0, 9 / 16, 10 / 16];
 interface LayerBuffers {
   opaque: GeometryBuffers;
   cutout: GeometryBuffers;
+  vegetation: GeometryBuffers;
   translucent: GeometryBuffers;
   water: GeometryBuffers;
 }
@@ -55,9 +57,24 @@ const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
 const FOREST_TINT = [0.42, 0.78, 0.36] as const;
 const DESERT_TINT = [0.74, 0.78, 0.4] as const;
 
+/** Lighting normal written into vegetation quads so Lambert matches grass tops. */
+export const VEGETATION_LIGHTING_NORMAL = [0, 1, 0] as const;
+
+export function bakedVertexLight(sky: number, blockLight: number, emission = 0, shade = 1): number {
+  const baked = Math.min(1.15, Math.max(0.16 + sky * 0.72, 0.18 + blockLight * 0.95, emission));
+  return baked * shade;
+}
+
+export function biomeGrassTint(biome: number): readonly [number, number, number] {
+  if (biome === 1) return FOREST_TINT;
+  if (biome === 2) return DESERT_TINT;
+  return PLAINS_TINT;
+}
+
 export interface MeshedChunk {
   opaque: THREE.BufferGeometry;
   cutout: THREE.BufferGeometry;
+  vegetation: THREE.BufferGeometry;
   translucent: THREE.BufferGeometry;
   water: THREE.BufferGeometry;
   faces: number;
@@ -92,6 +109,7 @@ export class ChunkMesher {
     const layers: LayerBuffers = {
       opaque: createBuffers(),
       cutout: createBuffers(),
+      vegetation: createBuffers(),
       translucent: createBuffers(),
       water: createBuffers(),
     };
@@ -164,6 +182,7 @@ export class ChunkMesher {
     const result = {
       opaque: this.toGeometry(layers.opaque),
       cutout: this.toGeometry(layers.cutout),
+      vegetation: this.toGeometry(layers.vegetation),
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       faces,
@@ -181,6 +200,7 @@ export class ChunkMesher {
   }
 
   private buffersFor(layers: LayerBuffers, definition: BlockDefinition): GeometryBuffers {
+    if (blockLightingMode(definition) === 'vegetation') return layers.vegetation;
     if (definition.renderLayer === 'cutout') return layers.cutout;
     if (definition.renderLayer === 'translucent') {
       return definition.translucentMaterial === 'water' ? layers.water : layers.translucent;
@@ -246,17 +266,31 @@ export class ChunkMesher {
     z: number,
   ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const color = this.colorFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
     const inset = 0.08;
-    this.addQuad(buffers, texture, [
-      [x + inset, y, z + inset], [x + 1 - inset, y, z + 1 - inset],
-      [x + 1 - inset, y + 0.9, z + 1 - inset], [x + inset, y + 0.9, z + inset],
-    ], [-0.707, 0, 0.707], color);
-    this.addQuad(buffers, texture, [
-      [x + 1 - inset, y, z + inset], [x + inset, y, z + 1 - inset],
-      [x + inset, y + 0.9, z + 1 - inset], [x + 1 - inset, y + 0.9, z + inset],
-    ], [0.707, 0, 0.707], color);
-    return 2;
+    const planes: readonly (readonly (readonly [number, number, number])[])[] = [
+      [
+        [x + inset, y, z + inset], [x + 1 - inset, y, z + 1 - inset],
+        [x + 1 - inset, y + 0.9, z + 1 - inset], [x + inset, y + 0.9, z + inset],
+      ],
+      [
+        [x + 1 - inset, y, z + inset], [x + inset, y, z + 1 - inset],
+        [x + inset, y + 0.9, z + 1 - inset], [x + 1 - inset, y + 0.9, z + inset],
+      ],
+    ];
+    for (const corners of planes) {
+      this.addQuad(buffers, texture, corners, VEGETATION_LIGHTING_NORMAL, color);
+      this.addQuad(
+        buffers,
+        texture,
+        [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
+        VEGETATION_LIGHTING_NORMAL,
+        color,
+        [0, 0, 1, 1],
+        true,
+      );
+    }
+    return 4;
   }
 
   private addTorch(
@@ -509,6 +543,7 @@ export class ChunkMesher {
     normal: readonly [number, number, number],
     color: readonly [number, number, number],
     textureUv: TextureUvRect = [0, 0, 1, 1],
+    backFace = false,
   ): void {
     const base = buffers.positions.length / 3;
     const tile = this.atlas.tile(textureKey);
@@ -516,7 +551,9 @@ export class ChunkMesher {
     const v0 = THREE.MathUtils.lerp(tile.v0, tile.v1, textureUv[1]);
     const u1 = THREE.MathUtils.lerp(tile.u0, tile.u1, textureUv[2]);
     const v1 = THREE.MathUtils.lerp(tile.v0, tile.v1, textureUv[3]);
-    const uv = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
+    const uv = backFace
+      ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
+      : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
     for (let index = 0; index < 4; index += 1) {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);
@@ -547,10 +584,9 @@ export class ChunkMesher {
     const sky = getSkyLight(world, sampleX, sampleY, sampleZ) / 15;
     const blockLight = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
     const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
-    const baked = Math.min(1.15, Math.max(0.16 + sky * 0.72, 0.18 + blockLight * 0.95, emission));
-    const light = baked * shade;
+    const light = bakedVertexLight(sky, blockLight, emission, shade);
     const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
-    const tint = this.tintFor(textureKey, biome);
+    const tint = this.tintFor(definition, textureKey, biome);
     this.scratchColor[0] = tint[0] * light;
     this.scratchColor[1] = tint[1] * light;
     this.scratchColor[2] = tint[2] * light;
@@ -565,14 +601,15 @@ export class ChunkMesher {
     return textures.side ?? textures.all ?? textures.top ?? 'block/missing';
   }
 
-  private tintFor(texture: string, biome: number): readonly [number, number, number] {
-    if (!texture.includes('grass_block_top')
-      && !texture.includes('leaves')
-      && !texture.includes('tall_grass')
-      && !texture.includes('fern')) return WHITE_TINT;
-    if (biome === 1) return FOREST_TINT;
-    if (biome === 2) return DESERT_TINT;
-    return PLAINS_TINT;
+  private tintFor(
+    definition: BlockDefinition,
+    texture: string,
+    biome: number,
+  ): readonly [number, number, number] {
+    if (definition.biomeTint !== 'grass'
+      && !texture.includes('grass_block_top')
+      && !texture.includes('leaves')) return WHITE_TINT;
+    return biomeGrassTint(biome);
   }
 
   private cacheColumns(chunk: Chunk, world: VoxelWorld): void {

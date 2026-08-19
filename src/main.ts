@@ -16,6 +16,7 @@ if (import.meta.env.DEV) {
   const qaMob = search.get('qaMob');
   const qaItem = search.get('qaItem');
   const qaBiome = search.get('qaBiome');
+  const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
@@ -28,7 +29,12 @@ if (import.meta.env.DEV) {
   } else if (qaBiome && ['plains', 'forest', 'desert'].includes(qaBiome)) {
     runningDevHarness = true;
     void import('./dev/VegetationQaHarness').then(async ({ startVegetationQaHarness }) => {
-      disposeApplication = await startVegetationQaHarness(canvas, uiRoot, qaBiome as 'plains' | 'forest' | 'desert');
+      disposeApplication = await startVegetationQaHarness(
+        canvas,
+        uiRoot,
+        qaBiome as 'plains' | 'forest' | 'desert',
+        qaTime,
+      );
     });
   } else if (qaItem) {
     runningDevHarness = true;

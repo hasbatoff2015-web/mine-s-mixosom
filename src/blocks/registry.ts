@@ -1,8 +1,10 @@
 import {
   BlockId,
+  type BlockBiomeTint,
   type BlockCategory,
   type BlockDefinition,
   type BlockDrop,
+  type BlockLightingMode,
   type BlockTextures,
   type BlockRenderLayer,
   type BlockRenderShape,
@@ -19,6 +21,8 @@ interface BlockOptions {
   occludesFaces?: boolean;
   renderLayer?: BlockRenderLayer;
   renderShape?: BlockRenderShape;
+  lightingMode?: BlockLightingMode;
+  biomeTint?: BlockBiomeTint;
   translucentMaterial?: TranslucentMaterial;
   tool?: ToolType;
   tier?: ToolTier;
@@ -45,6 +49,9 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     ? undefined
     : options.drop ?? { item: key, count: 1 };
 
+  const renderShape = options.renderShape ?? 'cube';
+  const lightingMode = options.lightingMode ?? (renderShape === 'cross' ? 'vegetation' : undefined);
+
   return Object.freeze({
     id,
     key,
@@ -55,7 +62,9 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     opaque: options.opaque ?? true,
     occludesFaces: options.occludesFaces ?? options.opaque ?? true,
     renderLayer: options.renderLayer ?? 'opaque',
-    renderShape: options.renderShape ?? 'cube',
+    renderShape,
+    ...(lightingMode === undefined ? {} : { lightingMode }),
+    ...(options.biomeTint === undefined ? {} : { biomeTint: options.biomeTint }),
     textures: Object.freeze(options.textures ?? { all: `block/${key}` }),
     ...(options.tool === undefined ? {} : { tool: options.tool }),
     ...(options.tier === undefined ? {} : { tier: options.tier }),
@@ -282,27 +291,33 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
 
   block(BlockId.TallGrass, 'tall_grass', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', biomeTint: 'grass',
+    replaceable: true, drop: false, hasItem: false,
   }),
   block(BlockId.Fern, 'fern', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', biomeTint: 'grass',
+    replaceable: true, drop: false, hasItem: false,
   }),
   block(BlockId.Dandelion, 'dandelion', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+    replaceable: true, drop: false, hasItem: false,
   }),
   block(BlockId.Poppy, 'poppy', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+    replaceable: true, drop: false, hasItem: false,
   }),
   block(BlockId.OxeyeDaisy, 'oxeye_daisy', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+    replaceable: true, drop: false, hasItem: false,
   }),
   block(BlockId.DeadBush, 'dead_bush', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', replaceable: true, drop: false, hasItem: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+    replaceable: true, drop: false, hasItem: false,
   }),
 ]);
 

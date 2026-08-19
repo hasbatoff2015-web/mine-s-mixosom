@@ -52,6 +52,7 @@ const atlasStub = { tile: () => sharedTile } as unknown as TextureAtlas;
 function disposeMeshed(meshed: ReturnType<ChunkMesher['build']>): void {
   meshed.opaque.dispose();
   meshed.cutout.dispose();
+  meshed.vegetation.dispose();
   meshed.translucent.dispose();
   meshed.water.dispose();
 }

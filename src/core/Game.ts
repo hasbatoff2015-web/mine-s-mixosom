@@ -53,6 +53,7 @@ import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types
 import { SurvivalSystem } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { VoxelWorld, type VoxelHit } from '../world/World';
+import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 
 interface GameSession {
@@ -123,6 +124,7 @@ export class Game {
   private arrowVisuals?: ArrowVisualFactory;
   private firstPerson?: FirstPersonRenderer;
   private session?: GameSession;
+  private readonly explosionQueue = new ExplosionQueue();
   private settings: RuntimeSettings = {
     volume: 0.7,
     sensitivity: 0.0022,
@@ -667,6 +669,7 @@ export class Game {
       daylight: this.daylightFactor(session.world.timeOfDay),
     });
     this.processMobEvents();
+    this.processExplosionQueue();
     if (session.summary.mode === 'survival' && session.survival.dead) {
       this.handleDeath();
       return;
@@ -1023,7 +1026,15 @@ export class Game {
       session.drops.spawn(drop.stack, drop.position, { velocity: drop.velocity });
     }
     for (const event of session.mobs.consumePlayerDamage()) this.damagePlayerFromMob(event);
-    for (const event of session.mobs.consumeExplosions()) this.explode(event);
+    for (const event of session.mobs.consumeExplosions()) {
+      this.explosionQueue.enqueue({
+        x: event.position.x,
+        y: event.position.y,
+        z: event.position.z,
+        radius: event.radius,
+        power: event.power,
+      });
+    }
   }
 
   private updateRedstone(): void {
@@ -1053,7 +1064,16 @@ export class Game {
     }
     session.activePressurePlates = occupied;
     session.redstone.update(FIXED_DT);
-    for (const event of session.redstone.consumeExplosionEvents()) this.explode(event);
+    for (const event of session.redstone.consumeExplosionEvents()) {
+      this.explosionQueue.enqueue({
+        x: event.position.x,
+        y: event.position.y,
+        z: event.position.z,
+        radius: event.radius,
+        power: event.power,
+      });
+    }
+    this.processExplosionQueue();
   }
 
   private damagePlayerFromMob(event: MobPlayerDamageEvent): void {
@@ -1094,57 +1114,73 @@ export class Game {
     }
   }
 
-  private explode(event: Readonly<{ position: THREE.Vector3; radius: number; power: number }>): void {
+  private processExplosionQueue(): void {
     const session = this.session!;
-    this.audio.playTone(72, 0.18, 0.09);
-    const playerCenter = session.player.position.clone().add(new THREE.Vector3(0, session.player.height * 0.5, 0));
-    const distanceToPlayer = playerCenter.distanceTo(event.position);
-    const playerExposure = clamp(1 - distanceToPlayer / (event.radius * 1.7), 0, 1);
+    if (this.explosionQueue.pendingCount === 0) return;
+    const mobile = isCoarsePointer();
+    const changed: Array<{ x: number; y: number; z: number }> = [];
+    const stats = this.explosionQueue.process(session.world, {
+      budgetMs: mobile ? 1.8 : 3.5,
+      maxJobs: mobile ? 6 : 12,
+      maxVoxels: mobile ? 256 : 512,
+      remainingPrimedCapacity: session.redstone.primedCapacityRemaining,
+      onResolved: (job) => this.applyExplosionDamage(job.x, job.y, job.z, job.radius, job.power),
+      onContents: (block) => {
+        changed.push({ x: block.x, y: block.y, z: block.z });
+        this.releaseBlockEntityContents({
+          x: block.x,
+          y: block.y,
+          z: block.z,
+          block: block.previous,
+          distance: 0,
+          normal: new THREE.Vector3(),
+        });
+      },
+      onChainedTnt: (tnt) => {
+        session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, { blockAlreadyRemoved: true });
+      },
+    });
+    if (changed.length > 0) session.redstone.notifyBlocksChanged(changed);
+    if (stats.processed > 0) {
+      const sounds = Math.min(2, stats.processed);
+      const gain = Math.min(0.14, 0.09 + (stats.processed - 1) * 0.01);
+      for (let index = 0; index < sounds; index += 1) this.audio.playTone(72, 0.18, gain);
+    }
+  }
+
+  private applyExplosionDamage(x: number, y: number, z: number, radius: number, power: number): void {
+    const session = this.session!;
+    const originX = x;
+    const originY = y;
+    const originZ = z;
+    const playerX = session.player.position.x;
+    const playerY = session.player.position.y + session.player.height * 0.5;
+    const playerZ = session.player.position.z;
+    const dx = playerX - originX;
+    const dy = playerY - originY;
+    const dz = playerZ - originZ;
+    const distanceToPlayer = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const playerExposure = clamp(1 - distanceToPlayer / (radius * 1.7), 0, 1);
     if (session.summary.mode === 'survival' && playerExposure > 0) {
-      session.survival.damage(Math.ceil(playerExposure * event.power * 5), 'explosion', { armor: session.inventory });
-      const push = playerCenter.sub(event.position);
-      if (push.lengthSq() > 1e-6) {
-        push.normalize();
-        session.player.velocity.addScaledVector(push, playerExposure * 8);
-        session.player.velocity.y += playerExposure * 4;
+      session.survival.damage(Math.ceil(playerExposure * power * 5), 'explosion', { armor: session.inventory });
+      const lengthSq = dx * dx + dy * dy + dz * dz;
+      if (lengthSq > 1e-6) {
+        const inverse = 1 / Math.sqrt(lengthSq);
+        session.player.velocity.x += dx * inverse * playerExposure * 8;
+        session.player.velocity.y += dy * inverse * playerExposure * 8 + playerExposure * 4;
+        session.player.velocity.z += dz * inverse * playerExposure * 8;
       }
     }
+    const attackerPosition = new THREE.Vector3(originX, originY, originZ);
     for (const mob of session.mobs.entities) {
-      const distance = mob.position.distanceTo(event.position);
-      const exposure = clamp(1 - distance / (event.radius * 1.5), 0, 1);
+      const distance = mob.position.distanceTo(attackerPosition);
+      const exposure = clamp(1 - distance / (radius * 1.5), 0, 1);
       if (exposure > 0) {
-        session.mobs.damage(mob, exposure * event.power * 5, {
+        session.mobs.damage(mob, exposure * power * 5, {
           source: 'explosion',
-          attackerPosition: event.position,
+          attackerPosition,
           knockback: exposure * 8,
         });
-      }
-    }
-
-    const radius = Math.ceil(event.radius);
-    const centerX = Math.floor(event.position.x);
-    const centerY = Math.floor(event.position.y);
-    const centerZ = Math.floor(event.position.z);
-    for (let y = Math.max(0, centerY - radius); y <= Math.min(WORLD_HEIGHT - 1, centerY + radius); y += 1) {
-      for (let z = centerZ - radius; z <= centerZ + radius; z += 1) {
-        for (let x = centerX - radius; x <= centerX + radius; x += 1) {
-          const distance = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5).distanceTo(event.position);
-          if (distance > event.radius) continue;
-          const block = session.world.getBlock(x, y, z);
-          const definition = getBlockDefinition(block);
-          if (block === BlockId.Air || definition.breakable === false || definition.hardness > event.power * 3) continue;
-          if (distance + definition.hardness * 0.3 > event.radius * (0.75 + Math.random() * 0.35)) continue;
-          if (block === BlockId.Tnt) {
-            session.redstone.primeTnt(x, y, z, 0.5 + Math.random());
-            continue;
-          }
-          this.releaseBlockEntityContents({
-            x, y, z, block, distance,
-            normal: new THREE.Vector3(),
-          });
-          session.world.setBlock(x, y, z, BlockId.Air);
-          session.redstone.notifyBlockChanged(x, y, z);
-        }
       }
     }
   }
@@ -1306,7 +1342,7 @@ export class Game {
       const tickTiming = this.tickTimings.snapshot();
       const renderInfo = this.renderer.info.render;
       const itemCache = this.itemVisuals?.cacheStats;
-      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
@@ -1329,6 +1365,7 @@ export class Game {
     this.session.redstone.dispose();
     this.session.drops.dispose();
     this.session.falling.dispose();
+    this.explosionQueue.clear();
     this.session = undefined;
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();
