@@ -130,9 +130,9 @@ export const ZOMBIE_MODEL: LegacyModelDefinition = {
     ]),
     modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16])]),
     modelPart('rightArm', [-5, 2, 0], [box([-3, -2, -2], [4, 12, 4], [40, 16])]),
-    modelPart('leftArm', [5, 2, 0], [box([-1, -2, -2], [4, 12, 4], [32, 48], { mirror: true })]),
+    modelPart('leftArm', [5, 2, 0], [box([-1, -2, -2], [4, 12, 4], [40, 16], { mirror: true })]),
     modelPart('rightLeg', [-1.9, 12, 0], [box([-2, 0, -2], [4, 12, 4], [0, 16])]),
-    modelPart('leftLeg', [1.9, 12, 0], [box([-2, 0, -2], [4, 12, 4], [16, 48], { mirror: true })]),
+    modelPart('leftLeg', [1.9, 12, 0], [box([-2, 0, -2], [4, 12, 4], [0, 16], { mirror: true })]),
   ],
 };
 

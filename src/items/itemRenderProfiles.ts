@@ -1,4 +1,5 @@
 import { getItemDefinition } from './registry';
+import { getBlockDefinition } from '../blocks';
 import type { ItemDefinition } from './types';
 
 export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow' | 'shield';
@@ -76,7 +77,13 @@ export const ITEM_RENDER_PROFILES: Readonly<Record<ItemRenderCategory, ItemRende
 
 export function classifyItemForRendering(itemOrId: string | ItemDefinition): ItemRenderCategory {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
-  if (item.kind === 'block') return 'block';
+  if (item.kind === 'block') {
+    const shape = getBlockDefinition(item.blockId).renderShape;
+    if (shape === 'torch' || shape === 'button' || shape === 'lever' || shape === 'door' || shape === 'cross') {
+      return 'generated';
+    }
+    return 'block';
+  }
   if (item.kind === 'shield') return 'shield';
   if (item.kind === 'tool' || (item.kind === 'weapon' && item.weapon === 'sword')) return 'handheld';
   if (item.kind === 'weapon' && item.weapon === 'bow') return 'bow';

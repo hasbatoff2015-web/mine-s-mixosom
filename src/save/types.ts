@@ -35,4 +35,6 @@ export interface SerializedWorldState {
   droppedItems: unknown[];
   mobs?: unknown[];
   redstone?: unknown;
+  blockStates?: Record<string, unknown>;
+  fallingBlocks?: unknown[];
 }

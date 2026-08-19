@@ -55,7 +55,9 @@
 
 - `H` — hardness блока;
 - `S` — итоговый speed multiplier инструмента с модификаторами;
-- `canHarvest` — инструмент имеет нужный тип и достаточный mining tier.
+- `canHarvest` — блок можно добыть текущим инструментом: для большинства блоков рука подходит, а `drop.requiresCorrectTool` (камень, руды, furnace) требует правильный тип и mining tier.
+
+Правильный инструмент ускоряет добычу через `S`, даже если блок и так harvestable рукой. `/100` применяется только когда `canHarvest` ложен.
 
 Тогда:
 
@@ -106,6 +108,10 @@ Mining Fatigue level L:                     S *= 0.3^min(L, 4)
 | Iron ore | `3.0` | Pickaxe | Stone |
 | Gold / Redstone / Diamond ore | `3.0` | Pickaxe | Iron |
 | Obsidian | `50` | Pickaxe | Diamond |
+| Cactus | `0.4` | — | Hand |
+| Torch | `0` | — | Instant |
+| Stone button | `0.5` | Pickaxe | Hand |
+| Oak door | `3.0` | Axe | Hand |
 | Bedrock / liquids | `< 0` | — | Unbreakable |
 
 При смене target накопленный progress сбрасывается. После обычного, не instant, разрушения vanilla также имеет короткую паузу между блоками; для alpha это допустимо отложить. Источники: [Breaking — speed/calculation](https://minecraft.wiki/w/Breaking#Calculation), [Tiers](https://minecraft.wiki/w/Tiers), [Pickaxe](https://minecraft.wiki/w/Pickaxe), [Block hardness](https://minecraft.wiki/w/Block_hardness).

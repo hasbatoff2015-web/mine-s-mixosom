@@ -11,7 +11,11 @@ export type BlockRenderShape =
   | 'lever'
   | 'button'
   | 'pressure_plate'
-  | 'cross';
+  | 'cross'
+  | 'door';
+
+export type DoorHalf = 'lower' | 'upper';
+export type DoorHinge = 'left' | 'right';
 
 export type TranslucentMaterial = 'glass' | 'water';
 export type BlockAttachment = 'floor' | 'wall' | 'ceiling';
@@ -23,6 +27,9 @@ export interface BlockRenderState {
   readonly power?: number;
   readonly attachment?: BlockAttachment;
   readonly facing?: HorizontalFacing;
+  readonly open?: boolean;
+  readonly half?: DoorHalf;
+  readonly hinge?: DoorHinge;
 }
 
 export interface BlockTextures {

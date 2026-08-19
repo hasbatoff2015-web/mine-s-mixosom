@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
+import { blockCollisionBox, type CollisionBox } from '../world/collision';
 import {
   GRAVITY,
   JUMP_VELOCITY,
@@ -66,8 +67,6 @@ export interface PlayerTickResult {
   readonly inLava: boolean;
   readonly headSubmerged: boolean;
 }
-
-interface CollisionBox extends PlayerAABB {}
 
 interface MoveResult {
   readonly actual: number;
@@ -486,18 +485,7 @@ export class PlayerController {
   }
 
   private blockCollisionBox(world: VoxelWorld, x: number, y: number, z: number): CollisionBox | undefined {
-    if (!world.isSolid(x, y, z)) return undefined;
-    const block = world.getBlock(x, y, z);
-    if (block === BlockId.OakSlab || block === BlockId.StoneSlab || block === BlockId.CobblestoneSlab) {
-      return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 0.5, maxZ: z + 1 };
-    }
-    if (block === BlockId.Cactus) {
-      return {
-        minX: x + 1 / 16, minY: y, minZ: z + 1 / 16,
-        maxX: x + 15 / 16, maxY: y + 1, maxZ: z + 15 / 16,
-      };
-    }
-    return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
+    return blockCollisionBox(world, x, y, z);
   }
 
   private overlapsOtherAxes(player: PlayerAABB, block: CollisionBox, movementAxis: 'x' | 'y' | 'z'): boolean {

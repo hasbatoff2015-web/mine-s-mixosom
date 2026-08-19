@@ -231,7 +231,7 @@ export class GameUI {
     this.setScreen(`
       <section class="screen"><div class="menu-card">
         <div class="menu-heading"><h2>Управление</h2><button class="game-button ghost" data-action="back">Назад</button></div>
-        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, Ctrl — бег, Shift — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
+        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, Shift — бег, C — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
         <p><strong>Mobile landscape:</strong> левый стик — движение, проводите по правой части для камеры; отдельные кнопки отвечают за прыжок, бег, приседание, добычу, использование, инвентарь и паузу.</p>
       </div></section>`);
     this.bindAction('back', onBack);

@@ -235,7 +235,8 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.WhiteBed, 'white_bed', { category: 'utility', hardness: 0.2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
   block(BlockId.OakDoor, 'oak_door', {
     category: 'utility', hardness: 3, opaque: false, tool: 'axe', tier: 'hand',
-    flammable: true, renderLayer: 'cutout', textures: { all: 'block/oak_door' },
+    flammable: true, renderLayer: 'cutout', renderShape: 'door', occludesFaces: false,
+    textures: { all: 'block/oak_door', bottom: 'block/oak_door', top: 'block/oak_door_upper' },
   }),
 
   ...woolBlocks,

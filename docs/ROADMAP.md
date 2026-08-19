@@ -13,7 +13,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 ### P0.1 Воспроизводимая поставка
 
 - [ ] На чистом clone выполнить `npm ci`, `npm run assets:import`, `npm run check` и `npm run check:archive`.
-- [x] Локальный pipeline после feel/polish pass: asset import `161/161`, typecheck, 83 tests, production build, size и archive green.
+- [x] Локальный pipeline после lighting/physics/interaction polish: asset import `162/162`, typecheck, 95 tests, production build, size и archive green.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -87,14 +87,14 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Добавить budgets по jobs/миллисекундам, generation/mesh scheduling и F3 telemetry для chunk rebuild; frustum/distance priority остаётся следующим этапом.
 - [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
 - [ ] Улучшить сортировку отдельных translucent water/glass faces.
-- [ ] Добавить skylight/block-light propagation и emissive updates для torch/lava.
+- [x] Добавить lightweight skylight/block-light contribution в chunk meshing; torch/lava обновляют свет локально, без full-world rebuild.
 - [x] Добавить power-of-two atlas, mipmaps, `4 px` padding/extrusion и ограниченную anisotropy для снижения bleeding/shimmer.
 
 ### P1.2 Block states и geometry
 
-- [ ] Отдельные meshes/collision для stairs, slabs, door, ladder, bed и chest; torch, wire, lever, button и pressure plate уже получили простые non-cube visuals.
-- [ ] Расширить compact block states beyond lever; lever floor/wall/ceiling orientation и v1→v2 redstone fallback уже реализованы.
-- [ ] Door open/close, ladder climbing, корректный two-block bed и sleeping checks.
+- [x] Тонкая 2-block oak door с open/close и collision; torch wall/floor и button floor/wall/ceiling. Stairs, slabs, ladder, bed и chest всё ещё ждут specialized meshes.
+- [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation; v1→v2 redstone fallback уже реализован.
+- [x] Door open/close на use; ladder climbing, корректный two-block bed и sleeping checks ещё нет.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Минимальная bounded propagation `0–15` для wire/torch/lever/button/plate/TNT реализована и покрыта unit tests.
 - [ ] Добавить корректные redstone connection meshes, orientation/support rules и более точную vertical topology без расширения в advanced components.
@@ -102,14 +102,14 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 ### P1.3 World simulation
 
 - [ ] Level-based liquids с bounded updates, боковым потоком и water/lava interaction.
-- [ ] Надёжная falling-block queue через unloaded chunk boundaries.
+- [x] Gravity-driven primed TNT и falling-block entities для sand/gravel; unloaded-chunk queue всё ещё упрощена.
 - [ ] Более разнообразные terrain features без нарушения seed determinism.
 - [ ] Spawn safety и regeneration tests по большому набору seeds.
 - [ ] Сжатие/compaction chunk deltas при долгой игре.
 
 ### P1.4 Combat, AI и feedback
 
-- [ ] Лёгкий voxel-aware pathfinding с ограниченным search budget.
+- [x] Практичный 1-block mob step-up без отдельного pathfinder; полный voxel-aware search всё ещё P1.
 - [ ] Улучшить spawn/despawn/light rules и obstacle recovery; bounded soft separation между мобами уже реализована.
 - [x] Подключить базовые first-person arm/item poses для swing/mining, walk, еды, bow charge и shield block.
 - [x] Убрать 20 TPS quantization из render camera, разделив live input look и fixed simulation state.

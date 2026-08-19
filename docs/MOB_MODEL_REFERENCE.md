@@ -67,11 +67,11 @@ Base skin и fleece — две отдельные definitions, которые д
 |---|---|---|---|
 | Head + outer layer | `(0,0,0)` | `8×8×8 @ 0,0`; same inflate `0.5 @ 32,0` | Cross-version approximation |
 | Torso | `(0,0,0)` | `(-4,0,-2); 8×12×4; 16,16` | Legacy match |
-| Arms | `(-5,2,0)`, `(5,2,0)` | `4×12×4` | Legacy match |
-| Legs | `(-1.9,12,0)`, `(1.9,12,0)` | `4×12×4` | Legacy match |
-| Forward arm pose | idle `-1.2`, attack `-1.55` plus small walk offset | Alpha approximation |
+| Arms | `(-5,2,0)`, `(5,2,0)` | `4×12×4`; left mirrored classic UV `[40,16]` | Legacy match |
+| Legs | `(-1.9,12,0)`, `(1.9,12,0)` | `4×12×4`; left mirrored classic UV `[0,16]` | Legacy match |
+| Forward arm pose | idle `+1.2`, attack `+1.55` plus small walk offset in Three.js Euler | Alpha approximation |
 
-Zombie cuboid dimensions, pivots and UV offsets were retained after direct sheet/QA comparison. The visible regression was alpha fringe in the inflated headwear layer, fixed locally with `alphaTest=0.45`; no guessed global offsets were introduced.
+Zombie cuboid dimensions and pivots were retained. The missing-leg/backward-arm regression came from 64×64 player overlay UVs and applying Minecraft `-1.2` directly to Three.js; both were corrected without guessed mesh offsets. Headwear still uses local `alphaTest=0.45`.
 
 ## Skeleton
 
@@ -109,7 +109,7 @@ Skeleton torso alone renders `DoubleSide`, so thin ribs/spine remain readable fr
 
 - Every animated part stores `baseRotationX/Y/Z` once and each frame computes `base + offset`; angles never accumulate.
 - Quadrupeds use diagonal signs `[+,-,-,+]`; chicken and bipeds use opposing left/right signs.
-- Chicken wing flap, spider eight-leg phase offsets, zombie forward arms and skeleton ranged pose are bounded alpha approximations.
+- Chicken wing flap, spider eight-leg phase offsets, zombie forward arms (`+1.2` Three.js Euler, not Minecraft `-1.2`) and skeleton ranged pose are bounded alpha approximations. Zombie left limbs use mirrored classic `64×32` UV slots, not empty 64×64 player overlay slots.
 - Soft entity separation is horizontal steering, not a rigid-body solver. Pair checks are capped at `1024` per update and population caps keep the pass bounded.
 
 ## Sources and limitations

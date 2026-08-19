@@ -1,5 +1,8 @@
 import { clamp } from '../core/constants';
 
+export const DESKTOP_SPRINT_CODES = ['ShiftLeft', 'ShiftRight'] as const;
+export const DESKTOP_SNEAK_CODE = 'KeyC';
+
 export interface InputCallbacks {
   canCapture(): boolean;
   toggleInventory(): void;
@@ -54,8 +57,8 @@ export class InputManager {
       forward: length > 1 ? forward / length : forward,
       right: length > 1 ? right / length : right,
       jump: this.keys.has('Space') || this.touchJump,
-      sprint: this.keys.has('ControlLeft') || this.keys.has('ControlRight') || this.touchSprint,
-      sneak: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchSneak,
+      sprint: DESKTOP_SPRINT_CODES.some((code) => this.keys.has(code)) || this.touchSprint,
+      sneak: this.keys.has(DESKTOP_SNEAK_CODE) || this.touchSneak,
     };
   }
 

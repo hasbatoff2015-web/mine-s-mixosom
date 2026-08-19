@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BlockId, getBlockDefinition } from '../blocks';
+import { BlockId, getBlockDefinition, type BlockRenderState } from '../blocks';
 import { CHUNK_SIZE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
@@ -7,6 +7,13 @@ import { getItemDefinition } from '../items';
 import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
 import { TerrainGenerator, type Biome } from './Generator';
+import {
+  ensureChunkSky,
+  getBlockLight,
+  getSkyLight,
+  relightAround,
+  seedChunkBlockLight,
+} from './LightEngine';
 
 export interface VoxelHit {
   x: number;
@@ -15,6 +22,13 @@ export interface VoxelHit {
   block: BlockId;
   normal: THREE.Vector3;
   distance: number;
+}
+
+export interface FallingBlockSpawn {
+  x: number;
+  y: number;
+  z: number;
+  block: BlockId;
 }
 
 export interface ChestState {
@@ -40,6 +54,7 @@ export class VoxelWorld {
   readonly modifications = new Map<string, Map<number, BlockId>>();
   readonly chests = new Map<string, ChestState>();
   readonly furnaces = new Map<string, FurnaceState>();
+  readonly blockStates = new Map<string, BlockRenderState>();
   readonly generator: TerrainGenerator;
   timeOfDay = 1_000;
   tickNumber = 0;
@@ -47,12 +62,13 @@ export class VoxelWorld {
   generationTotalMs = 0;
   generationMaximumMs = 0;
   private readonly scheduled: ScheduledBlockTick[] = [];
+  private readonly pendingFalls: FallingBlockSpawn[] = [];
 
   constructor(readonly seed: string) {
     this.generator = new TerrainGenerator(seed);
   }
 
-  restore(state: Pick<SerializedWorldState, 'timeOfDay' | 'modifications' | 'chests' | 'furnaces'>): void {
+  restore(state: Pick<SerializedWorldState, 'timeOfDay' | 'modifications' | 'chests' | 'furnaces' | 'blockStates'>): void {
     this.timeOfDay = state.timeOfDay;
     for (const [key, entries] of Object.entries(state.modifications)) {
       const delta = new Map<number, BlockId>();
@@ -61,6 +77,11 @@ export class VoxelWorld {
     }
     for (const [key, value] of Object.entries(state.chests)) this.chests.set(key, value as ChestState);
     for (const [key, value] of Object.entries(state.furnaces)) this.furnaces.set(key, value as FurnaceState);
+    if (state.blockStates) {
+      for (const [key, value] of Object.entries(state.blockStates)) {
+        this.blockStates.set(key, value as BlockRenderState);
+      }
+    }
   }
 
   getChunk(chunkX: number, chunkZ: number, generate = true): Chunk | undefined {
@@ -73,6 +94,8 @@ export class VoxelWorld {
       const delta = this.modifications.get(key);
       if (delta) for (const [index, block] of delta) chunk.blocks[index] = block;
       this.chunks.set(key, chunk);
+      ensureChunkSky(this, chunk);
+      seedChunkBlockLight(this, chunk);
       const generationMilliseconds = performance.now() - generationStart;
       this.generationSamples += 1;
       this.generationTotalMs += generationMilliseconds;
@@ -83,7 +106,30 @@ export class VoxelWorld {
       }
     }
     if (chunk) chunk.lastTouched = performance.now();
+    if (chunk && !chunk.skyReady) ensureChunkSky(this, chunk);
+    if (chunk && !chunk.blockLightReady) seedChunkBlockLight(this, chunk);
     return chunk;
+  }
+
+  getBlockState(x: number, y: number, z: number): BlockRenderState | undefined {
+    return this.blockStates.get(blockKey(x, y, z));
+  }
+
+  setBlockState(x: number, y: number, z: number, state: BlockRenderState): void {
+    this.blockStates.set(blockKey(x, y, z), state);
+    this.markBlockDirty(x, z);
+  }
+
+  skyLightAt(x: number, y: number, z: number): number {
+    return getSkyLight(this, x, y, z);
+  }
+
+  blockLightAt(x: number, y: number, z: number): number {
+    return getBlockLight(this, x, y, z);
+  }
+
+  consumeFallingBlocks(): FallingBlockSpawn[] {
+    return this.pendingFalls.splice(0);
   }
 
   get dirtyChunkCount(): number {
@@ -109,8 +155,11 @@ export class VoxelWorld {
     const localX = positiveMod(x, CHUNK_SIZE);
     const localZ = positiveMod(z, CHUNK_SIZE);
     const chunk = this.getChunk(chunkX, chunkZ)!;
-    if (chunk.get(localX, y, localZ) === block) return false;
+    const previous = chunk.get(localX, y, localZ) as BlockId;
+    if (previous === block) return false;
+    const previousDefinition = getBlockDefinition(previous);
     chunk.set(localX, y, localZ, block);
+    if (block === BlockId.Air) this.blockStates.delete(blockKey(x, y, z));
     if (record) {
       const key = chunkKey(chunkX, chunkZ);
       let delta = this.modifications.get(key);
@@ -138,6 +187,17 @@ export class VoxelWorld {
     }
     this.schedule(x, y, z, 1);
     this.schedule(x, y + 1, z, 1);
+    const nextDefinition = getBlockDefinition(block);
+    const occlusionChanged = previousDefinition.occludesFaces !== nextDefinition.occludesFaces;
+    const emissionChanged = (previousDefinition.emission ?? 0) !== (nextDefinition.emission ?? 0);
+    const lightRadius = Math.max(
+      previousDefinition.emission ?? 0,
+      nextDefinition.emission ?? 0,
+      occlusionChanged ? 8 : 0,
+    );
+    if (emissionChanged || occlusionChanged) {
+      relightAround(this, x, y, z, Math.min(15, Math.max(8, lightRadius)), occlusionChanged);
+    }
     return true;
   }
 
@@ -272,6 +332,10 @@ export class VoxelWorld {
     return result;
   }
 
+  serializeBlockStates(): Record<string, BlockRenderState> {
+    return Object.fromEntries(this.blockStates);
+  }
+
   private schedule(x: number, y: number, z: number, delay: number): void {
     if (y < 0 || y >= WORLD_HEIGHT) return;
     this.scheduled.push({ x, y, z, due: this.tickNumber + delay });
@@ -294,9 +358,10 @@ export class VoxelWorld {
         const below = this.getBlock(scheduled.x, scheduled.y - 1, scheduled.z);
         const belowDefinition = getBlockDefinition(below);
         if (below === BlockId.Air || belowDefinition.liquid || belowDefinition.replaceable) {
-          this.setBlock(scheduled.x, scheduled.y - 1, scheduled.z, block);
+          this.pendingFalls.push({
+            x: scheduled.x, y: scheduled.y, z: scheduled.z, block,
+          });
           this.setBlock(scheduled.x, scheduled.y, scheduled.z, BlockId.Air);
-          this.schedule(scheduled.x, scheduled.y - 1, scheduled.z, 1);
         }
       }
       if ((block === BlockId.Water || block === BlockId.Lava) && this.tickNumber % (block === BlockId.Water ? 4 : 10) === 0) {

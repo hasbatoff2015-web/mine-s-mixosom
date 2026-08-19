@@ -42,7 +42,7 @@ export function startMobQaHarness(
   const visuals = new VoxelVisualFactory();
   const model = createMobModel(visuals, kind);
   if (kind === 'zombie') {
-    for (const arm of model.arms) arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) - 1.2;
+    for (const arm of model.arms) arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) + 1.2;
   }
   if (kind === 'skeleton') {
     model.arms.forEach((arm, index) => {

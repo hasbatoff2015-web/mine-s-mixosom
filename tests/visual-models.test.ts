@@ -8,6 +8,7 @@ import {
   SHEEP_BASE_MODEL,
   SHEEP_WOOL_MODEL,
   SPIDER_MODEL,
+  ZOMBIE_MODEL,
 } from '../src/entities/mobModels';
 import {
   legacyBoxCenterToLocal,
@@ -93,6 +94,19 @@ describe('legacy textured mob models', () => {
     ]);
     expect(legs[0]?.rotation).toEqual([0, Math.PI / 4, -Math.PI / 4]);
     expect(legs[7]?.rotation).toEqual([0, Math.PI / 4, Math.PI / 4]);
+  });
+
+  it('uses classic 64x32 biped UV slots for zombie limbs instead of empty 64x64 player overlays', () => {
+    const leftArm = ZOMBIE_MODEL.parts.find((part) => part.name === 'leftArm')?.boxes[0];
+    const leftLeg = ZOMBIE_MODEL.parts.find((part) => part.name === 'leftLeg')?.boxes[0];
+    const rightArm = ZOMBIE_MODEL.parts.find((part) => part.name === 'rightArm')?.boxes[0];
+    const rightLeg = ZOMBIE_MODEL.parts.find((part) => part.name === 'rightLeg')?.boxes[0];
+    expect(leftArm).toMatchObject({ textureOffset: [40, 16], mirror: true });
+    expect(leftLeg).toMatchObject({ textureOffset: [0, 16], mirror: true });
+    expect(rightArm?.textureOffset).toEqual([40, 16]);
+    expect(rightLeg?.textureOffset).toEqual([0, 16]);
+    expect(leftArm?.textureOffset).not.toEqual([32, 48]);
+    expect(leftLeg?.textureOffset).not.toEqual([16, 48]);
   });
 
   it('keeps all generated UV coordinates normalized and creates six independent faces', () => {

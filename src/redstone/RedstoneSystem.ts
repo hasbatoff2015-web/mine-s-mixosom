@@ -8,6 +8,7 @@ import {
 } from '../blocks';
 import { blockKey } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
+import { moveVoxelBody } from '../entities/voxelPhysics';
 import type {
   RedstoneExplosionEvent,
   RedstoneSourceKind,
@@ -50,6 +51,8 @@ export interface RedstoneSystemOptions {
 
 export class PrimedTnt {
   readonly position: THREE.Vector3;
+  readonly previousPosition: THREE.Vector3;
+  readonly velocity: THREE.Vector3;
   fuseSeconds: number;
   readonly totalFuseSeconds: number;
   readonly visual?: THREE.Mesh;
@@ -59,8 +62,13 @@ export class PrimedTnt {
     position: Readonly<THREE.Vector3>,
     fuseSeconds: number,
     visual?: THREE.Mesh,
+    velocity?: Readonly<THREE.Vector3>,
   ) {
     this.position = new THREE.Vector3(position.x, position.y, position.z);
+    this.previousPosition = this.position.clone();
+    this.velocity = velocity
+      ? new THREE.Vector3(velocity.x, velocity.y, velocity.z)
+      : new THREE.Vector3(0, 4, 0);
     this.fuseSeconds = fuseSeconds;
     this.totalFuseSeconds = fuseSeconds;
     this.visual = visual;
@@ -205,7 +213,7 @@ export class RedstoneSystem {
     if (!source) return undefined;
     return {
       powered: source.active,
-      ...(source.kind === 'lever'
+      ...(source.kind === 'lever' || source.kind === 'button'
         ? { attachment: source.attachment, facing: source.facing }
         : {}),
     };
@@ -221,6 +229,25 @@ export class RedstoneSystem {
     this.assertActive();
     if (this.world.getBlock(x, y, z) !== BlockId.Lever) return false;
     const source = this.ensureSource(x, y, z, 'lever');
+    if (!source) return false;
+    if (source.attachment !== attachment || source.facing !== facing) {
+      source.attachment = attachment;
+      source.facing = facing;
+      this.options.onSourceChanged?.(x, y, z);
+    }
+    return true;
+  }
+
+  setButtonOrientation(
+    x: number,
+    y: number,
+    z: number,
+    attachment: BlockAttachment,
+    facing: HorizontalFacing,
+  ): boolean {
+    this.assertActive();
+    if (this.world.getBlock(x, y, z) !== BlockId.StoneButton) return false;
+    const source = this.ensureSource(x, y, z, 'button');
     if (!source) return false;
     if (source.attachment !== attachment || source.facing !== facing) {
       source.attachment = attachment;
@@ -312,7 +339,7 @@ export class RedstoneSystem {
     this.notifyBlockChanged(x, y, z);
     return this.createPrimedTnt(
       undefined,
-      new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+      new THREE.Vector3(x + 0.5, y, z + 0.5),
       Math.max(0.05, fuseSeconds),
     );
   }
@@ -345,6 +372,7 @@ export class RedstoneSystem {
         id: entity.id,
         position: [entity.position.x, entity.position.y, entity.position.z],
         fuseSeconds: entity.fuseSeconds,
+        velocity: [entity.velocity.x, entity.velocity.y, entity.velocity.z],
       })),
     };
   }
@@ -367,7 +395,7 @@ export class RedstoneSystem {
       source.remainingSeconds = snapshot.kind === 'button' && source.active
         ? Math.max(0, snapshot.remainingSeconds ?? this.defaultButtonPulseSeconds)
         : 0;
-      if (snapshot.kind === 'lever') {
+      if (snapshot.kind === 'lever' || snapshot.kind === 'button') {
         source.attachment = snapshot.attachment ?? 'floor';
         source.facing = snapshot.facing ?? 'north';
       }
@@ -381,6 +409,7 @@ export class RedstoneSystem {
         snapshot.id,
         new THREE.Vector3(...snapshot.position),
         snapshot.fuseSeconds,
+        snapshot.velocity,
       );
       restored += 1;
     }
@@ -428,18 +457,45 @@ export class RedstoneSystem {
 
   private updatePrimedTnt(deltaSeconds: number): void {
     for (const entity of [...this.primedById.values()]) {
+      entity.previousPosition.copy(entity.position);
       entity.fuseSeconds -= deltaSeconds;
       if (entity.fuseSeconds <= 1e-9) {
         this.detonate(entity);
         continue;
       }
+      entity.velocity.y -= 32 * deltaSeconds;
+      entity.velocity.x *= Math.exp(-0.5 * deltaSeconds);
+      entity.velocity.z *= Math.exp(-0.5 * deltaSeconds);
+      const result = moveVoxelBody(
+        this.world,
+        entity.position,
+        entity.velocity,
+        deltaSeconds,
+        { width: 0.98, height: 0.98 },
+      );
+      if (result.hitX) entity.velocity.x = 0;
+      if (result.hitZ) entity.velocity.z = 0;
+      if (result.hitY) entity.velocity.y = 0;
       if (entity.visual) {
         const elapsed = entity.totalFuseSeconds - entity.fuseSeconds;
         const urgency = 1 - entity.fuseSeconds / entity.totalFuseSeconds;
         const pulse = Math.sin(elapsed * (10 + urgency * 26)) > 0 ? 1.06 + urgency * 0.08 : 1;
         entity.visual.scale.setScalar(pulse);
         entity.visual.rotation.y = elapsed * 0.75;
+        entity.visual.position.set(entity.position.x, entity.position.y + 0.49, entity.position.z);
       }
+    }
+  }
+
+  interpolatePrimedTnt(alpha: number): void {
+    const t = Math.max(0, Math.min(1, alpha));
+    for (const entity of this.primedById.values()) {
+      if (!entity.visual) continue;
+      entity.visual.position.set(
+        THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t),
+        THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t) + 0.49,
+        THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t),
+      );
     }
   }
 
@@ -607,10 +663,17 @@ export class RedstoneSystem {
     requestedId: string | undefined,
     position: Readonly<THREE.Vector3>,
     fuseSeconds: number,
+    velocity?: readonly [number, number, number],
   ): PrimedTnt {
     const id = this.allocateTntId(requestedId);
     const visual = this.createTntVisual(id, position);
-    const entity = new PrimedTnt(id, position, fuseSeconds, visual);
+    const entity = new PrimedTnt(
+      id,
+      position,
+      fuseSeconds,
+      visual,
+      velocity ? new THREE.Vector3(...velocity) : undefined,
+    );
     this.primedById.set(id, entity);
     this.options.onTntPrimed?.(entity);
     return entity;
@@ -625,7 +688,7 @@ export class RedstoneSystem {
     this.tntMaterial ??= new THREE.MeshLambertMaterial({ color: 0xc33b2e, flatShading: true });
     const visual = new THREE.Mesh(this.tntGeometry, this.tntMaterial);
     visual.name = `primed-tnt:${id}`;
-    visual.position.set(position.x, position.y, position.z);
+    visual.position.set(position.x, position.y + 0.49, position.z);
     visual.castShadow = true;
     this.options.root.add(visual);
     return visual;
@@ -637,7 +700,7 @@ export class RedstoneSystem {
     const event: RedstoneExplosionEvent = {
       id: entity.id,
       source: 'tnt',
-      position: entity.position.clone(),
+      position: entity.position.clone().setY(entity.position.y + 0.49),
       power: 4,
       radius: 4,
     };
@@ -653,7 +716,7 @@ export class RedstoneSystem {
       ...(source.kind === 'button' && source.active
         ? { remainingSeconds: source.remainingSeconds }
         : {}),
-      ...(source.kind === 'lever'
+      ...(source.kind === 'lever' || source.kind === 'button'
         ? { attachment: source.attachment, facing: source.facing }
         : {}),
     };

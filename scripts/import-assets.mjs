@@ -68,6 +68,7 @@ const blocks = {
   cactus: 'cactus_side.png',
   cactus_top: 'cactus_top.png',
   oak_door: 'door_wood_lower.png',
+  oak_door_upper: 'door_wood_upper.png',
   redstone_wire: 'redstone_dust_line0.png',
   redstone_torch: 'redstone_torch_on.png',
   lever: 'lever.png',

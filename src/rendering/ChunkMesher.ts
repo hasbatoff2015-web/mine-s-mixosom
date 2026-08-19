@@ -9,6 +9,7 @@ import {
 import { CHUNK_SIZE } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelWorld } from '../world/World';
+import { getBlockLight, getSkyLight } from '../world/LightEngine';
 import type { TextureAtlas } from './TextureAtlas';
 
 interface Face {
@@ -225,12 +226,13 @@ export class ChunkMesher {
     z: number,
   ): number {
     switch (definition.renderShape) {
-      case 'torch': return this.addTorch(buffers, definition, world, x, y, z);
+      case 'torch': return this.addTorch(buffers, definition, state, world, x, y, z);
       case 'wire': return this.addWire(buffers, definition, state, world, x, y, z);
       case 'lever': return this.addLever(buffers, definition, state, world, x, y, z);
       case 'button': return this.addButton(buffers, definition, state, world, x, y, z);
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
       case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
+      case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
       case 'cube': return 0;
     }
   }
@@ -257,21 +259,41 @@ export class ChunkMesher {
     return 2;
   }
 
-  private addTorch(buffers: GeometryBuffers, definition: BlockDefinition, world: VoxelWorld, x: number, y: number, z: number): number {
+  private addTorch(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
     const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const attachment = state?.attachment ?? 'floor';
+    const facing = state?.facing ?? 'north';
+    const tilt = attachment === 'wall' ? 0.38 : 0;
+    const wall = attachment === 'wall' ? this.facingVector(facing) : new THREE.Vector3(0, 1, 0);
+    const origin = new THREE.Vector3(x + 0.5, y + (attachment === 'wall' ? 0.22 : 0), z + 0.5);
+    if (attachment === 'wall') origin.addScaledVector(wall, -0.28);
+    const tiltAxis = attachment === 'wall'
+      ? new THREE.Vector3().crossVectors(wall, new THREE.Vector3(0, 1, 0)).normalize()
+      : new THREE.Vector3(1, 0, 0);
+    let faces = 0;
     for (const angle of [Math.PI / 4, -Math.PI / 4]) {
       const matrix = new THREE.Matrix4()
-        .makeTranslation(x + 0.5, y, z + 0.5)
+        .makeTranslation(origin.x, origin.y, origin.z)
+        .multiply(new THREE.Matrix4().makeRotationAxis(tiltAxis, tilt))
         .multiply(new THREE.Matrix4().makeRotationY(angle));
       const local = [
-        [-0.28, 0.02, 0], [0.28, 0.02, 0], [0.28, 0.76, 0], [-0.28, 0.76, 0],
+        [-0.28, 0.02, 0], [0.28, 0.02, 0], [0.28, 0.8, 0], [-0.28, 0.8, 0],
       ] as const;
       const corners = local.map((point) => new THREE.Vector3(...point).applyMatrix4(matrix).toArray() as [number, number, number]);
       const normal = new THREE.Vector3(0, 0, 1).transformDirection(matrix).toArray() as [number, number, number];
       this.addQuad(buffers, texture, corners, normal, color);
+      faces += 1;
     }
-    return 2;
+    return faces;
   }
 
   private addWire(
@@ -348,12 +370,86 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const depth = state?.powered ? 0.06 : 0.11;
-    const matrix = new THREE.Matrix4().makeTranslation(x + 0.5, y + 0.5, z + depth / 2);
+    const attachment = state?.attachment ?? 'wall';
+    const facing = state?.facing ?? 'south';
+    const depth = state?.powered ? 0.06 : 0.125;
+    const normal = attachment === 'floor'
+      ? new THREE.Vector3(0, 1, 0)
+      : attachment === 'ceiling'
+        ? new THREE.Vector3(0, -1, 0)
+        : this.facingVector(facing);
+    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : this.facingVector(facing);
+    const localX = new THREE.Vector3().crossVectors(normal, localZ);
+    if (localX.lengthSq() < 1e-6) localX.set(1, 0, 0);
+    localX.normalize();
+    const basis = new THREE.Matrix4().makeBasis(localX, normal, localZ);
+    const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5);
+    const surface = center.clone().addScaledVector(normal, -0.5);
+    const buttonCenter = surface.clone().addScaledVector(normal, depth / 2);
+    const matrix = new THREE.Matrix4().makeTranslation(buttonCenter.x, buttonCenter.y, buttonCenter.z).multiply(basis);
     return this.addCuboid(
-      buffers, 'block/stone', [0.375, 0.22, depth], matrix,
+      buffers, 'block/stone', [0.375, depth, 0.22], matrix,
       world, definition, x, y, z,
     );
+  }
+
+  private addDoor(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const facing = state?.facing ?? 'north';
+    const open = state?.open === true;
+    const hinge = state?.hinge ?? 'left';
+    const occupied = open
+      ? (hinge === 'left'
+        ? ({ north: 'west', west: 'south', south: 'east', east: 'north' } as const)[facing]
+        : ({ north: 'east', east: 'south', south: 'west', west: 'north' } as const)[facing])
+      : facing;
+    const texture = state?.half === 'upper'
+      ? (definition.textures.top ?? 'block/oak_door_upper')
+      : (definition.textures.bottom ?? definition.textures.all ?? 'block/oak_door');
+    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const thickness = 3 / 16;
+    let corners: Array<[number, number, number]>;
+    let normal: [number, number, number];
+    switch (occupied) {
+      case 'north':
+        corners = [
+          [x, y, z + thickness], [x + 1, y, z + thickness],
+          [x + 1, y + 1, z + thickness], [x, y + 1, z + thickness],
+        ];
+        normal = [0, 0, 1];
+        break;
+      case 'south':
+        corners = [
+          [x + 1, y, z + 1 - thickness], [x, y, z + 1 - thickness],
+          [x, y + 1, z + 1 - thickness], [x + 1, y + 1, z + 1 - thickness],
+        ];
+        normal = [0, 0, -1];
+        break;
+      case 'west':
+        corners = [
+          [x + thickness, y, z + 1], [x + thickness, y, z],
+          [x + thickness, y + 1, z], [x + thickness, y + 1, z + 1],
+        ];
+        normal = [1, 0, 0];
+        break;
+      case 'east':
+        corners = [
+          [x + 1 - thickness, y, z], [x + 1 - thickness, y, z + 1],
+          [x + 1 - thickness, y + 1, z + 1], [x + 1 - thickness, y + 1, z],
+        ];
+        normal = [-1, 0, 0];
+        break;
+    }
+    this.addQuad(buffers, texture, corners, normal, color);
+    this.addQuad(buffers, texture, [...corners].reverse() as typeof corners, [-normal[0], 0, -normal[2]] as [number, number, number], color);
+    return 2;
   }
 
   private addPressurePlate(
@@ -445,10 +541,14 @@ export class ChunkMesher {
     const inCachedChunk = localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE;
     const columnIndex = inCachedChunk ? localZ * CHUNK_SIZE + localX : -1;
     const column = columnIndex >= 0 ? undefined : world.generator.columnAt(x, z);
-    const surface = columnIndex >= 0 ? this.columnHeights[columnIndex]! : column!.height;
-    const caveLight = y + normal[1] >= surface - 1 ? 1 : 0.34 + Math.max(0, y / 200);
+    const sampleX = x + Math.round(normal[0]);
+    const sampleY = y + Math.round(normal[1]);
+    const sampleZ = z + Math.round(normal[2]);
+    const sky = getSkyLight(world, sampleX, sampleY, sampleZ) / 15;
+    const blockLight = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
     const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
-    const light = Math.max(caveLight, emission) * shade;
+    const baked = Math.min(1.15, Math.max(0.16 + sky * 0.72, 0.18 + blockLight * 0.95, emission));
+    const light = baked * shade;
     const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
     const tint = this.tintFor(textureKey, biome);
     this.scratchColor[0] = tint[0] * light;

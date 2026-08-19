@@ -19,6 +19,7 @@ export interface SerializedPrimedTnt {
   readonly id: string;
   readonly position: readonly [number, number, number];
   readonly fuseSeconds: number;
+  readonly velocity?: readonly [number, number, number];
 }
 
 export interface SerializedRedstoneState {

@@ -54,7 +54,7 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       15 test files, 83 tests, 83 passed
+Vitest:       17 test files, 95 tests, 95 passed
 Vite build:   PASS
 Size/archive: PASS, 0.90 MiB uncompressed, 164 files
 Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
@@ -72,12 +72,14 @@ Main assets:  JS 693.81 kB / 184.82 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/world-generation.test.ts` | 4 | Negative chunk coordinates, seed determinism, five ore vertical bands/rarity и deterministic biome vegetation across real chunks |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
 | `tests/redstone.test.ts` | 8 | Power `0–15`, timed sources/TNT, all 24 lever attachment/facing/power geometry combinations, v2 orientation round-trip, v1 fallback и bounded propagation |
-| `tests/visual-models.test.ts` | 9 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
+| `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
 | `tests/item-rendering.test.ts` | 8 | Render categories/presets, texture coverage, cube/silhouette generated geometry, cache reuse, stack-copy thresholds, empty-hand visibility и pose reset |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
+| `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
+| `tests/lighting-physics-interaction.test.ts` | 8 | Block light, mob step-up, falling sand, primed TNT gravity, torch/button/door placement, door collision/geometry |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -189,18 +191,18 @@ Browser viewport matrix закрывает layout baseline, но не замен
 1. loading → main menu, нет горизонтального/вертикального scroll;
 2. create/list/load/delete world;
 3. pointer lock acquire/release, blur и `Esc`;
-4. WASD, jump, sprint, sneak, edge protection, step/slab collision;
-5. mine/place, корректный target outline и запрет placement внутри игрока;
+4. WASD, jump, Shift sprint, C sneak, edge protection, step/slab collision;
+5. mine/place, 1.9-like break times, thin torch/button/door, запрет placement внутри игрока;
 6. hotbar `1–9` и wheel, Q-drop/pickup;
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
 8. chest/furnace open/close/save, block destruction drops contents;
 9. food, fall/water/lava/cactus damage, death, respawn и bed spawn;
 10. melee cooldown/crit, shield front/back, bow with/without arrow;
-11. passive/hostile spawn, skeleton shot, creeper fuse/explosion, loot pickup;
-12. lever/button/plate → dust levels → primed TNT visual fuse/explosion/chain;
+11. passive/hostile spawn, skeleton shot, creeper fuse/explosion, loot pickup, mob 1-block step-up, zombie limbs;
+12. lever/button/plate → dust levels → primed TNT gravity/fuse/explosion/chain, falling sand entity, torch block light;
 13. F3 overlay, 3D shield/viewmodel, settings FOV/sensitivity/render distance/volume;
 14. pause/background/resume without hidden simulation;
-15. save/quit/reload and world/redstone state comparison.
+15. save/quit/reload and world/redstone/block-state/falling-block comparison.
 
 ## Mobile/touch manual matrix
 

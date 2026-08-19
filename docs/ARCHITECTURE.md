@@ -139,13 +139,15 @@ Map<chunkKey, Map<linearBlockIndex, BlockId>>
 
 При повторной генерации chunk delta накладывается поверх base terrain. Chest/furnace states хранятся отдельно по world block key `x,y,z`. Redstone сохраняет только source/primed-entity state, а derived wire power пересчитывает после restore.
 
-Scheduled block queue ограничена, за tick обрабатывается bounded число updates. Она обслуживает falling blocks и минимальный downward liquid path.
+Scheduled block queue ограничена, за tick обрабатывается bounded число updates. Gravity-блоки ставят falling-block spawn вместо телепорта; liquids сохраняют минимальный downward path.
+
+Каждый chunk хранит два `Uint8Array` света. Sky light заполняется сверху вниз по столбцу и коротко растекается по соседям; block light flood идёт от emissive блоков (torch 14, redstone torch 7, lava 15) с лимитом `8192` узлов. `relightAround` ограничен радиусом источника: смена emission не пересчитывает sky, смена occlusion пересчитывает sky только у загруженных чанков в радиусе. Mesher читает соседнюю ячейку face и пишет `max(sky, block, emission)` в vertex color. Three.js hemisphere/directional sun даёт суточный объём поверх baked light.
 
 ## Rendering
 
-`TextureAtlas.create()` собирает нужные block textures в power-of-two canvas atlas. Содержимое tile — `32×32`, вокруг него экструдируется gutter `4 px`; UV указывают только на content. Pixel art использует nearest magnification, `NearestMipmapLinearFilter`, mipmaps, ограниченную renderer-capability anisotropy и sRGB. Это снижает shimmer и не даёт mip levels смешивать соседние tiles. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 161 whitelist-файла в `public/textures`, включая entity sheets/layers, Steve arm, arrow projectile, bow stages и шесть vegetation sprites.
+`TextureAtlas.create()` собирает нужные block textures в power-of-two canvas atlas. Содержимое tile — `32×32`, вокруг него экструдируется gutter `4 px`; UV указывают только на content. Pixel art использует nearest magnification, `NearestMipmapLinearFilter`, mipmaps, ограниченную renderer-capability anisotropy и sRGB. Это снижает shimmer и не даёт mip levels смешивать соседние tiles. Missing texture получает заметный magenta/black fallback. Raw `assets/` остаётся локальным и исключён из публичного Git; воспроизводимая runtime-копия состоит из 162 whitelist-файлов в `public/textures`, включая `oak_door_upper`, entity sheets/layers, Steve arm, arrow projectile, bow stages и шесть vegetation sprites.
 
-`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; приблизительная cave light и face-direction shade также записаны в vertex color. `opaque` больше не выбирает render material. `cross`-растения добавляют две диагональные двусторонне читаемые плоскости прямо в общий cutout buffer чанка: один plant не создаёт отдельный `Object3D` или material.
+`ChunkMesher` проходит плотный block array, читает соседние chunk arrays один раз на build и добавляет только faces, у которых сосед не `occludesFaces`. Cube hot path развёрнут по шести направлениям и не вызывает `world.getBlock()`/`columnAt()` на каждый face. Geometry содержит positions, normals, UV и vertex colors. Grass/leaves получают biome RGB tint из chunk column cache; sky/block light и face-direction shade записаны в vertex color. `opaque` больше не выбирает render material. `cross`-растения добавляют две диагональные двусторонне читаемые плоскости прямо в общий cutout buffer чанка: один plant не создаёт отдельный `Object3D` или material.
 
 `WorldRenderer` создаёт независимые material paths:
 
@@ -162,7 +164,7 @@ Dirty chunks перестраиваются с лимитом jobs и бюдже
 
 Render camera не ждёт следующего fixed tick: `applyImmediateRenderLook()` каждый `requestAnimationFrame` применяет текущие `InputManager.yaw/pitch`. `PlayerController` по-прежнему потребляет тот же input на границе simulation tick для физики и сериализации. Такое разделение убирает ступенчатое вращение при сохранении детерминированного `20 TPS` gameplay loop.
 
-`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Сейчас lever строится из stone base и pivoted handle; torch/redstone torch — crossed planes, vegetation — batched crossed quads, wire — ground quad, button — малый cuboid, pressure plate — тонкая plate. Mesher всё ещё не объединяет cube faces; stairs/doors/beds/containers остаются следующим geometry extension point.
+`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Lever — stone base и pivoted handle; torch — crossed planes с wall tilt; vegetation — batched crossed quads; wire — ground quad; button — малый cuboid на floor/wall/ceiling; pressure plate — тонкая plate; oak door — вертикальная панель толщиной `3/16` на occupied face. Stairs/slabs/beds/containers остаются следующим geometry extension point.
 
 ## Player, survival и combat
 
@@ -206,9 +208,13 @@ Dropped items имеют bounded capacity, pickup delay, despawn timer, simple v
 
 MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Skeleton projectiles используют те же `ArrowPhysics` и переданный Game-owned `ArrowVisualFactory`, поэтому их scale, orientation, drag, gravity, collision и cleanup не расходятся с player arrows.
 
-Вместо тяжёлого pathfinding используется direct steering плюс voxel collision/line of sight. Hostile melee сравнивает 3D distance между eye positions и требует voxel LOS. `playerTargetable: false` сохраняет player-centred spawning/despawn для Creative, но убирает игрока из hostile target selection. Events `playerDamage`, `explosion` и `drop` накапливаются и потребляются `Game`, что сохраняет границу между entity simulation и player inventory/health/world destruction.
+Вместо тяжёлого pathfinding используется direct steering, voxel collision/line of sight и optional `stepHeight` в `moveVoxelBody` (мобы карабкаются на один блок). Hostile melee сравнивает 3D distance между eye positions и требует voxel LOS. `playerTargetable: false` сохраняет player-centred spawning/despawn для Creative, но убирает игрока из hostile target selection. Events `playerDamage`, `explosion` и `drop` накапливаются и потребляются `Game`, что сохраняет границу между entity simulation и player inventory/health/world destruction.
 
 Caps зависят от coarse pointer profile. Restore может принудительно создать сохранённых мобов в пределах общего hard cap.
+
+### FallingBlockManager
+
+Когда gravity-блок теряет опору, `VoxelWorld` кладёт spawn в bounded queue. `Game` создаёт falling entity с block mesh, gravity `-32` и voxel AABB; при земле блок возвращается в grid. Save schema 1 опционально сериализует in-flight entities.
 
 `VoxelVisualFactory` обслуживает projectiles и textured entity cuboids; item visuals вынесены в `ItemVisualFactory`. `TexturedCuboidGeometry` вычисляет legacy cross-layout UV для всех шести faces из logical offset/width/height/depth; normalized UV одинаковы для 1× и 2× physical sheets. Entity materials используют nearest, sRGB, no mipmaps и alpha test.
 
@@ -230,9 +236,9 @@ Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отд�
 
 Dust распространяет сигнал по шести voxel-соседям, уменьшая уровень на единицу. Torch постоянна, lever переключается use action, button хранит оставшееся pulse time, pressure plate получает occupancy из positions игрока, мобов и dropped items.
 
-Powered TNT удаляется из мира и становится отдельным Three.js visual с default fuse `4 s`. После fuse RedstoneSystem выдаёт typed explosion event; `Game` применяет radial damage/block destruction и коротко primes TNT, затронутый взрывом, создавая chain reaction.
+Powered TNT удаляется из мира и становится отдельной Three.js entity с fuse `4 s`, gravity и voxel AABB. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event; `Game` применяет radial damage/block destruction и коротко primes TNT, затронутый взрывом, создавая chain reaction.
 
-Serialization version 2 хранит active sources, lever attachment/facing, остаток timed button и primed TNT с оставшимся fuse. Restore принимает version 1 и назначает старому lever безопасную ориентацию `floor/north`. Wire power намеренно не сохраняется как производное состояние.
+Serialization version 2 хранит active sources, lever/button attachment/facing, остаток timed button и primed TNT с fuse и velocity. Restore принимает version 1. Wire power намеренно не сохраняется. Optional `blockStates` и `fallingBlocks` лежат в том же schema 1 snapshot.
 
 Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation steps за update и `8,192` queued updates. Это basic redstone approximation без directional dust shapes, quasi-connectivity и advanced components.
 
@@ -242,7 +248,7 @@ Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation 
 
 HUD получает фактический attack strength. Shield blocking state уходит в `FirstPersonRenderer`, а DOM остаётся для интерфейса, не для руки или held item.
 
-`InputManager` нормализует desktop и touch в общий `MoveInput` плюс edge-triggered attack/use flags. Desktop использует pointer lock; touch создаёт joystick, look zone и action buttons.
+`InputManager` нормализует desktop и touch в общий `MoveInput` плюс edge-triggered attack/use flags. Desktop sprint — `Shift`, sneak — `C`; touch action buttons не менялись. Desktop использует pointer lock; touch создаёт joystick, look zone и action buttons.
 
 CSS применяет safe-area insets, compact landscape layouts и portrait rotation overlay. UI не должен менять simulation напрямую: callbacks возвращаются в `Game`.
 

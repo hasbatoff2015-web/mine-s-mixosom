@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { BlockId, getBlockDefinition } from '../blocks';
+import { getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
+import { blockCollisionBox } from '../world/collision';
 
 const COLLISION_EPSILON = 1e-5;
 
@@ -17,53 +18,69 @@ export interface VoxelMoveResult {
   readonly hitY: boolean;
   readonly hitZ: boolean;
   readonly inLiquid: boolean;
+  readonly stepped: boolean;
 }
 
-function isCollidable(world: VoxelWorld, x: number, y: number, z: number): boolean {
-  const block = world.getBlock(x, y, z);
-  return block !== BlockId.Air && getBlockDefinition(block).solid;
+export interface VoxelMoveOptions {
+  /** When set, a grounded body may climb a single solid step of this height. */
+  readonly stepHeight?: number;
 }
 
-function bodyIntersectsBlock(
-  position: Readonly<THREE.Vector3>,
-  shape: VoxelBodyShape,
-  x: number,
-  y: number,
-  z: number,
-): boolean {
+interface BodyAABB {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+}
+
+function bodyAabb(position: Readonly<THREE.Vector3>, shape: VoxelBodyShape): BodyAABB {
   const halfWidth = shape.width * 0.5;
-  return position.x + halfWidth > x + COLLISION_EPSILON
-    && position.x - halfWidth < x + 1 - COLLISION_EPSILON
-    && position.y + shape.height > y + COLLISION_EPSILON
-    && position.y < y + 1 - COLLISION_EPSILON
-    && position.z + halfWidth > z + COLLISION_EPSILON
-    && position.z - halfWidth < z + 1 - COLLISION_EPSILON;
+  return {
+    minX: position.x - halfWidth,
+    minY: position.y,
+    minZ: position.z - halfWidth,
+    maxX: position.x + halfWidth,
+    maxY: position.y + shape.height,
+    maxZ: position.z + halfWidth,
+  };
 }
 
-function collidingBlocks(
+function boxesOverlap(
+  body: BodyAABB,
+  block: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number },
+): boolean {
+  return body.maxX > block.minX + COLLISION_EPSILON
+    && body.minX < block.maxX - COLLISION_EPSILON
+    && body.maxY > block.minY + COLLISION_EPSILON
+    && body.minY < block.maxY - COLLISION_EPSILON
+    && body.maxZ > block.minZ + COLLISION_EPSILON
+    && body.minZ < block.maxZ - COLLISION_EPSILON;
+}
+
+function collidingBoxes(
   world: VoxelWorld,
   position: Readonly<THREE.Vector3>,
   shape: VoxelBodyShape,
-): Array<readonly [number, number, number]> {
-  const halfWidth = shape.width * 0.5;
-  const minX = Math.floor(position.x - halfWidth + COLLISION_EPSILON);
-  const maxX = Math.floor(position.x + halfWidth - COLLISION_EPSILON);
-  const minY = Math.floor(position.y + COLLISION_EPSILON);
-  const maxY = Math.floor(position.y + shape.height - COLLISION_EPSILON);
-  const minZ = Math.floor(position.z - halfWidth + COLLISION_EPSILON);
-  const maxZ = Math.floor(position.z + halfWidth - COLLISION_EPSILON);
-  const blocks: Array<readonly [number, number, number]> = [];
-
+): Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }> {
+  const body = bodyAabb(position, shape);
+  const minX = Math.floor(body.minX + COLLISION_EPSILON);
+  const maxX = Math.floor(body.maxX - COLLISION_EPSILON);
+  const minY = Math.floor(body.minY + COLLISION_EPSILON);
+  const maxY = Math.floor(body.maxY - COLLISION_EPSILON);
+  const minZ = Math.floor(body.minZ + COLLISION_EPSILON);
+  const maxZ = Math.floor(body.maxZ - COLLISION_EPSILON);
+  const boxes = [];
   for (let y = minY; y <= maxY; y += 1) {
     for (let z = minZ; z <= maxZ; z += 1) {
       for (let x = minX; x <= maxX; x += 1) {
-        if (isCollidable(world, x, y, z) && bodyIntersectsBlock(position, shape, x, y, z)) {
-          blocks.push([x, y, z]);
-        }
+        const box = blockCollisionBox(world, x, y, z);
+        if (box && boxesOverlap(body, box)) boxes.push(box);
       }
     }
   }
-  return blocks;
+  return boxes;
 }
 
 function resolveAxis(
@@ -75,45 +92,57 @@ function resolveAxis(
 ): boolean {
   if (amount === 0) return false;
   position[axis] += amount;
-  const collisions = collidingBlocks(world, position, shape);
+  const collisions = collidingBoxes(world, position, shape);
   if (collisions.length === 0) return false;
 
   const halfWidth = shape.width * 0.5;
   if (axis === 'x') {
     if (amount > 0) {
       let boundary = Infinity;
-      for (const block of collisions) boundary = Math.min(boundary, block[0] - halfWidth);
+      for (const block of collisions) boundary = Math.min(boundary, block.minX - halfWidth);
       position.x = boundary - COLLISION_EPSILON;
     } else {
       let boundary = -Infinity;
-      for (const block of collisions) boundary = Math.max(boundary, block[0] + 1 + halfWidth);
+      for (const block of collisions) boundary = Math.max(boundary, block.maxX + halfWidth);
       position.x = boundary + COLLISION_EPSILON;
     }
   } else if (axis === 'y') {
     if (amount > 0) {
       let boundary = Infinity;
-      for (const block of collisions) boundary = Math.min(boundary, block[1] - shape.height);
+      for (const block of collisions) boundary = Math.min(boundary, block.minY - shape.height);
       position.y = boundary - COLLISION_EPSILON;
     } else {
       let boundary = -Infinity;
-      for (const block of collisions) boundary = Math.max(boundary, block[1] + 1);
+      for (const block of collisions) boundary = Math.max(boundary, block.maxY);
       position.y = boundary + COLLISION_EPSILON;
     }
   } else if (amount > 0) {
     let boundary = Infinity;
-    for (const block of collisions) boundary = Math.min(boundary, block[2] - halfWidth);
+    for (const block of collisions) boundary = Math.min(boundary, block.minZ - halfWidth);
     position.z = boundary - COLLISION_EPSILON;
   } else {
     let boundary = -Infinity;
-    for (const block of collisions) boundary = Math.max(boundary, block[2] + 1 + halfWidth);
+    for (const block of collisions) boundary = Math.max(boundary, block.maxZ + halfWidth);
     position.z = boundary + COLLISION_EPSILON;
   }
   return true;
 }
 
+function supportedFromBelow(world: VoxelWorld, position: Readonly<THREE.Vector3>, shape: VoxelBodyShape): boolean {
+  const probe = position.clone();
+  probe.y -= 0.08;
+  return collidingBoxes(world, probe, shape).length > 0;
+}
+
+function horizontalDistanceSquared(from: Readonly<THREE.Vector3>, to: Readonly<THREE.Vector3>): number {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  return dx * dx + dz * dz;
+}
+
 /**
  * Moves a feet-anchored AABB through the voxel field, one axis at a time.
- * The caller owns velocity response so items can bounce while mobs can stop/jump.
+ * Optional stepHeight lets mobs climb a single 1-block obstacle without a new pathfinder.
  */
 export function moveVoxelBody(
   world: VoxelWorld,
@@ -121,21 +150,54 @@ export function moveVoxelBody(
   velocity: Readonly<THREE.Vector3>,
   deltaSeconds: number,
   shape: VoxelBodyShape,
+  options: VoxelMoveOptions = {},
 ): VoxelMoveResult {
-  const hitX = resolveAxis(world, position, shape, 'x', velocity.x * deltaSeconds);
-  const hitZ = resolveAxis(world, position, shape, 'z', velocity.z * deltaSeconds);
-  const hitY = resolveAxis(world, position, shape, 'y', velocity.y * deltaSeconds);
+  const dx = velocity.x * deltaSeconds;
+  const dy = velocity.y * deltaSeconds;
+  const dz = velocity.z * deltaSeconds;
+  const beforeHorizontal = position.clone();
+  const grounded = supportedFromBelow(world, position, shape);
+  let hitX = resolveAxis(world, position, shape, 'x', dx);
+  let hitZ = resolveAxis(world, position, shape, 'z', dz);
+  const blocked = position.clone();
+  let stepped = false;
+  const stepHeight = options.stepHeight ?? 0;
+
+  if ((hitX || hitZ) && grounded && stepHeight > 0) {
+    position.copy(beforeHorizontal);
+    resolveAxis(world, position, shape, 'y', stepHeight);
+    if (position.y > beforeHorizontal.y + COLLISION_EPSILON) {
+      resolveAxis(world, position, shape, 'x', dx);
+      resolveAxis(world, position, shape, 'z', dz);
+      if (horizontalDistanceSquared(beforeHorizontal, position)
+        > horizontalDistanceSquared(beforeHorizontal, blocked) + COLLISION_EPSILON
+        && collidingBoxes(world, position, shape).length === 0) {
+        resolveAxis(world, position, shape, 'y', -(position.y - beforeHorizontal.y));
+        stepped = true;
+        hitX = false;
+        hitZ = false;
+      } else {
+        position.copy(blocked);
+      }
+    } else {
+      position.copy(blocked);
+    }
+  }
+
+  const hitY = resolveAxis(world, position, shape, 'y', dy);
   const sample = world.getBlock(
     Math.floor(position.x),
     Math.floor(position.y + shape.height * 0.5),
     Math.floor(position.z),
+    false,
   );
   return {
     hitX,
     hitY,
     hitZ,
-    onGround: hitY && velocity.y <= 0,
+    onGround: (hitY && velocity.y <= 0) || supportedFromBelow(world, position, shape),
     inLiquid: getBlockDefinition(sample).liquid === true,
+    stepped,
   };
 }
 
@@ -144,7 +206,7 @@ export function isSpaceClear(
   position: Readonly<THREE.Vector3>,
   shape: VoxelBodyShape,
 ): boolean {
-  return collidingBlocks(world, position, shape).length === 0;
+  return collidingBoxes(world, position, shape).length === 0;
 }
 
 export function hasVoxelLineOfSight(

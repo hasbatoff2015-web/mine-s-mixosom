@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import {
   BlockId,
+  buttonPlacementFromHit,
+  canHarvestBlock,
+  doorFacingFromYaw,
   getBlockDefinition,
+  miningProgressPerTick,
+  miningToolFromItemId,
+  torchPlacementFromHit,
   type BlockAttachment,
   type HorizontalFacing,
 } from '../blocks';
@@ -24,9 +30,11 @@ import { GameLifecycleManager } from './Lifecycle';
 import { RollingTimingWindow } from './PerformanceStats';
 import {
   DroppedItemManager,
+  FallingBlockManager,
   MobManager,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
+  type SerializedFallingBlock,
   type SerializedMob,
 } from '../entities';
 import { InputManager } from '../input/InputManager';
@@ -56,6 +64,7 @@ interface GameSession {
   combat: CombatSystem;
   inventory: Inventory;
   drops: DroppedItemManager;
+  falling: FallingBlockManager;
   mobs: MobManager;
   arrows: PlayerArrowManager;
   redstone: RedstoneSystem;
@@ -90,8 +99,8 @@ export class Game {
   private readonly saves = new SaveService();
   private readonly yandex = new YandexGamesService();
   private readonly input: InputManager;
-  private readonly ambient = new THREE.HemisphereLight(0xcceeff, 0x17201f, 0.9);
-  private readonly sunlight = new THREE.DirectionalLight(0xfff1cf, 1.15);
+  private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
+  private readonly sunlight = new THREE.DirectionalLight(0xffe2b3, 1.55);
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
@@ -147,6 +156,8 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
     this.scene.background = this.currentSkyColor;
     this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
+    this.ambient.intensity = 0.22;
+    this.sunlight.intensity = 1.35;
     this.sunlight.position.set(40, 70, 25);
     this.scene.add(this.ambient, this.sunlight, this.sun, this.moon);
 
@@ -317,7 +328,12 @@ export class Game {
     const worldRenderer = new WorldRenderer(
       world,
       atlas,
-      (x, y, z) => redstone.getBlockRenderState(x, y, z),
+      (x, y, z) => {
+        const worldState = world.getBlockState(x, y, z);
+        const redstoneState = redstone.getBlockRenderState(x, y, z);
+        if (!worldState && !redstoneState) return undefined;
+        return { ...worldState, ...redstoneState };
+      },
     );
     this.scene.add(worldRenderer.group);
     const drops = new DroppedItemManager(this.scene, world, {
@@ -333,6 +349,10 @@ export class Game {
       },
     });
     if (restored?.droppedItems) drops.restore(restored.droppedItems as SerializedDroppedItem[]);
+    const falling = new FallingBlockManager(this.scene, world, itemVisuals);
+    if (restored?.fallingBlocks) {
+      falling.restore(restored.fallingBlocks as SerializedFallingBlock[]);
+    }
 
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
     const mobs = new MobManager(this.scene, world, {
@@ -358,6 +378,7 @@ export class Game {
       combat,
       inventory,
       drops,
+      falling,
       mobs,
       arrows,
       redstone,
@@ -526,6 +547,8 @@ export class Game {
       chests: Object.fromEntries(session.world.chests),
       furnaces: Object.fromEntries(session.world.furnaces),
       droppedItems: session.drops.serialize(),
+      fallingBlocks: session.falling.serialize(),
+      blockStates: session.world.serializeBlockStates(),
       mobs: session.mobs.serialize(),
       redstone: session.redstone.serialize(),
     };
@@ -568,6 +591,10 @@ export class Game {
     if (!session) return;
     session.playTicks += 1;
     session.world.tick();
+    for (const spawn of session.world.consumeFallingBlocks()) {
+      session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
+    }
+    session.falling.update(FIXED_DT);
 
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
@@ -715,16 +742,7 @@ export class Game {
   }
 
   private miningDelta(definition: ReturnType<typeof getBlockDefinition>, tool: ItemStack | null): number {
-    if (definition.hardness <= 0) return 1;
-    const item = tool ? tryGetItemDefinition(tool.itemId) : undefined;
-    const correctType = !definition.tool || (item?.kind === 'tool' && item.tool === definition.tool);
-    const tierRanks = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 } as const;
-    const toolTier = item?.kind === 'tool' ? tierRanks[item.tier] : 0;
-    const required = tierRanks[definition.tier ?? 'hand'];
-    const correctTier = toolTier >= required;
-    const harvestable = correctType && correctTier;
-    const speed = correctType && item?.kind === 'tool' ? item.miningSpeed : 1;
-    return speed / definition.hardness / (harvestable ? 30 : 100);
+    return miningProgressPerTick(definition, miningToolFromItemId(tool?.itemId));
   }
 
   private breakTarget(): void {
@@ -734,11 +752,12 @@ export class Game {
     const definition = getBlockDefinition(hit.block);
     const toolStack = this.selectedStack();
     const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
-    const correctType = !definition.tool || (item?.kind === 'tool' && item.tool === definition.tool);
-    const tierRanks = { hand: 0, wood: 1, stone: 2, iron: 3, diamond: 4 } as const;
-    const correctTier = (item?.kind === 'tool' ? tierRanks[item.tier] : 0) >= tierRanks[definition.tier ?? 'hand'];
-    session.world.setBlock(hit.x, hit.y, hit.z, BlockId.Air);
-    session.redstone.notifyBlockChanged(hit.x, hit.y, hit.z);
+    const harvestable = canHarvestBlock(definition, miningToolFromItemId(toolStack?.itemId));
+    if (hit.block === BlockId.OakDoor) this.removeDoor(hit.x, hit.y, hit.z);
+    else {
+      session.world.setBlock(hit.x, hit.y, hit.z, BlockId.Air);
+      session.redstone.notifyBlockChanged(hit.x, hit.y, hit.z);
+    }
     session.miningProgress = 0;
     session.miningTarget = undefined;
     this.audio.playTone(145 + (hit.block % 9) * 12, 0.045, 0.035);
@@ -746,7 +765,7 @@ export class Game {
 
     if (session.summary.mode === 'survival') {
       const drop = definition.drop;
-      if (drop && (!drop.requiresCorrectTool || (correctType && correctTier))) {
+      if (drop && harvestable) {
         const count = drop.count ?? (drop.min !== undefined ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
         this.spawnDroppedStack(createItemStack(drop.item, count), new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5));
       }
@@ -795,6 +814,12 @@ export class Game {
         }
         return;
       }
+      if (hit.block === BlockId.OakDoor) {
+        this.toggleDoor(hit.x, hit.y, hit.z);
+        this.audio.playTone(310, 0.04, 0.03);
+        this.firstPerson?.swing();
+        return;
+      }
       if (hit.block === BlockId.WhiteBed) {
         session.survival.setSpawnPoint([hit.x + 0.5, hit.y + 1.01, hit.z + 0.5]);
         if (session.world.timeOfDay > 12_500 && session.world.timeOfDay < 23_500) {
@@ -824,6 +849,28 @@ export class Game {
     const existing = getBlockDefinition(session.world.getBlock(x, y, z));
     if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
     const placed = getBlockDefinition(item.placesBlockId);
+    if (item.placesBlockId === BlockId.OakDoor) {
+      this.placeDoor(x, y, z);
+      return;
+    }
+    if (item.placesBlockId === BlockId.Torch || item.placesBlockId === BlockId.RedstoneTorch) {
+      const view = session.player.viewDirection();
+      const orientation = torchPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
+      if (!orientation) {
+        this.ui.toast('Факел нельзя поставить на потолок');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
+      session.world.setBlockState(x, y, z, orientation);
+      return;
+    }
+    if (item.placesBlockId === BlockId.StoneButton) {
+      const view = session.player.viewDirection();
+      const orientation = buttonPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
+      session.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
+      return;
+    }
     if (placed.solid && session.player.intersectsBlock(x, y, z)) {
       this.ui.toast('Нельзя поставить блок внутри игрока');
       return;
@@ -841,16 +888,88 @@ export class Game {
   }
 
   private leverPlacement(hit: VoxelHit): { attachment: BlockAttachment; facing: HorizontalFacing } {
-    const attachment: BlockAttachment = hit.normal.y > 0.5
-      ? 'floor'
-      : hit.normal.y < -0.5
-        ? 'ceiling'
-        : 'wall';
-    const direction = attachment === 'wall' ? hit.normal : this.session!.player.viewDirection();
-    const facing: HorizontalFacing = Math.abs(direction.x) > Math.abs(direction.z)
-      ? direction.x >= 0 ? 'east' : 'west'
-      : direction.z >= 0 ? 'south' : 'north';
-    return { attachment, facing };
+    const view = this.session!.player.viewDirection();
+    return buttonPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
+  }
+
+  private finishPlacingBlock(x: number, y: number, z: number, block: BlockId, solid: boolean): boolean {
+    const session = this.session!;
+    if (solid && session.player.intersectsBlock(x, y, z)) {
+      this.ui.toast('Нельзя поставить блок внутри игрока');
+      return false;
+    }
+    if (!session.world.setBlock(x, y, z, block)) return false;
+    session.redstone.notifyBlockChanged(x, y, z);
+    this.audio.playTone(230, 0.04, 0.025);
+    this.firstPerson?.swing();
+    if (session.summary.mode === 'survival') this.consumeSelected(1);
+    return true;
+  }
+
+  private doorHalves(x: number, y: number, z: number): { lowerY: number; upperY: number } {
+    const session = this.session!;
+    const state = session.world.getBlockState(x, y, z);
+    const half = state?.half
+      ?? (session.world.getBlock(x, y - 1, z, false) === BlockId.OakDoor ? 'upper' : 'lower');
+    const lowerY = half === 'upper' ? y - 1 : y;
+    return { lowerY, upperY: lowerY + 1 };
+  }
+
+  private placeDoor(x: number, y: number, z: number): void {
+    const session = this.session!;
+    if (y + 1 >= WORLD_HEIGHT) {
+      this.ui.toast('Нет места для двери');
+      return;
+    }
+    const upperBlock = session.world.getBlock(x, y + 1, z);
+    const upperDefinition = getBlockDefinition(upperBlock);
+    if (upperBlock !== BlockId.Air && !upperDefinition.replaceable) {
+      this.ui.toast('Нет места для двери');
+      return;
+    }
+    if (session.player.intersectsBlock(x, y, z) || session.player.intersectsBlock(x, y + 1, z)) {
+      this.ui.toast('Нельзя поставить блок внутри игрока');
+      return;
+    }
+    if (!session.world.setBlock(x, y, z, BlockId.OakDoor)) return;
+    if (!session.world.setBlock(x, y + 1, z, BlockId.OakDoor)) {
+      session.world.setBlock(x, y, z, BlockId.Air);
+      return;
+    }
+    const facing = doorFacingFromYaw(session.player.yaw);
+    session.world.setBlockState(x, y, z, { facing, hinge: 'left', open: false, half: 'lower' });
+    session.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
+    session.redstone.notifyBlockChanged(x, y, z);
+    session.redstone.notifyBlockChanged(x, y + 1, z);
+    this.audio.playTone(230, 0.04, 0.025);
+    this.firstPerson?.swing();
+    if (session.summary.mode === 'survival') this.consumeSelected(1);
+  }
+
+  private toggleDoor(x: number, y: number, z: number): void {
+    const session = this.session!;
+    const { lowerY, upperY } = this.doorHalves(x, y, z);
+    const current = session.world.getBlockState(x, lowerY, z) ?? session.world.getBlockState(x, y, z);
+    const next = {
+      facing: current?.facing ?? 'north',
+      hinge: current?.hinge ?? 'left' as const,
+      open: current?.open !== true,
+    };
+    session.world.setBlockState(x, lowerY, z, { ...next, half: 'lower' });
+    if (session.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
+      session.world.setBlockState(x, upperY, z, { ...next, half: 'upper' });
+    }
+  }
+
+  private removeDoor(x: number, y: number, z: number): void {
+    const session = this.session!;
+    const { lowerY, upperY } = this.doorHalves(x, y, z);
+    session.world.setBlock(x, lowerY, z, BlockId.Air);
+    session.redstone.notifyBlockChanged(x, lowerY, z);
+    if (session.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
+      session.world.setBlock(x, upperY, z, BlockId.Air);
+      session.redstone.notifyBlockChanged(x, upperY, z);
+    }
   }
 
   private updateFoodUse(): void {
@@ -1104,6 +1223,8 @@ export class Game {
       const eyeHeight = session.player.eyeHeight;
       this.camera.position.set(position.x, position.y + eyeHeight, position.z);
       applyImmediateRenderLook(this.camera, this.input);
+      session.falling.interpolate(clamp(alpha, 0, 1));
+      session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
       const sprintFov = session.player.sprinting ? 7 : 0;
       const bowZoom = session.bowUseTicks > 0
         ? session.combat.bowCharge(session.bowUseTicks).power * 8
@@ -1156,11 +1277,13 @@ export class Game {
       ? this.currentSkyColor.copy(this.duskSkyColor).lerp(this.daySkyColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
       : this.currentSkyColor.copy(this.nightSkyColor).lerp(this.duskSkyColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
-    this.ambient.intensity = 0.12 + daylight * 0.78;
-    this.sunlight.intensity = daylight * 1.15;
+    this.ambient.intensity = 0.14 + daylight * 0.32;
+    this.sunlight.intensity = 0.18 + daylight * 1.55;
+    this.sunlight.color.set(daylight > 0.45 ? 0xffe2b3 : 0x8ea7d4);
     const session = this.session!;
     const center = session.player.position;
     this.sun.position.set(center.x + Math.cos(phase) * 70, center.y + sunHeight * 70, center.z + 15);
+    this.sunlight.position.copy(this.sun.position);
     this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
@@ -1183,7 +1306,7 @@ export class Game {
       const tickTiming = this.tickTimings.snapshot();
       const renderInfo = this.renderer.info.render;
       const itemCache = this.itemVisuals?.cacheStats;
-      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${chunkX}, ${chunkZ} · ${session.world.biomeAt(Math.floor(session.player.position.x), Math.floor(session.player.position.z))}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
@@ -1205,6 +1328,7 @@ export class Game {
     this.session.mobs.dispose();
     this.session.redstone.dispose();
     this.session.drops.dispose();
+    this.session.falling.dispose();
     this.session = undefined;
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();

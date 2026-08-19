@@ -2,12 +2,18 @@ import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
 
 export class Chunk {
   readonly blocks = new Uint16Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
+  /** Packed 0–15 sky light, column + short horizontal spread. */
+  readonly skyLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
+  /** Packed 0–15 block light from emissive sources. */
+  readonly blockLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
   /** Generation-time terrain column cache reused by meshing and biome tint. */
   readonly surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   /** 0 plains, 1 forest, 2 desert. */
   readonly biomeCodes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   dirty = true;
   generated = false;
+  skyReady = false;
+  blockLightReady = false;
   lastTouched = performance.now();
 
   constructor(readonly x: number, readonly z: number) {}

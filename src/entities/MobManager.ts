@@ -719,18 +719,17 @@ export class MobManager {
         mob.velocity,
         step,
         { width: mob.definition.width, height: mob.definition.height },
+        { stepHeight: 1.05 },
       );
       mob.onGround = result.onGround;
-      if (result.hitY) mob.velocity.y = 0;
+      if (result.hitY || result.stepped) mob.velocity.y = 0;
       if (result.hitX) {
         mob.velocity.x = 0;
-        if (mob.onGround) mob.velocity.y = 5.2;
-        mob.wanderDirection.x *= -1;
+        if (!result.stepped) mob.wanderDirection.x *= -1;
       }
       if (result.hitZ) {
         mob.velocity.z = 0;
-        if (mob.onGround) mob.velocity.y = 5.2;
-        mob.wanderDirection.z *= -1;
+        if (!result.stepped) mob.wanderDirection.z *= -1;
       }
     }
   }
@@ -803,7 +802,7 @@ export class MobManager {
       });
     }
     if (mob.kind === 'zombie') {
-      const pose = mob.state === 'attack' ? -1.55 : -1.2;
+      const pose = mob.state === 'attack' ? 1.55 : 1.2;
       mob.model.arms.forEach((arm, index) => {
         arm.rotation.x = Number(arm.userData.baseRotationX ?? 0)
           + pose + (index % 2 === 0 ? swing : -swing) * 0.25;
