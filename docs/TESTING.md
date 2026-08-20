@@ -75,7 +75,7 @@ Main assets:  JS 721.71 kB / 193.44 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
-| `tests/item-rendering.test.ts` | 14 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow generated held path |
+| `tests/item-rendering.test.ts` | 17 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow generated held path, held* QA parse/defaults, idle front-facing camera |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -148,6 +148,7 @@ Feel/polish pass повторно проверен во встроенном б�
 
 - в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
 - `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
+- `?qaItem=iron_pickaxe&heldScale=0.85&heldX=0.50&heldY=-0.56&heldZ=-0.82&heldRoll=14&heldPitch=0&heldYaw=0&pose=idle` — dev overlay печатает те же числа и `front·camera` dot; params не попадают в save и игнорируются в production build;
 - bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, vanilla pull thresholds `0.65/0.9`, movement slowdown и плавный FOV zoom. Mesh лука не изгибается.
 
 Minecraft generated-items Phase 1 ещё требует локальный visual QA (этот cloud-прогон покрыл только unit/check):

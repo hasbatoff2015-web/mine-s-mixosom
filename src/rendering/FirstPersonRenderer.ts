@@ -3,6 +3,13 @@ import { bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } fro
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
 import { TextureAtlas } from './TextureAtlas';
 import { createTexturedCuboidGeometry } from './TexturedCuboid';
+import {
+  formatHeldItemQaQuery,
+  heldItemQaValuesFromTransform,
+  readDevHeldItemQaOverride,
+  resolveHeldItemTransform,
+  type HeldItemQaOverride,
+} from './heldItemQa';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -47,8 +54,17 @@ export class FirstPersonRenderer {
   private equipProgress = 1;
   private bowTexturePath = 'item/bow';
   private disposed = false;
+  private heldQaOverride?: HeldItemQaOverride;
+  private loggedHeldQa = false;
+  private readonly heldQaFromUrl: boolean;
 
-  constructor(private readonly visuals: ItemVisualFactory) {
+  constructor(
+    private readonly visuals: ItemVisualFactory,
+    options: { readonly qaOverride?: HeldItemQaOverride } = {},
+  ) {
+    const fromUrl = options.qaOverride === undefined ? readDevHeldItemQaOverride() : undefined;
+    this.heldQaOverride = options.qaOverride ?? fromUrl;
+    this.heldQaFromUrl = fromUrl !== undefined;
     this.scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x4a382d, 1.75));
     const key = new THREE.DirectionalLight(0xffe4c2, 1.9);
     key.position.set(-2, 4, 3);
@@ -143,7 +159,13 @@ export class FirstPersonRenderer {
     );
 
     if (this.mainModel && this.mainItem) {
-      applyItemViewTransform(this.mainModel, itemRenderProfile(this.mainItem).transforms.firstPersonRightHand);
+      const base = itemRenderProfile(this.mainItem).transforms.firstPersonRightHand;
+      const resolved = resolveHeldItemTransform(base, this.heldQaOverride);
+      applyItemViewTransform(this.mainModel, resolved);
+      if (this.heldQaFromUrl && !this.loggedHeldQa) {
+        this.loggedHeldQa = true;
+        console.info(`[held-qa] ${formatHeldItemQaQuery(heldItemQaValuesFromTransform(resolved))}`);
+      }
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
       if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
@@ -170,6 +192,26 @@ export class FirstPersonRenderer {
   resize(width: number, height: number): void {
     this.camera.aspect = Math.max(1, width) / Math.max(1, height);
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Idle alignment of the generated +Z front against the viewmodel camera.
+   * 1 means the sprite faces the camera; walk/swing parent rotations reduce it.
+   */
+  measureHeldFrontCameraDot(): number | undefined {
+    if (!this.mainModel) return undefined;
+    this.mainModel.updateWorldMatrix(true, true);
+    this.camera.updateMatrixWorld();
+    const front = new THREE.Vector3(0, 0, 1).transformDirection(this.mainModel.matrixWorld).normalize();
+    const view = new THREE.Vector3();
+    this.camera.getWorldDirection(view);
+    return -front.dot(view);
+  }
+
+  heldFrontWorldNormal(): THREE.Vector3 | undefined {
+    if (!this.mainModel) return undefined;
+    this.mainModel.updateWorldMatrix(true, true);
+    return new THREE.Vector3(0, 0, 1).transformDirection(this.mainModel.matrixWorld).normalize();
   }
 
   dispose(): void {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BLOCKS, getBlockDefinition } from '../src/blocks';
 import {
   ITEMS,
+  FIRST_PERSON_SPRITE_POSE,
   bowPullingTexturePath,
   classifyItemForRendering,
   itemRenderProfile,
@@ -20,6 +21,11 @@ import {
   ItemVisualFactory,
   droppedVisualCopyCount,
 } from '../src/rendering/ItemVisualFactory';
+import {
+  formatHeldItemQaQuery,
+  parseHeldItemQaOverride,
+  resolveHeldItemTransform,
+} from '../src/rendering/heldItemQa';
 
 const ITEM_TEXTURES = import.meta.glob('../public/textures/item/*.png');
 const BLOCK_TEXTURES = import.meta.glob('../public/textures/block/*.png');
@@ -120,6 +126,11 @@ describe('item render profiles and assets', () => {
     expect(stick).toEqual(generated);
     expect(bow).toEqual(generated);
     expect(itemRenderProfile('stone').transforms.firstPersonRightHand).not.toEqual(generated);
+    expect(generated.position).toEqual(FIRST_PERSON_SPRITE_POSE.position);
+    expect(generated.scale[0]).toBe(FIRST_PERSON_SPRITE_POSE.scale);
+    expect(generated.rotation[0]).toBeCloseTo(0);
+    expect(generated.rotation[1]).toBeCloseTo(0);
+    expect(generated.rotation[2]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[2] * Math.PI / 180);
   });
 
   it('provides independent first-person, ground and GUI transform contexts', () => {
@@ -358,6 +369,58 @@ describe('FirstPersonRenderer', () => {
     viewmodel.update(0.016, frameState({ bowCharge: 0.9 }));
     expect(bow.userData.texturePath).toBe('item/bow_pulling_2');
 
+    viewmodel.dispose();
+    factory.dispose();
+  });
+});
+
+describe('held item QA transform overrides', () => {
+  it('parses held* query params and leaves missing or invalid keys unset', () => {
+    expect(parseHeldItemQaOverride('')).toBeUndefined();
+    expect(parseHeldItemQaOverride('qaItem=iron_pickaxe')).toBeUndefined();
+    expect(parseHeldItemQaOverride('heldScale=abc&heldX=')).toBeUndefined();
+    expect(parseHeldItemQaOverride('heldScale=0.85&heldX=0.5&heldRoll=14')).toEqual({
+      scale: 0.85,
+      x: 0.5,
+      roll: 14,
+    });
+    const onePointSixTarget = resolveHeldItemTransform(
+      itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand,
+      { scale: 0.578 },
+    );
+    expect(onePointSixTarget.scale[0]).toBeCloseTo(0.578);
+    expect(onePointSixTarget.scale[0]).not.toBeCloseTo(0.578 * 0.68);
+  });
+
+  it('overrides only the first-person sprite pose and keeps ground transforms', () => {
+    const base = itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand;
+    const ground = itemRenderProfile('iron_pickaxe').transforms.ground;
+    const resolved = resolveHeldItemTransform(base, { scale: 1.1, y: -0.7, pitch: 0, yaw: 0, roll: 10 });
+    expect(resolved.scale[0]).toBeCloseTo(1.1);
+    expect(resolved.position[1]).toBeCloseTo(-0.7);
+    expect(resolved.rotation[2]).toBeCloseTo(10 * Math.PI / 180);
+    expect(itemRenderProfile('iron_pickaxe').transforms.ground).toBe(ground);
+    expect(formatHeldItemQaQuery({
+      scale: 0.85, x: 0.5, y: -0.56, z: -0.82, roll: 14, pitch: 0, yaw: 0,
+    })).toContain('heldScale=0.85');
+  });
+
+  it('keeps the idle generated front facing the viewmodel camera', () => {
+    const factory = new ItemVisualFactory();
+    const viewmodel = new FirstPersonRenderer(factory, {
+      qaOverride: { pitch: 0, yaw: 0, roll: 14 },
+    });
+    viewmodel.setHeldItems('diamond_sword');
+    viewmodel.update(0.2, frameState());
+    const dot = viewmodel.measureHeldFrontCameraDot();
+    const front = viewmodel.heldFrontWorldNormal();
+    expect(dot).toBeDefined();
+    expect(dot).toBeCloseTo(1, 5);
+    expect(front?.z).toBeCloseTo(1, 5);
+    expect(Math.abs(front?.x ?? 1)).toBeLessThan(1e-5);
+    expect(Math.abs(front?.y ?? 1)).toBeLessThan(1e-5);
+    expect(viewmodel.root.rotation.x).toBeCloseTo(0);
+    expect(viewmodel.root.rotation.y).toBeCloseTo(0);
     viewmodel.dispose();
     factory.dispose();
   });

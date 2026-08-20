@@ -1,6 +1,12 @@
 import * as THREE from 'three';
-import { isKnownItemId } from '../items';
+import { isKnownItemId, itemRenderProfile } from '../items';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
+import {
+  formatHeldItemQaQuery,
+  heldItemQaValuesFromTransform,
+  parseHeldItemQaOverride,
+  resolveHeldItemTransform,
+} from '../rendering/heldItemQa';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 
@@ -35,7 +41,13 @@ export async function startItemQaHarness(
   const viewmodel = new FirstPersonRenderer(visuals);
   const dropped: THREE.Group[] = [];
   const qaItem = mode !== 'empty' && mode !== 'drops' && isKnownItemId(mode) ? mode : undefined;
-  const requestedPose = new URLSearchParams(location.search).get('pose');
+  const search = new URLSearchParams(location.search);
+  const requestedPose = search.get('pose');
+  const heldQa = parseHeldItemQaOverride(search);
+  const heldBase = itemRenderProfile(qaItem ?? 'coal').transforms.firstPersonRightHand;
+  const heldResolved = resolveHeldItemTransform(heldBase, heldQa);
+  const heldQuery = formatHeldItemQaQuery(heldItemQaValuesFromTransform(heldResolved));
+  console.info(`[held-qa] ?qaItem=${mode}&${heldQuery}&pose=idle`);
 
   if (mode === 'drops') {
     const samples = [
@@ -52,7 +64,8 @@ export async function startItemQaHarness(
     viewmodel.setHeldItems(qaItem);
   }
 
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">item QA · ${mode}</div>`;
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:13px/1.35 monospace;z-index:5;white-space:pre">item QA · ${mode}\n${heldQuery}</div>`;
+  const label = uiRoot.querySelector('#qa-label');
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
@@ -82,13 +95,17 @@ export async function startItemQaHarness(
         visual.position.y = 0.48 + Math.sin(elapsed * 2.2 + phase) * 0.06;
       });
     } else {
-      state.movementSpeed = requestedPose === 'idle' ? 0 : 1.8;
-      state.foodUseProgress = qaItem === 'apple' ? (elapsed % 2.2) / 2.2 : 0;
+      state.movementSpeed = requestedPose === 'walk' ? 1.8 : 0;
+      state.foodUseProgress = qaItem === 'apple' && requestedPose === 'eat' ? (elapsed % 2.2) / 2.2 : 0;
       state.bowCharge = qaItem === 'bow'
-        ? requestedPose === 'base' ? 0 : requestedPose === 'partial' ? 0.5 : requestedPose === 'full' ? 1 : (elapsed % 2.2) / 2.2
+        ? requestedPose === 'partial' ? 0.5 : requestedPose === 'full' ? 1 : requestedPose === 'base' || !requestedPose ? 0 : (elapsed % 2.2) / 2.2
         : 0;
-      state.shieldRaised = qaItem === 'shield';
+      state.shieldRaised = qaItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
+      const facing = viewmodel.measureHeldFrontCameraDot();
+      if (label && facing !== undefined) {
+        label.textContent = `item QA · ${mode}\n${heldQuery}\nfront·camera ${facing.toFixed(4)}`;
+      }
     }
     renderer.render(scene, camera);
     if (mode !== 'drops') viewmodel.render(renderer);

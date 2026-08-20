@@ -42,57 +42,42 @@ const profile = (
 const UNIFORM_GUI = transform([0, 0, 0], [0, 0, 0], [1, 1, 1]);
 
 /**
- * Vanilla `item/generated` and `item/handheld` firstperson_righthand JSON:
- *   rotation [0, -90, 25]
- *   translation [1.13, 3.2, 1.13]
- *   scale [0.68, 0.68, 0.68]
+ * Shared first-person pose for `item/generated`, `item/handheld` and bow.
  *
- * Those Eulers are for Minecraft item space (south-facing sprite, camera
- * looking south after the yaw). They must not be copied into Three.js.
+ * Vanilla JSON is `rotation [0, -90, 25]`, `translation [1.13, 3.2, 1.13]`,
+ * `scale [0.68, 0.68, 0.68]`. Those Eulers are Minecraft item space and must
+ * not be copied into Three.js: generated front is +Z, the viewmodel camera
+ * looks -Z, so yaw -90° is only a basis conversion. Pitch and yaw stay 0 so
+ * the sprite faces the camera; the remaining visible rotation is Z roll.
  *
- * GeneratedItemGeometry already puts the front on +Z. The first-person
- * camera looks down -Z, so an item at negative Z already shows the sprite.
- * Vanilla Y=-90 is only the Minecraft camera-basis conversion; applying it
- * here would present the side spans instead of the front texture.
+ * `scale` here is the FINAL uniform Three.js scale written to the item root.
+ * It is not a project multiplier on vanilla 0.68.
  *
- * Adapter: drop that -90° yaw, keep the 25° held roll, convert translation
- * from vanilla pixels to blocks, then apply one project-level hand/camera
- * offset. Generated, handheld and bow share this first-person pose.
+ * Previous composed default:
+ *   0.68 * 0.52 = 0.3536
+ * Current default (temporary calibration baseline, not an approved art value):
+ *   0.85
+ * Local QA can try the ×1.6 target without a code change:
+ *   ?heldScale=0.578  →  0.68 * 0.85
+ *
+ * Tune with dev query params
+ * `heldScale/heldX/heldY/heldZ/heldRoll/heldPitch/heldYaw`.
  */
-const VANILLA_FP_ROTATION_DEG: RenderVector = [0, -90, 25];
-const VANILLA_FP_TRANSLATION_PX: RenderVector = [1.13, 3.2, 1.13];
-const VANILLA_FP_SCALE = 0.68;
-const MC_PIXEL = 1 / 16;
-/** Cancels vanilla Y=-90 so the sprite stays camera-facing in Three.js. */
-const THREE_JS_BASIS_YAW_DEG = 90;
-/**
- * Places the item in the lower-right of our 70° viewmodel camera. This is a
- * single global rig offset, not a per-tool pose.
- */
-const VIEWMODEL_HAND_OFFSET: RenderVector = [0.36, -0.42, -0.70];
-/**
- * Vanilla 0.68 of a 1-block item is oversized at our camera distance.
- * Keep uniform scale; shrink globally so the front sprite stays readable.
- */
-const VIEWMODEL_SCALE = VANILLA_FP_SCALE * 0.52;
+export const FIRST_PERSON_SPRITE_POSE = Object.freeze({
+  position: [0.50, -0.56, -0.82] as RenderVector,
+  rotationDeg: [0, 0, 14] as RenderVector,
+  scale: 0.85,
+});
 
-function vanillaLikeFirstPersonRightHand(): ItemViewTransform {
-  return transform(
-    [
-      VIEWMODEL_HAND_OFFSET[0] + VANILLA_FP_TRANSLATION_PX[0] * MC_PIXEL,
-      VIEWMODEL_HAND_OFFSET[1] + VANILLA_FP_TRANSLATION_PX[1] * MC_PIXEL,
-      VIEWMODEL_HAND_OFFSET[2] - VANILLA_FP_TRANSLATION_PX[2] * MC_PIXEL,
-    ],
-    [
-      VANILLA_FP_ROTATION_DEG[0],
-      VANILLA_FP_ROTATION_DEG[1] + THREE_JS_BASIS_YAW_DEG,
-      VANILLA_FP_ROTATION_DEG[2],
-    ],
-    [VIEWMODEL_SCALE, VIEWMODEL_SCALE, VIEWMODEL_SCALE],
-  );
-}
-
-const FIRST_PERSON_GENERATED = vanillaLikeFirstPersonRightHand();
+const FIRST_PERSON_GENERATED = transform(
+  FIRST_PERSON_SPRITE_POSE.position,
+  FIRST_PERSON_SPRITE_POSE.rotationDeg,
+  [
+    FIRST_PERSON_SPRITE_POSE.scale,
+    FIRST_PERSON_SPRITE_POSE.scale,
+    FIRST_PERSON_SPRITE_POSE.scale,
+  ],
+);
 
 export const BOW_PULL_STAGE_1 = 0.65;
 export const BOW_PULL_STAGE_2 = 0.9;
