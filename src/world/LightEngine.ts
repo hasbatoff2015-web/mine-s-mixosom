@@ -55,6 +55,62 @@ export function combinedLight(world: VoxelWorld, x: number, y: number, z: number
   return Math.max(sky, block);
 }
 
+/**
+ * Minecraft-style 4-tap smooth lighting for one cube-face corner.
+ * Averages the cells that meet at the vertex on the exposed side of the face
+ * so cave openings interpolate instead of flipping from full sky to 0 on a grid edge.
+ */
+export function smoothFaceCornerLight(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  nx: number,
+  ny: number,
+  nz: number,
+  cx: number,
+  cy: number,
+  cz: number,
+): { sky: number; block: number } {
+  const startX = nx !== 0 ? x + nx : x + cx - 1;
+  const startY = ny !== 0 ? y + ny : y + cy - 1;
+  const startZ = nz !== 0 ? z + nz : z + cz - 1;
+  const countX = nx !== 0 ? 1 : 2;
+  const countY = ny !== 0 ? 1 : 2;
+  const countZ = nz !== 0 ? 1 : 2;
+  let sky = 0;
+  let block = 0;
+  let samples = 0;
+  for (let iz = 0; iz < countZ; iz += 1) {
+    for (let iy = 0; iy < countY; iy += 1) {
+      for (let ix = 0; ix < countX; ix += 1) {
+        sky += getSkyLight(world, startX + ix, startY + iy, startZ + iz);
+        block += getBlockLight(world, startX + ix, startY + iy, startZ + iz);
+        samples += 1;
+      }
+    }
+  }
+  const inv = 1 / Math.max(1, samples);
+  return { sky: sky * inv, block: block * inv };
+}
+
+/** Packed 0–15 sky/block sample. If the cell is unlit, uses the brightest neighbor air. */
+export function sampleVoxelLightLevels(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+): { sky: number; block: number } {
+  let sky = getSkyLight(world, x, y, z);
+  let block = getBlockLight(world, x, y, z);
+  if (sky > 0 || block > 0) return { sky, block };
+  for (const [dx, dy, dz] of NEIGHBOURS) {
+    sky = Math.max(sky, getSkyLight(world, x + dx, y + dy, z + dz));
+    block = Math.max(block, getBlockLight(world, x + dx, y + dy, z + dz));
+  }
+  return { sky, block };
+}
+
 function ChunkIndex(x: number, y: number, z: number): number {
   return y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
 }

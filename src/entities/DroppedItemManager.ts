@@ -8,6 +8,7 @@ import {
 } from '../inventory';
 import { getItemDefinition } from '../items';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
+import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { moveVoxelBody } from './voxelPhysics';
 
@@ -340,6 +341,15 @@ export class DroppedItemManager {
       entity.position.z,
     );
     entity.visual.rotation.y = entity.ageSeconds * 1.35 + entity.bobPhase;
+    applySampledEntityLight(
+      entity.visual,
+      this.world,
+      entity.position.x,
+      entity.position.y,
+      entity.position.z,
+      ITEM_HEIGHT,
+      worldDaylightUniform.value,
+    );
   }
 
   private mergeSpawnIntoNearby(

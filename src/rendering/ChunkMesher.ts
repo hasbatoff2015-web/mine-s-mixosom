@@ -9,11 +9,14 @@ import {
 import { CHUNK_SIZE } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelWorld } from '../world/World';
-import { getBlockLight, getSkyLight } from '../world/LightEngine';
+import { getBlockLight, getSkyLight, smoothFaceCornerLight } from '../world/LightEngine';
 import type { TextureAtlas } from './TextureAtlas';
 import {
   facingVector as facingVectorFrom,
   leverHandleAngle,
+  TORCH_HEIGHT,
+  TORCH_TEXTURE_UV,
+  TORCH_WIDTH,
   torchLocalMatrix,
 } from './specialBlockGeometry';
 
@@ -31,7 +34,7 @@ const FACES: readonly Face[] = [
   { normal: [1, 0, 0], corners: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]], shade: 0.82, texture: 'side' },
   { normal: [-1, 0, 0], corners: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], shade: 0.72, texture: 'side' },
   { normal: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]], shade: 1, texture: 'top' },
-  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], shade: 0.5, texture: 'bottom' },
+  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], shade: 0.58, texture: 'bottom' },
   { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], shade: 0.88, texture: 'side' },
   { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], shade: 0.76, texture: 'front' },
 ];
@@ -237,7 +240,18 @@ export class ChunkMesher {
       const corner = face.corners[index]!;
       buffers.positions.push(x + corner[0], y + corner[1], z + corner[2]);
       buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
-      this.pushLighting(buffers, lighting);
+      const cornerLight = smoothFaceCornerLight(
+        world, x, y, z,
+        face.normal[0], face.normal[1], face.normal[2],
+        corner[0], corner[1], corner[2],
+      );
+      this.pushLighting(buffers, {
+        tint: lighting.tint,
+        sky: cornerLight.sky / 15,
+        block: cornerLight.block / 15,
+        emission: lighting.emission,
+        shade: lighting.shade,
+      });
     }
     buffers.uvs.push(
       tile.u0, tile.v0,
@@ -315,21 +329,14 @@ export class ChunkMesher {
     z: number,
   ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
     const attachment = state?.attachment ?? 'floor';
     const facing = state?.facing ?? 'north';
-    let faces = 0;
-    for (const angle of [Math.PI / 4, -Math.PI / 4]) {
-      const matrix = torchLocalMatrix(x, y, z, attachment, facing, angle);
-      const local = [
-        [-0.28, 0.02, 0], [0.28, 0.02, 0], [0.28, 0.8, 0], [-0.28, 0.8, 0],
-      ] as const;
-      const corners = local.map((point) => new THREE.Vector3(...point).applyMatrix4(matrix).toArray() as [number, number, number]);
-      const normal = new THREE.Vector3(0, 0, 1).transformDirection(matrix).toArray() as [number, number, number];
-      this.addQuad(buffers, texture, corners, normal, lighting);
-      faces += 1;
-    }
-    return faces;
+    const matrix = torchLocalMatrix(x, y, z, attachment, facing)
+      .multiply(new THREE.Matrix4().makeTranslation(0, TORCH_HEIGHT * 0.5, 0));
+    return this.addCuboid(
+      buffers, texture, [TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH], matrix,
+      world, definition, x, y, z, TORCH_TEXTURE_UV,
+    );
   }
 
   private addWire(

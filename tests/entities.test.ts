@@ -28,7 +28,7 @@ describe('DroppedItemManager', () => {
     expect(first.visual.userData.visualCopies).toBe(2);
     const texturedMesh = first.visual.getObjectByName('item-model:dirt:block') as THREE.Mesh;
     expect(texturedMesh).toBeInstanceOf(THREE.Mesh);
-    expect((texturedMesh.material as THREE.MeshLambertMaterial).map).toBeInstanceOf(THREE.Texture);
+    expect((texturedMesh.material as THREE.MeshBasicMaterial).map).toBeInstanceOf(THREE.Texture);
     expect(manager.collectNearby(position, () => 2)).toBe(2);
     expect(first.stack.count).toBe(3);
     expect(manager.collectNearby(position, () => true)).toBe(3);
@@ -115,7 +115,7 @@ describe('MobManager', () => {
     expect(manager.projectileCount).toBe(1);
     const projectile = scene.getObjectByName('arrow-projectile') as THREE.Mesh;
     expect(projectile).toBeInstanceOf(THREE.Mesh);
-    expect((projectile.material as THREE.MeshLambertMaterial).map).toBeInstanceOf(THREE.Texture);
+    expect((projectile.material as THREE.MeshBasicMaterial).map).toBeInstanceOf(THREE.Texture);
     manager.dispose();
   });
 

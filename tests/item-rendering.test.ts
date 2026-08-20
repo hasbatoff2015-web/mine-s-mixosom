@@ -82,10 +82,10 @@ describe('ItemVisualFactory', () => {
 
     const stoneMesh = stone.children[0] as THREE.Mesh;
     expect(stoneMesh.geometry.getAttribute('position').count).toBe(24);
-    expect((stoneMesh.material as THREE.MeshLambertMaterial).map).toBe(atlasTexture);
+    expect((stoneMesh.material as THREE.MeshBasicMaterial).map).toBe(atlasTexture);
     const appleMesh = apple.children[0] as THREE.Mesh;
     expect(Array.isArray(appleMesh.material)).toBe(false);
-    const appleSurface = appleMesh.material as THREE.MeshLambertMaterial;
+    const appleSurface = appleMesh.material as THREE.MeshBasicMaterial;
     expect(appleSurface.map).toBeInstanceOf(THREE.Texture);
     expect(factory.cacheStats).toEqual(firstStats);
     expect(secondStone.children[0]).not.toBe(stoneMesh);

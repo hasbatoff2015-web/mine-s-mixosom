@@ -9,6 +9,7 @@ import {
 } from '../items';
 import { createGeneratedItemGeometry } from './GeneratedItemGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
+import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 
 interface AtlasSource {
   readonly texture: THREE.Texture;
@@ -55,8 +56,8 @@ export function applyItemViewTransform(object: THREE.Object3D, transform: ItemVi
 /** Shared cached item-model source for first-person and world item entities. */
 export class ItemVisualFactory {
   private readonly blockGeometries = new Map<number, THREE.BufferGeometry>();
-  private readonly blockMaterials = new Map<string, THREE.MeshLambertMaterial>();
-  private readonly itemMaterials = new Map<string, THREE.MeshLambertMaterial>();
+  private readonly blockMaterials = new Map<string, THREE.MeshBasicMaterial>();
+  private readonly itemMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private readonly itemTextures = new Map<string, THREE.Texture>();
   private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly fallbackTexture: THREE.Texture;
@@ -90,14 +91,12 @@ export class ItemVisualFactory {
       const block = getBlockDefinition(definition.blockId);
       const mesh = new THREE.Mesh(this.blockGeometry(block), this.blockMaterial(block));
       mesh.name = `${root.name}:block`;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      bindEntityLightReceiver(mesh);
       root.add(mesh);
     } else {
       const mesh = this.generatedMesh(definition.texture);
       mesh.name = `${root.name}:generated`;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      bindEntityLightReceiver(mesh);
       root.add(mesh);
     }
     return root;
@@ -109,8 +108,7 @@ export class ItemVisualFactory {
     if (!previous || !(previous instanceof THREE.Mesh)) return;
     const replacement = this.generatedMesh(texturePath);
     replacement.name = previous.name;
-    replacement.castShadow = previous.castShadow;
-    replacement.receiveShadow = previous.receiveShadow;
+    bindEntityLightReceiver(replacement);
     root.remove(previous);
     root.add(replacement);
     root.userData.texturePath = texturePath;
@@ -200,18 +198,17 @@ export class ItemVisualFactory {
     return geometry;
   }
 
-  private blockMaterial(block: BlockDefinition): THREE.MeshLambertMaterial {
+  private blockMaterial(block: BlockDefinition): THREE.MeshBasicMaterial {
     const layer = block.renderLayer;
     let material = this.blockMaterials.get(layer);
     if (material) return material;
     const map = this.atlas?.texture ?? this.fallbackTexture;
-    material = new THREE.MeshLambertMaterial({
+    material = createEntityMaterial({
       map,
       alphaTest: layer === 'cutout' ? 0.42 : 0,
       transparent: layer === 'translucent',
       opacity: layer === 'translucent' ? 0.72 : 1,
       depthWrite: layer !== 'translucent',
-      flatShading: true,
     });
     this.blockMaterials.set(layer, material);
     return material;
@@ -225,12 +222,10 @@ export class ItemVisualFactory {
     }
     let surface = this.itemMaterials.get(texturePath);
     if (!surface) {
-      surface = new THREE.MeshLambertMaterial({
+      surface = createEntityMaterial({
         map: this.itemTexture(texturePath),
         alphaTest: 0.08,
-        transparent: false,
         side: THREE.FrontSide,
-        flatShading: true,
       });
       this.itemMaterials.set(texturePath, surface);
     }

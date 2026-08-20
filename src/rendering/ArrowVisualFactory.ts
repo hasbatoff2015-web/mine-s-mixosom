@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { TextureAtlas } from './TextureAtlas';
+import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 
 /** Shared crossed-plane projectile model using the legacy arrow entity sheet. */
 export class ArrowVisualFactory {
   private readonly geometry = createArrowGeometry();
   private readonly texture: THREE.Texture;
-  private readonly material: THREE.MeshLambertMaterial;
+  private readonly material: THREE.MeshBasicMaterial;
 
   constructor() {
     this.texture = typeof document === 'undefined'
@@ -15,10 +16,9 @@ export class ArrowVisualFactory {
     this.texture.magFilter = THREE.NearestFilter;
     this.texture.minFilter = THREE.NearestFilter;
     this.texture.generateMipmaps = false;
-    this.material = new THREE.MeshLambertMaterial({
+    this.material = createEntityMaterial({
       map: this.texture,
       alphaTest: 0.08,
-      transparent: false,
       side: THREE.DoubleSide,
     });
   }
@@ -26,7 +26,7 @@ export class ArrowVisualFactory {
   create(): THREE.Mesh {
     const mesh = new THREE.Mesh(this.geometry, this.material);
     mesh.name = 'arrow-projectile';
-    mesh.castShadow = true;
+    bindEntityLightReceiver(mesh);
     return mesh;
   }
 

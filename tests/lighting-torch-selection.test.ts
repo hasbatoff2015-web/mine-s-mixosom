@@ -7,6 +7,8 @@ import {
   createSelectionGeometry,
   selectionBoxesForBlock,
   selectionShapeKey,
+  TORCH_HEIGHT,
+  TORCH_WIDTH,
   torchEndpoints,
 } from '../src/rendering/specialBlockGeometry';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
@@ -142,20 +144,23 @@ describe('torch lighting, orientation and selection', () => {
 
   it('orients wall torches with the wooden base against the wall for all four facings', () => {
     const cases = [
-      { facing: 'east' as const, towardWall: (base: THREE.Vector3, flame: THREE.Vector3) => flame.x > base.x && base.x < 0.5 },
-      { facing: 'west' as const, towardWall: (base: THREE.Vector3, flame: THREE.Vector3) => flame.x < base.x && base.x > 0.5 },
-      { facing: 'south' as const, towardWall: (base: THREE.Vector3, flame: THREE.Vector3) => flame.z > base.z && base.z < 0.5 },
-      { facing: 'north' as const, towardWall: (base: THREE.Vector3, flame: THREE.Vector3) => flame.z < base.z && base.z > 0.5 },
+      { facing: 'east' as const, wallDistance: (base: THREE.Vector3) => base.x, out: (base: THREE.Vector3, flame: THREE.Vector3) => flame.x > base.x },
+      { facing: 'west' as const, wallDistance: (base: THREE.Vector3) => 1 - base.x, out: (base: THREE.Vector3, flame: THREE.Vector3) => flame.x < base.x },
+      { facing: 'south' as const, wallDistance: (base: THREE.Vector3) => base.z, out: (base: THREE.Vector3, flame: THREE.Vector3) => flame.z > base.z },
+      { facing: 'north' as const, wallDistance: (base: THREE.Vector3) => 1 - base.z, out: (base: THREE.Vector3, flame: THREE.Vector3) => flame.z < base.z },
     ];
     for (const test of cases) {
       const { base, flame } = torchEndpoints(0, 0, 0, 'wall', test.facing);
       expect(flame.y, test.facing).toBeGreaterThan(base.y);
-      expect(test.towardWall(base, flame), test.facing).toBe(true);
+      expect(test.out(base, flame), test.facing).toBe(true);
+      expect(test.wallDistance(base), test.facing).toBeLessThan(TORCH_WIDTH * 0.75);
+      expect(test.wallDistance(base), test.facing).toBeGreaterThan(0);
     }
     const floor = torchEndpoints(0, 0, 0, 'floor', 'north');
     expect(floor.flame.y).toBeGreaterThan(floor.base.y);
     expect(floor.flame.x).toBeCloseTo(floor.base.x, 5);
     expect(floor.flame.z).toBeCloseTo(floor.base.z, 5);
+    expect(floor.base.y).toBeLessThan(0.08);
   });
 
   it('builds selection boxes that match special geometry instead of a full voxel cube', () => {
@@ -165,8 +170,9 @@ describe('torch lighting, orientation and selection', () => {
 
     const torch = selectionBoxesForBlock({ renderShape: 'torch' }, { attachment: 'wall', facing: 'east' });
     expect(torch).toHaveLength(1);
-    expect(Math.max(...torch[0]!.size)).toBeLessThan(0.9);
-    expect(Math.min(...torch[0]!.size)).toBeLessThan(0.2);
+    expect(Math.max(...torch[0]!.size)).toBeCloseTo(TORCH_HEIGHT);
+    expect(Math.min(...torch[0]!.size)).toBeCloseTo(TORCH_WIDTH);
+    expect(Math.max(...torch[0]!.size)).toBeLessThan(0.95);
 
     const button = selectionBoxesForBlock({ renderShape: 'button' }, { attachment: 'wall', facing: 'south' });
     expect(Math.max(...button[0]!.size)).toBeLessThan(0.5);
@@ -217,5 +223,52 @@ describe('torch lighting, orientation and selection', () => {
     expect(getBlockDefinition(BlockId.RedstoneTorch).renderShape).toBe('torch');
     expect(getBlockDefinition(BlockId.StoneButton).renderShape).toBe('button');
     expect(getBlockDefinition(BlockId.Lever).renderShape).toBe('lever');
+  });
+
+  it('meshes a thicker torch cuboid whose outline stays aligned with the stick', () => {
+    const world = new VoxelWorld('torch-size');
+    const chunk = world.getChunk(0, 0)!;
+    chunk.blocks.fill(BlockId.Air);
+    writeBlock(world, 4, 40, 4, BlockId.Torch);
+    world.setBlockState(4, 40, 4, { attachment: 'floor', facing: 'north' });
+    refreshLight(world, 4, 4);
+    const meshed = new ChunkMesher(atlasStub, (x, y, z) => world.getBlockState(x, y, z)).build(chunk, world);
+    meshed.cutout.computeBoundingBox();
+    const size = meshed.cutout.boundingBox!.getSize(new THREE.Vector3());
+    expect(size.y).toBeGreaterThan(0.8);
+    expect(Math.min(size.x, size.z)).toBeGreaterThan(0.18);
+    expect(Math.max(size.x, size.y, size.z)).toBeLessThan(1);
+    disposeMeshed(meshed);
+  });
+
+  it('interpolates sky light across a vertical hole instead of leaving the first ledges pitch-black', () => {
+    const world = new VoxelWorld('cave-opening');
+    const chunk = world.getChunk(0, 0)!;
+    chunk.blocks.fill(BlockId.Stone);
+    for (let y = 45; y < 80; y += 1) writeBlock(world, 8, y, 8, BlockId.Air);
+    for (let x = 4; x <= 12; x += 1) {
+      for (let z = 4; z <= 12; z += 1) writeBlock(world, x, 52, z, BlockId.GrassBlock);
+    }
+    writeBlock(world, 8, 52, 8, BlockId.Air);
+    refreshLight(world, 8, 8);
+
+    const meshed = new ChunkMesher(atlasStub).build(chunk, world);
+    const position = meshed.opaque.getAttribute('position');
+    const sky = meshed.opaque.getAttribute('skyLight');
+    const normal = meshed.opaque.getAttribute('normal');
+    const shaftSkies: number[] = [];
+    for (let index = 0; index < position.count; index += 1) {
+      const px = position.getX(index);
+      const py = position.getY(index);
+      const pz = position.getZ(index);
+      const nx = normal.getX(index);
+      if (py > 49 && py < 52 && Math.abs(px - 8.5) < 1.05 && Math.abs(pz - 8.5) < 1.05 && nx > 0.5) {
+        shaftSkies.push(sky.getX(index));
+      }
+    }
+    expect(shaftSkies.length).toBeGreaterThan(0);
+    expect(Math.max(...shaftSkies)).toBeGreaterThan(0.4);
+    expect(Math.min(...shaftSkies)).toBeGreaterThan(0.05);
+    disposeMeshed(meshed);
   });
 });

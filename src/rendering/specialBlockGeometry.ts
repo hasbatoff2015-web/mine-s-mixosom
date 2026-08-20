@@ -20,7 +20,14 @@ const _offset = new THREE.Matrix4();
 const _scale = new THREE.Matrix4();
 
 /** Flame tilts away from the supporting wall. Positive used to pitch the flame into the wall. */
-export const TORCH_WALL_TILT = -0.38;
+export const TORCH_WALL_TILT = -0.40;
+/** World-space stick size; cropped to the opaque 4×20 px region of torch.png. */
+export const TORCH_WIDTH = 0.22;
+export const TORCH_HEIGHT = 0.88;
+/** Keep the back face just off the supporting voxel to avoid z-fighting. */
+export const TORCH_WALL_INSET = 0.02;
+/** Tile UV of the opaque torch pixels in torch.png (32×32, v=0 at image bottom). */
+export const TORCH_TEXTURE_UV = [14 / 32, 0, 18 / 32, 20 / 32] as const;
 
 export function facingVector(facing: HorizontalFacing, target = new THREE.Vector3()): THREE.Vector3 {
   switch (facing) {
@@ -39,8 +46,10 @@ export function torchOrigin(
   facing: HorizontalFacing,
   target = new THREE.Vector3(),
 ): THREE.Vector3 {
-  target.set(x + 0.5, y + (attachment === 'wall' ? 0.22 : 0), z + 0.5);
-  if (attachment === 'wall') target.addScaledVector(facingVector(facing, _wall), -0.28);
+  target.set(x + 0.5, y + (attachment === 'wall' ? 0.2 : 0), z + 0.5);
+  if (attachment === 'wall') {
+    target.addScaledVector(facingVector(facing, _wall), -0.5 + TORCH_WALL_INSET);
+  }
   return target;
 }
 
@@ -53,7 +62,11 @@ export function torchTiltAxis(
   return target.crossVectors(facingVector(facing, _wall), _up).normalize();
 }
 
-/** Maps local torch space (base at y≈0, flame at y≈0.8) into the voxel cell. */
+/**
+ * Maps local torch space (base at y=0, flame at y=TORCH_HEIGHT, XZ centered)
+ * into the voxel cell. Wall torches offset by half-width along facing so the
+ * back face sits on the supporting wall instead of centering in the cell.
+ */
 export function torchLocalMatrix(
   x: number,
   y: number,
@@ -67,6 +80,14 @@ export function torchLocalMatrix(
   torchTiltAxis(attachment, facing, _axis);
   const matrix = new THREE.Matrix4().makeTranslation(_origin.x, _origin.y, _origin.z);
   matrix.multiply(_rotation.makeRotationAxis(_axis, tilt));
+  if (attachment === 'wall') {
+    facingVector(facing, _wall);
+    matrix.multiply(_offset.makeTranslation(
+      _wall.x * TORCH_WIDTH * 0.5,
+      0,
+      _wall.z * TORCH_WIDTH * 0.5,
+    ));
+  }
   if (extraYaw !== 0) matrix.multiply(new THREE.Matrix4().makeRotationY(extraYaw));
   return matrix;
 }
@@ -81,7 +102,7 @@ export function torchEndpoints(
   const matrix = torchLocalMatrix(x, y, z, attachment, facing);
   return {
     base: new THREE.Vector3(0, 0.02, 0).applyMatrix4(matrix),
-    flame: new THREE.Vector3(0, 0.8, 0).applyMatrix4(matrix),
+    flame: new THREE.Vector3(0, TORCH_HEIGHT - 0.04, 0).applyMatrix4(matrix),
   };
 }
 
@@ -161,15 +182,16 @@ function torchSelectionBox(
 ): OrientedSelectionBox {
   const attachment = state?.attachment ?? 'floor';
   const facing = state?.facing ?? 'north';
-  torchOrigin(x, y, z, attachment, facing, _origin);
-  const tilt = attachment === 'wall' ? TORCH_WALL_TILT : 0;
-  torchTiltAxis(attachment, facing, _axis);
-  const matrix = new THREE.Matrix4()
-    .makeTranslation(_origin.x, _origin.y, _origin.z)
-    .multiply(_rotation.makeRotationAxis(_axis, tilt))
-    .multiply(_offset.makeTranslation(0, 0.41, 0))
-    .multiply(_scale.makeScale(0.14, 0.8, 0.14));
-  return { center: [_origin.x, _origin.y + 0.41, _origin.z], size: [0.14, 0.8, 0.14], matrix };
+  const local = torchLocalMatrix(x, y, z, attachment, facing);
+  const center = new THREE.Vector3(0, TORCH_HEIGHT * 0.5, 0).applyMatrix4(local);
+  const matrix = local
+    .multiply(_offset.makeTranslation(0, TORCH_HEIGHT * 0.5, 0))
+    .multiply(_scale.makeScale(TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH));
+  return {
+    center: [center.x, center.y, center.z],
+    size: [TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH],
+    matrix,
+  };
 }
 
 function buttonSelectionBox(

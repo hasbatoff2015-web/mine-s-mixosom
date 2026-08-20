@@ -4,19 +4,20 @@ import {
   createTexturedCuboidGeometry,
   type TexturedCuboidDefinition,
 } from '../rendering/TexturedCuboid';
+import { bindEntityLightReceiver, createEntityMaterial } from '../rendering/worldLighting';
 
 /** Owns the tiny amount of shared geometry/material state used by entity models. */
 export class VoxelVisualFactory {
   private readonly cube = new THREE.BoxGeometry(1, 1, 1);
-  private readonly materials = new Map<number, THREE.MeshLambertMaterial>();
+  private readonly materials = new Map<number, THREE.MeshBasicMaterial>();
   private readonly texturedMaterials = new Map<string, THREE.Material>();
   private readonly entityTextures = new Map<string, THREE.Texture>();
   private readonly cuboidGeometries = new Map<string, THREE.BufferGeometry>();
 
-  material(color: number): THREE.MeshLambertMaterial {
+  material(color: number): THREE.MeshBasicMaterial {
     let material = this.materials.get(color);
     if (!material) {
-      material = new THREE.MeshLambertMaterial({ color, flatShading: true });
+      material = createEntityMaterial({ color });
       this.materials.set(color, material);
     }
     return material;
@@ -37,8 +38,7 @@ export class VoxelVisualFactory {
     const mesh = new THREE.Mesh(this.cube, this.material(color));
     mesh.scale.set(sizeX, sizeY, sizeZ);
     mesh.position.set(positionX, positionY, positionZ);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    bindEntityLightReceiver(mesh);
     parent.add(mesh);
     return mesh;
   }
@@ -55,8 +55,7 @@ export class VoxelVisualFactory {
       this.texturedMaterial(texturePath, options.glow === true, options.doubleSided === true, options.alphaTest),
     );
     mesh.position.set(...position);
-    mesh.castShadow = !options.glow;
-    mesh.receiveShadow = !options.glow;
+    if (options.glow !== true) bindEntityLightReceiver(mesh);
     parent.add(mesh);
     return mesh;
   }
@@ -104,9 +103,12 @@ export class VoxelVisualFactory {
     let material = this.texturedMaterials.get(key);
     if (!material) {
       const map = this.entityTexture(texturePath);
-      material = glow
-        ? new THREE.MeshBasicMaterial({ map, alphaTest, transparent: false, side: doubleSided ? THREE.DoubleSide : THREE.FrontSide })
-        : new THREE.MeshLambertMaterial({ map, alphaTest, transparent: false, flatShading: true, side: doubleSided ? THREE.DoubleSide : THREE.FrontSide });
+      material = createEntityMaterial({
+        map,
+        alphaTest,
+        glow,
+        side: doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+      });
       this.texturedMaterials.set(key, material);
     }
     return material;

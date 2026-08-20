@@ -54,11 +54,11 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       20 test files, 117 tests, 117 passed
+Vitest:       21 test files, 123 tests, 123 passed
 Vite build:   PASS
 Size/archive: PASS, 0.92 MiB uncompressed, 165 files
 Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
-Main assets:  JS 719.03 kB / 192.55 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Main assets:  JS 721.71 kB / 193.44 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -82,7 +82,8 @@ Main assets:  JS 719.03 kB / 192.55 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/lighting-physics-interaction.test.ts` | 8 | Block light, mob step-up, falling sand, primed TNT gravity, torch/button/door placement, door collision/geometry |
 | `tests/vegetation-lighting.test.ts` | 8 | Vegetation lighting profile, grass-compatible tint, upward normals, FrontSide cutout, torch block light |
 | `tests/explosion-performance.test.ts` | 5 | Batch relight dedupe, redstone notify dedupe, chain TNT once, 32-job budget drain, single TNT in one slice |
-| `tests/lighting-torch-selection.test.ts` | 9 | Bottom-face torch lighting, cave darkness floor, warm block-light tint, wall torch orientation, shape-aware selection boxes |
+| `tests/lighting-torch-selection.test.ts` | 11 | Bottom-face torch lighting, cave darkness floor, warm block-light tint, wall torch attachment/size, shape-aware selection, cave-opening sky interpolation |
+| `tests/entity-lighting.test.ts` | 4 | Daylight mob brightness, unlit cave darkness, warm torch tint, feet/torso/head averaging |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
