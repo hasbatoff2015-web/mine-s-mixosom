@@ -274,8 +274,8 @@ First-person transforms, Steve-arm placement и FOV easing являются ви
 | Bow | `power=(x²+2x)/3`, clamp `1`, full `20 ticks` | Draw curve совпадает; projectile damage/randomness могут быть упрощены |
 | Arrow flight | velocity в blocks/tick; air `×0.99`; water `×0.6`; gravity `-0.05/tick`; continuous segment hit | Player/skeleton basis унифицирован; exact critical random/pickup/model не заявлены |
 | Render look | live input yaw/pitch каждый RAF, simulation `20 TPS` | Осознанное client-feel разделение, не simulation change |
-| Bow presentation | 3 pulling textures, до `-8°` FOV, movement `×0.2` | Визуальный/FOV alpha target; draw curve остаётся reference-формулой |
-| Generated items | alpha silhouette front/back + merged side spans, depth `0.08` | Приближение generated model, не bit-exact Mojang geometry/UV |
+| Bow presentation | до `-8°` FOV, movement `×0.2` | Визуальный/FOV alpha target; draw curve остаётся reference-формулой |
+| Item models | не vanilla JSON item models | Не bit-exact Mojang geometry/UV |
 
 При балансировке сначала сохраняем узнаваемый loop и deterministic `20 TPS`. Любое дальнейшее отклонение от таблицы должно называться alpha approximation и фиксироваться здесь; нельзя молча выдавать современную Java-механику за 1.9.
 

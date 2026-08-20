@@ -32,7 +32,7 @@ Minecraft Java Edition 1.9 — **reference** для чисел и особенн
 
 - `ChunkMesher` / `WorldRenderer` / `TextureAtlas`
 - `LegacyModel` + `mobModels.ts`
-- `ItemVisualFactory` / `GeneratedItemGeometry` / `FirstPersonRenderer`
+- `ItemVisualFactory` / `ItemFamilyGeometry` / `FirstPersonRenderer`
 - `ArrowPhysics` / `ArrowVisualFactory`
 - `CombatSystem`
 

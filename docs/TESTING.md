@@ -54,11 +54,11 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       21 test files, 128 tests, 128 passed
+Vitest:       21 test files, 130 tests, 130 passed
 Vite build:   PASS
 Size/archive: PASS, 0.93 MiB uncompressed, 165 files
 Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
-Main assets:  JS 723.41 kB / 194.19 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Main assets:  JS 732.57 kB / 196.74 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -75,7 +75,7 @@ Main assets:  JS 723.41 kB / 194.19 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
-| `tests/item-rendering.test.ts` | 13 | Visual-kind audit, torch cuboid, extruded silhouette, FP yaw, texture coverage, cache reuse, stack copies, empty-hand и pose reset |
+| `tests/item-rendering.test.ts` | 15 | Family audit 123/123, every item instantiates without extrusion, special cuboids, tool/resource/food/armor families, gem octahedron, generic-fallback only for unknown IDs, bow string pose, cache reuse, stack copies, empty-hand и pose reset |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -147,9 +147,9 @@ First-person/items pass добавил dev-only `?qaItem=` harness и реаль
 Feel/polish pass повторно проверен во встроенном браузере на локальном dev server:
 
 - в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
-- `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
-- Held 3D pass (2026-08-20) покрыт unit-тестами visual-kind/torch cuboid/extruded silhouette; first-person torch/arrow/pickaxe/block visual QA нужно пройти локально, headless среда не рисует viewmodel screenshots;
-- bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, позу, movement slowdown и плавный FOV zoom;
+- `?qaItem=` harness по-прежнему рисует один `ItemVisualFactory` mesh и для held, и для dropped copies; stone остаётся atlas cube. После замены extrusion на family meshes first-person representative items нужно пройти локально (`diamond_sword`, `iron_pickaxe`, `iron_axe`, `iron_shovel`, `arrow`, `coal`, `diamond`, `iron_ingot`, `apple`, `book`, `iron_helmet`, `bow`, `shield`, `torch`, `oak_door`, `stone`);
+- Held family-mesh pass (2026-08-20) покрыт unit-тестами 123/123 routing, non-cube bounds, triangle budget и cache reuse; headless среда не рисует viewmodel screenshots;
+- bow draw гнёт limbs/string геометрически (`?qaItem=bow&pose=base|partial|full`), gameplay stages/FOV/slowdown не менялись;
 - `?qaArrow=1` показал три real-texture arrow visuals на разных траекториях с общей physics update;
 - mob QA спереди/сзади/сбоку подтвердил длинные base sheep legs под коротким wool overlay, readable two-sided skeleton ribs и чистый zombie headwear cutout;
 - `?qaTime=night` ставит факел, соседние plants и каменный навес, чтобы был виден block light.

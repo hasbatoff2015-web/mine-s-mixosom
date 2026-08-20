@@ -45,7 +45,6 @@ export class FirstPersonRenderer {
   private walkStrength = 0;
   private swingSeconds = 1;
   private equipProgress = 1;
-  private bowTexturePath = 'item/bow';
   private disposed = false;
 
   constructor(private readonly visuals: ItemVisualFactory) {
@@ -85,7 +84,6 @@ export class FirstPersonRenderer {
       this.mainItem = mainItemId;
       this.mainCategory = mainItemId ? itemRenderProfile(mainItemId).category : undefined;
       this.armPivot.visible = mainItemId === undefined;
-      this.bowTexturePath = 'item/bow';
       this.equipProgress = 0;
     }
     if (offhandItemId !== this.offhandItem) {
@@ -147,7 +145,7 @@ export class FirstPersonRenderer {
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
       if (this.mainCategory === 'bow') {
-        this.updateBowTexture(this.mainModel, state.bowCharge);
+        this.visuals.applyBowDraw(this.mainModel, state.bowCharge);
         if (state.bowCharge > 0) this.applyBowPose(this.mainModel, state.bowCharge);
       }
       if (this.mainCategory === 'shield' && state.shieldRaised) this.applyShieldPose(this.mainModel, false);
@@ -206,19 +204,6 @@ export class FirstPersonRenderer {
     model.rotation.z += 0.17 * eased;
     model.scale.multiplyScalar(1 + eased * 0.04);
     if (charge >= 0.98) model.position.y += Math.sin(this.elapsedSeconds * 42) * 0.004;
-  }
-
-  private updateBowTexture(model: THREE.Group, charge: number): void {
-    const texturePath = charge <= 0
-      ? 'item/bow'
-      : charge < 0.35
-        ? 'item/bow_pulling_0'
-        : charge < 0.7
-          ? 'item/bow_pulling_1'
-          : 'item/bow_pulling_2';
-    if (texturePath === this.bowTexturePath) return;
-    this.visuals.setGeneratedTextureVariant(model, texturePath);
-    this.bowTexturePath = texturePath;
   }
 
   private applyShieldPose(model: THREE.Object3D, leftHand: boolean): void {

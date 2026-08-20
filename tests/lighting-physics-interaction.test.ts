@@ -10,7 +10,7 @@ import {
 import { FallingBlockManager } from '../src/entities/FallingBlockManager';
 import { moveVoxelBody } from '../src/entities/voxelPhysics';
 import { DESKTOP_SNEAK_CODE, DESKTOP_SPRINT_CODES } from '../src/input/InputManager';
-import { itemVisualKind } from '../src/items/itemRenderProfiles';
+import { itemVisualFamily } from '../src/items/itemRenderProfiles';
 import { RedstoneSystem } from '../src/redstone';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import type { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
@@ -164,11 +164,13 @@ describe('lighting, physics and interaction polish', () => {
     meshed.water.dispose();
   });
 
-  it('routes torch items to special stick geometry and keeps other block items as cubes', () => {
-    expect(itemVisualKind('torch')).toBe('special-torch');
-    expect(itemVisualKind('redstone_torch')).toBe('special-torch');
-    expect(itemVisualKind('stone_button')).toBe('block-cube');
-    expect(itemVisualKind('oak_door')).toBe('block-cube');
+  it('routes torch, door, lever, button and plate items to special families', () => {
+    expect(itemVisualFamily('torch')).toBe('torch');
+    expect(itemVisualFamily('redstone_torch')).toBe('torch');
+    expect(itemVisualFamily('stone_button')).toBe('button');
+    expect(itemVisualFamily('oak_door')).toBe('door');
+    expect(itemVisualFamily('lever')).toBe('lever');
+    expect(itemVisualFamily('oak_pressure_plate')).toBe('pressure-plate');
     expect(getBlockDefinition(BlockId.Torch).renderShape).toBe('torch');
     expect(getBlockDefinition(BlockId.StoneButton).renderShape).toBe('button');
     expect(getBlockDefinition(BlockId.OakDoor).renderShape).toBe('door');

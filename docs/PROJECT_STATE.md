@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 128 unit/component tests in 21 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 130 unit/component tests in 21 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -77,8 +77,8 @@
 - 2×2 и 3×3 matcher поддерживает shaped, mirrored и shapeless recipes, tags и детерминированный consumption plan.
 - Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows/shield, tools, swords, armor, slabs/stairs и basic redstone/TNT items.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table.
-- Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Block-cube items рисуются atlas-cube; torch/redstone torch — тот же cuboid stick, что и в мире; остальные non-block items используют generated alpha-silhouette с opaque front/back spans и объединёнными boundary sides. Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
-- First-person предметы классифицируются как `block`, `torch`, `generated`, `handheld`, `bow` или `shield`. Mesh kind (`itemVisualKind`) отдельно держит `block-cube` / `special-torch` / `generated`. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, три bow texture stages и blocking pose подключены к фактическому runtime state.
+- Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Block-cube items рисуются atlas-cube; torch/door/button/plate — special cuboids; lever и все non-block items используют reusable low-poly family meshes (palette, не pixel extrusion). Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
+- First-person предметы классифицируются pose category `block` / `torch` / `generated` / `handheld` / `bow` / `shield` и mesh family (`itemVisualFamily`: cube, torch, tools, arrow, food, armor, resources, …). Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, геометрическое натяжение лука и blocking pose подключены к фактическому runtime state.
 
 ### Alpha approximation
 
@@ -86,7 +86,7 @@
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют.
 - Печь обновляется только во время симуляции мира; открытие container UI ставит игру на паузу.
 - Нет recipe book, подсказок неизвестных рецептов и массового craft по shift-click.
-- Трансформации и анимации ориентированы на читаемость alpha и Java 1.9 display contexts, но ещё не являются точной копией vanilla JSON transforms; off-hand кроме щита требует дополнительной полировки. Held torch/tools/arrow получили объёмные 3D-модели, но first-person scale/rotation всё ещё project-tuned.
+- Трансформации и анимации ориентированы на читаемость alpha и Java 1.9 display contexts, но ещё не являются точной копией vanilla JSON transforms; off-hand кроме щита требует дополнительной полировки. Held items — clean family meshes с project-tuned first-person poses.
 
 ## Игрок и survival
 
@@ -210,13 +210,13 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     21 files, 128 tests — PASS
+Vitest:     21 files, 130 tests — PASS
 Vite build: 72 modules — PASS
 Size/archive: 0.93 MiB / 165 files — PASS
-Main JS: 723.41 kB / 194.19 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Main JS: 732.57 kB / 196.74 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
-Покрыты registries, excluded item scope, stack/inventory operations, item visual-kind routing/torch cuboid/extruded silhouette/cache/poses/stack copies, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
+Покрыты registries, excluded item scope, stack/inventory operations, item visual family routing 123/123, special block cuboids, family-mesh cache/poses/stack copies, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 
 ## За пределами текущей alpha
 

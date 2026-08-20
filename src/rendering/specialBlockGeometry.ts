@@ -44,16 +44,23 @@ const TORCH_ITEM_FACES: readonly {
 
 const FULL_ATLAS_TILE: AtlasTile = { u0: 0, v0: 0, u1: 1, v1: 1 };
 
+export const DOOR_ITEM_SIZE = [0.52, 0.96, 0.12] as const;
+export const BUTTON_ITEM_SIZE = [0.38, 0.14, 0.24] as const;
+export const PLATE_ITEM_SIZE = [0.78, 0.07, 0.78] as const;
+
 /**
- * Centered held/dropped torch cuboid using the same stick size and opaque UV crop as world torches.
- * Pivot is the geometric center so item display transforms stay comparable to other models.
+ * Centered held/dropped cuboid with atlas UVs. Used by torch/door/button/plate item visuals.
  */
-export function createTorchItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THREE.BufferGeometry {
-  const [cropU0, cropV0, cropU1, cropV1] = TORCH_TEXTURE_UV;
-  const u0 = THREE.MathUtils.lerp(tile.u0, tile.u1, cropU0);
-  const v0 = THREE.MathUtils.lerp(tile.v0, tile.v1, cropV0);
-  const u1 = THREE.MathUtils.lerp(tile.u0, tile.u1, cropU1);
-  const v1 = THREE.MathUtils.lerp(tile.v0, tile.v1, cropV1);
+export function createAtlasItemCuboid(
+  size: readonly [number, number, number],
+  tile: AtlasTile = FULL_ATLAS_TILE,
+  crop: readonly [number, number, number, number] = [0, 0, 1, 1],
+  kind = 'cuboid',
+): THREE.BufferGeometry {
+  const u0 = THREE.MathUtils.lerp(tile.u0, tile.u1, crop[0]);
+  const v0 = THREE.MathUtils.lerp(tile.v0, tile.v1, crop[1]);
+  const u1 = THREE.MathUtils.lerp(tile.u0, tile.u1, crop[2]);
+  const v1 = THREE.MathUtils.lerp(tile.v0, tile.v1, crop[3]);
   const positions: number[] = [];
   const normals: number[] = [];
   const uvs: number[] = [];
@@ -62,9 +69,9 @@ export function createTorchItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THRE
     const base = positions.length / 3;
     for (const corner of face.corners) {
       positions.push(
-        (corner[0] - 0.5) * TORCH_WIDTH,
-        (corner[1] - 0.5) * TORCH_HEIGHT,
-        (corner[2] - 0.5) * TORCH_WIDTH,
+        (corner[0] - 0.5) * size[0],
+        (corner[1] - 0.5) * size[1],
+        (corner[2] - 0.5) * size[2],
       );
       normals.push(...face.normal);
     }
@@ -77,14 +84,40 @@ export function createTorchItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THRE
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.userData.specialItem = Object.freeze({
-    kind: 'torch',
-    width: TORCH_WIDTH,
-    height: TORCH_HEIGHT,
-    depth: TORCH_WIDTH,
+    kind,
+    width: size[0],
+    height: size[1],
+    depth: size[2],
+    triangles: indices.length / 3,
   });
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+/**
+ * Centered held/dropped torch cuboid using the same stick size and opaque UV crop as world torches.
+ * Pivot is the geometric center so item display transforms stay comparable to other models.
+ */
+export function createTorchItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THREE.BufferGeometry {
+  return createAtlasItemCuboid(
+    [TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH],
+    tile,
+    TORCH_TEXTURE_UV,
+    'torch',
+  );
+}
+
+export function createDoorItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THREE.BufferGeometry {
+  return createAtlasItemCuboid(DOOR_ITEM_SIZE, tile, [0, 0, 1, 1], 'door');
+}
+
+export function createButtonItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THREE.BufferGeometry {
+  return createAtlasItemCuboid(BUTTON_ITEM_SIZE, tile, [0, 0, 1, 1], 'button');
+}
+
+export function createPlateItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THREE.BufferGeometry {
+  return createAtlasItemCuboid(PLATE_ITEM_SIZE, tile, [0, 0, 1, 1], 'pressure-plate');
 }
 
 export function facingVector(facing: HorizontalFacing, target = new THREE.Vector3()): THREE.Vector3 {

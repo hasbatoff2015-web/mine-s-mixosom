@@ -1,15 +1,28 @@
 import * as THREE from 'three';
 import { getBlockDefinition, type BlockDefinition } from '../blocks';
 import {
-  ITEMS,
   getItemDefinition,
   itemRenderProfile,
-  itemVisualKind,
+  itemVisualFamily,
   type ItemRenderContext,
   type ItemViewTransform,
+  type ItemVisualFamily,
 } from '../items';
-import { createGeneratedItemGeometry } from './GeneratedItemGeometry';
-import { createTorchItemGeometry } from './specialBlockGeometry';
+import {
+  applyBowDrawPose,
+  colorForRole,
+  createBowVisual,
+  createShieldVisual,
+  familyGeometryCacheSize,
+  familyParts,
+  itemPalette,
+} from './ItemFamilyGeometry';
+import {
+  createButtonItemGeometry,
+  createDoorItemGeometry,
+  createPlateItemGeometry,
+  createTorchItemGeometry,
+} from './specialBlockGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 
@@ -41,6 +54,7 @@ const FULL_TILE: AtlasTile = Object.freeze({ u0: 0, v0: 0, u1: 1, v1: 1 });
 const DROPPED_OFFSETS: readonly (readonly [number, number, number])[] = [
   [0, 0, 0], [0.07, 0.025, 0.055], [-0.055, 0.045, -0.045], [0.025, 0.075, -0.07],
 ];
+const ATLAS_FAMILIES = new Set<ItemVisualFamily>(['torch', 'door', 'button', 'pressure-plate']);
 
 export function droppedVisualCopyCount(stackCount: number): number {
   if (stackCount > 32) return 4;
@@ -57,11 +71,10 @@ export function applyItemViewTransform(object: THREE.Object3D, transform: ItemVi
 
 /** Shared cached item-model source for first-person and world item entities. */
 export class ItemVisualFactory {
-  private readonly blockGeometries = new Map<number, THREE.BufferGeometry>();
+  private readonly blockGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly blockMaterials = new Map<string, THREE.MeshBasicMaterial>();
-  private readonly itemMaterials = new Map<string, THREE.MeshBasicMaterial>();
+  private readonly colorMaterials = new Map<number, THREE.MeshBasicMaterial>();
   private readonly itemTextures = new Map<string, THREE.Texture>();
-  private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly fallbackTexture: THREE.Texture;
   private readonly atlas?: AtlasSource;
   private disposed = false;
@@ -73,55 +86,72 @@ export class ItemVisualFactory {
 
   async preload(): Promise<void> {
     if (typeof document === 'undefined') return;
-    const paths = new Set(
-      ITEMS.filter((item) => itemVisualKind(item) === 'generated').map((item) => item.texture),
-    );
-    paths.add('item/bow_pulling_0');
-    paths.add('item/bow_pulling_1');
-    paths.add('item/bow_pulling_2');
-    await Promise.all([...paths].map((path) => this.loadGeneratedAsset(path)));
+    this.itemTexture('item/shield');
   }
 
   createItemModel(itemId: string): THREE.Group {
     this.assertActive();
     const definition = getItemDefinition(itemId);
-    const visualKind = itemVisualKind(definition);
+    const family = itemVisualFamily(definition);
     const root = new THREE.Group();
     root.name = `item-model:${itemId}`;
     root.userData.itemId = itemId;
-    root.userData.visualKind = visualKind;
+    root.userData.visualFamily = family;
+    root.userData.visualKind = family;
     root.userData.renderCategory = itemRenderProfile(definition).category;
     root.userData.texturePath = definition.texture;
 
-    if (definition.kind !== 'block') {
-      const mesh = this.generatedMesh(definition.texture);
-      mesh.name = `${root.name}:generated`;
+    if (family === 'block-cube' && definition.kind === 'block') {
+      const block = getBlockDefinition(definition.blockId);
+      const mesh = new THREE.Mesh(this.blockGeometry(block), this.blockMaterial(block));
+      mesh.name = `${root.name}:block`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
       return root;
     }
 
-    const block = getBlockDefinition(definition.blockId);
-    const geometry = visualKind === 'special-torch'
-      ? this.torchGeometry(block)
-      : this.blockGeometry(block);
-    const mesh = new THREE.Mesh(geometry, this.blockMaterial(block));
-    mesh.name = visualKind === 'special-torch' ? `${root.name}:torch` : `${root.name}:block`;
-    bindEntityLightReceiver(mesh);
-    root.add(mesh);
+    if (ATLAS_FAMILIES.has(family) && definition.kind === 'block') {
+      const block = getBlockDefinition(definition.blockId);
+      const mesh = new THREE.Mesh(this.atlasFamilyGeometry(family, block), this.blockMaterial(block));
+      mesh.name = `${root.name}:${family}`;
+      bindEntityLightReceiver(mesh);
+      root.add(mesh);
+      return root;
+    }
+
+    if (family === 'bow') {
+      const palette = itemPalette(definition);
+      const bow = createBowVisual({
+        limb: this.colorMaterial(palette.primary),
+        grip: this.colorMaterial(palette.secondary),
+        string: this.colorMaterial(palette.accent),
+      });
+      bow.name = `${root.name}:bow`;
+      bindEntityLightReceiver(bow);
+      root.add(bow);
+      return root;
+    }
+
+    if (family === 'shield') {
+      const palette = itemPalette(definition);
+      const shield = createShieldVisual(
+        this.shieldPlateMaterial(),
+        this.colorMaterial(palette.secondary),
+        this.colorMaterial(palette.accent),
+      );
+      shield.name = `${root.name}:shield`;
+      bindEntityLightReceiver(shield);
+      root.add(shield);
+      return root;
+    }
+
+    this.addPaletteParts(root, family, itemPalette(definition));
     return root;
   }
 
-  setGeneratedTextureVariant(root: THREE.Group, texturePath: string): void {
-    if (root.userData.texturePath === texturePath) return;
-    const previous = root.children[0];
-    if (!previous || !(previous instanceof THREE.Mesh)) return;
-    const replacement = this.generatedMesh(texturePath);
-    replacement.name = previous.name;
-    bindEntityLightReceiver(replacement);
-    root.remove(previous);
-    root.add(replacement);
-    root.userData.texturePath = texturePath;
+  applyBowDraw(root: THREE.Group, charge: number): void {
+    const bow = root.getObjectByName(`${root.name}:bow`) ?? root;
+    applyBowDrawPose(bow, charge);
   }
 
   createDroppedItemVisual(itemId: string, stackCount = 1): THREE.Group {
@@ -156,42 +186,61 @@ export class ItemVisualFactory {
     applyItemViewTransform(object, itemRenderProfile(itemId).transforms[context]);
   }
 
-  get cacheStats(): Readonly<{ blockGeometries: number; itemTextures: number; generatedGeometries: number; materials: number }> {
+  get cacheStats(): Readonly<{
+    blockGeometries: number;
+    itemTextures: number;
+    familyGeometries: number;
+    materials: number;
+  }> {
     return {
       blockGeometries: this.blockGeometries.size,
       itemTextures: this.itemTextures.size,
-      generatedGeometries: this.generatedGeometries.size,
-      materials: this.blockMaterials.size + this.itemMaterials.size,
+      familyGeometries: familyGeometryCacheSize(),
+      materials: this.blockMaterials.size + this.colorMaterials.size,
     };
   }
 
   dispose(): void {
     if (this.disposed) return;
     for (const geometry of this.blockGeometries.values()) geometry.dispose();
-    for (const geometry of this.generatedGeometries.values()) geometry.dispose();
     for (const material of this.blockMaterials.values()) material.dispose();
-    for (const material of this.itemMaterials.values()) material.dispose();
+    for (const material of this.colorMaterials.values()) material.dispose();
     for (const texture of this.itemTextures.values()) texture.dispose();
     this.fallbackTexture.dispose();
     this.blockGeometries.clear();
     this.blockMaterials.clear();
-    this.itemMaterials.clear();
+    this.colorMaterials.clear();
     this.itemTextures.clear();
-    this.generatedGeometries.clear();
     this.disposed = true;
   }
 
-  private torchGeometry(block: BlockDefinition): THREE.BufferGeometry {
-    let geometry = this.blockGeometries.get(block.id);
+  private addPaletteParts(root: THREE.Group, family: ItemVisualFamily, palette: ReturnType<typeof itemPalette>): void {
+    const parts = familyParts(family);
+    for (const part of parts) {
+      const mesh = new THREE.Mesh(part.geometry, this.colorMaterial(colorForRole(palette, part.role)));
+      mesh.name = `${root.name}:${family}:${part.role}`;
+      bindEntityLightReceiver(mesh);
+      root.add(mesh);
+    }
+  }
+
+  private atlasFamilyGeometry(family: ItemVisualFamily, block: BlockDefinition): THREE.BufferGeometry {
+    const key = `${family}:${block.id}`;
+    let geometry = this.blockGeometries.get(key);
     if (geometry) return geometry;
     const texture = this.textureForFace(block, 'front');
-    geometry = createTorchItemGeometry(this.atlas?.tile(texture) ?? FULL_TILE);
-    this.blockGeometries.set(block.id, geometry);
+    const tile = this.atlas?.tile(texture) ?? FULL_TILE;
+    if (family === 'torch') geometry = createTorchItemGeometry(tile);
+    else if (family === 'door') geometry = createDoorItemGeometry(tile);
+    else if (family === 'button') geometry = createButtonItemGeometry(tile);
+    else geometry = createPlateItemGeometry(tile);
+    this.blockGeometries.set(key, geometry);
     return geometry;
   }
 
   private blockGeometry(block: BlockDefinition): THREE.BufferGeometry {
-    let geometry = this.blockGeometries.get(block.id);
+    const key = `cube:${block.id}`;
+    let geometry = this.blockGeometries.get(key);
     if (geometry) return geometry;
     const positions: number[] = [];
     const normals: number[] = [];
@@ -214,7 +263,7 @@ export class ItemVisualFactory {
     geometry.setIndex(indices);
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
-    this.blockGeometries.set(block.id, geometry);
+    this.blockGeometries.set(key, geometry);
     return geometry;
   }
 
@@ -234,61 +283,21 @@ export class ItemVisualFactory {
     return material;
   }
 
-  private generatedMesh(texturePath: string): THREE.Mesh {
-    let geometry = this.generatedGeometries.get(texturePath);
-    if (!geometry) {
-      geometry = createGeneratedItemGeometry({ width: 1, height: 1, alpha: new Uint8Array([255]) });
-      this.generatedGeometries.set(texturePath, geometry);
-    }
-    let surface = this.itemMaterials.get(texturePath);
-    if (!surface) {
-      surface = createEntityMaterial({
-        map: this.itemTexture(texturePath),
-        alphaTest: 0.08,
-        side: THREE.FrontSide,
-      });
-      this.itemMaterials.set(texturePath, surface);
-    }
-    return new THREE.Mesh(geometry, surface);
+  private colorMaterial(hex: number): THREE.MeshBasicMaterial {
+    let material = this.colorMaterials.get(hex);
+    if (material) return material;
+    material = createEntityMaterial({ color: hex });
+    this.colorMaterials.set(hex, material);
+    return material;
   }
 
-  private async loadGeneratedAsset(texturePath: string): Promise<void> {
-    if (this.generatedGeometries.has(texturePath) && this.itemTextures.has(texturePath)) return;
-    const image = new Image();
-    image.decoding = 'async';
-    image.src = TextureAtlas.url(texturePath);
-    if (typeof image.decode === 'function') await image.decode();
-    else await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error(`Unable to load item texture: ${texturePath}`));
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error(`Unable to inspect item texture: ${texturePath}`);
-    context.imageSmoothingEnabled = false;
-    context.drawImage(image, 0, 0);
-    const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const alpha = new Uint8Array(canvas.width * canvas.height);
-    for (let index = 0; index < alpha.length; index += 1) alpha[index] = rgba[index * 4 + 3]!;
-    const previousGeometry = this.generatedGeometries.get(texturePath);
-    previousGeometry?.dispose();
-    this.generatedGeometries.set(texturePath, createGeneratedItemGeometry({
-      width: canvas.width,
-      height: canvas.height,
-      alpha,
-    }));
-    const texture = new THREE.Texture(image);
-    texture.needsUpdate = true;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
-    texture.generateMipmaps = false;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    this.itemTextures.get(texturePath)?.dispose();
-    this.itemTextures.set(texturePath, texture);
+  private shieldPlateMaterial(): THREE.MeshBasicMaterial {
+    const key = 0x1000000;
+    let material = this.colorMaterials.get(key);
+    if (material) return material;
+    material = createEntityMaterial({ map: this.itemTexture('item/shield') });
+    this.colorMaterials.set(key, material);
+    return material;
   }
 
   private itemTexture(texturePath: string): THREE.Texture {
