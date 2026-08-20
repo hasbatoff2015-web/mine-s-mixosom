@@ -1320,6 +1320,7 @@ export class Game {
     const center = session.player.position;
     this.sun.position.set(center.x + Math.cos(phase) * 70, center.y + sunHeight * 70, center.z + 15);
     this.sunlight.position.copy(this.sun.position);
+    session.worldRenderer.setDaylight(daylight);
     this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;

@@ -5,13 +5,20 @@ import {
   getBlockDefinition,
   type BlockDefinition,
   type BlockRenderState,
-  type HorizontalFacing,
 } from '../blocks';
 import { CHUNK_SIZE } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelWorld } from '../world/World';
 import { getBlockLight, getSkyLight } from '../world/LightEngine';
 import type { TextureAtlas } from './TextureAtlas';
+import {
+  facingVector as facingVectorFrom,
+  leverHandleAngle,
+  torchLocalMatrix,
+} from './specialBlockGeometry';
+
+export { leverHandleAngle } from './specialBlockGeometry';
+export { bakedVertexLight } from './worldLighting';
 
 interface Face {
   normal: readonly [number, number, number];
@@ -35,6 +42,18 @@ interface GeometryBuffers {
   colors: number[];
   uvs: number[];
   indices: number[];
+  skyLights: number[];
+  blockLights: number[];
+  faceShades: number[];
+  emissions: number[];
+}
+
+interface VertexLighting {
+  readonly tint: readonly [number, number, number];
+  readonly sky: number;
+  readonly block: number;
+  readonly emission: number;
+  readonly shade: number;
 }
 
 type TextureUvRect = readonly [u0: number, v0: number, u1: number, v1: number];
@@ -51,19 +70,17 @@ interface LayerBuffers {
   water: GeometryBuffers;
 }
 
-const createBuffers = (): GeometryBuffers => ({ positions: [], normals: [], colors: [], uvs: [], indices: [] });
+const createBuffers = (): GeometryBuffers => ({
+  positions: [], normals: [], colors: [], uvs: [], indices: [],
+  skyLights: [], blockLights: [], faceShades: [], emissions: [],
+});
 const WHITE_TINT = [1, 1, 1] as const;
 const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
 const FOREST_TINT = [0.42, 0.78, 0.36] as const;
 const DESERT_TINT = [0.74, 0.78, 0.4] as const;
 
-/** Lighting normal written into vegetation quads so Lambert matches grass tops. */
+/** Lighting normal written into vegetation quads so they sample/share the grass-top profile. */
 export const VEGETATION_LIGHTING_NORMAL = [0, 1, 0] as const;
-
-export function bakedVertexLight(sky: number, blockLight: number, emission = 0, shade = 1): number {
-  const baked = Math.min(1.15, Math.max(0.16 + sky * 0.72, 0.18 + blockLight * 0.95, emission));
-  return baked * shade;
-}
 
 export function biomeGrassTint(biome: number): readonly [number, number, number] {
   if (biome === 1) return FOREST_TINT;
@@ -87,14 +104,9 @@ export interface ChunkMeshProfile {
 
 export type BlockRenderStateResolver = (x: number, y: number, z: number) => BlockRenderState | undefined;
 
-export function leverHandleAngle(powered: boolean): number {
-  return powered ? -Math.PI * 0.28 : Math.PI * 0.28;
-}
-
 export class ChunkMesher {
   private readonly columnHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   private readonly columnBiomes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-  private readonly scratchColor: [number, number, number] = [1, 1, 1];
   private columnOriginX = 0;
   private columnOriginZ = 0;
   lastProfile: ChunkMeshProfile = { scanMs: 0, geometryMs: 0 };
@@ -218,14 +230,14 @@ export class ChunkMesher {
     z: number,
   ): void {
     const textureKey = this.textureForFace(definition, face.texture);
-    const color = this.colorFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
+    const lighting = this.lightingFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
     for (let index = 0; index < 4; index += 1) {
       const corner = face.corners[index]!;
       buffers.positions.push(x + corner[0], y + corner[1], z + corner[2]);
       buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
-      buffers.colors.push(color[0], color[1], color[2]);
+      this.pushLighting(buffers, lighting);
     }
     buffers.uvs.push(
       tile.u0, tile.v0,
@@ -266,7 +278,7 @@ export class ChunkMesher {
     z: number,
   ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const color = this.colorFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
     const inset = 0.08;
     const planes: readonly (readonly (readonly [number, number, number])[])[] = [
       [
@@ -279,13 +291,13 @@ export class ChunkMesher {
       ],
     ];
     for (const corners of planes) {
-      this.addQuad(buffers, texture, corners, VEGETATION_LIGHTING_NORMAL, color);
+      this.addQuad(buffers, texture, corners, VEGETATION_LIGHTING_NORMAL, lighting);
       this.addQuad(
         buffers,
         texture,
         [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
         VEGETATION_LIGHTING_NORMAL,
-        color,
+        lighting,
         [0, 0, 1, 1],
         true,
       );
@@ -303,28 +315,18 @@ export class ChunkMesher {
     z: number,
   ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
     const attachment = state?.attachment ?? 'floor';
     const facing = state?.facing ?? 'north';
-    const tilt = attachment === 'wall' ? 0.38 : 0;
-    const wall = attachment === 'wall' ? this.facingVector(facing) : new THREE.Vector3(0, 1, 0);
-    const origin = new THREE.Vector3(x + 0.5, y + (attachment === 'wall' ? 0.22 : 0), z + 0.5);
-    if (attachment === 'wall') origin.addScaledVector(wall, -0.28);
-    const tiltAxis = attachment === 'wall'
-      ? new THREE.Vector3().crossVectors(wall, new THREE.Vector3(0, 1, 0)).normalize()
-      : new THREE.Vector3(1, 0, 0);
     let faces = 0;
     for (const angle of [Math.PI / 4, -Math.PI / 4]) {
-      const matrix = new THREE.Matrix4()
-        .makeTranslation(origin.x, origin.y, origin.z)
-        .multiply(new THREE.Matrix4().makeRotationAxis(tiltAxis, tilt))
-        .multiply(new THREE.Matrix4().makeRotationY(angle));
+      const matrix = torchLocalMatrix(x, y, z, attachment, facing, angle);
       const local = [
         [-0.28, 0.02, 0], [0.28, 0.02, 0], [0.28, 0.8, 0], [-0.28, 0.8, 0],
       ] as const;
       const corners = local.map((point) => new THREE.Vector3(...point).applyMatrix4(matrix).toArray() as [number, number, number]);
       const normal = new THREE.Vector3(0, 0, 1).transformDirection(matrix).toArray() as [number, number, number];
-      this.addQuad(buffers, texture, corners, normal, color);
+      this.addQuad(buffers, texture, corners, normal, lighting);
       faces += 1;
     }
     return faces;
@@ -341,14 +343,21 @@ export class ChunkMesher {
   ): number {
     const texture = definition.textures.all ?? 'block/redstone_wire';
     const power = THREE.MathUtils.clamp(state?.power ?? 0, 0, 15) / 15;
-    const base = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
-    const color = [base[0] * (0.42 + power * 0.58), base[1] * (0.15 + power * 0.15), base[2] * 0.15] as const;
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const tinted: VertexLighting = {
+      ...lighting,
+      tint: [
+        lighting.tint[0] * (0.42 + power * 0.58),
+        lighting.tint[1] * (0.15 + power * 0.15),
+        lighting.tint[2] * 0.15,
+      ],
+    };
     this.addQuad(buffers, texture, [
       [x + 0.05, y + 0.012, z + 0.95],
       [x + 0.95, y + 0.012, z + 0.95],
       [x + 0.95, y + 0.012, z + 0.05],
       [x + 0.05, y + 0.012, z + 0.05],
-    ], [0, 1, 0], color);
+    ], [0, 1, 0], tinted);
     return 1;
   }
 
@@ -367,8 +376,8 @@ export class ChunkMesher {
       ? new THREE.Vector3(0, 1, 0)
       : attachment === 'ceiling'
         ? new THREE.Vector3(0, -1, 0)
-        : this.facingVector(facing);
-    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : this.facingVector(facing);
+        : facingVectorFrom(facing);
+    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : facingVectorFrom(facing);
     const localX = new THREE.Vector3().crossVectors(normal, localZ).normalize();
     const basis = new THREE.Matrix4().makeBasis(localX, normal, localZ);
     const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5);
@@ -411,8 +420,8 @@ export class ChunkMesher {
       ? new THREE.Vector3(0, 1, 0)
       : attachment === 'ceiling'
         ? new THREE.Vector3(0, -1, 0)
-        : this.facingVector(facing);
-    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : this.facingVector(facing);
+        : facingVectorFrom(facing);
+    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : facingVectorFrom(facing);
     const localX = new THREE.Vector3().crossVectors(normal, localZ);
     if (localX.lengthSq() < 1e-6) localX.set(1, 0, 0);
     localX.normalize();
@@ -447,7 +456,7 @@ export class ChunkMesher {
     const texture = state?.half === 'upper'
       ? (definition.textures.top ?? 'block/oak_door_upper')
       : (definition.textures.bottom ?? definition.textures.all ?? 'block/oak_door');
-    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
     const thickness = 3 / 16;
     let corners: Array<[number, number, number]>;
     let normal: [number, number, number];
@@ -481,8 +490,8 @@ export class ChunkMesher {
         normal = [-1, 0, 0];
         break;
     }
-    this.addQuad(buffers, texture, corners, normal, color);
-    this.addQuad(buffers, texture, [...corners].reverse() as typeof corners, [-normal[0], 0, -normal[2]] as [number, number, number], color);
+    this.addQuad(buffers, texture, corners, normal, lighting);
+    this.addQuad(buffers, texture, [...corners].reverse() as typeof corners, [-normal[0], 0, -normal[2]] as [number, number, number], lighting);
     return 2;
   }
 
@@ -529,7 +538,7 @@ export class ChunkMesher {
         texture,
         corners,
         normalTuple,
-        this.colorFor(world, definition, texture, x, y, z, normalTuple, face.shade),
+        this.lightingFor(world, definition, texture, x, y, z, normalTuple, face.shade),
         textureUv,
       );
     }
@@ -541,7 +550,7 @@ export class ChunkMesher {
     textureKey: string,
     corners: readonly (readonly [number, number, number])[],
     normal: readonly [number, number, number],
-    color: readonly [number, number, number],
+    lighting: VertexLighting,
     textureUv: TextureUvRect = [0, 0, 1, 1],
     backFace = false,
   ): void {
@@ -558,12 +567,20 @@ export class ChunkMesher {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);
       buffers.uvs.push(...uv[index]!);
-      buffers.colors.push(...color);
+      this.pushLighting(buffers, lighting);
     }
     buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
-  private colorFor(
+  private pushLighting(buffers: GeometryBuffers, lighting: VertexLighting): void {
+    buffers.colors.push(lighting.tint[0], lighting.tint[1], lighting.tint[2]);
+    buffers.skyLights.push(lighting.sky);
+    buffers.blockLights.push(lighting.block);
+    buffers.faceShades.push(lighting.shade);
+    buffers.emissions.push(lighting.emission);
+  }
+
+  private lightingFor(
     world: VoxelWorld,
     definition: BlockDefinition,
     textureKey: string,
@@ -572,7 +589,7 @@ export class ChunkMesher {
     z: number,
     normal: readonly [number, number, number],
     shade: number,
-  ): readonly [number, number, number] {
+  ): VertexLighting {
     const localX = x - this.columnOriginX;
     const localZ = z - this.columnOriginZ;
     const inCachedChunk = localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE;
@@ -582,15 +599,16 @@ export class ChunkMesher {
     const sampleY = y + Math.round(normal[1]);
     const sampleZ = z + Math.round(normal[2]);
     const sky = getSkyLight(world, sampleX, sampleY, sampleZ) / 15;
-    const blockLight = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
+    const block = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
     const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
-    const light = bakedVertexLight(sky, blockLight, emission, shade);
     const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
-    const tint = this.tintFor(definition, textureKey, biome);
-    this.scratchColor[0] = tint[0] * light;
-    this.scratchColor[1] = tint[1] * light;
-    this.scratchColor[2] = tint[2] * light;
-    return this.scratchColor;
+    return {
+      tint: this.tintFor(definition, textureKey, biome),
+      sky,
+      block,
+      emission,
+      shade,
+    };
   }
 
   private textureForFace(definition: BlockDefinition, face: Face['texture']): string {
@@ -634,21 +652,16 @@ export class ChunkMesher {
     return biome === 'forest' ? 1 : biome === 'desert' ? 2 : 0;
   }
 
-  private facingVector(facing: HorizontalFacing): THREE.Vector3 {
-    switch (facing) {
-      case 'north': return new THREE.Vector3(0, 0, -1);
-      case 'south': return new THREE.Vector3(0, 0, 1);
-      case 'east': return new THREE.Vector3(1, 0, 0);
-      case 'west': return new THREE.Vector3(-1, 0, 0);
-    }
-  }
-
   private toGeometry(buffers: GeometryBuffers): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffers.positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buffers.normals, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(buffers.colors, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buffers.uvs, 2));
+    geometry.setAttribute('skyLight', new THREE.Float32BufferAttribute(buffers.skyLights, 1));
+    geometry.setAttribute('blockLight', new THREE.Float32BufferAttribute(buffers.blockLights, 1));
+    geometry.setAttribute('faceShade', new THREE.Float32BufferAttribute(buffers.faceShades, 1));
+    geometry.setAttribute('emissionLight', new THREE.Float32BufferAttribute(buffers.emissions, 1));
     geometry.setIndex(buffers.indices);
     if (buffers.positions.length > 0) geometry.computeBoundingSphere();
     return geometry;

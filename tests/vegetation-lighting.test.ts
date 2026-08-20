@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BlockId, blockLightingMode, getBlockDefinition } from '../src/blocks';
 import { CHUNK_SIZE, floorDiv, positiveMod } from '../src/core/constants';
 import { ChunkMesher, bakedVertexLight, biomeGrassTint } from '../src/rendering/ChunkMesher';
+import { composeWorldLight } from '../src/rendering/worldLighting';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { WorldRenderer } from '../src/rendering/WorldRenderer';
 import { recomputeChunkSky, seedChunkBlockLight } from '../src/world/LightEngine';
@@ -40,6 +41,18 @@ function disposeMeshed(meshed: ReturnType<ChunkMesher['build']>): void {
 
 function plantColor(geometry: THREE.BufferGeometry, x: number, z: number): [number, number, number] {
   const position = geometry.getAttribute('position');
+  for (let index = 0; index < position.count; index += 1) {
+    const px = position.getX(index);
+    const pz = position.getZ(index);
+    if (px >= x && px <= x + 1 && pz >= z && pz <= z + 1) {
+      return litVertex(geometry, index);
+    }
+  }
+  throw new Error(`No vegetation vertex in cell ${x},${z}`);
+}
+
+function plantTint(geometry: THREE.BufferGeometry, x: number, z: number): [number, number, number] {
+  const position = geometry.getAttribute('position');
   const color = geometry.getAttribute('color');
   for (let index = 0; index < position.count; index += 1) {
     const px = position.getX(index);
@@ -51,20 +64,32 @@ function plantColor(geometry: THREE.BufferGeometry, x: number, z: number): [numb
   throw new Error(`No vegetation vertex in cell ${x},${z}`);
 }
 
+function litVertex(geometry: THREE.BufferGeometry, index: number): [number, number, number] {
+  const color = geometry.getAttribute('color');
+  const [r, g, b] = composeWorldLight(
+    geometry.getAttribute('skyLight').getX(index),
+    geometry.getAttribute('blockLight').getX(index),
+    geometry.getAttribute('emissionLight').getX(index),
+    geometry.getAttribute('faceShade').getX(index),
+  );
+  return [color.getX(index) * r, color.getY(index) * g, color.getZ(index) * b];
+}
+
 function topFaceColor(geometry: THREE.BufferGeometry): [number, number, number] {
   const normal = geometry.getAttribute('normal');
-  const color = geometry.getAttribute('color');
   for (let index = 0; index < normal.count; index += 1) {
-    if (normal.getY(index) > 0.99) return [color.getX(index), color.getY(index), color.getZ(index)];
+    if (normal.getY(index) > 0.99) return litVertex(geometry, index);
   }
   throw new Error('No upward cube face in opaque mesh');
 }
 
 describe('vegetation lighting profile', () => {
   it('keeps a min sunlight factor and prefers nearby torch block light', () => {
-    expect(bakedVertexLight(1, 0, 0, 1)).toBeCloseTo(0.88, 5);
-    expect(bakedVertexLight(0, 0, 0, 1)).toBeCloseTo(0.18, 5);
-    expect(bakedVertexLight(0, 14 / 15, 0, 1)).toBeCloseTo(0.18 + (14 / 15) * 0.95, 5);
+    expect(bakedVertexLight(1, 0, 0, 1)).toBeCloseTo(0.92, 5);
+    expect(bakedVertexLight(0, 0, 0, 1)).toBeCloseTo(0.09, 5);
+    const torch = composeWorldLight(0, 14 / 15, 0, 1);
+    expect(torch[0]).toBeGreaterThan(torch[1]);
+    expect(torch[1]).toBeGreaterThan(torch[2]);
     expect(bakedVertexLight(0, 14 / 15, 0, 1)).toBeGreaterThan(bakedVertexLight(0, 0, 0, 1));
   });
 
@@ -135,8 +160,8 @@ describe('vegetation lighting profile', () => {
     refreshLight(world, 8, 8);
 
     const meshed = new ChunkMesher(atlasStub).build(chunk, world);
-    const grassPlant = plantColor(meshed.vegetation, 7, 7);
-    const flower = plantColor(meshed.vegetation, 8, 8);
+    const grassPlant = plantTint(meshed.vegetation, 7, 7);
+    const flower = plantTint(meshed.vegetation, 8, 8);
     expect(flower[0]).toBeCloseTo(flower[1], 4);
     expect(flower[1]).toBeCloseTo(flower[2], 4);
     expect(flower[0]).toBeGreaterThan(grassPlant[0]);

@@ -1,6 +1,6 @@
 # Состояние проекта
 
-Срез: **2026-08-19**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-20**. Версия: `0.1.0`, playable alpha.
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -15,7 +15,7 @@
 | Boot/menu/world list | Готово | Loading screen, главное меню, создание, загрузка и удаление миров, Survival/Creative |
 | Main loop | Готово | Fixed update `20 TPS`, render interpolation, delta clamp, pause/background state |
 | Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus и biome-specific cross-plants |
-| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shared item/arrow visuals и отдельный first-person pass |
+| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, step `0.6`, collision, fall damage, water/lava |
 | Mining/building | Готово для alpha | Raycast, 1.9 harvest formula, hardness/tool/tier, durability, drops, thin door/torch/button placement |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor/off-hand, cursor clicks, 2×2/3×3 recipes, Creative catalog |
@@ -24,14 +24,14 @@
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
 | Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, shield, staged bow draw and shared player/skeleton arrow physics |
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI |
-| Day/night | Alpha approximation | 24,000-tick clock, stronger directional sun, compact per-chunk sky/block light baked into vertex colors; cross-plants use a vegetation lighting profile so they match grass instead of silhouetting |
+| Day/night | Alpha approximation | 24,000-tick clock; chunk materials combine separable sky/block attributes in a shader (`sky * daylight` vs warm torch block light) without Lambert N·L; hemisphere/directional sun still lights mobs/items |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
 | Desktop input | Готово | Pointer lock, WASD, Shift sprint, C sneak, mouse, F3 debug |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 108 unit/component tests in 19 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 117 unit/component tests in 20 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -55,8 +55,8 @@
 
 - Нет greedy meshing: каждый видимый face становится отдельным quad. Dirty chunks перестраиваются с ограничением количества за tick.
 - Нет worker generation/meshing, LOD, occlusion system и полноценного frustum-aware scheduler. Main-thread generation и meshing не запускаются в один fixed tick; rebuild ограничен числом jobs и бюджетом времени.
-- Sky/block light — bounded column+spread/flood approximation, не vanilla light engine: нет dedicated sky-light time remesh, нет RGB colored lights и нет quasi-connectivity.
-- «Освещение пещер» больше не высотный fake: occluding blocks гасят sky light, torch/lava дают локальный block light в vertex colors.
+- Sky/block light — bounded column+spread/flood approximation, не vanilla light engine: нет RGB lightmaps и нет quasi-connectivity. Daylight масштабирует sky-contribution в shader без remesh.
+- «Освещение пещер» больше не высотный fake: occluding blocks гасят sky light; torch/lava дают локальный block light. Нижние грани читают соседний voxel и больше не зануляются Lambert N·L. Torch block-light visually тёплый (жёлто-оранжевый) без PointLight.
 - Render classification независима от face occlusion/light semantics: opaque, alpha-tested cutout, vegetation cutout, glass translucent и water translucent имеют отдельные geometry/material paths. Leaves используют `alphaTest=0.42`, `transparent=false`, `depthWrite=true`, `DoubleSide` и сохраняют biome RGB tint. Cross-plants (`lightingMode: vegetation`) пишутся отдельным batched mesh с `FrontSide` и lighting normals `(0,1,0)`.
 - Water и glass разделены по opacity/render order, однако отдельные translucent faces внутри pass всё ещё не сортируются по глубине.
 - Slab имеет half-height collision, но chunk renderer пока рисует обычный cube. Stairs физически остаются full cube.
@@ -209,10 +209,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     19 files, 108 tests — PASS
-Vite build: 70 modules — PASS
+Vitest:     20 files, 117 tests — PASS
+Vite build: 72 modules — PASS
 Size/archive: 0.92 MiB / 165 files — PASS
-Main JS: 713.58 kB / 190.94 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Main JS: 719.03 kB / 192.55 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render categories/presets/texture coverage/cache/poses/stack copies, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

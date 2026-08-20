@@ -35,6 +35,7 @@ export async function startVegetationQaHarness(
   const surface = world.surfaceY(center.x, center.z);
   if (night) placeNightTorch(world, center.x, surface, center.z);
   const worldRenderer = new WorldRenderer(world, atlas);
+  worldRenderer.setDaylight(night ? 0.08 : 1);
   scene.add(worldRenderer.group);
   worldRenderer.rebuildDirty(100, 1_000);
   const camera = new THREE.PerspectiveCamera(58, 1, 0.05, 140);

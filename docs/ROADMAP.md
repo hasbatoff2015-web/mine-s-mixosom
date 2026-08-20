@@ -15,6 +15,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [ ] На чистом clone выполнить `npm ci`, `npm run assets:import`, `npm run check` и `npm run check:archive`.
 - [x] Локальный pipeline после lighting/physics/interaction polish: asset import `162/162`, typecheck, 95 tests, production build, size и archive green.
 - [x] Локальный pipeline после TNT explosion batching: typecheck, 108 tests, production build 70 modules, 0.92 MiB / 165 files.
+- [x] Локальный pipeline после lighting/torch/selection fix: typecheck, 117 tests, production build 72 modules, 0.92 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -89,6 +90,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
 - [ ] Улучшить сортировку отдельных translucent water/glass faces.
 - [x] Добавить lightweight skylight/block-light contribution в chunk meshing; torch/lava обновляют свет локально, без full-world rebuild.
+- [x] Убрать Lambert N·L с terrain (pitch-black bottoms), тёплый torch block-light в shader, shape-aware selection outline.
 - [x] Добавить power-of-two atlas, mipmaps, `4 px` padding/extrusion и ограниченную anisotropy для снижения bleeding/shimmer.
 
 ### P1.2 Block states и geometry
