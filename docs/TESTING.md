@@ -75,7 +75,7 @@ Main assets:  JS 721.71 kB / 193.44 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
-| `tests/item-rendering.test.ts` | 8 | Render categories/presets, texture coverage, cube/silhouette generated geometry, cache reuse, stack-copy thresholds, empty-hand visibility и pose reset |
+| `tests/item-rendering.test.ts` | 14 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow generated held path |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -148,7 +148,15 @@ Feel/polish pass повторно проверен во встроенном б�
 
 - в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
 - `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
-- bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, позу, movement slowdown и плавный FOV zoom;
+- bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, vanilla pull thresholds `0.65/0.9`, movement slowdown и плавный FOV zoom. Mesh лука не изгибается.
+
+Minecraft generated-items Phase 1 ещё требует локальный visual QA (этот cloud-прогон покрыл только unit/check):
+
+- `diamond_sword`, `iron_pickaxe`, `stick` — handheld sprite, видна FRONT texture, тонкий depth;
+- `coal`, `apple`, `arrow` — generated sprite, не voxel cubes и не projectile mesh;
+- `torch` — held generated sprite, placed world cuboid без изменений;
+- `bow` — texture stages на том же generated mesh;
+- `stone` — atlas cube control.
 - `?qaArrow=1` показал три real-texture arrow visuals на разных траекториях с общей physics update;
 - mob QA спереди/сзади/сбоку подтвердил длинные base sheep legs под коротким wool overlay, readable two-sided skeleton ribs и чистый zombie headwear cutout;
 - `?qaTime=night` ставит факел, соседние plants и каменный навес, чтобы был виден block light.

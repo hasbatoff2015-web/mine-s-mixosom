@@ -4,6 +4,7 @@ import {
   ITEMS,
   getItemDefinition,
   itemRenderProfile,
+  itemUsesGeneratedHeldGeometry,
   type ItemRenderContext,
   type ItemViewTransform,
 } from '../items';
@@ -71,7 +72,9 @@ export class ItemVisualFactory {
 
   async preload(): Promise<void> {
     if (typeof document === 'undefined') return;
-    const paths = new Set(ITEMS.filter((item) => item.kind !== 'block').map((item) => item.texture));
+    const paths = new Set(
+      ITEMS.filter((item) => itemUsesGeneratedHeldGeometry(item)).map((item) => item.texture),
+    );
     paths.add('item/bow_pulling_0');
     paths.add('item/bow_pulling_1');
     paths.add('item/bow_pulling_2');
@@ -87,17 +90,19 @@ export class ItemVisualFactory {
     root.userData.renderCategory = itemRenderProfile(definition).category;
     root.userData.texturePath = definition.texture;
 
-    if (definition.kind === 'block') {
+    if (itemUsesGeneratedHeldGeometry(definition)) {
+      const mesh = this.generatedMesh(definition.texture);
+      mesh.name = `${root.name}:generated`;
+      bindEntityLightReceiver(mesh);
+      root.add(mesh);
+    } else if (definition.kind === 'block') {
       const block = getBlockDefinition(definition.blockId);
       const mesh = new THREE.Mesh(this.blockGeometry(block), this.blockMaterial(block));
       mesh.name = `${root.name}:block`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
     } else {
-      const mesh = this.generatedMesh(definition.texture);
-      mesh.name = `${root.name}:generated`;
-      bindEntityLightReceiver(mesh);
-      root.add(mesh);
+      throw new Error(`Item ${definition.id} has no held visual path`);
     }
     return root;
   }

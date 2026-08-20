@@ -17,6 +17,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после TNT explosion batching: typecheck, 108 tests, production build 70 modules, 0.92 MiB / 165 files.
 - [x] Локальный pipeline после lighting/torch/selection fix: typecheck, 117 tests, production build 72 modules, 0.92 MiB / 165 files.
 - [x] Локальный pipeline после entity lighting / wall-torch followup: typecheck, 123 tests, production build.
+- [x] Локальный pipeline после Minecraft generated-items Phase 1: typecheck, 129 tests, production build 72 modules, 0.92 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -120,6 +121,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Подключить базовые first-person arm/item poses для swing/mining, walk, еды, bow charge и shield block.
 - [x] Убрать 20 TPS quantization из render camera, разделив live input look и fixed simulation state.
 - [x] Добавить cached alpha-silhouette depth geometry для generated held/dropped items и три стадии bow texture.
+- [x] Phase 1 vanilla-like `item/generated`: один front/back quad, толщина `1/16`, span detection `alpha == 0`, 32×32 в тех же 16×16 model units, общий first-person pose для generated/handheld, held torch sprite, bow pull `0.65/0.9`.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.

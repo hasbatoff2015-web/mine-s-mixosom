@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 123 unit/component tests in 21 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 129 unit/component tests in 21 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -77,8 +77,8 @@
 - 2×2 и 3×3 matcher поддерживает shaped, mirrored и shapeless recipes, tags и детерминированный consumption plan.
 - Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows/shield, tools, swords, armor, slabs/stairs и basic redstone/TNT items.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table.
-- Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Block items рисуются atlas-cube, остальные используют общую generated alpha-silhouette geometry с front/back и объединёнными boundary sides; stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
-- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield` и используют раздельные transform presets. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, три bow texture stages и blocking pose подключены к фактическому runtime state.
+- Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Обычные cube block items рисуются atlas-cube. Sprite items (включая held torch и arrow) используют общую `GeneratedItemGeometry`: один front/back quad на весь sprite, толщина `1/16`, side spans только по opaque→transparent (`alpha == 0`) с merge соседних рёбер. 32×32 pack не меняет model size. Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
+- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield`. `generated` и `handheld` (и bow) делят один vanilla-like first-person pose через Minecraft→Three.js basis adapter; кирка остаётся generated sprite, не 3D tool mesh. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` и blocking pose подключены к фактическому runtime state. Held torch идёт через generated sprite; placed torch geometry не менялась.
 
 ### Alpha approximation
 
@@ -86,7 +86,7 @@
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют.
 - Печь обновляется только во время симуляции мира; открытие container UI ставит игру на паузу.
 - Нет recipe book, подсказок неизвестных рецептов и массового craft по shift-click.
-- Трансформации и анимации ориентированы на читаемость alpha и Java 1.9 display contexts, но ещё не являются точной копией vanilla JSON transforms; off-hand кроме щита требует дополнительной полировки.
+- First-person generated/handheld pose приближен к vanilla `firstperson_righthand` через basis adapter, но это не bit-exact JSON copy: есть один project-level hand/camera offset и глобальный scale. Off-hand кроме щита, shield entity, chest inventory mesh и leather overlay остаются вне Phase 1.
 
 ## Игрок и survival
 
@@ -210,13 +210,13 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     21 files, 123 tests — PASS
+Vitest:     21 files, 129 tests — PASS
 Vite build: 72 modules — PASS
 Size/archive: 0.92 MiB / 165 files — PASS
-Main JS: 721.71 kB / 193.44 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Main JS: 722.19 kB / 193.75 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
-Покрыты registries, excluded item scope, stack/inventory operations, item render categories/presets/texture coverage/cache/poses/stack copies, crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
+Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (front/back, 1/16 depth, alpha==0 spans, 32×32 size, cache, bow 0.65/0.9), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 
 ## За пределами текущей alpha
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { itemRenderProfile, type ItemRenderCategory } from '../items';
+import { bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../items';
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
 import { TextureAtlas } from './TextureAtlas';
 import { createTexturedCuboidGeometry } from './TexturedCuboid';
@@ -146,10 +146,7 @@ export class FirstPersonRenderer {
       applyItemViewTransform(this.mainModel, itemRenderProfile(this.mainItem).transforms.firstPersonRightHand);
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
-      if (this.mainCategory === 'bow') {
-        this.updateBowTexture(this.mainModel, state.bowCharge);
-        if (state.bowCharge > 0) this.applyBowPose(this.mainModel, state.bowCharge);
-      }
+      if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
       if (this.mainCategory === 'shield' && state.shieldRaised) this.applyShieldPose(this.mainModel, false);
     }
 
@@ -196,26 +193,8 @@ export class FirstPersonRenderer {
     model.rotation.z += 0.18 * cadence;
   }
 
-  private applyBowPose(model: THREE.Object3D, charge: number): void {
-    const eased = 1 - Math.pow(1 - THREE.MathUtils.clamp(charge, 0, 1), 2);
-    model.position.x -= 0.12 * eased;
-    model.position.y += 0.09 * eased;
-    model.position.z -= 0.07 * eased;
-    model.rotation.x -= 0.18 * eased;
-    model.rotation.y += 0.58 * eased;
-    model.rotation.z += 0.17 * eased;
-    model.scale.multiplyScalar(1 + eased * 0.04);
-    if (charge >= 0.98) model.position.y += Math.sin(this.elapsedSeconds * 42) * 0.004;
-  }
-
   private updateBowTexture(model: THREE.Group, charge: number): void {
-    const texturePath = charge <= 0
-      ? 'item/bow'
-      : charge < 0.35
-        ? 'item/bow_pulling_0'
-        : charge < 0.7
-          ? 'item/bow_pulling_1'
-          : 'item/bow_pulling_2';
+    const texturePath = bowPullingTexturePath(charge);
     if (texturePath === this.bowTexturePath) return;
     this.visuals.setGeneratedTextureVariant(model, texturePath);
     this.bowTexturePath = texturePath;
