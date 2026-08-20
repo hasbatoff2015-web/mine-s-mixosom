@@ -2,7 +2,8 @@ import { getItemDefinition } from './registry';
 import { getBlockDefinition } from '../blocks';
 import type { ItemDefinition } from './types';
 
-export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow' | 'shield';
+export type ItemRenderCategory = 'block' | 'torch' | 'generated' | 'handheld' | 'bow' | 'shield';
+export type ItemVisualKind = 'block-cube' | 'special-torch' | 'generated';
 export type ItemRenderContext = 'firstPersonRightHand' | 'ground' | 'gui';
 export type RenderVector = readonly [x: number, y: number, z: number];
 
@@ -49,16 +50,22 @@ export const ITEM_RENDER_PROFILES: Readonly<Record<ItemRenderCategory, ItemRende
     transform([0, 0, 0], [0, 18, 0], [0.30, 0.30, 0.30]),
     UNIFORM_GUI,
   ),
+  torch: profile(
+    'torch',
+    transform([0.52, -0.36, -0.70], [18, -28, 10], [0.50, 0.50, 0.50]),
+    transform([0, 0, 0], [0, 32, 0], [0.42, 0.42, 0.42]),
+    UNIFORM_GUI,
+  ),
   generated: profile(
     'generated',
-    transform([0.48, -0.24, -0.76], [3, -18, -12], [0.31, 0.31, 0.31]),
-    transform([0, 0, 0], [0, 0, 0], [0.38, 0.38, 0.38]),
+    transform([0.52, -0.30, -0.72], [12, -48, 18], [0.48, 0.48, 0.48]),
+    transform([0, 0, 0], [0, 18, 0], [0.38, 0.38, 0.38]),
     UNIFORM_GUI,
   ),
   handheld: profile(
     'handheld',
-    transform([0.49, -0.30, -0.76], [2, -18, -10], [0.39, 0.39, 0.39]),
-    transform([0, 0, 0], [0, 0, 25], [0.38, 0.38, 0.38]),
+    transform([0.54, -0.32, -0.74], [14, -55, 22], [0.52, 0.52, 0.52]),
+    transform([0, 0, 0], [0, 0, 25], [0.40, 0.40, 0.40]),
     UNIFORM_GUI,
   ),
   bow: profile(
@@ -69,21 +76,26 @@ export const ITEM_RENDER_PROFILES: Readonly<Record<ItemRenderCategory, ItemRende
   ),
   shield: profile(
     'shield',
-    transform([0.47, -0.31, -0.82], [5, -18, -8], [0.42, 0.42, 0.42]),
-    transform([0, 0, 0], [0, 0, 0], [0.40, 0.40, 0.40]),
+    transform([0.48, -0.30, -0.80], [8, -42, 10], [0.44, 0.44, 0.44]),
+    transform([0, 0, 0], [0, 18, 0], [0.40, 0.40, 0.40]),
     UNIFORM_GUI,
   ),
 });
 
+/**
+ * Mesh construction kind, independent of first-person pose category.
+ * Cube blocks stay atlas cubes; torches reuse world cuboid stick; everything else is extruded.
+ */
+export function itemVisualKind(itemOrId: string | ItemDefinition): ItemVisualKind {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  if (item.kind !== 'block') return 'generated';
+  return getBlockDefinition(item.blockId).renderShape === 'torch' ? 'special-torch' : 'block-cube';
+}
+
 export function classifyItemForRendering(itemOrId: string | ItemDefinition): ItemRenderCategory {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
-  if (item.kind === 'block') {
-    const shape = getBlockDefinition(item.blockId).renderShape;
-    if (shape === 'torch' || shape === 'button' || shape === 'lever' || shape === 'door' || shape === 'cross') {
-      return 'generated';
-    }
-    return 'block';
-  }
+  if (itemVisualKind(item) === 'special-torch') return 'torch';
+  if (item.kind === 'block') return 'block';
   if (item.kind === 'shield') return 'shield';
   if (item.kind === 'tool' || (item.kind === 'weapon' && item.weapon === 'sword')) return 'handheld';
   if (item.kind === 'weapon' && item.weapon === 'bow') return 'bow';

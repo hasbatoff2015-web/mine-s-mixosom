@@ -4,10 +4,12 @@ import {
   ITEMS,
   getItemDefinition,
   itemRenderProfile,
+  itemVisualKind,
   type ItemRenderContext,
   type ItemViewTransform,
 } from '../items';
 import { createGeneratedItemGeometry } from './GeneratedItemGeometry';
+import { createTorchItemGeometry } from './specialBlockGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 
@@ -71,7 +73,9 @@ export class ItemVisualFactory {
 
   async preload(): Promise<void> {
     if (typeof document === 'undefined') return;
-    const paths = new Set(ITEMS.filter((item) => item.kind !== 'block').map((item) => item.texture));
+    const paths = new Set(
+      ITEMS.filter((item) => itemVisualKind(item) === 'generated').map((item) => item.texture),
+    );
     paths.add('item/bow_pulling_0');
     paths.add('item/bow_pulling_1');
     paths.add('item/bow_pulling_2');
@@ -81,24 +85,30 @@ export class ItemVisualFactory {
   createItemModel(itemId: string): THREE.Group {
     this.assertActive();
     const definition = getItemDefinition(itemId);
+    const visualKind = itemVisualKind(definition);
     const root = new THREE.Group();
     root.name = `item-model:${itemId}`;
     root.userData.itemId = itemId;
+    root.userData.visualKind = visualKind;
     root.userData.renderCategory = itemRenderProfile(definition).category;
     root.userData.texturePath = definition.texture;
 
-    if (definition.kind === 'block') {
-      const block = getBlockDefinition(definition.blockId);
-      const mesh = new THREE.Mesh(this.blockGeometry(block), this.blockMaterial(block));
-      mesh.name = `${root.name}:block`;
-      bindEntityLightReceiver(mesh);
-      root.add(mesh);
-    } else {
+    if (definition.kind !== 'block') {
       const mesh = this.generatedMesh(definition.texture);
       mesh.name = `${root.name}:generated`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
+      return root;
     }
+
+    const block = getBlockDefinition(definition.blockId);
+    const geometry = visualKind === 'special-torch'
+      ? this.torchGeometry(block)
+      : this.blockGeometry(block);
+    const mesh = new THREE.Mesh(geometry, this.blockMaterial(block));
+    mesh.name = visualKind === 'special-torch' ? `${root.name}:torch` : `${root.name}:block`;
+    bindEntityLightReceiver(mesh);
+    root.add(mesh);
     return root;
   }
 
@@ -171,6 +181,15 @@ export class ItemVisualFactory {
     this.disposed = true;
   }
 
+  private torchGeometry(block: BlockDefinition): THREE.BufferGeometry {
+    let geometry = this.blockGeometries.get(block.id);
+    if (geometry) return geometry;
+    const texture = this.textureForFace(block, 'front');
+    geometry = createTorchItemGeometry(this.atlas?.tile(texture) ?? FULL_TILE);
+    this.blockGeometries.set(block.id, geometry);
+    return geometry;
+  }
+
   private blockGeometry(block: BlockDefinition): THREE.BufferGeometry {
     let geometry = this.blockGeometries.get(block.id);
     if (geometry) return geometry;
@@ -193,6 +212,7 @@ export class ItemVisualFactory {
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setIndex(indices);
+    geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
     this.blockGeometries.set(block.id, geometry);
     return geometry;

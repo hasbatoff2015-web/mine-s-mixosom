@@ -17,6 +17,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после TNT explosion batching: typecheck, 108 tests, production build 70 modules, 0.92 MiB / 165 files.
 - [x] Локальный pipeline после lighting/torch/selection fix: typecheck, 117 tests, production build 72 modules, 0.92 MiB / 165 files.
 - [x] Локальный pipeline после entity lighting / wall-torch followup: typecheck, 123 tests, production build.
+- [x] Held non-block items: torch cuboid + extruded silhouette tools/arrow; cube blocks unchanged.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -120,10 +121,11 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Подключить базовые first-person arm/item poses для swing/mining, walk, еды, bow charge и shield block.
 - [x] Убрать 20 TPS quantization из render camera, разделив live input look и fixed simulation state.
 - [x] Добавить cached alpha-silhouette depth geometry для generated held/dropped items и три стадии bow texture.
+- [x] Held torch использует world cuboid stick; tools/weapons/arrow и прочие non-block items — extruded silhouette, не cube и не полный прямоугольник.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.
-- [ ] Довести off-hand, все item categories и transforms до более точного vanilla parity без потери общего cache pipeline.
+- [ ] Довести off-hand, все item categories и transforms до более точного vanilla parity без потери общего cache pipeline. Held 3D visuals уже разделены на block-cube / special-torch / generated.
 - [ ] Выверить projectile sweep и explosion exposure без дорогой полной физики.
 - [ ] Расширить поведение существ: spider climbing, passive flee, burning drops, sheep shearing — только после core stability.
 - [ ] Интеграционные combat scenarios: melee cooldown, crit, shield front/back, skeleton projectile, creeper chain damage.

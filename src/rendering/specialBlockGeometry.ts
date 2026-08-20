@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { BlockAttachment, BlockDefinition, BlockRenderState, HorizontalFacing } from '../blocks';
+import type { AtlasTile } from './TextureAtlas';
 
 export function leverHandleAngle(powered: boolean): number {
   return powered ? -Math.PI * 0.28 : Math.PI * 0.28;
@@ -28,6 +29,63 @@ export const TORCH_HEIGHT = 0.88;
 export const TORCH_WALL_INSET = 0.02;
 /** Tile UV of the opaque torch pixels in torch.png (32×32, v=0 at image bottom). */
 export const TORCH_TEXTURE_UV = [14 / 32, 0, 18 / 32, 20 / 32] as const;
+
+const TORCH_ITEM_FACES: readonly {
+  readonly normal: readonly [number, number, number];
+  readonly corners: readonly (readonly [number, number, number])[];
+}[] = [
+  { normal: [1, 0, 0], corners: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]] },
+  { normal: [-1, 0, 0], corners: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]] },
+  { normal: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
+  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
+  { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
+  { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]] },
+];
+
+const FULL_ATLAS_TILE: AtlasTile = { u0: 0, v0: 0, u1: 1, v1: 1 };
+
+/**
+ * Centered held/dropped torch cuboid using the same stick size and opaque UV crop as world torches.
+ * Pivot is the geometric center so item display transforms stay comparable to other models.
+ */
+export function createTorchItemGeometry(tile: AtlasTile = FULL_ATLAS_TILE): THREE.BufferGeometry {
+  const [cropU0, cropV0, cropU1, cropV1] = TORCH_TEXTURE_UV;
+  const u0 = THREE.MathUtils.lerp(tile.u0, tile.u1, cropU0);
+  const v0 = THREE.MathUtils.lerp(tile.v0, tile.v1, cropV0);
+  const u1 = THREE.MathUtils.lerp(tile.u0, tile.u1, cropU1);
+  const v1 = THREE.MathUtils.lerp(tile.v0, tile.v1, cropV1);
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (const face of TORCH_ITEM_FACES) {
+    const base = positions.length / 3;
+    for (const corner of face.corners) {
+      positions.push(
+        (corner[0] - 0.5) * TORCH_WIDTH,
+        (corner[1] - 0.5) * TORCH_HEIGHT,
+        (corner[2] - 0.5) * TORCH_WIDTH,
+      );
+      normals.push(...face.normal);
+    }
+    uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.userData.specialItem = Object.freeze({
+    kind: 'torch',
+    width: TORCH_WIDTH,
+    height: TORCH_HEIGHT,
+    depth: TORCH_WIDTH,
+  });
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
 
 export function facingVector(facing: HorizontalFacing, target = new THREE.Vector3()): THREE.Vector3 {
   switch (facing) {
