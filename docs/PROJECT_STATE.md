@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 143 unit/component tests in 22 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 150 unit/component tests in 22 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -78,7 +78,7 @@
 - Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows/shield, tools, swords, armor, slabs/stairs и basic redstone/TNT items.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table.
 - Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Обычные cube block items рисуются atlas-cube. Sprite items (включая held torch и arrow) используют общую `GeneratedItemGeometry`: один front/back quad на весь sprite, толщина `1/16`, side spans только по opaque→transparent (`alpha == 0`) с merge соседних рёбер. Side faces — outer shell (winding совпадает с outward normal). Collapsed side UV берёт центр opaque texel, не границу с transparent neighbor. 32×32 pack не меняет model size, но диагонали дают больше 1-texel spans (у `iron_pickaxe.png` 104 merged spans). Generated item material без mob wrap-shade (voxel light для drops сохраняется). Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
-- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield`. `generated`, `handheld` и bow делят один first-person sprite pose: position `[0.50, -0.56, -0.82]`, rotation `[0, 0, 14]°` (pitch/yaw 0, screen-space roll). `scale: 0.85` — **final** Three.js uniform scale, не множитель на vanilla `0.68` (старый composed default был `0.68 * 0.52 = 0.3536`). Это временный face-on calibration, не vanilla 1.9 pipeline и не утверждённое art-значение. Канонический idle right-hand adapter (`heldItemVanillaTransform.ts`) восстанавливает `T_hand(0.56,-0.52,-0.72) * T_disp(1.13,3.2,1.13)/16 * Ry(-90°) * Rz(25°) * S(0.68)` и **не подключён** к production. Ry(−90°) — реальный display rotate (front +Z → camera −X), не basis conversion. Dev `?qaItem=` по умолчанию — isolated inspect (`qaView=front|back|left|right`), `qaView=held` возвращает first-person, `qaView=held&pose=idle` печатает FOV/aspect/matrices/projected `screen01` points (current + proposed vanilla). `qaSideDebug=1` красит UP/DOWN/LEFT/RIGHT. `held*` override только idle held transform. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` и blocking pose накладываются поверх base. Held torch — generated sprite; placed torch geometry не менялась. `GeneratedItemGeometry` topology/UV/winding/depth закрыты как baseline (SHA-256 lock в tests).
+- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield`. `generated`, `handheld` и bow делят один first-person sprite pose: position `[0.50, -0.56, -0.82]`, rotation `[0, 0, 14]°` (pitch/yaw 0, screen-space roll). `scale: 0.85` — **final** Three.js uniform scale, не множитель на vanilla `0.68` (старый composed default был `0.68 * 0.52 = 0.3536`). Это временный face-on calibration, не vanilla 1.9 pipeline и не утверждённое art-значение. Канонический idle right-hand adapter (`heldItemVanillaTransform.ts`) восстанавливает `T_hand(0.56,-0.52,-0.72) * T_disp(1.13,3.2,1.13)/16 * Ry(-90°) * Rz(25°) * S(0.68)` и **не подключён** к production. Java 1.9 и 1.21.8 idle RH — одна matrix. `front → camera −X` не «edge-on»: предмет справа, `front·toCamera ≈ 0.66`; visual reference — F2 1.21.8 2048×1152. Ry(−90°) — реальный display rotate, не basis conversion. Dev `?qaItem=` по умолчанию — isolated inspect (`qaView=front|back|left|right`), `qaView=held` возвращает first-person, `qaView=held&pose=idle` печатает FOV/aspect/matrices/axis stages/silhouette `screen01` и F2 comparison (current + proposed vanilla). `qaSideDebug=1` красит UP/DOWN/LEFT/RIGHT. `held*` override только idle held transform. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` и blocking pose накладываются поверх base. Held torch — generated sprite; placed torch geometry не менялась. `GeneratedItemGeometry` topology/UV/winding/depth закрыты как baseline (djb2 lock в tests).
 
 ### Alpha approximation
 
@@ -86,7 +86,7 @@
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют.
 - Печь обновляется только во время симуляции мира; открытие container UI ставит игру на паузу.
 - Нет recipe book, подсказок неизвестных рецептов и массового craft по shift-click.
-- First-person generated/handheld pose калибруется по Java screenshots: крупнее, правее/ниже, pitch/yaw 0 (face-on). Это не bit-exact JSON copy, **не** vanilla idle matrix и **не утверждённое** art-значение. Vanilla reconstruction есть в коде как diagnostic adapter, без production switch. Off-hand кроме щита, shield entity, chest inventory mesh и leather overlay остаются вне текущего pass.
+- First-person generated/handheld pose калибруется по Java screenshots: крупнее, правее/ниже, pitch/yaw 0 (face-on). Это не bit-exact JSON copy, **не** vanilla idle matrix и **не утверждённое** art-значение. Vanilla reconstruction (1.9 == 1.21.8 idle RH) есть в коде как diagnostic adapter, без production switch. F2 1.21.8 2048×1152: left tip X почти совпал, Y systematic bias ~0.06. Off-hand кроме щита, shield entity, chest inventory mesh и leather overlay остаются вне текущего pass.
 
 ## Игрок и survival
 
@@ -210,10 +210,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     22 files, 143 tests — PASS
-Vite build: 74 modules — PASS
-Size/archive: 0.93 MiB / 165 files — PASS
-Main JS: 729.55 kB / 196.63 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Vitest:     22 files, 150 tests — PASS
+Vite build: 75 modules — PASS
+Size/archive: 0.94 MiB / 165 files — PASS
+Main JS: 735.81 kB / 198.86 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` QA overrides, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

@@ -19,11 +19,28 @@ import {
   VIEWMODEL_FOV_DEGREES,
   VIEWMODEL_NEAR,
   composeCurrentProductionIdleSpriteMatrix,
+  composeVanilla1218IdleFirstPersonRightHand,
   composeVanillaIdleFirstPersonRightHand,
+  frontFacingMetrics,
+  jomlRotationXYZQuaternion,
   minecraftItemTransformToMatrix4,
   minecraftRotationDegToQuaternion,
   projectGeneratedReferencePoints,
+  transformUnitAxes,
+  vanillaIdleRightHandStages,
 } from '../src/rendering/heldItemVanillaTransform';
+import {
+  HELD_ITEM_FOV_SWEEP_DEGREES,
+  IRON_PICKAXE_LANDMARK_TEXELS,
+  REFERENCE_F2_IRON_PICKAXE,
+  REFERENCE_F2_IRON_PICKAXE_PIXELS,
+  compareLandmarksToScreenshot,
+  extractIronPickaxeLandmarks,
+  projectLandmarksAtFovs,
+  projectSilhouetteLandmarks,
+  screenshotScreen01,
+} from '../src/rendering/heldItemLandmarks';
+import { IRON_PICKAXE_SILHOUETTE, maskFromSilhouette } from './ironPickaxeSilhouette';
 
 /** djb2 of `GeneratedItemGeometry.ts` at the closed topology baseline. */
 const GENERATED_ITEM_GEOMETRY_SOURCE_DJB2 = 'be428190';
@@ -255,7 +272,144 @@ describe('FirstPersonRenderer idle matrix debug', () => {
     expect(overlay).toContain('NOT applied');
     expect(overlay).toContain('screen01');
     expect(overlay).toContain('topLeft');
+    expect(overlay).toContain('VANILLA axis stages');
+    expect(overlay).toContain('1.9 GL == 1.21.8 JOML XYZ: YES');
+    const overlayMasked = viewmodel.formatHeldItemMatrixOverlay(maskFromSilhouette(IRON_PICKAXE_SILHOUETTE));
+    expect(overlayMasked).toContain('leftHeadTip');
+    expect(overlayMasked).toContain('F2 2048×1152');
+    expect(snapshot!.vanillaFacing.frontDotToCamera).toBeGreaterThan(0.5);
+    expect(snapshot!.productionFacing.frontDotLook).toBeCloseTo(-1, 5);
     viewmodel.dispose();
     factory.dispose();
+  });
+});
+
+describe('1.9 vs 1.21.8 idle right-hand matrix', () => {
+  it('matches JOML rotationXYZ to GlStateManager Rx*Ry*Rz for firstperson_righthand', () => {
+    const gl = minecraftRotationDegToQuaternion([0, -90, 25]);
+    const joml = jomlRotationXYZQuaternion([0, -90, 25]);
+    expect(gl.angleTo(joml)).toBeLessThan(1e-6);
+  });
+
+  it('produces the same idle camera-space matrix in 1.9 and 1.21.8', () => {
+    const v19 = composeVanillaIdleFirstPersonRightHand();
+    const v1218 = composeVanilla1218IdleFirstPersonRightHand();
+    for (let i = 0; i < 16; i += 1) {
+      expect(v1218.elements[i], `e[${i}]`).toBeCloseTo(v19.elements[i]!, 6);
+    }
+  });
+
+  it('keeps generated front visible from the camera despite a -X front normal', () => {
+    const vanilla = composeVanillaIdleFirstPersonRightHand();
+    const facing = frontFacingMetrics(vanilla);
+    const basis = transformUnitAxes(vanilla);
+    expect(facing.frontCamera[0]).toBeCloseTo(-1, 5);
+    expect(Math.abs(facing.frontCamera[2])).toBeLessThan(0.05);
+    expect(facing.frontDotLook).toBeCloseTo(0, 5);
+    expect(facing.frontDotToCamera).toBeGreaterThan(0.6);
+    expect(facing.grazingDegrees).toBeLessThan(55);
+    expect(basis.z[0]).toBeCloseTo(-1, 5);
+    expect(basis.x[2]).toBeGreaterThan(0.8);
+  });
+});
+
+describe('vanilla idle axis stages', () => {
+  it('keeps +X/+Y/+Z through bake and maps front +Z to camera -X after display/hand', () => {
+    const stages = Object.fromEntries(
+      vanillaIdleRightHandStages().map((stage) => [stage.name, stage]),
+    );
+    for (const name of ['localGenerated', 'afterBakeCentered'] as const) {
+      expect(stages[name]?.basis.x).toEqual([1, 0, 0]);
+      expect(stages[name]?.basis.y).toEqual([0, 1, 0]);
+      expect(stages[name]?.basis.z).toEqual([0, 0, 1]);
+    }
+    const display = stages.afterDisplay!;
+    const camera = stages.cameraSpace!;
+    expect(display.basis.z[0]).toBeCloseTo(-1, 5);
+    expect(display.basis.z[1]).toBeCloseTo(0, 5);
+    expect(display.basis.z[2]).toBeCloseTo(0, 5);
+    expect(camera.basis.z[0]).toBeCloseTo(-1, 5);
+    expect(camera.basis.x[2]).toBeGreaterThan(0.8);
+    expect(camera.origin[0]).toBeCloseTo(0.630625, 5);
+    expect(camera.origin[1]).toBeCloseTo(-0.32, 5);
+    expect(camera.origin[2]).toBeCloseTo(-0.649375, 5);
+    const production = transformUnitAxes(composeCurrentProductionIdleSpriteMatrix());
+    expect(production.z[2]).toBeCloseTo(1, 5);
+  });
+});
+
+describe('iron_pickaxe silhouette landmarks vs F2 screenshot', () => {
+  const mask = maskFromSilhouette(IRON_PICKAXE_SILHOUETTE);
+  const landmarks = extractIronPickaxeLandmarks(mask);
+  const camera = new THREE.PerspectiveCamera(
+    REFERENCE_F2_IRON_PICKAXE.handFovDegrees,
+    REFERENCE_F2_IRON_PICKAXE.aspect,
+    VIEWMODEL_NEAR,
+    VIEWMODEL_FAR,
+  );
+  camera.updateProjectionMatrix();
+
+  it('uses named 32×32 texels from the opaque silhouette, not AABB corners', () => {
+    expect(REFERENCE_F2_IRON_PICKAXE.framebufferWidth).toBe(2048);
+    expect(REFERENCE_F2_IRON_PICKAXE.framebufferHeight).toBe(1152);
+    expect(REFERENCE_F2_IRON_PICKAXE.minecraftVersion).toBe('1.21.8');
+    expect(REFERENCE_F2_IRON_PICKAXE.playerFovSetting).toBe(70);
+    expect(REFERENCE_F2_IRON_PICKAXE.handFovDegrees).toBe(70);
+    expect(screenshotScreen01(1618, 688)).toEqual([
+      1618 / 2048,
+      688 / 1152,
+    ]);
+    const byName = Object.fromEntries(landmarks.map((landmark) => [landmark.name, landmark]));
+    expect(byName.leftHeadTip?.texel).toEqual(IRON_PICKAXE_LANDMARK_TEXELS.leftHeadTip);
+    expect(byName.topWoodCap?.texel).toEqual(IRON_PICKAXE_LANDMARK_TEXELS.topWoodCap);
+    expect(byName.headHandleJunction?.texel).toEqual(IRON_PICKAXE_LANDMARK_TEXELS.headHandleJunction);
+    expect(byName.handleBottom?.texel).toEqual(IRON_PICKAXE_LANDMARK_TEXELS.handleBottom);
+    expect(byName.rightMetal?.texel).toEqual(IRON_PICKAXE_LANDMARK_TEXELS.rightMetal);
+    expect(byName.leftHeadTip?.local[2]).toBeCloseTo(VANILLA_GENERATED_DEPTH / 2, 10);
+    expect(landmarks).toHaveLength(5);
+  });
+
+  it('projects vanilla landmarks nearer the F2 screenshot than the face-on production pose', () => {
+    const vanilla = projectSilhouetteLandmarks(landmarks, composeVanillaIdleFirstPersonRightHand(), camera);
+    const vanilla1218 = projectSilhouetteLandmarks(landmarks, composeVanilla1218IdleFirstPersonRightHand(), camera);
+    const production = projectSilhouetteLandmarks(landmarks, composeCurrentProductionIdleSpriteMatrix(), camera);
+    const rows = compareLandmarksToScreenshot(production, vanilla);
+    const vanillaError = rows.reduce((sum, row) => (
+      sum + Math.hypot(row.vanillaDelta[0], row.vanillaDelta[1])
+    ), 0);
+    const productionError = rows.reduce((sum, row) => (
+      sum + Math.hypot(row.productionDelta[0], row.productionDelta[1])
+    ), 0);
+    expect(vanillaError).toBeLessThan(productionError);
+    for (let i = 0; i < vanilla.length; i += 1) {
+      expect(vanilla1218[i]!.screen01[0]).toBeCloseTo(vanilla[i]!.screen01[0], 6);
+      expect(vanilla1218[i]!.screen01[1]).toBeCloseTo(vanilla[i]!.screen01[1], 6);
+    }
+    const left = rows.find((row) => row.name === 'leftHeadTip')!;
+    const cap = rows.find((row) => row.name === 'topWoodCap')!;
+    expect(left.screenshotPx).toEqual(REFERENCE_F2_IRON_PICKAXE_PIXELS.leftHeadTip);
+    expect(left.vanilla01[0]).toBeCloseTo(0.7912, 3);
+    expect(left.vanilla01[1]).toBeCloseTo(0.6584, 3);
+    expect(cap.vanilla01[0]).toBeCloseTo(0.9769, 3);
+    expect(cap.vanilla01[1]).toBeCloseTo(0.5470, 3);
+    expect(Math.abs(left.vanilla01[0] - left.screenshot01[0])).toBeLessThan(0.05);
+  });
+
+  it('shows FOV 60–80 changing projected size without changing the pose matrix', () => {
+    const vanilla = composeVanillaIdleFirstPersonRightHand();
+    expect(HELD_ITEM_FOV_SWEEP_DEGREES).toEqual([60, 70, 75, 80]);
+    const byFov = projectLandmarksAtFovs(landmarks, vanilla);
+    const left60 = byFov[60]!.find((point) => point.name === 'leftHeadTip')!;
+    const left70 = byFov[70]!.find((point) => point.name === 'leftHeadTip')!;
+    const left75 = byFov[75]!.find((point) => point.name === 'leftHeadTip')!;
+    const left80 = byFov[80]!.find((point) => point.name === 'leftHeadTip')!;
+    expect(left60.screen01[0]).toBeGreaterThan(left70.screen01[0]);
+    expect(left70.screen01[0]).toBeGreaterThan(left75.screen01[0]);
+    expect(left75.screen01[0]).toBeGreaterThan(left80.screen01[0]);
+    expect(Math.abs(left70.screen01[0] - left80.screen01[0])).toBeGreaterThan(0.01);
+    expect(left60.screen01[0]).toBeCloseTo(0.8531, 3);
+    expect(left70.screen01[0]).toBeCloseTo(0.7912, 3);
+    expect(left75.screen01[0]).toBeCloseTo(0.7657, 3);
+    expect(left80.screen01[0]).toBeCloseTo(0.7430, 3);
   });
 });

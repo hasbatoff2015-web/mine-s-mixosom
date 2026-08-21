@@ -33,6 +33,7 @@ import {
   parseItemQaView,
   resolveHeldItemTransform,
 } from '../src/rendering/heldItemQa';
+import { IRON_PICKAXE_SILHOUETTE, maskFromSilhouette } from './ironPickaxeSilhouette';
 
 const ITEM_TEXTURES = import.meta.glob('../public/textures/item/*.png');
 const BLOCK_TEXTURES = import.meta.glob('../public/textures/block/*.png');
@@ -73,53 +74,6 @@ function diagonalMask(size: number): { width: number; height: number; alpha: Uin
     if (x < size) alpha[y * size + x] = 255;
   }
   return { width: size, height: size, alpha };
-}
-
-/** Silhouette of committed `public/textures/item/iron_pickaxe.png` (32×32, alpha != 0). */
-const IRON_PICKAXE_SILHOUETTE = [
-  '................................',
-  '................................',
-  '................................',
-  '................................',
-  '................................',
-  '...........#########............',
-  '..........#############..###....',
-  '...........#################....',
-  '................############....',
-  '...................########.....',
-  '.....................######.....',
-  '....................########....',
-  '...................#########....',
-  '..................#####.####....',
-  '.................#####..#####...',
-  '................#####....####...',
-  '...............#####.....####...',
-  '..............#####......####...',
-  '.............#####........###...',
-  '............#####.........###...',
-  '...........#####..........###...',
-  '..........#####...........###...',
-  '.........#####............###...',
-  '........#####..............#....',
-  '.......#####....................',
-  '......#####.....................',
-  '.....#####......................',
-  '....#####.......................',
-  '....####........................',
-  '....###.........................',
-  '................................',
-  '................................',
-] as const;
-
-function maskFromSilhouette(rows: readonly string[]): { width: number; height: number; alpha: Uint8Array } {
-  const height = rows.length;
-  const width = rows[0]!.length;
-  const alpha = new Uint8Array(width * height);
-  for (let y = 0; y < height; y += 1) {
-    const row = rows[y]!;
-    for (let x = 0; x < width; x += 1) alpha[y * width + x] = row[x] === '#' ? 255 : 0;
-  }
-  return { width, height, alpha };
 }
 
 function fullSpriteQuads(geometry: THREE.BufferGeometry): { front: number; back: number } {

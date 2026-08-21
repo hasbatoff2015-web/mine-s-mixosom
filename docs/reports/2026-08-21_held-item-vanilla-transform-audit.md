@@ -3,6 +3,9 @@
 Дата: 2026-08-21  
 Ветка: `cursor/minecraft-item-pipeline-rework-935a`
 
+> Follow-up: `docs/reports/2026-08-21_held-item-fp-1.21.8-screenshot-audit.md`.  
+> «Edge-on» (`front·look ≈ 0`) **не** опровергает матрицу: предмет справа от камеры, `front·toCamera ≈ 0.66`. Visual reference — F2 Java **1.21.8** 2048×1152, не screenshot с window chrome.
+
 ## Goal
 
 Восстановить математически vanilla idle first-person right-hand pipeline (без walking bob / swing / eat / use) и сравнить его с текущей Three.js цепочкой. Не подбирать `heldX/heldY/heldScale/pitch/yaw/roll` на глаз. `GeneratedItemGeometry` не менять. Production pose не переключать, пока conversion не доказан projected coordinates против Minecraft screenshot.

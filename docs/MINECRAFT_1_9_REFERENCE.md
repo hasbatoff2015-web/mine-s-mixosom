@@ -246,7 +246,7 @@ Java simulation tick и display refresh — разные временные шк
 
 First-person **world** FOV в settings (`60–100`, default `75`) и sprint/bow easing — визуальные alpha approximations. Отдельный viewmodel pass использует фиксированные **70°** vertical FOV, как vanilla hand pass (`getFOVModifier(..., false)`), и не следует settings FOV. Обычные item sprites преобразуются в cached geometry с одним front/back quad и боковыми spans по opaque→transparent (`alpha == 0`). Это следует `item/generated`: толщина `1/16`, 32×32 в тех же 16×16 model units, outer-shell winding, collapsed UV в центре opaque texel. Не bit-exact Mojang `ItemModelGenerator`.
 
-Idle first-person right-hand vanilla path восстановлен как matrix adapter (`T_hand * display T/R/S`), без production switch и без ручных `heldX/Y/scale` подборов. Текущий production pose остаётся временным face-on calibration.
+Idle first-person right-hand vanilla path восстановлен как matrix adapter (`T_hand * display T/R/S`), без production switch. Java 1.9 и 1.21.8 idle RH совпадают. Hand pass FOV 70 независим от settings FOV (`getFov(..., false)` / пользовательский тест 70 vs 97). Текущий production pose остаётся временным face-on calibration. F2 1.21.8 2048×1152: см. `docs/reports/2026-08-21_held-item-fp-1.21.8-screenshot-audit.md`.
 
 Источники: [Bow — weapon](https://minecraft.wiki/w/Bow#Weapon), [Arrow — damage](https://minecraft.wiki/w/Arrow#Damage).
 

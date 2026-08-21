@@ -172,9 +172,12 @@ export async function startItemQaHarness(
       state.shieldRaised = qaItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
       const facing = viewmodel.measureHeldFrontCameraDot();
-      const matrixOverlay = viewmodel.formatHeldItemMatrixOverlay();
+      const mask = qaItem && itemUsesGeneratedHeldGeometry(qaItem)
+        ? visuals.getGeneratedMask(getItemDefinition(qaItem).texture)
+        : undefined;
+      const matrixOverlay = viewmodel.formatHeldItemMatrixOverlay(mask);
       if (label) {
-        const facingLine = facing === undefined ? '' : `\nfront·camera ${facing.toFixed(4)}`;
+        const facingLine = facing === undefined ? '' : `\nfront·lookAxis ${facing.toFixed(4)}`;
         const matrices = matrixOverlay ? `\n\n${matrixOverlay}` : '';
         label.textContent = `${overlayLines.join('\n')}${facingLine}${matrices}`;
       }

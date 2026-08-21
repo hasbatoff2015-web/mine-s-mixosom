@@ -11,11 +11,21 @@ import {
   type HeldItemQaOverride,
 } from './heldItemQa';
 import {
+  composeVanilla1218IdleFirstPersonRightHand,
   composeVanillaIdleFirstPersonRightHand,
   formatHeldItemMatrixOverlay,
+  frontFacingMetrics,
   projectGeneratedReferencePoints,
+  transformUnitAxes,
   type HeldItemMatrixDebugSnapshot,
 } from './heldItemVanillaTransform';
+import {
+  compareLandmarksToScreenshot,
+  extractIronPickaxeLandmarks,
+  projectSilhouetteLandmarks,
+  REFERENCE_F2_IRON_PICKAXE,
+} from './heldItemLandmarks';
+import type { GeneratedItemMask } from './GeneratedItemGeometry';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -235,7 +245,7 @@ export class FirstPersonRenderer {
    * right-hand matrix. The vanilla matrix is diagnostic only and is not
    * written onto the mesh.
    */
-  captureHeldItemMatrixDebug(): HeldItemMatrixDebugSnapshot | undefined {
+  captureHeldItemMatrixDebug(mask?: GeneratedItemMask): HeldItemMatrixDebugSnapshot | undefined {
     if (!this.mainModel) return undefined;
     this.camera.updateMatrixWorld();
     this.camera.updateProjectionMatrix();
@@ -244,6 +254,27 @@ export class FirstPersonRenderer {
     const itemWorld = this.mainModel.matrixWorld.clone();
     const modelView = new THREE.Matrix4().multiplyMatrices(this.camera.matrixWorldInverse, itemWorld);
     const vanillaModelView = composeVanillaIdleFirstPersonRightHand();
+    const vanilla1218ModelView = composeVanilla1218IdleFirstPersonRightHand();
+    const landmarks = mask ? extractIronPickaxeLandmarks(mask) : undefined;
+    const silhouetteProduction = landmarks
+      ? projectSilhouetteLandmarks(landmarks, modelView, this.camera)
+      : undefined;
+    const silhouetteVanilla = landmarks
+      ? projectSilhouetteLandmarks(landmarks, vanillaModelView, this.camera)
+      : undefined;
+    const f2Camera = new THREE.PerspectiveCamera(
+      REFERENCE_F2_IRON_PICKAXE.handFovDegrees,
+      REFERENCE_F2_IRON_PICKAXE.aspect,
+      this.camera.near,
+      this.camera.far,
+    );
+    f2Camera.updateProjectionMatrix();
+    const screenshotComparison = landmarks
+      ? compareLandmarksToScreenshot(
+        projectSilhouetteLandmarks(landmarks, modelView, f2Camera),
+        projectSilhouetteLandmarks(landmarks, vanillaModelView, f2Camera),
+      )
+      : undefined;
     return {
       itemId: this.mainItem,
       freezeIdleMotion: this.freezeIdleMotion,
@@ -258,13 +289,21 @@ export class FirstPersonRenderer {
       itemWorld,
       modelView,
       productionPoints: projectGeneratedReferencePoints(modelView, this.camera),
+      productionBasis: transformUnitAxes(modelView),
+      productionFacing: frontFacingMetrics(modelView),
       vanillaModelView,
+      vanilla1218ModelView,
       vanillaPoints: projectGeneratedReferencePoints(vanillaModelView, this.camera),
+      vanillaBasis: transformUnitAxes(vanillaModelView),
+      vanillaFacing: frontFacingMetrics(vanillaModelView),
+      silhouetteProduction,
+      silhouetteVanilla,
+      screenshotComparison,
     };
   }
 
-  formatHeldItemMatrixOverlay(): string | undefined {
-    const snapshot = this.captureHeldItemMatrixDebug();
+  formatHeldItemMatrixOverlay(mask?: GeneratedItemMask): string | undefined {
+    const snapshot = this.captureHeldItemMatrixDebug(mask);
     return snapshot ? formatHeldItemMatrixOverlay(snapshot) : undefined;
   }
 
