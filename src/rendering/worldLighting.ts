@@ -140,6 +140,8 @@ export interface EntityMaterialOptions {
   readonly side?: THREE.Side;
   readonly fog?: boolean;
   readonly glow?: boolean;
+  /** Mob wrap-shade. Generated items set this false so thin side faces stay fullbright. */
+  readonly wrap?: boolean;
 }
 
 /**
@@ -149,6 +151,7 @@ export interface EntityMaterialOptions {
  */
 export function createEntityMaterial(options: EntityMaterialOptions = {}): THREE.MeshBasicMaterial {
   const glow = options.glow === true;
+  const wrap = options.wrap !== false;
   const material = new THREE.MeshBasicMaterial({
     map: options.map ?? null,
     color: options.color ?? 0xffffff,
@@ -163,6 +166,9 @@ export function createEntityMaterial(options: EntityMaterialOptions = {}): THREE
     material.customProgramCacheKey = () => 'frontier-entity-glow-v1';
     return material;
   }
+  const wrapExpression = wrap
+    ? `${ENTITY_WRAP_MIN} + ${ENTITY_WRAP_SCALE} * clamp(dot(normalize(mat3(modelMatrix) * normal), vec3(0.18, 0.92, 0.28)), 0.0, 1.0)`
+    : '1.0';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uEntityLight = { value: ENTITY_LIGHT_IDENTITY.clone() };
     material.userData.uEntityLight = shader.uniforms.uEntityLight;
@@ -173,7 +179,7 @@ varying float vEntityWrap;`,
     ).replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
-vEntityWrap = ${ENTITY_WRAP_MIN} + ${ENTITY_WRAP_SCALE} * clamp(dot(normalize(mat3(modelMatrix) * normal), vec3(0.18, 0.92, 0.28)), 0.0, 1.0);`,
+vEntityWrap = ${wrapExpression};`,
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <common>',
@@ -186,7 +192,9 @@ varying float vEntityWrap;`,
 diffuseColor.rgb *= uEntityLight * vEntityWrap;`,
     );
   };
-  material.customProgramCacheKey = () => 'frontier-entity-voxel-light-v1';
+  material.customProgramCacheKey = () => (
+    wrap ? 'frontier-entity-voxel-light-v1' : 'frontier-entity-voxel-light-v1-nowrap'
+  );
   return material;
 }
 

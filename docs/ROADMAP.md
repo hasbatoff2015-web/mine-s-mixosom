@@ -123,6 +123,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Добавить cached alpha-silhouette depth geometry для generated held/dropped items и три стадии bow texture.
 - [x] Phase 1 vanilla-like `item/generated`: один front/back quad, толщина `1/16`, span detection `alpha == 0`, 32×32 в тех же 16×16 model units, общий first-person pose для generated/handheld, held torch sprite, bow pull `0.65/0.9`.
 - [x] First-person sprite pose calibration: shared scale/position/roll, pitch/yaw 0, dev `held*` QA overrides.
+- [x] Generated-item geometry audit: outer-shell winding, texel-center side UV, inspect/`qaSideDebug` harness, `iron_pickaxe.png` span diagnostics. Held pose остаётся временным baseline.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.

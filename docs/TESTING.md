@@ -148,12 +148,16 @@ Feel/polish pass повторно проверен во встроенном б�
 
 - в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
 - `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
-- `?qaItem=iron_pickaxe&heldScale=0.85&heldX=0.50&heldY=-0.56&heldZ=-0.82&heldRoll=14&heldPitch=0&heldYaw=0&pose=idle` — dev overlay печатает те же числа и `front·camera` dot; params не попадают в save и игнорируются в production build;
+- `?qaItem=iron_pickaxe` — isolated inspect (front, центр, без bob/swing); overlay печатает spans/UV/depth;
+- `?qaItem=iron_pickaxe&qaSideDebug=1` — те же front/back textures, стороны UP red / DOWN green / LEFT blue / RIGHT yellow;
+- `?qaItem=iron_pickaxe&qaView=left` / `qaView=right` / `qaView=back` — лёгкий угол и тыл;
+- `?qaItem=iron_pickaxe&qaView=held&pose=idle` — прежний first-person; `held*` knobs работают только здесь;
+- `?qaItem=iron_pickaxe&heldScale=0.85&heldX=0.50&heldY=-0.56&heldZ=-0.82&heldRoll=14&heldPitch=0&heldYaw=0&pose=idle` — нужен `qaView=held`, иначе held* игнорируются;
 - bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, vanilla pull thresholds `0.65/0.9`, movement slowdown и плавный FOV zoom. Mesh лука не изгибается.
 
-Minecraft generated-items Phase 1 ещё требует локальный visual QA (этот cloud-прогон покрыл только unit/check):
+Minecraft generated-item geometry audit (локальный visual QA всё ещё нужен):
 
-- `diamond_sword`, `iron_pickaxe`, `stick` — handheld sprite, видна FRONT texture, тонкий depth;
+- `diamond_sword`, `iron_pickaxe`, `stick` — handheld sprite, видна FRONT texture, тонкий depth; `iron_pickaxe.png` 32×32 даёт 104 merged side spans (много 1-texel на диагонали — это контур, не баг merge);
 - `coal`, `apple`, `arrow` — generated sprite, не voxel cubes и не projectile mesh;
 - `torch` — held generated sprite, placed world cuboid без изменений;
 - `bow` — texture stages на том же generated mesh;

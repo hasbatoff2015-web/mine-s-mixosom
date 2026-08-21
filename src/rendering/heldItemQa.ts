@@ -105,3 +105,23 @@ export function readDevHeldItemQaOverride(): HeldItemQaOverride | undefined {
   if (typeof import.meta !== 'undefined' && import.meta.env?.DEV === false) return undefined;
   return parseHeldItemQaOverride(location.search);
 }
+
+export const ITEM_QA_VIEWS = ['front', 'back', 'left', 'right', 'held'] as const;
+export type ItemQaView = (typeof ITEM_QA_VIEWS)[number];
+
+function asSearchParams(search: string | URLSearchParams): URLSearchParams {
+  return typeof search === 'string'
+    ? new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+    : search;
+}
+
+/** Isolated geometry inspect is the default. `qaView=held` restores first-person pose. */
+export function parseItemQaView(search: string | URLSearchParams): ItemQaView {
+  const value = asSearchParams(search).get('qaView');
+  return (ITEM_QA_VIEWS as readonly string[]).includes(value ?? '') ? value as ItemQaView : 'front';
+}
+
+export function parseItemQaSideDebug(search: string | URLSearchParams): boolean {
+  const value = asSearchParams(search).get('qaSideDebug');
+  return value === '1' || value === 'true';
+}

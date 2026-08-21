@@ -13,9 +13,12 @@ import { FirstPersonRenderer, type FirstPersonFrameState } from '../src/renderin
 import {
   VANILLA_GENERATED_DEPTH,
   collectGeneratedItemSpans,
+  countGeneratedBoundaryEdges,
   createGeneratedItemGeometry,
+  formatGeneratedItemDiagnostics,
   generatedItemInfo,
   isGeneratedTransparentAlpha,
+  spanCounts,
 } from '../src/rendering/GeneratedItemGeometry';
 import {
   ItemVisualFactory,
@@ -24,6 +27,8 @@ import {
 import {
   formatHeldItemQaQuery,
   parseHeldItemQaOverride,
+  parseItemQaSideDebug,
+  parseItemQaView,
   resolveHeldItemTransform,
 } from '../src/rendering/heldItemQa';
 
@@ -68,6 +73,53 @@ function diagonalMask(size: number): { width: number; height: number; alpha: Uin
   return { width: size, height: size, alpha };
 }
 
+/** Silhouette of committed `public/textures/item/iron_pickaxe.png` (32×32, alpha != 0). */
+const IRON_PICKAXE_SILHOUETTE = [
+  '................................',
+  '................................',
+  '................................',
+  '................................',
+  '................................',
+  '...........#########............',
+  '..........#############..###....',
+  '...........#################....',
+  '................############....',
+  '...................########.....',
+  '.....................######.....',
+  '....................########....',
+  '...................#########....',
+  '..................#####.####....',
+  '.................#####..#####...',
+  '................#####....####...',
+  '...............#####.....####...',
+  '..............#####......####...',
+  '.............#####........###...',
+  '............#####.........###...',
+  '...........#####..........###...',
+  '..........#####...........###...',
+  '.........#####............###...',
+  '........#####..............#....',
+  '.......#####....................',
+  '......#####.....................',
+  '.....#####......................',
+  '....#####.......................',
+  '....####........................',
+  '....###.........................',
+  '................................',
+  '................................',
+] as const;
+
+function maskFromSilhouette(rows: readonly string[]): { width: number; height: number; alpha: Uint8Array } {
+  const height = rows.length;
+  const width = rows[0]!.length;
+  const alpha = new Uint8Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = rows[y]!;
+    for (let x = 0; x < width; x += 1) alpha[y * width + x] = row[x] === '#' ? 255 : 0;
+  }
+  return { width, height, alpha };
+}
+
 function fullSpriteQuads(geometry: THREE.BufferGeometry): { front: number; back: number } {
   const position = geometry.getAttribute('position');
   let front = 0;
@@ -95,6 +147,54 @@ function fullSpriteQuads(geometry: THREE.BufferGeometry): { front: number; back:
     if (maxZ < 0) back += 1;
   }
   return { front, back };
+}
+
+function windingNormal(geometry: THREE.BufferGeometry, vertex: number): THREE.Vector3 {
+  const position = geometry.getAttribute('position');
+  const ax = position.getX(vertex);
+  const ay = position.getY(vertex);
+  const az = position.getZ(vertex);
+  const e1 = new THREE.Vector3(
+    position.getX(vertex + 1) - ax,
+    position.getY(vertex + 1) - ay,
+    position.getZ(vertex + 1) - az,
+  );
+  const e2 = new THREE.Vector3(
+    position.getX(vertex + 2) - ax,
+    position.getY(vertex + 2) - ay,
+    position.getZ(vertex + 2) - az,
+  );
+  return e1.cross(e2).normalize();
+}
+
+function storedNormal(geometry: THREE.BufferGeometry, vertex: number): THREE.Vector3 {
+  const normal = geometry.getAttribute('normal');
+  return new THREE.Vector3(normal.getX(vertex), normal.getY(vertex), normal.getZ(vertex));
+}
+
+function uniqueUvValues(
+  uv: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+  vertex: number,
+  axis: 'u' | 'v',
+): number[] {
+  const values = new Set<number>();
+  for (let corner = 0; corner < 4; corner += 1) {
+    values.add(axis === 'u' ? uv.getX(vertex + corner) : uv.getY(vertex + corner));
+  }
+  return [...values];
+}
+
+function texelIndexU(u: number, size: number): number {
+  return Math.floor(u * size);
+}
+
+function texelIndexV(v: number, size: number): number {
+  return Math.floor((1 - v) * size);
+}
+
+function onTexelBoundary(value: number, size: number): boolean {
+  const scaled = value * size;
+  return Math.abs(scaled - Math.round(scaled)) < 1e-6;
 }
 
 describe('item render profiles and assets', () => {
@@ -240,22 +340,104 @@ describe('GeneratedItemGeometry', () => {
     coarse.dispose();
   });
 
-  it('uses 32×32 collapsed UV strips from the ItemModelGenerator (size-1) formula', () => {
-    const topLeft = new Uint8Array(32 * 32);
-    topLeft[0] = 255;
-    const topGeometry = createGeneratedItemGeometry({ width: 32, height: 32, alpha: topLeft });
-    const topUv = topGeometry.getAttribute('uv');
-    expect(topUv.getY(8)).toBeCloseTo(1);
-    expect(topUv.getX(16)).toBeCloseTo(0);
-    topGeometry.dispose();
+  it('uses texel-center collapsed UV so nearest-filter stays on the opaque pixel', () => {
+    const size = 32;
+    const x = 8;
+    const y = 10;
+    const alpha = new Uint8Array(size * size);
+    alpha[y * size + x] = 255;
+    const geometry = createGeneratedItemGeometry({ width: size, height: size, alpha });
+    const uv = geometry.getAttribute('uv');
+    const families = [
+      { name: 'up', vertex: 8, axis: 'v' as const, opaque: y, neighbor: y - 1 },
+      { name: 'down', vertex: 12, axis: 'v' as const, opaque: y, neighbor: y + 1 },
+      { name: 'left', vertex: 16, axis: 'u' as const, opaque: x, neighbor: x - 1 },
+      { name: 'right', vertex: 20, axis: 'u' as const, opaque: x, neighbor: x + 1 },
+    ];
+    for (const family of families) {
+      const collapsed = uniqueUvValues(uv, family.vertex, family.axis);
+      expect(collapsed, family.name).toHaveLength(1);
+      const sample = collapsed[0]!;
+      const texel = family.axis === 'u' ? texelIndexU(sample, size) : texelIndexV(sample, size);
+      const boundaryCheck = family.axis === 'u' ? sample : 1 - sample;
+      expect(onTexelBoundary(boundaryCheck, size), `${family.name} on texel edge`).toBe(false);
+      expect(texel, family.name).toBe(family.opaque);
+      expect(texel, `${family.name} neighbor`).not.toBe(family.neighbor);
+      if (family.axis === 'v') expect(sample).toBeCloseTo(1 - (family.opaque + 0.5) / size);
+      else expect(sample).toBeCloseTo((family.opaque + 0.5) / size);
+    }
+    geometry.dispose();
+  });
 
-    const bottomRight = new Uint8Array(32 * 32);
-    bottomRight[31 * 32 + 31] = 255;
-    const bottomGeometry = createGeneratedItemGeometry({ width: 32, height: 32, alpha: bottomRight });
-    const bottomUv = bottomGeometry.getAttribute('uv');
-    expect(bottomUv.getY(12)).toBeCloseTo(0);
-    expect(bottomUv.getX(20)).toBeCloseTo(1);
-    bottomGeometry.dispose();
+  it('faces front, back and every side family out of the item volume', () => {
+    const size = 32;
+    const alpha = new Uint8Array(size * size);
+    alpha[10 * size + 8] = 255;
+    const geometry = createGeneratedItemGeometry({ width: size, height: size, alpha });
+    const expected = [
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(1, 0, 0),
+    ];
+    expect(geometry.getAttribute('position').count).toBe(24);
+    expected.forEach((facing, index) => {
+      const vertex = index * 4;
+      const winding = windingNormal(geometry, vertex);
+      const stored = storedNormal(geometry, vertex);
+      expect(stored.dot(facing), `stored family ${index}`).toBeGreaterThan(0.99);
+      expect(winding.dot(facing), `winding family ${index}`).toBeGreaterThan(0.99);
+      expect(winding.dot(stored), `winding vs stored ${index}`).toBeGreaterThan(0.99);
+    });
+    geometry.dispose();
+
+    const plus = createGeneratedItemGeometry(plusMask(8));
+    for (let vertex = 0; vertex < plus.getAttribute('position').count; vertex += 4) {
+      const winding = windingNormal(plus, vertex);
+      const stored = storedNormal(plus, vertex);
+      expect(winding.dot(stored)).toBeGreaterThan(0.99);
+    }
+    plus.dispose();
+  });
+
+  it('matches iron_pickaxe.png span statistics used by the inspect overlay', () => {
+    const mask = maskFromSilhouette(IRON_PICKAXE_SILHOUETTE);
+    expect(mask.width).toBe(32);
+    expect(mask.height).toBe(32);
+    const spans = collectGeneratedItemSpans(mask);
+    const counts = spanCounts(spans);
+    const raw = countGeneratedBoundaryEdges(mask);
+    expect(counts).toEqual({ up: 24, down: 28, left: 28, right: 24, total: 104 });
+    expect(raw.total).toBeGreaterThan(counts.total);
+    expect(raw.up).toBeGreaterThanOrEqual(counts.up);
+    const geometry = createGeneratedItemGeometry(mask);
+    const info = generatedItemInfo(geometry);
+    expect(info.opaquePixels).toBe(204);
+    expect(info.frontQuads).toBe(1);
+    expect(info.backQuads).toBe(1);
+    expect(info.sideSpans).toBe(104);
+    expect(info.depth).toBeCloseTo(VANILLA_GENERATED_DEPTH);
+    expect(info.bounds.max[0] - info.bounds.min[0]).toBeCloseTo(1);
+    expect(info.bounds.max[2] - info.bounds.min[2]).toBeCloseTo(VANILLA_GENERATED_DEPTH);
+    expect(info.uv.front).toMatchObject({ uMin: 0, uMax: 1, vMin: 0, vMax: 1 });
+    expect(formatGeneratedItemDiagnostics(info, 'iron_pickaxe')).toContain('side spans  U 24  D 28  L 28  R 24  Σ 104');
+    const oneTexel = spans.filter((span) => span.max === span.min).length;
+    expect(oneTexel).toBeGreaterThan(80);
+    geometry.dispose();
+  });
+
+  it('writes debug side colors without changing production attributes', () => {
+    const production = createGeneratedItemGeometry(plusMask(4));
+    expect(production.getAttribute('color')).toBeUndefined();
+    const debug = createGeneratedItemGeometry(plusMask(4), { debugSides: true });
+    const color = debug.getAttribute('color');
+    expect(color).toBeDefined();
+    expect(color.getX(8)).toBeCloseTo(1);
+    expect(color.getY(8)).toBeCloseTo(0.12);
+    production.dispose();
+    debug.dispose();
   });
 });
 
@@ -384,6 +566,11 @@ describe('held item QA transform overrides', () => {
       x: 0.5,
       roll: 14,
     });
+    expect(parseItemQaView('qaItem=iron_pickaxe')).toBe('front');
+    expect(parseItemQaView('qaView=held')).toBe('held');
+    expect(parseItemQaView('qaView=left')).toBe('left');
+    expect(parseItemQaSideDebug('qaItem=iron_pickaxe')).toBe(false);
+    expect(parseItemQaSideDebug('qaSideDebug=1')).toBe(true);
     const onePointSixTarget = resolveHeldItemTransform(
       itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand,
       { scale: 0.578 },

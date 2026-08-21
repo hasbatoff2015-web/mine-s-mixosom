@@ -244,7 +244,7 @@ launchSpeed = 3 × power blocks/tick
 
 Java simulation tick и display refresh — разные временные шкалы. Для узнаваемого mouse feel alpha оставляет физику на `20 TPS`, но применяет накопленные input yaw/pitch к render camera каждый animation frame. Это проектный rendering contract, а не утверждение о внутреннем клиентском коде Java 1.9.
 
-First-person transforms, Steve-arm placement и FOV easing являются визуальными alpha approximations. Обычные item sprites преобразуются в cached geometry с front/back и боковыми рёбрами по границе alpha mask. Это следует идее generated item model, но не заявляет bit-exact совпадение с Mojang `ItemModelGenerator`: соседние рёбра объединяются в spans, а side UV используют boundary-strip approximation.
+First-person transforms, Steve-arm placement и FOV easing являются визуальными alpha approximations. Обычные item sprites преобразуются в cached geometry с одним front/back quad и боковыми spans по opaque→transparent (`alpha == 0`). Это следует `item/generated`: толщина `1/16`, 32×32 в тех же 16×16 model units, outer-shell winding, collapsed UV в центре opaque texel. Не bit-exact Mojang `ItemModelGenerator`.
 
 Источники: [Bow — weapon](https://minecraft.wiki/w/Bow#Weapon), [Arrow — damage](https://minecraft.wiki/w/Arrow#Damage).
 

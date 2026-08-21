@@ -8,7 +8,10 @@ import {
   type ItemRenderContext,
   type ItemViewTransform,
 } from '../items';
-import { createGeneratedItemGeometry } from './GeneratedItemGeometry';
+import {
+  createGeneratedItemGeometry,
+  type GeneratedItemMask,
+} from './GeneratedItemGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 
@@ -61,6 +64,7 @@ export class ItemVisualFactory {
   private readonly itemMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private readonly itemTextures = new Map<string, THREE.Texture>();
   private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
+  private readonly generatedMasks = new Map<string, GeneratedItemMask>();
   private readonly fallbackTexture: THREE.Texture;
   private readonly atlas?: AtlasSource;
   private disposed = false;
@@ -151,6 +155,14 @@ export class ItemVisualFactory {
     applyItemViewTransform(object, itemRenderProfile(itemId).transforms[context]);
   }
 
+  getGeneratedMask(texturePath: string): GeneratedItemMask | undefined {
+    return this.generatedMasks.get(texturePath);
+  }
+
+  getGeneratedGeometry(texturePath: string): THREE.BufferGeometry | undefined {
+    return this.generatedGeometries.get(texturePath);
+  }
+
   get cacheStats(): Readonly<{ blockGeometries: number; itemTextures: number; generatedGeometries: number; materials: number }> {
     return {
       blockGeometries: this.blockGeometries.size,
@@ -173,6 +185,7 @@ export class ItemVisualFactory {
     this.itemMaterials.clear();
     this.itemTextures.clear();
     this.generatedGeometries.clear();
+    this.generatedMasks.clear();
     this.disposed = true;
   }
 
@@ -231,6 +244,7 @@ export class ItemVisualFactory {
         map: this.itemTexture(texturePath),
         alphaTest: 0.08,
         side: THREE.FrontSide,
+        wrap: false,
       });
       this.itemMaterials.set(texturePath, surface);
     }
@@ -259,11 +273,13 @@ export class ItemVisualFactory {
     for (let index = 0; index < alpha.length; index += 1) alpha[index] = rgba[index * 4 + 3]!;
     const previousGeometry = this.generatedGeometries.get(texturePath);
     previousGeometry?.dispose();
-    this.generatedGeometries.set(texturePath, createGeneratedItemGeometry({
+    const mask: GeneratedItemMask = {
       width: canvas.width,
       height: canvas.height,
       alpha,
-    }));
+    };
+    this.generatedMasks.set(texturePath, mask);
+    this.generatedGeometries.set(texturePath, createGeneratedItemGeometry(mask));
     const texture = new THREE.Texture(image);
     texture.needsUpdate = true;
     texture.colorSpace = THREE.SRGBColorSpace;
