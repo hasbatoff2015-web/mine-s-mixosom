@@ -154,8 +154,8 @@ Feel/polish pass повторно проверен во встроенном б�
 - `?qaItem=iron_pickaxe&qaView=held&pose=idle` — first-person; overlay печатает camera FOV/aspect, matrices, axis stages, silhouette landmarks `screen01` и F2 2048×1152 comparison (proposed vanilla не applied; comparison camera фиксирована на F2 16:9 FOV70). Residual idle bob заморожен. `held*` knobs работают только здесь;
 - `?qaPose=subtle|balanced|stronger` — QA candidate shared pose (не production). Можно сузить отдельным `held*`;
 - `?qaPoseCompare=1&qaView=held&pose=idle&qaPose=balanced` — цикл 1–8 / `[` `]` по pickaxe, sword, coal, arrow, stick, apple, bow, torch без правки query;
-- `?qaItem=iron_pickaxe&qaView=held&pose=idle` — live pose panel справа: sliders/numeric для X/Y/Z/Pitch/Yaw/Roll/Scale, RESET production/subtle/balanced/stronger, COPY POSE/QUERY/TS. Смена предмета pose не сбрасывает. Только DEV;
-- `?qaItem=iron_pickaxe&heldScale=0.85&heldX=0.50&heldY=-0.56&heldZ=-0.82&heldRoll=14&heldPitch=0&heldYaw=0&pose=idle` — нужен `qaView=held`, иначе held* игнорируются. Эти knobs **не** являются production solution;
+- `?qaItem=iron_pickaxe&qaView=held&pose=idle` — live pose panel справа: sliders/numeric для X/Y/Z/Pitch/Yaw/Roll/Scale, RESET production (`0.67, -0.29, -0.70` / `1, -90, 34` / `0.60`) / subtle/balanced/stronger, COPY POSE/QUERY/TS. Смена предмета pose не сбрасывает. Только DEV;
+- `?qaItem=iron_pickaxe&qaView=held&pose=idle&heldScale=0.60&heldX=0.67&heldY=-0.29&heldZ=-0.70&heldPitch=1&heldYaw=-90&heldRoll=34` — `held*` knobs работают только при `qaView=held`;
 - bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, vanilla pull thresholds `0.65/0.9`, movement slowdown и плавный FOV zoom. Mesh лука не изгибается.
 
 Minecraft generated-item geometry audit (локальный visual QA всё ещё нужен):

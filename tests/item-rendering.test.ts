@@ -201,8 +201,8 @@ describe('item render profiles and assets', () => {
     expect(itemRenderProfile('stone').transforms.firstPersonRightHand).not.toEqual(generated);
     expect(generated.position).toEqual(FIRST_PERSON_SPRITE_POSE.position);
     expect(generated.scale[0]).toBe(FIRST_PERSON_SPRITE_POSE.scale);
-    expect(generated.rotation[0]).toBeCloseTo(0);
-    expect(generated.rotation[1]).toBeCloseTo(0);
+    expect(generated.rotation[0]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[0] * Math.PI / 180);
+    expect(generated.rotation[1]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[1] * Math.PI / 180);
     expect(generated.rotation[2]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[2] * Math.PI / 180);
   });
 
@@ -213,9 +213,24 @@ describe('item render profiles and assets', () => {
       if (category !== 'generated' && category !== 'handheld' && category !== 'bow') continue;
       expect(itemRenderProfile(item).transforms.firstPersonRightHand, item.id).toBe(shared);
     }
-    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.50, -0.56, -0.82]);
-    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([0, 0, 14]);
-    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.85);
+    for (const id of ['iron_pickaxe', 'diamond_sword', 'stick', 'coal', 'apple', 'arrow', 'bow', 'torch']) {
+      expect(itemRenderProfile(id).transforms.firstPersonRightHand, id).toBe(shared);
+    }
+    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.67, -0.29, -0.70]);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
+    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.60);
+    const block = itemRenderProfile('stone').transforms.firstPersonRightHand;
+    const shield = itemRenderProfile('shield').transforms.firstPersonRightHand;
+    expect(block.position).toEqual([0.46, -0.31, -0.80]);
+    expect(block.scale).toEqual([0.28, 0.28, 0.28]);
+    expect(block.rotation[0]).toBeCloseTo(24 * Math.PI / 180);
+    expect(block.rotation[1]).toBeCloseTo(-42 * Math.PI / 180);
+    expect(block.rotation[2]).toBeCloseTo(16 * Math.PI / 180);
+    expect(shield.position).toEqual([0.47, -0.31, -0.82]);
+    expect(shield.scale).toEqual([0.42, 0.42, 0.42]);
+    expect(shield.rotation[0]).toBeCloseTo(5 * Math.PI / 180);
+    expect(shield.rotation[1]).toBeCloseTo(-18 * Math.PI / 180);
+    expect(shield.rotation[2]).toBeCloseTo(-8 * Math.PI / 180);
   });
 
   it('provides independent first-person, ground and GUI transform contexts', () => {
@@ -632,7 +647,8 @@ describe('held item QA transform overrides', () => {
     );
     expect(applied.rotation[0]).toBeCloseTo(4 * Math.PI / 180);
     expect(applied.rotation[1]).toBeCloseTo(8 * Math.PI / 180);
-    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.rotation[1]).toBeCloseTo(0);
+    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.rotation[1])
+      .toBeCloseTo(-90 * Math.PI / 180);
     expect(formatHeldItemCandidateUrl('diamond_sword', 'subtle')).toContain('qaPose=subtle');
     expect(formatHeldItemCandidateUrl('diamond_sword', 'subtle')).toContain('heldYaw=8');
     expect(HELD_ITEM_POSE_CANDIDATES.subtle.yaw).toBeLessThan(HELD_ITEM_POSE_CANDIDATES.balanced.yaw);
@@ -705,8 +721,13 @@ describe('held item QA live calibration', () => {
     live.set(HELD_ITEM_POSE_CANDIDATES.balanced);
     expect(live.get().yaw).toBe(18);
     live.set(production());
-    expect(live.get().scale).toBe(0.85);
-    expect(live.get().pitch).toBe(0);
+    expect(live.get().x).toBeCloseTo(0.67);
+    expect(live.get().y).toBeCloseTo(-0.29);
+    expect(live.get().z).toBeCloseTo(-0.70);
+    expect(live.get().pitch).toBeCloseTo(1);
+    expect(live.get().yaw).toBeCloseTo(-90);
+    expect(live.get().roll).toBeCloseTo(34);
+    expect(live.get().scale).toBeCloseTo(0.60);
     expect(FIRST_PERSON_SPRITE_POSE.position).toEqual(locked.position);
     expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual(locked.rotationDeg);
     expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(locked.scale);
@@ -753,8 +774,8 @@ describe('held item QA live calibration', () => {
     viewmodel.update(0.016, frameState());
     expect(viewmodel.captureHeldItemMatrixDebug()?.itemLocal.elements[12]).toBeCloseTo(0.2);
     expect(live.get().yaw).toBe(22);
-    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.position[0]).toBe(0.5);
-    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([0, 0, 14]);
+    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.position[0]).toBe(0.67);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
     viewmodel.dispose();
     factory.dispose();
   });

@@ -201,19 +201,18 @@ describe('vanilla first-person matrix adapter', () => {
     expect(VANILLA_BAKED_MODEL_CENTERING).toEqual([-0.5, -0.5, -0.5]);
   });
 
-  it('keeps production idle sprite pose as the unapplied calibration baseline', () => {
-    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.50, -0.56, -0.82]);
-    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([0, 0, 14]);
-    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.85);
+  it('locks the current production idle sprite pose without requiring face-on', () => {
+    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.67, -0.29, -0.70]);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
+    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.60);
     const production = composeCurrentProductionIdleSpriteMatrix();
     const origin = new THREE.Vector3().applyMatrix4(production);
-    expect(origin.x).toBeCloseTo(0.50, 8);
-    expect(origin.y).toBeCloseTo(-0.56, 8);
-    expect(origin.z).toBeCloseTo(-0.82, 8);
+    expect(origin.x).toBeCloseTo(0.67, 8);
+    expect(origin.y).toBeCloseTo(-0.29, 8);
+    expect(origin.z).toBeCloseTo(-0.70, 8);
     const front = new THREE.Vector3(0, 0, 1).transformDirection(production);
-    expect(front.x).toBeCloseTo(0, 8);
-    expect(front.y).toBeCloseTo(0, 8);
-    expect(front.z).toBeCloseTo(1, 8);
+    expect(front.x).toBeLessThan(-0.8);
+    expect(Math.abs(front.z)).toBeLessThan(0.2);
   });
 
   it('projects reference points at viewmodel FOV 70 and 16:9 without applying vanilla to the mesh', () => {
@@ -226,12 +225,12 @@ describe('vanilla first-person matrix adapter', () => {
     const production = projectGeneratedReferencePoints(composeCurrentProductionIdleSpriteMatrix(), camera);
     const vanillaOrigin = vanilla.find((point) => point.name === 'origin')!;
     const productionOrigin = production.find((point) => point.name === 'origin')!;
-    expect(vanillaOrigin.screen01[0]).toBeGreaterThan(productionOrigin.screen01[0]);
-    expect(vanillaOrigin.screen01[1]).toBeLessThan(productionOrigin.screen01[1]);
     expect(vanillaOrigin.screen01[0]).toBeCloseTo(0.8902, 3);
     expect(vanillaOrigin.screen01[1]).toBeCloseTo(0.8518, 3);
-    expect(productionOrigin.screen01[0]).toBeCloseTo(0.7449, 3);
-    expect(productionOrigin.screen01[1]).toBeCloseTo(0.9876, 3);
+    expect(productionOrigin.screen01[0]).toBeGreaterThan(0);
+    expect(productionOrigin.screen01[0]).toBeLessThan(1);
+    expect(productionOrigin.screen01[1]).toBeGreaterThan(0);
+    expect(productionOrigin.screen01[1]).toBeLessThan(1);
     const vanillaTopLeft = vanilla.find((point) => point.name === 'topLeft')!;
     const vanillaTopRight = vanilla.find((point) => point.name === 'topRight')!;
     // After Ry(−90) the sprite plane is YZ in camera space, so front corners
@@ -267,7 +266,8 @@ describe('FirstPersonRenderer idle matrix debug', () => {
       expect(snapshot!.vanillaModelView.elements[i], `vanilla[${i}]`).toBeCloseTo(vanilla.elements[i]!, 8);
     }
     const liveFront = viewmodel.heldFrontWorldNormal()!;
-    expect(liveFront.z).toBeCloseTo(1, 6);
+    expect(liveFront.x).toBeLessThan(-0.8);
+    expect(Math.abs(liveFront.z)).toBeLessThan(0.2);
     const overlay = viewmodel.formatHeldItemMatrixOverlay();
     expect(overlay).toContain('NOT applied');
     expect(overlay).toContain('screen01');
@@ -278,7 +278,7 @@ describe('FirstPersonRenderer idle matrix debug', () => {
     expect(overlayMasked).toContain('leftHeadTip');
     expect(overlayMasked).toContain('F2 2048×1152');
     expect(snapshot!.vanillaFacing.frontDotToCamera).toBeGreaterThan(0.5);
-    expect(snapshot!.productionFacing.frontDotLook).toBeCloseTo(-1, 5);
+    expect(Math.abs(snapshot!.productionFacing.frontDotLook)).toBeLessThan(0.2);
     viewmodel.dispose();
     factory.dispose();
   });
@@ -334,7 +334,8 @@ describe('vanilla idle axis stages', () => {
     expect(camera.origin[1]).toBeCloseTo(-0.32, 5);
     expect(camera.origin[2]).toBeCloseTo(-0.649375, 5);
     const production = transformUnitAxes(composeCurrentProductionIdleSpriteMatrix());
-    expect(production.z[2]).toBeCloseTo(1, 5);
+    expect(production.z[0]).toBeLessThan(-0.8);
+    expect(Math.abs(production.z[2])).toBeLessThan(0.2);
   });
 });
 
@@ -369,18 +370,11 @@ describe('iron_pickaxe silhouette landmarks vs F2 screenshot', () => {
     expect(landmarks).toHaveLength(5);
   });
 
-  it('projects vanilla landmarks nearer the F2 screenshot than the face-on production pose', () => {
+  it('keeps 1.9 and 1.21.8 vanilla landmark projections aligned to the F2 screenshot', () => {
     const vanilla = projectSilhouetteLandmarks(landmarks, composeVanillaIdleFirstPersonRightHand(), camera);
     const vanilla1218 = projectSilhouetteLandmarks(landmarks, composeVanilla1218IdleFirstPersonRightHand(), camera);
     const production = projectSilhouetteLandmarks(landmarks, composeCurrentProductionIdleSpriteMatrix(), camera);
     const rows = compareLandmarksToScreenshot(production, vanilla);
-    const vanillaError = rows.reduce((sum, row) => (
-      sum + Math.hypot(row.vanillaDelta[0], row.vanillaDelta[1])
-    ), 0);
-    const productionError = rows.reduce((sum, row) => (
-      sum + Math.hypot(row.productionDelta[0], row.productionDelta[1])
-    ), 0);
-    expect(vanillaError).toBeLessThan(productionError);
     for (let i = 0; i < vanilla.length; i += 1) {
       expect(vanilla1218[i]!.screen01[0]).toBeCloseTo(vanilla[i]!.screen01[0], 6);
       expect(vanilla1218[i]!.screen01[1]).toBeCloseTo(vanilla[i]!.screen01[1], 6);

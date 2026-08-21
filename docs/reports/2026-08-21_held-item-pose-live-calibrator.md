@@ -98,11 +98,11 @@ Main JS: 736.40 kB / 199.04 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 
 ## Deferred
 
-- Запись выбранных чисел в `FIRST_PERSON_SPRITE_POSE` после ручного выбора.
+- ~~Запись выбранных чисел в `FIRST_PERSON_SPRITE_POSE` после ручного выбора.~~ Записано follow-up: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, `0.60`.
 
 ## Next work
 
-Пользователь калибрует локально и присылает COPY TS / QUERY.
+Production pose выбран вручную. Дальше только мелкий tuning если понадобится, без per-item exceptions.
 
 ## Git
 

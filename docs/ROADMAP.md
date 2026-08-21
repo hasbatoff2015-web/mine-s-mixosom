@@ -132,6 +132,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] F2 Java 1.21.8 2048×1152 silhouette landmark audit: 1.9==1.21.8 idle matrix; «edge-on» = неверная метрика `front·look`; Y-bias vs F2 остаётся. Production не переключали.
 - [x] Shared held-item pose: цель сменена с pixel-perfect F2 на visual Minecraft-like; QA candidates subtle/balanced/stronger + `qaPoseCompare`. Production pose не переключали.
 - [x] Live held-item pose QA panel: sliders/numeric/copy/reset, item switch без сброса pose. Production pose и geometry не менялись.
+- [x] Production shared held-item pose записан из manual visual QA: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, scale `0.60`. Yaw −90° не заменять.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.

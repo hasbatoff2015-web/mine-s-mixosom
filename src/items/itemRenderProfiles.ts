@@ -44,24 +44,19 @@ const UNIFORM_GUI = transform([0, 0, 0], [0, 0, 0], [1, 1, 1]);
 /**
  * Shared first-person pose for `item/generated`, `item/handheld` and bow.
  *
- * These numbers are a temporary face-on calibration, not the vanilla 1.9
- * pipeline. Vanilla `firstperson_righthand` is `rotation [0, -90, 25]`,
- * `translation [1.13, 3.2, 1.13]`, `scale [0.68, 0.68, 0.68]`. Ry(−90°) is a
- * real display rotation (sprite front +Z → camera −X), not a Three.js basis
- * conversion. Do not copy those Eulers into `rotation.set`.
- *
- * The mathematical adapter lives in `heldItemVanillaTransform.ts` and is not
- * wired here. Visual A/B/C candidates live in `heldItemQa.ts` (`qaPose=subtle|
- * balanced|stronger`) and also stay QA-only. `heldScale/heldX/heldY/heldZ/
- * heldRoll/heldPitch/heldYaw` remain QA-only overrides of this temporary pose.
+ * Manually selected through the live QA calibrator on representative
+ * generated/handheld items. Yaw −90° is the chosen visual result: do not
+ * replace it with the vanilla matrix, candidate 8/18/32° angles, or a
+ * “more correct” mathematical substitute.
  *
  * `scale` is the FINAL uniform Three.js scale written to the item root, not a
- * multiplier on vanilla 0.68.
+ * multiplier on vanilla 0.68. QA `held*` / `qaPose=subtle|balanced|stronger`
+ * remain overrides only and do not write these defaults.
  */
 export const FIRST_PERSON_SPRITE_POSE = Object.freeze({
-  position: [0.50, -0.56, -0.82] as RenderVector,
-  rotationDeg: [0, 0, 14] as RenderVector,
-  scale: 0.85,
+  position: [0.67, -0.29, -0.70] as RenderVector,
+  rotationDeg: [1, -90, 34] as RenderVector,
+  scale: 0.60,
 });
 
 const FIRST_PERSON_GENERATED = transform(

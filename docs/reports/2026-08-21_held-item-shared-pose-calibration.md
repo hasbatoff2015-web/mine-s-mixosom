@@ -194,6 +194,18 @@ Main JS: 736.36 kB / 199.03 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 
 Локальный A/B/C выбор, затем один production pose write без per-item exceptions.
 
+## Final production pose (follow-up)
+
+После live calibrator выбран и записан **один** shared pose. Это не candidate A/B/C и не vanilla matrix.
+
+```text
+position: [0.67, -0.29, -0.70]
+rotationDeg: [1, -90, 34]
+scale: 0.60
+```
+
+Причина выбора: manual visual QA на нескольких generated/handheld items. Yaw −90° не заменять.
+
 ## Git
 
 Ветка: `cursor/minecraft-item-pipeline-rework-935a` (HEAD `781da42`). **Не commit, не push, не merge `main`.**
