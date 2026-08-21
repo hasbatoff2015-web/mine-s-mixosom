@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 152 unit/component tests in 22 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 156 unit/component tests in 22 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -86,7 +86,7 @@
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют.
 - Печь обновляется только во время симуляции мира; открытие container UI ставит игру на паузу.
 - Нет recipe book, подсказок неизвестных рецептов и массового craft по shift-click.
-- First-person generated/handheld pose калибруется по Java screenshots: крупнее, правее/ниже, pitch/yaw 0 (face-on). Это не bit-exact JSON copy, **не** vanilla idle matrix и **не утверждённое** art-значение. Pixel-perfect F2 projection больше не цель: QA candidates `qaPose=subtle|balanced|stronger` ждут локального visual выбора. Vanilla reconstruction остаётся diagnostic adapter. Off-hand кроме щита, shield entity, chest inventory mesh и leather overlay остаются вне текущего pass.
+- First-person generated/handheld pose калибруется по Java screenshots: крупнее, правее/ниже, pitch/yaw 0 (face-on). Это не bit-exact JSON copy, **не** vanilla idle matrix и **не утверждённое** art-значение. Pixel-perfect F2 projection больше не цель: QA candidates `qaPose=subtle|balanced|stronger` и live panel (`sliders`/`COPY`) ждут локального visual выбора. Vanilla reconstruction остаётся diagnostic adapter. Off-hand кроме щита, shield entity, chest inventory mesh и leather overlay остаются вне текущего pass.
 
 ## Игрок и survival
 
@@ -210,13 +210,13 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     22 files, 152 tests — PASS
+Vitest:     22 files, 156 tests — PASS
 Vite build: 75 modules — PASS
 Size/archive: 0.94 MiB / 165 files — PASS
-Main JS: 736.36 kB / 199.03 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Main JS: 736.40 kB / 199.04 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
-Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
+Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 
 ## За пределами текущей alpha
 

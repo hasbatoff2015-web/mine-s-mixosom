@@ -189,3 +189,238 @@ export function parseItemQaSideDebug(search: string | URLSearchParams): boolean 
   const value = asSearchParams(search).get('qaSideDebug');
   return value === '1' || value === 'true';
 }
+
+export const HELD_ITEM_QA_FIELD_ORDER = ['x', 'y', 'z', 'pitch', 'yaw', 'roll', 'scale'] as const;
+export type HeldItemQaField = (typeof HELD_ITEM_QA_FIELD_ORDER)[number];
+
+export interface HeldItemQaFieldSpec {
+  readonly field: HeldItemQaField;
+  readonly label: string;
+  readonly query: keyof typeof PARAMS;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+}
+
+export const HELD_ITEM_QA_FIELDS: Readonly<Record<HeldItemQaField, HeldItemQaFieldSpec>> = Object.freeze({
+  x: { field: 'x', label: 'X', query: 'heldX', min: -2, max: 2, step: 0.01 },
+  y: { field: 'y', label: 'Y', query: 'heldY', min: -2, max: 2, step: 0.01 },
+  z: { field: 'z', label: 'Z', query: 'heldZ', min: -3, max: 0, step: 0.01 },
+  pitch: { field: 'pitch', label: 'Pitch', query: 'heldPitch', min: -90, max: 90, step: 1 },
+  yaw: { field: 'yaw', label: 'Yaw', query: 'heldYaw', min: -90, max: 90, step: 1 },
+  roll: { field: 'roll', label: 'Roll', query: 'heldRoll', min: -180, max: 180, step: 1 },
+  scale: { field: 'scale', label: 'Scale', query: 'heldScale', min: 0.1, max: 3, step: 0.01 },
+});
+
+export const HELD_ITEM_QA_STORAGE_KEY = 'held-item-qa-pose';
+
+export function cloneHeldItemQaValues(values: HeldItemQaValues): HeldItemQaValues {
+  return {
+    x: values.x,
+    y: values.y,
+    z: values.z,
+    pitch: values.pitch,
+    yaw: values.yaw,
+    roll: values.roll,
+    scale: values.scale,
+  };
+}
+
+export function formatHeldItemQaScalar(value: number, digits = 4): string {
+  return Number(value.toFixed(digits)).toString();
+}
+
+export function clampHeldItemQaField(field: HeldItemQaField, value: number): number {
+  const spec = HELD_ITEM_QA_FIELDS[field];
+  if (!Number.isFinite(value)) return spec.min;
+  const clamped = Math.min(spec.max, Math.max(spec.min, value));
+  const decimals = spec.step < 1 ? 4 : 2;
+  return Number(clamped.toFixed(decimals));
+}
+
+export function clampHeldItemQaValues(values: HeldItemQaValues): HeldItemQaValues {
+  return {
+    x: clampHeldItemQaField('x', values.x),
+    y: clampHeldItemQaField('y', values.y),
+    z: clampHeldItemQaField('z', values.z),
+    pitch: clampHeldItemQaField('pitch', values.pitch),
+    yaw: clampHeldItemQaField('yaw', values.yaw),
+    roll: clampHeldItemQaField('roll', values.roll),
+    scale: clampHeldItemQaField('scale', values.scale),
+  };
+}
+
+export function keyboardNudgeMultiplier(shift: boolean, alt: boolean): number {
+  if (alt) return 0.1;
+  if (shift) return 10;
+  return 1;
+}
+
+/** DOM-free live pose. Item switching is out of band and must not call reset. */
+export class HeldItemQaLiveState {
+  private values: HeldItemQaValues;
+
+  constructor(initial: HeldItemQaValues) {
+    this.values = clampHeldItemQaValues(cloneHeldItemQaValues(initial));
+  }
+
+  get(): HeldItemQaValues {
+    return cloneHeldItemQaValues(this.values);
+  }
+
+  set(next: HeldItemQaValues): HeldItemQaValues {
+    this.values = clampHeldItemQaValues(cloneHeldItemQaValues(next));
+    return this.get();
+  }
+
+  setField(field: HeldItemQaField, value: number): HeldItemQaValues {
+    this.values = clampHeldItemQaValues({ ...this.values, [field]: value });
+    return this.get();
+  }
+
+  nudge(field: HeldItemQaField, direction: -1 | 1, multiplier = 1): HeldItemQaValues {
+    const step = HELD_ITEM_QA_FIELDS[field].step * multiplier;
+    return this.setField(field, this.values[field] + direction * step);
+  }
+}
+
+export function matchingHeldItemPoseCandidate(
+  values: HeldItemQaValues,
+): HeldItemPoseCandidateId | undefined {
+  for (const id of HELD_ITEM_POSE_CANDIDATE_IDS) {
+    const candidate = HELD_ITEM_POSE_CANDIDATES[id];
+    if (heldItemQaValuesClose(values, candidate)) return id;
+  }
+  return undefined;
+}
+
+export function heldItemQaValuesClose(
+  left: HeldItemQaValues,
+  right: HeldItemQaValues,
+  epsilon = 1e-4,
+): boolean {
+  return HELD_ITEM_QA_FIELD_ORDER.every((field) => Math.abs(left[field] - right[field]) <= epsilon);
+}
+
+export function formatHeldItemPoseBlock(values: HeldItemQaValues): string {
+  return [
+    `heldScale=${formatHeldItemQaScalar(values.scale)}`,
+    `heldX=${formatHeldItemQaScalar(values.x)}`,
+    `heldY=${formatHeldItemQaScalar(values.y)}`,
+    `heldZ=${formatHeldItemQaScalar(values.z)}`,
+    `heldPitch=${formatHeldItemQaScalar(values.pitch)}`,
+    `heldYaw=${formatHeldItemQaScalar(values.yaw)}`,
+    `heldRoll=${formatHeldItemQaScalar(values.roll)}`,
+  ].join('\n');
+}
+
+export function formatHeldItemCopyQuery(itemId: string, values: HeldItemQaValues): string {
+  return [
+    `?qaItem=${itemId}`,
+    'qaView=held',
+    'pose=idle',
+    `heldScale=${formatHeldItemQaScalar(values.scale)}`,
+    `heldX=${formatHeldItemQaScalar(values.x)}`,
+    `heldY=${formatHeldItemQaScalar(values.y)}`,
+    `heldZ=${formatHeldItemQaScalar(values.z)}`,
+    `heldPitch=${formatHeldItemQaScalar(values.pitch)}`,
+    `heldYaw=${formatHeldItemQaScalar(values.yaw)}`,
+    `heldRoll=${formatHeldItemQaScalar(values.roll)}`,
+  ].join('&');
+}
+
+export function formatHeldItemPoseTs(values: HeldItemQaValues): string {
+  return [
+    '{',
+    `  position: [${formatHeldItemQaScalar(values.x)}, ${formatHeldItemQaScalar(values.y)}, ${formatHeldItemQaScalar(values.z)}],`,
+    `  rotationDeg: [${formatHeldItemQaScalar(values.pitch)}, ${formatHeldItemQaScalar(values.yaw)}, ${formatHeldItemQaScalar(values.roll)}],`,
+    `  scale: ${formatHeldItemQaScalar(values.scale)},`,
+    '}',
+  ].join('\n');
+}
+
+export function formatHeldItemQaStatus(itemId: string | undefined, values: HeldItemQaValues): string {
+  return [
+    `Item:`,
+    itemId ?? '(none)',
+    '',
+    `Position:`,
+    `X ${formatHeldItemQaScalar(values.x)}`,
+    `Y ${formatHeldItemQaScalar(values.y)}`,
+    `Z ${formatHeldItemQaScalar(values.z)}`,
+    '',
+    `Rotation:`,
+    `Pitch ${formatHeldItemQaScalar(values.pitch)}`,
+    `Yaw ${formatHeldItemQaScalar(values.yaw)}`,
+    `Roll ${formatHeldItemQaScalar(values.roll)}`,
+    '',
+    `Scale:`,
+    formatHeldItemQaScalar(values.scale),
+  ].join('\n');
+}
+
+export interface HeldItemQaStorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
+}
+
+export function serializeHeldItemQaStorage(values: HeldItemQaValues): string {
+  return JSON.stringify(clampHeldItemQaValues(values));
+}
+
+export function parseHeldItemQaStorage(raw: string | null | undefined): HeldItemQaValues | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Partial<HeldItemQaValues>;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    const values: HeldItemQaValues = {
+      x: Number(parsed.x),
+      y: Number(parsed.y),
+      z: Number(parsed.z),
+      pitch: Number(parsed.pitch),
+      yaw: Number(parsed.yaw),
+      roll: Number(parsed.roll),
+      scale: Number(parsed.scale),
+    };
+    if (HELD_ITEM_QA_FIELD_ORDER.some((field) => !Number.isFinite(values[field]))) return undefined;
+    return clampHeldItemQaValues(values);
+  } catch {
+    return undefined;
+  }
+}
+
+export function readHeldItemQaStorage(storage?: HeldItemQaStorageLike | null): HeldItemQaValues | undefined {
+  if (!storage) return undefined;
+  try {
+    return parseHeldItemQaStorage(storage.getItem(HELD_ITEM_QA_STORAGE_KEY));
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeHeldItemQaStorage(
+  values: HeldItemQaValues,
+  storage?: HeldItemQaStorageLike | null,
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(HELD_ITEM_QA_STORAGE_KEY, serializeHeldItemQaStorage(values));
+  } catch {
+    /* private-mode / disabled storage */
+  }
+}
+
+/** URL `qaPose`/`held*` win. Otherwise restore the QA-only session snapshot. */
+export function resolveHeldItemQaLiveInitial(
+  base: HeldItemQaValues,
+  search: string | URLSearchParams,
+  storage?: HeldItemQaStorageLike | null,
+): HeldItemQaValues {
+  const fromUrl = resolveHeldItemQaFromSearch(search);
+  if (fromUrl) {
+    return clampHeldItemQaValues({ ...base, ...fromUrl });
+  }
+  const stored = readHeldItemQaStorage(storage);
+  return stored ?? clampHeldItemQaValues(base);
+}

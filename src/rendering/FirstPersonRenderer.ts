@@ -113,6 +113,11 @@ export class FirstPersonRenderer {
     return count;
   }
 
+  /** QA-only live override. Does not write production `FIRST_PERSON_SPRITE_POSE`. */
+  setHeldQaOverride(override?: HeldItemQaOverride): void {
+    this.heldQaOverride = override;
+  }
+
   setHeldItems(mainItemId?: string, offhandItemId?: string): void {
     if (mainItemId !== this.mainItem) {
       this.mainModel?.removeFromParent();

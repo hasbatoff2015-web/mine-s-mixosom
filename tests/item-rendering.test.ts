@@ -29,15 +29,26 @@ import {
 import {
   formatHeldItemQaQuery,
   formatHeldItemCandidateUrl,
+  formatHeldItemCopyQuery,
+  formatHeldItemPoseBlock,
+  formatHeldItemPoseTs,
+  HeldItemQaLiveState,
   HELD_ITEM_POSE_CANDIDATES,
   HELD_ITEM_POSE_COMPARE_ITEMS,
+  HELD_ITEM_QA_STORAGE_KEY,
+  heldItemQaValuesFromTransform,
+  keyboardNudgeMultiplier,
   parseHeldItemPoseCandidate,
   parseHeldItemQaOverride,
+  parseHeldItemQaStorage,
   parseItemQaPoseCompare,
   parseItemQaSideDebug,
   parseItemQaView,
   resolveHeldItemQaFromSearch,
+  resolveHeldItemQaLiveInitial,
   resolveHeldItemTransform,
+  serializeHeldItemQaStorage,
+  writeHeldItemQaStorage,
 } from '../src/rendering/heldItemQa';
 import { IRON_PICKAXE_SILHOUETTE, maskFromSilhouette } from './ironPickaxeSilhouette';
 
@@ -646,6 +657,104 @@ describe('held item QA transform overrides', () => {
     expect(Math.abs(front?.y ?? 1)).toBeLessThan(1e-5);
     expect(viewmodel.root.rotation.x).toBeCloseTo(0);
     expect(viewmodel.root.rotation.y).toBeCloseTo(0);
+    viewmodel.dispose();
+    factory.dispose();
+  });
+});
+
+describe('held item QA live calibration', () => {
+  const production = (): ReturnType<typeof heldItemQaValuesFromTransform> => (
+    heldItemQaValuesFromTransform(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand)
+  );
+
+  it('parses QA pose params and serializes copy helpers', () => {
+    const values = {
+      scale: 0.84, x: 0.42, y: -0.61, z: -0.79, pitch: 5, yaw: 12, roll: 14,
+    };
+    expect(parseHeldItemQaOverride('heldPitch=5&heldYaw=12&heldRoll=14&heldScale=0.84')).toEqual({
+      pitch: 5, yaw: 12, roll: 14, scale: 0.84,
+    });
+    expect(formatHeldItemPoseBlock(values)).toBe([
+      'heldScale=0.84',
+      'heldX=0.42',
+      'heldY=-0.61',
+      'heldZ=-0.79',
+      'heldPitch=5',
+      'heldYaw=12',
+      'heldRoll=14',
+    ].join('\n'));
+    expect(formatHeldItemCopyQuery('iron_pickaxe', values)).toBe(
+      '?qaItem=iron_pickaxe&qaView=held&pose=idle&heldScale=0.84&heldX=0.42&heldY=-0.61&heldZ=-0.79&heldPitch=5&heldYaw=12&heldRoll=14',
+    );
+    expect(formatHeldItemPoseTs(values)).toContain('position: [0.42, -0.61, -0.79]');
+    expect(formatHeldItemPoseTs(values)).toContain('rotationDeg: [5, 12, 14]');
+    expect(formatHeldItemPoseTs(values)).toContain('scale: 0.84');
+  });
+
+  it('updates live state, resets to production, and does not mutate production pose', () => {
+    const locked = {
+      position: [...FIRST_PERSON_SPRITE_POSE.position],
+      rotationDeg: [...FIRST_PERSON_SPRITE_POSE.rotationDeg],
+      scale: FIRST_PERSON_SPRITE_POSE.scale,
+    };
+    const live = new HeldItemQaLiveState(production());
+    live.setField('yaw', 22);
+    live.nudge('x', 1, 1);
+    expect(live.get().yaw).toBe(22);
+    expect(live.get().x).toBeCloseTo(production().x + 0.01);
+    live.set(HELD_ITEM_POSE_CANDIDATES.balanced);
+    expect(live.get().yaw).toBe(18);
+    live.set(production());
+    expect(live.get().scale).toBe(0.85);
+    expect(live.get().pitch).toBe(0);
+    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual(locked.position);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual(locked.rotationDeg);
+    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(locked.scale);
+    expect(keyboardNudgeMultiplier(true, false)).toBe(10);
+    expect(keyboardNudgeMultiplier(false, true)).toBe(0.1);
+    live.setField('scale', 9);
+    expect(live.get().scale).toBe(3);
+  });
+
+  it('lets URL pose win over QA storage and round-trips the session snapshot', () => {
+    const memory = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => { memory.set(key, value); },
+    };
+    const stored = { ...production(), yaw: 33, x: 0.2 };
+    writeHeldItemQaStorage(stored, storage);
+    expect(memory.get(HELD_ITEM_QA_STORAGE_KEY)).toBe(serializeHeldItemQaStorage(stored));
+    expect(parseHeldItemQaStorage(memory.get(HELD_ITEM_QA_STORAGE_KEY) ?? null)?.yaw).toBe(33);
+    const fromStorage = resolveHeldItemQaLiveInitial(production(), 'qaView=held', storage);
+    expect(fromStorage.yaw).toBe(33);
+    const fromUrl = resolveHeldItemQaLiveInitial(production(), 'qaPose=subtle', storage);
+    expect(fromUrl.yaw).toBe(HELD_ITEM_POSE_CANDIDATES.subtle.yaw);
+    expect(fromUrl.yaw).not.toBe(33);
+  });
+
+  it('keeps the live pose when the held item changes', () => {
+    const live = new HeldItemQaLiveState({ ...production(), x: 0.42, yaw: 22 });
+    const factory = new ItemVisualFactory();
+    const viewmodel = new FirstPersonRenderer(factory, {
+      qaOverride: live.get(),
+      freezeIdleMotion: true,
+    });
+    viewmodel.setHeldItems('iron_pickaxe');
+    viewmodel.update(0.2, frameState());
+    const pickaxeX = viewmodel.captureHeldItemMatrixDebug()?.itemLocal.elements[12];
+    viewmodel.setHeldItems('diamond_sword');
+    viewmodel.update(0.2, frameState());
+    const swordDebug = viewmodel.captureHeldItemMatrixDebug();
+    expect(swordDebug?.itemId).toBe('diamond_sword');
+    expect(swordDebug?.itemLocal.elements[12]).toBeCloseTo(pickaxeX ?? Number.NaN);
+    live.setField('x', 0.2);
+    viewmodel.setHeldQaOverride(live.get());
+    viewmodel.update(0.016, frameState());
+    expect(viewmodel.captureHeldItemMatrixDebug()?.itemLocal.elements[12]).toBeCloseTo(0.2);
+    expect(live.get().yaw).toBe(22);
+    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.position[0]).toBe(0.5);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([0, 0, 14]);
     viewmodel.dispose();
     factory.dispose();
   });

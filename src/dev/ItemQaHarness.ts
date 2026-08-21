@@ -14,18 +14,23 @@ import {
 import {
   formatHeldItemCandidateUrl,
   formatHeldItemQaQuery,
+  formatHeldItemQaStatus,
+  HeldItemQaLiveState,
   heldItemQaValuesFromTransform,
   HELD_ITEM_POSE_COMPARE_ITEMS,
+  matchingHeldItemPoseCandidate,
   parseHeldItemPoseCandidate,
   parseItemQaPoseCompare,
   parseItemQaSideDebug,
   parseItemQaView,
   resolveHeldItemQaFromSearch,
-  resolveHeldItemTransform,
+  resolveHeldItemQaLiveInitial,
+  writeHeldItemQaStorage,
   type ItemQaView,
 } from '../rendering/heldItemQa';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
+import { mountHeldItemPosePanel } from './HeldItemPosePanel';
 
 export type ItemQaMode = 'empty' | 'drops' | string;
 
@@ -81,12 +86,18 @@ export async function startItemQaHarness(
   const qaItem = mode !== 'empty' && mode !== 'drops' && isKnownItemId(mode) ? mode : undefined;
   const requestedPose = search.get('pose');
   const freezeIdleMotion = !requestedPose || requestedPose === 'idle' || requestedPose === 'base';
-  const viewmodel = inspect ? undefined : new FirstPersonRenderer(visuals, { freezeIdleMotion });
-  const heldQa = resolveHeldItemQaFromSearch(search);
   const poseCandidate = parseHeldItemPoseCandidate(search);
+  const heldQa = resolveHeldItemQaFromSearch(search);
   const heldBase = itemRenderProfile(qaItem ?? 'coal').transforms.firstPersonRightHand;
-  const heldResolved = resolveHeldItemTransform(heldBase, heldQa);
-  const heldQuery = formatHeldItemQaQuery(heldItemQaValuesFromTransform(heldResolved));
+  const productionPose = heldItemQaValuesFromTransform(heldBase);
+  const qaStorage = typeof sessionStorage === 'undefined' ? undefined : sessionStorage;
+  const livePose = inspect || mode === 'drops'
+    ? undefined
+    : new HeldItemQaLiveState(resolveHeldItemQaLiveInitial(productionPose, search, qaStorage));
+  const viewmodel = inspect ? undefined : new FirstPersonRenderer(visuals, {
+    freezeIdleMotion,
+    qaOverride: livePose?.get(),
+  });
   let geometryOverlay = '';
   let currentItem = qaItem;
   if (poseCompare) {
@@ -130,9 +141,12 @@ export async function startItemQaHarness(
     geometryOverlay = generatedOverlay(visuals, itemId);
   };
 
+  const liveValues = (): ReturnType<HeldItemQaLiveState['get']> => livePose?.get() ?? productionPose;
+  const liveQuery = (): string => formatHeldItemQaQuery(liveValues());
+
   if (geometryOverlay) console.info(`[item-geom]\n${geometryOverlay}`);
   if (!inspect) {
-    console.info(`[held-qa] ?qaItem=${currentItem ?? mode}&qaView=held&${heldQuery}&pose=idle`);
+    console.info(`[held-qa] ?qaItem=${currentItem ?? mode}&qaView=held&${liveQuery()}&pose=idle`);
     if (poseCandidate) {
       for (const itemId of ['iron_pickaxe', 'diamond_sword'] as const) {
         console.info(`[held-qa] ${formatHeldItemCandidateUrl(itemId, poseCandidate)}`);
@@ -140,21 +154,52 @@ export async function startItemQaHarness(
     }
   }
 
-  const overlayLines = (): string[] => [
-    `item QA · ${currentItem ?? mode}${poseCandidate ? `  qaPose=${poseCandidate}` : ''}`,
-    inspect ? `qaView=${qaView}${sideDebug ? '  qaSideDebug=1' : ''}` : `qaView=held  pose=${requestedPose ?? 'idle'}`,
-    inspect
-      ? (sideDebug ? 'UP red  DOWN green  LEFT blue  RIGHT yellow' : 'isolated inspect · no bob/swing')
-      : heldQuery,
-    inspect && heldQa ? 'held* ignored here · add qaView=held' : '',
-    poseCompare
-      ? `qaPoseCompare  1-8 or [ ]  ${HELD_ITEM_POSE_COMPARE_ITEMS.map((id, index) => `${index + 1}:${id}`).join('  ')}`
-      : '',
-    geometryOverlay,
-  ].filter(Boolean);
+  const overlayLines = (): string[] => {
+    const values = liveValues();
+    const preset = matchingHeldItemPoseCandidate(values) ?? poseCandidate;
+    return [
+      `item QA · ${currentItem ?? mode}${preset ? `  qaPose=${preset}` : '  live'}`,
+      inspect ? `qaView=${qaView}${sideDebug ? '  qaSideDebug=1' : ''}` : `qaView=held  pose=${requestedPose ?? 'idle'}`,
+      inspect
+        ? (sideDebug ? 'UP red  DOWN green  LEFT blue  RIGHT yellow' : 'isolated inspect · no bob/swing')
+        : formatHeldItemQaStatus(currentItem, values),
+      inspect && heldQa ? 'held* ignored here · add qaView=held' : '',
+      !inspect
+        ? `items  1-8 or [ ]  ${HELD_ITEM_POSE_COMPARE_ITEMS.map((id, index) => `${index + 1}:${id}`).join('  ')}`
+        : '',
+      geometryOverlay,
+    ].filter(Boolean);
+  };
 
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:11px/1.35 monospace;z-index:5;white-space:pre;max-height:96vh;overflow:auto">${overlayLines().join('\n')}</div>`;
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:11px/1.35 monospace;z-index:5;white-space:pre;max-height:96vh;overflow:auto;pointer-events:none;max-width:min(420px, calc(100vw - 360px))">${overlayLines().join('\n')}</div>`;
   const label = uiRoot.querySelector('#qa-label');
+  const applyLivePose = (values = liveValues()): void => {
+    viewmodel?.setHeldQaOverride(values);
+    writeHeldItemQaStorage(values, qaStorage);
+  };
+  const selectHeldItemById = (itemId: string): void => {
+    if (inspect || !viewmodel) return;
+    currentItem = itemId;
+    viewmodel.setHeldItems(itemId);
+    refreshHeldGeometry(itemId);
+  };
+  const selectHeldItem = (index: number): void => {
+    if (inspect || !viewmodel) return;
+    const next = HELD_ITEM_POSE_COMPARE_ITEMS[(index + HELD_ITEM_POSE_COMPARE_ITEMS.length) % HELD_ITEM_POSE_COMPARE_ITEMS.length]!;
+    selectHeldItemById(next);
+  };
+  const posePanel = livePose && viewmodel
+    ? mountHeldItemPosePanel({
+      live: livePose,
+      production: productionPose,
+      getItemId: () => currentItem,
+      onChange: applyLivePose,
+      onSelectItem: selectHeldItemById,
+      canvas,
+    })
+    : undefined;
+  if (posePanel) uiRoot.append(posePanel.element);
+
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
@@ -174,29 +219,24 @@ export async function startItemQaHarness(
   resize();
   addEventListener('resize', resize);
 
-  const selectCompareItem = (index: number): void => {
-    if (!poseCompare || inspect || !viewmodel) return;
-    const next = HELD_ITEM_POSE_COMPARE_ITEMS[(index + HELD_ITEM_POSE_COMPARE_ITEMS.length) % HELD_ITEM_POSE_COMPARE_ITEMS.length]!;
-    currentItem = next;
-    viewmodel.setHeldItems(next);
-    refreshHeldGeometry(next);
-  };
-
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (!poseCompare || inspect) return;
+    if (inspect) return;
+    const target = event.target;
+    const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+    if (typing) return;
     if (event.code === 'BracketRight' || event.code === 'KeyN' || event.code === 'Period') {
-      selectCompareItem(compareIndex() + 1);
+      selectHeldItem(compareIndex() + 1);
       event.preventDefault();
       return;
     }
     if (event.code === 'BracketLeft' || event.code === 'KeyP' || event.code === 'Comma') {
-      selectCompareItem(compareIndex() - 1);
+      selectHeldItem(compareIndex() - 1);
       event.preventDefault();
       return;
     }
     const digit = event.code.match(/^Digit([1-8])$/);
-    if (digit) {
-      selectCompareItem(Number(digit[1]) - 1);
+    if (digit && !typing) {
+      selectHeldItem(Number(digit[1]) - 1);
       event.preventDefault();
     }
   };
@@ -228,14 +268,13 @@ export async function startItemQaHarness(
       state.shieldRaised = currentItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
       const facing = viewmodel.measureHeldFrontCameraDot();
-      const mask = !poseCompare && currentItem && itemUsesGeneratedHeldGeometry(currentItem)
-        ? visuals.getGeneratedMask(getItemDefinition(currentItem).texture)
-        : undefined;
-      const matrixOverlay = poseCompare ? undefined : viewmodel.formatHeldItemMatrixOverlay(mask);
+      const front = viewmodel.heldFrontWorldNormal();
       if (label) {
-        const facingLine = facing === undefined ? '' : `\nfront·lookAxis ${facing.toFixed(4)}`;
-        const matrices = matrixOverlay ? `\n\n${matrixOverlay}` : '';
-        label.textContent = `${overlayLines().join('\n')}${facingLine}${matrices}`;
+        const facingLine = facing === undefined ? '' : `\n\nfront·camera ${facing.toFixed(4)}`;
+        const normalLine = front
+          ? `\nfront normal ${front.x.toFixed(3)} ${front.y.toFixed(3)} ${front.z.toFixed(3)}`
+          : '';
+        label.textContent = `${overlayLines().join('\n')}${facingLine}${normalLine}`;
       }
     }
     renderer.render(scene, camera);
@@ -248,6 +287,7 @@ export async function startItemQaHarness(
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
     removeEventListener('keydown', onKeyDown);
+    posePanel?.dispose();
     extraDispose.forEach((dispose) => dispose());
     viewmodel?.dispose();
     visuals.dispose();

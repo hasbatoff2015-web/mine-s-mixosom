@@ -21,6 +21,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после vanilla FP transform audit: typecheck, 143 tests / 22 files, production build 74 modules, 0.93 MiB / 165 files.
 - [x] Локальный pipeline после F2 1.21.8 held-item screenshot audit: typecheck, 150 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после shared held-item pose QA candidates: typecheck, 152 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
+- [x] Локальный pipeline после live held-item pose QA panel: typecheck, 156 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -130,6 +131,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Vanilla idle first-person right-hand matrix reconstruction + held matrix QA overlay. Production pose не переключали: нет доказанного screenshot match projected points.
 - [x] F2 Java 1.21.8 2048×1152 silhouette landmark audit: 1.9==1.21.8 idle matrix; «edge-on» = неверная метрика `front·look`; Y-bias vs F2 остаётся. Production не переключали.
 - [x] Shared held-item pose: цель сменена с pixel-perfect F2 на visual Minecraft-like; QA candidates subtle/balanced/stronger + `qaPoseCompare`. Production pose не переключали.
+- [x] Live held-item pose QA panel: sliders/numeric/copy/reset, item switch без сброса pose. Production pose и geometry не менялись.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.
