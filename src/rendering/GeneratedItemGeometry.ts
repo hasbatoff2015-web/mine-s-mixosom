@@ -223,6 +223,49 @@ export function formatGeneratedItemDiagnostics(info: GeneratedItemGeometryInfo, 
   ].join('\n');
 }
 
+/** QA-only materials: textured front, dim textured back, vertex-colored sides. No entity-light callback. */
+export function createGeneratedItemSideDebugMaterials(
+  map: THREE.Texture | null = null,
+): [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial, THREE.MeshBasicMaterial] {
+  const front = new THREE.MeshBasicMaterial({
+    map,
+    alphaTest: 0.08,
+    fog: false,
+    side: THREE.FrontSide,
+  });
+  const back = new THREE.MeshBasicMaterial({
+    map,
+    color: 0x8c8c8c,
+    alphaTest: 0.08,
+    fog: false,
+    side: THREE.FrontSide,
+  });
+  const sides = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    fog: false,
+    side: THREE.FrontSide,
+  });
+  return [front, back, sides];
+}
+
+/**
+ * Swap a held/inspect mesh onto a debug clone. Clears `onBeforeRender` so a
+ * material array cannot crash the entity-light callback that reads `.userData`.
+ * Production cached geometry is left untouched.
+ */
+export function attachGeneratedItemSideDebug(
+  mesh: THREE.Mesh,
+  mask: Readonly<GeneratedItemMask>,
+): THREE.BufferGeometry {
+  const geometry = createGeneratedItemGeometry(mask, { debugSides: true });
+  const current = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  const map = current instanceof THREE.MeshBasicMaterial ? current.map : null;
+  mesh.onBeforeRender = () => {};
+  mesh.geometry = geometry;
+  mesh.material = createGeneratedItemSideDebugMaterials(map);
+  return geometry;
+}
+
 /**
  * Opaque → transparent boundary spans, merged with neighboring edges of the
  * same facing. Out-of-bounds neighbors are transparent, matching vanilla.

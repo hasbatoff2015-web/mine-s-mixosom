@@ -148,8 +148,8 @@ Feel/polish pass повторно проверен во встроенном б�
 
 - в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
 - `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
-- `?qaItem=iron_pickaxe` — isolated inspect (front, центр, без bob/swing); overlay печатает spans/UV/depth;
-- `?qaItem=iron_pickaxe&qaSideDebug=1` — те же front/back textures, стороны UP red / DOWN green / LEFT blue / RIGHT yellow;
+- `?qaItem=iron_pickaxe` — isolated inspect (front, центр, без bob/swing, orthographic); overlay печатает spans/UV/depth;
+- `?qaItem=iron_pickaxe&qaSideDebug=1` — textured front, dim back, стороны UP red / DOWN green / LEFT blue / RIGHT yellow;
 - `?qaItem=iron_pickaxe&qaView=left` / `qaView=right` / `qaView=back` — лёгкий угол и тыл;
 - `?qaItem=iron_pickaxe&qaView=held&pose=idle` — прежний first-person; `held*` knobs работают только здесь;
 - `?qaItem=iron_pickaxe&heldScale=0.85&heldX=0.50&heldY=-0.56&heldZ=-0.82&heldRoll=14&heldPitch=0&heldYaw=0&pose=idle` — нужен `qaView=held`, иначе held* игнорируются;

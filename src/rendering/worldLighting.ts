@@ -224,7 +224,9 @@ export function bindEntityLightReceiver(object: THREE.Object3D): void {
     const material = child.material;
     if (Array.isArray(material) || !material.userData) return;
     child.onBeforeRender = () => {
-      const uniform = (child.material as THREE.Material).userData.uEntityLight as
+      const current = child.material;
+      if (Array.isArray(current)) return;
+      const uniform = current.userData?.uEntityLight as
         | { value: THREE.Vector3 }
         | undefined;
       if (!uniform) return;

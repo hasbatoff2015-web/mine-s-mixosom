@@ -7,7 +7,7 @@ import {
 } from '../items';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import {
-  createGeneratedItemGeometry,
+  attachGeneratedItemSideDebug,
   formatGeneratedItemDiagnostics,
   generatedItemInfo,
 } from '../rendering/GeneratedItemGeometry';
@@ -25,6 +25,7 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 
 export type ItemQaMode = 'empty' | 'drops' | string;
 
+const INSPECT_FRUSTUM = 1.25;
 const INSPECT_CAMERA: Readonly<Record<Exclude<ItemQaView, 'held'>, readonly [number, number, number]>> = {
   front: [0, 0, 2.15],
   back: [0, 0, -2.15],
@@ -46,7 +47,9 @@ export async function startItemQaHarness(
   const sideDebug = parseItemQaSideDebug(search);
   const inspect = mode !== 'drops' && qaView !== 'held';
   scene.background = new THREE.Color(inspect ? 0x1b1d22 : 0x80b5d4);
-  const camera = new THREE.PerspectiveCamera(inspect ? 32 : 55, 1, 0.05, 50);
+  const camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = inspect
+    ? new THREE.OrthographicCamera(-INSPECT_FRUSTUM, INSPECT_FRUSTUM, INSPECT_FRUSTUM, -INSPECT_FRUSTUM, 0.05, 50)
+    : new THREE.PerspectiveCamera(55, 1, 0.05, 50);
   if (!inspect) {
     camera.position.set(0, 2.2, 5.2);
     camera.lookAt(0, 0.8, 0);
@@ -127,7 +130,15 @@ export async function startItemQaHarness(
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
     renderer.setSize(width, height, false);
-    camera.aspect = width / height;
+    if (camera instanceof THREE.OrthographicCamera) {
+      const aspect = width / height;
+      camera.left = -INSPECT_FRUSTUM * aspect;
+      camera.right = INSPECT_FRUSTUM * aspect;
+      camera.top = INSPECT_FRUSTUM;
+      camera.bottom = -INSPECT_FRUSTUM;
+    } else {
+      camera.aspect = width / height;
+    }
     camera.updateProjectionMatrix();
     viewmodel?.resize(width, height);
   };
@@ -185,7 +196,7 @@ export async function startItemQaHarness(
 
 function mountInspectItem(options: {
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   visuals: ItemVisualFactory;
   itemId: string;
   view: Exclude<ItemQaView, 'held'>;
@@ -224,20 +235,14 @@ function mountInspectItem(options: {
   const source = visuals.getGeneratedGeometry(texturePath) ?? mesh.geometry;
   let info = generatedItemInfo(source);
   if (sideDebug && mask) {
-    const frontMaterial = (
-      Array.isArray(mesh.material) ? mesh.material[0]! : mesh.material
-    ) as THREE.MeshBasicMaterial;
-    const debugGeometry = createGeneratedItemGeometry(mask, { debugSides: true });
-    const backMaterial = frontMaterial.clone();
-    backMaterial.color.setScalar(0.55);
-    const sideMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
-    mesh.geometry = debugGeometry;
-    mesh.material = [frontMaterial, backMaterial, sideMaterial];
+    const debugGeometry = attachGeneratedItemSideDebug(mesh, mask);
     info = generatedItemInfo(debugGeometry);
     extraDispose.push(() => {
       debugGeometry.dispose();
-      backMaterial.dispose();
-      sideMaterial.dispose();
+      const materials = mesh.material;
+      if (Array.isArray(materials)) {
+        for (const material of materials) material.dispose();
+      }
     });
   }
   return formatGeneratedItemDiagnostics(info, itemId);

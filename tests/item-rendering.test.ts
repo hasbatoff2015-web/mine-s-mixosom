@@ -11,7 +11,9 @@ import {
 } from '../src/items';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../src/rendering/FirstPersonRenderer';
 import {
+  GENERATED_SIDE_DEBUG_COLORS,
   VANILLA_GENERATED_DEPTH,
+  attachGeneratedItemSideDebug,
   collectGeneratedItemSpans,
   countGeneratedBoundaryEdges,
   createGeneratedItemGeometry,
@@ -428,16 +430,53 @@ describe('GeneratedItemGeometry', () => {
     geometry.dispose();
   });
 
-  it('writes debug side colors without changing production attributes', () => {
-    const production = createGeneratedItemGeometry(plusMask(4));
-    expect(production.getAttribute('color')).toBeUndefined();
-    const debug = createGeneratedItemGeometry(plusMask(4), { debugSides: true });
-    const color = debug.getAttribute('color');
-    expect(color).toBeDefined();
-    expect(color.getX(8)).toBeCloseTo(1);
-    expect(color.getY(8)).toBeCloseTo(0.12);
-    production.dispose();
-    debug.dispose();
+  it('maps qaSideDebug groups and vertex colors onto drawable FRONT/BACK/UP/DOWN/LEFT/RIGHT faces', () => {
+    const size = 32;
+    const alpha = new Uint8Array(size * size);
+    alpha[10 * size + 8] = 255;
+    const mask = { width: size, height: size, alpha };
+    const mesh = new THREE.Mesh(createGeneratedItemGeometry(mask));
+    mesh.onBeforeRender = () => {
+      const material = mesh.material as THREE.Material;
+      void material.userData.uEntityLight.value;
+    };
+    const originalGeometry = mesh.geometry;
+    const geometry = attachGeneratedItemSideDebug(mesh, mask);
+    const materials = mesh.material as THREE.MeshBasicMaterial[];
+
+    expect(Array.isArray(mesh.material)).toBe(true);
+    expect(materials).toHaveLength(3);
+    expect(materials[0]?.alphaTest).toBeCloseTo(0.08);
+    expect(materials[0]?.vertexColors).toBe(false);
+    expect(materials[1]?.color.getHex()).toBe(0x8c8c8c);
+    expect(materials[2]?.vertexColors).toBe(true);
+    expect(materials[2]?.map).toBeNull();
+    expect(geometry.groups).toEqual([
+      expect.objectContaining({ start: 0, count: 6, materialIndex: 0 }),
+      expect.objectContaining({ start: 6, count: 6, materialIndex: 1 }),
+      expect.objectContaining({ start: 12, count: 24, materialIndex: 2 }),
+    ]);
+    expect(() => {
+      (mesh.onBeforeRender as () => void)();
+    }).not.toThrow();
+
+    const color = geometry.getAttribute('color');
+    const expectColor = (vertex: number, rgb: readonly [number, number, number], label: string): void => {
+      expect(color.getX(vertex), `${label} r`).toBeCloseTo(rgb[0]);
+      expect(color.getY(vertex), `${label} g`).toBeCloseTo(rgb[1]);
+      expect(color.getZ(vertex), `${label} b`).toBeCloseTo(rgb[2]);
+    };
+    expectColor(0, GENERATED_SIDE_DEBUG_COLORS.front, 'FRONT');
+    expectColor(4, GENERATED_SIDE_DEBUG_COLORS.back, 'BACK');
+    expectColor(8, GENERATED_SIDE_DEBUG_COLORS.up, 'UP');
+    expectColor(12, GENERATED_SIDE_DEBUG_COLORS.down, 'DOWN');
+    expectColor(16, GENERATED_SIDE_DEBUG_COLORS.left, 'LEFT');
+    expectColor(20, GENERATED_SIDE_DEBUG_COLORS.right, 'RIGHT');
+    expect(originalGeometry.getAttribute('color')).toBeUndefined();
+
+    originalGeometry.dispose();
+    geometry.dispose();
+    materials.forEach((material) => material.dispose());
   });
 });
 
