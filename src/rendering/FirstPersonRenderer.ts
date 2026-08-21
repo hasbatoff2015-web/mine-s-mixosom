@@ -10,6 +10,12 @@ import {
   resolveHeldItemTransform,
   type HeldItemQaOverride,
 } from './heldItemQa';
+import {
+  composeVanillaIdleFirstPersonRightHand,
+  formatHeldItemMatrixOverlay,
+  projectGeneratedReferencePoints,
+  type HeldItemMatrixDebugSnapshot,
+} from './heldItemVanillaTransform';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -58,13 +64,17 @@ export class FirstPersonRenderer {
   private loggedHeldQa = false;
   private readonly heldQaFromUrl: boolean;
 
+  /** QA-only: drop residual idle bob / equip dip so matrices are comparable. */
+  private readonly freezeIdleMotion: boolean;
+
   constructor(
     private readonly visuals: ItemVisualFactory,
-    options: { readonly qaOverride?: HeldItemQaOverride } = {},
+    options: { readonly qaOverride?: HeldItemQaOverride; readonly freezeIdleMotion?: boolean } = {},
   ) {
     const fromUrl = options.qaOverride === undefined ? readDevHeldItemQaOverride() : undefined;
     this.heldQaOverride = options.qaOverride ?? fromUrl;
     this.heldQaFromUrl = fromUrl !== undefined;
+    this.freezeIdleMotion = options.freezeIdleMotion === true;
     this.scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x4a382d, 1.75));
     const key = new THREE.DirectionalLight(0xffe4c2, 1.9);
     key.position.set(-2, 4, 3);
@@ -122,6 +132,12 @@ export class FirstPersonRenderer {
     this.elapsedSeconds += delta;
     this.swingSeconds += delta;
     this.equipProgress = Math.min(1, this.equipProgress + delta * 7.5);
+    if (this.freezeIdleMotion) {
+      this.equipProgress = 1;
+      this.swingSeconds = 1;
+      this.walkStrength = 0;
+      this.walkPhase = 0;
+    }
     this.root.visible = state.visible;
     if (!state.visible) return;
 
@@ -131,7 +147,7 @@ export class FirstPersonRenderer {
     const sprintFactor = state.sprinting ? 1.22 : 1;
     const bobX = Math.sin(this.walkPhase) * 0.025 * this.walkStrength * sprintFactor;
     const bobY = -Math.abs(Math.cos(this.walkPhase)) * 0.018 * this.walkStrength * sprintFactor;
-    const idle = Math.sin(this.elapsedSeconds * 1.35) * 0.004;
+    const idle = this.freezeIdleMotion ? 0 : Math.sin(this.elapsedSeconds * 1.35) * 0.004;
 
     const explicitProgress = THREE.MathUtils.clamp(this.swingSeconds / 0.34, 0, 1);
     const miningProgress = (this.elapsedSeconds * 3.15) % 1;
@@ -212,6 +228,44 @@ export class FirstPersonRenderer {
     if (!this.mainModel) return undefined;
     this.mainModel.updateWorldMatrix(true, true);
     return new THREE.Vector3(0, 0, 1).transformDirection(this.mainModel.matrixWorld).normalize();
+  }
+
+  /**
+   * Snapshot of the live held-item matrices plus the proposed vanilla idle
+   * right-hand matrix. The vanilla matrix is diagnostic only and is not
+   * written onto the mesh.
+   */
+  captureHeldItemMatrixDebug(): HeldItemMatrixDebugSnapshot | undefined {
+    if (!this.mainModel) return undefined;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.root.updateWorldMatrix(true, true);
+    const itemLocal = this.mainModel.matrix.clone();
+    const itemWorld = this.mainModel.matrixWorld.clone();
+    const modelView = new THREE.Matrix4().multiplyMatrices(this.camera.matrixWorldInverse, itemWorld);
+    const vanillaModelView = composeVanillaIdleFirstPersonRightHand();
+    return {
+      itemId: this.mainItem,
+      freezeIdleMotion: this.freezeIdleMotion,
+      camera: {
+        type: this.camera.type,
+        fov: this.camera.fov,
+        aspect: this.camera.aspect,
+        near: this.camera.near,
+        far: this.camera.far,
+      },
+      itemLocal,
+      itemWorld,
+      modelView,
+      productionPoints: projectGeneratedReferencePoints(modelView, this.camera),
+      vanillaModelView,
+      vanillaPoints: projectGeneratedReferencePoints(vanillaModelView, this.camera),
+    };
+  }
+
+  formatHeldItemMatrixOverlay(): string | undefined {
+    const snapshot = this.captureHeldItemMatrixDebug();
+    return snapshot ? formatHeldItemMatrixOverlay(snapshot) : undefined;
   }
 
   dispose(): void {

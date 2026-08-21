@@ -18,6 +18,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после lighting/torch/selection fix: typecheck, 117 tests, production build 72 modules, 0.92 MiB / 165 files.
 - [x] Локальный pipeline после entity lighting / wall-torch followup: typecheck, 123 tests, production build.
 - [x] Локальный pipeline после Minecraft generated-items Phase 1: typecheck, 129 tests, production build 72 modules, 0.92 MiB / 165 files.
+- [x] Локальный pipeline после vanilla FP transform audit: typecheck, 143 tests / 22 files, production build 74 modules, 0.93 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -123,7 +124,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Добавить cached alpha-silhouette depth geometry для generated held/dropped items и три стадии bow texture.
 - [x] Phase 1 vanilla-like `item/generated`: один front/back quad, толщина `1/16`, span detection `alpha == 0`, 32×32 в тех же 16×16 model units, общий first-person pose для generated/handheld, held torch sprite, bow pull `0.65/0.9`.
 - [x] First-person sprite pose calibration: shared scale/position/roll, pitch/yaw 0, dev `held*` QA overrides.
-- [x] Generated-item geometry audit: outer-shell winding, texel-center side UV, inspect/`qaSideDebug` harness, `iron_pickaxe.png` span diagnostics. Held pose остаётся временным baseline.
+- [x] Generated-item geometry audit: outer-shell winding, texel-center side UV, inspect/`qaSideDebug` harness, `iron_pickaxe.png` span diagnostics. Topology закрыта как baseline.
+- [x] Vanilla idle first-person right-hand matrix reconstruction + held matrix QA overlay. Production pose не переключали: нет доказанного screenshot match projected points.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.

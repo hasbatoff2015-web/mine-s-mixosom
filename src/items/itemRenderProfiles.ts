@@ -44,24 +44,18 @@ const UNIFORM_GUI = transform([0, 0, 0], [0, 0, 0], [1, 1, 1]);
 /**
  * Shared first-person pose for `item/generated`, `item/handheld` and bow.
  *
- * Vanilla JSON is `rotation [0, -90, 25]`, `translation [1.13, 3.2, 1.13]`,
- * `scale [0.68, 0.68, 0.68]`. Those Eulers are Minecraft item space and must
- * not be copied into Three.js: generated front is +Z, the viewmodel camera
- * looks -Z, so yaw -90° is only a basis conversion. Pitch and yaw stay 0 so
- * the sprite faces the camera; the remaining visible rotation is Z roll.
+ * These numbers are a temporary face-on calibration, not the vanilla 1.9
+ * pipeline. Vanilla `firstperson_righthand` is `rotation [0, -90, 25]`,
+ * `translation [1.13, 3.2, 1.13]`, `scale [0.68, 0.68, 0.68]`. Ry(−90°) is a
+ * real display rotation (sprite front +Z → camera −X), not a Three.js basis
+ * conversion. Do not copy those Eulers into `rotation.set`.
  *
- * `scale` here is the FINAL uniform Three.js scale written to the item root.
- * It is not a project multiplier on vanilla 0.68.
+ * The mathematical adapter lives in `heldItemVanillaTransform.ts` and is not
+ * wired here. `heldScale/heldX/heldY/heldZ/heldRoll/heldPitch/heldYaw` remain
+ * QA-only overrides of this temporary pose.
  *
- * Previous composed default:
- *   0.68 * 0.52 = 0.3536
- * Current default (temporary calibration baseline, not an approved art value):
- *   0.85
- * Local QA can try the ×1.6 target without a code change:
- *   ?heldScale=0.578  →  0.68 * 0.85
- *
- * Tune with dev query params
- * `heldScale/heldX/heldY/heldZ/heldRoll/heldPitch/heldYaw`.
+ * `scale` is the FINAL uniform Three.js scale written to the item root, not a
+ * multiplier on vanilla 0.68.
  */
 export const FIRST_PERSON_SPRITE_POSE = Object.freeze({
   position: [0.50, -0.56, -0.82] as RenderVector,

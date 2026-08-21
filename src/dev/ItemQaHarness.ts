@@ -71,11 +71,12 @@ export async function startItemQaHarness(
   const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
   const visuals = new ItemVisualFactory({ atlas });
   await visuals.preload();
-  const viewmodel = inspect ? undefined : new FirstPersonRenderer(visuals);
   const dropped: THREE.Group[] = [];
   const extraDispose: Array<() => void> = [];
   const qaItem = mode !== 'empty' && mode !== 'drops' && isKnownItemId(mode) ? mode : undefined;
   const requestedPose = search.get('pose');
+  const freezeIdleMotion = !requestedPose || requestedPose === 'idle' || requestedPose === 'base';
+  const viewmodel = inspect ? undefined : new FirstPersonRenderer(visuals, { freezeIdleMotion });
   const heldQa = parseHeldItemQaOverride(search);
   const heldBase = itemRenderProfile(qaItem ?? 'coal').transforms.firstPersonRightHand;
   const heldResolved = resolveHeldItemTransform(heldBase, heldQa);
@@ -124,7 +125,7 @@ export async function startItemQaHarness(
     inspect && heldQa ? 'held* ignored here · add qaView=held' : '',
     geometryOverlay,
   ].filter(Boolean);
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:13px/1.35 monospace;z-index:5;white-space:pre">${overlayLines.join('\n')}</div>`;
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:11px/1.35 monospace;z-index:5;white-space:pre;max-height:96vh;overflow:auto">${overlayLines.join('\n')}</div>`;
   const label = uiRoot.querySelector('#qa-label');
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
@@ -171,8 +172,11 @@ export async function startItemQaHarness(
       state.shieldRaised = qaItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
       const facing = viewmodel.measureHeldFrontCameraDot();
-      if (label && facing !== undefined) {
-        label.textContent = `${overlayLines.join('\n')}\nfront·camera ${facing.toFixed(4)}`;
+      const matrixOverlay = viewmodel.formatHeldItemMatrixOverlay();
+      if (label) {
+        const facingLine = facing === undefined ? '' : `\nfront·camera ${facing.toFixed(4)}`;
+        const matrices = matrixOverlay ? `\n\n${matrixOverlay}` : '';
+        label.textContent = `${overlayLines.join('\n')}${facingLine}${matrices}`;
       }
     }
     renderer.render(scene, camera);

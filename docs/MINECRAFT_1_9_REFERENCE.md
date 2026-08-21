@@ -244,7 +244,9 @@ launchSpeed = 3 × power blocks/tick
 
 Java simulation tick и display refresh — разные временные шкалы. Для узнаваемого mouse feel alpha оставляет физику на `20 TPS`, но применяет накопленные input yaw/pitch к render camera каждый animation frame. Это проектный rendering contract, а не утверждение о внутреннем клиентском коде Java 1.9.
 
-First-person transforms, Steve-arm placement и FOV easing являются визуальными alpha approximations. Обычные item sprites преобразуются в cached geometry с одним front/back quad и боковыми spans по opaque→transparent (`alpha == 0`). Это следует `item/generated`: толщина `1/16`, 32×32 в тех же 16×16 model units, outer-shell winding, collapsed UV в центре opaque texel. Не bit-exact Mojang `ItemModelGenerator`.
+First-person **world** FOV в settings (`60–100`, default `75`) и sprint/bow easing — визуальные alpha approximations. Отдельный viewmodel pass использует фиксированные **70°** vertical FOV, как vanilla hand pass (`getFOVModifier(..., false)`), и не следует settings FOV. Обычные item sprites преобразуются в cached geometry с одним front/back quad и боковыми spans по opaque→transparent (`alpha == 0`). Это следует `item/generated`: толщина `1/16`, 32×32 в тех же 16×16 model units, outer-shell winding, collapsed UV в центре opaque texel. Не bit-exact Mojang `ItemModelGenerator`.
+
+Idle first-person right-hand vanilla path восстановлен как matrix adapter (`T_hand * display T/R/S`), без production switch и без ручных `heldX/Y/scale` подборов. Текущий production pose остаётся временным face-on calibration.
 
 Источники: [Bow — weapon](https://minecraft.wiki/w/Bow#Weapon), [Arrow — damage](https://minecraft.wiki/w/Arrow#Damage).
 
@@ -275,7 +277,7 @@ First-person transforms, Steve-arm placement и FOV easing являются ви
 | Arrow flight | velocity в blocks/tick; air `×0.99`; water `×0.6`; gravity `-0.05/tick`; continuous segment hit | Player/skeleton basis унифицирован; exact critical random/pickup/model не заявлены |
 | Render look | live input yaw/pitch каждый RAF, simulation `20 TPS` | Осознанное client-feel разделение, не simulation change |
 | Bow presentation | 3 pulling textures, до `-8°` FOV, movement `×0.2` | Визуальный/FOV alpha target; draw curve остаётся reference-формулой |
-| Generated items | alpha silhouette front/back + merged side spans, depth `0.08` | Приближение generated model, не bit-exact Mojang geometry/UV |
+| Generated items | alpha silhouette front/back + merged side spans, depth `1/16` | Приближение generated model, не bit-exact Mojang geometry/UV |
 
 При балансировке сначала сохраняем узнаваемый loop и deterministic `20 TPS`. Любое дальнейшее отклонение от таблицы должно называться alpha approximation и фиксироваться здесь; нельзя молча выдавать современную Java-механику за 1.9.
 
