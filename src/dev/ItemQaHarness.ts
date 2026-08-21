@@ -12,11 +12,15 @@ import {
   generatedItemInfo,
 } from '../rendering/GeneratedItemGeometry';
 import {
+  formatHeldItemCandidateUrl,
   formatHeldItemQaQuery,
   heldItemQaValuesFromTransform,
-  parseHeldItemQaOverride,
+  HELD_ITEM_POSE_COMPARE_ITEMS,
+  parseHeldItemPoseCandidate,
+  parseItemQaPoseCompare,
   parseItemQaSideDebug,
   parseItemQaView,
+  resolveHeldItemQaFromSearch,
   resolveHeldItemTransform,
   type ItemQaView,
 } from '../rendering/heldItemQa';
@@ -43,7 +47,8 @@ export async function startItemQaHarness(
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
   const search = new URLSearchParams(location.search);
-  const qaView = parseItemQaView(search);
+  const poseCompare = parseItemQaPoseCompare(search);
+  const qaView = poseCompare ? 'held' : parseItemQaView(search);
   const sideDebug = parseItemQaSideDebug(search);
   const inspect = mode !== 'drops' && qaView !== 'held';
   scene.background = new THREE.Color(inspect ? 0x1b1d22 : 0x80b5d4);
@@ -77,11 +82,23 @@ export async function startItemQaHarness(
   const requestedPose = search.get('pose');
   const freezeIdleMotion = !requestedPose || requestedPose === 'idle' || requestedPose === 'base';
   const viewmodel = inspect ? undefined : new FirstPersonRenderer(visuals, { freezeIdleMotion });
-  const heldQa = parseHeldItemQaOverride(search);
+  const heldQa = resolveHeldItemQaFromSearch(search);
+  const poseCandidate = parseHeldItemPoseCandidate(search);
   const heldBase = itemRenderProfile(qaItem ?? 'coal').transforms.firstPersonRightHand;
   const heldResolved = resolveHeldItemTransform(heldBase, heldQa);
   const heldQuery = formatHeldItemQaQuery(heldItemQaValuesFromTransform(heldResolved));
   let geometryOverlay = '';
+  let currentItem = qaItem;
+  if (poseCompare) {
+    const listed = currentItem !== undefined
+      && (HELD_ITEM_POSE_COMPARE_ITEMS as readonly string[]).includes(currentItem);
+    if (!listed) currentItem = HELD_ITEM_POSE_COMPARE_ITEMS[0];
+  }
+  const compareIndex = (): number => {
+    if (!currentItem) return 0;
+    const index = (HELD_ITEM_POSE_COMPARE_ITEMS as readonly string[]).indexOf(currentItem);
+    return index >= 0 ? index : 0;
+  };
 
   if (mode === 'drops') {
     const samples = [
@@ -105,27 +122,38 @@ export async function startItemQaHarness(
       extraDispose,
     });
   } else {
-    viewmodel?.setHeldItems(qaItem);
-    if (qaItem && itemUsesGeneratedHeldGeometry(qaItem)) {
-      const texturePath = getItemDefinition(qaItem).texture;
-      const geometry = visuals.getGeneratedGeometry(texturePath);
-      if (geometry) geometryOverlay = formatGeneratedItemDiagnostics(generatedItemInfo(geometry), qaItem);
+    viewmodel?.setHeldItems(currentItem);
+    geometryOverlay = generatedOverlay(visuals, currentItem);
+  }
+
+  const refreshHeldGeometry = (itemId: string | undefined): void => {
+    geometryOverlay = generatedOverlay(visuals, itemId);
+  };
+
+  if (geometryOverlay) console.info(`[item-geom]\n${geometryOverlay}`);
+  if (!inspect) {
+    console.info(`[held-qa] ?qaItem=${currentItem ?? mode}&qaView=held&${heldQuery}&pose=idle`);
+    if (poseCandidate) {
+      for (const itemId of ['iron_pickaxe', 'diamond_sword'] as const) {
+        console.info(`[held-qa] ${formatHeldItemCandidateUrl(itemId, poseCandidate)}`);
+      }
     }
   }
 
-  if (geometryOverlay) console.info(`[item-geom]\n${geometryOverlay}`);
-  if (!inspect) console.info(`[held-qa] ?qaItem=${mode}&qaView=held&${heldQuery}&pose=idle`);
-
-  const overlayLines = [
-    `item QA · ${mode}`,
+  const overlayLines = (): string[] => [
+    `item QA · ${currentItem ?? mode}${poseCandidate ? `  qaPose=${poseCandidate}` : ''}`,
     inspect ? `qaView=${qaView}${sideDebug ? '  qaSideDebug=1' : ''}` : `qaView=held  pose=${requestedPose ?? 'idle'}`,
     inspect
       ? (sideDebug ? 'UP red  DOWN green  LEFT blue  RIGHT yellow' : 'isolated inspect · no bob/swing')
       : heldQuery,
     inspect && heldQa ? 'held* ignored here · add qaView=held' : '',
+    poseCompare
+      ? `qaPoseCompare  1-8 or [ ]  ${HELD_ITEM_POSE_COMPARE_ITEMS.map((id, index) => `${index + 1}:${id}`).join('  ')}`
+      : '',
     geometryOverlay,
   ].filter(Boolean);
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:11px/1.35 monospace;z-index:5;white-space:pre;max-height:96vh;overflow:auto">${overlayLines.join('\n')}</div>`;
+
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:11px/1.35 monospace;z-index:5;white-space:pre;max-height:96vh;overflow:auto">${overlayLines().join('\n')}</div>`;
   const label = uiRoot.querySelector('#qa-label');
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
@@ -146,6 +174,34 @@ export async function startItemQaHarness(
   resize();
   addEventListener('resize', resize);
 
+  const selectCompareItem = (index: number): void => {
+    if (!poseCompare || inspect || !viewmodel) return;
+    const next = HELD_ITEM_POSE_COMPARE_ITEMS[(index + HELD_ITEM_POSE_COMPARE_ITEMS.length) % HELD_ITEM_POSE_COMPARE_ITEMS.length]!;
+    currentItem = next;
+    viewmodel.setHeldItems(next);
+    refreshHeldGeometry(next);
+  };
+
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (!poseCompare || inspect) return;
+    if (event.code === 'BracketRight' || event.code === 'KeyN' || event.code === 'Period') {
+      selectCompareItem(compareIndex() + 1);
+      event.preventDefault();
+      return;
+    }
+    if (event.code === 'BracketLeft' || event.code === 'KeyP' || event.code === 'Comma') {
+      selectCompareItem(compareIndex() - 1);
+      event.preventDefault();
+      return;
+    }
+    const digit = event.code.match(/^Digit([1-8])$/);
+    if (digit) {
+      selectCompareItem(Number(digit[1]) - 1);
+      event.preventDefault();
+    }
+  };
+  addEventListener('keydown', onKeyDown);
+
   const state: FirstPersonFrameState = {
     visible: mode !== 'drops' && !inspect, movementSpeed: 0, onGround: true, sprinting: false,
     mining: false, foodUseProgress: 0, bowCharge: 0, shieldRaised: false,
@@ -165,21 +221,21 @@ export async function startItemQaHarness(
       });
     } else if (!inspect && viewmodel) {
       state.movementSpeed = requestedPose === 'walk' ? 1.8 : 0;
-      state.foodUseProgress = qaItem === 'apple' && requestedPose === 'eat' ? (elapsed % 2.2) / 2.2 : 0;
-      state.bowCharge = qaItem === 'bow'
+      state.foodUseProgress = currentItem === 'apple' && requestedPose === 'eat' ? (elapsed % 2.2) / 2.2 : 0;
+      state.bowCharge = currentItem === 'bow'
         ? requestedPose === 'partial' ? 0.5 : requestedPose === 'full' ? 1 : requestedPose === 'base' || !requestedPose ? 0 : (elapsed % 2.2) / 2.2
         : 0;
-      state.shieldRaised = qaItem === 'shield' && requestedPose !== 'idle';
+      state.shieldRaised = currentItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
       const facing = viewmodel.measureHeldFrontCameraDot();
-      const mask = qaItem && itemUsesGeneratedHeldGeometry(qaItem)
-        ? visuals.getGeneratedMask(getItemDefinition(qaItem).texture)
+      const mask = !poseCompare && currentItem && itemUsesGeneratedHeldGeometry(currentItem)
+        ? visuals.getGeneratedMask(getItemDefinition(currentItem).texture)
         : undefined;
-      const matrixOverlay = viewmodel.formatHeldItemMatrixOverlay(mask);
+      const matrixOverlay = poseCompare ? undefined : viewmodel.formatHeldItemMatrixOverlay(mask);
       if (label) {
         const facingLine = facing === undefined ? '' : `\nfront·lookAxis ${facing.toFixed(4)}`;
         const matrices = matrixOverlay ? `\n\n${matrixOverlay}` : '';
-        label.textContent = `${overlayLines.join('\n')}${facingLine}${matrices}`;
+        label.textContent = `${overlayLines().join('\n')}${facingLine}${matrices}`;
       }
     }
     renderer.render(scene, camera);
@@ -191,6 +247,7 @@ export async function startItemQaHarness(
   return () => {
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
+    removeEventListener('keydown', onKeyDown);
     extraDispose.forEach((dispose) => dispose());
     viewmodel?.dispose();
     visuals.dispose();
@@ -199,6 +256,12 @@ export async function startItemQaHarness(
     if (ground) (ground.material as THREE.Material).dispose();
     renderer.dispose();
   };
+}
+
+function generatedOverlay(visuals: ItemVisualFactory, itemId: string | undefined): string {
+  if (!itemId || !itemUsesGeneratedHeldGeometry(itemId)) return '';
+  const geometry = visuals.getGeneratedGeometry(getItemDefinition(itemId).texture);
+  return geometry ? formatGeneratedItemDiagnostics(generatedItemInfo(geometry), itemId) : '';
 }
 
 function mountInspectItem(options: {

@@ -36,6 +36,59 @@ function readNumber(value: string | null): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+export const HELD_ITEM_POSE_CANDIDATE_IDS = ['subtle', 'balanced', 'stronger'] as const;
+export type HeldItemPoseCandidateId = (typeof HELD_ITEM_POSE_CANDIDATE_IDS)[number];
+
+/**
+ * QA-only shared first-person candidates. Not production defaults.
+ * Positive pitch shows top thickness; positive yaw shows left thickness.
+ * Yaw stays far below vanilla −90° so pickaxe side spans do not become teeth.
+ */
+export const HELD_ITEM_POSE_CANDIDATES: Readonly<Record<HeldItemPoseCandidateId, HeldItemQaValues>> = Object.freeze({
+  subtle: Object.freeze({
+    scale: 0.85, x: 0.50, y: -0.56, z: -0.82, roll: 14, pitch: 4, yaw: 8,
+  }),
+  balanced: Object.freeze({
+    scale: 0.88, x: 0.51, y: -0.54, z: -0.80, roll: 16, pitch: 8, yaw: 18,
+  }),
+  stronger: Object.freeze({
+    scale: 0.92, x: 0.52, y: -0.52, z: -0.76, roll: 18, pitch: 12, yaw: 32,
+  }),
+});
+
+/** Cycle list for `qaPoseCompare=1`. First four are the required representatives. */
+export const HELD_ITEM_POSE_COMPARE_ITEMS = Object.freeze([
+  'iron_pickaxe',
+  'diamond_sword',
+  'coal',
+  'arrow',
+  'stick',
+  'apple',
+  'bow',
+  'torch',
+] as const);
+
+export function parseHeldItemPoseCandidate(
+  search: string | URLSearchParams,
+): HeldItemPoseCandidateId | undefined {
+  const value = asSearchParams(search).get('qaPose');
+  return (HELD_ITEM_POSE_CANDIDATE_IDS as readonly string[]).includes(value ?? '')
+    ? value as HeldItemPoseCandidateId
+    : undefined;
+}
+
+export function parseItemQaPoseCompare(search: string | URLSearchParams): boolean {
+  const value = asSearchParams(search).get('qaPoseCompare');
+  return value === '1' || value === 'true';
+}
+
+export function formatHeldItemCandidateUrl(
+  itemId: string,
+  candidate: HeldItemPoseCandidateId,
+): string {
+  return `?qaItem=${itemId}&qaView=held&pose=idle&qaPose=${candidate}&${formatHeldItemQaQuery(HELD_ITEM_POSE_CANDIDATES[candidate])}`;
+}
+
 /** Parse `heldScale/heldX/heldY/heldZ/heldRoll/heldPitch/heldYaw` from a query string.
  *  `heldScale` replaces the final Three.js uniform scale; it is not multiplied by 0.68. */
 export function parseHeldItemQaOverride(search: string | URLSearchParams): HeldItemQaOverride | undefined {
@@ -49,6 +102,17 @@ export function parseHeldItemQaOverride(search: string | URLSearchParams): HeldI
     present = true;
   }
   return present ? override : undefined;
+}
+
+/** Merge `qaPose=` candidate with explicit `held*` keys. Explicit keys win. */
+export function resolveHeldItemQaFromSearch(search: string | URLSearchParams): HeldItemQaOverride | undefined {
+  const candidateId = parseHeldItemPoseCandidate(search);
+  const explicit = parseHeldItemQaOverride(search);
+  if (!candidateId && !explicit) return undefined;
+  return {
+    ...(candidateId ? HELD_ITEM_POSE_CANDIDATES[candidateId] : undefined),
+    ...explicit,
+  };
 }
 
 export function heldItemQaValuesFromTransform(transform: ItemViewTransform): HeldItemQaValues {
@@ -103,7 +167,7 @@ export function resolveHeldItemTransform(
 export function readDevHeldItemQaOverride(): HeldItemQaOverride | undefined {
   if (typeof location === 'undefined') return undefined;
   if (typeof import.meta !== 'undefined' && import.meta.env?.DEV === false) return undefined;
-  return parseHeldItemQaOverride(location.search);
+  return resolveHeldItemQaFromSearch(location.search);
 }
 
 export const ITEM_QA_VIEWS = ['front', 'back', 'left', 'right', 'held'] as const;

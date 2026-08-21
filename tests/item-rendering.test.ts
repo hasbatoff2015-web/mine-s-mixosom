@@ -28,9 +28,15 @@ import {
 } from '../src/rendering/ItemVisualFactory';
 import {
   formatHeldItemQaQuery,
+  formatHeldItemCandidateUrl,
+  HELD_ITEM_POSE_CANDIDATES,
+  HELD_ITEM_POSE_COMPARE_ITEMS,
+  parseHeldItemPoseCandidate,
   parseHeldItemQaOverride,
+  parseItemQaPoseCompare,
   parseItemQaSideDebug,
   parseItemQaView,
+  resolveHeldItemQaFromSearch,
   resolveHeldItemTransform,
 } from '../src/rendering/heldItemQa';
 import { IRON_PICKAXE_SILHOUETTE, maskFromSilhouette } from './ironPickaxeSilhouette';
@@ -177,16 +183,28 @@ describe('item render profiles and assets', () => {
     const pickaxe = itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand;
     const stick = itemRenderProfile('stick').transforms.firstPersonRightHand;
     const bow = itemRenderProfile('bow').transforms.firstPersonRightHand;
-    expect(handheld).toEqual(generated);
-    expect(pickaxe).toEqual(generated);
-    expect(stick).toEqual(generated);
-    expect(bow).toEqual(generated);
+    expect(handheld).toBe(generated);
+    expect(pickaxe).toBe(generated);
+    expect(stick).toBe(generated);
+    expect(bow).toBe(generated);
     expect(itemRenderProfile('stone').transforms.firstPersonRightHand).not.toEqual(generated);
     expect(generated.position).toEqual(FIRST_PERSON_SPRITE_POSE.position);
     expect(generated.scale[0]).toBe(FIRST_PERSON_SPRITE_POSE.scale);
     expect(generated.rotation[0]).toBeCloseTo(0);
     expect(generated.rotation[1]).toBeCloseTo(0);
     expect(generated.rotation[2]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[2] * Math.PI / 180);
+  });
+
+  it('does not give tools or resources a private first-person sprite pose', () => {
+    const shared = itemRenderProfile('coal').transforms.firstPersonRightHand;
+    for (const item of ITEMS) {
+      const category = classifyItemForRendering(item);
+      if (category !== 'generated' && category !== 'handheld' && category !== 'bow') continue;
+      expect(itemRenderProfile(item).transforms.firstPersonRightHand, item.id).toBe(shared);
+    }
+    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.50, -0.56, -0.82]);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([0, 0, 14]);
+    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.85);
   });
 
   it('provides independent first-person, ground and GUI transform contexts', () => {
@@ -583,6 +601,33 @@ describe('held item QA transform overrides', () => {
     expect(formatHeldItemQaQuery({
       scale: 0.85, x: 0.5, y: -0.56, z: -0.82, roll: 14, pitch: 0, yaw: 0,
     })).toContain('heldScale=0.85');
+  });
+
+  it('applies named qaPose candidates without changing production defaults', () => {
+    expect(parseHeldItemPoseCandidate('qaPose=balanced')).toBe('balanced');
+    expect(parseHeldItemPoseCandidate('qaPose=nope')).toBeUndefined();
+    expect(parseItemQaPoseCompare('qaPoseCompare=1')).toBe(true);
+    expect(parseItemQaPoseCompare('qaPoseCompare=true')).toBe(true);
+    expect(parseItemQaPoseCompare('qaItem=coal')).toBe(false);
+    expect(HELD_ITEM_POSE_COMPARE_ITEMS.slice(0, 4)).toEqual([
+      'iron_pickaxe', 'diamond_sword', 'coal', 'arrow',
+    ]);
+    const merged = resolveHeldItemQaFromSearch('qaPose=balanced&heldYaw=22');
+    expect(merged?.scale).toBe(HELD_ITEM_POSE_CANDIDATES.balanced.scale);
+    expect(merged?.yaw).toBe(22);
+    const applied = resolveHeldItemTransform(
+      itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand,
+      HELD_ITEM_POSE_CANDIDATES.subtle,
+    );
+    expect(applied.rotation[0]).toBeCloseTo(4 * Math.PI / 180);
+    expect(applied.rotation[1]).toBeCloseTo(8 * Math.PI / 180);
+    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.rotation[1]).toBeCloseTo(0);
+    expect(formatHeldItemCandidateUrl('diamond_sword', 'subtle')).toContain('qaPose=subtle');
+    expect(formatHeldItemCandidateUrl('diamond_sword', 'subtle')).toContain('heldYaw=8');
+    expect(HELD_ITEM_POSE_CANDIDATES.subtle.yaw).toBeLessThan(HELD_ITEM_POSE_CANDIDATES.balanced.yaw);
+    expect(HELD_ITEM_POSE_CANDIDATES.balanced.yaw).toBeLessThan(HELD_ITEM_POSE_CANDIDATES.stronger.yaw);
+    expect(HELD_ITEM_POSE_CANDIDATES.stronger.yaw).toBeLessThan(50);
+    expect(HELD_ITEM_POSE_CANDIDATES.subtle.pitch).toBeGreaterThan(0);
   });
 
   it('keeps the idle generated front facing the viewmodel camera', () => {

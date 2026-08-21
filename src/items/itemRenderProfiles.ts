@@ -51,8 +51,9 @@ const UNIFORM_GUI = transform([0, 0, 0], [0, 0, 0], [1, 1, 1]);
  * conversion. Do not copy those Eulers into `rotation.set`.
  *
  * The mathematical adapter lives in `heldItemVanillaTransform.ts` and is not
- * wired here. `heldScale/heldX/heldY/heldZ/heldRoll/heldPitch/heldYaw` remain
- * QA-only overrides of this temporary pose.
+ * wired here. Visual A/B/C candidates live in `heldItemQa.ts` (`qaPose=subtle|
+ * balanced|stronger`) and also stay QA-only. `heldScale/heldX/heldY/heldZ/
+ * heldRoll/heldPitch/heldYaw` remain QA-only overrides of this temporary pose.
  *
  * `scale` is the FINAL uniform Three.js scale written to the item root, not a
  * multiplier on vanilla 0.68.

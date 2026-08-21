@@ -152,6 +152,8 @@ Feel/polish pass повторно проверен во встроенном б�
 - `?qaItem=iron_pickaxe&qaSideDebug=1` — textured front, dim back, стороны UP red / DOWN green / LEFT blue / RIGHT yellow;
 - `?qaItem=iron_pickaxe&qaView=left` / `qaView=right` / `qaView=back` — лёгкий угол и тыл;
 - `?qaItem=iron_pickaxe&qaView=held&pose=idle` — first-person; overlay печатает camera FOV/aspect, matrices, axis stages, silhouette landmarks `screen01` и F2 2048×1152 comparison (proposed vanilla не applied; comparison camera фиксирована на F2 16:9 FOV70). Residual idle bob заморожен. `held*` knobs работают только здесь;
+- `?qaPose=subtle|balanced|stronger` — QA candidate shared pose (не production). Можно сузить отдельным `held*`;
+- `?qaPoseCompare=1&qaView=held&pose=idle&qaPose=balanced` — цикл 1–8 / `[` `]` по pickaxe, sword, coal, arrow, stick, apple, bow, torch без правки query;
 - `?qaItem=iron_pickaxe&heldScale=0.85&heldX=0.50&heldY=-0.56&heldZ=-0.82&heldRoll=14&heldPitch=0&heldYaw=0&pose=idle` — нужен `qaView=held`, иначе held* игнорируются. Эти knobs **не** являются production solution;
 - bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, vanilla pull thresholds `0.65/0.9`, movement slowdown и плавный FOV zoom. Mesh лука не изгибается.
 
