@@ -6,7 +6,7 @@ Finish the post–PR #2 user/UI/gameplay block in one implementation pass: chest
 
 ## Result
 
-Implemented on `cursor/container-ui-recipebook-flight` from main `76ce4a1`. `npm run check` green. **No commit / no push** — waiting for local visual QA.
+Implemented on `cursor/container-ui-recipebook-flight` from main `76ce4a1`. HEAD after the feature pass: `5515d19`. Follow-up visual/functional QA: `docs/reports/2026-08-22_container-ui-visual-functional-qa-fixes.md`.
 
 ## Audit
 
@@ -41,7 +41,7 @@ No fly state existed. Sprint on ground remains Shift; fly sprint is Ctrl. Contai
 - Common CSS: `.mc-backdrop` / `.mc-stage` / `.mc-panel` / `.mc-slot` / `.mc-grid` / labels / result / flame / arrow / book button / left book panel. Nearest-neighbor (`image-rendering: pixelated`).
 - Player section on block containers: label Inventory, 3×9, then hotbar gap + 1×9.
 - Wide: `[Recipe Book][Panel]`, composition centered. Narrow: scale down; ≤720px book may overlay left.
-- No `GameUI2`. Creative catalog path unchanged for E.
+- No `GameUI2`. Creative E later gained Catalog/Inventory tabs (see QA-fixes report).
 
 ## Chest
 
@@ -62,7 +62,7 @@ No fly state existed. Sprint on ground remains Shift; fly sprint is Ctrl. Contai
 - Label Furnace. Grid: input (top) / flame (remaining burn) / fuel (bottom) | progress arrow (cook/200) | output.
 - Output rejects arbitrary insert (`furnaceAccepts(2) === false`). Input only smeltable; fuel only `getFuelBurnTicks > 0`.
 - Shift: smeltable → input, fuel → fuel, else player inventory; output → player.
-- Recipe Book: smelting registry only; click moves one matching ingredient to input; **no auto-fuel**. Missing ingredient → ghost input, no fake stack.
+- Recipe Book: smelting registry is **not** shown in Furnace UI (product decision in the QA-fixes pass). Flame/arrow still read live `FurnaceState`.
 - Open furnace GUI does not pause the world. `tickFurnaces()` keeps advancing; flame/arrow/result update from live state.
 
 ## Crafting UI
@@ -74,7 +74,7 @@ No fly state existed. Sprint on ground remains Shift; fly sprint is Ctrl. Contai
 
 ## Recipe Book
 
-- Button (book icon) on crafting table, furnace, Survival inventory. Toggles a left panel; not a new modal; does not touch pointer lock.
+- Button (book icon) on crafting table and Survival inventory. Toggles a left panel; not a new modal; does not touch pointer lock. Furnace has no book button.
 - Session prefs: `recipeBookOpen.crafting` / `.furnace`. Search resets on open.
 - Search: display name, item id, recipe id, case-insensitive, grid patch only (focus kept).
 - Tabs: crafting ALL / EQUIPMENT / BUILDING / FOOD / REDSTONE / MISC; furnace ALL / FOOD / BUILDING / MISC. Empty tabs hidden except ALL.
@@ -119,7 +119,7 @@ Existing `closeInventoryAndResumeLook` → `enterPlaying` → `tryRequestPointer
 ```text
 npm run check PASS
 tsc --noEmit PASS
-Vitest 31 files / 257 tests PASS
+Vitest 33 files / 275 tests PASS (after QA-fixes pass; feature pass was 31/257)
 Vite 90 modules
 Size/archive 1.00 MiB / 166 files
 JS 787.86 kB / 214.34 gzip; CSS 20.00 kB / 5.03 gzip
@@ -142,7 +142,7 @@ New: `tests/chest-model.test.ts` (9), `tests/container-ui.test.ts` (12), `tests/
 
 - Input / flame / fuel / arrow / output layout.
 - Put ore + coal; flame shrinks, arrow fills **while the GUI stays open**. Close/reopen still shows the same live `FurnaceState`.
-- Shift-click routing. Recipe Book: only smelting; click fills input; fuel stays empty until player puts it.
+- Shift-click routing. **Product follow-up:** Recipe Book was removed from Furnace entirely (see QA-fixes report). `SMELTING_RECIPES` remain the simulation source.
 - Creative vs Survival: same furnace GUI.
 
 ### Crafting

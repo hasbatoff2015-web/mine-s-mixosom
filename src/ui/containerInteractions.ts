@@ -106,21 +106,31 @@ export function placeCraftingRecipe(
   inventory: Inventory,
   gridSize: 2 | 3,
   multiplier: number,
-): { readonly placed: boolean; readonly grid: Array<ItemStack | null>; readonly ghost?: GhostCraftState } {
+): {
+  readonly placed: boolean;
+  readonly aborted: boolean;
+  readonly grid: Array<ItemStack | null>;
+  readonly ghost?: GhostCraftState;
+} {
   const snapshot = inventory.serialize();
   const previousGrid = grid.map((stack) => cloneStack(stack));
   const returned = returnStacksToInventory(inventory, previousGrid);
   if (!returned.returned) {
     inventory.restore(snapshot);
-    return { placed: false, grid: previousGrid };
+    return { placed: false, aborted: true, grid: previousGrid };
   }
+  const empty = Array.from({ length: gridSize * gridSize }, () => null as ItemStack | null);
   const counts = inventoryItemCounts(inventory);
-  const fill = Math.max(1, Math.min(multiplier, maxRecipeFill(recipe, counts)));
-  if (fill < 1 || maxRecipeFill(recipe, counts) < 1) {
-    inventory.restore(snapshot);
-    for (let index = 0; index < grid.length; index += 1) grid[index] = previousGrid[index] ?? null;
-    return { placed: false, grid: previousGrid, ghost: ghostFromRecipe(recipe, gridSize, inventoryItemCounts(inventory)) };
+  const available = maxRecipeFill(recipe, counts);
+  if (available < 1) {
+    return {
+      placed: false,
+      aborted: false,
+      grid: empty,
+      ghost: ghostFromRecipe(recipe, gridSize, counts),
+    };
   }
+  const fill = Math.max(1, Math.min(multiplier, available));
   const template = craftingTemplate(recipe, gridSize, counts);
   const next: Array<ItemStack | null> = Array.from({ length: gridSize * gridSize }, () => null);
   for (let index = 0; index < template.length; index += 1) {
@@ -130,12 +140,15 @@ export function placeCraftingRecipe(
     const removed = inventory.remove(cell.itemId, want);
     if (removed <= 0) {
       inventory.restore(snapshot);
-      return { placed: false, grid: previousGrid, ghost: ghostFromRecipe(recipe, gridSize, inventoryItemCounts(inventory)) };
+      return { placed: false, aborted: true, grid: previousGrid };
     }
     next[index] = createItemStack(cell.itemId, removed);
   }
-  return { placed: true, grid: next };
+  return { placed: true, aborted: false, grid: next };
 }
+
+/** Transactional Recipe Book selection. Same as `placeCraftingRecipe`. */
+export const selectCraftingRecipe = placeCraftingRecipe;
 
 export function takeCraftOutput(
   grid: Array<ItemStack | null>,
@@ -257,7 +270,7 @@ export function showsCreativeCatalog(kind: ContainerKind, mode: 'survival' | 'cr
 }
 
 export function hasRecipeBook(kind: ContainerKind): boolean {
-  return kind === 'crafting-table' || kind === 'furnace' || kind === 'inventory';
+  return kind === 'crafting-table' || kind === 'inventory';
 }
 
 export { ingredientItemIds };

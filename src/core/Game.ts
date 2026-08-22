@@ -5,6 +5,7 @@ import {
   canHarvestBlock,
   doorFacingFromYaw,
   chestFacingFromYaw,
+  furnaceFacingFromYaw,
   getBlockDefinition,
   isPressurePlateBlock,
   isSlabBlock,
@@ -1034,6 +1035,11 @@ export class Game {
     if (item.placesBlockId === BlockId.Chest) {
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
       session.world.setBlockState(x, y, z, { facing: chestFacingFromYaw(session.player.yaw) });
+      return;
+    }
+    if (item.placesBlockId === BlockId.Furnace) {
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
+      session.world.setBlockState(x, y, z, { facing: furnaceFacingFromYaw(session.player.yaw) });
       return;
     }
     if (placed.solid && session.player.intersectsBlock(x, y, z)) {

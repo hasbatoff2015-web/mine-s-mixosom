@@ -259,9 +259,11 @@ Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation 
 
 `GameUI` строит screens/modals как DOM, а не рисует интерфейс в WebGL. Это упрощает responsive layout и debugging. Inventory UI оперирует теми же `ItemStack`/matcher APIs, что и tests.
 
-Block containers (chest / furnace / crafting table) и Survival player inventory используют общий pixel layout (`containerTheme.ts`: logical ~176×166, slot pitch 18, UI scale с потолком 4). Примитивы: `.mc-panel`, recessed slots, player 3×9 + hotbar, labels, result slot, flame/arrow, recipe-book button и left panel. `recipeBook.ts` читает canonical `CRAFTING_RECIPES` / `SMELTING_RECIPES` (стабильные recipe IDs, optional `knownIds`). Placement/ghost/shift-fill живут в `containerInteractions.ts`, не в DOM.
+Block containers (chest / furnace / crafting table) и Survival player inventory используют общий pixel layout (`containerTheme.ts`: logical ~176×166, slot pitch 18, UI scale с потолком 4). Примитивы: `.mc-panel`, recessed slots фиксированного `--mc-slot` (не `1fr`), player 3×9 + hotbar, labels, result slot, flame/arrow. Recipe Book — только crafting table и Survival 2×2: кнопка-сосед flex-ряда, open state `[book][gap][panel]`. `recipeBook.ts` читает canonical `CRAFTING_RECIPES` для UI; `SMELTING_RECIPES` остаются simulation-only. Placement транзакционный: вернуть real grid в inventory, затем real ingredients или ghost (`GhostCraftState`, никогда не `InventoryStack`).
 
-Creative catalog монтируется один раз (`data-creative-catalog`) **только** когда `kind === 'inventory' && mode === 'creative'`. Последующие slot clicks патчат `[data-inventory-dynamic]` и `#cursor-stack`, не remount `inventory-window`, поэтому scroll не сбрасывается. Открытие chest/furnace/table в Creative не показывает каталог.
+Creative E — `.mc-stage` с вкладками Каталог / Инвентарь. Catalog: `data-creative-catalog` (scroll identity) + 9 hotbar. Inventory tab: armor + 3×9, каталог скрыт, не unmount. Live furnace ticks патчат `[data-slot]` in-place по `data-sig` (`inventoryLayout.ts`), hover — inset box-shadow без layout shift.
+
+Chest world: `ChunkMesher` не эмитит cube faces (`renderShape: 'chest'`). `ChestRenderer` — единственный visual path. Facing = opposite of look. Lid hinge rear, positive `xRot`. Furnace cube remaps front по `blockStates.facing`; `burnTime > 0` → `textures.litFront` и `blockEmissionAt` = `torchBlockEmission()`. `LightEngine.seed/propagate` читает `world.blockEmissionAt`, не только definition.emission.
 
 HUD получает фактический attack strength. Shield blocking state уходит в `FirstPersonRenderer`, а DOM остаётся для интерфейса, не для руки или held item.
 

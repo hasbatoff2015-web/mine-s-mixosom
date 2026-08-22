@@ -243,7 +243,13 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.Furnace, 'furnace', {
     category: 'utility', hardness: 3.5, tool: 'pickaxe', tier: 'wood',
     drop: { item: 'furnace', count: 1, requiresCorrectTool: true },
-    textures: { top: 'block/furnace_top', bottom: 'block/furnace_top', side: 'block/furnace_side', front: 'block/furnace_front' },
+    textures: {
+      top: 'block/furnace_top',
+      bottom: 'block/furnace_top',
+      side: 'block/furnace_side',
+      front: 'block/furnace_front',
+      litFront: 'block/furnace_front_on',
+    },
   }),
   block(BlockId.Torch, 'torch', {
     category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14,
@@ -399,4 +405,9 @@ export function getBlockByKey(key: string): BlockDefinition | undefined {
 
 export function isKnownBlockId(id: number): id is BlockId {
   return BLOCK_REGISTRY.has(id as BlockId);
+}
+
+/** Canonical torch light level. Lit furnace uses this instead of a copied constant. */
+export function torchBlockEmission(): number {
+  return getBlockDefinition(BlockId.Torch).emission ?? 0;
 }

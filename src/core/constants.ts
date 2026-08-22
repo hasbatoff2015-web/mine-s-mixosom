@@ -36,6 +36,11 @@ export const positiveMod = (value: number, divisor: number): number => ((value %
 export const chunkKey = (x: number, z: number): string => `${x},${z}`;
 export const blockKey = (x: number, y: number, z: number): string => `${x},${y},${z}`;
 
+export function parseBlockKey(key: string): { x: number; y: number; z: number } {
+  const [x = 0, y = 0, z = 0] = key.split(',').map(Number);
+  return { x, y, z };
+}
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }

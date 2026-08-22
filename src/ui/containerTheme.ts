@@ -6,7 +6,9 @@ export const MC_FURNACE_HEIGHT = 166;
 export const MC_CRAFTING_HEIGHT = 166;
 export const MC_CHEST_HEIGHT = 168;
 export const MC_INVENTORY_HEIGHT = 166;
+export const MC_CREATIVE_HEIGHT = 222;
 export const MC_RECIPE_BOOK_WIDTH = 147;
+export const MC_BOOK_BUTTON_WIDTH = 20;
 export const MC_PLAYER_INV_TOP = 84;
 export const MC_HOTBAR_GAP = 4;
 export const MC_MAX_UI_SCALE = 4;
@@ -27,12 +29,15 @@ export function containerUiScale(
 }
 
 export function containerStageSize(
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace',
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'creative',
   recipeBookOpen: boolean,
 ): { width: number; height: number } {
+  if (kind === 'creative') return { width: MC_CONTAINER_WIDTH, height: MC_CREATIVE_HEIGHT };
   const height = kind === 'chest' ? MC_CHEST_HEIGHT
     : kind === 'furnace' || kind === 'crafting-table' ? MC_FURNACE_HEIGHT
       : MC_INVENTORY_HEIGHT;
-  const width = MC_CONTAINER_WIDTH + (recipeBookOpen ? MC_RECIPE_BOOK_WIDTH + 4 : 0);
-  return { width, height };
+  const bookExtra = recipeBookOpen
+    ? MC_RECIPE_BOOK_WIDTH + 4
+    : (kind === 'crafting-table' || kind === 'inventory' ? MC_BOOK_BUTTON_WIDTH : 0);
+  return { width: MC_CONTAINER_WIDTH + bookExtra, height };
 }

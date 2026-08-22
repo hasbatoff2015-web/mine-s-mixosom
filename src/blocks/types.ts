@@ -56,6 +56,8 @@ export interface BlockTextures {
   readonly bottom?: string;
   readonly side?: string;
   readonly front?: string;
+  /** Burning furnace (and similar) front face. Not used as default cube front. */
+  readonly litFront?: string;
 }
 
 export interface BlockDrop {

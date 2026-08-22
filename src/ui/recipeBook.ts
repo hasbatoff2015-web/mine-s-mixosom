@@ -143,6 +143,18 @@ export function inventoryItemCounts(inventory: Inventory): ReadonlyMap<string, n
   return counts;
 }
 
+export function inventoryAndGridCounts(
+  inventory: Inventory,
+  grid: readonly ({ itemId: string; count: number } | null)[],
+): Map<string, number> {
+  const counts = new Map(inventoryItemCounts(inventory));
+  for (const stack of grid) {
+    if (!stack) continue;
+    counts.set(stack.itemId, (counts.get(stack.itemId) ?? 0) + stack.count);
+  }
+  return counts;
+}
+
 export function pickIngredientItem(
   ingredient: Ingredient,
   counts: ReadonlyMap<string, number>,

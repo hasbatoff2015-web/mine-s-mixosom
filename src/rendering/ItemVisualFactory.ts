@@ -5,6 +5,7 @@ import {
   generatedHeldTexturePath,
   getItemDefinition,
   itemHeldMeshKind,
+  itemIconDescriptor,
   itemRenderProfile,
   itemUsesGeneratedHeldGeometry,
   OAK_DOOR_HELD_TEXTURE,
@@ -70,6 +71,17 @@ function heldLocalFaceUv(
   return [box.maxX, box.minY, box.minX, box.maxY];
 }
 
+export function specialPreviewEntityTexturePaths(): string[] {
+  const paths = new Set<string>();
+  for (const item of ITEMS) {
+    if (itemIconDescriptor(item).kind !== 'special_preview') continue;
+    if (item.kind === 'block' && getBlockDefinition(item.blockId).renderShape === 'chest') {
+      paths.add(CHEST_TEXTURE_KEY);
+    }
+  }
+  return [...paths];
+}
+
 export function droppedVisualCopyCount(stackCount: number): number {
   if (stackCount > 32) return 4;
   if (stackCount > 16) return 3;
@@ -110,7 +122,10 @@ export class ItemVisualFactory {
     paths.add('item/bow_pulling_0');
     paths.add('item/bow_pulling_1');
     paths.add('item/bow_pulling_2');
-    await Promise.all([...paths].map((path) => this.loadGeneratedAsset(path)));
+    await Promise.all([
+      ...[...paths].map((path) => this.loadGeneratedAsset(path)),
+      ...specialPreviewEntityTexturePaths().map((path) => this.ensureDecodedTexture(path)),
+    ]);
   }
 
   createItemModel(itemId: string): THREE.Group {
@@ -500,6 +515,22 @@ export class ItemVisualFactory {
       image.onerror = () => reject(new Error(`Unable to load ${url}`));
       image.src = url;
     });
+  }
+
+  private async ensureDecodedTexture(texturePath: string): Promise<void> {
+    const existing = this.itemTextures.get(texturePath);
+    if (existing?.image) return;
+    const image = await this.loadImageElement(TextureAtlas.url(texturePath));
+    const texture = new THREE.Texture(image);
+    texture.needsUpdate = true;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    this.itemTextures.get(texturePath)?.dispose();
+    this.itemTextures.set(texturePath, texture);
   }
 
   private itemTexture(texturePath: string): THREE.Texture {

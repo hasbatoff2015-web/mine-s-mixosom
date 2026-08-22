@@ -60,6 +60,7 @@ const blocks = {
   furnace_top: 'furnace_top.png',
   furnace_side: 'furnace_side.png',
   furnace_front: 'furnace_front_off.png',
+  furnace_front_on: 'furnace_front_on.png',
   furnace: 'furnace_front_off.png',
   torch: 'torch_on.png',
   ladder: 'ladder.png',

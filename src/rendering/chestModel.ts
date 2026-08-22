@@ -11,6 +11,11 @@ export const CHEST_LID_HEIGHT = 5 / 16;
 export const CHEST_OPEN_ANGLE = Math.PI / 2;
 /** Exponential lid follow per 20 TPS tick, matching vanilla ~0.1 lerp. */
 export const CHEST_LID_TICK_LERP = 0.1;
+/**
+ * Lift the lid off the body top by a sub-pixel so closed body-top and lid-bottom
+ * are not coplanar. Large polygonOffset is not used.
+ */
+export const CHEST_LID_SEAM = 1 / 64;
 
 export interface ChestCuboid {
   readonly minX: number;
@@ -28,8 +33,8 @@ export const CHEST_BODY_BOX: ChestCuboid = Object.freeze({
 });
 
 export const CHEST_LID_BOX: ChestCuboid = Object.freeze({
-  minX: CHEST_INSET, minY: 9 / 16, minZ: CHEST_INSET,
-  maxX: 1 - CHEST_INSET, maxY: 14 / 16, maxZ: 1 - CHEST_INSET,
+  minX: CHEST_INSET, minY: CHEST_BODY_HEIGHT + CHEST_LID_SEAM, minZ: CHEST_INSET,
+  maxX: 1 - CHEST_INSET, maxY: 14 / 16 + CHEST_LID_SEAM, maxZ: 1 - CHEST_INSET,
 });
 
 export const CHEST_LATCH_BOX: ChestCuboid = Object.freeze({
@@ -60,7 +65,27 @@ export function chestYaw(facing: HorizontalFacing): number {
 export function chestLidAngle(openProgress: number): number {
   const t = Math.max(0, Math.min(1, openProgress));
   if (t === 0) return 0;
-  return -t * CHEST_OPEN_ANGLE;
+  return t * CHEST_OPEN_ANGLE;
+}
+
+/** Authored latch/front is −Z. After `chestYaw(facing)` this equals `facing`. */
+export function chestLatchWorldNormal(facing: HorizontalFacing): readonly [number, number, number] {
+  const yaw = chestYaw(facing);
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return [-sin, 0, -cos];
+}
+
+export function isChestEntityTextureKey(key: string): boolean {
+  return key === CHEST_TEXTURE_KEY || key.endsWith('/chest/normal');
+}
+
+/** World Y of the lid's front-top edge after hinge rotation (block-local). */
+export function chestLidFrontTopY(openProgress: number): number {
+  const angle = chestLidAngle(openProgress);
+  const py = CHEST_LID_BOX.maxY - CHEST_LID_PIVOT.y;
+  const pz = CHEST_LID_BOX.minZ - CHEST_LID_PIVOT.z;
+  return CHEST_LID_PIVOT.y + py * Math.cos(angle) - pz * Math.sin(angle);
 }
 
 /** Frame-rate independent approach of `current` toward `target` (0/1). */
@@ -91,6 +116,7 @@ function modelBoxFaces(
   logicalW: number,
   logicalH: number,
   logicalD: number,
+  omit: ReadonlySet<'east' | 'west' | 'up' | 'down' | 'south' | 'north'> = new Set(),
 ): FaceSpec[] {
   const w = logicalW;
   const h = logicalH;
@@ -111,14 +137,26 @@ function modelBoxFaces(
   const east = rect(texX + d + w, texY + d, d, h);
   const north = rect(texX + d + w + d, texY + d, w, h);
   const { minX, minY, minZ, maxX, maxY, maxZ } = box;
-  return [
-    { nx: 1, ny: 0, nz: 0, corners: [[maxX, minY, maxZ], [maxX, minY, minZ], [maxX, maxY, minZ], [maxX, maxY, maxZ]], u0: east[0], v0: east[1], u1: east[2], v1: east[3] },
-    { nx: -1, ny: 0, nz: 0, corners: [[minX, minY, minZ], [minX, minY, maxZ], [minX, maxY, maxZ], [minX, maxY, minZ]], u0: west[0], v0: west[1], u1: west[2], v1: west[3] },
-    { nx: 0, ny: 1, nz: 0, corners: [[minX, maxY, maxZ], [maxX, maxY, maxZ], [maxX, maxY, minZ], [minX, maxY, minZ]], u0: up[0], v0: up[1], u1: up[2], v1: up[3] },
-    { nx: 0, ny: -1, nz: 0, corners: [[minX, minY, minZ], [maxX, minY, minZ], [maxX, minY, maxZ], [minX, minY, maxZ]], u0: down[0], v0: down[1], u1: down[2], v1: down[3] },
-    { nx: 0, ny: 0, nz: 1, corners: [[minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ]], u0: south[0], v0: south[1], u1: south[2], v1: south[3] },
-    { nx: 0, ny: 0, nz: -1, corners: [[maxX, minY, minZ], [minX, minY, minZ], [minX, maxY, minZ], [maxX, maxY, minZ]], u0: north[0], v0: north[1], u1: north[2], v1: north[3] },
-  ];
+  const faces: FaceSpec[] = [];
+  if (!omit.has('east')) {
+    faces.push({ nx: 1, ny: 0, nz: 0, corners: [[maxX, minY, maxZ], [maxX, minY, minZ], [maxX, maxY, minZ], [maxX, maxY, maxZ]], u0: east[0], v0: east[1], u1: east[2], v1: east[3] });
+  }
+  if (!omit.has('west')) {
+    faces.push({ nx: -1, ny: 0, nz: 0, corners: [[minX, minY, minZ], [minX, minY, maxZ], [minX, maxY, maxZ], [minX, maxY, minZ]], u0: west[0], v0: west[1], u1: west[2], v1: west[3] });
+  }
+  if (!omit.has('up')) {
+    faces.push({ nx: 0, ny: 1, nz: 0, corners: [[minX, maxY, maxZ], [maxX, maxY, maxZ], [maxX, maxY, minZ], [minX, maxY, minZ]], u0: up[0], v0: up[1], u1: up[2], v1: up[3] });
+  }
+  if (!omit.has('down')) {
+    faces.push({ nx: 0, ny: -1, nz: 0, corners: [[minX, minY, minZ], [maxX, minY, minZ], [maxX, minY, maxZ], [minX, minY, maxZ]], u0: down[0], v0: down[1], u1: down[2], v1: down[3] });
+  }
+  if (!omit.has('south')) {
+    faces.push({ nx: 0, ny: 0, nz: 1, corners: [[minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ]], u0: south[0], v0: south[1], u1: south[2], v1: south[3] });
+  }
+  if (!omit.has('north')) {
+    faces.push({ nx: 0, ny: 0, nz: -1, corners: [[maxX, minY, minZ], [minX, minY, minZ], [minX, maxY, minZ], [maxX, maxY, minZ]], u0: north[0], v0: north[1], u1: north[2], v1: north[3] });
+  }
+  return faces;
 }
 
 function appendFaces(
@@ -172,7 +210,7 @@ export function createChestLidGeometry(): THREE.BufferGeometry {
   const uvs: number[] = [];
   const indices: number[] = [];
   appendFaces(
-    modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14),
+    modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14, new Set(['down'])),
     positions, normals, uvs, indices,
     [CHEST_LID_PIVOT.x, CHEST_LID_PIVOT.y, CHEST_LID_PIVOT.z],
   );
@@ -185,7 +223,7 @@ export function createChestLatchGeometry(): THREE.BufferGeometry {
   const uvs: number[] = [];
   const indices: number[] = [];
   appendFaces(
-    modelBoxFaces(CHEST_LATCH_BOX, 0, 0, 2, 4, 1),
+    modelBoxFaces(CHEST_LATCH_BOX, 0, 0, 2, 4, 1, new Set(['south'])),
     positions, normals, uvs, indices,
     [CHEST_LID_PIVOT.x, CHEST_LID_PIVOT.y, CHEST_LID_PIVOT.z],
   );
@@ -200,8 +238,8 @@ export function createClosedChestGeometry(): THREE.BufferGeometry {
   const indices: number[] = [];
   const origin: readonly [number, number, number] = [0.5, 0.5, 0.5];
   appendFaces(modelBoxFaces(CHEST_BODY_BOX, 0, 19, 14, 10, 14), positions, normals, uvs, indices, origin);
-  appendFaces(modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14), positions, normals, uvs, indices, origin);
-  appendFaces(modelBoxFaces(CHEST_LATCH_BOX, 0, 0, 2, 4, 1), positions, normals, uvs, indices, origin);
+  appendFaces(modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14, new Set(['down'])), positions, normals, uvs, indices, origin);
+  appendFaces(modelBoxFaces(CHEST_LATCH_BOX, 0, 0, 2, 4, 1, new Set(['south'])), positions, normals, uvs, indices, origin);
   return geometryFrom(positions, normals, uvs, indices, {
     chestModel: true,
     specialHeldModel: true,
@@ -223,6 +261,6 @@ export function chestCollisionBox(x: number, y: number, z: number): {
   };
 }
 
-export function isChestEntityTextureKey(key: string): boolean {
-  return key === CHEST_TEXTURE_KEY || key.endsWith('/chest/normal');
+export function chestGeometryHasCoplanarBodyLidOverlap(): boolean {
+  return CHEST_LID_BOX.minY < CHEST_BODY_BOX.maxY;
 }

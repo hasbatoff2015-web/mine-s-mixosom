@@ -7,6 +7,7 @@ import {
   furnaceAccepts,
   ghostFromRecipe,
   hasRecipeBook,
+  maxRecipeFill,
   placeCraftingRecipe,
   placeSmeltingIngredient,
   returnStacksToInventory,
@@ -16,7 +17,9 @@ import {
 import {
   allCraftingBookEntries,
   allSmeltingBookEntries,
+  inventoryAndGridCounts,
   inventoryItemCounts,
+  isCraftingRecipeCraftable,
   isFuelItem,
   isSmeltableItem,
   queryRecipeBook,
@@ -24,15 +27,26 @@ import {
   visibleRecipeBookTabs,
 } from '../src/ui/recipeBook';
 import { containerStageSize, containerUiScale } from '../src/ui/containerTheme';
-import { patchContainerDynamic, patchInventoryDynamic } from '../src/ui/inventoryLayout';
+import {
+  applySlotSnapshots,
+  catalogMustHideMainInventory,
+  CREATIVE_DEFAULT_TAB,
+  creativeCatalogPlayerSlotKeys,
+  creativeInventoryTabSlotKeys,
+  patchContainerDynamic,
+  patchInventoryDynamic,
+  slotStateSignature,
+} from '../src/ui/inventoryLayout';
 
 describe('container layout', () => {
   it('keeps furnace/crafting logical size near vanilla 176×166', () => {
     expect(containerStageSize('furnace', false)).toEqual({ width: 176, height: 166 });
-    expect(containerStageSize('crafting-table', false)).toEqual({ width: 176, height: 166 });
+    expect(containerStageSize('crafting-table', false).height).toBe(166);
+    expect(containerStageSize('crafting-table', false).width).toBe(176 + 20);
     expect(containerStageSize('chest', false).width).toBe(176);
     const withBook = containerStageSize('crafting-table', true);
     expect(withBook.width).toBeGreaterThan(176);
+    expect(containerStageSize('creative', false).width).toBe(176);
   });
 
   it('scales down to fit 1280×720 and does not explode on 2560×1440', () => {
@@ -131,7 +145,7 @@ describe('recipe book', () => {
     expect(allSmeltingBookEntries().map((entry) => entry.id).sort())
       .toEqual([...SMELTING_RECIPES].map((recipe) => recipe.id).sort());
     expect(hasRecipeBook('crafting-table')).toBe(true);
-    expect(hasRecipeBook('furnace')).toBe(true);
+    expect(hasRecipeBook('furnace')).toBe(false);
     expect(hasRecipeBook('inventory')).toBe(true);
     expect(hasRecipeBook('chest')).toBe(false);
   });
@@ -201,3 +215,130 @@ describe('recipe book', () => {
     expect(showsCreativeCatalog('chest', 'creative')).toBe(false);
   });
 });
+
+describe('recipe book transactions', () => {
+  it('clears recipe A before placing B and conserves items', () => {
+    const inventory = new Inventory();
+    inventory.addItem('oak_planks', 8);
+    const chest = CRAFTING_RECIPES.find((item) => item.id === 'chest')!;
+    const table = CRAFTING_RECIPES.find((item) => item.id === 'crafting_table')!;
+    const first = placeCraftingRecipe(chest, Array.from({ length: 9 }, () => null), inventory, 3, 1);
+    expect(first.placed).toBe(true);
+    expect(first.grid.filter(Boolean)).toHaveLength(8);
+    const second = placeCraftingRecipe(table, first.grid, inventory, 3, 1);
+    expect(second.placed).toBe(true);
+    expect(second.aborted).toBe(false);
+    expect(second.grid.filter(Boolean)).toHaveLength(4);
+    expect(inventory.count('oak_planks')).toBe(4);
+    expect(second.grid.every((cell) => !cell || cell.itemId === 'oak_planks')).toBe(true);
+  });
+
+  it('returns real A and shows only a ghost when B is uncraftable', () => {
+    const inventory = new Inventory();
+    inventory.addItem('oak_planks', 8);
+    const chest = CRAFTING_RECIPES.find((item) => item.id === 'chest')!;
+    const pickaxe = CRAFTING_RECIPES.find((item) => item.id === 'diamond_pickaxe')!;
+    const first = placeCraftingRecipe(chest, Array.from({ length: 9 }, () => null), inventory, 3, 1);
+    const second = placeCraftingRecipe(pickaxe, first.grid, inventory, 3, 1);
+    expect(second.placed).toBe(false);
+    expect(second.aborted).toBe(false);
+    expect(second.grid.every((cell) => cell === null)).toBe(true);
+    expect(inventory.count('oak_planks')).toBe(8);
+    expect(second.ghost?.recipeId).toBe('diamond_pickaxe');
+    expect(inventory.count('diamond')).toBe(0);
+  });
+
+  it('aborts without loss when inventory cannot accept the previous grid', () => {
+    const inventory = new Inventory();
+    for (let index = 0; index < 36; index += 1) inventory.setSlot(index, createItemStack('cobblestone', 64));
+    const grid = Array.from({ length: 9 }, () => null as ReturnType<typeof createItemStack> | null);
+    grid[0] = createItemStack('oak_planks', 8);
+    const table = CRAFTING_RECIPES.find((item) => item.id === 'crafting_table')!;
+    const result = placeCraftingRecipe(table, grid, inventory, 3, 1);
+    expect(result.aborted).toBe(true);
+    expect(result.grid[0]).toEqual(createItemStack('oak_planks', 8));
+    expect(inventory.count('oak_planks')).toBe(0);
+  });
+
+  it('does not duplicate when switching A→B→A', () => {
+    const inventory = new Inventory();
+    inventory.addItem('oak_planks', 8);
+    const chest = CRAFTING_RECIPES.find((item) => item.id === 'chest')!;
+    const table = CRAFTING_RECIPES.find((item) => item.id === 'crafting_table')!;
+    const a = placeCraftingRecipe(chest, Array.from({ length: 9 }, () => null), inventory, 3, 1);
+    const b = placeCraftingRecipe(table, a.grid, inventory, 3, 1);
+    const again = placeCraftingRecipe(chest, b.grid, inventory, 3, 1);
+    expect(again.placed).toBe(true);
+    const total = inventory.count('oak_planks') + again.grid.reduce((sum, cell) => sum + (cell?.count ?? 0), 0);
+    expect(total).toBe(8);
+  });
+
+  it('counts split stacks for Show Craftable and shift fill', () => {
+    const inventory = new Inventory();
+    inventory.setSlot(0, createItemStack('oak_planks', 4));
+    inventory.setSlot(10, createItemStack('oak_planks', 4));
+    const chest = CRAFTING_RECIPES.find((item) => item.id === 'chest')!;
+    const sticks = CRAFTING_RECIPES.find((item) => item.id === 'sticks')!;
+    const counts = inventoryItemCounts(inventory);
+    expect(isCraftingRecipeCraftable(chest, counts)).toBe(true);
+    expect(isCraftingRecipeCraftable(sticks, counts)).toBe(true);
+    inventory.setSlot(10, null);
+    expect(isCraftingRecipeCraftable(chest, inventoryItemCounts(inventory))).toBe(false);
+    expect(isCraftingRecipeCraftable(sticks, inventoryItemCounts(inventory))).toBe(true);
+    expect(maxRecipeFill(sticks, inventoryItemCounts(inventory))).toBe(2);
+  });
+
+  it('includes grid contents when checking craftable status', () => {
+    const inventory = new Inventory();
+    const grid = Array.from({ length: 9 }, () => null as ReturnType<typeof createItemStack> | null);
+    grid[0] = createItemStack('oak_planks', 8);
+    const chest = CRAFTING_RECIPES.find((item) => item.id === 'chest')!;
+    expect(isCraftingRecipeCraftable(chest, inventoryItemCounts(inventory))).toBe(false);
+    expect(isCraftingRecipeCraftable(chest, inventoryAndGridCounts(inventory, grid))).toBe(true);
+  });
+
+  it('hides 3×3 recipes from the Survival 2×2 book', () => {
+    const two = queryRecipeBook({
+      kind: 'crafting', gridSize: 2, category: 'all', search: '', craftableOnly: false,
+    }, new Map());
+    const three = queryRecipeBook({
+      kind: 'crafting', gridSize: 3, category: 'all', search: '', craftableOnly: false,
+    }, new Map());
+    expect(two.some((entry) => entry.id === 'chest')).toBe(false);
+    expect(three.some((entry) => entry.id === 'chest')).toBe(true);
+    expect(two.some((entry) => entry.id === 'crafting_table')).toBe(true);
+  });
+});
+
+describe('creative inventory contract', () => {
+  it('defaults to Catalog with only 9 hotbar player slots', () => {
+    expect(CREATIVE_DEFAULT_TAB).toBe('catalog');
+    expect(catalogMustHideMainInventory('catalog')).toBe(true);
+    expect(catalogMustHideMainInventory('inventory')).toBe(false);
+    const hotbar = creativeCatalogPlayerSlotKeys();
+    expect(hotbar).toHaveLength(9);
+    expect(hotbar).toEqual(Array.from({ length: 9 }, (_value, index) => `inventory-${index}`));
+    expect(hotbar.some((key) => key === 'inventory-9')).toBe(false);
+    const inventoryTab = creativeInventoryTabSlotKeys();
+    expect(inventoryTab.filter((key) => key.startsWith('inventory-'))).toHaveLength(36);
+    expect(inventoryTab).toContain('armor-head');
+    expect(inventoryTab).toContain('offhand');
+  });
+
+  it('keeps slot DOM identity across content patches', () => {
+    const slot = { key: 'inventory-5', signature: slotStateSignature({ itemId: 'dirt', count: 64 }), className: 'slot', title: '', innerHTML: '64' };
+    const existing = [slot];
+    const result = applySlotSnapshots(existing, [{
+      key: 'inventory-5',
+      signature: slotStateSignature({ itemId: 'dirt', count: 63 }),
+      className: 'slot',
+      title: '',
+      innerHTML: '63',
+    }]);
+    expect(result.preserved).toBe(true);
+    expect(result.identity).toBe(true);
+    expect(existing[0]).toBe(slot);
+    expect(slot.innerHTML).toBe('63');
+  });
+});
+

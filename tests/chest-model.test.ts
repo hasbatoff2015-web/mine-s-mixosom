@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { BlockId, chestFacingFromYaw, getBlockDefinition } from '../src/blocks';
+import { BlockId, chestFacingFromYaw, doorFacingFromYaw, furnaceFacingFromYaw, getBlockDefinition } from '../src/blocks';
 import { CHUNK_SIZE, floorDiv, positiveMod } from '../src/core/constants';
 import { itemHeldMeshKind, itemIconDescriptor } from '../src/items';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import {
   CHEST_TEXTURE_KEY,
+  chestGeometryHasCoplanarBodyLidOverlap,
+  chestLatchWorldNormal,
   chestLidAngle,
+  chestLidFrontTopY,
   chestYaw,
   createClosedChestGeometry,
   defaultChestFacing,
@@ -38,7 +41,7 @@ describe('chest world model', () => {
     expect(CHEST_TEXTURE_KEY).toBe('entity/chest/normal');
     expect(isChestEntityTextureKey(CHEST_TEXTURE_KEY)).toBe(true);
     expect(itemHeldMeshKind('chest')).toBe('special_model');
-    expect(itemIconDescriptor('chest').kind).toBe('special_preview');
+    expect(itemIconDescriptor('chest')).toEqual({ kind: 'special_preview', category: 'chest' });
   });
 
   it('does not emit chunk cube faces for a placed chest', () => {
@@ -58,14 +61,29 @@ describe('chest world model', () => {
 
   it('faces the player lock-forward and defaults legacy chests to north', () => {
     expect(defaultChestFacing(undefined)).toBe('north');
-    expect(chestFacingFromYaw(0)).toBe('north');
+    expect(doorFacingFromYaw(0)).toBe('north');
+    expect(chestFacingFromYaw(0)).toBe('south');
+    expect(furnaceFacingFromYaw(0)).toBe('south');
+    expect(chestFacingFromYaw(0)).not.toBe(doorFacingFromYaw(0));
     expect(chestYaw('east')).toBeCloseTo(-Math.PI / 2, 8);
     expect(chestYaw('south')).toBeCloseTo(Math.PI, 8);
+    expect(chestLatchWorldNormal('north')[0]).toBeCloseTo(0, 8);
+    expect(chestLatchWorldNormal('north')[2]).toBeCloseTo(-1, 8);
+    expect(chestLatchWorldNormal('south')[2]).toBeCloseTo(1, 8);
+    expect(chestLatchWorldNormal('west')[0]).toBeCloseTo(-1, 8);
+    expect(chestLatchWorldNormal('east')[0]).toBeCloseTo(1, 8);
+  });
+
+  it('opens the lid up around the rear hinge, not down', () => {
+    expect(chestLidAngle(0)).toBe(0);
+    expect(chestLidAngle(1)).toBeCloseTo(Math.PI / 2, 8);
+    expect(chestLidFrontTopY(1)).toBeGreaterThan(chestLidFrontTopY(0));
+    expect(chestGeometryHasCoplanarBodyLidOverlap()).toBe(false);
   });
 
   it('interpolates lid progress without teleporting and keeps animation FPS-independent', () => {
     expect(chestLidAngle(0)).toBe(0);
-    expect(chestLidAngle(1)).toBeCloseTo(-Math.PI / 2, 8);
+    expect(chestLidAngle(1)).toBeCloseTo(Math.PI / 2, 8);
     const slow = stepChestOpenProgress(0, 1, 0.05);
     const fast = stepChestOpenProgress(0, 1, 0.2);
     expect(slow).toBeGreaterThan(0);

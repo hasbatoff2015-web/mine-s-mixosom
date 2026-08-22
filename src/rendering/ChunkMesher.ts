@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import {
   BlockId,
   blockLightingMode,
+  DEFAULT_FURNACE_FACING,
+  furnaceCubeFaceSlot,
+  furnaceFaceTextureKey,
   getBlockDefinition,
   occupiedDoorFacing,
   type BlockDefinition,
@@ -372,7 +375,7 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): void {
-    const textureKey = this.textureForFace(definition, face.texture);
+    const textureKey = this.cubeFaceTextureKey(definition, face, world, x, y, z);
     const lighting = this.lightingFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
@@ -831,7 +834,7 @@ export class ChunkMesher {
     const sampleZ = z + Math.round(normal[2]);
     const sky = getSkyLight(world, sampleX, sampleY, sampleZ) / 15;
     const block = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
-    const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
+    const emission = Math.max(0, Math.min(1, world.blockEmissionAt(x, y, z) / 15));
     const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
     return {
       tint: this.tintFor(definition, textureKey, biome),
@@ -840,6 +843,22 @@ export class ChunkMesher {
       emission,
       shade,
     };
+  }
+
+  private cubeFaceTextureKey(
+    definition: BlockDefinition,
+    face: Face,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): string {
+    if (definition.id === BlockId.Furnace) {
+      const facing = world.getBlockState(x, y, z)?.facing ?? DEFAULT_FURNACE_FACING;
+      const slot = furnaceCubeFaceSlot(face.normal[0], face.normal[1], face.normal[2], facing);
+      return furnaceFaceTextureKey(definition.textures, slot, world.isFurnaceBurning(x, y, z));
+    }
+    return this.textureForFace(definition, face.texture);
   }
 
   private textureForFace(definition: BlockDefinition, face: Face['texture']): string {
