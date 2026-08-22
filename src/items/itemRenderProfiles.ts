@@ -163,6 +163,8 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
       return 'generated';
     case 'button':
     case 'pressure_plate':
+    case 'stairs':
+    case 'slab':
       return 'special_model';
     case 'cube':
       return 'block_cube';

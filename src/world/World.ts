@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition, type BlockRenderState } from '../blocks';
+import { blockCollisionBoxes, rayAabbDistance } from './collision';
 import { CHUNK_SIZE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
@@ -23,6 +24,7 @@ export interface VoxelHit {
   block: BlockId;
   normal: THREE.Vector3;
   distance: number;
+  point: THREE.Vector3;
 }
 
 export interface FallingBlockSpawn {
@@ -141,6 +143,10 @@ export class VoxelWorld {
   setBlockState(x: number, y: number, z: number, state: BlockRenderState): void {
     this.blockStates.set(blockKey(x, y, z), state);
     this.markBlockDirty(x, z);
+    this.markBlockDirty(x + 1, z);
+    this.markBlockDirty(x - 1, z);
+    this.markBlockDirty(x, z + 1);
+    this.markBlockDirty(x, z - 1);
   }
 
   skyLightAt(x: number, y: number, z: number): number {
@@ -381,7 +387,15 @@ export class VoxelWorld {
     while (distance <= maxDistance) {
       const block = this.getBlock(x, y, z);
       const definition = getBlockDefinition(block);
-      if (block !== BlockId.Air && !definition.liquid) return { x, y, z, block, normal: normal.clone(), distance };
+      if (block !== BlockId.Air && !definition.liquid) {
+        if (definition.solid) {
+          const hit = this.hitSolidBoxes(origin, dir, x, y, z, block, maxDistance);
+          if (hit) return hit;
+        } else {
+          const point = origin.clone().addScaledVector(dir, distance);
+          return { x, y, z, block, normal: normal.clone(), distance, point };
+        }
+      }
       if (maxX < maxY && maxX < maxZ) {
         x += stepX;
         distance = maxX;
@@ -400,6 +414,30 @@ export class VoxelWorld {
       }
     }
     return undefined;
+  }
+
+  private hitSolidBoxes(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    x: number,
+    y: number,
+    z: number,
+    block: BlockId,
+    maxDistance: number,
+  ): VoxelHit | undefined {
+    let best: ReturnType<typeof rayAabbDistance>;
+    for (const box of blockCollisionBoxes(this, x, y, z)) {
+      const hit = rayAabbDistance(origin, dir, box);
+      if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
+      if (!best || hit.distance < best.distance) best = hit;
+    }
+    if (!best) return undefined;
+    return {
+      x, y, z, block,
+      normal: new THREE.Vector3(best.nx, best.ny, best.nz),
+      distance: best.distance,
+      point: origin.clone().addScaledVector(dir, best.distance),
+    };
   }
 
   tick(): void {

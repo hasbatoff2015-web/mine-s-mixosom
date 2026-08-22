@@ -12,6 +12,11 @@ import {
   type ItemViewTransform,
 } from '../items';
 import {
+  slabLocalBoxes,
+  stairLocalBoxes,
+  type LocalBox,
+} from './specialBlockGeometry';
+import {
   createGeneratedItemGeometry,
   type GeneratedItemMask,
 } from './GeneratedItemGeometry';
@@ -46,6 +51,23 @@ const FULL_TILE: AtlasTile = Object.freeze({ u0: 0, v0: 0, u1: 1, v1: 1 });
 const DROPPED_OFFSETS: readonly (readonly [number, number, number])[] = [
   [0, 0, 0], [0.07, 0.025, 0.055], [-0.055, 0.045, -0.045], [0.025, 0.075, -0.07],
 ];
+
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+function heldLocalFaceUv(
+  normal: readonly [number, number, number],
+  box: LocalBox,
+): readonly [number, number, number, number] {
+  const nx = normal[0];
+  const ny = normal[1];
+  const nz = normal[2];
+  if (nx > 0) return [box.maxZ, box.minY, box.minZ, box.maxY];
+  if (nx < 0) return [box.minZ, box.minY, box.maxZ, box.maxY];
+  if (ny > 0) return [box.minX, box.maxZ, box.maxX, box.minZ];
+  if (ny < 0) return [box.minX, box.minZ, box.maxX, box.maxZ];
+  if (nz > 0) return [box.minX, box.minY, box.maxX, box.maxY];
+  return [box.maxX, box.minY, box.minX, box.maxY];
+}
 
 export function droppedVisualCopyCount(stackCount: number): number {
   if (stackCount > 32) return 4;
@@ -175,6 +197,11 @@ export class ItemVisualFactory {
     return this.generatedGeometries.get(texturePath);
   }
 
+  generatedTextureDataUrl(texturePath: string): string | undefined {
+    const image = this.itemTextures.get(texturePath)?.image as { toDataURL?: () => string } | undefined;
+    return typeof image?.toDataURL === 'function' ? image.toDataURL() : undefined;
+  }
+
   get cacheStats(): Readonly<{ blockGeometries: number; itemTextures: number; generatedGeometries: number; materials: number }> {
     return {
       blockGeometries: this.blockGeometries.size,
@@ -206,19 +233,68 @@ export class ItemVisualFactory {
   private specialHeldGeometry(itemId: string): THREE.BufferGeometry {
     let geometry = this.specialHeldGeometries.get(itemId);
     if (geometry) return geometry;
-    // Vanilla button_inventory / pressure_plate_up inventory cuboids.
-    if (itemId === 'stone_button') {
-      geometry = this.atlasCuboidGeometry([6 / 16, 4 / 16, 4 / 16], [0, 0, 0], 'block/stone');
-    } else if (itemId === 'oak_pressure_plate') {
-      geometry = this.atlasCuboidGeometry(
-        [14 / 16, 1 / 16, 14 / 16],
-        [0, -0.5 + 1 / 32, 0],
-        'block/oak_planks',
-      );
-    } else {
-      throw new Error(`No special held model for ${itemId}`);
+    const item = getItemDefinition(itemId);
+    if (item.kind !== 'block') throw new Error(`No special held model for ${itemId}`);
+    const block = getBlockDefinition(item.blockId);
+    const texture = block.textures.all ?? block.textures.side ?? `block/${block.key}`;
+    switch (block.renderShape) {
+      case 'button':
+        geometry = this.atlasCuboidGeometry([6 / 16, 4 / 16, 4 / 16], [0, 0, 0], texture);
+        break;
+      case 'pressure_plate':
+        geometry = this.atlasCuboidGeometry(
+          [14 / 16, 1 / 16, 14 / 16],
+          [0, -0.5 + 1 / 32, 0],
+          texture,
+        );
+        break;
+      case 'stairs':
+        geometry = this.geometryFromLocalBoxes(stairLocalBoxes('east', 'bottom', 'straight'), texture);
+        break;
+      case 'slab':
+        geometry = this.geometryFromLocalBoxes(slabLocalBoxes('bottom'), texture);
+        break;
+      default:
+        throw new Error(`No special held model for ${itemId}`);
     }
     this.specialHeldGeometries.set(itemId, geometry);
+    return geometry;
+  }
+
+  private geometryFromLocalBoxes(boxes: readonly LocalBox[], textureKey: string): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const tile = this.atlas?.tile(textureKey) ?? FULL_TILE;
+    for (const box of boxes) {
+      for (const face of CUBE_FACES) {
+        const base = positions.length / 3;
+        const uv = heldLocalFaceUv(face.normal, box);
+        const u0 = lerp(tile.u0, tile.u1, uv[0]);
+        const v0 = lerp(tile.v0, tile.v1, uv[1]);
+        const u1 = lerp(tile.u0, tile.u1, uv[2]);
+        const v1 = lerp(tile.v0, tile.v1, uv[3]);
+        for (const corner of face.corners) {
+          positions.push(
+            box.minX + corner[0] * (box.maxX - box.minX) - 0.5,
+            box.minY + corner[1] * (box.maxY - box.minY) - 0.5,
+            box.minZ + corner[2] * (box.maxZ - box.minZ) - 0.5,
+          );
+          normals.push(...face.normal);
+        }
+        uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
+        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeBoundingSphere();
+    geometry.userData.specialHeldModel = true;
+    geometry.userData.specialHeldBoxes = boxes.length;
     return geometry;
   }
 

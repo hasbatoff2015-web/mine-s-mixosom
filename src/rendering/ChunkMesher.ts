@@ -14,17 +14,26 @@ import type { VoxelWorld } from '../world/World';
 import { getBlockLight, getSkyLight, smoothFaceCornerLight } from '../world/LightEngine';
 import type { TextureAtlas } from './TextureAtlas';
 import {
+  blockOccludesFaces,
+  defaultSlabType,
+  defaultStairFacing,
+  defaultStairHalf,
   DOOR_THICKNESS,
   doorFaceTextureUv,
   doorHalfTexture,
   facingVector as facingVectorFrom,
   ladderPlaneLocal,
   leverHandleAngle,
+  resolveStairShape,
+  slabLocalBoxes,
+  stairLocalBoxes,
   TORCH_HEIGHT,
   TORCH_TEXTURE_UV,
   TORCH_WIDTH,
   torchLocalMatrix,
   type DoorFaceRole,
+  type LocalBox,
+  type TextureUvRect,
 } from './specialBlockGeometry';
 
 export { leverHandleAngle } from './specialBlockGeometry';
@@ -46,6 +55,18 @@ const FACES: readonly Face[] = [
   { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], shade: 0.76, texture: 'front' },
 ];
 
+function localFaceUv(face: Face, box: LocalBox): TextureUvRect {
+  const nx = face.normal[0];
+  const ny = face.normal[1];
+  const nz = face.normal[2];
+  if (nx > 0) return [box.maxZ, box.minY, box.minZ, box.maxY];
+  if (nx < 0) return [box.minZ, box.minY, box.maxZ, box.maxY];
+  if (ny > 0) return [box.minX, box.maxZ, box.maxX, box.minZ];
+  if (ny < 0) return [box.minX, box.minZ, box.maxX, box.maxZ];
+  if (nz > 0) return [box.minX, box.minY, box.maxX, box.maxY];
+  return [box.maxX, box.minY, box.minX, box.maxY];
+}
+
 interface GeometryBuffers {
   positions: number[];
   normals: number[];
@@ -65,8 +86,6 @@ interface VertexLighting {
   readonly emission: number;
   readonly shade: number;
 }
-
-type TextureUvRect = readonly [u0: number, v0: number, u1: number, v1: number];
 
 // The legacy lever tile is a transparent 16x16 sprite; the handle occupies
 // logical x=7..9 and y=6..16. Crop that opaque strip before wrapping the cuboid.
@@ -256,46 +275,49 @@ export class ChunkMesher {
           const definition = getBlockDefinition(block);
           const worldX = chunk.x * CHUNK_SIZE + x;
           const worldZ = chunk.z * CHUNK_SIZE + z;
+          const state = this.resolveState(worldX, y, worldZ);
           const target = this.buffersFor(layers, definition);
-          if (definition.renderShape !== 'cube') {
-            faces += this.addSpecial(target, definition, this.resolveState(worldX, y, worldZ), world, worldX, y, worldZ);
+          const meshAsCube = definition.renderShape === 'cube'
+            || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
+          if (!meshAsCube) {
+            faces += this.addSpecial(target, definition, state, world, worldX, y, worldZ);
             continue;
           }
           const east = x < CHUNK_SIZE - 1
             ? blocks[blockIndex + 1] as BlockId
             : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(east, block)) {
+          if (this.faceVisible(east, block, world, worldX + 1, y, worldZ)) {
             this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const west = x > 0
             ? blocks[blockIndex - 1] as BlockId
             : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(west, block)) {
+          if (this.faceVisible(west, block, world, worldX - 1, y, worldZ)) {
             this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
-          if (this.faceVisible(above, block)) {
+          if (this.faceVisible(above, block, world, worldX, y + 1, worldZ)) {
             this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
-          if (this.faceVisible(below, block)) {
+          if (this.faceVisible(below, block, world, worldX, y - 1, worldZ)) {
             this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const south = z < CHUNK_SIZE - 1
             ? blocks[blockIndex + CHUNK_SIZE] as BlockId
             : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(south, block)) {
+          if (this.faceVisible(south, block, world, worldX, y, worldZ + 1)) {
             this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const north = z > 0
             ? blocks[blockIndex - CHUNK_SIZE] as BlockId
             : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(north, block)) {
+          if (this.faceVisible(north, block, world, worldX, y, worldZ - 1)) {
             this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
             faces += 1;
           }
@@ -316,11 +338,13 @@ export class ChunkMesher {
     return result;
   }
 
-  private faceVisible(adjacent: BlockId, block: BlockId): boolean {
+  private faceVisible(adjacent: BlockId, block: BlockId, world: VoxelWorld, ax: number, ay: number, az: number): boolean {
     if (adjacent === BlockId.Air) return true;
+    if (blockOccludesFaces(world, ax, ay, az)) return false;
     const adjacentDefinition = getBlockDefinition(adjacent);
-    return !adjacentDefinition.occludesFaces
-      && (adjacent !== block || adjacentDefinition.renderShape !== 'cube');
+    const adjacentFull = adjacentDefinition.renderShape === 'cube'
+      || (adjacentDefinition.renderShape === 'slab' && defaultSlabType(this.resolveState(ax, ay, az)) === 'double');
+    return adjacent !== block || !adjacentFull;
   }
 
   private buffersFor(layers: LayerBuffers, definition: BlockDefinition): GeometryBuffers {
@@ -389,6 +413,8 @@ export class ChunkMesher {
       case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
       case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
+      case 'stairs': return this.addStairs(buffers, definition, state, world, x, y, z);
+      case 'slab': return this.addSlab(buffers, definition, state, world, x, y, z);
       case 'cube': return 0;
     }
   }
@@ -619,9 +645,94 @@ export class ChunkMesher {
     const height = state?.powered ? 0.03125 : 0.0625;
     const matrix = new THREE.Matrix4().makeTranslation(x + 0.5, y + height / 2, z + 0.5);
     return this.addCuboid(
-      buffers, 'block/oak_planks', [0.875, height, 0.875], matrix,
+      buffers, definition.textures.all ?? 'block/oak_planks', [0.875, height, 0.875], matrix,
       world, definition, x, y, z,
     );
+  }
+
+  private addStairs(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const shape = resolveStairShape(world, x, y, z, state);
+    const boxes = stairLocalBoxes(defaultStairFacing(state), defaultStairHalf(state), shape);
+    let faces = 0;
+    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+    return faces;
+  }
+
+  private addSlab(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const boxes = slabLocalBoxes(defaultSlabType(state));
+    let faces = 0;
+    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+    return faces;
+  }
+
+  private addLocalCuboid(
+    buffers: GeometryBuffers,
+    texture: string,
+    box: LocalBox,
+    world: VoxelWorld,
+    definition: BlockDefinition,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    let faces = 0;
+    for (const face of FACES) {
+      if (this.localFaceCulled(box, face, world, x, y, z)) continue;
+      const corners = face.corners.map((corner) => [
+        x + box.minX + corner[0] * (box.maxX - box.minX),
+        y + box.minY + corner[1] * (box.maxY - box.minY),
+        z + box.minZ + corner[2] * (box.maxZ - box.minZ),
+      ] as [number, number, number]);
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        face.normal,
+        this.lightingFor(world, definition, texture, x, y, z, face.normal, face.shade),
+        localFaceUv(face, box),
+      );
+      faces += 1;
+    }
+    return faces;
+  }
+
+  private localFaceCulled(
+    box: LocalBox,
+    face: Face,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): boolean {
+    const nx = face.normal[0];
+    const ny = face.normal[1];
+    const nz = face.normal[2];
+    const onBoundary = (nx > 0 && box.maxX >= 1 - 1e-6)
+      || (nx < 0 && box.minX <= 1e-6)
+      || (ny > 0 && box.maxY >= 1 - 1e-6)
+      || (ny < 0 && box.minY <= 1e-6)
+      || (nz > 0 && box.maxZ >= 1 - 1e-6)
+      || (nz < 0 && box.minZ <= 1e-6);
+    if (!onBoundary) return false;
+    return blockOccludesFaces(world, x + nx, y + ny, z + nz);
   }
 
   private addCuboid(

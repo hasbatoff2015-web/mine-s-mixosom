@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
-import { blockCollisionBox, type CollisionBox } from '../world/collision';
+import { blockCollisionBoxes, type CollisionBox } from '../world/collision';
 import {
   GRAVITY,
   JUMP_VELOCITY,
@@ -151,12 +151,15 @@ export class PlayerController {
     ).normalize();
   }
 
+  /** True when the given world-space boxes overlap the player AABB. */
+  intersectsCollisionBoxes(boxes: readonly CollisionBox[]): boolean {
+    const box = this.aabb;
+    return boxes.some((collision) => this.boxesOverlap(box, collision));
+  }
+
   /** True when a full unit block at the supplied cell would overlap the player. */
   intersectsBlock(x: number, y: number, z: number): boolean {
-    const box = this.aabb;
-    return box.maxX > x + COLLISION_EPSILON && box.minX < x + 1 - COLLISION_EPSILON
-      && box.maxY > y + COLLISION_EPSILON && box.minY < y + 1 - COLLISION_EPSILON
-      && box.maxZ > z + COLLISION_EPSILON && box.minZ < z + 1 - COLLISION_EPSILON;
+    return this.intersectsCollisionBoxes([{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 }]);
   }
 
   intersectsBlockType(world: VoxelWorld, block: BlockId, padding = 0): boolean {
@@ -439,8 +442,10 @@ export class PlayerController {
     for (let y = Math.floor(box.minY + COLLISION_EPSILON); y <= Math.floor(box.maxY - COLLISION_EPSILON); y += 1) {
       for (let z = Math.floor(box.minZ + COLLISION_EPSILON); z <= Math.floor(box.maxZ - COLLISION_EPSILON); z += 1) {
         for (let x = Math.floor(box.minX + COLLISION_EPSILON); x <= Math.floor(box.maxX - COLLISION_EPSILON); x += 1) {
-          const collision = this.blockCollisionBox(world, x, y, z);
-          if (collision && this.boxesOverlap(box, collision)) return true;
+          const collisions = this.blockCollisionBoxes(world, x, y, z);
+          for (const collision of collisions) {
+            if (this.boxesOverlap(box, collision)) return true;
+          }
         }
       }
     }
@@ -461,19 +466,21 @@ export class PlayerController {
     for (let y = minY; y <= maxY; y += 1) {
       for (let z = minZ; z <= maxZ; z += 1) {
         for (let x = minX; x <= maxX; x += 1) {
-          const block = this.blockCollisionBox(world, x, y, z);
-          if (!block || !this.overlapsOtherAxes(player, block, axis)) continue;
-          if (requested > 0) {
-            const playerMax = axis === 'x' ? player.maxX : axis === 'y' ? player.maxY : player.maxZ;
-            const blockMin = axis === 'x' ? block.minX : axis === 'y' ? block.minY : block.minZ;
-            if (playerMax <= blockMin + COLLISION_EPSILON && playerMax + allowed > blockMin) {
-              allowed = Math.min(allowed, blockMin - playerMax);
-            }
-          } else {
-            const playerMin = axis === 'x' ? player.minX : axis === 'y' ? player.minY : player.minZ;
-            const blockMax = axis === 'x' ? block.maxX : axis === 'y' ? block.maxY : block.maxZ;
-            if (playerMin >= blockMax - COLLISION_EPSILON && playerMin + allowed < blockMax) {
-              allowed = Math.max(allowed, blockMax - playerMin);
+          const collisions = this.blockCollisionBoxes(world, x, y, z);
+          for (const block of collisions) {
+            if (!this.overlapsOtherAxes(player, block, axis)) continue;
+            if (requested > 0) {
+              const playerMax = axis === 'x' ? player.maxX : axis === 'y' ? player.maxY : player.maxZ;
+              const blockMin = axis === 'x' ? block.minX : axis === 'y' ? block.minY : block.minZ;
+              if (playerMax <= blockMin + COLLISION_EPSILON && playerMax + allowed > blockMin) {
+                allowed = Math.min(allowed, blockMin - playerMax);
+              }
+            } else {
+              const playerMin = axis === 'x' ? player.minX : axis === 'y' ? player.minY : player.minZ;
+              const blockMax = axis === 'x' ? block.maxX : axis === 'y' ? block.maxY : block.maxZ;
+              if (playerMin >= blockMax - COLLISION_EPSILON && playerMin + allowed < blockMax) {
+                allowed = Math.max(allowed, blockMax - playerMin);
+              }
             }
           }
         }
@@ -484,8 +491,8 @@ export class PlayerController {
     return { actual: allowed, collided: Math.abs(allowed - requested) > COLLISION_EPSILON };
   }
 
-  private blockCollisionBox(world: VoxelWorld, x: number, y: number, z: number): CollisionBox | undefined {
-    return blockCollisionBox(world, x, y, z);
+  private blockCollisionBoxes(world: VoxelWorld, x: number, y: number, z: number): CollisionBox[] {
+    return blockCollisionBoxes(world, x, y, z);
   }
 
   private overlapsOtherAxes(player: PlayerAABB, block: CollisionBox, movementAxis: 'x' | 'y' | 'z'): boolean {

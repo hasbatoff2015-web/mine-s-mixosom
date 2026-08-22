@@ -54,19 +54,19 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       23 test files, 165 tests, 165 passed
-Vite build:   75 modules PASS
-Size/archive: PASS, 0.94 MiB uncompressed, 165 files
-Main assets:  JS 741.32 kB / 200.49 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Vitest:       24 test files, 189 tests, 189 passed
+Vite build:   78 modules PASS
+Size/archive: PASS, 0.96 MiB uncompressed, 165 files
+Main assets:  JS 757.51 kB / 205.38 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
 | --- | ---: | --- |
-| `tests/block-registry.test.ts` | 10 | Registry invariants, independent render layers, special shapes и replaceable cross-plant definitions |
+| `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
-| `tests/crafting.test.ts` | 8 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs, smelting/fuel data |
+| `tests/crafting.test.ts` | 9 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
 | `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, shield timing/reduction, axe chance, bow curve, armor formula, survival drowning/food/death/respawn |
-| `tests/player-physics.test.ts` | 4 | Floor/wall sliding, fall damage, slab collision/step-up и takeoff-only jump event |
+| `tests/player-physics.test.ts` | 5 | Floor/wall sliding, fall damage, slab collision/step-up, stair generic step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
 | `tests/world-generation.test.ts` | 4 | Negative chunk coordinates, seed determinism, five ore vertical bands/rarity и deterministic biome vegetation across real chunks |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
@@ -76,6 +76,7 @@ Main assets:  JS 741.32 kB / 200.49 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
 | `tests/item-rendering.test.ts` | 26 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera |
 | `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
+| `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -217,7 +218,7 @@ Browser viewport matrix закрывает layout baseline, но не замен
 2. create/list/load/delete world;
 3. pointer lock acquire/release, blur и `Esc`;
 4. WASD, jump, Shift sprint, C sneak, edge protection, step/slab collision;
-5. mine/place, 1.9-like break times, thin torch/button/door/ladder, запрет placement внутри игрока;
+5. mine/place, 1.9-like break times, thin torch/button/door/ladder, stairs/slabs (half/double, facing, top stairs), запрет placement внутри игрока;
 6. hotbar `1–9` и wheel, Q-drop/pickup;
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
 8. chest/furnace open/close/save, block destruction drops contents;
@@ -228,6 +229,36 @@ Browser viewport matrix закрывает layout baseline, но не замен
 13. F3 overlay, 3D shield/viewmodel, settings FOV/sensitivity/render distance/volume;
 14. pause/background/resume without hidden simulation;
 15. save/quit/reload and world/redstone/block-state/falling-block comparison.
+
+## Stairs / slabs / special icons visual QA
+
+Последний pass перед merge ветки `cursor/minecraft-item-pipeline-rework-935a`. Полный checklist также в `docs/reports/2026-08-22_stairs-slabs-special-icons-pass.md`.
+
+Stairs:
+
+- oak + birch/spruce, cobblestone, bricks, stone bricks;
+- facing N/S/E/W, bottom и top half;
+- серия вверх и вниз обычным WASD (не climb);
+- боковое столкновение, jump, corner join;
+- `stone_stairs` нет в Creative/крафте.
+
+Slabs:
+
+- bottom / top / double merge одинакового материала;
+- разные материалы не merge;
+- стоять на 0.5, проходить под top slab;
+- held и icon — half, не full cube.
+
+Pressure plates:
+
+- oak и stone: thin model, placement на верхнюю опору, icon, activation.
+
+Icons:
+
+- Creative / survival inventory / hotbar;
+- `stone_button` не stone cube;
+- ordinary cubes без regression;
+- held generated pose без изменений.
 
 ## Mobile/touch manual matrix
 

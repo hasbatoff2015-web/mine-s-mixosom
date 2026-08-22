@@ -19,10 +19,16 @@ export type BlockRenderShape =
   | 'pressure_plate'
   | 'cross'
   | 'door'
-  | 'ladder';
+  | 'ladder'
+  | 'stairs'
+  | 'slab';
 
 export type DoorHalf = 'lower' | 'upper';
 export type DoorHinge = 'left' | 'right';
+export type SlabType = 'bottom' | 'top' | 'double';
+export type StairHalf = 'bottom' | 'top';
+export type StairShape = 'straight' | 'inner_left' | 'inner_right' | 'outer_left' | 'outer_right';
+export type PressurePlateTrigger = 'all' | 'living';
 
 export type TranslucentMaterial = 'glass' | 'water';
 export type BlockAttachment = 'floor' | 'wall' | 'ceiling';
@@ -37,6 +43,10 @@ export interface BlockRenderState {
   readonly open?: boolean;
   readonly half?: DoorHalf;
   readonly hinge?: DoorHinge;
+  /** Independent of door `half`. Missing in old saves → bottom. */
+  readonly slabType?: SlabType;
+  /** Independent of door `half`. Missing in old saves → bottom. */
+  readonly stairHalf?: StairHalf;
 }
 
 export interface BlockTextures {
@@ -98,6 +108,12 @@ export interface BlockDefinition {
   readonly redstonePower?: number;
   /** Damage dealt by contact; consumed by the survival/collision system. */
   readonly contactDamage?: number;
+  /**
+   * Hidden from Creative/recipes/obtainable UI. Numeric ID stays for old saves.
+   * Copied onto the matching block item when `hasItem !== false`.
+   */
+  readonly hiddenFromGameplay?: boolean;
+  readonly pressurePlateTrigger?: PressurePlateTrigger;
 }
 
 export function blockLightingMode(
@@ -177,6 +193,7 @@ export enum BlockId {
   StoneButton = 107,
   OakPressurePlate = 108,
   Tnt = 109,
+  StonePressurePlate = 110,
 
   OakSlab = 120,
   StoneSlab = 121,
@@ -184,6 +201,10 @@ export enum BlockId {
   OakStairs = 123,
   StoneStairs = 124,
   CobblestoneStairs = 125,
+  BirchSlab = 126,
+  SpruceSlab = 127,
+  BrickSlab = 128,
+  StoneBrickSlab = 129,
 
   TallGrass = 130,
   Fern = 131,
@@ -191,4 +212,9 @@ export enum BlockId {
   Poppy = 133,
   OxeyeDaisy = 134,
   DeadBush = 135,
+
+  BirchStairs = 136,
+  SpruceStairs = 137,
+  BrickStairs = 138,
+  StoneBrickStairs = 139,
 }

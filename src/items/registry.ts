@@ -41,6 +41,7 @@ const blockItems: ItemDefinition[] = BLOCKS
     blockId: definition.id,
     placesBlockId: definition.id,
     tags: blockTags(definition),
+    ...(definition.hiddenFromGameplay === true ? { hiddenFromGameplay: true } : {}),
   }));
 
 function resource(id: string, options: ResourceOptions = {}): ResourceItemDefinition {

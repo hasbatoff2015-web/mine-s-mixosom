@@ -1,4 +1,5 @@
 import type { BlockAttachment, DoorHinge, HorizontalFacing } from './types';
+import { BlockId } from './types';
 
 export interface OrientedPlacement {
   readonly attachment: BlockAttachment;
@@ -101,4 +102,79 @@ export function occupiedDoorFacing(
     case 'south': return 'west';
     case 'west': return 'north';
   }
+}
+
+export function oppositeFacing(facing: HorizontalFacing): HorizontalFacing {
+  switch (facing) {
+    case 'north': return 'south';
+    case 'south': return 'north';
+    case 'east': return 'west';
+    case 'west': return 'east';
+  }
+}
+
+export function counterClockwiseFacing(facing: HorizontalFacing): HorizontalFacing {
+  switch (facing) {
+    case 'north': return 'west';
+    case 'west': return 'south';
+    case 'south': return 'east';
+    case 'east': return 'north';
+  }
+}
+
+export function facingAxis(facing: HorizontalFacing): 'x' | 'z' {
+  return facing === 'east' || facing === 'west' ? 'x' : 'z';
+}
+
+export const HORIZONTAL_OFFSET: Readonly<Record<HorizontalFacing, readonly [number, number, number]>> = {
+  north: [0, 0, -1],
+  south: [0, 0, 1],
+  west: [-1, 0, 0],
+  east: [1, 0, 0],
+};
+
+export interface SlabPlacement {
+  readonly slabType: 'bottom' | 'top';
+}
+
+/**
+ * Vanilla-like slab half from the clicked face and hit height on that block.
+ * Top face → bottom slab in the adjacent cell; bottom face → top slab;
+ * side faces use whether the hit was above the midline.
+ */
+export function slabsCanMerge(existing: BlockId, placing: BlockId): boolean {
+  return existing === placing;
+}
+
+export function slabTypeFromHit(nx: number, ny: number, nz: number, localY: number): 'bottom' | 'top' {
+  void nx;
+  void nz;
+  if (ny > 0.5) return 'bottom';
+  if (ny < -0.5) return 'top';
+  return localY > 0.5 ? 'top' : 'bottom';
+}
+
+export interface StairPlacement {
+  readonly facing: HorizontalFacing;
+  readonly stairHalf: 'bottom' | 'top';
+}
+
+/**
+ * Vanilla stairs: facing is the player's horizontal look. Half is bottom unless
+ * the clicked face is the underside or a side hit above the midline.
+ */
+export function stairPlacementFromHit(
+  nx: number,
+  ny: number,
+  nz: number,
+  localY: number,
+  viewX: number,
+  viewZ: number,
+): StairPlacement {
+  void nx;
+  void nz;
+  const facing = horizontalFacingFromXZ(viewX, viewZ);
+  if (ny < -0.5) return { facing, stairHalf: 'top' };
+  if (ny > 0.5) return { facing, stairHalf: 'bottom' };
+  return { facing, stairHalf: localY > 0.5 ? 'top' : 'bottom' };
 }

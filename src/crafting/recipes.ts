@@ -84,6 +84,10 @@ const recipes: Recipe[] = [
     output: { item: 'oak_pressure_plate', count: 1 }, gridSize: 2,
   },
   {
+    id: 'stone_pressure_plate', type: 'shaped', pattern: ['SS'], key: { S: exact('stone') },
+    output: { item: 'stone_pressure_plate', count: 1 }, gridSize: 2,
+  },
+  {
     id: 'tnt', type: 'shaped', pattern: ['GSG', 'SGS', 'GSG'],
     key: { G: exact(ItemId.Gunpowder), S: exact('sand') },
     output: { item: 'tnt', count: 1 }, gridSize: 3,
@@ -149,22 +153,26 @@ for (const material of armorMaterials) {
 }
 
 const buildingRecipes = [
-  { key: 'oak', material: 'oak_planks' },
-  { key: 'stone', material: 'stone' },
-  { key: 'cobblestone', material: 'cobblestone' },
+  { key: 'oak', material: 'oak_planks', stairs: true },
+  { key: 'birch', material: 'birch_planks', stairs: true },
+  { key: 'spruce', material: 'spruce_planks', stairs: true },
+  { key: 'stone', material: 'stone', stairs: false },
+  { key: 'cobblestone', material: 'cobblestone', stairs: true },
+  { key: 'brick', material: 'bricks', stairs: true },
+  { key: 'stone_brick', material: 'stone_bricks', stairs: true },
 ] as const;
 
 for (const building of buildingRecipes) {
-  recipes.push(
-    {
-      id: `${building.key}_slab`, type: 'shaped', pattern: ['MMM'], key: { M: exact(building.material) },
-      output: { item: `${building.key}_slab`, count: 6 }, gridSize: 3,
-    },
-    {
+  recipes.push({
+    id: `${building.key}_slab`, type: 'shaped', pattern: ['MMM'], key: { M: exact(building.material) },
+    output: { item: `${building.key}_slab`, count: 6 }, gridSize: 3,
+  });
+  if (building.stairs) {
+    recipes.push({
       id: `${building.key}_stairs`, type: 'shaped', pattern: ['M  ', 'MM ', 'MMM'], mirrored: true,
       key: { M: exact(building.material) }, output: { item: `${building.key}_stairs`, count: 4 }, gridSize: 3,
-    },
-  );
+    });
+  }
 }
 
 function ingredientsOf(recipe: Recipe): readonly Ingredient[] {
@@ -218,5 +226,11 @@ export const FUEL_BURN_TICKS: Readonly<Record<string, number>> = Object.freeze({
   oak_planks: 300,
   birch_planks: 300,
   spruce_planks: 300,
+  oak_slab: 150,
+  birch_slab: 150,
+  spruce_slab: 150,
+  oak_stairs: 300,
+  birch_stairs: 300,
+  spruce_stairs: 300,
   [ItemId.Stick]: 100,
 });

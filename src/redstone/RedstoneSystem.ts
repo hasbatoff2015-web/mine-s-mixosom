@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   BlockId,
   getBlockDefinition,
+  isPressurePlateBlock,
   type BlockAttachment,
   type BlockRenderState,
   type HorizontalFacing,
@@ -306,7 +307,7 @@ export class RedstoneSystem {
 
   setPressurePlate(x: number, y: number, z: number, active: boolean): boolean {
     this.assertActive();
-    if (this.world.getBlock(x, y, z) !== BlockId.OakPressurePlate) return false;
+    if (!isPressurePlateBlock(this.world.getBlock(x, y, z))) return false;
     const source = this.ensureSource(x, y, z, 'pressure_plate');
     if (!source) return false;
     if (source.active !== active) {
@@ -661,7 +662,8 @@ export class RedstoneSystem {
       case BlockId.RedstoneTorch: return 'torch';
       case BlockId.Lever: return 'lever';
       case BlockId.StoneButton: return 'button';
-      case BlockId.OakPressurePlate: return 'pressure_plate';
+      case BlockId.OakPressurePlate:
+      case BlockId.StonePressurePlate: return 'pressure_plate';
       default: return undefined;
     }
   }

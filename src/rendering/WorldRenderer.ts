@@ -6,6 +6,7 @@ import type { VoxelHit, VoxelWorld } from '../world/World';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import {
   createSelectionGeometry,
+  resolveStairShape,
   selectionBoxesForBlock,
   selectionShapeKey,
 } from './specialBlockGeometry';
@@ -158,11 +159,16 @@ export class WorldRenderer {
     }
     const definition = getBlockDefinition(hit.block);
     const state = this.resolveState(hit.x, hit.y, hit.z);
-    const key = selectionShapeKey(definition, state);
+    const stairShape = definition.renderShape === 'stairs'
+      ? resolveStairShape(this.world, hit.x, hit.y, hit.z, state)
+      : '';
+    const key = selectionShapeKey(definition, state, stairShape);
     if (key !== this.selectionKey) {
       let geometry = this.selectionGeometries.get(key);
       if (!geometry) {
-        geometry = createSelectionGeometry(selectionBoxesForBlock(definition, state));
+        geometry = createSelectionGeometry(
+          selectionBoxesForBlock(definition, state, 0, 0, 0, undefined, stairShape || 'straight'),
+        );
         this.selectionGeometries.set(key, geometry);
       }
       this.selection.geometry = geometry;

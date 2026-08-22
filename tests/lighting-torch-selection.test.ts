@@ -207,7 +207,11 @@ describe('torch lighting, orientation and selection', () => {
     writeBlock(world, 5, 40, 5, BlockId.Torch);
     world.setBlockState(5, 40, 5, { attachment: 'wall', facing: 'east' });
     const renderer = new WorldRenderer(world, atlasStub, (x, y, z) => world.getBlockState(x, y, z));
-    renderer.setTarget({ x: 5, y: 40, z: 5, block: BlockId.Torch, distance: 1, normal: new THREE.Vector3(1, 0, 0) });
+    renderer.setTarget({
+      x: 5, y: 40, z: 5, block: BlockId.Torch, distance: 1,
+      normal: new THREE.Vector3(1, 0, 0),
+      point: new THREE.Vector3(5.5, 40.5, 5.5),
+    });
     expect(renderer.selection.visible).toBe(true);
     expect(renderer.selection.position.x).toBe(5);
     renderer.selection.geometry.computeBoundingBox();

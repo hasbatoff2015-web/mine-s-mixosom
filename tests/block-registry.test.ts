@@ -62,6 +62,9 @@ describe('block registry', () => {
     expect(getBlockDefinition(BlockId.RedstoneWire).renderShape).toBe('wire');
     expect(getBlockDefinition(BlockId.StoneButton).renderShape).toBe('button');
     expect(getBlockDefinition(BlockId.OakPressurePlate).renderShape).toBe('pressure_plate');
+    expect(getBlockDefinition(BlockId.StonePressurePlate).renderShape).toBe('pressure_plate');
+    expect(getBlockDefinition(BlockId.OakStairs).renderShape).toBe('stairs');
+    expect(getBlockDefinition(BlockId.OakSlab).renderShape).toBe('slab');
   });
 
   it('registers non-solid replaceable cutout cross plants', () => {
@@ -127,6 +130,11 @@ describe('item registry', () => {
   it('hides the shield from obtainable gameplay lists', () => {
     expect(getItemDefinition(ItemId.Shield).hiddenFromGameplay).toBe(true);
     expect(ITEMS.filter((item) => item.hiddenFromGameplay !== true).some((item) => item.id === ItemId.Shield)).toBe(false);
+  });
+
+  it('hides legacy stone_stairs from obtainable gameplay lists', () => {
+    expect(getItemDefinition('stone_stairs').hiddenFromGameplay).toBe(true);
+    expect(ITEMS.filter((item) => item.hiddenFromGameplay !== true).some((item) => item.id === 'stone_stairs')).toBe(false);
   });
 
   it('does not implement excluded progression content', () => {

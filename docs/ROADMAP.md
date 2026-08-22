@@ -23,6 +23,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после shared held-item pose QA candidates: typecheck, 152 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после live held-item pose QA panel: typecheck, 156 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после special-item door/ladder/lever pass: typecheck, 165 tests / 23 files, production build 75 modules, 0.94 MiB / 165 files.
+- [x] Локальный pipeline после stairs/slabs/special-icons pass: typecheck, 189 tests / 24 files, production build 78 modules, 0.96 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -54,6 +55,7 @@ Definition of done: принудительный reload/закрытие вкл�
 ### P0.4 Runtime correctness
 
 - [x] Runtime furnace переведён на `SMELTING_RECIPES` и `FUEL_BURN_TICKS`; glass и charcoal входят в общий path.
+- [ ] Последний visual QA stairs/slabs/special icons (checklist в `docs/reports/2026-08-22_stairs-slabs-special-icons-pass.md` и `docs/TESTING.md`), затем подготовка ветки `cursor/minecraft-item-pipeline-rework-935a` к merge в main. Не начинать chest GUI / furnace GUI / recipe book / creative flight в том же pass.
 - [ ] Проверить реальный attack meter, shield wind-up/arc, bow release, mob hit selection и weapon durability через browser smoke.
 - [ ] Пройти end-to-end redstone scenario в browser: source → dust → TNT → visual fuse → explosion/chain → save/reload active fuse.
 - [x] Закрыты targeted regressions: takeoff-only jump exhaustion, hunger sprint gate, Creative non-targetability, 3D+voxel-LOS melee и knockback only on dealt damage.
@@ -103,8 +105,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 ### P1.2 Block states и geometry
 
-- [x] Тонкая 2-block oak door с open/close, collision и UV half/hinge; torch wall/floor; button floor/wall/ceiling; ladder world plane + side placement. Stairs, slabs, bed и chest всё ещё ждут specialized meshes.
-- [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation, ladder facing; v1→v2 redstone fallback уже реализован.
+- [x] Тонкая 2-block oak door с open/close, collision и UV half/hinge; torch wall/floor; button floor/wall/ceiling; ladder world plane + side placement; stairs/slabs geometry+collision+icons. Bed и chest всё ещё ждут specialized meshes.
+- [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation, ladder facing, slabType, stairHalf; stair corner shape derived; v1→v2 redstone fallback уже реализован.
 - [x] Door open/close на use; ladder climbing, корректный two-block bed и sleeping checks ещё нет.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Mass TNT больше не вызывает per-block `relightAround`; `ExplosionQueue` + `applyBlockBatch` держат chain в budgeted ticks.

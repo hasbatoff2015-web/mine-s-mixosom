@@ -1,6 +1,17 @@
 import * as THREE from 'three';
-import type { BlockAttachment, BlockDefinition, BlockRenderState, DoorHinge, HorizontalFacing } from '../blocks';
-import { occupiedDoorFacing } from '../blocks';
+import type {
+  BlockAttachment, BlockDefinition, BlockRenderState, DoorHinge, HorizontalFacing, SlabType, StairHalf, StairShape,
+} from '../blocks';
+import {
+  BlockId,
+  counterClockwiseFacing,
+  facingAxis,
+  getBlockDefinition,
+  HORIZONTAL_OFFSET,
+  isStairBlock,
+  occupiedDoorFacing,
+  oppositeFacing,
+} from '../blocks';
 
 /** Vanilla ladder.json plane at 15.2/16 from the opposite face = 0.8/16 from support. */
 export const LADDER_PLANE = 0.8 / 16;
@@ -53,6 +64,178 @@ export function ladderPlaneLocal(facing: HorizontalFacing): {
     case 'north':
       return { axis: 'z', plane: 1 - LADDER_PLANE, min: 1 - LADDER_DEPTH, max: 1, outward: [0, 0, -1] };
   }
+}
+
+export interface LocalBox {
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+}
+
+export interface BlockNeighborView {
+  getBlock(x: number, y: number, z: number, generate?: boolean): BlockId;
+  getBlockState?(x: number, y: number, z: number): BlockRenderState | undefined;
+}
+
+export function defaultSlabType(state: BlockRenderState | undefined): SlabType {
+  return state?.slabType ?? 'bottom';
+}
+
+export function defaultStairHalf(state: BlockRenderState | undefined): StairHalf {
+  return state?.stairHalf ?? 'bottom';
+}
+
+export function defaultStairFacing(state: BlockRenderState | undefined): HorizontalFacing {
+  return state?.facing ?? 'north';
+}
+
+function rotateLocalBox(box: LocalBox, facing: HorizontalFacing): LocalBox {
+  const corners: Array<readonly [number, number]> = [
+    [box.minX, box.minZ],
+    [box.maxX, box.minZ],
+    [box.minX, box.maxZ],
+    [box.maxX, box.maxZ],
+  ];
+  const rotated = corners.map(([x, z]) => rotateYFromEast(x, z, facing));
+  const xs = rotated.map((point) => point[0]);
+  const zs = rotated.map((point) => point[1]);
+  return {
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+    minY: box.minY,
+    maxY: box.maxY,
+    minZ: Math.min(...zs),
+    maxZ: Math.max(...zs),
+  };
+}
+
+/** Local boxes are authored for east-facing stairs (upper step on +X). */
+function rotateYFromEast(x: number, z: number, facing: HorizontalFacing): readonly [number, number] {
+  const cx = x - 0.5;
+  const cz = z - 0.5;
+  switch (facing) {
+    case 'east': return [x, z];
+    case 'north': return [0.5 + cz, 0.5 - cx];
+    case 'west': return [0.5 - cx, 0.5 - cz];
+    case 'south': return [0.5 - cz, 0.5 + cx];
+  }
+}
+
+function flipY(box: LocalBox): LocalBox {
+  return {
+    minX: box.minX,
+    maxX: box.maxX,
+    minZ: box.minZ,
+    maxZ: box.maxZ,
+    minY: 1 - box.maxY,
+    maxY: 1 - box.minY,
+  };
+}
+
+const EAST_STRAIGHT: readonly LocalBox[] = [
+  { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5, maxZ: 1 },
+  { minX: 0.5, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 },
+];
+const EAST_INNER_LEFT: readonly LocalBox[] = [
+  { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5, maxZ: 1 },
+  { minX: 0.5, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 },
+  { minX: 0, minY: 0.5, minZ: 0, maxX: 0.5, maxY: 1, maxZ: 0.5 },
+];
+const EAST_INNER_RIGHT: readonly LocalBox[] = [
+  { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5, maxZ: 1 },
+  { minX: 0.5, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 },
+  { minX: 0, minY: 0.5, minZ: 0.5, maxX: 0.5, maxY: 1, maxZ: 1 },
+];
+const EAST_OUTER_LEFT: readonly LocalBox[] = [
+  { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5, maxZ: 1 },
+  { minX: 0.5, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 0.5 },
+];
+const EAST_OUTER_RIGHT: readonly LocalBox[] = [
+  { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5, maxZ: 1 },
+  { minX: 0.5, minY: 0.5, minZ: 0.5, maxX: 1, maxY: 1, maxZ: 1 },
+];
+
+function eastStairBoxes(shape: StairShape): readonly LocalBox[] {
+  switch (shape) {
+    case 'straight': return EAST_STRAIGHT;
+    case 'inner_left': return EAST_INNER_LEFT;
+    case 'inner_right': return EAST_INNER_RIGHT;
+    case 'outer_left': return EAST_OUTER_LEFT;
+    case 'outer_right': return EAST_OUTER_RIGHT;
+  }
+}
+
+export function slabLocalBoxes(slabType: SlabType = 'bottom'): readonly LocalBox[] {
+  if (slabType === 'top') return [{ minX: 0, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }];
+  if (slabType === 'double') return [{ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }];
+  return [{ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5, maxZ: 1 }];
+}
+
+export function stairLocalBoxes(
+  facing: HorizontalFacing = 'north',
+  half: StairHalf = 'bottom',
+  shape: StairShape = 'straight',
+): LocalBox[] {
+  const east = eastStairBoxes(shape);
+  const oriented = east.map((box) => rotateLocalBox(box, facing));
+  return half === 'top' ? oriented.map(flipY) : oriented;
+}
+
+export function resolveStairShape(
+  world: BlockNeighborView,
+  x: number,
+  y: number,
+  z: number,
+  state?: BlockRenderState,
+): StairShape {
+  const facing = defaultStairFacing(state);
+  const half = defaultStairHalf(state);
+  const frontOff = HORIZONTAL_OFFSET[facing];
+  const front = world.getBlock(x + frontOff[0], y + frontOff[1], z + frontOff[2], false);
+  if (isStairBlock(front) && defaultStairHalf(world.getBlockState?.(x + frontOff[0], y, z + frontOff[2])) === half) {
+    const frontFacing = defaultStairFacing(world.getBlockState?.(x + frontOff[0], y, z + frontOff[2]));
+    if (facingAxis(frontFacing) !== facingAxis(facing)
+      && stairCanTakeShape(world, x, y, z, state, oppositeFacing(frontFacing))) {
+      return frontFacing === counterClockwiseFacing(facing) ? 'inner_left' : 'inner_right';
+    }
+  }
+  const backOff = HORIZONTAL_OFFSET[oppositeFacing(facing)];
+  const back = world.getBlock(x + backOff[0], y, z + backOff[2], false);
+  if (isStairBlock(back) && defaultStairHalf(world.getBlockState?.(x + backOff[0], y, z + backOff[2])) === half) {
+    const backFacing = defaultStairFacing(world.getBlockState?.(x + backOff[0], y, z + backOff[2]));
+    if (facingAxis(backFacing) !== facingAxis(facing)
+      && stairCanTakeShape(world, x, y, z, state, backFacing)) {
+      return backFacing === counterClockwiseFacing(facing) ? 'outer_left' : 'outer_right';
+    }
+  }
+  return 'straight';
+}
+
+function stairCanTakeShape(
+  world: BlockNeighborView,
+  x: number,
+  y: number,
+  z: number,
+  state: BlockRenderState | undefined,
+  face: HorizontalFacing,
+): boolean {
+  const offset = HORIZONTAL_OFFSET[face];
+  const other = world.getBlock(x + offset[0], y, z + offset[2], false);
+  if (!isStairBlock(other)) return true;
+  const otherState = world.getBlockState?.(x + offset[0], y, z + offset[2]);
+  return defaultStairFacing(otherState) !== defaultStairFacing(state)
+    || defaultStairHalf(otherState) !== defaultStairHalf(state);
+}
+
+export function blockOccludesFaces(world: BlockNeighborView, x: number, y: number, z: number): boolean {
+  const id = world.getBlock(x, y, z, false);
+  if (id === BlockId.Air) return false;
+  const definition = getBlockDefinition(id);
+  if (definition.renderShape === 'slab') return defaultSlabType(world.getBlockState?.(x, y, z)) === 'double';
+  return definition.occludesFaces;
 }
 
 export function leverHandleAngle(powered: boolean): number {
@@ -189,12 +372,29 @@ function boxFromSize(
   return { center: [center.x, center.y, center.z], size, matrix };
 }
 
+function selectionBoxesFromLocal(x: number, y: number, z: number, boxes: readonly LocalBox[]): OrientedSelectionBox[] {
+  return boxes.map((box) => boxFromSize(
+    new THREE.Vector3(
+      x + (box.minX + box.maxX) / 2,
+      y + (box.minY + box.maxY) / 2,
+      z + (box.minZ + box.maxZ) / 2,
+    ),
+    [
+      Math.max(0.01, box.maxX - box.minX) + 0.008,
+      Math.max(0.01, box.maxY - box.minY) + 0.008,
+      Math.max(0.01, box.maxZ - box.minZ) + 0.008,
+    ],
+  ));
+}
+
 export function selectionBoxesForBlock(
   definition: Pick<BlockDefinition, 'renderShape'>,
   state?: BlockRenderState,
   x = 0,
   y = 0,
   z = 0,
+  world?: BlockNeighborView,
+  stairShape: StairShape = 'straight',
 ): OrientedSelectionBox[] {
   switch (definition.renderShape) {
     case 'torch': return [torchSelectionBox(x, y, z, state)];
@@ -205,6 +405,15 @@ export function selectionBoxesForBlock(
     case 'door': return [doorSelectionBox(x, y, z, state)];
     case 'ladder': return [ladderSelectionBox(x, y, z, state)];
     case 'cross': return [crossSelectionBox(x, y, z)];
+    case 'stairs': {
+      const shape = world ? resolveStairShape(world, x, y, z, state) : stairShape;
+      return selectionBoxesFromLocal(
+        x, y, z,
+        stairLocalBoxes(defaultStairFacing(state), defaultStairHalf(state), shape),
+      );
+    }
+    case 'slab':
+      return selectionBoxesFromLocal(x, y, z, slabLocalBoxes(defaultSlabType(state)));
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }
@@ -212,6 +421,7 @@ export function selectionBoxesForBlock(
 export function selectionShapeKey(
   definition: Pick<BlockDefinition, 'renderShape'>,
   state?: BlockRenderState,
+  stairShape: StairShape | '' = '',
 ): string {
   return [
     definition.renderShape,
@@ -221,6 +431,9 @@ export function selectionShapeKey(
     state?.open === true ? '1' : '0',
     state?.half ?? '',
     state?.hinge ?? '',
+    state?.slabType ?? '',
+    state?.stairHalf ?? '',
+    stairShape,
     String(state?.power ?? ''),
   ].join('|');
 }

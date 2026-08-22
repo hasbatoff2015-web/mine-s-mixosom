@@ -88,6 +88,7 @@ export class GameUI {
   private debugText = '';
   private debugVisible = false;
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
+  private itemIconResolver?: (itemId: string) => string;
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -117,6 +118,10 @@ export class GameUI {
         cursor.style.top = `${event.clientY}px`;
       }
     });
+  }
+
+  setItemIconResolver(resolver: (itemId: string) => string): void {
+    this.itemIconResolver = resolver;
   }
 
   showLoading(label = 'Подготавливаем мир…'): void {
@@ -500,7 +505,7 @@ export class GameUI {
   }
 
   private itemIcon(itemId: string): string {
-    return TextureAtlas.url(getItemDefinition(itemId).texture);
+    return this.itemIconResolver?.(itemId) ?? TextureAtlas.url(getItemDefinition(itemId).texture);
   }
 
   private pips(symbol: string, filled: number, total: number): string {
