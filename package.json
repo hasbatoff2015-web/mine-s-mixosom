@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "benchmark:performance": "vite-node scripts/benchmark-performance.ts",
+    "benchmark:lighting": "vite-node scripts/benchmark-lighting.ts",
+    "benchmark:perf-pass": "vite-node scripts/benchmark-perf-pass.ts",
     "build": "tsc --noEmit && vite build",
     "check:size": "node scripts/check-build.mjs",
     "check:archive": "node scripts/check-build.mjs --archive",

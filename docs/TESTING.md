@@ -29,6 +29,7 @@ npm run check:size
 npm run check:archive
 npm run benchmark:performance
 npx vite-node scripts/benchmark-perf-pass.ts
+npm run benchmark:lighting
 ```
 
 Полный локальный pipeline:
@@ -51,14 +52,14 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-22**:
+Срез локального запуска **2026-08-23**:
 
 ```text
 tsc --noEmit: PASS
-Vitest:       40 test files, 301 tests, 301 passed
-Vite build:   95 modules PASS
-Size/archive: PASS, 1.03 MiB uncompressed, 167 files
-Main assets:  JS 816.20 kB / 222.95 kB gzip; CSS 25.91 kB / 6.02 kB gzip
+Vitest:       41 test files, 311 tests, 311 passed
+Vite build:   96 modules PASS
+Size/archive: PASS, 1.04 MiB uncompressed, 167 files
+Main assets:  JS 825.05 kB / 225.85 kB gzip; CSS 25.91 kB / 6.02 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -100,8 +101,9 @@ Main assets:  JS 816.20 kB / 222.95 kB gzip; CSS 25.91 kB / 6.02 kB gzip
 | `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
 | `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
 | `tests/lighting-jobs.test.ts` | 5 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm |
+| `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
-| `tests/perf-profiler.test.ts` | 3 | `?perf=1` parsing, spike classification, adaptive job budget shrinks when frame is already expensive |
+| `tests/perf-profiler.test.ts` | 3 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, adaptive job budget shrinks when frame is already expensive |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 

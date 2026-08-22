@@ -1,10 +1,20 @@
-import { CHUNK_SIZE, chunkKey, clamp, floorDiv, TARGET_FRAME_MS, WORLD_JOB_BUDGET_MS } from '../core/constants';
+import { CHUNK_SIZE, LIGHTING_HALO_CHUNKS, chunkKey, clamp, floorDiv, TARGET_FRAME_MS, WORLD_JOB_BUDGET_MS } from '../core/constants';
 import type { Chunk } from './Chunk';
 import type { VoxelWorld } from './World';
 
 export interface ChunkJobRef {
   readonly chunk: Chunk;
   readonly distanceSq: number;
+}
+
+export interface InitialAreaProgress {
+  readonly generated: number;
+  readonly lit: number;
+  readonly meshed: number;
+  readonly generateTotal: number;
+  readonly litTotal: number;
+  readonly meshTotal: number;
+  readonly total: number;
 }
 
 export function adaptiveJobBudgetMs(
@@ -67,17 +77,51 @@ export function missingChunkCoords(
   return missing;
 }
 
+export function lightingHaloRadius(meshRadius: number): number {
+  return Math.max(0, Math.floor(meshRadius)) + LIGHTING_HALO_CHUNKS;
+}
+
+export function chebyshevChunkDistance(ax: number, az: number, bx: number, bz: number): number {
+  return Math.max(Math.abs(ax - bx), Math.abs(az - bz));
+}
+
+/** Neighbors inside the generation halo must exist and be lit before a chunk may mesh. */
+export function lightContextReady(
+  world: VoxelWorld,
+  chunk: Chunk,
+  centerChunkX: number,
+  centerChunkZ: number,
+  generationRadius: number,
+): boolean {
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+  for (const [dx, dz] of dirs) {
+    const neighborX = chunk.x + dx;
+    const neighborZ = chunk.z + dz;
+    if (chebyshevChunkDistance(neighborX, neighborZ, centerChunkX, centerChunkZ) > generationRadius) continue;
+    const neighbor = world.chunks.get(chunkKey(neighborX, neighborZ));
+    if (!neighbor?.lightingReady) return false;
+  }
+  return true;
+}
+
+export function chunkVisuallyLit(chunk: Chunk, hasMesh: boolean): boolean {
+  if (!hasMesh || chunk.dirty || !chunk.lightingReady) return false;
+  if (chunk.meshedLightVersion < 0) return true;
+  return chunk.meshedLightVersion === chunk.lightVersion;
+}
+
 export function initialAreaReady(
   world: VoxelWorld,
   hasMesh: (key: string) => boolean,
   blockX: number,
   blockZ: number,
-  radius: number,
+  meshRadius: number,
+  generateRadius = meshRadius,
 ): boolean {
-  const progress = countInitialAreaProgress(world, hasMesh, blockX, blockZ, radius);
-  return progress.generated === progress.total
-    && progress.lit === progress.total
-    && progress.meshed === progress.total;
+  const progress = countInitialAreaProgress(world, hasMesh, blockX, blockZ, meshRadius, generateRadius);
+  return progress.generated === progress.generateTotal
+    && progress.lit === progress.litTotal
+    && progress.meshed === progress.meshTotal;
 }
 
 export function countInitialAreaProgress(
@@ -85,23 +129,37 @@ export function countInitialAreaProgress(
   hasMesh: (key: string) => boolean,
   blockX: number,
   blockZ: number,
-  radius: number,
-): { generated: number; lit: number; meshed: number; total: number } {
+  meshRadius: number,
+  generateRadius = meshRadius,
+): InitialAreaProgress {
   const centerX = floorDiv(blockX, CHUNK_SIZE);
   const centerZ = floorDiv(blockZ, CHUNK_SIZE);
-  const span = Math.max(0, Math.floor(radius)) * 2 + 1;
+  const genR = Math.max(0, Math.floor(generateRadius));
+  const meshR = Math.max(0, Math.floor(meshRadius));
+  const generateTotal = (genR * 2 + 1) * (genR * 2 + 1);
+  const meshTotal = (meshR * 2 + 1) * (meshR * 2 + 1);
   let generated = 0;
   let lit = 0;
   let meshed = 0;
-  for (let dz = -radius; dz <= radius; dz += 1) {
-    for (let dx = -radius; dx <= radius; dx += 1) {
+  for (let dz = -genR; dz <= genR; dz += 1) {
+    for (let dx = -genR; dx <= genR; dx += 1) {
       const key = chunkKey(centerX + dx, centerZ + dz);
       const chunk = world.chunks.get(key);
       if (!chunk) continue;
       generated += 1;
-      if (chunk.skyReady && chunk.blockLightReady) lit += 1;
-      if (hasMesh(key) && !chunk.dirty) meshed += 1;
+      if (chunk.lightingReady) lit += 1;
+      if (chebyshevChunkDistance(chunk.x, chunk.z, centerX, centerZ) <= meshR && chunkVisuallyLit(chunk, hasMesh(key))) {
+        meshed += 1;
+      }
     }
   }
-  return { generated, lit, meshed, total: span * span };
+  return {
+    generated,
+    lit,
+    meshed,
+    generateTotal,
+    litTotal: generateTotal,
+    meshTotal,
+    total: generateTotal,
+  };
 }

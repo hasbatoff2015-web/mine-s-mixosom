@@ -1,6 +1,6 @@
 # Состояние проекта
 
-Срез: **2026-08-22**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-23**. Версия: `0.1.0`, playable alpha.
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -26,12 +26,12 @@
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
-| Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug |
+| Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, DEV F8 chunk grid / F7 light view |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 301 unit/component tests in 40 files, CPU job benchmarks и DEV `?perf=1` overlay; no automated WebGL/IndexedDB/full browser E2E suite |
+| Automated QA | Частично готово | 311 unit/component tests in 41 files, CPU job + lighting benchmarks и DEV `?perf=1` overlay (F8 chunk borders, F7 light debug); no automated WebGL/IndexedDB/full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -59,8 +59,8 @@
 ### Alpha approximation
 
 - Нет greedy meshing: каждый видимый face становится отдельным quad. Dirty chunks перестраиваются с ограничением количества за tick и adaptive ms budget; один chunk в `pendingMesh` пока ждёт rebuild.
-- Нет worker generation/meshing, LOD, occlusion system и полноценного frustum-aware scheduler. Pipeline на кадре: generate (unlit) → light → mesh; в PLAYING generation и mesh не в одном frame. Scheduler сортирует jobs по дистанции до игрока.
-- Sky/block light — bounded column+spread/flood approximation, не vanilla light engine: нет RGB lightmaps и нет quasi-connectivity. Daylight масштабирует sky-contribution в shader без remesh. Мутации не делают полный 6-pass sky всех overlapping chunks: локальные столбцы + AABB flood. Light writes не ставят `chunk.dirty`; remesh соседей только на X/Z boundary или при emission (torch/furnace).
+- Нет worker generation/meshing, LOD, occlusion system и полноценного frustum-aware scheduler. Pipeline на кадре: generate (unlit, radius = renderDistance+1) → incremental light → mesh visible radius. Visible chunk не мешится без neighbor light context. PLAYING: generation и mesh не в одном frame.
+- Sky/block light **намеренно упрощены ради frame pacing**, не vanilla 1:1. Sky — только вертикальные столбцы (opaque режет доступ к небу; water/leaves −1; cross-plants не меняют sky). Горизонтальный 6-pass spread **удалён**. Block light — bounded flood от emitters (torch 14, burning furnace = torch, lava 15). `final` в shader: `max(sky * daylight, warm * block)` + cheap face shade. Lighting jobs **resumable** (`WORLD_LIGHT_BUDGET_MS = 2` в PLAYING, 8 на loading). Chunk несёт `lightVersion` / `meshedLightVersion`. Visible mesh ждёт neighbor light context + 1-chunk lighting halo. Daylight — shader uniform, не world relight. Light writes не dirty-ят geometry на каждый voxel; coalesced visual update после job.
 - «Освещение пещер» больше не высотный fake: occluding blocks гасят sky light; torch/lava дают локальный block light. Нижние грани читают соседний voxel и больше не зануляются Lambert N·L. Cube faces усредняют 4 light samples на вершину, чтобы отверстия в землю не обрывались в pitch-black. Torch block-light visually тёплый (жёлто-оранжевый) без PointLight.
 - Render classification независима от face occlusion/light semantics: opaque, alpha-tested cutout, vegetation cutout, glass translucent и water translucent имеют отдельные geometry/material paths. Leaves используют `alphaTest=0.42`, `transparent=false`, `depthWrite=true`, `DoubleSide` и сохраняют biome RGB tint. Cross-plants (`lightingMode: vegetation`) пишутся отдельным batched mesh с `FrontSide` и lighting normals `(0,1,0)`.
 - Water и glass разделены по opacity/render order, однако отдельные translucent faces внутри pass всё ещё не сортируются по глубине.

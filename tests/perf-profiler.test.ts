@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifySpike, isPerfQueryEnabled, readPerfScenario } from '../src/core/devProfiler';
+import { classifySpike, isChunkOverlayQueryEnabled, isPerfQueryEnabled, readPerfScenario } from '../src/core/devProfiler';
 import { adaptiveJobBudgetMs } from '../src/world/worldJobs';
 
 describe('DEV profiler helpers', () => {
@@ -8,6 +8,9 @@ describe('DEV profiler helpers', () => {
     expect(isPerfQueryEnabled('?perf=true')).toBe(true);
     expect(isPerfQueryEnabled('?qaMob=cow')).toBe(false);
     expect(readPerfScenario('?perf=1&perfScenario=CREATIVE_BREAK_STRESS')).toBe('CREATIVE_BREAK_STRESS');
+    expect(isChunkOverlayQueryEnabled('?perf=1&chunks=1')).toBe(true);
+    expect(isChunkOverlayQueryEnabled('?perf=1')).toBe(false);
+    expect(isChunkOverlayQueryEnabled('?chunks=1')).toBe(true);
   });
 
   it('attributes a spike to the largest cost bucket', () => {

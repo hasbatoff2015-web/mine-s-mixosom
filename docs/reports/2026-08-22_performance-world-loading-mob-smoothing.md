@@ -169,12 +169,14 @@ manual local GPU QA required.
 ## Deferred
 
 - Один chunk mesh всё ещё 12–30 ms CPU: greedy meshing / worker — отдельное решение после device profiling.
-- Initial `recomputeChunkSky` 6-pass на новый chunk (~десятки ms) при streaming.
+- Initial `recomputeChunkSky` 6-pass на новый chunk (~десятки ms) при streaming. **Снято follow-up lighting pass 2026-08-23:** вертикальный sky + resumable slices, maxSlice ~2 ms CPU.
 - Нет occlusion culling / frustum job skip beyond distance sort.
 - Autosave JSON всего world не переписывался; 30 s interval, не попал в measured break path.
 - Adaptive quality (lower render distance) **не** включался.
 
 ## Next work
+
+Follow-up (2026-08-23): lighting performance + chunk seams. See `docs/reports/2026-08-23_lighting-performance-and-chunk-seams.md`.
 
 Device GPU capture with `?perf=1` on the user machine. Если mesh p95 всё ещё > ~16 ms на target device — профилировать greedy vs worker, не резать quality.
 

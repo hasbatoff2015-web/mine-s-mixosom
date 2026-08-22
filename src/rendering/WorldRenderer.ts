@@ -4,6 +4,7 @@ import type { HorizontalFacing } from '../blocks';
 import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
+import { lightContextReady } from '../world/worldJobs';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import { ChestRenderer } from './ChestRenderer';
 import {
@@ -99,25 +100,43 @@ export class WorldRenderer {
     return this.vegetationMaterial.side;
   }
 
-  rebuildDirty(maxChunks = 2, timeBudgetMs = 7, originX?: number, originZ?: number): number {
+  rebuildDirty(
+    maxChunks = 2,
+    timeBudgetMs = 7,
+    originX?: number,
+    originZ?: number,
+    options: { meshRadius?: number; requireNeighborLight?: boolean } = {},
+  ): number {
     const start = performance.now();
+    const centerX = originX === undefined ? this.world.viewChunkX : floorDiv(originX, CHUNK_SIZE);
+    const centerZ = originZ === undefined ? this.world.viewChunkZ : floorDiv(originZ, CHUNK_SIZE);
+    const meshRadius = options.meshRadius;
+    const requireNeighborLight = options.requireNeighborLight === true;
     const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
-      if (chunk.dirty) dirty.push(chunk);
+      if (!chunk.dirty && !chunk.lightMeshStale) continue;
+      if (meshRadius !== undefined) {
+        const distance = Math.max(Math.abs(chunk.x - centerX), Math.abs(chunk.z - centerZ));
+        if (distance > meshRadius) continue;
+      }
+      dirty.push(chunk);
     }
-    if (originX !== undefined && originZ !== undefined) {
-      const cx = floorDiv(originX, CHUNK_SIZE);
-      const cz = floorDiv(originZ, CHUNK_SIZE);
-      dirty.sort((a, b) => {
-        const da = (a.x - cx) * (a.x - cx) + (a.z - cz) * (a.z - cz);
-        const db = (b.x - cx) * (b.x - cx) + (b.z - cz) * (b.z - cz);
-        return da - db;
-      });
-    }
+    dirty.sort((a, b) => {
+      const da = (a.x - centerX) * (a.x - centerX) + (a.z - centerZ) * (a.z - centerZ);
+      const db = (b.x - centerX) * (b.x - centerX) + (b.z - centerZ) * (b.z - centerZ);
+      return da - db;
+    });
     let rebuilt = 0;
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
-      if (!chunk.skyReady || !chunk.blockLightReady) continue;
+      if (!chunk.lightingReady) continue;
+      if (requireNeighborLight && !lightContextReady(
+        this.world,
+        chunk,
+        centerX,
+        centerZ,
+        this.world.generationRadius,
+      )) continue;
       if (rebuilt > 0 && performance.now() - start >= timeBudgetMs) break;
       this.rebuild(chunk);
       rebuilt += 1;
@@ -161,6 +180,7 @@ export class WorldRenderer {
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
     chunk.dirty = false;
+    chunk.meshedLightVersion = chunk.lightVersion;
     this.world.acknowledgeMeshed(chunk);
     const meshMilliseconds = performance.now() - meshStart;
     this.meshSamples += 1;

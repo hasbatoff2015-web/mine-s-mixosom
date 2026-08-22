@@ -21,12 +21,21 @@ export interface PerfSnapshot {
   readonly waitingMesh: number;
   readonly waitingGenerate: number;
   readonly lightingJobs: number;
+  readonly lightPending: number;
+  readonly lightColumns: number;
+  readonly lightNodes: number;
+  readonly lightFrameMs: number;
+  readonly lightMaxSlice: number;
+  readonly dirtyLightChunks: number;
   readonly dirtyChunks: number;
   readonly blockMutations: number;
   readonly mobCount: number;
   readonly entityUpdateMs: number;
   readonly heapMb?: number;
   readonly lastSpike?: FrameCostBreakdown & { readonly category: string };
+  readonly chunkX?: number;
+  readonly chunkZ?: number;
+  readonly chunkHud?: string;
 }
 
 export function isPerfQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
@@ -40,6 +49,13 @@ export function readPerfScenario(search = typeof location === 'undefined' ? '' :
   if (!search) return undefined;
   const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
   return params.get('perfScenario') ?? undefined;
+}
+
+export function isChunkOverlayQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
+  if (!search) return false;
+  const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
+  const value = params.get('chunks');
+  return value === '1' || value === 'true';
 }
 
 export function classifySpike(cost: FrameCostBreakdown): string {
@@ -103,10 +119,19 @@ export class DevProfiler {
     waitingMesh: number;
     waitingGenerate: number;
     lightingJobs: number;
+    lightPending?: number;
+    lightColumns?: number;
+    lightNodes?: number;
+    lightFrameMs?: number;
+    lightMaxSlice?: number;
+    dirtyLightChunks?: number;
     dirtyChunks: number;
     blockMutations: number;
     mobCount: number;
     entityUpdateMs: number;
+    chunkX?: number;
+    chunkZ?: number;
+    chunkHud?: string;
   }): PerfSnapshot | undefined {
     if (!this.enabled) return undefined;
     const frame = this.frames.snapshot();
@@ -122,12 +147,21 @@ export class DevProfiler {
       waitingMesh: world.waitingMesh,
       waitingGenerate: world.waitingGenerate,
       lightingJobs: world.lightingJobs,
+      lightPending: world.lightPending ?? world.lightingJobs,
+      lightColumns: world.lightColumns ?? 0,
+      lightNodes: world.lightNodes ?? 0,
+      lightFrameMs: world.lightFrameMs ?? 0,
+      lightMaxSlice: world.lightMaxSlice ?? 0,
+      dirtyLightChunks: world.dirtyLightChunks ?? 0,
       dirtyChunks: world.dirtyChunks,
       blockMutations: world.blockMutations,
       mobCount: world.mobCount,
       entityUpdateMs: world.entityUpdateMs,
       heapMb: readJsHeapMb(),
       lastSpike: this.lastSpike,
+      chunkX: world.chunkX,
+      chunkZ: world.chunkZ,
+      chunkHud: world.chunkHud,
     };
   }
 
@@ -143,10 +177,13 @@ export class DevProfiler {
     }
     const spike = snapshot.lastSpike;
     const heap = snapshot.heapMb !== undefined ? `${snapshot.heapMb.toFixed(1)} MB` : 'n/a';
+    const chunkHud = snapshot.chunkHud ?? `chunk ${snapshot.chunkX ?? '—'},${snapshot.chunkZ ?? '—'}`;
     this.overlay.textContent = [
       `PERF  fps ${snapshot.fps}  frame ${snapshot.frame.averageMs.toFixed(1)} / p95 ${snapshot.frame.p95Ms.toFixed(1)} / p99 ${snapshot.frame.p99Ms.toFixed(1)} / max ${snapshot.frame.maximumMs.toFixed(1)}`,
       `TICK  ${snapshot.tick.averageMs.toFixed(2)} / p95 ${snapshot.tick.p95Ms.toFixed(2)}   RENDER ${snapshot.renderMs.toFixed(2)}`,
       `JOBS  gen ${snapshot.generateJobs} mesh ${snapshot.meshJobs} waitG ${snapshot.waitingGenerate} waitM ${snapshot.waitingMesh} light ${snapshot.lightingJobs} dirty ${snapshot.dirtyChunks} mut ${snapshot.blockMutations}`,
+      `LIGHT jobs ${snapshot.lightPending} | nodes ${snapshot.lightNodes} | cols ${snapshot.lightColumns} | frame ${snapshot.lightFrameMs.toFixed(1)} ms | maxSlice ${snapshot.lightMaxSlice.toFixed(1)} | dirtyL ${snapshot.dirtyLightChunks}`,
+      `CHUNK ${chunkHud}`,
       `ENT   mobs ${snapshot.mobCount} update ${snapshot.entityUpdateMs.toFixed(2)} ms   HEAP ${heap}`,
       spike
         ? `SPIKE ${spike.frameMs.toFixed(1)} ms  ${spike.category}  mesh ${spike.meshMs.toFixed(1)} light ${spike.lightMs.toFixed(1)} gen ${spike.generateMs.toFixed(1)} sim ${spike.tickMs.toFixed(1)} render ${spike.renderMs.toFixed(1)}`
