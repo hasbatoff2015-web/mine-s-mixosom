@@ -453,9 +453,15 @@ export class Game {
     this.accumulator = 0;
   }
 
-  /** Close the inventory modal and restore desktop mouse-look. Pause resume does not use this. */
+  /** Close the inventory modal and restore desktop mouse-look. */
   private closeInventoryAndResumeLook(): void {
     this.ui.closeInventory();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  /** Resume from pause/settings and restore desktop mouse-look. Opening pause does not use this. */
+  private resumeFromPause(): void {
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -507,14 +513,14 @@ export class Game {
       document.exitPointerLock?.();
       void this.saveSession();
       this.ui.showPause({
-        resume: () => this.enterPlaying(),
+        resume: () => this.resumeFromPause(),
         settings: () => {
           this.screenBeforeSettings = 'pause';
           this.showSettings();
         },
         saveAndQuit: () => void this.saveAndQuit(),
       });
-    } else if (this.lifecycle.state === 'PAUSED') this.enterPlaying();
+    } else if (this.lifecycle.state === 'PAUSED') this.resumeFromPause();
   }
 
   private showSettings(): void {
@@ -528,7 +534,7 @@ export class Game {
     }, () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
-          resume: () => this.enterPlaying(),
+          resume: () => this.resumeFromPause(),
           settings: () => this.showSettings(),
           saveAndQuit: () => void this.saveAndQuit(),
         });

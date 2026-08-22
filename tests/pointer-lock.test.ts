@@ -1,69 +1,70 @@
 import { describe, expect, it } from 'vitest';
 import { applyPointerLockRequest, shouldRequestPointerLock } from '../src/input/pointerLock';
 
-describe('pointer lock after inventory close', () => {
-  it('captures only after gameplay is resumable, not while a menu holds the cursor', () => {
-    expect(shouldRequestPointerLock({
-      canCapture: false,
-      coarsePointer: false,
-      lockedToCanvas: false,
-    })).toBe(false);
-    expect(shouldRequestPointerLock({
-      canCapture: true,
-      coarsePointer: false,
-      lockedToCanvas: false,
-    })).toBe(true);
-    expect(shouldRequestPointerLock({
-      canCapture: true,
-      coarsePointer: true,
-      lockedToCanvas: false,
-    })).toBe(false);
-    expect(shouldRequestPointerLock({
-      canCapture: true,
-      coarsePointer: false,
-      lockedToCanvas: true,
-    })).toBe(false);
-  });
+/** Mirrors Game canCapture: PLAYING and no inventory/pause overlay. */
+function canCapture(lifecyclePlaying: boolean, overlayOpen: boolean): boolean {
+  return lifecyclePlaying && !overlayOpen;
+}
 
-  it('follows PLAYING + inventory closed → capture; open inventory / pause stay released', () => {
-    const canCapture = (lifecyclePlaying: boolean, inventoryOpen: boolean) => (
-      lifecyclePlaying && !inventoryOpen
-    );
-    expect(shouldRequestPointerLock({
+describe('pointer lock after inventory close', () => {
+  it('captures after inventory close into PLAYING, not while the modal is open', () => {
+    expect(applyPointerLockRequest({
       canCapture: canCapture(true, true),
       coarsePointer: false,
       lockedToCanvas: false,
-    })).toBe(false);
+    }, () => undefined)).toBe(false);
     expect(shouldRequestPointerLock({
       canCapture: canCapture(true, false),
       coarsePointer: false,
       lockedToCanvas: false,
     })).toBe(true);
+  });
+});
+
+describe('pointer lock pause resume', () => {
+  it('does not capture when Esc opens pause from gameplay', () => {
+    const requests: string[] = [];
+    expect(applyPointerLockRequest({
+      canCapture: canCapture(false, true),
+      coarsePointer: false,
+      lockedToCanvas: false,
+    }, () => requests.push('lock'))).toBe(false);
+    expect(requests).toEqual([]);
+  });
+
+  it('captures when Continue resumes pause into PLAYING', () => {
+    const requests: string[] = [];
+    expect(applyPointerLockRequest({
+      canCapture: canCapture(true, false),
+      coarsePointer: false,
+      lockedToCanvas: false,
+    }, () => requests.push('lock'))).toBe(true);
+    expect(requests).toEqual(['lock']);
+  });
+
+  it('does not capture resume while an inventory/chest/furnace modal is open', () => {
     expect(shouldRequestPointerLock({
-      canCapture: canCapture(false, false),
+      canCapture: canCapture(true, true),
       coarsePointer: false,
       lockedToCanvas: false,
     })).toBe(false);
   });
 
-  it('requests the canvas pointer lock API only on the resume transition', () => {
-    const requests: string[] = [];
-    const request = () => requests.push('lock');
-    expect(applyPointerLockRequest({
-      canCapture: false,
-      coarsePointer: false,
+  it('does not capture on a coarse/touch device', () => {
+    expect(shouldRequestPointerLock({
+      canCapture: canCapture(true, false),
+      coarsePointer: true,
       lockedToCanvas: false,
-    }, request)).toBe(false);
+    })).toBe(false);
+  });
+
+  it('does not request again when already locked to the canvas', () => {
+    const requests: string[] = [];
     expect(applyPointerLockRequest({
-      canCapture: true,
+      canCapture: canCapture(true, false),
       coarsePointer: false,
       lockedToCanvas: true,
-    }, request)).toBe(false);
-    expect(applyPointerLockRequest({
-      canCapture: true,
-      coarsePointer: false,
-      lockedToCanvas: false,
-    }, request)).toBe(true);
-    expect(requests).toEqual(['lock']);
+    }, () => requests.push('lock'))).toBe(false);
+    expect(requests).toEqual([]);
   });
 });
