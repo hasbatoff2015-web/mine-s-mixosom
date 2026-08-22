@@ -54,10 +54,10 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       26 test files, 206 tests, 206 passed
-Vite build:   80 modules PASS
+Vitest:       26 test files, 208 tests, 208 passed
+Vite build:   81 modules PASS
 Size/archive: PASS, 0.96 MiB uncompressed, 165 files
-Main assets:  JS 757.51 kB / 205.38 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Main assets:  JS 760.71 kB / 206.58 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -78,7 +78,7 @@ Main assets:  JS 757.51 kB / 205.38 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
 | `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
-| `tests/icon-scroll-fixes.test.ts` | 4 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog |
+| `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -259,6 +259,7 @@ Icons:
 
 - Creative / survival inventory / hotbar;
 - special 3D icons максимально крупные в slot (auto-fit, не мелкий padding);
+- stairs/slabs/button/plates не почти чёрные: oak/birch/brick/stone цвета как у texture/held;
 - `stone_button` не stone cube;
 - ordinary cubes без regression;
 - held generated pose без изменений.

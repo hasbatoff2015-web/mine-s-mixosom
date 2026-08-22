@@ -10,6 +10,7 @@ import {
 } from '../items';
 import { TextureAtlas } from './TextureAtlas';
 import { ItemVisualFactory } from './ItemVisualFactory';
+import { disposeSpecialIconPreview, prepareSpecialIconPreview } from './itemIconPreview';
 
 const ICON_SIZE = 64;
 
@@ -68,15 +69,8 @@ export class ItemIconRenderer {
     if (!category) return undefined;
     const pose = SPECIAL_ICON_POSES[category];
     const scene = new THREE.Scene();
-    scene.add(new THREE.AmbientLight(0xffffff, 0.92));
-    const key = new THREE.DirectionalLight(0xffffff, 0.55);
-    key.position.set(0.45, 1.1, 0.85);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.22);
-    fill.position.set(-0.6, 0.4, -0.3);
-    scene.add(fill);
-
     const model = this.factory.createItemModel(itemId);
+    prepareSpecialIconPreview(model);
     model.rotation.set(
       THREE.MathUtils.degToRad(pose.rotationDeg[0]),
       THREE.MathUtils.degToRad(pose.rotationDeg[1]),
@@ -98,12 +92,15 @@ export class ItemIconRenderer {
       minFilter: THREE.NearestFilter,
       depthBuffer: true,
     });
+    target.texture.colorSpace = THREE.SRGBColorSpace;
     const previousTarget = this.renderer.getRenderTarget();
     const previousClear = new THREE.Color();
     const previousAlpha = this.renderer.getClearAlpha();
     this.renderer.getClearColor(previousClear);
     const previousOutput = this.renderer.outputColorSpace;
+    const previousTone = this.renderer.toneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.NoToneMapping;
     this.renderer.setRenderTarget(target);
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.clear();
@@ -114,7 +111,9 @@ export class ItemIconRenderer {
     this.renderer.setRenderTarget(previousTarget);
     this.renderer.setClearColor(previousClear, previousAlpha);
     this.renderer.outputColorSpace = previousOutput;
+    this.renderer.toneMapping = previousTone;
     target.dispose();
+    disposeSpecialIconPreview(model);
 
     const canvas = document.createElement('canvas');
     canvas.width = ICON_SIZE;
