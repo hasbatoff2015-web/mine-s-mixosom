@@ -729,6 +729,7 @@ export class Game {
             onGround: session.player.onGround,
             sprinting: session.player.sprinting,
             inWater: session.player.inWater,
+            onLadder: session.player.onLadder,
           },
           attackerSprinting: session.player.sprinting,
           attackerYaw: session.player.yaw,

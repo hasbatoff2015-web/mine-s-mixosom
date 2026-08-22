@@ -24,6 +24,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после live held-item pose QA panel: typecheck, 156 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после special-item door/ladder/lever pass: typecheck, 165 tests / 23 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после stairs/slabs/special-icons pass: typecheck, 189 tests / 24 files, production build 78 modules, 0.96 MiB / 165 files.
+- [x] Локальный pipeline после ladder/icon-fit/creative-scroll pass: typecheck, 206 tests / 26 files, production build 80 modules, 0.96 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -55,7 +56,7 @@ Definition of done: принудительный reload/закрытие вкл�
 ### P0.4 Runtime correctness
 
 - [x] Runtime furnace переведён на `SMELTING_RECIPES` и `FUEL_BURN_TICKS`; glass и charcoal входят в общий path.
-- [ ] Последний visual QA stairs/slabs/special icons (checklist в `docs/reports/2026-08-22_stairs-slabs-special-icons-pass.md` и `docs/TESTING.md`), затем подготовка ветки `cursor/minecraft-item-pipeline-rework-935a` к merge в main. Не начинать chest GUI / furnace GUI / recipe book / creative flight в том же pass.
+- [ ] Последний visual QA: крупные special icons, Creative scroll, ladder climbing (checklist в `docs/reports/2026-08-22_ladder-climbing-icon-scroll-fixes.md`), затем подготовка PR #2 к merge в main. Не начинать chest GUI / furnace GUI / recipe book / creative flight в том же pass.
 - [ ] Проверить реальный attack meter, shield wind-up/arc, bow release, mob hit selection и weapon durability через browser smoke.
 - [ ] Пройти end-to-end redstone scenario в browser: source → dust → TNT → visual fuse → explosion/chain → save/reload active fuse.
 - [x] Закрыты targeted regressions: takeoff-only jump exhaustion, hunger sprint gate, Creative non-targetability, 3D+voxel-LOS melee и knockback only on dealt damage.
@@ -107,7 +108,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 - [x] Тонкая 2-block oak door с open/close, collision и UV half/hinge; torch wall/floor; button floor/wall/ceiling; ladder world plane + side placement; stairs/slabs geometry+collision+icons. Bed и chest всё ещё ждут specialized meshes.
 - [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation, ladder facing, slabType, stairHalf; stair corner shape derived; v1→v2 redstone fallback уже реализован.
-- [x] Door open/close на use; ladder climbing, корректный two-block bed и sleeping checks ещё нет.
+- [x] Door open/close на use; ladder climbing (into-wall wish, slow descent, sneak hold). Корректный two-block bed и sleeping checks ещё нет.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Mass TNT больше не вызывает per-block `relightAround`; `ExplosionQueue` + `applyBlockBatch` держат chain в budgeted ticks.
 - [x] Минимальная bounded propagation `0–15` для wire/torch/lever/button/plate/TNT реализована и покрыта unit tests.
@@ -136,7 +137,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Shared held-item pose: цель сменена с pixel-perfect F2 на visual Minecraft-like; QA candidates subtle/balanced/stronger + `qaPoseCompare`. Production pose не переключали.
 - [x] Live held-item pose QA panel: sliders/numeric/copy/reset, item switch без сброса pose. Production pose и geometry не менялись.
 - [x] Production shared held-item pose записан из manual visual QA: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, scale `0.60`. Yaw −90° не заменять.
-- [x] Special block-item pass: lever/ladder/door held generated (vanilla 1.21.8 item JSON); ladder world plane + N/S/E/W placement; door cuboid UV/upper-lower; button/plate special inventory cuboids; shield hidden from obtainable gameplay. Climbing/chest GUI/flight/perf не трогались.
+- [x] Special block-item pass: lever/ladder/door held generated; ladder world plane + climbing; door cuboid UV; button/plate/stairs/slab special inventory cuboids + auto-fit icons. Chest GUI/flight/general perf не трогались.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.

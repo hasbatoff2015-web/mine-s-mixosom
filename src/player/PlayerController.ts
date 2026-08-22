@@ -19,6 +19,12 @@ import {
 } from '../core/constants';
 import type { MoveInput } from '../input/InputManager';
 import type { VoxelWorld } from '../world/World';
+import {
+  desiredHorizontalWish,
+  findLadderContact,
+  isClimbIntent,
+  ladderVerticalVelocity,
+} from './ladderMotion';
 
 const COLLISION_EPSILON = 1e-7;
 const GROUND_PROBE = 0.075;
@@ -66,6 +72,7 @@ export interface PlayerTickResult {
   readonly inWater: boolean;
   readonly inLava: boolean;
   readonly headSubmerged: boolean;
+  readonly onLadder: boolean;
 }
 
 interface MoveResult {
@@ -107,6 +114,7 @@ export class PlayerController {
   inWater = false;
   inLava = false;
   headSubmerged = false;
+  onLadder = false;
   fallDistance = 0;
   lastFallDistance = 0;
   lastFallDamage = 0;
@@ -185,6 +193,7 @@ export class PlayerController {
     this.previousPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
     this.onGround = false;
+    this.onLadder = false;
     this.fallDistance = 0;
     this.lastFallDistance = 0;
     this.lastFallDamage = 0;
@@ -219,6 +228,20 @@ export class PlayerController {
     if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
     else if (movement.jump && wasOnGround) this.velocity.y = JUMP_VELOCITY;
 
+    const wish = desiredHorizontalWish(this.yaw, movement.forward, movement.right);
+    const ladderAtStart = findLadderContact(world, this.aabb);
+    let climbIntent = false;
+    if (ladderAtStart && !this.inWater && !this.inLava) {
+      this.sprinting = false;
+      climbIntent = isClimbIntent(wish.x, wish.z, ladderAtStart.towardX, ladderAtStart.towardZ);
+      this.velocity.y = ladderVerticalVelocity({
+        climbIntent,
+        sneak: this.sneaking,
+        keepJump: jumped,
+        currentY: this.velocity.y,
+      });
+    }
+
     let dx = this.velocity.x * stepDt;
     let dy = this.velocity.y * stepDt;
     let dz = this.velocity.z * stepDt;
@@ -226,7 +249,6 @@ export class PlayerController {
 
     const vertical = this.moveAxis(world, 'y', dy);
     const afterVertical = this.position.clone();
-    const horizontalStart = this.position.clone();
     const xMove = this.moveAxis(world, 'x', dx);
     const zMove = this.moveAxis(world, 'z', dz);
     let actualX = xMove.actual;
@@ -234,7 +256,7 @@ export class PlayerController {
     let collidedX = xMove.collided;
     let collidedZ = zMove.collided;
 
-    if ((collidedX || collidedZ) && wasOnGround && !this.sneaking) {
+    if ((collidedX || collidedZ) && (wasOnGround || ladderAtStart !== undefined) && !this.sneaking) {
       const baseline = this.position.clone();
       const baselineDistanceSq = actualX * actualX + actualZ * actualZ;
       this.position.copy(afterVertical);
@@ -257,6 +279,7 @@ export class PlayerController {
     const actualDrop = Math.max(0, this.previousPosition.y - this.position.y);
     this.updateFluidState(world);
     const supported = this.hasGroundSupport(world, this.position);
+    this.onLadder = !this.inWater && !this.inLava && findLadderContact(world, this.aabb) !== undefined;
     this.onGround = !this.inWater && !this.inLava && (landed || (this.velocity.y <= 0 && supported));
 
     if (collidedX) this.velocity.x = 0;
@@ -264,7 +287,7 @@ export class PlayerController {
     if (vertical.collided) this.velocity.y = 0;
 
     let fallDamage = 0;
-    if (this.inWater || this.inLava) {
+    if (this.inWater || this.inLava || this.onLadder) {
       this.fallDistance = 0;
     } else if (!this.onGround) {
       if (actualDrop > 0) this.fallDistance += actualDrop;
@@ -276,7 +299,7 @@ export class PlayerController {
       if (fallDamage > 0) onDamage?.(fallDamage, 'fall');
     }
 
-    if (!this.inWater && !this.inLava) {
+    if (!this.inWater && !this.inLava && !this.onLadder) {
       if (this.onGround && this.velocity.y <= 0) this.velocity.y = 0;
       else this.velocity.y = Math.max(-TERMINAL_VELOCITY, (this.velocity.y - GRAVITY * stepDt) * Math.pow(0.98, stepDt / 0.05));
     }
@@ -316,6 +339,7 @@ export class PlayerController {
     if (state.yaw !== undefined) this.yaw = finite(state.yaw, this.yaw);
     if (state.pitch !== undefined) this.pitch = clamp(finite(state.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
     this.onGround = false;
+    this.onLadder = false;
     this.fallDistance = 0;
   }
 
@@ -342,6 +366,7 @@ export class PlayerController {
       inWater: this.inWater,
       inLava: this.inLava,
       headSubmerged: this.headSubmerged,
+      onLadder: this.onLadder,
     };
   }
 

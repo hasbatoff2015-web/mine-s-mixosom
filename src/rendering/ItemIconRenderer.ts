@@ -5,6 +5,7 @@ import {
   itemIconDescriptor,
   specialIconCategory,
   generatedHeldTexturePath,
+  orthographicFitExtent,
   OAK_DOOR_HELD_TEXTURE,
 } from '../items';
 import { TextureAtlas } from './TextureAtlas';
@@ -84,11 +85,12 @@ export class ItemIconRenderer {
     scene.add(model);
     model.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(model);
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const extent = Math.max(sphere.radius, 0.08) * pose.padding;
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const extent = orthographicFitExtent(size.x, size.y);
     const camera = new THREE.OrthographicCamera(-extent, extent, extent, -extent, 0.05, 8);
-    camera.position.set(sphere.center.x, sphere.center.y, sphere.center.z + 3);
-    camera.lookAt(sphere.center);
+    camera.position.set(center.x, center.y, center.z + 3);
+    camera.lookAt(center);
     camera.updateProjectionMatrix();
 
     const target = new THREE.WebGLRenderTarget(ICON_SIZE, ICON_SIZE, {

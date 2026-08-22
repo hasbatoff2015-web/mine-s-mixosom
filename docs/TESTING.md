@@ -54,8 +54,8 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       24 test files, 189 tests, 189 passed
-Vite build:   78 modules PASS
+Vitest:       26 test files, 206 tests, 206 passed
+Vite build:   80 modules PASS
 Size/archive: PASS, 0.96 MiB uncompressed, 165 files
 Main assets:  JS 757.51 kB / 205.38 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
@@ -77,6 +77,8 @@ Main assets:  JS 757.51 kB / 205.38 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/item-rendering.test.ts` | 26 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera |
 | `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
 | `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
+| `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
+| `tests/icon-scroll-fixes.test.ts` | 4 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -256,9 +258,22 @@ Pressure plates:
 Icons:
 
 - Creative / survival inventory / hotbar;
+- special 3D icons максимально крупные в slot (auto-fit, не мелкий padding);
 - `stone_button` не stone cube;
 - ordinary cubes без regression;
 - held generated pose без изменений.
+
+Creative scroll:
+
+- прокрутить каталог вниз, взять/положить/shift-click — scroll не прыгает наверх.
+
+Ladder:
+
+- стена 5–10 блоков, лестницы вверх;
+- лицом + W вверх; спиной + S вверх;
+- no input — медленно вниз; C sneak — удержание;
+- от стены — отцепиться; падение на ladder — clamp;
+- верх/низ; N/S/E/W; stairs рядом не дают climb.
 
 ## Mobile/touch manual matrix
 

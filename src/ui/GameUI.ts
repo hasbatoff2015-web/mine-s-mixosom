@@ -13,6 +13,7 @@ import { getItemDefinition, obtainableItems } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
 import { TextureAtlas } from '../rendering/TextureAtlas';
+import { inventoryPaintMode, patchInventoryDynamic } from './inventoryLayout';
 
 export interface MainMenuActions {
   play(): void;
@@ -362,9 +363,39 @@ export class GameUI {
   private renderInventory(): void {
     const context = this.inventoryContext;
     if (!context) return;
+    const dynamic = this.inventoryDynamicHtml(context);
+    const cursor = this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : '';
+    if (inventoryPaintMode(this.modal !== undefined) === 'patch-dynamic'
+      && this.modal
+      && patchInventoryDynamic(this.modal, dynamic, cursor)) {
+      return;
+    }
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop';
+    const catalog = obtainableItems();
+    const creative = context.mode === 'creative'
+      ? `<h3>Творческий каталог</h3><div class="container-grid" data-creative-catalog>${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
+      : '';
+    this.modal.innerHTML = `
+      <div class="inventory-window">
+        <div class="menu-heading"><h2>${this.inventoryTitle(context.kind)}</h2><button class="game-button ghost" data-ui="close">Закрыть</button></div>
+        ${creative}
+        <div data-inventory-dynamic>${dynamic}</div>
+        <div id="cursor-stack">${cursor}</div>
+      </div>`;
+    this.root.append(this.modal);
+    this.modal.querySelector('[data-ui="close"]')!.addEventListener('click', () => context.onClose());
+    this.modal.addEventListener('pointerdown', (event) => {
+      const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-slot]');
+      if (!slot) return;
+      event.preventDefault();
+      this.handleInventorySlot(slot.dataset.slot!, event.button === 2 ? 'right' : 'left', event.shiftKey);
+    });
+    this.modal.addEventListener('contextmenu', (event) => event.preventDefault());
+  }
+
+  private inventoryDynamicHtml(context: InventoryContext): string {
     const inventory = context.inventory;
     const mainSlots = inventory.slots.slice(9, 36);
     const hotbar = inventory.slots.slice(0, 9);
@@ -376,29 +407,10 @@ export class GameUI {
         ? this.furnaceHtml(context.furnace!)
         : `<h3>${context.kind === 'crafting-table' ? 'Верстак 3×3' : 'Создание 2×2'}</h3><div class="craft-area"><div class="craft-grid ${craftSize === 3 ? 'table' : ''}">${this.craftSlots.map((slot, index) => this.slotHtml(slot, `craft-${index}`)).join('')}</div><span>→</span>${this.slotHtml(match?.output ?? null, 'result')}</div>
            <div class="equipment-grid">${this.slotHtml(inventory.armor.head, 'armor-head')}${this.slotHtml(inventory.armor.chest, 'armor-chest')}${this.slotHtml(inventory.armor.legs, 'armor-legs')}${this.slotHtml(inventory.armor.feet, 'armor-feet')}${this.slotHtml(inventory.offhand, 'offhand')}</div>`;
-    const catalog = obtainableItems();
-    const creative = context.mode === 'creative'
-      ? `<h3>Творческий каталог</h3><div class="container-grid">${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
-      : '';
-    this.modal.innerHTML = `
-      <div class="inventory-window">
-        <div class="menu-heading"><h2>${this.inventoryTitle(context.kind)}</h2><button class="game-button ghost" data-ui="close">Закрыть</button></div>
-        ${creative}
-        <div class="inventory-layout"><section>${leftPanel}<p class="inventory-hint">ЛКМ — взять/положить стек · ПКМ — половина/один · Shift+ЛКМ — быстро переместить</p></section><section>
+    return `<div class="inventory-layout"><section>${leftPanel}<p class="inventory-hint">ЛКМ — взять/положить стек · ПКМ — половина/один · Shift+ЛКМ — быстро переместить</p></section><section>
           <h3>Инвентарь</h3><div class="inventory-grid">${mainSlots.map((slot, index) => this.slotHtml(slot, `inventory-${index + 9}`)).join('')}</div>
           <div class="inventory-grid hotbar-grid">${hotbar.map((slot, index) => this.slotHtml(slot, `inventory-${index}`)).join('')}</div>
-        </section></div>
-        <div id="cursor-stack">${this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : ''}</div>
-      </div>`;
-    this.root.append(this.modal);
-    this.modal.querySelector('[data-ui="close"]')!.addEventListener('click', () => context.onClose());
-    this.modal.addEventListener('pointerdown', (event) => {
-      const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-slot]');
-      if (!slot) return;
-      event.preventDefault();
-      this.handleInventorySlot(slot.dataset.slot!, event.button === 2 ? 'right' : 'left', event.shiftKey);
-    });
-    this.modal.addEventListener('contextmenu', (event) => event.preventDefault());
+        </section></div>`;
   }
 
   private handleInventorySlot(key: string, button: 'left' | 'right', shift: boolean): void {

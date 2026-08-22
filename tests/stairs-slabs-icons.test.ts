@@ -297,6 +297,14 @@ describe('special item icons', () => {
     expect(specialIconCategory('oak_stairs')).toBe(specialIconCategory('cobblestone_stairs'));
     expect(itemIconDescriptor('stone')).toEqual({ kind: 'texture', texturePath: 'block/stone' });
     expect(itemIconDescriptor('oak_planks').kind).toBe('texture');
+    expect(itemIconDescriptor('stone_button').kind).toBe('special_preview');
+    for (const id of [
+      'oak_stairs', 'birch_stairs', 'spruce_stairs', 'cobblestone_stairs', 'brick_stairs', 'stone_brick_stairs',
+      'oak_slab', 'birch_slab', 'spruce_slab', 'stone_slab', 'cobblestone_slab', 'brick_slab', 'stone_brick_slab',
+      'stone_button', 'oak_pressure_plate', 'stone_pressure_plate',
+    ]) {
+      expect(itemIconDescriptor(id).kind, id).toBe('special_preview');
+    }
   });
 
   it('keeps the locked generated/handheld first-person pose', () => {

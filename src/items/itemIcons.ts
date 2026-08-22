@@ -7,18 +7,22 @@ export type SpecialIconCategory = 'stairs' | 'slab' | 'button' | 'pressure_plate
 
 export interface SpecialIconPose {
   readonly rotationDeg: readonly [number, number, number];
-  readonly padding: number;
 }
 
+/** Shared isometric preview angle. Size is auto-fit from bounds, not padding. */
+export const SPECIAL_ICON_ROTATION_DEG = [30, 225, 0] as const;
+
 /**
- * Category preview transforms — not per-material magic numbers.
- * Shared isometric angle; padding zooms out so small models stay readable.
+ * Dominant projected dimension occupies this fraction of the square target.
+ * Leaves a small margin so the model does not touch the slot frame.
  */
+export const SPECIAL_ICON_FILL = 0.86;
+
 export const SPECIAL_ICON_POSES: Readonly<Record<SpecialIconCategory, SpecialIconPose>> = Object.freeze({
-  stairs: Object.freeze({ rotationDeg: [30, 225, 0] as const, padding: 1.18 }),
-  slab: Object.freeze({ rotationDeg: [30, 225, 0] as const, padding: 1.22 }),
-  button: Object.freeze({ rotationDeg: [30, 225, 0] as const, padding: 2.35 }),
-  pressure_plate: Object.freeze({ rotationDeg: [30, 225, 0] as const, padding: 1.42 }),
+  stairs: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
+  slab: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
+  button: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
+  pressure_plate: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
 });
 
 export type ItemIconKind = 'texture' | 'special_preview';
@@ -27,6 +31,16 @@ export interface ItemIconDescriptor {
   readonly kind: ItemIconKind;
   readonly texturePath?: string;
   readonly category?: SpecialIconCategory;
+}
+
+/**
+ * Orthographic half-extent so the XY AABB fills `fill` of a square looking down -Z.
+ * Smaller extent → larger on-screen model. No per-item scale.
+ */
+export function orthographicFitExtent(width: number, height: number, fill = SPECIAL_ICON_FILL): number {
+  const half = Math.max(width, height, 1e-6) * 0.5;
+  const safeFill = Math.min(0.94, Math.max(0.7, fill));
+  return half / safeFill;
 }
 
 export function specialIconCategory(itemOrId: string | ItemDefinition): SpecialIconCategory | undefined {
