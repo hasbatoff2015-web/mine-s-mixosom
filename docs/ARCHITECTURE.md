@@ -257,7 +257,7 @@ Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation 
 
 HUD получает фактический attack strength. Shield blocking state уходит в `FirstPersonRenderer`, а DOM остаётся для интерфейса, не для руки или held item.
 
-`InputManager` нормализует desktop и touch в общий `MoveInput` плюс edge-triggered attack/use flags. Desktop sprint — `Shift`, sneak — `C`; touch action buttons не менялись. Desktop использует pointer lock; `tryRequestPointerLock()` запрашивает его только когда `canCapture` (PLAYING и inventory закрыт) и указатель не coarse. Закрытие inventory modal (E / Close / Esc-на-modal) идёт через `Game.closeInventoryAndResumeLook`. Resume из pause («Продолжить» и Esc на pause) — `Game.resumeFromPause()` → `enterPlaying()` → `tryRequestPointerLock()`. Открытие pause по Esc из PLAYING только `exitPointerLock` и `showPause`. Touch создаёт joystick, look zone и action buttons.
+`InputManager` владеет Pointer Lock: request/release, `pointerlockchange`/`pointerlockerror`, last unlock reason (`escape` / `programmatic` / `focus-lost` / `unknown`). `tryRequestPointerLock()` сообщает success через lock-change и failure через Promise rejection / `pointerlockerror` (без `void`-глотания). Esc пока locked игнорируется (браузер сам unlock); `pointerlockchange` с reason `escape` открывает pause **без** повторного `exitPointerLock`. Continue / закрытие inventory — один request. Overlay «Нажмите, чтобы продолжить» рисует только `GameUI` и только после фактического failure. Auto-retry нет.
 
 CSS применяет safe-area insets, compact landscape layouts и portrait rotation overlay. UI не должен менять simulation напрямую: callbacks возвращаются в `Game`.
 

@@ -75,6 +75,7 @@ export class GameUI {
   private attack: HTMLElement;
   private debug: HTMLElement;
   private toasts: HTMLElement;
+  private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
@@ -102,7 +103,10 @@ export class GameUI {
         <div id="hotbar"></div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
-      </div>`;
+      </div>
+      <button type="button" id="pointer-lock-fallback" class="hidden">
+        <span>Нажмите, чтобы продолжить</span>
+      </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
@@ -112,6 +116,7 @@ export class GameUI {
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
+    this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -260,8 +265,19 @@ export class GameUI {
   }
 
   hideHud(): void {
+    this.hidePointerLockFallback();
     this.hud.classList.add('hidden');
     this.setControlsSuppressed(true);
+  }
+
+  showPointerLockFallback(onEngage: () => void): void {
+    this.pointerLockFallback.classList.remove('hidden');
+    this.pointerLockFallback.onclick = () => onEngage();
+  }
+
+  hidePointerLockFallback(): void {
+    this.pointerLockFallback.classList.add('hidden');
+    this.pointerLockFallback.onclick = null;
   }
 
   updateHud(state: HudState): void {
@@ -335,7 +351,6 @@ export class GameUI {
     this.craftSlots = Array.from({ length: context.kind === 'crafting-table' ? 9 : 4 }, () => null);
     this.renderInventory();
     this.setControlsSuppressed(true);
-    document.exitPointerLock?.();
   }
 
   closeInventory(returnStacks = true): void {

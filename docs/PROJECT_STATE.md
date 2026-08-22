@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 214 unit/component tests in 27 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 219 unit/component tests in 27 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -173,7 +173,7 @@
 - HUD: crosshair, hotbar, selected item, health/hunger, mining progress, attack meter container, toasts и F3 debug.
 - Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`.
-- Desktop pointer lock и keyboard/mouse controls: sprint на Shift, sneak/crouch на C; закрытие inventory (E, «Закрыть», Esc при открытом modal) и resume из pause («Продолжить», Esc на pause) вызывают `tryRequestPointerLock()` синхронно из user action. Открытие pause по Esc только `exitPointerLock`. Пока inventory/pause открыты, `canCapture` ложен. Touch buttons не изменены.
+- Desktop pointer lock: inventory/chest close = programmatic relock; Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Если Chrome отклоняет relock после Esc, PLAYING остаётся и показывается overlay «Нажмите, чтобы продолжить» только после фактического failure. Focus-lost не считается programmatic и не запрашивает lock сам.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
 - Lifecycle states: `LOADING`, `MENU`, `PLAYING`, `PAUSED`, `AD`, `BACKGROUND`, `DEAD`.
 - Только `PLAYING` продвигает fixed simulation; остальные states останавливают audio и GameplayAPI marker.
@@ -214,10 +214,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     27 files, 214 tests — PASS
+Vitest:     27 files, 219 tests — PASS
 Vite build: 82 modules — PASS
-Size/archive: 0.96 MiB / 165 files — PASS
-Main JS: 761.24 kB / 206.74 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Size/archive: 0.97 MiB / 165 files — PASS
+Main JS: 764.33 kB / 207.54 kB gzip; CSS: 13.26 kB / 3.91 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

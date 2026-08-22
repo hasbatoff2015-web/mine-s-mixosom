@@ -44,6 +44,11 @@ import {
   type SerializedMob,
 } from '../entities';
 import { InputManager } from '../input/InputManager';
+import {
+  shouldOpenPauseOnUnlock,
+  shouldShowPointerLockFallback,
+  type PointerUnlockReason,
+} from '../input/pointerLock';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { PlayerController } from '../player';
@@ -185,6 +190,9 @@ export class Game {
       togglePause: () => this.togglePause(),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
+      onPointerLockAcquired: () => this.ui.hidePointerLockFallback(),
+      onPointerLockReleased: (reason) => this.handlePointerUnlock(reason),
+      onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
     });
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.bindLifecycle();
@@ -447,6 +455,7 @@ export class Game {
 
   private enterPlaying(): void {
     this.ui.closeInventory();
+    this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     this.lifecycle.setState('PLAYING');
     this.previousTime = performance.now();
@@ -466,6 +475,36 @@ export class Game {
     this.input.tryRequestPointerLock();
   }
 
+  private openPauseMenu(): void {
+    this.ui.hidePointerLockFallback();
+    this.lifecycle.setState('PAUSED');
+    void this.saveSession();
+    this.ui.showPause({
+      resume: () => this.resumeFromPause(),
+      settings: () => {
+        this.screenBeforeSettings = 'pause';
+        this.showSettings();
+      },
+      saveAndQuit: () => void this.saveAndQuit(),
+    });
+  }
+
+  private handlePointerUnlock(reason: PointerUnlockReason): void {
+    if (!shouldOpenPauseOnUnlock(reason, this.lifecycle.state === 'PLAYING', this.ui.isInventoryOpen())) return;
+    this.openPauseMenu();
+  }
+
+  private showPointerLockFallbackIfNeeded(): void {
+    if (!shouldShowPointerLockFallback({
+      playing: this.lifecycle.state === 'PLAYING',
+      inventoryOpen: this.ui.isInventoryOpen(),
+      coarsePointer: isCoarsePointer(),
+      lockedToCanvas: this.input.isPointerLocked(),
+      lastRequestFailed: true,
+    })) return;
+    this.ui.showPointerLockFallback(() => this.input.tryRequestPointerLock());
+  }
+
   private toggleInventory(): void {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
@@ -474,6 +513,8 @@ export class Game {
       return;
     }
     this.lifecycle.setState('PAUSED');
+    this.ui.hidePointerLockFallback();
+    this.input.releasePointerLock();
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
@@ -487,6 +528,8 @@ export class Game {
   private openBlockInventory(kind: 'crafting-table' | 'chest' | 'furnace', hit: VoxelHit): void {
     const session = this.session!;
     this.lifecycle.setState('PAUSED');
+    this.ui.hidePointerLockFallback();
+    this.input.releasePointerLock();
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
@@ -509,17 +552,8 @@ export class Game {
       return;
     }
     if (this.lifecycle.state === 'PLAYING') {
-      this.lifecycle.setState('PAUSED');
-      document.exitPointerLock?.();
-      void this.saveSession();
-      this.ui.showPause({
-        resume: () => this.resumeFromPause(),
-        settings: () => {
-          this.screenBeforeSettings = 'pause';
-          this.showSettings();
-        },
-        saveAndQuit: () => void this.saveAndQuit(),
-      });
+      this.input.releasePointerLock();
+      this.openPauseMenu();
     } else if (this.lifecycle.state === 'PAUSED') this.resumeFromPause();
   }
 
@@ -1368,7 +1402,8 @@ export class Game {
     if (!session || this.deathShown) return;
     this.deathShown = true;
     this.lifecycle.setState('DEAD');
-    document.exitPointerLock?.();
+    this.ui.hidePointerLockFallback();
+    this.input.releasePointerLock();
     if (session.summary.mode === 'survival') {
       for (const stack of session.inventory.slots) if (stack) this.spawnDroppedStack(stack);
       for (const stack of Object.values(session.inventory.armor)) if (stack) this.spawnDroppedStack(stack);
@@ -1538,9 +1573,6 @@ export class Game {
     window.addEventListener('pagehide', () => void this.saveSession());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveSession();
-    });
-    document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement === null && this.lifecycle.state === 'PLAYING' && !isCoarsePointer()) this.togglePause();
     });
     window.addEventListener('keydown', (event) => {
       if (event.code === 'F3' && !event.repeat) {

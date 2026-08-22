@@ -54,10 +54,10 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       27 test files, 214 tests, 214 passed
+Vitest:       27 test files, 219 tests, 219 passed
 Vite build:   82 modules PASS
-Size/archive: PASS, 0.96 MiB uncompressed, 165 files
-Main assets:  JS 761.24 kB / 206.74 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Size/archive: PASS, 0.97 MiB uncompressed, 165 files
+Main assets:  JS 764.33 kB / 207.54 kB gzip; CSS 13.26 kB / 3.91 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -79,7 +79,7 @@ Main assets:  JS 761.24 kB / 206.74 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
 | `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
-| `tests/pointer-lock.test.ts` | 6 | Inventory-close and pause-resume pointer lock: capture on Continue, not on Esc-open-pause, not while modal/coarse/already locked |
+| `tests/pointer-lock.test.ts` | 11 | Unlock reasons (escape/programmatic/focus-lost), Esc pause without duplicate exit, Continue one request, failed request → fallback, no auto-retry |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
