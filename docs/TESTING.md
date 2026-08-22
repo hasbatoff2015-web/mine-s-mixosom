@@ -54,10 +54,10 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       26 test files, 208 tests, 208 passed
-Vite build:   81 modules PASS
+Vitest:       27 test files, 211 tests, 211 passed
+Vite build:   82 modules PASS
 Size/archive: PASS, 0.96 MiB uncompressed, 165 files
-Main assets:  JS 760.71 kB / 206.58 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Main assets:  JS 761.16 kB / 206.73 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -79,6 +79,7 @@ Main assets:  JS 760.71 kB / 206.58 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
 | `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
+| `tests/pointer-lock.test.ts` | 3 | Inventory-close pointer lock policy: capture only when canCapture, not while inventory/pause, not coarse, not if already locked |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -218,7 +219,7 @@ Browser viewport matrix закрывает layout baseline, но не замен
 
 1. loading → main menu, нет горизонтального/вертикального scroll;
 2. create/list/load/delete world;
-3. pointer lock acquire/release, blur и `Esc`;
+3. pointer lock acquire/release, blur и `Esc`; закрытие inventory по E и Close сразу возвращает lock без повторного click по canvas;
 4. WASD, jump, Shift sprint, C sneak, edge protection, step/slab collision;
 5. mine/place, 1.9-like break times, thin torch/button/door/ladder, stairs/slabs (half/double, facing, top stairs), запрет placement внутри игрока;
 6. hotbar `1–9` и wheel, Q-drop/pickup;

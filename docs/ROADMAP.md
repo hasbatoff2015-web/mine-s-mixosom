@@ -26,6 +26,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после stairs/slabs/special-icons pass: typecheck, 189 tests / 24 files, production build 78 modules, 0.96 MiB / 165 files.
 - [x] Локальный pipeline после ladder/icon-fit/creative-scroll pass: typecheck, 206 tests / 26 files, production build 80 modules, 0.96 MiB / 165 files.
 - [x] Локальный pipeline после special-icon preview lighting: typecheck, 208 tests / 26 files, production build 81 modules, 0.96 MiB / 165 files.
+- [x] Локальный pipeline после inventory close pointer lock: typecheck, 211 tests / 27 files, production build 82 modules, 0.96 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -57,7 +58,7 @@ Definition of done: принудительный reload/закрытие вкл�
 ### P0.4 Runtime correctness
 
 - [x] Runtime furnace переведён на `SMELTING_RECIPES` и `FUEL_BURN_TICKS`; glass и charcoal входят в общий path.
-- [ ] Последний visual QA: крупные и **не тёмные** special icons (oak/birch/brick/stone stairs, slabs, button, plates), Creative scroll, ladder climbing (checklist в `docs/reports/2026-08-22_special-icon-preview-lighting.md`), затем подготовка PR #2 к merge в main. Не начинать chest GUI / furnace GUI / recipe book / creative flight в том же pass.
+- [ ] Последний visual QA: крупные и не тёмные special icons, Creative scroll, ladder, **inventory close возвращает pointer lock** (checklist в `docs/reports/2026-08-22_inventory-close-pointer-lock.md`), затем подготовка PR #2 к merge в main. Не начинать chest GUI / furnace GUI / recipe book / creative flight в том же pass.
 - [ ] Проверить реальный attack meter, shield wind-up/arc, bow release, mob hit selection и weapon durability через browser smoke.
 - [ ] Пройти end-to-end redstone scenario в browser: source → dust → TNT → visual fuse → explosion/chain → save/reload active fuse.
 - [x] Закрыты targeted regressions: takeoff-only jump exhaustion, hunger sprint gate, Creative non-targetability, 3D+voxel-LOS melee и knockback only on dealt damage.

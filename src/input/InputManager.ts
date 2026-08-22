@@ -1,4 +1,5 @@
 import { clamp } from '../core/constants';
+import { applyPointerLockRequest, isCoarsePointerMedia } from './pointerLock';
 
 export const DESKTOP_SPRINT_CODES = ['ShiftLeft', 'ShiftRight'] as const;
 export const DESKTOP_SNEAK_CODE = 'KeyC';
@@ -82,6 +83,21 @@ export class InputManager {
     this.touchJump = false;
   }
 
+  /**
+   * Re-enter mouse-look after a gameplay overlay closes.
+   * No-op while inventory/pause/menu keep `canCapture` false, on touch, or if already locked.
+   */
+  tryRequestPointerLock(): void {
+    applyPointerLockRequest({
+      canCapture: this.callbacks.canCapture(),
+      coarsePointer: isCoarsePointerMedia(),
+      lockedToCanvas: typeof document !== 'undefined' && document.pointerLockElement === this.canvas,
+    }, () => {
+      if (typeof this.canvas.requestPointerLock !== 'function') return;
+      void this.canvas.requestPointerLock();
+    });
+  }
+
   private bindDesktop(): void {
     window.addEventListener('keydown', (event) => {
       if (event.code === 'KeyE' && !event.repeat) {
@@ -108,9 +124,7 @@ export class InputManager {
       this.releaseActions();
     });
 
-    this.canvas.addEventListener('click', () => {
-      if (this.callbacks.canCapture() && document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock();
-    });
+    this.canvas.addEventListener('click', () => this.tryRequestPointerLock());
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement !== this.canvas) return;
       this.rotate(event.movementX, event.movementY);

@@ -453,12 +453,18 @@ export class Game {
     this.accumulator = 0;
   }
 
+  /** Close the inventory modal and restore desktop mouse-look. Pause resume does not use this. */
+  private closeInventoryAndResumeLook(): void {
+    this.ui.closeInventory();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
   private toggleInventory(): void {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
     if (this.ui.isInventoryOpen()) {
-      this.ui.closeInventory();
-      this.enterPlaying();
+      this.closeInventoryAndResumeLook();
       return;
     }
     this.lifecycle.setState('PAUSED');
@@ -466,10 +472,7 @@ export class Game {
       inventory: session.inventory,
       mode: session.summary.mode,
       kind: 'inventory',
-      onClose: () => {
-        this.ui.closeInventory();
-        this.enterPlaying();
-      },
+      onClose: () => this.closeInventoryAndResumeLook(),
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
     });
@@ -485,8 +488,7 @@ export class Game {
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
       onClose: () => {
-        this.ui.closeInventory();
-        this.enterPlaying();
+        this.closeInventoryAndResumeLook();
         void this.saveSession();
       },
       onDrop: (stack) => this.spawnDroppedStack(stack),
@@ -497,8 +499,7 @@ export class Game {
   private togglePause(): void {
     if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING') return;
     if (this.ui.isInventoryOpen()) {
-      this.ui.closeInventory();
-      this.enterPlaying();
+      this.closeInventoryAndResumeLook();
       return;
     }
     if (this.lifecycle.state === 'PLAYING') {

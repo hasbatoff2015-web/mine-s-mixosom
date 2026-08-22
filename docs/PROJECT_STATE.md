@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 208 unit/component tests in 26 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 211 unit/component tests in 27 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -173,7 +173,7 @@
 - HUD: crosshair, hotbar, selected item, health/hunger, mining progress, attack meter container, toasts и F3 debug.
 - Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`.
-- Desktop pointer lock и keyboard/mouse controls: sprint на Shift, sneak/crouch на C; touch buttons не изменены.
+- Desktop pointer lock и keyboard/mouse controls: sprint на Shift, sneak/crouch на C; закрытие inventory (E, кнопка «Закрыть», Esc при открытом modal) вызывает `InputManager.tryRequestPointerLock()` и возвращает mouse-look без повторного клика по canvas. Пока inventory/pause открыты, `canCapture` ложен и курсор остаётся свободным. Touch buttons не изменены.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
 - Lifecycle states: `LOADING`, `MENU`, `PLAYING`, `PAUSED`, `AD`, `BACKGROUND`, `DEAD`.
 - Только `PLAYING` продвигает fixed simulation; остальные states останавливают audio и GameplayAPI marker.
@@ -214,10 +214,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     26 files, 208 tests — PASS
-Vite build: 81 modules — PASS
+Vitest:     27 files, 211 tests — PASS
+Vite build: 82 modules — PASS
 Size/archive: 0.96 MiB / 165 files — PASS
-Main JS: 760.71 kB / 206.58 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Main JS: 761.16 kB / 206.73 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

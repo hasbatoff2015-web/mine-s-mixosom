@@ -257,7 +257,7 @@ Default safety bounds: до `2,048` sources, `64` primed TNT, `512` propagation 
 
 HUD получает фактический attack strength. Shield blocking state уходит в `FirstPersonRenderer`, а DOM остаётся для интерфейса, не для руки или held item.
 
-`InputManager` нормализует desktop и touch в общий `MoveInput` плюс edge-triggered attack/use flags. Desktop sprint — `Shift`, sneak — `C`; touch action buttons не менялись. Desktop использует pointer lock; touch создаёт joystick, look zone и action buttons.
+`InputManager` нормализует desktop и touch в общий `MoveInput` плюс edge-triggered attack/use flags. Desktop sprint — `Shift`, sneak — `C`; touch action buttons не менялись. Desktop использует pointer lock; `tryRequestPointerLock()` запрашивает его только когда `canCapture` (PLAYING и inventory закрыт) и указатель не coarse. Закрытие inventory modal (E / Close / Esc-на-modal) идёт через `Game.closeInventoryAndResumeLook`. Pause resume по-прежнему только `enterPlaying()` без авто-lock, чтобы Escape/pause не захватывали мышь. Touch создаёт joystick, look zone и action buttons.
 
 CSS применяет safe-area insets, compact landscape layouts и portrait rotation overlay. UI не должен менять simulation напрямую: callbacks возвращаются в `Game`.
 
