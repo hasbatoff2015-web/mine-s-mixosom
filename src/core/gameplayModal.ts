@@ -14,7 +14,7 @@ export const BLOCKED_MOVE_INPUT: MoveInput = Object.freeze({
   flySprint: false,
 });
 
-/** World tick runs only in PLAYING. Container GUIs stay PLAYING. */
+/** World tick runs only in PLAYING. Container GUIs stay PLAYING. LOADING_WORLD prepares chunks without gameplay. */
 export function worldSimulationActive(lifecycle: LifecycleState): boolean {
   return lifecycle === 'PLAYING';
 }

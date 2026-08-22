@@ -1,6 +1,6 @@
 import { Signal } from './events';
 
-export type LifecycleState = 'LOADING' | 'MENU' | 'PLAYING' | 'PAUSED' | 'AD' | 'BACKGROUND' | 'DEAD';
+export type LifecycleState = 'LOADING' | 'LOADING_WORLD' | 'MENU' | 'PLAYING' | 'PAUSED' | 'AD' | 'BACKGROUND' | 'DEAD';
 
 export class GameLifecycleManager {
   readonly changed = new Signal<LifecycleState>();

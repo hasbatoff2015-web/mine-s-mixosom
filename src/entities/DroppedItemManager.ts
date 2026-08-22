@@ -10,6 +10,7 @@ import { getItemDefinition } from '../items';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
+import { interpolateVec3 } from '../core/entityInterpolation';
 import { moveVoxelBody } from './voxelPhysics';
 
 const ITEM_WIDTH = 0.28;
@@ -71,6 +72,7 @@ export interface DroppedItemManagerOptions {
 export class DroppedItemEntity {
   stack: ItemStack;
   readonly position: THREE.Vector3;
+  readonly previousPosition = new THREE.Vector3();
   readonly velocity: THREE.Vector3;
   ageSeconds: number;
   pickupDelaySeconds: number;
@@ -90,6 +92,7 @@ export class DroppedItemEntity {
   ) {
     this.stack = stack;
     this.position = new THREE.Vector3(position.x, position.y, position.z);
+    this.previousPosition.copy(this.position);
     this.velocity = new THREE.Vector3(velocity.x, velocity.y, velocity.z);
     this.ageSeconds = ageSeconds;
     this.pickupDelaySeconds = pickupDelaySeconds;
@@ -171,7 +174,7 @@ export class DroppedItemManager {
     );
     this.itemsById.set(id, entity);
     this.updateCountScale(entity);
-    this.syncVisual(entity);
+    this.syncVisual(entity, 1);
     this.options.onSpawn?.(entity);
     return entity;
   }
@@ -198,10 +201,19 @@ export class DroppedItemManager {
     const expired: DroppedItemEntity[] = [];
 
     for (const entity of this.itemsById.values()) {
+      entity.previousPosition.copy(entity.position);
       entity.ageSeconds += totalDelta;
       entity.pickupDelaySeconds = Math.max(0, entity.pickupDelaySeconds - totalDelta);
       for (let substep = 0; substep < substeps; substep += 1) this.simulateEntity(entity, step);
-      this.syncVisual(entity);
+      applySampledEntityLight(
+        entity.visual,
+        this.world,
+        entity.position.x,
+        entity.position.y,
+        entity.position.z,
+        ITEM_HEIGHT,
+        worldDaylightUniform.value,
+      );
       if (entity.ageSeconds >= this.despawnSeconds || entity.position.y < -32) expired.push(entity);
     }
     for (const entity of expired) this.removeEntity(entity, 'despawned');
@@ -331,25 +343,30 @@ export class DroppedItemManager {
     }
   }
 
-  private syncVisual(entity: DroppedItemEntity): void {
+  interpolateVisuals(alpha: number): void {
+    const t = Math.max(0, Math.min(1, alpha));
+    for (const entity of this.itemsById.values()) this.syncVisual(entity, t);
+  }
+
+  private syncVisual(entity: DroppedItemEntity, alpha = 1): void {
+    const visual = interpolateVec3(
+      entity.previousPosition.x,
+      entity.previousPosition.y,
+      entity.previousPosition.z,
+      entity.position.x,
+      entity.position.y,
+      entity.position.z,
+      alpha,
+    );
     const bob = entity.onGround
       ? Math.sin(entity.ageSeconds * 2.5 + entity.bobPhase) * 0.035 + 0.045
       : 0;
     entity.visual.position.set(
-      entity.position.x,
-      entity.position.y + ITEM_HEIGHT * 0.5 + bob,
-      entity.position.z,
+      visual.x,
+      visual.y + ITEM_HEIGHT * 0.5 + bob,
+      visual.z,
     );
     entity.visual.rotation.y = entity.ageSeconds * 1.35 + entity.bobPhase;
-    applySampledEntityLight(
-      entity.visual,
-      this.world,
-      entity.position.x,
-      entity.position.y,
-      entity.position.z,
-      ITEM_HEIGHT,
-      worldDaylightUniform.value,
-    );
   }
 
   private mergeSpawnIntoNearby(

@@ -16,7 +16,9 @@ import {
   relightRegion,
   seedChunkBlockLight,
   lightEngineStats,
+  type LightRegion,
 } from './LightEngine';
+import { neighborMeshOffsets } from './worldJobs';
 
 export interface VoxelHit {
   x: number;
@@ -46,6 +48,8 @@ export interface BlockBatchOptions {
   readonly record?: boolean;
   readonly updateLighting?: boolean;
   readonly scheduleNeighbors?: boolean;
+  /** Queue lighting instead of flushing immediately. Gameplay flushes once per frame. */
+  readonly deferLighting?: boolean;
 }
 
 export interface BlockBatchStats {
@@ -86,6 +90,11 @@ export class VoxelWorld {
   generationSamples = 0;
   generationTotalMs = 0;
   generationMaximumMs = 0;
+  meshDirtyMarks = 0;
+  lightQueueMarks = 0;
+  mutationMarks = 0;
+  readonly pendingMesh = new Set<string>();
+  private pendingLight?: { region: LightRegion; sky: boolean; block: boolean };
   private readonly scheduled: ScheduledBlockTick[] = [];
   private readonly scheduledKeys = new Set<string>();
   private readonly pendingFalls: FallingBlockSpawn[] = [];
@@ -120,21 +129,23 @@ export class VoxelWorld {
       const delta = this.modifications.get(key);
       if (delta) for (const [index, block] of delta) chunk.blocks[index] = block;
       this.chunks.set(key, chunk);
-      ensureChunkSky(this, chunk);
-      seedChunkBlockLight(this, chunk);
       const generationMilliseconds = performance.now() - generationStart;
       this.generationSamples += 1;
       this.generationTotalMs += generationMilliseconds;
       this.generationMaximumMs = Math.max(this.generationMaximumMs, generationMilliseconds);
+      this.markMeshDirty(chunk);
       for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
         const neighbor = this.chunks.get(chunkKey(chunkX + dx, chunkZ + dz));
-        if (neighbor) neighbor.dirty = true;
+        if (neighbor) this.markMeshDirty(neighbor);
       }
     }
     if (chunk) chunk.lastTouched = performance.now();
-    if (chunk && !chunk.skyReady) ensureChunkSky(this, chunk);
-    if (chunk && !chunk.blockLightReady) seedChunkBlockLight(this, chunk);
     return chunk;
+  }
+
+  ensureChunkLighting(chunk: Chunk): void {
+    if (!chunk.skyReady) ensureChunkSky(this, chunk);
+    if (!chunk.blockLightReady) seedChunkBlockLight(this, chunk);
   }
 
   getBlockState(x: number, y: number, z: number): BlockRenderState | undefined {
@@ -212,8 +223,11 @@ export class VoxelWorld {
     for (const mutation of mutations) {
       unique.set(blockKey(mutation.x, mutation.y, mutation.z), mutation);
     }
+    this.mutationMarks += unique.size;
 
+    let hadBlockLight = false;
     for (const mutation of unique.values()) {
+      if (this.cellTransmitsBlockLight(mutation.x, mutation.y, mutation.z)) hadBlockLight = true;
       const wrote = this.writeBlockRaw(mutation.x, mutation.y, mutation.z, mutation.block, record, dirtyChunks);
       if (!wrote) continue;
       applied += 1;
@@ -235,17 +249,54 @@ export class VoxelWorld {
     const mutationMs = performance.now() - mutationStart;
     let relightMs = 0;
     const skyBefore = this.skyRecomputeSnapshot();
-    if (applied > 0 && updateLighting && (occlusionChanged || emissionChanged)) {
-      const relightStart = performance.now();
-      relightRegion(this, {
-        minX: minX - lightRadius,
-        minY: minY - lightRadius,
-        minZ: minZ - lightRadius,
-        maxX: maxX + lightRadius,
-        maxY: maxY + lightRadius,
-        maxZ: maxZ + lightRadius,
-      }, occlusionChanged);
-      relightMs = performance.now() - relightStart;
+    const needsSky = occlusionChanged;
+    const needsBlock = emissionChanged || hadBlockLight;
+    if (applied > 0 && updateLighting && (needsSky || needsBlock)) {
+      const skyRadius = needsSky ? 4 : 0;
+      const blockRadius = needsBlock ? lightRadius : 0;
+      const radius = Math.max(skyRadius, blockRadius);
+      const region: LightRegion = {
+        minX: minX - radius,
+        minY: minY - (needsBlock ? blockRadius : 0),
+        minZ: minZ - radius,
+        maxX: maxX + radius,
+        maxY: maxY + (needsBlock ? blockRadius : 0),
+        maxZ: maxZ + radius,
+      };
+      if (options.deferLighting) {
+        this.queueLight(region, needsSky, needsBlock);
+      } else {
+        const relightStart = performance.now();
+        if (needsSky) {
+          relightRegion(this, {
+            minX: minX - skyRadius,
+            minY: 0,
+            minZ: minZ - skyRadius,
+            maxX: maxX + skyRadius,
+            maxY: WORLD_HEIGHT - 1,
+            maxZ: maxZ + skyRadius,
+          }, true, false);
+        }
+        if (needsBlock) {
+          relightRegion(this, {
+            minX: minX - blockRadius,
+            minY: minY - blockRadius,
+            minZ: minZ - blockRadius,
+            maxX: maxX + blockRadius,
+            maxY: maxY + blockRadius,
+            maxZ: maxZ + blockRadius,
+          }, false, true);
+        }
+        relightMs = performance.now() - relightStart;
+      }
+      if (emissionChanged) {
+        this.markLightRegionDirty(
+          minX - lightRadius,
+          minZ - lightRadius,
+          maxX + lightRadius,
+          maxZ + lightRadius,
+        );
+      }
     }
 
     return {
@@ -259,6 +310,37 @@ export class VoxelWorld {
 
   private skyRecomputeSnapshot(): number {
     return lightEngineStats.skyRecomputes;
+  }
+
+  /** Stored block light only — does not seed unlit chunks. */
+  peekBlockLight(x: number, y: number, z: number): number {
+    if (y < 0 || y >= WORLD_HEIGHT) return 0;
+    const chunk = this.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), false);
+    if (!chunk?.blockLightReady) return 0;
+    return chunk.blockLight[Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE))] ?? 0;
+  }
+
+  private cellTransmitsBlockLight(x: number, y: number, z: number): boolean {
+    if (this.peekBlockLight(x, y, z) > 0) return true;
+    return this.peekBlockLight(x + 1, y, z) > 0
+      || this.peekBlockLight(x - 1, y, z) > 0
+      || this.peekBlockLight(x, y + 1, z) > 0
+      || this.peekBlockLight(x, y - 1, z) > 0
+      || this.peekBlockLight(x, y, z + 1) > 0
+      || this.peekBlockLight(x, y, z - 1) > 0;
+  }
+
+  private markLightRegionDirty(minX: number, minZ: number, maxX: number, maxZ: number): void {
+    const minChunkX = floorDiv(minX, CHUNK_SIZE);
+    const maxChunkX = floorDiv(maxX, CHUNK_SIZE);
+    const minChunkZ = floorDiv(minZ, CHUNK_SIZE);
+    const maxChunkZ = floorDiv(maxZ, CHUNK_SIZE);
+    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ += 1) {
+      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
+        const chunk = this.getChunk(chunkX, chunkZ, false);
+        if (chunk) this.markMeshDirty(chunk);
+      }
+    }
   }
 
   private writeBlockRaw(
@@ -289,12 +371,11 @@ export class VoxelWorld {
       }
       delta.set(Chunk.index(localX, y, localZ), block);
     }
-    chunk.dirty = true;
+    this.markMeshDirty(chunk);
     dirtyChunks.add(chunkKey(chunkX, chunkZ));
-    if (localX === 0) this.dirtyNeighbor(chunkX - 1, chunkZ, dirtyChunks);
-    if (localX === CHUNK_SIZE - 1) this.dirtyNeighbor(chunkX + 1, chunkZ, dirtyChunks);
-    if (localZ === 0) this.dirtyNeighbor(chunkX, chunkZ - 1, dirtyChunks);
-    if (localZ === CHUNK_SIZE - 1) this.dirtyNeighbor(chunkX, chunkZ + 1, dirtyChunks);
+    for (const [dx, dz] of neighborMeshOffsets(localX, localZ)) {
+      this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirtyChunks);
+    }
     const nextDefinition = getBlockDefinition(block);
     const occlusionChanged = previousDefinition.occludesFaces !== nextDefinition.occludesFaces;
     const emissionChanged = (previousDefinition.emission ?? 0) !== (nextDefinition.emission ?? 0);
@@ -309,14 +390,72 @@ export class VoxelWorld {
   private dirtyNeighbor(chunkX: number, chunkZ: number, dirtyChunks: Set<string>): void {
     const neighbor = this.getChunk(chunkX, chunkZ, false);
     if (!neighbor) return;
-    neighbor.dirty = true;
+    this.markMeshDirty(neighbor);
     dirtyChunks.add(chunkKey(chunkX, chunkZ));
+  }
+
+  markMeshDirty(chunk: Chunk): void {
+    this.meshDirtyMarks += 1;
+    chunk.dirty = true;
+    this.pendingMesh.add(chunkKey(chunk.x, chunk.z));
+  }
+
+  acknowledgeMeshed(chunk: Chunk): void {
+    if (chunk.dirty) return;
+    this.pendingMesh.delete(chunkKey(chunk.x, chunk.z));
+  }
+
+  queueLight(region: LightRegion, sky: boolean, block: boolean): void {
+    this.lightQueueMarks += 1;
+    if (!this.pendingLight) {
+      this.pendingLight = { region: { ...region }, sky, block };
+      return;
+    }
+    const current = this.pendingLight.region;
+    this.pendingLight = {
+      sky: this.pendingLight.sky || sky,
+      block: this.pendingLight.block || block,
+      region: {
+        minX: Math.min(current.minX, region.minX),
+        minY: Math.min(current.minY, region.minY),
+        minZ: Math.min(current.minZ, region.minZ),
+        maxX: Math.max(current.maxX, region.maxX),
+        maxY: Math.max(current.maxY, region.maxY),
+        maxZ: Math.max(current.maxZ, region.maxZ),
+      },
+    };
+  }
+
+  flushLighting(): number {
+    const pending = this.pendingLight;
+    if (!pending) return 0;
+    this.pendingLight = undefined;
+    const start = performance.now();
+    if (pending.sky) relightRegion(this, pending.region, true, false);
+    if (pending.block) relightRegion(this, pending.region, false, true);
+    return performance.now() - start;
+  }
+
+  get pendingLightJobs(): number {
+    return this.pendingLight ? 1 : 0;
+  }
+
+  get pendingMeshJobs(): number {
+    return this.pendingMesh.size;
+  }
+
+  get unlitChunkCount(): number {
+    let count = 0;
+    for (const chunk of this.chunks.values()) {
+      if (!chunk.skyReady || !chunk.blockLightReady) count += 1;
+    }
+    return count;
   }
 
   /** Invalidates geometry when runtime visual state changes without changing BlockId. */
   markBlockDirty(x: number, z: number): void {
     const chunk = this.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), false);
-    if (chunk) chunk.dirty = true;
+    if (chunk) this.markMeshDirty(chunk);
   }
 
   ensureChunks(centerX: number, centerZ: number, radius: number, maxNew = Infinity): Chunk[] {

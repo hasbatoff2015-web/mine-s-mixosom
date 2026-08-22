@@ -26,14 +26,30 @@ import {
   DEFAULT_RENDER_DISTANCE_DESKTOP,
   DEFAULT_RENDER_DISTANCE_MOBILE,
   FIXED_DT,
+  MAX_CATCH_UP_TICKS,
   MAX_FRAME_DELTA,
   PLAYER_REACH,
   TICK_RATE,
   WORLD_HEIGHT,
+  WORLD_JOB_BUDGET_MS,
+  WORLD_LOADING_JOB_BUDGET_MS,
+  TARGET_FRAME_MS,
+  SEA_LEVEL,
   blockKey,
   clamp,
   floorDiv,
 } from './constants';
+import { advanceFixedStep } from './fixedStep';
+import { DevProfiler, isPerfQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
+import {
+  chunksInSquareRadius,
+  initialReadyChunkRadius,
+  monotonicPercent,
+  worldLoadPercent,
+  worldLoadView,
+  type WorldLoadPhase,
+  type WorldLoadSnapshot,
+} from './worldLoading';
 import {
   openingPauseMenuPausesSimulation,
   playerGameplayAllowed,
@@ -73,6 +89,7 @@ import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types
 import { SurvivalSystem } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { VoxelWorld, type VoxelHit } from '../world/World';
+import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, missingChunkCoords, sortedLoadedChunksByDistance } from '../world/worldJobs';
 import { blockCollisionBoxes } from '../world/collision';
 import {
   defaultSlabType,
@@ -176,6 +193,26 @@ export class Game {
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
+  private readonly profiler = new DevProfiler(isPerfQueryEnabled());
+  private readonly perfScenario = readPerfScenario();
+  private worldLoad?: {
+    centerX: number;
+    centerZ: number;
+    radius: number;
+    phase: WorldLoadPhase;
+    generateTotal: number;
+    generated: number;
+    lit: number;
+    meshed: number;
+    error?: string;
+    warmedUp: boolean;
+    snapSpawn: boolean;
+  };
+  private lastLoadPercent = 0;
+  private lastEntityUpdateMs = 0;
+  private lastGenerateMs = 0;
+  private lastLightMs = 0;
+  private lastMeshMs = 0;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
@@ -245,6 +282,7 @@ export class Game {
     this.renderer.dispose();
     this.saves.close();
     this.yandex.dispose();
+    this.profiler.dispose();
   }
 
   private showMainMenu(): void {
@@ -320,7 +358,7 @@ export class Game {
     if (!arrowVisuals) throw new Error('Arrow visual factory is not ready.');
 
     const player = new PlayerController();
-    const spawn = restored?.player.position ?? this.findSpawn(world);
+    const spawn = restored?.player.position ?? this.estimateSpawn(world);
     player.teleport(spawn);
     if (restored) {
       player.restore({
@@ -433,32 +471,264 @@ export class Game {
       inventory.getSlot(this.session.selectedSlot)?.itemId,
       inventory.offhand?.itemId,
     );
-    world.ensureChunks(Math.floor(player.position.x), Math.floor(player.position.z), 2);
-    let rebuilt = 0;
-    for (const chunk of [...world.chunks.values()]) {
-      worldRenderer.rebuild(chunk);
-      rebuilt += 1;
-      if (rebuilt % 4 === 0) await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    }
     this.deathShown = false;
-    this.enterPlaying();
+    this.beginWorldLoading(!restored);
   }
 
-  private findSpawn(world: VoxelWorld): [number, number, number] {
+  private estimateSpawn(world: VoxelWorld): [number, number, number] {
     for (let radius = 0; radius <= 24; radius += 1) {
       for (let z = -radius; z <= radius; z += 1) {
         for (let x = -radius; x <= radius; x += 1) {
           if (radius > 0 && Math.abs(x) !== radius && Math.abs(z) !== radius) continue;
-          const surface = world.surfaceY(x, z);
-          const floor = world.getBlock(x, surface, z);
-          if ((floor === BlockId.GrassBlock || floor === BlockId.Sand)
-            && !world.isSolid(x, surface + 1, z) && !world.isSolid(x, surface + 2, z)) {
-            return [x + 0.5, surface + 1.01, z + 0.5];
-          }
+          const column = world.generator.columnAt(x, z);
+          if (column.height <= SEA_LEVEL) continue;
+          return [x + 0.5, column.height + 1.01, z + 0.5];
         }
       }
     }
-    return [0.5, world.generator.columnAt(0, 0).height + 2, 0.5];
+    const fallback = world.generator.columnAt(0, 0);
+    return [0.5, fallback.height + 2, 0.5];
+  }
+
+  private snapPlayerToTerrain(): void {
+    const session = this.session;
+    if (!session) return;
+    const x = Math.floor(session.player.position.x);
+    const z = Math.floor(session.player.position.z);
+    const surface = session.world.surfaceY(x, z);
+    const floor = session.world.getBlock(x, surface, z);
+    if (
+      (floor === BlockId.GrassBlock || floor === BlockId.Sand)
+      && !session.world.isSolid(x, surface + 1, z)
+      && !session.world.isSolid(x, surface + 2, z)
+    ) {
+      session.player.teleport([x + 0.5, surface + 1.01, z + 0.5]);
+    }
+  }
+
+  private beginWorldLoading(snapSpawn = false): void {
+    const session = this.session;
+    if (!session) return;
+    const radius = initialReadyChunkRadius(this.settings.renderDistance);
+    this.worldLoad = {
+      centerX: Math.floor(session.player.position.x),
+      centerZ: Math.floor(session.player.position.z),
+      radius,
+      phase: 'generate',
+      generateTotal: chunksInSquareRadius(radius),
+      generated: 0,
+      lit: 0,
+      meshed: 0,
+      warmedUp: false,
+      snapSpawn,
+    };
+    this.lastLoadPercent = 8;
+    this.lifecycle.setState('LOADING_WORLD');
+    this.ui.showLoading('Загрузка мира', this.lastLoadPercent, 'Подготовка мира…');
+    this.input.releasePointerLock();
+  }
+
+  private processWorldLoading(frameStart: number): void {
+    const session = this.session;
+    const load = this.worldLoad;
+    if (!session || !load) return;
+    try {
+      this.processWorldJobs(frameStart, true);
+      const progress = countInitialAreaProgress(
+        session.world,
+        (key) => session.worldRenderer.hasChunk(key),
+        load.centerX,
+        load.centerZ,
+        load.radius,
+      );
+      load.generated = progress.generated;
+      load.lit = progress.lit;
+      load.meshed = progress.meshed;
+      const ready = initialAreaReady(
+        session.world,
+        (key) => session.worldRenderer.hasChunk(key),
+        load.centerX,
+        load.centerZ,
+        load.radius,
+      );
+      if (ready && !load.warmedUp) {
+        load.phase = 'warmup';
+        this.warmupRenderer();
+        load.warmedUp = true;
+      } else if (ready && load.warmedUp) {
+        load.phase = 'ready';
+      } else if (session.world.unlitChunkCount > 0 && load.generated >= load.generateTotal) {
+        load.phase = 'light';
+      } else if (load.generated >= load.generateTotal) {
+        load.phase = 'mesh';
+      } else load.phase = 'generate';
+
+      const snapshot: WorldLoadSnapshot = {
+        phase: load.phase,
+        generated: load.generated,
+        generateTotal: load.generateTotal,
+        lit: Math.max(0, load.lit),
+        litTotal: load.generateTotal,
+        meshed: load.meshed,
+        meshTotal: load.generateTotal,
+        error: load.error,
+      };
+      this.lastLoadPercent = load.phase === 'ready'
+        ? 100
+        : monotonicPercent(this.lastLoadPercent, worldLoadPercent(snapshot));
+      const view = worldLoadView(snapshot, this.lastLoadPercent);
+      this.ui.updateWorldLoading(view.label, view.percent, view.detail);
+      if (load.phase === 'ready') {
+        if (load.snapSpawn) this.snapPlayerToTerrain();
+        this.worldLoad = undefined;
+        this.enterPlaying();
+        this.maybeRunPerfScenario();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('World loading failed.', error);
+      load.phase = 'error';
+      load.error = message;
+      this.worldLoad = undefined;
+      this.lifecycle.setState('MENU');
+      this.ui.showWorldLoadError(message, () => void this.showWorldList());
+    }
+  }
+
+  private warmupRenderer(): void {
+    const session = this.session;
+    if (!session) return;
+    this.camera.position.set(
+      session.player.position.x,
+      session.player.position.y + session.player.eyeHeight,
+      session.player.position.z,
+    );
+    applyImmediateRenderLook(this.camera, this.input);
+    this.renderer.compile(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private processWorldJobs(frameStart: number, loading: boolean): void {
+    const session = this.session;
+    if (!session) return;
+    const originX = loading ? this.worldLoad?.centerX ?? session.player.position.x : session.player.position.x;
+    const originZ = loading ? this.worldLoad?.centerZ ?? session.player.position.z : session.player.position.z;
+    const radius = loading
+      ? this.worldLoad?.radius ?? this.settings.renderDistance
+      : this.settings.renderDistance;
+    const maxBudget = loading ? WORLD_LOADING_JOB_BUDGET_MS : WORLD_JOB_BUDGET_MS;
+    const budget = adaptiveJobBudgetMs(
+      performance.now() - frameStart,
+      loading ? 12 : TARGET_FRAME_MS,
+      maxBudget,
+      loading ? 1 : 0.35,
+    );
+    if (budget <= 0) return;
+    const jobStart = performance.now();
+    let generated = 0;
+    let meshed = 0;
+
+    const missing = missingChunkCoords(session.world, originX, originZ, radius);
+    const generateLimit = loading ? 8 : 1;
+    for (const coord of missing) {
+      if (generated >= generateLimit) break;
+      if (performance.now() - jobStart >= budget) break;
+      const genStart = performance.now();
+      session.world.getChunk(coord.x, coord.z);
+      this.lastGenerateMs += performance.now() - genStart;
+      generated += 1;
+    }
+    this.lastChunkGenerationJobs = generated;
+
+    this.lastLightMs += session.world.flushLighting();
+    const unlit = sortedLoadedChunksByDistance(
+      session.world,
+      originX,
+      originZ,
+      (chunk) => !chunk.skyReady || !chunk.blockLightReady,
+    );
+    const lightLimit = loading ? 4 : 1;
+    let lit = 0;
+    for (const job of unlit) {
+      if (lit >= lightLimit) break;
+      if (performance.now() - jobStart >= budget) break;
+      const chunkLightStart = performance.now();
+      session.world.ensureChunkLighting(job.chunk);
+      this.lastLightMs += performance.now() - chunkLightStart;
+      lit += 1;
+    }
+
+    if (!loading && generated > 0) {
+      this.lastChunkMeshJobs = 0;
+      return;
+    }
+    const meshBudget = Math.max(0.5, budget - (performance.now() - jobStart));
+    const meshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
+    const meshStart = performance.now();
+    meshed = session.worldRenderer.rebuildDirty(
+      meshLimit,
+      meshBudget,
+      originX,
+      originZ,
+    );
+    this.lastMeshMs += performance.now() - meshStart;
+    this.lastChunkMeshJobs = meshed;
+  }
+
+  private maybeRunPerfScenario(): void {
+    if (!this.perfScenario || !this.session) return;
+    if (this.perfScenario === 'CREATIVE_BREAK_STRESS') this.runCreativeBreakStress();
+    if (this.perfScenario === 'MOB_SMOOTHNESS') this.runMobSmoothnessSample();
+  }
+
+  private runCreativeBreakStress(): void {
+    const session = this.session;
+    if (!session) return;
+    const originX = Math.floor(session.player.position.x);
+    const originY = Math.floor(session.player.position.y);
+    const originZ = Math.floor(session.player.position.z);
+    const marksBefore = session.world.meshDirtyMarks;
+    const lightBefore = session.world.lightQueueMarks;
+    const mutations = [];
+    for (let index = 0; index < 100; index += 1) {
+      mutations.push({
+        x: originX + (index % 10),
+        y: originY,
+        z: originZ + Math.floor(index / 10) + 2,
+        block: session.world.getBlock(originX + (index % 10), originY, originZ + Math.floor(index / 10) + 2),
+      });
+    }
+    const started = performance.now();
+    for (const mutation of mutations) {
+      session.world.applyBlockBatch([{ x: mutation.x, y: mutation.y, z: mutation.z, block: BlockId.Air }], {
+        deferLighting: true,
+      });
+    }
+    const queued = performance.now() - started;
+    const lightMs = session.world.flushLighting();
+    console.info('[perf] CREATIVE_BREAK_STRESS', {
+      edits: mutations.length,
+      queuedMs: Number(queued.toFixed(2)),
+      lightMs: Number(lightMs.toFixed(2)),
+      meshDirtyMarks: session.world.meshDirtyMarks - marksBefore,
+      pendingMesh: session.world.pendingMeshJobs,
+      lightQueueMarks: session.world.lightQueueMarks - lightBefore,
+      pendingLight: session.world.pendingLightJobs,
+    });
+  }
+
+  private runMobSmoothnessSample(): void {
+    const session = this.session;
+    if (!session) return;
+    const spawn = session.player.position.clone();
+    spawn.x += 3;
+    const mob = session.mobs.spawn('cow', spawn, { force: true, velocity: new THREE.Vector3(0, 0, 2) });
+    if (!mob) return;
+    session.mobs.interpolateVisuals(0.5);
+    console.info('[perf] MOB_SMOOTHNESS', {
+      sim: [mob.position.x, mob.position.z],
+      visual: [mob.visual.position.x, mob.visual.position.z],
+    });
   }
 
   private enterPlaying(): void {
@@ -565,7 +835,7 @@ export class Game {
   }
 
   private togglePause(): void {
-    if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING') return;
+    if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD') return;
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -643,29 +913,73 @@ export class Game {
   }
 
   private frame(now: number): void {
+    const frameStart = performance.now();
     const rawElapsed = Math.max(0, (now - this.previousTime) / 1000);
-    const elapsed = Math.min(MAX_FRAME_DELTA, rawElapsed);
     this.previousTime = now;
     this.frameTimings.add(rawElapsed * 1000);
     this.fpsFrames += 1;
-    this.fpsTimer += elapsed;
+    this.fpsTimer += Math.min(MAX_FRAME_DELTA, rawElapsed);
     if (this.fpsTimer >= 0.5) {
       this.fps = Math.round(this.fpsFrames / this.fpsTimer);
       this.fpsFrames = 0;
       this.fpsTimer = 0;
     }
-    if (worldSimulationActive(this.lifecycle.state)) {
-      this.accumulator += elapsed;
-      while (this.accumulator >= FIXED_DT) {
-        const tickStart = performance.now();
-        this.tick();
-        this.tickTimings.add(performance.now() - tickStart);
-        this.accumulator -= FIXED_DT;
-      }
+    this.lastGenerateMs = 0;
+    this.lastLightMs = 0;
+    this.lastMeshMs = 0;
+    this.lastEntityUpdateMs = 0;
+    let tickMs = 0;
+    if (this.lifecycle.state === 'LOADING_WORLD') {
+      this.accumulator = 0;
+      this.processWorldLoading(frameStart);
+    } else if (worldSimulationActive(this.lifecycle.state)) {
+      const stepped = advanceFixedStep(this.accumulator, rawElapsed, FIXED_DT, MAX_FRAME_DELTA, MAX_CATCH_UP_TICKS);
+      this.accumulator = stepped.nextAccumulator;
+      const tickStart = performance.now();
+      for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
+      tickMs = performance.now() - tickStart;
+      if (stepped.ticks > 0) this.tickTimings.add(tickMs / stepped.ticks);
+      this.processWorldJobs(frameStart, false);
     } else this.accumulator = 0;
-    this.updateFirstPerson(elapsed);
-    if (this.session) this.session.worldRenderer.updateChests(elapsed);
+    this.updateFirstPerson(rawElapsed);
+    if (this.session) this.session.worldRenderer.updateChests(rawElapsed);
+    const renderStart = performance.now();
     this.render(this.accumulator / FIXED_DT);
+    const renderMs = performance.now() - renderStart;
+    const frameMs = performance.now() - frameStart;
+    if (this.profiler.enabled) {
+      const cost: FrameCostBreakdown = {
+        frameMs,
+        tickMs,
+        generateMs: this.lastGenerateMs,
+        lightMs: this.lastLightMs,
+        meshMs: this.lastMeshMs,
+        entityMs: this.lastEntityUpdateMs,
+        renderMs,
+        otherMs: Math.max(0, frameMs - tickMs - renderMs),
+      };
+      this.profiler.addFrame(cost, rawElapsed);
+      const session = this.session;
+      const snapshot = this.profiler.snapshot({
+        generateJobs: this.lastChunkGenerationJobs,
+        meshJobs: this.lastChunkMeshJobs,
+        waitingMesh: session?.world.pendingMeshJobs ?? 0,
+        waitingGenerate: session
+          ? missingChunkCoords(
+            session.world,
+            Math.floor(session.player.position.x),
+            Math.floor(session.player.position.z),
+            this.settings.renderDistance,
+          ).length
+          : 0,
+        lightingJobs: session?.world.pendingLightJobs ?? 0,
+        dirtyChunks: session?.world.dirtyChunkCount ?? 0,
+        blockMutations: session?.world.mutationMarks ?? 0,
+        mobCount: session?.mobs.count ?? 0,
+        entityUpdateMs: this.lastEntityUpdateMs,
+      });
+      if (snapshot) this.profiler.paint(this.ui.overlayRoot(), snapshot);
+    }
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
   }
 
@@ -729,21 +1043,10 @@ export class Game {
       }
     }
 
-    this.lastChunkGenerationJobs = session.world.ensureChunks(
-      Math.floor(session.player.position.x),
-      Math.floor(session.player.position.z),
-      this.settings.renderDistance,
-      1,
-    ).length;
     if (session.playTicks % 80 === 0) {
       const removed = session.world.pruneChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance);
       session.worldRenderer.removeChunks(removed);
     }
-    // Never combine a synchronous generation job with a mesh job in one fixed tick.
-    // Dirty flags coalesce repeated changes, and the time budget prevents a two-mesh burst.
-    this.lastChunkMeshJobs = this.lastChunkGenerationJobs > 0
-      ? 0
-      : session.worldRenderer.rebuildDirty(isCoarsePointer() ? 1 : 2, isCoarsePointer() ? 4 : 7);
     if (gameplayAllowed) {
       this.updateTargetAndActions();
       this.updateFoodUse();
@@ -754,6 +1057,7 @@ export class Game {
       session.miningTarget = undefined;
     }
     session.arrows.tick(FIXED_DT);
+    const entityStart = performance.now();
     session.mobs.update(FIXED_DT, {
       playerPosition: session.player.position,
       playerEyePosition: session.player.eyePosition(),
@@ -768,6 +1072,7 @@ export class Game {
       return;
     }
     session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
+    this.lastEntityUpdateMs += performance.now() - entityStart;
     this.updateRedstone();
     if (session.summary.mode === 'survival' && session.survival.dead) {
       this.handleDeath();
@@ -853,7 +1158,9 @@ export class Game {
     const harvestable = canHarvestBlock(definition, miningToolFromItemId(toolStack?.itemId));
     if (hit.block === BlockId.OakDoor) this.removeDoor(hit.x, hit.y, hit.z);
     else {
-      session.world.setBlock(hit.x, hit.y, hit.z, BlockId.Air);
+      session.world.applyBlockBatch([{ x: hit.x, y: hit.y, z: hit.z, block: BlockId.Air }], {
+        deferLighting: true,
+      });
       session.redstone.notifyBlockChanged(hit.x, hit.y, hit.z);
     }
     session.miningProgress = 0;
@@ -1475,6 +1782,9 @@ export class Game {
       applyImmediateRenderLook(this.camera, this.input);
       session.falling.interpolate(clamp(alpha, 0, 1));
       session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
+      session.mobs.interpolateVisuals(alpha);
+      session.drops.interpolateVisuals(alpha);
+      session.arrows.interpolateVisuals(alpha);
       const sprintFov = session.player.sprinting ? 7 : 0;
       const bowZoom = session.bowUseTicks > 0
         ? session.combat.bowCharge(session.bowUseTicks).power * 8
@@ -1581,6 +1891,7 @@ export class Game {
     this.session.drops.dispose();
     this.session.falling.dispose();
     this.explosionQueue.clear();
+    this.worldLoad = undefined;
     this.session = undefined;
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();

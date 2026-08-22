@@ -39,6 +39,7 @@ export function getSkyLight(world: VoxelWorld, x: number, y: number, z: number):
   if (y >= WORLD_HEIGHT) return 15;
   const chunk = loadedChunk(world, x, z);
   if (!chunk) return 0;
+  if (!chunk.skyReady) ensureChunkSky(world, chunk);
   return chunk.skyLight[ChunkIndex(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE))] ?? 0;
 }
 
@@ -46,6 +47,7 @@ export function getBlockLight(world: VoxelWorld, x: number, y: number, z: number
   if (y < 0 || y >= WORLD_HEIGHT) return 0;
   const chunk = loadedChunk(world, x, z);
   if (!chunk) return 0;
+  if (!chunk.blockLightReady) seedChunkBlockLight(world, chunk);
   return chunk.blockLight[ChunkIndex(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE))] ?? 0;
 }
 
@@ -115,12 +117,18 @@ function ChunkIndex(x: number, y: number, z: number): number {
   return y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
 }
 
-function setSky(chunk: Chunk, localX: number, y: number, localZ: number, value: number): void {
-  chunk.skyLight[ChunkIndex(localX, y, localZ)] = value;
+function setSky(chunk: Chunk, localX: number, y: number, localZ: number, value: number): boolean {
+  const index = ChunkIndex(localX, y, localZ);
+  if ((chunk.skyLight[index] ?? 0) === value) return false;
+  chunk.skyLight[index] = value;
+  return true;
 }
 
-function setBlockLightValue(chunk: Chunk, localX: number, y: number, localZ: number, value: number): void {
-  chunk.blockLight[ChunkIndex(localX, y, localZ)] = value;
+function setBlockLightValue(chunk: Chunk, localX: number, y: number, localZ: number, value: number): boolean {
+  const index = ChunkIndex(localX, y, localZ);
+  if ((chunk.blockLight[index] ?? 0) === value) return false;
+  chunk.blockLight[index] = value;
+  return true;
 }
 
 export function ensureChunkSky(world: VoxelWorld, chunk: Chunk): void {
@@ -182,7 +190,9 @@ function spreadSkyHorizontal(world: VoxelWorld, chunk: Chunk): void {
 function sampleSky(world: VoxelWorld, x: number, y: number, z: number): number {
   if (y < 0) return 0;
   if (y >= WORLD_HEIGHT) return 15;
-  return getSkyLight(world, x, y, z);
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return 0;
+  return chunk.skyLight[ChunkIndex(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE))] ?? 0;
 }
 
 export function relightAround(world: VoxelWorld, x: number, y: number, z: number, radius = 14, recomputeSky = true): void {
@@ -193,35 +203,100 @@ export function relightAround(world: VoxelWorld, x: number, y: number, z: number
     maxX: x + radius,
     maxY: y + radius,
     maxZ: z + radius,
-  }, recomputeSky);
+  }, recomputeSky, true);
 }
 
-/** Relights a bounding region once: each loaded chunk sky at most one recompute. */
-export function relightRegion(world: VoxelWorld, region: LightRegion, recomputeSky = true): void {
+/**
+ * Relights a bounding region. Sky uses column updates + local spread instead of
+ * a full 6-pass recompute of every overlapping chunk. Block light still floods
+ * the AABB. Light writes do not mark geometry dirty — callers remesh the
+ * mutation chunk and emission-affected neighbors explicitly.
+ */
+export function relightRegion(
+  world: VoxelWorld,
+  region: LightRegion,
+  recomputeSky = true,
+  propagateBlock = true,
+): void {
   const minX = Math.floor(region.minX);
   const maxX = Math.floor(region.maxX);
   const minY = Math.max(0, Math.floor(region.minY));
   const maxY = Math.min(WORLD_HEIGHT - 1, Math.floor(region.maxY));
   const minZ = Math.floor(region.minZ);
   const maxZ = Math.floor(region.maxZ);
-  if (maxY < minY) return;
 
   if (recomputeSky) {
-    const minChunkX = floorDiv(minX, CHUNK_SIZE);
-    const maxChunkX = floorDiv(maxX, CHUNK_SIZE);
-    const minChunkZ = floorDiv(minZ, CHUNK_SIZE);
-    const maxChunkZ = floorDiv(maxZ, CHUNK_SIZE);
-    for (let cz = minChunkZ; cz <= maxChunkZ; cz += 1) {
-      for (let cx = minChunkX; cx <= maxChunkX; cx += 1) {
-        const chunk = loadedChunk(world, cx * CHUNK_SIZE, cz * CHUNK_SIZE);
-        if (!chunk) continue;
-        recomputeChunkSky(world, chunk);
-        world.markBlockDirty(cx * CHUNK_SIZE, cz * CHUNK_SIZE);
-      }
+    updateSkyInRegion(world, minX, maxX, minZ, maxZ);
+  }
+  if (propagateBlock && maxY >= minY) {
+    propagateBlockLight(world, minX, minY, minZ, maxX, maxY, maxZ);
+    lightEngineStats.blockPropagations += 1;
+  }
+}
+
+function recomputeSkyColumn(world: VoxelWorld, x: number, z: number): void {
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return;
+  const localX = positiveMod(x, CHUNK_SIZE);
+  const localZ = positiveMod(z, CHUNK_SIZE);
+  let sky = 15;
+  for (let y = WORLD_HEIGHT - 1; y >= 0; y -= 1) {
+    const definition = getBlockDefinition(chunk.get(localX, y, localZ));
+    if (definition.occludesFaces) {
+      setSky(chunk, localX, y, localZ, 0);
+      sky = 0;
+      continue;
+    }
+    setSky(chunk, localX, y, localZ, sky);
+    if (definition.liquid || definition.renderLayer === 'cutout') {
+      sky = Math.max(0, sky - 1);
     }
   }
-  propagateBlockLight(world, minX, minY, minZ, maxX, maxY, maxZ);
-  lightEngineStats.blockPropagations += 1;
+}
+
+function updateSkyInRegion(world: VoxelWorld, minX: number, maxX: number, minZ: number, maxZ: number): void {
+  const touched = new Set<string>();
+  for (let z = minZ; z <= maxZ; z += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const chunk = loadedChunk(world, x, z);
+      if (!chunk) continue;
+      if (!chunk.skyReady) {
+        recomputeChunkSky(world, chunk);
+        continue;
+      }
+      recomputeSkyColumn(world, x, z);
+      touched.add(chunkKey(chunk.x, chunk.z));
+    }
+  }
+  for (let pass = 0; pass < 4; pass += 1) {
+    let changed = false;
+    for (let z = minZ; z <= maxZ; z += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const chunk = loadedChunk(world, x, z);
+        if (!chunk) continue;
+        const localX = positiveMod(x, CHUNK_SIZE);
+        const localZ = positiveMod(z, CHUNK_SIZE);
+        const originX = chunk.x * CHUNK_SIZE;
+        const originZ = chunk.z * CHUNK_SIZE;
+        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+          const definition = getBlockDefinition(chunk.get(localX, y, localZ));
+          if (definition.occludesFaces) continue;
+          const index = ChunkIndex(localX, y, localZ);
+          let sky = chunk.skyLight[index] ?? 0;
+          for (const [dx, dy, dz] of NEIGHBOURS) {
+            const neighbor = sampleSky(world, originX + localX + dx, y + dy, originZ + localZ + dz);
+            sky = Math.max(sky, neighbor - 1);
+          }
+          if (sky > (chunk.skyLight[index] ?? 0)) {
+            chunk.skyLight[index] = sky;
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  lightEngineStats.skyRecomputes += touched.size;
 }
 
 export function seedChunkBlockLight(world: VoxelWorld, chunk: Chunk): void {
@@ -302,7 +377,6 @@ function floodBlockLight(
       const index = ChunkIndex(localX, ny, localZ);
       if (next <= (chunk.blockLight[index] ?? 0)) continue;
       chunk.blockLight[index] = next;
-      chunk.dirty = true;
       queue.push([nx, ny, nz, next]);
     }
   }

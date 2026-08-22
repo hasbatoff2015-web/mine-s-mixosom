@@ -17,6 +17,8 @@ import {
 } from './mobDefinitions';
 import { createMobModel, type MobModel } from './mobModels';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
+import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
+import { FIXED_DT } from '../core/constants';
 import { VoxelVisualFactory } from './voxelVisuals';
 
 const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
@@ -131,6 +133,7 @@ interface MobProjectile {
   readonly ownerKind: MobKind;
   readonly visual: THREE.Object3D;
   readonly position: THREE.Vector3;
+  readonly previousPosition: THREE.Vector3;
   readonly velocity: THREE.Vector3;
   ageSeconds: number;
   damage: number;
@@ -140,6 +143,7 @@ interface MobProjectile {
 export class MobEntity {
   readonly definition: MobDefinition;
   readonly position: THREE.Vector3;
+  readonly previousPosition = new THREE.Vector3();
   readonly velocity: THREE.Vector3;
   readonly visual: THREE.Group;
   readonly model: MobModel;
@@ -156,6 +160,9 @@ export class MobEntity {
   burnAccumulator = 0;
   farSeconds = 0;
   walkPhase = 0;
+  previousWalkPhase = 0;
+  facingYaw = 0;
+  previousFacingYaw = 0;
   fleeSeconds = 0;
   readonly wanderDirection = new THREE.Vector3();
   resumeState: MobState = 'idle';
@@ -173,6 +180,7 @@ export class MobEntity {
   ) {
     this.definition = getMobDefinition(kind);
     this.position = new THREE.Vector3(position.x, position.y, position.z);
+    this.previousPosition.copy(this.position);
     this.velocity = new THREE.Vector3(velocity.x, velocity.y, velocity.z);
     this.health = health;
     this.state = state;
@@ -303,7 +311,8 @@ export class MobManager {
     );
     this.mobsById.set(id, mob);
     this.scene.add(model.root);
-    this.syncVisual(mob, 0);
+    this.syncVisual(mob, 0, 1);
+    this.applyMobLight(mob);
     this.options.onSpawn?.(mob);
     return mob;
   }
@@ -327,6 +336,9 @@ export class MobManager {
     this.applyBoundedSeparation(delta);
 
     for (const mob of [...this.mobsById.values()]) {
+      mob.previousPosition.copy(mob.position);
+      mob.previousFacingYaw = mob.facingYaw;
+      mob.previousWalkPhase = mob.walkPhase;
       mob.ageSeconds += delta;
       mob.attackCooldownSeconds = Math.max(0, mob.attackCooldownSeconds - delta);
       mob.stateSeconds += delta;
@@ -335,7 +347,7 @@ export class MobManager {
 
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
-        this.syncVisual(mob, delta);
+        this.snapMobRender(mob);
         if (mob.deathSeconds >= 0.7) this.finishDeath(mob);
         continue;
       }
@@ -349,15 +361,58 @@ export class MobManager {
 
       this.updateSunExposure(mob, delta, daylight, context.lightLevelAt);
       if (!mob.alive) {
-        this.syncVisual(mob, delta);
+        this.snapMobRender(mob);
         continue;
       }
       this.simulateMobPhysics(mob, delta);
+      const speed = Math.hypot(mob.velocity.x, mob.velocity.z);
+      if (speed > 0.05) {
+        mob.facingYaw = Math.atan2(mob.velocity.x, mob.velocity.z) + Math.PI;
+        mob.walkPhase += delta * Math.max(3, speed * 4.5);
+      }
+      this.snapIfTeleported(mob);
       this.updateDistanceDespawn(mob, delta, playerPosition);
-      this.syncVisual(mob, delta);
+      this.applyMobLight(mob);
     }
 
     this.updateProjectiles(delta, targetPosition, context);
+  }
+
+  /**
+   * Render-only interpolation. Gameplay/AI/hitboxes keep using simulation transforms.
+   */
+  interpolateVisuals(alpha: number): void {
+    const t = Math.max(0, Math.min(1, alpha));
+    for (const mob of this.mobsById.values()) {
+      this.syncVisual(mob, 0, t);
+    }
+    for (const projectile of this.projectiles.values()) {
+      const visual = interpolateVec3(
+        projectile.previousPosition.x,
+        projectile.previousPosition.y,
+        projectile.previousPosition.z,
+        projectile.position.x,
+        projectile.position.y,
+        projectile.position.z,
+        t,
+      );
+      projectile.visual.position.set(visual.x, visual.y, visual.z);
+    }
+  }
+
+  private snapMobRender(mob: MobEntity): void {
+    mob.previousPosition.copy(mob.position);
+    mob.previousFacingYaw = mob.facingYaw;
+    mob.previousWalkPhase = mob.walkPhase;
+  }
+
+  private snapIfTeleported(mob: MobEntity): void {
+    if (shouldSnapPose(
+      { x: mob.previousPosition.x, y: mob.previousPosition.y, z: mob.previousPosition.z, yaw: mob.previousFacingYaw, walkPhase: mob.previousWalkPhase },
+      { x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw, walkPhase: mob.walkPhase },
+    )) {
+      this.snapMobRender(mob);
+    }
   }
 
   /**
@@ -767,22 +822,37 @@ export class MobManager {
     if (mob.farSeconds > 8 || mob.position.y < -32) this.removeMob(mob, 'despawn');
   }
 
-  private syncVisual(mob: MobEntity, delta: number): void {
+  private syncVisual(mob: MobEntity, _delta: number, alpha = 1): void {
+    const pose = interpolatePose(
+      {
+        x: mob.previousPosition.x,
+        y: mob.previousPosition.y,
+        z: mob.previousPosition.z,
+        yaw: mob.previousFacingYaw,
+        walkPhase: mob.previousWalkPhase,
+      },
+      {
+        x: mob.position.x,
+        y: mob.position.y,
+        z: mob.position.z,
+        yaw: mob.facingYaw,
+        walkPhase: mob.walkPhase,
+      },
+      alpha,
+    );
     const speed = Math.hypot(mob.velocity.x, mob.velocity.z);
-    if (speed > 0.05) {
-      mob.visual.rotation.y = Math.atan2(mob.velocity.x, mob.velocity.z) + Math.PI;
-      mob.walkPhase += delta * Math.max(3, speed * 4.5);
-    }
-    const swing = Math.sin(mob.walkPhase) * Math.min(0.65, speed * 0.22);
+    const walkPhase = pose.walkPhase;
+    const swing = Math.sin(walkPhase) * Math.min(0.65, speed * 0.22);
+    mob.visual.rotation.y = pose.yaw;
     if (mob.kind === 'spider') {
       mob.model.legs.forEach((leg, index) => {
         const side = index % 2 === 0 ? -1 : 1;
         const pair = Math.floor(index / 2);
-        const phase = Math.sin(mob.walkPhase + pair * 0.85);
+        const phase = Math.sin(walkPhase + pair * 0.85);
         leg.rotation.x = Number(leg.userData.baseRotationX ?? 0);
         leg.rotation.y = Number(leg.userData.baseRotationY ?? 0) - phase * 0.18 * side;
         leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0)
-          - Math.abs(Math.cos(mob.walkPhase + pair * 0.7)) * 0.08 * side;
+          - Math.abs(Math.cos(walkPhase + pair * 0.7)) * 0.08 * side;
       });
     } else {
       mob.model.legs.forEach((leg, index) => {
@@ -793,7 +863,8 @@ export class MobManager {
       });
     }
     if (mob.kind === 'chicken') {
-      const flap = Math.sin(mob.ageSeconds * (speed > 0.1 ? 14 : 4)) * (speed > 0.1 ? 0.35 : 0.08);
+      const visualAge = mob.ageSeconds - FIXED_DT * (1 - alpha);
+      const flap = Math.sin(visualAge * (speed > 0.1 ? 14 : 4)) * (speed > 0.1 ? 0.35 : 0.08);
       mob.model.wings.forEach((wing, index) => {
         wing.rotation.x = Number(wing.userData.baseRotationX ?? 0);
         wing.rotation.y = Number(wing.userData.baseRotationY ?? 0);
@@ -801,10 +872,10 @@ export class MobManager {
       });
     }
     if (mob.kind === 'zombie') {
-      const pose = mob.state === 'attack' ? 1.55 : 1.2;
+      const poseArms = mob.state === 'attack' ? 1.55 : 1.2;
       mob.model.arms.forEach((arm, index) => {
         arm.rotation.x = Number(arm.userData.baseRotationX ?? 0)
-          + pose + (index % 2 === 0 ? swing : -swing) * 0.25;
+          + poseArms + (index % 2 === 0 ? swing : -swing) * 0.25;
         arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
         arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
       });
@@ -832,7 +903,10 @@ export class MobManager {
       mob.visual.rotation.z = 0;
     }
     const hurtJolt = mob.state === 'hurt' ? Math.sin(mob.stateSeconds * 45) * 0.035 : 0;
-    mob.visual.position.set(mob.position.x + hurtJolt, mob.position.y, mob.position.z);
+    mob.visual.position.set(pose.x + hurtJolt, pose.y, pose.z);
+  }
+
+  private applyMobLight(mob: MobEntity): void {
     applySampledEntityLight(
       mob.visual,
       this.world,
@@ -945,6 +1019,7 @@ export class MobManager {
       ownerKind: owner.kind,
       visual,
       position,
+      previousPosition: position.clone(),
       velocity,
       ageSeconds: 0,
       damage: owner.definition.attackDamage,
@@ -967,6 +1042,7 @@ export class MobManager {
     context: MobUpdateContext,
   ): void {
     for (const projectile of [...this.projectiles.values()]) {
+      projectile.previousPosition.copy(projectile.position);
       projectile.ageSeconds += delta;
       if (projectile.ageSeconds > 8) {
         this.removeProjectile(projectile.id);

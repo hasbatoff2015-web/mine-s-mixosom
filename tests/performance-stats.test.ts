@@ -9,6 +9,7 @@ describe('rolling performance telemetry', () => {
     expect(stats.samples).toBe(4);
     expect(stats.averageMs).toBe(7.25);
     expect(stats.p95Ms).toBe(20);
+    expect(stats.p99Ms).toBe(20);
     expect(stats.maximumMs).toBe(20);
   });
 });

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
 import type { HorizontalFacing } from '../blocks';
-import { chunkKey } from '../core/constants';
+import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
@@ -99,16 +99,34 @@ export class WorldRenderer {
     return this.vegetationMaterial.side;
   }
 
-  rebuildDirty(maxChunks = 2, timeBudgetMs = 7): number {
+  rebuildDirty(maxChunks = 2, timeBudgetMs = 7, originX?: number, originZ?: number): number {
     const start = performance.now();
-    let rebuilt = 0;
+    const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
-      if (!chunk.dirty || rebuilt >= maxChunks) continue;
+      if (chunk.dirty) dirty.push(chunk);
+    }
+    if (originX !== undefined && originZ !== undefined) {
+      const cx = floorDiv(originX, CHUNK_SIZE);
+      const cz = floorDiv(originZ, CHUNK_SIZE);
+      dirty.sort((a, b) => {
+        const da = (a.x - cx) * (a.x - cx) + (a.z - cz) * (a.z - cz);
+        const db = (b.x - cx) * (b.x - cx) + (b.z - cz) * (b.z - cz);
+        return da - db;
+      });
+    }
+    let rebuilt = 0;
+    for (const chunk of dirty) {
+      if (rebuilt >= maxChunks) break;
+      if (!chunk.skyReady || !chunk.blockLightReady) continue;
+      if (rebuilt > 0 && performance.now() - start >= timeBudgetMs) break;
       this.rebuild(chunk);
       rebuilt += 1;
-      if (performance.now() - start >= timeBudgetMs) break;
     }
     return rebuilt;
+  }
+
+  hasChunk(key: string): boolean {
+    return this.chunks.has(key);
   }
 
   rebuild(chunk: Chunk): void {
@@ -143,6 +161,7 @@ export class WorldRenderer {
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
     chunk.dirty = false;
+    this.world.acknowledgeMeshed(chunk);
     const meshMilliseconds = performance.now() - meshStart;
     this.meshSamples += 1;
     this.meshTotalMs += meshMilliseconds;
