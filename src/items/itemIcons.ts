@@ -76,6 +76,14 @@ export function itemIconDescriptor(itemOrId: string | ItemDefinition): ItemIconD
   return { kind: 'texture', texturePath: item.texture };
 }
 
+/** Cube GUI tiles use `item.texture`, which prefers block `front` over `side`. */
+export function usesFrontFacingGuiTexture(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  if (item.kind !== 'block') return false;
+  const front = getBlockDefinition(item.blockId).textures.front;
+  return !!front && item.texture === front;
+}
+
 export function usesCanonicalSpecialPreview(itemOrId: string | ItemDefinition): boolean {
   return itemIconDescriptor(itemOrId).kind === 'special_preview';
 }

@@ -31,6 +31,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после pointer-lock Esc fallback: typecheck, 219 tests / 27 files, production build 82 modules, 0.97 MiB / 165 files.
 - [x] Локальный pipeline после container UI / chest model / Recipe Book / Creative flight / sim-while-GUI-open: typecheck, 257 tests / 31 files, production build 90 modules, 1.00 MiB / 166 files.
 - [x] Локальный pipeline после container visual/functional QA (Creative tabs, chest lid/facing, furnace lit/light, transactional Recipe Book, stable slot DOM): typecheck, 275 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
+- [x] Локальный pipeline после recipe-book layout / hover overlay / chest lid interior / furnace GUI front / Creative inventory polish: typecheck, 276 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -156,7 +157,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 ### P1.5 UX и accessibility
 
 - [ ] Settings persistence, fullscreen toggle, remappable controls и touch-layout presets.
-- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival 2×2 inventory; Recipe Book слева на crafting/Survival (search, categories, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs.
+- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival 2×2 inventory; Recipe Book слева на crafting/Survival (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter).
 - [x] Chest entity model + opposite-of-look facing + lid-up hinge; furnace facing + lit front + torch-equivalent block light from burn state.
 - [x] Creative double-Space flight (7 ticks, collision, landing, Ctrl sprint, Shift descend, ladder override).
 - [ ] Полный inventory drag UX, tooltips с характеристиками и vanilla advancement recipe unlocks.

@@ -81,6 +81,21 @@ export function furnaceFaceTextureKey(
   return textures.side ?? textures.all ?? textures.top ?? 'block/missing';
 }
 
+/**
+ * 2D inventory/hotbar tile for a cube block. Prefer the authored FRONT
+ * (furnace opening, crafting-table tools) over the side/back.
+ */
+export function blockItemIconTexture(
+  textures: { front?: string; all?: string; side?: string; top?: string },
+  fallbackKey: string,
+): string {
+  return textures.front
+    ?? textures.all
+    ?? textures.side
+    ?? textures.top
+    ?? `block/${fallbackKey}`;
+}
+
 export function attachmentFromHitNormal(_nx: number, ny: number, _nz: number): BlockAttachment {
   if (ny > 0.5) return 'floor';
   if (ny < -0.5) return 'ceiling';

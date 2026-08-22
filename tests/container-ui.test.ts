@@ -23,13 +23,18 @@ import {
   isFuelItem,
   isSmeltableItem,
   queryRecipeBook,
+  recipeBookTabIcon,
+  recipeBookTabUsesText,
   recipeEntryCraftable,
+  RECIPE_BOOK_TAB_ICONS,
   visibleRecipeBookTabs,
 } from '../src/ui/recipeBook';
-import { containerStageSize, containerUiScale } from '../src/ui/containerTheme';
+import { containerStageSize, containerUiScale, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CREATIVE_SCROLL_GUTTER } from '../src/ui/containerTheme';
 import {
   applySlotSnapshots,
+  armorSlotKind,
   catalogMustHideMainInventory,
+  CREATIVE_ARMOR_SLOT_KEYS,
   CREATIVE_DEFAULT_TAB,
   creativeCatalogPlayerSlotKeys,
   creativeInventoryTabSlotKeys,
@@ -42,11 +47,15 @@ describe('container layout', () => {
   it('keeps furnace/crafting logical size near vanilla 176×166', () => {
     expect(containerStageSize('furnace', false)).toEqual({ width: 176, height: 166 });
     expect(containerStageSize('crafting-table', false).height).toBe(166);
-    expect(containerStageSize('crafting-table', false).width).toBe(176 + 20);
+    expect(containerStageSize('crafting-table', false).width).toBe(176);
     expect(containerStageSize('chest', false).width).toBe(176);
     const withBook = containerStageSize('crafting-table', true);
     expect(withBook.width).toBeGreaterThan(176);
-    expect(containerStageSize('creative', false).width).toBe(176);
+    expect(containerStageSize('creative', false).width).toBe(195);
+    expect(MC_BOOK_BUTTON_IN_CRAFT_ROW).toBe(true);
+    const creativeInner = 195 - 14;
+    expect(9 * 18).toBeLessThanOrEqual(creativeInner);
+    expect(9 * 18 + MC_CREATIVE_SCROLL_GUTTER).toBeLessThanOrEqual(creativeInner);
   });
 
   it('scales down to fit 1280×720 and does not explode on 2560×1440', () => {
@@ -164,6 +173,15 @@ describe('recipe book', () => {
     expect(craftable.every((entry) => recipeEntryCraftable(entry, counts))).toBe(true);
     const tabs = visibleRecipeBookTabs('crafting');
     expect(tabs[0]).toBe('all');
+    expect(tabs).toContain('building');
+    expect(recipeBookTabUsesText('all')).toBe(true);
+    expect(recipeBookTabUsesText('building')).toBe(false);
+    expect(recipeBookTabIcon('building')).toBe('block/bricks');
+    expect(recipeBookTabIcon('equipment')).toBe('item/iron_pickaxe');
+    expect(recipeBookTabIcon('food')).toBe('item/apple');
+    expect(recipeBookTabIcon('redstone')).toBe('item/redstone_dust');
+    expect(recipeBookTabIcon('misc')).toBe('item/gunpowder');
+    expect(RECIPE_BOOK_TAB_ICONS.all).toBeUndefined();
     const furnaceOnly = queryRecipeBook({
       kind: 'smelting', gridSize: 3, category: 'all', search: '', craftableOnly: false,
     }, counts);
@@ -321,8 +339,11 @@ describe('creative inventory contract', () => {
     expect(hotbar.some((key) => key === 'inventory-9')).toBe(false);
     const inventoryTab = creativeInventoryTabSlotKeys();
     expect(inventoryTab.filter((key) => key.startsWith('inventory-'))).toHaveLength(36);
-    expect(inventoryTab).toContain('armor-head');
-    expect(inventoryTab).toContain('offhand');
+    expect(inventoryTab).toEqual(expect.arrayContaining([...CREATIVE_ARMOR_SLOT_KEYS]));
+    expect(inventoryTab).not.toContain('offhand');
+    expect(armorSlotKind('armor-head')).toBe('head');
+    expect(armorSlotKind('offhand')).toBeUndefined();
+    expect(armorSlotKind('inventory-0')).toBeUndefined();
   });
 
   it('keeps slot DOM identity across content patches', () => {

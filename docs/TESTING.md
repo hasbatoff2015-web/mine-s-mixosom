@@ -54,10 +54,10 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       33 test files, 275 tests, 275 passed
+Vitest:       33 test files, 276 tests, 276 passed
 Vite build:   90 modules PASS
 Size/archive: PASS, 1.01 MiB uncompressed, 167 files
-Main assets:  JS 793.27 kB / 215.81 kB gzip; CSS 22.02 kB / 5.30 kB gzip
+Main assets:  JS 795.55 kB / 216.39 kB gzip; CSS 25.36 kB / 5.89 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -80,12 +80,12 @@ Main assets:  JS 793.27 kB / 215.81 kB gzip; CSS 22.02 kB / 5.30 kB gzip
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
 | `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
 | `tests/pointer-lock.test.ts` | 11 | Unlock reasons (escape/programmatic/focus-lost), Esc pause without duplicate exit, Continue one request, failed request → fallback, no auto-retry |
-| `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, coplanar seam, held special_model, 27-slot persist, Creative catalog gate, shift transfer, single open target |
-| `tests/container-ui.test.ts` | 21 | Logical 176×166 scale, no furnace Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract, slot DOM identity |
+| `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, lid interior `down` face, coplanar seam, held special_model, 27-slot persist, Creative catalog gate, shift transfer, single open target |
+| `tests/container-ui.test.ts` | 21 | Logical 176×166 scale, book button in craft row (no extra closed width), no furnace Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
 | `tests/creative-flight.test.ts` | 8 | 7-tick edge double-tap, Survival never flies, toggle on/off, hover/ascend/descend/Ctrl sprint, collision/landing/ladder override, mode switch, GUI input block while world ticks |
 | `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules |
-| `tests/furnace-orientation-lit.test.ts` | 5 | N/S/E/W front, lit/unlit texture, torch emission, LightEngine on/off, save/load burning |
-| `tests/special-preview-contract.test.ts` | 3 | Every special_model → special_preview, shared pose/policy, chest entity preload |
+| `tests/furnace-orientation-lit.test.ts` | 5 | N/S/E/W front, lit/unlit texture, GUI icon uses furnace_front not side, torch emission, LightEngine on/off, save/load burning |
+| `tests/special-preview-contract.test.ts` | 4 | Every special_model → special_preview, shared pose/policy, chest entity preload, furnace cube GUI uses front texture |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -287,13 +287,13 @@ Ladder:
 
 Полный checklist: `docs/reports/2026-08-22_container-ui-recipebook-creative-flight.md`.
 
-Chest: facing N/S/E/W latch/front toward player, entity texture, lid opens up, no chunk cube under entity, 27 slots, Survival и Creative GUI одинаковы (без Creative catalog), left/right/shift clicks, held/icon через canonical special_preview.
+Chest: facing N/S/E/W latch/front toward player, entity texture, lid opens up, lid interior visible, no chunk cube under entity, 27 slots, Survival и Creative GUI одинаковы (без Creative catalog), left/right/shift clicks, held/icon через canonical special_preview.
 
-Furnace: input / flame / fuel / arrow / output, **без Recipe Book**, facing N/S/E/W, lit front + torch light while burning, progress live while GUI open, shift-click routing.
+Furnace: input / flame / fuel / arrow / output, **без Recipe Book**, facing N/S/E/W, lit front + torch light while burning, GUI icon = furnace_front, progress live while GUI open, shift-click routing.
 
-Crafting: 3×3 → arrow → result, close возвращает grid, Recipe Book, transactional A→B, ghost ≠ stack.
+Crafting: 3×3 → arrow → result, close возвращает grid, Recipe Book (left panel + craft-row book button + icon tabs), transactional A→B, ghost ≠ stack.
 
-Creative E: вкладки Каталог (catalog + 9 hotbar) / Инвентарь (armor + 3×9 + hotbar), без giant slots.
+Creative E: вкладки Каталог (catalog + scrollbar gutter + 9 hotbar) / Инвентарь (armor silhouettes, без offhand, 3×9 + hotbar), без giant / overflowing slots.
 
 Flight: только Creative, double Space 7 ticks, Space/Shift высота, Ctrl sprint, landing off, walls/ceiling, ladder не перехватывает, Survival — только прыжок.
 

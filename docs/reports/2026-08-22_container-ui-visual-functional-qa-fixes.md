@@ -93,7 +93,7 @@ GPU confirmation of chest seam and hover stability; real-device Creative E. No f
 
 ## Next work
 
-User local visual QA on this commit. Do not change code until that pass.
+Follow-up local QA polish: `docs/reports/2026-08-22_container-ui-layout-visual-polish.md`.
 
 ## Git
 

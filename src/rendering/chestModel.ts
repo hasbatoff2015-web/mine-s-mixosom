@@ -209,8 +209,11 @@ export function createChestLidGeometry(): THREE.BufferGeometry {
   const normals: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
+  // Include the lid underside (`down`). It was previously omitted to avoid a
+  // coplanar seam with the body top; CHEST_LID_SEAM already separates those
+  // planes, and omitting `down` made the inner lid transparent when open.
   appendFaces(
-    modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14, new Set(['down'])),
+    modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14),
     positions, normals, uvs, indices,
     [CHEST_LID_PIVOT.x, CHEST_LID_PIVOT.y, CHEST_LID_PIVOT.z],
   );
@@ -238,7 +241,7 @@ export function createClosedChestGeometry(): THREE.BufferGeometry {
   const indices: number[] = [];
   const origin: readonly [number, number, number] = [0.5, 0.5, 0.5];
   appendFaces(modelBoxFaces(CHEST_BODY_BOX, 0, 19, 14, 10, 14), positions, normals, uvs, indices, origin);
-  appendFaces(modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14, new Set(['down'])), positions, normals, uvs, indices, origin);
+  appendFaces(modelBoxFaces(CHEST_LID_BOX, 0, 0, 14, 5, 14), positions, normals, uvs, indices, origin);
   appendFaces(modelBoxFaces(CHEST_LATCH_BOX, 0, 0, 2, 4, 1, new Set(['south'])), positions, normals, uvs, indices, origin);
   return geometryFrom(positions, normals, uvs, indices, {
     chestModel: true,
@@ -263,4 +266,16 @@ export function chestCollisionBox(x: number, y: number, z: number): {
 
 export function chestGeometryHasCoplanarBodyLidOverlap(): boolean {
   return CHEST_LID_BOX.minY < CHEST_BODY_BOX.maxY;
+}
+
+/** Lid underside is a real `down` face (FrontSide), not a missing/culled interior. */
+export function chestLidIncludesInteriorFace(geometry: THREE.BufferGeometry): boolean {
+  const normals = geometry.getAttribute('normal');
+  if (!normals) return false;
+  for (let index = 0; index < normals.count; index += 1) {
+    if (normals.getX(index) === 0 && normals.getY(index) < -0.5 && normals.getZ(index) === 0) {
+      return true;
+    }
+  }
+  return false;
 }

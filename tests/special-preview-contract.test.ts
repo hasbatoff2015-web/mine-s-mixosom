@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { itemHeldMeshKind, itemIconDescriptor, ITEMS, SPECIAL_ICON_POSES, usesCanonicalSpecialPreview } from '../src/items';
+import { getItemDefinition, itemHeldMeshKind, itemIconDescriptor, ITEMS, SPECIAL_ICON_POSES, usesCanonicalSpecialPreview, usesFrontFacingGuiTexture } from '../src/items';
 import { SPECIAL_ICON_PREVIEW_POLICY } from '../src/rendering/itemIconPreview';
 import { specialPreviewEntityTexturePaths } from '../src/rendering/ItemVisualFactory';
 import { CHEST_TEXTURE_KEY } from '../src/rendering/chestModel';
@@ -34,5 +34,13 @@ describe('generic special preview contract', () => {
   it('preloads entity textures used by special previews (chest) without brightness hacks', () => {
     expect(specialPreviewEntityTexturePaths()).toContain(CHEST_TEXTURE_KEY);
     expect(CHEST_TEXTURE_KEY).toBe('entity/chest/normal');
+  });
+
+  it('keeps cube GUI icons on the authored front face instead of the side/back', () => {
+    expect(itemHeldMeshKind('furnace')).toBe('block_cube');
+    expect(itemIconDescriptor('furnace')).toEqual({ kind: 'texture', texturePath: 'block/furnace_front' });
+    expect(usesFrontFacingGuiTexture('furnace')).toBe(true);
+    expect(getItemDefinition('furnace').texture).not.toBe('block/furnace_side');
+    expect(usesCanonicalSpecialPreview('furnace')).toBe(false);
   });
 });

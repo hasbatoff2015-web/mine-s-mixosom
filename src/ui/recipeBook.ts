@@ -44,8 +44,27 @@ export interface RecipeBookPage {
 
 export const RECIPE_BOOK_PAGE_SIZE = 20;
 
-const CRAFTING_TABS: readonly CraftingBookCategory[] = ['all', 'equipment', 'building', 'food', 'redstone', 'misc'];
+const CRAFTING_TABS: readonly CraftingBookCategory[] = ['all', 'building', 'equipment', 'food', 'redstone', 'misc'];
 const SMELTING_TABS: readonly SmeltingBookCategory[] = ['all', 'food', 'building', 'misc'];
+
+/** Texture keys for category tabs. `all` stays a text label ("Все"). */
+export const RECIPE_BOOK_TAB_ICONS: Readonly<Record<CraftingBookCategory, string | undefined>> = Object.freeze({
+  all: undefined,
+  building: 'block/bricks',
+  equipment: 'item/iron_pickaxe',
+  food: 'item/apple',
+  redstone: 'item/redstone_dust',
+  misc: 'item/gunpowder',
+});
+
+export function recipeBookTabIcon(tab: RecipeBookCategory): string | undefined {
+  if (tab === 'all') return undefined;
+  return RECIPE_BOOK_TAB_ICONS[tab as CraftingBookCategory];
+}
+
+export function recipeBookTabUsesText(tab: RecipeBookCategory): boolean {
+  return tab === 'all';
+}
 
 function ingredientItemIds(ingredient: Ingredient): readonly string[] {
   if (typeof ingredient === 'string') return [ingredient];

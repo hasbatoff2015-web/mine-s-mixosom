@@ -74,11 +74,11 @@ No fly state existed. Sprint on ground remains Shift; fly sprint is Ctrl. Contai
 
 ## Recipe Book
 
-- Button (book icon) on crafting table and Survival inventory. Toggles a left panel; not a new modal; does not touch pointer lock. Furnace has no book button.
+- Button (book icon) sits in the **craft row** left of 2×2/3×3 on crafting table and Survival inventory. Toggles a separate left panel; not a new modal; does not touch pointer lock. Furnace has no book button.
 - Session prefs: `recipeBookOpen.crafting` / `.furnace`. Search resets on open.
 - Search: display name, item id, recipe id, case-insensitive, grid patch only (focus kept).
-- Tabs: crafting ALL / EQUIPMENT / BUILDING / FOOD / REDSTONE / MISC; furnace ALL / FOOD / BUILDING / MISC. Empty tabs hidden except ALL.
-- Show All / Show Craftable; inventory mutation re-queries craftable. Uncraftable in All: red `.uncraftable` buttons.
+- Tabs: vertical icon column — ALL (text «Все») / BUILDING / EQUIPMENT / FOOD / REDSTONE / MISC. Empty tabs hidden except ALL.
+- Show All / Show Craftable is a crafting-table icon toggle; inventory mutation re-queries craftable. Uncraftable in All: red inset outline.
 - Click craftable: return current grid to inventory if possible, then place min ingredients. Shift: fill `maxRecipeFill` (≤64). If grid cannot be returned safely → no destroy.
 - Uncraftable: ghost cells (translucent; missing tinted); not real stacks; any grid edit clears ghost.
 - Variants with the same result: right-click cycles.

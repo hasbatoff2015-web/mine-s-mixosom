@@ -9,7 +9,9 @@ import {
   chestLatchWorldNormal,
   chestLidAngle,
   chestLidFrontTopY,
+  chestLidIncludesInteriorFace,
   chestYaw,
+  createChestLidGeometry,
   createClosedChestGeometry,
   defaultChestFacing,
   isChestEntityTextureKey,
@@ -79,6 +81,10 @@ describe('chest world model', () => {
     expect(chestLidAngle(1)).toBeCloseTo(Math.PI / 2, 8);
     expect(chestLidFrontTopY(1)).toBeGreaterThan(chestLidFrontTopY(0));
     expect(chestGeometryHasCoplanarBodyLidOverlap()).toBe(false);
+    const lid = createChestLidGeometry();
+    expect(chestLidIncludesInteriorFace(lid)).toBe(true);
+    expect(lid.getIndex()?.count).toBe(36);
+    lid.dispose();
   });
 
   it('interpolates lid progress without teleporting and keeps animation FPS-independent', () => {

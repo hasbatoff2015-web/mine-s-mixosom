@@ -9,7 +9,7 @@ import { getItemDefinition, obtainableItems } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
 import { TextureAtlas } from '../rendering/TextureAtlas';
-import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature } from './inventoryLayout';
+import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchRecipeGridHost, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature, armorSlotKind } from './inventoryLayout';
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
@@ -24,6 +24,8 @@ import {
   queryRecipeBook,
   recipeEntryCraftable,
   visibleRecipeBookTabs,
+  recipeBookTabIcon,
+  recipeBookTabUsesText,
   type RecipeBookCategory,
 } from './recipeBook';
 import {
@@ -452,7 +454,7 @@ export class GameUI {
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal.innerHTML = `
       <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
-        <div class="mc-panel mc-creative" data-container-kind="inventory">
+        <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>
           <div class="mc-creative-tabs">
             <button type="button" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
@@ -474,6 +476,8 @@ export class GameUI {
 
   private syncCreativeTabs(): void {
     if (!this.modal) return;
+    const panel = this.modal.querySelector<HTMLElement>('.mc-creative');
+    if (panel) panel.dataset.creativeCurrent = this.creativeTab;
     for (const button of this.modal.querySelectorAll<HTMLElement>('[data-creative-tab]')) {
       button.classList.toggle('active', button.dataset.creativeTab === this.creativeTab);
     }
@@ -481,7 +485,7 @@ export class GameUI {
 
   private renderContainerScreen(context: InventoryContext): void {
     const bookOpen = this.isRecipeBookOpen(context.kind);
-    const showBook = hasRecipeBook(context.kind) && (context.kind !== 'inventory' || context.mode !== 'creative');
+    const showBook = this.showsRecipeBook(context);
     const stage = containerStageSize(context.kind, bookOpen && showBook);
     const scale = containerUiScale(window.innerWidth, window.innerHeight, stage.width, stage.height);
     const body = this.containerBodyHtml(context);
@@ -500,12 +504,8 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.dataset.bookUi = layoutKey;
-    const bookButton = showBook && !bookOpen
-      ? `<button type="button" class="mc-book-button" data-recipe-toggle title="${CONTAINER_STRINGS.recipeBook}"><img src="${TextureAtlas.url('item/book')}" alt="" /></button>`
-      : '';
     this.modal.innerHTML = `
       <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
-        ${bookButton}
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
           <button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>
@@ -563,48 +563,59 @@ export class GameUI {
       this.recipeBookSearch = search.value;
       this.recipeBookPage = 0;
       this.patchRecipeGridOnly(context);
+      this.syncRecipeBookChrome(context);
     });
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
     this.modal?.querySelector('[data-recipe-craftable]')?.addEventListener('click', () => {
       this.recipeBookCraftableOnly = !this.recipeBookCraftableOnly;
       this.recipeBookPage = 0;
-      this.patchRecipeGridOnly(context);
       this.syncRecipeBookChrome(context);
     });
     for (const tab of this.modal?.querySelectorAll<HTMLElement>('[data-recipe-tab]') ?? []) {
       tab.addEventListener('click', () => {
         this.recipeBookCategory = tab.dataset.recipeTab as RecipeBookCategory;
         this.recipeBookPage = 0;
-        this.patchRecipeGridOnly(context);
         this.syncRecipeBookChrome(context);
       });
     }
     this.modal?.querySelector('[data-recipe-prev]')?.addEventListener('click', () => {
       this.recipeBookPage = Math.max(0, this.recipeBookPage - 1);
-      this.patchRecipeGridOnly(context);
+      this.syncRecipeBookChrome(context);
     });
     this.modal?.querySelector('[data-recipe-next]')?.addEventListener('click', () => {
       this.recipeBookPage += 1;
-      this.patchRecipeGridOnly(context);
+      this.syncRecipeBookChrome(context);
     });
   }
 
   private patchRecipeGridOnly(context: InventoryContext): void {
     const grid = this.modal?.querySelector('[data-recipe-grid]');
+    if (!grid) return;
     const html = this.recipeButtonsHtml(context);
-    if (grid && grid.innerHTML !== html) grid.innerHTML = html;
+    if (typeof document !== 'undefined' && 'querySelectorAll' in grid) {
+      patchRecipeGridHost(grid, html);
+      return;
+    }
+    if (grid.innerHTML !== html) grid.innerHTML = html;
   }
 
   private syncRecipeBookChrome(context: InventoryContext): void {
     const craftable = this.modal?.querySelector('[data-recipe-craftable]');
     if (craftable) {
       craftable.classList.toggle('active', this.recipeBookCraftableOnly);
-      craftable.textContent = this.recipeBookCraftableOnly ? CONTAINER_STRINGS.showCraftable : CONTAINER_STRINGS.showAll;
+      craftable.setAttribute('title', this.recipeBookCraftableOnly ? CONTAINER_STRINGS.showAll : CONTAINER_STRINGS.showCraftable);
+      craftable.setAttribute('aria-pressed', this.recipeBookCraftableOnly ? 'true' : 'false');
     }
     for (const tab of this.modal?.querySelectorAll<HTMLElement>('[data-recipe-tab]') ?? []) {
       tab.classList.toggle('active', tab.dataset.recipeTab === this.recipeBookCategory);
     }
+    const pageLabel = this.modal?.querySelector('[data-recipe-page]');
+    if (pageLabel) pageLabel.textContent = this.recipeBookPageLabel(context);
     this.patchRecipeGridOnly(context);
+  }
+
+  private showsRecipeBook(context: InventoryContext): boolean {
+    return hasRecipeBook(context.kind) && (context.kind !== 'inventory' || context.mode !== 'creative');
   }
 
   private isRecipeBookOpen(kind: InventoryContext['kind']): boolean {
@@ -633,17 +644,23 @@ export class GameUI {
     const armor = context.kind === 'inventory'
       ? this.equipmentColumnHtml(context)
       : '';
+    const book = this.showsRecipeBook(context) ? this.recipeBookToggleHtml() : '';
     return `<div class="mc-label">${label}</div>
       <div class="mc-craft-row">
         ${armor}
+        ${book}
         <div class="mc-grid mc-grid-${size}">${this.craftSlots.map((slot, index) => this.craftSlotHtml(slot, index)).join('')}</div>
         <div class="mc-arrow" aria-hidden="true"></div>
         ${this.slotHtml(match?.output ?? null, 'result')}
       </div>`;
   }
 
+  private recipeBookToggleHtml(): string {
+    return `<button type="button" class="mc-book-button" data-recipe-toggle title="${CONTAINER_STRINGS.recipeBook}"><img src="${TextureAtlas.url('item/book')}" width="16" height="16" alt="" /></button>`;
+  }
+
   private equipmentColumnHtml(context: InventoryContext): string {
-    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}${this.slotHtml(context.inventory.offhand, 'offhand')}</div>`;
+    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}</div>`;
   }
 
   private craftSlotHtml(stack: ItemStack | null, index: number): string {
@@ -671,24 +688,60 @@ export class GameUI {
   }
 
   private creativePlayerInventoryHtml(context: InventoryContext): string {
-    return `<div class="mc-creative-inventory">${this.equipmentColumnHtml(context)}<div class="mc-creative-main">${this.playerMainGridHtml(context)}</div></div>`;
+    return `<div class="mc-creative-inventory">
+      <div class="mc-creative-equip">${this.equipmentColumnHtml(context)}</div>
+      <div class="mc-creative-main">${this.playerMainGridHtml(context)}</div>
+    </div>`;
   }
 
   private recipeBookHtml(context: InventoryContext): string {
     if (!this.isRecipeBookOpen(context.kind)) return '';
     const tabs = visibleRecipeBookTabs('crafting');
+    const craftableTitle = this.recipeBookCraftableOnly ? CONTAINER_STRINGS.showAll : CONTAINER_STRINGS.showCraftable;
     return `<aside class="mc-recipe-book" data-recipe-book>
-      <div class="mc-recipe-toolbar">
-        <div class="mc-recipe-toolbar-row">
+      <nav class="mc-recipe-cats" aria-label="${CONTAINER_STRINGS.recipeBook}">
+        ${tabs.map((tab) => this.recipeTabButtonHtml(tab)).join('')}
+      </nav>
+      <div class="mc-recipe-main">
+        <div class="mc-recipe-toolbar">
           <input data-recipe-search type="search" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(this.recipeBookSearch)}" />
-          <button type="button" class="mc-book-button mc-book-button-inline" data-recipe-toggle title="${CONTAINER_STRINGS.recipeBook}"><img src="${TextureAtlas.url('item/book')}" alt="" /></button>
+          <button type="button" class="mc-recipe-craftable${this.recipeBookCraftableOnly ? ' active' : ''}" data-recipe-craftable title="${craftableTitle}" aria-pressed="${this.recipeBookCraftableOnly ? 'true' : 'false'}">
+            <img src="${TextureAtlas.url('block/crafting_table')}" width="16" height="16" alt="" />
+          </button>
         </div>
-        <button type="button" data-recipe-craftable class="${this.recipeBookCraftableOnly ? 'active' : ''}">${this.recipeBookCraftableOnly ? CONTAINER_STRINGS.showCraftable : CONTAINER_STRINGS.showAll}</button>
+        <div class="mc-recipe-grid" data-recipe-grid>${this.recipeButtonsHtml(context)}</div>
+        <div class="mc-recipe-pager">
+          <button type="button" data-recipe-prev aria-label="prev">‹</button>
+          <span data-recipe-page>${this.recipeBookPageLabel(context)}</span>
+          <button type="button" data-recipe-next aria-label="next">›</button>
+        </div>
       </div>
-      <div class="mc-recipe-tabs">${tabs.map((tab) => `<button type="button" data-recipe-tab="${tab}" class="${this.recipeBookCategory === tab ? 'active' : ''}">${this.tabLabel(tab)}</button>`).join('')}</div>
-      <div class="mc-recipe-grid" data-recipe-grid>${this.recipeButtonsHtml(context)}</div>
-      <div class="mc-recipe-pager"><button type="button" data-recipe-prev>‹</button><button type="button" data-recipe-next>›</button></div>
     </aside>`;
+  }
+
+  private recipeTabButtonHtml(tab: RecipeBookCategory): string {
+    const active = this.recipeBookCategory === tab ? ' active' : '';
+    const label = this.tabLabel(tab);
+    if (recipeBookTabUsesText(tab)) {
+      return `<button type="button" class="mc-recipe-tab${active}" data-recipe-tab="${tab}" title="${label}">${label}</button>`;
+    }
+    const icon = recipeBookTabIcon(tab);
+    return `<button type="button" class="mc-recipe-tab${active}" data-recipe-tab="${tab}" title="${label}">${icon ? `<img src="${TextureAtlas.url(icon)}" width="16" height="16" alt="${label}" />` : label}</button>`;
+  }
+
+  private recipeBookPageLabel(context: InventoryContext): string {
+    const gridSize = context.kind === 'crafting-table' ? 3 : 2;
+    const counts = inventoryAndGridCounts(context.inventory, this.craftSlots);
+    const filtered = queryRecipeBook({
+      kind: 'crafting',
+      gridSize,
+      category: this.recipeBookCategory,
+      search: this.recipeBookSearch,
+      craftableOnly: this.recipeBookCraftableOnly,
+    }, counts);
+    const page = paginateRecipeBook(filtered, this.recipeBookPage);
+    this.recipeBookPage = page.page;
+    return `${page.page + 1}/${page.pageCount}`;
   }
 
   private recipeGridHtml(context: InventoryContext): string {
@@ -709,7 +762,8 @@ export class GameUI {
     this.recipeBookPage = page.page;
     return page.entries.map((entry) => {
       const craftable = recipeEntryCraftable(entry, counts);
-      return `<button type="button" class="mc-recipe-btn${craftable ? '' : ' uncraftable'}" data-recipe-id="${this.escape(entry.id)}" title="${this.escape(getItemDefinition(entry.resultId).name)}">
+      const sig = `${entry.id}:${craftable ? 1 : 0}:${entry.resultCount}`;
+      return `<button type="button" class="mc-recipe-btn${craftable ? '' : ' uncraftable'}" data-recipe-id="${this.escape(entry.id)}" data-sig="${sig}" title="${this.escape(getItemDefinition(entry.resultId).name)}">
         <img src="${this.itemIcon(entry.resultId)}" alt="" />
         ${entry.resultCount > 1 ? `<span class="count">${entry.resultCount}</span>` : ''}
       </button>`;
@@ -874,10 +928,12 @@ export class GameUI {
       durability: stack?.durability,
       selected,
     });
+    const armor = armorSlotKind(key);
+    const armorAttr = armor ? ` data-armor="${armor}"` : '';
     if (!stack) {
-      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}" data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
+      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}" data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}" title="${this.escape(definition!.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}" title="${this.escape(definition!.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemIcon(itemId: string): string {

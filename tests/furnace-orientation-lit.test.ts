@@ -15,6 +15,8 @@ import { seedChunkBlockLight } from '../src/world/LightEngine';
 import { VoxelWorld } from '../src/world/World';
 import { createItemStack } from '../src/inventory';
 import { CONTAINER_STRINGS, RECIPE_CATEGORY_LABELS_EN } from '../src/ui/containerStrings';
+import { getItemDefinition, usesFrontFacingGuiTexture } from '../src/items';
+import { blockItemIconTexture } from '../src/blocks/placement';
 
 function writeBlock(world: VoxelWorld, x: number, y: number, z: number, block: BlockId): void {
   const chunk = world.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE))!;
@@ -62,6 +64,12 @@ describe('furnace facing and lit visuals', () => {
     expect(furnaceFaceTextureKey(textures, 'front', true)).toBe('block/furnace_front_on');
     expect(furnaceFaceTextureKey(textures, 'side', true)).toBe('block/furnace_side');
     expect(furnaceFaceTextureKey(textures, 'top', true)).toBe('block/furnace_top');
+    expect(blockItemIconTexture(textures, 'furnace')).toBe('block/furnace_front');
+    expect(getItemDefinition('furnace').texture).toBe('block/furnace_front');
+    expect(getItemDefinition('furnace').texture).not.toBe('block/furnace_side');
+    expect(usesFrontFacingGuiTexture('furnace')).toBe(true);
+    expect(getItemDefinition('crafting_table').texture).toBe('block/crafting_table');
+    expect(usesFrontFacingGuiTexture('crafting_table')).toBe(true);
   });
 
   it('meshes the lit front on the facing world side only', () => {

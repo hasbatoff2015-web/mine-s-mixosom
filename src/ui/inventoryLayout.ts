@@ -80,10 +80,19 @@ export function creativeCatalogPlayerSlotKeys(): string[] {
 
 export function creativeInventoryTabSlotKeys(): string[] {
   return [
-    'armor-head', 'armor-chest', 'armor-legs', 'armor-feet', 'offhand',
+    'armor-head', 'armor-chest', 'armor-legs', 'armor-feet',
     ...Array.from({ length: 27 }, (_value, index) => `inventory-${index + 9}`),
     ...creativeCatalogPlayerSlotKeys(),
   ];
+}
+
+export const CREATIVE_ARMOR_SLOT_KEYS = ['armor-head', 'armor-chest', 'armor-legs', 'armor-feet'] as const;
+
+export function armorSlotKind(key: string): 'head' | 'chest' | 'legs' | 'feet' | undefined {
+  if (key === 'armor-head' || key === 'armor-chest' || key === 'armor-legs' || key === 'armor-feet') {
+    return key.slice('armor-'.length) as 'head' | 'chest' | 'legs' | 'feet';
+  }
+  return undefined;
 }
 
 export function catalogMustHideMainInventory(tab: CreativeInventoryTab): boolean {
@@ -95,12 +104,22 @@ function canPatchSlots(node: { querySelectorAll?: Function } | null): node is El
 }
 
 export function patchSlotHost(host: Element, nextHtml: string): { preserved: boolean } {
+  return patchKeyedHost(host, nextHtml, 'data-slot');
+}
+
+export function patchRecipeGridHost(host: Element, nextHtml: string): { preserved: boolean } {
+  return patchKeyedHost(host, nextHtml, 'data-recipe-id');
+}
+
+function patchKeyedHost(host: Element, nextHtml: string, keyAttr: 'data-slot' | 'data-recipe-id'): { preserved: boolean } {
   const template = document.createElement('template');
   template.innerHTML = nextHtml.trim();
-  const nextSlots = [...template.content.querySelectorAll<HTMLElement>('[data-slot]')];
-  const existing = [...host.querySelectorAll<HTMLElement>('[data-slot]')];
-  const existingKeys = existing.map((element) => element.dataset.slot ?? '');
-  const nextKeys = nextSlots.map((element) => element.dataset.slot ?? '');
+  const selector = `[${keyAttr}]`;
+  const nextSlots = [...template.content.querySelectorAll<HTMLElement>(selector)];
+  const existing = [...host.querySelectorAll<HTMLElement>(selector)];
+  const keyOf = (element: HTMLElement): string => element.getAttribute(keyAttr) ?? '';
+  const existingKeys = existing.map(keyOf);
+  const nextKeys = nextSlots.map(keyOf);
   if (!slotKeysMatch(existingKeys, nextKeys)) {
     host.innerHTML = nextHtml;
     return { preserved: false };
@@ -115,6 +134,8 @@ export function patchSlotHost(host: Element, nextHtml: string): { preserved: boo
     current.dataset.sig = incoming.dataset.sig ?? '';
     if (incoming.dataset.ghost) current.dataset.ghost = incoming.dataset.ghost;
     else delete current.dataset.ghost;
+    if (incoming.dataset.armor) current.dataset.armor = incoming.dataset.armor;
+    else delete current.dataset.armor;
   }
   for (const nextProgress of template.content.querySelectorAll<HTMLElement>('[data-progress]')) {
     const current = host.querySelector<HTMLElement>(`[data-progress="${nextProgress.dataset.progress}"]`);
@@ -168,8 +189,9 @@ export function patchContainerDynamic(
   patchHostHtml(player, parts.player);
   cursor.innerHTML = parts.cursor;
   const grid = root.querySelector('[data-recipe-grid]');
-  if (grid && parts.recipeGrid !== undefined && grid.innerHTML !== parts.recipeGrid) {
-    grid.innerHTML = parts.recipeGrid;
+  if (grid && parts.recipeGrid !== undefined) {
+    if (canPatchSlots(grid)) patchRecipeGridHost(grid, parts.recipeGrid);
+    else if (grid.innerHTML !== parts.recipeGrid) grid.innerHTML = parts.recipeGrid;
   }
   return true;
 }
