@@ -57,10 +57,10 @@ const blocks = {
   crafting_table_top: 'crafting_table_top.png',
   crafting_table_side: 'crafting_table_side.png',
   crafting_table: 'crafting_table_front.png',
-  chest: 'planks_oak.png',
   furnace_top: 'furnace_top.png',
   furnace_side: 'furnace_side.png',
   furnace_front: 'furnace_front_off.png',
+  furnace_front_on: 'furnace_front_on.png',
   furnace: 'furnace_front_off.png',
   torch: 'torch_on.png',
   ladder: 'ladder.png',
@@ -143,6 +143,7 @@ const copies = [];
 for (const [target, source] of Object.entries(blocks)) copies.push([join('blocks', source), join('block', `${target}.png`)]);
 for (const [target, source] of Object.entries(items)) copies.push([join('items', source), join('item', `${target}.png`)]);
 for (const [target, source] of Object.entries(entities)) copies.push([join('entity', source), join('entity', `${target}.png`)]);
+copies.push([join('entity', 'chest', 'normal.png'), join('entity', 'chest', 'normal.png')]);
 copies.push([join('entity', 'shield_base_nopattern.png'), join('item', 'shield.png')]);
 copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);

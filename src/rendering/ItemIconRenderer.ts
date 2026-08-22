@@ -3,10 +3,10 @@ import {
   ITEMS,
   SPECIAL_ICON_POSES,
   itemIconDescriptor,
-  specialIconCategory,
   generatedHeldTexturePath,
   orthographicFitExtent,
   OAK_DOOR_HELD_TEXTURE,
+  type SpecialIconCategory,
 } from '../items';
 import { TextureAtlas } from './TextureAtlas';
 import { ItemVisualFactory } from './ItemVisualFactory';
@@ -57,17 +57,15 @@ export class ItemIconRenderer {
       return TextureAtlas.url(descriptor.texturePath ?? generatedHeldTexturePath(itemId));
     }
     try {
-      return this.renderPreview(itemId) ?? TextureAtlas.url(generatedHeldTexturePath(itemId));
+      return this.renderPreview(itemId, descriptor.category) ?? TextureAtlas.url(generatedHeldTexturePath(itemId));
     } catch {
       return TextureAtlas.url(generatedHeldTexturePath(itemId));
     }
   }
 
-  private renderPreview(itemId: string): string | undefined {
+  private renderPreview(itemId: string, category: SpecialIconCategory | undefined): string | undefined {
     if (this.disposed || typeof document === 'undefined') return undefined;
-    const category = specialIconCategory(itemId);
-    if (!category) return undefined;
-    const pose = SPECIAL_ICON_POSES[category];
+    const pose = SPECIAL_ICON_POSES[category ?? 'generic'] ?? SPECIAL_ICON_POSES.generic;
     const scene = new THREE.Scene();
     const model = this.factory.createItemModel(itemId);
     prepareSpecialIconPreview(model);

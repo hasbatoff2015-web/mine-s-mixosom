@@ -61,6 +61,12 @@ export function blockCollisionBoxes(
   if (block === BlockId.OakDoor) {
     return [doorCollisionBox(x, y, z, state)];
   }
+  if (block === BlockId.Chest) {
+    return [{
+      minX: x + 1 / 16, minY: y, minZ: z + 1 / 16,
+      maxX: x + 15 / 16, maxY: y + 14 / 16, maxZ: z + 15 / 16,
+    }];
+  }
   return [{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 }];
 }
 

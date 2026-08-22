@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import {
   BlockId,
   blockLightingMode,
+  DEFAULT_FURNACE_FACING,
+  furnaceCubeFaceSlot,
+  furnaceFaceTextureKey,
   getBlockDefinition,
   occupiedDoorFacing,
   type BlockDefinition,
@@ -226,6 +229,7 @@ export interface MeshedChunk {
   translucent: THREE.BufferGeometry;
   water: THREE.BufferGeometry;
   faces: number;
+  chests: Array<{ x: number; y: number; z: number }>;
 }
 
 export interface ChunkMeshProfile {
@@ -258,6 +262,7 @@ export class ChunkMesher {
     };
     this.cacheColumns(chunk, world);
     let faces = 0;
+    const chests: Array<{ x: number; y: number; z: number }> = [];
     const chunkHeight = chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE);
     const blocks = chunk.blocks;
     const eastChunk = world.getChunk(chunk.x + 1, chunk.z, false);
@@ -279,6 +284,10 @@ export class ChunkMesher {
           const target = this.buffersFor(layers, definition);
           const meshAsCube = definition.renderShape === 'cube'
             || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
+          if (definition.renderShape === 'chest') {
+            chests.push({ x: worldX, y, z: worldZ });
+            continue;
+          }
           if (!meshAsCube) {
             faces += this.addSpecial(target, definition, state, world, worldX, y, worldZ);
             continue;
@@ -332,6 +341,7 @@ export class ChunkMesher {
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       faces,
+      chests,
     };
     const buildEnd = performance.now();
     this.lastProfile = { scanMs: scanEnd - buildStart, geometryMs: buildEnd - scanEnd };
@@ -365,7 +375,7 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): void {
-    const textureKey = this.textureForFace(definition, face.texture);
+    const textureKey = this.cubeFaceTextureKey(definition, face, world, x, y, z);
     const lighting = this.lightingFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
@@ -415,6 +425,7 @@ export class ChunkMesher {
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
       case 'stairs': return this.addStairs(buffers, definition, state, world, x, y, z);
       case 'slab': return this.addSlab(buffers, definition, state, world, x, y, z);
+      case 'chest': return 0;
       case 'cube': return 0;
     }
   }
@@ -823,7 +834,7 @@ export class ChunkMesher {
     const sampleZ = z + Math.round(normal[2]);
     const sky = getSkyLight(world, sampleX, sampleY, sampleZ) / 15;
     const block = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
-    const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
+    const emission = Math.max(0, Math.min(1, world.blockEmissionAt(x, y, z) / 15));
     const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
     return {
       tint: this.tintFor(definition, textureKey, biome),
@@ -832,6 +843,22 @@ export class ChunkMesher {
       emission,
       shade,
     };
+  }
+
+  private cubeFaceTextureKey(
+    definition: BlockDefinition,
+    face: Face,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): string {
+    if (definition.id === BlockId.Furnace) {
+      const facing = world.getBlockState(x, y, z)?.facing ?? DEFAULT_FURNACE_FACING;
+      const slot = furnaceCubeFaceSlot(face.normal[0], face.normal[1], face.normal[2], facing);
+      return furnaceFaceTextureKey(definition.textures, slot, world.isFurnaceBurning(x, y, z));
+    }
+    return this.textureForFace(definition, face.texture);
   }
 
   private textureForFace(definition: BlockDefinition, face: Face['texture']): string {

@@ -8,8 +8,15 @@ import {
   type PointerUnlockReason,
 } from './pointerLock';
 
+function isTypingElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+}
+
 export const DESKTOP_SPRINT_CODES = ['ShiftLeft', 'ShiftRight'] as const;
 export const DESKTOP_SNEAK_CODE = 'KeyC';
+export const DESKTOP_FLY_SPRINT_CODES = ['ControlLeft', 'ControlRight'] as const;
 
 export interface InputCallbacks {
   canCapture(): boolean;
@@ -28,6 +35,10 @@ export interface MoveInput {
   jump: boolean;
   sprint: boolean;
   sneak: boolean;
+  /** Shift while flying: descend. Optional so older tests stay valid. */
+  descend?: boolean;
+  /** Ctrl while flying: faster horizontal flight. */
+  flySprint?: boolean;
 }
 
 export class InputManager {
@@ -76,6 +87,8 @@ export class InputManager {
       jump: this.keys.has('Space') || this.touchJump,
       sprint: DESKTOP_SPRINT_CODES.some((code) => this.keys.has(code)) || this.touchSprint,
       sneak: this.keys.has(DESKTOP_SNEAK_CODE) || this.touchSneak,
+      descend: DESKTOP_SPRINT_CODES.some((code) => this.keys.has(code)),
+      flySprint: DESKTOP_FLY_SPRINT_CODES.some((code) => this.keys.has(code)),
     };
   }
 
@@ -140,7 +153,9 @@ export class InputManager {
 
   private bindDesktop(): void {
     window.addEventListener('keydown', (event) => {
+      const typing = isTypingElement(event.target);
       if (event.code === 'KeyE' && !event.repeat) {
+        if (typing) return;
         event.preventDefault();
         this.callbacks.toggleInventory();
         return;
@@ -150,6 +165,7 @@ export class InputManager {
         this.callbacks.togglePause();
         return;
       }
+      if (typing) return;
       if (event.code === 'KeyQ' && !event.repeat) {
         this.callbacks.dropItem();
         return;

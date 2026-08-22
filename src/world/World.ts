@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { BlockId, getBlockDefinition, type BlockRenderState } from '../blocks';
+import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
 import { blockCollisionBoxes, rayAabbDistance } from './collision';
-import { CHUNK_SIZE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, positiveMod } from '../core/constants';
+import { CHUNK_SIZE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
 import { getItemDefinition } from '../items';
@@ -12,6 +12,7 @@ import {
   ensureChunkSky,
   getBlockLight,
   getSkyLight,
+  relightAround,
   relightRegion,
   seedChunkBlockLight,
   lightEngineStats,
@@ -467,6 +468,18 @@ export class VoxelWorld {
     return furnace;
   }
 
+  isFurnaceBurning(x: number, y: number, z: number): boolean {
+    if (this.getBlock(x, y, z, false) !== BlockId.Furnace) return false;
+    return (this.furnaces.get(blockKey(x, y, z))?.burnTime ?? 0) > 0;
+  }
+
+  /** Emission including lit-furnace torch strength. Does not allocate furnace state. */
+  blockEmissionAt(x: number, y: number, z: number): number {
+    const block = this.getBlock(x, y, z, false);
+    if (block === BlockId.Furnace && this.isFurnaceBurning(x, y, z)) return torchBlockEmission();
+    return getBlockDefinition(block).emission ?? 0;
+  }
+
   serializeModifications(): Record<string, Record<string, number>> {
     const result: Record<string, Record<string, number>> = {};
     for (const [key, values] of this.modifications) {
@@ -521,7 +534,8 @@ export class VoxelWorld {
   }
 
   private tickFurnaces(): void {
-    for (const furnace of this.furnaces.values()) {
+    for (const [key, furnace] of this.furnaces) {
+      const wasBurning = furnace.burnTime > 0;
       const input = furnace.slots[0];
       const recipe = input ? findSmeltingRecipe(input.itemId) : undefined;
       const outputId = recipe?.output.item;
@@ -550,6 +564,24 @@ export class VoxelWorld {
           furnace.cookTime = 0;
         }
       } else furnace.cookTime = 0;
+      const isBurning = furnace.burnTime > 0;
+      if (wasBurning === isBurning) continue;
+      const { x, y, z } = parseBlockKey(key);
+      if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z);
     }
+  }
+
+  private syncFurnaceEmission(x: number, y: number, z: number): void {
+    const radius = Math.max(1, torchBlockEmission());
+    const minChunkX = floorDiv(x - radius, CHUNK_SIZE);
+    const maxChunkX = floorDiv(x + radius, CHUNK_SIZE);
+    const minChunkZ = floorDiv(z - radius, CHUNK_SIZE);
+    const maxChunkZ = floorDiv(z + radius, CHUNK_SIZE);
+    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ += 1) {
+      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
+        this.markBlockDirty(chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
+      }
+    }
+    relightAround(this, x, y, z, radius, false);
   }
 }

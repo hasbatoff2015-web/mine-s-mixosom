@@ -16,6 +16,86 @@ export function doorFacingFromYaw(yaw: number): HorizontalFacing {
   return horizontalFacingFromXZ(-Math.sin(yaw), -Math.cos(yaw));
 }
 
+export function oppositeHorizontalFacing(facing: HorizontalFacing): HorizontalFacing {
+  switch (facing) {
+    case 'north': return 'south';
+    case 'south': return 'north';
+    case 'east': return 'west';
+    case 'west': return 'east';
+  }
+}
+
+/** World-space unit normal for a horizontal facing (north = −Z). */
+export function horizontalFacingNormal(facing: HorizontalFacing): readonly [number, number, number] {
+  switch (facing) {
+    case 'north': return [0, 0, -1];
+    case 'south': return [0, 0, 1];
+    case 'east': return [1, 0, 0];
+    case 'west': return [-1, 0, 0];
+  }
+}
+
+/**
+ * Vanilla chest `facing` is the latch/front. Java places with
+ * `player.getHorizontalFacing().getOpposite()`, so the latch faces the player.
+ */
+export function chestFacingFromYaw(yaw: number): HorizontalFacing {
+  return oppositeHorizontalFacing(doorFacingFromYaw(yaw));
+}
+
+/**
+ * Vanilla furnace `facing` is the front (lit opening). Same opposite-of-look
+ * convention as chests, kept as a separate helper so doors stay look-aligned.
+ */
+export function furnaceFacingFromYaw(yaw: number): HorizontalFacing {
+  return oppositeHorizontalFacing(doorFacingFromYaw(yaw));
+}
+
+/** Missing block-state facing: cube front already lives on −Z (north). */
+export const DEFAULT_FURNACE_FACING: HorizontalFacing = 'north';
+
+export function furnaceCubeFaceSlot(
+  nx: number,
+  ny: number,
+  nz: number,
+  facing: HorizontalFacing,
+): 'top' | 'bottom' | 'side' | 'front' {
+  if (ny > 0.5) return 'top';
+  if (ny < -0.5) return 'bottom';
+  const [fx, , fz] = horizontalFacingNormal(facing);
+  if (nx === fx && nz === fz) return 'front';
+  return 'side';
+}
+
+export function furnaceFaceTextureKey(
+  textures: { front?: string; litFront?: string; side?: string; all?: string; top?: string; bottom?: string },
+  slot: 'top' | 'bottom' | 'side' | 'front',
+  burning: boolean,
+): string {
+  if (slot === 'top') return textures.top ?? textures.all ?? textures.side ?? 'block/missing';
+  if (slot === 'bottom') return textures.bottom ?? textures.all ?? textures.side ?? 'block/missing';
+  if (slot === 'front') {
+    if (burning && textures.litFront) return textures.litFront;
+    return textures.front ?? textures.side ?? textures.all ?? 'block/missing';
+  }
+  return textures.side ?? textures.all ?? textures.top ?? 'block/missing';
+}
+
+/**
+ * 2D inventory/hotbar tile for a cube block. Prefer the authored FRONT
+ * (furnace opening, crafting-table tools) over the side/back.
+ */
+export function blockItemIconTexture(
+  textures: { front?: string; all?: string; side?: string; top?: string },
+  fallbackKey: string,
+): string {
+  return textures.front
+    ?? textures.all
+    ?? textures.side
+    ?? textures.top
+    ?? `block/${fallbackKey}`;
+}
+
 export function attachmentFromHitNormal(_nx: number, ny: number, _nz: number): BlockAttachment {
   if (ny > 0.5) return 'floor';
   if (ny < -0.5) return 'ceiling';

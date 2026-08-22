@@ -233,7 +233,7 @@ export function seedChunkBlockLight(world: VoxelWorld, chunk: Chunk): void {
   for (let y = 0; y < WORLD_HEIGHT; y += 1) {
     for (let z = 0; z < CHUNK_SIZE; z += 1) {
       for (let x = 0; x < CHUNK_SIZE; x += 1) {
-        const emission = getBlockDefinition(chunk.get(x, y, z)).emission ?? 0;
+        const emission = world.blockEmissionAt(originX + x, y, originZ + z);
         if (emission <= 0) continue;
         setBlockLightValue(chunk, x, y, z, emission);
         sources.push([originX + x, y, originZ + z, emission]);
@@ -268,7 +268,7 @@ function propagateBlockLight(
         if (!chunk) continue;
         const localX = positiveMod(x, CHUNK_SIZE);
         const localZ = positiveMod(z, CHUNK_SIZE);
-        const emission = getBlockDefinition(chunk.get(localX, y, localZ)).emission ?? 0;
+        const emission = world.blockEmissionAt(x, y, z);
         setBlockLightValue(chunk, localX, y, localZ, emission);
         if (emission > 0) sources.push([x, y, z, emission]);
       }

@@ -1,4 +1,5 @@
 import { BLOCKS, BlockId, type BlockDefinition } from '../blocks';
+import { blockItemIconTexture } from '../blocks/placement';
 import {
   ItemId,
   type ArmorItemDefinition,
@@ -37,7 +38,7 @@ const blockItems: ItemDefinition[] = BLOCKS
     name: definition.name,
     kind: 'block' as const,
     maxStack: 64 as const,
-    texture: definition.textures.all ?? definition.textures.side ?? definition.textures.top ?? `block/${definition.key}`,
+    texture: blockItemIconTexture(definition.textures, definition.key),
     blockId: definition.id,
     placesBlockId: definition.id,
     tags: blockTags(definition),

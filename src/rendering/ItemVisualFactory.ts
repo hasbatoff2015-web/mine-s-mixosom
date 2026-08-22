@@ -5,6 +5,7 @@ import {
   generatedHeldTexturePath,
   getItemDefinition,
   itemHeldMeshKind,
+  itemIconDescriptor,
   itemRenderProfile,
   itemUsesGeneratedHeldGeometry,
   OAK_DOOR_HELD_TEXTURE,
@@ -22,6 +23,7 @@ import {
 } from './GeneratedItemGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
+import { CHEST_TEXTURE_KEY, createClosedChestGeometry } from './chestModel';
 
 interface AtlasSource {
   readonly texture: THREE.Texture;
@@ -69,6 +71,17 @@ function heldLocalFaceUv(
   return [box.maxX, box.minY, box.minX, box.maxY];
 }
 
+export function specialPreviewEntityTexturePaths(): string[] {
+  const paths = new Set<string>();
+  for (const item of ITEMS) {
+    if (itemIconDescriptor(item).kind !== 'special_preview') continue;
+    if (item.kind === 'block' && getBlockDefinition(item.blockId).renderShape === 'chest') {
+      paths.add(CHEST_TEXTURE_KEY);
+    }
+  }
+  return [...paths];
+}
+
 export function droppedVisualCopyCount(stackCount: number): number {
   if (stackCount > 32) return 4;
   if (stackCount > 16) return 3;
@@ -91,6 +104,7 @@ export class ItemVisualFactory {
   private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly generatedMasks = new Map<string, GeneratedItemMask>();
   private readonly specialHeldGeometries = new Map<string, THREE.BufferGeometry>();
+  private chestEntityMaterial?: THREE.MeshBasicMaterial;
   private readonly fallbackTexture: THREE.Texture;
   private readonly atlas?: AtlasSource;
   private disposed = false;
@@ -108,7 +122,10 @@ export class ItemVisualFactory {
     paths.add('item/bow_pulling_0');
     paths.add('item/bow_pulling_1');
     paths.add('item/bow_pulling_2');
-    await Promise.all([...paths].map((path) => this.loadGeneratedAsset(path)));
+    await Promise.all([
+      ...[...paths].map((path) => this.loadGeneratedAsset(path)),
+      ...specialPreviewEntityTexturePaths().map((path) => this.ensureDecodedTexture(path)),
+    ]);
   }
 
   createItemModel(itemId: string): THREE.Group {
@@ -129,7 +146,9 @@ export class ItemVisualFactory {
       root.add(mesh);
     } else if (meshKind === 'special_model' && definition.kind === 'block') {
       const block = getBlockDefinition(definition.blockId);
-      const mesh = new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
+      const mesh = block.renderShape === 'chest'
+        ? new THREE.Mesh(this.specialHeldGeometry(definition.id), this.chestMaterial())
+        : new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
       mesh.name = `${root.name}:special`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
@@ -227,6 +246,8 @@ export class ItemVisualFactory {
     this.generatedGeometries.clear();
     this.generatedMasks.clear();
     this.specialHeldGeometries.clear();
+    this.chestEntityMaterial?.dispose();
+    this.chestEntityMaterial = undefined;
     this.disposed = true;
   }
 
@@ -253,6 +274,9 @@ export class ItemVisualFactory {
         break;
       case 'slab':
         geometry = this.geometryFromLocalBoxes(slabLocalBoxes('bottom'), texture);
+        break;
+      case 'chest':
+        geometry = createClosedChestGeometry();
         break;
       default:
         throw new Error(`No special held model for ${itemId}`);
@@ -374,6 +398,16 @@ export class ItemVisualFactory {
     return material;
   }
 
+  private chestMaterial(): THREE.MeshBasicMaterial {
+    if (this.chestEntityMaterial) return this.chestEntityMaterial;
+    this.chestEntityMaterial = createEntityMaterial({
+      map: this.itemTexture(CHEST_TEXTURE_KEY),
+      wrap: false,
+    });
+    this.chestEntityMaterial.userData.chestEntityTexture = CHEST_TEXTURE_KEY;
+    return this.chestEntityMaterial;
+  }
+
   private generatedMesh(texturePath: string): THREE.Mesh {
     let geometry = this.generatedGeometries.get(texturePath);
     if (!geometry) {
@@ -481,6 +515,22 @@ export class ItemVisualFactory {
       image.onerror = () => reject(new Error(`Unable to load ${url}`));
       image.src = url;
     });
+  }
+
+  private async ensureDecodedTexture(texturePath: string): Promise<void> {
+    const existing = this.itemTextures.get(texturePath);
+    if (existing?.image) return;
+    const image = await this.loadImageElement(TextureAtlas.url(texturePath));
+    const texture = new THREE.Texture(image);
+    texture.needsUpdate = true;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    this.itemTextures.get(texturePath)?.dispose();
+    this.itemTextures.set(texturePath, texture);
   }
 
   private itemTexture(texturePath: string): THREE.Texture {

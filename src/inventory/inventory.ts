@@ -326,6 +326,15 @@ export class Inventory {
     return Inventory.deserialize(this.serialize());
   }
 
+  restore(state: SerializedInventory): void {
+    const other = Inventory.deserialize(state);
+    for (let index = 0; index < Inventory.SLOT_COUNT; index += 1) {
+      this.#slots[index] = other.getSlot(index);
+    }
+    for (const slot of ARMOR_SLOTS) this.#armor[slot] = other.getSlot({ section: 'armor', slot });
+    this.#offhand = other.getSlot({ section: 'offhand' });
+  }
+
   private allStacks(): readonly (ItemStack | null)[] {
     return [...this.#slots, ...ARMOR_SLOTS.map((slot) => this.#armor[slot]), this.#offhand];
   }

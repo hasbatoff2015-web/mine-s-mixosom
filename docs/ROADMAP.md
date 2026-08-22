@@ -29,6 +29,9 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после inventory close pointer lock: typecheck, 211 tests / 27 files, production build 82 modules, 0.96 MiB / 165 files.
 - [x] Локальный pipeline после pause resume pointer lock: typecheck, 214 tests / 27 files, production build 82 modules, 0.96 MiB / 165 files.
 - [x] Локальный pipeline после pointer-lock Esc fallback: typecheck, 219 tests / 27 files, production build 82 modules, 0.97 MiB / 165 files.
+- [x] Локальный pipeline после container UI / chest model / Recipe Book / Creative flight / sim-while-GUI-open: typecheck, 257 tests / 31 files, production build 90 modules, 1.00 MiB / 166 files.
+- [x] Локальный pipeline после container visual/functional QA (Creative tabs, chest lid/facing, furnace lit/light, transactional Recipe Book, stable slot DOM): typecheck, 275 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
+- [x] Локальный pipeline после recipe-book layout / hover overlay / chest lid interior / furnace GUI front / Creative inventory polish: typecheck, 276 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -60,7 +63,7 @@ Definition of done: принудительный reload/закрытие вкл�
 ### P0.4 Runtime correctness
 
 - [x] Runtime furnace переведён на `SMELTING_RECIPES` и `FUEL_BURN_TICKS`; glass и charcoal входят в общий path.
-- [ ] Последний visual QA: pointer-lock overlay после Esc→Continue, icons, Creative scroll, ladder (checklist в `docs/reports/2026-08-22_pointer-lock-escape-fallback.md`), затем подготовка PR #2 к merge в main. Не начинать chest GUI / furnace GUI / recipe book / creative flight в том же pass.
+- [x] Последний visual QA pointer-lock overlay / icons / Creative scroll / ladder закрыт в PR #2 (`76ce4a1`). Container UI / Recipe Book / Creative flight — отдельный pass на `cursor/container-ui-recipebook-flight`.
 - [ ] Проверить реальный attack meter, shield wind-up/arc, bow release, mob hit selection и weapon durability через browser smoke.
 - [ ] Пройти end-to-end redstone scenario в browser: source → dust → TNT → visual fuse → explosion/chain → save/reload active fuse.
 - [x] Закрыты targeted regressions: takeoff-only jump exhaustion, hunger sprint gate, Creative non-targetability, 3D+voxel-LOS melee и knockback only on dealt damage.
@@ -141,7 +144,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Shared held-item pose: цель сменена с pixel-perfect F2 на visual Minecraft-like; QA candidates subtle/balanced/stronger + `qaPoseCompare`. Production pose не переключали.
 - [x] Live held-item pose QA panel: sliders/numeric/copy/reset, item switch без сброса pose. Production pose и geometry не менялись.
 - [x] Production shared held-item pose записан из manual visual QA: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, scale `0.60`. Yaw −90° не заменять.
-- [x] Special block-item pass: lever/ladder/door held generated; ladder world plane + climbing; door cuboid UV; button/plate/stairs/slab special inventory cuboids + auto-fit icons. Chest GUI/flight/general perf не трогались.
+- [x] Special block-item pass: lever/ladder/door held generated; ladder world plane + climbing; door cuboid UV; button/plate/stairs/slab special inventory cuboids + auto-fit icons.
+- [x] Chest world/item visual: entity atlas, body/lid/latch, held special_model. Double chest всё ещё вне scope.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.
@@ -153,7 +157,10 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 ### P1.5 UX и accessibility
 
 - [ ] Settings persistence, fullscreen toggle, remappable controls и touch-layout presets.
-- [ ] Полный inventory drag UX, shift-craft, tooltips с характеристиками и recipe hints.
+- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival 2×2 inventory; Recipe Book слева на crafting/Survival (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter).
+- [x] Chest entity model + opposite-of-look facing + lid-up hinge; furnace facing + lit front + torch-equivalent block light from burn state.
+- [x] Creative double-Space flight (7 ticks, collision, landing, Ctrl sprint, Shift descend, ladder override).
+- [ ] Полный inventory drag UX, tooltips с характеристиками и vanilla advancement recipe unlocks.
 - [ ] Масштаб UI, high-contrast mode, reduced motion и keyboard focus navigation в меню.
 - [ ] Русская и английская localization tables с выбором через Yandex environment.
 - [ ] Понятные save/error/loading states вместо console-only diagnostics.

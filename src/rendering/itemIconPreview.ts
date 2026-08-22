@@ -33,12 +33,20 @@ function previewMaterial(source: THREE.Material): THREE.MeshBasicMaterial {
   preview.vertexColors = true;
   preview.toneMapped = false;
   preview.onBeforeCompile = () => undefined;
-  preview.customProgramCacheKey = () => 'special-icon-preview-unlit-v1';
+  preview.customProgramCacheKey = () => SPECIAL_ICON_PREVIEW_POLICY.programCacheKey;
   preview.needsUpdate = true;
   return preview;
 }
 
 /** Preview-only: strip shared entity-light hooks without mutating held/world meshes. */
+export const SPECIAL_ICON_PREVIEW_POLICY = Object.freeze({
+  autoFit: true,
+  colorSpace: 'srgb' as const,
+  unlitMaterial: true,
+  stripsWorldLight: true,
+  programCacheKey: 'special-icon-preview-unlit-v1',
+});
+
 export function prepareSpecialIconPreview(root: THREE.Object3D): void {
   root.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;

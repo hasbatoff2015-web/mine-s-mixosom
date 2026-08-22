@@ -3,7 +3,7 @@ import { getBlockDefinition } from '../blocks';
 import type { ItemDefinition } from './types';
 import { itemHeldMeshKind } from './itemRenderProfiles';
 
-export type SpecialIconCategory = 'stairs' | 'slab' | 'button' | 'pressure_plate';
+export type SpecialIconCategory = 'stairs' | 'slab' | 'button' | 'pressure_plate' | 'chest' | 'generic';
 
 export interface SpecialIconPose {
   readonly rotationDeg: readonly [number, number, number];
@@ -18,11 +18,15 @@ export const SPECIAL_ICON_ROTATION_DEG = [30, 225, 0] as const;
  */
 export const SPECIAL_ICON_FILL = 0.86;
 
+const sharedPose: SpecialIconPose = Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG });
+
 export const SPECIAL_ICON_POSES: Readonly<Record<SpecialIconCategory, SpecialIconPose>> = Object.freeze({
-  stairs: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
-  slab: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
-  button: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
-  pressure_plate: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
+  stairs: sharedPose,
+  slab: sharedPose,
+  button: sharedPose,
+  pressure_plate: sharedPose,
+  chest: sharedPose,
+  generic: sharedPose,
 });
 
 export type ItemIconKind = 'texture' | 'special_preview';
@@ -51,15 +55,35 @@ export function specialIconCategory(itemOrId: string | ItemDefinition): SpecialI
     case 'slab': return 'slab';
     case 'button': return 'button';
     case 'pressure_plate': return 'pressure_plate';
+    case 'chest': return 'chest';
     default: return undefined;
   }
 }
 
+export function specialIconPose(category: SpecialIconCategory | undefined): SpecialIconPose {
+  return SPECIAL_ICON_POSES[category ?? 'generic'];
+}
+
+/**
+ * Any special held model uses the canonical preview pipeline.
+ * Unknown shapes fall back to `generic` pose; size/color-space stay automatic.
+ */
 export function itemIconDescriptor(itemOrId: string | ItemDefinition): ItemIconDescriptor {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
-  const category = specialIconCategory(item);
-  if (category && itemHeldMeshKind(item) === 'special_model') {
-    return { kind: 'special_preview', category };
+  if (itemHeldMeshKind(item) === 'special_model') {
+    return { kind: 'special_preview', category: specialIconCategory(item) ?? 'generic' };
   }
   return { kind: 'texture', texturePath: item.texture };
+}
+
+/** Cube GUI tiles use `item.texture`, which prefers block `front` over `side`. */
+export function usesFrontFacingGuiTexture(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  if (item.kind !== 'block') return false;
+  const front = getBlockDefinition(item.blockId).textures.front;
+  return !!front && item.texture === front;
+}
+
+export function usesCanonicalSpecialPreview(itemOrId: string | ItemDefinition): boolean {
+  return itemIconDescriptor(itemOrId).kind === 'special_preview';
 }
