@@ -4,6 +4,7 @@ import {
   buttonPlacementFromHit,
   canHarvestBlock,
   doorFacingFromYaw,
+  chestFacingFromYaw,
   getBlockDefinition,
   isPressurePlateBlock,
   isSlabBlock,
@@ -32,6 +33,12 @@ import {
   clamp,
   floorDiv,
 } from './constants';
+import {
+  openingPauseMenuPausesSimulation,
+  playerGameplayAllowed,
+  resolvePlayerMoveInput,
+  worldSimulationActive,
+} from './gameplayModal';
 import { GameLifecycleManager } from './Lifecycle';
 import { RollingTimingWindow } from './PerformanceStats';
 import {
@@ -454,6 +461,7 @@ export class Game {
   }
 
   private enterPlaying(): void {
+    this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
@@ -464,6 +472,7 @@ export class Game {
 
   /** Close the inventory modal and restore desktop mouse-look. */
   private closeInventoryAndResumeLook(): void {
+    this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
@@ -477,7 +486,7 @@ export class Game {
 
   private openPauseMenu(): void {
     this.ui.hidePointerLockFallback();
-    this.lifecycle.setState('PAUSED');
+    if (openingPauseMenuPausesSimulation()) this.lifecycle.setState('PAUSED');
     void this.saveSession();
     this.ui.showPause({
       resume: () => this.resumeFromPause(),
@@ -512,9 +521,8 @@ export class Game {
       this.closeInventoryAndResumeLook();
       return;
     }
-    this.lifecycle.setState('PAUSED');
-    this.ui.hidePointerLockFallback();
-    this.input.releasePointerLock();
+    if (this.lifecycle.state !== 'PLAYING') return;
+    this.openGameplayModal();
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
@@ -525,11 +533,21 @@ export class Game {
     });
   }
 
-  private openBlockInventory(kind: 'crafting-table' | 'chest' | 'furnace', hit: VoxelHit): void {
-    const session = this.session!;
-    this.lifecycle.setState('PAUSED');
+  private openGameplayModal(): void {
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
+    this.input.releaseActions();
+    if (this.session) {
+      this.session.miningProgress = 0;
+      this.session.miningTarget = undefined;
+    }
+  }
+
+  private openBlockInventory(kind: 'crafting-table' | 'chest' | 'furnace', hit: VoxelHit): void {
+    const session = this.session!;
+    if (this.lifecycle.state !== 'PLAYING') return;
+    this.openGameplayModal();
+    if (kind === 'chest') session.worldRenderer.setOpenChest(blockKey(hit.x, hit.y, hit.z));
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
@@ -635,7 +653,7 @@ export class Game {
       this.fpsFrames = 0;
       this.fpsTimer = 0;
     }
-    if (this.lifecycle.simulating) {
+    if (worldSimulationActive(this.lifecycle.state)) {
       this.accumulator += elapsed;
       while (this.accumulator >= FIXED_DT) {
         const tickStart = performance.now();
@@ -645,6 +663,7 @@ export class Game {
       }
     } else this.accumulator = 0;
     this.updateFirstPerson(elapsed);
+    if (this.session) this.session.worldRenderer.updateChests(elapsed);
     this.render(this.accumulator / FIXED_DT);
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
   }
@@ -669,9 +688,12 @@ export class Game {
     );
     session.combat.tick(FIXED_DT);
 
-    const movementBefore = this.input.movement();
+    const inventoryOpen = this.ui.isInventoryOpen();
+    const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, inventoryOpen);
+    const movementBefore = resolvePlayerMoveInput(inventoryOpen, this.input.movement());
     const drawingBow = session.bowUseTicks > 0;
     const movementMultiplier = drawingBow ? Math.min(0.2, session.combat.movementMultiplier) : session.combat.movementMultiplier;
+    session.player.creativeFlightAllowed = session.summary.mode === 'creative';
     const playerInput = {
       yaw: this.input.yaw,
       pitch: this.input.pitch,
@@ -682,6 +704,8 @@ export class Game {
         sprint: !drawingBow && movementBefore.sprint
           && movementMultiplier === 1
           && (session.summary.mode === 'creative' || session.survival.hunger > 6),
+        descend: movementBefore.descend === true,
+        flySprint: movementBefore.flySprint === true,
       }),
     };
     const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
@@ -719,8 +743,15 @@ export class Game {
     this.lastChunkMeshJobs = this.lastChunkGenerationJobs > 0
       ? 0
       : session.worldRenderer.rebuildDirty(isCoarsePointer() ? 1 : 2, isCoarsePointer() ? 4 : 7);
-    this.updateTargetAndActions();
-    this.updateFoodUse();
+    if (gameplayAllowed) {
+      this.updateTargetAndActions();
+      this.updateFoodUse();
+    } else {
+      this.input.consumeAttackPressed();
+      this.input.consumeUsePressed();
+      session.miningProgress = 0;
+      session.miningTarget = undefined;
+    }
     session.arrows.tick(FIXED_DT);
     session.mobs.update(FIXED_DT, {
       playerPosition: session.player.position,
@@ -747,6 +778,7 @@ export class Game {
       void this.saveSession();
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
+    if (inventoryOpen) this.ui.refreshOpenInventory();
   }
 
   private updateTargetAndActions(): void {
@@ -997,6 +1029,11 @@ export class Game {
       }
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
       session.world.setBlockState(x, y, z, { facing: placement.facing, stairHalf: placement.stairHalf });
+      return;
+    }
+    if (item.placesBlockId === BlockId.Chest) {
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
+      session.world.setBlockState(x, y, z, { facing: chestFacingFromYaw(session.player.yaw) });
       return;
     }
     if (placed.solid && session.player.intersectsBlock(x, y, z)) {

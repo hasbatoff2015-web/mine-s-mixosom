@@ -1,19 +1,47 @@
-import { consumeCraftingGrid, matchCraftingRecipe } from '../crafting';
+import { matchCraftingRecipe } from '../crafting';
 import {
-  Inventory,
   applySlotClick,
-  canStacksMerge,
-  cloneStack,
   createItemStack,
-  mergeItemStacks,
-  type InventorySlotRef,
+  Inventory,
   type ItemStack,
 } from '../inventory';
 import { getItemDefinition, obtainableItems } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
 import { TextureAtlas } from '../rendering/TextureAtlas';
-import { inventoryPaintMode, patchInventoryDynamic } from './inventoryLayout';
+import { inventoryPaintMode, patchContainerDynamic, patchInventoryDynamic } from './inventoryLayout';
+import {
+  CONTAINER_STRINGS,
+} from './containerStrings';
+import {
+  containerStageSize,
+  containerUiScale,
+} from './containerTheme';
+import {
+  allCraftingBookEntries,
+  inventoryItemCounts,
+  paginateRecipeBook,
+  pickIngredientItem,
+  queryRecipeBook,
+  recipeEntryCraftable,
+  visibleRecipeBookTabs,
+  type RecipeBookCategory,
+  type RecipeBookEntry,
+  type RecipeBookKind,
+} from './recipeBook';
+import {
+  clickFurnaceSlot,
+  furnaceAccepts,
+  furnaceShiftRoute,
+  ghostFromRecipe,
+  hasRecipeBook,
+  placeCraftingRecipe,
+  placeSmeltingIngredient,
+  shiftMoveStack,
+  showsCreativeCatalog,
+  takeCraftOutput,
+  type GhostCraftState,
+} from './containerInteractions';
 
 export interface MainMenuActions {
   play(): void;
@@ -79,6 +107,14 @@ export class GameUI {
   private modal?: HTMLElement;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
+  private ghostCraft?: GhostCraftState;
+  private ghostFurnaceItem?: string;
+  private recipeBookOpen = { crafting: false, furnace: false };
+  private recipeBookSearch = '';
+  private recipeBookCategory: RecipeBookCategory = 'all';
+  private recipeBookCraftableOnly = false;
+  private recipeBookPage = 0;
+  private recipeVariantIndex = 0;
   private inventoryContext?: InventoryContext;
   private hotbarHtml = '';
   private selectedItemText = '';
@@ -242,7 +278,7 @@ export class GameUI {
     this.setScreen(`
       <section class="screen"><div class="menu-card">
         <div class="menu-heading"><h2>Управление</h2><button class="game-button ghost" data-action="back">Назад</button></div>
-        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, Shift — бег, C — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
+        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, двойной Space в творческом — полёт, Shift — бег (на земле) / вниз (в полёте), Ctrl — ускорение полёта, C — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
         <p><strong>Mobile landscape:</strong> левый стик — движение, проводите по правой части для камеры; отдельные кнопки отвечают за прыжок, бег, приседание, добычу, использование, инвентарь и паузу.</p>
       </div></section>`);
     this.bindAction('back', onBack);
@@ -348,6 +384,11 @@ export class GameUI {
     this.closeInventory(false);
     this.inventoryContext = context;
     this.cursorStack = null;
+    this.ghostCraft = undefined;
+    this.ghostFurnaceItem = undefined;
+    this.recipeBookSearch = '';
+    this.recipeBookCategory = 'all';
+    this.recipeBookPage = 0;
     this.craftSlots = Array.from({ length: context.kind === 'crafting-table' ? 9 : 4 }, () => null);
     this.renderInventory();
     this.setControlsSuppressed(true);
@@ -368,6 +409,8 @@ export class GameUI {
     this.inventoryContext = undefined;
     this.cursorStack = null;
     this.craftSlots = [];
+    this.ghostCraft = undefined;
+    this.ghostFurnaceItem = undefined;
     this.setControlsSuppressed(false);
   }
 
@@ -375,10 +418,28 @@ export class GameUI {
     return this.modal !== undefined;
   }
 
+  openContainerKind(): InventoryContext['kind'] | undefined {
+    return this.inventoryContext?.kind;
+  }
+
+  /** Re-paint an already open container from live world/inventory state (furnace progress). */
+  refreshOpenInventory(): void {
+    if (!this.inventoryContext) return;
+    this.renderInventory();
+  }
+
   private renderInventory(): void {
     const context = this.inventoryContext;
     if (!context) return;
-    const dynamic = this.inventoryDynamicHtml(context);
+    if (showsCreativeCatalog(context.kind, context.mode)) {
+      this.renderCreativeInventory(context);
+      return;
+    }
+    this.renderContainerScreen(context);
+  }
+
+  private renderCreativeInventory(context: InventoryContext): void {
+    const dynamic = this.playerInventoryHtml(context);
     const cursor = this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : '';
     if (inventoryPaintMode(this.modal !== undefined) === 'patch-dynamic'
       && this.modal
@@ -389,43 +450,276 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop';
     const catalog = obtainableItems();
-    const creative = context.mode === 'creative'
-      ? `<h3>Творческий каталог</h3><div class="container-grid" data-creative-catalog>${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
-      : '';
     this.modal.innerHTML = `
       <div class="inventory-window">
-        <div class="menu-heading"><h2>${this.inventoryTitle(context.kind)}</h2><button class="game-button ghost" data-ui="close">Закрыть</button></div>
-        ${creative}
+        <div class="menu-heading"><h2>${CONTAINER_STRINGS.inventory}</h2><button class="game-button ghost" data-ui="close">${CONTAINER_STRINGS.close}</button></div>
+        <h3>Творческий каталог</h3>
+        <div class="container-grid" data-creative-catalog>${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>
         <div data-inventory-dynamic>${dynamic}</div>
         <div id="cursor-stack">${cursor}</div>
       </div>`;
     this.root.append(this.modal);
-    this.modal.querySelector('[data-ui="close"]')!.addEventListener('click', () => context.onClose());
-    this.modal.addEventListener('pointerdown', (event) => {
+    this.bindContainerChrome(context);
+  }
+
+  private renderContainerScreen(context: InventoryContext): void {
+    const bookOpen = this.isRecipeBookOpen(context.kind);
+    const stage = containerStageSize(context.kind, bookOpen && hasRecipeBook(context.kind) && context.mode !== 'creative');
+    const scale = containerUiScale(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    const body = this.containerBodyHtml(context);
+    const player = this.playerInventoryHtml(context, context.kind !== 'inventory');
+    const recipe = hasRecipeBook(context.kind) && (context.kind !== 'inventory' || context.mode !== 'creative')
+      ? this.recipeBookHtml(context)
+      : '';
+    const cursor = this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : '';
+    const bookUi = `${bookOpen ? 1 : 0}:${this.recipeBookCategory}:${this.recipeBookCraftableOnly ? 1 : 0}`;
+    if (this.modal?.classList.contains('mc-backdrop')
+      && this.modal.dataset.bookUi === bookUi
+      && patchContainerDynamic(this.modal, { body, player, recipeGrid: this.recipeGridHtml(context), cursor })) {
+      this.applyContainerScale(scale, stage.width);
+      return;
+    }
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.dataset.bookUi = bookUi;
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+        ${recipe}
+        <div class="mc-panel" data-container-kind="${context.kind}">
+          ${hasRecipeBook(context.kind) ? `<button type="button" class="mc-book-button" data-recipe-toggle title="${CONTAINER_STRINGS.recipeBook}"><img src="${TextureAtlas.url('item/book')}" alt="" /></button>` : ''}
+          <button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>
+          <div data-container-body>${body}</div>
+          <div data-player-inventory>${player}</div>
+        </div>
+      </div>
+      <div id="cursor-stack">${cursor}</div>`;
+    this.root.append(this.modal);
+    this.bindContainerChrome(context);
+    this.bindRecipeBookControls(context);
+  }
+
+  private applyContainerScale(scale: number, logicalWidth: number): void {
+    const stage = this.modal?.querySelector<HTMLElement>('.mc-stage');
+    if (!stage) return;
+    stage.style.setProperty('--mc-ui-scale', String(scale));
+    stage.style.setProperty('--mc-logical-width', String(logicalWidth));
+  }
+
+  private bindContainerChrome(context: InventoryContext): void {
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => context.onClose());
+    this.modal!.addEventListener('pointerdown', (event) => {
+      const toggle = (event.target as HTMLElement).closest('[data-recipe-toggle]');
+      if (toggle) {
+        event.preventDefault();
+        this.toggleRecipeBook(context.kind);
+        this.renderInventory();
+        return;
+      }
+      const recipe = (event.target as HTMLElement).closest<HTMLElement>('[data-recipe-id]');
+      if (recipe) {
+        event.preventDefault();
+        this.handleRecipeClick(recipe.dataset.recipeId!, event.button === 2, event.shiftKey);
+        return;
+      }
       const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-slot]');
       if (!slot) return;
       event.preventDefault();
       this.handleInventorySlot(slot.dataset.slot!, event.button === 2 ? 'right' : 'left', event.shiftKey);
     });
-    this.modal.addEventListener('contextmenu', (event) => event.preventDefault());
+    this.modal!.addEventListener('contextmenu', (event) => event.preventDefault());
   }
 
-  private inventoryDynamicHtml(context: InventoryContext): string {
-    const inventory = context.inventory;
-    const mainSlots = inventory.slots.slice(9, 36);
-    const hotbar = inventory.slots.slice(0, 9);
-    const craftSize = context.kind === 'crafting-table' ? 3 : 2;
-    const match = matchCraftingRecipe(this.craftSlots, craftSize, craftSize);
-    const leftPanel = context.kind === 'chest'
-      ? this.containerHtml('Сундук', context.chest?.slots ?? [])
-      : context.kind === 'furnace'
-        ? this.furnaceHtml(context.furnace!)
-        : `<h3>${context.kind === 'crafting-table' ? 'Верстак 3×3' : 'Создание 2×2'}</h3><div class="craft-area"><div class="craft-grid ${craftSize === 3 ? 'table' : ''}">${this.craftSlots.map((slot, index) => this.slotHtml(slot, `craft-${index}`)).join('')}</div><span>→</span>${this.slotHtml(match?.output ?? null, 'result')}</div>
-           <div class="equipment-grid">${this.slotHtml(inventory.armor.head, 'armor-head')}${this.slotHtml(inventory.armor.chest, 'armor-chest')}${this.slotHtml(inventory.armor.legs, 'armor-legs')}${this.slotHtml(inventory.armor.feet, 'armor-feet')}${this.slotHtml(inventory.offhand, 'offhand')}</div>`;
-    return `<div class="inventory-layout"><section>${leftPanel}<p class="inventory-hint">ЛКМ — взять/положить стек · ПКМ — половина/один · Shift+ЛКМ — быстро переместить</p></section><section>
-          <h3>Инвентарь</h3><div class="inventory-grid">${mainSlots.map((slot, index) => this.slotHtml(slot, `inventory-${index + 9}`)).join('')}</div>
-          <div class="inventory-grid hotbar-grid">${hotbar.map((slot, index) => this.slotHtml(slot, `inventory-${index}`)).join('')}</div>
-        </section></div>`;
+  private bindRecipeBookControls(context: InventoryContext): void {
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-recipe-search]');
+    search?.addEventListener('input', () => {
+      this.recipeBookSearch = search.value;
+      this.recipeBookPage = 0;
+      this.patchRecipeGridOnly(context);
+    });
+    search?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    this.modal?.querySelector('[data-recipe-craftable]')?.addEventListener('click', () => {
+      this.recipeBookCraftableOnly = !this.recipeBookCraftableOnly;
+      this.recipeBookPage = 0;
+      this.renderInventory();
+    });
+    for (const tab of this.modal?.querySelectorAll<HTMLElement>('[data-recipe-tab]') ?? []) {
+      tab.addEventListener('click', () => {
+        this.recipeBookCategory = tab.dataset.recipeTab as RecipeBookCategory;
+        this.recipeBookPage = 0;
+        this.renderInventory();
+      });
+    }
+    this.modal?.querySelector('[data-recipe-prev]')?.addEventListener('click', () => {
+      this.recipeBookPage = Math.max(0, this.recipeBookPage - 1);
+      this.patchRecipeGridOnly(context);
+    });
+    this.modal?.querySelector('[data-recipe-next]')?.addEventListener('click', () => {
+      this.recipeBookPage += 1;
+      this.patchRecipeGridOnly(context);
+    });
+  }
+
+  private patchRecipeGridOnly(context: InventoryContext): void {
+    const grid = this.modal?.querySelector('[data-recipe-grid]');
+    if (grid) grid.innerHTML = this.recipeButtonsHtml(context);
+  }
+
+  private isRecipeBookOpen(kind: InventoryContext['kind']): boolean {
+    if (kind === 'furnace') return this.recipeBookOpen.furnace;
+    return this.recipeBookOpen.crafting;
+  }
+
+  private toggleRecipeBook(kind: InventoryContext['kind']): void {
+    if (kind === 'furnace') this.recipeBookOpen.furnace = !this.recipeBookOpen.furnace;
+    else this.recipeBookOpen.crafting = !this.recipeBookOpen.crafting;
+  }
+
+  private containerBodyHtml(context: InventoryContext): string {
+    if (context.kind === 'chest') {
+      const slots = context.chest?.slots ?? Array.from({ length: 27 }, () => null);
+      return `<div class="mc-label">${CONTAINER_STRINGS.chest}</div>
+        <div class="mc-grid mc-grid-9">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
+    }
+    if (context.kind === 'furnace') return this.furnaceHtml(context.furnace!);
+    return this.craftingHtml(context);
+  }
+
+  private craftingHtml(context: InventoryContext): string {
+    const size = context.kind === 'crafting-table' ? 3 : 2;
+    const match = matchCraftingRecipe(this.craftSlots, size, size);
+    const label = context.kind === 'crafting-table' ? CONTAINER_STRINGS.crafting : CONTAINER_STRINGS.inventory;
+    const armor = context.kind === 'inventory'
+      ? `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}${this.slotHtml(context.inventory.offhand, 'offhand')}</div>`
+      : '';
+    return `<div class="mc-label">${label}</div>
+      <div class="mc-craft-row">
+        ${armor}
+        <div class="mc-grid mc-grid-${size}">${this.craftSlots.map((slot, index) => this.craftSlotHtml(slot, index)).join('')}</div>
+        <div class="mc-arrow" aria-hidden="true"></div>
+        ${this.slotHtml(match?.output ?? null, 'result')}
+      </div>`;
+  }
+
+  private craftSlotHtml(stack: ItemStack | null, index: number): string {
+    if (stack) return this.slotHtml(stack, `craft-${index}`);
+    const ghost = this.ghostCraft?.cells[index];
+    if (!ghost) return this.slotHtml(null, `craft-${index}`);
+    const missing = this.ghostCraft?.missing[index] === true;
+    return `<button class="slot mc-slot ghost${missing ? ' missing' : ''}" data-slot="craft-${index}" data-ghost="1" title="${this.escape(getItemDefinition(ghost.itemId).name)}"><img src="${this.itemIcon(ghost.itemId)}" alt="" /></button>`;
+  }
+
+  private playerInventoryHtml(context: InventoryContext, labeled = false): string {
+    const mainSlots = context.inventory.slots.slice(9, 36);
+    const hotbar = context.inventory.slots.slice(0, 9);
+    const label = labeled ? `<div class="mc-label">${CONTAINER_STRINGS.inventory}</div>` : '<h3>Инвентарь</h3>';
+    return `${label}<div class="mc-grid mc-grid-9 inventory-grid">${mainSlots.map((slot, index) => this.slotHtml(slot, `inventory-${index + 9}`)).join('')}</div>
+      <div class="mc-grid mc-grid-9 inventory-grid hotbar-grid">${hotbar.map((slot, index) => this.slotHtml(slot, `inventory-${index}`)).join('')}</div>`;
+  }
+
+  private recipeBookHtml(context: InventoryContext): string {
+    if (!this.isRecipeBookOpen(context.kind)) return '';
+    const kind: RecipeBookKind = context.kind === 'furnace' ? 'smelting' : 'crafting';
+    const tabs = visibleRecipeBookTabs(kind);
+    return `<aside class="mc-recipe-book" data-recipe-book>
+      <div class="mc-recipe-toolbar">
+        <input data-recipe-search type="search" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(this.recipeBookSearch)}" />
+        <button type="button" data-recipe-craftable class="${this.recipeBookCraftableOnly ? 'active' : ''}">${this.recipeBookCraftableOnly ? CONTAINER_STRINGS.showCraftable : CONTAINER_STRINGS.showAll}</button>
+      </div>
+      <div class="mc-recipe-tabs">${tabs.map((tab) => `<button type="button" data-recipe-tab="${tab}" class="${this.recipeBookCategory === tab ? 'active' : ''}">${this.tabLabel(tab)}</button>`).join('')}</div>
+      <div class="mc-recipe-grid" data-recipe-grid>${this.recipeButtonsHtml(context)}</div>
+      <div class="mc-recipe-pager"><button type="button" data-recipe-prev>‹</button><button type="button" data-recipe-next>›</button></div>
+    </aside>`;
+  }
+
+  private recipeGridHtml(context: InventoryContext): string {
+    return this.recipeButtonsHtml(context);
+  }
+
+  private recipeButtonsHtml(context: InventoryContext): string {
+    const kind: RecipeBookKind = context.kind === 'furnace' ? 'smelting' : 'crafting';
+    const gridSize = context.kind === 'crafting-table' ? 3 : 2;
+    const counts = inventoryItemCounts(context.inventory);
+    const filtered = queryRecipeBook({
+      kind,
+      gridSize,
+      category: this.recipeBookCategory,
+      search: this.recipeBookSearch,
+      craftableOnly: this.recipeBookCraftableOnly,
+    }, counts);
+    const page = paginateRecipeBook(filtered, this.recipeBookPage);
+    this.recipeBookPage = page.page;
+    return page.entries.map((entry) => {
+      const craftable = recipeEntryCraftable(entry, counts);
+      return `<button type="button" class="mc-recipe-btn${craftable ? '' : ' uncraftable'}" data-recipe-id="${this.escape(entry.id)}" title="${this.escape(getItemDefinition(entry.resultId).name)}">
+        <img src="${this.itemIcon(entry.resultId)}" alt="" />
+        ${entry.resultCount > 1 ? `<span class="count">${entry.resultCount}</span>` : ''}
+      </button>`;
+    }).join('');
+  }
+
+  private tabLabel(tab: RecipeBookCategory): string {
+    if (tab === 'all') return CONTAINER_STRINGS.all;
+    if (tab === 'equipment') return CONTAINER_STRINGS.equipment;
+    if (tab === 'building') return CONTAINER_STRINGS.building;
+    if (tab === 'food') return CONTAINER_STRINGS.food;
+    if (tab === 'redstone') return CONTAINER_STRINGS.redstone;
+    return CONTAINER_STRINGS.misc;
+  }
+
+  private handleRecipeClick(recipeId: string, right: boolean, shift: boolean): void {
+    const context = this.inventoryContext;
+    if (!context) return;
+    if (context.kind === 'furnace') {
+      const entry = this.smeltingEntry(recipeId);
+      if (!entry?.smelting) return;
+      const placed = placeSmeltingIngredient(entry.smelting, context.furnace?.slots[0] ?? null, context.inventory);
+      if (placed.placed && context.furnace) {
+        context.furnace.slots[0] = placed.input;
+        this.ghostFurnaceItem = undefined;
+      } else {
+        this.ghostFurnaceItem = pickIngredientItem(entry.smelting.input, inventoryItemCounts(context.inventory));
+      }
+      context.onChanged();
+      this.renderInventory();
+      return;
+    }
+    const variants = allCraftingBookEntries().filter((entry) => {
+      const current = allCraftingBookEntries().find((item) => item.id === recipeId);
+      return current !== undefined && entry.resultId === current.resultId && (entry.gridSize ?? 3) <= (context.kind === 'crafting-table' ? 3 : 2);
+    });
+    let entry = variants.find((item) => item.id === recipeId) ?? variants[0];
+    if (!entry?.recipe) return;
+    if (right && variants.length > 1) {
+      this.recipeVariantIndex = (this.recipeVariantIndex + 1) % variants.length;
+      entry = variants[this.recipeVariantIndex]!;
+    }
+    const recipe = entry.recipe;
+    if (!recipe) return;
+    const counts = inventoryItemCounts(context.inventory);
+    const gridSize = context.kind === 'crafting-table' ? 3 : 2;
+    if (!recipeEntryCraftable(entry, counts)) {
+      this.ghostCraft = ghostFromRecipe(recipe, gridSize, counts);
+      this.renderInventory();
+      return;
+    }
+    const placed = placeCraftingRecipe(recipe, this.craftSlots, context.inventory, gridSize, shift ? 64 : 1);
+    if (placed.placed) {
+      this.craftSlots = placed.grid;
+      this.ghostCraft = undefined;
+    } else this.ghostCraft = placed.ghost;
+    context.onChanged();
+    this.renderInventory();
+  }
+
+  private smeltingEntry(id: string): RecipeBookEntry | undefined {
+    return queryRecipeBook({
+      kind: 'smelting',
+      gridSize: 3,
+      category: 'all',
+      search: '',
+      craftableOnly: false,
+    }, new Map()).find((entry) => entry.id === id);
   }
 
   private handleInventorySlot(key: string, button: 'left' | 'right', shift: boolean): void {
@@ -434,6 +728,7 @@ export class GameUI {
     if (key.startsWith('inventory-')) {
       const index = Number(key.slice('inventory-'.length));
       if (shift && context.kind === 'chest' && context.chest) this.quickMoveInventoryToContainer(index, context.chest);
+      else if (shift && context.kind === 'furnace' && context.furnace) this.shiftInventoryToFurnace(index);
       else this.cursorStack = context.inventory.clickSlot(index, this.cursorStack, button);
     } else if (key.startsWith('armor-')) {
       const slot = key.slice('armor-'.length) as 'head' | 'chest' | 'legs' | 'feet';
@@ -441,12 +736,13 @@ export class GameUI {
     } else if (key === 'offhand') this.cursorStack = context.inventory.clickSlot({ section: 'offhand' }, this.cursorStack, button);
     else if (key.startsWith('craft-')) {
       const index = Number(key.slice('craft-'.length));
+      this.ghostCraft = undefined;
       const result = applySlotClick(this.craftSlots[index] ?? null, this.cursorStack, button);
       this.craftSlots[index] = result.slot;
       this.cursorStack = result.cursor;
-    } else if (key === 'result') this.takeCraftResult();
+    } else if (key === 'result') this.takeCraftResult(shift);
     else if (key.startsWith('container-')) this.clickContainer(Number(key.slice('container-'.length)), button, shift);
-    else if (key.startsWith('furnace-')) this.clickFurnace(Number(key.slice('furnace-'.length)), button);
+    else if (key.startsWith('furnace-')) this.clickFurnace(Number(key.slice('furnace-'.length)) as 0 | 1 | 2, button, shift);
     else if (key.startsWith('creative-')) {
       const definition = obtainableItems()[Number(key.slice('creative-'.length))];
       if (definition) this.cursorStack = createItemStack(definition.id, button === 'right' ? 1 : definition.maxStack);
@@ -455,18 +751,14 @@ export class GameUI {
     this.renderInventory();
   }
 
-  private takeCraftResult(): void {
-    const size = this.inventoryContext?.kind === 'crafting-table' ? 3 : 2;
-    const match = matchCraftingRecipe(this.craftSlots, size, size);
-    if (!match) return;
-    if (this.cursorStack === null) this.cursorStack = cloneStack(match.output);
-    else {
-      if (!canStacksMerge(this.cursorStack, match.output)) return;
-      const merged = mergeItemStacks(this.cursorStack, match.output);
-      if (merged.remainder) return;
-      this.cursorStack = merged.target;
-    }
-    this.craftSlots = [...consumeCraftingGrid(this.craftSlots, match)];
+  private takeCraftResult(shift = false): void {
+    const context = this.inventoryContext;
+    if (!context) return;
+    const size = context.kind === 'crafting-table' ? 3 : 2;
+    const taken = takeCraftOutput(this.craftSlots, this.cursorStack, size, shift, context.inventory);
+    this.craftSlots = taken.grid;
+    this.cursorStack = taken.cursor;
+    this.ghostCraft = undefined;
   }
 
   private clickContainer(index: number, button: 'left' | 'right', shift: boolean): void {
@@ -484,51 +776,75 @@ export class GameUI {
     this.cursorStack = result.cursor;
   }
 
-  private clickFurnace(index: number, button: 'left' | 'right'): void {
-    const furnace = this.inventoryContext?.furnace;
-    if (!furnace) return;
-    const result = applySlotClick(furnace.slots[index] ?? null, this.cursorStack, button);
-    furnace.slots[index] = result.slot;
-    this.cursorStack = result.cursor;
+  private clickFurnace(index: 0 | 1 | 2, button: 'left' | 'right', shift: boolean): void {
+    const context = this.inventoryContext;
+    const furnace = context?.furnace;
+    if (!context || !furnace) return;
+    this.ghostFurnaceItem = undefined;
+    const stack = furnace.slots[index];
+    if (shift && stack) {
+      const remainder = context.inventory.add(stack);
+      furnace.slots[index] = remainder;
+      return;
+    }
+    const clicked = clickFurnaceSlot(furnace.slots, index, this.cursorStack, button);
+    furnace.slots = clicked.slots;
+    this.cursorStack = clicked.cursor;
+  }
+
+  private shiftInventoryToFurnace(index: number): void {
+    const context = this.inventoryContext;
+    const furnace = context?.furnace;
+    if (!context || !furnace) return;
+    const moving = context.inventory.getSlot(index);
+    if (!moving) return;
+    const route = furnaceShiftRoute(moving, 'inventory');
+    if (route === 'inventory') {
+      context.inventory.quickMove(index);
+      return;
+    }
+    const slotIndex = route === 'input' ? 0 : 1;
+    const result = shiftMoveStack(moving, [furnace.slots[slotIndex]], (_slot, stack) => furnaceAccepts(slotIndex, stack));
+    furnace.slots[slotIndex] = result.targets[0] ?? null;
+    context.inventory.setSlot(index, result.remainder);
   }
 
   private quickMoveInventoryToContainer(index: number, container: ContainerAdapter): void {
     const inventory = this.inventoryContext!.inventory;
-    let moving = inventory.getSlot(index);
+    const moving = inventory.getSlot(index);
     if (!moving) return;
-    for (let slot = 0; slot < container.slots.length && moving; slot += 1) {
-      const target = container.slots[slot];
-      if (!target || !canStacksMerge(target, moving)) continue;
-      const merged = mergeItemStacks(target, moving);
-      container.slots[slot] = merged.target;
-      moving = merged.remainder;
-    }
-    for (let slot = 0; slot < container.slots.length && moving; slot += 1) {
-      if (container.slots[slot]) continue;
-      container.slots[slot] = moving;
-      moving = null;
-    }
-    inventory.setSlot(index, moving);
-  }
-
-  private containerHtml(title: string, slots: readonly (ItemStack | null)[]): string {
-    return `<h3>${title}</h3><div class="container-grid">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
+    const moved = shiftMoveStack(moving, container.slots);
+    container.slots.splice(0, container.slots.length, ...moved.targets);
+    inventory.setSlot(index, moved.remainder);
   }
 
   private furnaceHtml(furnace: FurnaceState): string {
     const burn = furnace.burnTotal > 0 ? furnace.burnTime / furnace.burnTotal : 0;
     const cook = furnace.cookTime / 200;
-    return `<h3>Печь</h3><div class="furnace-layout">${this.slotHtml(furnace.slots[0], 'furnace-0')}<div class="furnace-meter"><span>жар</span><div class="meter-track"><span style="width:${burn * 100}%"></span></div><span>готово</span><div class="meter-track"><span style="width:${cook * 100}%"></span></div></div>${this.slotHtml(furnace.slots[2], 'furnace-2')}${this.slotHtml(furnace.slots[1], 'furnace-1')}</div>`;
+    return `<div class="mc-label">${CONTAINER_STRINGS.furnace}</div>
+      <div class="mc-furnace">
+        <div class="mc-furnace-input">${this.furnaceInputHtml(furnace.slots[0])}</div>
+        <div class="mc-flame" style="--p:${burn}"><span></span></div>
+        <div class="mc-furnace-fuel">${this.slotHtml(furnace.slots[1], 'furnace-1')}</div>
+        <div class="mc-arrow mc-arrow-progress"><span style="width:${Math.max(0, Math.min(1, cook)) * 100}%"></span></div>
+        <div class="mc-furnace-output">${this.slotHtml(furnace.slots[2], 'furnace-2')}</div>
+      </div>`;
+  }
+
+  private furnaceInputHtml(stack: ItemStack | null): string {
+    if (stack) return this.slotHtml(stack, 'furnace-0');
+    if (!this.ghostFurnaceItem) return this.slotHtml(null, 'furnace-0');
+    return `<button class="slot mc-slot ghost missing" data-slot="furnace-0" data-ghost="1" title="${this.escape(getItemDefinition(this.ghostFurnaceItem).name)}"><img src="${this.itemIcon(this.ghostFurnaceItem)}" alt="" /></button>`;
   }
 
   private slotHtml(stack: ItemStack | null, key: string, selected = false): string {
-    if (!stack) return `<button class="slot${selected ? ' selected' : ''}" data-slot="${key}" data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
+    if (!stack) return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     const definition = getItemDefinition(stack.itemId);
     const maxDurability = 'durability' in definition ? definition.durability : undefined;
     const durability = maxDurability && stack.durability !== undefined
       ? `<div class="durability"><span style="width:${Math.max(0, stack.durability / maxDurability) * 100}%"></span></div>`
       : '';
-    return `<button class="slot${selected ? ' selected' : ''}" data-slot="${key}" data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}" title="${this.escape(definition.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}" title="${this.escape(definition.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemIcon(itemId: string): string {
@@ -537,10 +853,6 @@ export class GameUI {
 
   private pips(symbol: string, filled: number, total: number): string {
     return Array.from({ length: total }, (_value, index) => `<span class="${index < filled ? '' : 'empty'}">${symbol}</span>`).join('');
-  }
-
-  private inventoryTitle(kind: InventoryContext['kind']): string {
-    return kind === 'crafting-table' ? 'Верстак' : kind === 'chest' ? 'Сундук' : kind === 'furnace' ? 'Печь' : 'Инвентарь';
   }
 
   private setScreen(html: string): void {

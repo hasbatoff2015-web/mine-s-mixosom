@@ -3,7 +3,7 @@ import { getBlockDefinition } from '../blocks';
 import type { ItemDefinition } from './types';
 import { itemHeldMeshKind } from './itemRenderProfiles';
 
-export type SpecialIconCategory = 'stairs' | 'slab' | 'button' | 'pressure_plate';
+export type SpecialIconCategory = 'stairs' | 'slab' | 'button' | 'pressure_plate' | 'chest';
 
 export interface SpecialIconPose {
   readonly rotationDeg: readonly [number, number, number];
@@ -23,6 +23,7 @@ export const SPECIAL_ICON_POSES: Readonly<Record<SpecialIconCategory, SpecialIco
   slab: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
   button: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
   pressure_plate: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
+  chest: Object.freeze({ rotationDeg: SPECIAL_ICON_ROTATION_DEG }),
 });
 
 export type ItemIconKind = 'texture' | 'special_preview';
@@ -51,6 +52,7 @@ export function specialIconCategory(itemOrId: string | ItemDefinition): SpecialI
     case 'slab': return 'slab';
     case 'button': return 'button';
     case 'pressure_plate': return 'pressure_plate';
+    case 'chest': return 'chest';
     default: return undefined;
   }
 }

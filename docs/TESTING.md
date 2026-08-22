@@ -54,10 +54,10 @@ npm run assets:import
 
 ```text
 tsc --noEmit: PASS
-Vitest:       27 test files, 219 tests, 219 passed
-Vite build:   82 modules PASS
-Size/archive: PASS, 0.97 MiB uncompressed, 165 files
-Main assets:  JS 764.33 kB / 207.54 kB gzip; CSS 13.26 kB / 3.91 kB gzip
+Vitest:       31 test files, 257 tests, 257 passed
+Vite build:   90 modules PASS
+Size/archive: PASS, 1.00 MiB uncompressed, 166 files
+Main assets:  JS 787.86 kB / 214.34 kB gzip; CSS 20.00 kB / 5.03 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -80,6 +80,10 @@ Main assets:  JS 764.33 kB / 207.54 kB gzip; CSS 13.26 kB / 3.91 kB gzip
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
 | `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
 | `tests/pointer-lock.test.ts` | 11 | Unlock reasons (escape/programmatic/focus-lost), Esc pause without duplicate exit, Continue one request, failed request → fallback, no auto-retry |
+| `tests/chest-model.test.ts` | 9 | Chest ≠ oak cube, entity texture, no chunk faces, facing, lid lerp, held special_model, 27-slot persist, Creative catalog gate, shift transfer, single open target |
+| `tests/container-ui.test.ts` | 12 | Logical 176×166 scale, Creative catalog not in containers, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe book registry/search/categories/craftable/ghost/shift-fill/furnace input |
+| `tests/creative-flight.test.ts` | 8 | 7-tick edge double-tap, Survival never flies, toggle on/off, hover/ascend/descend/Ctrl sprint, collision/landing/ladder override, mode switch, GUI input block while world ticks |
+| `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -124,8 +128,8 @@ Targeted regression pass также подтвердил кодовые fixes:
 - переход в список миров и форму создания;
 - создание Survival мира с seed;
 - появление terrain, HUD и hotbar;
-- открытие/закрытие inventory;
-- pause через `Esc`;
+- открытие/закрытие inventory (мир продолжает tick; WASD/look заблокированы);
+- pause через `Esc` (simulation останавливается);
 - «Сохранить и выйти»;
 - появление мира в списке и повторная загрузка.
 - загрузка сохранённого мира и respawn path;
@@ -220,11 +224,11 @@ Browser viewport matrix закрывает layout baseline, но не замен
 1. loading → main menu, нет горизонтального/вертикального scroll;
 2. create/list/load/delete world;
 3. pointer lock acquire/release, blur и `Esc`; закрытие inventory по E/Close и pause «Продолжить» сразу возвращают lock без повторного click по canvas; Esc из gameplay открывает pause с видимым курсором;
-4. WASD, jump, Shift sprint, C sneak, edge protection, step/slab collision;
+4. WASD, jump, Shift sprint (земля) / descend (полёт), Ctrl fly sprint, double Space Creative flight, C sneak, edge protection, step/slab/chest collision;
 5. mine/place, 1.9-like break times, thin torch/button/door/ladder, stairs/slabs (half/double, facing, top stairs), запрет placement внутри игрока;
 6. hotbar `1–9` и wheel, Q-drop/pickup;
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
-8. chest/furnace open/close/save, block destruction drops contents;
+8. chest model/facing/lid, chest/furnace/crafting GUI (без Creative catalog), Recipe Book, block destruction drops contents;
 9. food, fall/water/lava/cactus damage, death, respawn и bed spawn;
 10. melee cooldown/crit, shield front/back, bow with/without arrow;
 11. passive/hostile spawn, skeleton shot, creeper fuse/explosion, loot pickup, mob 1-block step-up, zombie limbs;
@@ -276,6 +280,20 @@ Ladder:
 - no input — медленно вниз; C sneak — удержание;
 - от стены — отцепиться; падение на ladder — clamp;
 - верх/низ; N/S/E/W; stairs рядом не дают climb.
+
+## Container UI / Recipe Book / Creative flight
+
+Полный checklist: `docs/reports/2026-08-22_container-ui-recipebook-creative-flight.md`.
+
+Chest: facing N/S/E/W, entity texture, lock на front, lid open/close только выбранного сундука, 27 slots, Survival и Creative GUI одинаковы (без Creative catalog), left/right/shift clicks, held/icon не oak cube.
+
+Furnace: input / flame / fuel / arrow / output, progress после закрытия GUI, shift-click routing, Recipe Book только smelting.
+
+Crafting: 3×3 → arrow → result, close возвращает grid, Recipe Book, ghost vs placement.
+
+Flight: только Creative, double Space 7 ticks, Space/Shift высота, Ctrl sprint, landing off, walls/ceiling, ladder не перехватывает, Survival — только прыжок.
+
+Pointer lock: close E / chest / furnace / crafting / Continue / Esc overlay без второго flow.
 
 ## Mobile/touch manual matrix
 

@@ -165,6 +165,7 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'pressure_plate':
     case 'stairs':
     case 'slab':
+    case 'chest':
       return 'special_model';
     case 'cube':
       return 'block_cube';

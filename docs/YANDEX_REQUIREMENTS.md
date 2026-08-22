@@ -79,7 +79,8 @@ ysdk.features.LoadingAPI?.ready();
 | Boot / asset loading | `LOADING` | Нет gameplay call |
 | Интерактивное main menu / world list | `MENU` | `GameplayAPI.stop()` только если ранее было PLAYING |
 | Мир загружен, player получил управление | `PLAYING` | `ysdk.features.GameplayAPI?.start()` |
-| Pause menu / inventory, если simulation остановлена | `PAUSED` | `...stop()` |
+| Pause menu (настоящая остановка simulation) | `PAUSED` | `...stop()` |
+| Inventory / chest / furnace / crafting (modal, мир тикает) | `PLAYING` | `start()` остаётся активным |
 | Перед fullscreen/rewarded ad | `AD` | Save, затем `...stop()` |
 | Потеря вкладки/focus/minimize | `BACKGROUND` | `...stop()` |
 | Возврат из ad/background | предыдущее логическое состояние | `...start()` только если реально возобновляется gameplay |

@@ -23,6 +23,10 @@ export const GRAVITY = 32;
 export const WATER_GRAVITY = 5;
 export const JUMP_VELOCITY = 8.4;
 export const TERMINAL_VELOCITY = 50;
+export const CREATIVE_FLY_SPEED = 10.9;
+export const CREATIVE_SPRINT_FLY_SPEED = 21.6;
+export const CREATIVE_VERTICAL_SPEED = 7.5;
+export const CREATIVE_FLY_DOUBLE_TAP_TICKS = 7;
 
 export const DAY_TICKS = 24_000;
 export const AUTOSAVE_INTERVAL_SECONDS = 30;

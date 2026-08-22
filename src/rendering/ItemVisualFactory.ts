@@ -22,6 +22,7 @@ import {
 } from './GeneratedItemGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
+import { CHEST_TEXTURE_KEY, createClosedChestGeometry } from './chestModel';
 
 interface AtlasSource {
   readonly texture: THREE.Texture;
@@ -91,6 +92,7 @@ export class ItemVisualFactory {
   private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly generatedMasks = new Map<string, GeneratedItemMask>();
   private readonly specialHeldGeometries = new Map<string, THREE.BufferGeometry>();
+  private chestEntityMaterial?: THREE.MeshBasicMaterial;
   private readonly fallbackTexture: THREE.Texture;
   private readonly atlas?: AtlasSource;
   private disposed = false;
@@ -129,7 +131,9 @@ export class ItemVisualFactory {
       root.add(mesh);
     } else if (meshKind === 'special_model' && definition.kind === 'block') {
       const block = getBlockDefinition(definition.blockId);
-      const mesh = new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
+      const mesh = block.renderShape === 'chest'
+        ? new THREE.Mesh(this.specialHeldGeometry(definition.id), this.chestMaterial())
+        : new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
       mesh.name = `${root.name}:special`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
@@ -227,6 +231,8 @@ export class ItemVisualFactory {
     this.generatedGeometries.clear();
     this.generatedMasks.clear();
     this.specialHeldGeometries.clear();
+    this.chestEntityMaterial?.dispose();
+    this.chestEntityMaterial = undefined;
     this.disposed = true;
   }
 
@@ -253,6 +259,9 @@ export class ItemVisualFactory {
         break;
       case 'slab':
         geometry = this.geometryFromLocalBoxes(slabLocalBoxes('bottom'), texture);
+        break;
+      case 'chest':
+        geometry = createClosedChestGeometry();
         break;
       default:
         throw new Error(`No special held model for ${itemId}`);
@@ -372,6 +381,16 @@ export class ItemVisualFactory {
     });
     this.blockMaterials.set(layer, material);
     return material;
+  }
+
+  private chestMaterial(): THREE.MeshBasicMaterial {
+    if (this.chestEntityMaterial) return this.chestEntityMaterial;
+    this.chestEntityMaterial = createEntityMaterial({
+      map: this.itemTexture(CHEST_TEXTURE_KEY),
+      wrap: false,
+    });
+    this.chestEntityMaterial.userData.chestEntityTexture = CHEST_TEXTURE_KEY;
+    return this.chestEntityMaterial;
   }
 
   private generatedMesh(texturePath: string): THREE.Mesh {

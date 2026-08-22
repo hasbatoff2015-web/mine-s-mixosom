@@ -414,6 +414,11 @@ export function selectionBoxesForBlock(
     }
     case 'slab':
       return selectionBoxesFromLocal(x, y, z, slabLocalBoxes(defaultSlabType(state)));
+    case 'chest':
+      return selectionBoxesFromLocal(x, y, z, [{
+        minX: 1 / 16, minY: 0, minZ: 1 / 16,
+        maxX: 15 / 16, maxY: 14 / 16, maxZ: 15 / 16,
+      }]);
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }

@@ -21,7 +21,8 @@ export type BlockRenderShape =
   | 'door'
   | 'ladder'
   | 'stairs'
-  | 'slab';
+  | 'slab'
+  | 'chest';
 
 export type DoorHalf = 'lower' | 'upper';
 export type DoorHinge = 'left' | 'right';

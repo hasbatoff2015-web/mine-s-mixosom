@@ -16,6 +16,11 @@ export function doorFacingFromYaw(yaw: number): HorizontalFacing {
   return horizontalFacingFromXZ(-Math.sin(yaw), -Math.cos(yaw));
 }
 
+/** Chest lock faces the player — same horizontal heading as a placed door. */
+export function chestFacingFromYaw(yaw: number): HorizontalFacing {
+  return doorFacingFromYaw(yaw);
+}
+
 export function attachmentFromHitNormal(_nx: number, ny: number, _nz: number): BlockAttachment {
   if (ny > 0.5) return 'floor';
   if (ny < -0.5) return 'ceiling';

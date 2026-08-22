@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import { blockCollisionBoxes, type CollisionBox } from '../world/collision';
 import {
+  CREATIVE_FLY_SPEED,
+  CREATIVE_SPRINT_FLY_SPEED,
+  CREATIVE_VERTICAL_SPEED,
   GRAVITY,
   JUMP_VELOCITY,
   PLAYER_EYE_HEIGHT,
@@ -19,6 +22,10 @@ import {
 } from '../core/constants';
 import type { MoveInput } from '../input/InputManager';
 import type { VoxelWorld } from '../world/World';
+import {
+  nextFlyWindowTicks,
+  shouldAcceptFlyToggle,
+} from './creativeFlight';
 import {
   desiredHorizontalWish,
   findLadderContact,
@@ -115,9 +122,14 @@ export class PlayerController {
   inLava = false;
   headSubmerged = false;
   onLadder = false;
+  isFlying = false;
+  creativeFlightAllowed = false;
   fallDistance = 0;
   lastFallDistance = 0;
   lastFallDamage = 0;
+  private jumpHeld = false;
+  private flyWindowTicks = 0;
+  private flyIgnoreGroundTicks = 0;
 
   constructor(options: PlayerControllerOptions | PlayerControllerOptions['position'] = {}) {
     const normalized: PlayerControllerOptions = options instanceof THREE.Vector3 || Array.isArray(options)
@@ -197,6 +209,9 @@ export class PlayerController {
     this.fallDistance = 0;
     this.lastFallDistance = 0;
     this.lastFallDamage = 0;
+    this.isFlying = false;
+    this.jumpHeld = false;
+    this.flyWindowTicks = 0;
   }
 
   respawn(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
@@ -218,18 +233,41 @@ export class PlayerController {
     this.pitch = clamp(finite(input.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
 
     const movement = input.movement();
+    const jumpPressed = movement.jump && !this.jumpHeld;
+    this.jumpHeld = movement.jump;
+    if (!this.creativeFlightAllowed) {
+      this.isFlying = false;
+      this.flyWindowTicks = 0;
+    } else {
+      const flyAction = shouldAcceptFlyToggle(true, jumpPressed, this.flyWindowTicks);
+      if (flyAction === 'toggle') {
+        this.isFlying = !this.isFlying;
+        if (this.isFlying) {
+          this.velocity.y = 0;
+          this.flyIgnoreGroundTicks = 2;
+        }
+      }
+      this.flyWindowTicks = nextFlyWindowTicks(flyAction, this.flyWindowTicks);
+    }
+
     const wasOnGround = this.onGround || this.hasGroundSupport(world, this.position);
     this.updateFluidState(world);
-    this.updateStance(world, movement.sneak);
-    this.sprinting = movement.sprint && movement.forward > 0.05 && !this.sneaking && !this.inWater && !this.inLava;
-    const jumped = movement.jump && wasOnGround && !this.inWater && !this.inLava;
+    if (this.isFlying) this.sneaking = false;
+    else this.updateStance(world, movement.sneak);
+    this.sprinting = this.isFlying
+      ? Boolean(movement.flySprint) && (Math.abs(movement.forward) > 0.05 || Math.abs(movement.right) > 0.05)
+      : movement.sprint && movement.forward > 0.05 && !this.sneaking && !this.inWater && !this.inLava;
+    const jumped = !this.isFlying && movement.jump && wasOnGround && !this.inWater && !this.inLava;
 
-    this.updateHorizontalVelocity(movement, stepDt, wasOnGround);
-    if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
+    if (this.isFlying) this.updateFlyVelocity(movement, stepDt);
+    else this.updateHorizontalVelocity(movement, stepDt, wasOnGround);
+    if (this.isFlying) {
+      /* Flight owns vertical velocity. */
+    } else if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
     else if (movement.jump && wasOnGround) this.velocity.y = JUMP_VELOCITY;
 
     const wish = desiredHorizontalWish(this.yaw, movement.forward, movement.right);
-    const ladderAtStart = findLadderContact(world, this.aabb);
+    const ladderAtStart = this.isFlying ? undefined : findLadderContact(world, this.aabb);
     let climbIntent = false;
     if (ladderAtStart && !this.inWater && !this.inLava) {
       this.sprinting = false;
@@ -279,27 +317,35 @@ export class PlayerController {
     const actualDrop = Math.max(0, this.previousPosition.y - this.position.y);
     this.updateFluidState(world);
     const supported = this.hasGroundSupport(world, this.position);
-    this.onLadder = !this.inWater && !this.inLava && findLadderContact(world, this.aabb) !== undefined;
+    this.onLadder = !this.isFlying && !this.inWater && !this.inLava && findLadderContact(world, this.aabb) !== undefined;
     this.onGround = !this.inWater && !this.inLava && (landed || (this.velocity.y <= 0 && supported));
+    if (this.flyIgnoreGroundTicks > 0) this.flyIgnoreGroundTicks -= 1;
+    if (this.isFlying && landed && this.flyIgnoreGroundTicks <= 0) this.isFlying = false;
 
     if (collidedX) this.velocity.x = 0;
     if (collidedZ) this.velocity.z = 0;
     if (vertical.collided) this.velocity.y = 0;
 
     let fallDamage = 0;
-    if (this.inWater || this.inLava || this.onLadder) {
+    if (!this.isFlying) {
+      if (this.inWater || this.inLava || this.onLadder) {
+        this.fallDistance = 0;
+      } else if (!this.onGround) {
+        if (actualDrop > 0) this.fallDistance += actualDrop;
+      } else if (landed) {
+        this.lastFallDistance = this.fallDistance + actualDrop;
+        fallDamage = Math.max(0, Math.ceil(this.lastFallDistance - 3));
+        this.lastFallDamage = fallDamage;
+        this.fallDistance = 0;
+        if (fallDamage > 0) onDamage?.(fallDamage, 'fall');
+      }
+    } else {
       this.fallDistance = 0;
-    } else if (!this.onGround) {
-      if (actualDrop > 0) this.fallDistance += actualDrop;
-    } else if (landed) {
-      this.lastFallDistance = this.fallDistance + actualDrop;
-      fallDamage = Math.max(0, Math.ceil(this.lastFallDistance - 3));
-      this.lastFallDamage = fallDamage;
-      this.fallDistance = 0;
-      if (fallDamage > 0) onDamage?.(fallDamage, 'fall');
     }
 
-    if (!this.inWater && !this.inLava && !this.onLadder) {
+    if (this.isFlying) {
+      /* No gravity while flying. */
+    } else if (!this.inWater && !this.inLava && !this.onLadder) {
       if (this.onGround && this.velocity.y <= 0) this.velocity.y = 0;
       else this.velocity.y = Math.max(-TERMINAL_VELOCITY, (this.velocity.y - GRAVITY * stepDt) * Math.pow(0.98, stepDt / 0.05));
     }
@@ -340,6 +386,10 @@ export class PlayerController {
     if (state.pitch !== undefined) this.pitch = clamp(finite(state.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
     this.onGround = false;
     this.onLadder = false;
+    this.isFlying = false;
+    this.jumpHeld = false;
+    this.flyWindowTicks = 0;
+    this.flyIgnoreGroundTicks = 0;
     this.fallDistance = 0;
   }
 
@@ -368,6 +418,30 @@ export class PlayerController {
       headSubmerged: this.headSubmerged,
       onLadder: this.onLadder,
     };
+  }
+
+  private updateFlyVelocity(movement: MoveInput, dt: number): void {
+    const forwardX = -Math.sin(this.yaw);
+    const forwardZ = -Math.cos(this.yaw);
+    const rightX = Math.cos(this.yaw);
+    const rightZ = -Math.sin(this.yaw);
+    let wishX = forwardX * movement.forward + rightX * movement.right;
+    let wishZ = forwardZ * movement.forward + rightZ * movement.right;
+    const wishLength = Math.hypot(wishX, wishZ);
+    if (wishLength > 1) {
+      wishX /= wishLength;
+      wishZ /= wishLength;
+    }
+    const speed = movement.flySprint ? CREATIVE_SPRINT_FLY_SPEED : CREATIVE_FLY_SPEED;
+    const desiredX = wishX * speed;
+    const desiredZ = wishZ * speed;
+    const blend = 1 - Math.exp(-10 * dt);
+    this.velocity.x += (desiredX - this.velocity.x) * blend;
+    this.velocity.z += (desiredZ - this.velocity.z) * blend;
+    let desiredY = 0;
+    if (movement.jump) desiredY += CREATIVE_VERTICAL_SPEED;
+    if (movement.descend) desiredY -= CREATIVE_VERTICAL_SPEED;
+    this.velocity.y += (desiredY - this.velocity.y) * blend;
   }
 
   private updateStance(world: VoxelWorld, wantsSneak: boolean): void {

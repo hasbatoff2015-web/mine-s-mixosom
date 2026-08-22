@@ -29,3 +29,19 @@ export function patchInventoryDynamic(
   cursor.innerHTML = cursorHtml;
   return true;
 }
+
+export function patchContainerDynamic(
+  root: InventoryDomRoot,
+  parts: { body: string; player: string; recipeGrid?: string; cursor: string },
+): boolean {
+  const body = root.querySelector('[data-container-body]');
+  const player = root.querySelector('[data-player-inventory]');
+  const cursor = root.querySelector('#cursor-stack');
+  if (!body || !player || !cursor) return false;
+  body.innerHTML = parts.body;
+  player.innerHTML = parts.player;
+  cursor.innerHTML = parts.cursor;
+  const grid = root.querySelector('[data-recipe-grid]');
+  if (grid && parts.recipeGrid !== undefined) grid.innerHTML = parts.recipeGrid;
+  return true;
+}

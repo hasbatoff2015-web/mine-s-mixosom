@@ -226,6 +226,7 @@ export interface MeshedChunk {
   translucent: THREE.BufferGeometry;
   water: THREE.BufferGeometry;
   faces: number;
+  chests: Array<{ x: number; y: number; z: number }>;
 }
 
 export interface ChunkMeshProfile {
@@ -258,6 +259,7 @@ export class ChunkMesher {
     };
     this.cacheColumns(chunk, world);
     let faces = 0;
+    const chests: Array<{ x: number; y: number; z: number }> = [];
     const chunkHeight = chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE);
     const blocks = chunk.blocks;
     const eastChunk = world.getChunk(chunk.x + 1, chunk.z, false);
@@ -279,6 +281,10 @@ export class ChunkMesher {
           const target = this.buffersFor(layers, definition);
           const meshAsCube = definition.renderShape === 'cube'
             || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
+          if (definition.renderShape === 'chest') {
+            chests.push({ x: worldX, y, z: worldZ });
+            continue;
+          }
           if (!meshAsCube) {
             faces += this.addSpecial(target, definition, state, world, worldX, y, worldZ);
             continue;
@@ -332,6 +338,7 @@ export class ChunkMesher {
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       faces,
+      chests,
     };
     const buildEnd = performance.now();
     this.lastProfile = { scanMs: scanEnd - buildStart, geometryMs: buildEnd - scanEnd };
@@ -415,6 +422,7 @@ export class ChunkMesher {
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
       case 'stairs': return this.addStairs(buffers, definition, state, world, x, y, z);
       case 'slab': return this.addSlab(buffers, definition, state, world, x, y, z);
+      case 'chest': return 0;
       case 'cube': return 0;
     }
   }

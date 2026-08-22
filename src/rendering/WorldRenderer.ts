@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
+import type { HorizontalFacing } from '../blocks';
 import { chunkKey } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
+import { ChestRenderer } from './ChestRenderer';
 import {
   createSelectionGeometry,
   resolveStairShape,
@@ -16,11 +18,13 @@ import { createWorldChunkMaterial, setWorldDaylight } from './worldLighting';
 interface ChunkVisual {
   group: THREE.Group;
   faces: number;
+  chests: Array<{ x: number; y: number; z: number }>;
 }
 
 export class WorldRenderer {
   readonly group = new THREE.Group();
   readonly selection: THREE.LineSegments;
+  readonly chests = new ChestRenderer();
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
   private readonly resolveState: BlockRenderStateResolver;
@@ -84,6 +88,7 @@ export class WorldRenderer {
     this.selection.renderOrder = 10;
     this.selection.matrixAutoUpdate = false;
     this.group.add(this.selection);
+    this.group.add(this.chests.group);
   }
 
   get cutoutSide(): THREE.Side {
@@ -136,7 +141,7 @@ export class WorldRenderer {
       group.add(mesh);
     } else meshed.water.dispose();
     this.group.add(group);
-    this.chunks.set(key, { group, faces: meshed.faces });
+    this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
     chunk.dirty = false;
     const meshMilliseconds = performance.now() - meshStart;
     this.meshSamples += 1;
@@ -179,6 +184,23 @@ export class WorldRenderer {
     this.selection.visible = true;
   }
 
+  setOpenChest(key?: string): void {
+    this.chests.setOpenTarget(key);
+  }
+
+  updateChests(dtSeconds: number): void {
+    const cells: Array<{ x: number; y: number; z: number; facing?: HorizontalFacing }> = [];
+    for (const visual of this.chunks.values()) {
+      for (const chest of visual.chests) {
+        cells.push({
+          ...chest,
+          facing: this.resolveState(chest.x, chest.y, chest.z)?.facing as HorizontalFacing | undefined,
+        });
+      }
+    }
+    this.chests.sync(cells, dtSeconds);
+  }
+
   get faceCount(): number {
     let faces = 0;
     for (const chunk of this.chunks.values()) faces += chunk.faces;
@@ -204,6 +226,7 @@ export class WorldRenderer {
     this.vegetationMaterial.dispose();
     this.glassMaterial.dispose();
     this.waterMaterial.dispose();
+    this.chests.dispose();
   }
 
   private removeChunk(key: string): void {
