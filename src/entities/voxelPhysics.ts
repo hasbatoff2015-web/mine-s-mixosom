@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
-import { blockCollisionBox } from '../world/collision';
+import { blockCollisionBoxes } from '../world/collision';
 
 const COLLISION_EPSILON = 1e-5;
 
@@ -71,16 +71,18 @@ function collidingBoxes(
   const maxY = Math.floor(body.maxY - COLLISION_EPSILON);
   const minZ = Math.floor(body.minZ + COLLISION_EPSILON);
   const maxZ = Math.floor(body.maxZ - COLLISION_EPSILON);
-  const boxes = [];
+  const collected = [];
   for (let y = minY; y <= maxY; y += 1) {
     for (let z = minZ; z <= maxZ; z += 1) {
       for (let x = minX; x <= maxX; x += 1) {
-        const box = blockCollisionBox(world, x, y, z);
-        if (box && boxesOverlap(body, box)) boxes.push(box);
+        const solids = blockCollisionBoxes(world, x, y, z);
+        for (const box of solids) {
+          if (boxesOverlap(body, box)) collected.push(box);
+        }
       }
     }
   }
-  return boxes;
+  return collected;
 }
 
 function resolveAxis(

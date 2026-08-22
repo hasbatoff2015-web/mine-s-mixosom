@@ -11,7 +11,9 @@ import {
   type TranslucentMaterial,
   type ToolTier,
   type ToolType,
+  type PressurePlateTrigger,
 } from './types';
+import { BLOCK_FAMILIES } from './blockFamilies';
 
 interface BlockOptions {
   category?: BlockCategory;
@@ -37,6 +39,8 @@ interface BlockOptions {
   hasItem?: boolean;
   redstonePower?: number;
   contactDamage?: number;
+  hiddenFromGameplay?: boolean;
+  pressurePlateTrigger?: PressurePlateTrigger;
 }
 
 const title = (key: string): string =>
@@ -79,6 +83,8 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     ...(options.redstonePower === undefined ? {} : { redstonePower: options.redstonePower }),
     ...(options.contactDamage === undefined ? {} : { contactDamage: options.contactDamage }),
     ...(options.translucentMaterial === undefined ? {} : { translucentMaterial: options.translucentMaterial }),
+    ...(options.hiddenFromGameplay === undefined ? {} : { hiddenFromGameplay: options.hiddenFromGameplay }),
+    ...(options.pressurePlateTrigger === undefined ? {} : { pressurePlateTrigger: options.pressurePlateTrigger }),
   });
 }
 
@@ -240,7 +246,11 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14,
     renderLayer: 'cutout', renderShape: 'torch',
   }),
-  block(BlockId.Ladder, 'ladder', { category: 'utility', hardness: 0.4, solid: false, opaque: false, renderLayer: 'cutout', tool: 'axe', tier: 'hand', flammable: true }),
+  block(BlockId.Ladder, 'ladder', {
+    category: 'utility', hardness: 0.4, solid: false, opaque: false,
+    renderLayer: 'cutout', renderShape: 'ladder', occludesFaces: false,
+    tool: 'axe', tier: 'hand', flammable: true,
+  }),
   block(BlockId.WhiteBed, 'white_bed', { category: 'utility', hardness: 0.2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
   block(BlockId.OakDoor, 'oak_door', {
     category: 'utility', hardness: 3, opaque: false, tool: 'axe', tier: 'hand',
@@ -269,25 +279,60 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   }),
   block(BlockId.OakPressurePlate, 'oak_pressure_plate', {
     category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'axe', tier: 'hand', flammable: true, redstonePower: 15,
-    renderShape: 'pressure_plate',
+    renderShape: 'pressure_plate', pressurePlateTrigger: 'all',
+    textures: { all: 'block/oak_planks' },
+  }),
+  block(BlockId.StonePressurePlate, 'stone_pressure_plate', {
+    category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'pickaxe', tier: 'hand', redstonePower: 15,
+    renderShape: 'pressure_plate', pressurePlateTrigger: 'living',
+    textures: { all: 'block/stone' },
   }),
   block(BlockId.Tnt, 'tnt', {
     category: 'redstone', hardness: 0, flammable: true,
     textures: { all: 'block/tnt' },
   }),
 
-  block(BlockId.OakSlab, 'oak_slab', { category: 'building', hardness: 2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
-  block(BlockId.StoneSlab, 'stone_slab', {
-    category: 'building', hardness: 2, opaque: false, tool: 'pickaxe', tier: 'wood',
-    drop: { item: 'stone_slab', count: 1, requiresCorrectTool: true },
+  ...BLOCK_FAMILIES.flatMap((family) => {
+    const shaped: BlockDefinition[] = [];
+    if (family.slabId !== undefined) {
+      shaped.push(block(family.slabId, `${family.key}_slab`, {
+        category: 'building',
+        hardness: family.hardness,
+        opaque: false,
+        occludesFaces: false,
+        tool: family.tool,
+        tier: family.tier,
+        flammable: family.flammable,
+        renderShape: 'slab',
+        textures: { all: family.texture },
+        drop: {
+          item: `${family.key}_slab`,
+          count: 1,
+          ...(family.requiresCorrectTool ? { requiresCorrectTool: true } : {}),
+        },
+      }));
+    }
+    if (family.stairId !== undefined) {
+      shaped.push(block(family.stairId, `${family.key}_stairs`, {
+        category: 'building',
+        hardness: family.hardness,
+        opaque: false,
+        occludesFaces: false,
+        tool: family.tool,
+        tier: family.tier,
+        flammable: family.flammable,
+        renderShape: 'stairs',
+        textures: { all: family.texture },
+        hiddenFromGameplay: family.hideStairs === true,
+        drop: {
+          item: `${family.key}_stairs`,
+          count: 1,
+          ...(family.requiresCorrectTool ? { requiresCorrectTool: true } : {}),
+        },
+      }));
+    }
+    return shaped;
   }),
-  block(BlockId.CobblestoneSlab, 'cobblestone_slab', {
-    category: 'building', hardness: 2, opaque: false, tool: 'pickaxe', tier: 'wood',
-    drop: { item: 'cobblestone_slab', count: 1, requiresCorrectTool: true },
-  }),
-  block(BlockId.OakStairs, 'oak_stairs', { category: 'building', hardness: 2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
-  block(BlockId.StoneStairs, 'stone_stairs', { category: 'building', hardness: 2, opaque: false, tool: 'pickaxe', tier: 'wood' }),
-  block(BlockId.CobblestoneStairs, 'cobblestone_stairs', { category: 'building', hardness: 2, opaque: false, tool: 'pickaxe', tier: 'wood' }),
 
   block(BlockId.TallGrass, 'tall_grass', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,

@@ -1,4 +1,12 @@
 import { clamp } from '../core/constants';
+import {
+  applyPointerLockRequest,
+  classifyPointerUnlock,
+  isCoarsePointerMedia,
+  shouldExitPointerLock,
+  shouldIgnoreEscapeKeydown,
+  type PointerUnlockReason,
+} from './pointerLock';
 
 export const DESKTOP_SPRINT_CODES = ['ShiftLeft', 'ShiftRight'] as const;
 export const DESKTOP_SNEAK_CODE = 'KeyC';
@@ -9,6 +17,9 @@ export interface InputCallbacks {
   togglePause(): void;
   dropItem(): void;
   selectHotbar(index: number): void;
+  onPointerLockAcquired(): void;
+  onPointerLockReleased(reason: PointerUnlockReason): void;
+  onPointerLockRequestFailed(): void;
 }
 
 export interface MoveInput {
@@ -26,6 +37,7 @@ export class InputManager {
   using = false;
   attackPressed = false;
   usePressed = false;
+  lastUnlockReason: PointerUnlockReason = 'unknown';
   private readonly keys = new Set<string>();
   private touchForward = 0;
   private touchRight = 0;
@@ -36,6 +48,10 @@ export class InputManager {
   private lastLookX = 0;
   private lastLookY = 0;
   private sensitivity = 0.0022;
+  private lockedToCanvas = false;
+  private programmaticReleasePending = false;
+  private requestPending = false;
+  private swallowEscapeKeyup = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -43,6 +59,7 @@ export class InputManager {
   ) {
     this.bindDesktop();
     this.bindTouch();
+    this.bindPointerLock();
   }
 
   setSensitivity(value: number): void {
@@ -82,6 +99,45 @@ export class InputManager {
     this.touchJump = false;
   }
 
+  isPointerLocked(): boolean {
+    return typeof document !== 'undefined' && document.pointerLockElement === this.canvas;
+  }
+
+  /**
+   * Programmatic unlock (inventory/death/pause while still locked).
+   * No-op if the pointer is already free — avoids a second exit after Esc.
+   */
+  releasePointerLock(): void {
+    if (!shouldExitPointerLock(this.isPointerLocked())) return;
+    this.programmaticReleasePending = true;
+    document.exitPointerLock?.();
+  }
+
+  /**
+   * Re-enter mouse-look after a gameplay overlay closes.
+   * Returns whether a lock request was issued. Failure is reported asynchronously.
+   */
+  tryRequestPointerLock(): boolean {
+    return applyPointerLockRequest({
+      canCapture: this.callbacks.canCapture(),
+      coarsePointer: isCoarsePointerMedia(),
+      lockedToCanvas: this.isPointerLocked(),
+    }, () => {
+      if (typeof this.canvas.requestPointerLock !== 'function') {
+        this.callbacks.onPointerLockRequestFailed();
+        return;
+      }
+      this.requestPending = true;
+      const pending = this.canvas.requestPointerLock();
+      if (pending && typeof (pending as Promise<void>).then === 'function') {
+        void (pending as Promise<void>).then(
+          () => undefined,
+          () => this.notifyRequestFailure(),
+        );
+      }
+    });
+  }
+
   private bindDesktop(): void {
     window.addEventListener('keydown', (event) => {
       if (event.code === 'KeyE' && !event.repeat) {
@@ -90,6 +146,7 @@ export class InputManager {
         return;
       }
       if (event.code === 'Escape' && !event.repeat) {
+        if (shouldIgnoreEscapeKeydown(this.isPointerLocked()) || this.swallowEscapeKeyup) return;
         this.callbacks.togglePause();
         return;
       }
@@ -102,15 +159,16 @@ export class InputManager {
       }
       this.keys.add(event.code);
     });
-    window.addEventListener('keyup', (event) => this.keys.delete(event.code));
+    window.addEventListener('keyup', (event) => {
+      if (event.code === 'Escape') this.swallowEscapeKeyup = false;
+      this.keys.delete(event.code);
+    });
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.releaseActions();
     });
 
-    this.canvas.addEventListener('click', () => {
-      if (this.callbacks.canCapture() && document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock();
-    });
+    this.canvas.addEventListener('click', () => this.tryRequestPointerLock());
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement !== this.canvas) return;
       this.rotate(event.movementX, event.movementY);
@@ -235,6 +293,43 @@ export class InputManager {
       button.addEventListener('pointerup', up);
       button.addEventListener('pointercancel', up);
     }
+  }
+
+  private bindPointerLock(): void {
+    if (typeof document === 'undefined') return;
+    this.lockedToCanvas = document.pointerLockElement === this.canvas;
+    document.addEventListener('pointerlockchange', () => this.handlePointerLockChange());
+    document.addEventListener('pointerlockerror', () => this.notifyRequestFailure());
+  }
+
+  private handlePointerLockChange(): void {
+    const nowLocked = this.isPointerLocked();
+    const previouslyLocked = this.lockedToCanvas;
+    this.lockedToCanvas = nowLocked;
+    if (nowLocked) {
+      this.requestPending = false;
+      this.programmaticReleasePending = false;
+      this.callbacks.onPointerLockAcquired();
+      return;
+    }
+    const reason = classifyPointerUnlock({
+      previouslyLocked,
+      nowLocked: false,
+      programmaticReleasePending: this.programmaticReleasePending,
+      documentHidden: document.hidden,
+      documentHasFocus: typeof document.hasFocus === 'function' ? document.hasFocus() : true,
+    });
+    this.programmaticReleasePending = false;
+    if (!reason) return;
+    this.lastUnlockReason = reason;
+    if (reason === 'escape') this.swallowEscapeKeyup = true;
+    this.callbacks.onPointerLockReleased(reason);
+  }
+
+  private notifyRequestFailure(): void {
+    if (!this.requestPending) return;
+    this.requestPending = false;
+    this.callbacks.onPointerLockRequestFailed();
   }
 
   private rotate(dx: number, dy: number): void {

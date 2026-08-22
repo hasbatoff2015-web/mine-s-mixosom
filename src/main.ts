@@ -15,6 +15,7 @@ if (import.meta.env.DEV) {
   const search = new URLSearchParams(location.search);
   const qaMob = search.get('qaMob');
   const qaItem = search.get('qaItem');
+  const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
   const qaBiome = search.get('qaBiome');
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
@@ -36,10 +37,10 @@ if (import.meta.env.DEV) {
         qaTime,
       );
     });
-  } else if (qaItem) {
+  } else if (qaItem || qaPoseCompare) {
     runningDevHarness = true;
     void import('./dev/ItemQaHarness').then(async ({ startItemQaHarness }) => {
-      disposeApplication = await startItemQaHarness(canvas, uiRoot, qaItem);
+      disposeApplication = await startItemQaHarness(canvas, uiRoot, qaItem || 'iron_pickaxe');
     });
   } else if (qaMob && mobKinds.has(qaMob as MobKind)) {
     runningDevHarness = true;

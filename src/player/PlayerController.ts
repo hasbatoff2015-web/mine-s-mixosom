@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
-import { blockCollisionBox, type CollisionBox } from '../world/collision';
+import { blockCollisionBoxes, type CollisionBox } from '../world/collision';
 import {
   GRAVITY,
   JUMP_VELOCITY,
@@ -19,6 +19,12 @@ import {
 } from '../core/constants';
 import type { MoveInput } from '../input/InputManager';
 import type { VoxelWorld } from '../world/World';
+import {
+  desiredHorizontalWish,
+  findLadderContact,
+  isClimbIntent,
+  ladderVerticalVelocity,
+} from './ladderMotion';
 
 const COLLISION_EPSILON = 1e-7;
 const GROUND_PROBE = 0.075;
@@ -66,6 +72,7 @@ export interface PlayerTickResult {
   readonly inWater: boolean;
   readonly inLava: boolean;
   readonly headSubmerged: boolean;
+  readonly onLadder: boolean;
 }
 
 interface MoveResult {
@@ -107,6 +114,7 @@ export class PlayerController {
   inWater = false;
   inLava = false;
   headSubmerged = false;
+  onLadder = false;
   fallDistance = 0;
   lastFallDistance = 0;
   lastFallDamage = 0;
@@ -151,12 +159,15 @@ export class PlayerController {
     ).normalize();
   }
 
+  /** True when the given world-space boxes overlap the player AABB. */
+  intersectsCollisionBoxes(boxes: readonly CollisionBox[]): boolean {
+    const box = this.aabb;
+    return boxes.some((collision) => this.boxesOverlap(box, collision));
+  }
+
   /** True when a full unit block at the supplied cell would overlap the player. */
   intersectsBlock(x: number, y: number, z: number): boolean {
-    const box = this.aabb;
-    return box.maxX > x + COLLISION_EPSILON && box.minX < x + 1 - COLLISION_EPSILON
-      && box.maxY > y + COLLISION_EPSILON && box.minY < y + 1 - COLLISION_EPSILON
-      && box.maxZ > z + COLLISION_EPSILON && box.minZ < z + 1 - COLLISION_EPSILON;
+    return this.intersectsCollisionBoxes([{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 }]);
   }
 
   intersectsBlockType(world: VoxelWorld, block: BlockId, padding = 0): boolean {
@@ -182,6 +193,7 @@ export class PlayerController {
     this.previousPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
     this.onGround = false;
+    this.onLadder = false;
     this.fallDistance = 0;
     this.lastFallDistance = 0;
     this.lastFallDamage = 0;
@@ -216,6 +228,20 @@ export class PlayerController {
     if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
     else if (movement.jump && wasOnGround) this.velocity.y = JUMP_VELOCITY;
 
+    const wish = desiredHorizontalWish(this.yaw, movement.forward, movement.right);
+    const ladderAtStart = findLadderContact(world, this.aabb);
+    let climbIntent = false;
+    if (ladderAtStart && !this.inWater && !this.inLava) {
+      this.sprinting = false;
+      climbIntent = isClimbIntent(wish.x, wish.z, ladderAtStart.towardX, ladderAtStart.towardZ);
+      this.velocity.y = ladderVerticalVelocity({
+        climbIntent,
+        sneak: this.sneaking,
+        keepJump: jumped,
+        currentY: this.velocity.y,
+      });
+    }
+
     let dx = this.velocity.x * stepDt;
     let dy = this.velocity.y * stepDt;
     let dz = this.velocity.z * stepDt;
@@ -223,7 +249,6 @@ export class PlayerController {
 
     const vertical = this.moveAxis(world, 'y', dy);
     const afterVertical = this.position.clone();
-    const horizontalStart = this.position.clone();
     const xMove = this.moveAxis(world, 'x', dx);
     const zMove = this.moveAxis(world, 'z', dz);
     let actualX = xMove.actual;
@@ -231,7 +256,7 @@ export class PlayerController {
     let collidedX = xMove.collided;
     let collidedZ = zMove.collided;
 
-    if ((collidedX || collidedZ) && wasOnGround && !this.sneaking) {
+    if ((collidedX || collidedZ) && (wasOnGround || ladderAtStart !== undefined) && !this.sneaking) {
       const baseline = this.position.clone();
       const baselineDistanceSq = actualX * actualX + actualZ * actualZ;
       this.position.copy(afterVertical);
@@ -254,6 +279,7 @@ export class PlayerController {
     const actualDrop = Math.max(0, this.previousPosition.y - this.position.y);
     this.updateFluidState(world);
     const supported = this.hasGroundSupport(world, this.position);
+    this.onLadder = !this.inWater && !this.inLava && findLadderContact(world, this.aabb) !== undefined;
     this.onGround = !this.inWater && !this.inLava && (landed || (this.velocity.y <= 0 && supported));
 
     if (collidedX) this.velocity.x = 0;
@@ -261,7 +287,7 @@ export class PlayerController {
     if (vertical.collided) this.velocity.y = 0;
 
     let fallDamage = 0;
-    if (this.inWater || this.inLava) {
+    if (this.inWater || this.inLava || this.onLadder) {
       this.fallDistance = 0;
     } else if (!this.onGround) {
       if (actualDrop > 0) this.fallDistance += actualDrop;
@@ -273,7 +299,7 @@ export class PlayerController {
       if (fallDamage > 0) onDamage?.(fallDamage, 'fall');
     }
 
-    if (!this.inWater && !this.inLava) {
+    if (!this.inWater && !this.inLava && !this.onLadder) {
       if (this.onGround && this.velocity.y <= 0) this.velocity.y = 0;
       else this.velocity.y = Math.max(-TERMINAL_VELOCITY, (this.velocity.y - GRAVITY * stepDt) * Math.pow(0.98, stepDt / 0.05));
     }
@@ -313,6 +339,7 @@ export class PlayerController {
     if (state.yaw !== undefined) this.yaw = finite(state.yaw, this.yaw);
     if (state.pitch !== undefined) this.pitch = clamp(finite(state.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
     this.onGround = false;
+    this.onLadder = false;
     this.fallDistance = 0;
   }
 
@@ -339,6 +366,7 @@ export class PlayerController {
       inWater: this.inWater,
       inLava: this.inLava,
       headSubmerged: this.headSubmerged,
+      onLadder: this.onLadder,
     };
   }
 
@@ -439,8 +467,10 @@ export class PlayerController {
     for (let y = Math.floor(box.minY + COLLISION_EPSILON); y <= Math.floor(box.maxY - COLLISION_EPSILON); y += 1) {
       for (let z = Math.floor(box.minZ + COLLISION_EPSILON); z <= Math.floor(box.maxZ - COLLISION_EPSILON); z += 1) {
         for (let x = Math.floor(box.minX + COLLISION_EPSILON); x <= Math.floor(box.maxX - COLLISION_EPSILON); x += 1) {
-          const collision = this.blockCollisionBox(world, x, y, z);
-          if (collision && this.boxesOverlap(box, collision)) return true;
+          const collisions = this.blockCollisionBoxes(world, x, y, z);
+          for (const collision of collisions) {
+            if (this.boxesOverlap(box, collision)) return true;
+          }
         }
       }
     }
@@ -461,19 +491,21 @@ export class PlayerController {
     for (let y = minY; y <= maxY; y += 1) {
       for (let z = minZ; z <= maxZ; z += 1) {
         for (let x = minX; x <= maxX; x += 1) {
-          const block = this.blockCollisionBox(world, x, y, z);
-          if (!block || !this.overlapsOtherAxes(player, block, axis)) continue;
-          if (requested > 0) {
-            const playerMax = axis === 'x' ? player.maxX : axis === 'y' ? player.maxY : player.maxZ;
-            const blockMin = axis === 'x' ? block.minX : axis === 'y' ? block.minY : block.minZ;
-            if (playerMax <= blockMin + COLLISION_EPSILON && playerMax + allowed > blockMin) {
-              allowed = Math.min(allowed, blockMin - playerMax);
-            }
-          } else {
-            const playerMin = axis === 'x' ? player.minX : axis === 'y' ? player.minY : player.minZ;
-            const blockMax = axis === 'x' ? block.maxX : axis === 'y' ? block.maxY : block.maxZ;
-            if (playerMin >= blockMax - COLLISION_EPSILON && playerMin + allowed < blockMax) {
-              allowed = Math.max(allowed, blockMax - playerMin);
+          const collisions = this.blockCollisionBoxes(world, x, y, z);
+          for (const block of collisions) {
+            if (!this.overlapsOtherAxes(player, block, axis)) continue;
+            if (requested > 0) {
+              const playerMax = axis === 'x' ? player.maxX : axis === 'y' ? player.maxY : player.maxZ;
+              const blockMin = axis === 'x' ? block.minX : axis === 'y' ? block.minY : block.minZ;
+              if (playerMax <= blockMin + COLLISION_EPSILON && playerMax + allowed > blockMin) {
+                allowed = Math.min(allowed, blockMin - playerMax);
+              }
+            } else {
+              const playerMin = axis === 'x' ? player.minX : axis === 'y' ? player.minY : player.minZ;
+              const blockMax = axis === 'x' ? block.maxX : axis === 'y' ? block.maxY : block.maxZ;
+              if (playerMin >= blockMax - COLLISION_EPSILON && playerMin + allowed < blockMax) {
+                allowed = Math.max(allowed, blockMax - playerMin);
+              }
             }
           }
         }
@@ -484,8 +516,8 @@ export class PlayerController {
     return { actual: allowed, collided: Math.abs(allowed - requested) > COLLISION_EPSILON };
   }
 
-  private blockCollisionBox(world: VoxelWorld, x: number, y: number, z: number): CollisionBox | undefined {
-    return blockCollisionBox(world, x, y, z);
+  private blockCollisionBoxes(world: VoxelWorld, x: number, y: number, z: number): CollisionBox[] {
+    return blockCollisionBoxes(world, x, y, z);
   }
 
   private overlapsOtherAxes(player: PlayerAABB, block: CollisionBox, movementAxis: 'x' | 'y' | 'z'): boolean {

@@ -41,6 +41,7 @@ const blockItems: ItemDefinition[] = BLOCKS
     blockId: definition.id,
     placesBlockId: definition.id,
     tags: blockTags(definition),
+    ...(definition.hiddenFromGameplay === true ? { hiddenFromGameplay: true } : {}),
   }));
 
 function resource(id: string, options: ResourceOptions = {}): ResourceItemDefinition {
@@ -228,6 +229,7 @@ const equipment: readonly ItemDefinition[] = [
   Object.freeze({
     id: ItemId.Shield, name: 'Shield', kind: 'shield', maxStack: 1, texture: 'item/shield',
     tags: Object.freeze(['shield']), durability: 336,
+    hiddenFromGameplay: true,
   } as const),
   ...armor,
 ];
@@ -275,4 +277,13 @@ export function getItemsWithTag(tag: string): readonly ItemDefinition[] {
 
 export function getBlockItemId(blockId: BlockId): string | undefined {
   return ITEMS.find((definition) => definition.kind === 'block' && definition.blockId === blockId)?.id;
+}
+
+export function isItemObtainable(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? ITEM_REGISTRY.get(itemOrId) : itemOrId;
+  return item !== undefined && item.hiddenFromGameplay !== true;
+}
+
+export function obtainableItems(): readonly ItemDefinition[] {
+  return ITEMS.filter((item) => item.hiddenFromGameplay !== true);
 }

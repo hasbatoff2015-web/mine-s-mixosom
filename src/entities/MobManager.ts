@@ -3,6 +3,8 @@ import { BlockId, getBlockDefinition } from '../blocks';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
 import { createItemStack, type ItemStack } from '../inventory';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
+import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
+import { combinedLight } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
 import {
   MOB_DEFINITIONS,
@@ -521,20 +523,17 @@ export class MobManager {
   }
 
   getApproximateLight(position: Readonly<THREE.Vector3>, daylight = this.daylightFactor()): number {
-    const x = Math.floor(position.x);
-    const y = Math.floor(position.y);
-    const z = Math.floor(position.z);
-    const surface = this.world.surfaceY(x, z);
-    let light = y > surface ? Math.round(THREE.MathUtils.clamp(daylight, 0, 1) * 15) : 0;
-    for (let dz = -2; dz <= 2; dz += 1) {
-      for (let dy = -2; dy <= 2; dy += 1) {
-        for (let dx = -2; dx <= 2; dx += 1) {
-          const emission = getBlockDefinition(this.world.getBlock(x + dx, y + dy, z + dz)).emission ?? 0;
-          light = Math.max(light, emission - Math.abs(dx) - Math.abs(dy) - Math.abs(dz));
-        }
-      }
-    }
-    return THREE.MathUtils.clamp(Math.round(light), 0, 15);
+    return THREE.MathUtils.clamp(
+      Math.round(combinedLight(
+        this.world,
+        Math.floor(position.x),
+        Math.floor(position.y),
+        Math.floor(position.z),
+        daylight,
+      )),
+      0,
+      15,
+    );
   }
 
   consumeDrops(): MobDrop[] {
@@ -834,6 +833,15 @@ export class MobManager {
     }
     const hurtJolt = mob.state === 'hurt' ? Math.sin(mob.stateSeconds * 45) * 0.035 : 0;
     mob.visual.position.set(mob.position.x + hurtJolt, mob.position.y, mob.position.z);
+    applySampledEntityLight(
+      mob.visual,
+      this.world,
+      mob.position.x,
+      mob.position.y,
+      mob.position.z,
+      mob.definition.height,
+      worldDaylightUniform.value,
+    );
   }
 
   private steerToward(mob: MobEntity, direction: Readonly<THREE.Vector3>, speed: number): void {
@@ -974,6 +982,15 @@ export class MobManager {
       if (blockHit) {
         projectile.position.addScaledVector(movement.clone().normalize(), Math.max(0, blockHit.distance - 0.035));
         projectile.visual.position.copy(projectile.position);
+        applySampledEntityLight(
+          projectile.visual,
+          this.world,
+          projectile.position.x,
+          projectile.position.y,
+          projectile.position.z,
+          0.25,
+          worldDaylightUniform.value,
+        );
         projectile.velocity.set(0, 0, 0);
         projectile.inGround = true;
         continue;
@@ -984,6 +1001,15 @@ export class MobManager {
       ) === BlockId.Water;
       applyArrowDragAndGravity(projectile.velocity, inWater);
       projectile.visual.position.copy(projectile.position);
+      applySampledEntityLight(
+        projectile.visual,
+        this.world,
+        projectile.position.x,
+        projectile.position.y,
+        projectile.position.z,
+        0.25,
+        worldDaylightUniform.value,
+      );
       if (projectile.velocity.lengthSq() > 0) {
         projectile.visual.quaternion.setFromUnitVectors(
           PROJECTILE_FORWARD,

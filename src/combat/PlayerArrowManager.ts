@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import type { MobManager } from '../entities';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
+import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 
@@ -80,6 +81,10 @@ export class PlayerArrowManager {
           arrow.inGround = true;
           arrow.velocity.set(0, 0, 0);
           arrow.visual.position.copy(arrow.position);
+          applySampledEntityLight(
+            arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
+            worldDaylightUniform.value,
+          );
           break;
         }
         arrow.position.add(movement);
@@ -91,6 +96,10 @@ export class PlayerArrowManager {
       if (removed || arrow.inGround) continue;
       arrow.visual.position.copy(arrow.position);
       this.orient(arrow.visual, arrow.velocity);
+      applySampledEntityLight(
+        arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
+        worldDaylightUniform.value,
+      );
     }
   }
 

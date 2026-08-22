@@ -3,6 +3,7 @@ import {
   BlockId,
   blockLightingMode,
   getBlockDefinition,
+  occupiedDoorFacing,
   type BlockDefinition,
   type BlockRenderState,
   type HorizontalFacing,
@@ -10,8 +11,33 @@ import {
 import { CHUNK_SIZE } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelWorld } from '../world/World';
-import { getBlockLight, getSkyLight } from '../world/LightEngine';
+import { getBlockLight, getSkyLight, smoothFaceCornerLight } from '../world/LightEngine';
 import type { TextureAtlas } from './TextureAtlas';
+import {
+  blockOccludesFaces,
+  defaultSlabType,
+  defaultStairFacing,
+  defaultStairHalf,
+  DOOR_THICKNESS,
+  doorFaceTextureUv,
+  doorHalfTexture,
+  facingVector as facingVectorFrom,
+  ladderPlaneLocal,
+  leverHandleAngle,
+  resolveStairShape,
+  slabLocalBoxes,
+  stairLocalBoxes,
+  TORCH_HEIGHT,
+  TORCH_TEXTURE_UV,
+  TORCH_WIDTH,
+  torchLocalMatrix,
+  type DoorFaceRole,
+  type LocalBox,
+  type TextureUvRect,
+} from './specialBlockGeometry';
+
+export { leverHandleAngle } from './specialBlockGeometry';
+export { bakedVertexLight } from './worldLighting';
 
 interface Face {
   normal: readonly [number, number, number];
@@ -24,10 +50,22 @@ const FACES: readonly Face[] = [
   { normal: [1, 0, 0], corners: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]], shade: 0.82, texture: 'side' },
   { normal: [-1, 0, 0], corners: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], shade: 0.72, texture: 'side' },
   { normal: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]], shade: 1, texture: 'top' },
-  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], shade: 0.5, texture: 'bottom' },
+  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], shade: 0.58, texture: 'bottom' },
   { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], shade: 0.88, texture: 'side' },
   { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], shade: 0.76, texture: 'front' },
 ];
+
+function localFaceUv(face: Face, box: LocalBox): TextureUvRect {
+  const nx = face.normal[0];
+  const ny = face.normal[1];
+  const nz = face.normal[2];
+  if (nx > 0) return [box.maxZ, box.minY, box.minZ, box.maxY];
+  if (nx < 0) return [box.minZ, box.minY, box.maxZ, box.maxY];
+  if (ny > 0) return [box.minX, box.maxZ, box.maxX, box.minZ];
+  if (ny < 0) return [box.minX, box.minZ, box.maxX, box.maxZ];
+  if (nz > 0) return [box.minX, box.minY, box.maxX, box.maxY];
+  return [box.maxX, box.minY, box.minX, box.maxY];
+}
 
 interface GeometryBuffers {
   positions: number[];
@@ -35,9 +73,19 @@ interface GeometryBuffers {
   colors: number[];
   uvs: number[];
   indices: number[];
+  skyLights: number[];
+  blockLights: number[];
+  faceShades: number[];
+  emissions: number[];
 }
 
-type TextureUvRect = readonly [u0: number, v0: number, u1: number, v1: number];
+interface VertexLighting {
+  readonly tint: readonly [number, number, number];
+  readonly sky: number;
+  readonly block: number;
+  readonly emission: number;
+  readonly shade: number;
+}
 
 // The legacy lever tile is a transparent 16x16 sprite; the handle occupies
 // logical x=7..9 and y=6..16. Crop that opaque strip before wrapping the cuboid.
@@ -51,18 +99,118 @@ interface LayerBuffers {
   water: GeometryBuffers;
 }
 
-const createBuffers = (): GeometryBuffers => ({ positions: [], normals: [], colors: [], uvs: [], indices: [] });
+const createBuffers = (): GeometryBuffers => ({
+  positions: [], normals: [], colors: [], uvs: [], indices: [],
+  skyLights: [], blockLights: [], faceShades: [], emissions: [],
+});
 const WHITE_TINT = [1, 1, 1] as const;
 const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
 const FOREST_TINT = [0.42, 0.78, 0.36] as const;
 const DESERT_TINT = [0.74, 0.78, 0.4] as const;
 
-/** Lighting normal written into vegetation quads so Lambert matches grass tops. */
+/** Lighting normal written into vegetation quads so they sample/share the grass-top profile. */
 export const VEGETATION_LIGHTING_NORMAL = [0, 1, 0] as const;
 
-export function bakedVertexLight(sky: number, blockLight: number, emission = 0, shade = 1): number {
-  const baked = Math.min(1.15, Math.max(0.16 + sky * 0.72, 0.18 + blockLight * 0.95, emission));
-  return baked * shade;
+interface DoorMeshFace {
+  readonly role: DoorFaceRole;
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly normal: readonly [number, number, number];
+}
+
+function doorCuboidFaces(
+  x: number,
+  y: number,
+  z: number,
+  occupied: HorizontalFacing,
+  thickness: number,
+): readonly DoorMeshFace[] {
+  let minX = x;
+  let maxX = x + 1;
+  let minZ = z;
+  let maxZ = z + 1;
+  if (occupied === 'west') maxX = x + thickness;
+  else if (occupied === 'east') minX = x + 1 - thickness;
+  else if (occupied === 'north') maxZ = z + thickness;
+  else minZ = z + 1 - thickness;
+  const minY = y;
+  const maxY = y + 1;
+  const role = (
+    face: HorizontalFacing | 'up' | 'down',
+  ): DoorFaceRole => {
+    if (face === occupied) return 'outer';
+    if (
+      (occupied === 'west' && face === 'east')
+      || (occupied === 'east' && face === 'west')
+      || (occupied === 'north' && face === 'south')
+      || (occupied === 'south' && face === 'north')
+    ) return 'inner';
+    return 'edge';
+  };
+  return [
+    {
+      role: role('west'),
+      normal: [-1, 0, 0],
+      corners: [[minX, minY, maxZ], [minX, minY, minZ], [minX, maxY, minZ], [minX, maxY, maxZ]],
+    },
+    {
+      role: role('east'),
+      normal: [1, 0, 0],
+      corners: [[maxX, minY, minZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [maxX, maxY, minZ]],
+    },
+    {
+      role: role('north'),
+      normal: [0, 0, -1],
+      corners: [[maxX, minY, minZ], [minX, minY, minZ], [minX, maxY, minZ], [maxX, maxY, minZ]],
+    },
+    {
+      role: role('south'),
+      normal: [0, 0, 1],
+      corners: [[minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ]],
+    },
+    {
+      role: 'edge',
+      normal: [0, 1, 0],
+      corners: [[minX, maxY, maxZ], [maxX, maxY, maxZ], [maxX, maxY, minZ], [minX, maxY, minZ]],
+    },
+    {
+      role: 'edge',
+      normal: [0, -1, 0],
+      corners: [[minX, minY, minZ], [maxX, minY, minZ], [maxX, minY, maxZ], [minX, minY, maxZ]],
+    },
+  ];
+}
+
+function ladderFrontCorners(
+  x: number,
+  y: number,
+  z: number,
+  facing: HorizontalFacing,
+): { corners: Array<[number, number, number]>; normal: [number, number, number] } {
+  const plane = ladderPlaneLocal(facing);
+  const px = x + (plane.axis === 'x' ? plane.plane : 0);
+  const pz = z + (plane.axis === 'z' ? plane.plane : 0);
+  switch (facing) {
+    case 'east':
+      return {
+        normal: [1, 0, 0],
+        corners: [[px, y, z + 1], [px, y, z], [px, y + 1, z], [px, y + 1, z + 1]],
+      };
+    case 'west':
+      return {
+        normal: [-1, 0, 0],
+        corners: [[px, y, z], [px, y, z + 1], [px, y + 1, z + 1], [px, y + 1, z]],
+      };
+    case 'south':
+      return {
+        normal: [0, 0, 1],
+        corners: [[x, y, pz], [x + 1, y, pz], [x + 1, y + 1, pz], [x, y + 1, pz]],
+      };
+    case 'north':
+      return {
+        normal: [0, 0, -1],
+        corners: [[x + 1, y, pz], [x, y, pz], [x, y + 1, pz], [x + 1, y + 1, pz]],
+      };
+  }
 }
 
 export function biomeGrassTint(biome: number): readonly [number, number, number] {
@@ -87,14 +235,9 @@ export interface ChunkMeshProfile {
 
 export type BlockRenderStateResolver = (x: number, y: number, z: number) => BlockRenderState | undefined;
 
-export function leverHandleAngle(powered: boolean): number {
-  return powered ? -Math.PI * 0.28 : Math.PI * 0.28;
-}
-
 export class ChunkMesher {
   private readonly columnHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   private readonly columnBiomes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-  private readonly scratchColor: [number, number, number] = [1, 1, 1];
   private columnOriginX = 0;
   private columnOriginZ = 0;
   lastProfile: ChunkMeshProfile = { scanMs: 0, geometryMs: 0 };
@@ -132,46 +275,49 @@ export class ChunkMesher {
           const definition = getBlockDefinition(block);
           const worldX = chunk.x * CHUNK_SIZE + x;
           const worldZ = chunk.z * CHUNK_SIZE + z;
+          const state = this.resolveState(worldX, y, worldZ);
           const target = this.buffersFor(layers, definition);
-          if (definition.renderShape !== 'cube') {
-            faces += this.addSpecial(target, definition, this.resolveState(worldX, y, worldZ), world, worldX, y, worldZ);
+          const meshAsCube = definition.renderShape === 'cube'
+            || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
+          if (!meshAsCube) {
+            faces += this.addSpecial(target, definition, state, world, worldX, y, worldZ);
             continue;
           }
           const east = x < CHUNK_SIZE - 1
             ? blocks[blockIndex + 1] as BlockId
             : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(east, block)) {
+          if (this.faceVisible(east, block, world, worldX + 1, y, worldZ)) {
             this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const west = x > 0
             ? blocks[blockIndex - 1] as BlockId
             : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(west, block)) {
+          if (this.faceVisible(west, block, world, worldX - 1, y, worldZ)) {
             this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
-          if (this.faceVisible(above, block)) {
+          if (this.faceVisible(above, block, world, worldX, y + 1, worldZ)) {
             this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
-          if (this.faceVisible(below, block)) {
+          if (this.faceVisible(below, block, world, worldX, y - 1, worldZ)) {
             this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const south = z < CHUNK_SIZE - 1
             ? blocks[blockIndex + CHUNK_SIZE] as BlockId
             : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(south, block)) {
+          if (this.faceVisible(south, block, world, worldX, y, worldZ + 1)) {
             this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
             faces += 1;
           }
           const north = z > 0
             ? blocks[blockIndex - CHUNK_SIZE] as BlockId
             : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(north, block)) {
+          if (this.faceVisible(north, block, world, worldX, y, worldZ - 1)) {
             this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
             faces += 1;
           }
@@ -192,11 +338,13 @@ export class ChunkMesher {
     return result;
   }
 
-  private faceVisible(adjacent: BlockId, block: BlockId): boolean {
+  private faceVisible(adjacent: BlockId, block: BlockId, world: VoxelWorld, ax: number, ay: number, az: number): boolean {
     if (adjacent === BlockId.Air) return true;
+    if (blockOccludesFaces(world, ax, ay, az)) return false;
     const adjacentDefinition = getBlockDefinition(adjacent);
-    return !adjacentDefinition.occludesFaces
-      && (adjacent !== block || adjacentDefinition.renderShape !== 'cube');
+    const adjacentFull = adjacentDefinition.renderShape === 'cube'
+      || (adjacentDefinition.renderShape === 'slab' && defaultSlabType(this.resolveState(ax, ay, az)) === 'double');
+    return adjacent !== block || !adjacentFull;
   }
 
   private buffersFor(layers: LayerBuffers, definition: BlockDefinition): GeometryBuffers {
@@ -218,14 +366,25 @@ export class ChunkMesher {
     z: number,
   ): void {
     const textureKey = this.textureForFace(definition, face.texture);
-    const color = this.colorFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
+    const lighting = this.lightingFor(world, definition, textureKey, x, y, z, face.normal, face.shade);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
     for (let index = 0; index < 4; index += 1) {
       const corner = face.corners[index]!;
       buffers.positions.push(x + corner[0], y + corner[1], z + corner[2]);
       buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
-      buffers.colors.push(color[0], color[1], color[2]);
+      const cornerLight = smoothFaceCornerLight(
+        world, x, y, z,
+        face.normal[0], face.normal[1], face.normal[2],
+        corner[0], corner[1], corner[2],
+      );
+      this.pushLighting(buffers, {
+        tint: lighting.tint,
+        sky: cornerLight.sky / 15,
+        block: cornerLight.block / 15,
+        emission: lighting.emission,
+        shade: lighting.shade,
+      });
     }
     buffers.uvs.push(
       tile.u0, tile.v0,
@@ -253,6 +412,9 @@ export class ChunkMesher {
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
       case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
       case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
+      case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
+      case 'stairs': return this.addStairs(buffers, definition, state, world, x, y, z);
+      case 'slab': return this.addSlab(buffers, definition, state, world, x, y, z);
       case 'cube': return 0;
     }
   }
@@ -266,7 +428,7 @@ export class ChunkMesher {
     z: number,
   ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const color = this.colorFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
     const inset = 0.08;
     const planes: readonly (readonly (readonly [number, number, number])[])[] = [
       [
@@ -279,13 +441,13 @@ export class ChunkMesher {
       ],
     ];
     for (const corners of planes) {
-      this.addQuad(buffers, texture, corners, VEGETATION_LIGHTING_NORMAL, color);
+      this.addQuad(buffers, texture, corners, VEGETATION_LIGHTING_NORMAL, lighting);
       this.addQuad(
         buffers,
         texture,
         [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
         VEGETATION_LIGHTING_NORMAL,
-        color,
+        lighting,
         [0, 0, 1, 1],
         true,
       );
@@ -303,31 +465,14 @@ export class ChunkMesher {
     z: number,
   ): number {
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
     const attachment = state?.attachment ?? 'floor';
     const facing = state?.facing ?? 'north';
-    const tilt = attachment === 'wall' ? 0.38 : 0;
-    const wall = attachment === 'wall' ? this.facingVector(facing) : new THREE.Vector3(0, 1, 0);
-    const origin = new THREE.Vector3(x + 0.5, y + (attachment === 'wall' ? 0.22 : 0), z + 0.5);
-    if (attachment === 'wall') origin.addScaledVector(wall, -0.28);
-    const tiltAxis = attachment === 'wall'
-      ? new THREE.Vector3().crossVectors(wall, new THREE.Vector3(0, 1, 0)).normalize()
-      : new THREE.Vector3(1, 0, 0);
-    let faces = 0;
-    for (const angle of [Math.PI / 4, -Math.PI / 4]) {
-      const matrix = new THREE.Matrix4()
-        .makeTranslation(origin.x, origin.y, origin.z)
-        .multiply(new THREE.Matrix4().makeRotationAxis(tiltAxis, tilt))
-        .multiply(new THREE.Matrix4().makeRotationY(angle));
-      const local = [
-        [-0.28, 0.02, 0], [0.28, 0.02, 0], [0.28, 0.8, 0], [-0.28, 0.8, 0],
-      ] as const;
-      const corners = local.map((point) => new THREE.Vector3(...point).applyMatrix4(matrix).toArray() as [number, number, number]);
-      const normal = new THREE.Vector3(0, 0, 1).transformDirection(matrix).toArray() as [number, number, number];
-      this.addQuad(buffers, texture, corners, normal, color);
-      faces += 1;
-    }
-    return faces;
+    const matrix = torchLocalMatrix(x, y, z, attachment, facing)
+      .multiply(new THREE.Matrix4().makeTranslation(0, TORCH_HEIGHT * 0.5, 0));
+    return this.addCuboid(
+      buffers, texture, [TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH], matrix,
+      world, definition, x, y, z, TORCH_TEXTURE_UV,
+    );
   }
 
   private addWire(
@@ -341,14 +486,21 @@ export class ChunkMesher {
   ): number {
     const texture = definition.textures.all ?? 'block/redstone_wire';
     const power = THREE.MathUtils.clamp(state?.power ?? 0, 0, 15) / 15;
-    const base = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
-    const color = [base[0] * (0.42 + power * 0.58), base[1] * (0.15 + power * 0.15), base[2] * 0.15] as const;
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const tinted: VertexLighting = {
+      ...lighting,
+      tint: [
+        lighting.tint[0] * (0.42 + power * 0.58),
+        lighting.tint[1] * (0.15 + power * 0.15),
+        lighting.tint[2] * 0.15,
+      ],
+    };
     this.addQuad(buffers, texture, [
       [x + 0.05, y + 0.012, z + 0.95],
       [x + 0.95, y + 0.012, z + 0.95],
       [x + 0.95, y + 0.012, z + 0.05],
       [x + 0.05, y + 0.012, z + 0.05],
-    ], [0, 1, 0], color);
+    ], [0, 1, 0], tinted);
     return 1;
   }
 
@@ -367,8 +519,8 @@ export class ChunkMesher {
       ? new THREE.Vector3(0, 1, 0)
       : attachment === 'ceiling'
         ? new THREE.Vector3(0, -1, 0)
-        : this.facingVector(facing);
-    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : this.facingVector(facing);
+        : facingVectorFrom(facing);
+    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : facingVectorFrom(facing);
     const localX = new THREE.Vector3().crossVectors(normal, localZ).normalize();
     const basis = new THREE.Matrix4().makeBasis(localX, normal, localZ);
     const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5);
@@ -411,8 +563,8 @@ export class ChunkMesher {
       ? new THREE.Vector3(0, 1, 0)
       : attachment === 'ceiling'
         ? new THREE.Vector3(0, -1, 0)
-        : this.facingVector(facing);
-    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : this.facingVector(facing);
+        : facingVectorFrom(facing);
+    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : facingVectorFrom(facing);
     const localX = new THREE.Vector3().crossVectors(normal, localZ);
     if (localX.lengthSq() < 1e-6) localX.set(1, 0, 0);
     localX.normalize();
@@ -436,53 +588,48 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const facing = state?.facing ?? 'north';
-    const open = state?.open === true;
+    const occupied = occupiedDoorFacing(
+      state?.facing ?? 'north',
+      state?.open === true,
+      state?.hinge ?? 'left',
+    );
     const hinge = state?.hinge ?? 'left';
-    const occupied = open
-      ? (hinge === 'left'
-        ? ({ north: 'west', west: 'south', south: 'east', east: 'north' } as const)[facing]
-        : ({ north: 'east', east: 'south', south: 'west', west: 'north' } as const)[facing])
-      : facing;
-    const texture = state?.half === 'upper'
-      ? (definition.textures.top ?? 'block/oak_door_upper')
-      : (definition.textures.bottom ?? definition.textures.all ?? 'block/oak_door');
-    const color = this.colorFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
-    const thickness = 3 / 16;
-    let corners: Array<[number, number, number]>;
-    let normal: [number, number, number];
-    switch (occupied) {
-      case 'north':
-        corners = [
-          [x, y, z + thickness], [x + 1, y, z + thickness],
-          [x + 1, y + 1, z + thickness], [x, y + 1, z + thickness],
-        ];
-        normal = [0, 0, 1];
-        break;
-      case 'south':
-        corners = [
-          [x + 1, y, z + 1 - thickness], [x, y, z + 1 - thickness],
-          [x, y + 1, z + 1 - thickness], [x + 1, y + 1, z + 1 - thickness],
-        ];
-        normal = [0, 0, -1];
-        break;
-      case 'west':
-        corners = [
-          [x + thickness, y, z + 1], [x + thickness, y, z],
-          [x + thickness, y + 1, z], [x + thickness, y + 1, z + 1],
-        ];
-        normal = [1, 0, 0];
-        break;
-      case 'east':
-        corners = [
-          [x + 1 - thickness, y, z], [x + 1 - thickness, y, z + 1],
-          [x + 1 - thickness, y + 1, z + 1], [x + 1 - thickness, y + 1, z],
-        ];
-        normal = [-1, 0, 0];
-        break;
+    const texture = doorHalfTexture(state?.half, definition.textures);
+    const t = DOOR_THICKNESS;
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const outerUv = doorFaceTextureUv('outer', hinge);
+    const innerUv = doorFaceTextureUv('inner', hinge);
+    const edgeUv = doorFaceTextureUv('edge', hinge);
+    const faces = doorCuboidFaces(x, y, z, occupied, t);
+    for (const face of faces) {
+      const uv = face.role === 'outer' ? outerUv : face.role === 'inner' ? innerUv : edgeUv;
+      this.addQuad(buffers, texture, face.corners, face.normal, lighting, uv);
     }
-    this.addQuad(buffers, texture, corners, normal, color);
-    this.addQuad(buffers, texture, [...corners].reverse() as typeof corners, [-normal[0], 0, -normal[2]] as [number, number, number], color);
+    return faces.length;
+  }
+
+  private addLadder(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? 'block/ladder';
+    const facing = state?.facing ?? 'north';
+    const { corners, normal } = ladderFrontCorners(x, y, z, facing);
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, normal, 1);
+    this.addQuad(buffers, texture, corners, normal, lighting);
+    this.addQuad(
+      buffers,
+      texture,
+      [corners[1]!, corners[0]!, corners[3]!, corners[2]!],
+      [-normal[0], 0, -normal[2]] as [number, number, number],
+      lighting,
+      [1, 0, 0, 1],
+    );
     return 2;
   }
 
@@ -498,9 +645,94 @@ export class ChunkMesher {
     const height = state?.powered ? 0.03125 : 0.0625;
     const matrix = new THREE.Matrix4().makeTranslation(x + 0.5, y + height / 2, z + 0.5);
     return this.addCuboid(
-      buffers, 'block/oak_planks', [0.875, height, 0.875], matrix,
+      buffers, definition.textures.all ?? 'block/oak_planks', [0.875, height, 0.875], matrix,
       world, definition, x, y, z,
     );
+  }
+
+  private addStairs(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const shape = resolveStairShape(world, x, y, z, state);
+    const boxes = stairLocalBoxes(defaultStairFacing(state), defaultStairHalf(state), shape);
+    let faces = 0;
+    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+    return faces;
+  }
+
+  private addSlab(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const boxes = slabLocalBoxes(defaultSlabType(state));
+    let faces = 0;
+    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+    return faces;
+  }
+
+  private addLocalCuboid(
+    buffers: GeometryBuffers,
+    texture: string,
+    box: LocalBox,
+    world: VoxelWorld,
+    definition: BlockDefinition,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    let faces = 0;
+    for (const face of FACES) {
+      if (this.localFaceCulled(box, face, world, x, y, z)) continue;
+      const corners = face.corners.map((corner) => [
+        x + box.minX + corner[0] * (box.maxX - box.minX),
+        y + box.minY + corner[1] * (box.maxY - box.minY),
+        z + box.minZ + corner[2] * (box.maxZ - box.minZ),
+      ] as [number, number, number]);
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        face.normal,
+        this.lightingFor(world, definition, texture, x, y, z, face.normal, face.shade),
+        localFaceUv(face, box),
+      );
+      faces += 1;
+    }
+    return faces;
+  }
+
+  private localFaceCulled(
+    box: LocalBox,
+    face: Face,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): boolean {
+    const nx = face.normal[0];
+    const ny = face.normal[1];
+    const nz = face.normal[2];
+    const onBoundary = (nx > 0 && box.maxX >= 1 - 1e-6)
+      || (nx < 0 && box.minX <= 1e-6)
+      || (ny > 0 && box.maxY >= 1 - 1e-6)
+      || (ny < 0 && box.minY <= 1e-6)
+      || (nz > 0 && box.maxZ >= 1 - 1e-6)
+      || (nz < 0 && box.minZ <= 1e-6);
+    if (!onBoundary) return false;
+    return blockOccludesFaces(world, x + nx, y + ny, z + nz);
   }
 
   private addCuboid(
@@ -529,7 +761,7 @@ export class ChunkMesher {
         texture,
         corners,
         normalTuple,
-        this.colorFor(world, definition, texture, x, y, z, normalTuple, face.shade),
+        this.lightingFor(world, definition, texture, x, y, z, normalTuple, face.shade),
         textureUv,
       );
     }
@@ -541,7 +773,7 @@ export class ChunkMesher {
     textureKey: string,
     corners: readonly (readonly [number, number, number])[],
     normal: readonly [number, number, number],
-    color: readonly [number, number, number],
+    lighting: VertexLighting,
     textureUv: TextureUvRect = [0, 0, 1, 1],
     backFace = false,
   ): void {
@@ -558,12 +790,20 @@ export class ChunkMesher {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);
       buffers.uvs.push(...uv[index]!);
-      buffers.colors.push(...color);
+      this.pushLighting(buffers, lighting);
     }
     buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
-  private colorFor(
+  private pushLighting(buffers: GeometryBuffers, lighting: VertexLighting): void {
+    buffers.colors.push(lighting.tint[0], lighting.tint[1], lighting.tint[2]);
+    buffers.skyLights.push(lighting.sky);
+    buffers.blockLights.push(lighting.block);
+    buffers.faceShades.push(lighting.shade);
+    buffers.emissions.push(lighting.emission);
+  }
+
+  private lightingFor(
     world: VoxelWorld,
     definition: BlockDefinition,
     textureKey: string,
@@ -572,7 +812,7 @@ export class ChunkMesher {
     z: number,
     normal: readonly [number, number, number],
     shade: number,
-  ): readonly [number, number, number] {
+  ): VertexLighting {
     const localX = x - this.columnOriginX;
     const localZ = z - this.columnOriginZ;
     const inCachedChunk = localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE;
@@ -582,15 +822,16 @@ export class ChunkMesher {
     const sampleY = y + Math.round(normal[1]);
     const sampleZ = z + Math.round(normal[2]);
     const sky = getSkyLight(world, sampleX, sampleY, sampleZ) / 15;
-    const blockLight = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
+    const block = getBlockLight(world, sampleX, sampleY, sampleZ) / 15;
     const emission = Math.max(0, Math.min(1, (definition.emission ?? 0) / 15));
-    const light = bakedVertexLight(sky, blockLight, emission, shade);
     const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
-    const tint = this.tintFor(definition, textureKey, biome);
-    this.scratchColor[0] = tint[0] * light;
-    this.scratchColor[1] = tint[1] * light;
-    this.scratchColor[2] = tint[2] * light;
-    return this.scratchColor;
+    return {
+      tint: this.tintFor(definition, textureKey, biome),
+      sky,
+      block,
+      emission,
+      shade,
+    };
   }
 
   private textureForFace(definition: BlockDefinition, face: Face['texture']): string {
@@ -634,21 +875,16 @@ export class ChunkMesher {
     return biome === 'forest' ? 1 : biome === 'desert' ? 2 : 0;
   }
 
-  private facingVector(facing: HorizontalFacing): THREE.Vector3 {
-    switch (facing) {
-      case 'north': return new THREE.Vector3(0, 0, -1);
-      case 'south': return new THREE.Vector3(0, 0, 1);
-      case 'east': return new THREE.Vector3(1, 0, 0);
-      case 'west': return new THREE.Vector3(-1, 0, 0);
-    }
-  }
-
   private toGeometry(buffers: GeometryBuffers): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffers.positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buffers.normals, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(buffers.colors, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buffers.uvs, 2));
+    geometry.setAttribute('skyLight', new THREE.Float32BufferAttribute(buffers.skyLights, 1));
+    geometry.setAttribute('blockLight', new THREE.Float32BufferAttribute(buffers.blockLights, 1));
+    geometry.setAttribute('faceShade', new THREE.Float32BufferAttribute(buffers.faceShades, 1));
+    geometry.setAttribute('emissionLight', new THREE.Float32BufferAttribute(buffers.emissions, 1));
     geometry.setIndex(buffers.indices);
     if (buffers.positions.length > 0) geometry.computeBoundingSphere();
     return geometry;

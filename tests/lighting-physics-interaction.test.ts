@@ -164,10 +164,11 @@ describe('lighting, physics and interaction polish', () => {
     meshed.water.dispose();
   });
 
-  it('keeps torch/button/door items on generated special geometry instead of cubes', () => {
+  it('keeps torch/door/ladder items on generated pose and button on the block pose', () => {
     expect(classifyItemForRendering('torch')).toBe('generated');
-    expect(classifyItemForRendering('stone_button')).toBe('generated');
     expect(classifyItemForRendering('oak_door')).toBe('generated');
+    expect(classifyItemForRendering('ladder')).toBe('generated');
+    expect(classifyItemForRendering('stone_button')).toBe('block');
     expect(getBlockDefinition(BlockId.Torch).renderShape).toBe('torch');
     expect(getBlockDefinition(BlockId.StoneButton).renderShape).toBe('button');
     expect(getBlockDefinition(BlockId.OakDoor).renderShape).toBe('door');

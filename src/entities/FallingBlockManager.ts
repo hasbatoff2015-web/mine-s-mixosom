@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BlockId, getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
+import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import { moveVoxelBody } from './voxelPhysics';
 
 const BODY = Object.freeze({ width: 0.98, height: 0.98 });
@@ -81,6 +82,17 @@ export class FallingBlockManager {
         continue;
       }
       if (entity.position.y < -8 || entity.ageSeconds > 12) this.land(entity);
+      else {
+        applySampledEntityLight(
+          entity.visual,
+          this.world,
+          entity.position.x,
+          entity.position.y,
+          entity.position.z,
+          1,
+          worldDaylightUniform.value,
+        );
+      }
     }
   }
 

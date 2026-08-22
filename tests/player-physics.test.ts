@@ -6,14 +6,23 @@ import type { VoxelWorld } from '../src/world/World';
 
 class TestWorld {
   readonly blocks = new Map<string, BlockId>();
+  readonly states = new Map<string, { facing?: 'north' | 'south' | 'east' | 'west'; stairHalf?: 'bottom' | 'top'; slabType?: 'bottom' | 'top' | 'double' }>();
 
   set(x: number, y: number, z: number, block: BlockId): void {
     this.blocks.set(`${x},${y},${z}`, block);
   }
 
+  setState(x: number, y: number, z: number, state: TestWorld['states'] extends Map<string, infer V> ? V : never): void {
+    this.states.set(`${x},${y},${z}`, state);
+  }
+
   getBlock(x: number, y: number, z: number): BlockId {
     if (y < 0) return BlockId.Bedrock;
     return this.blocks.get(`${x},${y},${z}`) ?? BlockId.Air;
+  }
+
+  getBlockState(x: number, y: number, z: number) {
+    return this.states.get(`${x},${y},${z}`);
   }
 
   isSolid(x: number, y: number, z: number): boolean {
@@ -71,6 +80,18 @@ describe('PlayerController voxel physics', () => {
     }
     expect(player.position.x).toBeGreaterThan(1);
     expect(player.position.y).toBeCloseTo(1.5, 5);
+  });
+
+  it('walks onto east-facing stairs via generic step-up instead of treating them as a full cube', () => {
+    const world = flatWorld();
+    world.set(1, 1, 0, BlockId.OakStairs);
+    world.setState(1, 1, 0, { facing: 'east', stairHalf: 'bottom' });
+    const player = new PlayerController({ position: [0.5, 1, 0.5] });
+    for (let tick = 0; tick < 24 && player.position.x < 1.35; tick += 1) {
+      player.tick(world as unknown as VoxelWorld, input({ right: 1 }), 0.05);
+    }
+    expect(player.position.x).toBeGreaterThan(1);
+    expect(player.position.y).toBeGreaterThan(1.45);
   });
 
   it('reports a held jump only on the takeoff tick', () => {

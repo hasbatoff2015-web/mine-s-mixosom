@@ -1,8 +1,31 @@
 import * as THREE from 'three';
-import { itemRenderProfile, type ItemRenderCategory } from '../items';
+import { bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../items';
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
 import { TextureAtlas } from './TextureAtlas';
 import { createTexturedCuboidGeometry } from './TexturedCuboid';
+import {
+  formatHeldItemQaQuery,
+  heldItemQaValuesFromTransform,
+  readDevHeldItemQaOverride,
+  resolveHeldItemTransform,
+  type HeldItemQaOverride,
+} from './heldItemQa';
+import {
+  composeVanilla1218IdleFirstPersonRightHand,
+  composeVanillaIdleFirstPersonRightHand,
+  formatHeldItemMatrixOverlay,
+  frontFacingMetrics,
+  projectGeneratedReferencePoints,
+  transformUnitAxes,
+  type HeldItemMatrixDebugSnapshot,
+} from './heldItemVanillaTransform';
+import {
+  compareLandmarksToScreenshot,
+  extractIronPickaxeLandmarks,
+  projectSilhouetteLandmarks,
+  REFERENCE_F2_IRON_PICKAXE,
+} from './heldItemLandmarks';
+import type { GeneratedItemMask } from './GeneratedItemGeometry';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -47,8 +70,21 @@ export class FirstPersonRenderer {
   private equipProgress = 1;
   private bowTexturePath = 'item/bow';
   private disposed = false;
+  private heldQaOverride?: HeldItemQaOverride;
+  private loggedHeldQa = false;
+  private readonly heldQaFromUrl: boolean;
 
-  constructor(private readonly visuals: ItemVisualFactory) {
+  /** QA-only: drop residual idle bob / equip dip so matrices are comparable. */
+  private readonly freezeIdleMotion: boolean;
+
+  constructor(
+    private readonly visuals: ItemVisualFactory,
+    options: { readonly qaOverride?: HeldItemQaOverride; readonly freezeIdleMotion?: boolean } = {},
+  ) {
+    const fromUrl = options.qaOverride === undefined ? readDevHeldItemQaOverride() : undefined;
+    this.heldQaOverride = options.qaOverride ?? fromUrl;
+    this.heldQaFromUrl = fromUrl !== undefined;
+    this.freezeIdleMotion = options.freezeIdleMotion === true;
     this.scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x4a382d, 1.75));
     const key = new THREE.DirectionalLight(0xffe4c2, 1.9);
     key.position.set(-2, 4, 3);
@@ -75,6 +111,11 @@ export class FirstPersonRenderer {
     let count = 0;
     this.root.traverse(() => { count += 1; });
     return count;
+  }
+
+  /** QA-only live override. Does not write production `FIRST_PERSON_SPRITE_POSE`. */
+  setHeldQaOverride(override?: HeldItemQaOverride): void {
+    this.heldQaOverride = override;
   }
 
   setHeldItems(mainItemId?: string, offhandItemId?: string): void {
@@ -106,6 +147,12 @@ export class FirstPersonRenderer {
     this.elapsedSeconds += delta;
     this.swingSeconds += delta;
     this.equipProgress = Math.min(1, this.equipProgress + delta * 7.5);
+    if (this.freezeIdleMotion) {
+      this.equipProgress = 1;
+      this.swingSeconds = 1;
+      this.walkStrength = 0;
+      this.walkPhase = 0;
+    }
     this.root.visible = state.visible;
     if (!state.visible) return;
 
@@ -115,7 +162,7 @@ export class FirstPersonRenderer {
     const sprintFactor = state.sprinting ? 1.22 : 1;
     const bobX = Math.sin(this.walkPhase) * 0.025 * this.walkStrength * sprintFactor;
     const bobY = -Math.abs(Math.cos(this.walkPhase)) * 0.018 * this.walkStrength * sprintFactor;
-    const idle = Math.sin(this.elapsedSeconds * 1.35) * 0.004;
+    const idle = this.freezeIdleMotion ? 0 : Math.sin(this.elapsedSeconds * 1.35) * 0.004;
 
     const explicitProgress = THREE.MathUtils.clamp(this.swingSeconds / 0.34, 0, 1);
     const miningProgress = (this.elapsedSeconds * 3.15) % 1;
@@ -143,13 +190,16 @@ export class FirstPersonRenderer {
     );
 
     if (this.mainModel && this.mainItem) {
-      applyItemViewTransform(this.mainModel, itemRenderProfile(this.mainItem).transforms.firstPersonRightHand);
+      const base = itemRenderProfile(this.mainItem).transforms.firstPersonRightHand;
+      const resolved = resolveHeldItemTransform(base, this.heldQaOverride);
+      applyItemViewTransform(this.mainModel, resolved);
+      if (this.heldQaFromUrl && !this.loggedHeldQa) {
+        this.loggedHeldQa = true;
+        console.info(`[held-qa] ${formatHeldItemQaQuery(heldItemQaValuesFromTransform(resolved))}`);
+      }
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
-      if (this.mainCategory === 'bow') {
-        this.updateBowTexture(this.mainModel, state.bowCharge);
-        if (state.bowCharge > 0) this.applyBowPose(this.mainModel, state.bowCharge);
-      }
+      if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
       if (this.mainCategory === 'shield' && state.shieldRaised) this.applyShieldPose(this.mainModel, false);
     }
 
@@ -175,6 +225,93 @@ export class FirstPersonRenderer {
     this.camera.updateProjectionMatrix();
   }
 
+  /**
+   * Idle alignment of the generated +Z front against the viewmodel camera.
+   * 1 means the sprite faces the camera; walk/swing parent rotations reduce it.
+   */
+  measureHeldFrontCameraDot(): number | undefined {
+    if (!this.mainModel) return undefined;
+    this.mainModel.updateWorldMatrix(true, true);
+    this.camera.updateMatrixWorld();
+    const front = new THREE.Vector3(0, 0, 1).transformDirection(this.mainModel.matrixWorld).normalize();
+    const view = new THREE.Vector3();
+    this.camera.getWorldDirection(view);
+    return -front.dot(view);
+  }
+
+  heldFrontWorldNormal(): THREE.Vector3 | undefined {
+    if (!this.mainModel) return undefined;
+    this.mainModel.updateWorldMatrix(true, true);
+    return new THREE.Vector3(0, 0, 1).transformDirection(this.mainModel.matrixWorld).normalize();
+  }
+
+  /**
+   * Snapshot of the live held-item matrices plus the proposed vanilla idle
+   * right-hand matrix. The vanilla matrix is diagnostic only and is not
+   * written onto the mesh.
+   */
+  captureHeldItemMatrixDebug(mask?: GeneratedItemMask): HeldItemMatrixDebugSnapshot | undefined {
+    if (!this.mainModel) return undefined;
+    this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.root.updateWorldMatrix(true, true);
+    const itemLocal = this.mainModel.matrix.clone();
+    const itemWorld = this.mainModel.matrixWorld.clone();
+    const modelView = new THREE.Matrix4().multiplyMatrices(this.camera.matrixWorldInverse, itemWorld);
+    const vanillaModelView = composeVanillaIdleFirstPersonRightHand();
+    const vanilla1218ModelView = composeVanilla1218IdleFirstPersonRightHand();
+    const landmarks = mask ? extractIronPickaxeLandmarks(mask) : undefined;
+    const silhouetteProduction = landmarks
+      ? projectSilhouetteLandmarks(landmarks, modelView, this.camera)
+      : undefined;
+    const silhouetteVanilla = landmarks
+      ? projectSilhouetteLandmarks(landmarks, vanillaModelView, this.camera)
+      : undefined;
+    const f2Camera = new THREE.PerspectiveCamera(
+      REFERENCE_F2_IRON_PICKAXE.handFovDegrees,
+      REFERENCE_F2_IRON_PICKAXE.aspect,
+      this.camera.near,
+      this.camera.far,
+    );
+    f2Camera.updateProjectionMatrix();
+    const screenshotComparison = landmarks
+      ? compareLandmarksToScreenshot(
+        projectSilhouetteLandmarks(landmarks, modelView, f2Camera),
+        projectSilhouetteLandmarks(landmarks, vanillaModelView, f2Camera),
+      )
+      : undefined;
+    return {
+      itemId: this.mainItem,
+      freezeIdleMotion: this.freezeIdleMotion,
+      camera: {
+        type: this.camera.type,
+        fov: this.camera.fov,
+        aspect: this.camera.aspect,
+        near: this.camera.near,
+        far: this.camera.far,
+      },
+      itemLocal,
+      itemWorld,
+      modelView,
+      productionPoints: projectGeneratedReferencePoints(modelView, this.camera),
+      productionBasis: transformUnitAxes(modelView),
+      productionFacing: frontFacingMetrics(modelView),
+      vanillaModelView,
+      vanilla1218ModelView,
+      vanillaPoints: projectGeneratedReferencePoints(vanillaModelView, this.camera),
+      vanillaBasis: transformUnitAxes(vanillaModelView),
+      vanillaFacing: frontFacingMetrics(vanillaModelView),
+      silhouetteProduction,
+      silhouetteVanilla,
+      screenshotComparison,
+    };
+  }
+
+  formatHeldItemMatrixOverlay(mask?: GeneratedItemMask): string | undefined {
+    const snapshot = this.captureHeldItemMatrixDebug(mask);
+    return snapshot ? formatHeldItemMatrixOverlay(snapshot) : undefined;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.mainModel?.removeFromParent();
@@ -196,26 +333,8 @@ export class FirstPersonRenderer {
     model.rotation.z += 0.18 * cadence;
   }
 
-  private applyBowPose(model: THREE.Object3D, charge: number): void {
-    const eased = 1 - Math.pow(1 - THREE.MathUtils.clamp(charge, 0, 1), 2);
-    model.position.x -= 0.12 * eased;
-    model.position.y += 0.09 * eased;
-    model.position.z -= 0.07 * eased;
-    model.rotation.x -= 0.18 * eased;
-    model.rotation.y += 0.58 * eased;
-    model.rotation.z += 0.17 * eased;
-    model.scale.multiplyScalar(1 + eased * 0.04);
-    if (charge >= 0.98) model.position.y += Math.sin(this.elapsedSeconds * 42) * 0.004;
-  }
-
   private updateBowTexture(model: THREE.Group, charge: number): void {
-    const texturePath = charge <= 0
-      ? 'item/bow'
-      : charge < 0.35
-        ? 'item/bow_pulling_0'
-        : charge < 0.7
-          ? 'item/bow_pulling_1'
-          : 'item/bow_pulling_2';
+    const texturePath = bowPullingTexturePath(charge);
     if (texturePath === this.bowTexturePath) return;
     this.visuals.setGeneratedTextureVariant(model, texturePath);
     this.bowTexturePath = texturePath;

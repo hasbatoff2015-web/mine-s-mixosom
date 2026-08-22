@@ -1,10 +1,47 @@
 import * as THREE from 'three';
-import { isKnownItemId } from '../items';
+import {
+  generatedHeldTexturePath,
+  getItemDefinition,
+  isKnownItemId,
+  itemRenderProfile,
+  itemUsesGeneratedHeldGeometry,
+} from '../items';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
+import {
+  attachGeneratedItemSideDebug,
+  formatGeneratedItemDiagnostics,
+  generatedItemInfo,
+} from '../rendering/GeneratedItemGeometry';
+import {
+  formatHeldItemCandidateUrl,
+  formatHeldItemQaQuery,
+  formatHeldItemQaStatus,
+  HeldItemQaLiveState,
+  heldItemQaValuesFromTransform,
+  HELD_ITEM_POSE_COMPARE_ITEMS,
+  matchingHeldItemPoseCandidate,
+  parseHeldItemPoseCandidate,
+  parseItemQaPoseCompare,
+  parseItemQaSideDebug,
+  parseItemQaView,
+  resolveHeldItemQaFromSearch,
+  resolveHeldItemQaLiveInitial,
+  writeHeldItemQaStorage,
+  type ItemQaView,
+} from '../rendering/heldItemQa';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
+import { mountHeldItemPosePanel } from './HeldItemPosePanel';
 
 export type ItemQaMode = 'empty' | 'drops' | string;
+
+const INSPECT_FRUSTUM = 1.25;
+const INSPECT_CAMERA: Readonly<Record<Exclude<ItemQaView, 'held'>, readonly [number, number, number]>> = {
+  front: [0, 0, 2.15],
+  back: [0, 0, -2.15],
+  left: [-0.78, 0.06, 2.02],
+  right: [0.78, 0.06, 2.02],
+};
 
 export async function startItemQaHarness(
   canvas: HTMLCanvasElement,
@@ -15,27 +52,65 @@ export async function startItemQaHarness(
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x80b5d4);
-  const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 50);
-  camera.position.set(0, 2.2, 5.2);
-  camera.lookAt(0, 0.8, 0);
-  scene.add(new THREE.HemisphereLight(0xe7f3ff, 0x4c4233, 1.55));
-  const light = new THREE.DirectionalLight(0xffe5be, 2);
-  light.position.set(-3, 6, 4);
-  scene.add(light);
-  const ground = new THREE.Mesh(
+  const search = new URLSearchParams(location.search);
+  const poseCompare = parseItemQaPoseCompare(search);
+  const qaView = poseCompare ? 'held' : parseItemQaView(search);
+  const sideDebug = parseItemQaSideDebug(search);
+  const inspect = mode !== 'drops' && qaView !== 'held';
+  scene.background = new THREE.Color(inspect ? 0x1b1d22 : 0x80b5d4);
+  const camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = inspect
+    ? new THREE.OrthographicCamera(-INSPECT_FRUSTUM, INSPECT_FRUSTUM, INSPECT_FRUSTUM, -INSPECT_FRUSTUM, 0.05, 50)
+    : new THREE.PerspectiveCamera(55, 1, 0.05, 50);
+  if (!inspect) {
+    camera.position.set(0, 2.2, 5.2);
+    camera.lookAt(0, 0.8, 0);
+  }
+  if (!inspect) {
+    scene.add(new THREE.HemisphereLight(0xe7f3ff, 0x4c4233, 1.55));
+    const light = new THREE.DirectionalLight(0xffe5be, 2);
+    light.position.set(-3, 6, 4);
+    scene.add(light);
+  }
+  const ground = inspect ? undefined : new THREE.Mesh(
     new THREE.PlaneGeometry(12, 12),
     new THREE.MeshLambertMaterial({ color: 0x668a4e }),
   );
-  ground.rotation.x = -Math.PI / 2;
-  scene.add(ground);
+  if (ground) {
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+  }
   const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
   const visuals = new ItemVisualFactory({ atlas });
   await visuals.preload();
-  const viewmodel = new FirstPersonRenderer(visuals);
   const dropped: THREE.Group[] = [];
+  const extraDispose: Array<() => void> = [];
   const qaItem = mode !== 'empty' && mode !== 'drops' && isKnownItemId(mode) ? mode : undefined;
-  const requestedPose = new URLSearchParams(location.search).get('pose');
+  const requestedPose = search.get('pose');
+  const freezeIdleMotion = !requestedPose || requestedPose === 'idle' || requestedPose === 'base';
+  const poseCandidate = parseHeldItemPoseCandidate(search);
+  const heldQa = resolveHeldItemQaFromSearch(search);
+  const heldBase = itemRenderProfile(qaItem ?? 'coal').transforms.firstPersonRightHand;
+  const productionPose = heldItemQaValuesFromTransform(heldBase);
+  const qaStorage = typeof sessionStorage === 'undefined' ? undefined : sessionStorage;
+  const livePose = inspect || mode === 'drops'
+    ? undefined
+    : new HeldItemQaLiveState(resolveHeldItemQaLiveInitial(productionPose, search, qaStorage));
+  const viewmodel = inspect ? undefined : new FirstPersonRenderer(visuals, {
+    freezeIdleMotion,
+    qaOverride: livePose?.get(),
+  });
+  let geometryOverlay = '';
+  let currentItem = qaItem;
+  if (poseCompare) {
+    const listed = currentItem !== undefined
+      && (HELD_ITEM_POSE_COMPARE_ITEMS as readonly string[]).includes(currentItem);
+    if (!listed) currentItem = HELD_ITEM_POSE_COMPARE_ITEMS[0];
+  }
+  const compareIndex = (): number => {
+    if (!currentItem) return 0;
+    const index = (HELD_ITEM_POSE_COMPARE_ITEMS as readonly string[]).indexOf(currentItem);
+    return index >= 0 ? index : 0;
+  };
 
   if (mode === 'drops') {
     const samples = [
@@ -48,24 +123,128 @@ export async function startItemQaHarness(
       scene.add(visual);
       dropped.push(visual);
     });
+  } else if (inspect && qaItem) {
+    geometryOverlay = mountInspectItem({
+      scene,
+      camera,
+      visuals,
+      itemId: qaItem,
+      view: qaView,
+      sideDebug,
+      extraDispose,
+    });
   } else {
-    viewmodel.setHeldItems(qaItem);
+    viewmodel?.setHeldItems(currentItem);
+    geometryOverlay = generatedOverlay(visuals, currentItem);
   }
 
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">item QA · ${mode}</div>`;
+  const refreshHeldGeometry = (itemId: string | undefined): void => {
+    geometryOverlay = generatedOverlay(visuals, itemId);
+  };
+
+  const liveValues = (): ReturnType<HeldItemQaLiveState['get']> => livePose?.get() ?? productionPose;
+  const liveQuery = (): string => formatHeldItemQaQuery(liveValues());
+
+  if (geometryOverlay) console.info(`[item-geom]\n${geometryOverlay}`);
+  if (!inspect) {
+    console.info(`[held-qa] ?qaItem=${currentItem ?? mode}&qaView=held&${liveQuery()}&pose=idle`);
+    if (poseCandidate) {
+      for (const itemId of ['iron_pickaxe', 'diamond_sword'] as const) {
+        console.info(`[held-qa] ${formatHeldItemCandidateUrl(itemId, poseCandidate)}`);
+      }
+    }
+  }
+
+  const overlayLines = (): string[] => {
+    const values = liveValues();
+    const preset = matchingHeldItemPoseCandidate(values) ?? poseCandidate;
+    return [
+      `item QA · ${currentItem ?? mode}${preset ? `  qaPose=${preset}` : '  live'}`,
+      inspect ? `qaView=${qaView}${sideDebug ? '  qaSideDebug=1' : ''}` : `qaView=held  pose=${requestedPose ?? 'idle'}`,
+      inspect
+        ? (sideDebug ? 'UP red  DOWN green  LEFT blue  RIGHT yellow' : 'isolated inspect · no bob/swing')
+        : formatHeldItemQaStatus(currentItem, values),
+      inspect && heldQa ? 'held* ignored here · add qaView=held' : '',
+      !inspect
+        ? `items  1-8 or [ ]  ${HELD_ITEM_POSE_COMPARE_ITEMS.map((id, index) => `${index + 1}:${id}`).join('  ')}`
+        : '',
+      geometryOverlay,
+    ].filter(Boolean);
+  };
+
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:11px/1.35 monospace;z-index:5;white-space:pre;max-height:96vh;overflow:auto;pointer-events:none;max-width:min(420px, calc(100vw - 360px))">${overlayLines().join('\n')}</div>`;
+  const label = uiRoot.querySelector('#qa-label');
+  const applyLivePose = (values = liveValues()): void => {
+    viewmodel?.setHeldQaOverride(values);
+    writeHeldItemQaStorage(values, qaStorage);
+  };
+  const selectHeldItemById = (itemId: string): void => {
+    if (inspect || !viewmodel) return;
+    currentItem = itemId;
+    viewmodel.setHeldItems(itemId);
+    refreshHeldGeometry(itemId);
+  };
+  const selectHeldItem = (index: number): void => {
+    if (inspect || !viewmodel) return;
+    const next = HELD_ITEM_POSE_COMPARE_ITEMS[(index + HELD_ITEM_POSE_COMPARE_ITEMS.length) % HELD_ITEM_POSE_COMPARE_ITEMS.length]!;
+    selectHeldItemById(next);
+  };
+  const posePanel = livePose && viewmodel
+    ? mountHeldItemPosePanel({
+      live: livePose,
+      production: productionPose,
+      getItemId: () => currentItem,
+      onChange: applyLivePose,
+      onSelectItem: selectHeldItemById,
+      canvas,
+    })
+    : undefined;
+  if (posePanel) uiRoot.append(posePanel.element);
+
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
     renderer.setSize(width, height, false);
-    camera.aspect = width / height;
+    if (camera instanceof THREE.OrthographicCamera) {
+      const aspect = width / height;
+      camera.left = -INSPECT_FRUSTUM * aspect;
+      camera.right = INSPECT_FRUSTUM * aspect;
+      camera.top = INSPECT_FRUSTUM;
+      camera.bottom = -INSPECT_FRUSTUM;
+    } else {
+      camera.aspect = width / height;
+    }
     camera.updateProjectionMatrix();
-    viewmodel.resize(width, height);
+    viewmodel?.resize(width, height);
   };
   resize();
   addEventListener('resize', resize);
 
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (inspect) return;
+    const target = event.target;
+    const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+    if (typing) return;
+    if (event.code === 'BracketRight' || event.code === 'KeyN' || event.code === 'Period') {
+      selectHeldItem(compareIndex() + 1);
+      event.preventDefault();
+      return;
+    }
+    if (event.code === 'BracketLeft' || event.code === 'KeyP' || event.code === 'Comma') {
+      selectHeldItem(compareIndex() - 1);
+      event.preventDefault();
+      return;
+    }
+    const digit = event.code.match(/^Digit([1-8])$/);
+    if (digit && !typing) {
+      selectHeldItem(Number(digit[1]) - 1);
+      event.preventDefault();
+    }
+  };
+  addEventListener('keydown', onKeyDown);
+
   const state: FirstPersonFrameState = {
-    visible: mode !== 'drops', movementSpeed: 0, onGround: true, sprinting: false,
+    visible: mode !== 'drops' && !inspect, movementSpeed: 0, onGround: true, sprinting: false,
     mining: false, foodUseProgress: 0, bowCharge: 0, shieldRaised: false,
   };
   let frame = 0;
@@ -81,17 +260,26 @@ export async function startItemQaHarness(
         visual.rotation.y = elapsed * 1.15 + phase;
         visual.position.y = 0.48 + Math.sin(elapsed * 2.2 + phase) * 0.06;
       });
-    } else {
-      state.movementSpeed = requestedPose === 'idle' ? 0 : 1.8;
-      state.foodUseProgress = qaItem === 'apple' ? (elapsed % 2.2) / 2.2 : 0;
-      state.bowCharge = qaItem === 'bow'
-        ? requestedPose === 'base' ? 0 : requestedPose === 'partial' ? 0.5 : requestedPose === 'full' ? 1 : (elapsed % 2.2) / 2.2
+    } else if (!inspect && viewmodel) {
+      state.movementSpeed = requestedPose === 'walk' ? 1.8 : 0;
+      state.foodUseProgress = currentItem === 'apple' && requestedPose === 'eat' ? (elapsed % 2.2) / 2.2 : 0;
+      state.bowCharge = currentItem === 'bow'
+        ? requestedPose === 'partial' ? 0.5 : requestedPose === 'full' ? 1 : requestedPose === 'base' || !requestedPose ? 0 : (elapsed % 2.2) / 2.2
         : 0;
-      state.shieldRaised = qaItem === 'shield';
+      state.shieldRaised = currentItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
+      const facing = viewmodel.measureHeldFrontCameraDot();
+      const front = viewmodel.heldFrontWorldNormal();
+      if (label) {
+        const facingLine = facing === undefined ? '' : `\n\nfront·camera ${facing.toFixed(4)}`;
+        const normalLine = front
+          ? `\nfront normal ${front.x.toFixed(3)} ${front.y.toFixed(3)} ${front.z.toFixed(3)}`
+          : '';
+        label.textContent = `${overlayLines().join('\n')}${facingLine}${normalLine}`;
+      }
     }
     renderer.render(scene, camera);
-    if (mode !== 'drops') viewmodel.render(renderer);
+    if (!inspect && mode !== 'drops') viewmodel?.render(renderer);
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);
@@ -99,11 +287,74 @@ export async function startItemQaHarness(
   return () => {
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
-    viewmodel.dispose();
+    removeEventListener('keydown', onKeyDown);
+    posePanel?.dispose();
+    extraDispose.forEach((dispose) => dispose());
+    viewmodel?.dispose();
     visuals.dispose();
     atlas.dispose();
-    ground.geometry.dispose();
-    (ground.material as THREE.Material).dispose();
+    ground?.geometry.dispose();
+    if (ground) (ground.material as THREE.Material).dispose();
     renderer.dispose();
   };
+}
+
+function generatedOverlay(visuals: ItemVisualFactory, itemId: string | undefined): string {
+  if (!itemId || !itemUsesGeneratedHeldGeometry(itemId)) return '';
+  const geometry = visuals.getGeneratedGeometry(generatedHeldTexturePath(itemId));
+  return geometry ? formatGeneratedItemDiagnostics(generatedItemInfo(geometry), itemId) : '';
+}
+
+function mountInspectItem(options: {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  visuals: ItemVisualFactory;
+  itemId: string;
+  view: Exclude<ItemQaView, 'held'>;
+  sideDebug: boolean;
+  extraDispose: Array<() => void>;
+}): string {
+  const { scene, camera, visuals, itemId, view, sideDebug, extraDispose } = options;
+  const backdrop = new THREE.Mesh(
+    new THREE.PlaneGeometry(8, 8),
+    new THREE.MeshBasicMaterial({ color: 0x2a3038, fog: false }),
+  );
+  backdrop.position.z = view === 'back' ? 2.4 : -2.4;
+  if (view === 'back') backdrop.rotation.y = Math.PI;
+  scene.add(backdrop);
+  extraDispose.push(() => {
+    backdrop.geometry.dispose();
+    (backdrop.material as THREE.Material).dispose();
+  });
+
+  camera.position.set(...INSPECT_CAMERA[view]);
+  camera.lookAt(0, 0, 0);
+
+  const model = visuals.createItemModel(itemId);
+  model.position.set(0, 0, 0);
+  model.rotation.set(0, 0, 0);
+  model.scale.setScalar(1.55);
+  scene.add(model);
+
+  const mesh = model.children[0];
+  if (!(mesh instanceof THREE.Mesh) || !itemUsesGeneratedHeldGeometry(itemId)) {
+    return `item ${itemId}\nnot generated sprite geometry`;
+  }
+
+  const texturePath = generatedHeldTexturePath(itemId);
+  const mask = visuals.getGeneratedMask(texturePath);
+  const source = visuals.getGeneratedGeometry(texturePath) ?? mesh.geometry;
+  let info = generatedItemInfo(source);
+  if (sideDebug && mask) {
+    const debugGeometry = attachGeneratedItemSideDebug(mesh, mask);
+    info = generatedItemInfo(debugGeometry);
+    extraDispose.push(() => {
+      debugGeometry.dispose();
+      const materials = mesh.material;
+      if (Array.isArray(materials)) {
+        for (const material of materials) material.dispose();
+      }
+    });
+  }
+  return formatGeneratedItemDiagnostics(info, itemId);
 }

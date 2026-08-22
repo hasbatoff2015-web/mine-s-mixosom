@@ -54,10 +54,17 @@ describe('crafting matcher', () => {
     expect(consumeCraftingGrid(input, match!)[0]).toEqual({ itemId: 'oak_log', count: 4 });
   });
 
+  it('does not expose the shield recipe while the registry entry remains', () => {
+    expect(CRAFTING_RECIPES.some((recipe) => recipe.id === 'shield' || recipe.output.item === ItemId.Shield)).toBe(false);
+    expect(getItemDefinition(ItemId.Shield).kind).toBe('shield');
+    expect(getItemDefinition(ItemId.Shield).hiddenFromGameplay).toBe(true);
+  });
+
   it('contains valid outputs for core, equipment, armor and building recipes', () => {
     const expected = [
       'crafting_table', 'chest', 'furnace', 'torch', 'wooden_pickaxe', 'diamond_sword',
-      'shield', 'bow', 'arrows', 'white_bed', 'oak_door', 'oak_slab', 'cobblestone_stairs',
+      'bow', 'arrows', 'white_bed', 'oak_door', 'oak_slab', 'cobblestone_stairs',
+      'birch_stairs', 'stone_pressure_plate', 'brick_stairs',
       'gold_chestplate', 'tnt',
     ];
     const ids = new Set(CRAFTING_RECIPES.map((recipe) => recipe.id));

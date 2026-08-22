@@ -3,15 +3,54 @@ import { describe, expect, it } from 'vitest';
 import { BLOCKS, getBlockDefinition } from '../src/blocks';
 import {
   ITEMS,
+  FIRST_PERSON_SPRITE_POSE,
+  bowPullingTexturePath,
   classifyItemForRendering,
   itemRenderProfile,
+  itemUsesGeneratedHeldGeometry,
 } from '../src/items';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../src/rendering/FirstPersonRenderer';
-import { createGeneratedItemGeometry } from '../src/rendering/GeneratedItemGeometry';
+import {
+  GENERATED_SIDE_DEBUG_COLORS,
+  VANILLA_GENERATED_DEPTH,
+  attachGeneratedItemSideDebug,
+  collectGeneratedItemSpans,
+  countGeneratedBoundaryEdges,
+  createGeneratedItemGeometry,
+  formatGeneratedItemDiagnostics,
+  generatedItemInfo,
+  isGeneratedTransparentAlpha,
+  spanCounts,
+} from '../src/rendering/GeneratedItemGeometry';
 import {
   ItemVisualFactory,
   droppedVisualCopyCount,
 } from '../src/rendering/ItemVisualFactory';
+import {
+  formatHeldItemQaQuery,
+  formatHeldItemCandidateUrl,
+  formatHeldItemCopyQuery,
+  formatHeldItemPoseBlock,
+  formatHeldItemPoseTs,
+  HeldItemQaLiveState,
+  HELD_ITEM_POSE_CANDIDATES,
+  HELD_ITEM_POSE_COMPARE_ITEMS,
+  HELD_ITEM_QA_STORAGE_KEY,
+  heldItemQaValuesFromTransform,
+  keyboardNudgeMultiplier,
+  parseHeldItemPoseCandidate,
+  parseHeldItemQaOverride,
+  parseHeldItemQaStorage,
+  parseItemQaPoseCompare,
+  parseItemQaSideDebug,
+  parseItemQaView,
+  resolveHeldItemQaFromSearch,
+  resolveHeldItemQaLiveInitial,
+  resolveHeldItemTransform,
+  serializeHeldItemQaStorage,
+  writeHeldItemQaStorage,
+} from '../src/rendering/heldItemQa';
+import { IRON_PICKAXE_SILHOUETTE, maskFromSilhouette } from './ironPickaxeSilhouette';
 
 const ITEM_TEXTURES = import.meta.glob('../public/textures/item/*.png');
 const BLOCK_TEXTURES = import.meta.glob('../public/textures/block/*.png');
@@ -31,15 +70,170 @@ function frameState(overrides: Partial<FirstPersonFrameState> = {}): FirstPerson
   };
 }
 
+function opaqueRect(size: number): { width: number; height: number; alpha: Uint8Array } {
+  return { width: size, height: size, alpha: new Uint8Array(size * size).fill(255) };
+}
+
+function plusMask(size: number): { width: number; height: number; alpha: Uint8Array } {
+  const alpha = new Uint8Array(size * size);
+  const mid = Math.floor(size / 2);
+  for (let i = 0; i < size; i += 1) {
+    alpha[mid * size + i] = 255;
+    alpha[i * size + mid] = 255;
+  }
+  return { width: size, height: size, alpha };
+}
+
+function diagonalMask(size: number): { width: number; height: number; alpha: Uint8Array } {
+  const alpha = new Uint8Array(size * size);
+  for (let y = 0; y < size; y += 1) {
+    const x = y;
+    if (x < size) alpha[y * size + x] = 255;
+  }
+  return { width: size, height: size, alpha };
+}
+
+function fullSpriteQuads(geometry: THREE.BufferGeometry): { front: number; back: number } {
+  const position = geometry.getAttribute('position');
+  let front = 0;
+  let back = 0;
+  for (let vertex = 0; vertex < position.count; vertex += 4) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let corner = 0; corner < 4; corner += 1) {
+      const index = vertex + corner;
+      minX = Math.min(minX, position.getX(index));
+      maxX = Math.max(maxX, position.getX(index));
+      minY = Math.min(minY, position.getY(index));
+      maxY = Math.max(maxY, position.getY(index));
+      minZ = Math.min(minZ, position.getZ(index));
+      maxZ = Math.max(maxZ, position.getZ(index));
+    }
+    const coversSprite = minX === -0.5 && maxX === 0.5 && minY === -0.5 && maxY === 0.5;
+    const flatZ = maxZ - minZ < 1e-8;
+    if (!coversSprite || !flatZ) continue;
+    if (minZ > 0) front += 1;
+    if (maxZ < 0) back += 1;
+  }
+  return { front, back };
+}
+
+function windingNormal(geometry: THREE.BufferGeometry, vertex: number): THREE.Vector3 {
+  const position = geometry.getAttribute('position');
+  const ax = position.getX(vertex);
+  const ay = position.getY(vertex);
+  const az = position.getZ(vertex);
+  const e1 = new THREE.Vector3(
+    position.getX(vertex + 1) - ax,
+    position.getY(vertex + 1) - ay,
+    position.getZ(vertex + 1) - az,
+  );
+  const e2 = new THREE.Vector3(
+    position.getX(vertex + 2) - ax,
+    position.getY(vertex + 2) - ay,
+    position.getZ(vertex + 2) - az,
+  );
+  return e1.cross(e2).normalize();
+}
+
+function storedNormal(geometry: THREE.BufferGeometry, vertex: number): THREE.Vector3 {
+  const normal = geometry.getAttribute('normal');
+  return new THREE.Vector3(normal.getX(vertex), normal.getY(vertex), normal.getZ(vertex));
+}
+
+function uniqueUvValues(
+  uv: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+  vertex: number,
+  axis: 'u' | 'v',
+): number[] {
+  const values = new Set<number>();
+  for (let corner = 0; corner < 4; corner += 1) {
+    values.add(axis === 'u' ? uv.getX(vertex + corner) : uv.getY(vertex + corner));
+  }
+  return [...values];
+}
+
+function texelIndexU(u: number, size: number): number {
+  return Math.floor(u * size);
+}
+
+function texelIndexV(v: number, size: number): number {
+  return Math.floor((1 - v) * size);
+}
+
+function onTexelBoundary(value: number, size: number): boolean {
+  const scaled = value * size;
+  return Math.abs(scaled - Math.round(scaled)) < 1e-6;
+}
+
 describe('item render profiles and assets', () => {
-  it('classifies blocks, generated items, handheld tools, bow and shield separately', () => {
-    expect(classifyItemForRendering('stone')).toBe('block');
-    expect(classifyItemForRendering('apple')).toBe('generated');
-    expect(classifyItemForRendering('coal')).toBe('generated');
-    expect(classifyItemForRendering('iron_pickaxe')).toBe('handheld');
+  it('classifies representative Phase 1 items onto generated, handheld, block and bow paths', () => {
     expect(classifyItemForRendering('diamond_sword')).toBe('handheld');
+    expect(classifyItemForRendering('iron_pickaxe')).toBe('handheld');
+    expect(classifyItemForRendering('stick')).toBe('handheld');
+    expect(classifyItemForRendering('coal')).toBe('generated');
+    expect(classifyItemForRendering('apple')).toBe('generated');
+    expect(classifyItemForRendering('arrow')).toBe('generated');
+    expect(classifyItemForRendering('torch')).toBe('generated');
+    expect(classifyItemForRendering('stone')).toBe('block');
     expect(classifyItemForRendering('bow')).toBe('bow');
-    expect(classifyItemForRendering('shield')).toBe('shield');
+    expect(itemUsesGeneratedHeldGeometry('torch')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('redstone_torch')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('lever')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('ladder')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('oak_door')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('stone')).toBe(false);
+    expect(itemUsesGeneratedHeldGeometry('arrow')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('bow')).toBe(true);
+  });
+
+  it('uses one first-person pose for generated, handheld and bow', () => {
+    const generated = itemRenderProfile('coal').transforms.firstPersonRightHand;
+    const handheld = itemRenderProfile('diamond_sword').transforms.firstPersonRightHand;
+    const pickaxe = itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand;
+    const stick = itemRenderProfile('stick').transforms.firstPersonRightHand;
+    const bow = itemRenderProfile('bow').transforms.firstPersonRightHand;
+    expect(handheld).toBe(generated);
+    expect(pickaxe).toBe(generated);
+    expect(stick).toBe(generated);
+    expect(bow).toBe(generated);
+    expect(itemRenderProfile('stone').transforms.firstPersonRightHand).not.toEqual(generated);
+    expect(generated.position).toEqual(FIRST_PERSON_SPRITE_POSE.position);
+    expect(generated.scale[0]).toBe(FIRST_PERSON_SPRITE_POSE.scale);
+    expect(generated.rotation[0]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[0] * Math.PI / 180);
+    expect(generated.rotation[1]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[1] * Math.PI / 180);
+    expect(generated.rotation[2]).toBeCloseTo(FIRST_PERSON_SPRITE_POSE.rotationDeg[2] * Math.PI / 180);
+  });
+
+  it('does not give tools or resources a private first-person sprite pose', () => {
+    const shared = itemRenderProfile('coal').transforms.firstPersonRightHand;
+    for (const item of ITEMS) {
+      const category = classifyItemForRendering(item);
+      if (category !== 'generated' && category !== 'handheld' && category !== 'bow') continue;
+      expect(itemRenderProfile(item).transforms.firstPersonRightHand, item.id).toBe(shared);
+    }
+    for (const id of ['iron_pickaxe', 'diamond_sword', 'stick', 'coal', 'apple', 'arrow', 'bow', 'torch']) {
+      expect(itemRenderProfile(id).transforms.firstPersonRightHand, id).toBe(shared);
+    }
+    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.67, -0.29, -0.70]);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
+    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.60);
+    const block = itemRenderProfile('stone').transforms.firstPersonRightHand;
+    const shield = itemRenderProfile('shield').transforms.firstPersonRightHand;
+    expect(block.position).toEqual([0.46, -0.31, -0.80]);
+    expect(block.scale).toEqual([0.28, 0.28, 0.28]);
+    expect(block.rotation[0]).toBeCloseTo(24 * Math.PI / 180);
+    expect(block.rotation[1]).toBeCloseTo(-42 * Math.PI / 180);
+    expect(block.rotation[2]).toBeCloseTo(16 * Math.PI / 180);
+    expect(shield.position).toEqual([0.47, -0.31, -0.82]);
+    expect(shield.scale).toEqual([0.42, 0.42, 0.42]);
+    expect(shield.rotation[0]).toBeCloseTo(5 * Math.PI / 180);
+    expect(shield.rotation[1]).toBeCloseTo(-18 * Math.PI / 180);
+    expect(shield.rotation[2]).toBeCloseTo(-8 * Math.PI / 180);
   });
 
   it('provides independent first-person, ground and GUI transform contexts', () => {
@@ -49,6 +243,16 @@ describe('item render profiles and assets', () => {
       expect(transforms.ground).not.toBe(transforms.gui);
       expect(transforms.firstPersonRightHand.scale.every((value) => value > 0)).toBe(true);
     }
+  });
+
+  it('maps vanilla bow pull thresholds to pulling_0/1/2 textures', () => {
+    expect(bowPullingTexturePath(0)).toBe('item/bow');
+    expect(bowPullingTexturePath(0.01)).toBe('item/bow_pulling_0');
+    expect(bowPullingTexturePath(0.64)).toBe('item/bow_pulling_0');
+    expect(bowPullingTexturePath(0.65)).toBe('item/bow_pulling_1');
+    expect(bowPullingTexturePath(0.89)).toBe('item/bow_pulling_1');
+    expect(bowPullingTexturePath(0.9)).toBe('item/bow_pulling_2');
+    expect(bowPullingTexturePath(1)).toBe('item/bow_pulling_2');
   });
 
   it('maps every registered item and every block face texture to an imported PNG', () => {
@@ -68,47 +272,255 @@ describe('item render profiles and assets', () => {
   });
 });
 
+describe('GeneratedItemGeometry', () => {
+  it('builds one full-sprite front quad and one mirrored back quad', () => {
+    const geometry = createGeneratedItemGeometry(plusMask(8));
+    const info = generatedItemInfo(geometry);
+    expect(info.frontQuads).toBe(1);
+    expect(info.backQuads).toBe(1);
+    expect(fullSpriteQuads(geometry)).toEqual({ front: 1, back: 1 });
+    expect(info.depth).toBeCloseTo(VANILLA_GENERATED_DEPTH);
+    expect(geometry.boundingBox!.max.z - geometry.boundingBox!.min.z).toBeCloseTo(1 / 16);
+    geometry.dispose();
+  });
+
+  it('does not emit front row-span faces', () => {
+    const alpha = new Uint8Array([
+      255, 255, 255, 0,
+      255, 0, 255, 0,
+      255, 255, 255, 0,
+      0, 0, 0, 0,
+    ]);
+    const geometry = createGeneratedItemGeometry({ width: 4, height: 4, alpha });
+    expect(fullSpriteQuads(geometry)).toEqual({ front: 1, back: 1 });
+    expect(generatedItemInfo(geometry).frontQuads).toBe(1);
+    geometry.dispose();
+  });
+
+  it('treats only alpha 0 as transparent and merges neighboring boundary spans', () => {
+    expect(isGeneratedTransparentAlpha(0)).toBe(true);
+    expect(isGeneratedTransparentAlpha(1)).toBe(false);
+    expect(isGeneratedTransparentAlpha(7)).toBe(false);
+    expect(isGeneratedTransparentAlpha(255)).toBe(false);
+
+    const spans = collectGeneratedItemSpans({
+      width: 3,
+      height: 2,
+      alpha: new Uint8Array([
+        1, 255, 7,
+        0, 0, 0,
+      ]),
+    });
+    const up = spans.filter((span) => span.facing === 'up');
+    const down = spans.filter((span) => span.facing === 'down');
+    expect(up).toEqual([expect.objectContaining({ min: 0, max: 2, anchor: 0 })]);
+    expect(down).toEqual([expect.objectContaining({ min: 0, max: 2, anchor: 0 })]);
+    expect(spans.some((span) => span.facing === 'left' && span.anchor === 0)).toBe(true);
+    expect(spans.some((span) => span.facing === 'right' && span.anchor === 2)).toBe(true);
+  });
+
+  it('keeps 32×32 geometry in the same 16×16 model size as 16×16', () => {
+    const small = createGeneratedItemGeometry(opaqueRect(16));
+    const large = createGeneratedItemGeometry(opaqueRect(32));
+    const smallBox = small.boundingBox!;
+    const largeBox = large.boundingBox!;
+    expect(largeBox.max.x - largeBox.min.x).toBeCloseTo(smallBox.max.x - smallBox.min.x);
+    expect(largeBox.max.y - largeBox.min.y).toBeCloseTo(smallBox.max.y - smallBox.min.y);
+    expect(largeBox.max.x - largeBox.min.x).toBeCloseTo(1);
+    expect(largeBox.max.z - largeBox.min.z).toBeCloseTo(VANILLA_GENERATED_DEPTH);
+    expect(generatedItemInfo(large).sideSpans).toBe(generatedItemInfo(small).sideSpans);
+    expect(generatedItemInfo(large).frontQuads).toBe(1);
+
+    const detailed = createGeneratedItemGeometry(diagonalMask(32));
+    const coarse = createGeneratedItemGeometry(diagonalMask(16));
+    expect(detailed.boundingBox!.max.x - detailed.boundingBox!.min.x).toBeCloseTo(
+      coarse.boundingBox!.max.x - coarse.boundingBox!.min.x,
+    );
+    expect(generatedItemInfo(detailed).sideSpans).toBeGreaterThan(generatedItemInfo(coarse).sideSpans);
+    small.dispose();
+    large.dispose();
+    detailed.dispose();
+    coarse.dispose();
+  });
+
+  it('uses texel-center collapsed UV so nearest-filter stays on the opaque pixel', () => {
+    const size = 32;
+    const x = 8;
+    const y = 10;
+    const alpha = new Uint8Array(size * size);
+    alpha[y * size + x] = 255;
+    const geometry = createGeneratedItemGeometry({ width: size, height: size, alpha });
+    const uv = geometry.getAttribute('uv');
+    const families = [
+      { name: 'up', vertex: 8, axis: 'v' as const, opaque: y, neighbor: y - 1 },
+      { name: 'down', vertex: 12, axis: 'v' as const, opaque: y, neighbor: y + 1 },
+      { name: 'left', vertex: 16, axis: 'u' as const, opaque: x, neighbor: x - 1 },
+      { name: 'right', vertex: 20, axis: 'u' as const, opaque: x, neighbor: x + 1 },
+    ];
+    for (const family of families) {
+      const collapsed = uniqueUvValues(uv, family.vertex, family.axis);
+      expect(collapsed, family.name).toHaveLength(1);
+      const sample = collapsed[0]!;
+      const texel = family.axis === 'u' ? texelIndexU(sample, size) : texelIndexV(sample, size);
+      const boundaryCheck = family.axis === 'u' ? sample : 1 - sample;
+      expect(onTexelBoundary(boundaryCheck, size), `${family.name} on texel edge`).toBe(false);
+      expect(texel, family.name).toBe(family.opaque);
+      expect(texel, `${family.name} neighbor`).not.toBe(family.neighbor);
+      if (family.axis === 'v') expect(sample).toBeCloseTo(1 - (family.opaque + 0.5) / size);
+      else expect(sample).toBeCloseTo((family.opaque + 0.5) / size);
+    }
+    geometry.dispose();
+  });
+
+  it('faces front, back and every side family out of the item volume', () => {
+    const size = 32;
+    const alpha = new Uint8Array(size * size);
+    alpha[10 * size + 8] = 255;
+    const geometry = createGeneratedItemGeometry({ width: size, height: size, alpha });
+    const expected = [
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(1, 0, 0),
+    ];
+    expect(geometry.getAttribute('position').count).toBe(24);
+    expected.forEach((facing, index) => {
+      const vertex = index * 4;
+      const winding = windingNormal(geometry, vertex);
+      const stored = storedNormal(geometry, vertex);
+      expect(stored.dot(facing), `stored family ${index}`).toBeGreaterThan(0.99);
+      expect(winding.dot(facing), `winding family ${index}`).toBeGreaterThan(0.99);
+      expect(winding.dot(stored), `winding vs stored ${index}`).toBeGreaterThan(0.99);
+    });
+    geometry.dispose();
+
+    const plus = createGeneratedItemGeometry(plusMask(8));
+    for (let vertex = 0; vertex < plus.getAttribute('position').count; vertex += 4) {
+      const winding = windingNormal(plus, vertex);
+      const stored = storedNormal(plus, vertex);
+      expect(winding.dot(stored)).toBeGreaterThan(0.99);
+    }
+    plus.dispose();
+  });
+
+  it('matches iron_pickaxe.png span statistics used by the inspect overlay', () => {
+    const mask = maskFromSilhouette(IRON_PICKAXE_SILHOUETTE);
+    expect(mask.width).toBe(32);
+    expect(mask.height).toBe(32);
+    const spans = collectGeneratedItemSpans(mask);
+    const counts = spanCounts(spans);
+    const raw = countGeneratedBoundaryEdges(mask);
+    expect(counts).toEqual({ up: 24, down: 28, left: 28, right: 24, total: 104 });
+    expect(raw.total).toBeGreaterThan(counts.total);
+    expect(raw.up).toBeGreaterThanOrEqual(counts.up);
+    const geometry = createGeneratedItemGeometry(mask);
+    const info = generatedItemInfo(geometry);
+    expect(info.opaquePixels).toBe(204);
+    expect(info.frontQuads).toBe(1);
+    expect(info.backQuads).toBe(1);
+    expect(info.sideSpans).toBe(104);
+    expect(info.depth).toBeCloseTo(VANILLA_GENERATED_DEPTH);
+    expect(info.bounds.max[0] - info.bounds.min[0]).toBeCloseTo(1);
+    expect(info.bounds.max[2] - info.bounds.min[2]).toBeCloseTo(VANILLA_GENERATED_DEPTH);
+    expect(info.uv.front).toMatchObject({ uMin: 0, uMax: 1, vMin: 0, vMax: 1 });
+    expect(formatGeneratedItemDiagnostics(info, 'iron_pickaxe')).toContain('side spans  U 24  D 28  L 28  R 24  Σ 104');
+    const oneTexel = spans.filter((span) => span.max === span.min).length;
+    expect(oneTexel).toBeGreaterThan(80);
+    geometry.dispose();
+  });
+
+  it('maps qaSideDebug groups and vertex colors onto drawable FRONT/BACK/UP/DOWN/LEFT/RIGHT faces', () => {
+    const size = 32;
+    const alpha = new Uint8Array(size * size);
+    alpha[10 * size + 8] = 255;
+    const mask = { width: size, height: size, alpha };
+    const mesh = new THREE.Mesh(createGeneratedItemGeometry(mask));
+    mesh.onBeforeRender = () => {
+      const material = mesh.material as THREE.Material;
+      void material.userData.uEntityLight.value;
+    };
+    const originalGeometry = mesh.geometry;
+    const geometry = attachGeneratedItemSideDebug(mesh, mask);
+    const materials = mesh.material as THREE.MeshBasicMaterial[];
+
+    expect(Array.isArray(mesh.material)).toBe(true);
+    expect(materials).toHaveLength(3);
+    expect(materials[0]?.alphaTest).toBeCloseTo(0.08);
+    expect(materials[0]?.vertexColors).toBe(false);
+    expect(materials[1]?.color.getHex()).toBe(0x8c8c8c);
+    expect(materials[2]?.vertexColors).toBe(true);
+    expect(materials[2]?.map).toBeNull();
+    expect(geometry.groups).toEqual([
+      expect.objectContaining({ start: 0, count: 6, materialIndex: 0 }),
+      expect.objectContaining({ start: 6, count: 6, materialIndex: 1 }),
+      expect.objectContaining({ start: 12, count: 24, materialIndex: 2 }),
+    ]);
+    expect(() => {
+      (mesh.onBeforeRender as () => void)();
+    }).not.toThrow();
+
+    const color = geometry.getAttribute('color');
+    const expectColor = (vertex: number, rgb: readonly [number, number, number], label: string): void => {
+      expect(color.getX(vertex), `${label} r`).toBeCloseTo(rgb[0]);
+      expect(color.getY(vertex), `${label} g`).toBeCloseTo(rgb[1]);
+      expect(color.getZ(vertex), `${label} b`).toBeCloseTo(rgb[2]);
+    };
+    expectColor(0, GENERATED_SIDE_DEBUG_COLORS.front, 'FRONT');
+    expectColor(4, GENERATED_SIDE_DEBUG_COLORS.back, 'BACK');
+    expectColor(8, GENERATED_SIDE_DEBUG_COLORS.up, 'UP');
+    expectColor(12, GENERATED_SIDE_DEBUG_COLORS.down, 'DOWN');
+    expectColor(16, GENERATED_SIDE_DEBUG_COLORS.left, 'LEFT');
+    expectColor(20, GENERATED_SIDE_DEBUG_COLORS.right, 'RIGHT');
+    expect(originalGeometry.getAttribute('color')).toBeUndefined();
+
+    originalGeometry.dispose();
+    geometry.dispose();
+    materials.forEach((material) => material.dispose());
+  });
+});
+
 describe('ItemVisualFactory', () => {
-  it('builds cached atlas cubes for blocks and real textured thin models for items', () => {
+  it('builds cached atlas cubes for blocks and generated geometry for items', () => {
     const atlasTexture = new THREE.Texture();
     const factory = new ItemVisualFactory({
       atlas: { texture: atlasTexture, tile: () => FULL_TILE },
     });
     const stone = factory.createItemModel('stone');
     const apple = factory.createItemModel('apple');
+    const torch = factory.createItemModel('torch');
+    const arrow = factory.createItemModel('arrow');
     const firstStats = factory.cacheStats;
     const secondStone = factory.createItemModel('stone');
     const secondApple = factory.createItemModel('apple');
+    const secondTorch = factory.createItemModel('torch');
 
     const stoneMesh = stone.children[0] as THREE.Mesh;
     expect(stoneMesh.geometry.getAttribute('position').count).toBe(24);
-    expect((stoneMesh.material as THREE.MeshLambertMaterial).map).toBe(atlasTexture);
+    expect(stoneMesh.geometry.userData.generatedItem).toBeUndefined();
+    expect((stoneMesh.material as THREE.MeshBasicMaterial).map).toBe(atlasTexture);
+    expect(stoneMesh.name).toContain(':block');
+
     const appleMesh = apple.children[0] as THREE.Mesh;
+    expect(appleMesh.name).toContain(':generated');
+    expect(generatedItemInfo(appleMesh.geometry).frontQuads).toBe(1);
     expect(Array.isArray(appleMesh.material)).toBe(false);
-    const appleSurface = appleMesh.material as THREE.MeshLambertMaterial;
-    expect(appleSurface.map).toBeInstanceOf(THREE.Texture);
+    expect((appleMesh.material as THREE.MeshBasicMaterial).map).toBeInstanceOf(THREE.Texture);
+
+    const torchMesh = torch.children[0] as THREE.Mesh;
+    expect(torchMesh.name).toContain(':generated');
+    expect(torchMesh.geometry.userData.generatedItem).toBeDefined();
+    expect((arrow.children[0] as THREE.Mesh).name).toContain(':generated');
+
     expect(factory.cacheStats).toEqual(firstStats);
     expect(secondStone.children[0]).not.toBe(stoneMesh);
     expect((secondStone.children[0] as THREE.Mesh).geometry).toBe(stoneMesh.geometry);
     expect((secondApple.children[0] as THREE.Mesh).geometry).toBe(appleMesh.geometry);
+    expect((secondTorch.children[0] as THREE.Mesh).geometry).toBe(torchMesh.geometry);
 
     factory.dispose();
     atlasTexture.dispose();
-  });
-
-  it('extrudes the opaque pixel silhouette instead of a rectangular item box', () => {
-    const alpha = new Uint8Array([
-      0, 255, 0,
-      255, 255, 255,
-      0, 255, 0,
-    ]);
-    const geometry = createGeneratedItemGeometry({ width: 3, height: 3, alpha });
-    const bounds = geometry.boundingBox!;
-    expect(bounds.max.z - bounds.min.z).toBeCloseTo(0.08);
-    expect(geometry.userData.generatedItem).toMatchObject({ opaquePixels: 5 });
-    expect(geometry.userData.generatedItem.sideSpans).toBeGreaterThan(4);
-    expect(geometry.getAttribute('position').count).toBeGreaterThan(24);
-    geometry.dispose();
   });
 
   it('uses bounded vanilla-like visual copies for dropped stacks', () => {
@@ -144,12 +556,16 @@ describe('FirstPersonRenderer', () => {
     expect(viewmodel.heldCategory).toBe('block');
     viewmodel.setHeldItems('iron_pickaxe');
     expect(viewmodel.heldCategory).toBe('handheld');
+    viewmodel.setHeldItems('stick');
+    expect(viewmodel.heldCategory).toBe('handheld');
+    viewmodel.setHeldItems('torch');
+    expect(viewmodel.heldCategory).toBe('generated');
 
     viewmodel.dispose();
     factory.dispose();
   });
 
-  it('recomputes swing, eat and bow poses from the base transform', () => {
+  it('recomputes eat/swing from the shared pose and swaps bow textures at vanilla pull stages', () => {
     const factory = new ItemVisualFactory();
     const viewmodel = new FirstPersonRenderer(factory);
     viewmodel.setHeldItems('apple');
@@ -165,10 +581,204 @@ describe('FirstPersonRenderer', () => {
     viewmodel.setHeldItems('bow');
     viewmodel.update(0.016, frameState());
     const bow = viewmodel.scene.getObjectByName('item-model:bow')!;
-    const baseBowY = bow.rotation.y;
-    viewmodel.update(0.016, frameState({ bowCharge: 1 }));
-    expect(bow.rotation.y).toBeGreaterThan(baseBowY + 0.4);
+    expect(bow.userData.texturePath).toBe('item/bow');
+    const baseRotationY = bow.rotation.y;
+    viewmodel.update(0.016, frameState({ bowCharge: 0.5 }));
+    expect(bow.userData.texturePath).toBe('item/bow_pulling_0');
+    expect(bow.rotation.y).toBeCloseTo(baseRotationY);
+    viewmodel.update(0.016, frameState({ bowCharge: 0.65 }));
+    expect(bow.userData.texturePath).toBe('item/bow_pulling_1');
+    viewmodel.update(0.016, frameState({ bowCharge: 0.9 }));
+    expect(bow.userData.texturePath).toBe('item/bow_pulling_2');
 
+    viewmodel.dispose();
+    factory.dispose();
+  });
+});
+
+describe('held item QA transform overrides', () => {
+  it('parses held* query params and leaves missing or invalid keys unset', () => {
+    expect(parseHeldItemQaOverride('')).toBeUndefined();
+    expect(parseHeldItemQaOverride('qaItem=iron_pickaxe')).toBeUndefined();
+    expect(parseHeldItemQaOverride('heldScale=abc&heldX=')).toBeUndefined();
+    expect(parseHeldItemQaOverride('heldScale=0.85&heldX=0.5&heldRoll=14')).toEqual({
+      scale: 0.85,
+      x: 0.5,
+      roll: 14,
+    });
+    expect(parseItemQaView('qaItem=iron_pickaxe')).toBe('front');
+    expect(parseItemQaView('qaView=held')).toBe('held');
+    expect(parseItemQaView('qaView=left')).toBe('left');
+    expect(parseItemQaSideDebug('qaItem=iron_pickaxe')).toBe(false);
+    expect(parseItemQaSideDebug('qaSideDebug=1')).toBe(true);
+    const onePointSixTarget = resolveHeldItemTransform(
+      itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand,
+      { scale: 0.578 },
+    );
+    expect(onePointSixTarget.scale[0]).toBeCloseTo(0.578);
+    expect(onePointSixTarget.scale[0]).not.toBeCloseTo(0.578 * 0.68);
+  });
+
+  it('overrides only the first-person sprite pose and keeps ground transforms', () => {
+    const base = itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand;
+    const ground = itemRenderProfile('iron_pickaxe').transforms.ground;
+    const resolved = resolveHeldItemTransform(base, { scale: 1.1, y: -0.7, pitch: 0, yaw: 0, roll: 10 });
+    expect(resolved.scale[0]).toBeCloseTo(1.1);
+    expect(resolved.position[1]).toBeCloseTo(-0.7);
+    expect(resolved.rotation[2]).toBeCloseTo(10 * Math.PI / 180);
+    expect(itemRenderProfile('iron_pickaxe').transforms.ground).toBe(ground);
+    expect(formatHeldItemQaQuery({
+      scale: 0.85, x: 0.5, y: -0.56, z: -0.82, roll: 14, pitch: 0, yaw: 0,
+    })).toContain('heldScale=0.85');
+  });
+
+  it('applies named qaPose candidates without changing production defaults', () => {
+    expect(parseHeldItemPoseCandidate('qaPose=balanced')).toBe('balanced');
+    expect(parseHeldItemPoseCandidate('qaPose=nope')).toBeUndefined();
+    expect(parseItemQaPoseCompare('qaPoseCompare=1')).toBe(true);
+    expect(parseItemQaPoseCompare('qaPoseCompare=true')).toBe(true);
+    expect(parseItemQaPoseCompare('qaItem=coal')).toBe(false);
+    expect(HELD_ITEM_POSE_COMPARE_ITEMS.slice(0, 4)).toEqual([
+      'iron_pickaxe', 'diamond_sword', 'coal', 'arrow',
+    ]);
+    const merged = resolveHeldItemQaFromSearch('qaPose=balanced&heldYaw=22');
+    expect(merged?.scale).toBe(HELD_ITEM_POSE_CANDIDATES.balanced.scale);
+    expect(merged?.yaw).toBe(22);
+    const applied = resolveHeldItemTransform(
+      itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand,
+      HELD_ITEM_POSE_CANDIDATES.subtle,
+    );
+    expect(applied.rotation[0]).toBeCloseTo(4 * Math.PI / 180);
+    expect(applied.rotation[1]).toBeCloseTo(8 * Math.PI / 180);
+    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.rotation[1])
+      .toBeCloseTo(-90 * Math.PI / 180);
+    expect(formatHeldItemCandidateUrl('diamond_sword', 'subtle')).toContain('qaPose=subtle');
+    expect(formatHeldItemCandidateUrl('diamond_sword', 'subtle')).toContain('heldYaw=8');
+    expect(HELD_ITEM_POSE_CANDIDATES.subtle.yaw).toBeLessThan(HELD_ITEM_POSE_CANDIDATES.balanced.yaw);
+    expect(HELD_ITEM_POSE_CANDIDATES.balanced.yaw).toBeLessThan(HELD_ITEM_POSE_CANDIDATES.stronger.yaw);
+    expect(HELD_ITEM_POSE_CANDIDATES.stronger.yaw).toBeLessThan(50);
+    expect(HELD_ITEM_POSE_CANDIDATES.subtle.pitch).toBeGreaterThan(0);
+  });
+
+  it('keeps the idle generated front facing the viewmodel camera', () => {
+    const factory = new ItemVisualFactory();
+    const viewmodel = new FirstPersonRenderer(factory, {
+      qaOverride: { pitch: 0, yaw: 0, roll: 14 },
+    });
+    viewmodel.setHeldItems('diamond_sword');
+    viewmodel.update(0.2, frameState());
+    const dot = viewmodel.measureHeldFrontCameraDot();
+    const front = viewmodel.heldFrontWorldNormal();
+    expect(dot).toBeDefined();
+    expect(dot).toBeCloseTo(1, 5);
+    expect(front?.z).toBeCloseTo(1, 5);
+    expect(Math.abs(front?.x ?? 1)).toBeLessThan(1e-5);
+    expect(Math.abs(front?.y ?? 1)).toBeLessThan(1e-5);
+    expect(viewmodel.root.rotation.x).toBeCloseTo(0);
+    expect(viewmodel.root.rotation.y).toBeCloseTo(0);
+    viewmodel.dispose();
+    factory.dispose();
+  });
+});
+
+describe('held item QA live calibration', () => {
+  const production = (): ReturnType<typeof heldItemQaValuesFromTransform> => (
+    heldItemQaValuesFromTransform(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand)
+  );
+
+  it('parses QA pose params and serializes copy helpers', () => {
+    const values = {
+      scale: 0.84, x: 0.42, y: -0.61, z: -0.79, pitch: 5, yaw: 12, roll: 14,
+    };
+    expect(parseHeldItemQaOverride('heldPitch=5&heldYaw=12&heldRoll=14&heldScale=0.84')).toEqual({
+      pitch: 5, yaw: 12, roll: 14, scale: 0.84,
+    });
+    expect(formatHeldItemPoseBlock(values)).toBe([
+      'heldScale=0.84',
+      'heldX=0.42',
+      'heldY=-0.61',
+      'heldZ=-0.79',
+      'heldPitch=5',
+      'heldYaw=12',
+      'heldRoll=14',
+    ].join('\n'));
+    expect(formatHeldItemCopyQuery('iron_pickaxe', values)).toBe(
+      '?qaItem=iron_pickaxe&qaView=held&pose=idle&heldScale=0.84&heldX=0.42&heldY=-0.61&heldZ=-0.79&heldPitch=5&heldYaw=12&heldRoll=14',
+    );
+    expect(formatHeldItemPoseTs(values)).toContain('position: [0.42, -0.61, -0.79]');
+    expect(formatHeldItemPoseTs(values)).toContain('rotationDeg: [5, 12, 14]');
+    expect(formatHeldItemPoseTs(values)).toContain('scale: 0.84');
+  });
+
+  it('updates live state, resets to production, and does not mutate production pose', () => {
+    const locked = {
+      position: [...FIRST_PERSON_SPRITE_POSE.position],
+      rotationDeg: [...FIRST_PERSON_SPRITE_POSE.rotationDeg],
+      scale: FIRST_PERSON_SPRITE_POSE.scale,
+    };
+    const live = new HeldItemQaLiveState(production());
+    live.setField('yaw', 22);
+    live.nudge('x', 1, 1);
+    expect(live.get().yaw).toBe(22);
+    expect(live.get().x).toBeCloseTo(production().x + 0.01);
+    live.set(HELD_ITEM_POSE_CANDIDATES.balanced);
+    expect(live.get().yaw).toBe(18);
+    live.set(production());
+    expect(live.get().x).toBeCloseTo(0.67);
+    expect(live.get().y).toBeCloseTo(-0.29);
+    expect(live.get().z).toBeCloseTo(-0.70);
+    expect(live.get().pitch).toBeCloseTo(1);
+    expect(live.get().yaw).toBeCloseTo(-90);
+    expect(live.get().roll).toBeCloseTo(34);
+    expect(live.get().scale).toBeCloseTo(0.60);
+    expect(FIRST_PERSON_SPRITE_POSE.position).toEqual(locked.position);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual(locked.rotationDeg);
+    expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(locked.scale);
+    expect(keyboardNudgeMultiplier(true, false)).toBe(10);
+    expect(keyboardNudgeMultiplier(false, true)).toBe(0.1);
+    live.setField('scale', 9);
+    expect(live.get().scale).toBe(3);
+  });
+
+  it('lets URL pose win over QA storage and round-trips the session snapshot', () => {
+    const memory = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => { memory.set(key, value); },
+    };
+    const stored = { ...production(), yaw: 33, x: 0.2 };
+    writeHeldItemQaStorage(stored, storage);
+    expect(memory.get(HELD_ITEM_QA_STORAGE_KEY)).toBe(serializeHeldItemQaStorage(stored));
+    expect(parseHeldItemQaStorage(memory.get(HELD_ITEM_QA_STORAGE_KEY) ?? null)?.yaw).toBe(33);
+    const fromStorage = resolveHeldItemQaLiveInitial(production(), 'qaView=held', storage);
+    expect(fromStorage.yaw).toBe(33);
+    const fromUrl = resolveHeldItemQaLiveInitial(production(), 'qaPose=subtle', storage);
+    expect(fromUrl.yaw).toBe(HELD_ITEM_POSE_CANDIDATES.subtle.yaw);
+    expect(fromUrl.yaw).not.toBe(33);
+  });
+
+  it('keeps the live pose when the held item changes', () => {
+    const live = new HeldItemQaLiveState({ ...production(), x: 0.42, yaw: 22 });
+    const factory = new ItemVisualFactory();
+    const viewmodel = new FirstPersonRenderer(factory, {
+      qaOverride: live.get(),
+      freezeIdleMotion: true,
+    });
+    viewmodel.setHeldItems('iron_pickaxe');
+    viewmodel.update(0.2, frameState());
+    const pickaxeX = viewmodel.captureHeldItemMatrixDebug()?.itemLocal.elements[12];
+    viewmodel.setHeldItems('diamond_sword');
+    viewmodel.update(0.2, frameState());
+    const swordDebug = viewmodel.captureHeldItemMatrixDebug();
+    expect(swordDebug?.itemId).toBe('diamond_sword');
+    expect(swordDebug?.itemLocal.elements[12]).toBeCloseTo(pickaxeX ?? Number.NaN);
+    live.setField('x', 0.2);
+    viewmodel.setHeldQaOverride(live.get());
+    viewmodel.update(0.016, frameState());
+    expect(viewmodel.captureHeldItemMatrixDebug()?.itemLocal.elements[12]).toBeCloseTo(0.2);
+    expect(live.get().yaw).toBe(22);
+    expect(itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand.position[0]).toBe(0.67);
+    expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
     viewmodel.dispose();
     factory.dispose();
   });

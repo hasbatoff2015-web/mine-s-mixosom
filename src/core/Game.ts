@@ -5,8 +5,14 @@ import {
   canHarvestBlock,
   doorFacingFromYaw,
   getBlockDefinition,
+  isPressurePlateBlock,
+  isSlabBlock,
+  isStairBlock,
+  ladderPlacementFromHit,
   miningProgressPerTick,
   miningToolFromItemId,
+  slabTypeFromHit,
+  stairPlacementFromHit,
   torchPlacementFromHit,
   type BlockAttachment,
   type HorizontalFacing,
@@ -38,12 +44,18 @@ import {
   type SerializedMob,
 } from '../entities';
 import { InputManager } from '../input/InputManager';
+import {
+  shouldOpenPauseOnUnlock,
+  shouldShowPointerLockFallback,
+  type PointerUnlockReason,
+} from '../input/pointerLock';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
-import { ITEMS, ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
+import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { PlayerController } from '../player';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
+import { ItemIconRenderer } from '../rendering/ItemIconRenderer';
 import { applyImmediateRenderLook } from '../rendering/cameraLook';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
@@ -53,6 +65,14 @@ import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types
 import { SurvivalSystem } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { VoxelWorld, type VoxelHit } from '../world/World';
+import { blockCollisionBoxes } from '../world/collision';
+import {
+  defaultSlabType,
+  defaultStairFacing,
+  defaultStairHalf,
+  slabLocalBoxes,
+  stairLocalBoxes,
+} from '../rendering/specialBlockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 
@@ -121,6 +141,7 @@ export class Game {
   };
   private atlas?: TextureAtlas;
   private itemVisuals?: ItemVisualFactory;
+  private itemIcons?: ItemIconRenderer;
   private arrowVisuals?: ArrowVisualFactory;
   private firstPerson?: FirstPersonRenderer;
   private session?: GameSession;
@@ -169,6 +190,9 @@ export class Game {
       togglePause: () => this.togglePause(),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
+      onPointerLockAcquired: () => this.ui.hidePointerLockFallback(),
+      onPointerLockReleased: (reason) => this.handlePointerUnlock(reason),
+      onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
     });
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.bindLifecycle();
@@ -192,6 +216,9 @@ export class Game {
     ]);
     this.itemVisuals = new ItemVisualFactory({ atlas: this.atlas });
     await this.itemVisuals.preload();
+    this.itemIcons = new ItemIconRenderer(this.renderer, this.itemVisuals);
+    this.itemIcons.bake();
+    this.ui.setItemIconResolver((itemId) => this.itemIcons!.url(itemId));
     this.arrowVisuals = new ArrowVisualFactory();
     this.firstPerson = new FirstPersonRenderer(this.itemVisuals);
     this.resize();
@@ -204,6 +231,7 @@ export class Game {
     this.disposeSession();
     this.firstPerson?.dispose();
     this.itemVisuals?.dispose();
+    this.itemIcons?.dispose();
     this.arrowVisuals?.dispose();
     this.atlas?.dispose();
     this.renderer.dispose();
@@ -427,29 +455,71 @@ export class Game {
 
   private enterPlaying(): void {
     this.ui.closeInventory();
+    this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     this.lifecycle.setState('PLAYING');
     this.previousTime = performance.now();
     this.accumulator = 0;
   }
 
+  /** Close the inventory modal and restore desktop mouse-look. */
+  private closeInventoryAndResumeLook(): void {
+    this.ui.closeInventory();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  /** Resume from pause/settings and restore desktop mouse-look. Opening pause does not use this. */
+  private resumeFromPause(): void {
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openPauseMenu(): void {
+    this.ui.hidePointerLockFallback();
+    this.lifecycle.setState('PAUSED');
+    void this.saveSession();
+    this.ui.showPause({
+      resume: () => this.resumeFromPause(),
+      settings: () => {
+        this.screenBeforeSettings = 'pause';
+        this.showSettings();
+      },
+      saveAndQuit: () => void this.saveAndQuit(),
+    });
+  }
+
+  private handlePointerUnlock(reason: PointerUnlockReason): void {
+    if (!shouldOpenPauseOnUnlock(reason, this.lifecycle.state === 'PLAYING', this.ui.isInventoryOpen())) return;
+    this.openPauseMenu();
+  }
+
+  private showPointerLockFallbackIfNeeded(): void {
+    if (!shouldShowPointerLockFallback({
+      playing: this.lifecycle.state === 'PLAYING',
+      inventoryOpen: this.ui.isInventoryOpen(),
+      coarsePointer: isCoarsePointer(),
+      lockedToCanvas: this.input.isPointerLocked(),
+      lastRequestFailed: true,
+    })) return;
+    this.ui.showPointerLockFallback(() => this.input.tryRequestPointerLock());
+  }
+
   private toggleInventory(): void {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
     if (this.ui.isInventoryOpen()) {
-      this.ui.closeInventory();
-      this.enterPlaying();
+      this.closeInventoryAndResumeLook();
       return;
     }
     this.lifecycle.setState('PAUSED');
+    this.ui.hidePointerLockFallback();
+    this.input.releasePointerLock();
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
       kind: 'inventory',
-      onClose: () => {
-        this.ui.closeInventory();
-        this.enterPlaying();
-      },
+      onClose: () => this.closeInventoryAndResumeLook(),
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
     });
@@ -458,6 +528,8 @@ export class Game {
   private openBlockInventory(kind: 'crafting-table' | 'chest' | 'furnace', hit: VoxelHit): void {
     const session = this.session!;
     this.lifecycle.setState('PAUSED');
+    this.ui.hidePointerLockFallback();
+    this.input.releasePointerLock();
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
@@ -465,8 +537,7 @@ export class Game {
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
       onClose: () => {
-        this.ui.closeInventory();
-        this.enterPlaying();
+        this.closeInventoryAndResumeLook();
         void this.saveSession();
       },
       onDrop: (stack) => this.spawnDroppedStack(stack),
@@ -477,23 +548,13 @@ export class Game {
   private togglePause(): void {
     if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING') return;
     if (this.ui.isInventoryOpen()) {
-      this.ui.closeInventory();
-      this.enterPlaying();
+      this.closeInventoryAndResumeLook();
       return;
     }
     if (this.lifecycle.state === 'PLAYING') {
-      this.lifecycle.setState('PAUSED');
-      document.exitPointerLock?.();
-      void this.saveSession();
-      this.ui.showPause({
-        resume: () => this.enterPlaying(),
-        settings: () => {
-          this.screenBeforeSettings = 'pause';
-          this.showSettings();
-        },
-        saveAndQuit: () => void this.saveAndQuit(),
-      });
-    } else if (this.lifecycle.state === 'PAUSED') this.enterPlaying();
+      this.input.releasePointerLock();
+      this.openPauseMenu();
+    } else if (this.lifecycle.state === 'PAUSED') this.resumeFromPause();
   }
 
   private showSettings(): void {
@@ -507,7 +568,7 @@ export class Game {
     }, () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
-          resume: () => this.enterPlaying(),
+          resume: () => this.resumeFromPause(),
           settings: () => this.showSettings(),
           saveAndQuit: () => void this.saveAndQuit(),
         });
@@ -709,6 +770,7 @@ export class Game {
             onGround: session.player.onGround,
             sprinting: session.player.sprinting,
             inWater: session.player.inWater,
+            onLadder: session.player.onLadder,
           },
           attackerSprinting: session.player.sprinting,
           attackerYaw: session.player.yaw,
@@ -770,7 +832,12 @@ export class Game {
       const drop = definition.drop;
       if (drop && harvestable) {
         const count = drop.count ?? (drop.min !== undefined ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
-        this.spawnDroppedStack(createItemStack(drop.item, count), new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5));
+        const slabExtra = isSlabBlock(hit.block)
+          && defaultSlabType(session.world.getBlockState(hit.x, hit.y, hit.z)) === 'double' ? count : 0;
+        this.spawnDroppedStack(
+          createItemStack(drop.item, count + slabExtra),
+          new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+        );
       }
       if (toolStack && (item?.kind === 'tool' || item?.kind === 'weapon')) {
         session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
@@ -844,11 +911,13 @@ export class Game {
       return;
     }
     if (!hit || !stack || item?.placesBlockId === undefined) return;
+    if (this.tryMergeSlab(hit, item.placesBlockId)) return;
     const hitDefinition = getBlockDefinition(hit.block);
     const replaceHit = hitDefinition.replaceable === true;
     const x = replaceHit ? hit.x : hit.x + hit.normal.x;
     const y = replaceHit ? hit.y : hit.y + hit.normal.y;
     const z = replaceHit ? hit.z : hit.z + hit.normal.z;
+    if (this.tryMergeSlabAt(x, y, z, item.placesBlockId)) return;
     const existing = getBlockDefinition(session.world.getBlock(x, y, z));
     if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
     const placed = getBlockDefinition(item.placesBlockId);
@@ -874,6 +943,62 @@ export class Game {
       session.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
       return;
     }
+    if (item.placesBlockId === BlockId.Ladder) {
+      const orientation = ladderPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z);
+      if (!orientation) {
+        this.ui.toast('Лестницу можно поставить только на боковую сторону блока');
+        return;
+      }
+      if (replaceHit || !hitDefinition.solid) {
+        this.ui.toast('Лестнице нужна сплошная боковая опора');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
+      session.world.setBlockState(x, y, z, { facing: orientation.facing });
+      return;
+    }
+    if (isPressurePlateBlock(item.placesBlockId)) {
+      const support = getBlockDefinition(session.world.getBlock(x, y - 1, z, false));
+      if (!support.solid) {
+        this.ui.toast('Нажимную пластину можно поставить только сверху блока');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      return;
+    }
+    if (isSlabBlock(item.placesBlockId)) {
+      const localY = hit.point ? hit.point.y - hit.y : 0.25;
+      const slabType = slabTypeFromHit(hit.normal.x, hit.normal.y, hit.normal.z, localY);
+      const boxes = slabLocalBoxes(slabType).map((box) => ({
+        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
+        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
+      }));
+      if (session.player.intersectsCollisionBoxes(boxes)) {
+        this.ui.toast('Нельзя поставить блок внутри игрока');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      session.world.setBlockState(x, y, z, { slabType });
+      return;
+    }
+    if (isStairBlock(item.placesBlockId)) {
+      const view = session.player.viewDirection();
+      const localY = hit.point ? hit.point.y - hit.y : 0.25;
+      const placement = stairPlacementFromHit(
+        hit.normal.x, hit.normal.y, hit.normal.z, localY, view.x, view.z,
+      );
+      const boxes = stairLocalBoxes(placement.facing, placement.stairHalf, 'straight').map((box) => ({
+        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
+        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
+      }));
+      if (session.player.intersectsCollisionBoxes(boxes)) {
+        this.ui.toast('Нельзя поставить блок внутри игрока');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      session.world.setBlockState(x, y, z, { facing: placement.facing, stairHalf: placement.stairHalf });
+      return;
+    }
     if (placed.solid && session.player.intersectsBlock(x, y, z)) {
       this.ui.toast('Нельзя поставить блок внутри игрока');
       return;
@@ -888,6 +1013,42 @@ export class Game {
       this.firstPerson?.swing();
       if (session.summary.mode === 'survival') this.consumeSelected(1);
     }
+  }
+
+  private tryMergeSlab(hit: VoxelHit, placing: BlockId): boolean {
+    if (!isSlabBlock(placing) || hit.block !== placing) return false;
+    const existing = defaultSlabType(this.session!.world.getBlockState(hit.x, hit.y, hit.z));
+    if (existing === 'double') return false;
+    const ny = hit.normal.y;
+    const merge = (existing === 'bottom' && ny > 0.5) || (existing === 'top' && ny < -0.5);
+    if (!merge) return false;
+    return this.mergeSlab(hit.x, hit.y, hit.z);
+  }
+
+  private tryMergeSlabAt(x: number, y: number, z: number, placing: BlockId): boolean {
+    const session = this.session!;
+    const dest = session.world.getBlock(x, y, z, false);
+    if (!isSlabBlock(placing) || dest !== placing) return false;
+    if (defaultSlabType(session.world.getBlockState(x, y, z)) === 'double') return false;
+    return this.mergeSlab(x, y, z);
+  }
+
+  private mergeSlab(x: number, y: number, z: number): boolean {
+    const session = this.session!;
+    const boxes = slabLocalBoxes('double').map((box) => ({
+      minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
+      maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
+    }));
+    if (session.player.intersectsCollisionBoxes(boxes)) {
+      this.ui.toast('Нельзя поставить блок внутри игрока');
+      return true;
+    }
+    session.world.setBlockState(x, y, z, { slabType: 'double' });
+    session.redstone.notifyBlockChanged(x, y, z);
+    this.audio.playTone(230, 0.04, 0.025);
+    this.firstPerson?.swing();
+    if (session.summary.mode === 'survival') this.consumeSelected(1);
+    return true;
   }
 
   private leverPlacement(hit: VoxelHit): { attachment: BlockAttachment; facing: HorizontalFacing } {
@@ -1040,23 +1201,31 @@ export class Game {
   private updateRedstone(): void {
     const session = this.session!;
     const occupied = new Set<string>();
-    const positions: Readonly<THREE.Vector3>[] = [
+    const living: Readonly<THREE.Vector3>[] = [
       session.player.position,
       ...session.mobs.entities.map((mob) => mob.position),
-      ...session.drops.entities.map((drop) => drop.position),
     ];
-    for (const position of positions) {
-      const x = Math.floor(position.x);
-      const z = Math.floor(position.z);
-      const feetY = Math.floor(position.y + 0.05);
-      for (const y of [feetY, feetY - 1]) {
-        if (session.world.getBlock(x, y, z) !== BlockId.OakPressurePlate) continue;
-        const key = blockKey(x, y, z);
-        if (occupied.has(key)) continue;
-        occupied.add(key);
-        session.redstone.setPressurePlateOccupied(x, y, z, true);
+    const items: Readonly<THREE.Vector3>[] = session.drops.entities.map((drop) => drop.position);
+    const occupy = (positions: readonly Readonly<THREE.Vector3>[], livingOnly: boolean): void => {
+      void livingOnly;
+      for (const position of positions) {
+        const x = Math.floor(position.x);
+        const z = Math.floor(position.z);
+        const feetY = Math.floor(position.y + 0.05);
+        for (const y of [feetY, feetY - 1]) {
+          const block = session.world.getBlock(x, y, z);
+          if (!isPressurePlateBlock(block)) continue;
+          const trigger = getBlockDefinition(block).pressurePlateTrigger ?? 'all';
+          if (trigger === 'living' && livingOnly === false) continue;
+          const key = blockKey(x, y, z);
+          if (occupied.has(key)) continue;
+          occupied.add(key);
+          session.redstone.setPressurePlateOccupied(x, y, z, true);
+        }
       }
-    }
+    };
+    occupy(living, true);
+    occupy(items, false);
     for (const key of session.activePressurePlates) {
       if (occupied.has(key)) continue;
       const [x, y, z] = key.split(',').map(Number) as [number, number, number];
@@ -1134,6 +1303,7 @@ export class Game {
           block: block.previous,
           distance: 0,
           normal: new THREE.Vector3(),
+          point: new THREE.Vector3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
         });
       },
       onChainedTnt: (tnt) => {
@@ -1232,7 +1402,8 @@ export class Game {
     if (!session || this.deathShown) return;
     this.deathShown = true;
     this.lifecycle.setState('DEAD');
-    document.exitPointerLock?.();
+    this.ui.hidePointerLockFallback();
+    this.input.releasePointerLock();
     if (session.summary.mode === 'survival') {
       for (const stack of session.inventory.slots) if (stack) this.spawnDroppedStack(stack);
       for (const stack of Object.values(session.inventory.armor)) if (stack) this.spawnDroppedStack(stack);
@@ -1320,6 +1491,7 @@ export class Game {
     const center = session.player.position;
     this.sun.position.set(center.x + Math.cos(phase) * 70, center.y + sunHeight * 70, center.z + 15);
     this.sunlight.position.copy(this.sun.position);
+    session.worldRenderer.setDaylight(daylight);
     this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
@@ -1401,9 +1573,6 @@ export class Game {
     window.addEventListener('pagehide', () => void this.saveSession());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveSession();
-    });
-    document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement === null && this.lifecycle.state === 'PLAYING' && !isCoarsePointer()) this.togglePause();
     });
     window.addEventListener('keydown', (event) => {
       if (event.code === 'F3' && !event.repeat) {

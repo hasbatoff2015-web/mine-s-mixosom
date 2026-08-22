@@ -1,9 +1,17 @@
 import * as THREE from 'three';
+import { getBlockDefinition } from '../blocks';
 import { chunkKey } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
+import {
+  createSelectionGeometry,
+  resolveStairShape,
+  selectionBoxesForBlock,
+  selectionShapeKey,
+} from './specialBlockGeometry';
 import type { TextureAtlas } from './TextureAtlas';
+import { createWorldChunkMaterial, setWorldDaylight } from './worldLighting';
 
 interface ChunkVisual {
   group: THREE.Group;
@@ -15,11 +23,14 @@ export class WorldRenderer {
   readonly selection: THREE.LineSegments;
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
-  private readonly opaqueMaterial: THREE.MeshLambertMaterial;
-  private readonly cutoutMaterial: THREE.MeshLambertMaterial;
-  private readonly vegetationMaterial: THREE.MeshLambertMaterial;
-  private readonly glassMaterial: THREE.MeshLambertMaterial;
-  private readonly waterMaterial: THREE.MeshLambertMaterial;
+  private readonly resolveState: BlockRenderStateResolver;
+  private readonly opaqueMaterial: THREE.MeshBasicMaterial;
+  private readonly cutoutMaterial: THREE.MeshBasicMaterial;
+  private readonly vegetationMaterial: THREE.MeshBasicMaterial;
+  private readonly glassMaterial: THREE.MeshBasicMaterial;
+  private readonly waterMaterial: THREE.MeshBasicMaterial;
+  private readonly selectionGeometries = new Map<string, THREE.BufferGeometry>();
+  private selectionKey = '';
   meshSamples = 0;
   meshTotalMs = 0;
   meshMaximumMs = 0;
@@ -27,51 +38,51 @@ export class WorldRenderer {
   constructor(
     private readonly world: VoxelWorld,
     atlas: TextureAtlas,
-    resolveState?: BlockRenderStateResolver,
+    resolveState: BlockRenderStateResolver = () => undefined,
   ) {
     this.group.name = 'voxel-world';
+    this.resolveState = resolveState;
     this.mesher = new ChunkMesher(atlas, resolveState);
-    this.opaqueMaterial = new THREE.MeshLambertMaterial({ map: atlas.texture, vertexColors: true });
-    this.cutoutMaterial = new THREE.MeshLambertMaterial({
-      map: atlas.texture,
-      vertexColors: true,
+    this.opaqueMaterial = createWorldChunkMaterial(atlas);
+    this.cutoutMaterial = createWorldChunkMaterial(atlas, {
       alphaTest: 0.42,
       transparent: false,
       depthWrite: true,
       depthTest: true,
       side: THREE.DoubleSide,
     });
-    this.vegetationMaterial = new THREE.MeshLambertMaterial({
-      map: atlas.texture,
-      vertexColors: true,
+    this.vegetationMaterial = createWorldChunkMaterial(atlas, {
       alphaTest: 0.42,
       transparent: false,
       depthWrite: true,
       depthTest: true,
       side: THREE.FrontSide,
     });
-    this.glassMaterial = new THREE.MeshLambertMaterial({
-      map: atlas.texture,
-      vertexColors: true,
+    this.glassMaterial = createWorldChunkMaterial(atlas, {
       transparent: true,
       opacity: 0.52,
       alphaTest: 0.03,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    this.waterMaterial = new THREE.MeshLambertMaterial({
-      map: atlas.texture,
-      vertexColors: true,
+    this.waterMaterial = createWorldChunkMaterial(atlas, {
       transparent: true,
       opacity: 0.7,
       alphaTest: 0.02,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const selectionGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.008, 1.008, 1.008));
-    this.selection = new THREE.LineSegments(selectionGeometry, new THREE.LineBasicMaterial({ color: 0xfff0a8, transparent: true, opacity: 0.95 }));
+    const cubeKey = selectionShapeKey({ renderShape: 'cube' }, undefined);
+    const cubeGeometry = createSelectionGeometry(selectionBoxesForBlock({ renderShape: 'cube' }));
+    this.selectionGeometries.set(cubeKey, cubeGeometry);
+    this.selectionKey = cubeKey;
+    this.selection = new THREE.LineSegments(
+      cubeGeometry,
+      new THREE.LineBasicMaterial({ color: 0xfff0a8, transparent: true, opacity: 0.95 }),
+    );
     this.selection.visible = false;
     this.selection.renderOrder = 10;
+    this.selection.matrixAutoUpdate = false;
     this.group.add(this.selection);
   }
 
@@ -137,9 +148,35 @@ export class WorldRenderer {
     for (const key of keys) this.removeChunk(key);
   }
 
+  setDaylight(daylight: number): void {
+    setWorldDaylight(daylight);
+  }
+
   setTarget(hit?: VoxelHit): void {
-    this.selection.visible = hit !== undefined;
-    if (hit) this.selection.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+    if (!hit) {
+      this.selection.visible = false;
+      return;
+    }
+    const definition = getBlockDefinition(hit.block);
+    const state = this.resolveState(hit.x, hit.y, hit.z);
+    const stairShape = definition.renderShape === 'stairs'
+      ? resolveStairShape(this.world, hit.x, hit.y, hit.z, state)
+      : '';
+    const key = selectionShapeKey(definition, state, stairShape);
+    if (key !== this.selectionKey) {
+      let geometry = this.selectionGeometries.get(key);
+      if (!geometry) {
+        geometry = createSelectionGeometry(
+          selectionBoxesForBlock(definition, state, 0, 0, 0, undefined, stairShape || 'straight'),
+        );
+        this.selectionGeometries.set(key, geometry);
+      }
+      this.selection.geometry = geometry;
+      this.selectionKey = key;
+    }
+    this.selection.position.set(hit.x, hit.y, hit.z);
+    this.selection.updateMatrix();
+    this.selection.visible = true;
   }
 
   get faceCount(): number {
@@ -158,8 +195,10 @@ export class WorldRenderer {
 
   dispose(): void {
     for (const key of [...this.chunks.keys()]) this.removeChunk(key);
-    this.selection.geometry.dispose();
+    this.group.remove(this.selection);
     (this.selection.material as THREE.Material).dispose();
+    for (const geometry of this.selectionGeometries.values()) geometry.dispose();
+    this.selectionGeometries.clear();
     this.opaqueMaterial.dispose();
     this.cutoutMaterial.dispose();
     this.vegetationMaterial.dispose();

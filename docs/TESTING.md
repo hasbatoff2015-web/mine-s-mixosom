@@ -50,24 +50,23 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-19**:
+Срез локального запуска **2026-08-22**:
 
 ```text
 tsc --noEmit: PASS
-Vitest:       19 test files, 108 tests, 108 passed
-Vite build:   PASS
-Size/archive: PASS, 0.92 MiB uncompressed, 165 files
-Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
-Main assets:  JS 693.81 kB / 184.82 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Vitest:       27 test files, 219 tests, 219 passed
+Vite build:   82 modules PASS
+Size/archive: PASS, 0.97 MiB uncompressed, 165 files
+Main assets:  JS 764.33 kB / 207.54 kB gzip; CSS 13.26 kB / 3.91 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
 | --- | ---: | --- |
-| `tests/block-registry.test.ts` | 10 | Registry invariants, independent render layers, special shapes и replaceable cross-plant definitions |
+| `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
-| `tests/crafting.test.ts` | 8 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs, smelting/fuel data |
+| `tests/crafting.test.ts` | 9 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
 | `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, shield timing/reduction, axe chance, bow curve, armor formula, survival drowning/food/death/respawn |
-| `tests/player-physics.test.ts` | 4 | Floor/wall sliding, fall damage, slab collision/step-up и takeoff-only jump event |
+| `tests/player-physics.test.ts` | 5 | Floor/wall sliding, fall damage, slab collision/step-up, stair generic step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
 | `tests/world-generation.test.ts` | 4 | Negative chunk coordinates, seed determinism, five ore vertical bands/rarity и deterministic biome vegetation across real chunks |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
@@ -75,13 +74,20 @@ Main assets:  JS 693.81 kB / 184.82 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
-| `tests/item-rendering.test.ts` | 8 | Render categories/presets, texture coverage, cube/silhouette generated geometry, cache reuse, stack-copy thresholds, empty-hand visibility и pose reset |
+| `tests/item-rendering.test.ts` | 26 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera |
+| `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
+| `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
+| `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
+| `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
+| `tests/pointer-lock.test.ts` | 11 | Unlock reasons (escape/programmatic/focus-lost), Esc pause without duplicate exit, Continue one request, failed request → fallback, no auto-retry |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
 | `tests/lighting-physics-interaction.test.ts` | 8 | Block light, mob step-up, falling sand, primed TNT gravity, torch/button/door placement, door collision/geometry |
 | `tests/vegetation-lighting.test.ts` | 8 | Vegetation lighting profile, grass-compatible tint, upward normals, FrontSide cutout, torch block light |
 | `tests/explosion-performance.test.ts` | 5 | Batch relight dedupe, redstone notify dedupe, chain TNT once, 32-job budget drain, single TNT in one slice |
+| `tests/lighting-torch-selection.test.ts` | 11 | Bottom-face torch lighting, cave darkness floor, warm block-light tint, wall torch attachment/size, shape-aware selection, cave-opening sky interpolation |
+| `tests/entity-lighting.test.ts` | 4 | Daylight mob brightness, unlit cave darkness, warm torch tint, feet/torso/head averaging |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -146,7 +152,27 @@ Feel/polish pass повторно проверен во встроенном б�
 
 - в реальном Creative-мире пустой main hand показывает компактную textured Steve arm, а apple/feather/coal/stick/sword скрывают отдельную руку и сохраняют читаемый контур;
 - `?qaItem=` подтвердил одинаковую cached generated geometry для held/dropped item, глубину и stack copies; stone остаётся настоящим atlas cube;
-- bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, позу, movement slowdown и плавный FOV zoom;
+- `?qaItem=iron_pickaxe` — isolated inspect (front, центр, без bob/swing, orthographic); overlay печатает spans/UV/depth;
+- `?qaItem=iron_pickaxe&qaSideDebug=1` — textured front, dim back, стороны UP red / DOWN green / LEFT blue / RIGHT yellow;
+- `?qaItem=iron_pickaxe&qaView=left` / `qaView=right` / `qaView=back` — лёгкий угол и тыл;
+- `?qaItem=iron_pickaxe&qaView=held&pose=idle` — first-person; overlay печатает camera FOV/aspect, matrices, axis stages, silhouette landmarks `screen01` и F2 2048×1152 comparison (proposed vanilla не applied; comparison camera фиксирована на F2 16:9 FOV70). Residual idle bob заморожен. `held*` knobs работают только здесь;
+- `?qaPose=subtle|balanced|stronger` — QA candidate shared pose (не production). Можно сузить отдельным `held*`;
+- `?qaPoseCompare=1&qaView=held&pose=idle&qaPose=balanced` — цикл 1–8 / `[` `]` по pickaxe, sword, coal, arrow, stick, apple, bow, torch без правки query;
+- `?qaItem=iron_pickaxe&qaView=held&pose=idle` — live pose panel справа: sliders/numeric для X/Y/Z/Pitch/Yaw/Roll/Scale, RESET production (`0.67, -0.29, -0.70` / `1, -90, 34` / `0.60`) / subtle/balanced/stronger, COPY POSE/QUERY/TS. Смена предмета pose не сбрасывает. Только DEV;
+- `?qaItem=iron_pickaxe&qaView=held&pose=idle&heldScale=0.60&heldX=0.67&heldY=-0.29&heldZ=-0.70&heldPitch=1&heldYaw=-90&heldRoll=34` — `held*` knobs работают только при `qaView=held`;
+- bow standby/partial/full используют локальные `bow_pulling_0/1/2` textures, vanilla pull thresholds `0.65/0.9`, movement slowdown и плавный FOV zoom. Mesh лука не изгибается.
+
+Minecraft generated-item geometry audit (локальный visual QA всё ещё нужен):
+
+- `diamond_sword`, `iron_pickaxe`, `stick` — handheld sprite, видна FRONT texture, тонкий depth; `iron_pickaxe.png` 32×32 даёт 104 merged side spans (много 1-texel на диагонали — это контур, не баг merge);
+- `coal`, `apple`, `arrow` — generated sprite, не voxel cubes и не projectile mesh;
+- `torch` — held generated sprite, placed world cuboid без изменений;
+- `lever` — held generated sprite from `block/lever.png` (vanilla 1.21.8 item JSON); placed lever base+handle;
+- `ladder` — held generated sprite from `block/ladder.png`; placed thin plane on N/S/E/W support;
+- `oak_door` — held generated composite of upper+lower block textures; placed 3/16 cuboid with half/hinge UV;
+- `bow` — texture stages на том же generated mesh;
+- `stone` — atlas cube control.
+- `?qaItem=lever&qaView=held`, `?qaItem=ladder&qaView=held`, `?qaItem=oak_door&qaView=held`.
 - `?qaArrow=1` показал три real-texture arrow visuals на разных траекториях с общей physics update;
 - mob QA спереди/сзади/сбоку подтвердил длинные base sheep legs под коротким wool overlay, readable two-sided skeleton ribs и чистый zombie headwear cutout;
 - `?qaTime=night` ставит факел, соседние plants и каменный навес, чтобы был виден block light.
@@ -193,9 +219,9 @@ Browser viewport matrix закрывает layout baseline, но не замен
 
 1. loading → main menu, нет горизонтального/вертикального scroll;
 2. create/list/load/delete world;
-3. pointer lock acquire/release, blur и `Esc`;
+3. pointer lock acquire/release, blur и `Esc`; закрытие inventory по E/Close и pause «Продолжить» сразу возвращают lock без повторного click по canvas; Esc из gameplay открывает pause с видимым курсором;
 4. WASD, jump, Shift sprint, C sneak, edge protection, step/slab collision;
-5. mine/place, 1.9-like break times, thin torch/button/door, запрет placement внутри игрока;
+5. mine/place, 1.9-like break times, thin torch/button/door/ladder, stairs/slabs (half/double, facing, top stairs), запрет placement внутри игрока;
 6. hotbar `1–9` и wheel, Q-drop/pickup;
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
 8. chest/furnace open/close/save, block destruction drops contents;
@@ -206,6 +232,50 @@ Browser viewport matrix закрывает layout baseline, но не замен
 13. F3 overlay, 3D shield/viewmodel, settings FOV/sensitivity/render distance/volume;
 14. pause/background/resume without hidden simulation;
 15. save/quit/reload and world/redstone/block-state/falling-block comparison.
+
+## Stairs / slabs / special icons visual QA
+
+Последний pass перед merge ветки `cursor/minecraft-item-pipeline-rework-935a`. Полный checklist также в `docs/reports/2026-08-22_stairs-slabs-special-icons-pass.md`.
+
+Stairs:
+
+- oak + birch/spruce, cobblestone, bricks, stone bricks;
+- facing N/S/E/W, bottom и top half;
+- серия вверх и вниз обычным WASD (не climb);
+- боковое столкновение, jump, corner join;
+- `stone_stairs` нет в Creative/крафте.
+
+Slabs:
+
+- bottom / top / double merge одинакового материала;
+- разные материалы не merge;
+- стоять на 0.5, проходить под top slab;
+- held и icon — half, не full cube.
+
+Pressure plates:
+
+- oak и stone: thin model, placement на верхнюю опору, icon, activation.
+
+Icons:
+
+- Creative / survival inventory / hotbar;
+- special 3D icons максимально крупные в slot (auto-fit, не мелкий padding);
+- stairs/slabs/button/plates не почти чёрные: oak/birch/brick/stone цвета как у texture/held;
+- `stone_button` не stone cube;
+- ordinary cubes без regression;
+- held generated pose без изменений.
+
+Creative scroll:
+
+- прокрутить каталог вниз, взять/положить/shift-click — scroll не прыгает наверх.
+
+Ladder:
+
+- стена 5–10 блоков, лестницы вверх;
+- лицом + W вверх; спиной + S вверх;
+- no input — медленно вниз; C sneak — удержание;
+- от стены — отцепиться; падение на ladder — clamp;
+- верх/низ; N/S/E/W; stairs рядом не дают climb.
 
 ## Mobile/touch manual matrix
 

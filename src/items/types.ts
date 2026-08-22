@@ -16,6 +16,11 @@ export interface BaseItemDefinition {
   readonly tags?: readonly string[];
   /** Optional block placed by using the item. */
   readonly placesBlockId?: BlockId;
+  /**
+   * Hidden from Creative catalog, recipes and other obtainable UI.
+   * The registry entry may remain for combat/tests/old saves.
+   */
+  readonly hiddenFromGameplay?: boolean;
 }
 
 export interface BlockItemDefinition extends BaseItemDefinition {

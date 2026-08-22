@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import {
   BlockId,
   getBlockDefinition,
+  isPressurePlateBlock,
   type BlockAttachment,
   type BlockRenderState,
   type HorizontalFacing,
 } from '../blocks';
 import { blockKey } from '../core/constants';
+import { bindEntityLightReceiver, createEntityMaterial, applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { moveVoxelBody } from '../entities/voxelPhysics';
 import type {
@@ -95,7 +97,7 @@ export class RedstoneSystem {
   private dirtyHead = 0;
   private tntIdCounter = 0;
   private tntGeometry?: THREE.BoxGeometry;
-  private tntMaterial?: THREE.MeshLambertMaterial;
+  private tntMaterial?: THREE.MeshBasicMaterial;
   private disposed = false;
 
   constructor(
@@ -305,7 +307,7 @@ export class RedstoneSystem {
 
   setPressurePlate(x: number, y: number, z: number, active: boolean): boolean {
     this.assertActive();
-    if (this.world.getBlock(x, y, z) !== BlockId.OakPressurePlate) return false;
+    if (!isPressurePlateBlock(this.world.getBlock(x, y, z))) return false;
     const source = this.ensureSource(x, y, z, 'pressure_plate');
     if (!source) return false;
     if (source.active !== active) {
@@ -497,6 +499,15 @@ export class RedstoneSystem {
         entity.visual.scale.setScalar(pulse);
         entity.visual.rotation.y = elapsed * 0.75;
         entity.visual.position.set(entity.position.x, entity.position.y + 0.49, entity.position.z);
+        applySampledEntityLight(
+          entity.visual,
+          this.world,
+          entity.position.x,
+          entity.position.y,
+          entity.position.z,
+          0.98,
+          worldDaylightUniform.value,
+        );
       }
     }
   }
@@ -651,7 +662,8 @@ export class RedstoneSystem {
       case BlockId.RedstoneTorch: return 'torch';
       case BlockId.Lever: return 'lever';
       case BlockId.StoneButton: return 'button';
-      case BlockId.OakPressurePlate: return 'pressure_plate';
+      case BlockId.OakPressurePlate:
+      case BlockId.StonePressurePlate: return 'pressure_plate';
       default: return undefined;
     }
   }
@@ -699,11 +711,11 @@ export class RedstoneSystem {
   ): THREE.Mesh | undefined {
     if (!this.options.root) return undefined;
     this.tntGeometry ??= new THREE.BoxGeometry(0.92, 0.92, 0.92);
-    this.tntMaterial ??= new THREE.MeshLambertMaterial({ color: 0xc33b2e, flatShading: true });
+    this.tntMaterial ??= createEntityMaterial({ color: 0xc33b2e });
     const visual = new THREE.Mesh(this.tntGeometry, this.tntMaterial);
     visual.name = `primed-tnt:${id}`;
     visual.position.set(position.x, position.y + 0.49, position.z);
-    visual.castShadow = true;
+    bindEntityLightReceiver(visual);
     this.options.root.add(visual);
     return visual;
   }

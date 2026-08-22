@@ -9,10 +9,11 @@ import {
   type InventorySlotRef,
   type ItemStack,
 } from '../inventory';
-import { ITEMS, getItemDefinition } from '../items';
+import { getItemDefinition, obtainableItems } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
 import { TextureAtlas } from '../rendering/TextureAtlas';
+import { inventoryPaintMode, patchInventoryDynamic } from './inventoryLayout';
 
 export interface MainMenuActions {
   play(): void;
@@ -74,6 +75,7 @@ export class GameUI {
   private attack: HTMLElement;
   private debug: HTMLElement;
   private toasts: HTMLElement;
+  private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
@@ -88,6 +90,7 @@ export class GameUI {
   private debugText = '';
   private debugVisible = false;
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
+  private itemIconResolver?: (itemId: string) => string;
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -100,7 +103,10 @@ export class GameUI {
         <div id="hotbar"></div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
-      </div>`;
+      </div>
+      <button type="button" id="pointer-lock-fallback" class="hidden">
+        <span>Нажмите, чтобы продолжить</span>
+      </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
@@ -110,6 +116,7 @@ export class GameUI {
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
+    this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -117,6 +124,10 @@ export class GameUI {
         cursor.style.top = `${event.clientY}px`;
       }
     });
+  }
+
+  setItemIconResolver(resolver: (itemId: string) => string): void {
+    this.itemIconResolver = resolver;
   }
 
   showLoading(label = 'Подготавливаем мир…'): void {
@@ -254,8 +265,19 @@ export class GameUI {
   }
 
   hideHud(): void {
+    this.hidePointerLockFallback();
     this.hud.classList.add('hidden');
     this.setControlsSuppressed(true);
+  }
+
+  showPointerLockFallback(onEngage: () => void): void {
+    this.pointerLockFallback.classList.remove('hidden');
+    this.pointerLockFallback.onclick = () => onEngage();
+  }
+
+  hidePointerLockFallback(): void {
+    this.pointerLockFallback.classList.add('hidden');
+    this.pointerLockFallback.onclick = null;
   }
 
   updateHud(state: HudState): void {
@@ -329,7 +351,6 @@ export class GameUI {
     this.craftSlots = Array.from({ length: context.kind === 'crafting-table' ? 9 : 4 }, () => null);
     this.renderInventory();
     this.setControlsSuppressed(true);
-    document.exitPointerLock?.();
   }
 
   closeInventory(returnStacks = true): void {
@@ -357,9 +378,39 @@ export class GameUI {
   private renderInventory(): void {
     const context = this.inventoryContext;
     if (!context) return;
+    const dynamic = this.inventoryDynamicHtml(context);
+    const cursor = this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : '';
+    if (inventoryPaintMode(this.modal !== undefined) === 'patch-dynamic'
+      && this.modal
+      && patchInventoryDynamic(this.modal, dynamic, cursor)) {
+      return;
+    }
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop';
+    const catalog = obtainableItems();
+    const creative = context.mode === 'creative'
+      ? `<h3>Творческий каталог</h3><div class="container-grid" data-creative-catalog>${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
+      : '';
+    this.modal.innerHTML = `
+      <div class="inventory-window">
+        <div class="menu-heading"><h2>${this.inventoryTitle(context.kind)}</h2><button class="game-button ghost" data-ui="close">Закрыть</button></div>
+        ${creative}
+        <div data-inventory-dynamic>${dynamic}</div>
+        <div id="cursor-stack">${cursor}</div>
+      </div>`;
+    this.root.append(this.modal);
+    this.modal.querySelector('[data-ui="close"]')!.addEventListener('click', () => context.onClose());
+    this.modal.addEventListener('pointerdown', (event) => {
+      const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-slot]');
+      if (!slot) return;
+      event.preventDefault();
+      this.handleInventorySlot(slot.dataset.slot!, event.button === 2 ? 'right' : 'left', event.shiftKey);
+    });
+    this.modal.addEventListener('contextmenu', (event) => event.preventDefault());
+  }
+
+  private inventoryDynamicHtml(context: InventoryContext): string {
     const inventory = context.inventory;
     const mainSlots = inventory.slots.slice(9, 36);
     const hotbar = inventory.slots.slice(0, 9);
@@ -371,28 +422,10 @@ export class GameUI {
         ? this.furnaceHtml(context.furnace!)
         : `<h3>${context.kind === 'crafting-table' ? 'Верстак 3×3' : 'Создание 2×2'}</h3><div class="craft-area"><div class="craft-grid ${craftSize === 3 ? 'table' : ''}">${this.craftSlots.map((slot, index) => this.slotHtml(slot, `craft-${index}`)).join('')}</div><span>→</span>${this.slotHtml(match?.output ?? null, 'result')}</div>
            <div class="equipment-grid">${this.slotHtml(inventory.armor.head, 'armor-head')}${this.slotHtml(inventory.armor.chest, 'armor-chest')}${this.slotHtml(inventory.armor.legs, 'armor-legs')}${this.slotHtml(inventory.armor.feet, 'armor-feet')}${this.slotHtml(inventory.offhand, 'offhand')}</div>`;
-    const creative = context.mode === 'creative'
-      ? `<h3>Творческий каталог</h3><div class="container-grid">${ITEMS.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
-      : '';
-    this.modal.innerHTML = `
-      <div class="inventory-window">
-        <div class="menu-heading"><h2>${this.inventoryTitle(context.kind)}</h2><button class="game-button ghost" data-ui="close">Закрыть</button></div>
-        ${creative}
-        <div class="inventory-layout"><section>${leftPanel}<p class="inventory-hint">ЛКМ — взять/положить стек · ПКМ — половина/один · Shift+ЛКМ — быстро переместить</p></section><section>
+    return `<div class="inventory-layout"><section>${leftPanel}<p class="inventory-hint">ЛКМ — взять/положить стек · ПКМ — половина/один · Shift+ЛКМ — быстро переместить</p></section><section>
           <h3>Инвентарь</h3><div class="inventory-grid">${mainSlots.map((slot, index) => this.slotHtml(slot, `inventory-${index + 9}`)).join('')}</div>
           <div class="inventory-grid hotbar-grid">${hotbar.map((slot, index) => this.slotHtml(slot, `inventory-${index}`)).join('')}</div>
-        </section></div>
-        <div id="cursor-stack">${this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : ''}</div>
-      </div>`;
-    this.root.append(this.modal);
-    this.modal.querySelector('[data-ui="close"]')!.addEventListener('click', () => context.onClose());
-    this.modal.addEventListener('pointerdown', (event) => {
-      const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-slot]');
-      if (!slot) return;
-      event.preventDefault();
-      this.handleInventorySlot(slot.dataset.slot!, event.button === 2 ? 'right' : 'left', event.shiftKey);
-    });
-    this.modal.addEventListener('contextmenu', (event) => event.preventDefault());
+        </section></div>`;
   }
 
   private handleInventorySlot(key: string, button: 'left' | 'right', shift: boolean): void {
@@ -415,7 +448,7 @@ export class GameUI {
     else if (key.startsWith('container-')) this.clickContainer(Number(key.slice('container-'.length)), button, shift);
     else if (key.startsWith('furnace-')) this.clickFurnace(Number(key.slice('furnace-'.length)), button);
     else if (key.startsWith('creative-')) {
-      const definition = ITEMS[Number(key.slice('creative-'.length))];
+      const definition = obtainableItems()[Number(key.slice('creative-'.length))];
       if (definition) this.cursorStack = createItemStack(definition.id, button === 'right' ? 1 : definition.maxStack);
     }
     context.onChanged();
@@ -499,7 +532,7 @@ export class GameUI {
   }
 
   private itemIcon(itemId: string): string {
-    return TextureAtlas.url(getItemDefinition(itemId).texture);
+    return this.itemIconResolver?.(itemId) ?? TextureAtlas.url(getItemDefinition(itemId).texture);
   }
 
   private pips(symbol: string, filled: number, total: number): string {
