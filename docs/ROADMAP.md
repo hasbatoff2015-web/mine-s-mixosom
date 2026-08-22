@@ -22,6 +22,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после F2 1.21.8 held-item screenshot audit: typecheck, 150 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после shared held-item pose QA candidates: typecheck, 152 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
 - [x] Локальный pipeline после live held-item pose QA panel: typecheck, 156 tests / 22 files, production build 75 modules, 0.94 MiB / 165 files.
+- [x] Локальный pipeline после special-item door/ladder/lever pass: typecheck, 165 tests / 23 files, production build 75 modules, 0.94 MiB / 165 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -102,8 +103,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 ### P1.2 Block states и geometry
 
-- [x] Тонкая 2-block oak door с open/close и collision; torch wall/floor и button floor/wall/ceiling. Stairs, slabs, ladder, bed и chest всё ещё ждут specialized meshes.
-- [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation; v1→v2 redstone fallback уже реализован.
+- [x] Тонкая 2-block oak door с open/close, collision и UV half/hinge; torch wall/floor; button floor/wall/ceiling; ladder world plane + side placement. Stairs, slabs, bed и chest всё ещё ждут specialized meshes.
+- [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation, ladder facing; v1→v2 redstone fallback уже реализован.
 - [x] Door open/close на use; ladder climbing, корректный two-block bed и sleeping checks ещё нет.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Mass TNT больше не вызывает per-block `relightAround`; `ExplosionQueue` + `applyBlockBatch` держат chain в budgeted ticks.
@@ -133,6 +134,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Shared held-item pose: цель сменена с pixel-perfect F2 на visual Minecraft-like; QA candidates subtle/balanced/stronger + `qaPoseCompare`. Production pose не переключали.
 - [x] Live held-item pose QA panel: sliders/numeric/copy/reset, item switch без сброса pose. Production pose и geometry не менялись.
 - [x] Production shared held-item pose записан из manual visual QA: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, scale `0.60`. Yaw −90° не заменять.
+- [x] Special block-item pass: lever/ladder/door held generated (vanilla 1.21.8 item JSON); ladder world plane + N/S/E/W placement; door cuboid UV/upper-lower; button/plate special inventory cuboids; shield hidden from obtainable gameplay. Climbing/chest GUI/flight/perf не трогались.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
 - [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.

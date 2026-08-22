@@ -9,7 +9,7 @@ import {
   type InventorySlotRef,
   type ItemStack,
 } from '../inventory';
-import { ITEMS, getItemDefinition } from '../items';
+import { getItemDefinition, obtainableItems } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
 import { TextureAtlas } from '../rendering/TextureAtlas';
@@ -371,8 +371,9 @@ export class GameUI {
         ? this.furnaceHtml(context.furnace!)
         : `<h3>${context.kind === 'crafting-table' ? 'Верстак 3×3' : 'Создание 2×2'}</h3><div class="craft-area"><div class="craft-grid ${craftSize === 3 ? 'table' : ''}">${this.craftSlots.map((slot, index) => this.slotHtml(slot, `craft-${index}`)).join('')}</div><span>→</span>${this.slotHtml(match?.output ?? null, 'result')}</div>
            <div class="equipment-grid">${this.slotHtml(inventory.armor.head, 'armor-head')}${this.slotHtml(inventory.armor.chest, 'armor-chest')}${this.slotHtml(inventory.armor.legs, 'armor-legs')}${this.slotHtml(inventory.armor.feet, 'armor-feet')}${this.slotHtml(inventory.offhand, 'offhand')}</div>`;
+    const catalog = obtainableItems();
     const creative = context.mode === 'creative'
-      ? `<h3>Творческий каталог</h3><div class="container-grid">${ITEMS.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
+      ? `<h3>Творческий каталог</h3><div class="container-grid">${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>`
       : '';
     this.modal.innerHTML = `
       <div class="inventory-window">
@@ -415,7 +416,7 @@ export class GameUI {
     else if (key.startsWith('container-')) this.clickContainer(Number(key.slice('container-'.length)), button, shift);
     else if (key.startsWith('furnace-')) this.clickFurnace(Number(key.slice('furnace-'.length)), button);
     else if (key.startsWith('creative-')) {
-      const definition = ITEMS[Number(key.slice('creative-'.length))];
+      const definition = obtainableItems()[Number(key.slice('creative-'.length))];
       if (definition) this.cursorStack = createItemStack(definition.id, button === 'right' ? 1 : definition.maxStack);
     }
     context.onChanged();

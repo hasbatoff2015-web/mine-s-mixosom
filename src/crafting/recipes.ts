@@ -62,11 +62,6 @@ const recipes: Recipe[] = [
     output: { item: ItemId.Arrow, count: 4 }, gridSize: 3,
   },
   {
-    id: 'shield', type: 'shaped', pattern: ['PIP', 'PPP', ' P '],
-    key: { P: tag('planks'), I: exact(ItemId.IronIngot) },
-    output: { item: ItemId.Shield, count: 1 }, gridSize: 3,
-  },
-  {
     id: 'stone_bricks', type: 'shaped', pattern: ['SS', 'SS'], key: { S: exact('stone') },
     output: { item: 'stone_bricks', count: 4 }, gridSize: 2,
   },

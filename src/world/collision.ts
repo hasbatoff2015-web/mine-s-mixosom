@@ -1,4 +1,4 @@
-import { BlockId, getBlockDefinition, type BlockRenderState, type HorizontalFacing } from '../blocks';
+import { BlockId, getBlockDefinition, occupiedDoorFacing, type BlockRenderState, type HorizontalFacing } from '../blocks';
 
 export interface CollisionBox {
   readonly minX: number;
@@ -47,25 +47,8 @@ export function doorCollisionBox(
   const facing = state?.facing ?? 'north';
   const open = state?.open === true;
   const hinge = state?.hinge ?? 'left';
-  const occupied = open ? openedDoorFacing(facing, hinge) : facing;
+  const occupied = occupiedDoorFacing(facing, open, hinge);
   return slabOnFace(x, y, z, occupied);
-}
-
-function openedDoorFacing(facing: HorizontalFacing, hinge: 'left' | 'right'): HorizontalFacing {
-  if (hinge === 'left') {
-    switch (facing) {
-      case 'north': return 'west';
-      case 'west': return 'south';
-      case 'south': return 'east';
-      case 'east': return 'north';
-    }
-  }
-  switch (facing) {
-    case 'north': return 'east';
-    case 'east': return 'south';
-    case 'south': return 'west';
-    case 'west': return 'north';
-  }
 }
 
 function slabOnFace(x: number, y: number, z: number, facing: HorizontalFacing): CollisionBox {

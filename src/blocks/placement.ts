@@ -1,4 +1,4 @@
-import type { BlockAttachment, HorizontalFacing } from './types';
+import type { BlockAttachment, DoorHinge, HorizontalFacing } from './types';
 
 export interface OrientedPlacement {
   readonly attachment: BlockAttachment;
@@ -62,4 +62,43 @@ export function buttonPlacementFromHit(
     attachment,
     facing: facingFromHit(attachment, nx, ny, nz, viewX, viewZ),
   };
+}
+
+/**
+ * Ladder attaches only to a vertical face. `facing` is the clicked-face
+ * normal (same convention as wall torch): support is opposite that direction.
+ */
+export function ladderPlacementFromHit(
+  nx: number,
+  ny: number,
+  nz: number,
+): OrientedPlacement | undefined {
+  if (Math.abs(ny) >= 0.5) return undefined;
+  return {
+    attachment: 'wall',
+    facing: horizontalFacingFromXZ(nx, nz),
+  };
+}
+
+/** Closed door occupies `facing`; open door swings 90° by hinge. */
+export function occupiedDoorFacing(
+  facing: HorizontalFacing,
+  open: boolean,
+  hinge: DoorHinge = 'left',
+): HorizontalFacing {
+  if (!open) return facing;
+  if (hinge === 'left') {
+    switch (facing) {
+      case 'north': return 'west';
+      case 'west': return 'south';
+      case 'south': return 'east';
+      case 'east': return 'north';
+    }
+  }
+  switch (facing) {
+    case 'north': return 'east';
+    case 'east': return 'south';
+    case 'south': return 'west';
+    case 'west': return 'north';
+  }
 }

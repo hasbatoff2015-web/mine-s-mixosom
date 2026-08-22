@@ -240,7 +240,11 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14,
     renderLayer: 'cutout', renderShape: 'torch',
   }),
-  block(BlockId.Ladder, 'ladder', { category: 'utility', hardness: 0.4, solid: false, opaque: false, renderLayer: 'cutout', tool: 'axe', tier: 'hand', flammable: true }),
+  block(BlockId.Ladder, 'ladder', {
+    category: 'utility', hardness: 0.4, solid: false, opaque: false,
+    renderLayer: 'cutout', renderShape: 'ladder', occludesFaces: false,
+    tool: 'axe', tier: 'hand', flammable: true,
+  }),
   block(BlockId.WhiteBed, 'white_bed', { category: 'utility', hardness: 0.2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
   block(BlockId.OakDoor, 'oak_door', {
     category: 'utility', hardness: 3, opaque: false, tool: 'axe', tier: 'hand',

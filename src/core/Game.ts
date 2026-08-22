@@ -5,6 +5,7 @@ import {
   canHarvestBlock,
   doorFacingFromYaw,
   getBlockDefinition,
+  ladderPlacementFromHit,
   miningProgressPerTick,
   miningToolFromItemId,
   torchPlacementFromHit,
@@ -39,7 +40,7 @@ import {
 } from '../entities';
 import { InputManager } from '../input/InputManager';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
-import { ITEMS, ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
+import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { PlayerController } from '../player';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
@@ -872,6 +873,20 @@ export class Game {
       const orientation = buttonPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
       session.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
+      return;
+    }
+    if (item.placesBlockId === BlockId.Ladder) {
+      const orientation = ladderPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z);
+      if (!orientation) {
+        this.ui.toast('Лестницу можно поставить только на боковую сторону блока');
+        return;
+      }
+      if (replaceHit || !hitDefinition.solid) {
+        this.ui.toast('Лестнице нужна сплошная боковая опора');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
+      session.world.setBlockState(x, y, z, { facing: orientation.facing });
       return;
     }
     if (placed.solid && session.player.intersectsBlock(x, y, z)) {

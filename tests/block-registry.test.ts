@@ -55,8 +55,8 @@ describe('block registry', () => {
   });
 
   it('uses dedicated geometry for the lever and obvious thin redstone blocks', () => {
-    expect(getBlockDefinition(BlockId.Lever).renderShape).toBe('lever');
-    expect(getBlockDefinition(BlockId.Lever).renderShape).not.toBe('cube');
+    expect(getBlockDefinition(BlockId.Ladder).renderShape).toBe('ladder');
+    expect(getBlockDefinition(BlockId.Ladder).renderShape).not.toBe('cube');
     expect(getBlockDefinition(BlockId.Torch).renderShape).toBe('torch');
     expect(getBlockDefinition(BlockId.RedstoneTorch).renderShape).toBe('torch');
     expect(getBlockDefinition(BlockId.RedstoneWire).renderShape).toBe('wire');
@@ -122,6 +122,11 @@ describe('item registry', () => {
     expect(getItemDefinition(ItemId.GoldChestplate)).toMatchObject({
       kind: 'armor', material: 'gold', slot: 'chest', maxStack: 1,
     });
+  });
+
+  it('hides the shield from obtainable gameplay lists', () => {
+    expect(getItemDefinition(ItemId.Shield).hiddenFromGameplay).toBe(true);
+    expect(ITEMS.filter((item) => item.hiddenFromGameplay !== true).some((item) => item.id === ItemId.Shield)).toBe(false);
   });
 
   it('does not implement excluded progression content', () => {

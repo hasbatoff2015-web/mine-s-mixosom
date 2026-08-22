@@ -5,6 +5,14 @@ import type { ItemDefinition } from './types';
 export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow' | 'shield';
 export type ItemRenderContext = 'firstPersonRightHand' | 'ground' | 'gui';
 export type RenderVector = readonly [x: number, y: number, z: number];
+/**
+ * Held/inventory mesh path. Pose category (`ItemRenderCategory`) stays independent:
+ * a generated sprite can share the sprite pose, a special cuboid can use the block pose.
+ */
+export type ItemHeldMeshKind = 'block_cube' | 'generated' | 'special_model';
+
+/** Runtime-composited full-door sprite; Faithful pack has no `item/oak_door.png`. */
+export const OAK_DOOR_HELD_TEXTURE = 'generated/oak_door_item';
 
 export interface ItemViewTransform {
   readonly position: RenderVector;
@@ -117,7 +125,14 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
   if (item.kind === 'block') {
     const shape = getBlockDefinition(item.blockId).renderShape;
-    if (shape === 'torch' || shape === 'button' || shape === 'lever' || shape === 'door' || shape === 'cross') {
+    if (
+      shape === 'torch'
+      || shape === 'lever'
+      || shape === 'door'
+      || shape === 'ladder'
+      || shape === 'cross'
+      || shape === 'wire'
+    ) {
       return 'generated';
     }
     return 'block';
@@ -130,14 +145,43 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
 }
 
 /**
- * Held/inventory mesh path. Torch uses item/generated sprite geometry even
- * though the placed block is a world cuboid. Other special block items stay
- * on the cube path in this phase.
+ * Vanilla 1.21.8 Faithful is textures-only. Item JSON parents:
+ * lever/ladder/door → `item/generated`; button/plate → block inventory cuboid;
+ * ordinary blocks → cube. Torch remains generated even though the placed
+ * block is a world cuboid.
  */
-export function itemUsesGeneratedHeldGeometry(itemOrId: string | ItemDefinition): boolean {
+export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMeshKind {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
-  if (item.kind !== 'block') return true;
-  return getBlockDefinition(item.blockId).renderShape === 'torch';
+  if (item.kind !== 'block') return 'generated';
+  switch (getBlockDefinition(item.blockId).renderShape) {
+    case 'torch':
+    case 'lever':
+    case 'ladder':
+    case 'door':
+    case 'cross':
+    case 'wire':
+      return 'generated';
+    case 'button':
+    case 'pressure_plate':
+      return 'special_model';
+    case 'cube':
+      return 'block_cube';
+  }
+}
+
+export function itemUsesGeneratedHeldGeometry(itemOrId: string | ItemDefinition): boolean {
+  return itemHeldMeshKind(itemOrId) === 'generated';
+}
+
+export function itemUsesSpecialHeldModel(itemOrId: string | ItemDefinition): boolean {
+  return itemHeldMeshKind(itemOrId) === 'special_model';
+}
+
+/** Texture path fed to `GeneratedItemGeometry` (may be a runtime composite key). */
+export function generatedHeldTexturePath(itemOrId: string | ItemDefinition): string {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  if (item.id === 'oak_door') return OAK_DOOR_HELD_TEXTURE;
+  return item.texture;
 }
 
 export function itemRenderProfile(itemOrId: string | ItemDefinition): ItemRenderProfile {

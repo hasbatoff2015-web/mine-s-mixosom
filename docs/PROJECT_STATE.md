@@ -1,6 +1,6 @@
 # Состояние проекта
 
-Срез: **2026-08-21**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-22**. Версия: `0.1.0`, playable alpha.
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -17,12 +17,12 @@
 | Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus и biome-specific cross-plants |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, step `0.6`, collision, fall damage, water/lava |
-| Mining/building | Готово для alpha | Raycast, 1.9 harvest formula, hardness/tool/tier, durability, drops, thin door/torch/button placement |
+| Mining/building | Готово для alpha | Raycast, 1.9 harvest formula, hardness/tool/tier, durability, drops, thin door/torch/button/ladder placement |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor/off-hand, cursor clicks, 2×2/3×3 recipes, Creative catalog |
 | Chest/furnace/bed | Alpha approximation | 27-slot chest, three-slot furnace, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
-| Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, shield, staged bow draw and shared player/skeleton arrow physics |
+| Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, internal shield combat, staged bow draw and shared player/skeleton arrow physics |
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel sky/block lighting on world entities |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
@@ -31,7 +31,7 @@
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | 156 unit/component tests in 22 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
+| Automated QA | Частично готово | 165 unit/component tests in 23 files, reproducible performance benchmark and visual browser scenes; no automated WebGL, IndexedDB or full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
@@ -49,7 +49,8 @@
 - Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком.
 - Chunk дополнительно хранит компактные `Uint8Array` skyLight/blockLight (`0–15`) того же размера, что и blocks.
 - Sand и gravel при потере опоры удаляются из сетки и становятся falling-block entity с gravity/mesh, затем возвращаются в world.
-- Дверь — тонкая 2-block geometry с open/close, collision по occupied face и joint upper/lower state.
+- Дверь — тонкая 2-block cuboid geometry (`3/16`) с open/close, collision по occupied face, joint upper/lower state и UV half/hinge как у vanilla `door_*_left/right`.
+- Лестница — тонкая cutout-плоскость на боковой опоре (`NORTH/SOUTH/EAST/WEST`); climbing movement не реализован.
 
 ### Alpha approximation
 
@@ -60,7 +61,7 @@
 - Render classification независима от face occlusion/light semantics: opaque, alpha-tested cutout, vegetation cutout, glass translucent и water translucent имеют отдельные geometry/material paths. Leaves используют `alphaTest=0.42`, `transparent=false`, `depthWrite=true`, `DoubleSide` и сохраняют biome RGB tint. Cross-plants (`lightingMode: vegetation`) пишутся отдельным batched mesh с `FrontSide` и lighting normals `(0,1,0)`.
 - Water и glass разделены по opacity/render order, однако отдельные translucent faces внутри pass всё ещё не сортируются по глубине.
 - Slab имеет half-height collision, но chunk renderer пока рисует обычный cube. Stairs физически остаются full cube.
-- Lever, torch/redstone torch, wire, button, pressure plate и oak door больше не рисуются full cubes. Torch ставится на пол и стену; button — на пол, стену и потолок. Ladder, bed, stairs/slabs и containers всё ещё не имеют полного набора specialized visual states/meshes.
+- Lever, torch/redstone torch, wire, button, pressure plate, oak door и ladder больше не рисуются full cubes. Torch ставится на пол и стену; button — на пол, стену и потолок; ladder — только на боковую сторону solid support. Bed, stairs/slabs и containers всё ещё не имеют полного набора specialized visual states/meshes.
 - Bed — один блок с установкой spawn point и простым пропуском ночи.
 - Basic redstone намеренно ограничен шестисоседней передачей сигнала и не моделирует directional connection shapes, quasi-connectivity или advanced components.
 - Fluid simulation только локальная и нисходящая; нет уровня жидкости, бокового потока, смешивания, бесконечных источников и обновлений vanilla-класса.
@@ -69,16 +70,16 @@
 
 ### Готово
 
-- Data-first item registry связывает block items, resources, foods, tools, weapons, shield и четыре комплекта armor.
+- Data-first item registry связывает block items, resources, foods, tools, weapons, shield (internal/hidden) и четыре комплекта armor.
 - В progression есть wood/stone/iron/diamond pickaxe, axe, shovel и sword; hoe и gold tools намеренно исключены.
 - Gold armor присутствует, как и leather/iron/diamond armor.
 - Stack validation, merge/split, left/right click semantics, durability, equipment constraints, atomic consume и serialization покрыты unit tests.
 - Mining использует Java 1.9 формулу `(S/H)/30` при harvest и `/100` иначе. Preferred tool ускоряет добычу; `requiresCorrectTool` нужен только камню, рудам и furnace.
 - 2×2 и 3×3 matcher поддерживает shaped, mirrored и shapeless recipes, tags и детерминированный consumption plan.
-- Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows/shield, tools, swords, armor, slabs/stairs и basic redstone/TNT items.
+- Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows, tools, swords, armor, slabs/stairs и basic redstone/TNT items. Shield recipe временно снят: предмет скрыт из obtainable gameplay.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table.
 - Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Обычные cube block items рисуются atlas-cube. Sprite items (включая held torch и arrow) используют общую `GeneratedItemGeometry`: один front/back quad на весь sprite, толщина `1/16`, side spans только по opaque→transparent (`alpha == 0`) с merge соседних рёбер. Side faces — outer shell (winding совпадает с outward normal). Collapsed side UV берёт центр opaque texel, не границу с transparent neighbor. 32×32 pack не меняет model size, но диагонали дают больше 1-texel spans (у `iron_pickaxe.png` 104 merged spans). Generated item material без mob wrap-shade (voxel light для drops сохраняется). Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
-- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield`. `generated`, `handheld` и bow делят один first-person sprite pose: position `[0.67, -0.29, -0.70]`, rotation `[1, -90, 34]°`, `scale: 0.60` (**final** Three.js uniform, не множитель на vanilla `0.68`). Значения выбраны вручную через live QA calibrator; yaw −90° — намеренный visual result, не порт vanilla matrix и не candidate 8/18/32°. Канонический idle right-hand adapter (`heldItemVanillaTransform.ts`) остаётся diagnostic-only. Dev `?qaItem=` по умолчанию — isolated inspect (`qaView=front|back|left|right`), `qaView=held` возвращает first-person с live panel; RESET TO PRODUCTION возвращает эти числа. `qaSideDebug=1` красит UP/DOWN/LEFT/RIGHT. `held*` / `qaPose` override только idle held transform. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` и blocking pose накладываются поверх base. Held torch — generated sprite; placed torch geometry не менялась. `GeneratedItemGeometry` topology/UV/winding/depth закрыты как baseline (djb2 lock в tests).
+- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow` или `shield`. Held mesh отдельно: `block_cube` / `generated` / `special_model`. `generated`, `handheld` и bow делят один first-person sprite pose: position `[0.67, -0.29, -0.70]`, rotation `[1, -90, 34]°`, `scale: 0.60` (**final** Three.js uniform, не множитель на vanilla `0.68`). Значения выбраны вручную через live QA calibrator; yaw −90° — намеренный visual result, не порт vanilla matrix и не candidate 8/18/32°. Канонический idle right-hand adapter (`heldItemVanillaTransform.ts`) остаётся diagnostic-only. Dev `?qaItem=` по умолчанию — isolated inspect (`qaView=front|back|left|right`), `qaView=held` возвращает first-person с live panel; RESET TO PRODUCTION возвращает эти числа. `qaSideDebug=1` красит UP/DOWN/LEFT/RIGHT. `held*` / `qaPose` override только idle held transform. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` и blocking pose накладываются поверх base. Held torch/lever/ladder — generated sprite по vanilla 1.21.8 item JSON (`layer0` = block texture); oak_door — generated из runtime-композиции `oak_door_upper`+`oak_door` (в pack нет `item/oak_door.png`). Button/pressure plate — special inventory cuboid. Placed torch geometry не менялась. `GeneratedItemGeometry` topology/UV/winding/depth закрыты как baseline (djb2 lock в tests). Shield renderer/combat сохранены, но предмет скрыт из Creative/рецептов/obtainable UI.
 
 ### Alpha approximation
 
@@ -118,7 +119,7 @@
 
 - CombatSystem реализует quadratic attack cooldown с `+0.5 tick`, item attack profiles, critical conditions и sprint knockback.
 - Melee target выбирается raycast по mob AABB и не проходит сквозь voxels; entity reach ограничен тремя блоками в runtime.
-- Shield активируется после 5 ticks, замедляет движение, проверяет фронтальную дугу, снижает melee damage на 66% и полностью блокирует фронтальный projectile damage в рамках alpha.
+- Shield активируется после 5 ticks, замедляет движение, проверяет фронтальную дугу, снижает melee damage на 66% и полностью блокирует фронтальный projectile damage в рамках alpha. Сам предмет временно скрыт из obtainable gameplay; combat/renderer остаются internal.
 - Bow использует 20-tick charge curve, три pulling textures, плавный FOV zoom и movement slowdown, расходует arrows в Survival, повреждает bow и создаёт projectile с gravity/block/mob collision.
 - MobManager подключён к main tick и save/restore.
 - Passive: cow, pig, chicken, sheep. Hostile: zombie, skeleton, creeper, spider.
@@ -210,10 +211,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     22 files, 156 tests — PASS
+Vitest:     23 files, 165 tests — PASS
 Vite build: 75 modules — PASS
 Size/archive: 0.94 MiB / 165 files — PASS
-Main JS: 736.40 kB / 199.04 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
+Main JS: 741.32 kB / 200.49 kB gzip; CSS: 12.90 kB / 3.82 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

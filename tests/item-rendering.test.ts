@@ -183,6 +183,9 @@ describe('item render profiles and assets', () => {
     expect(classifyItemForRendering('bow')).toBe('bow');
     expect(itemUsesGeneratedHeldGeometry('torch')).toBe(true);
     expect(itemUsesGeneratedHeldGeometry('redstone_torch')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('lever')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('ladder')).toBe(true);
+    expect(itemUsesGeneratedHeldGeometry('oak_door')).toBe(true);
     expect(itemUsesGeneratedHeldGeometry('stone')).toBe(false);
     expect(itemUsesGeneratedHeldGeometry('arrow')).toBe(true);
     expect(itemUsesGeneratedHeldGeometry('bow')).toBe(true);

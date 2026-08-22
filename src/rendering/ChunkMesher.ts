@@ -3,8 +3,10 @@ import {
   BlockId,
   blockLightingMode,
   getBlockDefinition,
+  occupiedDoorFacing,
   type BlockDefinition,
   type BlockRenderState,
+  type HorizontalFacing,
 } from '../blocks';
 import { CHUNK_SIZE } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
@@ -12,12 +14,17 @@ import type { VoxelWorld } from '../world/World';
 import { getBlockLight, getSkyLight, smoothFaceCornerLight } from '../world/LightEngine';
 import type { TextureAtlas } from './TextureAtlas';
 import {
+  DOOR_THICKNESS,
+  doorFaceTextureUv,
+  doorHalfTexture,
   facingVector as facingVectorFrom,
+  ladderPlaneLocal,
   leverHandleAngle,
   TORCH_HEIGHT,
   TORCH_TEXTURE_UV,
   TORCH_WIDTH,
   torchLocalMatrix,
+  type DoorFaceRole,
 } from './specialBlockGeometry';
 
 export { leverHandleAngle } from './specialBlockGeometry';
@@ -84,6 +91,108 @@ const DESERT_TINT = [0.74, 0.78, 0.4] as const;
 
 /** Lighting normal written into vegetation quads so they sample/share the grass-top profile. */
 export const VEGETATION_LIGHTING_NORMAL = [0, 1, 0] as const;
+
+interface DoorMeshFace {
+  readonly role: DoorFaceRole;
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly normal: readonly [number, number, number];
+}
+
+function doorCuboidFaces(
+  x: number,
+  y: number,
+  z: number,
+  occupied: HorizontalFacing,
+  thickness: number,
+): readonly DoorMeshFace[] {
+  let minX = x;
+  let maxX = x + 1;
+  let minZ = z;
+  let maxZ = z + 1;
+  if (occupied === 'west') maxX = x + thickness;
+  else if (occupied === 'east') minX = x + 1 - thickness;
+  else if (occupied === 'north') maxZ = z + thickness;
+  else minZ = z + 1 - thickness;
+  const minY = y;
+  const maxY = y + 1;
+  const role = (
+    face: HorizontalFacing | 'up' | 'down',
+  ): DoorFaceRole => {
+    if (face === occupied) return 'outer';
+    if (
+      (occupied === 'west' && face === 'east')
+      || (occupied === 'east' && face === 'west')
+      || (occupied === 'north' && face === 'south')
+      || (occupied === 'south' && face === 'north')
+    ) return 'inner';
+    return 'edge';
+  };
+  return [
+    {
+      role: role('west'),
+      normal: [-1, 0, 0],
+      corners: [[minX, minY, maxZ], [minX, minY, minZ], [minX, maxY, minZ], [minX, maxY, maxZ]],
+    },
+    {
+      role: role('east'),
+      normal: [1, 0, 0],
+      corners: [[maxX, minY, minZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [maxX, maxY, minZ]],
+    },
+    {
+      role: role('north'),
+      normal: [0, 0, -1],
+      corners: [[maxX, minY, minZ], [minX, minY, minZ], [minX, maxY, minZ], [maxX, maxY, minZ]],
+    },
+    {
+      role: role('south'),
+      normal: [0, 0, 1],
+      corners: [[minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ]],
+    },
+    {
+      role: 'edge',
+      normal: [0, 1, 0],
+      corners: [[minX, maxY, maxZ], [maxX, maxY, maxZ], [maxX, maxY, minZ], [minX, maxY, minZ]],
+    },
+    {
+      role: 'edge',
+      normal: [0, -1, 0],
+      corners: [[minX, minY, minZ], [maxX, minY, minZ], [maxX, minY, maxZ], [minX, minY, maxZ]],
+    },
+  ];
+}
+
+function ladderFrontCorners(
+  x: number,
+  y: number,
+  z: number,
+  facing: HorizontalFacing,
+): { corners: Array<[number, number, number]>; normal: [number, number, number] } {
+  const plane = ladderPlaneLocal(facing);
+  const px = x + (plane.axis === 'x' ? plane.plane : 0);
+  const pz = z + (plane.axis === 'z' ? plane.plane : 0);
+  switch (facing) {
+    case 'east':
+      return {
+        normal: [1, 0, 0],
+        corners: [[px, y, z + 1], [px, y, z], [px, y + 1, z], [px, y + 1, z + 1]],
+      };
+    case 'west':
+      return {
+        normal: [-1, 0, 0],
+        corners: [[px, y, z], [px, y, z + 1], [px, y + 1, z + 1], [px, y + 1, z]],
+      };
+    case 'south':
+      return {
+        normal: [0, 0, 1],
+        corners: [[x, y, pz], [x + 1, y, pz], [x + 1, y + 1, pz], [x, y + 1, pz]],
+      };
+    case 'north':
+      return {
+        normal: [0, 0, -1],
+        corners: [[x + 1, y, pz], [x, y, pz], [x, y + 1, pz], [x + 1, y + 1, pz]],
+      };
+  }
+}
 
 export function biomeGrassTint(biome: number): readonly [number, number, number] {
   if (biome === 1) return FOREST_TINT;
@@ -279,6 +388,7 @@ export class ChunkMesher {
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
       case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
       case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
+      case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
       case 'cube': return 0;
     }
   }
@@ -452,53 +562,48 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const facing = state?.facing ?? 'north';
-    const open = state?.open === true;
+    const occupied = occupiedDoorFacing(
+      state?.facing ?? 'north',
+      state?.open === true,
+      state?.hinge ?? 'left',
+    );
     const hinge = state?.hinge ?? 'left';
-    const occupied = open
-      ? (hinge === 'left'
-        ? ({ north: 'west', west: 'south', south: 'east', east: 'north' } as const)[facing]
-        : ({ north: 'east', east: 'south', south: 'west', west: 'north' } as const)[facing])
-      : facing;
-    const texture = state?.half === 'upper'
-      ? (definition.textures.top ?? 'block/oak_door_upper')
-      : (definition.textures.bottom ?? definition.textures.all ?? 'block/oak_door');
+    const texture = doorHalfTexture(state?.half, definition.textures);
+    const t = DOOR_THICKNESS;
     const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
-    const thickness = 3 / 16;
-    let corners: Array<[number, number, number]>;
-    let normal: [number, number, number];
-    switch (occupied) {
-      case 'north':
-        corners = [
-          [x, y, z + thickness], [x + 1, y, z + thickness],
-          [x + 1, y + 1, z + thickness], [x, y + 1, z + thickness],
-        ];
-        normal = [0, 0, 1];
-        break;
-      case 'south':
-        corners = [
-          [x + 1, y, z + 1 - thickness], [x, y, z + 1 - thickness],
-          [x, y + 1, z + 1 - thickness], [x + 1, y + 1, z + 1 - thickness],
-        ];
-        normal = [0, 0, -1];
-        break;
-      case 'west':
-        corners = [
-          [x + thickness, y, z + 1], [x + thickness, y, z],
-          [x + thickness, y + 1, z], [x + thickness, y + 1, z + 1],
-        ];
-        normal = [1, 0, 0];
-        break;
-      case 'east':
-        corners = [
-          [x + 1 - thickness, y, z], [x + 1 - thickness, y, z + 1],
-          [x + 1 - thickness, y + 1, z + 1], [x + 1 - thickness, y + 1, z],
-        ];
-        normal = [-1, 0, 0];
-        break;
+    const outerUv = doorFaceTextureUv('outer', hinge);
+    const innerUv = doorFaceTextureUv('inner', hinge);
+    const edgeUv = doorFaceTextureUv('edge', hinge);
+    const faces = doorCuboidFaces(x, y, z, occupied, t);
+    for (const face of faces) {
+      const uv = face.role === 'outer' ? outerUv : face.role === 'inner' ? innerUv : edgeUv;
+      this.addQuad(buffers, texture, face.corners, face.normal, lighting, uv);
     }
+    return faces.length;
+  }
+
+  private addLadder(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? 'block/ladder';
+    const facing = state?.facing ?? 'north';
+    const { corners, normal } = ladderFrontCorners(x, y, z, facing);
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, normal, 1);
     this.addQuad(buffers, texture, corners, normal, lighting);
-    this.addQuad(buffers, texture, [...corners].reverse() as typeof corners, [-normal[0], 0, -normal[2]] as [number, number, number], lighting);
+    this.addQuad(
+      buffers,
+      texture,
+      [corners[1]!, corners[0]!, corners[3]!, corners[2]!],
+      [-normal[0], 0, -normal[2]] as [number, number, number],
+      lighting,
+      [1, 0, 0, 1],
+    );
     return 2;
   }
 

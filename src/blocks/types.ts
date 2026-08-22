@@ -18,7 +18,8 @@ export type BlockRenderShape =
   | 'button'
   | 'pressure_plate'
   | 'cross'
-  | 'door';
+  | 'door'
+  | 'ladder';
 
 export type DoorHalf = 'lower' | 'upper';
 export type DoorHinge = 'left' | 'right';

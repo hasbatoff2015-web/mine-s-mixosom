@@ -50,15 +50,14 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-20**:
+Срез локального запуска **2026-08-22**:
 
 ```text
 tsc --noEmit: PASS
-Vitest:       21 test files, 123 tests, 123 passed
-Vite build:   PASS
-Size/archive: PASS, 0.92 MiB uncompressed, 165 files
-Benchmark:    81 generated/meshed chunks + 600 updates with 24 mobs
-Main assets:  JS 721.71 kB / 193.44 kB gzip; CSS 12.90 kB / 3.82 kB gzip
+Vitest:       23 test files, 165 tests, 165 passed
+Vite build:   75 modules PASS
+Size/archive: PASS, 0.94 MiB uncompressed, 165 files
+Main assets:  JS 741.32 kB / 200.49 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -75,7 +74,8 @@ Main assets:  JS 721.71 kB / 193.44 kB gzip; CSS 12.90 kB / 3.82 kB gzip
 | `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
-| `tests/item-rendering.test.ts` | 17 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow generated held path, held* QA parse/defaults, idle front-facing camera |
+| `tests/item-rendering.test.ts` | 26 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera |
+| `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
 | `tests/arrow-physics.test.ts` | 2 | Full-charge launch is `3 blocks/tick`; common air drag/gravity constants and update order |
 | `tests/mining.test.ts` | 3 | 1.9 harvest vs preferred-tool, hand/axe/pickaxe/shovel break times |
@@ -163,8 +163,12 @@ Minecraft generated-item geometry audit (локальный visual QA всё е�
 - `diamond_sword`, `iron_pickaxe`, `stick` — handheld sprite, видна FRONT texture, тонкий depth; `iron_pickaxe.png` 32×32 даёт 104 merged side spans (много 1-texel на диагонали — это контур, не баг merge);
 - `coal`, `apple`, `arrow` — generated sprite, не voxel cubes и не projectile mesh;
 - `torch` — held generated sprite, placed world cuboid без изменений;
+- `lever` — held generated sprite from `block/lever.png` (vanilla 1.21.8 item JSON); placed lever base+handle;
+- `ladder` — held generated sprite from `block/ladder.png`; placed thin plane on N/S/E/W support;
+- `oak_door` — held generated composite of upper+lower block textures; placed 3/16 cuboid with half/hinge UV;
 - `bow` — texture stages на том же generated mesh;
 - `stone` — atlas cube control.
+- `?qaItem=lever&qaView=held`, `?qaItem=ladder&qaView=held`, `?qaItem=oak_door&qaView=held`.
 - `?qaArrow=1` показал три real-texture arrow visuals на разных траекториях с общей physics update;
 - mob QA спереди/сзади/сбоку подтвердил длинные base sheep legs под коротким wool overlay, readable two-sided skeleton ribs и чистый zombie headwear cutout;
 - `?qaTime=night` ставит факел, соседние plants и каменный навес, чтобы был виден block light.
@@ -213,7 +217,7 @@ Browser viewport matrix закрывает layout baseline, но не замен
 2. create/list/load/delete world;
 3. pointer lock acquire/release, blur и `Esc`;
 4. WASD, jump, Shift sprint, C sneak, edge protection, step/slab collision;
-5. mine/place, 1.9-like break times, thin torch/button/door, запрет placement внутри игрока;
+5. mine/place, 1.9-like break times, thin torch/button/door/ladder, запрет placement внутри игрока;
 6. hotbar `1–9` и wheel, Q-drop/pickup;
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
 8. chest/furnace open/close/save, block destruction drops contents;

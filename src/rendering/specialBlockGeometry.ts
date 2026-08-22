@@ -1,5 +1,59 @@
 import * as THREE from 'three';
-import type { BlockAttachment, BlockDefinition, BlockRenderState, HorizontalFacing } from '../blocks';
+import type { BlockAttachment, BlockDefinition, BlockRenderState, DoorHinge, HorizontalFacing } from '../blocks';
+import { occupiedDoorFacing } from '../blocks';
+
+/** Vanilla ladder.json plane at 15.2/16 from the opposite face = 0.8/16 from support. */
+export const LADDER_PLANE = 0.8 / 16;
+/** Vanilla ladder collision depth 1.6/16. */
+export const LADDER_DEPTH = 1.6 / 16;
+export const DOOR_THICKNESS = 3 / 16;
+
+export type DoorFaceRole = 'outer' | 'inner' | 'edge';
+export type TextureUvRect = readonly [u0: number, v0: number, u1: number, v1: number];
+
+/**
+ * Door face UVs in atlas-tile space (v=0 at image bottom, matching ChunkMesher).
+ * Large faces use the full half-texture; hinge left/right mirrors U like vanilla
+ * `door_*_left` / `door_*_right`. Edges use the 3-pixel thickness strip, not a
+ * repeated full-cube UV.
+ */
+export function doorFaceTextureUv(role: DoorFaceRole, hinge: DoorHinge = 'left'): TextureUvRect {
+  if (role === 'outer') return hinge === 'left' ? [0, 0, 1, 1] : [1, 0, 0, 1];
+  if (role === 'inner') return hinge === 'left' ? [1, 0, 0, 1] : [0, 0, 1, 1];
+  return [0, 0, 3 / 16, 1];
+}
+
+export function doorHalfTexture(
+  half: BlockRenderState['half'],
+  textures: Pick<BlockDefinition, 'textures'>['textures'],
+): string {
+  return half === 'upper'
+    ? (textures.top ?? 'block/oak_door_upper')
+    : (textures.bottom ?? textures.all ?? 'block/oak_door');
+}
+
+/**
+ * Ladder plane against the support. `facing` is the clicked-face normal
+ * (support is opposite), matching wall torch.
+ */
+export function ladderPlaneLocal(facing: HorizontalFacing): {
+  readonly axis: 'x' | 'z';
+  readonly plane: number;
+  readonly min: number;
+  readonly max: number;
+  readonly outward: readonly [number, number, number];
+} {
+  switch (facing) {
+    case 'east':
+      return { axis: 'x', plane: LADDER_PLANE, min: 0, max: LADDER_DEPTH, outward: [1, 0, 0] };
+    case 'west':
+      return { axis: 'x', plane: 1 - LADDER_PLANE, min: 1 - LADDER_DEPTH, max: 1, outward: [-1, 0, 0] };
+    case 'south':
+      return { axis: 'z', plane: LADDER_PLANE, min: 0, max: LADDER_DEPTH, outward: [0, 0, 1] };
+    case 'north':
+      return { axis: 'z', plane: 1 - LADDER_PLANE, min: 1 - LADDER_DEPTH, max: 1, outward: [0, 0, -1] };
+  }
+}
 
 export function leverHandleAngle(powered: boolean): number {
   return powered ? -Math.PI * 0.28 : Math.PI * 0.28;
@@ -149,6 +203,7 @@ export function selectionBoxesForBlock(
     case 'pressure_plate': return [pressurePlateSelectionBox(x, y, z, state)];
     case 'wire': return [wireSelectionBox(x, y, z)];
     case 'door': return [doorSelectionBox(x, y, z, state)];
+    case 'ladder': return [ladderSelectionBox(x, y, z, state)];
     case 'cross': return [crossSelectionBox(x, y, z)];
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
@@ -257,15 +312,12 @@ function doorSelectionBox(
   z: number,
   state: BlockRenderState | undefined,
 ): OrientedSelectionBox {
-  const facing = state?.facing ?? 'north';
-  const open = state?.open === true;
-  const hinge = state?.hinge ?? 'left';
-  const occupied = open
-    ? (hinge === 'left'
-      ? ({ north: 'west', west: 'south', south: 'east', east: 'north' } as const)[facing]
-      : ({ north: 'east', east: 'south', south: 'west', west: 'north' } as const)[facing])
-    : facing;
-  const thickness = 3 / 16;
+  const occupied = occupiedDoorFacing(
+    state?.facing ?? 'north',
+    state?.open === true,
+    state?.hinge ?? 'left',
+  );
+  const thickness = DOOR_THICKNESS;
   switch (occupied) {
     case 'north':
       return boxFromSize(new THREE.Vector3(x + 0.5, y + 0.5, z + thickness / 2), [1, 1, thickness]);
@@ -276,6 +328,25 @@ function doorSelectionBox(
     case 'east':
       return boxFromSize(new THREE.Vector3(x + 1 - thickness / 2, y + 0.5, z + 0.5), [thickness, 1, 1]);
   }
+}
+
+function ladderSelectionBox(
+  x: number,
+  y: number,
+  z: number,
+  state: BlockRenderState | undefined,
+): OrientedSelectionBox {
+  const plane = ladderPlaneLocal(state?.facing ?? 'north');
+  if (plane.axis === 'x') {
+    return boxFromSize(
+      new THREE.Vector3(x + (plane.min + plane.max) / 2, y + 0.5, z + 0.5),
+      [LADDER_DEPTH, 1, 1],
+    );
+  }
+  return boxFromSize(
+    new THREE.Vector3(x + 0.5, y + 0.5, z + (plane.min + plane.max) / 2),
+    [1, 1, LADDER_DEPTH],
+  );
 }
 
 function crossSelectionBox(x: number, y: number, z: number): OrientedSelectionBox {

@@ -2,9 +2,12 @@ import * as THREE from 'three';
 import { getBlockDefinition, type BlockDefinition } from '../blocks';
 import {
   ITEMS,
+  generatedHeldTexturePath,
   getItemDefinition,
+  itemHeldMeshKind,
   itemRenderProfile,
   itemUsesGeneratedHeldGeometry,
+  OAK_DOOR_HELD_TEXTURE,
   type ItemRenderContext,
   type ItemViewTransform,
 } from '../items';
@@ -65,6 +68,7 @@ export class ItemVisualFactory {
   private readonly itemTextures = new Map<string, THREE.Texture>();
   private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly generatedMasks = new Map<string, GeneratedItemMask>();
+  private readonly specialHeldGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly fallbackTexture: THREE.Texture;
   private readonly atlas?: AtlasSource;
   private disposed = false;
@@ -77,7 +81,7 @@ export class ItemVisualFactory {
   async preload(): Promise<void> {
     if (typeof document === 'undefined') return;
     const paths = new Set(
-      ITEMS.filter((item) => itemUsesGeneratedHeldGeometry(item)).map((item) => item.texture),
+      ITEMS.filter((item) => itemUsesGeneratedHeldGeometry(item)).map((item) => generatedHeldTexturePath(item)),
     );
     paths.add('item/bow_pulling_0');
     paths.add('item/bow_pulling_1');
@@ -92,11 +96,19 @@ export class ItemVisualFactory {
     root.name = `item-model:${itemId}`;
     root.userData.itemId = itemId;
     root.userData.renderCategory = itemRenderProfile(definition).category;
-    root.userData.texturePath = definition.texture;
+    root.userData.heldMeshKind = itemHeldMeshKind(definition);
+    root.userData.texturePath = generatedHeldTexturePath(definition);
 
-    if (itemUsesGeneratedHeldGeometry(definition)) {
-      const mesh = this.generatedMesh(definition.texture);
+    const meshKind = itemHeldMeshKind(definition);
+    if (meshKind === 'generated') {
+      const mesh = this.generatedMesh(generatedHeldTexturePath(definition));
       mesh.name = `${root.name}:generated`;
+      bindEntityLightReceiver(mesh);
+      root.add(mesh);
+    } else if (meshKind === 'special_model' && definition.kind === 'block') {
+      const block = getBlockDefinition(definition.blockId);
+      const mesh = new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
+      mesh.name = `${root.name}:special`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
     } else if (definition.kind === 'block') {
@@ -176,6 +188,7 @@ export class ItemVisualFactory {
     if (this.disposed) return;
     for (const geometry of this.blockGeometries.values()) geometry.dispose();
     for (const geometry of this.generatedGeometries.values()) geometry.dispose();
+    for (const geometry of this.specialHeldGeometries.values()) geometry.dispose();
     for (const material of this.blockMaterials.values()) material.dispose();
     for (const material of this.itemMaterials.values()) material.dispose();
     for (const texture of this.itemTextures.values()) texture.dispose();
@@ -186,7 +199,60 @@ export class ItemVisualFactory {
     this.itemTextures.clear();
     this.generatedGeometries.clear();
     this.generatedMasks.clear();
+    this.specialHeldGeometries.clear();
     this.disposed = true;
+  }
+
+  private specialHeldGeometry(itemId: string): THREE.BufferGeometry {
+    let geometry = this.specialHeldGeometries.get(itemId);
+    if (geometry) return geometry;
+    // Vanilla button_inventory / pressure_plate_up inventory cuboids.
+    if (itemId === 'stone_button') {
+      geometry = this.atlasCuboidGeometry([6 / 16, 4 / 16, 4 / 16], [0, 0, 0], 'block/stone');
+    } else if (itemId === 'oak_pressure_plate') {
+      geometry = this.atlasCuboidGeometry(
+        [14 / 16, 1 / 16, 14 / 16],
+        [0, -0.5 + 1 / 32, 0],
+        'block/oak_planks',
+      );
+    } else {
+      throw new Error(`No special held model for ${itemId}`);
+    }
+    this.specialHeldGeometries.set(itemId, geometry);
+    return geometry;
+  }
+
+  private atlasCuboidGeometry(
+    size: readonly [number, number, number],
+    center: readonly [number, number, number],
+    textureKey: string,
+  ): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const tile = this.atlas?.tile(textureKey) ?? FULL_TILE;
+    for (const face of CUBE_FACES) {
+      const base = positions.length / 3;
+      for (const corner of face.corners) {
+        positions.push(
+          (corner[0] - 0.5) * size[0] + center[0],
+          (corner[1] - 0.5) * size[1] + center[1],
+          (corner[2] - 0.5) * size[2] + center[2],
+        );
+        normals.push(...face.normal);
+      }
+      uvs.push(tile.u0, tile.v0, tile.u1, tile.v0, tile.u1, tile.v1, tile.u0, tile.v1);
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeBoundingSphere();
+    geometry.userData.specialHeldModel = true;
+    return geometry;
   }
 
   private blockGeometry(block: BlockDefinition): THREE.BufferGeometry {
@@ -253,6 +319,10 @@ export class ItemVisualFactory {
 
   private async loadGeneratedAsset(texturePath: string): Promise<void> {
     if (this.generatedGeometries.has(texturePath) && this.itemTextures.has(texturePath)) return;
+    if (texturePath === OAK_DOOR_HELD_TEXTURE) {
+      await this.loadCompositedDoorAsset();
+      return;
+    }
     const image = new Image();
     image.decoding = 'async';
     image.src = TextureAtlas.url(texturePath);
@@ -290,6 +360,51 @@ export class ItemVisualFactory {
     texture.wrapT = THREE.ClampToEdgeWrapping;
     this.itemTextures.get(texturePath)?.dispose();
     this.itemTextures.set(texturePath, texture);
+  }
+
+  /**
+   * Vanilla oak_door item is `item/generated` + `item/oak_door.png`. Faithful 1.21.8
+   * in this repo only ships block halves, so stack upper/lower into a square sprite.
+   */
+  private async loadCompositedDoorAsset(): Promise<void> {
+    const upper = await this.loadImageElement(TextureAtlas.url('block/oak_door_upper'));
+    const lower = await this.loadImageElement(TextureAtlas.url('block/oak_door'));
+    const size = 32;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Unable to composite oak door item texture');
+    context.imageSmoothingEnabled = false;
+    context.drawImage(upper, 0, 0, upper.naturalWidth, upper.naturalHeight, 0, 0, size, size / 2);
+    context.drawImage(lower, 0, 0, lower.naturalWidth, lower.naturalHeight, 0, size / 2, size, size / 2);
+    const rgba = context.getImageData(0, 0, size, size).data;
+    const alpha = new Uint8Array(size * size);
+    for (let index = 0; index < alpha.length; index += 1) alpha[index] = rgba[index * 4 + 3]!;
+    this.generatedGeometries.get(OAK_DOOR_HELD_TEXTURE)?.dispose();
+    const mask: GeneratedItemMask = { width: size, height: size, alpha };
+    this.generatedMasks.set(OAK_DOOR_HELD_TEXTURE, mask);
+    this.generatedGeometries.set(OAK_DOOR_HELD_TEXTURE, createGeneratedItemGeometry(mask));
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    this.itemTextures.get(OAK_DOOR_HELD_TEXTURE)?.dispose();
+    this.itemTextures.set(OAK_DOOR_HELD_TEXTURE, texture);
+  }
+
+  private loadImageElement(url: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.decoding = 'async';
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`Unable to load ${url}`));
+      image.src = url;
+    });
   }
 
   private itemTexture(texturePath: string): THREE.Texture {

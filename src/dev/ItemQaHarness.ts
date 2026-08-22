@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  generatedHeldTexturePath,
   getItemDefinition,
   isKnownItemId,
   itemRenderProfile,
@@ -300,7 +301,7 @@ export async function startItemQaHarness(
 
 function generatedOverlay(visuals: ItemVisualFactory, itemId: string | undefined): string {
   if (!itemId || !itemUsesGeneratedHeldGeometry(itemId)) return '';
-  const geometry = visuals.getGeneratedGeometry(getItemDefinition(itemId).texture);
+  const geometry = visuals.getGeneratedGeometry(generatedHeldTexturePath(itemId));
   return geometry ? formatGeneratedItemDiagnostics(generatedItemInfo(geometry), itemId) : '';
 }
 
@@ -340,7 +341,7 @@ function mountInspectItem(options: {
     return `item ${itemId}\nnot generated sprite geometry`;
   }
 
-  const texturePath = getItemDefinition(itemId).texture;
+  const texturePath = generatedHeldTexturePath(itemId);
   const mask = visuals.getGeneratedMask(texturePath);
   const source = visuals.getGeneratedGeometry(texturePath) ?? mesh.geometry;
   let info = generatedItemInfo(source);
