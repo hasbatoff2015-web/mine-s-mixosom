@@ -1,6 +1,19 @@
 export const TICK_RATE = 20;
 export const FIXED_DT = 1 / TICK_RATE;
 export const MAX_FRAME_DELTA = 0.25;
+/** Drop excess accumulated time after this many catch-up ticks so a hitch cannot spiral. */
+export const MAX_CATCH_UP_TICKS = 4;
+export const TARGET_FRAME_MS = 1000 / 60;
+export const WORLD_JOB_BUDGET_MS = 4;
+export const WORLD_LOADING_JOB_BUDGET_MS = 10;
+/** Dedicated lighting slice while PLAYING. Must never wrap a 30 ms job. */
+export const WORLD_LIGHT_BUDGET_MS = 2;
+/** Loading screen can spend more; the overlay still animates between slices. */
+export const WORLD_LOADING_LIGHT_BUDGET_MS = 8;
+/** Extra generated+lit ring so visible chunks mesh with neighbor light context. */
+export const LIGHTING_HALO_CHUNKS = 1;
+/** Visual interpolation snap: teleport/spawn/corrections larger than this skip lerp. */
+export const ENTITY_SNAP_DISTANCE = 6;
 
 export const CHUNK_SIZE = 16;
 export const WORLD_HEIGHT = 80;

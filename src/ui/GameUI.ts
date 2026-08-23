@@ -159,19 +159,69 @@ export class GameUI {
     });
   }
 
+  overlayRoot(): HTMLElement {
+    return this.root;
+  }
+
   setItemIconResolver(resolver: (itemId: string) => string): void {
     this.itemIconResolver = resolver;
   }
 
-  showLoading(label = 'Подготавливаем мир…'): void {
+  showLoading(label = 'Подготавливаем мир…', percent?: number, detail?: string): void {
     this.hideHud();
+    const bar = percent === undefined
+      ? '<div class="loading-bar"></div>'
+      : `<div class="loading-bar determinate"><span style="width:${Math.max(0, Math.min(100, percent))}%"></span></div>`;
+    const extra = detail ? `<p class="loading-detail">${this.escape(detail)}</p>` : '';
     this.setScreen(`
       <div id="loading-screen" class="screen">
         <div class="menu-card">
           <div class="brand"><div class="brand-mark"></div><h1>FRONTIER CUBES</h1><p>survival alpha</p></div>
-          <strong>${this.escape(label)}</strong><div class="loading-bar"></div>
+          <strong data-loading-label>${this.escape(label)}</strong>
+          ${bar}
+          ${extra}
         </div>
       </div>`);
+  }
+
+  updateWorldLoading(label: string, percent: number, detail: string): void {
+    const screen = this.screen?.id === 'loading-screen' ? this.screen : undefined;
+    if (!screen) {
+      this.showLoading(label, percent, detail);
+      return;
+    }
+    const heading = screen.querySelector('[data-loading-label]');
+    if (heading) heading.textContent = label;
+    let bar = screen.querySelector<HTMLElement>('.loading-bar');
+    if (!bar || !bar.classList.contains('determinate')) {
+      bar = document.createElement('div');
+      bar.className = 'loading-bar determinate';
+      bar.innerHTML = '<span></span>';
+      screen.querySelector('.menu-card')?.querySelector('.loading-bar')?.replaceWith(bar)
+        ?? screen.querySelector('.menu-card')?.append(bar);
+    }
+    const fill = bar.querySelector('span') ?? bar.appendChild(document.createElement('span'));
+    fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    let detailNode = screen.querySelector<HTMLElement>('.loading-detail');
+    if (!detailNode) {
+      detailNode = document.createElement('p');
+      detailNode.className = 'loading-detail';
+      screen.querySelector('.menu-card')?.append(detailNode);
+    }
+    detailNode.textContent = detail;
+  }
+
+  showWorldLoadError(message: string, onBack: () => void): void {
+    this.hideHud();
+    this.setScreen(`
+      <section class="screen"><div class="menu-card">
+        <h1>Не удалось подготовить мир</h1>
+        <p>${this.escape(message)}</p>
+        <div class="menu-stack">
+          <button class="game-button primary" data-action="back">К списку миров</button>
+        </div>
+      </div></section>`);
+    this.bindAction('back', onBack);
   }
 
   showMainMenu(actions: MainMenuActions): void {

@@ -32,6 +32,12 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после container UI / chest model / Recipe Book / Creative flight / sim-while-GUI-open: typecheck, 257 tests / 31 files, production build 90 modules, 1.00 MiB / 166 files.
 - [x] Локальный pipeline после container visual/functional QA (Creative tabs, chest lid/facing, furnace lit/light, transactional Recipe Book, stable slot DOM): typecheck, 275 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
 - [x] Локальный pipeline после recipe-book layout / hover overlay / chest lid interior / furnace GUI front / Creative inventory polish: typecheck, 276 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
+- [x] Локальный pipeline после performance/world-loading/mob-smoothing pass: typecheck, 301 tests / 40 files, production build 95 modules, 1.03 MiB / 167 files.
+- [x] Локальный pipeline после lighting performance / chunk seams pass: typecheck, 311 tests / 41 files, production build 96 modules, 1.04 MiB / 167 files.
+- [x] Локальный pipeline после DEV chunk streaming inspector (diagnostic only, no scheduler change): typecheck, 323 tests / 42 files, production build 99 modules, 1.06 MiB / 167 files.
+- [x] Локальный pipeline после chunk mesh starvation / obsolete pending cleanup: typecheck, 337 tests / 43 files, production build 100 modules, 1.07 MiB / 167 files.
+- [x] Локальный pipeline после player-visible streaming latency metrics (inspector only, no scheduler change): typecheck, 349 tests / 43 files, production build 100 modules, 1.08 MiB / 167 files.
+- [x] Локальный pipeline после lighting halo / flood-head scheduler fix: typecheck, 368 tests / 44 files, production build 100 modules, 1.08 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -104,9 +110,13 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [ ] Перенести chunk generation/meshing в Web Workers с cancellable priority queue, если device profiling после текущего CPU pass подтвердит необходимость.
 - [ ] Внедрить greedy meshing или эквивалентное объединение coplanar faces.
 - [x] Добавить budgets по jobs/миллисекундам, generation/mesh scheduling и F3 telemetry для chunk rebuild; frustum/distance priority остаётся следующим этапом.
+- [x] Adaptive per-frame world-job budget, dirty-mesh Set-dedupe, neighbor remesh только на X/Z boundary, `LOADING_WORLD` until initial radius ready, entity render interpolation at 20 TPS.
+- [x] Simplified column sky + bounded block light, resumable light jobs (`WORLD_LIGHT_BUDGET_MS`), lighting halo, `lightVersion`/`meshedLightVersion`, DEV chunk-border overlay.
+- [x] Lighting flood mutex no longer stops the queue on a blocked head; near unlock neighbors outrank distant halo; obsolete floods are abandoned.
 - [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
 - [ ] Улучшить сортировку отдельных translucent water/glass faces.
 - [x] Добавить lightweight skylight/block-light contribution в chunk meshing; torch/lava обновляют свет локально, без full-world rebuild.
+- [x] Block-break path: skip lighting when sky-class+emission unchanged; vertical sky columns only (no 6-pass); light writes no longer dirty neighbor meshes.
 - [x] Убрать Lambert N·L с terrain (pitch-black bottoms), тёплый torch block-light в shader, shape-aware selection outline.
 - [x] Wall torch flush to supporting face, thicker cuboid matching outline; entity lighting from voxel sky/block (feet/torso/head); cube-face 4-tap smooth lighting at cave openings.
 - [x] Добавить power-of-two atlas, mipmaps, `4 px` padding/extrusion и ограниченную anisotropy для снижения bleeding/shimmer.

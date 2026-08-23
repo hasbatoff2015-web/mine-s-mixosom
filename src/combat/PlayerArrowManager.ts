@@ -4,10 +4,12 @@ import type { MobManager } from '../entities';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
+import { interpolateVec3 } from '../core/entityInterpolation';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 
 interface PlayerArrow {
   readonly position: THREE.Vector3;
+  readonly previousPosition: THREE.Vector3;
   readonly velocity: THREE.Vector3;
   readonly visual: THREE.Object3D;
   age: number;
@@ -45,13 +47,22 @@ export class PlayerArrowManager {
     visual.position.copy(origin);
     this.orient(visual, velocity);
     this.scene.add(visual);
-    this.arrows.push({ position: origin.clone(), velocity, visual, age: 0, critical, inGround: false });
+    this.arrows.push({
+      position: origin.clone(),
+      previousPosition: origin.clone(),
+      velocity,
+      visual,
+      age: 0,
+      critical,
+      inGround: false,
+    });
   }
 
   tick(dt: number): void {
     const tickSteps = Math.max(1, Math.round(dt * 20));
     for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
       const arrow = this.arrows[index]!;
+      arrow.previousPosition.copy(arrow.position);
       arrow.age += dt;
       if (arrow.age > 8) {
         this.remove(index);
@@ -80,6 +91,7 @@ export class PlayerArrowManager {
           arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
           arrow.inGround = true;
           arrow.velocity.set(0, 0, 0);
+          arrow.previousPosition.copy(arrow.position);
           arrow.visual.position.copy(arrow.position);
           applySampledEntityLight(
             arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
@@ -94,12 +106,27 @@ export class PlayerArrowManager {
         applyArrowDragAndGravity(arrow.velocity, inWater);
       }
       if (removed || arrow.inGround) continue;
-      arrow.visual.position.copy(arrow.position);
       this.orient(arrow.visual, arrow.velocity);
       applySampledEntityLight(
         arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
         worldDaylightUniform.value,
       );
+    }
+  }
+
+  interpolateVisuals(alpha: number): void {
+    const t = Math.max(0, Math.min(1, alpha));
+    for (const arrow of this.arrows) {
+      const visual = interpolateVec3(
+        arrow.previousPosition.x,
+        arrow.previousPosition.y,
+        arrow.previousPosition.z,
+        arrow.position.x,
+        arrow.position.y,
+        arrow.position.z,
+        t,
+      );
+      arrow.visual.position.set(visual.x, visual.y, visual.z);
     }
   }
 

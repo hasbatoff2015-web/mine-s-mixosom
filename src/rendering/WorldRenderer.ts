@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
 import type { HorizontalFacing } from '../blocks';
-import { chunkKey } from '../core/constants';
+import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
+import { lightContextReady } from '../world/worldJobs';
+import { meshJobSortScore, meshWaitMs } from '../world/streamingScheduler';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import { ChestRenderer } from './ChestRenderer';
 import {
@@ -99,16 +101,81 @@ export class WorldRenderer {
     return this.vegetationMaterial.side;
   }
 
-  rebuildDirty(maxChunks = 2, timeBudgetMs = 7): number {
+  rebuildDirty(
+    maxChunks = 2,
+    timeBudgetMs = 7,
+    originX?: number,
+    originZ?: number,
+    options: {
+      meshRadius?: number;
+      requireNeighborLight?: boolean;
+      counters?: { attempted: number; completed: number; skippedBlocked: number };
+      onMeshStart?: (chunk: Chunk) => void;
+      onMeshComplete?: (chunk: Chunk) => void;
+      dirX?: number;
+      dirZ?: number;
+    } = {},
+  ): number {
     const start = performance.now();
-    let rebuilt = 0;
+    const centerX = originX === undefined ? this.world.viewChunkX : floorDiv(originX, CHUNK_SIZE);
+    const centerZ = originZ === undefined ? this.world.viewChunkZ : floorDiv(originZ, CHUNK_SIZE);
+    const meshRadius = options.meshRadius;
+    const requireNeighborLight = options.requireNeighborLight === true;
+    const counters = options.counters;
+    const dirX = options.dirX ?? 0;
+    const dirZ = options.dirZ ?? 0;
+    const now = performance.now();
+    const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
-      if (!chunk.dirty || rebuilt >= maxChunks) continue;
+      if (!chunk.dirty && !chunk.lightMeshStale) continue;
+      if (meshRadius !== undefined) {
+        const distance = Math.max(Math.abs(chunk.x - centerX), Math.abs(chunk.z - centerZ));
+        if (distance > meshRadius) continue;
+      }
+      dirty.push(chunk);
+    }
+    dirty.sort((a, b) => {
+      const sa = meshJobSortScore(a.x, a.z, centerX, centerZ, dirX, dirZ, meshWaitMs(a, now));
+      const sb = meshJobSortScore(b.x, b.z, centerX, centerZ, dirX, dirZ, meshWaitMs(b, now));
+      return sa - sb;
+    });
+    let rebuilt = 0;
+    for (const chunk of dirty) {
+      if (rebuilt >= maxChunks) break;
+      if (!chunk.lightingReady) {
+        // Skip blocked head; keep scanning for a later ready chunk.
+        if (counters) {
+          counters.attempted += 1;
+          counters.skippedBlocked += 1;
+        }
+        continue;
+      }
+      if (requireNeighborLight && !lightContextReady(
+        this.world,
+        chunk,
+        centerX,
+        centerZ,
+        this.world.generationRadius,
+      )) {
+        if (counters) {
+          counters.attempted += 1;
+          counters.skippedBlocked += 1;
+        }
+        continue;
+      }
+      if (rebuilt > 0 && performance.now() - start >= timeBudgetMs) break;
+      if (counters) counters.attempted += 1;
+      options.onMeshStart?.(chunk);
       this.rebuild(chunk);
+      options.onMeshComplete?.(chunk);
+      if (counters) counters.completed += 1;
       rebuilt += 1;
-      if (performance.now() - start >= timeBudgetMs) break;
     }
     return rebuilt;
+  }
+
+  hasChunk(key: string): boolean {
+    return this.chunks.has(key);
   }
 
   rebuild(chunk: Chunk): void {
@@ -143,6 +210,8 @@ export class WorldRenderer {
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
     chunk.dirty = false;
+    chunk.meshedLightVersion = chunk.lightVersion;
+    this.world.acknowledgeMeshed(chunk);
     const meshMilliseconds = performance.now() - meshStart;
     this.meshSamples += 1;
     this.meshTotalMs += meshMilliseconds;

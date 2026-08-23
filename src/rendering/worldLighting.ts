@@ -21,6 +21,8 @@ export const ENTITY_LIGHT_IDENTITY = new THREE.Vector3(1, 1, 1);
 
 /** Shared by every world material so day/night updates without remeshing. */
 export const worldDaylightUniform: { value: number } = { value: 1 };
+/** 0 off, 1 sky, 2 block, 3 final (composed). DEV overlay only. */
+export const worldLightDebugUniform: { value: number } = { value: 0 };
 
 export interface WorldLightSample {
   readonly sky: number;
@@ -81,6 +83,7 @@ export function createWorldChunkMaterial(
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uDaylight = worldDaylightUniform;
+    shader.uniforms.uLightDebug = worldLightDebugUniform;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -107,6 +110,7 @@ vEmissionLight = emissionLight;`,
         '#include <common>',
         `#include <common>
 uniform float uDaylight;
+uniform float uLightDebug;
 varying float vSkyLight;
 varying float vBlockLight;
 varying float vFaceShade;
@@ -119,15 +123,21 @@ vec3 torchWarm = vec3(${TORCH_LIGHT_RGB[0]}, ${TORCH_LIGHT_RGB[1]}, ${TORCH_LIGH
 float skyTerm = (${SKY_TERM_MIN} + pow(max(vSkyLight, 0.0), ${SKY_TERM_GAMMA}) * ${SKY_TERM_SCALE}) * uDaylight + ${SKY_AMBIENT};
 vec3 blockRgb = torchWarm * (vBlockLight * ${BLOCK_LIGHT_VISUAL});
 vec3 baked = max(vec3(skyTerm), max(blockRgb, vec3(vEmissionLight)));
+if (uLightDebug > 0.5 && uLightDebug < 1.5) baked = vec3(vSkyLight);
+else if (uLightDebug > 1.5 && uLightDebug < 2.5) baked = vec3(vBlockLight);
 diffuseColor.rgb *= baked * vFaceShade;`,
       );
   };
-  material.customProgramCacheKey = () => 'frontier-world-baked-light-v2';
+  material.customProgramCacheKey = () => 'frontier-world-baked-light-v3';
   return material;
 }
 
 export function setWorldDaylight(daylight: number): void {
   worldDaylightUniform.value = THREE.MathUtils.clamp(daylight, 0.08, 1);
+}
+
+export function setWorldLightDebug(mode: number): void {
+  worldLightDebugUniform.value = mode;
 }
 
 export interface EntityMaterialOptions {

@@ -95,7 +95,7 @@ describe('container modal vs real pause', () => {
   });
 
   it('only non-PLAYING lifecycle states stop the world', () => {
-    const paused: LifecycleState[] = ['LOADING', 'MENU', 'PAUSED', 'AD', 'BACKGROUND', 'DEAD'];
+    const paused: LifecycleState[] = ['LOADING', 'LOADING_WORLD', 'MENU', 'PAUSED', 'AD', 'BACKGROUND', 'DEAD'];
     for (const state of paused) expect(worldSimulationActive(state), state).toBe(false);
     expect(worldSimulationActive('PLAYING')).toBe(true);
   });

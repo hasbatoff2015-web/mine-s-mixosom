@@ -8,7 +8,9 @@ describe('rolling performance telemetry', () => {
     const stats = window.snapshot();
     expect(stats.samples).toBe(4);
     expect(stats.averageMs).toBe(7.25);
+    expect(stats.p50Ms).toBe(3);
     expect(stats.p95Ms).toBe(20);
+    expect(stats.p99Ms).toBe(20);
     expect(stats.maximumMs).toBe(20);
   });
 });

@@ -56,9 +56,9 @@ flowchart TD
 
 ## Fixed loop и порядок tick
 
-Render loop использует `requestAnimationFrame`. Реальная frame delta ограничивается `MAX_FRAME_DELTA = 0.25 s`, затем накапливается в accumulator. Пока accumulator не меньше `FIXED_DT = 0.05 s`, выполняется simulation tick. Камера интерполируется между `previousPosition` и текущей позицией игрока.
+Render loop использует `requestAnimationFrame`. `advanceFixedStep()` ограничивает raw delta `MAX_FRAME_DELTA = 0.25 s` и не выполняет больше `MAX_CATCH_UP_TICKS = 4` simulation ticks за кадр: избыток времени отбрасывается, чтобы stall 300 ms не разгонял spiral of death. Пока accumulator ≥ `FIXED_DT = 0.05 s`, выполняется simulation tick. Камера, мобы, drops, arrows и TNT интерполируются между previous/current simulation snapshots.
 
-Simulation продвигается только в lifecycle state `PLAYING`. Container GUI (Survival/Creative inventory, chest, furnace, crafting table, Recipe Book) **не** является pause: мир остаётся в `PLAYING`, tick продолжается, а player gameplay input блокируется отдельно (`gameplayModal.ts`). Настоящая остановка simulation — Pause menu (`Esc` → `PAUSED`) и platform/background/ad/death. Furnace burn/cook всегда идёт через `VoxelWorld.tickFurnaces()` в общем world tick, без UI-таймера.
+Simulation продвигается только в lifecycle state `PLAYING`. `LOADING_WORLD` готовит initial radius без player physics, mining и pointer lock. Container GUI (Survival/Creative inventory, chest, furnace, crafting table, Recipe Book) **не** является pause: мир остаётся в `PLAYING`, tick продолжается, а player gameplay input блокируется отдельно (`gameplayModal.ts`). Настоящая остановка simulation — Pause menu (`Esc` → `PAUSED`) и platform/background/ad/death. Furnace burn/cook всегда идёт через `VoxelWorld.tickFurnaces()` в общем world tick, без UI-таймера.
 
 Текущий tick логически выполняет:
 
@@ -81,13 +81,13 @@ Simulation продвигается только в lifecycle state `PLAYING`. C
 `GameLifecycleManager` использует состояния:
 
 ```text
-LOADING → MENU → PLAYING ↔ PAUSED
-                    ↓
-                   DEAD
+LOADING → MENU → LOADING_WORLD → PLAYING ↔ PAUSED
+                         ↓
+                        DEAD
 PLAYING → AD / BACKGROUND → controlled resume
 ```
 
-На входе в `PLAYING` audio возобновляется и Yandex `GameplayAPI.start()` вызывается idempotently. В остальных states simulation/audio останавливаются и вызывается `GameplayAPI.stop()`. Background также инициирует save. Открытый container не переводит lifecycle из `PLAYING`, поэтому audio/GameplayAPI не стопаются вместе с GUI.
+`LOADING_WORLD` держится, пока `initialAreaReady` не подтвердит generate+light+mesh в квадрате render distance вокруг spawn (новые миры и load save). Progress bar — weighted milestones (`worldLoading.ts`), не fake timer. Pointer lock `canCapture` только в `PLAYING`. На входе в `PLAYING` audio возобновляется и Yandex `GameplayAPI.start()` вызывается idempotently. В остальных states simulation/audio останавливаются и вызывается `GameplayAPI.stop()`. Background также инициирует save. Platform `loadingReady()` остаётся boot-time и не подменяется world overlay. Открытый container не переводит lifecycle из `PLAYING`, поэтому audio/GameplayAPI не стопаются вместе с GUI.
 
 Текущая state machine хранит только одно предыдущее состояние. Для production желательно перейти к набору независимых pause reasons, чтобы user pause, platform modal и visibility не могли ошибочно отменить друг друга.
 
@@ -143,7 +143,17 @@ Map<chunkKey, Map<linearBlockIndex, BlockId>>
 
 Scheduled block queue ограничена, за tick обрабатывается bounded число updates. Gravity-блоки ставят falling-block spawn вместо телепорта; liquids сохраняют минимальный downward path.
 
-Каждый chunk хранит два `Uint8Array` света. Sky light заполняется сверху вниз по столбцу и коротко растекается по соседям; block light flood идёт от emissive блоков (torch 14, redstone torch 7, lava 15) с лимитом `8192` узлов. Одиночная смена блока вызывает `relightAround` (через `relightRegion`). Массовые записи идут через `VoxelWorld.applyBlockBatch`: каждый загруженный chunk в регионе получает `recomputeChunkSky` максимум один раз, затем один `propagateBlockLight` по union AABB. Cube faces пишут per-vertex `skyLight`/`blockLight` как среднее четырёх клеток у вершины (smooth lighting lite), плюс `faceShade` / `emissionLight` и biome tint в `color`. Chunk materials — `MeshBasicMaterial` с `onBeforeCompile`: shader делает `max(sky^γ * daylight, torchWarm * block)` и **не** применяет Lambert N·L. World entities используют тот же `composeWorldLight` через `sampleEntityLight`. Тёплый цвет факела живёт только в block-light contribution, daylight/sky остаётся нейтральным.
+Каждый chunk хранит два `Uint8Array` света плюс `lightVersion` / `meshedLightVersion`. **Lighting is intentionally simplified for performance.** Sky light отвечает только на «есть ли доступ к открытому небу?» — вертикальный столбец сверху вниз: opaque (`occludesFaces`) обнуляет sky; air пропускает 15; water и leaf cubes ослабляют на 1; cross-plants/torch/door sky не меняют. Горизонтальный 6-pass / 4-pass sky spread **не используется**. Block light — локальный bounded BFS от emission (torch 14, burning furnace = torch, lava 15, redstone torch 7) с reusable typed queue и лимитом узлов. Shader: `max(sky^γ * uDaylight, torchWarm * block)` + `faceShade`. Смена времени суток не пересчитывает voxel map.
+
+`getChunk` генерирует terrain **без** lighting. `processLighting(budgetMs)` — resumable: cursor по столбцам, flood head, yield по `WORLD_LIGHT_BUDGET_MS` (PLAYING ~2 ms, loading ~8 ms) и hard cap столбцов/узлов, чтобы scheduler **не** запускал монолитный 30 ms `lightChunk()`. Initial ready: generate+light `renderDistance+1` (halo), mesh только visible `renderDistance`, и только если 4 соседа в halo существуют и lit. Streaming chunk не становится visible с заведомо stale/provisional light.
+
+PLAYING job fairness (`src/world/streamingScheduler.ts`): budgets **не** поднимались (`WORLD_JOB_BUDGET_MS = 4`, light slice 2 ms). Если в кадре была generation, mesh больше не пропускается целиком. Nearby ready mesh (chebyshev ≤ 2 или wait ≥ 150 ms) может взять **один** mesh slot; иначе generation может вытеснить mesh не чаще одного кадра подряд. Priority: ring (player / neighbors / ring-2 / rest) + age boost + лёгкий movement-ahead tie-break + distanceSq; score пересчитывается каждый mesh pass от текущего player chunk. `discardObsoletePendingMesh` снимает `pendingMesh` вне wanted mesh radius (generated data и `dirty` сохраняются). `pruneChunks` удаляет pending key вместе с chunk. Mesh lane по-прежнему `continue` мимо blocked head.
+
+Lighting lane: sky/block **не** ждут, пока соседи lit (это только mesh `lightContextReady`). `processLighting` больше **не** делает `break` на blocked flood-head: чужие unlit jobs `continue`, in-progress flood owner возобновляется, если он ещё в generate radius и не вытеснен. Unlit вне generate radius не стартуют; flood mutex на obsolete/pruned owner сбрасывается (block cursor restart, sky сохраняется). Если flood держит дальний halo (chebyshev > 2), а рядом есть critical unlit, который unlock wanted mesh, mutex preempt'ится. Nearby unlit neighbors (chebyshev ≤ 2) получают generation/light priority. HUD: `skipsBlockedHead yes`, `stopsOnBlockedHead no`, `criticalBlocked` / `oldestCritical` / `floodOwner`.
+
+Мутации: skip lighting если sky-class и emission не изменились (tall grass → air). Torch/furnace **не** запускают sky recompute. Sky column update только при occlusion/leaf/water class change, локально, не весь chunk 6 раз. LightEngine не dirty-ит geometry на каждый voxel. Visual: mutation chunk + X/Z boundary; emission (torch/furnace) — light AABB; `lightVersion++` один раз на затронутый dirty chunk после job. `WorldRenderer.rebuildDirty` мешит если `dirty || lightVersion !== meshedLightVersion`, пропускает unlit и chunks вне mesh radius / без light context.
+
+DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN/LIGHT/MESH ready/blocked, LIGHT `criticalBlocked`/`oldestCritical`/`skipsBlockedHead`/`floodOwner`, `meshReady`/`meshUrgent`/`meshOldestDirtyAge` (scheduler dirty/prefetch, не player-visible wait)/`meshStarvationAvoided`, SIM player/mobs/world/combat/entities/other, PLAYER-VISIBLE `WANTED→VISIBLE` / `READY-WANTED→MESH` histograms, prefetch history separately, READY MESH STARVATION > 500 ms from readyWanted timestamp, LAST SLOW VISIBLE CHUNK when wanted→visible > 2 s, LAST SPIKE age). F8 или `?perf=1&chunks=1` — цветная сетка 16×16 по streaming state. F7 — sky/block/final false-color. F9 — freeze inspected front chunk (CURRENT STATE vs LAST WANTED PERIOD). FRONT CHUNK может показать DEPENDENCY CHAIN. HUD: chunk X/Z, gen/lit/mesh, versions, sky/block. `queuedObsolete` считает pending jobs вне wanted set (mesh = `pendingMesh`, не dirty halo).
 
 ## Rendering
 
@@ -159,7 +169,7 @@ Scheduled block queue ограничена, за tick обрабатываетс
 - translucent glass material с opacity `0.52`;
 - отдельный translucent water material с opacity `0.70` и более поздним render order.
 
-Все пять шейдеров делят `worldDaylightUniform`, который `Game` обновляет каждый render frame. Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; generation и meshing не совмещаются в один fixed tick, а repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry.
+Все пять шейдеров делят `worldDaylightUniform`, который `Game` обновляет каждый render frame. Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; на PLAYING generation-кадре допускается один urgent/fair mesh slot, repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry.
 
 Selection outline — тот же `LineSegments` в `WorldRenderer`. `selectionBoxesForBlock()` строит oriented boxes из фактической special geometry (cube / torch / button / lever / plate / wire / door / ladder / cross / stairs / slab / chest); геометрии кэшируются по shape key. Voxel raycast пересекает `blockCollisionBoxes` для solid блоков, поэтому пустая половина slab/stair не выделяется.
 
@@ -213,13 +223,13 @@ CombatSystem хранит attack cooldown и shield state. Melee result вычи
 
 ### DroppedItemManager
 
-Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Менеджер получает тот же `ItemVisualFactory`, что и first-person renderer: настоящие item textures/atlas cubes bob-ятся и медленно вращаются, а thresholds `1/2/17/33` показывают `1/2/3/4` bounded visual copies. World-dropped meshes получают `sampleEntityLight` на 20 TPS.
+Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Менеджер получает тот же `ItemVisualFactory`, что и first-person renderer: настоящие item textures/atlas cubes bob-ятся и медленно вращаются, а thresholds `1/2/17/33` показывают `1/2/3/4` bounded visual copies. World-dropped meshes получают `sampleEntityLight` на 20 TPS; visual position интерполируется на render frame.
 
 ### MobManager
 
 MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Skeleton projectiles используют те же `ArrowPhysics` и переданный Game-owned `ArrowVisualFactory`, поэтому их scale, orientation, drag, gravity, collision и cleanup не расходятся с player arrows.
 
-Освещение мобов идёт из voxel `skyLight`/`blockLight`: `sampleEntityLight` усредняет feet/torso/head, `createEntityMaterial` (`MeshBasicMaterial` + wrap ≥ 0.76) умножает на этот RGB. Scene hemisphere/directional больше не являются источником света мобов — тот же класс бага, что Lambert на terrain. Spawn/burn light checks читают `combinedLight`.
+Освещение мобов идёт из voxel `skyLight`/`blockLight`: `sampleEntityLight` усредняет feet/torso/head на simulation tick, `createEntityMaterial` (`MeshBasicMaterial` + wrap ≥ 0.76) умножает на этот RGB. Visual root/yaw/walkPhase считаются в `interpolateVisuals(alpha)` через `entityInterpolation.ts` (lerp + shortest-yaw, snap при ≥ 6 блоков). Gameplay/AI/hitboxes остаются на simulation transform.
 
 Вместо тяжёлого pathfinding используется direct steering, voxel collision/line of sight и optional `stepHeight` в `moveVoxelBody` (мобы карабкаются на один блок). Hostile melee сравнивает 3D distance между eye positions и требует voxel LOS. `playerTargetable: false` сохраняет player-centred spawning/despawn для Creative, но убирает игрока из hostile target selection. Events `playerDamage`, `explosion` и `drop` накапливаются и потребляются `Game`, что сохраняет границу между entity simulation и player inventory/health/world destruction.
 
@@ -312,9 +322,11 @@ Ads, authorization, cloud saves, leaderboards и payments находятся в�
 
 В коде уже есть несколько hard/bounded limits:
 
-- frame delta cap `0.25 s`;
-- один новый chunk за normal gameplay tick;
-- один или два dirty chunk rebuild за tick в зависимости от pointer profile плюс `4/7 ms` soft budget;
+- frame delta cap `0.25 s` и `MAX_CATCH_UP_TICKS = 4`;
+- adaptive world-job budget (`WORLD_JOB_BUDGET_MS = 4`, loading `10`) от remaining frame headroom;
+- один новый chunk за normal gameplay frame (loading — до 8, пока есть budget);
+- dirty mesh Set-dedupe; 1–2 rebuild за frame плюс time budget, unlit chunks не мешатся;
+- spatial priority (ближе к игроку раньше);
 - periodic chunk pruning;
 - scheduled block queue max `4096`, processing max `64/tick`;
 - dropped item cap default `128`;
@@ -322,7 +334,9 @@ Ads, authorization, cloud saves, leaderboards и payments находятся в�
 - player arrow cap `48`, lifetime `8 s`.
 - redstone source/TNT/queue/steps caps.
 
-Эти ограничения защищают main thread от неограниченного роста, но не заменяют profiling. Воспроизводимый `npm run benchmark:performance` отдельно измеряет 81 chunk generation/meshing и 600 updates для 24 mobs. Текущий профиль не оправдывает worker migration в этом проходе: сначала устранён подтверждённый synchronous mesh hot path; worker остаётся архитектурным следующим шагом для слабых устройств и больших render distances.
+DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution **with LAST SPIKE age**, SIM subsection timers и mesh wait histograms, без per-frame console. Chunk streaming inspector (GEN/LIGHT/MESH ready vs blocked, FRONT CHUNK, F9 freeze, PLAYER-VISIBLE `WANTED→VISIBLE` / `READY-WANTED WAIT`, READY MESH STARVATION > 500 ms) только при включённом profiler, HUD 4–8 Hz. Scenarios: `?perfScenario=CREATIVE_BREAK_STRESS` / `MOB_SMOOTHNESS`. Production HUD не считает p99 и не сканирует job queues, пока profiler выключен.
+
+Эти ограничения защищают main thread от неограниченного роста, но не заменяют device GPU QA. `npm run benchmark:performance` измеряет 81 chunk generation/meshing и 600 updates для 24 mobs; `scripts/benchmark-perf-pass.ts` — mutation/job CPU; `npm run benchmark:streaming` — CPU streaming scheduler (walk/fly/reverse/zigzag). Worker meshing по-прежнему не оправдан как следующий обязательный шаг: сначала закрыты repeated remesh, full-chunk sky на каждый break и mesh starvation from generation-frame skip.
 
 ## Правила расширения
 

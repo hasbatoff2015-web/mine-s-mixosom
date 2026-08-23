@@ -28,6 +28,9 @@ npm run build
 npm run check:size
 npm run check:archive
 npm run benchmark:performance
+npx vite-node scripts/benchmark-perf-pass.ts
+npm run benchmark:lighting
+npm run benchmark:streaming
 ```
 
 Полный локальный pipeline:
@@ -50,14 +53,14 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-22**:
+Срез локального запуска **2026-08-23** (lighting halo / flood-head scheduler):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       33 test files, 276 tests, 276 passed
-Vite build:   90 modules PASS
-Size/archive: PASS, 1.01 MiB uncompressed, 167 files
-Main assets:  JS 795.55 kB / 216.39 kB gzip; CSS 25.36 kB / 5.89 kB gzip
+Vitest:       44 test files, 368 tests, 368 passed
+Vite build:   100 modules PASS
+Size/archive: PASS, 1.08 MiB uncompressed, 167 files
+Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -83,7 +86,7 @@ Main assets:  JS 795.55 kB / 216.39 kB gzip; CSS 25.36 kB / 5.89 kB gzip
 | `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, lid interior `down` face, coplanar seam, held special_model, 27-slot persist, Creative catalog gate, shift transfer, single open target |
 | `tests/container-ui.test.ts` | 21 | Logical 176×166 scale, book button in craft row (no extra closed width), no furnace Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
 | `tests/creative-flight.test.ts` | 8 | 7-tick edge double-tap, Survival never flies, toggle on/off, hover/ascend/descend/Ctrl sprint, collision/landing/ladder override, mode switch, GUI input block while world ticks |
-| `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules |
+| `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules; `LOADING_WORLD` is not simulating |
 | `tests/furnace-orientation-lit.test.ts` | 5 | N/S/E/W front, lit/unlit texture, GUI icon uses furnace_front not side, torch emission, LightEngine on/off, save/load burning |
 | `tests/special-preview-contract.test.ts` | 4 | Every special_model → special_preview, shared pose/policy, chest entity preload, furnace cube GUI uses front texture |
 | `tests/camera-look.test.ts` | 2 | Live input rotation immediately reaches render camera between fixed ticks; fixed simulation remains `20 TPS` |
@@ -94,6 +97,16 @@ Main assets:  JS 795.55 kB / 216.39 kB gzip; CSS 25.36 kB / 5.89 kB gzip
 | `tests/explosion-performance.test.ts` | 5 | Batch relight dedupe, redstone notify dedupe, chain TNT once, 32-job budget drain, single TNT in one slice |
 | `tests/lighting-torch-selection.test.ts` | 11 | Bottom-face torch lighting, cave darkness floor, warm block-light tint, wall torch attachment/size, shape-aware selection, cave-opening sky interpolation |
 | `tests/entity-lighting.test.ts` | 4 | Daylight mob brightness, unlit cave darkness, warm torch tint, feet/torso/head averaging |
+| `tests/entity-interpolation.test.ts` | 3 | Render lerp at α=0.5, shortest-yaw wrap, snap on large correction |
+| `tests/fixed-step.test.ts` | 3 | ~20 ticks / 60 Hz second, 300 ms stall capped at `MAX_CATCH_UP_TICKS`, leftover accumulator |
+| `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
+| `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
+| `tests/lighting-jobs.test.ts` | 5 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm |
+| `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
+| `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
+| `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
+| `tests/chunk-streaming-inspector.test.ts` | 26 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH STARVATION uses readyWanted not litAt, LAST SPIKE age, ready vs blocked head, front-target selection, player-visible vs prefetch latency, wanted enter/leave/re-enter, rolling stats exclude never-wanted halo |
+| `tests/lighting-scheduler.test.ts` | 19 | Lighting flood skip past blocked head; 70 blocked + 1 ready; resume near flood owner; mesh-context DAG (no lighting A↔B cycle); A→B→C leaf lighting; near-unlock priority; distant flood preempt; obsolete unlit skip; orphaned/obsolete flood after prune or leave radius; radius-6 wanted set; 2 ms slice; torch border; flat sky seam; rapid break; CPU fly near-hole bound |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -376,6 +389,17 @@ Decoration у края chunk нужно проверять отдельно, п�
 
 ## Performance/soak
 
+DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, SIM player/mobs/world/combat/entities/other, job counts, LAST SPIKE with **age**, READY MESH STARVATION > 500 ms (readyWanted wait, not litAt), PLAYER-VISIBLE `WANTED→VISIBLE` / `READY-WANTED→MESH` histograms plus separate PREFETCH HISTORY (`lit→meshStart`). Chunk streaming inspector (PLAYER/FRONT CHUNK, halo, DEPENDENCY CHAIN, GEN/LIGHT/MESH ready vs blocked, LIGHT `skipsBlockedHead` / `criticalBlocked`, `queuedObsolete` = pending outside wanted). Не логирует console каждый кадр. F8 цветная сетка, F7 light view, F9 freeze front chunk (CURRENT STATE vs LAST WANTED PERIOD; CURRENTLY NOT WANTED if outside mesh radius). Prefetch vs player-visible: `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Mesh starvation: `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. Lighting halo flood skip: `docs/reports/2026-08-23_lighting-halo-scheduler-starvation.md`. Scripted:
+
+- `?perf=1&perfScenario=CREATIVE_BREAK_STRESS` — 100 canonical `applyBlockBatch` air mutations after world ready;
+- `?perf=1&perfScenario=MOB_SMOOTHNESS` — one cow with interpolated visual sample.
+
+CPU streaming scheduler (no GPU):
+
+```bash
+npm run benchmark:streaming
+```
+
 Минимальный soak — 15 минут активной игры:
 
 - двигаться по прямой достаточно далеко для repeated ensure/prune;
@@ -393,6 +417,11 @@ Decoration у края chunk нужно проверять отдельно, п�
 - `performance.memory` там, где API доступен;
 - long tasks, frame spikes, console errors и unhandled rejections;
 - save duration/size.
+
+- Rapid Creative break: держать ломание по площадке; FPS не должен уходить в устойчивые 0–10; F3/`?perf=1` last spike не multi-hundred-ms mesh-per-block.
+- Мобы при 60+ Hz: ходьба/поворот без 20 FPS steps (AI decisions остаются дискретными).
+- World entry: loading overlay с живым percent до PLAYING; первый gameplay кадр в уже мешнутой зоне, без провала в пустоту.
+- Бег вперёд 30–60 с: recurring multi-frame stalls без категории в perf overlay — регресс.
 
 Failure signs: монотонный рост scene children после pruning/load, duplicated pickups, autosave backlog, постоянные multi-frame mesh stalls и значимый drift от 20 TPS.
 
