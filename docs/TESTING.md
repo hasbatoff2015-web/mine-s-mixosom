@@ -380,6 +380,7 @@ Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run ben
 - neighbor height delta ≤ 4, в том числе на biome borders и chunk borders;
 - bedrock `Y 0–2` sealed, caves never carve it; extra ~15 underground vs old surface~49;
 - cave networks cross `x=15|16`; connected-component size/width vs swiss-cheese ratio;
+- **no 1×1 / 1–2 surface cave pinholes** on plains/forest/desert/mountains; ordinary caves keep `CAVE_ROOF_DEPTH = 4` under the 3×3 local min surface;
 - Forest oak ≈ 35–50% old count; Desert cactus ≈ 20–30% old count;
 - ores only inside shifted `ORE_RULES` bands, including new deep stone;
 - spawn on plains grass above sea, not mountain/cave/desert;

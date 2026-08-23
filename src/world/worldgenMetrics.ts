@@ -1,11 +1,17 @@
 import { BlockId } from '../blocks';
 import { CHUNK_SIZE } from '../core/constants';
 import { Chunk } from './Chunk';
-import type { TerrainGenerator } from './Generator';
+import { CAVE_ROOF_DEPTH, type TerrainGenerator } from './Generator';
 
 export const WORLDGEN_QA_SEEDS = [
   'alpha', 'bravo', 'charlie', 'delta', 'echo',
   'foxtrot', 'golf', 'hotel', 'india', 'juliet',
+] as const;
+
+export const WORLDGEN_PINHOLE_SEEDS = [
+  ...WORLDGEN_QA_SEEDS,
+  'kilo', 'lima', 'mike', 'november', 'oscar',
+  'papa', 'quebec', 'romeo', 'sierra', 'tango',
 ] as const;
 
 export interface WorldgenRegionStats {
@@ -30,6 +36,11 @@ export interface WorldgenRegionStats {
   readonly caveMeanWidth: number;
   readonly bedrockBroken: number;
   readonly maxBedrockY: number;
+  readonly surfaceHoles: number;
+  readonly pinholeOpenings: number;
+  readonly tinyOpenings: number;
+  readonly thinRoofCells: number;
+  readonly hillsideExposures: number;
 }
 
 function percentile(sorted: readonly number[], ratio: number): number {
@@ -128,6 +139,7 @@ export function measureWorldgenRegion(
   heights.sort((a, b) => a - b);
   components.sort((a, b) => a - b);
   const avgHeight = heights.reduce((sum, value) => sum + value, 0) / Math.max(1, heights.length);
+  const integrity = measureSurfaceIntegrity(chunks, generator);
   return {
     columns: heights.length,
     minHeight: heights[0] ?? 0,
@@ -150,6 +162,11 @@ export function measureWorldgenRegion(
     caveMeanWidth: widthSamples.reduce((sum, value) => sum + value, 0) / Math.max(1, widthSamples.length),
     bedrockBroken,
     maxBedrockY,
+    surfaceHoles: integrity.surfaceHoles,
+    pinholeOpenings: integrity.pinholeOpenings,
+    tinyOpenings: integrity.tinyOpenings,
+    thinRoofCells: integrity.thinRoofCells,
+    hillsideExposures: integrity.hillsideExposures,
   };
 }
 
@@ -221,4 +238,92 @@ export function maxNeighborHeightDelta(generator: TerrainGenerator, samples = 40
 
 export function surfaceAtWorld(chunks: Map<string, Chunk>, x: number, z: number): number {
   return surfaceAt(chunks, x, z);
+}
+
+export interface SurfaceIntegrity {
+  readonly surfaceHoles: number;
+  readonly pinholeOpenings: number;
+  readonly tinyOpenings: number;
+  readonly largestOpening: number;
+  readonly thinRoofCells: number;
+  readonly hillsideExposures: number;
+}
+
+const SURFACE_HOLE_BLOCKS = new Set<number>([BlockId.Air, BlockId.Lava, BlockId.Water]);
+
+export function measureSurfaceIntegrity(
+  chunks: Map<string, Chunk>,
+  generator: TerrainGenerator,
+): SurfaceIntegrity {
+  const holes = new Set<string>();
+  let thinRoofCells = 0;
+  let hillsideExposures = 0;
+  const holeKey = (x: number, z: number) => `${x},${z}`;
+
+  for (const chunk of chunks.values()) {
+    for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
+        const x = chunk.x * CHUNK_SIZE + lx;
+        const z = chunk.z * CHUNK_SIZE + lz;
+        const height = chunk.surfaceHeights[lz * CHUNK_SIZE + lx]!;
+        const surface = chunk.get(lx, height, lz);
+        if (SURFACE_HOLE_BLOCKS.has(surface)) holes.add(holeKey(x, z));
+
+        let localMin = height;
+        for (let dz = -1; dz <= 1; dz += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dz === 0) continue;
+            const neighbor = surfaceAt(chunks, x + dx, z + dz);
+            if (neighbor > 0) localMin = Math.min(localMin, neighbor);
+            if (neighbor > 0 && neighbor < height) {
+              const exposedY = neighbor + 1;
+              const exposed = chunk.get(lx, exposedY, lz);
+              if (exposedY < height && (exposed === BlockId.Air || exposed === BlockId.Lava)) {
+                hillsideExposures += 1;
+              }
+            }
+          }
+        }
+        for (let y = generator.bedrockHeight(x, z) + 1; y < height; y += 1) {
+          const block = chunk.get(lx, y, lz);
+          if (block !== BlockId.Air && block !== BlockId.Lava) continue;
+          if (localMin - y < CAVE_ROOF_DEPTH) thinRoofCells += 1;
+        }
+      }
+    }
+  }
+
+  const sizes = openingComponentSizes(holes);
+  return {
+    surfaceHoles: holes.size,
+    pinholeOpenings: sizes.filter((size) => size === 1).length,
+    tinyOpenings: sizes.filter((size) => size > 0 && size <= 2).length,
+    largestOpening: sizes.length === 0 ? 0 : Math.max(...sizes),
+    thinRoofCells,
+    hillsideExposures,
+  };
+}
+
+function openingComponentSizes(holes: Set<string>): number[] {
+  const seen = new Set<string>();
+  const sizes: number[] = [];
+  for (const start of holes) {
+    if (seen.has(start)) continue;
+    let size = 0;
+    const stack = [start];
+    seen.add(start);
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      size += 1;
+      const [sx, sz] = cur.split(',').map(Number) as [number, number];
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const next = `${sx + dx},${sz + dz}`;
+        if (seen.has(next) || !holes.has(next)) continue;
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+    sizes.push(size);
+  }
+  return sizes;
 }

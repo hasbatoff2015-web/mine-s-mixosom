@@ -38,7 +38,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после chunk mesh starvation / obsolete pending cleanup: typecheck, 337 tests / 43 files, production build 100 modules, 1.07 MiB / 167 files.
 - [x] Локальный pipeline после player-visible streaming latency metrics (inspector only, no scheduler change): typecheck, 349 tests / 43 files, production build 100 modules, 1.08 MiB / 167 files.
 - [x] Локальный pipeline после lighting halo / flood-head scheduler fix: typecheck, 368 tests / 44 files, production build 100 modules, 1.08 MiB / 167 files.
-- [x] Локальный pipeline после worldgen mountains / deeper bedrock / connected caves / vegetation density: typecheck, 380 tests / 45 files, production build 100 modules, 1.08 MiB / 167 files.
+- [x] Локальный pipeline после worldgen mountains / deeper bedrock / connected caves / vegetation density: typecheck, 382 tests / 45 files, production build 100 modules, 1.08 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.

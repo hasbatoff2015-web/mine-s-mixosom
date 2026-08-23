@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
 import { CHUNK_SIZE, SEA_LEVEL, TERRAIN_HEADROOM, WORLD_HEIGHT } from '../src/core/constants';
 import { Chunk } from '../src/world/Chunk';
-import { collectSpawnColumns, ORE_RULES, TerrainGenerator } from '../src/world/Generator';
-import { maxNeighborHeightDelta, measureWorldgenRegion, WORLDGEN_QA_SEEDS } from '../src/world/worldgenMetrics';
+import { collectSpawnColumns, CAVE_ROOF_DEPTH, ORE_RULES, TerrainGenerator } from '../src/world/Generator';
+import {
+  generateChunkGrid,
+  maxNeighborHeightDelta,
+  measureSurfaceIntegrity,
+  measureWorldgenRegion,
+  WORLDGEN_PINHOLE_SEEDS,
+  WORLDGEN_QA_SEEDS,
+} from '../src/world/worldgenMetrics';
 import { VoxelWorld } from '../src/world/World';
 
 const OLD_TREES_PER_FOREST = 7.073;
@@ -119,6 +126,53 @@ describe('worldgen mountains, caves and density', () => {
     expect(stats.caveMeanWidth).toBeGreaterThan(1.1);
     expect(stats.caveRatio).toBeGreaterThan(0.04);
     expect(stats.caveRatio).toBeLessThan(0.28);
+  });
+
+  it('does not punch 1×1 cave pinholes through plains, forest, desert or mountain surfaces', () => {
+    let plains = 0;
+    let forest = 0;
+    let desert = 0;
+    let mountain = 0;
+    let pinholes = 0;
+    let tiny = 0;
+    let holes = 0;
+    let thinRoof = 0;
+    let hillside = 0;
+    for (const seed of WORLDGEN_PINHOLE_SEEDS) {
+      const gen = new TerrainGenerator(seed);
+      const chunks = generateChunkGrid(gen, 2);
+      const integrity = measureSurfaceIntegrity(chunks, gen);
+      pinholes += integrity.pinholeOpenings;
+      tiny += integrity.tinyOpenings;
+      holes += integrity.surfaceHoles;
+      thinRoof += integrity.thinRoofCells;
+      hillside += integrity.hillsideExposures;
+      for (const chunk of chunks.values()) {
+        const center = gen.columnAt(chunk.x * CHUNK_SIZE + 8, chunk.z * CHUNK_SIZE + 8);
+        if (center.biome === 'plains') plains += 1;
+        if (center.biome === 'forest') forest += 1;
+        if (center.biome === 'desert') desert += 1;
+        if (center.mountain >= 10) mountain += 1;
+      }
+    }
+    expect(plains).toBeGreaterThan(0);
+    expect(forest).toBeGreaterThan(0);
+    expect(desert).toBeGreaterThan(0);
+    expect(mountain).toBeGreaterThan(0);
+    expect(pinholes, '1×1 surface openings').toBe(0);
+    expect(tiny, '1–2 block surface openings').toBe(0);
+    expect(holes, 'any surface cave mouths').toBe(0);
+    expect(thinRoof, 'cave air inside the roof cap').toBe(0);
+    expect(hillside, 'side leaks on slopes').toBe(0);
+  });
+
+  it('keeps a solid roof of CAVE_ROOF_DEPTH under ordinary cave air', () => {
+    expect(CAVE_ROOF_DEPTH).toBeGreaterThanOrEqual(3);
+    const gen = new TerrainGenerator('cave-network');
+    const stats = measureWorldgenRegion(gen, 2);
+    expect(stats.thinRoofCells).toBe(0);
+    expect(stats.caveLargest).toBeGreaterThan(1000);
+    expect(stats.caveRatio).toBeGreaterThan(0.08);
   });
 
   it('reduces forest trees ~2–3× and desert cactus ~4× vs the previous generator', () => {

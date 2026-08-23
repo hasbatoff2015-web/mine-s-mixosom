@@ -137,7 +137,7 @@ height = clamp(BASE(66) + broad×4 + detail×1.5×biomeDetail + hills(0–8) + m
 
 Mountain mask — low-frequency fBm (`x/260`) с `smoothstep(0.16, 0.46)`, поэтому возвышенности широкие и пересекают несколько chunks. Biome влияет на surface/material/vegetation и только на detail amplitude, не на macro height, чтобы не было cliff на Forest↔Plains↔Desert.
 
-Chunk pass заполняет bedrock (`Y 0–2`)/stone/top layers/water, затем вырезает ridged 3D caves (world-coordinate noise, не per-chunk RNG), размещает ores в сдвинутых Y-bands и decor. Caves не режут bedrock и `y >= surface`. Итоговые height/biome каждого столбца сохраняются в `Chunk.surfaceHeights`/`biomeCodes`, чтобы mesher не повторял noise sampling для каждого видимого face.
+Chunk pass заполняет bedrock (`Y 0–2`)/stone/top layers/water, затем вырезает ridged 3D caves (world-coordinate noise, не per-chunk RNG), размещает ores в сдвинутых Y-bands и decor. Caves не режут bedrock. Обычный carve только при `y ≤ min(surface в 3×3) - CAVE_ROOF_DEPTH` (`4`): noise не доходит до grass/sand и не вытекает 1×1 на склоне. Отдельные 1×1 surface mouths отключены. Итоговые height/biome каждого столбца сохраняются в `Chunk.surfaceHeights`/`biomeCodes`, чтобы mesher не повторял noise sampling для каждого видимого face. Высоты соседей для крыши берутся из предвычисленной карты chunk+halo, не из 9× `columnAt` на каждый voxel.
 
 Новый spawn (`collectSpawnColumns`) ранжирует plains с низким mountain contribution в радиусе 192, без generation hitch на create. DEV `?worldgenDebug=1` показывает `y` / `mtn` / `hills` на chunk HUD.
 

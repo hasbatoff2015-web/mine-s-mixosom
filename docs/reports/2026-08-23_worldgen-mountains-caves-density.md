@@ -81,11 +81,64 @@ Still one noise carver (`isCave`), not a second worm engine.
 | Length / connectivity | tiny blobs | avg component **1848**, p95 **3686**, largest **139423** in a 5×5×height sample |
 | Branching | none | extra tunnel when `slow > 0.12` and branch noise `< 0.07` |
 | Chambers | none | `slow > 0.50 && main < 0.18` |
-| Surface entrances | none | rare (`random01 > 0.935` and fbm), only if a cave exists just below |
+| Surface entrances | none | **disabled** (were 1×1 pinholes); underground networks unchanged |
 | Chunk borders | world-coord noise already | regression: carve at `x=15` continues at `x=16` |
 | Bedrock | theoretically skip surface | explicit `y <= bedrock` never air |
 
 Deep lava in caves uses `random01 > 0.94` (was `> 0.82`) so extra cave volume does not triple emitters and starve the 2 ms light budget.
+
+## Surface cave pinhole fix
+
+Local visual QA accepted mountains, forest density, and cave systems, but reported scattered **1×1 black squares** on grass.
+
+### Root cause
+
+Two carve paths reached the surface:
+
+1. **`isCave` allowed `y < surfaceY`**, so dirt/sandstone directly under grass could become cave air. On a slope, a cell that is “deep” in a tall column is at or above a neighbor’s grass, so the cave opened as a single dark pixel in the hillside/surface.
+2. **`isCaveEntrance`** (`random01 > 0.935` plus a weak fBm gate) then **punched `y = height-2 … height`**, including the grass/sand block, whenever cave noise existed ~3 below. That check is **per-column**, so mouths were isolated 1×1 (or a few adjacent 1×1s), never a real 3-wide entrance.
+
+Terrain height math, mountain mask, and vegetation were not the cause.
+
+### New roof rule
+
+- Precompute `18×18` height/biome halo once per chunk (`columnAt` for halo cells, reused for the 16×16 interior).
+- `roof = min(3×3 neighbor heights) - CAVE_ROOF_DEPTH` with **`CAVE_ROOF_DEPTH = 4`**.
+- Ordinary carve only if `y ≤ roof` (and still never bedrock).
+- **Intentional surface mouths are off** this pass. Better zero pinholes than fake 1×1 “entrances”. A later pass can add a real 3×2+ hillside mouth if wanted.
+- No post-fill of holes. No per-voxel 9× terrain noise.
+
+Works for plains grass/dirt, forest grass/dirt, desert sand/sandstone, mountain slopes, and seabed (no 1×1 drain).
+
+### Statistical QA (20 seeds × 5×5 chunks)
+
+`WORLDGEN_PINHOLE_SEEDS`: original 10 QA seeds plus kilo…tango.
+
+- Accidental 1×1 openings: **0**
+- 1–2 block openings: **0**
+- Any surface cave mouth (air/lava/water at intended surface Y): **0**
+- Cave air inside the roof cap: **0**
+- Hillside exposures at neighbor-surface+1: **0**
+
+### Cave metrics before/after this fix
+
+Same 10 QA seeds, radius 2:
+
+| | After mountains pass | After pinhole fix |
+| --- | --- | --- |
+| Cave air % | 25.2 | **24.7** |
+| Mean width | 3.71 | **3.73** |
+| Avg component | 1848 | **4086** (tiny near-surface blobs gone) |
+| p95 component | 3686 | **10233** |
+| Largest | 139423 | **134377** |
+| Trees / forest | 3.127 | 3.109 |
+| Cactus / desert | 0.603 | 0.635 |
+
+Underground networks stayed large. Vegetation ratios unchanged in-band.
+
+### Performance
+
+81-chunk batch **576 ms → 525 ms** (roof band skips cave noise). Forest chunk ~6.3 ms vs ~6.7 ms. Halo is one extra ring of `columnAt`, not 9× per stone cell.
 
 ## Forest
 
@@ -150,7 +203,7 @@ Not honestly available in this cloud agent (no reliable WebGL screenshot path). 
 
 ## Tests
 
-`tests/worldgen-terrain.test.ts` (12) plus existing generation/ore/profiler tests. Full `npm run check`: **380 tests / 45 files**, production 100 modules, 1.08 MiB / 167 files.
+`tests/worldgen-terrain.test.ts` (14) plus existing generation/ore/profiler tests. Full `npm run check`: **382 tests / 45 files**, production 100 modules, 1.08 MiB / 167 files.
 
 ## Deferred
 

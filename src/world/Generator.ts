@@ -14,6 +14,12 @@ export interface OreRule {
 }
 
 /**
+ * Ordinary cave carving stops this many blocks below the local (3×3 min) terrain roof.
+ * Intentional 1×1 surface mouths are disabled; underground networks stay intact.
+ */
+export const CAVE_ROOF_DEPTH = 4;
+
+/**
  * Absolute Y bands after the +15 stack shift. Relative shape matches the old
  * compact-world layout (diamond/redstone near bedrock, coal higher).
  */
@@ -108,30 +114,49 @@ export class TerrainGenerator {
   generate(chunk: Chunk): void {
     const worldX = chunk.x * CHUNK_SIZE;
     const worldZ = chunk.z * CHUNK_SIZE;
+    const halo = 1;
+    const stride = CHUNK_SIZE + halo * 2;
+    const heights = new Int16Array(stride * stride);
+    const biomes = new Uint8Array(stride * stride);
+    for (let hz = 0; hz < stride; hz += 1) {
+      for (let hx = 0; hx < stride; hx += 1) {
+        const column = this.columnAt(worldX + hx - halo, worldZ + hz - halo);
+        const index = hz * stride + hx;
+        heights[index] = column.height;
+        biomes[index] = column.biome === 'forest' ? 1 : column.biome === 'desert' ? 2 : 0;
+      }
+    }
 
     for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
       for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
         const x = worldX + localX;
         const z = worldZ + localZ;
-        const column = this.columnAt(x, z);
+        const hx = localX + halo;
+        const hz = localZ + halo;
+        const height = heights[hz * stride + hx]!;
+        const biomeCode = biomes[hz * stride + hx]!;
+        const desert = biomeCode === 2;
         const columnIndex = localZ * CHUNK_SIZE + localX;
-        chunk.surfaceHeights[columnIndex] = column.height;
-        chunk.biomeCodes[columnIndex] = column.biome === 'forest' ? 1 : column.biome === 'desert' ? 2 : 0;
+        chunk.surfaceHeights[columnIndex] = height;
+        chunk.biomeCodes[columnIndex] = biomeCode;
+        let roof = height;
+        for (let dz = -1; dz <= 1; dz += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            roof = Math.min(roof, heights[(hz + dz) * stride + hx + dx]!);
+          }
+        }
+        roof -= CAVE_ROOF_DEPTH;
         const floor = this.bedrockHeight(x, z);
-        const entrance = this.isCaveEntrance(x, z, column.height);
         for (let y = 0; y < WORLD_HEIGHT; y += 1) {
           let block = BlockId.Air;
           if (y <= floor) block = BlockId.Bedrock;
-          else if (y < column.height - (column.biome === 'desert' ? 4 : 3)) block = BlockId.Stone;
-          else if (y < column.height) block = column.biome === 'desert' ? BlockId.Sandstone : BlockId.Dirt;
-          else if (y === column.height) block = column.biome === 'desert' ? BlockId.Sand : BlockId.GrassBlock;
+          else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
+          else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
+          else if (y === height) block = desert ? BlockId.Sand : BlockId.GrassBlock;
           else if (y <= SEA_LEVEL) block = BlockId.Water;
 
-          if (block !== BlockId.Bedrock && y < column.height && this.isCave(x, y, z, column.height)) {
+          if (block !== BlockId.Bedrock && y <= roof && this.isCave(x, y, z, height)) {
             block = y < floor + 6 && random01(this.numericSeed + 8128, x, y, z) > 0.94 ? BlockId.Lava : BlockId.Air;
-          }
-          if (entrance && y >= column.height - 2 && y <= column.height && block !== BlockId.Bedrock && block !== BlockId.Water) {
-            if (this.isCave(x, Math.max(floor + 1, column.height - 3), z, column.height)) block = BlockId.Air;
           }
           chunk.set(localX, y, localZ, block);
         }
@@ -164,17 +189,7 @@ export class TerrainGenerator {
   isSafeSpawnColumn(x: number, z: number): boolean {
     const column = this.columnAt(x, z);
     if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
-    if (this.isCaveEntrance(x, z, column.height)) return false;
-    if (this.isCave(x, column.height - 1, z, column.height)) return false;
     return true;
-  }
-
-  private isCaveEntrance(x: number, z: number, surfaceY: number): boolean {
-    if (surfaceY <= SEA_LEVEL + 1) return false;
-    const rare = random01(this.numericSeed + 611, x, 3, z) > 0.935;
-    if (!rare) return false;
-    const field = fbm2D(this.numericSeed + 613, x / 88, z / 88, 2);
-    return field > 0.12;
   }
 
   private generateOres(chunk: Chunk): void {

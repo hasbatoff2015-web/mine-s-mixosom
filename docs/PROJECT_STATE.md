@@ -43,7 +43,7 @@
 - Генерация детерминирована строковым seed.
 - Реализованы три биома: `plains`, `forest`, `desert`.
 - Высота поверхности типично `63–84` (sea level `63`); periodic mountain mask даёт широкие возвышенности примерно `+10…+20` над local baseline, с headroom `12` блоков до `WORLD_HEIGHT`.
-- Есть bedrock floor (`Y 0–2`), ridged 3D-noise cave networks (ветвления и chambers, без прореза bedrock), редкая lava на глубине и veins для coal, iron, gold, redstone и diamond в сдвинутых Y-bands.
+- Есть bedrock floor (`Y 0–2`), ridged 3D-noise cave networks (ветвления и chambers, без прореза bedrock и **без 1×1 surface pinholes**: carve только `≤ localMin(surface) - 4`), редкая lava на глубине и veins для coal, iron, gold, redstone и diamond в сдвинутых Y-bands.
 - Forest oak density ≈ 40% прежней, desert cactus ≈ 25–30% прежней; biome-specific cross-plants без изменения самих моделей.
 - Terrain decor включает oak trees, cactus и детерминированные растения: tall grass/flowers в plains, tall grass/fern/flowers в forest, dead bush в desert.
 - Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone и slabs/stairs. Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint.
@@ -218,7 +218,7 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     45 files, 380 tests — PASS
+Vitest:     45 files, 382 tests — PASS
 Vite build: 100 modules — PASS
 Size/archive: 1.08 MiB / 167 files — PASS
 Main JS: 870.56 kB / 240.68 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
