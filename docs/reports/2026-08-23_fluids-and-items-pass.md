@@ -2,6 +2,8 @@
 
 Date: 2026-08-23  
 Branch: `cursor/fluids-and-items-pass-935a`  
+HEAD: `4a6cb98`  
+Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/6  
 Base: `main` @ `420d31885d8383dfb11765f897d6aac2c548935c`  
 **main was not merged.** **No force push.** Code is frozen pending local visual QA.
 
@@ -92,20 +94,24 @@ Optional 1.8-style mappings in `import-assets.mjs`: `web.png`, `rail_normal.png`
 ## Tests
 
 ```text
-npx vitest run  →  47 files, 398 tests, all passed
+npm run check → PASS
 npx tsc --noEmit → PASS
+Vitest: 47 files, 398 tests, all passed
+Vite build: 102 modules
+Size/archive: 1.11 MiB / 180 files
+Main JS: 892.31 kB / 246.96 kB gzip
 ```
 
 New files: `tests/fluids.test.ts` (8), `tests/content-pass.test.ts` (8).
 
 ## Bench / perf notes
 
-- Fluid slice is 1.5 ms and cannot expand lighting/mesh budgets.
-- Worst-case unit check: one water source on a stone plane; queue ≤ 2048, updates/tick ≤ 48.
+- Fluid flood: 200 ticks **7.2 ms** total, **max tick 1.47 ms** (under 1.5 ms budget), **max queue 208** (cap 2048).
+- Worldgen 81-chunk batch **545 ms** (same band as the previous worldgen pass ~525–600 ms).
+- Streaming scheduler budgets unchanged (`WORLD_JOB_BUDGET_MS = 4`, `WORLD_LIGHT_BUDGET_MS = 2`); walkFair wanted→visible p95 200 ms.
+- Lighting initial 9×9 sliced max slice **2.20 ms**.
+- Block-break regression still 1 pending mesh / 1 dirty chunk.
 - Worldgen lava fill is a per-column loop to Y 12, no fluid simulation during `generate()`.
-- Block break next to liquid only enqueues neighbors (existing `scheduleFluidAround`), not a world rebuild.
-
-Run after this pass (CPU-only): `npm run check`, `npm run benchmark:fluids`, and existing `benchmark:worldgen` / `benchmark:streaming` / `benchmark:lighting` if checking for regression.
 
 ## Manual QA checklist
 

@@ -220,8 +220,9 @@
 ```text
 TypeScript: tsc --noEmit — PASS
 Vitest:     47 files, 398 tests — PASS
-Vite build: see latest report
-Size/archive: see latest report
+Vite build: 102 modules — PASS
+Size/archive: 1.11 MiB / 180 files — PASS
+Main JS: 892.31 kB / 246.96 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
