@@ -513,7 +513,12 @@ export class VoxelWorld {
    * Time-sliced lighting. Never runs a monolithic 30 ms sky job: each call
    * yields at `budgetMs` and resumes cursors on the next frame.
    */
-  processLighting(budgetMs: number, originX: number, originZ: number): number {
+  processLighting(
+    budgetMs: number,
+    originX: number,
+    originZ: number,
+    counters?: { attempted: number; completed: number; yielded: number; blocked: number },
+  ): number {
     resetLightFrameStats();
     const start = performance.now();
     const deadline = start + Math.max(0.25, budgetMs);
@@ -540,10 +545,19 @@ export class VoxelWorld {
         if (performance.now() >= deadline) break;
         const key = chunkKey(job.chunk.x, job.chunk.z);
         const floodOwner = lightingFloodOwner();
-        if (floodOwner !== '' && floodOwner !== key && floodOwner !== 'region') break;
+        if (floodOwner !== '' && floodOwner !== key && floodOwner !== 'region') {
+          if (counters) counters.blocked += 1;
+          break;
+        }
+        if (counters) counters.attempted += 1;
         const complete = processChunkLighting(this, job.chunk, deadline);
-        if (complete) this.applyInitialLightingVersions(job.chunk);
-        if (!complete) break;
+        if (complete) {
+          this.applyInitialLightingVersions(job.chunk);
+          if (counters) counters.completed += 1;
+        } else {
+          if (counters) counters.yielded += 1;
+          break;
+        }
       }
     } else {
       lightFrameStats.jobsPending = this.unlitChunkCount + (this.pendingLight ? 1 : 0);

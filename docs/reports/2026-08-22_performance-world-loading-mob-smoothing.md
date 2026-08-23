@@ -119,7 +119,7 @@ FIX: reused layer buffers (`resetBuffers`), packed light из соседних c
 
 ### Profiler
 
-`?perf=1`: FPS, frame ms / avg / p95 / p99 / max, tick p95, render ms, gen/mesh/wait/light/dirty/mutations, mob count, heap если `performance.memory`, last spike category. Overlay throttle 200 ms. Выключенный profiler — no-op, без p99.
+`?perf=1`: FPS, frame ms / avg / p95 / p99 / max, tick p95, render ms, gen/mesh/wait/light/dirty/mutations, mob count, heap если `performance.memory`, last spike category **with age**. Overlay throttle 200 ms. Streaming inspector HUD 8 Hz when profiler or F8 overlay is on. Выключенный profiler — no-op, без p99 и без O(queue) rank scans.
 
 ## Benchmarks
 
@@ -177,6 +177,8 @@ manual local GPU QA required.
 ## Next work
 
 Follow-up (2026-08-23): lighting performance + chunk seams. See `docs/reports/2026-08-23_lighting-performance-and-chunk-seams.md`.
+
+Follow-up (2026-08-23): **chunk streaming inspector is DIAGNOSTIC ONLY**. No scheduler/budget/priority/lifecycle change. Symptom after lighting pass: fast move/fly can reach an empty area; nearest chunk may appear 10–20 s later while FPS stays high and `waitM` is hundreds. Capture with `?perf=1&chunks=1`, F9 freeze, LAST SLOW CHUNK. See `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Do not treat inspector tests as proof of a backlog fix.
 
 Device GPU capture with `?perf=1` on the user machine. Если mesh p95 всё ещё > ~16 ms на target device — профилировать greedy vs worker, не резать quality.
 

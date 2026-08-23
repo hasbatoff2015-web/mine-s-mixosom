@@ -88,11 +88,32 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
+import {
+  categoryColor,
+  chunkKey as inspectChunkKey,
+  emptyJobFrameCounters,
+  lightingIsActive,
+  parseChunkKey,
+  pushSlowSnapshot,
+  toggleInspectFreeze,
+  type ChunkDebugCategory,
+  type InspectFreeze,
+  type JobFrameCounters,
+  type SlowChunkSnapshot,
+} from '../debug/chunkStreamingInspector';
+import {
+  captureStreamingSnapshot,
+  collectStreamingQueues,
+  formatStreamingHud,
+  inspectStreamingChunk,
+  maybeSlowSnapshot,
+} from '../debug/chunkStreamingRuntime';
+import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { SaveService } from '../save/SaveService';
 import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
 import { SurvivalSystem } from '../survival';
 import { GameUI } from '../ui/GameUI';
-import { lightFrameStats } from '../world/LightEngine';
+import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import { blockCollisionBoxes } from '../world/collision';
@@ -222,6 +243,17 @@ export class Game {
   private readonly chunkGrid = new ChunkGridOverlay();
   private chunkGridVisible = isChunkOverlayQueryEnabled();
   private lightDebugMode = 0;
+  private jobFrame: JobFrameCounters = emptyJobFrameCounters();
+  private readonly streamingTrace = new ChunkStreamingTrace();
+  private inspectFreeze: InspectFreeze | null = null;
+  private inspectorHud = '';
+  private lastInspectorAt = 0;
+  private overlayRevision = 0;
+  private overlayCategories = new Map<string, ChunkDebugCategory>();
+  private slowSnapshots: SlowChunkSnapshot[] = [];
+  private readonly slowArmed = new Set<string>();
+  private lastMeshActiveKey: string | null = null;
+  private lastFrontTarget: { cx: number; cz: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
@@ -635,6 +667,10 @@ export class Game {
       ? this.worldLoad?.generateRadius ?? lightingHaloRadius(meshRadius)
       : lightingHaloRadius(meshRadius);
     session.world.setViewCenter(originX, originZ, meshRadius);
+    this.jobFrame = emptyJobFrameCounters();
+    this.lastMeshActiveKey = null;
+    const inspect = this.profiler.enabled;
+    const inspectNow = inspect ? performance.now() : 0;
     const maxBudget = loading ? WORLD_LOADING_JOB_BUDGET_MS : WORLD_JOB_BUDGET_MS;
     const budget = adaptiveJobBudgetMs(
       performance.now() - frameStart,
@@ -643,11 +679,8 @@ export class Game {
       loading ? 1 : 0.35,
     );
     if (budget <= 0 && !loading) {
-      this.lastLightMs += session.world.processLighting(
-        WORLD_LIGHT_BUDGET_MS,
-        originX,
-        originZ,
-      );
+      this.jobFrame.lightingOnlyDueToBudget = true;
+      this.lastLightMs += this.runLightingJobs(session, WORLD_LIGHT_BUDGET_MS, originX, originZ, inspect, inspectNow);
       return;
     }
     const jobStart = performance.now();
@@ -655,37 +688,222 @@ export class Game {
     let meshed = 0;
 
     const missing = missingChunkCoords(session.world, originX, originZ, generateRadius);
+    if (inspect) {
+      for (const coord of missing) this.streamingTrace.mark('requested', coord.x, coord.z, inspectNow);
+    }
     const generateLimit = loading ? 8 : 1;
     const generateBudget = Math.max(budget, loading ? 1 : 0);
     for (const coord of missing) {
       if (generated >= generateLimit) break;
       if (generateBudget > 0 && performance.now() - jobStart >= generateBudget) break;
+      if (inspect) {
+        this.jobFrame.genAttempted += 1;
+        this.streamingTrace.mark('generationStarted', coord.x, coord.z, performance.now());
+      }
       const genStart = performance.now();
       session.world.getChunk(coord.x, coord.z);
       this.lastGenerateMs += performance.now() - genStart;
       generated += 1;
+      if (inspect) {
+        this.jobFrame.genCompleted += 1;
+        const doneAt = performance.now();
+        this.streamingTrace.mark('generated', coord.x, coord.z, doneAt);
+        this.streamingTrace.mark('meshQueued', coord.x, coord.z, doneAt);
+      }
     }
     this.lastChunkGenerationJobs = generated;
 
     const lightBudget = loading ? WORLD_LOADING_LIGHT_BUDGET_MS : WORLD_LIGHT_BUDGET_MS;
-    this.lastLightMs += session.world.processLighting(lightBudget, originX, originZ);
+    this.lastLightMs += this.runLightingJobs(session, lightBudget, originX, originZ, inspect, inspectNow);
 
     if (!loading && generated > 0) {
+      this.jobFrame.meshSkippedDueToGenSeparation = true;
       this.lastChunkMeshJobs = 0;
       return;
     }
     const meshBudget = Math.max(0.5, (loading ? WORLD_LOADING_JOB_BUDGET_MS : WORLD_JOB_BUDGET_MS) - (performance.now() - jobStart));
     const meshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
     const meshStart = performance.now();
+    const meshCounters = inspect ? { attempted: 0, completed: 0, skippedBlocked: 0 } : undefined;
     meshed = session.worldRenderer.rebuildDirty(
       meshLimit,
       meshBudget,
       originX,
       originZ,
-      { meshRadius, requireNeighborLight: true },
+      {
+        meshRadius,
+        requireNeighborLight: true,
+        counters: meshCounters,
+        onMeshStart: inspect
+          ? (chunk) => {
+            this.lastMeshActiveKey = inspectChunkKey(chunk.x, chunk.z);
+            this.streamingTrace.mark('meshStarted', chunk.x, chunk.z, performance.now());
+          }
+          : undefined,
+        onMeshComplete: inspect
+          ? (chunk) => {
+            const doneAt = performance.now();
+            this.streamingTrace.mark('meshed', chunk.x, chunk.z, doneAt);
+            this.streamingTrace.mark('visible', chunk.x, chunk.z, doneAt);
+          }
+          : undefined,
+      },
     );
     this.lastMeshMs += performance.now() - meshStart;
     this.lastChunkMeshJobs = meshed;
+    if (meshCounters) {
+      this.jobFrame.meshAttempted = meshCounters.attempted;
+      this.jobFrame.meshCompleted = meshCounters.completed;
+      this.jobFrame.meshSkippedBlocked = meshCounters.skippedBlocked;
+    }
+  }
+
+  private runLightingJobs(
+    session: GameSession,
+    budgetMs: number,
+    originX: number,
+    originZ: number,
+    inspect: boolean,
+    inspectNow: number,
+  ): number {
+    const beforeReady = inspect ? this.snapshotLitKeys(session) : undefined;
+    const beforeActive = inspect ? this.snapshotLightingActiveKeys(session) : undefined;
+    const counters = inspect ? { attempted: 0, completed: 0, yielded: 0, blocked: 0 } : undefined;
+    if (inspect) {
+      for (const chunk of session.world.chunks.values()) {
+        if (!chunk.lightingReady) this.streamingTrace.mark('lightQueued', chunk.x, chunk.z, inspectNow);
+      }
+    }
+    const elapsed = session.world.processLighting(budgetMs, originX, originZ, counters);
+    if (inspect && counters) {
+      this.jobFrame.lightAttempted = counters.attempted;
+      this.jobFrame.lightCompleted = counters.completed;
+      this.jobFrame.lightYielded = counters.yielded;
+      this.jobFrame.lightBlocked = counters.blocked;
+      const afterActive = this.snapshotLightingActiveKeys(session);
+      for (const key of afterActive) {
+        if (!beforeActive?.has(key)) {
+          const { cx, cz } = parseChunkKey(key);
+          this.streamingTrace.mark('lightStarted', cx, cz, performance.now());
+        }
+      }
+      if (counters.yielded > 0) {
+        const owner = lightingFloodOwner();
+        if (owner && owner !== 'region') {
+          const { cx, cz } = parseChunkKey(owner);
+          this.streamingTrace.mark('lightYielded', cx, cz, performance.now());
+        }
+      }
+      for (const chunk of session.world.chunks.values()) {
+        const key = inspectChunkKey(chunk.x, chunk.z);
+        if (chunk.lightingReady && !beforeReady?.has(key)) {
+          this.streamingTrace.mark('lit', chunk.x, chunk.z, performance.now());
+        }
+      }
+    }
+    return elapsed;
+  }
+
+  private snapshotLitKeys(session: GameSession): Set<string> {
+    const keys = new Set<string>();
+    for (const chunk of session.world.chunks.values()) {
+      if (chunk.lightingReady) keys.add(inspectChunkKey(chunk.x, chunk.z));
+    }
+    return keys;
+  }
+
+  private snapshotLightingActiveKeys(session: GameSession): Set<string> {
+    const keys = new Set<string>();
+    const owner = lightingFloodOwner();
+    for (const chunk of session.world.chunks.values()) {
+      const key = inspectChunkKey(chunk.x, chunk.z);
+      if (lightingIsActive(chunk.lightingReady, chunk.skyFillCursor, chunk.blockScanCursor, owner, key)) {
+        keys.add(key);
+      }
+    }
+    return keys;
+  }
+
+  private refreshStreamingInspector(session: GameSession, now: number): void {
+    const originX = session.player.position.x;
+    const originZ = session.player.position.z;
+    const meshRadius = this.settings.renderDistance;
+    const generateRadius = lightingHaloRadius(meshRadius);
+    const playerCx = floorDiv(Math.floor(originX), 16);
+    const playerCz = floorDiv(Math.floor(originZ), 16);
+    const look = session.player.viewDirection();
+    if (this.profiler.enabled) {
+      for (const key of session.world.pendingMesh) {
+        const { cx, cz } = parseChunkKey(key);
+        this.streamingTrace.mark('meshQueued', cx, cz, now);
+        this.streamingTrace.mark('requested', cx, cz, now);
+      }
+      for (let dz = -generateRadius; dz <= generateRadius; dz += 1) {
+        for (let dx = -generateRadius; dx <= generateRadius; dx += 1) {
+          this.streamingTrace.mark('requested', playerCx + dx, playerCz + dz, now);
+        }
+      }
+    }
+    const view = {
+      world: session.world,
+      hasMesh: (key: string) => session.worldRenderer.hasChunk(key),
+      originX,
+      originZ,
+      meshRadius,
+      generateRadius,
+      playerCx,
+      playerCz,
+      lookX: look.x,
+      lookZ: look.z,
+      velocityX: session.player.velocity.x,
+      velocityZ: session.player.velocity.z,
+      flying: session.player.isFlying,
+      jobFrame: this.jobFrame,
+      freeze: this.inspectFreeze,
+      now,
+    };
+    const snap = captureStreamingSnapshot(view, this.streamingTrace, this.lastMeshActiveKey);
+    this.overlayCategories = snap.overlay;
+    this.overlayRevision += 1;
+    this.lastFrontTarget = snap.front ? { cx: snap.front.cx, cz: snap.front.cz } : { cx: playerCx, cz: playerCz };
+    const keep = new Set<string>();
+    if (this.inspectFreeze) keep.add(inspectChunkKey(this.inspectFreeze.cx, this.inspectFreeze.cz));
+    if (snap.front) keep.add(inspectChunkKey(snap.front.cx, snap.front.cz));
+    keep.add(inspectChunkKey(playerCx, playerCz));
+    this.streamingTrace.evictFar(playerCx, playerCz, generateRadius + 4, keep);
+
+    if (this.profiler.enabled) {
+      const queues = collectStreamingQueues(view);
+      const consider = (cx: number, cz: number): void => {
+        const key = inspectChunkKey(cx, cz);
+        const visible = session.worldRenderer.hasChunk(key);
+        if (visible) {
+          this.slowArmed.delete(key);
+          return;
+        }
+        const inspected = inspectStreamingChunk(view, cx, cz, queues, this.streamingTrace, this.lastMeshActiveKey);
+        const captured = maybeSlowSnapshot(
+          inspected,
+          snap.horizon,
+          snap.gen.pending,
+          snap.light.pending,
+          snap.mesh.pending,
+          now,
+          this.slowArmed.has(key),
+        );
+        if (!captured) return;
+        this.slowArmed.add(key);
+        this.slowSnapshots = pushSlowSnapshot(this.slowSnapshots, captured);
+      };
+      if (snap.front) consider(snap.front.cx, snap.front.cz);
+      for (let dz = -meshRadius; dz <= meshRadius; dz += 1) {
+        for (let dx = -meshRadius; dx <= meshRadius; dx += 1) {
+          if (snap.front && snap.front.cx === playerCx + dx && snap.front.cz === playerCz + dz) continue;
+          consider(playerCx + dx, playerCz + dz);
+        }
+      }
+      this.inspectorHud = formatStreamingHud(snap, this.slowSnapshots.at(-1) ?? null, now);
+    }
   }
 
   private maybeRunPerfScenario(): void {
@@ -957,6 +1175,14 @@ export class Game {
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
       this.session.worldRenderer.updateChests(rawElapsed);
+      const inspectClock = performance.now();
+      if (
+        (this.profiler.enabled || this.chunkGridVisible)
+        && inspectClock - this.lastInspectorAt >= 125
+      ) {
+        this.lastInspectorAt = inspectClock;
+        this.refreshStreamingInspector(this.session, inspectClock);
+      }
       this.updateChunkGrid();
     }
     const renderStart = performance.now();
@@ -1004,6 +1230,7 @@ export class Game {
         chunkX: session ? floorDiv(playerX, 16) : undefined,
         chunkZ: session ? floorDiv(playerZ, 16) : undefined,
         chunkHud: session ? this.chunkDebugLine(session) : undefined,
+        inspectorHud: this.inspectorHud || undefined,
       });
       if (snapshot) this.profiler.paint(this.ui.overlayRoot(), snapshot);
     }
@@ -1918,6 +2145,12 @@ export class Game {
     this.explosionQueue.clear();
     this.worldLoad = undefined;
     this.session = undefined;
+    this.inspectFreeze = null;
+    this.inspectorHud = '';
+    this.overlayCategories.clear();
+    this.slowArmed.clear();
+    this.slowSnapshots = [];
+    this.streamingTrace.reset(performance.now());
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();
   }
@@ -1931,12 +2164,12 @@ export class Game {
     const chunk = session.world.getChunk(chunkX, chunkZ, false);
     const look = this.lightDebugMode === 1 ? 'SKY' : this.lightDebugMode === 2 ? 'BLOCK' : this.lightDebugMode === 3 ? 'FINAL' : 'off';
     const biome = session.world.biomeAt(x, z);
-    if (!chunk) return `${chunkX},${chunkZ} missing · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'}`;
+    if (!chunk) return `${chunkX},${chunkZ} missing · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'} F9=${this.inspectFreeze ? 'frozen' : 'live'}`;
     const key = `${chunkX},${chunkZ}`;
     const mesh = session.worldRenderer.hasChunk(key) ? 'mesh' : 'nomesh';
     const lit = chunk.lightingReady ? 'lit' : `sky${chunk.skyReady ? '1' : '0'}/blk${chunk.blockLightReady ? '1' : '0'}`;
     const stale = chunk.lightMeshStale ? ' STALE' : '';
-    return `${chunkX},${chunkZ} ${lit} ${mesh} lv ${chunk.lightVersion}/${chunk.meshedLightVersion} sky ${session.world.skyLightAt(x, y, z)} blk ${session.world.blockLightAt(x, y, z)}${stale} · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'}`;
+    return `${chunkX},${chunkZ} ${lit} ${mesh} lv ${chunk.lightVersion}/${chunk.meshedLightVersion} sky ${session.world.skyLightAt(x, y, z)} blk ${session.world.blockLightAt(x, y, z)}${stale} · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'} F9=${this.inspectFreeze ? 'frozen' : 'live'}`;
   }
 
   private updateChunkGrid(): void {
@@ -1946,7 +2179,18 @@ export class Game {
     }
     this.chunkGrid.setVisible(true);
     const position = this.session.player.position;
-    this.chunkGrid.update(position.x, position.y, position.z, this.settings.renderDistance + 1);
+    const highlights: Array<{ cx: number; cz: number; color: number }> = [];
+    const playerCx = floorDiv(Math.floor(position.x), 16);
+    const playerCz = floorDiv(Math.floor(position.z), 16);
+    highlights.push({ cx: playerCx, cz: playerCz, color: 0xffffff });
+    if (this.inspectFreeze) {
+      highlights.push({ cx: this.inspectFreeze.cx, cz: this.inspectFreeze.cz, color: 0xff4fd8 });
+    }
+    this.chunkGrid.update(position.x, position.y, position.z, this.settings.renderDistance + 1, {
+      colorAt: (cx, cz) => categoryColor(this.overlayCategories.get(inspectChunkKey(cx, cz)) ?? 'absent'),
+      highlights,
+      colorRevision: this.overlayRevision,
+    });
   }
 
   private cycleLightDebug(): void {
@@ -1994,9 +2238,23 @@ export class Game {
         if (!this.debugVisible) this.cachedDebugText = '';
         this.refreshHud();
       }
+      if (event.code === 'F9' && !event.repeat) {
+        event.preventDefault();
+        const session = this.session;
+        if (session) {
+          const fallback = {
+            cx: floorDiv(Math.floor(session.player.position.x), 16),
+            cz: floorDiv(Math.floor(session.player.position.z), 16),
+          };
+          this.inspectFreeze = toggleInspectFreeze(this.inspectFreeze, this.lastFrontTarget ?? fallback);
+          this.lastInspectorAt = 0;
+          this.updateChunkGrid();
+        }
+      }
       if (event.code === 'F8' && !event.repeat) {
         event.preventDefault();
         this.chunkGridVisible = !this.chunkGridVisible;
+        this.lastInspectorAt = 0;
         this.updateChunkGrid();
         this.debugNextTick = 0;
       }

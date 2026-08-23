@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifySpike, isChunkOverlayQueryEnabled, isPerfQueryEnabled, readPerfScenario } from '../src/core/devProfiler';
+import { classifySpike, DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, readPerfScenario } from '../src/core/devProfiler';
 import { adaptiveJobBudgetMs } from '../src/world/worldJobs';
 
 describe('DEV profiler helpers', () => {
@@ -29,5 +29,33 @@ describe('DEV profiler helpers', () => {
   it('shrinks the world-job budget when the frame is already expensive', () => {
     expect(adaptiveJobBudgetMs(12, 16.67, 5)).toBeLessThan(adaptiveJobBudgetMs(4, 16.67, 5));
     expect(adaptiveJobBudgetMs(16, 16.67, 5)).toBe(0);
+  });
+
+  it('stores a last-spike timestamp so HUD age is not confused with the current frame', () => {
+    const profiler = new DevProfiler(true);
+    profiler.addFrame({
+      frameMs: 39.5,
+      tickMs: 1,
+      generateMs: 0,
+      lightMs: 2,
+      meshMs: 30,
+      entityMs: 0,
+      renderMs: 4,
+      otherMs: 0.5,
+    }, 0.016);
+    const snapshot = profiler.snapshot({
+      generateJobs: 0,
+      meshJobs: 0,
+      waitingMesh: 370,
+      waitingGenerate: 0,
+      lightingJobs: 100,
+      dirtyChunks: 0,
+      blockMutations: 0,
+      mobCount: 0,
+      entityUpdateMs: 0,
+    });
+    expect(snapshot?.lastSpike?.frameMs).toBe(39.5);
+    expect(snapshot?.lastSpike?.category).toBe('mesh');
+    expect(snapshot?.lastSpikeAtMs).toBeGreaterThan(0);
   });
 });

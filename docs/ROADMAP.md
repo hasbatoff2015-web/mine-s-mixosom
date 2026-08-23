@@ -34,6 +34,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после recipe-book layout / hover overlay / chest lid interior / furnace GUI front / Creative inventory polish: typecheck, 276 tests / 33 files, production build 90 modules, 1.01 MiB / 167 files.
 - [x] Локальный pipeline после performance/world-loading/mob-smoothing pass: typecheck, 301 tests / 40 files, production build 95 modules, 1.03 MiB / 167 files.
 - [x] Локальный pipeline после lighting performance / chunk seams pass: typecheck, 311 tests / 41 files, production build 96 modules, 1.04 MiB / 167 files.
+- [x] Локальный pipeline после DEV chunk streaming inspector (diagnostic only, no scheduler change): typecheck, 323 tests / 42 files, production build 99 modules, 1.06 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.

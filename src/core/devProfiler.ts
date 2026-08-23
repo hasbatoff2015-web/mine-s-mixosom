@@ -1,3 +1,4 @@
+import { formatLastSpike } from '../debug/chunkStreamingInspector';
 import { RollingTimingWindow, type TimingSnapshot } from './PerformanceStats';
 
 export interface FrameCostBreakdown {
@@ -33,9 +34,11 @@ export interface PerfSnapshot {
   readonly entityUpdateMs: number;
   readonly heapMb?: number;
   readonly lastSpike?: FrameCostBreakdown & { readonly category: string };
+  readonly lastSpikeAtMs?: number;
   readonly chunkX?: number;
   readonly chunkZ?: number;
   readonly chunkHud?: string;
+  readonly inspectorHud?: string;
 }
 
 export function isPerfQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
@@ -86,6 +89,7 @@ export class DevProfiler {
   private readonly ticks = new RollingTimingWindow(120);
   private readonly renders = new RollingTimingWindow(120);
   private lastSpike?: FrameCostBreakdown & { category: string };
+  private lastSpikeAtMs = 0;
   private fps = 0;
   private fpsFrames = 0;
   private fpsTimer = 0;
@@ -110,6 +114,7 @@ export class DevProfiler {
     }
     if (cost.frameMs >= 33) {
       this.lastSpike = { ...cost, category: classifySpike(cost) };
+      this.lastSpikeAtMs = performance.now();
     }
   }
 
@@ -132,6 +137,7 @@ export class DevProfiler {
     chunkX?: number;
     chunkZ?: number;
     chunkHud?: string;
+    inspectorHud?: string;
   }): PerfSnapshot | undefined {
     if (!this.enabled) return undefined;
     const frame = this.frames.snapshot();
@@ -159,9 +165,11 @@ export class DevProfiler {
       entityUpdateMs: world.entityUpdateMs,
       heapMb: readJsHeapMb(),
       lastSpike: this.lastSpike,
+      lastSpikeAtMs: this.lastSpike ? this.lastSpikeAtMs : undefined,
       chunkX: world.chunkX,
       chunkZ: world.chunkZ,
       chunkHud: world.chunkHud,
+      inspectorHud: world.inspectorHud,
     };
   }
 
@@ -178,6 +186,10 @@ export class DevProfiler {
     const spike = snapshot.lastSpike;
     const heap = snapshot.heapMb !== undefined ? `${snapshot.heapMb.toFixed(1)} MB` : 'n/a';
     const chunkHud = snapshot.chunkHud ?? `chunk ${snapshot.chunkX ?? '—'},${snapshot.chunkZ ?? '—'}`;
+    const spikeAge = snapshot.lastSpikeAtMs !== undefined ? now - snapshot.lastSpikeAtMs : 0;
+    const spikeLine = spike
+      ? `${formatLastSpike(spike.frameMs, spikeAge)}  ${spike.category}  mesh ${spike.meshMs.toFixed(1)} light ${spike.lightMs.toFixed(1)} gen ${spike.generateMs.toFixed(1)} sim ${spike.tickMs.toFixed(1)} render ${spike.renderMs.toFixed(1)}`
+      : 'LAST SPIKE  —';
     this.overlay.textContent = [
       `PERF  fps ${snapshot.fps}  frame ${snapshot.frame.averageMs.toFixed(1)} / p95 ${snapshot.frame.p95Ms.toFixed(1)} / p99 ${snapshot.frame.p99Ms.toFixed(1)} / max ${snapshot.frame.maximumMs.toFixed(1)}`,
       `TICK  ${snapshot.tick.averageMs.toFixed(2)} / p95 ${snapshot.tick.p95Ms.toFixed(2)}   RENDER ${snapshot.renderMs.toFixed(2)}`,
@@ -185,10 +197,9 @@ export class DevProfiler {
       `LIGHT jobs ${snapshot.lightPending} | nodes ${snapshot.lightNodes} | cols ${snapshot.lightColumns} | frame ${snapshot.lightFrameMs.toFixed(1)} ms | maxSlice ${snapshot.lightMaxSlice.toFixed(1)} | dirtyL ${snapshot.dirtyLightChunks}`,
       `CHUNK ${chunkHud}`,
       `ENT   mobs ${snapshot.mobCount} update ${snapshot.entityUpdateMs.toFixed(2)} ms   HEAP ${heap}`,
-      spike
-        ? `SPIKE ${spike.frameMs.toFixed(1)} ms  ${spike.category}  mesh ${spike.meshMs.toFixed(1)} light ${spike.lightMs.toFixed(1)} gen ${spike.generateMs.toFixed(1)} sim ${spike.tickMs.toFixed(1)} render ${spike.renderMs.toFixed(1)}`
-        : 'SPIKE  —',
-    ].join('\n');
+      spikeLine,
+      snapshot.inspectorHud ?? '',
+    ].filter((line) => line.length > 0).join('\n');
   }
 
   dispose(): void {

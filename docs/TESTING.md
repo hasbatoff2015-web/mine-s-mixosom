@@ -52,14 +52,14 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-23**:
+Срез локального запуска **2026-08-23** (streaming inspector pass):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       41 test files, 311 tests, 311 passed
-Vite build:   96 modules PASS
-Size/archive: PASS, 1.04 MiB uncompressed, 167 files
-Main assets:  JS 825.05 kB / 225.85 kB gzip; CSS 25.91 kB / 6.02 kB gzip
+Vitest:       42 test files, 323 tests, 323 passed
+Vite build:   99 modules PASS
+Size/archive: PASS, 1.06 MiB uncompressed, 167 files
+Main assets:  JS 850.05 kB / 234.31 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -103,7 +103,8 @@ Main assets:  JS 825.05 kB / 225.85 kB gzip; CSS 25.91 kB / 6.02 kB gzip
 | `tests/lighting-jobs.test.ts` | 5 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm |
 | `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
-| `tests/perf-profiler.test.ts` | 3 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, adaptive job budget shrinks when frame is already expensive |
+| `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
+| `tests/chunk-streaming-inspector.test.ts` | 11 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts, durations, F9 freeze, slow-chunk threshold, LAST SPIKE age, ready vs blocked head, front-target selection |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -386,7 +387,7 @@ Decoration у края chunk нужно проверять отдельно, п�
 
 ## Performance/soak
 
-DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, job counts, last spike category. Не логирует console каждый кадр. Scripted:
+DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, job counts, LAST SPIKE with **age**. Chunk streaming inspector (PLAYER/FRONT CHUNK, halo, GEN/LIGHT/MESH ready vs blocked, `queuedObsolete`). Не логирует console каждый кадр. F8 цветная сетка, F7 light view, F9 freeze front chunk. Как снять 10–20 s hole: `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Scripted:
 
 - `?perf=1&perfScenario=CREATIVE_BREAK_STRESS` — 100 canonical `applyBlockBatch` air mutations after world ready;
 - `?perf=1&perfScenario=MOB_SMOOTHNESS` — one cow with interpolated visual sample.

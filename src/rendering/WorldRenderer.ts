@@ -105,13 +105,20 @@ export class WorldRenderer {
     timeBudgetMs = 7,
     originX?: number,
     originZ?: number,
-    options: { meshRadius?: number; requireNeighborLight?: boolean } = {},
+    options: {
+      meshRadius?: number;
+      requireNeighborLight?: boolean;
+      counters?: { attempted: number; completed: number; skippedBlocked: number };
+      onMeshStart?: (chunk: Chunk) => void;
+      onMeshComplete?: (chunk: Chunk) => void;
+    } = {},
   ): number {
     const start = performance.now();
     const centerX = originX === undefined ? this.world.viewChunkX : floorDiv(originX, CHUNK_SIZE);
     const centerZ = originZ === undefined ? this.world.viewChunkZ : floorDiv(originZ, CHUNK_SIZE);
     const meshRadius = options.meshRadius;
     const requireNeighborLight = options.requireNeighborLight === true;
+    const counters = options.counters;
     const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
       if (!chunk.dirty && !chunk.lightMeshStale) continue;
@@ -129,16 +136,32 @@ export class WorldRenderer {
     let rebuilt = 0;
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
-      if (!chunk.lightingReady) continue;
+      if (!chunk.lightingReady) {
+        if (counters) {
+          counters.attempted += 1;
+          counters.skippedBlocked += 1;
+        }
+        continue;
+      }
       if (requireNeighborLight && !lightContextReady(
         this.world,
         chunk,
         centerX,
         centerZ,
         this.world.generationRadius,
-      )) continue;
+      )) {
+        if (counters) {
+          counters.attempted += 1;
+          counters.skippedBlocked += 1;
+        }
+        continue;
+      }
       if (rebuilt > 0 && performance.now() - start >= timeBudgetMs) break;
+      if (counters) counters.attempted += 1;
+      options.onMeshStart?.(chunk);
       this.rebuild(chunk);
+      options.onMeshComplete?.(chunk);
+      if (counters) counters.completed += 1;
       rebuilt += 1;
     }
     return rebuilt;

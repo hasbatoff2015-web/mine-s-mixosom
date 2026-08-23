@@ -149,7 +149,7 @@ Scheduled block queue ограничена, за tick обрабатываетс
 
 Мутации: skip lighting если sky-class и emission не изменились (tall grass → air). Torch/furnace **не** запускают sky recompute. Sky column update только при occlusion/leaf/water class change, локально, не весь chunk 6 раз. LightEngine не dirty-ит geometry на каждый voxel. Visual: mutation chunk + X/Z boundary; emission (torch/furnace) — light AABB; `lightVersion++` один раз на затронутый dirty chunk после job. `WorldRenderer.rebuildDirty` мешит если `dirty || lightVersion !== meshedLightVersion`, пропускает unlit и chunks вне mesh radius / без light context.
 
-DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL). F8 или `?perf=1&chunks=1` — сетка 16×16. F7 — sky/block/final false-color. HUD: chunk X/Z, gen/lit/mesh, versions, sky/block.
+DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN/LIGHT/MESH ready/blocked/oldest, frame attempt counters, PLAYER/FRONT chunk, halo, queue ranks, LAST SPIKE age). F8 или `?perf=1&chunks=1` — цветная сетка 16×16 по streaming state. F7 — sky/block/final false-color. F9 — freeze inspected front chunk. HUD: chunk X/Z, gen/lit/mesh, versions, sky/block. Inspector — **diagnostic only**, scheduler не менялся.
 
 ## Rendering
 
@@ -330,7 +330,7 @@ Ads, authorization, cloud saves, leaderboards и payments находятся в�
 - player arrow cap `48`, lifetime `8 s`.
 - redstone source/TNT/queue/steps caps.
 
-DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution, без per-frame console. Scenarios: `?perfScenario=CREATIVE_BREAK_STRESS` / `MOB_SMOOTHNESS`. Production HUD не считает p99, пока profiler выключен.
+DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution **with LAST SPIKE age**, без per-frame console. Chunk streaming inspector (GEN/LIGHT/MESH ready vs blocked, FRONT CHUNK, F9 freeze) только при включённом profiler, HUD 4–8 Hz. Scenarios: `?perfScenario=CREATIVE_BREAK_STRESS` / `MOB_SMOOTHNESS`. Production HUD не считает p99 и не сканирует job queues, пока profiler выключен.
 
 Эти ограничения защищают main thread от неограниченного роста, но не заменяют device GPU QA. `npm run benchmark:performance` измеряет 81 chunk generation/meshing и 600 updates для 24 mobs; `scripts/benchmark-perf-pass.ts` — mutation/job CPU. Worker meshing по-прежнему не оправдан как следующий обязательный шаг: сначала закрыты repeated remesh и full-chunk sky на каждый break.
 
