@@ -22,11 +22,13 @@ export interface RecipeOutput {
   readonly count: number;
 }
 
-interface BaseRecipe {
+export interface BaseRecipe {
   readonly id: string;
   readonly output: RecipeOutput;
   /** Smallest grid that may be used for the recipe (2 for inventory, 3 for table). */
   readonly gridSize?: 2 | 3;
+  /** After consume, replace emptied ingredient cells (e.g. lava_bucket → bucket). */
+  readonly remainders?: Readonly<Record<string, string>>;
 }
 
 export interface ShapedRecipe extends BaseRecipe {

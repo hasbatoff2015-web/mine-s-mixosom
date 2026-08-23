@@ -27,7 +27,7 @@ flowchart TD
   Game --> Player["PlayerController"]
   Game --> Survival["SurvivalSystem"]
   Game --> Combat["CombatSystem + PlayerArrowManager"]
-  Game --> Entities["MobManager + DroppedItemManager"]
+  Game --> Entities["MobManager + DroppedItemManager + MinecartManager"]
   Game --> Redstone["RedstoneSystem"]
   Game --> Save["SaveService / IndexedDB"]
   Game --> Platform["YandexGamesService"]
@@ -62,7 +62,7 @@ Simulation продвигается только в lifecycle state `PLAYING`. `
 
 Текущий tick логически выполняет:
 
-1. world clock, scheduled block ticks и furnaces;
+1. world clock, scheduled block ticks, **budgeted fluid queue** и furnaces;
 2. combat state: held/off-hand, shield use и cooldown;
 3. player input, hunger-aware sprint gate, AABB physics и survival/environment update;
 4. chunk ensure/prune и ограниченный dirty rebuild;
@@ -153,7 +153,8 @@ Map<chunkKey, Map<linearBlockIndex, BlockId>>
 
 При повторной генерации chunk delta накладывается поверх base terrain. Chest/furnace states хранятся отдельно по world block key `x,y,z`. Redstone сохраняет только source/primed-entity state, а derived wire power пересчитывает после restore.
 
-Scheduled block queue ограничена, за tick обрабатывается bounded число updates. Gravity-блоки ставят falling-block spawn вместо телепорта; liquids сохраняют минимальный downward path.
+- Scheduled block queue ограничена, за tick обрабатывается bounded число updates. Gravity-блоки ставят falling-block spawn вместо телепорта.
+- Fluids (`src/world/fluids.ts`): source (`fluidLevel` 8) и flowing (1–7, optional `fluidFalling`). Water delay 5 ticks / horizontal decay 1 (до 7 клеток); lava delay 30 / decay 2 (короче). Сначала вниз, потом в стороны. Unloaded chunk не считается воздухом. Очередь cap 2048, до 48 updates и `FLUID_JOB_BUDGET_MS = 1.5` за tick; writes через `applyBlockBatch` с `deferLighting` и без neighbor schedule. Смешение: lava source ↔ water → obsidian на клетке лавы; flowing lava ↔ water → cobblestone. Старые saves без state = source. Worldgen больше не сыпет одиночную пещерную лаву: связные floor pockets до Y 12 (`lavaLakeMask`, минимум 2 noise-соседей).
 
 Каждый chunk хранит два `Uint8Array` света плюс `lightVersion` / `meshedLightVersion`. **Lighting is intentionally simplified for performance.** Sky light отвечает только на «есть ли доступ к открытому небу?» — вертикальный столбец сверху вниз: opaque (`occludesFaces`) обнуляет sky; air пропускает 15; water и leaf cubes ослабляют на 1; cross-plants/torch/door sky не меняют. Горизонтальный 6-pass / 4-pass sky spread **не используется**. Block light — локальный bounded BFS от emission (torch 14, burning furnace = torch, lava 15, redstone torch 7) с reusable typed queue и лимитом узлов. Shader: `max(sky^γ * uDaylight, torchWarm * block)` + `faceShade`. Смена времени суток не пересчитывает voxel map.
 
@@ -195,7 +196,7 @@ Chest не идёт в chunk cube mesh. `ChunkMesher` собирает `meshed.c
 
 Render camera не ждёт следующего fixed tick: `applyImmediateRenderLook()` каждый `requestAnimationFrame` применяет текущие `InputManager.yaw/pitch`. `PlayerController` по-прежнему потребляет тот же input на границе simulation tick для физики и сериализации. Такое разделение убирает ступенчатое вращение при сохранении детерминированного `20 TPS` gameplay loop.
 
-`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Lever — stone base и pivoted handle; torch — cuboid stick с wall/floor `torchLocalMatrix`; vegetation — batched crossed quads с `lightingMode`/`biomeTint` на definition; wire — ground quad; button — малый cuboid на floor/wall/ceiling; pressure plate — тонкая plate (oak и stone, texture с definition); oak door — вертикальный cuboid толщиной `3/16` на occupied face с UV half/hinge; ladder — тонкая plane на support face (`LADDER_PLANE` / `LADDER_DEPTH`); stairs/slabs — axis-aligned cuboids в `ChunkMesher` из `stairLocalBoxes`/`slabLocalBoxes` (UV по региону грани, не stretch на всю composite); chest — entity model вне chunk mesh. `BLOCK_FAMILIES` задаёт source texture/hardness/tool и slab/stair IDs, поэтому новый wood species — строка семьи, не новый renderer. Ladder climbing — `ladderMotion.ts` + `PlayerController`: thin climb volume, wish INTO support, не `W = вверх`. Stairs не являются climb block. Creative flying перекрывает ladder, пока `isFlying`.
+`BlockDefinition.renderShape` маршрутизирует non-cube blocks в расширяемые builders. Lever — stone base и pivoted handle; torch — cuboid stick с wall/floor `torchLocalMatrix`; vegetation — batched crossed quads с `lightingMode`/`biomeTint` на definition; wire — ground quad; button — малый cuboid на floor/wall/ceiling; pressure plate — тонкая plate (oak и stone, texture с definition); oak door — вертикальный cuboid толщиной `3/16` на occupied face с UV half/hinge; ladder — тонкая plane на support face (`LADDER_PLANE` / `LADDER_DEPTH`); stairs/slabs — axis-aligned cuboids в `ChunkMesher` из `stairLocalBoxes`/`slabLocalBoxes` (UV по региону грани, не stretch на всю composite); fence — post + autoconnect arms, collision height 1.5; rail — ground strip с neighbor shape; chest — entity model вне chunk mesh. `BLOCK_FAMILIES` задаёт source texture/hardness/tool и slab/stair/fence IDs, поэтому новый wood species — строка семьи, не новый renderer. Ladder climbing — `ladderMotion.ts` + `PlayerController`: thin climb volume, wish INTO support, не `W = вверх`. Stairs не являются climb block. Creative flying перекрывает ladder, пока `isFlying`.
 
 `BlockRenderState.slabType` и `stairHalf` независимы от door `half`. Stair `shape` вычисляется из соседей (vanilla inner/outer) и не пишется в save. Старые saves: slab без type → bottom; stairs без facing/half → north/bottom. `stone_stairs` hidden, ID сохранён.
 
@@ -250,6 +251,10 @@ Caps зависят от coarse pointer profile. Restore может принуд
 ### FallingBlockManager
 
 Когда gravity-блок теряет опору, `VoxelWorld` кладёт spawn в bounded queue. `Game` создаёт falling entity с block mesh, gravity `-32` и voxel AABB; при земле блок возвращается в grid. Save schema 1 опционально сериализует in-flight entities.
+
+### MinecartManager
+
+`MinecartManager` — bounded rail vehicle (cap 16). Вагонетка ставится только на `BlockId.Rail`, едет по `railShape` (straight / curve / ascending), ускоряется на спуске и тормозит friction'ом на плоскости. Игрок садится use-действием и выходит sneak/jump. Сериализация — optional `minecarts` в schema 1. Это practical approximation, не vanilla minecart physics.
 
 `VoxelVisualFactory` обслуживает textured entity cuboids; item visuals вынесены в `ItemVisualFactory`. Оба используют `createEntityMaterial` из `worldLighting.ts`. `TexturedCuboidGeometry` вычисляет legacy cross-layout UV для всех шести faces из logical offset/width/height/depth; normalized UV одинаковы для 1× и 2× physical sheets. Entity materials используют nearest, sRGB, no mipmaps и alpha test.
 

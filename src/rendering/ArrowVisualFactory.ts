@@ -7,6 +7,7 @@ export class ArrowVisualFactory {
   private readonly geometry = createArrowGeometry();
   private readonly texture: THREE.Texture;
   private readonly material: THREE.MeshBasicMaterial;
+  private readonly flamingMaterial: THREE.MeshBasicMaterial;
 
   constructor() {
     this.texture = typeof document === 'undefined'
@@ -21,11 +22,13 @@ export class ArrowVisualFactory {
       alphaTest: 0.08,
       side: THREE.DoubleSide,
     });
+    this.flamingMaterial = this.material.clone();
+    this.flamingMaterial.color.set(0xff7a22);
   }
 
-  create(): THREE.Mesh {
-    const mesh = new THREE.Mesh(this.geometry, this.material);
-    mesh.name = 'arrow-projectile';
+  create(flaming = false): THREE.Mesh {
+    const mesh = new THREE.Mesh(this.geometry, flaming ? this.flamingMaterial : this.material);
+    mesh.name = flaming ? 'fire-arrow-projectile' : 'arrow-projectile';
     bindEntityLightReceiver(mesh);
     return mesh;
   }
@@ -33,6 +36,7 @@ export class ArrowVisualFactory {
   dispose(): void {
     this.geometry.dispose();
     this.material.dispose();
+    this.flamingMaterial.dispose();
     this.texture.dispose();
   }
 }

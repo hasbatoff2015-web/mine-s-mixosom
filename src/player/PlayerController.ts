@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
-import { blockCollisionBoxes, type CollisionBox } from '../world/collision';
+import { blockCollisionBoxes, movementMultiplier, type CollisionBox } from '../world/collision';
 import {
   CREATIVE_FLY_SPEED,
   CREATIVE_SPRINT_FLY_SPEED,
@@ -120,6 +120,8 @@ export class PlayerController {
   sprinting = false;
   inWater = false;
   inLava = false;
+  inCobweb = false;
+  private webMultiplier = 1;
   headSubmerged = false;
   onLadder = false;
   isFlying = false;
@@ -464,9 +466,10 @@ export class PlayerController {
       wishX /= wishLength;
       wishZ /= wishLength;
     }
-    const speed = this.inWater || this.inLava
+    const speed = (this.inWater || this.inLava
       ? WATER_SPEED * (this.inLava ? 0.55 : 1)
-      : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
+      : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED)
+      * this.webMultiplier;
     const desiredX = wishX * speed;
     const desiredZ = wishZ * speed;
     const response = this.inWater || this.inLava ? 7 : wasOnGround ? 22 : 3.5;
@@ -494,6 +497,9 @@ export class PlayerController {
   private updateFluidState(world: VoxelWorld): void {
     this.inWater = this.overlapsBlock(world, BlockId.Water);
     this.inLava = this.overlapsBlock(world, BlockId.Lava);
+    const box = this.aabb;
+    this.webMultiplier = movementMultiplier(world, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+    this.inCobweb = this.webMultiplier < 1;
     const eye = this.eyePosition();
     const eyeBlock = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
     this.headSubmerged = eyeBlock === BlockId.Water || eyeBlock === BlockId.Lava;

@@ -3,4 +3,4 @@ export * from './FallingBlockManager';
 export * from './MobManager';
 export * from './mobDefinitions';
 export * from './mobModels';
-export * from './voxelPhysics';
+export * from './MinecartManager';

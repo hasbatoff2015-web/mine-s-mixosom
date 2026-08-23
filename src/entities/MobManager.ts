@@ -44,6 +44,7 @@ export interface MobDamageOptions {
   readonly source?: MobDamageSource;
   readonly attackerPosition?: Readonly<THREE.Vector3>;
   readonly knockback?: number;
+  readonly igniteTicks?: number;
 }
 
 export interface MobPlayerDamageEvent {
@@ -164,6 +165,7 @@ export class MobEntity {
   facingYaw = 0;
   previousFacingYaw = 0;
   fleeSeconds = 0;
+  fireTicks = 0;
   readonly wanderDirection = new THREE.Vector3();
   resumeState: MobState = 'idle';
   deathDropsEmitted = false;
@@ -360,6 +362,14 @@ export class MobManager {
       }
 
       this.updateSunExposure(mob, delta, daylight, context.lightLevelAt);
+      if (mob.fireTicks > 0) {
+        mob.fireTicks = Math.max(0, mob.fireTicks - Math.round(delta * 20));
+        mob.burnAccumulator += delta;
+        if (mob.burnAccumulator >= 1) {
+          mob.burnAccumulator = 0;
+          this.damage(mob, 1, { source: 'fire' });
+        }
+      }
       if (!mob.alive) {
         this.snapMobRender(mob);
         continue;
@@ -469,6 +479,9 @@ export class MobManager {
       mob.velocity.y = Math.max(mob.velocity.y, 3.2);
       mob.wanderDirection.copy(away);
       mob.fleeSeconds = mob.definition.disposition === 'passive' ? 3 : 0;
+    }
+    if (damageOptions.igniteTicks) {
+      mob.fireTicks = Math.max(mob.fireTicks, damageOptions.igniteTicks);
     }
     if (mob.health <= 0) {
       this.beginDeath(mob);
@@ -764,8 +777,20 @@ export class MobManager {
       if (sampled.liquid) {
         mob.velocity.y += 4.5 * step;
         mob.velocity.multiplyScalar(Math.exp(-2.8 * step));
+        if (sampled.id === BlockId.Lava) {
+          mob.fireTicks = Math.max(mob.fireTicks, 60);
+        }
       } else {
         mob.velocity.y -= 20 * step;
+      }
+      const web = this.world.getBlock(
+        Math.floor(mob.position.x),
+        Math.floor(mob.position.y + 0.5),
+        Math.floor(mob.position.z),
+        false,
+      );
+      if (web === BlockId.Cobweb) {
+        mob.velocity.multiplyScalar(0.15);
       }
       const result = moveVoxelBody(
         this.world,

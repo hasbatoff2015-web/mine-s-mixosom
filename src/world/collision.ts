@@ -1,6 +1,7 @@
 import {
   BlockId,
   getBlockDefinition,
+  isFenceBlock,
   isSlabBlock,
   isStairBlock,
   occupiedDoorFacing,
@@ -11,6 +12,8 @@ import {
   defaultSlabType,
   defaultStairFacing,
   defaultStairHalf,
+  fenceConnections,
+  fenceLocalBoxes,
   resolveStairShape,
   slabLocalBoxes,
   stairLocalBoxes,
@@ -51,6 +54,9 @@ export function blockCollisionBoxes(
         resolveStairShape(world, x, y, z, state),
       ),
     );
+  }
+  if (isFenceBlock(block)) {
+    return offsetBoxes(x, y, z, fenceLocalBoxes(fenceConnections(world, x, y, z), 1.5));
   }
   if (block === BlockId.Cactus) {
     return [{
@@ -125,6 +131,31 @@ function slabOnFace(x: number, y: number, z: number, facing: HorizontalFacing): 
     case 'east':
       return { minX: x + 1 - DOOR_THICKNESS, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
   }
+}
+
+export function movementMultiplier(
+  world: BlockNeighborView,
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number,
+): number {
+  const x0 = Math.floor(minX);
+  const x1 = Math.floor(maxX - 1e-7);
+  const y0 = Math.floor(minY);
+  const y1 = Math.floor(maxY - 1e-7);
+  const z0 = Math.floor(minZ);
+  const z1 = Math.floor(maxZ - 1e-7);
+  for (let y = y0; y <= y1; y += 1) {
+    for (let z = z0; z <= z1; z += 1) {
+      for (let x = x0; x <= x1; x += 1) {
+        if (world.getBlock(x, y, z, false) === BlockId.Cobweb) return 0.15;
+      }
+    }
+  }
+  return 1;
 }
 
 export function rayAabbDistance(

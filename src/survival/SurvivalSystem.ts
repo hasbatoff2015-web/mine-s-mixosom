@@ -1,7 +1,7 @@
 import { BlockId } from '../blocks';
 import { FIXED_DT, clamp } from '../core/constants';
 import type { Inventory } from '../inventory';
-import { tryGetItemDefinition, type FoodItemDefinition } from '../items';
+import { tryGetItemDefinition, type FoodItemDefinition, type StatusEffectId, type StatusEffectSpec } from '../items';
 import type { PlayerController } from '../player';
 import type { VoxelWorld } from '../world/World';
 
@@ -157,6 +157,8 @@ export class SurvivalSystem {
   useArmorToughness: boolean;
   spawnPoint: [number, number, number] = [0.5, 64, 0.5];
   lastDamage?: DamageResult;
+  private readonly effects = new Map<StatusEffectId, { amplifier: number; ticks: number }>();
+  private effectRegenTimer = 0;
 
   private accumulator = 0;
   private hurtResistantTicks = 0;
@@ -262,6 +264,28 @@ export class SurvivalSystem {
     return result;
   }
 
+  applyEffect(effect: StatusEffectSpec): void {
+    const current = this.effects.get(effect.id);
+    if (!current || effect.amplifier > current.amplifier || effect.durationTicks > current.ticks) {
+      this.effects.set(effect.id, { amplifier: effect.amplifier, ticks: effect.durationTicks });
+    }
+    if (effect.id === 'absorption') {
+      this.absorption = Math.max(this.absorption, 4 * (effect.amplifier + 1));
+    }
+  }
+
+  hasEffect(id: StatusEffectId): boolean {
+    return (this.effects.get(id)?.ticks ?? 0) > 0;
+  }
+
+  get invisible(): boolean {
+    return this.hasEffect('invisibility');
+  }
+
+  effectTicks(id: StatusEffectId): number {
+    return this.effects.get(id)?.ticks ?? 0;
+  }
+
   ignite(ticks = 160): void {
     if (Number.isFinite(ticks)) this.fireTicks = Math.max(this.fireTicks, Math.max(0, Math.floor(ticks)));
   }
@@ -277,14 +301,15 @@ export class SurvivalSystem {
   }
 
   /** Applies a food item and optionally removes one from the supplied inventory. */
-  consumeFood(itemOrId: string | FoodItemDefinition, inventory?: Pick<Inventory, 'has' | 'remove'>): boolean {
+  consumeFood(itemOrId: string | FoodItemDefinition, inventory?: Pick<Inventory, 'has' | 'remove' | 'addItem'>): boolean {
     const item = typeof itemOrId === 'string' ? tryGetItemDefinition(itemOrId) : itemOrId;
     if (item?.kind !== 'food' || !this.canConsumeFood(item.id)) return false;
     if (inventory && !inventory.has(item.id, 1)) return false;
     if (inventory && inventory.remove(item.id, 1) !== 1) return false;
     this.hunger = Math.min(MAX_HUNGER, this.hunger + item.food.nutrition);
     this.saturation = Math.min(this.hunger, this.saturation + item.food.saturation);
-    if (item.id === 'golden_apple') this.absorption = Math.max(this.absorption, 4);
+    for (const effect of item.food.effects ?? []) this.applyEffect(effect);
+    if (item.food.returnsItem) inventory?.addItem(item.food.returnsItem, 1);
     return true;
   }
 
@@ -320,6 +345,8 @@ export class SurvivalSystem {
     this.fireTimer = 0;
     this.regenTimer = 0;
     this.starvationTimer = 0;
+    this.effects.clear();
+    this.effectRegenTimer = 0;
     player?.teleport(position);
   }
 
@@ -405,7 +432,28 @@ export class SurvivalSystem {
       }
     } else this.fireTimer = 0;
 
+    this.tickStatusEffects(context, events);
     this.tickHunger(context, events);
+  }
+
+  private tickStatusEffects(context: SurvivalTickContext, events: DamageResult[]): void {
+    void context;
+    void events;
+    for (const [id, effect] of [...this.effects]) {
+      effect.ticks -= 1;
+      if (id === 'regeneration' && this.health < MAX_HEALTH) {
+        this.effectRegenTimer += 1;
+        const interval = effect.amplifier >= 1 ? 25 : 50;
+        if (this.effectRegenTimer >= interval) {
+          this.effectRegenTimer = 0;
+          this.heal(1);
+        }
+      }
+      if (effect.ticks <= 0) {
+        this.effects.delete(id);
+        if (id === 'regeneration') this.effectRegenTimer = 0;
+      }
+    }
   }
 
   private tickHunger(context: SurvivalTickContext, events: DamageResult[]): void {

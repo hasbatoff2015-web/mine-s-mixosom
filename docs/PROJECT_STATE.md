@@ -43,10 +43,10 @@
 - Генерация детерминирована строковым seed.
 - Реализованы три биома: `plains`, `forest`, `desert`.
 - Высота поверхности типично `63–84` (sea level `63`); periodic mountain mask даёт широкие возвышенности примерно `+10…+20` над local baseline, с headroom `12` блоков до `WORLD_HEIGHT`.
-- Есть bedrock floor (`Y 0–2`), ridged 3D-noise cave networks (ветвления и chambers, без прореза bedrock и **без 1×1 surface pinholes**: carve только `≤ localMin(surface) - 4`), редкая lava на глубине и veins для coal, iron, gold, redstone и diamond в сдвинутых Y-bands.
+- Есть bedrock floor (`Y 0–2`), ridged 3D-noise cave networks (ветвления и chambers, без прореза bedrock и **без 1×1 surface pinholes**: carve только `≤ localMin(surface) - 4`), связные подземные lava lakes (source pockets до Y 12, не scatter) и veins для coal, iron, gold, redstone и diamond в сдвинутых Y-bands.
 - Forest oak density ≈ 40% прежней, desert cactus ≈ 25–30% прежней; biome-specific cross-plants без изменения самих моделей.
 - Terrain decor включает oak trees, cactus и детерминированные растения: tall grass/flowers в plains, tall grass/fern/flowers в forest, dead bush в desert.
-- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone и slabs/stairs. Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint.
+- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone, slabs/stairs, **oak/birch/spruce fences**, **rail**, **cobweb**, **fire** (без item). Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint.
 - Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком. Старые saves загружаются без crash; **неизменённый** terrain при reload перегенерируется новым worldgen (возможен seam на границе уже изменённого и нового chunk). Для visual QA гор/пещер нужен новый мир.
 - Chunk дополнительно хранит компактные `Uint8Array` skyLight/blockLight (`0–15`) того же размера, что и blocks.
 - Sand и gravel при потере опоры удаляются из сетки и становятся falling-block entity с gravity/mesh, затем возвращаются в world.
@@ -68,18 +68,18 @@
 - Lever, torch/redstone torch, wire, button, pressure plate, oak door, ladder, stairs, slabs и chest больше не рисуются full cubes. Torch ставится на пол и стену; button — на пол, стену и потолок; ladder — только на боковую сторону solid support; pressure plate — только на верхнюю грань solid support. Chest — отдельная entity-модель (body/lid/latch) с Faithful `entity/chest/normal` texture. Placement facing = opposite of look (latch/front к игроку), отдельно от door look-facing. Крышка открывается назад-вверх вокруг заднего hinge (`chestLidAngle` > 0); lid/body разделены `CHEST_LID_SEAM = 1/64`, latch-south omitted, **lid underside (`down`) присутствует** чтобы внутренняя сторона крышки не была прозрачной. Furnace — cube с `blockStates.facing` (тоже opposite-of-look) и lit front `furnace_front_on` при `burnTime > 0`; emission = `torchBlockEmission()`. Bed всё ещё не имеет specialized mesh.
 - Bed — один блок с установкой spawn point и простым пропуском ночи.
 - Basic redstone намеренно ограничен шестисоседней передачей сигнала и не моделирует directional connection shapes, quasi-connectivity или advanced components.
-- Fluid simulation только локальная и нисходящая; нет уровня жидкости, бокового потока, смешивания, бесконечных источников и обновлений vanilla-класса.
+- Fluid simulation: source + flowing (`fluidLevel` 8 / 1–7, `fluidFalling`), down-first then sideways, water ~7 cells / 5 ticks, lava shorter / 30 ticks, budgeted queue (48 updates, 1.5 ms, cap 2048). Water + lava source → obsidian; water + flowing lava → cobblestone. Нет infinite water springs и нет slope-mesh: flowing рисуется укороченным cuboid. Worldgen lava — связные source lakes, не scatter.
 
 ## Предметы, добыча и создание
 
 ### Готово
 
-- Data-first item registry связывает block items, resources, foods, tools, weapons, shield (internal/hidden) и четыре комплекта armor.
+- Data-first item registry связывает block items, resources, foods, tools, weapons, shield (internal/hidden), четыре комплекта armor, **flint and steel**, **golden apple**, **glass bottle**, **invisibility/regeneration potions**, **buckets**, **fire arrow** и **minecart**.
 - В progression есть wood/stone/iron/diamond pickaxe, axe, shovel и sword; hoe и gold tools намеренно исключены.
 - Gold armor присутствует, как и leather/iron/diamond armor.
 - Stack validation, merge/split, left/right click semantics, durability, equipment constraints, atomic consume и serialization покрыты unit tests.
 - Mining использует Java 1.9 формулу `(S/H)/30` при harvest и `/100` иначе. Preferred tool ускоряет добычу; `requiresCorrectTool` нужен только камню, рудам и furnace.
-- 2×2 и 3×3 matcher поддерживает shaped, mirrored и shapeless recipes, tags и детерминированный consumption plan.
+- 2×2 и 3×3 matcher поддерживает shaped, mirrored и shapeless recipes, tags, детерминированный consumption plan и **remainders** (lava bucket → empty bucket).
 - Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows, tools, swords, armor, slabs/stairs (включая birch/spruce/brick/stone brick; без hidden `stone_stairs`) и basic redstone/TNT/`stone_pressure_plate`. Shield recipe временно снят: предмет скрыт из obtainable gameplay.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table. Lit visual/light выводятся из `FurnaceState.burnTime > 0`, не из отдельного `lit` flag. LightEngine читает `world.blockEmissionAt`.
 - Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Обычные cube block items рисуются atlas-cube. Sprite items (включая held torch и arrow) используют общую `GeneratedItemGeometry`: один front/back quad на весь sprite, толщина `1/16`, side spans только по opaque→transparent (`alpha == 0`) с merge соседних рёбер. Side faces — outer shell (winding совпадает с outward normal). Collapsed side UV берёт центр opaque texel, не границу с transparent neighbor. 32×32 pack не меняет model size, но диагонали дают больше 1-texel spans (у `iron_pickaxe.png` 104 merged spans). Generated item material без mob wrap-shade (voxel light для drops сохраняется). Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
@@ -103,8 +103,8 @@
 - Collision resolver двигает по осям, поддерживает wall sliding, step-up, ladder climb/descent и защиту от схода с края в sneak. Solid collision — массив boxes на клетку (`blockCollisionBoxes`): stairs/slabs/cactus/door/chest используют фактическую форму. Ladder collision для ходьбы нет (non-solid); climb volume отдельно в `ladderMotion.ts`.
 - Render camera получает текущие yaw/pitch непосредственно из input каждый animation frame; физика и gameplay остаются на fixed `20 TPS`, поэтому mouse-look не квантуется simulation ticks.
 - Визуальные transforms мобов, drops, player arrows и primed TNT/falling blocks интерполируются на render frame (`alpha = accumulator / FIXED_DT`). AI, hitbox, damage и collision читают только simulation pose. Teleport/spawn/коррекции ≥ 6 блоков делают snap.
-- Есть water/lava state, плавучесть/drag, утопление, lava/fire/cactus damage и fall damage после трёх блоков.
-- Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance.
+- Есть water/lava state, плавучесть/drag, утопление, lava/fire/cactus damage и fall damage после трёх блоков. Cobweb сильно замедляет игрока/мобов (`movementMultiplier` 0.15) и стрелы. Fence collision height 1.5.
+- Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance. Status effects: absorption, regeneration (heal-over-time), invisibility (hostile `playerTargetable` false; first-person руки остаются видимыми). Effects не сериализуются (reload сбрасывает таймеры, absorption в save есть).
 - Sprint в Survival доступен только при hunger выше `6`; удержание jump начисляет jump exhaustion только в tick фактического отрыва от земли.
 - Armor использует release-1.9 damage formula; toughness выключена по умолчанию как более поздняя 1.9.1-механика.
 - Food use требует удержания, consumable проверяет hunger cap.
@@ -132,7 +132,8 @@
 - AI имеет idle/wander/chase/attack/hurt/die states, caps, distance spawning/despawn, line of sight и voxel collision.
 - Hostile melee использует реальную 3D-дистанцию между eye positions и voxel line of sight, поэтому не бьёт игрока на другом этаже или через стену.
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
-- Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. Creeper имеет fuse/radial explosion, hostile hits передаются в shield/armor/survival, смерть моба создаёт loot drops.
+- Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. **Fire arrow** — shapeless `arrow + lava_bucket` (остаётся empty bucket), projectile с оранжевым tint, поджигает цель 5 с (`igniteTicks` 100) и TNT. Creeper имеет fuse/radial explosion, hostile hits передаются в shield/armor/survival, смерть моба создаёт loot drops.
+- `MinecartManager`: вагонетка только на рельсах, ride/dismount, slope accel + friction, save `minecarts?`. Rails autoconnect (straight/curve/ascending). Practical, не vanilla bit-exact.
 - Player knockback применяется только если `SurvivalSystem.damage()` реально нанёс damage; shield/armor/i-frame ignored hit не сдвигает игрока.
 - Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie left limbs берут mirrored classic `64×32` UV (`[40,16]`/`[0,16]`), а forward-arms pose задаётся положительным Three.js Euler (`+1.2` / `+1.55`), не Minecraft-значением `-1.2`. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.
@@ -146,7 +147,7 @@
 - Нет breeding, taming, shearing, animal drops по burning state, skeleton equipment, spider climbing и сложных special cases.
 - Projectile/explosion physics не моделируют точный swept volume/exposure/raycast sampling vanilla.
 - Shield disable-by-axe реализован в combat helper, но текущие мобы не атакуют топорами.
-- Нет enchantments, potion effects, experience и advanced combat feedback.
+- Нет enchantments, experience и advanced combat feedback. Potion items (invisibility / regeneration) и golden apple effects есть; brewing stand нет.
 
 ## Basic redstone и TNT
 
@@ -198,7 +199,7 @@
 
 - IndexedDB database `frontier-cubes-saves`, object store `worlds`, save schema `1`.
 - World summary хранит id, name, seed, mode, timestamps и play time.
-- Сохраняются player position/velocity/view, health/hunger/saturation, selected slot, spawn point, inventory/equipment, time, block modifications, optional blockStates, chest/furnace state, dropped items, falling blocks, mobs, redstone sources и primed TNT.
+- Сохраняются player position/velocity/view, health/hunger/saturation, selected slot, spawn point, inventory/equipment, time, block modifications, optional blockStates, chest/furnace state, dropped items, falling blocks, mobs, redstone sources, primed TNT и optional minecarts.
 - Autosave interval — 30 seconds игрового времени; дополнительные saves выполняются при pause, background, pagehide, закрытии container и выходе в меню.
 - Повреждённый inventory не блокирует загрузку всего мира: используется empty inventory fallback.
 - Yandex adapter безопасно работает без SDK локально, вызывает `LoadingAPI.ready()` после interactive menu и маркирует gameplay start/stop.
@@ -218,14 +219,13 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     45 files, 382 tests — PASS
-Vite build: 100 modules — PASS
-Size/archive: 1.08 MiB / 167 files — PASS
-Main JS: 870.56 kB / 240.68 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
+Vitest:     47 files, 398 tests — PASS
+Vite build: see latest report
+Size/archive: see latest report
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 
 ## За пределами текущей alpha
 
-Не реализованы multiplayer, server authority, accounts/cloud worlds, weather, farming, enchantments, brewing, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, vehicles, bosses и моддинг API. Это осознанно не подменяется заглушками в P0.
+Не реализованы multiplayer, server authority, accounts/cloud worlds, weather, farming, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. Drinkable potions, rails и minecart в этой alpha есть как practical approximation, без brewing/powered rails. Это осознанно не подменяется заглушками в P0.

@@ -31,6 +31,7 @@ npm run benchmark:performance
 npx vite-node scripts/benchmark-perf-pass.ts
 npm run benchmark:lighting
 npm run benchmark:streaming
+npm run benchmark:fluids
 ```
 
 Полный локальный pipeline:
@@ -53,14 +54,11 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-23** (lighting halo / flood-head scheduler):
+Срез локального запуска **2026-08-23** (fluids and items pass):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       44 test files, 368 tests, 368 passed
-Vite build:   100 modules PASS
-Size/archive: PASS, 1.08 MiB uncompressed, 167 files
-Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
+Vitest:       47 test files, 398 tests, 398 passed
 ```
 
 | Test file | Tests | Что проверяется |
@@ -107,6 +105,8 @@ Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 | `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
 | `tests/chunk-streaming-inspector.test.ts` | 26 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH STARVATION uses readyWanted not litAt, LAST SPIKE age, ready vs blocked head, front-target selection, player-visible vs prefetch latency, wanted enter/leave/re-enter, rolling stats exclude never-wanted halo |
 | `tests/lighting-scheduler.test.ts` | 19 | Lighting flood skip past blocked head; 70 blocked + 1 ready; resume near flood owner; mesh-context DAG (no lighting A↔B cycle); A→B→C leaf lighting; near-unlock priority; distant flood preempt; obsolete unlit skip; orphaned/obsolete flood after prune or leave radius; radius-6 wanted set; 2 ms slice; torch border; flat sky seam; rapid break; CPU fly near-hole bound |
+| `tests/fluids.test.ts` | 8 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap |
+| `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects, cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -393,6 +393,19 @@ npm run benchmark:worldgen
 ```
 
 CPU-only (no GPU FPS). Compare plains/forest/desert chunk ms and 81-chunk batch with the numbers in `docs/reports/2026-08-23_worldgen-mountains-caves-density.md`.
+
+Fluids (`tests/fluids.test.ts`, `npm run benchmark:fluids`):
+
+- water falls before spreading and reaches 7 horizontal cells from a source;
+- lava falls and stops short of water's reach;
+- removing a source dries flowing water;
+- water + lava source → obsidian; water + flowing lava → cobblestone;
+- flow continues across a loaded chunk border;
+- queue stays ≤ 2048 and per-tick updates ≤ 48.
+
+```bash
+npm run benchmark:fluids
+```
 
 ## Combat/entity regression scenarios
 

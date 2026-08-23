@@ -7,7 +7,9 @@ import {
   chestFacingFromYaw,
   furnaceFacingFromYaw,
   getBlockDefinition,
+  isFenceBlock,
   isPressurePlateBlock,
+  isRailBlock,
   isSlabBlock,
   isStairBlock,
   ladderPlacementFromHit,
@@ -63,10 +65,12 @@ import { RollingTimingWindow } from './PerformanceStats';
 import {
   DroppedItemManager,
   FallingBlockManager,
+  MinecartManager,
   MobManager,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
   type SerializedFallingBlock,
+  type SerializedMinecart,
   type SerializedMob,
 } from '../entities';
 import { InputManager } from '../input/InputManager';
@@ -135,6 +139,7 @@ import {
   defaultSlabType,
   defaultStairFacing,
   defaultStairHalf,
+  resolveRailShape,
   slabLocalBoxes,
   stairLocalBoxes,
 } from '../rendering/specialBlockGeometry';
@@ -153,6 +158,8 @@ interface GameSession {
   falling: FallingBlockManager;
   mobs: MobManager;
   arrows: PlayerArrowManager;
+  minecarts: MinecartManager;
+  ridingCartId?: string;
   redstone: RedstoneSystem;
   activePressurePlates: Set<string>;
   selectedSlot: number;
@@ -211,6 +218,7 @@ export class Game {
   private firstPerson?: FirstPersonRenderer;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
+  private lastConsumedArrow: string | undefined;
   private settings: RuntimeSettings = {
     volume: 0.7,
     sensitivity: 0.0022,
@@ -513,7 +521,20 @@ export class Game {
       heldItemId: inventory.getSlot(selectedSlot)?.itemId,
       offhandItemId: inventory.offhand?.itemId,
     });
-    const arrows = new PlayerArrowManager(this.scene, world, mobs, { visualFactory: arrowVisuals });
+    const arrows = new PlayerArrowManager(this.scene, world, mobs, {
+      visualFactory: arrowVisuals,
+      onBlockHit: (x, y, z, flaming) => {
+        const session = this.session;
+        if (!session) return;
+        if (session.world.getBlock(x, y, z, false) === BlockId.Tnt) {
+          session.redstone.primeTnt(x, y, z);
+        } else if (flaming) {
+          this.tryIgniteAt(x, y + 1, z, session);
+        }
+      },
+    });
+    const minecarts = new MinecartManager(this.scene, world, itemVisuals);
+    if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
 
     this.session = {
       summary,
@@ -527,6 +548,7 @@ export class Game {
       falling,
       mobs,
       arrows,
+      minecarts,
       redstone,
       activePressurePlates,
       selectedSlot,
@@ -1309,6 +1331,7 @@ export class Game {
       furnaces: Object.fromEntries(session.world.furnaces),
       droppedItems: session.drops.serialize(),
       fallingBlocks: session.falling.serialize(),
+      minecarts: session.minecarts.serialize(),
       blockStates: session.world.serializeBlockStates(),
       mobs: session.mobs.serialize(),
       redstone: session.redstone.serialize(),
@@ -1465,6 +1488,7 @@ export class Game {
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, inventoryOpen);
     const movementBefore = resolvePlayerMoveInput(inventoryOpen, this.input.movement());
     const drawingBow = session.bowUseTicks > 0;
+    const riding = Boolean(session.ridingCartId);
     const movementMultiplier = drawingBow ? Math.min(0.2, session.combat.movementMultiplier) : session.combat.movementMultiplier;
     session.player.creativeFlightAllowed = session.summary.mode === 'creative';
     const playerInput = {
@@ -1472,9 +1496,10 @@ export class Game {
       pitch: this.input.pitch,
       movement: () => ({
         ...movementBefore,
-        forward: movementBefore.forward * movementMultiplier,
-        right: movementBefore.right * movementMultiplier,
-        sprint: !drawingBow && movementBefore.sprint
+        forward: riding ? 0 : movementBefore.forward * movementMultiplier,
+        right: riding ? 0 : movementBefore.right * movementMultiplier,
+        jump: riding ? false : movementBefore.jump,
+        sprint: !riding && !drawingBow && movementBefore.sprint
           && movementMultiplier === 1
           && (session.summary.mode === 'creative' || session.survival.hunger > 6),
         descend: movementBefore.descend === true,
@@ -1518,12 +1543,14 @@ export class Game {
     simMark = this.addSimPart('other', simMark);
     const entityStart = performance.now();
     session.arrows.tick(FIXED_DT);
+    session.minecarts.update(FIXED_DT);
+    this.updateMinecartRiding(session);
     simMark = this.addSimPart('entities', simMark);
     session.mobs.update(FIXED_DT, {
       playerPosition: session.player.position,
       playerEyePosition: session.player.eyePosition(),
       playerAlive: !session.survival.dead,
-      playerTargetable: session.summary.mode === 'survival',
+      playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
       daylight: this.daylightFactor(session.world.timeOfDay),
     });
     this.processMobEvents();
@@ -1714,6 +1741,27 @@ export class Game {
       session.bowUseTicks = 1;
       return;
     }
+    if (stack?.itemId === ItemId.FlintAndSteel) {
+      this.useFlintAndSteel(hit);
+      return;
+    }
+    if (stack?.itemId === ItemId.Bucket) {
+      this.useEmptyBucket(hit);
+      return;
+    }
+    if (stack?.itemId === ItemId.Minecart) {
+      this.placeMinecart(hit);
+      return;
+    }
+    if (hit && session.minecarts.cartAt(hit.x, hit.y, hit.z)) {
+      this.mountMinecart(session.minecarts.cartAt(hit.x, hit.y, hit.z)!.id);
+      return;
+    }
+    const nearbyCart = session.minecarts.nearest(session.player.position, 1.5);
+    if (!stack && nearbyCart) {
+      this.mountMinecart(nearbyCart.id);
+      return;
+    }
     if (!hit || !stack || item?.placesBlockId === undefined) return;
     if (this.tryMergeSlab(hit, item.placesBlockId)) return;
     const hitDefinition = getBlockDefinition(hit.block);
@@ -1813,6 +1861,20 @@ export class Game {
       session.world.setBlockState(x, y, z, { facing: furnaceFacingFromYaw(session.player.yaw) });
       return;
     }
+    if (isRailBlock(item.placesBlockId)) {
+      const support = getBlockDefinition(session.world.getBlock(x, y - 1, z, false));
+      if (!support.solid) {
+        this.ui.toast('Рельсы нужны на опоре');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      this.refreshRailsAround(x, y, z);
+      return;
+    }
+    if (isFenceBlock(item.placesBlockId)) {
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, true)) return;
+      return;
+    }
     if (placed.solid && session.player.intersectsBlock(x, y, z)) {
       this.ui.toast('Нельзя поставить блок внутри игрока');
       return;
@@ -1823,9 +1885,22 @@ export class Game {
         const orientation = this.leverPlacement(hit);
         session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
       }
+      if (item.placesBlockId === BlockId.Water || item.placesBlockId === BlockId.Lava) {
+        session.world.setBlockState(x, y, z, { fluidLevel: 8 });
+        session.world.scheduleFluidAround(x, y, z, 1);
+        if (stack?.itemId === ItemId.WaterBucket || stack?.itemId === ItemId.LavaBucket) {
+          if (session.summary.mode === 'survival') {
+            session.inventory.setSlot(session.selectedSlot, createItemStack(ItemId.Bucket));
+          }
+        }
+      }
       this.audio.playTone(230, 0.04, 0.025);
       this.firstPerson?.swing();
-      if (session.summary.mode === 'survival') this.consumeSelected(1);
+      if (session.summary.mode === 'survival'
+        && stack?.itemId !== ItemId.WaterBucket
+        && stack?.itemId !== ItemId.LavaBucket) {
+        this.consumeSelected(1);
+      }
     }
   }
 
@@ -1981,13 +2056,17 @@ export class Game {
     const session = this.session!;
     const charge = session.combat.bowCharge(session.bowUseTicks);
     if (!charge.canFire) return;
-    if (session.summary.mode === 'survival' && session.inventory.remove(ItemId.Arrow, 1) !== 1) {
+    if (session.summary.mode === 'survival' && !this.consumeArrow(session)) {
       this.ui.toast('Нужна стрела');
       return;
     }
+    if (session.summary.mode !== 'survival') {
+      this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow : ItemId.Arrow;
+    }
     const direction = session.player.viewDirection();
     const origin = session.player.eyePosition().addScaledVector(direction, 0.35);
-    session.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical);
+    const flaming = this.lastConsumedArrow === ItemId.FireArrow;
+    session.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
@@ -2188,6 +2267,130 @@ export class Game {
     });
   }
 
+  private consumeArrow(session: GameSession): boolean {
+    const selected = this.selectedStack();
+    if (selected?.itemId === ItemId.FireArrow && session.inventory.remove(ItemId.FireArrow, 1) === 1) {
+      this.lastConsumedArrow = ItemId.FireArrow;
+      return true;
+    }
+    if (session.inventory.remove(ItemId.FireArrow, 1) === 1) {
+      this.lastConsumedArrow = ItemId.FireArrow;
+      return true;
+    }
+    if (session.inventory.remove(ItemId.Arrow, 1) === 1) {
+      this.lastConsumedArrow = ItemId.Arrow;
+      return true;
+    }
+    this.lastConsumedArrow = undefined;
+    return false;
+  }
+
+  private useFlintAndSteel(hit: VoxelHit | undefined): void {
+    const session = this.session!;
+    if (!hit) return;
+    if (hit.block === BlockId.Tnt) {
+      session.redstone.primeTnt(hit.x, hit.y, hit.z);
+      this.wearFlint();
+      return;
+    }
+    const x = hit.x + hit.normal.x;
+    const y = hit.y + hit.normal.y;
+    const z = hit.z + hit.normal.z;
+    if (this.tryIgniteAt(x, y, z, session)) this.wearFlint();
+  }
+
+  private wearFlint(): void {
+    const session = this.session!;
+    const stack = this.selectedStack();
+    if (!stack) return;
+    this.audio.playTone(480, 0.05, 0.03);
+    this.firstPerson?.swing();
+    if (session.summary.mode === 'survival') {
+      session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
+    }
+  }
+
+  private tryIgniteAt(x: number, y: number, z: number, session: GameSession): boolean {
+    const block = session.world.getBlock(x, y, z, false);
+    if (block === BlockId.Tnt) {
+      session.redstone.primeTnt(x, y, z);
+      return true;
+    }
+    const definition = getBlockDefinition(block);
+    if (block !== BlockId.Air && definition.replaceable !== true) return false;
+    if (!session.world.setBlock(x, y, z, BlockId.Fire)) return false;
+    session.world.scheduleFluidAround(x, y, z, 1);
+    return true;
+  }
+
+  private useEmptyBucket(hit: VoxelHit | undefined): void {
+    const session = this.session!;
+    if (!hit) return;
+    if (hit.block !== BlockId.Water && hit.block !== BlockId.Lava) return;
+    const source = (session.world.getBlockState(hit.x, hit.y, hit.z)?.fluidLevel ?? 8) >= 8
+      && session.world.getBlockState(hit.x, hit.y, hit.z)?.fluidFalling !== true;
+    if (!source) return;
+    const filled = hit.block === BlockId.Water ? ItemId.WaterBucket : ItemId.LavaBucket;
+    session.world.setBlock(hit.x, hit.y, hit.z, BlockId.Air);
+    session.world.scheduleFluidAround(hit.x, hit.y, hit.z, 1);
+    session.inventory.setSlot(session.selectedSlot, createItemStack(filled));
+    this.audio.playTone(260, 0.04, 0.025);
+    this.firstPerson?.swing();
+  }
+
+  private placeMinecart(hit: VoxelHit | undefined): void {
+    const session = this.session!;
+    if (!hit) return;
+    const x = hit.block === BlockId.Rail ? hit.x : hit.x + hit.normal.x;
+    const y = hit.block === BlockId.Rail ? hit.y : hit.y + hit.normal.y;
+    const z = hit.block === BlockId.Rail ? hit.z : hit.z + hit.normal.z;
+    if (session.world.getBlock(x, y, z, false) !== BlockId.Rail) {
+      this.ui.toast('Вагонетку можно поставить только на рельсы');
+      return;
+    }
+    if (!session.minecarts.spawn(x, y, z)) return;
+    this.audio.playTone(220, 0.04, 0.03);
+    this.firstPerson?.swing();
+    if (session.summary.mode === 'survival') this.consumeSelected(1);
+  }
+
+  private mountMinecart(id: string): void {
+    const session = this.session!;
+    session.ridingCartId = id;
+    this.audio.playTone(300, 0.04, 0.02);
+  }
+
+  private updateMinecartRiding(session: GameSession): void {
+    const id = session.ridingCartId;
+    if (!id) return;
+    const cart = session.minecarts.entities.find((entry) => entry.id === id);
+    if (!cart) {
+      session.ridingCartId = undefined;
+      return;
+    }
+    if (this.input.movement().sneak || this.input.movement().jump) {
+      session.ridingCartId = undefined;
+      session.player.position.set(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
+      session.player.velocity.set(0, 0, 0);
+      return;
+    }
+    session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
+    session.player.velocity.copy(cart.velocity);
+    session.player.fallDistance = 0;
+  }
+
+  private refreshRailsAround(x: number, y: number, z: number): void {
+    const session = this.session!;
+    const cells = [
+      [x, y, z], [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1],
+      [x + 1, y + 1, z], [x - 1, y + 1, z], [x, y + 1, z + 1], [x, y + 1, z - 1],
+    ];
+    for (const [cx, cy, cz] of cells) {
+      if (session.world.getBlock(cx!, cy!, cz!, false) !== BlockId.Rail) continue;
+      session.world.setBlockState(cx!, cy!, cz!, { railShape: resolveRailShape(session.world, cx!, cy!, cz!) });
+    }
+  }
+
   private consumeSelected(count: number): void {
     const session = this.session!;
     const stack = this.selectedStack();
@@ -2249,6 +2452,7 @@ export class Game {
       session.mobs.interpolateVisuals(alpha);
       session.drops.interpolateVisuals(alpha);
       session.arrows.interpolateVisuals(alpha);
+      session.minecarts.interpolateVisuals(alpha);
       const sprintFov = session.player.sprinting ? 7 : 0;
       const bowZoom = session.bowUseTicks > 0
         ? session.combat.bowCharge(session.bowUseTicks).power * 8
@@ -2348,6 +2552,7 @@ export class Game {
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.arrows.dispose();
+    this.session.minecarts.dispose();
     this.session.mobs.dispose();
     this.session.redstone.dispose();
     this.session.drops.dispose();

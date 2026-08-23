@@ -14,7 +14,9 @@ import {
   type WeaponItemDefinition,
 } from './types';
 
-type ResourceOptions = Partial<Pick<BaseItemDefinition, 'maxStack' | 'tags' | 'placesBlockId'>>;
+type ResourceOptions = Partial<Pick<BaseItemDefinition, 'maxStack' | 'tags' | 'placesBlockId'>> & {
+  readonly durability?: number;
+};
 
 const title = (key: string): string =>
   key.replace(/(^|_)([a-z])/g, (_match, separator: string, letter: string) =>
@@ -28,6 +30,7 @@ function blockTags(definition: BlockDefinition): readonly string[] {
   if (definition.key.endsWith('_wool')) tags.push('wool');
   if (definition.key.endsWith('_slab')) tags.push('slab');
   if (definition.key.endsWith('_stairs')) tags.push('stairs');
+  if (definition.key.endsWith('_fence')) tags.push('fence');
   return Object.freeze(tags);
 }
 
@@ -50,10 +53,11 @@ function resource(id: string, options: ResourceOptions = {}): ResourceItemDefini
     id,
     name: title(id),
     kind: 'resource',
-    maxStack: options.maxStack ?? 64,
+    maxStack: options.durability !== undefined ? 1 : (options.maxStack ?? 64),
     texture: `item/${id}`,
     ...(options.tags === undefined ? {} : { tags: Object.freeze([...options.tags]) }),
     ...(options.placesBlockId === undefined ? {} : { placesBlockId: options.placesBlockId }),
+    ...(options.durability === undefined ? {} : { durability: options.durability }),
   });
 }
 
@@ -61,7 +65,7 @@ function food(
   id: string,
   nutrition: number,
   saturation: number,
-  alwaysEdible = false,
+  extra: { alwaysEdible?: boolean; returnsItem?: string; effects?: FoodItemDefinition['food']['effects'] } = {},
 ): FoodItemDefinition {
   return Object.freeze({
     id,
@@ -69,7 +73,13 @@ function food(
     kind: 'food',
     maxStack: 64,
     texture: `item/${id}`,
-    food: Object.freeze({ nutrition, saturation, ...(alwaysEdible ? { alwaysEdible: true } : {}) }),
+    food: Object.freeze({
+      nutrition,
+      saturation,
+      ...(extra.alwaysEdible ? { alwaysEdible: true } : {}),
+      ...(extra.returnsItem ? { returnsItem: extra.returnsItem } : {}),
+      ...(extra.effects ? { effects: extra.effects } : {}),
+    }),
   });
 }
 
@@ -206,7 +216,14 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.Flint), resource(ItemId.ClayBall), resource(ItemId.Brick),
   resource(ItemId.String), resource(ItemId.Feather), resource(ItemId.Leather),
   resource(ItemId.Gunpowder), resource(ItemId.Book),
-  resource(ItemId.Arrow),
+  resource(ItemId.Arrow, { tags: ['arrow'] }),
+  resource(ItemId.FireArrow, { tags: ['arrow'] }),
+  resource(ItemId.FlintAndSteel, { durability: 64 }),
+  resource(ItemId.GlassBottle),
+  resource(ItemId.Bucket),
+  resource(ItemId.WaterBucket, { placesBlockId: BlockId.Water }),
+  resource(ItemId.LavaBucket, { placesBlockId: BlockId.Lava }),
+  resource(ItemId.Minecart),
 ];
 
 const foods: readonly ItemDefinition[] = [
@@ -218,6 +235,23 @@ const foods: readonly ItemDefinition[] = [
   food(ItemId.CookedPorkchop, 8, 12.8),
   food(ItemId.Chicken, 2, 1.2),
   food(ItemId.CookedChicken, 6, 7.2),
+  food(ItemId.GoldenApple, 4, 9.6, {
+    alwaysEdible: true,
+    effects: [
+      { id: 'absorption', amplifier: 0, durationTicks: 2400 },
+      { id: 'regeneration', amplifier: 1, durationTicks: 100 },
+    ],
+  }),
+  food(ItemId.PotionInvisibility, 0, 0, {
+    alwaysEdible: true,
+    returnsItem: ItemId.GlassBottle,
+    effects: [{ id: 'invisibility', amplifier: 0, durationTicks: 3600 }],
+  }),
+  food(ItemId.PotionRegeneration, 0, 0, {
+    alwaysEdible: true,
+    returnsItem: ItemId.GlassBottle,
+    effects: [{ id: 'regeneration', amplifier: 0, durationTicks: 900 }],
+  }),
 ];
 
 const equipment: readonly ItemDefinition[] = [

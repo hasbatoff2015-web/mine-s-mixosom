@@ -300,6 +300,21 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     category: 'redstone', hardness: 0, flammable: true,
     textures: { all: 'block/tnt' },
   }),
+  block(BlockId.Fire, 'fire', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'standard',
+    replaceable: true, breakable: true, hasItem: false, drop: false, emission: 14,
+  }),
+  block(BlockId.Cobweb, 'cobweb', {
+    category: 'decoration', hardness: 4, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'standard',
+    tool: 'shears', tier: 'hand', drop: { item: 'string', count: 1 },
+  }),
+  block(BlockId.Rail, 'rail', {
+    category: 'utility', hardness: 0.7, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'rail',
+    drop: { item: 'rail', count: 1 },
+  }),
 
   ...BLOCK_FAMILIES.flatMap((family) => {
     const shaped: BlockDefinition[] = [];
@@ -338,6 +353,20 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
           count: 1,
           ...(family.requiresCorrectTool ? { requiresCorrectTool: true } : {}),
         },
+      }));
+    }
+    if (family.fenceId !== undefined) {
+      shaped.push(block(family.fenceId, `${family.key}_fence`, {
+        category: 'building',
+        hardness: family.hardness,
+        opaque: false,
+        occludesFaces: false,
+        tool: family.tool,
+        tier: family.tier,
+        flammable: family.flammable,
+        renderShape: 'fence',
+        textures: { all: family.texture },
+        drop: { item: `${family.key}_fence`, count: 1 },
       }));
     }
     return shaped;

@@ -134,7 +134,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 ### P1.3 World simulation
 
-- [ ] Level-based liquids с bounded updates, боковым потоком и water/lava interaction.
+- [x] Level-based liquids с bounded updates, боковым потоком и water/lava interaction (practical Java-like, не bit-exact; без infinite springs).
 - [x] Gravity-driven primed TNT и falling-block entities для sand/gravel; unloaded-chunk queue всё ещё упрощена.
 - [x] Более разнообразные terrain features без нарушения seed determinism (mountains + connected caves + density; без новых biomes/structures).
 - [x] Spawn finder учитывает новый terrain height и избегает desert/caves/high mountains (покрыто `tests/worldgen-terrain.test.ts`).
@@ -189,7 +189,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 - weather и атмосферные эффекты;
 - biome expansion, структуры и более глубокая exploration progression;
-- experience, enchantments, potion-like effects;
+- experience, enchantments, brewing stand / full potion crafting;
 - farming и animal breeding;
 - advanced redstone, pistons, hoppers и automation;
 - дополнительные dimensions, bosses и late-game progression;

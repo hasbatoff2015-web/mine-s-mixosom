@@ -17,6 +17,7 @@ import type { VoxelWorld } from '../world/World';
 import type { TextureAtlas } from './TextureAtlas';
 import {
   blockOccludesFaces,
+  defaultRailShape,
   defaultSlabType,
   defaultStairFacing,
   defaultStairHalf,
@@ -24,8 +25,12 @@ import {
   doorFaceTextureUv,
   doorHalfTexture,
   facingVector as facingVectorFrom,
+  fenceConnections,
+  fenceLocalBoxes,
   ladderPlaneLocal,
   leverHandleAngle,
+  railLocalBoxes,
+  resolveRailShape,
   resolveStairShape,
   slabLocalBoxes,
   stairLocalBoxes,
@@ -37,6 +42,7 @@ import {
   type LocalBox,
   type TextureUvRect,
 } from './specialBlockGeometry';
+import { fluidSurfaceHeight, readFluidFalling, readFluidLevel } from '../world/fluids';
 
 export { leverHandleAngle } from './specialBlockGeometry';
 export { bakedVertexLight } from './worldLighting';
@@ -314,9 +320,15 @@ export class ChunkMesher {
           const definition = getBlockDefinition(block);
           const worldX = chunk.x * CHUNK_SIZE + x;
           const worldZ = chunk.z * CHUNK_SIZE + z;
-          const needsState = definition.renderShape !== 'cube' || definition.id === BlockId.Furnace;
+          const needsState = definition.renderShape !== 'cube'
+            || definition.id === BlockId.Furnace
+            || definition.liquid === true;
           const state = needsState ? this.resolveState(worldX, y, worldZ) : undefined;
           const target = this.buffersFor(layers, definition);
+          if (definition.liquid) {
+            faces += this.addFluid(target, definition, state, world, worldX, y, worldZ);
+            continue;
+          }
           const meshAsCube = definition.renderShape === 'cube'
             || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
           if (definition.renderShape === 'chest') {
@@ -466,6 +478,8 @@ export class ChunkMesher {
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
       case 'stairs': return this.addStairs(buffers, definition, state, world, x, y, z);
       case 'slab': return this.addSlab(buffers, definition, state, world, x, y, z);
+      case 'fence': return this.addFence(buffers, definition, world, x, y, z);
+      case 'rail': return this.addRail(buffers, definition, state, world, x, y, z);
       case 'chest': return 0;
       case 'cube': return 0;
     }
@@ -733,6 +747,61 @@ export class ChunkMesher {
     let faces = 0;
     for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
     return faces;
+  }
+
+  private addFence(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const boxes = fenceLocalBoxes(fenceConnections(world, x, y, z), 1);
+    let faces = 0;
+    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+    return faces;
+  }
+
+  private addRail(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? 'block/rail';
+    const shape = world ? resolveRailShape(world, x, y, z) : defaultRailShape(state);
+    const boxes = railLocalBoxes(shape);
+    let faces = 0;
+    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+    return faces;
+  }
+
+  private addFluid(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const level = state?.fluidLevel ?? readFluidLevel(world, x, y, z);
+    const falling = state?.fluidFalling ?? readFluidFalling(world, x, y, z);
+    const height = fluidSurfaceHeight(level, falling);
+    return this.addLocalCuboid(
+      buffers,
+      texture,
+      { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: height, maxZ: 1 },
+      world,
+      definition,
+      x, y, z,
+    );
   }
 
   private addLocalCuboid(

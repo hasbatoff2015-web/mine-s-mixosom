@@ -29,6 +29,10 @@ import {
 } from './LightEngine';
 import { chebyshevChunkDistance, neighborMeshOffsets } from './worldJobs';
 import {
+  FLUID_QUEUE_CAP,
+  processFluidQueue,
+} from './fluids';
+import {
   collectUnlitLightJobs,
   criticalUnlitKeys,
   isLightJobBlockedByFlood,
@@ -94,6 +98,13 @@ interface ScheduledBlockTick {
   due: number;
 }
 
+export interface ScheduledFluidTick {
+  x: number;
+  y: number;
+  z: number;
+  due: number;
+}
+
 export class VoxelWorld {
   readonly chunks = new Map<string, Chunk>();
   readonly modifications = new Map<string, Map<number, BlockId>>();
@@ -109,6 +120,8 @@ export class VoxelWorld {
   meshDirtyMarks = 0;
   lightQueueMarks = 0;
   mutationMarks = 0;
+  fluidUpdates = 0;
+  fluidQueuePeak = 0;
   readonly pendingMesh = new Set<string>();
   private pendingLight?: PendingLightJob;
   meshRadius = 32;
@@ -118,6 +131,8 @@ export class VoxelWorld {
   private readonly scheduled: ScheduledBlockTick[] = [];
   private readonly scheduledKeys = new Set<string>();
   private readonly pendingFalls: FallingBlockSpawn[] = [];
+  private readonly fluidScheduled: ScheduledFluidTick[] = [];
+  private readonly fluidKeys = new Set<string>();
 
   constructor(readonly seed: string) {
     this.generator = new TerrainGenerator(seed);
@@ -320,6 +335,7 @@ export class VoxelWorld {
       if (scheduleNeighbors) {
         this.schedule(mutation.x, mutation.y, mutation.z, 1);
         this.schedule(mutation.x, mutation.y + 1, mutation.z, 1);
+        this.scheduleFluidAround(mutation.x, mutation.y, mutation.z, 1);
       }
     }
 
@@ -443,7 +459,12 @@ export class VoxelWorld {
     if (previous === block) return undefined;
     const previousDefinition = getBlockDefinition(previous);
     chunk.set(localX, y, localZ, block);
-    if (block === BlockId.Air) this.blockStates.delete(blockKey(x, y, z));
+    if (block === BlockId.Air || !getBlockDefinition(block).liquid) {
+      const previousState = this.blockStates.get(blockKey(x, y, z));
+      if (previousState && (block === BlockId.Air || previousDefinition.liquid)) {
+        this.blockStates.delete(blockKey(x, y, z));
+      }
+    }
     if (record) {
       const key = chunkKey(chunkX, chunkZ);
       let delta = this.modifications.get(key);
@@ -746,7 +767,50 @@ export class VoxelWorld {
     this.tickNumber += 1;
     this.timeOfDay = (this.timeOfDay + 1) % 24_000;
     this.processScheduledTicks();
+    const fluids = processFluidQueue(this);
+    this.fluidUpdates = fluids.updates;
     this.tickFurnaces();
+  }
+
+  scheduleFluid(x: number, y: number, z: number, delay = 1): void {
+    if (y < 0 || y >= WORLD_HEIGHT) return;
+    const key = blockKey(x, y, z);
+    const due = this.tickNumber + Math.max(1, delay);
+    if (this.fluidKeys.has(key)) {
+      const existing = this.fluidScheduled.find((entry) => entry.x === x && entry.y === y && entry.z === z);
+      if (existing && existing.due <= due) return;
+      if (existing) existing.due = due;
+      return;
+    }
+    if (this.fluidScheduled.length >= FLUID_QUEUE_CAP) return;
+    this.fluidKeys.add(key);
+    this.fluidScheduled.push({ x, y, z, due });
+    this.fluidQueuePeak = Math.max(this.fluidQueuePeak, this.fluidScheduled.length);
+  }
+
+  scheduleFluidAround(x: number, y: number, z: number, delay = 1): void {
+    this.scheduleFluid(x, y, z, delay);
+    this.scheduleFluid(x + 1, y, z, delay);
+    this.scheduleFluid(x - 1, y, z, delay);
+    this.scheduleFluid(x, y + 1, z, delay);
+    this.scheduleFluid(x, y - 1, z, delay);
+    this.scheduleFluid(x, y, z + 1, delay);
+    this.scheduleFluid(x, y, z - 1, delay);
+  }
+
+  takeDueFluid(): ScheduledFluidTick | undefined {
+    for (let index = 0; index < this.fluidScheduled.length; index += 1) {
+      const scheduled = this.fluidScheduled[index]!;
+      if (scheduled.due > this.tickNumber) continue;
+      this.fluidScheduled.splice(index, 1);
+      this.fluidKeys.delete(blockKey(scheduled.x, scheduled.y, scheduled.z));
+      return scheduled;
+    }
+    return undefined;
+  }
+
+  get fluidQueueSize(): number {
+    return this.fluidScheduled.length;
   }
 
   getChest(x: number, y: number, z: number): ChestState {
@@ -824,14 +888,25 @@ export class VoxelWorld {
           this.setBlock(scheduled.x, scheduled.y, scheduled.z, BlockId.Air);
         }
       }
-      if ((block === BlockId.Water || block === BlockId.Lava) && this.tickNumber % (block === BlockId.Water ? 4 : 10) === 0) {
-        const below = this.getBlock(scheduled.x, scheduled.y - 1, scheduled.z);
-        if (below === BlockId.Air) {
-          this.setBlock(scheduled.x, scheduled.y - 1, scheduled.z, block);
-          this.schedule(scheduled.x, scheduled.y - 1, scheduled.z, 4);
-        }
+      if (block === BlockId.Fire) {
+        this.tickFire(scheduled.x, scheduled.y, scheduled.z);
       }
     }
+  }
+
+  private tickFire(x: number, y: number, z: number): void {
+    if (this.getBlock(x, y, z, false) !== BlockId.Fire) return;
+    const below = this.getBlock(x, y - 1, z, false);
+    const support = getBlockDefinition(below);
+    if (below === BlockId.Air || support.liquid || support.replaceable) {
+      this.setBlock(x, y, z, BlockId.Air);
+      return;
+    }
+    if ((this.tickNumber + x * 13 + z * 7) % 40 === 0) {
+      this.setBlock(x, y, z, BlockId.Air);
+      return;
+    }
+    this.schedule(x, y, z, 20);
   }
 
   private tickFurnaces(): void {

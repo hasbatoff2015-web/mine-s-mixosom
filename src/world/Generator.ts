@@ -156,13 +156,14 @@ export class TerrainGenerator {
           else if (y <= SEA_LEVEL) block = BlockId.Water;
 
           if (block !== BlockId.Bedrock && y <= roof && this.isCave(x, y, z, height)) {
-            block = y < floor + 6 && random01(this.numericSeed + 8128, x, y, z) > 0.94 ? BlockId.Lava : BlockId.Air;
+            block = BlockId.Air;
           }
           chunk.set(localX, y, localZ, block);
         }
       }
     }
 
+    this.placeLavaLakes(chunk, heights, halo);
     this.generateOres(chunk);
     this.decorate(chunk);
     chunk.generated = true;
@@ -190,6 +191,42 @@ export class TerrainGenerator {
     const column = this.columnAt(x, z);
     if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
     return true;
+  }
+
+  lavaLakeMask(x: number, z: number): boolean {
+    const field = fbm2D(this.numericSeed + 8128, x / 22, z / 22, 3);
+    if (field <= 0.20) return false;
+    let neighbors = 0;
+    if (fbm2D(this.numericSeed + 8128, (x + 1) / 22, z / 22, 3) > 0.20) neighbors += 1;
+    if (fbm2D(this.numericSeed + 8128, (x - 1) / 22, z / 22, 3) > 0.20) neighbors += 1;
+    if (fbm2D(this.numericSeed + 8128, x / 22, (z + 1) / 22, 3) > 0.20) neighbors += 1;
+    if (fbm2D(this.numericSeed + 8128, x / 22, (z - 1) / 22, 3) > 0.20) neighbors += 1;
+    return neighbors >= 2;
+  }
+
+  private placeLavaLakes(chunk: Chunk, heights: Int16Array, halo: number): void {
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
+    const stride = CHUNK_SIZE + halo * 2;
+    const lakeSurface = 12;
+    for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
+      for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
+        const x = worldX + localX;
+        const z = worldZ + localZ;
+        if (!this.lavaLakeMask(x, z)) continue;
+        const height = heights[(localZ + halo) * stride + (localX + halo)]!;
+        const floor = this.bedrockHeight(x, z);
+        const top = Math.min(lakeSurface, height - 6);
+        for (let y = floor + 1; y <= top; y += 1) {
+          const here = chunk.get(localX, y, localZ);
+          const below = chunk.get(localX, y - 1, localZ);
+          if (here !== BlockId.Air && here !== BlockId.Lava) continue;
+          if (below === BlockId.Air || below === BlockId.Water) continue;
+          if (!this.isCave(x, y, z, height)) continue;
+          chunk.set(localX, y, localZ, BlockId.Lava);
+        }
+      }
+    }
   }
 
   private generateOres(chunk: Chunk): void {

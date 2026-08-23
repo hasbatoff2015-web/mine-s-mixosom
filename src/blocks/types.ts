@@ -22,7 +22,21 @@ export type BlockRenderShape =
   | 'ladder'
   | 'stairs'
   | 'slab'
-  | 'chest';
+  | 'chest'
+  | 'fence'
+  | 'rail';
+
+export type RailShape =
+  | 'north_south'
+  | 'east_west'
+  | 'north_east'
+  | 'north_west'
+  | 'south_east'
+  | 'south_west'
+  | 'ascending_north'
+  | 'ascending_south'
+  | 'ascending_east'
+  | 'ascending_west';
 
 export type DoorHalf = 'lower' | 'upper';
 export type DoorHinge = 'left' | 'right';
@@ -48,6 +62,13 @@ export interface BlockRenderState {
   readonly slabType?: SlabType;
   /** Independent of door `half`. Missing in old saves → bottom. */
   readonly stairHalf?: StairHalf;
+  /**
+   * Fluid depth. Missing on water/lava → source (8). Flowing water 1–7,
+   * flowing lava typically 2/4/6. Old saves stay sources.
+   */
+  readonly fluidLevel?: number;
+  readonly fluidFalling?: boolean;
+  readonly railShape?: RailShape;
 }
 
 export interface BlockTextures {
@@ -220,4 +241,11 @@ export enum BlockId {
   SpruceStairs = 137,
   BrickStairs = 138,
   StoneBrickStairs = 139,
+
+  Fire = 140,
+  Cobweb = 141,
+  OakFence = 142,
+  BirchFence = 143,
+  SpruceFence = 144,
+  Rail = 145,
 }
