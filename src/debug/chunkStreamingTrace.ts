@@ -93,6 +93,14 @@ export class ChunkStreamingTrace {
       case 'visible':
         stamp('visibleAt');
         break;
+      case 'enteredMeshWanted':
+        stamp('enteredMeshWantedAt');
+        break;
+      case 'leftMeshWanted':
+        break;
+      case 'readyWhileWanted':
+        stamp('readyToMeshWhileWantedAt');
+        break;
       default:
         break;
     }

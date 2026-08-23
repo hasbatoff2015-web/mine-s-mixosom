@@ -170,13 +170,27 @@ New: `tests/streaming-scheduler.test.ts` (11). Inspector tests extended for halo
 
 GPU smoothness is **not** claimed here. Please fly with `?perf=1&chunks=1`:
 
-1. Creative fly straight — FRONT/PLAYER chunk should not sit lit with `lit→meshStart` of seconds; READY MESH WAIT > 500 ms should fire earlier than a 2 s LAST SLOW CHUNK.
+1. Creative fly straight — judge **WANTED→VISIBLE** / **READY-WANTED WAIT**, not prefetch `lit→meshStart`. A chunk lit 40 s ahead that appears as you arrive is healthy. READY MESH STARVATION > 500 ms should fire only when the chunk is wanted, ready, and mesh has not started. LAST SLOW VISIBLE CHUNK requires wanted→visible > 2 s inside mesh radius.
 2. Reverse direction — old east pending should not outrank new west neighbors; `queuedObsolete` should stay near the working set, not hundreds.
 3. Caves / torch — lighting views unchanged (F7).
 4. Rapid Creative break — still one dirty/pending job class, no 0–10 FPS return.
 5. Mobs still interpolate.
 6. Loading World still reaches a meshed floor before PLAYING.
 7. Confirm LAST SPIKE age so an old SIM 39 ms is not read as the current frame.
+8. F9 freeze then fly away — HUD must say CURRENTLY NOT WANTED; live wanted timers must not keep growing.
+
+## Prefetch lifetime vs player-visible latency
+
+The starvation fix made nearby mesh start while flying. After that, local QA could still show `lit→meshStart = 42 s` / old `READY MESH WAIT = 43 s` even when the hole in front of the player filled immediately.
+
+That number was **prefetch lifetime**: the chunk was generated/lit as halo far ahead, sat ready, then entered mesh radius and meshed in ~100 ms. The inspector used `litAt` / `readyToMeshAt` (set at light time) / request age, so it labeled prefetch as player-visible stall.
+
+**Player-visible clocks** (inspector follow-up, diagnostics only, no scheduler change):
+
+- `WANTED→VISIBLE` = time from entering mesh wanted radius to appearing
+- `READY-WANTED WAIT` = time from “wanted + fully ready to mesh” to mesh start
+
+Use those to decide if a remaining streaming stall exists. Keep `lit→meshStart` as PREFETCH HISTORY only. See `docs/reports/2026-08-23_chunk-streaming-inspector.md`.
 
 ## Git
 

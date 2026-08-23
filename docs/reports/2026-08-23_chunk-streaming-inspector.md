@@ -22,8 +22,8 @@ No claim that backlog is proven or streaming is solved.
 1. Launch with `?perf=1&chunks=1` (or `?perf=1` then F8).
 2. Creative fly / sprint until a hole appears in front of the player.
 3. Press **F9** immediately (`FREEZE INSPECTED CHUNK`) so FRONT CHUNK stays selected after it finally appears.
-4. Wait until the chunk shows; screenshot the perf HUD (PLAYER CHUNK, FRONT CHUNK, HALO, GEN/LIGHT/MESH ready vs blocked, `queuedObsolete`, LAST SLOW CHUNK, LAST SPIKE age).
-5. Optional: if F9 was missed, `LAST SLOW CHUNK` still keeps the last 8 stalls that stayed non-visible for > 2 s while inside mesh radius.
+4. Wait until the chunk shows; screenshot the perf HUD (PLAYER CHUNK, FRONT CHUNK, HALO, GEN/LIGHT/MESH ready vs blocked, `queuedObsolete`, LAST SLOW VISIBLE CHUNK, PLAYER-VISIBLE WANTED→VISIBLE, LAST SPIKE age). Do not treat prefetch `lit→meshStart` of tens of seconds as a player-visible stall.
+5. Optional: if F9 was missed, `LAST SLOW VISIBLE CHUNK` still keeps the last 8 stalls that stayed non-visible for > 2 s **while inside mesh wanted radius**.
 
 ## Hotkeys
 
@@ -60,12 +60,15 @@ Existing PERF/TICK/JOBS/LIGHT/CHUNK/ENT lines remain. Added:
 - **FRAME** gen attempted/completed/skippedBlocked, light attempted/completed/yielded/blocked, mesh attempted/completed/skippedBlocked, plus `skipMesh(gen-frame)` and `lighting-only budget` flags
 - **MOVE** horizontal speed (blocks/s), 8-way heading, Creative flying
 - **HORIZON** render radius, requested (= mesh+1 halo), furthest requested/missing, `wantedNow` (mesh-radius square), `missingWanted`, `queuedObsolete` (jobs whose chunk is outside the current mesh-radius wanted set)
-- **PLAYER CHUNK** and **FRONT CHUNK**: flags, versions, distance-only priority, queue ranks (`not queued` if absent), `blockedBy`, stage durations, cardinal HALO, last ~12 events
-- **LAST SLOW CHUNK** from the ring buffer
+- **PLAYER CHUNK** and **FRONT CHUNK**: flags, versions, distance-only priority, queue ranks (`not queued` if absent), `blockedBy`, **CURRENT STATE** (`wantedNow`, `wantedSince`, `readyWhileWanted`, meshStarted, visible), **PREFETCH HISTORY** (generated/lit ages, `lit N s before becoming wanted`), **PLAYER-VISIBLE WAIT** (`WANTED AGE`, `READY-WANTED WAIT`, wanted→ready, readyWanted→meshStart, mesh duration, `WANTED→VISIBLE`). Prefetch `lit→meshStart` is still shown, labeled prefetch, never as READY MESH WAIT. Cardinal HALO, last ~12 events
+- **LAST SLOW VISIBLE CHUNK** from the ring buffer (wanted→visible, wanted→ready, READY-WANTED→MESH, maxDistanceWhileWanted, ranks/blocker while wanted)
+- **READY MESH STARVATION** if a wanted ready-to-mesh chunk waited > 500 ms to start mesh (`readyToMeshWhileWantedAt`, not `litAt`)
+- **PLAYER-VISIBLE LATENCY** rolling p50/p95/max for `WANTED→VISIBLE` and `READY-WANTED→MESH` (only chunks that entered mesh wanted radius)
+- **PREFETCH HISTORY** rolling `lit→meshStart` / request→visible (not the player-visible stall metric)
 - **LAST SPIKE** `39.5 ms (37.8s ago)` — spike detection still `frameMs >= 33`; only the label gained age
 - **LEGEND** + F7/F8/F9 reminder
 
-Inspector text updates ~8 Hz (125 ms), overlay paint already 200 ms. Production path without `?perf=1` / F8 does not walk queues for ranks.
+Inspector text updates ~8 Hz (125 ms), overlay paint already 200 ms. Wanted timestamps sync on that refresh and on player chunk-cross while profiler is on — not every render frame. Production path without `?perf=1` / F8 does not walk queues for ranks.
 
 ## Chunk states (real flags)
 
@@ -101,7 +104,48 @@ HALO shows N/S/E/W only (diagonals are not required by `lightContextReady`).
 
 ## Slow chunk capture
 
-Wanted (mesh radius) + not visible + age ≥ 2 s → one snapshot per stall into a ring of 8. No per-frame console. HUD shows LAST SLOW CHUNK.
+**LAST SLOW VISIBLE CHUNK** fires only when the chunk is inside the **current** mesh wanted radius, is not visible, and continuous **wanted→visible** (open wanted age if still missing) ≥ 2 s. Prefetch/request/`litAt` age must not trigger it. Halo chunks that never entered mesh wanted radius are excluded.
+
+**READY MESH STARVATION** (> 500 ms) is a separate warning: wanted + generated + lit + lightContextReady + mesh not started + `now - readyToMeshWhileWantedAt` > 500 ms. It does **not** use `litAt`.
+
+## Prefetch lifetime vs player-visible latency
+
+These are different clocks. Mixing them is how a healthy fly-over looked like a 40 s stall.
+
+| Clock | Meaning | Typical healthy fly-over |
+| --- | --- | --- |
+| **PREFETCH AGE** / `lit→meshStart` | Time since generation/light (often halo/prefetch, before the player needed the mesh) | 40 s if the chunk was lit far ahead |
+| **WANTED AGE** | Time since this continuous stay inside mesh/visible radius. Resets on leave; new stamp on re-enter | ~100 ms if the chunk appeared as you arrived |
+| **READY-WANTED WAIT** | `meshStartedAt - readyToMeshWhileWantedAt` (or open `now - ready…` while still waiting). `readyToMeshWhileWantedAt` is set only while wanted **and** ready to mesh; if lit 40 s earlier, this stamp is approximately enter-wanted time, not old `litAt` | tens of ms |
+| **WANTED→VISIBLE** | `visibleAt - enteredMeshWantedAt` — full user delay from “needed” to “appeared” | ~50–150 ms when streaming is healthy |
+
+Healthy prefetched chunk:
+
+```
+PREFETCH: generated 41s ago, lit 40s ago
+WANTED: entered 120ms ago
+readyWanted 120ms ago, meshStart 80ms ago, visible 65ms ago
+wanted→visible 55ms, ready→meshStart 40ms
+```
+
+That is **HEALTHY**. Do not call `lit→meshStart ~40s` READY MESH WAIT.
+
+Real stall:
+
+```
+WANTED: entered 3.4s ago
+READY: 3.3s ago
+meshStart: not started
+readyWantedWait: 3.3s
+visible: no
+blockedBy: waiting mesh budget
+```
+
+F9 still freezes the inspect target. If that chunk is later distance 27 / outside request radius, HUD shows **CURRENTLY NOT WANTED**. Live wanted / ready-wanted timers stop. **LAST WANTED PERIOD** keeps `lastWantedDuration` / `lastWanted→visible`. CURRENT STATE and LAST WANTED PERIOD are separate so an old far chunk does not look like it is stalling right now.
+
+Rolling p50/p95/max **WANTED→VISIBLE** and **READY-WANTED→MESH** include only chunks that actually entered mesh wanted radius. Prefetch-only halo is excluded.
+
+This follow-up does **not** change streaming behavior (no scheduler / budget / priority / lighting / meshing logic). It only makes the clocks honest so the next local fly QA can tell whether a real stall remains.
 
 ## Architecture notes (observations only)
 
@@ -114,11 +158,11 @@ These are facts the inspector can now show. They are **not** fixes:
 
 ## Tests
 
-Unit tests cover category/color mapping, blocker strings, read-only ranks, obsolete counts, durations (including open lit→meshStart), F9 freeze, slow-chunk threshold, LAST SPIKE age, ready vs blocked head, and front-target selection. They do **not** diagnose a runtime bottleneck.
+Unit tests cover category/color mapping, blocker strings, read-only ranks, obsolete counts, durations (including open lit→meshStart **as prefetch history**), F9 freeze, slow-chunk threshold on **wanted→visible**, LAST SPIKE age, ready vs blocked head, front-target selection, 40 s prefetch vs small READY-WANTED wait, wanted enter/leave/re-enter, READY MESH STARVATION from readyWanted not litAt, frozen CURRENTLY NOT WANTED, and rolling stats excluding never-wanted halo. They do **not** diagnose a runtime bottleneck.
 
 Existing performance/lighting tests must stay green.
 
-`npm run check` on this pass: 323 tests / 42 files, production 99 modules, 1.06 MiB / 167 files.
+`npm run check` on the player-visible latency follow-up: 349 tests / 43 files, production 100 modules, 1.08 MiB / 167 files. Inspector tests: 26.
 
 ## Changed files
 
@@ -134,7 +178,7 @@ Existing performance/lighting tests must stay green.
 
 ## Deferred
 
-Actual streaming fix (fair mesh vs generation, obsolete pending cleanup) is in `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. This inspector pass remains the capture tool (`?perf=1&chunks=1`, F9, LAST SLOW CHUNK).
+Actual streaming fix (fair mesh vs generation, obsolete pending cleanup) is in `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. This inspector remains the capture tool (`?perf=1&chunks=1`, F9, LAST SLOW VISIBLE CHUNK). Player-visible vs prefetch clocks are documented above.
 
 ## Git
 

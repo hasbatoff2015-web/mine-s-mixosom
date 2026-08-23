@@ -106,6 +106,23 @@ export interface ChunkTimestamps {
   meshStartedAt?: number;
   meshedAt?: number;
   visibleAt?: number;
+  /** Live continuous period: first time this stay inside mesh/visible wanted radius. */
+  enteredMeshWantedAt?: number;
+  enteredGenerationWantedAt?: number;
+  enteredLightHaloAt?: number;
+  /** Set only while wanted + generated + lit + lightContextReady + not visible. */
+  readyToMeshWhileWantedAt?: number;
+  maxDistanceWhileWanted?: number;
+  lastEnteredMeshWantedAt?: number;
+  lastLeftMeshWantedAt?: number;
+  lastReadyToMeshWhileWantedAt?: number;
+  lastWantedVisibleAt?: number;
+  lastWantedMeshStartedAt?: number;
+  lastWantedMeshedAt?: number;
+  lastMaxDistanceWhileWanted?: number;
+  lastWantedDurationMs?: number;
+  lastWantedToVisibleMs?: number;
+  lastReadyWantedToMeshStartMs?: number;
 }
 
 export interface ChunkDurations {
@@ -140,6 +157,11 @@ export interface SlowChunkSnapshot {
   readonly genPending: number;
   readonly lightPending: number;
   readonly meshPending: number;
+  readonly wantedToVisibleMs: number | null;
+  readonly wantedToReadyMs: number | null;
+  readonly readyWantedToMeshStartMs: number | null;
+  readonly meshDurationMs: number | null;
+  readonly maxDistanceWhileWanted: number | null;
 }
 
 export interface HorizonCounts {
@@ -449,6 +471,297 @@ export function computeDurations(timestamps: ChunkTimestamps, now: number): Chun
   };
 }
 
+export interface WantedSyncInput {
+  readonly inMeshWanted: boolean;
+  readonly inGenerationWanted?: boolean;
+  readonly inLightHalo?: boolean;
+  readonly generated: boolean;
+  readonly lightingReady: boolean;
+  readonly lightContextReady: boolean;
+  readonly visible: boolean;
+  readonly distance: number;
+  readonly now: number;
+}
+
+export interface WantedSyncResult {
+  readonly enteredMeshWanted: boolean;
+  readonly leftMeshWanted: boolean;
+  readonly becameReadyWhileWanted: boolean;
+}
+
+export interface PlayerVisibleLatency {
+  readonly wantedNow: boolean;
+  readonly currentlyNotWanted: boolean;
+  readonly wantedAgeMs: number | null;
+  readonly readyWhileWanted: boolean;
+  readonly readyWantedAgeMs: number | null;
+  readonly readyWantedWaitMs: number | null;
+  readonly meshStartedThisPeriod: boolean;
+  readonly wantedToReadyMs: number | null;
+  readonly readyWantedToMeshStartMs: number | null;
+  readonly meshDurationMs: number | null;
+  readonly meshToVisibleMs: number | null;
+  readonly wantedToVisibleMs: number | null;
+  readonly lastWantedDurationMs: number | null;
+  readonly lastWantedToVisibleMs: number | null;
+  readonly lastReadyWantedToMeshStartMs: number | null;
+  readonly lastLeftAgoMs: number | null;
+  readonly prefetchGeneratedAgeMs: number | null;
+  readonly prefetchLitAgeMs: number | null;
+  readonly litAgeBeforeWantedMs: number | null;
+  readonly generatedAgeBeforeWantedMs: number | null;
+  readonly maxDistanceWhileWanted: number | null;
+}
+
+export function isReadyToMeshWhileWanted(
+  input: Pick<WantedSyncInput, 'inMeshWanted' | 'generated' | 'lightingReady' | 'lightContextReady' | 'visible'>,
+): boolean {
+  return (
+    input.inMeshWanted
+    && input.generated
+    && input.lightingReady
+    && input.lightContextReady
+    && !input.visible
+  );
+}
+
+export function meshStartedThisWantedPeriod(stamps: ChunkTimestamps): boolean {
+  const entered = stamps.enteredMeshWantedAt;
+  return entered !== undefined
+    && stamps.meshStartedAt !== undefined
+    && stamps.meshStartedAt >= entered;
+}
+
+export function visibleThisWantedPeriod(stamps: ChunkTimestamps): boolean {
+  const entered = stamps.enteredMeshWantedAt;
+  return entered !== undefined
+    && stamps.visibleAt !== undefined
+    && stamps.visibleAt >= entered;
+}
+
+function freezeLastWantedPeriod(stamps: ChunkTimestamps, now: number): void {
+  const entered = stamps.enteredMeshWantedAt;
+  if (entered === undefined) return;
+  const readyAt = stamps.readyToMeshWhileWantedAt;
+  stamps.lastEnteredMeshWantedAt = entered;
+  stamps.lastLeftMeshWantedAt = now;
+  stamps.lastReadyToMeshWhileWantedAt = readyAt;
+  stamps.lastWantedVisibleAt = stamps.visibleAt;
+  stamps.lastWantedMeshStartedAt = stamps.meshStartedAt;
+  stamps.lastWantedMeshedAt = stamps.meshedAt;
+  stamps.lastMaxDistanceWhileWanted = stamps.maxDistanceWhileWanted;
+  stamps.lastWantedDurationMs = now - entered;
+  if (stamps.visibleAt !== undefined && stamps.visibleAt >= entered) {
+    stamps.lastWantedToVisibleMs = stamps.visibleAt - entered;
+  } else {
+    stamps.lastWantedToVisibleMs = undefined;
+  }
+  if (readyAt !== undefined && stamps.meshStartedAt !== undefined && stamps.meshStartedAt >= readyAt) {
+    stamps.lastReadyWantedToMeshStartMs = stamps.meshStartedAt - readyAt;
+  } else if (readyAt !== undefined && !meshStartedThisWantedPeriod(stamps)) {
+    stamps.lastReadyWantedToMeshStartMs = now - readyAt;
+  } else {
+    stamps.lastReadyWantedToMeshStartMs = undefined;
+  }
+  stamps.enteredMeshWantedAt = undefined;
+  stamps.readyToMeshWhileWantedAt = undefined;
+  stamps.maxDistanceWhileWanted = undefined;
+}
+
+/** DEV-only: mutates diagnostic timestamps, never scheduler queues. */
+export function syncWantedPeriod(stamps: ChunkTimestamps, input: WantedSyncInput): WantedSyncResult {
+  const result = {
+    enteredMeshWanted: false,
+    leftMeshWanted: false,
+    becameReadyWhileWanted: false,
+  };
+  const { now } = input;
+
+  if (input.inGenerationWanted) {
+    if (stamps.enteredGenerationWantedAt === undefined) stamps.enteredGenerationWantedAt = now;
+  } else {
+    stamps.enteredGenerationWantedAt = undefined;
+  }
+  if (input.inLightHalo) {
+    if (stamps.enteredLightHaloAt === undefined) stamps.enteredLightHaloAt = now;
+  } else {
+    stamps.enteredLightHaloAt = undefined;
+  }
+
+  if (input.inMeshWanted) {
+    if (stamps.enteredMeshWantedAt === undefined) {
+      stamps.enteredMeshWantedAt = now;
+      result.enteredMeshWanted = true;
+    }
+    stamps.maxDistanceWhileWanted = Math.max(stamps.maxDistanceWhileWanted ?? 0, input.distance);
+    if (isReadyToMeshWhileWanted(input) && stamps.readyToMeshWhileWantedAt === undefined) {
+      stamps.readyToMeshWhileWantedAt = now;
+      result.becameReadyWhileWanted = true;
+    }
+  } else if (stamps.enteredMeshWantedAt !== undefined) {
+    freezeLastWantedPeriod(stamps, now);
+    result.leftMeshWanted = true;
+  }
+  return result;
+}
+
+function ageBefore(start: number | undefined, earlier: number | undefined): number | null {
+  if (start === undefined || earlier === undefined) return null;
+  const age = start - earlier;
+  return age > 0 ? age : null;
+}
+
+export function computePlayerVisibleLatency(
+  stamps: ChunkTimestamps,
+  options: { readonly wantedNow: boolean; readonly visible: boolean; readonly now: number },
+): PlayerVisibleLatency {
+  const { now, wantedNow, visible } = options;
+  const entered = stamps.enteredMeshWantedAt;
+  const readyAt = stamps.readyToMeshWhileWantedAt;
+  const startedThisPeriod = meshStartedThisWantedPeriod(stamps);
+  const visibleThisPeriod = visibleThisWantedPeriod(stamps);
+  const wantStartForPrefetch = entered ?? stamps.lastEnteredMeshWantedAt;
+
+  let readyWantedWaitMs: number | null = null;
+  let readyWantedToMeshStartMs: number | null = null;
+  if (wantedNow && readyAt !== undefined) {
+    if (startedThisPeriod && stamps.meshStartedAt !== undefined) {
+      readyWantedToMeshStartMs = stamps.meshStartedAt - readyAt;
+      readyWantedWaitMs = readyWantedToMeshStartMs;
+    } else if (!visible) {
+      readyWantedWaitMs = now - readyAt;
+    }
+  }
+
+  let wantedToVisibleMs: number | null = null;
+  if (wantedNow && entered !== undefined) {
+    if (visibleThisPeriod && stamps.visibleAt !== undefined) {
+      wantedToVisibleMs = stamps.visibleAt - entered;
+    } else if (visible && !visibleThisPeriod) {
+      wantedToVisibleMs = 0;
+    } else if (!visible) {
+      wantedToVisibleMs = now - entered;
+    }
+  }
+
+  return {
+    wantedNow,
+    currentlyNotWanted: !wantedNow,
+    wantedAgeMs: wantedNow && entered !== undefined ? now - entered : null,
+    readyWhileWanted: wantedNow && readyAt !== undefined && !visible,
+    readyWantedAgeMs: wantedNow && readyAt !== undefined ? now - readyAt : null,
+    readyWantedWaitMs,
+    meshStartedThisPeriod: startedThisPeriod,
+    wantedToReadyMs: wantedNow && entered !== undefined && readyAt !== undefined
+      ? Math.max(0, readyAt - entered)
+      : null,
+    readyWantedToMeshStartMs,
+    meshDurationMs: delta(stamps.meshStartedAt, stamps.meshedAt),
+    meshToVisibleMs: delta(stamps.meshedAt, stamps.visibleAt),
+    wantedToVisibleMs,
+    lastWantedDurationMs: stamps.lastWantedDurationMs ?? null,
+    lastWantedToVisibleMs: stamps.lastWantedToVisibleMs ?? null,
+    lastReadyWantedToMeshStartMs: stamps.lastReadyWantedToMeshStartMs ?? null,
+    lastLeftAgoMs: stamps.lastLeftMeshWantedAt !== undefined ? now - stamps.lastLeftMeshWantedAt : null,
+    prefetchGeneratedAgeMs: stamps.generatedAt !== undefined ? now - stamps.generatedAt : null,
+    prefetchLitAgeMs: stamps.litAt !== undefined ? now - stamps.litAt : null,
+    litAgeBeforeWantedMs: ageBefore(wantStartForPrefetch, stamps.litAt),
+    generatedAgeBeforeWantedMs: ageBefore(wantStartForPrefetch, stamps.generatedAt),
+    maxDistanceWhileWanted: (wantedNow ? stamps.maxDistanceWhileWanted : stamps.lastMaxDistanceWhileWanted) ?? null,
+  };
+}
+
+export function openReadyWantedWaitMs(latency: PlayerVisibleLatency): number | null {
+  if (!latency.wantedNow || !latency.readyWhileWanted || latency.meshStartedThisPeriod) return null;
+  return latency.readyWantedWaitMs;
+}
+
+export function shouldRecordWantedVisibleSample(stamps: ChunkTimestamps): boolean {
+  return stamps.enteredMeshWantedAt !== undefined;
+}
+
+export function wantedToVisibleSampleMs(stamps: ChunkTimestamps, visibleAt: number): number | null {
+  if (stamps.enteredMeshWantedAt === undefined) return null;
+  const sample = visibleAt - stamps.enteredMeshWantedAt;
+  return sample >= 0 ? sample : null;
+}
+
+export function readyWantedToMeshSampleMs(stamps: ChunkTimestamps): number | null {
+  if (stamps.readyToMeshWhileWantedAt === undefined || stamps.meshStartedAt === undefined) return null;
+  if (stamps.meshStartedAt < stamps.readyToMeshWhileWantedAt) return null;
+  return stamps.meshStartedAt - stamps.readyToMeshWhileWantedAt;
+}
+
+export function formatWantedStateLines(options: {
+  readonly latency: PlayerVisibleLatency;
+  readonly meshStarted: boolean;
+  readonly visible: boolean;
+  readonly frozen: boolean;
+}): string[] {
+  const { latency, meshStarted, visible } = options;
+  const lines: string[] = [options.frozen ? 'CURRENT STATE (F9 freeze)' : 'CURRENT STATE'];
+  if (latency.currentlyNotWanted) {
+    lines.push('  CURRENTLY NOT WANTED');
+  }
+  lines.push(`  wantedNow ${yesNo(latency.wantedNow)}`);
+  lines.push(`  wantedSince ${formatDurationMs(latency.wantedAgeMs)}`);
+  lines.push(`  readyWhileWanted ${yesNo(latency.readyWhileWanted)}`);
+  lines.push(`  readyWantedAge ${formatDurationMs(latency.readyWantedAgeMs)}`);
+  lines.push(`  meshStarted ${yesNo(meshStarted)}  visible ${yesNo(visible)}`);
+  lines.push('PREFETCH HISTORY');
+  lines.push(`  generated ${latency.prefetchGeneratedAgeMs !== null ? `${formatDurationMs(latency.prefetchGeneratedAgeMs)} ago` : '—'}`);
+  lines.push(`  lit ${latency.prefetchLitAgeMs !== null ? `${formatDurationMs(latency.prefetchLitAgeMs)} ago` : '—'}`);
+  if (latency.litAgeBeforeWantedMs !== null) {
+    lines.push(`  lit ${formatDurationMs(latency.litAgeBeforeWantedMs)} before becoming wanted`);
+  }
+  if (latency.generatedAgeBeforeWantedMs !== null && latency.generatedAgeBeforeWantedMs !== latency.litAgeBeforeWantedMs) {
+    lines.push(`  generated ${formatDurationMs(latency.generatedAgeBeforeWantedMs)} before becoming wanted`);
+  }
+  lines.push('PLAYER-VISIBLE WAIT');
+  if (latency.wantedNow) {
+    lines.push(`  WANTED AGE ${formatDurationMs(latency.wantedAgeMs)}`);
+    lines.push(`  READY-WANTED WAIT ${formatDurationMs(latency.readyWantedWaitMs)}`);
+    lines.push(`  wanted→ready ${formatDurationMs(latency.wantedToReadyMs)}`);
+    lines.push(`  readyWanted→meshStart ${formatDurationMs(latency.readyWantedToMeshStartMs)}`);
+    lines.push(`  mesh duration ${formatDurationMs(latency.meshDurationMs)}`);
+    lines.push(`  mesh→visible ${formatDurationMs(latency.meshToVisibleMs)}`);
+    lines.push(`  WANTED→VISIBLE ${formatDurationMs(latency.wantedToVisibleMs)}`);
+  } else {
+    lines.push('  WANTED AGE — (timer stopped)');
+    lines.push('  READY-WANTED WAIT — (timer stopped)');
+    lines.push('LAST WANTED PERIOD');
+    if (latency.lastWantedDurationMs === null) {
+      lines.push('  none');
+    } else {
+      lines.push(`  duration ${formatDurationMs(latency.lastWantedDurationMs)}`);
+      lines.push(`  WANTED→VISIBLE ${formatDurationMs(latency.lastWantedToVisibleMs)}`);
+      lines.push(`  READY-WANTED WAIT ${formatDurationMs(latency.lastReadyWantedToMeshStartMs)}`);
+      if (latency.lastLeftAgoMs !== null) {
+        lines.push(`  left ${formatDurationMs(latency.lastLeftAgoMs)} ago`);
+      }
+    }
+  }
+  return lines;
+}
+
+export function formatLastSlowVisibleChunkLines(slow: SlowChunkSnapshot, now: number): string[] {
+  const ago = now - slow.atMs >= 0 ? `  ${((now - slow.atMs) / 1000).toFixed(1)}s ago` : '';
+  return [
+    `LAST SLOW VISIBLE CHUNK ${slow.cx},${slow.cz}  ${slow.state}${ago}`,
+    `  WANTED→VISIBLE ${formatDurationMs(slow.wantedToVisibleMs)}  wanted→ready ${formatDurationMs(slow.wantedToReadyMs)}  READY-WANTED→MESH ${formatDurationMs(slow.readyWantedToMeshStartMs)}  mesh ${formatDurationMs(slow.meshDurationMs)}`,
+    `  maxDistanceWhileWanted ${slow.maxDistanceWhileWanted ?? '—'}  blockedBy ${slow.blocker}  ranks G${formatQueueRank(slow.genRank)} L${formatQueueRank(slow.lightRank)} M${formatQueueRank(slow.meshRank)}`,
+    `  wanted ${slow.wantedNow} missing ${slow.missingWanted} obsolete ${slow.queuedObsolete}  queues g${slow.genPending}/l${slow.lightPending}/m${slow.meshPending}`,
+  ];
+}
+
+export function formatReadyMeshStarvationLine(
+  warn: { cx: number; cz: number; waitMs: number; atMs: number },
+  now: number,
+): string {
+  const ago = ((now - warn.atMs) / 1000).toFixed(1);
+  return `READY MESH STARVATION ${formatDurationMs(warn.waitMs)}  chunk ${warn.cx},${warn.cz}  ${ago}s ago  (wanted + ready-to-mesh, mesh not started > ${READY_MESH_WAIT_WARN_MS} ms)`;
+}
+
 export function formatDurationMs(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
   if (Math.abs(ms) >= 1000) return `${(ms / 1000).toFixed(2)}s`;
@@ -504,16 +817,43 @@ export function resolveInspectedChunk(
   return current;
 }
 
+/**
+ * SLOW VISIBLE CHUNK: inside current mesh wanted radius, not visible,
+ * and continuous wanted→visible (open wanted age if still missing) exceeds threshold.
+ * Prefetch/request/lit age must not be passed here.
+ */
+export function shouldCaptureSlowVisibleChunk(options: {
+  readonly inMeshWanted: boolean;
+  readonly visible: boolean;
+  readonly wantedToVisibleMs: number;
+  readonly alreadyCaptured: boolean;
+  readonly thresholdMs?: number;
+}): boolean {
+  const thresholdMs = options.thresholdMs ?? SLOW_CHUNK_THRESHOLD_MS;
+  return options.inMeshWanted
+    && !options.visible
+    && options.wantedToVisibleMs >= thresholdMs
+    && !options.alreadyCaptured;
+}
+
+/** @deprecated Pass wanted age, not request/lit age. Prefer shouldCaptureSlowVisibleChunk. */
 export function shouldCaptureSlowChunk(
   wantedVisible: boolean,
   isVisible: boolean,
-  ageMs: number,
+  wantedAgeMs: number,
   alreadyCaptured: boolean,
   thresholdMs = SLOW_CHUNK_THRESHOLD_MS,
 ): boolean {
-  return wantedVisible && !isVisible && ageMs >= thresholdMs && !alreadyCaptured;
+  return shouldCaptureSlowVisibleChunk({
+    inMeshWanted: wantedVisible,
+    visible: isVisible,
+    wantedToVisibleMs: wantedAgeMs,
+    alreadyCaptured,
+    thresholdMs,
+  });
 }
 
+/** READY MESH STARVATION: uses readyWanted wait, never litAt/prefetch age. */
 export function shouldWarnReadyMeshWait(
   waitMs: number,
   alreadyWarned: boolean,

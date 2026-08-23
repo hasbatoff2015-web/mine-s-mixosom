@@ -90,14 +90,18 @@ import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import {
   categoryColor,
+  chebyshev,
   chunkKey as inspectChunkKey,
   emptyJobFrameCounters,
   lightingIsActive,
+  openReadyWantedWaitMs,
   parseChunkKey,
   pushSlowSnapshot,
-  READY_MESH_WAIT_WARN_MS,
+  readyWantedToMeshSampleMs,
   shouldWarnReadyMeshWait,
+  syncWantedPeriod,
   toggleInspectFreeze,
+  wantedToVisibleSampleMs,
   type ChunkDebugCategory,
   type InspectFreeze,
   type JobFrameCounters,
@@ -117,7 +121,7 @@ import { SurvivalSystem } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { VoxelWorld, type VoxelHit } from '../world/World';
-import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
+import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
   discardObsoletePendingMesh,
@@ -271,7 +275,10 @@ export class Game {
   private readonly requestToVisibleWaits = new RollingTimingWindow(64);
   private readonly generatedToVisibleWaits = new RollingTimingWindow(64);
   private readonly meshDurations = new RollingTimingWindow(64);
+  private readonly wantedToVisibleWaits = new RollingTimingWindow(64);
+  private readonly readyWantedToMeshWaits = new RollingTimingWindow(64);
   private lastReadyMeshWaitWarn: { cx: number; cz: number; waitMs: number; atMs: number } | null = null;
+  private lastInspectMeshWanted = new Set<string>();
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
@@ -737,11 +744,14 @@ export class Game {
 
     const playerCx = floorDiv(originX, 16);
     const playerCz = floorDiv(originZ, 16);
+    const now = performance.now();
+    if (inspect && (playerCx !== this.lastStreamChunkX || playerCz !== this.lastStreamChunkZ)) {
+      this.syncInspectWantedPeriods(session, playerCx, playerCz, meshRadius, generateRadius, now);
+    }
     this.lastStreamChunkX = playerCx;
     this.lastStreamChunkZ = playerCz;
     discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
 
-    const now = performance.now();
     const velocity = session.player.velocity;
     const readyJobs = collectReadyMeshJobs(
       session.world,
@@ -767,17 +777,6 @@ export class Game {
     this.jobFrame.meshStarvationAvoided = plan.starvationAvoided;
     this.jobFrame.meshSkippedFrame = plan.skipMesh;
     this.jobFrame.meshSkippedDueToGenSeparation = !loading && generated > 0 && plan.skipMesh;
-    if (inspect && readyJobs[0] && shouldWarnReadyMeshWait(plan.oldestReadyAgeMs, false)) {
-      const head = readyJobs[0];
-      const previous = this.lastReadyMeshWaitWarn;
-      const same = previous !== null && previous.cx === head.chunk.x && previous.cz === head.chunk.z;
-      this.lastReadyMeshWaitWarn = {
-        cx: head.chunk.x,
-        cz: head.chunk.z,
-        waitMs: plan.oldestReadyAgeMs,
-        atMs: same ? previous.atMs : now,
-      };
-    }
 
     if (plan.skipMesh || plan.meshLimit <= 0) {
       if (!loading && generated > 0) this.genWithoutMeshStreak += 1;
@@ -818,6 +817,10 @@ export class Game {
             if (stamps.meshStartedAt !== undefined) this.meshDurations.add(doneAt - stamps.meshStartedAt);
             if (stamps.requestedAt !== undefined) this.requestToVisibleWaits.add(doneAt - stamps.requestedAt);
             if (stamps.generatedAt !== undefined) this.generatedToVisibleWaits.add(doneAt - stamps.generatedAt);
+            const wantedVisible = wantedToVisibleSampleMs(stamps, doneAt);
+            if (wantedVisible !== null) this.wantedToVisibleWaits.add(wantedVisible);
+            const readyWanted = readyWantedToMeshSampleMs(stamps);
+            if (readyWanted !== null) this.readyWantedToMeshWaits.add(readyWanted);
           }
         },
       },
@@ -898,6 +901,65 @@ export class Game {
     return keys;
   }
 
+  private syncInspectWantedPeriods(
+    session: GameSession,
+    playerCx: number,
+    playerCz: number,
+    meshRadius: number,
+    generateRadius: number,
+    now: number,
+  ): void {
+    const nextWanted = new Set<string>();
+    const syncOne = (cx: number, cz: number, inMeshWanted: boolean, inGenerationWanted: boolean): void => {
+      const key = inspectChunkKey(cx, cz);
+      const chunk = session.world.chunks.get(key);
+      const stamps = this.streamingTrace.record(cx, cz);
+      const lightingReady = chunk?.lightingReady === true;
+      const visible = session.worldRenderer.hasChunk(key);
+      const contextReady = chunk
+        ? lightContextReady(session.world, chunk, playerCx, playerCz, generateRadius)
+        : false;
+      const result = syncWantedPeriod(stamps, {
+        inMeshWanted,
+        inGenerationWanted,
+        inLightHalo: inGenerationWanted,
+        generated: Boolean(chunk),
+        lightingReady,
+        lightContextReady: contextReady,
+        visible,
+        distance: chebyshev(cx, cz, playerCx, playerCz),
+        now,
+      });
+      if (result.enteredMeshWanted) this.streamingTrace.mark('enteredMeshWanted', cx, cz, now);
+      if (result.leftMeshWanted) this.streamingTrace.mark('leftMeshWanted', cx, cz, now);
+      if (result.becameReadyWhileWanted) this.streamingTrace.mark('readyWhileWanted', cx, cz, now);
+    };
+
+    for (let dz = -generateRadius; dz <= generateRadius; dz += 1) {
+      for (let dx = -generateRadius; dx <= generateRadius; dx += 1) {
+        const cx = playerCx + dx;
+        const cz = playerCz + dz;
+        const inMeshWanted = chebyshev(cx, cz, playerCx, playerCz) <= meshRadius;
+        if (inMeshWanted) nextWanted.add(inspectChunkKey(cx, cz));
+        syncOne(cx, cz, inMeshWanted, true);
+      }
+    }
+    for (const key of this.lastInspectMeshWanted) {
+      if (nextWanted.has(key)) continue;
+      const { cx, cz } = parseChunkKey(key);
+      const inGenerationWanted = chebyshev(cx, cz, playerCx, playerCz) <= generateRadius;
+      syncOne(cx, cz, false, inGenerationWanted);
+    }
+    if (this.inspectFreeze) {
+      const { cx, cz } = this.inspectFreeze;
+      const dist = chebyshev(cx, cz, playerCx, playerCz);
+      if (dist > generateRadius) {
+        syncOne(cx, cz, false, false);
+      }
+    }
+    this.lastInspectMeshWanted = nextWanted;
+  }
+
   private refreshStreamingInspector(session: GameSession, now: number): void {
     const originX = session.player.position.x;
     const originZ = session.player.position.z;
@@ -917,6 +979,7 @@ export class Game {
           this.streamingTrace.mark('requested', playerCx + dx, playerCz + dz, now);
         }
       }
+      this.syncInspectWantedPeriods(session, playerCx, playerCz, meshRadius, generateRadius, now);
     }
     const view = {
       world: session.world,
@@ -948,6 +1011,7 @@ export class Game {
 
     if (this.profiler.enabled) {
       const queues = collectStreamingQueues(view);
+      const starvation = { current: null as { cx: number; cz: number; waitMs: number } | null };
       const consider = (cx: number, cz: number): void => {
         const key = inspectChunkKey(cx, cz);
         const visible = session.worldRenderer.hasChunk(key);
@@ -956,6 +1020,12 @@ export class Game {
           return;
         }
         const inspected = inspectStreamingChunk(view, cx, cz, queues, this.streamingTrace, this.lastMeshActiveKey);
+        const wait = openReadyWantedWaitMs(inspected.latency);
+        if (wait !== null && shouldWarnReadyMeshWait(wait, false)) {
+          if (!starvation.current || wait > starvation.current.waitMs) {
+            starvation.current = { cx, cz, waitMs: wait };
+          }
+        }
         const captured = maybeSlowSnapshot(
           inspected,
           snap.horizon,
@@ -976,11 +1046,24 @@ export class Game {
           consider(playerCx + dx, playerCz + dz);
         }
       }
+      if (starvation.current) {
+        const previous = this.lastReadyMeshWaitWarn;
+        const found = starvation.current;
+        const same = previous !== null && previous.cx === found.cx && previous.cz === found.cz;
+        this.lastReadyMeshWaitWarn = {
+          cx: found.cx,
+          cz: found.cz,
+          waitMs: found.waitMs,
+          atMs: same && previous ? previous.atMs : now,
+        };
+      }
       this.inspectorHud = formatStreamingHud(snap, this.slowSnapshots.at(-1) ?? null, now, {
         readyMeshWaitWarn: this.lastReadyMeshWaitWarn,
         litToMesh: this.litToMeshWaits.snapshot(),
         requestToVisible: this.requestToVisibleWaits.snapshot(),
         generatedToVisible: this.generatedToVisibleWaits.snapshot(),
+        wantedToVisible: this.wantedToVisibleWaits.snapshot(),
+        readyWantedToMesh: this.readyWantedToMeshWaits.snapshot(),
       });
     }
   }
@@ -2261,6 +2344,7 @@ export class Game {
     this.overlayCategories.clear();
     this.slowArmed.clear();
     this.slowSnapshots = [];
+    this.lastInspectMeshWanted.clear();
     this.streamingTrace.reset(performance.now());
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();

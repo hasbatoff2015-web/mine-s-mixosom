@@ -15,6 +15,7 @@ import {
   chunksAlongLook,
   compass8,
   computeDurations,
+  computePlayerVisibleLatency,
   countHorizon,
   describeChunkBlocker,
   distancePriority,
@@ -22,14 +23,16 @@ import {
   formatDurationMs,
   formatHalo,
   formatHistogramMs,
+  formatLastSlowVisibleChunkLines,
   formatQueueRank,
+  formatReadyMeshStarvationLine,
   formatTraceEvents,
+  formatWantedStateLines,
   haloBlockedDir,
   lightingIsActive,
   queueRank,
-  READY_MESH_WAIT_WARN_MS,
   selectFrontMissingChunk,
-  shouldCaptureSlowChunk,
+  shouldCaptureSlowVisibleChunk,
   summarizeQueueLane,
   yesNo,
   type ChunkDebugFacts,
@@ -37,6 +40,7 @@ import {
   type HaloNeighborFact,
   type InspectFreeze,
   type JobFrameCounters,
+  type PlayerVisibleLatency,
   type SlowChunkSnapshot,
 } from './chunkStreamingInspector';
 import type { ChunkStreamingTrace } from './chunkStreamingTrace';
@@ -79,6 +83,7 @@ export interface ChunkInspectView {
   readonly meshedLightVersion: number | null;
   readonly priority: ReturnType<typeof distancePriority>;
   readonly durations: ReturnType<typeof computeDurations>;
+  readonly latency: PlayerVisibleLatency;
   readonly events: string[];
   readonly source?: string;
 }
@@ -302,6 +307,11 @@ export function inspectStreamingChunk(
   const category = categorizeChunk(facts);
   const timestamps = trace.timestamps(cx, cz);
   const durations = computeDurations(timestamps, view.now);
+  const latency = computePlayerVisibleLatency(timestamps, {
+    wantedNow: facts.inMeshRadius,
+    visible: facts.visible,
+    now: view.now,
+  });
   const chunk = view.world.chunks.get(worldChunkKey(cx, cz));
   const events = trace.get(cx, cz)?.events ?? [];
   const origin = timestamps.requestedAt ?? events[0]?.t ?? view.now;
@@ -324,6 +334,7 @@ export function inspectStreamingChunk(
     meshedLightVersion: chunk?.meshedLightVersion ?? null,
     priority: distancePriority(cx, cz, view.playerCx, view.playerCz),
     durations,
+    latency,
     events: formatTraceEvents(events, origin),
     source,
   };
@@ -478,7 +489,13 @@ export function maybeSlowSnapshot(
   alreadyCaptured: boolean,
 ): SlowChunkSnapshot | null {
   const wantedVisible = view.facts.inMeshRadius;
-  if (!shouldCaptureSlowChunk(wantedVisible, view.facts.visible, view.ageMs ?? 0, alreadyCaptured)) {
+  const wantedToVisibleMs = view.latency.wantedToVisibleMs ?? view.latency.wantedAgeMs ?? 0;
+  if (!shouldCaptureSlowVisibleChunk({
+    inMeshWanted: wantedVisible,
+    visible: view.facts.visible,
+    wantedToVisibleMs,
+    alreadyCaptured,
+  })) {
     return null;
   }
   return {
@@ -497,6 +514,11 @@ export function maybeSlowSnapshot(
     genPending,
     lightPending,
     meshPending,
+    wantedToVisibleMs: view.latency.wantedToVisibleMs,
+    wantedToReadyMs: view.latency.wantedToReadyMs,
+    readyWantedToMeshStartMs: view.latency.readyWantedWaitMs,
+    meshDurationMs: view.latency.meshDurationMs,
+    maxDistanceWhileWanted: view.latency.maxDistanceWhileWanted,
   };
 }
 
@@ -504,20 +526,28 @@ function formatInspectBlock(title: string, view: ChunkInspectView, frozen: boole
   const haloNote = view.haloBlock ? ` (${view.haloBlock} halo)` : '';
   return [
     `${title} ${view.cx},${view.cz}${frozen ? '  FROZEN' : ''}${view.source ? `  [${view.source}]` : ''}`,
-    `distance ${view.distance}  state ${view.state}  age ${formatDurationMs(view.ageMs)}`,
+    `distance ${view.distance}  state ${view.state}`,
     `requested ${yesNo(view.facts.requested)}  generated ${yesNo(view.facts.generated)}  lit ${yesNo(view.facts.lightingReady)}  lightContextReady ${yesNo(view.facts.lightContextReady)}`,
     `meshQueued ${yesNo(view.facts.meshQueued)}  meshActive ${yesNo(view.facts.meshActive)}  meshed ${yesNo(view.facts.meshed)}  visible ${yesNo(view.facts.visible)}`,
     `lightVersion ${view.lightVersion ?? '—'}  meshedLightVersion ${view.meshedLightVersion ?? '—'}`,
     `priority ${view.priority.score}  (${view.priority.note})`,
     `GEN rank ${formatQueueRank(view.genRank)}  LIGHT rank ${formatQueueRank(view.lightRank)}  MESH rank ${formatQueueRank(view.meshRank)}`,
     `blockedBy ${view.blocker}${haloNote}`,
-    `request→gen ${formatDurationMs(view.durations.requestToGenerateMs)}  gen dur ${formatDurationMs(view.durations.generateDurationMs)}  gen→lit ${formatDurationMs(view.durations.generatedToLitMs)}`,
-    `lit→meshStart ${formatDurationMs(view.durations.litToMeshStartMs)}  mesh dur ${formatDurationMs(view.durations.meshDurationMs)}  mesh→vis ${formatDurationMs(view.durations.meshToVisibleMs)}`,
+    ...formatWantedStateLines({
+      latency: view.latency,
+      meshStarted: view.facts.meshActive || view.latency.meshStartedThisPeriod,
+      visible: view.facts.visible,
+      frozen,
+    }),
+    `prefetch request→gen ${formatDurationMs(view.durations.requestToGenerateMs)}  gen dur ${formatDurationMs(view.durations.generateDurationMs)}  gen→lit ${formatDurationMs(view.durations.generatedToLitMs)}`,
+    `prefetch lit→meshStart ${formatDurationMs(view.durations.litToMeshStartMs)}  mesh dur ${formatDurationMs(view.durations.meshDurationMs)}  mesh→vis ${formatDurationMs(view.durations.meshToVisibleMs)}`,
     'HALO',
     ...view.haloLines.map((line) => `  ${line}`),
     ...(view.events.length > 0 ? ['EVENTS', ...view.events.map((line) => `  ${line}`)] : []),
   ];
 }
+
+export { formatInspectBlock };
 
 export function formatStreamingHud(
   snap: StreamingInspectorSnapshot,
@@ -528,6 +558,8 @@ export function formatStreamingHud(
     readonly litToMesh?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
     readonly requestToVisible?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
     readonly generatedToVisible?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
+    readonly wantedToVisible?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
+    readonly readyWantedToMesh?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
   },
 ): string {
   const age = (ms: number | null): string => (ms === null ? '—' : formatDurationMs(ms));
@@ -538,7 +570,7 @@ export function formatStreamingHud(
     `  head ${snap.light.headKey ?? '—'} ${snap.light.headState ?? ''} | stopsOnBlockedHead ${yesNo(snap.lightStopsOnBlockedHead)}`,
     `MESH ${snap.mesh.pending} pending | ready ${snap.mesh.ready} | blocked ${snap.mesh.blocked} | oldest ${age(snap.mesh.oldestAgeMs)}`,
     `  head ${snap.mesh.headKey ?? '—'} ${snap.mesh.headState ?? ''} | skipsBlockedHead ${yesNo(snap.meshSkipsBlockedHead)}`,
-    `  meshReady ${jf.meshReady}  meshUrgent ${jf.meshUrgent}  meshOldestReadyAge ${formatDurationMs(jf.meshOldestReadyAgeMs || null)}  starvationAvoided ${yesNo(jf.meshStarvationAvoided)}  skippedFrame ${yesNo(jf.meshSkippedFrame)}`,
+    `  meshReady ${jf.meshReady}  meshUrgent ${jf.meshUrgent}  meshOldestDirtyAge ${formatDurationMs(jf.meshOldestReadyAgeMs || null)} (scheduler dirty/prefetch; not READY-WANTED WAIT)  starvationAvoided ${yesNo(jf.meshStarvationAvoided)}  skippedFrame ${yesNo(jf.meshSkippedFrame)}`,
     `FRAME gen ${jf.genAttempted}/${jf.genCompleted}/${jf.genSkippedBlocked}  light ${jf.lightAttempted}/${jf.lightCompleted}/${jf.lightYielded}/${jf.lightBlocked}  mesh ${jf.meshAttempted}/${jf.meshCompleted}/${jf.meshSkippedBlocked}${jf.meshSkippedDueToGenSeparation ? '  skipMesh(gen-frame)' : ''}${jf.lightingOnlyDueToBudget ? '  lighting-only budget' : ''}${jf.meshCompleted > 0 ? '  meshCompletedFrame' : ''}`,
     `MOVE ${snap.speedBlocksPerSec.toFixed(1)} b/s ${snap.heading}  flying ${yesNo(snap.flying)}`,
     `HORIZON render ${snap.meshRadius}  requested ${snap.generateRadius}  furthestReq ${snap.furthestRequested}  furthestMissing ${snap.furthestMissing ?? '—'}`,
@@ -546,22 +578,38 @@ export function formatStreamingHud(
     ...formatInspectBlock('PLAYER CHUNK', snap.player, false),
     ...(snap.front ? formatInspectBlock('FRONT CHUNK', snap.front, snap.frozen) : ['FRONT CHUNK —']),
   ];
+  if (extras?.wantedToVisible || extras?.readyWantedToMesh) {
+    lines.push('PLAYER-VISIBLE LATENCY (only chunks that entered mesh wanted radius)');
+    if (extras.wantedToVisible) {
+      lines.push(formatHistogramMs(
+        'WANTED→VISIBLE',
+        extras.wantedToVisible.p50Ms,
+        extras.wantedToVisible.p95Ms,
+        extras.wantedToVisible.maximumMs,
+        extras.wantedToVisible.samples,
+      ));
+    }
+    if (extras.readyWantedToMesh) {
+      lines.push(formatHistogramMs(
+        'READY-WANTED→MESH',
+        extras.readyWantedToMesh.p50Ms,
+        extras.readyWantedToMesh.p95Ms,
+        extras.readyWantedToMesh.maximumMs,
+        extras.readyWantedToMesh.samples,
+      ));
+    }
+  }
   if (extras?.litToMesh) {
-    lines.push(formatHistogramMs('WAIT request→visible', extras.requestToVisible?.p50Ms ?? 0, extras.requestToVisible?.p95Ms ?? 0, extras.requestToVisible?.maximumMs ?? 0, extras.requestToVisible?.samples ?? 0));
-    lines.push(formatHistogramMs('WAIT generated→visible', extras.generatedToVisible?.p50Ms ?? 0, extras.generatedToVisible?.p95Ms ?? 0, extras.generatedToVisible?.maximumMs ?? 0, extras.generatedToVisible?.samples ?? 0));
-    lines.push(formatHistogramMs('WAIT lit→meshStart', extras.litToMesh.p50Ms, extras.litToMesh.p95Ms, extras.litToMesh.maximumMs, extras.litToMesh.samples));
+    lines.push('PREFETCH HISTORY (not player-visible wait)');
+    lines.push(formatHistogramMs('prefetch request→visible', extras.requestToVisible?.p50Ms ?? 0, extras.requestToVisible?.p95Ms ?? 0, extras.requestToVisible?.maximumMs ?? 0, extras.requestToVisible?.samples ?? 0));
+    lines.push(formatHistogramMs('prefetch generated→visible', extras.generatedToVisible?.p50Ms ?? 0, extras.generatedToVisible?.p95Ms ?? 0, extras.generatedToVisible?.maximumMs ?? 0, extras.generatedToVisible?.samples ?? 0));
+    lines.push(formatHistogramMs('prefetch lit→meshStart', extras.litToMesh.p50Ms, extras.litToMesh.p95Ms, extras.litToMesh.maximumMs, extras.litToMesh.samples));
   }
   if (extras?.readyMeshWaitWarn) {
-    const warn = extras.readyMeshWaitWarn;
-    lines.push(`READY MESH WAIT ${(warn.waitMs / 1000).toFixed(2)}s  chunk ${warn.cx},${warn.cz}  ${((now - warn.atMs) / 1000).toFixed(1)}s ago  (warn > ${READY_MESH_WAIT_WARN_MS} ms)`);
+    lines.push(formatReadyMeshStarvationLine(extras.readyMeshWaitWarn, now));
   }
   if (slow) {
-    lines.push(
-      `LAST SLOW CHUNK ${slow.cx},${slow.cz}  ${slow.state}  ${(now - slow.atMs) >= 0 ? `${((now - slow.atMs) / 1000).toFixed(1)}s ago` : ''}`,
-      `  blockedBy ${slow.blocker}  ranks G${formatQueueRank(slow.genRank)} L${formatQueueRank(slow.lightRank)} M${formatQueueRank(slow.meshRank)}`,
-      `  wanted ${slow.wantedNow} missing ${slow.missingWanted} obsolete ${slow.queuedObsolete}  queues g${slow.genPending}/l${slow.lightPending}/m${slow.meshPending}`,
-      `  lit→meshStart ${formatDurationMs(slow.durations.litToMeshStartMs)}  age ${formatDurationMs(slow.durations.ageMs)}`,
-    );
+    lines.push(...formatLastSlowVisibleChunkLines(slow, now));
   }
   lines.push('LEGEND  ' + [
     'GRAY absent',

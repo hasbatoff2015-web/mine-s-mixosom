@@ -3,20 +3,31 @@ import {
   categorizeChunk,
   categoryColor,
   computeDurations,
+  computePlayerVisibleLatency,
   countHorizon,
   describeChunkBlocker,
+  formatLastSlowVisibleChunkLines,
   formatLastSpike,
   formatQueueRank,
   formatDurationMs,
   formatHistogramMs,
+  formatReadyMeshStarvationLine,
+  formatWantedStateLines,
+  openReadyWantedWaitMs,
   queueRank,
+  readyWantedToMeshSampleMs,
   resolveInspectedChunk,
   selectFrontMissingChunk,
   shouldCaptureSlowChunk,
+  shouldCaptureSlowVisibleChunk,
+  shouldRecordWantedVisibleSample,
   shouldWarnReadyMeshWait,
   summarizeQueueLane,
+  syncWantedPeriod,
   toggleInspectFreeze,
+  wantedToVisibleSampleMs,
   type ChunkDebugFacts,
+  type ChunkTimestamps,
   type HaloNeighborFact,
 } from '../src/debug/chunkStreamingInspector';
 import { ChunkStreamingTrace } from '../src/debug/chunkStreamingTrace';
@@ -277,10 +288,243 @@ describe('chunk streaming inspector (diagnostic mapping)', () => {
     expect(frozen).toEqual({ cx: 9, cz: 9, source: 'freeze' });
   });
 
-  it('warns when a ready mesh waits more than 500 ms', () => {
+  it('warns when a ready-wanted mesh waits more than 500 ms', () => {
     expect(shouldWarnReadyMeshWait(499, false)).toBe(false);
     expect(shouldWarnReadyMeshWait(500, false)).toBe(true);
-    expect(formatHistogramMs('WAIT lit→meshStart', 40, 120, 400, 8)).toContain('p50');
-    expect(formatHistogramMs('WAIT lit→meshStart', 0, 0, 0, 0)).toBe('WAIT lit→meshStart —');
+    expect(formatHistogramMs('READY-WANTED→MESH', 40, 120, 400, 8)).toContain('p50');
+    expect(formatHistogramMs('WANTED→VISIBLE', 0, 0, 0, 0)).toBe('WANTED→VISIBLE —');
+  });
+});
+
+const readyWantedInput = (now: number, overrides: Partial<Parameters<typeof syncWantedPeriod>[1]> = {}) => ({
+  inMeshWanted: true,
+  inGenerationWanted: true,
+  inLightHalo: false,
+  generated: true,
+  lightingReady: true,
+  lightContextReady: true,
+  visible: false,
+  distance: 2,
+  now,
+  ...overrides,
+});
+
+describe('player-visible chunk latency (wanted vs prefetch)', () => {
+  it('keeps huge lit→meshStart for a 40s prefetch but READY-WANTED→MESH is small', () => {
+    const stamps: ChunkTimestamps = {
+      requestedAt: 0,
+      generatedAt: 10,
+      litAt: 20,
+    };
+    syncWantedPeriod(stamps, readyWantedInput(40_000));
+    stamps.meshStartedAt = 40_100;
+    stamps.meshedAt = 40_114;
+    stamps.visibleAt = 40_115;
+    const durations = computeDurations(stamps, 40_115);
+    const latency = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: true, now: 40_115 });
+    expect(durations.litToMeshStartMs).toBe(40_080);
+    expect(latency.readyWantedToMeshStartMs).toBe(100);
+    expect(latency.wantedToVisibleMs).toBe(115);
+    expect(latency.litAgeBeforeWantedMs).toBe(39_980);
+    expect(shouldWarnReadyMeshWait(latency.readyWantedWaitMs ?? 0, false)).toBe(false);
+    expect(shouldWarnReadyMeshWait(durations.litToMeshStartMs ?? 0, false)).toBe(true);
+  });
+
+  it('sets enteredMeshWantedAt when the chunk enters mesh wanted radius', () => {
+    const stamps: ChunkTimestamps = {};
+    const result = syncWantedPeriod(stamps, readyWantedInput(1_200, { lightingReady: false, lightContextReady: false }));
+    expect(result.enteredMeshWanted).toBe(true);
+    expect(stamps.enteredMeshWantedAt).toBe(1_200);
+    expect(stamps.readyToMeshWhileWantedAt).toBeUndefined();
+  });
+
+  it('stops the live wanted timer when the chunk leaves mesh wanted radius', () => {
+    const stamps: ChunkTimestamps = { litAt: 0 };
+    syncWantedPeriod(stamps, readyWantedInput(100));
+    const whileWanted = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: false, now: 400 });
+    expect(whileWanted.wantedAgeMs).toBe(300);
+    expect(whileWanted.readyWantedWaitMs).toBe(300);
+    const left = syncWantedPeriod(stamps, readyWantedInput(500, { inMeshWanted: false, inGenerationWanted: false }));
+    expect(left.leftMeshWanted).toBe(true);
+    expect(stamps.enteredMeshWantedAt).toBeUndefined();
+    const later = computePlayerVisibleLatency(stamps, { wantedNow: false, visible: false, now: 8_000 });
+    expect(later.wantedAgeMs).toBeNull();
+    expect(later.readyWantedWaitMs).toBeNull();
+    expect(later.currentlyNotWanted).toBe(true);
+    expect(later.lastWantedDurationMs).toBe(400);
+    expect(later.wantedAgeMs).toBeNull();
+  });
+
+  it('starts a new wanted period on re-enter', () => {
+    const stamps: ChunkTimestamps = {};
+    syncWantedPeriod(stamps, readyWantedInput(100));
+    syncWantedPeriod(stamps, readyWantedInput(400, { inMeshWanted: false }));
+    expect(stamps.lastEnteredMeshWantedAt).toBe(100);
+    const reenter = syncWantedPeriod(stamps, readyWantedInput(900));
+    expect(reenter.enteredMeshWanted).toBe(true);
+    expect(stamps.enteredMeshWantedAt).toBe(900);
+    expect(stamps.enteredMeshWantedAt).not.toBe(stamps.lastEnteredMeshWantedAt);
+    const latency = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: false, now: 950 });
+    expect(latency.wantedAgeMs).toBe(50);
+  });
+
+  it('does not fire SLOW VISIBLE CHUNK for an old prefetched chunk outside wanted radius', () => {
+    expect(shouldCaptureSlowVisibleChunk({
+      inMeshWanted: false,
+      visible: false,
+      wantedToVisibleMs: 40_000,
+      alreadyCaptured: false,
+    })).toBe(false);
+    expect(shouldCaptureSlowChunk(false, false, 40_000, false)).toBe(false);
+  });
+
+  it('fires SLOW VISIBLE CHUNK when wanted→visible exceeds 2 s inside wanted radius', () => {
+    expect(shouldCaptureSlowVisibleChunk({
+      inMeshWanted: true,
+      visible: false,
+      wantedToVisibleMs: 1_999,
+      alreadyCaptured: false,
+    })).toBe(false);
+    expect(shouldCaptureSlowVisibleChunk({
+      inMeshWanted: true,
+      visible: false,
+      wantedToVisibleMs: 2_000,
+      alreadyCaptured: false,
+    })).toBe(true);
+    expect(shouldCaptureSlowChunk(true, false, 2_000, false)).toBe(true);
+  });
+
+  it('READY MESH STARVATION uses readyWanted timestamp, not litAt', () => {
+    const stamps: ChunkTimestamps = { generatedAt: 0, litAt: 0 };
+    syncWantedPeriod(stamps, readyWantedInput(40_000));
+    const early = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: false, now: 40_080 });
+    expect(early.readyWantedWaitMs).toBe(80);
+    expect(computeDurations(stamps, 40_080).litToMeshStartMs).toBe(40_080);
+    expect(shouldWarnReadyMeshWait(early.readyWantedWaitMs ?? 0, false)).toBe(false);
+    expect(openReadyWantedWaitMs(early)).toBe(80);
+    const starving = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: false, now: 40_501 });
+    expect(starving.readyWantedWaitMs).toBe(501);
+    expect(shouldWarnReadyMeshWait(starving.readyWantedWaitMs ?? 0, false)).toBe(true);
+    expect(formatReadyMeshStarvationLine({ cx: 3, cz: -1, waitMs: 501, atMs: 40_501 }, 40_501)).toContain('READY MESH STARVATION');
+    expect(formatReadyMeshStarvationLine({ cx: 3, cz: -1, waitMs: 501, atMs: 40_501 }, 40_501)).not.toContain('READY MESH WAIT');
+  });
+
+  it('frozen F9 target outside radius shows CURRENTLY NOT WANTED and last wanted durations', () => {
+    const stamps: ChunkTimestamps = { generatedAt: 0, litAt: 10 };
+    syncWantedPeriod(stamps, readyWantedInput(100, { distance: 3 }));
+    stamps.meshStartedAt = 140;
+    stamps.meshedAt = 154;
+    stamps.visibleAt = 155;
+    syncWantedPeriod(stamps, readyWantedInput(200, { inMeshWanted: false, visible: true, distance: 27 }));
+    const frozenLater = computePlayerVisibleLatency(stamps, { wantedNow: false, visible: false, now: 5_200 });
+    expect(frozenLater.currentlyNotWanted).toBe(true);
+    expect(frozenLater.wantedAgeMs).toBeNull();
+    expect(frozenLater.readyWantedWaitMs).toBeNull();
+    expect(frozenLater.lastWantedDurationMs).toBe(100);
+    expect(frozenLater.lastWantedToVisibleMs).toBe(55);
+    expect(frozenLater.lastReadyWantedToMeshStartMs).toBe(40);
+    const lines = formatWantedStateLines({
+      latency: frozenLater,
+      meshStarted: false,
+      visible: false,
+      frozen: true,
+    }).join('\n');
+    expect(lines).toContain('CURRENT STATE (F9 freeze)');
+    expect(lines).toContain('CURRENTLY NOT WANTED');
+    expect(lines).toContain('LAST WANTED PERIOD');
+    expect(lines).toContain('WANTED AGE — (timer stopped)');
+    expect(lines).toContain('READY-WANTED WAIT — (timer stopped)');
+    expect(lines).toContain('duration 100 ms');
+    expect(lines).toContain('WANTED→VISIBLE 55 ms');
+    const slowLines = formatLastSlowVisibleChunkLines({
+      atMs: 200,
+      cx: 10,
+      cz: 0,
+      state: 'WAITING_MESH',
+      blocker: 'waiting mesh budget',
+      genRank: null,
+      lightRank: null,
+      meshRank: 8,
+      durations: computeDurations(stamps, 5_200),
+      wantedNow: 81,
+      missingWanted: 1,
+      queuedObsolete: 0,
+      genPending: 0,
+      lightPending: 0,
+      meshPending: 4,
+      wantedToVisibleMs: 3_400,
+      wantedToReadyMs: 42,
+      readyWantedToMeshStartMs: 3_300,
+      meshDurationMs: null,
+      maxDistanceWhileWanted: 4,
+    }, 5_200).join('\n');
+    expect(slowLines).toContain('LAST SLOW VISIBLE CHUNK');
+    expect(slowLines).not.toContain('LAST SLOW CHUNK 10');
+    expect(slowLines).toContain('WANTED→VISIBLE 3.40s');
+  });
+
+  it('rolling stats include only chunks that actually entered mesh wanted radius', () => {
+    const haloOnly: ChunkTimestamps = { generatedAt: 0, litAt: 10, meshStartedAt: 40_000, visibleAt: 40_020 };
+    expect(shouldRecordWantedVisibleSample(haloOnly)).toBe(false);
+    expect(wantedToVisibleSampleMs(haloOnly, 40_020)).toBeNull();
+    expect(readyWantedToMeshSampleMs(haloOnly)).toBeNull();
+
+    const wanted: ChunkTimestamps = {
+      generatedAt: 0,
+      litAt: 10,
+      enteredMeshWantedAt: 40_000,
+      readyToMeshWhileWantedAt: 40_000,
+      meshStartedAt: 40_080,
+      visibleAt: 40_100,
+    };
+    expect(shouldRecordWantedVisibleSample(wanted)).toBe(true);
+    expect(wantedToVisibleSampleMs(wanted, 40_100)).toBe(100);
+    expect(readyWantedToMeshSampleMs(wanted)).toBe(80);
+  });
+
+  it('does not mutate production scheduler queues while updating wanted stamps', () => {
+    const keys = ['0,0', '1,0'];
+    const stamps: ChunkTimestamps = {};
+    syncWantedPeriod(stamps, readyWantedInput(50));
+    expect(keys).toEqual(['0,0', '1,0']);
+    expect(stamps.enteredMeshWantedAt).toBe(50);
+  });
+
+  it('self-QA A: 40s lit prefetch then 100ms wanted→visible is not slow', () => {
+    const stamps: ChunkTimestamps = { generatedAt: 0, litAt: 100 };
+    syncWantedPeriod(stamps, readyWantedInput(40_000));
+    stamps.meshStartedAt = 40_040;
+    stamps.meshedAt = 40_090;
+    stamps.visibleAt = 40_100;
+    const latency = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: true, now: 40_100 });
+    expect(latency.wantedToVisibleMs).toBe(100);
+    expect(shouldCaptureSlowVisibleChunk({
+      inMeshWanted: true,
+      visible: true,
+      wantedToVisibleMs: latency.wantedToVisibleMs ?? 0,
+      alreadyCaptured: false,
+    })).toBe(false);
+    expect(shouldCaptureSlowVisibleChunk({
+      inMeshWanted: true,
+      visible: false,
+      wantedToVisibleMs: 100,
+      alreadyCaptured: false,
+    })).toBe(false);
+  });
+
+  it('self-QA B: wanted + ready for 3s is a real READY MESH STARVATION', () => {
+    const stamps: ChunkTimestamps = { generatedAt: 0, litAt: 50 };
+    syncWantedPeriod(stamps, readyWantedInput(1_000));
+    const latency = computePlayerVisibleLatency(stamps, { wantedNow: true, visible: false, now: 4_400 });
+    expect(latency.wantedAgeMs).toBe(3_400);
+    expect(latency.readyWantedWaitMs).toBe(3_400);
+    expect(openReadyWantedWaitMs(latency)).toBe(3_400);
+    expect(shouldWarnReadyMeshWait(latency.readyWantedWaitMs ?? 0, false)).toBe(true);
+    expect(shouldCaptureSlowVisibleChunk({
+      inMeshWanted: true,
+      visible: false,
+      wantedToVisibleMs: latency.wantedToVisibleMs ?? 0,
+      alreadyCaptured: false,
+    })).toBe(true);
   });
 });
