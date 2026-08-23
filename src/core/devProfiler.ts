@@ -12,6 +12,16 @@ export interface FrameCostBreakdown {
   otherMs: number;
 }
 
+export interface SimPartBreakdown {
+  readonly player: number;
+  readonly mobs: number;
+  readonly world: number;
+  readonly combat: number;
+  readonly entities: number;
+  readonly other: number;
+  readonly ticks: number;
+}
+
 export interface PerfSnapshot {
   readonly fps: number;
   readonly frame: TimingSnapshot & { readonly p99Ms: number };
@@ -39,6 +49,8 @@ export interface PerfSnapshot {
   readonly chunkZ?: number;
   readonly chunkHud?: string;
   readonly inspectorHud?: string;
+  readonly simParts?: SimPartBreakdown;
+  readonly meshWait?: TimingSnapshot;
 }
 
 export function isPerfQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
@@ -138,6 +150,8 @@ export class DevProfiler {
     chunkZ?: number;
     chunkHud?: string;
     inspectorHud?: string;
+    simParts?: SimPartBreakdown;
+    meshWait?: TimingSnapshot;
   }): PerfSnapshot | undefined {
     if (!this.enabled) return undefined;
     const frame = this.frames.snapshot();
@@ -170,6 +184,8 @@ export class DevProfiler {
       chunkZ: world.chunkZ,
       chunkHud: world.chunkHud,
       inspectorHud: world.inspectorHud,
+      simParts: world.simParts,
+      meshWait: world.meshWait,
     };
   }
 
@@ -190,11 +206,21 @@ export class DevProfiler {
     const spikeLine = spike
       ? `${formatLastSpike(spike.frameMs, spikeAge)}  ${spike.category}  mesh ${spike.meshMs.toFixed(1)} light ${spike.lightMs.toFixed(1)} gen ${spike.generateMs.toFixed(1)} sim ${spike.tickMs.toFixed(1)} render ${spike.renderMs.toFixed(1)}`
       : 'LAST SPIKE  —';
+    const sim = snapshot.simParts;
+    const simLine = sim
+      ? `SIM   ticks ${sim.ticks}  player ${sim.player.toFixed(2)} mobs ${sim.mobs.toFixed(2)} world ${sim.world.toFixed(2)} combat ${sim.combat.toFixed(2)} entities ${sim.entities.toFixed(2)} other ${sim.other.toFixed(2)}`
+      : '';
+    const meshWait = snapshot.meshWait;
+    const meshWaitLine = meshWait && meshWait.samples > 0
+      ? `MESH  cpu p50 ${meshWait.p50Ms.toFixed(1)} p95 ${meshWait.p95Ms.toFixed(1)} p99 ${meshWait.p99Ms.toFixed(1)} max ${meshWait.maximumMs.toFixed(1)} n${meshWait.samples}`
+      : '';
     this.overlay.textContent = [
       `PERF  fps ${snapshot.fps}  frame ${snapshot.frame.averageMs.toFixed(1)} / p95 ${snapshot.frame.p95Ms.toFixed(1)} / p99 ${snapshot.frame.p99Ms.toFixed(1)} / max ${snapshot.frame.maximumMs.toFixed(1)}`,
       `TICK  ${snapshot.tick.averageMs.toFixed(2)} / p95 ${snapshot.tick.p95Ms.toFixed(2)}   RENDER ${snapshot.renderMs.toFixed(2)}`,
+      simLine,
       `JOBS  gen ${snapshot.generateJobs} mesh ${snapshot.meshJobs} waitG ${snapshot.waitingGenerate} waitM ${snapshot.waitingMesh} light ${snapshot.lightingJobs} dirty ${snapshot.dirtyChunks} mut ${snapshot.blockMutations}`,
       `LIGHT jobs ${snapshot.lightPending} | nodes ${snapshot.lightNodes} | cols ${snapshot.lightColumns} | frame ${snapshot.lightFrameMs.toFixed(1)} ms | maxSlice ${snapshot.lightMaxSlice.toFixed(1)} | dirtyL ${snapshot.dirtyLightChunks}`,
+      meshWaitLine,
       `CHUNK ${chunkHud}`,
       `ENT   mobs ${snapshot.mobCount} update ${snapshot.entityUpdateMs.toFixed(2)} ms   HEAP ${heap}`,
       spikeLine,

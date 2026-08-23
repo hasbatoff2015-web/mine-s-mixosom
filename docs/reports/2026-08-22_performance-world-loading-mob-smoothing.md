@@ -180,6 +180,8 @@ Follow-up (2026-08-23): lighting performance + chunk seams. See `docs/reports/20
 
 Follow-up (2026-08-23): **chunk streaming inspector is DIAGNOSTIC ONLY**. No scheduler/budget/priority/lifecycle change. Symptom after lighting pass: fast move/fly can reach an empty area; nearest chunk may appear 10–20 s later while FPS stays high and `waitM` is hundreds. Capture with `?perf=1&chunks=1`, F9 freeze, LAST SLOW CHUNK. See `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Do not treat inspector tests as proof of a backlog fix.
 
+Follow-up (2026-08-23): **mesh starvation / obsolete pending cleanup.** Local QA LAST SLOW CHUNK `(-72,153)` had `lit→meshStart ≈ 3.02 s` at mesh rank ~8 because PLAYING skipped every mesh job on a generation frame; Creative flight generates every frame. `queuedObsolete ≈ 604` was leaked `pendingMesh` keys after prune + inspector counting dirty halo. Fix: fair one-mesh slot, wanted-set pending cleanup, ring/age/ahead rescore. See `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. Inspector remains; it is no longer the only streaming work.
+
 Device GPU capture with `?perf=1` on the user machine. Если mesh p95 всё ещё > ~16 ms на target device — профилировать greedy vs worker, не резать quality.
 
 ## Git

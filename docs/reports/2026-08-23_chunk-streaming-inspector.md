@@ -134,7 +134,7 @@ Existing performance/lighting tests must stay green.
 
 ## Deferred
 
-Actual streaming fix (cancel obsolete jobs, change priorities, budgets, ready radius, etc.) waits for a local screenshot of FRONT CHUNK during a 10–20 s hole.
+Actual streaming fix (fair mesh vs generation, obsolete pending cleanup) is in `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. This inspector pass remains the capture tool (`?perf=1&chunks=1`, F9, LAST SLOW CHUNK).
 
 ## Git
 

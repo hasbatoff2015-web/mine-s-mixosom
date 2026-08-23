@@ -5,6 +5,7 @@
  */
 
 export const SLOW_CHUNK_THRESHOLD_MS = 2000;
+export const READY_MESH_WAIT_WARN_MS = 500;
 export const SLOW_CHUNK_RING = 8;
 export const TRACE_EVENT_LIMIT = 12;
 
@@ -173,6 +174,11 @@ export interface JobFrameCounters {
   meshSkippedBlocked: number;
   meshSkippedDueToGenSeparation: boolean;
   lightingOnlyDueToBudget: boolean;
+  meshReady: number;
+  meshUrgent: number;
+  meshOldestReadyAgeMs: number;
+  meshStarvationAvoided: boolean;
+  meshSkippedFrame: boolean;
 }
 
 export interface PrioritySnapshot {
@@ -202,6 +208,11 @@ export function emptyJobFrameCounters(): JobFrameCounters {
     meshSkippedBlocked: 0,
     meshSkippedDueToGenSeparation: false,
     lightingOnlyDueToBudget: false,
+    meshReady: 0,
+    meshUrgent: 0,
+    meshOldestReadyAgeMs: 0,
+    meshStarvationAvoided: false,
+    meshSkippedFrame: false,
   };
 }
 
@@ -335,22 +346,28 @@ export function countHorizon(options: {
   readonly genQueueKeys: readonly string[];
   readonly lightQueueKeys: readonly string[];
   readonly meshQueueKeys: readonly string[];
+  readonly genWantedKeys?: readonly string[];
+  readonly lightWantedKeys?: readonly string[];
+  readonly meshWantedKeys?: readonly string[];
 }): HorizonCounts {
   const wanted = new Set(options.wantedKeys);
+  const genWanted = new Set(options.genWantedKeys ?? options.wantedKeys);
+  const lightWanted = new Set(options.lightWantedKeys ?? options.wantedKeys);
+  const meshWanted = new Set(options.meshWantedKeys ?? options.wantedKeys);
   let missingWanted = 0;
   for (const key of wanted) {
     if (!options.presentKeys.has(key)) missingWanted += 1;
   }
-  const obsoleteIn = (keys: readonly string[]): number => {
+  const obsoleteIn = (keys: readonly string[], wantedSet: ReadonlySet<string>): number => {
     let count = 0;
     for (const key of keys) {
-      if (!wanted.has(key)) count += 1;
+      if (!wantedSet.has(key)) count += 1;
     }
     return count;
   };
-  const queuedObsoleteGen = obsoleteIn(options.genQueueKeys);
-  const queuedObsoleteLight = obsoleteIn(options.lightQueueKeys);
-  const queuedObsoleteMesh = obsoleteIn(options.meshQueueKeys);
+  const queuedObsoleteGen = obsoleteIn(options.genQueueKeys, genWanted);
+  const queuedObsoleteLight = obsoleteIn(options.lightQueueKeys, lightWanted);
+  const queuedObsoleteMesh = obsoleteIn(options.meshQueueKeys, meshWanted);
   return {
     wantedNow: wanted.size,
     missingWanted,
@@ -448,6 +465,17 @@ export function formatLastSpike(spikeMs: number, ageMs: number): string {
   return `LAST SPIKE ${spikeMs.toFixed(1)} ms (${formatAgeMs(ageMs)} ago)`;
 }
 
+export function formatHistogramMs(
+  label: string,
+  p50: number,
+  p95: number,
+  max: number,
+  samples: number,
+): string {
+  if (samples <= 0) return `${label} —`;
+  return `${label} p50 ${formatDurationMs(p50)}  p95 ${formatDurationMs(p95)}  max ${formatDurationMs(max)}  n${samples}`;
+}
+
 export function distancePriority(cx: number, cz: number, originCx: number, originCz: number): PrioritySnapshot {
   const score = distanceSq(cx, cz, originCx, originCz);
   return {
@@ -455,7 +483,7 @@ export function distancePriority(cx: number, cz: number, originCx: number, origi
     distanceComponent: score,
     visibilityComponent: null,
     movementAheadComponent: null,
-    note: 'priority is distanceSq only; no visibility or movement-ahead term',
+    note: 'inspect distanceSq; scheduler uses ring + age boost + ahead + distanceSq',
   };
 }
 
@@ -484,6 +512,14 @@ export function shouldCaptureSlowChunk(
   thresholdMs = SLOW_CHUNK_THRESHOLD_MS,
 ): boolean {
   return wantedVisible && !isVisible && ageMs >= thresholdMs && !alreadyCaptured;
+}
+
+export function shouldWarnReadyMeshWait(
+  waitMs: number,
+  alreadyWarned: boolean,
+  thresholdMs = READY_MESH_WAIT_WARN_MS,
+): boolean {
+  return waitMs >= thresholdMs && !alreadyWarned;
 }
 
 export function pushSlowSnapshot<T>(buffer: readonly T[], item: T, max = SLOW_CHUNK_RING): T[] {

@@ -30,6 +30,7 @@ npm run check:archive
 npm run benchmark:performance
 npx vite-node scripts/benchmark-perf-pass.ts
 npm run benchmark:lighting
+npm run benchmark:streaming
 ```
 
 Полный локальный pipeline:
@@ -52,14 +53,14 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-23** (streaming inspector pass):
+Срез локального запуска **2026-08-23** (chunk mesh starvation fix):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       42 test files, 323 tests, 323 passed
-Vite build:   99 modules PASS
-Size/archive: PASS, 1.06 MiB uncompressed, 167 files
-Main assets:  JS 850.05 kB / 234.31 kB gzip; CSS 25.94 kB / 6.03 kB gzip
+Vitest:       43 test files, 337 tests, 337 passed
+Vite build:   100 modules PASS
+Size/archive: PASS, 1.07 MiB uncompressed, 167 files
+Main assets:  JS 856.82 kB / 236.47 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -104,7 +105,8 @@ Main assets:  JS 850.05 kB / 234.31 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 | `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
 | `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
-| `tests/chunk-streaming-inspector.test.ts` | 11 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts, durations, F9 freeze, slow-chunk threshold, LAST SPIKE age, ready vs blocked head, front-target selection |
+| `tests/chunk-streaming-inspector.test.ts` | 14 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH WAIT 500 ms, LAST SPIKE age, ready vs blocked head, front-target selection |
+| `tests/streaming-scheduler.test.ts` | 11 | Generation cannot starve nearby mesh; LOADING still meshes; urgent wait; obsolete pending cleanup; prune clears pendingMesh; queue consistency; priority on chunk cross; blocked mesh head; continuous-gen fair vs legacy |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -387,10 +389,16 @@ Decoration у края chunk нужно проверять отдельно, п�
 
 ## Performance/soak
 
-DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, job counts, LAST SPIKE with **age**. Chunk streaming inspector (PLAYER/FRONT CHUNK, halo, GEN/LIGHT/MESH ready vs blocked, `queuedObsolete`). Не логирует console каждый кадр. F8 цветная сетка, F7 light view, F9 freeze front chunk. Как снять 10–20 s hole: `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Scripted:
+DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, SIM player/mobs/world/combat/entities/other, job counts, LAST SPIKE with **age**, READY MESH WAIT > 500 ms, lit→meshStart histograms. Chunk streaming inspector (PLAYER/FRONT CHUNK, halo, GEN/LIGHT/MESH ready vs blocked, `queuedObsolete` = pending outside wanted). Не логирует console каждый кадр. F8 цветная сетка, F7 light view, F9 freeze front chunk. Starvation/obsolete evidence: `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. Scripted:
 
 - `?perf=1&perfScenario=CREATIVE_BREAK_STRESS` — 100 canonical `applyBlockBatch` air mutations after world ready;
 - `?perf=1&perfScenario=MOB_SMOOTHNESS` — one cow with interpolated visual sample.
+
+CPU streaming scheduler (no GPU):
+
+```bash
+npm run benchmark:streaming
+```
 
 Минимальный soak — 15 минут активной игры:
 

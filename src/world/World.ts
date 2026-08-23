@@ -183,6 +183,7 @@ export class VoxelWorld {
   applyInitialLightingVersions(chunk: Chunk): void {
     const touched = consumeLightTouched();
     this.noteLightDataChanged(chunk);
+    if (chunk.dirty && chunk.readyToMeshAt === 0) chunk.readyToMeshAt = performance.now();
     for (const other of touched) {
       if (other === chunk) continue;
       if (other.meshedLightVersion >= 0) this.noteLightDataChanged(other);
@@ -471,11 +472,13 @@ export class VoxelWorld {
     this.meshDirtyMarks += 1;
     chunk.dirty = true;
     this.pendingMesh.add(chunkKey(chunk.x, chunk.z));
+    if (chunk.lightingReady && chunk.readyToMeshAt === 0) chunk.readyToMeshAt = performance.now();
   }
 
   acknowledgeMeshed(chunk: Chunk): void {
     if (chunk.dirty) return;
     this.pendingMesh.delete(chunkKey(chunk.x, chunk.z));
+    chunk.readyToMeshAt = 0;
   }
 
   queueLight(region: LightRegion, sky: boolean, block: boolean): void {
@@ -576,6 +579,7 @@ export class VoxelWorld {
     return (this.pendingLight ? 1 : 0) + this.unlitChunkCount;
   }
 
+  /** In-radius dirty/stale keys after `discardObsoletePendingMesh`. Not a historical leak. */
   get pendingMeshJobs(): number {
     return this.pendingMesh.size;
   }
@@ -619,6 +623,7 @@ export class VoxelWorld {
     for (const [key, chunk] of this.chunks) {
       if (Math.abs(chunk.x - cx) <= radius + 1 && Math.abs(chunk.z - cz) <= radius + 1) continue;
       this.chunks.delete(key);
+      this.pendingMesh.delete(key);
       removed.push(key);
     }
     return removed;

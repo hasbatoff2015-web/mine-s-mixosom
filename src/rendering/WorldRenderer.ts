@@ -5,6 +5,7 @@ import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { lightContextReady } from '../world/worldJobs';
+import { meshJobSortScore, meshWaitMs } from '../world/streamingScheduler';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import { ChestRenderer } from './ChestRenderer';
 import {
@@ -111,6 +112,8 @@ export class WorldRenderer {
       counters?: { attempted: number; completed: number; skippedBlocked: number };
       onMeshStart?: (chunk: Chunk) => void;
       onMeshComplete?: (chunk: Chunk) => void;
+      dirX?: number;
+      dirZ?: number;
     } = {},
   ): number {
     const start = performance.now();
@@ -119,6 +122,9 @@ export class WorldRenderer {
     const meshRadius = options.meshRadius;
     const requireNeighborLight = options.requireNeighborLight === true;
     const counters = options.counters;
+    const dirX = options.dirX ?? 0;
+    const dirZ = options.dirZ ?? 0;
+    const now = performance.now();
     const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
       if (!chunk.dirty && !chunk.lightMeshStale) continue;
@@ -129,14 +135,15 @@ export class WorldRenderer {
       dirty.push(chunk);
     }
     dirty.sort((a, b) => {
-      const da = (a.x - centerX) * (a.x - centerX) + (a.z - centerZ) * (a.z - centerZ);
-      const db = (b.x - centerX) * (b.x - centerX) + (b.z - centerZ) * (b.z - centerZ);
-      return da - db;
+      const sa = meshJobSortScore(a.x, a.z, centerX, centerZ, dirX, dirZ, meshWaitMs(a, now));
+      const sb = meshJobSortScore(b.x, b.z, centerX, centerZ, dirX, dirZ, meshWaitMs(b, now));
+      return sa - sb;
     });
     let rebuilt = 0;
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
       if (!chunk.lightingReady) {
+        // Skip blocked head; keep scanning for a later ready chunk.
         if (counters) {
           counters.attempted += 1;
           counters.skippedBlocked += 1;

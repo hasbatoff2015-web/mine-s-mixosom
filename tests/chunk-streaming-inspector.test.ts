@@ -8,10 +8,12 @@ import {
   formatLastSpike,
   formatQueueRank,
   formatDurationMs,
+  formatHistogramMs,
   queueRank,
   resolveInspectedChunk,
   selectFrontMissingChunk,
   shouldCaptureSlowChunk,
+  shouldWarnReadyMeshWait,
   summarizeQueueLane,
   toggleInspectFreeze,
   type ChunkDebugFacts,
@@ -146,6 +148,37 @@ describe('chunk streaming inspector (diagnostic mapping)', () => {
     expect(gen).toEqual(['0,1', '8,8']);
   });
 
+  it('does not treat lighting-halo jobs as obsolete mesh work', () => {
+    const meshWanted = ['0,0'];
+    const generateWanted = ['0,0', '1,0'];
+    const counts = countHorizon({
+      wantedKeys: meshWanted,
+      presentKeys: new Set(['0,0', '1,0']),
+      genQueueKeys: ['1,0'],
+      lightQueueKeys: ['1,0'],
+      meshQueueKeys: ['0,0'],
+      genWantedKeys: generateWanted,
+      lightWantedKeys: generateWanted,
+      meshWantedKeys: meshWanted,
+    });
+    expect(counts.queuedObsoleteGen).toBe(0);
+    expect(counts.queuedObsoleteLight).toBe(0);
+    expect(counts.queuedObsoleteMesh).toBe(0);
+  });
+
+  it('counts pendingMesh keys outside wanted as obsolete, not dirty-only halo', () => {
+    const counts = countHorizon({
+      wantedKeys: ['0,0', '1,0'],
+      presentKeys: new Set(['0,0', '1,0', '2,0']),
+      genQueueKeys: [],
+      lightQueueKeys: [],
+      meshQueueKeys: ['0,0', '9,9', '10,0'],
+      meshWantedKeys: ['0,0', '1,0'],
+    });
+    expect(counts.queuedObsoleteMesh).toBe(2);
+    expect(counts.queuedObsolete).toBe(2);
+  });
+
   it('computes stage durations including an open lit→meshStart stall', () => {
     const durations = computeDurations({
       requestedAt: 1000,
@@ -242,5 +275,12 @@ describe('chunk streaming inspector (diagnostic mapping)', () => {
       candidates,
     });
     expect(frozen).toEqual({ cx: 9, cz: 9, source: 'freeze' });
+  });
+
+  it('warns when a ready mesh waits more than 500 ms', () => {
+    expect(shouldWarnReadyMeshWait(499, false)).toBe(false);
+    expect(shouldWarnReadyMeshWait(500, false)).toBe(true);
+    expect(formatHistogramMs('WAIT lit→meshStart', 40, 120, 400, 8)).toContain('p50');
+    expect(formatHistogramMs('WAIT lit→meshStart', 0, 0, 0, 0)).toBe('WAIT lit→meshStart —');
   });
 });

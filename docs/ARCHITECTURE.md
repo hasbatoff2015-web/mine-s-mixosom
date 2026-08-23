@@ -147,9 +147,11 @@ Scheduled block queue ограничена, за tick обрабатываетс
 
 `getChunk` генерирует terrain **без** lighting. `processLighting(budgetMs)` — resumable: cursor по столбцам, flood head, yield по `WORLD_LIGHT_BUDGET_MS` (PLAYING ~2 ms, loading ~8 ms) и hard cap столбцов/узлов, чтобы scheduler **не** запускал монолитный 30 ms `lightChunk()`. Initial ready: generate+light `renderDistance+1` (halo), mesh только visible `renderDistance`, и только если 4 соседа в halo существуют и lit. Streaming chunk не становится visible с заведомо stale/provisional light.
 
+PLAYING job fairness (`src/world/streamingScheduler.ts`): budgets **не** поднимались (`WORLD_JOB_BUDGET_MS = 4`, light slice 2 ms). Если в кадре была generation, mesh больше не пропускается целиком. Nearby ready mesh (chebyshev ≤ 2 или wait ≥ 150 ms) может взять **один** mesh slot; иначе generation может вытеснить mesh не чаще одного кадра подряд. Priority: ring (player / neighbors / ring-2 / rest) + age boost + лёгкий movement-ahead tie-break + distanceSq; score пересчитывается каждый mesh pass от текущего player chunk. `discardObsoletePendingMesh` снимает `pendingMesh` вне wanted mesh radius (generated data и `dirty` сохраняются). `pruneChunks` удаляет pending key вместе с chunk. Mesh lane по-прежнему `continue` мимо blocked head.
+
 Мутации: skip lighting если sky-class и emission не изменились (tall grass → air). Torch/furnace **не** запускают sky recompute. Sky column update только при occlusion/leaf/water class change, локально, не весь chunk 6 раз. LightEngine не dirty-ит geometry на каждый voxel. Visual: mutation chunk + X/Z boundary; emission (torch/furnace) — light AABB; `lightVersion++` один раз на затронутый dirty chunk после job. `WorldRenderer.rebuildDirty` мешит если `dirty || lightVersion !== meshedLightVersion`, пропускает unlit и chunks вне mesh radius / без light context.
 
-DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN/LIGHT/MESH ready/blocked/oldest, frame attempt counters, PLAYER/FRONT chunk, halo, queue ranks, LAST SPIKE age). F8 или `?perf=1&chunks=1` — цветная сетка 16×16 по streaming state. F7 — sky/block/final false-color. F9 — freeze inspected front chunk. HUD: chunk X/Z, gen/lit/mesh, versions, sky/block. Inspector — **diagnostic only**, scheduler не менялся.
+DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN/LIGHT/MESH ready/blocked/oldest, `meshReady`/`meshUrgent`/`meshOldestReadyAge`/`meshStarvationAvoided`, SIM player/mobs/world/combat/entities/other, WAIT histograms, READY MESH WAIT > 500 ms, LAST SLOW CHUNK > 2 s, LAST SPIKE age). F8 или `?perf=1&chunks=1` — цветная сетка 16×16 по streaming state. F7 — sky/block/final false-color. F9 — freeze inspected front chunk. HUD: chunk X/Z, gen/lit/mesh, versions, sky/block. `queuedObsolete` считает pending jobs вне wanted set (mesh = `pendingMesh`, не dirty halo).
 
 ## Rendering
 
@@ -165,7 +167,7 @@ DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN
 - translucent glass material с opacity `0.52`;
 - отдельный translucent water material с opacity `0.70` и более поздним render order.
 
-Все пять шейдеров делят `worldDaylightUniform`, который `Game` обновляет каждый render frame. Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; generation и meshing не совмещаются в один fixed tick, а repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry.
+Все пять шейдеров делят `worldDaylightUniform`, который `Game` обновляет каждый render frame. Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; на PLAYING generation-кадре допускается один urgent/fair mesh slot, repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry.
 
 Selection outline — тот же `LineSegments` в `WorldRenderer`. `selectionBoxesForBlock()` строит oriented boxes из фактической special geometry (cube / torch / button / lever / plate / wire / door / ladder / cross / stairs / slab / chest); геометрии кэшируются по shape key. Voxel raycast пересекает `blockCollisionBoxes` для solid блоков, поэтому пустая половина slab/stair не выделяется.
 
@@ -330,9 +332,9 @@ Ads, authorization, cloud saves, leaderboards и payments находятся в�
 - player arrow cap `48`, lifetime `8 s`.
 - redstone source/TNT/queue/steps caps.
 
-DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution **with LAST SPIKE age**, без per-frame console. Chunk streaming inspector (GEN/LIGHT/MESH ready vs blocked, FRONT CHUNK, F9 freeze) только при включённом profiler, HUD 4–8 Hz. Scenarios: `?perfScenario=CREATIVE_BREAK_STRESS` / `MOB_SMOOTHNESS`. Production HUD не считает p99 и не сканирует job queues, пока profiler выключен.
+DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution **with LAST SPIKE age**, SIM subsection timers и mesh wait histograms, без per-frame console. Chunk streaming inspector (GEN/LIGHT/MESH ready vs blocked, FRONT CHUNK, F9 freeze, READY MESH WAIT > 500 ms) только при включённом profiler, HUD 4–8 Hz. Scenarios: `?perfScenario=CREATIVE_BREAK_STRESS` / `MOB_SMOOTHNESS`. Production HUD не считает p99 и не сканирует job queues, пока profiler выключен.
 
-Эти ограничения защищают main thread от неограниченного роста, но не заменяют device GPU QA. `npm run benchmark:performance` измеряет 81 chunk generation/meshing и 600 updates для 24 mobs; `scripts/benchmark-perf-pass.ts` — mutation/job CPU. Worker meshing по-прежнему не оправдан как следующий обязательный шаг: сначала закрыты repeated remesh и full-chunk sky на каждый break.
+Эти ограничения защищают main thread от неограниченного роста, но не заменяют device GPU QA. `npm run benchmark:performance` измеряет 81 chunk generation/meshing и 600 updates для 24 mobs; `scripts/benchmark-perf-pass.ts` — mutation/job CPU; `npm run benchmark:streaming` — CPU streaming scheduler (walk/fly/reverse/zigzag). Worker meshing по-прежнему не оправдан как следующий обязательный шаг: сначала закрыты repeated remesh, full-chunk sky на каждый break и mesh starvation from generation-frame skip.
 
 ## Правила расширения
 

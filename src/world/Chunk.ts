@@ -23,6 +23,8 @@ export class Chunk {
   /** 0..256 column cursor for resumable block-light emitter scan. */
   blockScanCursor = 0;
   lastTouched = performance.now();
+  /** Monotonic time when this chunk became ready-to-mesh while still dirty. 0 = unset. */
+  readyToMeshAt = 0;
 
   constructor(readonly x: number, readonly z: number) {}
 

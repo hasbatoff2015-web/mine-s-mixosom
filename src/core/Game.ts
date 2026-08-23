@@ -95,6 +95,8 @@ import {
   lightingIsActive,
   parseChunkKey,
   pushSlowSnapshot,
+  READY_MESH_WAIT_WARN_MS,
+  shouldWarnReadyMeshWait,
   toggleInspectFreeze,
   type ChunkDebugCategory,
   type InspectFreeze,
@@ -116,6 +118,12 @@ import { GameUI } from '../ui/GameUI';
 import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
+import {
+  collectReadyMeshJobs,
+  discardObsoletePendingMesh,
+  pendingMeshInRadius,
+  planMeshFrame,
+} from '../world/streamingScheduler';
 import { blockCollisionBoxes } from '../world/collision';
 import {
   defaultSlabType,
@@ -254,6 +262,16 @@ export class Game {
   private readonly slowArmed = new Set<string>();
   private lastMeshActiveKey: string | null = null;
   private lastFrontTarget: { cx: number; cz: number } | null = null;
+  private genWithoutMeshStreak = 0;
+  private lastStreamChunkX = Number.NaN;
+  private lastStreamChunkZ = Number.NaN;
+  private readonly simParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0 };
+  private lastSimParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0, ticks: 0 };
+  private readonly litToMeshWaits = new RollingTimingWindow(64);
+  private readonly requestToVisibleWaits = new RollingTimingWindow(64);
+  private readonly generatedToVisibleWaits = new RollingTimingWindow(64);
+  private readonly meshDurations = new RollingTimingWindow(64);
+  private lastReadyMeshWaitWarn: { cx: number; cz: number; waitMs: number; atMs: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
@@ -680,6 +698,7 @@ export class Game {
     );
     if (budget <= 0 && !loading) {
       this.jobFrame.lightingOnlyDueToBudget = true;
+      discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
       this.lastLightMs += this.runLightingJobs(session, WORLD_LIGHT_BUDGET_MS, originX, originZ, inspect, inspectNow);
       return;
     }
@@ -716,17 +735,62 @@ export class Game {
     const lightBudget = loading ? WORLD_LOADING_LIGHT_BUDGET_MS : WORLD_LIGHT_BUDGET_MS;
     this.lastLightMs += this.runLightingJobs(session, lightBudget, originX, originZ, inspect, inspectNow);
 
-    if (!loading && generated > 0) {
-      this.jobFrame.meshSkippedDueToGenSeparation = true;
+    const playerCx = floorDiv(originX, 16);
+    const playerCz = floorDiv(originZ, 16);
+    this.lastStreamChunkX = playerCx;
+    this.lastStreamChunkZ = playerCz;
+    discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
+
+    const now = performance.now();
+    const velocity = session.player.velocity;
+    const readyJobs = collectReadyMeshJobs(
+      session.world,
+      originX,
+      originZ,
+      meshRadius,
+      now,
+      velocity.x,
+      velocity.z,
+    );
+    const defaultMeshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
+    const plan = planMeshFrame({
+      loading,
+      generatedThisFrame: generated > 0,
+      consecutiveGenWithoutMesh: this.genWithoutMeshStreak,
+      readyJobs,
+      defaultMeshLimit,
+      frameElapsedMs: now - frameStart,
+    });
+    this.jobFrame.meshReady = plan.ready;
+    this.jobFrame.meshUrgent = plan.urgent;
+    this.jobFrame.meshOldestReadyAgeMs = plan.oldestReadyAgeMs;
+    this.jobFrame.meshStarvationAvoided = plan.starvationAvoided;
+    this.jobFrame.meshSkippedFrame = plan.skipMesh;
+    this.jobFrame.meshSkippedDueToGenSeparation = !loading && generated > 0 && plan.skipMesh;
+    if (inspect && readyJobs[0] && shouldWarnReadyMeshWait(plan.oldestReadyAgeMs, false)) {
+      const head = readyJobs[0];
+      const previous = this.lastReadyMeshWaitWarn;
+      const same = previous !== null && previous.cx === head.chunk.x && previous.cz === head.chunk.z;
+      this.lastReadyMeshWaitWarn = {
+        cx: head.chunk.x,
+        cz: head.chunk.z,
+        waitMs: plan.oldestReadyAgeMs,
+        atMs: same ? previous.atMs : now,
+      };
+    }
+
+    if (plan.skipMesh || plan.meshLimit <= 0) {
+      if (!loading && generated > 0) this.genWithoutMeshStreak += 1;
+      else this.genWithoutMeshStreak = 0;
       this.lastChunkMeshJobs = 0;
       return;
     }
+
     const meshBudget = Math.max(0.5, (loading ? WORLD_LOADING_JOB_BUDGET_MS : WORLD_JOB_BUDGET_MS) - (performance.now() - jobStart));
-    const meshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
     const meshStart = performance.now();
     const meshCounters = inspect ? { attempted: 0, completed: 0, skippedBlocked: 0 } : undefined;
     meshed = session.worldRenderer.rebuildDirty(
-      meshLimit,
+      plan.meshLimit,
       meshBudget,
       originX,
       originZ,
@@ -734,23 +798,33 @@ export class Game {
         meshRadius,
         requireNeighborLight: true,
         counters: meshCounters,
+        dirX: velocity.x,
+        dirZ: velocity.z,
         onMeshStart: inspect
           ? (chunk) => {
             this.lastMeshActiveKey = inspectChunkKey(chunk.x, chunk.z);
             this.streamingTrace.mark('meshStarted', chunk.x, chunk.z, performance.now());
           }
           : undefined,
-        onMeshComplete: inspect
-          ? (chunk) => {
-            const doneAt = performance.now();
+        onMeshComplete: (chunk) => {
+          const doneAt = performance.now();
+          if (inspect) {
             this.streamingTrace.mark('meshed', chunk.x, chunk.z, doneAt);
             this.streamingTrace.mark('visible', chunk.x, chunk.z, doneAt);
+            const stamps = this.streamingTrace.timestamps(chunk.x, chunk.z);
+            if (stamps.litAt !== undefined && stamps.meshStartedAt !== undefined) {
+              this.litToMeshWaits.add(stamps.meshStartedAt - stamps.litAt);
+            }
+            if (stamps.meshStartedAt !== undefined) this.meshDurations.add(doneAt - stamps.meshStartedAt);
+            if (stamps.requestedAt !== undefined) this.requestToVisibleWaits.add(doneAt - stamps.requestedAt);
+            if (stamps.generatedAt !== undefined) this.generatedToVisibleWaits.add(doneAt - stamps.generatedAt);
           }
-          : undefined,
+        },
       },
     );
     this.lastMeshMs += performance.now() - meshStart;
     this.lastChunkMeshJobs = meshed;
+    this.genWithoutMeshStreak = meshed > 0 || generated === 0 ? 0 : this.genWithoutMeshStreak + 1;
     if (meshCounters) {
       this.jobFrame.meshAttempted = meshCounters.attempted;
       this.jobFrame.meshCompleted = meshCounters.completed;
@@ -902,7 +976,12 @@ export class Game {
           consider(playerCx + dx, playerCz + dz);
         }
       }
-      this.inspectorHud = formatStreamingHud(snap, this.slowSnapshots.at(-1) ?? null, now);
+      this.inspectorHud = formatStreamingHud(snap, this.slowSnapshots.at(-1) ?? null, now, {
+        readyMeshWaitWarn: this.lastReadyMeshWaitWarn,
+        litToMesh: this.litToMeshWaits.snapshot(),
+        requestToVisible: this.requestToVisibleWaits.snapshot(),
+        generatedToVisible: this.generatedToVisibleWaits.snapshot(),
+      });
     }
   }
 
@@ -1166,9 +1245,16 @@ export class Game {
     } else if (worldSimulationActive(this.lifecycle.state)) {
       const stepped = advanceFixedStep(this.accumulator, rawElapsed, FIXED_DT, MAX_FRAME_DELTA, MAX_CATCH_UP_TICKS);
       this.accumulator = stepped.nextAccumulator;
+      this.simParts.player = 0;
+      this.simParts.mobs = 0;
+      this.simParts.world = 0;
+      this.simParts.combat = 0;
+      this.simParts.entities = 0;
+      this.simParts.other = 0;
       const tickStart = performance.now();
       for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
       tickMs = performance.now() - tickStart;
+      this.lastSimParts = { ...this.simParts, ticks: stepped.ticks };
       if (stepped.ticks > 0) this.tickTimings.add(tickMs / stepped.ticks);
       this.processWorldJobs(frameStart, false);
     } else this.accumulator = 0;
@@ -1207,7 +1293,14 @@ export class Game {
       const snapshot = this.profiler.snapshot({
         generateJobs: this.lastChunkGenerationJobs,
         meshJobs: this.lastChunkMeshJobs,
-        waitingMesh: session?.world.pendingMeshJobs ?? 0,
+        waitingMesh: session
+          ? pendingMeshInRadius(
+            session.world,
+            playerX,
+            playerZ,
+            this.settings.renderDistance,
+          )
+          : 0,
         waitingGenerate: session
           ? missingChunkCoords(
             session.world,
@@ -1231,21 +1324,32 @@ export class Game {
         chunkZ: session ? floorDiv(playerZ, 16) : undefined,
         chunkHud: session ? this.chunkDebugLine(session) : undefined,
         inspectorHud: this.inspectorHud || undefined,
+        simParts: this.profiler.enabled ? this.lastSimParts : undefined,
+        meshWait: this.profiler.enabled ? this.meshDurations.snapshot() : undefined,
       });
       if (snapshot) this.profiler.paint(this.ui.overlayRoot(), snapshot);
     }
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
   }
 
+  private addSimPart(part: 'player' | 'mobs' | 'world' | 'combat' | 'entities' | 'other', started: number): number {
+    if (!this.profiler.enabled) return 0;
+    this.simParts[part] += performance.now() - started;
+    return performance.now();
+  }
+
   private tick(): void {
     const session = this.session;
     if (!session) return;
+    const profile = this.profiler.enabled;
+    let simMark = profile ? performance.now() : 0;
     session.playTicks += 1;
     session.world.tick();
     for (const spawn of session.world.consumeFallingBlocks()) {
       session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
     }
     session.falling.update(FIXED_DT);
+    simMark = this.addSimPart('world', simMark);
 
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
@@ -1256,6 +1360,7 @@ export class Game {
       this.input.using && holdingShield && session.foodUseTicks <= 0 && session.bowUseTicks <= 0,
     );
     session.combat.tick(FIXED_DT);
+    simMark = this.addSimPart('combat', simMark);
 
     const inventoryOpen = this.ui.isInventoryOpen();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, inventoryOpen);
@@ -1296,6 +1401,7 @@ export class Game {
         return;
       }
     }
+    simMark = this.addSimPart('player', simMark);
 
     if (session.playTicks % 80 === 0) {
       const removed = session.world.pruneChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance);
@@ -1310,8 +1416,10 @@ export class Game {
       session.miningProgress = 0;
       session.miningTarget = undefined;
     }
-    session.arrows.tick(FIXED_DT);
+    simMark = this.addSimPart('other', simMark);
     const entityStart = performance.now();
+    session.arrows.tick(FIXED_DT);
+    simMark = this.addSimPart('entities', simMark);
     session.mobs.update(FIXED_DT, {
       playerPosition: session.player.position,
       playerEyePosition: session.player.eyePosition(),
@@ -1320,6 +1428,7 @@ export class Game {
       daylight: this.daylightFactor(session.world.timeOfDay),
     });
     this.processMobEvents();
+    simMark = this.addSimPart('mobs', simMark);
     this.processExplosionQueue();
     if (session.summary.mode === 'survival' && session.survival.dead) {
       this.handleDeath();
@@ -1327,6 +1436,7 @@ export class Game {
     }
     session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
     this.lastEntityUpdateMs += performance.now() - entityStart;
+    simMark = this.addSimPart('entities', simMark);
     this.updateRedstone();
     if (session.summary.mode === 'survival' && session.survival.dead) {
       this.handleDeath();
@@ -1339,6 +1449,7 @@ export class Game {
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
     if (inventoryOpen) this.ui.refreshOpenInventory();
+    this.addSimPart('other', simMark);
   }
 
   private updateTargetAndActions(): void {
