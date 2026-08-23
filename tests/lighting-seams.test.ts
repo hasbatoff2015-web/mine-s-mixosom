@@ -98,11 +98,11 @@ describe('simplified lighting, seams and budgets', () => {
     world.ensureChunks(8, 8, 1);
     lightAll(world);
     resetLightEngineStats();
-    world.setBlock(8, 50, 8, BlockId.Torch);
+    world.setBlock(8, 88, 8, BlockId.Torch);
     expect(lightEngineStats.skyRecomputes).toBe(0);
     expect(lightEngineStats.blockPropagations).toBeGreaterThan(0);
     const blockBefore = lightEngineStats.blockPropagations;
-    world.setBlock(8, 50, 8, BlockId.Air);
+    world.setBlock(8, 88, 8, BlockId.Air);
     expect(lightEngineStats.skyRecomputes).toBe(0);
     expect(lightEngineStats.blockPropagations).toBeGreaterThan(blockBefore);
   });

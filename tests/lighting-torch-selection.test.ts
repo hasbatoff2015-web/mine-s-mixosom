@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { CHUNK_SIZE, floorDiv, positiveMod } from '../src/core/constants';
+import { CHUNK_SIZE, WORLD_HEIGHT, floorDiv, positiveMod } from '../src/core/constants';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import {
   createSelectionGeometry,
@@ -249,7 +249,7 @@ describe('torch lighting, orientation and selection', () => {
     const world = new VoxelWorld('cave-opening');
     const chunk = world.getChunk(0, 0)!;
     chunk.blocks.fill(BlockId.Stone);
-    for (let y = 45; y < 80; y += 1) writeBlock(world, 8, y, 8, BlockId.Air);
+    for (let y = 45; y < WORLD_HEIGHT; y += 1) writeBlock(world, 8, y, 8, BlockId.Air);
     for (let x = 4; x <= 12; x += 1) {
       for (let z = 4; z <= 12; z += 1) writeBlock(world, x, 52, z, BlockId.GrassBlock);
     }

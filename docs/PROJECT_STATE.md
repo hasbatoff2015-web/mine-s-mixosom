@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | Boot/menu/world list | Готово | Boot loading, главное меню, создание/загрузка миров; вход в мир идёт через `LOADING_WORLD` с реальным progress, пока initial radius не готов |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
-| Procedural world | Готово | Seeded chunks `16×16×80`, plains/forest/desert, caves, sea, five ores, trees, cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
+| Procedural world | Готово | Seeded chunks `16×16×96`, plains/forest/desert, periodic mountains (+10…+20), deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision, fall damage, water/lava |
 | Mining/building | Готово для alpha | Raycast, 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
@@ -26,27 +26,28 @@
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
-| Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect |
+| Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills на chunk HUD |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
-| Automated QA | Частично готово | unit/component tests (см. `docs/TESTING.md`), CPU job + lighting + streaming-scheduler benchmarks и DEV `?perf=1` overlay (F8 colored chunk states, F7 light debug, F9 freeze front chunk, streaming inspector + mesh fairness HUD); no automated WebGL/IndexedDB/full browser E2E suite |
+| Automated QA | Частично готово | unit/component tests (см. `docs/TESTING.md`), CPU job + lighting + streaming-scheduler + worldgen benchmarks и DEV `?perf=1` overlay (F8 colored chunk states, F7 light debug, F9 freeze front chunk, streaming inspector + mesh fairness HUD); no automated WebGL/IndexedDB/full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |
 
 ## Мир и блоки
 
 ### Готово
 
-- Чанк хранит `16 × 80 × 16` numeric block IDs в `Uint16Array`.
+- Чанк хранит `16 × 96 × 16` numeric block IDs в `Uint16Array`. Индекс `y × 256 + z × 16 + x` не содержит `WORLD_HEIGHT`, поэтому старые modification deltas остаются валидными.
 - Горизонтальные координаты процедурно не ограничены; вокруг игрока загружается настраиваемый радиус, дальние chunks удаляются из runtime cache.
 - Генерация детерминирована строковым seed.
 - Реализованы три биома: `plains`, `forest`, `desert`.
-- Высота поверхности варьируется примерно от `38` до `68`, sea level — `48`.
-- Есть bedrock floor, 3D-noise caves, редкая lava на глубине и veins для coal, iron, gold, redstone и diamond.
+- Высота поверхности типично `63–84` (sea level `63`); periodic mountain mask даёт широкие возвышенности примерно `+10…+20` над local baseline, с headroom `12` блоков до `WORLD_HEIGHT`.
+- Есть bedrock floor (`Y 0–2`), ridged 3D-noise cave networks (ветвления и chambers, без прореза bedrock), редкая lava на глубине и veins для coal, iron, gold, redstone и diamond в сдвинутых Y-bands.
+- Forest oak density ≈ 40% прежней, desert cactus ≈ 25–30% прежней; biome-specific cross-plants без изменения самих моделей.
 - Terrain decor включает oak trees, cactus и детерминированные растения: tall grass/flowers в plains, tall grass/fern/flowers в forest, dead bush в desert.
 - Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone и slabs/stairs. Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint.
-- Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком.
+- Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком. Старые saves загружаются без crash; **неизменённый** terrain при reload перегенерируется новым worldgen (возможен seam на границе уже изменённого и нового chunk). Для visual QA гор/пещер нужен новый мир.
 - Chunk дополнительно хранит компактные `Uint8Array` skyLight/blockLight (`0–15`) того же размера, что и blocks.
 - Sand и gravel при потере опоры удаляются из сетки и становятся falling-block entity с gravity/mesh, затем возвращаются в world.
 - Дверь — тонкая 2-block cuboid geometry (`3/16`) с open/close, collision по occupied face, joint upper/lower state и UV half/hinge как у vanilla `door_*_left/right`.
@@ -217,10 +218,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     33 files, 275 tests — PASS
-Vite build: 90 modules — PASS
-Size/archive: 1.01 MiB / 167 files — PASS
-Main JS: 793.27 kB / 215.81 kB gzip; CSS: 22.02 kB / 5.30 kB gzip
+Vitest:     45 files, 380 tests — PASS
+Vite build: 100 modules — PASS
+Size/archive: 1.08 MiB / 167 files — PASS
+Main JS: 870.56 kB / 240.68 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

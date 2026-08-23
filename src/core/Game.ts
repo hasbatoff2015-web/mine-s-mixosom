@@ -42,7 +42,7 @@ import {
   floorDiv,
 } from './constants';
 import { advanceFixedStep } from './fixedStep';
-import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
+import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
 import {
   chunksInSquareRadius,
   initialReadyChunkRadius,
@@ -120,6 +120,7 @@ import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types
 import { SurvivalSystem } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
+import { collectSpawnColumns } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -545,33 +546,35 @@ export class Game {
   }
 
   private estimateSpawn(world: VoxelWorld): [number, number, number] {
-    for (let radius = 0; radius <= 24; radius += 1) {
-      for (let z = -radius; z <= radius; z += 1) {
-        for (let x = -radius; x <= radius; x += 1) {
-          if (radius > 0 && Math.abs(x) !== radius && Math.abs(z) !== radius) continue;
-          const column = world.generator.columnAt(x, z);
-          if (column.height <= SEA_LEVEL) continue;
-          return [x + 0.5, column.height + 1.01, z + 0.5];
-        }
-      }
-    }
+    const best = collectSpawnColumns(world.generator)[0];
+    if (best) return [best.x + 0.5, best.height + 1.01, best.z + 0.5];
     const fallback = world.generator.columnAt(0, 0);
-    return [0.5, fallback.height + 2, 0.5];
+    return [0.5, Math.max(SEA_LEVEL + 2, fallback.height + 2), 0.5];
   }
 
   private snapPlayerToTerrain(): void {
     const session = this.session;
     if (!session) return;
-    const x = Math.floor(session.player.position.x);
-    const z = Math.floor(session.player.position.z);
-    const surface = session.world.surfaceY(x, z);
-    const floor = session.world.getBlock(x, surface, z);
-    if (
-      (floor === BlockId.GrassBlock || floor === BlockId.Sand)
-      && !session.world.isSolid(x, surface + 1, z)
-      && !session.world.isSolid(x, surface + 2, z)
-    ) {
+    const originX = Math.floor(session.player.position.x);
+    const originZ = Math.floor(session.player.position.z);
+    const tryColumn = (x: number, z: number): boolean => {
+      const column = session.world.generator.columnAt(x, z);
+      if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
+      const surface = session.world.surfaceY(x, z);
+      const floor = session.world.getBlock(x, surface, z);
+      if (floor !== BlockId.GrassBlock) return false;
+      if (session.world.isSolid(x, surface + 1, z) || session.world.isSolid(x, surface + 2, z)) return false;
       session.player.teleport([x + 0.5, surface + 1.01, z + 0.5]);
+      return true;
+    };
+    if (tryColumn(originX, originZ)) return;
+    for (let radius = 1; radius <= 24; radius += 1) {
+      for (let z = -radius; z <= radius; z += 1) {
+        for (let x = -radius; x <= radius; x += 1) {
+          if (Math.abs(x) !== radius && Math.abs(z) !== radius) continue;
+          if (tryColumn(originX + x, originZ + z)) return;
+        }
+      }
     }
   }
 
@@ -2377,7 +2380,10 @@ export class Game {
     const mesh = session.worldRenderer.hasChunk(key) ? 'mesh' : 'nomesh';
     const lit = chunk.lightingReady ? 'lit' : `sky${chunk.skyReady ? '1' : '0'}/blk${chunk.blockLightReady ? '1' : '0'}`;
     const stale = chunk.lightMeshStale ? ' STALE' : '';
-    return `${chunkX},${chunkZ} ${lit} ${mesh} lv ${chunk.lightVersion}/${chunk.meshedLightVersion} sky ${session.world.skyLightAt(x, y, z)} blk ${session.world.blockLightAt(x, y, z)}${stale} · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'} F9=${this.inspectFreeze ? 'frozen' : 'live'}`;
+    const base = `${chunkX},${chunkZ} ${lit} ${mesh} lv ${chunk.lightVersion}/${chunk.meshedLightVersion} sky ${session.world.skyLightAt(x, y, z)} blk ${session.world.blockLightAt(x, y, z)}${stale} · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'} F9=${this.inspectFreeze ? 'frozen' : 'live'}`;
+    if (!isWorldgenDebugQueryEnabled()) return base;
+    const column = session.world.generator.columnAt(x, z);
+    return `${base}  y=${column.height} mtn=${column.mountain.toFixed(1)} hills=${column.hills.toFixed(1)}`;
   }
 
   private updateChunkGrid(): void {

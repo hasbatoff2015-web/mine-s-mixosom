@@ -16,8 +16,18 @@ export const LIGHTING_HALO_CHUNKS = 1;
 export const ENTITY_SNAP_DISTANCE = 6;
 
 export const CHUNK_SIZE = 16;
-export const WORLD_HEIGHT = 80;
-export const SEA_LEVEL = 48;
+/**
+ * Vertical world size in blocks (Y in `0 .. WORLD_HEIGHT-1`).
+ * Raised 80 → 96 so we can keep sea/plains relationship, add ~15 underground,
+ * and still fit +10…+20 mountains plus build headroom. Indexing is
+ * `y * 16 * 16 + z * 16 + x` and does not embed WORLD_HEIGHT, so old
+ * modification deltas remain valid.
+ */
+export const WORLD_HEIGHT = 96;
+/** Still ~1 block below typical plains, shifted +15 with the terrain stack. */
+export const SEA_LEVEL = 63;
+/** Generated terrain stays this many blocks below WORLD_HEIGHT for player builds. */
+export const TERRAIN_HEADROOM = 12;
 export const DEFAULT_RENDER_DISTANCE_DESKTOP = 4;
 export const DEFAULT_RENDER_DISTANCE_MOBILE = 2;
 

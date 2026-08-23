@@ -372,6 +372,27 @@ Responsive browser layout считается пройденным; реальн�
 
 Decoration у края chunk нужно проверять отдельно, потому что текущий placer намеренно не строит дерево через соседний chunk.
 
+Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run benchmark:worldgen`):
+
+- same seed → identical heights/caves/trees/cacti; other seed → different terrain;
+- surface in `58–84`, sea `63`, generated peaks leave `TERRAIN_HEADROOM = 12`;
+- mountain contribution `+10…+20` на части мира, не на каждом chunk;
+- neighbor height delta ≤ 4, в том числе на biome borders и chunk borders;
+- bedrock `Y 0–2` sealed, caves never carve it; extra ~15 underground vs old surface~49;
+- cave networks cross `x=15|16`; connected-component size/width vs swiss-cheese ratio;
+- Forest oak ≈ 35–50% old count; Desert cactus ≈ 20–30% old count;
+- ores only inside shifted `ORE_RULES` bands, including new deep stone;
+- spawn on plains grass above sea, not mountain/cave/desert;
+- old modification linear indices still restore after `WORLD_HEIGHT` 80→96.
+
+DEV: `?worldgenDebug=1` appends `y=` / `mtn=` / `hills=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
+
+```bash
+npm run benchmark:worldgen
+```
+
+CPU-only (no GPU FPS). Compare plains/forest/desert chunk ms and 81-chunk batch with the numbers in `docs/reports/2026-08-23_worldgen-mountains-caves-density.md`.
+
 ## Combat/entity regression scenarios
 
 - Удар рукой, sword, pickaxe, shovel и axe на empty/half/full cooldown.

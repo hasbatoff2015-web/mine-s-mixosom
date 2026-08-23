@@ -8,7 +8,7 @@ import {
   positiveMod,
 } from '../src/core/constants';
 import { Chunk } from '../src/world/Chunk';
-import { TerrainGenerator } from '../src/world/Generator';
+import { TerrainGenerator, ORE_RULES } from '../src/world/Generator';
 import { VoxelWorld } from '../src/world/World';
 
 function generatedChunk(seed: string, x: number, z: number): Chunk {
@@ -73,13 +73,7 @@ describe('chunk coordinates and seeded generation', () => {
   });
 
   it('places every compact-world ore in its configured vertical band', () => {
-    const bands = new Map<BlockId, readonly [number, number]>([
-      [BlockId.CoalOre, [18, 46]],
-      [BlockId.IronOre, [8, 40]],
-      [BlockId.GoldOre, [4, 24]],
-      [BlockId.RedstoneOre, [3, 15]],
-      [BlockId.DiamondOre, [3, 11]],
-    ]);
+    const bands = new Map<BlockId, readonly [number, number]>(ORE_RULES.map((rule) => [rule.block, [rule.minY, rule.maxY]]));
     const counts = new Map<BlockId, number>();
     const generator = new TerrainGenerator('ore-distribution-sanity');
 
