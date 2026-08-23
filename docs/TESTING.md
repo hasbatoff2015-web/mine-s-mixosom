@@ -53,14 +53,14 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-23** (chunk mesh starvation fix):
+Срез локального запуска **2026-08-23** (lighting halo / flood-head scheduler):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       43 test files, 337 tests, 337 passed
+Vitest:       44 test files, 368 tests, 368 passed
 Vite build:   100 modules PASS
-Size/archive: PASS, 1.07 MiB uncompressed, 167 files
-Main assets:  JS 856.82 kB / 236.47 kB gzip; CSS 25.94 kB / 6.03 kB gzip
+Size/archive: PASS, 1.08 MiB uncompressed, 167 files
+Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -106,7 +106,7 @@ Main assets:  JS 856.82 kB / 236.47 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
 | `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
 | `tests/chunk-streaming-inspector.test.ts` | 26 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH STARVATION uses readyWanted not litAt, LAST SPIKE age, ready vs blocked head, front-target selection, player-visible vs prefetch latency, wanted enter/leave/re-enter, rolling stats exclude never-wanted halo |
-| `tests/streaming-scheduler.test.ts` | 11 | Generation cannot starve nearby mesh; LOADING still meshes; urgent wait; obsolete pending cleanup; prune clears pendingMesh; queue consistency; priority on chunk cross; blocked mesh head; continuous-gen fair vs legacy |
+| `tests/lighting-scheduler.test.ts` | 19 | Lighting flood skip past blocked head; 70 blocked + 1 ready; resume near flood owner; mesh-context DAG (no lighting A↔B cycle); A→B→C leaf lighting; near-unlock priority; distant flood preempt; obsolete unlit skip; orphaned/obsolete flood after prune or leave radius; radius-6 wanted set; 2 ms slice; torch border; flat sky seam; rapid break; CPU fly near-hole bound |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -389,7 +389,7 @@ Decoration у края chunk нужно проверять отдельно, п�
 
 ## Performance/soak
 
-DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, SIM player/mobs/world/combat/entities/other, job counts, LAST SPIKE with **age**, READY MESH STARVATION > 500 ms (readyWanted wait, not litAt), PLAYER-VISIBLE `WANTED→VISIBLE` / `READY-WANTED→MESH` histograms plus separate PREFETCH HISTORY (`lit→meshStart`). Chunk streaming inspector (PLAYER/FRONT CHUNK, halo, GEN/LIGHT/MESH ready vs blocked, `queuedObsolete` = pending outside wanted). Не логирует console каждый кадр. F8 цветная сетка, F7 light view, F9 freeze front chunk (CURRENT STATE vs LAST WANTED PERIOD; CURRENTLY NOT WANTED if outside mesh radius). Prefetch lifetime vs player-visible latency: `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Starvation/obsolete evidence: `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. Scripted:
+DEV overlay: `?perf=1` — FPS, frame/tick p95/p99/max, SIM player/mobs/world/combat/entities/other, job counts, LAST SPIKE with **age**, READY MESH STARVATION > 500 ms (readyWanted wait, not litAt), PLAYER-VISIBLE `WANTED→VISIBLE` / `READY-WANTED→MESH` histograms plus separate PREFETCH HISTORY (`lit→meshStart`). Chunk streaming inspector (PLAYER/FRONT CHUNK, halo, DEPENDENCY CHAIN, GEN/LIGHT/MESH ready vs blocked, LIGHT `skipsBlockedHead` / `criticalBlocked`, `queuedObsolete` = pending outside wanted). Не логирует console каждый кадр. F8 цветная сетка, F7 light view, F9 freeze front chunk (CURRENT STATE vs LAST WANTED PERIOD; CURRENTLY NOT WANTED if outside mesh radius). Prefetch vs player-visible: `docs/reports/2026-08-23_chunk-streaming-inspector.md`. Mesh starvation: `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. Lighting halo flood skip: `docs/reports/2026-08-23_lighting-halo-scheduler-starvation.md`. Scripted:
 
 - `?perf=1&perfScenario=CREATIVE_BREAK_STRESS` — 100 canonical `applyBlockBatch` air mutations after world ready;
 - `?perf=1&perfScenario=MOB_SMOOTHNESS` — one cow with interpolated visual sample.

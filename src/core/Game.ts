@@ -125,6 +125,7 @@ import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightC
 import {
   collectReadyMeshJobs,
   discardObsoletePendingMesh,
+  lightingUnlockNeighborKeys,
   pendingMeshInRadius,
   planMeshFrame,
 } from '../world/streamingScheduler';
@@ -713,7 +714,19 @@ export class Game {
     let generated = 0;
     let meshed = 0;
 
-    const missing = missingChunkCoords(session.world, originX, originZ, generateRadius);
+    const missing = missingChunkCoords(
+      session.world,
+      originX,
+      originZ,
+      generateRadius,
+      lightingUnlockNeighborKeys(
+        session.world,
+        floorDiv(originX, 16),
+        floorDiv(originZ, 16),
+        meshRadius,
+        generateRadius,
+      ),
+    );
     if (inspect) {
       for (const coord of missing) this.streamingTrace.mark('requested', coord.x, coord.z, inspectNow);
     }

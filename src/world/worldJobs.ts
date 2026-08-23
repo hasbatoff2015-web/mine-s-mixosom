@@ -61,6 +61,7 @@ export function missingChunkCoords(
   blockX: number,
   blockZ: number,
   radius: number,
+  unlockKeys?: ReadonlySet<string>,
 ): Array<{ x: number; z: number; distanceSq: number }> {
   const centerX = floorDiv(blockX, CHUNK_SIZE);
   const centerZ = floorDiv(blockZ, CHUNK_SIZE);
@@ -73,7 +74,12 @@ export function missingChunkCoords(
       missing.push({ x, z, distanceSq: dx * dx + dz * dz });
     }
   }
-  missing.sort((a, b) => a.distanceSq - b.distanceSq);
+  missing.sort((a, b) => {
+    const ua = unlockKeys?.has(chunkKey(a.x, a.z)) ? 0 : 1;
+    const ub = unlockKeys?.has(chunkKey(b.x, b.z)) ? 0 : 1;
+    if (ua !== ub) return ua - ub;
+    return a.distanceSq - b.distanceSq;
+  });
   return missing;
 }
 

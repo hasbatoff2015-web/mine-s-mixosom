@@ -37,6 +37,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после DEV chunk streaming inspector (diagnostic only, no scheduler change): typecheck, 323 tests / 42 files, production build 99 modules, 1.06 MiB / 167 files.
 - [x] Локальный pipeline после chunk mesh starvation / obsolete pending cleanup: typecheck, 337 tests / 43 files, production build 100 modules, 1.07 MiB / 167 files.
 - [x] Локальный pipeline после player-visible streaming latency metrics (inspector only, no scheduler change): typecheck, 349 tests / 43 files, production build 100 modules, 1.08 MiB / 167 files.
+- [x] Локальный pipeline после lighting halo / flood-head scheduler fix: typecheck, 368 tests / 44 files, production build 100 modules, 1.08 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -111,6 +112,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Добавить budgets по jobs/миллисекундам, generation/mesh scheduling и F3 telemetry для chunk rebuild; frustum/distance priority остаётся следующим этапом.
 - [x] Adaptive per-frame world-job budget, dirty-mesh Set-dedupe, neighbor remesh только на X/Z boundary, `LOADING_WORLD` until initial radius ready, entity render interpolation at 20 TPS.
 - [x] Simplified column sky + bounded block light, resumable light jobs (`WORLD_LIGHT_BUDGET_MS`), lighting halo, `lightVersion`/`meshedLightVersion`, DEV chunk-border overlay.
+- [x] Lighting flood mutex no longer stops the queue on a blocked head; near unlock neighbors outrank distant halo; obsolete floods are abandoned.
 - [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
 - [ ] Улучшить сортировку отдельных translucent water/glass faces.
 - [x] Добавить lightweight skylight/block-light contribution в chunk meshing; torch/lava обновляют свет локально, без full-world rebuild.

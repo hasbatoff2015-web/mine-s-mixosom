@@ -14,6 +14,8 @@ import {
   getBlockLight,
   getSkyLight,
   lightingFloodOwner,
+  abandonLightingFloodIfOrphaned,
+  resetIncompleteBlockLighting,
   lightEngineStats,
   lightFrameStats,
   processChunkLighting,
@@ -25,7 +27,14 @@ import {
   type LightRegion,
   type PendingLightJob,
 } from './LightEngine';
-import { neighborMeshOffsets, sortedLoadedChunksByDistance } from './worldJobs';
+import { chebyshevChunkDistance, neighborMeshOffsets } from './worldJobs';
+import {
+  collectUnlitLightJobs,
+  criticalUnlitKeys,
+  isLightJobBlockedByFlood,
+  lightingUnlockNeighborKeys,
+  shouldPreemptDistantLightingFlood,
+} from './streamingScheduler';
 
 export interface VoxelHit {
   x: number;
@@ -525,6 +534,22 @@ export class VoxelWorld {
     resetLightFrameStats();
     const start = performance.now();
     const deadline = start + Math.max(0.25, budgetMs);
+    const originCx = floorDiv(originX, CHUNK_SIZE);
+    const originCz = floorDiv(originZ, CHUNK_SIZE);
+    const generateRadius = this.generationRadius;
+    const unlock = lightingUnlockNeighborKeys(this, originCx, originCz, this.meshRadius, generateRadius);
+    const previousOwner = lightingFloodOwner();
+    const keepFlood = (key: string): boolean => {
+      const chunk = this.chunks.get(key);
+      if (!chunk) return false;
+      if (chebyshevChunkDistance(chunk.x, chunk.z, originCx, originCz) > generateRadius) return false;
+      const critical = criticalUnlitKeys(this, originCx, originCz, this.meshRadius, generateRadius);
+      return !shouldPreemptDistantLightingFlood(key, originCx, originCz, unlock, critical.length);
+    };
+    if (abandonLightingFloodIfOrphaned(keepFlood)) {
+      const leftover = this.chunks.get(previousOwner);
+      if (leftover) resetIncompleteBlockLighting(leftover);
+    }
     const owner = lightingFloodOwner();
 
     if (this.pendingLight && (owner === '' || owner === 'region')) {
@@ -537,20 +562,15 @@ export class VoxelWorld {
     }
 
     if (performance.now() < deadline && (lightingFloodOwner() === '' || lightingFloodOwner() !== 'region')) {
-      const unlit = sortedLoadedChunksByDistance(
-        this,
-        originX,
-        originZ,
-        (chunk) => !chunk.lightingReady,
-      );
+      const unlit = collectUnlitLightJobs(this, originX, originZ, generateRadius, unlock);
       lightFrameStats.jobsPending = unlit.length + (this.pendingLight ? 1 : 0);
       for (const job of unlit) {
         if (performance.now() >= deadline) break;
         const key = chunkKey(job.chunk.x, job.chunk.z);
         const floodOwner = lightingFloodOwner();
-        if (floodOwner !== '' && floodOwner !== key && floodOwner !== 'region') {
+        if (isLightJobBlockedByFlood(floodOwner, key)) {
           if (counters) counters.blocked += 1;
-          break;
+          continue;
         }
         if (counters) counters.attempted += 1;
         const complete = processChunkLighting(this, job.chunk, deadline);
@@ -626,6 +646,7 @@ export class VoxelWorld {
       this.pendingMesh.delete(key);
       removed.push(key);
     }
+    abandonLightingFloodIfOrphaned((key) => this.chunks.has(key));
     return removed;
   }
 

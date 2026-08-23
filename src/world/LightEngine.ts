@@ -355,6 +355,22 @@ export function lightingFloodOwner(): string {
   return floodOwnerKey;
 }
 
+/** If the in-progress flood's chunk was pruned or left the live generate radius, drop the mutex. */
+export function abandonLightingFloodIfOrphaned(keepOwner: (key: string) => boolean): boolean {
+  if (floodOwnerKey === '' || floodOwnerKey === 'region') return false;
+  if (keepOwner(floodOwnerKey)) return false;
+  floodHead = 0;
+  floodTail = 0;
+  floodOwnerKey = '';
+  return true;
+}
+
+/** Restart block-light seeding after an obsolete flood is dropped. Sky fill is kept. */
+export function resetIncompleteBlockLighting(chunk: Chunk): void {
+  if (chunk.blockLightReady) return;
+  chunk.blockScanCursor = 0;
+}
+
 function absorbBorderBlockLight(world: VoxelWorld, chunk: Chunk): void {
   const originX = chunk.x * CHUNK_SIZE;
   const originZ = chunk.z * CHUNK_SIZE;

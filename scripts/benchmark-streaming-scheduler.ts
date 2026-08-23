@@ -127,8 +127,13 @@ const beforeLocalQa = {
 };
 
 function compact(result: ReturnType<typeof runStreamingPath>) {
-  const { litToMeshWaitsMs, ...rest } = result;
-  return { ...rest, litToMesh: summarize('litToMesh', litToMeshWaitsMs) };
+  const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...rest } = result;
+  return {
+    ...rest,
+    litToMesh: summarize('litToMesh', litToMeshWaitsMs),
+    wantedToVisible: summarize('wantedToVisible', wantedToVisibleMs),
+    readyWantedToMesh: summarize('readyWantedToMesh', readyWantedToMeshMs),
+  };
 }
 
 const flySliced = runStreamingPath(new VoxelWorld('stream-fly-sliced-light'), {
@@ -142,11 +147,56 @@ const flySliced = runStreamingPath(new VoxelWorld('stream-fly-sliced-light'), {
   path: [{ x: 8, z: 8 }, { x: 8 + 12 * CHUNK_SIZE, z: 8 }],
 });
 
+const flyRadius6 = runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'), {
+  meshRadius: 6,
+  lightBudgetMs: 2,
+  pruneEveryFrames: 80,
+  warmupFrames: 48,
+  instantLight: false,
+  policy: 'fair',
+  speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
+  path: [{ x: 8, z: 8 }, { x: 8 + 30 * CHUNK_SIZE, z: 8 }],
+});
+
+const reverseRadius6 = runStreamingPath(new VoxelWorld('stream-reverse-r6-sliced'), {
+  meshRadius: 6,
+  lightBudgetMs: 2,
+  pruneEveryFrames: 80,
+  warmupFrames: 40,
+  instantLight: false,
+  policy: 'fair',
+  speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
+  path: eastThenWestPath(15, 15),
+});
+
+const zigzagRadius6 = runStreamingPath(new VoxelWorld('stream-zigzag-r6-sliced'), {
+  meshRadius: 6,
+  lightBudgetMs: 2,
+  pruneEveryFrames: 40,
+  warmupFrames: 40,
+  instantLight: false,
+  policy: 'fair',
+  speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
+  path: zigzagPath(6, 4),
+});
+
+const beforeLightingQa = {
+  frontDistance: 2,
+  blockedBy: 'neighbor S not lit',
+  wantedSinceS: 18.75,
+  maxDistanceLightPending: 71,
+  maxDistanceLightBlocked: 70,
+  maxDistanceLightReady: 1,
+  oldestBlockedS: 161,
+  stopsOnBlockedHead: true,
+};
+
 console.info(JSON.stringify({
   scenario: 'streaming-scheduler',
   budgetsUnchanged: { WORLD_JOB_BUDGET_MS: 4, WORLD_LIGHT_BUDGET_MS: 2 },
   note: 'walk/fly/reverse/zigzag use instantLight to isolate mesh fairness from lighting slices',
   beforeLocalQa,
+  beforeLightingQa,
   walkFair: compact(walk),
   walkLegacy: compact(walkLegacy),
   flyFair: compact(fly),
@@ -155,6 +205,9 @@ console.info(JSON.stringify({
   reverseLegacy: compact(reverseLegacy),
   zigzagFair: compact(zigzag),
   flySlicedLightFair: compact(flySliced),
+  flyRadius6SlicedLight: compact(flyRadius6),
+  reverseRadius6SlicedLight: compact(reverseRadius6),
+  zigzagRadius6SlicedLight: compact(zigzagRadius6),
   meshCpuSamples: measureMeshSamples(),
   breakRegression: measureBreakRegression(),
 }, null, 2));

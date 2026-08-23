@@ -7,6 +7,14 @@ import { lightingFloodOwner } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
 import { chebyshevChunkDistance, lightContextReady } from '../world/worldJobs';
 import {
+  collectUnlitLightJobs,
+  criticalUnlitKeys,
+  formatMeshLightDependencyChain,
+  isLightJobBlockedByFlood,
+  lightingUnlockNeighborKeys,
+  walkMeshLightDependencyChain,
+} from '../world/streamingScheduler';
+import {
   CARDINAL_HALO,
   categorizeChunk,
   categoryLabel,
@@ -85,6 +93,7 @@ export interface ChunkInspectView {
   readonly durations: ReturnType<typeof computeDurations>;
   readonly latency: PlayerVisibleLatency;
   readonly events: string[];
+  readonly dependencyChain: string[];
   readonly source?: string;
 }
 
@@ -104,9 +113,13 @@ export interface StreamingInspectorSnapshot {
   readonly flying: boolean;
   readonly jobFrame: JobFrameCounters;
   readonly lightStopsOnBlockedHead: boolean;
+  readonly lightSkipsBlockedHead: boolean;
   readonly meshSkipsBlockedHead: boolean;
   readonly frozen: boolean;
   readonly overlay: Map<string, ReturnType<typeof categorizeChunk>>;
+  readonly lightCriticalBlocked: number;
+  readonly lightOldestCriticalAgeMs: number | null;
+  readonly floodOwner: string;
 }
 
 function wantedKeys(originCx: number, originCz: number, radius: number): string[] {
@@ -242,22 +255,25 @@ export function collectStreamingQueues(view: StreamingWorldView): {
   genKeys.sort((a, b) => a.dist - b.dist);
 
   const floodOwner = lightingFloodOwner();
-  const lightJobs: Array<{ key: string; dist: number; ready: boolean }> = [];
+  const unlock = lightingUnlockNeighborKeys(view.world, originCx, originCz, view.meshRadius, view.generateRadius);
+  const lightOrdered = collectUnlitLightJobs(view.world, view.originX, view.originZ, view.generateRadius, unlock);
+  const lightJobs: Array<{ key: string; dist: number; ready: boolean }> = lightOrdered.map((job) => {
+    const key = chunkKey(job.chunk.x, job.chunk.z);
+    return {
+      key,
+      dist: job.distanceSq,
+      ready: !isLightJobBlockedByFlood(floodOwner, key),
+    };
+  });
   const meshJobs: Array<{ key: string; dist: number; ready: boolean }> = [];
   for (const chunk of view.world.chunks.values()) {
     const dist = distanceSq(chunk.x, chunk.z, originCx, originCz);
-    const key = chunkKey(chunk.x, chunk.z);
-    if (!chunk.lightingReady) {
-      const blocked = floodOwner !== '' && floodOwner !== 'region' && floodOwner !== worldChunkKey(chunk.x, chunk.z);
-      lightJobs.push({ key, dist, ready: !blocked });
-    }
     const inMesh = chebyshev(chunk.x, chunk.z, originCx, originCz) <= view.meshRadius;
     if (inMesh && (chunk.dirty || chunk.lightMeshStale || view.world.pendingMesh.has(worldChunkKey(chunk.x, chunk.z)))) {
       const context = lightContextReady(view.world, chunk, originCx, originCz, view.generateRadius);
-      meshJobs.push({ key, dist, ready: chunk.lightingReady && context });
+      meshJobs.push({ key: chunkKey(chunk.x, chunk.z), dist, ready: chunk.lightingReady && context });
     }
   }
-  lightJobs.sort((a, b) => a.dist - b.dist);
   meshJobs.sort((a, b) => a.dist - b.dist);
 
   const meshAllKeys: string[] = [];
@@ -336,6 +352,16 @@ export function inspectStreamingChunk(
     durations,
     latency,
     events: formatTraceEvents(events, origin),
+    dependencyChain: formatMeshLightDependencyChain(
+      walkMeshLightDependencyChain(
+        view.world,
+        cx,
+        cz,
+        view.playerCx,
+        view.playerCz,
+        view.generateRadius,
+      ),
+    ),
     source,
   };
 }
@@ -434,6 +460,19 @@ export function captureStreamingSnapshot(
   const genHead = queues.genKeys[0];
   const lightHead = queues.lightKeys[0];
   const meshHead = queues.meshKeys[0];
+  const criticalUnlit = criticalUnlitKeys(
+    view.world,
+    view.playerCx,
+    view.playerCz,
+    view.meshRadius,
+    view.generateRadius,
+  );
+  let oldestCritical: number | null = null;
+  for (const key of criticalUnlit) {
+    const age = ages.get(key);
+    if (age === undefined) continue;
+    oldestCritical = oldestCritical === null ? age : Math.max(oldestCritical, age);
+  }
 
   return {
     player,
@@ -472,10 +511,14 @@ export function captureStreamingSnapshot(
     heading: compass8(dirX, dirZ),
     flying: view.flying,
     jobFrame: view.jobFrame,
-    lightStopsOnBlockedHead: true,
+    lightStopsOnBlockedHead: false,
+    lightSkipsBlockedHead: true,
     meshSkipsBlockedHead: true,
     frozen: view.freeze?.frozen === true,
     overlay: overlayCategories,
+    lightCriticalBlocked: criticalUnlit.length,
+    lightOldestCriticalAgeMs: oldestCritical,
+    floodOwner: queues.floodOwner,
   };
 }
 
@@ -543,6 +586,7 @@ function formatInspectBlock(title: string, view: ChunkInspectView, frozen: boole
     `prefetch lit→meshStart ${formatDurationMs(view.durations.litToMeshStartMs)}  mesh dur ${formatDurationMs(view.durations.meshDurationMs)}  mesh→vis ${formatDurationMs(view.durations.meshToVisibleMs)}`,
     'HALO',
     ...view.haloLines.map((line) => `  ${line}`),
+    ...(view.dependencyChain.length > 0 ? ['DEPENDENCY CHAIN', ...view.dependencyChain.map((line) => `  ${line}`)] : []),
     ...(view.events.length > 0 ? ['EVENTS', ...view.events.map((line) => `  ${line}`)] : []),
   ];
 }
@@ -566,8 +610,8 @@ export function formatStreamingHud(
   const jf = snap.jobFrame;
   const lines = [
     `GEN ${snap.gen.pending} pending | oldest ${age(snap.gen.oldestAgeMs)} | head ${snap.gen.headKey ?? '—'} ${snap.gen.headState ?? ''}`,
-    `LIGHT ${snap.light.pending} pending | ready ${snap.light.ready} | blocked ${snap.light.blocked} | oldest ${age(snap.light.oldestAgeMs)}`,
-    `  head ${snap.light.headKey ?? '—'} ${snap.light.headState ?? ''} | stopsOnBlockedHead ${yesNo(snap.lightStopsOnBlockedHead)}`,
+    `LIGHT ${snap.light.pending} pending | ready ${snap.light.ready} | blocked ${snap.light.blocked} | criticalBlocked ${snap.lightCriticalBlocked} | oldestCritical ${age(snap.lightOldestCriticalAgeMs)}`,
+    `  head ${snap.light.headKey ?? '—'} ${snap.light.headState ?? ''} | skipsBlockedHead ${yesNo(snap.lightSkipsBlockedHead)} | stopsOnBlockedHead ${yesNo(snap.lightStopsOnBlockedHead)} | floodOwner ${snap.floodOwner || '—'}`,
     `MESH ${snap.mesh.pending} pending | ready ${snap.mesh.ready} | blocked ${snap.mesh.blocked} | oldest ${age(snap.mesh.oldestAgeMs)}`,
     `  head ${snap.mesh.headKey ?? '—'} ${snap.mesh.headState ?? ''} | skipsBlockedHead ${yesNo(snap.meshSkipsBlockedHead)}`,
     `  meshReady ${jf.meshReady}  meshUrgent ${jf.meshUrgent}  meshOldestDirtyAge ${formatDurationMs(jf.meshOldestReadyAgeMs || null)} (scheduler dirty/prefetch; not READY-WANTED WAIT)  starvationAvoided ${yesNo(jf.meshStarvationAvoided)}  skippedFrame ${yesNo(jf.meshSkippedFrame)}`,

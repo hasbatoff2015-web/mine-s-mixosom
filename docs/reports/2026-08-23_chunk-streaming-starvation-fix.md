@@ -192,6 +192,8 @@ That number was **prefetch lifetime**: the chunk was generated/lit as halo far a
 
 Use those to decide if a remaining streaming stall exists. Keep `lit→meshStart` as PREFETCH HISTORY only. See `docs/reports/2026-08-23_chunk-streaming-inspector.md`.
 
+Follow-up (2026-08-23): **lighting flood-head starvation.** Local QA FRONT distance 2 stayed `lightContextReady: no` for ~18.75 s (S halo unlit). At render 6: LIGHT 71 pending / 70 blocked / 1 ready / oldest ~161 s / `stopsOnBlockedHead yes`. Root cause: `processLighting` `break` on flood mutex waiters so the one ready owner never ran. Fix: skip blocked, resume/preempt flood, near-unlock priority. See `docs/reports/2026-08-23_lighting-halo-scheduler-starvation.md`.
+
 ## Git
 
 Feature branch only. No merge to main. No force push.

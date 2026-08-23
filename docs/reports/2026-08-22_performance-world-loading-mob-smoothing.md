@@ -182,6 +182,8 @@ Follow-up (2026-08-23): **chunk streaming inspector is DIAGNOSTIC ONLY**. No sch
 
 Follow-up (2026-08-23): **mesh starvation / obsolete pending cleanup.** Local QA LAST SLOW CHUNK `(-72,153)` had `lit→meshStart ≈ 3.02 s` at mesh rank ~8 because PLAYING skipped every mesh job on a generation frame; Creative flight generates every frame. `queuedObsolete ≈ 604` was leaked `pendingMesh` keys after prune + inspector counting dirty halo. Fix: fair one-mesh slot, wanted-set pending cleanup, ring/age/ahead rescore. See `docs/reports/2026-08-23_chunk-streaming-starvation-fix.md`. Inspector remains; it is no longer the only streaming work.
 
+Follow-up (2026-08-23): **lighting halo / flood-head starvation.** After mesh fairness, nearby chunks could still sit unmeshed for ~18.75 s (`lightContextReady: no`, S halo unlit) while LIGHT showed 70 blocked + 1 ready and `stopsOnBlockedHead yes` (oldest ~161 s at rd=6). `processLighting` stopped at the blocked flood head. See `docs/reports/2026-08-23_lighting-halo-scheduler-starvation.md`.
+
 Device GPU capture with `?perf=1` on the user machine. Если mesh p95 всё ещё > ~16 ms на target device — профилировать greedy vs worker, не резать quality.
 
 ## Git

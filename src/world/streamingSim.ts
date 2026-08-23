@@ -14,10 +14,15 @@ import {
   floorDiv,
 } from '../core/constants';
 import { lightingHaloRadius, missingChunkCoords } from './worldJobs';
+import { lightingFloodOwner } from './LightEngine';
 import {
   collectReadyMeshJobs,
+  collectUnlitLightJobs,
   completeCpuMesh,
+  criticalUnlitKeys,
   discardObsoletePendingMesh,
+  isLightJobBlockedByFlood,
+  lightingUnlockNeighborKeys,
   meshWaitMs,
   pendingMeshInRadius,
   planMeshFrame,
@@ -58,6 +63,13 @@ export interface StreamingSimTotals {
   completedVisible: number;
   litToMeshWaitsMs: number[];
   playerChunkMissMs: number;
+  wantedToVisibleMs: number[];
+  readyWantedToMeshMs: number[];
+  maxNearWantedMissingMs: number;
+  peakLightPending: number;
+  peakLightBlocked: number;
+  peakCriticalUnlit: number;
+  peakLightReady: number;
 }
 
 export function obsoletePendingMeshCount(
@@ -155,13 +167,18 @@ export function stepStreamingFrame(
     loading?: boolean;
     instantLight?: boolean;
     readySince?: Map<string, number>;
+    readyWantedSince?: Map<string, number>;
+    readyWantedSamples?: number[];
   },
 ): StreamingSimFrameResult & { consecutiveGenWithoutMesh: number } {
   const generateRadius = lightingHaloRadius(meshRadius);
   world.setViewCenter(originX, originZ, meshRadius);
   const loading = options.loading === true;
   const generateLimit = options.generateLimit ?? (loading ? 8 : 1);
-  const missing = missingChunkCoords(world, originX, originZ, generateRadius);
+  const originCx = floorDiv(originX, CHUNK_SIZE);
+  const originCz = floorDiv(originZ, CHUNK_SIZE);
+  const unlock = lightingUnlockNeighborKeys(world, originCx, originCz, meshRadius, generateRadius);
+  const missing = missingChunkCoords(world, originX, originZ, generateRadius, unlock);
   let generated = 0;
   for (const coord of missing) {
     if (generated >= generateLimit) break;
@@ -176,8 +193,6 @@ export function stepStreamingFrame(
     world.processLighting(options.lightBudgetMs ?? WORLD_LIGHT_BUDGET_MS, originX, originZ);
   }
   const readySince = options.readySince;
-  const originCx = floorDiv(originX, CHUNK_SIZE);
-  const originCz = floorDiv(originZ, CHUNK_SIZE);
   if (readySince) {
     for (const chunk of world.chunks.values()) {
       if (!chunk.lightingReady || (!chunk.dirty && !chunk.lightMeshStale)) continue;
@@ -196,6 +211,12 @@ export function stepStreamingFrame(
   const dirX = options.dirX ?? 0;
   const dirZ = options.dirZ ?? 0;
   const readyJobs = collectReadyMeshJobs(world, originX, originZ, meshRadius, options.now, dirX, dirZ);
+  if (options.readyWantedSince) {
+    for (const job of readyJobs) {
+      const key = `${job.chunk.x},${job.chunk.z}`;
+      if (!options.readyWantedSince.has(key)) options.readyWantedSince.set(key, options.now);
+    }
+  }
   const defaultMeshLimit = loading ? 4 : 2;
   const plan = options.policy === 'legacy-skip-on-gen'
     ? planLegacyMeshFrame({
@@ -221,6 +242,12 @@ export function stepStreamingFrame(
       completeCpuMesh(world, job.chunk);
       visible.add(`${job.chunk.x},${job.chunk.z}`);
       options.readySince?.delete(`${job.chunk.x},${job.chunk.z}`);
+      const readyKey = `${job.chunk.x},${job.chunk.z}`;
+      if (options.readyWantedSince && options.readyWantedSamples) {
+        const started = options.readyWantedSince.get(readyKey) ?? options.now;
+        options.readyWantedSamples.push(Math.max(0, options.now - started));
+        options.readyWantedSince.delete(readyKey);
+      }
       meshed += 1;
     }
   }
@@ -265,7 +292,12 @@ export function runStreamingPath(
   const litAtFrame = new Map<string, number>();
   const recordedLitToMesh = new Set<string>();
   const readySince = new Map<string, number>();
+  const readyWantedSince = new Map<string, number>();
   const litToMeshWaitsMs: number[] = [];
+  const wantedToVisibleMs: number[] = [];
+  const readyWantedToMeshMs: number[] = [];
+  const enteredWantedAt = new Map<string, number>();
+  const recordedWantedVisible = new Set<string>();
   let consecutiveGenWithoutMesh = 0;
   let now = 1;
   let generated = 0;
@@ -274,9 +306,15 @@ export function runStreamingPath(
   let maxLitToMeshFrames = 0;
   let playerMissingFrames = 0;
   let maxPlayerMissingFrames = 0;
+  let nearMissingFrames = 0;
+  let maxNearWantedMissingMs = 0;
   let peakObsoleteMesh = 0;
   let peakPendingMesh = 0;
   let peakPendingMeshInRadius = 0;
+  let peakLightPending = 0;
+  let peakLightBlocked = 0;
+  let peakCriticalUnlit = 0;
+  let peakLightReady = 0;
   let starvationAvoided = 0;
   let meshSkippedFrames = 0;
   let originX = options.path[0]?.x ?? 0;
@@ -295,6 +333,8 @@ export function runStreamingPath(
       generateLimit: 8,
       instantLight: options.instantLight,
       readySince,
+      readyWantedSince,
+      readyWantedSamples: readyWantedToMeshMs,
     });
     consecutiveGenWithoutMesh = 0;
     generated += step.generated;
@@ -326,6 +366,8 @@ export function runStreamingPath(
         lightBudgetMs: options.lightBudgetMs,
         instantLight: options.instantLight,
         readySince,
+        readyWantedSince,
+        readyWantedSamples: readyWantedToMeshMs,
       });
       consecutiveGenWithoutMesh = step.consecutiveGenWithoutMesh;
       generated += step.generated;
@@ -341,6 +383,46 @@ export function runStreamingPath(
         playerMissingFrames += 1;
         maxPlayerMissingFrames = Math.max(maxPlayerMissingFrames, playerMissingFrames);
       } else playerMissingFrames = 0;
+
+      const ocx = floorDiv(originX, CHUNK_SIZE);
+      const ocz = floorDiv(originZ, CHUNK_SIZE);
+      const generateRadius = lightingHaloRadius(meshRadius);
+      let nearMissing = false;
+      const liveWanted = new Set<string>();
+      for (let dz = -meshRadius; dz <= meshRadius; dz += 1) {
+        for (let dx = -meshRadius; dx <= meshRadius; dx += 1) {
+          const key = `${ocx + dx},${ocz + dz}`;
+          liveWanted.add(key);
+          if (!enteredWantedAt.has(key)) enteredWantedAt.set(key, now);
+          if (visible.has(key) && !recordedWantedVisible.has(key)) {
+            wantedToVisibleMs.push(Math.max(0, now - (enteredWantedAt.get(key) ?? now)));
+            recordedWantedVisible.add(key);
+          }
+          if (Math.max(Math.abs(dx), Math.abs(dz)) <= 2 && !visible.has(key)) nearMissing = true;
+        }
+      }
+      for (const key of [...enteredWantedAt.keys()]) {
+        if (liveWanted.has(key)) continue;
+        enteredWantedAt.delete(key);
+      }
+      if (nearMissing) {
+        nearMissingFrames += 1;
+        maxNearWantedMissingMs = Math.max(maxNearWantedMissingMs, nearMissingFrames * frameMs);
+      } else nearMissingFrames = 0;
+
+      const floodOwner = lightingFloodOwner();
+      const lightJobs = collectUnlitLightJobs(world, originX, originZ, generateRadius);
+      let lightBlocked = 0;
+      for (const job of lightJobs) {
+        if (isLightJobBlockedByFlood(floodOwner, `${job.chunk.x},${job.chunk.z}`)) lightBlocked += 1;
+      }
+      peakLightPending = Math.max(peakLightPending, lightJobs.length);
+      peakLightBlocked = Math.max(peakLightBlocked, lightBlocked);
+      peakLightReady = Math.max(peakLightReady, lightJobs.length - lightBlocked);
+      peakCriticalUnlit = Math.max(
+        peakCriticalUnlit,
+        criticalUnlitKeys(world, ocx, ocz, meshRadius, generateRadius).length,
+      );
 
       for (const chunk of world.chunks.values()) {
         const key = `${chunk.x},${chunk.z}`;
@@ -381,6 +463,13 @@ export function runStreamingPath(
     completedVisible: recordedLitToMesh.size,
     litToMeshWaitsMs,
     playerChunkMissMs: maxPlayerMissingFrames * frameMs,
+    wantedToVisibleMs,
+    readyWantedToMeshMs,
+    maxNearWantedMissingMs,
+    peakLightPending,
+    peakLightBlocked,
+    peakCriticalUnlit,
+    peakLightReady,
   };
 }
 
