@@ -117,17 +117,29 @@ Recipes в `src/crafting/recipes.ts` поддерживают exact item, `anyOf
 
 ### Chunks
 
-`Chunk` хранит blocks в плотном `Uint16Array` длиной `16 × 80 × 16`. Индекс:
+`Chunk` хранит blocks в плотном `Uint16Array` длиной `16 × WORLD_HEIGHT × 16` (`WORLD_HEIGHT = 96`). Индекс:
 
 ```text
 index = y × 16 × 16 + z × 16 + x
 ```
 
+`WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера, mesher/collision/raycast крутят `0 .. WORLD_HEIGHT-1`.
+
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
 ### Generation
 
-`TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers. Column generation выбирает biome и height; chunk pass заполняет bedrock/stone/top layers/water, затем вырезает caves, размещает ores и decor. Итоговые height/biome каждого столбца сохраняются в `Chunk.surfaceHeights`/`biomeCodes`, чтобы mesher не повторял noise sampling для каждого видимого face.
+`TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers (`smoothstep` для mountain mask). Column generation выбирает biome (dryness/climate, без отдельного mountain biome) и height:
+
+```text
+height = clamp(BASE(66) + broad×4 + detail×1.5×biomeDetail + hills(0–8) + mountainMask×amp(10–20), 58, 84)
+```
+
+Mountain mask — low-frequency fBm (`x/260`) с `smoothstep(0.16, 0.46)`, поэтому возвышенности широкие и пересекают несколько chunks. Biome влияет на surface/material/vegetation и только на detail amplitude, не на macro height, чтобы не было cliff на Forest↔Plains↔Desert.
+
+Chunk pass заполняет bedrock (`Y 0–2`)/stone/top layers/water, затем вырезает ridged 3D caves (world-coordinate noise, не per-chunk RNG), размещает ores в сдвинутых Y-bands и decor. Caves не режут bedrock. Обычный carve только при `y ≤ min(surface в 3×3) - CAVE_ROOF_DEPTH` (`4`): noise не доходит до grass/sand и не вытекает 1×1 на склоне. Отдельные 1×1 surface mouths отключены. Итоговые height/biome каждого столбца сохраняются в `Chunk.surfaceHeights`/`biomeCodes`, чтобы mesher не повторял noise sampling для каждого видимого face. Высоты соседей для крыши берутся из предвычисленной карты chunk+halo, не из 9× `columnAt` на каждый voxel.
+
+Новый spawn (`collectSpawnColumns`) ранжирует plains с низким mountain contribution в радиусе 192, без generation hitch на create. DEV `?worldgenDebug=1` показывает `y` / `mtn` / `hills` на chunk HUD.
 
 Генератор не читает browser state или wall clock, поэтому базовый terrain воспроизводим по seed. Loot, часть explosions и некоторые runtime decisions используют `Math.random()` и не являются replay-deterministic.
 

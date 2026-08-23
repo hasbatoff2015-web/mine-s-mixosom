@@ -66,6 +66,13 @@ export function readPerfScenario(search = typeof location === 'undefined' ? '' :
   return params.get('perfScenario') ?? undefined;
 }
 
+export function isWorldgenDebugQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
+  if (!search) return false;
+  const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
+  const value = params.get('worldgenDebug');
+  return value === '1' || value === 'true';
+}
+
 export function isChunkOverlayQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
   if (!search) return false;
   const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);

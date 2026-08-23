@@ -1,30 +1,90 @@
 import { BlockId } from '../blocks';
-import { CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT } from '../core/constants';
+import { CHUNK_SIZE, SEA_LEVEL, TERRAIN_HEADROOM, WORLD_HEIGHT } from '../core/constants';
 import { Chunk } from './Chunk';
-import { fbm2D, hashCoords, mulberry32, random01, valueNoise3D } from './noise';
+import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise3D } from './noise';
 
 export type Biome = 'plains' | 'forest' | 'desert';
 
-interface OreRule {
-  block: BlockId;
-  minY: number;
-  maxY: number;
-  veins: number;
-  size: number;
+export interface OreRule {
+  readonly block: BlockId;
+  readonly minY: number;
+  readonly maxY: number;
+  readonly veins: number;
+  readonly size: number;
 }
 
-const ORES: readonly OreRule[] = [
-  { block: BlockId.CoalOre, minY: 18, maxY: 46, veins: 10, size: 7 },
-  { block: BlockId.IronOre, minY: 8, maxY: 40, veins: 10, size: 6 },
-  { block: BlockId.GoldOre, minY: 4, maxY: 24, veins: 4, size: 5 },
-  { block: BlockId.RedstoneOre, minY: 3, maxY: 15, veins: 5, size: 5 },
-  { block: BlockId.DiamondOre, minY: 3, maxY: 11, veins: 2, size: 4 },
+/**
+ * Ordinary cave carving stops this many blocks below the local (3×3 min) terrain roof.
+ * Intentional 1×1 surface mouths are disabled; underground networks stay intact.
+ */
+export const CAVE_ROOF_DEPTH = 4;
+
+/**
+ * Absolute Y bands after the +15 stack shift. Relative shape matches the old
+ * compact-world layout (diamond/redstone near bedrock, coal higher).
+ */
+export const ORE_RULES: readonly OreRule[] = [
+  { block: BlockId.CoalOre, minY: 28, maxY: 61, veins: 12, size: 7 },
+  { block: BlockId.IronOre, minY: 8, maxY: 52, veins: 11, size: 6 },
+  { block: BlockId.GoldOre, minY: 4, maxY: 32, veins: 4, size: 5 },
+  { block: BlockId.RedstoneOre, minY: 3, maxY: 18, veins: 5, size: 5 },
+  { block: BlockId.DiamondOre, minY: 3, maxY: 16, veins: 2, size: 4 },
 ];
 
 export interface ColumnInfo {
   biome: Biome;
   height: number;
+  base: number;
+  hills: number;
+  mountain: number;
 }
+
+export interface SpawnColumn {
+  readonly x: number;
+  readonly z: number;
+  readonly biome: Biome;
+  readonly height: number;
+  readonly mountain: number;
+}
+
+/** Lower is better: plains, low mountains, closer to origin. */
+export function spawnColumnScore(column: SpawnColumn, originX = 0, originZ = 0): number {
+  const biomePenalty = column.biome === 'plains' ? 0 : column.biome === 'forest' ? 18 : 80;
+  return biomePenalty + column.mountain * 3.2 + Math.hypot(column.x - originX, column.z - originZ) * 0.04;
+}
+
+/**
+ * Rank nearby grass columns for a new-world spawn. Uses only column noise,
+ * so it does not generate chunks during menu/create.
+ */
+export function collectSpawnColumns(
+  generator: TerrainGenerator,
+  originX = 0,
+  originZ = 0,
+  radius = 192,
+  step = 8,
+): SpawnColumn[] {
+  const columns: SpawnColumn[] = [];
+  for (let z = originZ - radius; z <= originZ + radius; z += step) {
+    for (let x = originX - radius; x <= originX + radius; x += step) {
+      if (!generator.isSafeSpawnColumn(x, z)) continue;
+      const column = generator.columnAt(x, z);
+      columns.push({
+        x,
+        z,
+        biome: column.biome,
+        height: column.height,
+        mountain: column.mountain,
+      });
+    }
+  }
+  columns.sort((a, b) => spawnColumnScore(a, originX, originZ) - spawnColumnScore(b, originX, originZ));
+  return columns;
+}
+
+const MIN_SURFACE = 58;
+const BASE_HEIGHT = 66;
+const MAX_SURFACE = WORLD_HEIGHT - TERRAIN_HEADROOM;
 
 export class TerrainGenerator {
   readonly numericSeed: number;
@@ -37,36 +97,66 @@ export class TerrainGenerator {
     const climate = fbm2D(this.numericSeed + 301, x / 150, z / 150, 3);
     const dryness = fbm2D(this.numericSeed + 733, x / 210, z / 210, 3);
     const biome: Biome = dryness > 0.24 ? 'desert' : climate < -0.14 ? 'forest' : 'plains';
-    const broad = fbm2D(this.numericSeed + 17, x / 105, z / 105, 4);
-    const detail = fbm2D(this.numericSeed + 47, x / 32, z / 32, 3);
-    const ridge = 1 - Math.abs(fbm2D(this.numericSeed + 91, x / 185, z / 185, 3));
-    const biomeScale = biome === 'desert' ? 0.65 : biome === 'forest' ? 1.08 : 0.9;
-    const raw = 49 + broad * 8 * biomeScale + detail * 2.2 + Math.max(0, ridge - 0.7) * 13;
-    return { biome, height: Math.max(38, Math.min(68, Math.floor(raw))) };
+    const broad = fbm2D(this.numericSeed + 17, x / 120, z / 120, 4);
+    const detail = fbm2D(this.numericSeed + 47, x / 36, z / 36, 3);
+    const biomeDetail = biome === 'desert' ? 0.75 : biome === 'forest' ? 1.05 : 0.9;
+    const base = BASE_HEIGHT + broad * 4 + detail * 1.5 * biomeDetail;
+    const hillField = fbm2D(this.numericSeed + 91, x / 72, z / 72, 3);
+    const hills = Math.max(0, hillField - 0.12) * 8;
+    const mountainField = fbm2D(this.numericSeed + 201, x / 260, z / 260, 3);
+    const mountainMask = smoothstep(0.16, 0.46, mountainField);
+    const mountainAmp = 10 + (fbm2D(this.numericSeed + 277, x / 180, z / 180, 2) + 1) * 5;
+    const mountain = mountainMask * mountainAmp;
+    const height = Math.max(MIN_SURFACE, Math.min(MAX_SURFACE, Math.floor(base + hills + mountain)));
+    return { biome, height, base, hills, mountain };
   }
 
   generate(chunk: Chunk): void {
     const worldX = chunk.x * CHUNK_SIZE;
     const worldZ = chunk.z * CHUNK_SIZE;
+    const halo = 1;
+    const stride = CHUNK_SIZE + halo * 2;
+    const heights = new Int16Array(stride * stride);
+    const biomes = new Uint8Array(stride * stride);
+    for (let hz = 0; hz < stride; hz += 1) {
+      for (let hx = 0; hx < stride; hx += 1) {
+        const column = this.columnAt(worldX + hx - halo, worldZ + hz - halo);
+        const index = hz * stride + hx;
+        heights[index] = column.height;
+        biomes[index] = column.biome === 'forest' ? 1 : column.biome === 'desert' ? 2 : 0;
+      }
+    }
 
     for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
       for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
         const x = worldX + localX;
         const z = worldZ + localZ;
-        const column = this.columnAt(x, z);
+        const hx = localX + halo;
+        const hz = localZ + halo;
+        const height = heights[hz * stride + hx]!;
+        const biomeCode = biomes[hz * stride + hx]!;
+        const desert = biomeCode === 2;
         const columnIndex = localZ * CHUNK_SIZE + localX;
-        chunk.surfaceHeights[columnIndex] = column.height;
-        chunk.biomeCodes[columnIndex] = column.biome === 'forest' ? 1 : column.biome === 'desert' ? 2 : 0;
+        chunk.surfaceHeights[columnIndex] = height;
+        chunk.biomeCodes[columnIndex] = biomeCode;
+        let roof = height;
+        for (let dz = -1; dz <= 1; dz += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            roof = Math.min(roof, heights[(hz + dz) * stride + hx + dx]!);
+          }
+        }
+        roof -= CAVE_ROOF_DEPTH;
+        const floor = this.bedrockHeight(x, z);
         for (let y = 0; y < WORLD_HEIGHT; y += 1) {
           let block = BlockId.Air;
-          if (y <= this.bedrockHeight(x, z)) block = BlockId.Bedrock;
-          else if (y < column.height - (column.biome === 'desert' ? 4 : 3)) block = BlockId.Stone;
-          else if (y < column.height) block = column.biome === 'desert' ? BlockId.Sandstone : BlockId.Dirt;
-          else if (y === column.height) block = column.biome === 'desert' ? BlockId.Sand : BlockId.GrassBlock;
+          if (y <= floor) block = BlockId.Bedrock;
+          else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
+          else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
+          else if (y === height) block = desert ? BlockId.Sand : BlockId.GrassBlock;
           else if (y <= SEA_LEVEL) block = BlockId.Water;
 
-          if (block === BlockId.Stone && y > 3 && y < column.height - 4 && this.isCave(x, y, z)) {
-            block = y < 7 && random01(this.numericSeed + 8128, x, y, z) > 0.78 ? BlockId.Lava : BlockId.Air;
+          if (block !== BlockId.Bedrock && y <= roof && this.isCave(x, y, z, height)) {
+            block = y < floor + 6 && random01(this.numericSeed + 8128, x, y, z) > 0.94 ? BlockId.Lava : BlockId.Air;
           }
           chunk.set(localX, y, localZ, block);
         }
@@ -79,19 +169,32 @@ export class TerrainGenerator {
     chunk.dirty = true;
   }
 
-  private bedrockHeight(x: number, z: number): number {
+  bedrockHeight(x: number, z: number): number {
     return Math.floor(random01(this.numericSeed + 9001, x, 0, z) * 3);
   }
 
-  private isCave(x: number, y: number, z: number): boolean {
-    const primary = valueNoise3D(this.numericSeed + 191, x / 19, y / 11, z / 19);
-    const tunnels = Math.abs(valueNoise3D(this.numericSeed + 419, x / 28, y / 8, z / 28));
-    return primary > 0.46 && tunnels < 0.43;
+  isCave(x: number, y: number, z: number, surfaceY: number): boolean {
+    const floor = this.bedrockHeight(x, z);
+    if (y <= floor || y >= surfaceY) return false;
+    const main = Math.abs(valueNoise3D(this.numericSeed + 191, x / 52, y / 22, z / 52));
+    const slow = valueNoise3D(this.numericSeed + 419, x / 78, y / 26, z / 78);
+    if (main < 0.10 + Math.max(0, slow) * 0.02) return true;
+    if (slow > 0.12) {
+      const branch = Math.abs(valueNoise3D(this.numericSeed + 811, x / 34, y / 18, z / 34));
+      if (branch < 0.07) return true;
+    }
+    return slow > 0.50 && main < 0.18;
+  }
+
+  isSafeSpawnColumn(x: number, z: number): boolean {
+    const column = this.columnAt(x, z);
+    if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
+    return true;
   }
 
   private generateOres(chunk: Chunk): void {
     const rng = mulberry32(hashCoords(this.numericSeed + 991, chunk.x, 0, chunk.z));
-    for (const ore of ORES) {
+    for (const ore of ORE_RULES) {
       for (let vein = 0; vein < ore.veins; vein += 1) {
         let x = Math.floor(rng() * CHUNK_SIZE);
         let y = ore.minY + Math.floor(rng() * (ore.maxY - ore.minY + 1));
@@ -117,12 +220,17 @@ export class TerrainGenerator {
       const worldZ = chunk.z * CHUNK_SIZE + z;
       const column = this.columnAt(worldX, worldZ);
       if (column.height <= SEA_LEVEL || column.height >= WORLD_HEIGHT - 8) continue;
+      if (chunk.get(x, column.height, z) === BlockId.Air) continue;
       if (column.biome === 'desert') {
-        if (chunk.get(x, column.height, z) !== BlockId.Sand || rng() > 0.72) continue;
+        if (chunk.get(x, column.height, z) !== BlockId.Sand || rng() > 0.09) continue;
         const height = 2 + Math.floor(rng() * 2);
-        for (let y = 1; y <= height; y += 1) chunk.set(x, column.height + y, z, BlockId.Cactus ?? BlockId.OakLog);
+        for (let y = 1; y <= height; y += 1) chunk.set(x, column.height + y, z, BlockId.Cactus);
       } else {
-        if (chunk.get(x, column.height, z) !== BlockId.GrassBlock || (column.biome === 'plains' && rng() > 0.48)) continue;
+        if (chunk.get(x, column.height, z) !== BlockId.GrassBlock) continue;
+        if (column.biome === 'forest' && rng() > 0.4) continue;
+        if (column.biome === 'plains' && rng() > 0.48) continue;
+        const grove = fbm2D(this.numericSeed + 1703, worldX / 42, worldZ / 42, 2);
+        if (column.biome === 'forest' && grove < -0.35 && rng() > 0.5) continue;
         this.placeOak(chunk, x, column.height + 1, z, 4 + Math.floor(rng() * 2));
       }
     }

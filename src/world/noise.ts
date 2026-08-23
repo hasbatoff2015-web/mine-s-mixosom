@@ -50,6 +50,12 @@ export function valueNoise3D(seed: number, x: number, y: number, z: number): num
   return mix(mix(x00, x10, ty), mix(x01, x11, ty), tz);
 }
 
+export function smoothstep(edge0: number, edge1: number, value: number): number {
+  if (edge0 === edge1) return value >= edge1 ? 1 : 0;
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
 export function fbm2D(seed: number, x: number, z: number, octaves = 4): number {
   let value = 0;
   let amplitude = 0.5;

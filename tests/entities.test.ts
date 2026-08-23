@@ -7,6 +7,7 @@ import {
   MobManager,
   type MobKind,
 } from '../src/entities';
+import { WORLD_HEIGHT } from '../src/core/constants';
 import { VoxelWorld } from '../src/world/World';
 
 describe('DroppedItemManager', () => {
@@ -94,7 +95,10 @@ describe('MobManager', () => {
   it('runs the creeper fuse and exposes explosion events', () => {
     const world = new VoxelWorld('creeper-fuse');
     const manager = new MobManager(new THREE.Scene(), world, { automaticSpawning: false });
-    for (let z = 0; z <= 2; z += 1) world.setBlock(0, 71, z, BlockId.Stone);
+    for (let z = 0; z <= 2; z += 1) {
+      world.setBlock(0, 71, z, BlockId.Stone);
+      for (let y = 72; y < WORLD_HEIGHT; y += 1) world.setBlock(0, y, z, BlockId.Air);
+    }
     manager.spawn('creeper', new THREE.Vector3(0, 72, 2), { force: true });
     const playerPosition = new THREE.Vector3(0, 72, 0);
     for (let index = 0; index < 7; index += 1) manager.update(0.25, { playerPosition });

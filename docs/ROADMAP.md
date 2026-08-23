@@ -38,6 +38,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после chunk mesh starvation / obsolete pending cleanup: typecheck, 337 tests / 43 files, production build 100 modules, 1.07 MiB / 167 files.
 - [x] Локальный pipeline после player-visible streaming latency metrics (inspector only, no scheduler change): typecheck, 349 tests / 43 files, production build 100 modules, 1.08 MiB / 167 files.
 - [x] Локальный pipeline после lighting halo / flood-head scheduler fix: typecheck, 368 tests / 44 files, production build 100 modules, 1.08 MiB / 167 files.
+- [x] Локальный pipeline после worldgen mountains / deeper bedrock / connected caves / vegetation density: typecheck, 382 tests / 45 files, production build 100 modules, 1.08 MiB / 167 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -135,8 +136,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 - [ ] Level-based liquids с bounded updates, боковым потоком и water/lava interaction.
 - [x] Gravity-driven primed TNT и falling-block entities для sand/gravel; unloaded-chunk queue всё ещё упрощена.
-- [ ] Более разнообразные terrain features без нарушения seed determinism.
-- [ ] Spawn safety и regeneration tests по большому набору seeds.
+- [x] Более разнообразные terrain features без нарушения seed determinism (mountains + connected caves + density; без новых biomes/structures).
+- [x] Spawn finder учитывает новый terrain height и избегает desert/caves/high mountains (покрыто `tests/worldgen-terrain.test.ts`).
 - [ ] Сжатие/compaction chunk deltas при долгой игре.
 
 ### P1.4 Combat, AI и feedback
