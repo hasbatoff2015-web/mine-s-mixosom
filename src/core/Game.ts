@@ -21,7 +21,7 @@ import {
   type BlockAttachment,
   type HorizontalFacing,
 } from '../blocks';
-import { CombatSystem, PlayerArrowManager } from '../combat';
+import { CombatSystem, PlayerArrowManager, flamingArrowBlockHit } from '../combat';
 import { AudioManager } from './AudioManager';
 import {
   AUTOSAVE_INTERVAL_SECONDS,
@@ -88,6 +88,7 @@ import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { ItemIconRenderer } from '../rendering/ItemIconRenderer';
 import { applyImmediateRenderLook } from '../rendering/cameraLook';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
+import { updateSharedFireAnimation } from '../rendering/fireTexture';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
@@ -525,11 +526,9 @@ export class Game {
       visualFactory: arrowVisuals,
       onBlockHit: (x, y, z, flaming) => {
         const session = this.session;
-        if (!session) return;
-        if (session.world.getBlock(x, y, z, false) === BlockId.Tnt) {
+        if (!session || !flaming) return;
+        if (flamingArrowBlockHit(session.world.getBlock(x, y, z, false)) === 'prime_tnt') {
           session.redstone.primeTnt(x, y, z);
-        } else if (flaming) {
-          this.tryIgniteAt(x, y + 1, z, session);
         }
       },
     });
@@ -1384,6 +1383,7 @@ export class Game {
     } else this.accumulator = 0;
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
+      updateSharedFireAnimation(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
       const inspectClock = performance.now();
       if (
@@ -2487,6 +2487,7 @@ export class Game {
       state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
       state.shieldRaised = session.combat.shieldActive;
+      state.onFire = session.survival.fireTicks > 0;
     } else {
       state.movementSpeed = 0;
       state.onGround = false;
@@ -2495,6 +2496,7 @@ export class Game {
       state.foodUseProgress = 0;
       state.bowCharge = 0;
       state.shieldRaised = false;
+      state.onFire = false;
     }
     viewmodel.update(deltaSeconds, state);
   }

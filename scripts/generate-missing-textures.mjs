@@ -4,7 +4,7 @@
  * `assets:import` if a mapped source file was not in the pack.
  */
 import { deflateSync } from 'node:zlib';
-import { mkdir, writeFile, access } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 const root = join(process.cwd(), 'public', 'textures');
@@ -66,13 +66,109 @@ function paint(width, height, plotter) {
 
 const px = (r, g, b, a = 255) => [r, g, b, a];
 
+function fromMap(rows, palette) {
+  return (x, y) => {
+    const row = rows[y];
+    if (!row || x >= row.length) return px(0, 0, 0, 0);
+    return palette[row[x]] ?? px(0, 0, 0, 0);
+  };
+}
+
+const FIRE_FRAMES = 8;
+const FIRE_SIZE = 16;
+
+function hash2(x, y, frame) {
+  let n = (x * 374761393 + y * 668265263 + frame * 1274126177) | 0;
+  n = (n ^ (n >>> 13)) * 1274126177;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+
+function fireFramePixel(frame, x, y) {
+  const fromBottom = FIRE_SIZE - 1 - y;
+  if (fromBottom < 0) return px(0, 0, 0, 0);
+  const tongues = [
+    { cx: 3.2 + Math.sin(frame * 0.9) * 0.7, width: 2.1, height: 11 + Math.sin(frame * 1.1 + 0.2) * 2.2 },
+    { cx: 7.8 + Math.cos(frame * 0.8) * 0.6, width: 3.1, height: 14.2 + Math.sin(frame * 0.95 + 1.3) * 1.4 },
+    { cx: 12.4 + Math.sin(frame * 1.05 + 2) * 0.7, width: 2.3, height: 11.6 + Math.cos(frame * 0.85) * 2 },
+  ];
+  let heat = 0;
+  for (const tongue of tongues) {
+    const dx = Math.abs(x + 0.5 - tongue.cx);
+    const top = tongue.height;
+    if (fromBottom > top) continue;
+    const flare = 1 + (fromBottom / Math.max(1, top)) * 0.55;
+    const half = tongue.width * flare * (0.55 + (1 - fromBottom / top) * 0.55);
+    if (dx > half) continue;
+    const edge = 1 - dx / half;
+    const rise = fromBottom / top;
+    const jagged = 0.78 + hash2(x, frame, Math.floor(fromBottom)) * 0.35;
+    if (rise > jagged) continue;
+    const hole = hash2(x * 3, fromBottom, frame);
+    if (rise > 0.55 && hole > 0.72) continue;
+    heat = Math.max(heat, edge * (1 - rise * 0.42) * jagged);
+  }
+  if (heat < 0.16) return px(0, 0, 0, 0);
+  if (fromBottom < 3 + hash2(x, frame, 3) * 1.5) {
+    return px(255, 248 - fromBottom * 8, 170 + fromBottom * 10, 255);
+  }
+  if (heat > 0.78 && fromBottom < 7) return px(255, 230, 90);
+  if (fromBottom < 8) return px(255, 168 - frame, 28);
+  if (fromBottom < 12) return px(255, 110, 18);
+  return px(198, 42, 8, 240);
+}
+
 const icons = {
-  'item/flint_and_steel.png': (x, y) => {
-    if (x + y > 22 || x + y < 6) return px(0, 0, 0, 0);
-    if (y > x - 2 && y < x + 4) return y < 8 ? px(90, 90, 95) : px(170, 175, 185);
-    if (y > 9 && x < 8) return px(70, 70, 78);
-    return px(0, 0, 0, 0);
-  },
+  'item/flint_and_steel.png': fromMap([
+    '................',
+    '..sss...........',
+    '.sHHHs..........',
+    '.sH..Hs.........',
+    '.sH...s.........',
+    '.sH..Hs.........',
+    '.sHHHs..........',
+    '..sss...........',
+    '.........xxx....',
+    '........xxXxx...',
+    '.......xxX.Xx...',
+    '......xxxXXxx...',
+    '.......xxXxx....',
+    '........xxx.....',
+    '................',
+    '................',
+  ], {
+    '.': px(0, 0, 0, 0),
+    s: px(62, 62, 70),
+    H: px(188, 192, 202),
+    x: px(28, 28, 32),
+    X: px(72, 74, 80),
+  }),
+  'item/fire_arrow.png': fromMap([
+    '.............FY.',
+    '............FYF.',
+    '...........YF#F.',
+    '..........F#MF..',
+    '.........s#M.F..',
+    '........s#s.....',
+    '.......s#s......',
+    '......s#s.......',
+    '.....W#s........',
+    '....W#..........',
+    '...WW...........',
+    '..WwW...........',
+    '.WW.............',
+    '................',
+    '................',
+    '................',
+  ], {
+    '.': px(0, 0, 0, 0),
+    s: px(132, 88, 42),
+    '#': px(168, 118, 58),
+    M: px(168, 170, 178),
+    W: px(236, 236, 240),
+    w: px(186, 186, 194),
+    Y: px(255, 236, 96),
+    F: px(255, 132, 22),
+  }),
   'item/glass_bottle.png': (x, y) => {
     const dx = Math.abs(x - 7.5);
     const neck = y >= 1 && y <= 4 && dx <= 2;
@@ -121,22 +217,6 @@ const icons = {
     if (y >= 11) return (x + y) % 2 === 0 ? px(50, 50, 55) : px(80, 80, 86);
     return px(120, 120, 128);
   },
-  'item/fire_arrow.png': (x, y) => {
-    const shaft = y >= 4 && y <= 11 && x >= 2 && x <= 13 && Math.abs((y - 7.5) - (x - 8) * 0.15) < 1.6;
-    const head = x >= 11 && y >= 5 && y <= 10;
-    const flame = x <= 5 && y >= 3 && y <= 12;
-    if (flame && (x + y) % 3 !== 0) return px(255, 140 - y * 4, 20);
-    if (head) return px(160, 160, 170);
-    if (shaft) return px(150, 105, 55);
-    return px(0, 0, 0, 0);
-  },
-  'block/fire.png': (x, y) => {
-    const height = 14 - ((x * 5 + 3) % 6);
-    if (y > height) return px(0, 0, 0, 0);
-    if (y < 4) return px(255, 230, 80, 220);
-    if (y < 9) return px(255, 140, 20, 230);
-    return px(220, 40, 10, 200);
-  },
   'block/cobweb.png': (x, y) => {
     const diag = Math.abs(x - y) <= 1 || Math.abs(x + y - 15) <= 1;
     const plus = x === 7 || x === 8 || y === 7 || y === 8;
@@ -164,8 +244,11 @@ export async function generateMissingTextures(force = false) {
     const path = join(root, relative);
     if (!force) {
       try {
-        await access(path);
-        continue;
+        const existing = await readFile(path);
+        const tinyStub = existing.length < 250 && (
+          relative === 'item/flint_and_steel.png' || relative === 'item/fire_arrow.png'
+        );
+        if (!tinyStub) continue;
       } catch {
         // missing
       }
@@ -173,6 +256,27 @@ export async function generateMissingTextures(force = false) {
     await mkdir(dirname(path), { recursive: true });
     const size = relative.startsWith('entity/') ? 32 : 16;
     await writeFile(path, paint(size, size, plotter));
+    written += 1;
+  }
+  const firePath = join(root, 'block/fire.png');
+  let writeFire = force;
+  if (!writeFire) {
+    try {
+      const existing = await readFile(firePath);
+      const width = existing.readUInt32BE(16);
+      const height = existing.readUInt32BE(20);
+      writeFire = height <= width;
+    } catch {
+      writeFire = true;
+    }
+  }
+  if (writeFire) {
+    await mkdir(dirname(firePath), { recursive: true });
+    await writeFile(firePath, paint(FIRE_SIZE, FIRE_SIZE * FIRE_FRAMES, (x, y) => {
+      const frameFromBottom = FIRE_FRAMES - 1 - Math.floor(y / FIRE_SIZE);
+      const localY = y % FIRE_SIZE;
+      return fireFramePixel(frameFromBottom, x, localY);
+    }));
     written += 1;
   }
   return written;

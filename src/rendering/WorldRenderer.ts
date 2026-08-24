@@ -16,6 +16,7 @@ import {
 } from './specialBlockGeometry';
 import type { TextureAtlas } from './TextureAtlas';
 import { createWorldChunkMaterial, setWorldDaylight } from './worldLighting';
+import { SharedFireTexture } from './fireTexture';
 
 interface ChunkVisual {
   group: THREE.Group;
@@ -207,6 +208,11 @@ export class WorldRenderer {
       mesh.renderOrder = 3;
       group.add(mesh);
     } else meshed.water.dispose();
+    if (meshed.fire.getAttribute('position').count > 0) {
+      const mesh = new THREE.Mesh(meshed.fire, SharedFireTexture.instance().material);
+      mesh.renderOrder = 4;
+      group.add(mesh);
+    } else meshed.fire.dispose();
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
     chunk.dirty = false;

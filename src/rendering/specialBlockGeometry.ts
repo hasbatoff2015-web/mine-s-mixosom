@@ -502,6 +502,7 @@ export function selectionBoxesForBlock(
     case 'door': return [doorSelectionBox(x, y, z, state)];
     case 'ladder': return [ladderSelectionBox(x, y, z, state)];
     case 'cross': return [crossSelectionBox(x, y, z)];
+    case 'fire': return [crossSelectionBox(x, y, z)];
     case 'stairs': {
       const shape = world ? resolveStairShape(world, x, y, z, state) : stairShape;
       return selectionBoxesFromLocal(

@@ -43,6 +43,7 @@ import {
   type TextureUvRect,
 } from './specialBlockGeometry';
 import { fluidCellGeometry } from '../world/fluidSurface';
+import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
 
 export { leverHandleAngle } from './specialBlockGeometry';
 export { bakedVertexLight } from './worldLighting';
@@ -105,6 +106,7 @@ interface LayerBuffers {
   vegetation: GeometryBuffers;
   translucent: GeometryBuffers;
   water: GeometryBuffers;
+  fire: GeometryBuffers;
 }
 
 const createBuffers = (): GeometryBuffers => ({
@@ -244,8 +246,18 @@ export interface MeshedChunk {
   vegetation: THREE.BufferGeometry;
   translucent: THREE.BufferGeometry;
   water: THREE.BufferGeometry;
+  fire: THREE.BufferGeometry;
   faces: number;
   chests: Array<{ x: number; y: number; z: number }>;
+}
+
+export function disposeMeshedChunk(meshed: MeshedChunk): void {
+  meshed.opaque.dispose();
+  meshed.cutout.dispose();
+  meshed.vegetation.dispose();
+  meshed.translucent.dispose();
+  meshed.water.dispose();
+  meshed.fire.dispose();
 }
 
 export interface ChunkMeshProfile {
@@ -264,6 +276,7 @@ export class ChunkMesher {
     vegetation: createBuffers(),
     translucent: createBuffers(),
     water: createBuffers(),
+    fire: createBuffers(),
   };
   private columnOriginX = 0;
   private columnOriginZ = 0;
@@ -290,6 +303,7 @@ export class ChunkMesher {
     resetBuffers(this.layers.vegetation);
     resetBuffers(this.layers.translucent);
     resetBuffers(this.layers.water);
+    resetBuffers(this.layers.fire);
     const layers = this.layers;
     this.cacheColumns(chunk, world);
     this.lightSelf = chunk;
@@ -387,6 +401,7 @@ export class ChunkMesher {
       vegetation: this.toGeometry(layers.vegetation),
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
+      fire: this.toGeometry(layers.fire),
       faces,
       chests,
     };
@@ -407,6 +422,7 @@ export class ChunkMesher {
   }
 
   private buffersFor(layers: LayerBuffers, definition: BlockDefinition): GeometryBuffers {
+    if (definition.renderShape === 'fire') return layers.fire;
     if (blockLightingMode(definition) === 'vegetation') return layers.vegetation;
     if (definition.renderLayer === 'cutout') return layers.cutout;
     if (definition.renderLayer === 'translucent') {
@@ -474,6 +490,7 @@ export class ChunkMesher {
       case 'button': return this.addButton(buffers, definition, state, world, x, y, z);
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
       case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
+      case 'fire': return this.addFire(buffers, definition, world, x, y, z);
       case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
       case 'stairs': return this.addStairs(buffers, definition, state, world, x, y, z);
@@ -519,6 +536,29 @@ export class ChunkMesher {
       );
     }
     return 4;
+  }
+
+  private addFire(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const bright: VertexLighting = {
+      tint: WHITE_TINT,
+      sky: lighting.sky,
+      block: lighting.block,
+      emission: 1,
+      shade: 1,
+    };
+    for (const plane of fireBlockPlanes(x, y, z)) {
+      this.addLocalUvQuad(buffers, plane.corners, this.quadNormal(plane.corners), bright);
+    }
+    return FIRE_PLANE_COUNT;
   }
 
   private addTorch(
@@ -1019,6 +1059,23 @@ export class ChunkMesher {
     const uv = backFace
       ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
       : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
+    for (let index = 0; index < 4; index += 1) {
+      buffers.positions.push(...corners[index]!);
+      buffers.normals.push(...normal);
+      buffers.uvs.push(...uv[index]!);
+      this.pushLighting(buffers, lighting);
+    }
+    buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+
+  private addLocalUvQuad(
+    buffers: GeometryBuffers,
+    corners: readonly (readonly [number, number, number])[],
+    normal: readonly [number, number, number],
+    lighting: VertexLighting,
+  ): void {
+    const base = buffers.positions.length / 3;
+    const uv = [[0, 0], [1, 0], [1, 1], [0, 1]] as const;
     for (let index = 0; index < 4; index += 1) {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);

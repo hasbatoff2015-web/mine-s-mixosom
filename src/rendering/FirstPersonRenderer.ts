@@ -26,6 +26,7 @@ import {
   REFERENCE_F2_IRON_PICKAXE,
 } from './heldItemLandmarks';
 import type { GeneratedItemMask } from './GeneratedItemGeometry';
+import { SharedFireTexture } from './fireTexture';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -36,6 +37,7 @@ export interface FirstPersonFrameState {
   foodUseProgress: number;
   bowCharge: number;
   shieldRaised: boolean;
+  onFire?: boolean;
 }
 
 const ARM_BASE_POSITION = Object.freeze([0.53, -0.48, -0.84] as const);
@@ -69,6 +71,7 @@ export class FirstPersonRenderer {
   private swingSeconds = 1;
   private equipProgress = 1;
   private bowTexturePath = 'item/bow';
+  private readonly fireOverlay: THREE.Mesh;
   private disposed = false;
   private heldQaOverride?: HeldItemQaOverride;
   private loggedHeldQa = false;
@@ -97,6 +100,11 @@ export class FirstPersonRenderer {
     arm.position.y = -0.22;
     this.armPivot.add(arm);
     this.offhandHolder.visible = false;
+    this.fireOverlay = SharedFireTexture.instance().createScaledOverlay(1.85, 1.35);
+    this.fireOverlay.name = 'first-person:fire-overlay';
+    this.fireOverlay.position.set(0, -0.22, -0.52);
+    this.fireOverlay.visible = false;
+    this.scene.add(this.fireOverlay);
   }
 
   get heldItemId(): string | undefined {
@@ -154,6 +162,7 @@ export class FirstPersonRenderer {
       this.walkPhase = 0;
     }
     this.root.visible = state.visible;
+    this.fireOverlay.visible = state.visible && state.onFire === true;
     if (!state.visible) return;
 
     const targetWalk = state.onGround ? THREE.MathUtils.clamp(state.movementSpeed / 4.3, 0, 1) : 0;
@@ -319,6 +328,8 @@ export class FirstPersonRenderer {
     this.armGeometry.dispose();
     this.armMaterial.dispose();
     this.armTexture.dispose();
+    this.fireOverlay.removeFromParent();
+    this.fireOverlay.geometry.dispose();
     this.disposed = true;
   }
 

@@ -20,6 +20,7 @@ function disposeMeshed(result: ReturnType<ChunkMesher['build']>): void {
   result.vegetation.dispose();
   result.translucent.dispose();
   result.water.dispose();
+  result.fire.dispose();
 }
 
 describe('RedstoneSystem', () => {

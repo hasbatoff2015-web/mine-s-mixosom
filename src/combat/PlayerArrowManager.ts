@@ -6,6 +6,7 @@ import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worl
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
+import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
 
 interface PlayerArrow {
   readonly position: THREE.Vector3;
@@ -98,7 +99,7 @@ export class PlayerArrowManager {
             source: 'projectile',
             attackerPosition: arrow.position,
             knockback: arrow.critical ? 4.2 : 2.4,
-            ...(arrow.flaming ? { igniteTicks: 100 } : {}),
+            ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
           });
           this.remove(index);
           removed = true;

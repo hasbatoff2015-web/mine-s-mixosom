@@ -70,6 +70,7 @@ function measureGenerateMesh(): { generateMs: number; lightMs: number; meshMs: n
   meshed.vegetation.dispose();
   meshed.translucent.dispose();
   meshed.water.dispose();
+  meshed.fire.dispose();
   return { generateMs, lightMs, meshMs, faces };
 }
 

@@ -43,6 +43,7 @@ function meshMs(world: VoxelWorld, chunkX = 0, chunkZ = 0): { ms: number; faces:
   meshed.vegetation.dispose();
   meshed.translucent.dispose();
   meshed.water.dispose();
+  meshed.fire.dispose();
   return { ms, faces };
 }
 

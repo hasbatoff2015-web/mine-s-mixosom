@@ -18,6 +18,7 @@ export type BlockRenderShape =
   | 'button'
   | 'pressure_plate'
   | 'cross'
+  | 'fire'
   | 'door'
   | 'ladder'
   | 'stairs'

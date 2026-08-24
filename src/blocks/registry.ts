@@ -302,7 +302,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   }),
   block(BlockId.Fire, 'fire', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
-    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'standard',
+    renderLayer: 'cutout', renderShape: 'fire', lightingMode: 'standard',
     replaceable: true, breakable: true, hasItem: false, drop: false, emission: 14,
   }),
   block(BlockId.Cobweb, 'cobweb', {

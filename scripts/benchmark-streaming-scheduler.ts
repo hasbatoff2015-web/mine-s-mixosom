@@ -46,6 +46,7 @@ function measureMeshSamples(): Record<string, { meshMs: number; faces: number; b
     meshed.vegetation.dispose();
     meshed.translucent.dispose();
     meshed.water.dispose();
+    meshed.fire.dispose();
   }
   return samples;
 }

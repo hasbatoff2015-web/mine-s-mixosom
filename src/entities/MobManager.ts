@@ -3,6 +3,7 @@ import { BlockId, getBlockDefinition } from '../blocks';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
 import { createItemStack, type ItemStack } from '../inventory';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
+import { SharedFireTexture } from '../rendering/fireTexture';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import { combinedLight } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
@@ -159,6 +160,7 @@ export class MobEntity {
   deathSeconds = 0;
   fuseSeconds = 0;
   burnAccumulator = 0;
+  fireDamageTimer = 0;
   farSeconds = 0;
   walkPhase = 0;
   previousWalkPhase = 0;
@@ -166,6 +168,7 @@ export class MobEntity {
   previousFacingYaw = 0;
   fleeSeconds = 0;
   fireTicks = 0;
+  fireOverlay?: THREE.Mesh;
   readonly wanderDirection = new THREE.Vector3();
   resumeState: MobState = 'idle';
   deathDropsEmitted = false;
@@ -364,11 +367,13 @@ export class MobManager {
       this.updateSunExposure(mob, delta, daylight, context.lightLevelAt);
       if (mob.fireTicks > 0) {
         mob.fireTicks = Math.max(0, mob.fireTicks - Math.round(delta * 20));
-        mob.burnAccumulator += delta;
-        if (mob.burnAccumulator >= 1) {
-          mob.burnAccumulator = 0;
+        mob.fireDamageTimer += delta;
+        if (mob.fireDamageTimer >= 1) {
+          mob.fireDamageTimer = 0;
           this.damage(mob, 1, { source: 'fire' });
         }
+      } else {
+        mob.fireDamageTimer = 0;
       }
       if (!mob.alive) {
         this.snapMobRender(mob);
@@ -779,6 +784,9 @@ export class MobManager {
         mob.velocity.multiplyScalar(Math.exp(-2.8 * step));
         if (sampled.id === BlockId.Lava) {
           mob.fireTicks = Math.max(mob.fireTicks, 60);
+        } else if (sampled.id === BlockId.Water) {
+          mob.fireTicks = 0;
+          mob.fireDamageTimer = 0;
         }
       } else {
         mob.velocity.y -= 20 * step;
@@ -929,6 +937,23 @@ export class MobManager {
     }
     const hurtJolt = mob.state === 'hurt' ? Math.sin(mob.stateSeconds * 45) * 0.035 : 0;
     mob.visual.position.set(pose.x + hurtJolt, pose.y, pose.z);
+    this.syncFireOverlay(mob);
+  }
+
+  private syncFireOverlay(mob: MobEntity): void {
+    if (mob.fireTicks > 0 && mob.alive) {
+      if (!mob.fireOverlay) {
+        mob.fireOverlay = SharedFireTexture.instance().createScaledOverlay(
+          mob.definition.width,
+          mob.definition.height,
+        );
+        mob.visual.add(mob.fireOverlay);
+      }
+      mob.fireOverlay.visible = true;
+      mob.fireOverlay.rotation.y = -mob.visual.rotation.y;
+    } else if (mob.fireOverlay) {
+      mob.fireOverlay.visible = false;
+    }
   }
 
   private applyMobLight(mob: MobEntity): void {
@@ -1237,6 +1262,11 @@ export class MobManager {
 
   private removeMob(mob: MobEntity, reason: MobRemovalReason): void {
     if (!this.mobsById.delete(mob.id)) return;
+    if (mob.fireOverlay) {
+      mob.fireOverlay.removeFromParent();
+      mob.fireOverlay.geometry.dispose();
+      mob.fireOverlay = undefined;
+    }
     mob.visual.removeFromParent();
     this.options.onRemove?.(mob, reason);
   }

@@ -59,6 +59,7 @@ function disposeMeshed(meshed: ReturnType<ChunkMesher['build']>): void {
   meshed.vegetation.dispose();
   meshed.translucent.dispose();
   meshed.water.dispose();
+  meshed.fire.dispose();
 }
 
 function geometryBounds(geometry: THREE.BufferGeometry): THREE.Box3 {

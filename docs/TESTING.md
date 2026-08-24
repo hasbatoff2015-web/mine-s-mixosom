@@ -109,6 +109,7 @@ Vitest:       49 test files, 424 tests, 424 passed
 | `tests/fluid-surface.test.ts` | 7 | Corner heights, flat source pool culls internals, flowing slopes, shared edges, fluid-above no top, chunk-border seams, lava geometry, falling column |
 | `tests/fluid-streaming.test.ts` | 18 | Level-only skip relight, no water region flood, no-op, queue dedupe, remesh coalesce, equilibrium soak, distant pause/resume, generated lakes idle, mix, water/lava/both fly streaming, mesh cost |
 | `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects, cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
+| `tests/fire-arrow-and-fire.test.ts` | 5 | Fire arrow only primes TNT / ignites living (no world fire), periodic burn + water extinguish, 6-plane fire mesh, animated fire strip, flint/fire-arrow icons and handheld models |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 

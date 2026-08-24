@@ -59,6 +59,7 @@ describe('chest world model', () => {
     meshed.vegetation.dispose();
     meshed.translucent.dispose();
     meshed.water.dispose();
+    meshed.fire.dispose();
   });
 
   it('faces the player lock-forward and defaults legacy chests to north', () => {

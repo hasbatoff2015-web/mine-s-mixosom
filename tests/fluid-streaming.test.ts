@@ -331,6 +331,7 @@ describe('fluid mesh cost', () => {
     dry.vegetation.dispose();
     dry.translucent.dispose();
     dry.water.dispose();
+    dry.fire.dispose();
     for (let z = 2; z <= 13; z += 1) {
       for (let x = 2; x <= 13; x += 1) world.setBlock(x, 31, z, BlockId.Water);
     }
@@ -342,5 +343,6 @@ describe('fluid mesh cost', () => {
     wet.vegetation.dispose();
     wet.translucent.dispose();
     wet.water.dispose();
+    wet.fire.dispose();
   });
 });
