@@ -78,13 +78,56 @@ function mixLavaCell(
   });
 }
 
-interface FluidWrite {
+export interface FluidWrite {
   x: number;
   y: number;
   z: number;
   block: BlockId;
   level?: number;
   falling?: boolean;
+}
+
+function hasDownDrop(world: VoxelWorld, x: number, y: number, z: number, type: BlockId): boolean {
+  if (y <= 0) return false;
+  const below = world.getBlock(x, y - 1, z, false);
+  if (canReplaceWithFluid(below)) return true;
+  return below === type && !isFluidSource(world, x, y - 1, z);
+}
+
+function pathHasDrop(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  dx: number,
+  dz: number,
+  radius: number,
+  type: BlockId,
+): boolean {
+  let cx = x;
+  let cz = z;
+  for (let step = 1; step <= radius; step += 1) {
+    cx += dx;
+    cz += dz;
+    if (!chunkLoaded(world, cx, cz)) return false;
+    const block = world.getBlock(cx, y, cz, false);
+    if (block === type) {
+      if (hasDownDrop(world, cx, y, cz, type)) return true;
+      continue;
+    }
+    if (!canReplaceWithFluid(block)) return false;
+    if (hasDownDrop(world, cx, y, cz, type)) return true;
+  }
+  return false;
+}
+
+function preferredHorizontalDirs(world: VoxelWorld, x: number, y: number, z: number, type: BlockId): ReadonlyArray<readonly [number, number]> {
+  const radius = type === BlockId.Lava ? 2 : 4;
+  const drops: Array<readonly [number, number]> = [];
+  for (const dir of HORIZONTAL) {
+    if (pathHasDrop(world, x, y, z, dir[0], dir[1], radius, type)) drops.push(dir);
+  }
+  return drops.length > 0 ? drops : HORIZONTAL;
 }
 
 function expectedFlowingLevel(world: VoxelWorld, x: number, y: number, z: number, type: BlockId): {
@@ -153,10 +196,12 @@ export function applyFluidWrites(world: VoxelWorld, writes: readonly FluidWrite[
     const current = world.getBlock(write.x, write.y, write.z, false);
     if (write.block === BlockId.Air) {
       if (current !== BlockId.Air) mutations.push({ x: write.x, y: write.y, z: write.z, block: BlockId.Air });
+      else world.noteFluidNoop();
       continue;
     }
     if (!isFluidBlock(write.block)) {
       if (current !== write.block) mutations.push({ x: write.x, y: write.y, z: write.z, block: write.block });
+      else world.noteFluidNoop();
       continue;
     }
     const level = write.level ?? FLUID_SOURCE_LEVEL;
@@ -169,6 +214,7 @@ export function applyFluidWrites(world: VoxelWorld, writes: readonly FluidWrite[
     const previousLevel = readFluidLevel(world, write.x, write.y, write.z);
     const previousFalling = readFluidFalling(world, write.x, write.y, write.z);
     if (previousLevel !== level || previousFalling !== falling) states.push({ ...write, level, falling });
+    else world.noteFluidNoop();
   }
   let applied = 0;
   if (mutations.length > 0) {
@@ -176,6 +222,7 @@ export function applyFluidWrites(world: VoxelWorld, writes: readonly FluidWrite[
       updateLighting: true,
       deferLighting: true,
       scheduleNeighbors: false,
+      lightOrigin: 'fluid',
     }).applied;
   }
   for (const write of states) {
@@ -185,8 +232,7 @@ export function applyFluidWrites(world: VoxelWorld, writes: readonly FluidWrite[
     const state = falling || level < FLUID_SOURCE_LEVEL
       ? { fluidLevel: level, fluidFalling: falling }
       : { fluidLevel: FLUID_SOURCE_LEVEL };
-    world.setBlockState(write.x, write.y, write.z, state);
-    applied += 1;
+    if (world.setBlockState(write.x, write.y, write.z, state)) applied += 1;
   }
   return applied;
 }
@@ -256,7 +302,7 @@ export function computeFluidUpdate(world: VoxelWorld, x: number, y: number, z: n
 
   const next = effectiveLevel - fluidDecay(type);
   if (next <= 0) return writes;
-  for (const [dx, dz] of HORIZONTAL) {
+  for (const [dx, dz] of preferredHorizontalDirs(world, x, y, z, type)) {
     tryEnter(world, type, x, y, z, x + dx, y, z + dz, next, false, writes);
   }
   return writes;
@@ -264,18 +310,25 @@ export function computeFluidUpdate(world: VoxelWorld, x: number, y: number, z: n
 
 export function processFluidQueue(world: VoxelWorld): { updates: number; writes: number; ms: number } {
   const started = performance.now();
+  world.beginFluidTick();
+  const due = world.takeDueFluids(FLUID_UPDATES_PER_TICK);
   let updates = 0;
   let writes = 0;
-  while (updates < FLUID_UPDATES_PER_TICK && performance.now() - started < FLUID_JOB_BUDGET_MS) {
-    const next = world.takeDueFluid();
-    if (!next) break;
+  for (const next of due) {
+    if (performance.now() - started >= FLUID_JOB_BUDGET_MS) {
+      world.scheduleFluid(next.x, next.y, next.z, 1);
+      continue;
+    }
     updates += 1;
     const produced = computeFluidUpdate(world, next.x, next.y, next.z);
     if (produced.length === 0) continue;
-    writes += applyFluidWrites(world, produced);
+    const applied = applyFluidWrites(world, produced);
+    writes += applied;
+    if (applied <= 0) continue;
     const delay = fluidTickDelay(world.getBlock(next.x, next.y, next.z, false) || BlockId.Water);
     for (const write of produced) enqueueNeighbors(world, write.x, write.y, write.z, delay);
     enqueueNeighbors(world, next.x, next.y, next.z, delay);
   }
+  world.endFluidTick(updates, writes);
   return { updates, writes, ms: performance.now() - started };
 }

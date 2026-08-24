@@ -1102,6 +1102,8 @@ export class Game {
         generatedToVisible: this.generatedToVisibleWaits.snapshot(),
         wantedToVisible: this.wantedToVisibleWaits.snapshot(),
         readyWantedToMesh: this.readyWantedToMeshWaits.snapshot(),
+        fluid: session.world.fluidHudStats(),
+        lightOrigins: session.world.lightOriginCounts,
       });
     }
   }

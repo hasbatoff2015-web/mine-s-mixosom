@@ -121,6 +121,31 @@ export function skyOcclusionClass(definition: BlockDefinition | undefined): 'blo
   return 'pass';
 }
 
+export type LightingInvalidation = 'none' | 'localSky' | 'addEmitter' | 'region';
+
+/**
+ * Classifies whether a BlockId change must relight.
+ * Fluid level stays on the same BlockId, so it never reaches this helper.
+ * Air ↔ water: local sky column only. Lava/torch add: add-only emitter flood.
+ * Emission/occlusion drops and opaque swaps: full region.
+ */
+export function lightingInvalidation(previous: BlockId, next: BlockId): LightingInvalidation {
+  const prev = getBlockDefinition(previous);
+  const following = getBlockDefinition(next);
+  const skyA = skyOcclusionClass(prev);
+  const skyB = skyOcclusionClass(following);
+  const emitA = prev.emission ?? 0;
+  const emitB = following.emission ?? 0;
+  const occA = prev.occludesFaces;
+  const occB = following.occludesFaces;
+  if (skyA === skyB && emitA === emitB && occA === occB) return 'none';
+  if (occA !== occB) return 'region';
+  if (emitB > emitA) return 'addEmitter';
+  if (emitA > emitB) return 'region';
+  if (skyA !== skyB) return 'localSky';
+  return 'none';
+}
+
 function skyAttenuation(definition: BlockDefinition): number {
   const kind = skyOcclusionClass(definition);
   if (kind === 'block') return 16;
@@ -519,6 +544,10 @@ function recomputeSkyColumn(world: VoxelWorld, x: number, z: number): void {
   fillColumnSky(chunk, positiveMod(x, CHUNK_SIZE), positiveMod(z, CHUNK_SIZE));
 }
 
+export function recomputeSkyColumnAt(world: VoxelWorld, x: number, z: number): void {
+  recomputeSkyColumn(world, x, z);
+}
+
 function updateSkyInRegion(
   world: VoxelWorld,
   minX: number,
@@ -606,10 +635,13 @@ export function addBlockLightEmitters(
   return done;
 }
 
+export type LightJobOrigin = 'fluid' | 'edit' | 'other';
+
 export interface PendingLightJob {
   region: LightRegion;
   sky: boolean;
   block: boolean;
+  origin: LightJobOrigin;
 }
 
 export function continuePendingLight(world: VoxelWorld, job: PendingLightJob, deadline?: number): boolean {

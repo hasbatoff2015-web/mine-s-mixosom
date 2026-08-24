@@ -54,11 +54,11 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-23** (fluids and items pass):
+Срез локального запуска **2026-08-24** (fluid surface + streaming fix):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       47 test files, 398 tests, 398 passed
+Vitest:       49 test files, 424 tests, 424 passed
 ```
 
 | Test file | Tests | Что проверяется |
@@ -105,7 +105,9 @@ Vitest:       47 test files, 398 tests, 398 passed
 | `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
 | `tests/chunk-streaming-inspector.test.ts` | 26 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH STARVATION uses readyWanted not litAt, LAST SPIKE age, ready vs blocked head, front-target selection, player-visible vs prefetch latency, wanted enter/leave/re-enter, rolling stats exclude never-wanted halo |
 | `tests/lighting-scheduler.test.ts` | 19 | Lighting flood skip past blocked head; 70 blocked + 1 ready; resume near flood owner; mesh-context DAG (no lighting A↔B cycle); A→B→C leaf lighting; near-unlock priority; distant flood preempt; obsolete unlit skip; orphaned/obsolete flood after prune or leave radius; radius-6 wanted set; 2 ms slice; torch border; flat sky seam; rapid break; CPU fly near-hole bound |
-| `tests/fluids.test.ts` | 8 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap |
+| `tests/fluids.test.ts` | 9 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap, FLUID HUD counters |
+| `tests/fluid-surface.test.ts` | 7 | Corner heights, flat source pool culls internals, flowing slopes, shared edges, fluid-above no top, chunk-border seams, lava geometry, falling column |
+| `tests/fluid-streaming.test.ts` | 18 | Level-only skip relight, no water region flood, no-op, queue dedupe, remesh coalesce, equilibrium soak, distant pause/resume, generated lakes idle, mix, water/lava/both fly streaming, mesh cost |
 | `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects, cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
@@ -394,14 +396,18 @@ npm run benchmark:worldgen
 
 CPU-only (no GPU FPS). Compare plains/forest/desert chunk ms and 81-chunk batch with the numbers in `docs/reports/2026-08-23_worldgen-mountains-caves-density.md`.
 
-Fluids (`tests/fluids.test.ts`, `npm run benchmark:fluids`):
+Fluids (`tests/fluids.test.ts`, `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`, `npm run benchmark:fluids`):
 
 - water falls before spreading and reaches 7 horizontal cells from a source;
 - lava falls and stops short of water's reach;
 - removing a source dries flowing water;
 - water + lava source → obsidian; water + flowing lava → cobblestone;
 - flow continues across a loaded chunk border;
-- queue stays ≤ 2048 and per-tick updates ≤ 48.
+- queue stays ≤ 2048 and per-tick updates ≤ 48;
+- render uses four corner heights, culls same-fluid internals, and keeps chunk-border corners identical;
+- settled water/lava extra ticks write 0; distant fluids pause and resume;
+- water/lava level-only changes skip relight; water flood does not queue a lighting region;
+- water/lava/both then Creative-fly streaming stays inside the same 8 s near-hole bound as the no-fluid scheduler test (`WORLD_LIGHT_BUDGET_MS = 2`).
 
 ```bash
 npm run benchmark:fluids

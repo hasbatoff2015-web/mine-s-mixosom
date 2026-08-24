@@ -42,7 +42,7 @@ import {
   type LocalBox,
   type TextureUvRect,
 } from './specialBlockGeometry';
-import { fluidSurfaceHeight, readFluidFalling, readFluidLevel } from '../world/fluids';
+import { fluidCellGeometry } from '../world/fluidSurface';
 
 export { leverHandleAngle } from './specialBlockGeometry';
 export { bakedVertexLight } from './worldLighting';
@@ -784,24 +784,136 @@ export class ChunkMesher {
   private addFluid(
     buffers: GeometryBuffers,
     definition: BlockDefinition,
-    state: BlockRenderState | undefined,
+    _state: BlockRenderState | undefined,
     world: VoxelWorld,
     x: number,
     y: number,
     z: number,
   ): number {
+    const geometry = fluidCellGeometry(world, x, y, z);
+    if (!geometry) return 0;
     const texture = definition.textures.all ?? `block/${definition.key}`;
-    const level = state?.fluidLevel ?? readFluidLevel(world, x, y, z);
-    const falling = state?.fluidFalling ?? readFluidFalling(world, x, y, z);
-    const height = fluidSurfaceHeight(level, falling);
-    return this.addLocalCuboid(
-      buffers,
-      texture,
-      { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: height, maxZ: 1 },
-      world,
-      definition,
-      x, y, z,
-    );
+    let faces = 0;
+    if (geometry.top) {
+      const { h00, h10, h01, h11 } = geometry.top;
+      const corners: Array<[number, number, number]> = [
+        [x, y + h01, z + 1],
+        [x + 1, y + h11, z + 1],
+        [x + 1, y + h10, z],
+        [x, y + h00, z],
+      ];
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        this.quadNormal(corners),
+        this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1),
+      );
+      faces += 1;
+    }
+    if (geometry.bottom) {
+      const corners: Array<[number, number, number]> = [
+        [x, y, z],
+        [x + 1, y, z],
+        [x + 1, y, z + 1],
+        [x, y, z + 1],
+      ];
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        [0, -1, 0],
+        this.lightingFor(world, definition, texture, x, y, z, [0, -1, 0], 0.58),
+      );
+      faces += 1;
+    }
+    if (geometry.sides.px) {
+      const h10 = geometry.top?.h10 ?? 1;
+      const h11 = geometry.top?.h11 ?? 1;
+      const corners: Array<[number, number, number]> = [
+        [x + 1, y, z + 1],
+        [x + 1, y, z],
+        [x + 1, y + h10, z],
+        [x + 1, y + h11, z + 1],
+      ];
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        [1, 0, 0],
+        this.lightingFor(world, definition, texture, x, y, z, [1, 0, 0], 0.82),
+      );
+      faces += 1;
+    }
+    if (geometry.sides.nx) {
+      const h00 = geometry.top?.h00 ?? 1;
+      const h01 = geometry.top?.h01 ?? 1;
+      const corners: Array<[number, number, number]> = [
+        [x, y, z],
+        [x, y, z + 1],
+        [x, y + h01, z + 1],
+        [x, y + h00, z],
+      ];
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        [-1, 0, 0],
+        this.lightingFor(world, definition, texture, x, y, z, [-1, 0, 0], 0.72),
+      );
+      faces += 1;
+    }
+    if (geometry.sides.pz) {
+      const h01 = geometry.top?.h01 ?? 1;
+      const h11 = geometry.top?.h11 ?? 1;
+      const corners: Array<[number, number, number]> = [
+        [x, y, z + 1],
+        [x + 1, y, z + 1],
+        [x + 1, y + h11, z + 1],
+        [x, y + h01, z + 1],
+      ];
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        [0, 0, 1],
+        this.lightingFor(world, definition, texture, x, y, z, [0, 0, 1], 0.88),
+      );
+      faces += 1;
+    }
+    if (geometry.sides.nz) {
+      const h00 = geometry.top?.h00 ?? 1;
+      const h10 = geometry.top?.h10 ?? 1;
+      const corners: Array<[number, number, number]> = [
+        [x + 1, y, z],
+        [x, y, z],
+        [x, y + h00, z],
+        [x + 1, y + h10, z],
+      ];
+      this.addQuad(
+        buffers,
+        texture,
+        corners,
+        [0, 0, -1],
+        this.lightingFor(world, definition, texture, x, y, z, [0, 0, -1], 0.76),
+      );
+      faces += 1;
+    }
+    return faces;
+  }
+
+  private quadNormal(corners: readonly (readonly [number, number, number])[]): [number, number, number] {
+    const ax = corners[1]![0] - corners[0]![0];
+    const ay = corners[1]![1] - corners[0]![1];
+    const az = corners[1]![2] - corners[0]![2];
+    const bx = corners[3]![0] - corners[0]![0];
+    const by = corners[3]![1] - corners[0]![1];
+    const bz = corners[3]![2] - corners[0]![2];
+    let nx = ay * bz - az * by;
+    let ny = az * bx - ax * bz;
+    let nz = ax * by - ay * bx;
+    const length = Math.hypot(nx, ny, nz) || 1;
+    return [nx / length, ny / length, nz / length];
   }
 
   private addLocalCuboid(

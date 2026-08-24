@@ -169,10 +169,12 @@ export function stepStreamingFrame(
     readySince?: Map<string, number>;
     readyWantedSince?: Map<string, number>;
     readyWantedSamples?: number[];
+    tickWorld?: boolean;
   },
 ): StreamingSimFrameResult & { consecutiveGenWithoutMesh: number } {
   const generateRadius = lightingHaloRadius(meshRadius);
   world.setViewCenter(originX, originZ, meshRadius);
+  if (options.tickWorld) world.tick();
   const loading = options.loading === true;
   const generateLimit = options.generateLimit ?? (loading ? 8 : 1);
   const originCx = floorDiv(originX, CHUNK_SIZE);
@@ -284,6 +286,7 @@ export function runStreamingPath(
     pruneEveryFrames?: number;
     warmupFrames?: number;
     instantLight?: boolean;
+    tickWorld?: boolean;
   },
 ): StreamingSimTotals {
   const frameMs = options.frameMs ?? TARGET_FRAME_MS;
@@ -335,6 +338,7 @@ export function runStreamingPath(
       readySince,
       readyWantedSince,
       readyWantedSamples: readyWantedToMeshMs,
+      tickWorld: options.tickWorld,
     });
     consecutiveGenWithoutMesh = 0;
     generated += step.generated;
@@ -368,6 +372,7 @@ export function runStreamingPath(
         readySince,
         readyWantedSince,
         readyWantedSamples: readyWantedToMeshMs,
+        tickWorld: options.tickWorld,
       });
       consecutiveGenWithoutMesh = step.consecutiveGenWithoutMesh;
       generated += step.generated;

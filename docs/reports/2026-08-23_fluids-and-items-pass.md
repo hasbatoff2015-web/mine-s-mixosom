@@ -56,7 +56,80 @@ Implemented on a new feature branch from current `main`. Fluids are a budgeted q
 - Streaming budgets unchanged: `WORLD_JOB_BUDGET_MS = 4`, `WORLD_LIGHT_BUDGET_MS = 2`.
 - `npm run benchmark:fluids` — synthetic source flood; queue must stay inside the cap.
 
-Not implemented (on purpose): infinite water springs, vanilla slope fluid mesh, water current pushing entities.
+Not implemented (on purpose): infinite water springs, water current pushing entities. Flowing UV orientation is deferred if the atlas cannot rotate tiles.
+
+## Fluid surface rendering + streaming regression fix
+
+Date: **2026-08-24**. Parent HEAD before this fix: `7b01c3d`. Draft PR #6 kept. `main` not merged. No force push.
+
+### Goal
+
+Replace the blocky cuboid fluid mesh with a Minecraft-like continuous surface (corner heights, slopes, same-fluid culling) and stop fluid placement from starving chunk streaming. `WORLD_LIGHT_BUDGET_MS = 2` unchanged.
+
+### Exact visual root cause
+
+`ChunkMesher.addFluid` built a uniform cuboid: one `fluidLevel` → one height for all four top vertices (`hNW = hNE = hSW = hSE`). Water/lava have `occludesFaces: false`, so `localFaceCulled` never hid same-fluid vertical faces. The result was a grid of separate translucent platforms / orange slabs (screens 1–2), not one body of liquid (screen 3).
+
+### Fluid mesh
+
+`src/world/fluidSurface.ts` computes **world-space** `fluidCornerHeight(world, cornerX, y, cornerZ, type)` from the four cells that touch that vertical edge. Same fluid above a sample → height 1.0 (full column). Otherwise collect same-fluid surface heights; **any source or falling sample uses max** so source lakes stay flat (~14/16); flowing-only samples average. Simulation `fluidLevel` is not the render height 1:1.
+
+Top face: four vertices at `h00/h10/h01/h11`. No top if the same fluid is above. Shared corners are bit-identical from every adjacent block, including across chunk borders. Water and lava share this path; materials/textures are unchanged. Flowing UV rotation is not in this pass.
+
+### Face culling
+
+Same-fluid neighbors hide the entire shared vertical face (internal grid). Exposed sides vs air use the two edge heights so the wall meets the sloped top. Solid `occludesFaces` still culls. Bottom culls against same fluid or opaque. That is what removes the blue/orange grid, not an epsilon.
+
+### Slopes
+
+A flowing cell next to a higher neighbor gets a high shared edge and a lower outer edge, so the top quad tilts. Adjacent platforms become one ramp.
+
+### Chunk borders
+
+Dirty rule stays boundary-only, plus the **diagonal neighbor at chunk corners** because a world-space corner is shared by four chunks. Corner function does not depend on “current block perspective”, so there is no crack from disagreeing heights.
+
+### Mechanics
+
+Unchanged delays/decay/mix. Horizontal spread now prefers dirs that reach a drop within water 4 / lava 2; otherwise all four dirs (flat ground unchanged). Mix still converts the lava cell and does not requeue no-op writes.
+
+### Streaming root cause
+
+Not the old blocked-head bug. `applyBlockBatch` treated every air→water as `skyChanged` and often `hadBlockLight`, then `queueLight` **merged into one growing AABB**. `processLighting` ran that `pendingLight` region **first** and consumed the 2 ms slice. Unlit wanted chunks waited behind a flood that restarted from the AABB min each frame. HUD: LIGHT ready ~53, oldestCritical ~20 s, MESH blocked, WANTED→VISIBLE ~16 s, mut ~425, dirty ~74, FPS fine.
+
+### What changed for lighting
+
+- `lightingInvalidation`: same sky class + emission + occlusion → **none** (level-only water/lava).
+- Air↔water: **local sky column only**, never a region job.
+- Air→lava: local sky + `addBlockLightEmitters`.
+- Lava/torch removal and opaque swaps: region, leftover budget only.
+- `processLighting`: **unlit streaming first**, leftover for region.
+- Fluid sim radius: `min(meshRadius, 2)`. Trailing fluids stay queued (`pausedDistant`) and do not compete with the fly ring.
+- No-op writes skip setBlock/dirty/light/neighbor schedule. Queue still one pending key per coordinate.
+
+`WORLD_LIGHT_BUDGET_MS` stays **2**. Fluid budget stays 1.5 ms / 48 / cap 2048.
+
+### Equilibrium
+
+Automated: one water source, one lava source, and a 5+5 soak. After settle, 1000 extra ticks: **writes = 0**, mesh/light dirty 0, queue idle. Source removal then 500 extra ticks: no further mutations.
+
+### Tests / HUD
+
+New: `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`; HUD `FLUID` line and LIGHT origin counts under `?perf=1&chunks=1`.
+
+### Manual QA (short)
+
+1. Water pool from above: one surface, no cell grid.
+2. Lava pool from above: not a pile of slabs.
+3. Water slope from the side.
+4. Lava slope from the side.
+5. Waterfall: full column, no thin slab.
+6. Chunk-border flow: no crack / duplicate wall.
+7. Remove source: drain then idle.
+8. Water/lava mix: obsidian / cobblestone.
+9. Water then Creative fly: no 10–20 s holes.
+10. Lava then Creative fly: same.
+
+This environment cannot screenshot WebGL; geometry tests and headless streaming benches are the automated stand-in.
 
 ## Items / blocks / entities
 
@@ -94,21 +167,24 @@ Optional 1.8-style mappings in `import-assets.mjs`: `web.png`, `rail_normal.png`
 ## Tests
 
 ```text
-npm run check → PASS
+npm run check → PASS (2026-08-24 surface+streaming fix)
 npx tsc --noEmit → PASS
-Vitest: 47 files, 398 tests, all passed
-Vite build: 102 modules
+Vitest: 49 files, 424 tests, all passed
+Vite build: 103 modules
 Size/archive: 1.11 MiB / 180 files
-Main JS: 892.31 kB / 246.96 kB gzip
+Main JS: 898.65 kB / 248.95 kB gzip
 ```
 
-New files: `tests/fluids.test.ts` (8), `tests/content-pass.test.ts` (8).
+New files: `tests/fluids.test.ts`, `tests/content-pass.test.ts`, `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`.
 
 ## Bench / perf notes
 
-- Fluid flood: 200 ticks **7.2 ms** total, **max tick 1.47 ms** (under 1.5 ms budget), **max queue 208** (cap 2048).
+- Fluid flood (this fix): water 200 ticks **13.9 ms** total, **max tick 1.88 ms**, peak queue **194**, writes **224**, dedupe **817**, settle tick **25**, late writes **0**. Previous cuboid-flood bench was 7.2 ms / max 1.47 ms / queue 208 — extra cost is local sky columns, still inside the 1.5–2 ms tick band.
+- Lava 400 ticks **2.2 ms** total, **max tick 0.69 ms**, peak queue **80**, writes **48**, settle **62**, late writes **0**.
+- Fluid-heavy 12×12 pool mesh **12.7 ms / 704 faces** vs dry chunk **7.9 ms / 512 faces** (~1.6×, not a meshing explosion).
+- Streaming after water/lava/both + Creative fly (`WORLD_LIGHT_BUDGET_MS = 2`): WANTED→VISIBLE p50 **~3.3 s**, p95 **~5.1 s**, max **~5.2 s**; near-missing max **~6.9–7.0 s**. Same band as the no-fluid radius-6 scheduler test (not 16–20 s holes). Local QA before this fix: WANTED→VISIBLE ~16 s, oldestCritical ~20 s.
 - Worldgen 81-chunk batch **545 ms** (same band as the previous worldgen pass ~525–600 ms).
-- Streaming scheduler budgets unchanged (`WORLD_JOB_BUDGET_MS = 4`, `WORLD_LIGHT_BUDGET_MS = 2`); walkFair wanted→visible p95 200 ms.
+- Streaming scheduler budgets unchanged (`WORLD_JOB_BUDGET_MS = 4`, `WORLD_LIGHT_BUDGET_MS = 2`).
 - Lighting initial 9×9 sliced max slice **2.20 ms**.
 - Block-break regression still 1 pending mesh / 1 dirty chunk.
 - Worldgen lava fill is a per-column loop to Y 12, no fluid simulation during `generate()`.
@@ -139,7 +215,7 @@ New files: `tests/fluids.test.ts` (8), `tests/content-pass.test.ts` (8).
 ## Known issues / deferred
 
 - No infinite water source conversion.
-- Fluid mesh is a flat cuboid, not vanilla slopes; chunk seams possible at height steps.
+- Flowing texture UV is not rotated to the flow vector yet (geometry/culling first).
 - Status effect timers are not saved (absorption amount is).
 - Minecart physics is an approximation; no powered rails, no cart-cart coupling.
 - Invisibility does not hide first-person hands or worn armor perfectly.
@@ -147,7 +223,11 @@ New files: `tests/fluids.test.ts` (8), `tests/content-pass.test.ts` (8).
 
 ## Changed files (high level)
 
-- `src/world/fluids.ts` (new), `World.ts`, `Generator.ts`, `collision.ts`
+- `src/world/fluids.ts`, `src/world/fluidSurface.ts` (new), `World.ts`, `Generator.ts`, `LightEngine.ts`, `worldJobs.ts`, `streamingSim.ts`
+- `src/rendering/ChunkMesher.ts`
+- `src/debug/chunkStreamingRuntime.ts`, `src/core/Game.ts`
+- `scripts/benchmark-fluids.ts`
+- `tests/fluids.test.ts`, `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`
 - `src/blocks/*`, `src/items/*`, `src/crafting/*`, `src/survival/SurvivalSystem.ts`
 - `src/entities/MinecartManager.ts`, `MobManager.ts`, `src/combat/PlayerArrowManager.ts`
 - `src/core/Game.ts`, `constants.ts`

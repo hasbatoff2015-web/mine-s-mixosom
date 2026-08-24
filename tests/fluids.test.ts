@@ -131,4 +131,16 @@ describe('fluid flow', () => {
     expect(peak).toBeLessThanOrEqual(2048);
     expect(world.fluidUpdates).toBeLessThanOrEqual(48);
   });
+
+  it('exposes fluid HUD counters after a tick', () => {
+    const world = new VoxelWorld('fluid-hud');
+    loadFlat(world, 30);
+    world.setBlock(8, 31, 8, BlockId.Water);
+    world.scheduleFluidAround(8, 31, 8, 1);
+    tickWorld(world, 8);
+    const hud = world.fluidHudStats();
+    expect(hud.q + hud.updates + hud.writes + hud.dedupe).toBeGreaterThan(0);
+    expect(hud.dedupe).toBeGreaterThanOrEqual(0);
+    expect(world.lightOriginCounts.stream).toBeGreaterThanOrEqual(0);
+  });
 });
