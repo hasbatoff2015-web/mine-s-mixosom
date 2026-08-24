@@ -66,6 +66,8 @@ import {
   DroppedItemManager,
   FallingBlockManager,
   MinecartManager,
+  minecartDismountFromSprint,
+  resolveFlintAndSteelUse,
   MobManager,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
@@ -221,6 +223,7 @@ export class Game {
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
   private lastConsumedArrow: string | undefined;
+  private minecartDismountHeld = false;
   private settings: RuntimeSettings = {
     volume: 0.7,
     sensitivity: 0.0022,
@@ -1551,10 +1554,12 @@ export class Game {
     const entityStart = performance.now();
     session.arrows.tick(FIXED_DT);
     session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
+    const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
+    const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
     session.minecarts.update(FIXED_DT, {
       riderId: session.ridingCartId,
-      forward: riding ? movementBefore.forward : 0,
-      strafe: riding ? movementBefore.right : 0,
+      forward: riding && steerOnRail ? movementBefore.forward : 0,
+      strafe: riding && steerOnRail ? movementBefore.right : 0,
       riderYaw: session.player.yaw,
     });
     this.updateMinecartRiding(session);
@@ -1781,9 +1786,10 @@ export class Game {
       this.placeMinecart(hit);
       return;
     }
-    const targetedCart = hit
-      ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-      : session.minecarts.nearest(session.player.position, 1.5);
+    const targetedCart = this.raycastPlayerMinecart(session)?.cart
+      ?? (hit
+        ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
+        : session.minecarts.nearest(session.player.position, 1.5));
     if (targetedCart && session.minecarts.isRideable(targetedCart)) {
       this.mountMinecart(targetedCart.id);
       return;
@@ -2320,24 +2326,29 @@ export class Game {
 
   private useFlintAndSteel(hit: VoxelHit | undefined): void {
     const session = this.session!;
-    const cart = hit
-      ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-      : session.minecarts.nearest(session.player.position, 1.6);
-    if (cart?.variant === 'tnt' && session.minecarts.primeTnt(cart)) {
+    const cart = session.minecarts.handleFlintUse(
+      session.player.eyePosition(),
+      session.player.viewDirection(),
+      PLAYER_REACH,
+    );
+    const action = resolveFlintAndSteelUse(cart, hit);
+    if (action.type === 'prime-cart') {
       this.wearFlint();
       this.audio.playTone(220, 0.12, 0.04);
       return;
     }
-    if (!hit) return;
-    if (hit.block === BlockId.Tnt) {
-      session.redstone.primeTnt(hit.x, hit.y, hit.z);
+    if (action.type === 'already-primed') {
+      this.firstPerson?.swing();
+      return;
+    }
+    if (action.type === 'prime-tnt-block') {
+      session.redstone.primeTnt(action.x, action.y, action.z);
       this.wearFlint();
       return;
     }
-    const x = hit.x + hit.normal.x;
-    const y = hit.y + hit.normal.y;
-    const z = hit.z + hit.normal.z;
-    if (this.tryIgniteAt(x, y, z, session)) this.wearFlint();
+    if (action.type === 'ignite-cell' && this.tryIgniteAt(action.x, action.y, action.z, session)) {
+      this.wearFlint();
+    }
   }
 
   private wearFlint(): void {
@@ -2397,9 +2408,10 @@ export class Game {
 
   private tryInsertTntMinecart(hit: VoxelHit | undefined): boolean {
     const session = this.session!;
-    const cart = hit
-      ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-      : session.minecarts.nearest(session.player.position, 1.6);
+    const cart = this.raycastPlayerMinecart(session)?.cart
+      ?? (hit
+        ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
+        : session.minecarts.nearest(session.player.position, 1.6));
     if (!cart || !session.minecarts.insertTnt(cart)) return false;
     this.audio.playTone(260, 0.05, 0.03);
     this.firstPerson?.swing();
@@ -2413,6 +2425,7 @@ export class Game {
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) return;
     session.ridingCartId = id;
+    this.minecartDismountHeld = true;
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
     session.player.previousPosition.copy(session.player.position);
     session.player.velocity.set(0, 0, 0);
@@ -2421,13 +2434,18 @@ export class Game {
 
   private updateMinecartRiding(session: GameSession): void {
     const id = session.ridingCartId;
-    if (!id) return;
+    if (!id) {
+      this.minecartDismountHeld = this.input.movement().sprint;
+      return;
+    }
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) {
       session.ridingCartId = undefined;
       return;
     }
-    if (this.input.movement().sneak) {
+    const edge = minecartDismountFromSprint(this.input.movement().sprint, this.minecartDismountHeld);
+    this.minecartDismountHeld = edge.held;
+    if (edge.dismount) {
       session.ridingCartId = undefined;
       const exit = session.minecarts.findDismountPosition(cart);
       session.player.position.copy(exit);
@@ -2439,6 +2457,14 @@ export class Game {
     session.player.previousPosition.set(cart.previousPosition.x, cart.previousPosition.y + 0.2, cart.previousPosition.z);
     session.player.velocity.copy(cart.velocity);
     session.player.fallDistance = 0;
+  }
+
+  private raycastPlayerMinecart(session: GameSession) {
+    return session.minecarts.raycast(
+      session.player.eyePosition(),
+      session.player.viewDirection(),
+      PLAYER_REACH,
+    );
   }
 
   private refreshRailsAround(x: number, y: number, z: number): void {

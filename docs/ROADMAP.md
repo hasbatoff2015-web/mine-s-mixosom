@@ -43,6 +43,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после fluid surface + streaming regression fix: typecheck, 424 tests / 49 files, production build 103 modules, 1.11 MiB / 180 files.
 - [x] Локальный pipeline после fire arrow / fire visual / item icons: typecheck, 429 tests / 50 files, production build 106 modules, 1.12 MiB / 180 files.
 - [x] Локальный pipeline после fire-contact / sunlight / 3D minecart pass: typecheck, 453 tests / 51 files, production build 109 modules, 1.13 MiB / 180 files.
+- [x] Локальный pipeline после minecart floor / derail / Shift dismount / TNT ignition + primed texture: typecheck, 464 tests / 51 files, production build 109 modules, 1.13 MiB / 180 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.

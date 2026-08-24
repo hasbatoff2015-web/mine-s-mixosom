@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
-import { FIXED_DT, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
+import { FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import {
   isMinecartEntityVisual,
   MinecartVisualFactory,
   MINECART_HEIGHT,
+  MINECART_HIT_HEIGHT,
   MINECART_LENGTH,
   MINECART_WIDTH,
 } from '../rendering/minecartGeometry';
@@ -31,14 +32,69 @@ const ACCEL_TIME = 0.5;
 const COAST_FRICTION = 0.965;
 const SLOPE_GRAVITY = 6.5;
 const PUSH_GAIN = 0.28;
+const GROUND_FRICTION = 0.78;
+const AIR_DRAG = 0.995;
+const DERAIL_GRACE_TICKS = 4;
 const BODY = Object.freeze({ width: MINECART_WIDTH, height: MINECART_HEIGHT });
 const CART_AABB = Object.freeze({
   width: MINECART_WIDTH,
   length: MINECART_LENGTH,
   height: MINECART_HEIGHT,
 });
+const CART_HIT_AABB = Object.freeze({
+  width: MINECART_WIDTH,
+  length: MINECART_LENGTH,
+  height: MINECART_HIT_HEIGHT,
+});
 
 export type MinecartVariant = 'normal' | 'tnt';
+
+/** Rising edge of Shift/sprint: one keydown → one dismount. Hold does not repeat. */
+export function minecartDismountFromSprint(
+  sprintDown: boolean,
+  wasHeld: boolean,
+): { dismount: boolean; held: boolean } {
+  if (!sprintDown) return { dismount: false, held: false };
+  if (wasHeld) return { dismount: false, held: true };
+  return { dismount: true, held: true };
+}
+
+export type FlintAndSteelCartResult = 'primed' | 'already' | 'none';
+
+export type FlintAndSteelAction =
+  | { readonly type: 'prime-cart'; readonly wear: true }
+  | { readonly type: 'already-primed'; readonly wear: false }
+  | { readonly type: 'prime-tnt-block'; readonly x: number; readonly y: number; readonly z: number; readonly wear: true }
+  | { readonly type: 'ignite-cell'; readonly x: number; readonly y: number; readonly z: number }
+  | { readonly type: 'none' };
+
+/**
+ * Entity (TNT minecart) wins over block flint. A successful cart prime never
+ * falls through to Fire placement on the rail or a neighboring face.
+ */
+export function resolveFlintAndSteelUse(
+  cart: FlintAndSteelCartResult,
+  hit?: {
+    readonly block: number;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly normal: { readonly x: number; readonly y: number; readonly z: number };
+  },
+): FlintAndSteelAction {
+  if (cart === 'primed') return { type: 'prime-cart', wear: true };
+  if (cart === 'already') return { type: 'already-primed', wear: false };
+  if (!hit) return { type: 'none' };
+  if (hit.block === BlockId.Tnt) {
+    return { type: 'prime-tnt-block', x: hit.x, y: hit.y, z: hit.z, wear: true };
+  }
+  return {
+    type: 'ignite-cell',
+    x: hit.x + hit.normal.x,
+    y: hit.y + hit.normal.y,
+    z: hit.z + hit.normal.z,
+  };
+}
 
 export interface SerializedMinecart {
   readonly id: string;
@@ -47,6 +103,7 @@ export interface SerializedMinecart {
   readonly yaw: number;
   readonly variant?: MinecartVariant;
   readonly fuseTicks?: number;
+  readonly onRail?: boolean;
 }
 
 export interface MinecartEntity {
@@ -63,6 +120,7 @@ export interface MinecartEntity {
   alongSpeed: number;
   progress: number;
   rail?: RailCell;
+  derailGraceTicks: number;
 }
 
 export interface MinecartUpdateInput {
@@ -133,6 +191,7 @@ export class MinecartManager {
       fuseTicks: 0,
       alongSpeed: 0,
       progress: 0.5,
+      derailGraceTicks: 0,
     };
     this.snapToRail(entity);
     this.carts.set(entityId, entity);
@@ -166,6 +225,20 @@ export class MinecartManager {
 
   get(id: string): MinecartEntity | undefined {
     return this.carts.get(id);
+  }
+
+  isOnRail(cart: MinecartEntity): boolean {
+    return cart.rail !== undefined;
+  }
+
+  handleFlintUse(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    reach: number,
+  ): 'primed' | 'already' | 'none' {
+    const hit = this.raycast(origin, direction, reach);
+    if (hit?.cart.variant !== 'tnt') return 'none';
+    return this.primeTnt(hit.cart) ? 'primed' : 'already';
   }
 
   isRideable(cart: MinecartEntity): boolean {
@@ -224,12 +297,12 @@ export class MinecartManager {
     for (const cart of this.carts.values()) {
       const hit = rayAabb(
         origin.x, origin.y, origin.z, dx, dy, dz, maxDistance,
-        cart.position.x - CART_AABB.width * 0.5,
+        cart.position.x - CART_HIT_AABB.width * 0.5,
         cart.position.y,
-        cart.position.z - CART_AABB.length * 0.5,
-        cart.position.x + CART_AABB.width * 0.5,
-        cart.position.y + CART_AABB.height,
-        cart.position.z + CART_AABB.length * 0.5,
+        cart.position.z - CART_HIT_AABB.length * 0.5,
+        cart.position.x + CART_HIT_AABB.width * 0.5,
+        cart.position.y + CART_HIT_AABB.height,
+        cart.position.z + CART_HIT_AABB.length * 0.5,
       );
       if (hit === undefined) continue;
       if (!best || hit < best.distance) best = { cart, distance: hit };
@@ -243,16 +316,30 @@ export class MinecartManager {
       [1, 1], [1, -1], [-1, 1], [-1, -1],
     ];
     const shape = { width: PLAYER_WIDTH, height: PLAYER_HEIGHT };
-    for (const [dx, dz] of offsets) {
-      const candidate = new THREE.Vector3(cart.position.x + dx, cart.position.y, cart.position.z + dz);
-      if (!isSpaceClear(this.world, candidate, shape)) continue;
-      const below = this.world.getBlock(
-        Math.floor(candidate.x), Math.floor(candidate.y - 0.05), Math.floor(candidate.z), false,
-      );
-      if (below === BlockId.Rail && !isSpaceClear(this.world, candidate.clone().setY(candidate.y + 0.2), shape)) {
-        continue;
+    for (const lift of [0, 1]) {
+      for (const [dx, dz] of offsets) {
+        const candidate = new THREE.Vector3(
+          cart.position.x + dx,
+          cart.position.y + lift,
+          cart.position.z + dz,
+        );
+        if (!isSpaceClear(this.world, candidate, shape)) continue;
+        if (this.overlapsCart(cart, {
+          minX: candidate.x - PLAYER_WIDTH * 0.5,
+          maxX: candidate.x + PLAYER_WIDTH * 0.5,
+          minY: candidate.y,
+          maxY: candidate.y + PLAYER_HEIGHT,
+          minZ: candidate.z - PLAYER_WIDTH * 0.5,
+          maxZ: candidate.z + PLAYER_WIDTH * 0.5,
+        })) continue;
+        const below = this.world.getBlock(
+          Math.floor(candidate.x), Math.floor(candidate.y - 0.05), Math.floor(candidate.z), false,
+        );
+        if (below === BlockId.Rail && !isSpaceClear(this.world, candidate.clone().setY(candidate.y + 0.2), shape)) {
+          continue;
+        }
+        return candidate;
       }
-      return candidate;
     }
     return new THREE.Vector3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
   }
@@ -301,6 +388,7 @@ export class MinecartManager {
       yaw: cart.yaw,
       variant: cart.variant,
       fuseTicks: cart.fuseTicks,
+      onRail: cart.rail !== undefined,
     }));
   }
 
@@ -315,9 +403,14 @@ export class MinecartManager {
       cart.velocity.set(entry.velocity[0], entry.velocity[1], entry.velocity[2]);
       cart.yaw = entry.yaw;
       cart.fuseTicks = Math.max(0, Math.floor(entry.fuseTicks ?? 0));
-      this.snapToRail(cart);
-      const tangent = this.tangentOf(cart);
-      cart.alongSpeed = cart.velocity.x * tangent.x + cart.velocity.z * tangent.z;
+      if (entry.onRail === false) {
+        cart.rail = undefined;
+        cart.derailGraceTicks = 0;
+      } else {
+        this.snapToRail(cart);
+        const tangent = this.tangentOf(cart);
+        cart.alongSpeed = cart.velocity.x * tangent.x + cart.velocity.z * tangent.z;
+      }
       this.syncVisual(cart);
     }
   }
@@ -334,18 +427,18 @@ export class MinecartManager {
   }
 
   private stepCart(cart: MinecartEntity, dt: number, input: MinecartUpdateInput): void {
-    this.ensureRail(cart);
+    if (cart.derailGraceTicks > 0) cart.derailGraceTicks -= 1;
+    if (cart.rail && this.world.getBlock(cart.rail.x, cart.rail.y, cart.rail.z, false) !== BlockId.Rail) {
+      cart.rail = undefined;
+    }
+    if (!cart.rail && cart.derailGraceTicks <= 0) this.tryRecapture(cart);
     if (!cart.rail) {
-      cart.velocity.y -= 32 * dt;
-      const moved = moveVoxelBody(this.world, cart.position, cart.velocity, dt, BODY);
-      if (moved.hitY && cart.velocity.y <= 0) cart.velocity.y = 0;
-      cart.alongSpeed = 0;
+      this.stepOffRail(cart, dt);
       return;
     }
     const sample = sampleRail(cart.rail, cart.progress);
     const ridden = input.riderId === cart.id && cart.variant === 'normal';
     const forward = ridden ? (input.forward ?? 0) : 0;
-    // A/D (`strafe`) is reserved for future junctions and must not slide the cart off the rail.
     void input.strafe;
     const accel = MINECART_MAX_SPEED / ACCEL_TIME;
     if (Math.abs(forward) > 0.05) {
@@ -378,14 +471,16 @@ export class MinecartManager {
       const leftover = nextT > 1 ? (nextT - 1) * length : nextT * length;
       const neighbor = nextRail(this.world, cart.rail, tEnd);
       if (!neighbor) {
-        cart.progress = tEnd;
-        cart.alongSpeed = 0;
-        remaining = 0;
-        break;
-      }
-      if (!isRailChunkLoaded(this.world, neighbor.x, neighbor.z)) {
-        cart.progress = tEnd;
-        cart.alongSpeed = 0;
+        const end = sampleRail(cart.rail, tEnd);
+        const nextX = Math.floor(end.x + Math.sign(end.tangentX || 0) * 0.51);
+        const nextZ = Math.floor(end.z + Math.sign(end.tangentZ || 0) * 0.51);
+        if (!isRailChunkLoaded(this.world, nextX, nextZ)) {
+          cart.progress = tEnd;
+          cart.alongSpeed = 0;
+          remaining = 0;
+          break;
+        }
+        this.leaveRail(cart, leftover, end);
         remaining = 0;
         break;
       }
@@ -404,23 +499,69 @@ export class MinecartManager {
       remaining = Math.sign(cart.alongSpeed) * Math.abs(leftover);
     }
 
+    if (!cart.rail) return;
     const pose = sampleRail(cart.rail, cart.progress);
     cart.position.set(pose.x, pose.y, pose.z);
     cart.velocity.set(pose.tangentX * cart.alongSpeed, pose.tangentY * cart.alongSpeed, pose.tangentZ * cart.alongSpeed);
-    if (Math.abs(cart.alongSpeed) > 0.02) {
-      cart.yaw = pose.yaw;
-      cart.pitch = pose.pitch;
-    } else {
-      cart.yaw = pose.yaw;
-      cart.pitch = pose.pitch;
-    }
+    cart.yaw = pose.yaw;
+    cart.pitch = pose.pitch;
   }
 
-  private ensureRail(cart: MinecartEntity): void {
-    if (cart.rail && this.world.getBlock(cart.rail.x, cart.rail.y, cart.rail.z, false) === BlockId.Rail) {
-      return;
+  private stepOffRail(cart: MinecartEntity, dt: number): void {
+    cart.alongSpeed = 0;
+    cart.velocity.y -= GRAVITY * dt;
+    const moved = moveVoxelBody(this.world, cart.position, cart.velocity, dt, BODY);
+    if (moved.hitX) cart.velocity.x = 0;
+    if (moved.hitZ) cart.velocity.z = 0;
+    if (moved.onGround || (moved.hitY && cart.velocity.y <= 0)) {
+      cart.velocity.y = 0;
+      cart.velocity.x *= GROUND_FRICTION;
+      cart.velocity.z *= GROUND_FRICTION;
+      if (Math.hypot(cart.velocity.x, cart.velocity.z) < 0.05) {
+        cart.velocity.x = 0;
+        cart.velocity.z = 0;
+      }
+    } else {
+      cart.velocity.x *= AIR_DRAG;
+      cart.velocity.z *= AIR_DRAG;
     }
-    this.snapToRail(cart);
+    cart.pitch *= 0.85;
+  }
+
+  private leaveRail(
+    cart: MinecartEntity,
+    leftover: number,
+    end: ReturnType<typeof sampleRail>,
+  ): void {
+    const speed = cart.alongSpeed;
+    const travel = Math.max(Math.abs(leftover), 0.08) * Math.sign(speed || leftover || 1);
+    cart.position.set(
+      end.x + end.tangentX * travel,
+      end.y + end.tangentY * travel,
+      end.z + end.tangentZ * travel,
+    );
+    cart.velocity.set(end.tangentX * speed, end.tangentY * speed, end.tangentZ * speed);
+    cart.alongSpeed = 0;
+    cart.rail = undefined;
+    cart.derailGraceTicks = DERAIL_GRACE_TICKS;
+    cart.yaw = end.yaw;
+    cart.pitch = end.pitch;
+  }
+
+  private tryRecapture(cart: MinecartEntity): void {
+    const cell = findRailCell(this.world, cart.position.x, cart.position.y, cart.position.z);
+    if (!cell) return;
+    cart.rail = cell;
+    cart.progress = progressOnRail(cell.shape, cart.position.x - cell.x, cart.position.z - cell.z);
+    const pose = sampleRail(cell, cart.progress);
+    cart.position.set(pose.x, pose.y, pose.z);
+    cart.alongSpeed = THREE.MathUtils.clamp(
+      cart.velocity.x * pose.tangentX + cart.velocity.z * pose.tangentZ,
+      -MINECART_MAX_SPEED,
+      MINECART_MAX_SPEED,
+    );
+    cart.yaw = pose.yaw;
+    cart.pitch = pose.pitch;
   }
 
   private snapToRail(cart: MinecartEntity): void {

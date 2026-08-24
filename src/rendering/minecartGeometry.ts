@@ -5,18 +5,27 @@ import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 export const MINECART_ENTITY_KIND = 'minecart-entity';
 export const MINECART_TEXTURE_KEY = 'entity/minecart';
 export const MINECART_TNT_TEXTURE_KEY = 'block/tnt';
+export const MINECART_FLOOR_NAME = 'minecart-floor';
+export const MINECART_TNT_CARGO_NAME = 'tnt-cargo';
 
 /** World size of the open-top cart, in blocks. */
 export const MINECART_WIDTH = 0.98;
 export const MINECART_LENGTH = 0.98;
 export const MINECART_HEIGHT = 0.62;
 export const MINECART_WALL = 0.08;
-export const MINECART_FLOOR = 0.09;
+/** Top of the solid inner floor; must sit above the 2/16 rail strip. */
+export const MINECART_FLOOR_TOP = 0.16;
+export const MINECART_FLOOR_THICKNESS = 0.12;
+export const RAIL_STRIP_HEIGHT = 2 / 16;
+export const MINECART_TNT_SIZE = 0.76;
+/** Sit the cargo on the inner floor without sharing the floor plane (z-fight). */
+export const MINECART_TNT_SEAT = 0.006;
+/** Extra height so arrows/use hit the TNT cube above the rim. */
+export const MINECART_HIT_HEIGHT = 1.15;
 
 const INNER_GRAY = 0x3d3d44;
 const FLOOR_GRAY = 0x4a4a52;
 const WHEEL_GRAY = 0x1c1c20;
-const TNT_CARGO = 'tnt-cargo';
 
 export interface MinecartVisual extends THREE.Group {
   userData: THREE.Object3D['userData'] & {
@@ -29,9 +38,14 @@ export function isMinecartEntityVisual(object: THREE.Object3D): boolean {
   return object.userData.kind === MINECART_ENTITY_KIND;
 }
 
+export function minecartFloorMesh(visual: THREE.Object3D): THREE.Mesh | undefined {
+  const found = visual.getObjectByName(MINECART_FLOOR_NAME);
+  return found instanceof THREE.Mesh ? found : undefined;
+}
+
 /**
- * Open-top metal cart: four thick walls, floor, inner darker lining, wheels.
- * Exterior uses the existing `entity/minecart` texture; interior is solid gray.
+ * Open-top metal cart: four thick walls, opaque full-width floor, inner lining, wheels.
+ * Exterior uses `entity/minecart`; interior/floor are solid gray. Top stays open.
  */
 export class MinecartVisualFactory {
   private readonly geometries: THREE.BufferGeometry[] = [];
@@ -57,20 +71,27 @@ export class MinecartVisualFactory {
 
     const halfW = MINECART_WIDTH / 2;
     const halfL = MINECART_LENGTH / 2;
-    const wallH = MINECART_HEIGHT - MINECART_FLOOR;
+    const wallH = MINECART_HEIGHT - MINECART_FLOOR_TOP;
     const innerW = MINECART_WIDTH - MINECART_WALL * 2;
     const innerL = MINECART_LENGTH - MINECART_WALL * 2;
+    const floorCenterY = MINECART_FLOOR_TOP - MINECART_FLOOR_THICKNESS / 2;
 
-    this.addBox(group, [innerW, MINECART_FLOOR, innerL], [0, MINECART_FLOOR / 2, 0], floor);
+    const floorMesh = this.addBox(
+      group,
+      [MINECART_WIDTH, MINECART_FLOOR_THICKNESS, MINECART_LENGTH],
+      [0, floorCenterY, 0],
+      floor,
+    );
+    floorMesh.name = MINECART_FLOOR_NAME;
 
-    const wallY = MINECART_FLOOR + wallH / 2;
+    const wallY = MINECART_FLOOR_TOP + wallH / 2;
     this.addBox(group, [MINECART_WIDTH, wallH, MINECART_WALL], [0, wallY, halfL - MINECART_WALL / 2], outer);
     this.addBox(group, [MINECART_WIDTH, wallH, MINECART_WALL], [0, wallY, -(halfL - MINECART_WALL / 2)], outer);
     this.addBox(group, [MINECART_WALL, wallH, innerL], [halfW - MINECART_WALL / 2, wallY, 0], outer);
     this.addBox(group, [MINECART_WALL, wallH, innerL], [-(halfW - MINECART_WALL / 2), wallY, 0], outer);
 
     const innerH = wallH - 0.02;
-    const innerY = MINECART_FLOOR + innerH / 2 + 0.01;
+    const innerY = MINECART_FLOOR_TOP + innerH / 2 + 0.01;
     const inset = MINECART_WALL + 0.012;
     this.addBox(group, [innerW, innerH, 0.02], [0, innerY, halfL - inset], inner);
     this.addBox(group, [innerW, innerH, 0.02], [0, innerY, -(halfL - inset)], inner);
@@ -88,11 +109,11 @@ export class MinecartVisualFactory {
 
     const tnt = this.addBox(
       group,
-      [0.76, 0.76, 0.76],
-      [0, 0.72, 0],
+      [MINECART_TNT_SIZE, MINECART_TNT_SIZE, MINECART_TNT_SIZE],
+      [0, MINECART_FLOOR_TOP + MINECART_TNT_SEAT + MINECART_TNT_SIZE / 2, 0],
       this.tnt ??= this.texturedMaterial(MINECART_TNT_TEXTURE_KEY),
     );
-    tnt.name = TNT_CARGO;
+    tnt.name = MINECART_TNT_CARGO_NAME;
     tnt.visible = false;
 
     return group;
@@ -100,12 +121,12 @@ export class MinecartVisualFactory {
 
   setVariant(visual: THREE.Object3D, variant: 'normal' | 'tnt'): void {
     visual.userData.variant = variant;
-    const cargo = visual.getObjectByName(TNT_CARGO);
+    const cargo = visual.getObjectByName(MINECART_TNT_CARGO_NAME);
     if (cargo) cargo.visible = variant === 'tnt';
   }
 
   pulsePrimed(visual: THREE.Object3D, fuseRatio: number): void {
-    const cargo = visual.getObjectByName(TNT_CARGO);
+    const cargo = visual.getObjectByName(MINECART_TNT_CARGO_NAME);
     if (!cargo) return;
     const pulse = fuseRatio > 0 ? 1 + Math.sin(fuseRatio * 40) * 0.04 * fuseRatio : 1;
     cargo.scale.setScalar(pulse);
@@ -138,7 +159,12 @@ export class MinecartVisualFactory {
   }
 
   private colorMaterial(color: number): THREE.MeshBasicMaterial {
-    const material = createEntityMaterial({ color });
+    const material = createEntityMaterial({
+      color,
+      transparent: false,
+      depthWrite: true,
+      side: THREE.DoubleSide,
+    });
     this.materials.push(material);
     return material;
   }
@@ -154,7 +180,12 @@ export class MinecartVisualFactory {
     map.wrapS = THREE.ClampToEdgeWrapping;
     map.wrapT = THREE.ClampToEdgeWrapping;
     this.textures.push(map);
-    const material = createEntityMaterial({ map });
+    const material = createEntityMaterial({
+      map,
+      transparent: false,
+      depthWrite: true,
+      side: THREE.DoubleSide,
+    });
     this.materials.push(material);
     return material;
   }

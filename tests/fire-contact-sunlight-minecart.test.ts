@@ -4,9 +4,10 @@ import { BlockId } from '../src/blocks';
 import {
   FIRE_ARROW_IGNITE_TICKS,
   FIRE_DAMAGE_INTERVAL_TICKS,
+  PlayerArrowManager,
   flamingArrowBlockHit,
 } from '../src/combat';
-import { CHUNK_SIZE, WALK_SPEED, WORLD_HEIGHT } from '../src/core/constants';
+import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED, WORLD_HEIGHT } from '../src/core/constants';
 import { findCraftingRecipe, getCraftingResult, CRAFTING_RECIPES } from '../src/crafting';
 import {
   isMinecartEntityVisual,
@@ -16,11 +17,25 @@ import {
   TNT_MINECART_EXPLOSION_RADIUS,
   TNT_MINECART_FUSE_TICKS,
   entryProgress,
+  minecartDismountFromSprint,
+  resolveFlintAndSteelUse,
 } from '../src/entities';
-import { Inventory, createItemStack } from '../src/inventory';
+import { DESKTOP_SNEAK_CODE, DESKTOP_SPRINT_CODES } from '../src/input/InputManager';
+import { Inventory, createItemStack, damageItem } from '../src/inventory';
 import { ItemId } from '../src/items';
 import { PlayerController } from '../src/player';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
+import {
+  MINECART_FLOOR_NAME,
+  MINECART_FLOOR_THICKNESS,
+  MINECART_FLOOR_TOP,
+  MINECART_TNT_CARGO_NAME,
+  MINECART_TNT_SEAT,
+  MINECART_TNT_SIZE,
+  MINECART_WIDTH,
+  RAIL_STRIP_HEIGHT,
+  minecartFloorMesh,
+} from '../src/rendering/minecartGeometry';
 import {
   isolatedRailShapeFromYaw,
   railTextureYaw,
@@ -55,6 +70,34 @@ function setSkyColumn(world: VoxelWorld, x: number, z: number, value: number, ma
 
 function carts(world: VoxelWorld): MinecartManager {
   return new MinecartManager(new THREE.Scene(), world, new ItemVisualFactory());
+}
+
+function nsTrack(world: VoxelWorld, x: number, y: number, z0: number, z1: number): void {
+  world.getChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z0 / CHUNK_SIZE));
+  world.getChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z1 / CHUNK_SIZE));
+  for (let z = z0; z <= z1; z += 1) {
+    world.setBlock(x, y, z, BlockId.Rail);
+    world.setBlockState(x, y, z, { railShape: 'north_south' });
+  }
+}
+
+function fireCount(world: VoxelWorld, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): number {
+  let count = 0;
+  for (let x = x0; x <= x1; x += 1) {
+    for (let y = y0; y <= y1; y += 1) {
+      for (let z = z0; z <= z1; z += 1) {
+        if (world.getBlock(x, y, z, false) === BlockId.Fire) count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+/** Box-Muller zeros: u=0.5, v=0.25 → no arrow spread. */
+function noSpreadRandom(): () => number {
+  let index = 0;
+  const seq = [0.5, 0.25];
+  return () => seq[index++ % 2]!;
 }
 
 describe('fire contact and independent burn sources', () => {
@@ -529,5 +572,332 @@ describe('player fire AABB', () => {
       movement: () => ({ forward: 0, right: 0, jump: false, sprint: false, sneak: false }),
     }, 0.05);
     expect(player.inFire).toBe(true);
+  });
+});
+
+describe('minecart solid inner floor', () => {
+  it('has an opaque full-width floor above the rail strip with TNT seated on it', () => {
+    const world = new VoxelWorld('cart-floor');
+    platform(world, 4, 4, 6, 6);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: 'north_south' });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    const floor = minecartFloorMesh(cart.visual);
+    expect(floor).toBeDefined();
+    expect(floor!.name).toBe(MINECART_FLOOR_NAME);
+    const geometry = floor!.geometry as THREE.BoxGeometry;
+    expect(geometry.parameters.width).toBeCloseTo(MINECART_WIDTH, 5);
+    expect(geometry.parameters.depth).toBeCloseTo(MINECART_WIDTH, 5);
+    expect(geometry.parameters.height).toBeCloseTo(MINECART_FLOOR_THICKNESS, 5);
+    expect(geometry.getIndex()?.count).toBe(36);
+    expect(MINECART_FLOOR_TOP).toBeGreaterThan(RAIL_STRIP_HEIGHT);
+    const floorTop = floor!.position.y + geometry.parameters.height / 2;
+    expect(floorTop).toBeCloseTo(MINECART_FLOOR_TOP, 5);
+    expect(floorTop).toBeGreaterThan(RAIL_STRIP_HEIGHT);
+    const material = floor!.material as THREE.MeshBasicMaterial;
+    expect(material.transparent).toBe(false);
+    expect(material.opacity).toBe(1);
+    expect(material.depthWrite).toBe(true);
+    expect(material.depthTest).toBe(true);
+    expect(material.side).toBe(THREE.DoubleSide);
+
+    manager.insertTnt(cart);
+    const cargo = cart.visual.getObjectByName(MINECART_TNT_CARGO_NAME) as THREE.Mesh;
+    expect(cargo.visible).toBe(true);
+    const cargoBottom = cargo.position.y - MINECART_TNT_SIZE / 2;
+    expect(cargoBottom).toBeCloseTo(MINECART_FLOOR_TOP + MINECART_TNT_SEAT, 5);
+    expect(cargoBottom).toBeGreaterThan(floorTop);
+    manager.dispose();
+  });
+});
+
+describe('minecart derail and off-rail physics', () => {
+  it('leaves a 10-rail track with momentum instead of stopping on the last cell', () => {
+    const world = new VoxelWorld('cart-derail');
+    world.getChunk(0, 0);
+    world.getChunk(0, 1);
+    platform(world, 4, 4, 6, 28);
+    nsTrack(world, 5, 41, 5, 14);
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 6)!;
+    cart.alongSpeed = 4;
+    let leftRail = false;
+    for (let tick = 0; tick < 80; tick += 1) {
+      manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: Math.PI });
+      if (!manager.isOnRail(cart)) {
+        leftRail = true;
+        expect(Math.hypot(cart.velocity.x, cart.velocity.y, cart.velocity.z)).toBeGreaterThan(0.2);
+        expect(cart.position.z).toBeGreaterThan(14.5);
+        break;
+      }
+    }
+    expect(leftRail).toBe(true);
+    expect(manager.isOnRail(cart)).toBe(false);
+    const speed = Math.hypot(cart.velocity.x, cart.velocity.z);
+    expect(speed).not.toBe(0);
+    manager.dispose();
+  });
+
+  it('applies gravity after derail and does not pass through terrain', () => {
+    const world = new VoxelWorld('cart-offrail-phys');
+    world.getChunk(0, 0);
+    world.getChunk(0, 1);
+    platform(world, 4, 4, 6, 16);
+    nsTrack(world, 5, 41, 5, 14);
+    for (let x = 4; x <= 6; x += 1) {
+      for (let z = 14; z <= 22; z += 1) {
+        world.getChunk(0, Math.floor(z / CHUNK_SIZE));
+        world.setBlock(x, 40, z, BlockId.Air);
+        world.setBlock(x, 39, z, BlockId.Air);
+        world.setBlock(x, 41, z, BlockId.Air);
+      }
+    }
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 12)!;
+    cart.alongSpeed = 4;
+    let yAtLeave: number | undefined;
+    for (let tick = 0; tick < 50; tick += 1) {
+      manager.update(0.05);
+      if (!manager.isOnRail(cart)) {
+        yAtLeave = cart.position.y;
+        break;
+      }
+    }
+    expect(yAtLeave).toBeDefined();
+    expect(yAtLeave).toBeGreaterThan(40.5);
+    for (let tick = 0; tick < 12; tick += 1) manager.update(0.05);
+    expect(cart.position.y).toBeLessThan(yAtLeave! - 0.5);
+    manager.dispose();
+
+    const walled = new VoxelWorld('cart-wall');
+    walled.getChunk(0, 0);
+    walled.getChunk(0, 1);
+    platform(walled, 4, 4, 6, 20);
+    nsTrack(walled, 5, 41, 5, 14);
+    for (let y = 41; y <= 43; y += 1) walled.setBlock(5, y, 18, BlockId.Stone);
+    const wallCarts = carts(walled);
+    const blocked = wallCarts.spawn(5, 41, 12)!;
+    blocked.alongSpeed = 4;
+    for (let tick = 0; tick < 80; tick += 1) wallCarts.update(0.05);
+    expect(blocked.position.z).toBeLessThan(17.7);
+    expect(blocked.position.z).toBeGreaterThan(14);
+    wallCarts.dispose();
+  });
+
+  it('slows on flat ground over several ticks, not in one tick and not forever', () => {
+    const world = new VoxelWorld('cart-friction');
+    world.getChunk(0, 0);
+    world.getChunk(0, 1);
+    platform(world, 4, 4, 6, 28);
+    nsTrack(world, 5, 41, 5, 14);
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 12)!;
+    cart.alongSpeed = 4;
+    let first = 0;
+    for (let tick = 0; tick < 40; tick += 1) {
+      manager.update(0.05);
+      if (!manager.isOnRail(cart)) {
+        first = Math.hypot(cart.velocity.x, cart.velocity.z);
+        break;
+      }
+    }
+    expect(manager.isOnRail(cart)).toBe(false);
+    expect(first).toBeGreaterThan(0.2);
+    manager.update(0.05);
+    const afterOne = Math.hypot(cart.velocity.x, cart.velocity.z);
+    expect(afterOne).toBeGreaterThan(0);
+    expect(afterOne).toBeLessThan(first);
+    for (let tick = 0; tick < 40; tick += 1) manager.update(0.05);
+    expect(Math.hypot(cart.velocity.x, cart.velocity.z)).toBeLessThan(0.05);
+    manager.dispose();
+  });
+
+  it('ignores W/A/S/D after leaving the rail', () => {
+    const world = new VoxelWorld('cart-no-steer');
+    world.getChunk(0, 0);
+    world.getChunk(0, 1);
+    platform(world, 4, 4, 6, 24);
+    nsTrack(world, 5, 41, 5, 14);
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 12)!;
+    cart.alongSpeed = 4;
+    for (let tick = 0; tick < 40; tick += 1) manager.update(0.05);
+    expect(manager.isOnRail(cart)).toBe(false);
+    const vx = cart.velocity.x;
+    const vz = cart.velocity.z;
+    for (let tick = 0; tick < 4; tick += 1) {
+      manager.update(0.05, { riderId: cart.id, forward: 1, strafe: 1, riderYaw: Math.PI });
+    }
+    expect(Math.abs(cart.velocity.x)).toBeLessThanOrEqual(Math.abs(vx) + 1e-6);
+    expect(Math.abs(cart.velocity.z)).toBeLessThanOrEqual(Math.abs(vz) + 1e-6);
+    const coast = new THREE.Vector3().copy(cart.velocity);
+    for (let tick = 0; tick < 4; tick += 1) {
+      manager.update(0.05, { riderId: cart.id, forward: -1, strafe: -1, riderYaw: 0 });
+    }
+    expect(Math.abs(cart.velocity.z)).toBeLessThanOrEqual(Math.abs(coast.z) + 1e-6);
+    manager.dispose();
+  });
+
+  it('re-captures when the cart actually crosses another rail cell', () => {
+    const world = new VoxelWorld('cart-recapture');
+    world.getChunk(0, 0);
+    world.getChunk(0, 1);
+    platform(world, 4, 4, 6, 22);
+    const manager = carts(world);
+    world.setBlock(5, 41, 8, BlockId.Rail);
+    world.setBlockState(5, 41, 8, { railShape: 'north_south' });
+    const cart = manager.spawn(5, 41, 8)!;
+    cart.rail = undefined;
+    cart.derailGraceTicks = 0;
+    cart.position.set(5.5, 41, 10.35);
+    cart.previousPosition.copy(cart.position);
+    cart.velocity.set(0, 0, 4);
+    world.setBlock(5, 41, 11, BlockId.Rail);
+    world.setBlockState(5, 41, 11, { railShape: 'north_south' });
+    let recaptured = false;
+    for (let tick = 0; tick < 20; tick += 1) {
+      manager.update(0.05);
+      const cellZ = manager.get(cart.id)?.rail?.z;
+      if (cellZ === 11) {
+        recaptured = true;
+        break;
+      }
+    }
+    expect(recaptured).toBe(true);
+    expect(cart.alongSpeed).toBeGreaterThan(0);
+    manager.dispose();
+  });
+
+  it('restores off-rail pose without snapping back onto a distant track', () => {
+    const world = new VoxelWorld('cart-save-offrail');
+    platform(world, 4, 4, 6, 12);
+    nsTrack(world, 5, 41, 5, 8);
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 6)!;
+    cart.rail = undefined;
+    cart.position.set(7.5, 41, 10.5);
+    cart.velocity.set(1.2, 0, 0.4);
+    const saved = manager.serialize();
+    expect(saved[0]?.onRail).toBe(false);
+    manager.restore(saved);
+    const restored = manager.entities[0]!;
+    expect(manager.isOnRail(restored)).toBe(false);
+    expect(restored.position.x).toBeCloseTo(7.5, 5);
+    expect(restored.velocity.x).toBeCloseTo(1.2, 5);
+    manager.dispose();
+  });
+});
+
+describe('minecart Shift dismount', () => {
+  it('binds dismount to Shift/sprint, not sneak, and uses a press edge', () => {
+    expect(DESKTOP_SPRINT_CODES).toContain('ShiftLeft');
+    expect(DESKTOP_SPRINT_CODES).toContain('ShiftRight');
+    expect(DESKTOP_SNEAK_CODE).toBe('KeyC');
+    expect(minecartDismountFromSprint(true, false)).toEqual({ dismount: true, held: true });
+    expect(minecartDismountFromSprint(true, true)).toEqual({ dismount: false, held: true });
+    expect(minecartDismountFromSprint(false, true)).toEqual({ dismount: false, held: false });
+    expect(minecartDismountFromSprint(true, false)).toEqual({ dismount: true, held: true });
+  });
+
+  it('places the player beside the cart and tries another side when the first is blocked', () => {
+    const world = new VoxelWorld('cart-dismount');
+    platform(world, 3, 3, 9, 9);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: 'north_south' });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    const open = manager.findDismountPosition(cart);
+    expect(open.x).toBeCloseTo(cart.position.x + 1, 3);
+    expect(open.z).toBeCloseTo(cart.position.z, 3);
+
+    for (let y = 41; y <= 43; y += 1) {
+      world.setBlock(6, y, 5, BlockId.Stone);
+      world.setBlock(4, y, 5, BlockId.Stone);
+    }
+    const other = manager.findDismountPosition(cart);
+    expect(other.x).toBeCloseTo(cart.position.x, 3);
+    expect(Math.abs(other.z - cart.position.z)).toBeGreaterThan(0.7);
+    expect(Math.abs(other.x - cart.position.x)).toBeLessThan(0.2);
+    manager.dispose();
+  });
+});
+
+describe('TNT minecart ignition routing', () => {
+  it('primes from flint on the entity without placing Fire, wears flint once, and is idempotent', () => {
+    const world = new VoxelWorld('tnt-flint');
+    platform(world, 4, 4, 6, 6);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: 'north_south' });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    manager.insertTnt(cart);
+    const origin = new THREE.Vector3(5.5, 42.1, 5.5);
+    const down = new THREE.Vector3(0, -1, 0);
+    expect(manager.handleFlintUse(origin, down, PLAYER_REACH)).toBe('primed');
+    expect(cart.fuseTicks).toBe(TNT_MINECART_FUSE_TICKS);
+    expect(fireCount(world, 4, 40, 4, 6, 43, 6)).toBe(0);
+    const railHit = { block: BlockId.Rail, x: 5, y: 41, z: 5, normal: { x: 0, y: 1, z: 0 } };
+    expect(resolveFlintAndSteelUse('primed', railHit).type).toBe('prime-cart');
+    expect(resolveFlintAndSteelUse('already', railHit).type).toBe('already-primed');
+    expect(resolveFlintAndSteelUse('none', railHit).type).toBe('ignite-cell');
+    expect(resolveFlintAndSteelUse('none', {
+      block: BlockId.Tnt, x: 5, y: 41, z: 5, normal: { x: 0, y: 1, z: 0 },
+    }).type).toBe('prime-tnt-block');
+    expect(flamingArrowBlockHit(BlockId.Tnt)).toBe('prime_tnt');
+    const stack = createItemStack(ItemId.FlintAndSteel);
+    const worn = damageItem(stack, 1);
+    expect(worn?.durability).toBe(63);
+    expect(manager.handleFlintUse(origin, down, PLAYER_REACH)).toBe('already');
+    expect(cart.fuseTicks).toBe(TNT_MINECART_FUSE_TICKS);
+    expect(manager.consumeExplosions()).toHaveLength(0);
+    expect(fireCount(world, 4, 40, 4, 6, 43, 6)).toBe(0);
+    const startZ = cart.position.z;
+    cart.alongSpeed = 2;
+    for (let tick = 0; tick < 8; tick += 1) manager.update(0.05);
+    expect(cart.fuseTicks).toBe(TNT_MINECART_FUSE_TICKS - 8);
+    expect(cart.position.z).not.toBeCloseTo(startZ, 2);
+    manager.dispose();
+  });
+
+  it('detonates immediately from a fire arrow, including a primed cart, and ignores a normal arrow', () => {
+    const world = new VoxelWorld('tnt-arrow-route');
+    platform(world, 4, 4, 6, 8);
+    world.setBlock(5, 41, 6, BlockId.Rail);
+    world.setBlockState(5, 41, 6, { railShape: 'north_south' });
+    const scene = new THREE.Scene();
+    const manager = new MinecartManager(scene, world, new ItemVisualFactory());
+    const mobs = new MobManager(scene, world, { automaticSpawning: false });
+    const cart = manager.spawn(5, 41, 6)!;
+    manager.insertTnt(cart);
+    const arrows = new PlayerArrowManager(scene, world, mobs, {
+      minecarts: manager,
+      random: noSpreadRandom(),
+      onMinecartHit: (hit, flaming) => {
+        if (flaming && hit.variant === 'tnt') manager.explodeNow(hit);
+      },
+      onBlockHit: (x, y, z, flaming) => {
+        if (flaming) expect(flamingArrowBlockHit(world.getBlock(x, y, z, false))).not.toBe('none');
+      },
+    });
+    arrows.spawn(new THREE.Vector3(5.5, 41.55, 4.4), new THREE.Vector3(0, 0, 1), 3, 2, false, false);
+    arrows.tick(0.05);
+    expect(manager.count).toBe(1);
+    expect(cart.fuseTicks).toBe(0);
+    arrows.spawn(new THREE.Vector3(5.5, 41.55, 4.4), new THREE.Vector3(0, 0, 1), 3, 2, false, true);
+    arrows.tick(0.05);
+    expect(manager.count).toBe(0);
+    expect(manager.consumeExplosions()).toHaveLength(1);
+    expect(fireCount(world, 4, 40, 5, 6, 42, 8)).toBe(0);
+
+    const primed = manager.spawn(5, 41, 6)!;
+    manager.insertTnt(primed);
+    expect(manager.primeTnt(primed)).toBe(true);
+    arrows.spawn(new THREE.Vector3(5.5, 41.55, 4.4), new THREE.Vector3(0, 0, 1), 3, 2, false, true);
+    arrows.tick(0.05);
+    expect(manager.count).toBe(0);
+    arrows.dispose();
+    mobs.dispose();
+    manager.dispose();
   });
 });

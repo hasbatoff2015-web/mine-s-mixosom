@@ -8,6 +8,7 @@ import {
   type HorizontalFacing,
 } from '../blocks';
 import { blockKey } from '../core/constants';
+import { TextureAtlas } from '../rendering/TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial, applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { moveVoxelBody } from '../entities/voxelPhysics';
@@ -25,6 +26,8 @@ const NEIGHBOURS = Object.freeze([
   [0, 1, 0], [0, -1, 0],
   [0, 0, 1], [0, 0, -1],
 ] as const);
+
+export const PRIMED_TNT_TEXTURE_KEY = 'block/tnt';
 
 interface MutableSourceState {
   readonly kind: RedstoneSourceKind;
@@ -97,7 +100,8 @@ export class RedstoneSystem {
   private dirtyHead = 0;
   private tntIdCounter = 0;
   private tntGeometry?: THREE.BoxGeometry;
-  private tntMaterial?: THREE.MeshBasicMaterial;
+  private tntMap?: THREE.Texture;
+  private readonly tntMaterials: THREE.MeshBasicMaterial[] = [];
   private disposed = false;
 
   constructor(
@@ -447,9 +451,11 @@ export class RedstoneSystem {
     if (this.disposed) return;
     this.clear();
     this.tntGeometry?.dispose();
-    this.tntMaterial?.dispose();
+    this.tntMap?.dispose();
+    for (const material of this.tntMaterials) material.dispose();
     this.tntGeometry = undefined;
-    this.tntMaterial = undefined;
+    this.tntMap = undefined;
+    this.tntMaterials.length = 0;
     this.disposed = true;
   }
 
@@ -498,6 +504,11 @@ export class RedstoneSystem {
         const pulse = Math.sin(elapsed * (10 + urgency * 26)) > 0 ? 1.06 + urgency * 0.08 : 1;
         entity.visual.scale.setScalar(pulse);
         entity.visual.rotation.y = elapsed * 0.75;
+        const material = entity.visual.material;
+        if (material instanceof THREE.MeshBasicMaterial) {
+          const flash = Math.sin(elapsed * (12 + urgency * 28)) > 0;
+          material.color.setHex(flash ? 0xffffff : 0xffe7b0);
+        }
         entity.visual.position.set(entity.position.x, entity.position.y + 0.49, entity.position.z);
         applySampledEntityLight(
           entity.visual,
@@ -711,13 +722,34 @@ export class RedstoneSystem {
   ): THREE.Mesh | undefined {
     if (!this.options.root) return undefined;
     this.tntGeometry ??= new THREE.BoxGeometry(0.92, 0.92, 0.92);
-    this.tntMaterial ??= createEntityMaterial({ color: 0xc33b2e });
-    const visual = new THREE.Mesh(this.tntGeometry, this.tntMaterial);
+    this.tntMap ??= this.createTntTexture();
+    const material = createEntityMaterial({
+      map: this.tntMap,
+      color: 0xffffff,
+      transparent: false,
+      depthWrite: true,
+    });
+    this.tntMaterials.push(material);
+    const visual = new THREE.Mesh(this.tntGeometry, material);
     visual.name = `primed-tnt:${id}`;
     visual.position.set(position.x, position.y + 0.49, position.z);
     bindEntityLightReceiver(visual);
     this.options.root.add(visual);
     return visual;
+  }
+
+  private createTntTexture(): THREE.Texture {
+    const map = typeof document === 'undefined'
+      ? new THREE.Texture()
+      : new THREE.TextureLoader().load(TextureAtlas.url(PRIMED_TNT_TEXTURE_KEY));
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.magFilter = THREE.NearestFilter;
+    map.minFilter = THREE.NearestFilter;
+    map.generateMipmaps = false;
+    map.wrapS = THREE.ClampToEdgeWrapping;
+    map.wrapT = THREE.ClampToEdgeWrapping;
+    map.name = PRIMED_TNT_TEXTURE_KEY;
+    return map;
   }
 
   private detonate(entity: PrimedTnt): void {

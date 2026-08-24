@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
-import { RedstoneSystem } from '../src/redstone';
+import { PRIMED_TNT_TEXTURE_KEY, RedstoneSystem } from '../src/redstone';
 import { ChunkMesher, leverHandleAngle } from '../src/rendering/ChunkMesher';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { VoxelWorld } from '../src/world/World';
@@ -87,7 +87,18 @@ describe('RedstoneSystem', () => {
     expect(world.getBlock(6, y, 5)).toBe(BlockId.Air);
     expect(redstone.primedTntCount).toBe(1);
     expect(scene.children).toHaveLength(1);
-    for (let tick = 0; tick < 79; tick += 1) redstone.update(0.05);
+    const primed = redstone.primedTnt[0]!;
+    const material = primed.visual?.material;
+    expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const meshMaterial = material as THREE.MeshBasicMaterial;
+    expect(meshMaterial.map).toBeTruthy();
+    expect(meshMaterial.map?.name).toBe(PRIMED_TNT_TEXTURE_KEY);
+    const mapBefore = meshMaterial.map;
+    for (let tick = 0; tick < 40; tick += 1) redstone.update(0.05);
+    expect(meshMaterial.map).toBe(mapBefore);
+    expect(meshMaterial.map?.name).toBe(PRIMED_TNT_TEXTURE_KEY);
+    expect(meshMaterial.color.getHex()).not.toBe(0xc33b2e);
+    for (let tick = 0; tick < 39; tick += 1) redstone.update(0.05);
     expect(redstone.consumeExplosionEvents()).toHaveLength(0);
     redstone.update(0.05);
     const explosions = redstone.consumeExplosionEvents();

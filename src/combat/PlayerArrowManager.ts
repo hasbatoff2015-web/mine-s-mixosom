@@ -21,6 +21,8 @@ interface PlayerArrow {
 }
 
 const FORWARD = new THREE.Vector3(0, 0, -1);
+/** Prefer a cart over a rail/block that is only slightly closer (cart sits on the rail). */
+const CART_BLOCK_SLOP = 0.5;
 
 export class PlayerArrowManager {
   private readonly arrows: PlayerArrow[] = [];
@@ -102,8 +104,8 @@ export class PlayerArrowManager {
         const blockHit = this.world.raycast(arrow.position, direction, distance);
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
         const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
-        const cartCloser = cartHit && (!mobHit || cartHit.distance < mobHit.distance)
-          && (!blockHit || cartHit.distance < blockHit.distance);
+        const cartCloser = cartHit && (!mobHit || cartHit.distance <= mobHit.distance)
+          && (!blockHit || cartHit.distance <= blockHit.distance + CART_BLOCK_SLOP);
         if (cartCloser && cartHit) {
           this.onMinecartHit?.(cartHit.cart, arrow.flaming);
           this.remove(index);
