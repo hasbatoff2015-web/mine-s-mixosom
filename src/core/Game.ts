@@ -141,6 +141,7 @@ import {
   defaultStairFacing,
   defaultStairHalf,
   resolveRailShape,
+  isolatedRailShapeFromYaw,
   slabLocalBoxes,
   stairLocalBoxes,
 } from '../rendering/specialBlockGeometry';
@@ -522,8 +523,11 @@ export class Game {
       heldItemId: inventory.getSlot(selectedSlot)?.itemId,
       offhandItemId: inventory.offhand?.itemId,
     });
+    const minecarts = new MinecartManager(this.scene, world, itemVisuals);
+    if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
     const arrows = new PlayerArrowManager(this.scene, world, mobs, {
       visualFactory: arrowVisuals,
+      minecarts,
       onBlockHit: (x, y, z, flaming) => {
         const session = this.session;
         if (!session || !flaming) return;
@@ -531,9 +535,12 @@ export class Game {
           session.redstone.primeTnt(x, y, z);
         }
       },
+      onMinecartHit: (cart, flaming) => {
+        const session = this.session;
+        if (!session || !flaming) return;
+        if (cart.variant === 'tnt') session.minecarts.explodeNow(cart);
+      },
     });
-    const minecarts = new MinecartManager(this.scene, world, itemVisuals);
-    if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
 
     this.session = {
       summary,
@@ -1496,6 +1503,7 @@ export class Game {
     const playerInput = {
       yaw: this.input.yaw,
       pitch: this.input.pitch,
+      locomotion: !riding,
       movement: () => ({
         ...movementBefore,
         forward: riding ? 0 : movementBefore.forward * movementMultiplier,
@@ -1516,6 +1524,7 @@ export class Game {
         player: session.player,
         world: session.world,
         armor: session.inventory,
+        inFire: session.player.inFire,
         horizontalDistance: playerResult.horizontalDistance,
         sprinting: session.player.sprinting,
         swimming: session.player.inWater,
@@ -1529,10 +1538,6 @@ export class Game {
     }
     simMark = this.addSimPart('player', simMark);
 
-    if (session.playTicks % 80 === 0) {
-      const removed = session.world.pruneChunks(Math.floor(session.player.position.x), Math.floor(session.player.position.z), this.settings.renderDistance);
-      session.worldRenderer.removeChunks(removed);
-    }
     if (gameplayAllowed) {
       this.updateTargetAndActions();
       this.updateFoodUse();
@@ -1545,8 +1550,32 @@ export class Game {
     simMark = this.addSimPart('other', simMark);
     const entityStart = performance.now();
     session.arrows.tick(FIXED_DT);
-    session.minecarts.update(FIXED_DT);
+    session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
+    session.minecarts.update(FIXED_DT, {
+      riderId: session.ridingCartId,
+      forward: riding ? movementBefore.forward : 0,
+      strafe: riding ? movementBefore.right : 0,
+      riderYaw: session.player.yaw,
+    });
     this.updateMinecartRiding(session);
+    if (session.playTicks % 80 === 0) {
+      const removed = session.world.pruneChunks(
+        Math.floor(session.player.position.x),
+        Math.floor(session.player.position.z),
+        this.settings.renderDistance,
+      );
+      session.worldRenderer.removeChunks(removed);
+    }
+    for (const boom of session.minecarts.consumeExplosions()) {
+      this.explosionQueue.enqueue({
+        x: boom.position.x,
+        y: boom.position.y,
+        z: boom.position.z,
+        radius: boom.radius,
+        power: boom.power,
+      });
+      if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
+    }
     simMark = this.addSimPart('entities', simMark);
     session.mobs.update(FIXED_DT, {
       playerPosition: session.player.position,
@@ -1747,21 +1776,20 @@ export class Game {
       this.useFlintAndSteel(hit);
       return;
     }
-    if (stack?.itemId === ItemId.Bucket) {
-      this.useEmptyBucket(hit);
-      return;
-    }
+    if (stack?.itemId === 'tnt' && this.tryInsertTntMinecart(hit)) return;
     if (stack?.itemId === ItemId.Minecart) {
       this.placeMinecart(hit);
       return;
     }
-    if (hit && session.minecarts.cartAt(hit.x, hit.y, hit.z)) {
-      this.mountMinecart(session.minecarts.cartAt(hit.x, hit.y, hit.z)!.id);
+    const targetedCart = hit
+      ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
+      : session.minecarts.nearest(session.player.position, 1.5);
+    if (targetedCart && session.minecarts.isRideable(targetedCart)) {
+      this.mountMinecart(targetedCart.id);
       return;
     }
-    const nearbyCart = session.minecarts.nearest(session.player.position, 1.5);
-    if (!stack && nearbyCart) {
-      this.mountMinecart(nearbyCart.id);
+    if (stack?.itemId === ItemId.Bucket) {
+      this.useEmptyBucket(hit);
       return;
     }
     if (!hit || !stack || item?.placesBlockId === undefined) return;
@@ -1870,6 +1898,9 @@ export class Game {
         return;
       }
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      session.world.setBlockState(x, y, z, {
+        railShape: isolatedRailShapeFromYaw(session.player.yaw),
+      });
       this.refreshRailsAround(x, y, z);
       return;
     }
@@ -2289,6 +2320,14 @@ export class Game {
 
   private useFlintAndSteel(hit: VoxelHit | undefined): void {
     const session = this.session!;
+    const cart = hit
+      ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
+      : session.minecarts.nearest(session.player.position, 1.6);
+    if (cart?.variant === 'tnt' && session.minecarts.primeTnt(cart)) {
+      this.wearFlint();
+      this.audio.playTone(220, 0.12, 0.04);
+      return;
+    }
     if (!hit) return;
     if (hit.block === BlockId.Tnt) {
       session.redstone.primeTnt(hit.x, hit.y, hit.z);
@@ -2356,27 +2395,48 @@ export class Game {
     if (session.summary.mode === 'survival') this.consumeSelected(1);
   }
 
+  private tryInsertTntMinecart(hit: VoxelHit | undefined): boolean {
+    const session = this.session!;
+    const cart = hit
+      ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
+      : session.minecarts.nearest(session.player.position, 1.6);
+    if (!cart || !session.minecarts.insertTnt(cart)) return false;
+    this.audio.playTone(260, 0.05, 0.03);
+    this.firstPerson?.swing();
+    if (session.summary.mode === 'survival') this.consumeSelected(1);
+    if (session.ridingCartId === cart.id) session.ridingCartId = undefined;
+    return true;
+  }
+
   private mountMinecart(id: string): void {
     const session = this.session!;
+    const cart = session.minecarts.get(id);
+    if (!cart || !session.minecarts.isRideable(cart)) return;
     session.ridingCartId = id;
+    session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
+    session.player.previousPosition.copy(session.player.position);
+    session.player.velocity.set(0, 0, 0);
     this.audio.playTone(300, 0.04, 0.02);
   }
 
   private updateMinecartRiding(session: GameSession): void {
     const id = session.ridingCartId;
     if (!id) return;
-    const cart = session.minecarts.entities.find((entry) => entry.id === id);
-    if (!cart) {
+    const cart = session.minecarts.get(id);
+    if (!cart || !session.minecarts.isRideable(cart)) {
       session.ridingCartId = undefined;
       return;
     }
-    if (this.input.movement().sneak || this.input.movement().jump) {
+    if (this.input.movement().sneak) {
       session.ridingCartId = undefined;
-      session.player.position.set(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
+      const exit = session.minecarts.findDismountPosition(cart);
+      session.player.position.copy(exit);
+      session.player.previousPosition.copy(exit);
       session.player.velocity.set(0, 0, 0);
       return;
     }
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
+    session.player.previousPosition.set(cart.previousPosition.x, cart.previousPosition.y + 0.2, cart.previousPosition.z);
     session.player.velocity.copy(cart.velocity);
     session.player.fallDistance = 0;
   }
@@ -2487,7 +2547,7 @@ export class Game {
       state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
       state.shieldRaised = session.combat.shieldActive;
-      state.onFire = session.survival.fireTicks > 0;
+      state.onFire = session.survival.isOnFire;
     } else {
       state.movementSpeed = 0;
       state.onGround = false;

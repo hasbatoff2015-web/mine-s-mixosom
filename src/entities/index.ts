@@ -4,3 +4,4 @@ export * from './MobManager';
 export * from './mobDefinitions';
 export * from './mobModels';
 export * from './MinecartManager';
+export * from './railPath';

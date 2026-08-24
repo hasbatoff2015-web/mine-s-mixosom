@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition } from '../blocks';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
+import {
+  aabbFromBody,
+  aabbOverlapsBlockType,
+  FIRE_DAMAGE_INTERVAL_SECONDS,
+  hasDirectSkyLight,
+  isSunHighEnough,
+} from '../combat/fireSources';
 import { createItemStack, type ItemStack } from '../inventory';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { SharedFireTexture } from '../rendering/fireTexture';
@@ -168,6 +175,8 @@ export class MobEntity {
   previousFacingYaw = 0;
   fleeSeconds = 0;
   fireTicks = 0;
+  contactBurning = false;
+  sunlightBurning = false;
   fireOverlay?: THREE.Mesh;
   readonly wanderDirection = new THREE.Vector3();
   resumeState: MobState = 'idle';
@@ -196,6 +205,10 @@ export class MobEntity {
 
   get alive(): boolean {
     return this.state !== 'die' && this.health > 0;
+  }
+
+  get isOnFire(): boolean {
+    return this.alive && (this.fireTicks > 0 || this.contactBurning || this.sunlightBurning);
   }
 
   get eyePosition(): THREE.Vector3 {
@@ -364,17 +377,7 @@ export class MobManager {
         this.updateAi(mob, delta, targetPosition, context, daylight);
       }
 
-      this.updateSunExposure(mob, delta, daylight, context.lightLevelAt);
-      if (mob.fireTicks > 0) {
-        mob.fireTicks = Math.max(0, mob.fireTicks - Math.round(delta * 20));
-        mob.fireDamageTimer += delta;
-        if (mob.fireDamageTimer >= 1) {
-          mob.fireDamageTimer = 0;
-          this.damage(mob, 1, { source: 'fire' });
-        }
-      } else {
-        mob.fireDamageTimer = 0;
-      }
+      this.updateBurning(mob, delta, daylight);
       if (!mob.alive) {
         this.snapMobRender(mob);
         continue;
@@ -490,7 +493,8 @@ export class MobManager {
     }
     if (mob.health <= 0) {
       this.beginDeath(mob);
-    } else {
+    } else if (damageOptions.source !== 'fire') {
+      // Periodic fire/sunlight DOT must not stun-lock AI (creeper fuse, chase).
       mob.hurtSeconds = 0.28;
       this.changeState(mob, 'hurt');
     }
@@ -784,9 +788,6 @@ export class MobManager {
         mob.velocity.multiplyScalar(Math.exp(-2.8 * step));
         if (sampled.id === BlockId.Lava) {
           mob.fireTicks = Math.max(mob.fireTicks, 60);
-        } else if (sampled.id === BlockId.Water) {
-          mob.fireTicks = 0;
-          mob.fireDamageTimer = 0;
         }
       } else {
         mob.velocity.y -= 20 * step;
@@ -821,25 +822,40 @@ export class MobManager {
     }
   }
 
-  private updateSunExposure(
+  private updateBurning(
     mob: MobEntity,
     delta: number,
     daylight: number,
-    customLight: MobUpdateContext['lightLevelAt'],
   ): void {
-    if ((mob.kind !== 'zombie' && mob.kind !== 'skeleton') || daylight < 0.82) {
-      mob.burnAccumulator = 0;
-      return;
+    const box = aabbFromBody(
+      mob.position.x, mob.position.y, mob.position.z,
+      mob.definition.width, mob.definition.height,
+    );
+    const inWater = aabbOverlapsBlockType(this.world, box, BlockId.Water);
+    mob.contactBurning = aabbOverlapsBlockType(this.world, box, BlockId.Fire);
+    if (inWater) {
+      mob.fireTicks = 0;
+      mob.sunlightBurning = false;
+    } else {
+      const skyX = Math.floor(mob.position.x);
+      const skyY = Math.floor(mob.position.y + mob.definition.height * 0.9);
+      const skyZ = Math.floor(mob.position.z);
+      mob.sunlightBurning = isHostileMob(mob.kind)
+        && isSunHighEnough(daylight)
+        && hasDirectSkyLight(this.world, skyX, skyY, skyZ);
     }
-    const light = customLight?.(mob.eyePosition) ?? this.getApproximateLight(mob.eyePosition, daylight);
-    if (light < 14) {
-      mob.burnAccumulator = 0;
-      return;
+    if (mob.fireTicks > 0) {
+      mob.fireTicks = Math.max(0, mob.fireTicks - Math.round(delta * 20));
     }
-    mob.burnAccumulator += delta;
-    if (mob.burnAccumulator >= 1) {
-      mob.burnAccumulator %= 1;
-      this.damage(mob, 1, { source: 'fire' });
+    if (mob.isOnFire) {
+      mob.fireDamageTimer += delta;
+      if (mob.fireDamageTimer >= FIRE_DAMAGE_INTERVAL_SECONDS) {
+        mob.fireDamageTimer = 0;
+        this.damage(mob, 1, { source: 'fire' });
+      }
+    } else {
+      mob.fireDamageTimer = 0;
+      mob.burnAccumulator = 0;
     }
   }
 
@@ -941,7 +957,7 @@ export class MobManager {
   }
 
   private syncFireOverlay(mob: MobEntity): void {
-    if (mob.fireTicks > 0 && mob.alive) {
+    if (mob.isOnFire) {
       if (!mob.fireOverlay) {
         mob.fireOverlay = SharedFireTexture.instance().createScaledOverlay(
           mob.definition.width,

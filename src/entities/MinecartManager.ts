@@ -1,19 +1,52 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
-import { CHUNK_SIZE, FIXED_DT, floorDiv } from '../core/constants';
+import { FIXED_DT, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
 import { interpolateVec3 } from '../core/entityInterpolation';
-import type { ItemVisualFactory } from '../rendering/ItemVisualFactory';
+import {
+  isMinecartEntityVisual,
+  MinecartVisualFactory,
+  MINECART_HEIGHT,
+  MINECART_LENGTH,
+  MINECART_WIDTH,
+} from '../rendering/minecartGeometry';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
-import type { RailShape } from '../blocks';
-import { defaultRailShape, resolveRailShape } from '../rendering/specialBlockGeometry';
 import type { VoxelWorld } from '../world/World';
-import { moveVoxelBody } from './voxelPhysics';
+import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
+import {
+  entryProgress,
+  findRailCell,
+  isRailChunkLoaded,
+  nextRail,
+  progressOnRail,
+  railLength,
+  sampleRail,
+  type RailCell,
+} from './railPath';
+
+export const TNT_MINECART_FUSE_TICKS = 80;
+export const TNT_MINECART_EXPLOSION_POWER = 4;
+export const TNT_MINECART_EXPLOSION_RADIUS = 4;
+export const MINECART_MAX_SPEED = WALK_SPEED;
+const ACCEL_TIME = 0.5;
+const COAST_FRICTION = 0.965;
+const SLOPE_GRAVITY = 6.5;
+const PUSH_GAIN = 0.28;
+const BODY = Object.freeze({ width: MINECART_WIDTH, height: MINECART_HEIGHT });
+const CART_AABB = Object.freeze({
+  width: MINECART_WIDTH,
+  length: MINECART_LENGTH,
+  height: MINECART_HEIGHT,
+});
+
+export type MinecartVariant = 'normal' | 'tnt';
 
 export interface SerializedMinecart {
   readonly id: string;
   readonly position: readonly [number, number, number];
   readonly velocity: readonly [number, number, number];
   readonly yaw: number;
+  readonly variant?: MinecartVariant;
+  readonly fuseTicks?: number;
 }
 
 export interface MinecartEntity {
@@ -23,60 +56,53 @@ export interface MinecartEntity {
   readonly velocity: THREE.Vector3;
   readonly visual: THREE.Object3D;
   yaw: number;
+  pitch: number;
   rider: boolean;
+  variant: MinecartVariant;
+  fuseTicks: number;
+  alongSpeed: number;
+  progress: number;
+  rail?: RailCell;
 }
 
-const BODY = Object.freeze({ width: 0.98, height: 0.7 });
-const MAX_SPEED = 0.4;
-const FRICTION = 0.96;
-const SLOPE_ACCEL = 0.04;
-
-function railAt(world: VoxelWorld, x: number, y: number, z: number): RailShape | undefined {
-  if (world.getBlock(x, y, z, false) !== BlockId.Rail) return undefined;
-  return resolveRailShape(world, x, y, z) ?? defaultRailShape(world.getBlockState(x, y, z));
+export interface MinecartUpdateInput {
+  readonly riderId?: string;
+  readonly forward?: number;
+  readonly strafe?: number;
+  readonly riderYaw?: number;
 }
 
-function findRail(world: VoxelWorld, position: THREE.Vector3): { x: number; y: number; z: number; shape: RailShape } | undefined {
-  const x = Math.floor(position.x);
-  const y = Math.floor(position.y + 0.05);
-  const z = Math.floor(position.z);
-  for (const sampleY of [y, y - 1, y + 1]) {
-    const shape = railAt(world, x, sampleY, z);
-    if (shape) return { x, y: sampleY, z, shape };
-  }
-  return undefined;
+export interface MinecartExplosionEvent {
+  readonly id: string;
+  readonly position: THREE.Vector3;
+  readonly power: number;
+  readonly radius: number;
 }
 
-function railAxis(shape: RailShape): { x: number; z: number; y: number } {
-  switch (shape) {
-    case 'east_west':
-    case 'north_east':
-    case 'north_west':
-    case 'south_east':
-    case 'south_west':
-      return { x: 1, z: 0, y: 0 };
-    case 'ascending_east':
-      return { x: 1, z: 0, y: 1 };
-    case 'ascending_west':
-      return { x: -1, z: 0, y: 1 };
-    case 'ascending_south':
-      return { x: 0, z: 1, y: 1 };
-    case 'ascending_north':
-      return { x: 0, z: -1, y: 1 };
-    default:
-      return { x: 0, z: 1, y: 0 };
-  }
+export interface MinecartPushSource {
+  readonly position: THREE.Vector3;
+  readonly velocity: THREE.Vector3;
+  readonly aabb: {
+    readonly minX: number;
+    readonly minY: number;
+    readonly minZ: number;
+    readonly maxX: number;
+    readonly maxY: number;
+    readonly maxZ: number;
+  };
 }
 
 export class MinecartManager {
   private readonly carts = new Map<string, MinecartEntity>();
+  private readonly visuals = new MinecartVisualFactory();
+  private readonly pendingExplosions: MinecartExplosionEvent[] = [];
   private idCounter = 0;
   private disposed = false;
 
   constructor(
     private readonly scene: THREE.Object3D,
     private readonly world: VoxelWorld,
-    private readonly visuals: ItemVisualFactory,
+    _unusedVisuals?: unknown,
     private readonly maxCarts = 16,
   ) {}
 
@@ -88,24 +114,29 @@ export class MinecartManager {
     return this.carts.size;
   }
 
-  spawn(x: number, y: number, z: number, id?: string): MinecartEntity | undefined {
+  spawn(x: number, y: number, z: number, id?: string, variant: MinecartVariant = 'normal'): MinecartEntity | undefined {
     if (this.disposed || this.carts.size >= this.maxCarts) return undefined;
     const entityId = id ?? `cart-${this.idCounter += 1}`;
-    const position = new THREE.Vector3(x + 0.5, y, z + 0.5);
-    const visual = this.createVisual();
-    visual.position.copy(position);
-    visual.position.y += 0.35;
+    const visual = this.visuals.create();
+    this.visuals.setVariant(visual, variant);
     this.scene.add(visual);
     const entity: MinecartEntity = {
       id: entityId,
-      position,
-      previousPosition: position.clone(),
+      position: new THREE.Vector3(x + 0.5, y, z + 0.5),
+      previousPosition: new THREE.Vector3(x + 0.5, y, z + 0.5),
       velocity: new THREE.Vector3(),
       visual,
       yaw: 0,
+      pitch: 0,
       rider: false,
+      variant,
+      fuseTicks: 0,
+      alongSpeed: 0,
+      progress: 0.5,
     };
+    this.snapToRail(entity);
     this.carts.set(entityId, entity);
+    this.syncVisual(entity);
     return entity;
   }
 
@@ -133,60 +164,113 @@ export class MinecartManager {
     return best;
   }
 
-  push(cart: MinecartEntity, direction: THREE.Vector3, strength = 0.18): void {
-    cart.velocity.x += direction.x * strength;
-    cart.velocity.z += direction.z * strength;
+  get(id: string): MinecartEntity | undefined {
+    return this.carts.get(id);
   }
 
-  update(deltaSeconds: number): void {
+  isRideable(cart: MinecartEntity): boolean {
+    return cart.variant === 'normal';
+  }
+
+  insertTnt(cart: MinecartEntity): boolean {
+    if (cart.variant === 'tnt') return false;
+    cart.variant = 'tnt';
+    this.visuals.setVariant(cart.visual, 'tnt');
+    return true;
+  }
+
+  primeTnt(cart: MinecartEntity, ticks = TNT_MINECART_FUSE_TICKS): boolean {
+    if (cart.variant !== 'tnt') return false;
+    if (cart.fuseTicks > 0) return false;
+    cart.fuseTicks = Math.max(1, Math.floor(ticks));
+    return true;
+  }
+
+  explodeNow(cart: MinecartEntity): boolean {
+    if (cart.variant !== 'tnt') return false;
+    this.detonate(cart);
+    return true;
+  }
+
+  push(cart: MinecartEntity, direction: THREE.Vector3, strength = 0.18): void {
+    const tangent = this.tangentOf(cart);
+    const along = (direction.x * tangent.x + direction.z * tangent.z) * strength * 20;
+    cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+  }
+
+  tryPushFromPlayer(player: MinecartPushSource, ridingId?: string): void {
+    for (const cart of this.carts.values()) {
+      if (cart.id === ridingId) continue;
+      if (!this.overlapsCart(cart, player.aabb)) continue;
+      const tangent = this.tangentOf(cart);
+      const along = player.velocity.x * tangent.x + player.velocity.z * tangent.z;
+      if (Math.abs(along) <= 0.05) continue;
+      cart.alongSpeed += along * PUSH_GAIN;
+      const cap = MINECART_MAX_SPEED;
+      cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed, -cap, cap);
+    }
+  }
+
+  raycast(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    maxDistance: number,
+  ): { cart: MinecartEntity; distance: number } | undefined {
+    const inv = 1 / Math.max(1e-8, direction.length());
+    const dx = direction.x * inv;
+    const dy = direction.y * inv;
+    const dz = direction.z * inv;
+    let best: { cart: MinecartEntity; distance: number } | undefined;
+    for (const cart of this.carts.values()) {
+      const hit = rayAabb(
+        origin.x, origin.y, origin.z, dx, dy, dz, maxDistance,
+        cart.position.x - CART_AABB.width * 0.5,
+        cart.position.y,
+        cart.position.z - CART_AABB.length * 0.5,
+        cart.position.x + CART_AABB.width * 0.5,
+        cart.position.y + CART_AABB.height,
+        cart.position.z + CART_AABB.length * 0.5,
+      );
+      if (hit === undefined) continue;
+      if (!best || hit < best.distance) best = { cart, distance: hit };
+    }
+    return best;
+  }
+
+  findDismountPosition(cart: MinecartEntity): THREE.Vector3 {
+    const offsets: Array<readonly [number, number]> = [
+      [1, 0], [-1, 0], [0, 1], [0, -1],
+      [1, 1], [1, -1], [-1, 1], [-1, -1],
+    ];
+    const shape = { width: PLAYER_WIDTH, height: PLAYER_HEIGHT };
+    for (const [dx, dz] of offsets) {
+      const candidate = new THREE.Vector3(cart.position.x + dx, cart.position.y, cart.position.z + dz);
+      if (!isSpaceClear(this.world, candidate, shape)) continue;
+      const below = this.world.getBlock(
+        Math.floor(candidate.x), Math.floor(candidate.y - 0.05), Math.floor(candidate.z), false,
+      );
+      if (below === BlockId.Rail && !isSpaceClear(this.world, candidate.clone().setY(candidate.y + 0.2), shape)) {
+        continue;
+      }
+      return candidate;
+    }
+    return new THREE.Vector3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
+  }
+
+  update(deltaSeconds: number, input: MinecartUpdateInput = {}): void {
     if (this.disposed) return;
     const dt = Number.isFinite(deltaSeconds) ? Math.min(deltaSeconds, 0.1) : FIXED_DT;
     for (const cart of [...this.carts.values()]) {
       cart.previousPosition.copy(cart.position);
-      const rail = findRail(this.world, cart.position);
-      if (!rail) {
-        cart.velocity.y -= 32 * dt;
-        const moved = moveVoxelBody(this.world, cart.position, cart.velocity, dt, BODY);
-        if (moved.hitY && cart.velocity.y <= 0) cart.velocity.y = 0;
-        this.syncVisual(cart);
-        continue;
+      if (cart.fuseTicks > 0) {
+        cart.fuseTicks -= 1;
+        this.visuals.pulsePrimed(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
+        if (cart.fuseTicks <= 0) {
+          this.detonate(cart);
+          continue;
+        }
       }
-      const axis = railAxis(rail.shape);
-      const along = cart.velocity.x * axis.x + cart.velocity.z * axis.z;
-      let speed = along;
-      if (axis.y !== 0) {
-        const downhill = axis.y > 0
-          ? (axis.x !== 0 ? -Math.sign(axis.x) : -Math.sign(axis.z))
-          : 0;
-        // Ascending rails: moving toward the high end costs speed.
-        if (speed * (axis.x || axis.z) > 0) speed -= SLOPE_ACCEL;
-        else speed += SLOPE_ACCEL;
-        void downhill;
-      } else {
-        speed *= FRICTION;
-      }
-      speed = THREE.MathUtils.clamp(speed, -MAX_SPEED, MAX_SPEED);
-      if (Math.abs(speed) < 0.004) speed = 0;
-      cart.velocity.set(axis.x * speed, 0, axis.z * speed);
-      cart.position.x = rail.x + 0.5 + axis.x * ((cart.position.x - (rail.x + 0.5)) * Math.abs(axis.x));
-      cart.position.z = rail.z + 0.5 + axis.z * ((cart.position.z - (rail.z + 0.5)) * Math.abs(axis.z));
-      cart.position.addScaledVector(cart.velocity, dt * 20);
-      cart.position.x = rail.x + 0.5 + (axis.x !== 0 ? (cart.position.x - (rail.x + 0.5)) : 0);
-      cart.position.z = rail.z + 0.5 + (axis.z !== 0 ? (cart.position.z - (rail.z + 0.5)) : 0);
-      if (axis.x === 0) cart.position.x = rail.x + 0.5;
-      if (axis.z === 0) cart.position.z = rail.z + 0.5;
-      cart.position.y = rail.y;
-      if (rail.shape.startsWith('ascending_')) {
-        const t = axis.x !== 0
-          ? THREE.MathUtils.clamp(cart.position.x - rail.x, 0, 1)
-          : THREE.MathUtils.clamp(cart.position.z - rail.z, 0, 1);
-        const rising = rail.shape === 'ascending_east' || rail.shape === 'ascending_south';
-        cart.position.y = rail.y + (rising ? t : 1 - t);
-      }
-      if (speed !== 0) cart.yaw = Math.atan2(cart.velocity.x, cart.velocity.z);
-      if (!this.world.getChunk(floorDiv(Math.floor(cart.position.x), CHUNK_SIZE), floorDiv(Math.floor(cart.position.z), CHUNK_SIZE), false)) {
-        continue;
-      }
+      this.stepCart(cart, dt, input);
       this.syncVisual(cart);
     }
   }
@@ -199,9 +283,14 @@ export class MinecartManager {
         cart.position.x, cart.position.y, cart.position.z,
         t,
       );
-      cart.visual.position.set(visual.x, visual.y + 0.35, visual.z);
+      cart.visual.position.set(visual.x, visual.y, visual.z);
       cart.visual.rotation.y = cart.yaw;
+      cart.visual.rotation.x = cart.pitch;
     }
+  }
+
+  consumeExplosions(): MinecartExplosionEvent[] {
+    return this.pendingExplosions.splice(0);
   }
 
   serialize(): SerializedMinecart[] {
@@ -210,18 +299,25 @@ export class MinecartManager {
       position: [cart.position.x, cart.position.y, cart.position.z],
       velocity: [cart.velocity.x, cart.velocity.y, cart.velocity.z],
       yaw: cart.yaw,
+      variant: cart.variant,
+      fuseTicks: cart.fuseTicks,
     }));
   }
 
   restore(serialized: readonly SerializedMinecart[]): void {
     this.clear();
     for (const entry of serialized) {
-      const cart = this.spawn(entry.position[0] - 0.5, entry.position[1], entry.position[2] - 0.5, entry.id);
+      const variant = entry.variant === 'tnt' ? 'tnt' : 'normal';
+      const cart = this.spawn(entry.position[0] - 0.5, entry.position[1], entry.position[2] - 0.5, entry.id, variant);
       if (!cart) continue;
       cart.position.set(entry.position[0], entry.position[1], entry.position[2]);
       cart.previousPosition.copy(cart.position);
       cart.velocity.set(entry.velocity[0], entry.velocity[1], entry.velocity[2]);
       cart.yaw = entry.yaw;
+      cart.fuseTicks = Math.max(0, Math.floor(entry.fuseTicks ?? 0));
+      this.snapToRail(cart);
+      const tangent = this.tangentOf(cart);
+      cart.alongSpeed = cart.velocity.x * tangent.x + cart.velocity.z * tangent.z;
       this.syncVisual(cart);
     }
   }
@@ -233,25 +329,171 @@ export class MinecartManager {
 
   dispose(): void {
     this.clear();
+    this.visuals.dispose();
     this.disposed = true;
   }
 
-  private createVisual(): THREE.Object3D {
-    try {
-      const visual = this.visuals.createItemModel('minecart');
-      visual.scale.set(0.98, 0.7, 0.98);
-      return visual;
-    } catch {
-      return new THREE.Object3D();
+  private stepCart(cart: MinecartEntity, dt: number, input: MinecartUpdateInput): void {
+    this.ensureRail(cart);
+    if (!cart.rail) {
+      cart.velocity.y -= 32 * dt;
+      const moved = moveVoxelBody(this.world, cart.position, cart.velocity, dt, BODY);
+      if (moved.hitY && cart.velocity.y <= 0) cart.velocity.y = 0;
+      cart.alongSpeed = 0;
+      return;
+    }
+    const sample = sampleRail(cart.rail, cart.progress);
+    const ridden = input.riderId === cart.id && cart.variant === 'normal';
+    const forward = ridden ? (input.forward ?? 0) : 0;
+    // A/D (`strafe`) is reserved for future junctions and must not slide the cart off the rail.
+    void input.strafe;
+    const accel = MINECART_MAX_SPEED / ACCEL_TIME;
+    if (Math.abs(forward) > 0.05) {
+      const yaw = input.riderYaw ?? cart.yaw;
+      const wishX = -Math.sin(yaw) * forward;
+      const wishZ = -Math.cos(yaw) * forward;
+      const along = wishX * sample.tangentX + wishZ * sample.tangentZ;
+      cart.alongSpeed += along * accel * dt;
+    } else {
+      cart.alongSpeed *= COAST_FRICTION;
+    }
+    if (sample.tangentY !== 0) {
+      cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
+    }
+    cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    if (Math.abs(cart.alongSpeed) < 0.02 && Math.abs(forward) <= 0.05) cart.alongSpeed = 0;
+
+    let remaining = cart.alongSpeed * dt;
+    let guard = 0;
+    while (Math.abs(remaining) > 1e-5 && cart.rail && guard < 4) {
+      guard += 1;
+      const length = railLength(cart.rail.shape);
+      const nextT = cart.progress + remaining / length;
+      if (nextT >= 0 && nextT <= 1) {
+        cart.progress = nextT;
+        remaining = 0;
+        break;
+      }
+      const tEnd: 0 | 1 = nextT > 1 ? 1 : 0;
+      const leftover = nextT > 1 ? (nextT - 1) * length : nextT * length;
+      const neighbor = nextRail(this.world, cart.rail, tEnd);
+      if (!neighbor) {
+        cart.progress = tEnd;
+        cart.alongSpeed = 0;
+        remaining = 0;
+        break;
+      }
+      if (!isRailChunkLoaded(this.world, neighbor.x, neighbor.z)) {
+        cart.progress = tEnd;
+        cart.alongSpeed = 0;
+        remaining = 0;
+        break;
+      }
+      const enterT = entryProgress(
+        neighbor.shape,
+        cart.rail.x - neighbor.x,
+        cart.rail.y - neighbor.y,
+        cart.rail.z - neighbor.z,
+      );
+      const oldSample = sampleRail(cart.rail, tEnd);
+      cart.rail = neighbor;
+      cart.progress = enterT;
+      const entered = sampleRail(neighbor, enterT);
+      const aligned = oldSample.tangentX * entered.tangentX + oldSample.tangentZ * entered.tangentZ;
+      if (aligned < 0) cart.alongSpeed *= -1;
+      remaining = Math.sign(cart.alongSpeed) * Math.abs(leftover);
+    }
+
+    const pose = sampleRail(cart.rail, cart.progress);
+    cart.position.set(pose.x, pose.y, pose.z);
+    cart.velocity.set(pose.tangentX * cart.alongSpeed, pose.tangentY * cart.alongSpeed, pose.tangentZ * cart.alongSpeed);
+    if (Math.abs(cart.alongSpeed) > 0.02) {
+      cart.yaw = pose.yaw;
+      cart.pitch = pose.pitch;
+    } else {
+      cart.yaw = pose.yaw;
+      cart.pitch = pose.pitch;
     }
   }
 
+  private ensureRail(cart: MinecartEntity): void {
+    if (cart.rail && this.world.getBlock(cart.rail.x, cart.rail.y, cart.rail.z, false) === BlockId.Rail) {
+      return;
+    }
+    this.snapToRail(cart);
+  }
+
+  private snapToRail(cart: MinecartEntity): void {
+    const cell = findRailCell(this.world, cart.position.x, cart.position.y, cart.position.z);
+    if (!cell) {
+      cart.rail = undefined;
+      return;
+    }
+    cart.rail = cell;
+    cart.progress = progressOnRail(cell.shape, cart.position.x - cell.x, cart.position.z - cell.z);
+    const pose = sampleRail(cell, cart.progress);
+    cart.position.set(pose.x, pose.y, pose.z);
+    cart.yaw = pose.yaw;
+    cart.pitch = pose.pitch;
+  }
+
+  private tangentOf(cart: MinecartEntity): { x: number; z: number } {
+    if (!cart.rail) return { x: Math.sin(cart.yaw), z: Math.cos(cart.yaw) };
+    const sample = sampleRail(cart.rail, cart.progress);
+    return { x: sample.tangentX, z: sample.tangentZ };
+  }
+
+  private overlapsCart(cart: MinecartEntity, box: MinecartPushSource['aabb']): boolean {
+    const minX = cart.position.x - CART_AABB.width * 0.5;
+    const maxX = cart.position.x + CART_AABB.width * 0.5;
+    const minY = cart.position.y;
+    const maxY = cart.position.y + CART_AABB.height;
+    const minZ = cart.position.z - CART_AABB.length * 0.5;
+    const maxZ = cart.position.z + CART_AABB.length * 0.5;
+    return box.maxX > minX && box.minX < maxX
+      && box.maxY > minY && box.minY < maxY
+      && box.maxZ > minZ && box.minZ < maxZ;
+  }
+
+  private detonate(cart: MinecartEntity): void {
+    this.pendingExplosions.push({
+      id: cart.id,
+      position: cart.position.clone(),
+      power: TNT_MINECART_EXPLOSION_POWER,
+      radius: TNT_MINECART_EXPLOSION_RADIUS,
+    });
+    this.scene.remove(cart.visual);
+    this.carts.delete(cart.id);
+  }
+
   private syncVisual(cart: MinecartEntity): void {
-    cart.visual.position.set(cart.position.x, cart.position.y + 0.35, cart.position.z);
-    cart.visual.rotation.y = cart.yaw;
+    cart.visual.position.set(cart.position.x, cart.position.y, cart.position.z);
+    cart.visual.rotation.set(cart.pitch, cart.yaw, 0);
+    this.visuals.setVariant(cart.visual, cart.variant);
     applySampledEntityLight(
-      cart.visual, this.world, cart.position.x, cart.position.y + 0.4, cart.position.z, 0.3,
+      cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,
       worldDaylightUniform.value,
     );
   }
+}
+
+export { isMinecartEntityVisual };
+
+function rayAabb(
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  maxDistance: number,
+  minX: number, minY: number, minZ: number,
+  maxX: number, maxY: number, maxZ: number,
+): number | undefined {
+  const t1x = (minX - ox) / (dx || 1e-12);
+  const t2x = (maxX - ox) / (dx || 1e-12);
+  const t1y = (minY - oy) / (dy || 1e-12);
+  const t2y = (maxY - oy) / (dy || 1e-12);
+  const t1z = (minZ - oz) / (dz || 1e-12);
+  const t2z = (maxZ - oz) / (dz || 1e-12);
+  const tmin = Math.max(Math.min(t1x, t2x), Math.min(t1y, t2y), Math.min(t1z, t2z));
+  const tmax = Math.min(Math.max(t1x, t2x), Math.max(t1y, t2y), Math.max(t1z, t2z));
+  if (tmax < 0 || tmin > tmax || tmin > maxDistance) return undefined;
+  return Math.max(0, tmin);
 }

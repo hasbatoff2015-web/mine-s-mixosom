@@ -30,6 +30,7 @@ import {
   ladderPlaneLocal,
   leverHandleAngle,
   railLocalBoxes,
+  railTextureYaw,
   resolveRailShape,
   resolveStairShape,
   slabLocalBoxes,
@@ -815,10 +816,18 @@ export class ChunkMesher {
   ): number {
     const texture = definition.textures.all ?? 'block/rail';
     const shape = world ? resolveRailShape(world, x, y, z) : defaultRailShape(state);
-    const boxes = railLocalBoxes(shape);
-    let faces = 0;
-    for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
-    return faces;
+    const yaw = railTextureYaw(shape);
+    if (yaw === 0) {
+      const boxes = railLocalBoxes(shape);
+      let faces = 0;
+      for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+      return faces;
+    }
+    const height = shape.startsWith('ascending_') ? 8 / 16 : 2 / 16;
+    const matrix = new THREE.Matrix4()
+      .makeTranslation(x + 0.5, y + height * 0.5, z + 0.5)
+      .multiply(new THREE.Matrix4().makeRotationY(yaw));
+    return this.addCuboid(buffers, texture, [1, height, 1], matrix, world, definition, x, y, z);
   }
 
   private addFluid(

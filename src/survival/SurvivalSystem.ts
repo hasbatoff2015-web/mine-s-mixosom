@@ -1,4 +1,6 @@
 import { BlockId } from '../blocks';
+import { FIRE_ARROW_IGNITE_TICKS } from '../combat/fireArrow';
+import { FIRE_DAMAGE_INTERVAL_TICKS } from '../combat/fireSources';
 import { FIXED_DT, clamp } from '../core/constants';
 import type { Inventory } from '../inventory';
 import { tryGetItemDefinition, type FoodItemDefinition, type StatusEffectId, type StatusEffectSpec } from '../items';
@@ -60,6 +62,7 @@ export interface SurvivalTickContext {
   readonly difficulty?: Difficulty;
   readonly inWater?: boolean;
   readonly inLava?: boolean;
+  readonly inFire?: boolean;
   readonly headSubmerged?: boolean;
   readonly touchingCactus?: boolean;
   readonly horizontalDistance?: number;
@@ -78,6 +81,9 @@ export interface SurvivalTickResult {
   readonly saturation: number;
   readonly airTicks: number;
   readonly fireTicks: number;
+  readonly arrowFireTicks: number;
+  readonly contactFire: boolean;
+  readonly onFire: boolean;
   readonly dead: boolean;
   readonly damage: readonly DamageResult[];
 }
@@ -100,6 +106,7 @@ export interface SerializedSurvivalState {
   readonly absorption: number;
   readonly airTicks: number;
   readonly fireTicks: number;
+  readonly arrowFireTicks?: number;
   readonly dead: boolean;
   readonly spawnPoint: [number, number, number];
 }
@@ -152,6 +159,8 @@ export class SurvivalSystem {
   absorption = 0;
   airTicks = MAX_AIR_TICKS;
   fireTicks = 0;
+  arrowFireTicks = 0;
+  contactFire = false;
   dead = false;
   difficulty: Difficulty;
   useArmorToughness: boolean;
@@ -286,12 +295,24 @@ export class SurvivalSystem {
     return this.effects.get(id)?.ticks ?? 0;
   }
 
+  get isOnFire(): boolean {
+    return this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0;
+  }
+
   ignite(ticks = 160): void {
     if (Number.isFinite(ticks)) this.fireTicks = Math.max(this.fireTicks, Math.max(0, Math.floor(ticks)));
   }
 
+  igniteFromArrow(ticks = FIRE_ARROW_IGNITE_TICKS): void {
+    if (Number.isFinite(ticks)) {
+      this.arrowFireTicks = Math.max(this.arrowFireTicks, Math.max(0, Math.floor(ticks)));
+    }
+  }
+
   extinguish(): void {
     this.fireTicks = 0;
+    this.arrowFireTicks = 0;
+    this.contactFire = false;
     this.fireTimer = 0;
   }
 
@@ -336,6 +357,8 @@ export class SurvivalSystem {
     this.absorption = 0;
     this.airTicks = MAX_AIR_TICKS;
     this.fireTicks = 0;
+    this.arrowFireTicks = 0;
+    this.contactFire = false;
     this.dead = false;
     this.hurtResistantTicks = 0;
     this.lastRawDamage = 0;
@@ -359,6 +382,7 @@ export class SurvivalSystem {
       absorption: this.absorption,
       airTicks: this.airTicks,
       fireTicks: this.fireTicks,
+      arrowFireTicks: this.arrowFireTicks,
       dead: this.dead,
       spawnPoint: [...this.spawnPoint],
     };
@@ -372,6 +396,7 @@ export class SurvivalSystem {
     if (state.absorption !== undefined) this.absorption = Math.max(0, state.absorption);
     if (state.airTicks !== undefined) this.airTicks = clamp(Math.floor(state.airTicks), 0, MAX_AIR_TICKS);
     if (state.fireTicks !== undefined) this.fireTicks = Math.max(0, Math.floor(state.fireTicks));
+    if (state.arrowFireTicks !== undefined) this.arrowFireTicks = Math.max(0, Math.floor(state.arrowFireTicks));
     if (state.spawnPoint?.length === 3 && state.spawnPoint.every(Number.isFinite)) this.spawnPoint = [...state.spawnPoint];
     this.dead = state.dead ?? this.health <= 0;
   }
@@ -391,7 +416,11 @@ export class SurvivalSystem {
     const touchingCactus = context.touchingCactus
       ?? (player && world ? player.intersectsBlockType(world, BlockId.Cactus, 0.08) : false);
 
-    if (inWater && !inLava) this.extinguish();
+    if (inWater && !inLava) {
+      this.fireTicks = 0;
+      this.arrowFireTicks = 0;
+    }
+    this.contactFire = context.inFire ?? player?.inFire ?? false;
     if (headSubmerged && inWater && !inLava) {
       this.airTicks = Math.max(0, this.airTicks - 1);
       if (this.airTicks === 0) {
@@ -423,10 +452,11 @@ export class SurvivalSystem {
       }
     } else this.cactusTimer = 0;
 
-    if (this.fireTicks > 0) {
-      this.fireTicks -= 1;
+    if (this.fireTicks > 0) this.fireTicks -= 1;
+    if (this.arrowFireTicks > 0) this.arrowFireTicks -= 1;
+    if (this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0) {
       this.fireTimer += 1;
-      if (this.fireTimer >= 20) {
+      if (this.fireTimer >= FIRE_DAMAGE_INTERVAL_TICKS) {
         this.fireTimer = 0;
         this.dealEnvironmentDamage(1, 'fire', context, events);
       }
@@ -540,6 +570,9 @@ export class SurvivalSystem {
       saturation: this.saturation,
       airTicks: this.airTicks,
       fireTicks: this.fireTicks,
+      arrowFireTicks: this.arrowFireTicks,
+      contactFire: this.contactFire,
+      onFire: this.isOnFire,
       dead: this.dead,
       damage: events,
     };

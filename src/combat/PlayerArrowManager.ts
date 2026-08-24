@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import type { MobManager } from '../entities';
+import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
@@ -34,16 +35,22 @@ export class PlayerArrowManager {
     options: {
       readonly visualFactory?: ArrowVisualFactory;
       readonly random?: () => number;
+      readonly minecarts?: MinecartManager;
       readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
+      readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
     } = {},
   ) {
     this.visuals = options.visualFactory ?? new ArrowVisualFactory();
     this.ownsVisuals = options.visualFactory === undefined;
     this.random = options.random ?? Math.random;
+    this.minecarts = options.minecarts;
     this.onBlockHit = options.onBlockHit;
+    this.onMinecartHit = options.onMinecartHit;
   }
 
+  private readonly minecarts?: MinecartManager;
   private readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
+  private readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
 
   get count(): number {
     return this.arrows.length;
@@ -94,6 +101,15 @@ export class PlayerArrowManager {
         const direction = movement.clone().multiplyScalar(1 / distance);
         const blockHit = this.world.raycast(arrow.position, direction, distance);
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
+        const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
+        const cartCloser = cartHit && (!mobHit || cartHit.distance < mobHit.distance)
+          && (!blockHit || cartHit.distance < blockHit.distance);
+        if (cartCloser && cartHit) {
+          this.onMinecartHit?.(cartHit.cart, arrow.flaming);
+          this.remove(index);
+          removed = true;
+          break;
+        }
         if (mobHit && (!blockHit || mobHit.distance < blockHit.distance)) {
           this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
             source: 'projectile',

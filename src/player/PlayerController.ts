@@ -42,6 +42,8 @@ export interface PlayerInputSource {
   readonly yaw: number;
   readonly pitch: number;
   movement(): MoveInput;
+  /** When false, look/fluids still update but the body does not walk or fall. */
+  readonly locomotion?: boolean;
 }
 
 export interface PlayerAABB {
@@ -78,6 +80,7 @@ export interface PlayerTickResult {
   readonly fallDamage: number;
   readonly inWater: boolean;
   readonly inLava: boolean;
+  readonly inFire: boolean;
   readonly headSubmerged: boolean;
   readonly onLadder: boolean;
 }
@@ -120,6 +123,7 @@ export class PlayerController {
   sprinting = false;
   inWater = false;
   inLava = false;
+  inFire = false;
   inCobweb = false;
   private webMultiplier = 1;
   headSubmerged = false;
@@ -254,6 +258,14 @@ export class PlayerController {
 
     const wasOnGround = this.onGround || this.hasGroundSupport(world, this.position);
     this.updateFluidState(world);
+    if (input.locomotion === false) {
+      this.velocity.set(0, 0, 0);
+      this.sprinting = false;
+      this.onGround = true;
+      this.fallDistance = 0;
+      this.updateStance(world, movement.sneak);
+      return this.tickResult(false, 0, 0, 0, false);
+    }
     if (this.isFlying) this.sneaking = false;
     else this.updateStance(world, movement.sneak);
     this.sprinting = this.isFlying
@@ -417,6 +429,7 @@ export class PlayerController {
       fallDamage,
       inWater: this.inWater,
       inLava: this.inLava,
+      inFire: this.inFire,
       headSubmerged: this.headSubmerged,
       onLadder: this.onLadder,
     };
@@ -497,6 +510,7 @@ export class PlayerController {
   private updateFluidState(world: VoxelWorld): void {
     this.inWater = this.overlapsBlock(world, BlockId.Water);
     this.inLava = this.overlapsBlock(world, BlockId.Lava);
+    this.inFire = this.overlapsBlock(world, BlockId.Fire);
     const box = this.aabb;
     this.webMultiplier = movementMultiplier(world, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     this.inCobweb = this.webMultiplier < 1;

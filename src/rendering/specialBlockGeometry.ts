@@ -440,6 +440,24 @@ export function defaultRailShape(state: BlockRenderState | undefined): RailShape
   return state?.railShape ?? 'north_south';
 }
 
+/** Isolated rail follows the player's look axis (north = −Z). */
+export function isolatedRailShapeFromYaw(yaw: number): 'north_south' | 'east_west' {
+  const x = -Math.sin(yaw);
+  const z = -Math.cos(yaw);
+  return Math.abs(x) > Math.abs(z) ? 'east_west' : 'north_south';
+}
+
+/** East-west family is the same strip rotated 90° so logical EW matches visual rails. */
+export function railTextureYaw(shape: RailShape): number {
+  return shape === 'east_west' || shape === 'ascending_east' || shape === 'ascending_west'
+    ? Math.PI / 2
+    : 0;
+}
+
+export function railRunsEastWest(shape: RailShape): boolean {
+  return railTextureYaw(shape) !== 0;
+}
+
 export function resolveRailShape(
   world: BlockNeighborView,
   x: number,
