@@ -26,10 +26,19 @@ import {
 import { createMobModel, type MobModel } from './mobModels';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
-import { FIXED_DT } from '../core/constants';
+import { CHUNK_SIZE, FIXED_DT, floorDiv } from '../core/constants';
 import { VoxelVisualFactory } from './voxelVisuals';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
+/** Night surface hostile attempts relative to the previous unrestricted rate. */
+export const SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5;
+/** Skip a new cave hostile if another living hostile is already this close. */
+export const CAVE_HOSTILE_DENSITY_RADIUS = 12;
+/** At most one newly spawned cave hostile per chunk in a single spawn event. */
+export const MAX_NEW_CAVE_HOSTILES_PER_CHUNK_EVENT = 1;
+const HOSTILE_SPAWN_LIGHT_MAX = 7;
+const PASSIVE_SPAWN_LIGHT_MIN = 9;
+const CAVE_SPAWN_SKY_MAX = 7;
 
 export function mobHurtFlashIntensity(secondsLeft: number): number {
   if (!Number.isFinite(secondsLeft) || secondsLeft <= 0) return 0;
@@ -128,6 +137,9 @@ export interface MobManagerOptions {
   readonly spawnIntervalSeconds?: number;
   readonly minimumSpawnDistance?: number;
   readonly maximumSpawnDistance?: number;
+  /** Test override. Production night surface hostiles use `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR`. */
+  readonly surfaceHostileSpawnFactor?: number;
+  readonly caveHostileDensityRadius?: number;
   readonly random?: () => number;
   readonly arrowVisualFactory?: ArrowVisualFactory;
   readonly onSpawn?: (mob: Readonly<MobEntity>) => void;
@@ -257,6 +269,8 @@ export class MobManager {
   private readonly spawnIntervalSeconds: number;
   private readonly minimumSpawnDistance: number;
   private readonly maximumSpawnDistance: number;
+  private readonly surfaceHostileSpawnFactor: number;
+  private readonly caveHostileDensityRadius: number;
   private readonly random: () => number;
   private mobIdCounter = 0;
   private projectileIdCounter = 0;
@@ -278,6 +292,14 @@ export class MobManager {
     this.maximumSpawnDistance = Math.max(
       this.minimumSpawnDistance + 1,
       options.maximumSpawnDistance ?? 34,
+    );
+    this.surfaceHostileSpawnFactor = Math.max(
+      0,
+      Math.min(1, options.surfaceHostileSpawnFactor ?? SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR),
+    );
+    this.caveHostileDensityRadius = Math.max(
+      4,
+      options.caveHostileDensityRadius ?? CAVE_HOSTILE_DENSITY_RADIUS,
     );
     this.random = options.random ?? Math.random;
     this.arrowVisuals = options.arrowVisualFactory ?? new ArrowVisualFactory();
@@ -1029,50 +1051,175 @@ export class MobManager {
     playerPosition: Readonly<THREE.Vector3>,
     daylight: number,
     customLight: MobUpdateContext['lightLevelAt'],
-  ): MobEntity | undefined {
+  ): void {
     const hostileRoom = this.hasPopulationRoom('hostile');
     const passiveRoom = this.hasPopulationRoom('passive');
-    if (!hostileRoom && !passiveRoom) return undefined;
+    if (!hostileRoom && !passiveRoom) return;
 
     const preferHostile = hostileRoom && (daylight < 0.45 || !passiveRoom || this.random() < 0.22);
-    const disposition: MobDisposition = preferHostile ? 'hostile' : 'passive';
-    const kinds = disposition === 'hostile' ? HOSTILE_KINDS : PASSIVE_KINDS;
-    const kind = kinds[Math.floor(this.random() * kinds.length)] ?? kinds[0]!;
-    const definition = getMobDefinition(kind);
+    if (!preferHostile) {
+      this.tryPassiveSpawn(playerPosition, daylight, customLight);
+      return;
+    }
+
+    const allowSurfaceHostile = daylight < 0.45 && this.random() < this.surfaceHostileSpawnFactor;
+    const usedChunksThisEvent = new Set<string>();
+    let spawnedCave = 0;
+    let spawnedSurface = false;
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const angle = this.random() * Math.PI * 2;
-      const distance = this.minimumSpawnDistance
-        + this.random() * (this.maximumSpawnDistance - this.minimumSpawnDistance);
-      const x = Math.floor(playerPosition.x + Math.cos(angle) * distance) + 0.5;
-      const z = Math.floor(playerPosition.z + Math.sin(angle) * distance) + 0.5;
-      const surfaceY = this.world.surfaceY(Math.floor(x), Math.floor(z));
-      let y = surfaceY + 1;
-      if (disposition === 'hostile' && this.random() < 0.38 && surfaceY > 8) {
-        y = this.findCaveSpawnY(Math.floor(x), Math.floor(z), surfaceY, definition) ?? y;
+      const sample = this.randomSpawnColumn(playerPosition);
+      if (!sample) continue;
+
+      if (
+        spawnedCave < MAX_NEW_CAVE_HOSTILES_PER_CHUNK_EVENT
+        && this.tryCaveHostileSpawn(sample, playerPosition, daylight, customLight, usedChunksThisEvent)
+      ) {
+        spawnedCave += 1;
       }
-      const position = new THREE.Vector3(x, y, z);
-      if (!this.spawnPositionIsValid(position, definition, disposition)) continue;
+
+      if (
+        allowSurfaceHostile
+        && !spawnedSurface
+        && !usedChunksThisEvent.has(sample.chunkKey)
+        && this.trySurfaceHostileSpawn(sample, daylight, customLight)
+      ) {
+        usedChunksThisEvent.add(sample.chunkKey);
+        spawnedSurface = true;
+      }
+
+      if (
+        (spawnedCave > 0 || !this.hasPopulationRoom('hostile'))
+        && (spawnedSurface || !allowSurfaceHostile)
+      ) {
+        return;
+      }
+    }
+  }
+
+  private tryPassiveSpawn(
+    playerPosition: Readonly<THREE.Vector3>,
+    daylight: number,
+    customLight: MobUpdateContext['lightLevelAt'],
+  ): MobEntity | undefined {
+    if (!this.hasPopulationRoom('passive')) return undefined;
+    const kind = PASSIVE_KINDS[Math.floor(this.random() * PASSIVE_KINDS.length)] ?? PASSIVE_KINDS[0]!;
+    const definition = getMobDefinition(kind);
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const sample = this.randomSpawnColumn(playerPosition);
+      if (!sample) continue;
+      const y = sample.surfaceY + 1;
+      const position = new THREE.Vector3(sample.x + 0.5, y, sample.z + 0.5);
+      if (!this.spawnPositionIsValid(position, definition, 'passive')) continue;
       const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
-      if (disposition === 'hostile' ? light > 7 : light < 9) continue;
+      if (light < PASSIVE_SPAWN_LIGHT_MIN) continue;
       return this.spawn(kind, position);
     }
     return undefined;
+  }
+
+  private randomSpawnColumn(playerPosition: Readonly<THREE.Vector3>): {
+    x: number;
+    z: number;
+    surfaceY: number;
+    chunkKey: string;
+  } | undefined {
+    const angle = this.random() * Math.PI * 2;
+    const distance = this.minimumSpawnDistance
+      + this.random() * (this.maximumSpawnDistance - this.minimumSpawnDistance);
+    const x = Math.floor(playerPosition.x + Math.cos(angle) * distance);
+    const z = Math.floor(playerPosition.z + Math.sin(angle) * distance);
+    const dx = (x + 0.5) - playerPosition.x;
+    const dz = (z + 0.5) - playerPosition.z;
+    if (dx * dx + dz * dz < this.minimumSpawnDistance * this.minimumSpawnDistance) return undefined;
+    return {
+      x,
+      z,
+      surfaceY: this.world.surfaceY(x, z),
+      chunkKey: `${floorDiv(x, CHUNK_SIZE)},${floorDiv(z, CHUNK_SIZE)}`,
+    };
+  }
+
+  private tryCaveHostileSpawn(
+    sample: { x: number; z: number; surfaceY: number; chunkKey: string },
+    playerPosition: Readonly<THREE.Vector3>,
+    daylight: number,
+    customLight: MobUpdateContext['lightLevelAt'],
+    caveChunksThisEvent: Set<string>,
+  ): boolean {
+    if (!this.hasPopulationRoom('hostile')) return false;
+    if (caveChunksThisEvent.has(sample.chunkKey)) return false;
+    if (sample.surfaceY <= 8) return false;
+    if (this.chunkHasLivingHostile(sample.chunkKey)) return false;
+    const y = this.findCaveSpawnY(sample.x, sample.z, sample.surfaceY);
+    if (y === undefined) return false;
+    const position = new THREE.Vector3(sample.x + 0.5, y, sample.z + 0.5);
+    const distX = position.x - playerPosition.x;
+    const distZ = position.z - playerPosition.z;
+    if (distX * distX + distZ * distZ < this.minimumSpawnDistance * this.minimumSpawnDistance) {
+      return false;
+    }
+    if (this.hostileCountNear(position.x, position.z, this.caveHostileDensityRadius) > 0) return false;
+    const kind = HOSTILE_KINDS[Math.floor(this.random() * HOSTILE_KINDS.length)] ?? HOSTILE_KINDS[0]!;
+    const definition = getMobDefinition(kind);
+    if (!this.spawnPositionIsValid(position, definition, 'hostile')) return false;
+    if (!this.caveSpawnEnvironmentOk(position)) return false;
+    const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
+    if (light > HOSTILE_SPAWN_LIGHT_MAX) return false;
+    if (!this.spawn(kind, position)) return false;
+    caveChunksThisEvent.add(sample.chunkKey);
+    return true;
+  }
+
+  private trySurfaceHostileSpawn(
+    sample: { x: number; z: number; surfaceY: number },
+    daylight: number,
+    customLight: MobUpdateContext['lightLevelAt'],
+  ): boolean {
+    if (!this.hasPopulationRoom('hostile')) return false;
+    const kind = HOSTILE_KINDS[Math.floor(this.random() * HOSTILE_KINDS.length)] ?? HOSTILE_KINDS[0]!;
+    const definition = getMobDefinition(kind);
+    const position = new THREE.Vector3(sample.x + 0.5, sample.surfaceY + 1, sample.z + 0.5);
+    if (!this.spawnPositionIsValid(position, definition, 'hostile')) return false;
+    if (this.world.skyLightAt(sample.x, Math.floor(position.y), sample.z) < 8) return false;
+    const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
+    if (light > HOSTILE_SPAWN_LIGHT_MAX) return false;
+    return this.spawn(kind, position) !== undefined;
   }
 
   private findCaveSpawnY(
     x: number,
     z: number,
     surfaceY: number,
-    definition: MobDefinition,
   ): number | undefined {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const y = 3 + Math.floor(this.random() * Math.max(1, surfaceY - 5));
-      const candidate = new THREE.Vector3(x + 0.5, y, z + 0.5);
-      if (isSpaceClear(this.world, candidate, definition)
-        && getBlockDefinition(this.world.getBlock(x, y - 1, z)).solid) return y;
+    const minY = 4;
+    const maxY = Math.max(minY, surfaceY - 6);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const y = minY + Math.floor(this.random() * Math.max(1, maxY - minY + 1));
+      if (y >= surfaceY - 4) continue;
+      if (!this.caveColumnLooksSpawnable(x, y, z)) continue;
+      return y;
     }
     return undefined;
+  }
+
+  private caveColumnLooksSpawnable(x: number, y: number, z: number): boolean {
+    const below = this.world.getBlock(x, y - 1, z);
+    const belowDefinition = getBlockDefinition(below);
+    if (!belowDefinition.solid || belowDefinition.liquid) return false;
+    if (this.bodyTouchesLiquid(x + 0.5, y, z + 0.5, 1.8)) return false;
+    if (this.world.getBlock(x, y, z) !== BlockId.Air) return false;
+    if (this.world.getBlock(x, y + 1, z) !== BlockId.Air) return false;
+    if (hasDirectSkyLight(this.world, x, y, z)) return false;
+    if (this.world.skyLightAt(x, y, z) > CAVE_SPAWN_SKY_MAX) return false;
+    return true;
+  }
+
+  private caveSpawnEnvironmentOk(position: Readonly<THREE.Vector3>): boolean {
+    const x = Math.floor(position.x);
+    const y = Math.floor(position.y);
+    const z = Math.floor(position.z);
+    return this.caveColumnLooksSpawnable(x, y, z);
   }
 
   private spawnPositionIsValid(
@@ -1081,6 +1228,7 @@ export class MobManager {
     disposition: MobDisposition,
   ): boolean {
     if (!isSpaceClear(this.world, position, definition)) return false;
+    if (this.bodyTouchesLiquid(position.x, position.y, position.z, definition.height)) return false;
     const below = this.world.getBlock(
       Math.floor(position.x),
       Math.floor(position.y) - 1,
@@ -1090,6 +1238,44 @@ export class MobManager {
     if (!belowDefinition.solid || belowDefinition.liquid) return false;
     if (disposition === 'passive' && below !== BlockId.GrassBlock) return false;
     return true;
+  }
+
+  private bodyTouchesLiquid(x: number, y: number, z: number, height: number): boolean {
+    const minX = Math.floor(x - 0.3);
+    const maxX = Math.floor(x + 0.3);
+    const minZ = Math.floor(z - 0.3);
+    const maxZ = Math.floor(z + 0.3);
+    const minY = Math.floor(y);
+    const maxY = Math.floor(y + height - 0.01);
+    for (let by = minY; by <= maxY; by += 1) {
+      for (let bz = minZ; bz <= maxZ; bz += 1) {
+        for (let bx = minX; bx <= maxX; bx += 1) {
+          if (this.world.isLiquid(bx, by, bz)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private hostileCountNear(x: number, z: number, radius: number): number {
+    const radiusSq = radius * radius;
+    let count = 0;
+    for (const mob of this.mobsById.values()) {
+      if (!mob.alive || mob.definition.disposition !== 'hostile') continue;
+      const dx = mob.position.x - x;
+      const dz = mob.position.z - z;
+      if (dx * dx + dz * dz <= radiusSq) count += 1;
+    }
+    return count;
+  }
+
+  private chunkHasLivingHostile(chunkKey: string): boolean {
+    for (const mob of this.mobsById.values()) {
+      if (!mob.alive || mob.definition.disposition !== 'hostile') continue;
+      const key = `${floorDiv(Math.floor(mob.position.x), CHUNK_SIZE)},${floorDiv(Math.floor(mob.position.z), CHUNK_SIZE)}`;
+      if (key === chunkKey) return true;
+    }
+    return false;
   }
 
   private spawnArrow(

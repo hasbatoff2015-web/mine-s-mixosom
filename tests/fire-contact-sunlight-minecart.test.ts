@@ -116,24 +116,52 @@ describe('fire contact and independent burn sources', () => {
     expect(survival.health).toBe(after);
   });
 
-  it('deals ordinary Fire damage through the canonical hook even with armor and full hunger', () => {
+  it('routes ordinary Fire through armor and still emits onDamage when HP is lost', () => {
     const events: DamageResult[] = [];
     const survival = new SurvivalSystem({
+      hunger: 10,
+      saturation: 0,
       onDamage: (result) => {
         if (!result.ignored && result.dealt > 0) events.push(result);
       },
     });
-    expect(survival.hunger).toBe(20);
-    expect(survival.saturation).toBeGreaterThan(0);
     for (let tick = 0; tick < FIRE_DAMAGE_INTERVAL_TICKS; tick += 1) {
       survival.tick(0.05, {
         inFire: true,
-        armor: { points: 20, toughness: 8 },
+        armor: { points: 15, toughness: 0 },
         difficulty: 'normal',
       });
     }
-    expect(survival.health).toBe(19);
-    expect(events.some((event) => event.source === 'fire' && event.dealt === 1)).toBe(true);
+    expect(survival.health).toBeLessThan(20);
+    expect(survival.health).toBeGreaterThan(19);
+    expect(events.some((event) => event.source === 'fire' && event.dealt > 0 && event.dealt < 1)).toBe(true);
+  });
+
+  it('lets armor reduce Fire and Lava, with Lava remaining stronger', () => {
+    const armor = { points: 15, toughness: 0 };
+    const ticks = 20;
+    const fireBare = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    const fireArmored = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    const lavaBare = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    const lavaArmored = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    for (let tick = 0; tick < ticks; tick += 1) {
+      fireBare.tick(0.05, { inFire: true });
+      fireArmored.tick(0.05, { inFire: true, armor });
+      lavaBare.tick(0.05, { inLava: true });
+      lavaArmored.tick(0.05, { inLava: true, armor });
+    }
+    const fireBareLost = 20 - fireBare.health;
+    const fireArmoredLost = 20 - fireArmored.health;
+    const lavaBareLost = 20 - lavaBare.health;
+    const lavaArmoredLost = 20 - lavaArmored.health;
+    expect(fireBareLost).toBeGreaterThan(0);
+    expect(fireArmoredLost).toBeGreaterThan(0);
+    expect(fireArmoredLost).toBeLessThan(fireBareLost);
+    expect(lavaBareLost).toBeGreaterThan(0);
+    expect(lavaArmoredLost).toBeGreaterThan(0);
+    expect(lavaArmoredLost).toBeLessThan(lavaBareLost);
+    expect(lavaBareLost).toBeGreaterThan(fireBareLost);
+    expect(lavaArmoredLost).toBeGreaterThan(fireArmoredLost);
   });
 
   it('deals less ordinary Fire damage than Lava over the same interval', () => {

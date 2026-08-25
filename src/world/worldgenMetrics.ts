@@ -513,6 +513,55 @@ function isSolidSupport(block: number): boolean {
   return block !== BlockId.Air && block !== BlockId.Water && block !== BlockId.Lava;
 }
 
+function chunkExists(chunks: Map<string, Chunk>, x: number, z: number): boolean {
+  const cx = Math.floor(x / CHUNK_SIZE);
+  const cz = Math.floor(z / CHUNK_SIZE);
+  return chunks.has(`${cx},${cz}`);
+}
+
+export interface LavaContainmentStats {
+  readonly lavaCells: number;
+  readonly exposedCells: number;
+  readonly unsupportedCells: number;
+  readonly hangingCells: number;
+}
+
+/**
+ * Voxel containment for generated lava. Neighbors outside the sampled grid
+ * are ignored (unknown), matching runtime fluid activation.
+ */
+export function measureLavaContainment(chunks: Map<string, Chunk>): LavaContainmentStats {
+  const hangingCells = measureLavaPonds(chunks).hangingCells;
+  let lavaCells = 0;
+  let exposedCells = 0;
+  let unsupportedCells = 0;
+  for (const chunk of chunks.values()) {
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      for (let x = 0; x < CHUNK_SIZE; x += 1) {
+        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+          if (chunk.get(x, y, z) !== BlockId.Lava) continue;
+          lavaCells += 1;
+          const wx = chunk.x * CHUNK_SIZE + x;
+          const wz = chunk.z * CHUNK_SIZE + z;
+          const below = blockAt(chunks, wx, y - 1, wz);
+          if (below === BlockId.Air || below === BlockId.Water) unsupportedCells += 1;
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            const nx = wx + dx;
+            const nz = wz + dz;
+            if (!chunkExists(chunks, nx, nz)) continue;
+            const neighbor = blockAt(chunks, nx, y, nz);
+            if (neighbor === BlockId.Air || neighbor === BlockId.Water || neighbor === BlockId.Fire) {
+              exposedCells += 1;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  return { lavaCells, exposedCells, unsupportedCells, hangingCells };
+}
+
 export function countExposedBedrock(chunks: Map<string, Chunk>, generator: TerrainGenerator): number {
   let exposed = 0;
   for (const chunk of chunks.values()) {

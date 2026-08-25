@@ -17,6 +17,7 @@ import {
   WORLDGEN_PINHOLE_SEEDS,
   countExposedBedrock,
   generateChunkGrid,
+  measureLavaContainment,
   measureLavaPonds,
   measureOreComponentSizes,
   measureOreCounts,
@@ -88,6 +89,10 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
       const chunks = generateChunkGrid(generator, 2);
       exposed += countExposedBedrock(chunks, generator);
       const lava = measureLavaPonds(chunks);
+      const containment = measureLavaContainment(chunks);
+      expect(containment.exposedCells).toBe(0);
+      expect(containment.unsupportedCells).toBe(0);
+      expect(containment.hangingCells).toBe(0);
       totalPonds += lava.count;
       hanging += lava.hangingCells;
       maxFill = Math.max(maxFill, lava.maxFillRatioLarge);
@@ -204,7 +209,8 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
     }
     expect(lavaCells).toBeGreaterThan(0);
     expect(world.fluidQueueSize).toBe(exposed);
-    if (lavaCells > 12) expect(world.fluidQueueSize).toBeLessThan(lavaCells);
+    expect(exposed).toBe(0);
+    expect(world.fluidQueueSize).toBe(0);
 
     tickWorld(world, 220);
     let idle = 0;
@@ -378,5 +384,110 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
       const components = measureOreComponentSizes(sample, ore);
       expect(Math.max(0, ...components)).toBeLessThan(size * 3);
     }
+  });
+
+  it('keeps ordinary generated ponds enclosed, idle, and irregular', () => {
+    const world = new VoxelWorld('lava-enclosed-idle');
+    world.setViewCenter(8, 8, 3);
+    for (let cz = -2; cz <= 2; cz += 1) {
+      for (let cx = -2; cx <= 2; cx += 1) world.getChunk(cx, cz);
+    }
+    let lavaCells = 0;
+    let exposed = 0;
+    let openWaterline = 0;
+    let airBelow = 0;
+    let maxDepth = 0;
+    const generator = world.generator;
+    for (let cz = -2; cz <= 2; cz += 1) {
+      for (let cx = -2; cx <= 2; cx += 1) {
+        const chunk = world.getChunk(cx, cz)!;
+        for (let z = 0; z < CHUNK_SIZE; z += 1) {
+          for (let x = 0; x < CHUNK_SIZE; x += 1) {
+            for (let y = 2; y <= 12; y += 1) {
+              if (chunk.get(x, y, z) !== BlockId.Lava) continue;
+              lavaCells += 1;
+              const wx = cx * CHUNK_SIZE + x;
+              const wz = cz * CHUNK_SIZE + z;
+              if (generatedFluidNeedsActivation(world, wx, y, wz)) exposed += 1;
+              const below = world.getBlock(wx, y - 1, wz, false);
+              if (below === BlockId.Air) airBelow += 1;
+              for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+                const neighbor = world.getBlock(wx + dx, y, wz + dz, false);
+                if (neighbor === BlockId.Air || neighbor === BlockId.Water) openWaterline += 1;
+                if (neighbor !== BlockId.Lava) {
+                  expect(generator.terrainSolid(wx + dx, y, wz + dz) || neighbor === BlockId.Stone).toBe(true);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    const ponds = measureLavaPonds(generateChunkGrid(new TerrainGenerator('lava-enclosed-idle'), 2));
+    for (const pond of ponds.ponds) {
+      expect(pond.depth).toBeLessThanOrEqual(LAVA_POND_MAX_DEPTH);
+      maxDepth = Math.max(maxDepth, pond.depth);
+      expect(Math.max(pond.width, pond.length)).toBeLessThanOrEqual(14);
+      expect(pond.cells).toBeLessThanOrEqual(160);
+      if (Math.max(pond.width, pond.length) >= 8) {
+        expect(pond.fillRatio).toBeLessThan(0.96);
+      }
+    }
+    expect(lavaCells).toBeGreaterThan(0);
+    expect(exposed).toBe(0);
+    expect(openWaterline).toBe(0);
+    expect(airBelow).toBe(0);
+    expect(world.fluidQueueSize).toBe(0);
+    expect(maxDepth).toBeLessThanOrEqual(LAVA_POND_MAX_DEPTH);
+    const writesBefore = world.fluidWrites;
+    tickWorld(world, 40);
+    expect(world.fluidWrites).toBe(writesBefore);
+    expect(world.fluidQueueSize).toBe(0);
+  });
+
+  it('validates chunk-border ponds against generator terrain, not missing chunks', () => {
+    const world = new VoxelWorld('alpha');
+    world.setViewCenter(16, 8, 2);
+    world.getChunk(0, 0);
+    const west = world.getChunk(0, 0)!;
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      for (let y = 2; y <= 12; y += 1) {
+        if (west.get(15, y, z) !== BlockId.Lava) continue;
+        expect(world.generator.terrainSolid(16, y, z)).toBe(true);
+        expect(generatedFluidNeedsActivation(world, 15, y, z)).toBe(false);
+      }
+    }
+    world.getChunk(1, 0);
+    let exposedAfter = 0;
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      for (let y = 2; y <= 12; y += 1) {
+        if (world.getBlock(15, y, z, false) !== BlockId.Lava) continue;
+        if (generatedFluidNeedsActivation(world, 15, y, z)) exposedAfter += 1;
+        const east = world.getBlock(16, y, z, false);
+        expect(east === BlockId.Air || east === BlockId.Water).toBe(false);
+      }
+    }
+    expect(exposedAfter).toBe(0);
+  });
+
+  it('does not treat an unknown neighbor as a Stone wall when the generator says cave', () => {
+    const generator = new TerrainGenerator('alpha');
+    let checked = 0;
+    for (let x = 14; x <= 17; x += 1) {
+      for (let z = 0; z < CHUNK_SIZE; z += 1) {
+        for (let y = 4; y <= 12; y += 1) {
+          const solid = generator.terrainSolid(x, y, z);
+          const cave = generator.isCave(x, y, z, generator.columnAt(x, z).height);
+          if (y <= generator.bedrockHeight(x, z) || y <= STONE_CAP_TOP_Y) {
+            expect(solid).toBe(true);
+            continue;
+          }
+          if (y > generator.columnAt(x, z).height) expect(solid).toBe(false);
+          else expect(solid).toBe(!cave);
+          checked += 1;
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
   });
 });
