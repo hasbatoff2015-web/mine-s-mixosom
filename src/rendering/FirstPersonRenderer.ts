@@ -71,7 +71,7 @@ export class FirstPersonRenderer {
   private swingSeconds = 1;
   private equipProgress = 1;
   private bowTexturePath = 'item/bow';
-  private readonly fireOverlay: THREE.Mesh;
+  private readonly fireOverlay: THREE.Object3D;
   private disposed = false;
   private heldQaOverride?: HeldItemQaOverride;
   private loggedHeldQa = false;
@@ -100,9 +100,7 @@ export class FirstPersonRenderer {
     arm.position.y = -0.22;
     this.armPivot.add(arm);
     this.offhandHolder.visible = false;
-    this.fireOverlay = SharedFireTexture.instance().createScaledOverlay(1.85, 1.35);
-    this.fireOverlay.name = 'first-person:fire-overlay';
-    this.fireOverlay.position.set(0, -0.22, -0.52);
+    this.fireOverlay = SharedFireTexture.instance().createFirstPersonOverlay();
     this.fireOverlay.visible = false;
     this.scene.add(this.fireOverlay);
   }
@@ -329,7 +327,9 @@ export class FirstPersonRenderer {
     this.armMaterial.dispose();
     this.armTexture.dispose();
     this.fireOverlay.removeFromParent();
-    this.fireOverlay.geometry.dispose();
+    this.fireOverlay.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.geometry.dispose();
+    });
     this.disposed = true;
   }
 

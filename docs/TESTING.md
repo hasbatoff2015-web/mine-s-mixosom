@@ -54,13 +54,13 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-25** (chat commands / minecart drop polish):
+Срез локального запуска **2026-08-25** (fire overlay / lava ponds / bedrock cap / hurt / ores ×2):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       53 test files, 495 tests, 495 passed
-production:   116 modules, 1.15 MiB / 180 files
-Main JS: 934.02 kB / 259.29 kB gzip; CSS: 27.02 kB / 6.28 kB gzip
+Vitest:       55 test files, 506 tests, 506 passed
+production:   117 modules, 1.15 MiB / 180 files
+Main JS: 938.51 kB / 260.95 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -115,6 +115,8 @@ Main JS: 934.02 kB / 259.29 kB gzip; CSS: 27.02 kB / 6.28 kB gzip
 | `tests/fire-contact-sunlight-minecart.test.ts` | 35 | Fire AABB contact vs leave, independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert/fuse/explode, Flint entity-first prime (no Fire), Fire Arrow vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
 | `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |
 | `tests/chat-commands.test.ts` | 9 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
+| `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
+| `tests/lava-bedrock-ore-pass.test.ts` | 5 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/ore ×2, chunk-border determinism, generated pond idle + shore-break flow, ore Y/vein size |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -386,15 +388,16 @@ Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run ben
 - surface in `58–84`, sea `63`, generated peaks leave `TERRAIN_HEADROOM = 12`;
 - mountain contribution `+10…+20` на части мира, не на каждом chunk;
 - neighbor height delta ≤ 4, в том числе на biome borders и chunk borders;
-- bedrock `Y 0–2` sealed, caves never carve it; extra ~15 underground vs old surface~49;
+- bedrock `Y 0–2` sealed with Stone cap `Y=3`; caves never carve cap; extra ~15 underground vs old surface~49;
 - cave networks cross `x=15|16`; connected-component size/width vs swiss-cheese ratio;
 - **no 1×1 / 1–2 surface cave pinholes** on plains/forest/desert/mountains; ordinary caves keep `CAVE_ROOF_DEPTH = 4` under the 3×3 local min surface;
 - Forest oak ≈ 35–50% old count; Desert cactus ≈ 20–30% old count;
-- ores only inside shifted `ORE_RULES` bands, including new deep stone;
+- ores only inside shifted `ORE_RULES` bands, including new deep stone; vein **attempts ×2**, vein `size` unchanged;
+- small irregular cave lava ponds (depth ≤ 3, bounded footprint, support, no giant rectangular sheets);
 - spawn on plains grass above sea, not mountain/cave/desert;
 - old modification linear indices still restore after `WORLD_HEIGHT` 80→96.
 
-DEV: `?worldgenDebug=1` appends `y=` / `mtn=` / `hills=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
+DEV: `?worldgenDebug=1` appends `surfaceY=` / `mtn=` / `hills=` / `cave=` / `cap=` / `blk=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
 
 ```bash
 npm run benchmark:worldgen

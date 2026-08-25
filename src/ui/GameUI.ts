@@ -101,6 +101,8 @@ export class GameUI {
   private attack: HTMLElement;
   private debug: HTMLElement;
   private toasts: HTMLElement;
+  private hurtFlash: HTMLElement;
+  private hurtFlashAlpha = -1;
   private chat: HTMLElement;
   private chatLogEl: HTMLElement;
   private chatForm: HTMLFormElement;
@@ -136,6 +138,7 @@ export class GameUI {
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
+        <div id="hurt-flash" aria-hidden="true"></div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="attack-indicator"><span></span></div>
@@ -163,6 +166,7 @@ export class GameUI {
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
+    this.hurtFlash = this.root.querySelector('#hurt-flash')!;
     this.chat = this.root.querySelector('#chat')!;
     this.chatLogEl = this.root.querySelector('#chat-log')!;
     this.chatForm = this.root.querySelector('#chat-form')!;
@@ -460,6 +464,13 @@ export class GameUI {
   onHotbarSelect?: (index: number) => void;
   onChatSubmit?: (line: string) => void;
   onChatCancel?: () => void;
+
+  setHurtFlash(alpha: number): void {
+    const next = Math.max(0, Math.min(1, alpha));
+    if (Math.abs(next - this.hurtFlashAlpha) < 0.004) return;
+    this.hurtFlashAlpha = next;
+    this.hurtFlash.style.opacity = next <= 0.01 ? '0' : next.toFixed(3);
+  }
 
   toast(message: string, timeout = 1900): void {
     const toast = document.createElement('div');

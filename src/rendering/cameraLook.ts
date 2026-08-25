@@ -9,6 +9,7 @@ export interface RenderLookSource {
 export function applyImmediateRenderLook(
   camera: THREE.PerspectiveCamera,
   look: Readonly<RenderLookSource>,
+  roll = 0,
 ): void {
-  camera.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
+  camera.rotation.set(look.pitch, look.yaw, roll, 'YXZ');
 }

@@ -99,6 +99,7 @@ import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/Fi
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { ItemIconRenderer } from '../rendering/ItemIconRenderer';
 import { applyImmediateRenderLook } from '../rendering/cameraLook';
+import { HurtFeedback, isPeriodicDamageSource } from '../rendering/hurtFeedback';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { updateSharedFireAnimation } from '../rendering/fireTexture';
 import { TextureAtlas } from '../rendering/TextureAtlas';
@@ -134,10 +135,10 @@ import {
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { SaveService } from '../save/SaveService';
 import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
-import { SurvivalSystem, type DamageSource } from '../survival';
+import { SurvivalSystem, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
-import { collectSpawnColumns } from '../world/Generator';
+import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -257,6 +258,7 @@ export class Game {
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
   private readonly chat = new ChatLog();
+  private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly perfScenario = readPerfScenario();
   private worldLoad?: {
@@ -475,6 +477,7 @@ export class Game {
       health: restored?.player.health ?? 20,
       hunger: restored?.player.hunger ?? 20,
       saturation: restored?.player.saturation ?? 5,
+      onDamage: (result) => this.onPlayerDamaged(result),
       onDeath: (source) => this.handleDeath(source),
     });
     survival.setSpawnPoint(restored?.player.spawnPoint ?? spawn);
@@ -2661,6 +2664,11 @@ export class Game {
     session.player.teleport(destination);
   }
 
+  private onPlayerDamaged(result: DamageResult): void {
+    if (result.ignored || result.dealt <= 0) return;
+    this.hurt.trigger(performance.now(), { periodic: isPeriodicDamageSource(result.source) });
+  }
+
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
@@ -2688,6 +2696,7 @@ export class Game {
   }
 
   private render(alpha: number): void {
+    const now = performance.now();
     const session = this.session;
     if (session) {
       const position = this.interpolatedPlayerPosition
@@ -2695,7 +2704,7 @@ export class Game {
         .lerp(session.player.position, clamp(alpha, 0, 1));
       const eyeHeight = session.player.eyeHeight;
       this.camera.position.set(position.x, position.y + eyeHeight, position.z);
-      applyImmediateRenderLook(this.camera, this.input);
+      applyImmediateRenderLook(this.camera, this.input, this.hurt.cameraRoll(now));
       session.falling.interpolate(clamp(alpha, 0, 1));
       session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
       session.mobs.interpolateVisuals(alpha);
@@ -2713,7 +2722,8 @@ export class Game {
       }
       this.updateEnvironment(session.world.timeOfDay);
     }
-    this.ui.fadeChatLines(performance.now(), chatLineOpacity);
+    this.ui.setHurtFlash(this.hurt.flashAlpha(now));
+    this.ui.fadeChatLines(now, chatLineOpacity);
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -2842,7 +2852,11 @@ export class Game {
     const base = `${chunkX},${chunkZ} ${lit} ${mesh} lv ${chunk.lightVersion}/${chunk.meshedLightVersion} sky ${session.world.skyLightAt(x, y, z)} blk ${session.world.blockLightAt(x, y, z)}${stale} · ${biome}  F7=${look} F8=${this.chunkGridVisible ? 'on' : 'off'} F9=${this.inspectFreeze ? 'frozen' : 'live'}`;
     if (!isWorldgenDebugQueryEnabled()) return base;
     const column = session.world.generator.columnAt(x, z);
-    return `${base}  y=${column.height} mtn=${column.mountain.toFixed(1)} hills=${column.hills.toFixed(1)}`;
+    const floor = session.world.generator.bedrockHeight(x, z);
+    const cap = stoneCapY(floor);
+    const cave = session.world.generator.isCave(x, y, z, column.height) ? 1 : 0;
+    const block = session.world.getBlock(x, y, z, false);
+    return `${base}  surfaceY=${column.height} mtn=${column.mountain.toFixed(1)} hills=${column.hills.toFixed(1)} cave=${cave} cap=${cap} blk=${block}`;
   }
 
   private updateChunkGrid(): void {

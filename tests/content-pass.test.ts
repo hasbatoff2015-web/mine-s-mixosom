@@ -13,7 +13,7 @@ import { SurvivalSystem } from '../src/survival';
 import { blockCollisionBoxes } from '../src/world/collision';
 import { VoxelWorld } from '../src/world/World';
 import { TerrainGenerator } from '../src/world/Generator';
-import { Chunk } from '../src/world/Chunk';
+import { generateChunkGrid, measureLavaPonds } from '../src/world/worldgenMetrics';
 
 function clearColumn(world: VoxelWorld, x: number, z: number, from: number, to: number): void {
   for (let y = from; y <= to; y += 1) world.setBlock(x, y, z, BlockId.Air);
@@ -135,34 +135,13 @@ describe('new items, blocks and entities', () => {
 describe('worldgen lava lakes', () => {
   it('places connected lava pockets instead of scattered single voxels', () => {
     const generator = new TerrainGenerator('lava-lake-audit');
-    let lava = 0;
-    let singles = 0;
-    let clustered = 0;
-    for (let cz = -2; cz <= 2; cz += 1) {
-      for (let cx = -2; cx <= 2; cx += 1) {
-        const chunk = new Chunk(cx, cz);
-        generator.generate(chunk);
-        for (let z = 0; z < 16; z += 1) {
-          for (let x = 0; x < 16; x += 1) {
-            for (let y = 1; y <= 14; y += 1) {
-              if (chunk.get(x, y, z) !== BlockId.Lava) continue;
-              lava += 1;
-              let neighbors = 0;
-              for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-                const nx = x + dx;
-                const nz = z + dz;
-                if (nx < 0 || nx > 15 || nz < 0 || nz > 15) continue;
-                if (chunk.get(nx, y, nz) === BlockId.Lava) neighbors += 1;
-              }
-              if (neighbors === 0) singles += 1;
-              else clustered += 1;
-            }
-          }
-        }
-      }
-    }
-    expect(lava).toBeGreaterThan(20);
-    expect(clustered).toBeGreaterThan(singles);
-    expect(singles / Math.max(1, lava)).toBeLessThan(0.25);
+    const chunks = generateChunkGrid(generator, 2);
+    const lava = measureLavaPonds(chunks);
+    expect(lava.sourceCells).toBeGreaterThan(8);
+    expect(lava.count).toBeGreaterThan(0);
+    const isolated = lava.ponds.filter((pond) => pond.cells <= 1).length;
+    expect(isolated / Math.max(1, lava.count)).toBeLessThan(0.25);
+    expect(lava.depthMax).toBeLessThanOrEqual(3);
+    expect(lava.max).toBeLessThan(200);
   });
 });

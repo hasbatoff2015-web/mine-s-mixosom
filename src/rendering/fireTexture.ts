@@ -7,6 +7,36 @@ import { fireBlockPlanes } from './fireGeometry';
 export const FIRE_FALLBACK_FRAMES = 8;
 /** Two game ticks per frame, matching a simple vanilla-like flicker. */
 export const FIRE_SECONDS_PER_FRAME = 0.1;
+/** First-person overlay opacity. World fire material stays opaque-cutout. */
+export const FP_FIRE_OVERLAY_OPACITY = 0.76;
+
+export interface FirstPersonFireQuad {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly width: number;
+  readonly height: number;
+  readonly rotX: number;
+  readonly rotY: number;
+}
+
+/**
+ * Two lower-corner billboards. Tops stay below camera center so the crosshair
+ * and upper view stay readable. Values are camera-local metres.
+ */
+export function firstPersonFireOverlayLayout(): {
+  readonly quads: readonly FirstPersonFireQuad[];
+  readonly minY: number;
+  readonly maxY: number;
+} {
+  const quads: readonly FirstPersonFireQuad[] = [
+    { x: -0.36, y: -0.27, z: -0.38, width: 0.52, height: 0.24, rotX: -0.16, rotY: 0.46 },
+    { x: 0.36, y: -0.27, z: -0.38, width: 0.52, height: 0.24, rotX: -0.16, rotY: -0.46 },
+  ];
+  const minY = Math.min(...quads.map((quad) => quad.y - quad.height * 0.5));
+  const maxY = Math.max(...quads.map((quad) => quad.y + quad.height * 0.5));
+  return { quads, minY, maxY };
+}
 
 let shared: SharedFireTexture | undefined;
 let elapsed = 0;
@@ -14,6 +44,7 @@ let elapsed = 0;
 export class SharedFireTexture {
   readonly texture: THREE.Texture;
   readonly material: THREE.MeshBasicMaterial;
+  private overlayMaterial?: THREE.MeshBasicMaterial;
   private frameCount = FIRE_FALLBACK_FRAMES;
 
   private constructor() {
@@ -61,6 +92,36 @@ export class SharedFireTexture {
     mesh.renderOrder = 4;
     mesh.frustumCulled = false;
     return mesh;
+  }
+
+  /** Camera-space lower flames. Shares the animated strip; does not remesh. */
+  createFirstPersonOverlay(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = 'first-person:fire-overlay';
+    const material = this.firstPersonMaterial();
+    for (const quad of firstPersonFireOverlayLayout().quads) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(quad.width, quad.height), material);
+      mesh.position.set(quad.x, quad.y, quad.z);
+      mesh.rotation.set(quad.rotX, quad.rotY, 0);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 12;
+      group.add(mesh);
+    }
+    return group;
+  }
+
+  private firstPersonMaterial(): THREE.MeshBasicMaterial {
+    if (!this.overlayMaterial) {
+      this.overlayMaterial = this.material.clone();
+      this.overlayMaterial.map = this.texture;
+      this.overlayMaterial.transparent = true;
+      this.overlayMaterial.opacity = FP_FIRE_OVERLAY_OPACITY;
+      this.overlayMaterial.depthTest = false;
+      this.overlayMaterial.depthWrite = false;
+      this.overlayMaterial.fog = false;
+      this.overlayMaterial.alphaTest = 0.08;
+    }
+    return this.overlayMaterial;
   }
 
   private load(): void {

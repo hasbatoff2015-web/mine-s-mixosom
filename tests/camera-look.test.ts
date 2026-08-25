@@ -16,6 +16,11 @@ describe('immediate render look', () => {
 
     expect(camera.rotation.y).toBeCloseTo(0.73);
     expect(camera.rotation.x).toBeCloseTo(-0.21);
+    expect(camera.rotation.z).toBe(0);
+    expect(authoritativePlayer).toEqual({ yaw: 0, pitch: 0 });
+    applyImmediateRenderLook(camera, input, 0.04);
+    expect(camera.rotation.z).toBeCloseTo(0.04);
+    expect(camera.rotation.y).toBeCloseTo(0.73);
     expect(authoritativePlayer).toEqual({ yaw: 0, pitch: 0 });
   });
 
