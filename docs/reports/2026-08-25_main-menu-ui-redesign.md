@@ -14,7 +14,7 @@ The existing DOM `GameUI` now presents one coherent menu family. Main navigation
 
 ## Implemented
 
-- Original voxel landscape background under `public/ui/frontier-menu-background.png`.
+- Original voxel landscape background under `public/ui/frontier-menu-background.png`. Created with OpenAI ImageGen from the prompt summary: wide original browser-game voxel forest, river and distant hills at dusk; centered clear space for menu UI; atmospheric but readable; no text, logo, UI, characters, branded or recognizable Minecraft assets.
 - CSS/HTML Frontier Cubes logo treatment with no copied game logo or branded asset.
 - Main-menu routing to singleplayer, online mock and settings.
 - Singleplayer selection state, double-click/load, explicit play/create/delete/back actions, retained delete confirmation and create-world flow.
@@ -87,7 +87,7 @@ Run the manual browser checklist from `docs/TESTING.md` on desktop and compact l
 
 ## Git
 
-Commit: pending final review.
-Push: pending final review.
-Draft PR: pending final review.
+Implementation commit: `05c722f` (`feat: redesign main and related menus`).
+Push: `codex/main-menu-ui-redesign` published to `origin`.
+Draft PR: automatic creation unavailable because GitHub CLI/connector is absent and the in-app browser is blocked by the Windows ACL failure. Creation URL: `https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/new/codex/main-menu-ui-redesign`.
 No merge to `main` performed.
