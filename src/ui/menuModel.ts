@@ -47,7 +47,6 @@ export const DESKTOP_CONTROL_SECTIONS: readonly ControlSection[] = [
       { action: 'Присесть', key: 'C' },
       { action: 'Полёт', key: 'Двойной пробел', note: 'Творческий режим' },
       { action: 'Снизиться в полёте', key: 'Shift', note: 'Творческий режим' },
-      { action: 'Ускорить полёт', key: 'Ctrl', note: 'Творческий режим' },
     ],
   },
   {

@@ -16,6 +16,7 @@ describe('menu model', () => {
     const bindings = DESKTOP_CONTROL_SECTIONS.flatMap((section) => section.bindings);
     expect(bindings).toContainEqual({ action: 'Бег', key: 'Shift' });
     expect(bindings).toContainEqual({ action: 'Присесть', key: 'C' });
+    expect(bindings.some((binding) => binding.action === 'Ускорить полёт')).toBe(false);
     expect(bindings.some((binding) => binding.key === 'T')).toBe(false);
   });
 

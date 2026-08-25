@@ -273,7 +273,7 @@ export class GameUI {
         <header class="menu-heading"><div><span class="eyebrow">Локальные миры</span><h1>Одиночная игра</h1></div></header>
         <div class="world-list">${rows}</div>
         <footer class="menu-footer world-actions">
-          <button class="game-button" data-action="play-world" ${worlds.length ? '' : 'disabled'}>Играть в выбранном мире</button>
+          <button class="game-button" data-action="play-world" ${worlds.length ? '' : 'disabled'}>Играть</button>
           <button class="game-button" data-action="create">Создать новый мир</button>
           <button class="game-button danger" data-action="delete-world" ${worlds.length ? '' : 'disabled'}>Удалить</button>
           <button class="game-button" data-action="back">Назад</button>
