@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
 import { CHUNK_SIZE } from '../src/core/constants';
-import { isFluidSource } from '../src/world/fluids';
+import { isFluidSource, generatedFluidNeedsActivation, activateGeneratedFluidBoundaries } from '../src/world/fluids';
 import { Chunk } from '../src/world/Chunk';
 import {
   BEDROCK_COVER_DEPTH,
@@ -30,6 +30,9 @@ const ORE_BASELINE = {
   redstone: 8482,
   diamond: 2764,
 } as const;
+
+/** Diamond count from the ore-increase pass on the same 20-seed sample. */
+const DIAMOND_AFTER_ORE_INCREASE = 5035;
 
 function tickWorld(world: VoxelWorld, ticks: number): void {
   for (let i = 0; i < ticks; i += 1) world.tick();
@@ -141,12 +144,14 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
       iron: totals.iron / ORE_BASELINE.iron,
       gold: totals.gold / ORE_BASELINE.gold,
       redstone: totals.redstone / ORE_BASELINE.redstone,
-      diamond: totals.diamond / ORE_BASELINE.diamond,
     };
     for (const [name, value] of Object.entries(ratio)) {
       expect(value, `${name}=${value.toFixed(3)}`).toBeGreaterThan(1.7);
       expect(value, `${name}=${value.toFixed(3)}`).toBeLessThan(2.4);
     }
+    const diamondVsCurrent = totals.diamond / DIAMOND_AFTER_ORE_INCREASE;
+    expect(diamondVsCurrent, `diamond=${totals.diamond}`).toBeGreaterThan(0.28);
+    expect(diamondVsCurrent, `diamond=${totals.diamond}`).toBeLessThan(0.38);
     const sorted = [...sizes].sort((a, b) => a - b);
     expect(percentile(sorted, 0.5)).toBeLessThan(80);
     expect(percentile(sorted, 0.95)).toBeLessThan(140);
@@ -171,9 +176,45 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
     expect(continued).toBeGreaterThanOrEqual(0);
   });
 
-  it('does not enqueue generated ponds and flows only after a shore break', () => {
+  it('schedules only exposed generated lava and flows after a shore break', () => {
     const world = new VoxelWorld('lava-shore-break');
     world.setViewCenter(8, 8, 4);
+    let lavaCells = 0;
+    let exposed = 0;
+    for (let cz = -2; cz <= 2; cz += 1) {
+      for (let cx = -2; cx <= 2; cx += 1) {
+        world.getChunk(cx, cz);
+      }
+    }
+    for (let cz = -2; cz <= 2; cz += 1) {
+      for (let cx = -2; cx <= 2; cx += 1) {
+        const chunk = world.getChunk(cx, cz)!;
+        for (let z = 0; z < CHUNK_SIZE; z += 1) {
+          for (let x = 0; x < CHUNK_SIZE; x += 1) {
+            for (let y = 2; y <= 12; y += 1) {
+              if (chunk.get(x, y, z) !== BlockId.Lava) continue;
+              lavaCells += 1;
+              const wx = cx * CHUNK_SIZE + x;
+              const wz = cz * CHUNK_SIZE + z;
+              if (generatedFluidNeedsActivation(world, wx, y, wz)) exposed += 1;
+            }
+          }
+        }
+      }
+    }
+    expect(lavaCells).toBeGreaterThan(0);
+    expect(world.fluidQueueSize).toBe(exposed);
+    if (lavaCells > 12) expect(world.fluidQueueSize).toBeLessThan(lavaCells);
+
+    tickWorld(world, 220);
+    let idle = 0;
+    for (let tick = 0; tick < 80; tick += 1) {
+      world.tick();
+      if (world.fluidWrites === 0) idle += 1;
+      else idle = 0;
+    }
+    expect(idle).toBeGreaterThan(10);
+
     let lava: { x: number; y: number; z: number } | undefined;
     for (let cz = -2; cz <= 2 && !lava; cz += 1) {
       for (let cx = -2; cx <= 2 && !lava; cx += 1) {
@@ -184,6 +225,8 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
               if (chunk.get(x, y, z) !== BlockId.Lava) continue;
               const wx = cx * CHUNK_SIZE + x;
               const wz = cz * CHUNK_SIZE + z;
+              if (!isFluidSource(world, wx, y, wz)) continue;
+              if (generatedFluidNeedsActivation(world, wx, y, wz)) continue;
               const stoneBeside = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([dx, dz]) => (
                 world.getBlock(wx + dx, y, wz + dz) === BlockId.Stone
               ));
@@ -195,11 +238,8 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
         }
       }
     }
-    expect(world.fluidQueueSize).toBe(0);
     expect(lava).toBeDefined();
     expect(isFluidSource(world, lava!.x, lava!.y, lava!.z)).toBe(true);
-    tickWorld(world, 40);
-    expect(world.fluidWrites).toBe(0);
     let sourcesBefore = 0;
     for (let cz = -2; cz <= 2; cz += 1) {
       for (let cx = -2; cx <= 2; cx += 1) {
@@ -249,7 +289,7 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
     }
     expect(sourcesAfter).toBeLessThanOrEqual(sourcesBefore);
     expect(lavaAfter).toBeLessThan(sourcesBefore + 80);
-    let idle = 0;
+    idle = 0;
     for (let tick = 0; tick < 80; tick += 1) {
       world.tick();
       if (world.fluidWrites === 0) idle += 1;
@@ -258,14 +298,68 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
     expect(idle).toBeGreaterThan(20);
   });
 
+  it('activates a generated-style exposed lava ledge and leaves an enclosed basin idle', () => {
+    const world = new VoxelWorld('lava-boundary-synth');
+    world.setViewCenter(8, 8, 2);
+    const chunk = world.getChunk(0, 0)!;
+    for (let x = 2; x <= 10; x += 1) {
+      for (let z = 2; z <= 10; z += 1) {
+        for (let y = 40; y <= 44; y += 1) chunk.set(x, y, z, BlockId.Stone);
+      }
+    }
+    for (let x = 4; x <= 8; x += 1) {
+      for (let z = 4; z <= 8; z += 1) {
+        chunk.set(x, 41, z, BlockId.Lava);
+        chunk.set(x, 42, z, BlockId.Air);
+      }
+    }
+    const before = world.fluidQueueSize;
+    activateGeneratedFluidBoundaries(world, chunk);
+    expect(world.fluidQueueSize).toBe(before);
+    expect(generatedFluidNeedsActivation(world, 6, 41, 6)).toBe(false);
+
+    chunk.set(10, 41, 6, BlockId.Air);
+    chunk.set(9, 41, 6, BlockId.Lava);
+    activateGeneratedFluidBoundaries(world, chunk);
+    expect(generatedFluidNeedsActivation(world, 9, 41, 6)).toBe(true);
+    expect(world.fluidQueueSize).toBeGreaterThan(before);
+    tickWorld(world, 80);
+    expect(world.getBlock(10, 41, 6, false) === BlockId.Lava || world.getBlock(10, 40, 6, false) === BlockId.Lava).toBe(true);
+  });
+
+  it('activates cross-chunk lava at x=15/16 when the neighbor chunk loads', () => {
+    const world = new VoxelWorld('lava-cross-chunk');
+    world.setViewCenter(16, 8, 2);
+    const west = world.getChunk(0, 0)!;
+    for (let z = 4; z <= 8; z += 1) {
+      for (let y = 40; y <= 44; y += 1) west.set(15, y, z, BlockId.Stone);
+    }
+    west.set(15, 41, 6, BlockId.Lava);
+    west.set(15, 40, 6, BlockId.Stone);
+    west.set(15, 42, 6, BlockId.Air);
+    activateGeneratedFluidBoundaries(world, west);
+    const queuedBeforeEast = world.fluidQueueSize;
+    const east = world.getChunk(1, 0)!;
+    for (let z = 4; z <= 8; z += 1) {
+      for (let y = 40; y <= 44; y += 1) east.set(0, y, z, BlockId.Air);
+    }
+    east.set(0, 40, 6, BlockId.Stone);
+    activateGeneratedFluidBoundaries(world, east);
+    expect(generatedFluidNeedsActivation(world, 15, 41, 6)).toBe(true);
+    expect(world.fluidQueueSize).toBeGreaterThanOrEqual(queuedBeforeEast);
+    tickWorld(world, 80);
+    expect(world.getBlock(16, 41, 6, false)).toBe(BlockId.Lava);
+  });
+
   it('keeps ore Y bands and vein size, and stays deterministic', () => {
     expect(ORE_RULES.map((rule) => [rule.block, rule.minY, rule.maxY, rule.size, rule.veins])).toEqual([
       [BlockId.CoalOre, 28, 61, 7, 24],
       [BlockId.IronOre, 8, 52, 6, 22],
       [BlockId.GoldOre, 4, 32, 5, 8],
       [BlockId.RedstoneOre, 3, 18, 5, 10],
-      [BlockId.DiamondOre, 3, 16, 4, 4],
+      [BlockId.DiamondOre, 3, 16, 4, 1],
     ]);
+    expect(ORE_RULES.find((rule) => rule.block === BlockId.DiamondOre)?.extraVeinChance).toBeCloseTo(1 / 3);
     const a = new TerrainGenerator('ore-det');
     const b = new TerrainGenerator('ore-det');
     const chunkA = new Chunk(2, -1);

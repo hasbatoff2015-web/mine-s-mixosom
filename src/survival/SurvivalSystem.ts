@@ -112,7 +112,7 @@ export interface SerializedSurvivalState {
 }
 
 const ARMOR_BYPASS_SOURCES: ReadonlySet<DamageSource> = new Set([
-  'fall', 'drowning', 'starvation', 'suffocation', 'void',
+  'fall', 'drowning', 'starvation', 'suffocation', 'void', 'fire', 'lava',
 ]);
 
 export function getArmorStats(source?: ArmorSource): ArmorStats {
@@ -488,26 +488,28 @@ export class SurvivalSystem {
 
   private tickHunger(context: SurvivalTickContext, events: DamageResult[]): void {
     const difficulty = context.difficulty ?? this.difficulty;
+    const inLava = context.inLava ?? context.player?.inLava ?? false;
+    const suppressFoodRegen = this.contactFire || inLava;
     if (difficulty === 'peaceful') {
       if (this.hunger < MAX_HUNGER) this.hunger = Math.min(MAX_HUNGER, this.hunger + 1 / 200);
-      if (this.health < MAX_HEALTH) {
+      if (!suppressFoodRegen && this.health < MAX_HEALTH) {
         this.regenTimer += 1;
         if (this.regenTimer >= 20) {
           this.regenTimer = 0;
           this.heal(1);
         }
-      }
+      } else if (suppressFoodRegen) this.regenTimer = 0;
       return;
     }
 
-    if (this.health < MAX_HEALTH && this.hunger >= 20 && this.saturation > 0) {
+    if (!suppressFoodRegen && this.health < MAX_HEALTH && this.hunger >= 20 && this.saturation > 0) {
       this.regenTimer += 1;
       if (this.regenTimer >= 10) {
         this.regenTimer = 0;
         this.heal(1);
         this.addExhaustion(6);
       }
-    } else if (this.health < MAX_HEALTH && this.hunger >= 18) {
+    } else if (!suppressFoodRegen && this.health < MAX_HEALTH && this.hunger >= 18) {
       this.regenTimer += 1;
       if (this.regenTimer >= 80) {
         this.regenTimer = 0;

@@ -47,6 +47,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после shape-aware block targeting / minecart LMB break: typecheck, 485 tests / 52 files, production build 111 modules, 1.14 MiB / 180 files.
 - [x] Локальный pipeline после chat commands / minecart drop polish: typecheck, 495 tests / 53 files, production build 116 modules, 1.15 MiB / 180 files.
 - [x] Локальный pipeline после fire overlay / cave lava ponds / bedrock cap / hurt feedback / ore ×2: typecheck, 506 tests / 55 files, production build 117 modules, 1.15 MiB / 180 files.
+- [x] Локальный pipeline после frozen-lava / lighting-flicker / Diamond /3 / Fire damage / mob hurt flash: typecheck, 517 tests / 56 files, production build 117 modules, 1.15 MiB / 180 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.

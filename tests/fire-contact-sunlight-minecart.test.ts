@@ -41,7 +41,7 @@ import {
   railTextureYaw,
   resolveRailShape,
 } from '../src/rendering/specialBlockGeometry';
-import { SurvivalSystem } from '../src/survival';
+import { SurvivalSystem, type DamageResult } from '../src/survival';
 import { allCraftingBookEntries } from '../src/ui/recipeBook';
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
@@ -114,6 +114,65 @@ describe('fire contact and independent burn sources', () => {
     expect(survival.contactFire).toBe(false);
     expect(survival.isOnFire).toBe(false);
     expect(survival.health).toBe(after);
+  });
+
+  it('deals ordinary Fire damage through the canonical hook even with armor and full hunger', () => {
+    const events: DamageResult[] = [];
+    const survival = new SurvivalSystem({
+      onDamage: (result) => {
+        if (!result.ignored && result.dealt > 0) events.push(result);
+      },
+    });
+    expect(survival.hunger).toBe(20);
+    expect(survival.saturation).toBeGreaterThan(0);
+    for (let tick = 0; tick < FIRE_DAMAGE_INTERVAL_TICKS; tick += 1) {
+      survival.tick(0.05, {
+        inFire: true,
+        armor: { points: 20, toughness: 8 },
+        difficulty: 'normal',
+      });
+    }
+    expect(survival.health).toBe(19);
+    expect(events.some((event) => event.source === 'fire' && event.dealt === 1)).toBe(true);
+  });
+
+  it('deals less ordinary Fire damage than Lava over the same interval', () => {
+    const fire = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    const lava = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    for (let tick = 0; tick < 20; tick += 1) {
+      fire.tick(0.05, { inFire: true });
+      lava.tick(0.05, { inLava: true });
+    }
+    const fireLost = 20 - fire.health;
+    const lavaLost = 20 - lava.health;
+    expect(fireLost).toBeGreaterThan(0);
+    expect(fireLost).toBeLessThan(lavaLost);
+    expect(lava.fireTicks).toBeGreaterThan(0);
+    lava.tick(0.05, { inLava: false });
+    expect(lava.fireTicks).toBeGreaterThan(0);
+    expect(lava.isOnFire).toBe(true);
+  });
+
+  it('keeps Lava afterburn and Fire Arrow timers after leaving ordinary Fire', () => {
+    const survival = new SurvivalSystem({ hunger: 10, saturation: 0 });
+    survival.ignite(300);
+    survival.igniteFromArrow(FIRE_ARROW_IGNITE_TICKS);
+    survival.tick(0.05, { inFire: true });
+    expect(survival.contactFire).toBe(true);
+    const fireTicks = survival.fireTicks;
+    const arrowTicks = survival.arrowFireTicks;
+    survival.tick(0.05, { inFire: false });
+    expect(survival.contactFire).toBe(false);
+    expect(survival.fireTicks).toBeGreaterThan(0);
+    expect(survival.fireTicks).toBeLessThanOrEqual(fireTicks);
+    expect(survival.arrowFireTicks).toBeGreaterThan(0);
+    expect(survival.arrowFireTicks).toBeLessThanOrEqual(arrowTicks);
+    expect(survival.isOnFire).toBe(true);
+    const health = survival.health;
+    for (let tick = 0; tick < 8; tick += 1) survival.tick(0.05, { inFire: false });
+    expect(survival.contactFire).toBe(false);
+    expect(survival.fireTicks).toBeGreaterThan(0);
+    expect(survival.health).toBe(health);
   });
 
   it('damages a mob inside Fire and stops contact burn immediately after leaving', () => {

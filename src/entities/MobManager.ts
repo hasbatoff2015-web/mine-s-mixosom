@@ -29,6 +29,25 @@ import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entity
 import { FIXED_DT } from '../core/constants';
 import { VoxelVisualFactory } from './voxelVisuals';
 
+export const MOB_HURT_FLASH_SECONDS = 0.22;
+
+export function mobHurtFlashIntensity(secondsLeft: number): number {
+  if (!Number.isFinite(secondsLeft) || secondsLeft <= 0) return 0;
+  return Math.min(1, secondsLeft / MOB_HURT_FLASH_SECONDS);
+}
+
+export function applyMobHurtTint(
+  rgb: readonly [number, number, number],
+  intensity: number,
+): [number, number, number] {
+  const t = Math.max(0, Math.min(1, intensity));
+  return [
+    Math.min(1.2, rgb[0] * (1 - t * 0.12) + t * 0.95),
+    rgb[1] * (1 - t * 0.82),
+    rgb[2] * (1 - t * 0.82),
+  ];
+}
+
 const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
 const PASSIVE_KINDS: readonly MobKind[] = ['cow', 'pig', 'chicken', 'sheep'];
 const UP = new THREE.Vector3(0, 1, 0);
@@ -164,6 +183,7 @@ export class MobEntity {
   stateSeconds = 0;
   decisionSeconds = 0;
   hurtSeconds = 0;
+  hurtFlashSeconds = 0;
   deathSeconds = 0;
   fuseSeconds = 0;
   burnAccumulator = 0;
@@ -376,6 +396,9 @@ export class MobManager {
       } else {
         this.updateAi(mob, delta, targetPosition, context, daylight);
       }
+      if (mob.hurtFlashSeconds > 0) {
+        mob.hurtFlashSeconds = Math.max(0, mob.hurtFlashSeconds - delta);
+      }
 
       this.updateBurning(mob, delta, daylight);
       if (!mob.alive) {
@@ -492,11 +515,17 @@ export class MobManager {
       mob.fireTicks = Math.max(mob.fireTicks, damageOptions.igniteTicks);
     }
     if (mob.health <= 0) {
+      if (damageOptions.source !== 'fire') {
+        mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
+        this.applyMobLight(mob);
+      }
       this.beginDeath(mob);
     } else if (damageOptions.source !== 'fire') {
       // Periodic fire/sunlight DOT must not stun-lock AI (creeper fuse, chase).
       mob.hurtSeconds = 0.28;
+      mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
       this.changeState(mob, 'hurt');
+      this.applyMobLight(mob);
     }
     return true;
   }
@@ -973,7 +1002,7 @@ export class MobManager {
   }
 
   private applyMobLight(mob: MobEntity): void {
-    applySampledEntityLight(
+    const sample = applySampledEntityLight(
       mob.visual,
       this.world,
       mob.position.x,
@@ -982,6 +1011,11 @@ export class MobManager {
       mob.definition.height,
       worldDaylightUniform.value,
     );
+    const flash = mobHurtFlashIntensity(mob.hurtFlashSeconds);
+    if (flash <= 0) return;
+    const tinted = applyMobHurtTint(sample.rgb, flash);
+    const light = mob.visual.userData.entityLight as THREE.Vector3 | undefined;
+    if (light instanceof THREE.Vector3) light.set(tinted[0], tinted[1], tinted[2]);
   }
 
   private steerToward(mob: MobEntity, direction: Readonly<THREE.Vector3>, speed: number): void {

@@ -17,6 +17,7 @@ import {
   lightingFloodOwner,
   abandonLightingFloodIfOrphaned,
   resetIncompleteBlockLighting,
+  resetRegionLightFlood,
   lightEngineStats,
   lightFrameStats,
   processChunkLighting,
@@ -27,6 +28,8 @@ import {
   skyOcclusionClass,
   lightingInvalidation,
   recomputeSkyColumnAt,
+  LIGHT_FLOOD_ADD_EMITTER,
+  LIGHT_FLOOD_REGION,
   type LightJobOrigin,
   type LightRegion,
   type PendingLightJob,
@@ -34,6 +37,7 @@ import {
 import { chebyshevChunkDistance, neighborFluidMeshOffsets, neighborMeshOffsets } from './worldJobs';
 import {
   FLUID_QUEUE_CAP,
+  activateGeneratedFluidBoundaries,
   processFluidQueue,
 } from './fluids';
 import {
@@ -158,6 +162,7 @@ export class VoxelWorld {
   readonly pendingMesh = new Set<string>();
   private pendingLight?: PendingLightJob;
   private pendingEmitters: Array<readonly [number, number, number]> = [];
+  private readonly pendingEmitterLightKeys = new Set<string>();
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
   viewChunkX = 0;
@@ -201,6 +206,7 @@ export class VoxelWorld {
       const delta = this.modifications.get(key);
       if (delta) for (const [index, block] of delta) chunk.blocks[index] = block;
       this.chunks.set(key, chunk);
+      activateGeneratedFluidBoundaries(this, chunk);
       const generationMilliseconds = performance.now() - generationStart;
       this.generationSamples += 1;
       this.generationTotalMs += generationMilliseconds;
@@ -271,6 +277,21 @@ export class VoxelWorld {
         if (chunk?.dirty && chunk.lightingReady) chunk.bumpLightVersion();
       }
     }
+  }
+
+  private collectEmitterLightTouches(): void {
+    for (const chunk of consumeLightTouched()) {
+      if (chunk.lightingReady) this.pendingEmitterLightKeys.add(chunkKey(chunk.x, chunk.z));
+    }
+  }
+
+  private commitEmitterLightVersions(): void {
+    consumeLightTouched();
+    for (const key of this.pendingEmitterLightKeys) {
+      const chunk = this.chunks.get(key);
+      if (chunk?.lightingReady) chunk.bumpLightVersion();
+    }
+    this.pendingEmitterLightKeys.clear();
   }
 
   getBlockState(x: number, y: number, z: number): BlockRenderState | undefined {
@@ -600,10 +621,16 @@ export class VoxelWorld {
     this.lightQueueMarks += 1;
     this.noteRegionLightDirty(region);
     if (!this.pendingLight) {
-      this.pendingLight = { region: { ...region }, sky, block, origin };
+      this.pendingLight = { region: { ...region }, sky, block, origin, skyColumn: 0, blockSeeded: false };
       return;
     }
     const current = this.pendingLight.region;
+    const expanded = region.minX < current.minX
+      || region.minY < current.minY
+      || region.minZ < current.minZ
+      || region.maxX > current.maxX
+      || region.maxY > current.maxY
+      || region.maxZ > current.maxZ;
     const mergedOrigin: LightJobOrigin = this.pendingLight.origin === origin
       ? origin
       : (this.pendingLight.origin === 'edit' || origin === 'edit' ? 'edit' : origin);
@@ -611,6 +638,8 @@ export class VoxelWorld {
       sky: this.pendingLight.sky || sky,
       block: this.pendingLight.block || block,
       origin: mergedOrigin,
+      skyColumn: expanded ? 0 : (this.pendingLight.skyColumn ?? 0),
+      blockSeeded: expanded ? false : this.pendingLight.blockSeeded === true,
       region: {
         minX: Math.min(current.minX, region.minX),
         minY: Math.min(current.minY, region.minY),
@@ -620,6 +649,7 @@ export class VoxelWorld {
         maxZ: Math.max(current.maxZ, region.maxZ),
       },
     };
+    if (expanded) resetRegionLightFlood();
   }
 
   flushLighting(): number {
@@ -629,6 +659,8 @@ export class VoxelWorld {
     this.pendingEmitters = [];
     const start = performance.now();
     if (emitters.length > 0) addBlockLightEmitters(this, emitters);
+    this.collectEmitterLightTouches();
+    this.commitEmitterLightVersions();
     if (pending) {
       relightRegion(this, pending.region, pending.sky, pending.block);
       this.bumpDirtyInRegion(pending.region);
@@ -674,41 +706,47 @@ export class VoxelWorld {
       edit: this.pendingLight?.origin === 'edit' ? 1 : 0,
       other: this.pendingLight?.origin === 'other' ? 1 : 0,
     };
-    for (const job of unlit) {
-      if (performance.now() >= deadline) break;
-      const key = chunkKey(job.chunk.x, job.chunk.z);
-      const floodOwner = lightingFloodOwner();
-      if (isLightJobBlockedByFlood(floodOwner, key)) {
-        if (counters) counters.blocked += 1;
-        continue;
-      }
-      if (counters) counters.attempted += 1;
-      const complete = processChunkLighting(this, job.chunk, deadline);
-      if (complete) {
-        this.applyInitialLightingVersions(job.chunk);
-        if (counters) counters.completed += 1;
-      } else {
-        if (counters) counters.yielded += 1;
-        break;
+    const liveOwner = lightingFloodOwner();
+    const resumeSharedFlood = liveOwner === LIGHT_FLOOD_REGION || liveOwner === LIGHT_FLOOD_ADD_EMITTER;
+    if (!resumeSharedFlood) {
+      for (const job of unlit) {
+        if (performance.now() >= deadline) break;
+        const key = chunkKey(job.chunk.x, job.chunk.z);
+        const floodOwner = lightingFloodOwner();
+        if (isLightJobBlockedByFlood(floodOwner, key)) {
+          if (counters) counters.blocked += 1;
+          continue;
+        }
+        if (counters) counters.attempted += 1;
+        const complete = processChunkLighting(this, job.chunk, deadline);
+        if (complete) {
+          this.applyInitialLightingVersions(job.chunk);
+          if (counters) counters.completed += 1;
+        } else {
+          if (counters) counters.yielded += 1;
+          break;
+        }
       }
     }
 
-    if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner() === '') {
-      const emitters = this.pendingEmitters;
+    if (performance.now() < deadline && lightingFloodOwner() === LIGHT_FLOOD_ADD_EMITTER) {
+      addBlockLightEmitters(this, this.pendingEmitters, deadline);
       this.pendingEmitters = [];
-      addBlockLightEmitters(this, emitters, deadline);
-      for (const chunk of consumeLightTouched()) {
-        if (chunk.lightingReady) chunk.bumpLightVersion();
-      }
-    }
-
-    if (performance.now() < deadline && this.pendingLight && (lightingFloodOwner() === '' || lightingFloodOwner() === 'region')) {
+      this.collectEmitterLightTouches();
+      if (lightingFloodOwner() === '') this.commitEmitterLightVersions();
+    } else if (performance.now() < deadline && this.pendingLight && (lightingFloodOwner() === '' || lightingFloodOwner() === LIGHT_FLOOD_REGION)) {
       const region = this.pendingLight.region;
       const done = continuePendingLight(this, this.pendingLight, deadline);
       if (done) {
         this.pendingLight = undefined;
         this.bumpDirtyInRegion(region);
       }
+    } else if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner() === '') {
+      const emitters = this.pendingEmitters;
+      this.pendingEmitters = [];
+      addBlockLightEmitters(this, emitters, deadline);
+      this.collectEmitterLightTouches();
+      if (lightingFloodOwner() === '') this.commitEmitterLightVersions();
     }
 
     let dirtyLight = 0;

@@ -8,6 +8,7 @@ import {
   FLUID_SOURCE_LEVEL,
   applyFluidWrites,
   computeFluidUpdate,
+  generatedFluidNeedsActivation,
 } from '../src/world/fluids';
 import { runStreamingPath, STREAMING_SPEEDS } from '../src/world/streamingSim';
 import { VoxelWorld } from '../src/world/World';
@@ -217,23 +218,32 @@ describe('fluid equilibrium and distant pause', () => {
     expect(world.fluidUpdates + world.fluidWrites + world.fluidQueueSize).toBeGreaterThan(0);
   });
 
-  it('does not enqueue generated lava lakes', () => {
+  it('enqueues only exposed generated lava boundaries, not whole ponds', () => {
     const world = new VoxelWorld('lava-lake-audit');
     let lava = 0;
+    let exposed = 0;
+    for (let cz = -2; cz <= 2; cz += 1) {
+      for (let cx = -2; cx <= 2; cx += 1) {
+        world.getChunk(cx, cz);
+      }
+    }
     for (let cz = -2; cz <= 2; cz += 1) {
       for (let cx = -2; cx <= 2; cx += 1) {
         const chunk = world.getChunk(cx, cz)!;
         for (let z = 0; z < CHUNK_SIZE; z += 1) {
           for (let x = 0; x < CHUNK_SIZE; x += 1) {
             for (let y = 1; y <= 12; y += 1) {
-              if (chunk.get(x, y, z) === BlockId.Lava) lava += 1;
+              if (chunk.get(x, y, z) !== BlockId.Lava) continue;
+              lava += 1;
+              if (generatedFluidNeedsActivation(world, cx * CHUNK_SIZE + x, y, cz * CHUNK_SIZE + z)) exposed += 1;
             }
           }
         }
       }
     }
     expect(lava).toBeGreaterThan(0);
-    expect(world.fluidQueueSize).toBe(0);
+    expect(world.fluidQueueSize).toBe(exposed);
+    if (lava > 12) expect(world.fluidQueueSize).toBeLessThan(lava);
   });
 
   it('still mixes water with lava source and flowing lava', () => {

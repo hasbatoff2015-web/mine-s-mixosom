@@ -1,5 +1,6 @@
 import { BlockId, getBlockDefinition } from '../blocks';
 import { CHUNK_SIZE, FLUID_JOB_BUDGET_MS, WORLD_HEIGHT, floorDiv } from '../core/constants';
+import type { Chunk } from './Chunk';
 import type { VoxelWorld } from './World';
 
 export const FLUID_SOURCE_LEVEL = 8;
@@ -51,10 +52,86 @@ export function chunkLoaded(world: VoxelWorld, x: number, z: number): boolean {
   return world.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), false) !== undefined;
 }
 
-function canReplaceWithFluid(block: BlockId): boolean {
+export function canReplaceWithFluid(block: BlockId): boolean {
   if (block === BlockId.Air || block === BlockId.Fire) return true;
   const definition = getBlockDefinition(block);
   return definition.replaceable === true && definition.liquid !== true && definition.solid !== true;
+}
+
+/**
+ * True when a generated source/flowing cell can enter a neighbor right now.
+ * Unloaded neighbor chunks are treated as unknown (not air) so we retry when they load.
+ */
+export function generatedFluidNeedsActivation(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  const type = world.getBlock(x, y, z, false);
+  if (!isFluidBlock(type)) return false;
+  const opposite = otherFluid(type);
+  if (y > 0) {
+    const below = world.getBlock(x, y - 1, z, false);
+    if (canReplaceWithFluid(below) || (opposite !== undefined && below === opposite)) return true;
+  }
+  for (const [dx, dz] of HORIZONTAL) {
+    const nx = x + dx;
+    const nz = z + dz;
+    if (!chunkLoaded(world, nx, nz)) continue;
+    const neighbor = world.getBlock(nx, y, nz, false);
+    if (canReplaceWithFluid(neighbor) || (opposite !== undefined && neighbor === opposite)) return true;
+  }
+  return false;
+}
+
+function scheduleIfGeneratedBoundary(world: VoxelWorld, x: number, y: number, z: number): void {
+  if (generatedFluidNeedsActivation(world, x, y, z)) world.scheduleFluid(x, y, z, 1);
+}
+
+function activateEdgeFluidsToward(
+  world: VoxelWorld,
+  chunk: Chunk,
+  towardDx: number,
+  towardDz: number,
+): void {
+  const originX = chunk.x * CHUNK_SIZE;
+  const originZ = chunk.z * CHUNK_SIZE;
+  if (towardDx !== 0) {
+    const localX = towardDx > 0 ? CHUNK_SIZE - 1 : 0;
+    for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
+      for (let y = 1; y < WORLD_HEIGHT; y += 1) {
+        if (!isFluidBlock(chunk.get(localX, y, localZ) as BlockId)) continue;
+        scheduleIfGeneratedBoundary(world, originX + localX, y, originZ + localZ);
+      }
+    }
+    return;
+  }
+  const localZ = towardDz > 0 ? CHUNK_SIZE - 1 : 0;
+  for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
+    for (let y = 1; y < WORLD_HEIGHT; y += 1) {
+      if (!isFluidBlock(chunk.get(localX, y, localZ) as BlockId)) continue;
+      scheduleIfGeneratedBoundary(world, originX + localX, y, originZ + localZ);
+    }
+  }
+}
+
+/**
+ * After worldgen, schedule only cells that can already flow. Interior pond
+ * sources stay idle. Neighbor-chunk faces are rechecked when the adjacent
+ * chunk appears, so x=15/16 lava is not frozen behind an unloaded neighbor.
+ */
+export function activateGeneratedFluidBoundaries(world: VoxelWorld, chunk: Chunk): void {
+  const originX = chunk.x * CHUNK_SIZE;
+  const originZ = chunk.z * CHUNK_SIZE;
+  for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
+    for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
+      for (let y = 1; y < WORLD_HEIGHT; y += 1) {
+        if (!isFluidBlock(chunk.get(localX, y, localZ) as BlockId)) continue;
+        scheduleIfGeneratedBoundary(world, originX + localX, y, originZ + localZ);
+      }
+    }
+  }
+  for (const [dx, dz] of HORIZONTAL) {
+    const neighbor = world.getChunk(chunk.x + dx, chunk.z + dz, false);
+    if (!neighbor) continue;
+    activateEdgeFluidsToward(world, neighbor, -dx, -dz);
+  }
 }
 
 function otherFluid(type: BlockId): BlockId | undefined {

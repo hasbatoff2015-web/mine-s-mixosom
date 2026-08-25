@@ -11,6 +11,8 @@ export interface OreRule {
   readonly maxY: number;
   readonly veins: number;
   readonly size: number;
+  /** Extra independent vein attempt with this probability. Diamond only. */
+  readonly extraVeinChance?: number;
 }
 
 /**
@@ -61,7 +63,7 @@ export const ORE_RULES: readonly OreRule[] = [
   { block: BlockId.IronOre, minY: 8, maxY: 52, veins: 22, size: 6 },
   { block: BlockId.GoldOre, minY: 4, maxY: 32, veins: 8, size: 5 },
   { block: BlockId.RedstoneOre, minY: 3, maxY: 18, veins: 10, size: 5 },
-  { block: BlockId.DiamondOre, minY: 3, maxY: 16, veins: 4, size: 4 },
+  { block: BlockId.DiamondOre, minY: 3, maxY: 16, veins: 1, size: 4, extraVeinChance: 1 / 3 },
 ];
 
 export interface ColumnInfo {
@@ -379,7 +381,9 @@ export class TerrainGenerator {
     const worldX = chunk.x * CHUNK_SIZE;
     const worldZ = chunk.z * CHUNK_SIZE;
     for (const ore of ORE_RULES) {
-      for (let vein = 0; vein < ore.veins; vein += 1) {
+      let veins = ore.veins;
+      if ((ore.extraVeinChance ?? 0) > 0 && rng() < (ore.extraVeinChance ?? 0)) veins += 1;
+      for (let vein = 0; vein < veins; vein += 1) {
         let x = Math.floor(rng() * CHUNK_SIZE);
         let y = ore.minY + Math.floor(rng() * (ore.maxY - ore.minY + 1));
         let z = Math.floor(rng() * CHUNK_SIZE);

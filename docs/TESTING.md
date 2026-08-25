@@ -54,13 +54,13 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-25** (fire overlay / lava ponds / bedrock cap / hurt / ores ×2):
+Срез локального запуска **2026-08-25** (frozen lava / lighting flicker / Diamond /3 / Fire damage / mob hurt flash):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       55 test files, 506 tests, 506 passed
+Vitest:       56 test files, 517 tests, 517 passed
 production:   117 modules, 1.15 MiB / 180 files
-Main JS: 938.51 kB / 260.95 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
+Main JS: 941.47 kB / 261.92 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -101,22 +101,23 @@ Main JS: 938.51 kB / 260.95 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
 | `tests/fixed-step.test.ts` | 3 | ~20 ticks / 60 Hz second, 300 ms stall capped at `MAX_CATCH_UP_TICKS`, leftover accumulator |
 | `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
 | `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
-| `tests/lighting-jobs.test.ts` | 5 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm |
+| `tests/lighting-jobs.test.ts` | 6 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm, lava emitter light stable after settle without remesh churn |
+| `tests/fluids.test.ts` | 9 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap, FLUID HUD counters |
+| `tests/fluid-streaming.test.ts` | 18 | Level-only skip relight, no water region flood, no-op, queue dedupe, remesh coalesce, equilibrium soak, distant pause/resume, generated lava **boundary-only** enqueue, mix, water/lava/both fly streaming, mesh cost |
 | `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
 | `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
 | `tests/chunk-streaming-inspector.test.ts` | 26 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH STARVATION uses readyWanted not litAt, LAST SPIKE age, ready vs blocked head, front-target selection, player-visible vs prefetch latency, wanted enter/leave/re-enter, rolling stats exclude never-wanted halo |
 | `tests/lighting-scheduler.test.ts` | 19 | Lighting flood skip past blocked head; 70 blocked + 1 ready; resume near flood owner; mesh-context DAG (no lighting A↔B cycle); A→B→C leaf lighting; near-unlock priority; distant flood preempt; obsolete unlit skip; orphaned/obsolete flood after prune or leave radius; radius-6 wanted set; 2 ms slice; torch border; flat sky seam; rapid break; CPU fly near-hole bound |
-| `tests/fluids.test.ts` | 9 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap, FLUID HUD counters |
 | `tests/fluid-surface.test.ts` | 7 | Corner heights, flat source pool culls internals, flowing slopes, shared edges, fluid-above no top, chunk-border seams, lava geometry, falling column |
-| `tests/fluid-streaming.test.ts` | 18 | Level-only skip relight, no water region flood, no-op, queue dedupe, remesh coalesce, equilibrium soak, distant pause/resume, generated lakes idle, mix, water/lava/both fly streaming, mesh cost |
 | `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects, cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
 | `tests/fire-arrow-and-fire.test.ts` | 5 | Fire arrow only primes TNT / ignites living (no world fire), periodic burn + water extinguish, 6-plane fire mesh, animated fire strip, flint/fire-arrow icons and handheld models |
-| `tests/fire-contact-sunlight-minecart.test.ts` | 35 | Fire AABB contact vs leave, independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert/fuse/explode, Flint entity-first prime (no Fire), Fire Arrow vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
+| `tests/fire-contact-sunlight-minecart.test.ts` | 38 | Fire AABB contact vs leave, Fire vs Lava cadence, armor/hunger no longer zero Fire HP, independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert/fuse/explode, Flint entity-first prime (no Fire), Fire Arrow vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
 | `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |
 | `tests/chat-commands.test.ts` | 9 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
 | `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
-| `tests/lava-bedrock-ore-pass.test.ts` | 5 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/ore ×2, chunk-border determinism, generated pond idle + shore-break flow, ore Y/vein size |
+| `tests/lava-bedrock-ore-pass.test.ts` | 7 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0, Coal/Iron/Gold/Redstone ×2, Diamond ≈0.33× current, chunk-border determinism, boundary-only enqueue + shore-break + cross-chunk 15/16, ore Y/vein size |
+| `tests/mob-hurt-flash.test.ts` | 5 | Successful mob damage starts per-entity red tint; miss/zero/fire DOT do not; decay + restart; shared material unchanged; fire overlay survives; death cleanup |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -392,7 +393,7 @@ Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run ben
 - cave networks cross `x=15|16`; connected-component size/width vs swiss-cheese ratio;
 - **no 1×1 / 1–2 surface cave pinholes** on plains/forest/desert/mountains; ordinary caves keep `CAVE_ROOF_DEPTH = 4` under the 3×3 local min surface;
 - Forest oak ≈ 35–50% old count; Desert cactus ≈ 20–30% old count;
-- ores only inside shifted `ORE_RULES` bands, including new deep stone; vein **attempts ×2**, vein `size` unchanged;
+- ores only inside shifted `ORE_RULES` bands, including new deep stone; Coal/Iron/Gold/Redstone vein **attempts ×2**; Diamond **≈ current/3** (`veins: 1` + `extraVeinChance: 1/3`); vein `size` unchanged;
 - small irregular cave lava ponds (depth ≤ 3, bounded footprint, support, no giant rectangular sheets);
 - spawn on plains grass above sea, not mountain/cave/desert;
 - old modification linear indices still restore after `WORLD_HEIGHT` 80→96.

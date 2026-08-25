@@ -6,7 +6,7 @@
 
 import { CHUNK_SIZE, TARGET_FRAME_MS, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from './Chunk';
-import { lightingFloodOwner } from './LightEngine';
+import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightingFloodOwner } from './LightEngine';
 import type { VoxelWorld } from './World';
 import { chebyshevChunkDistance, lightContextReady } from './worldJobs';
 
@@ -296,7 +296,10 @@ export interface MeshLightDepChain {
 
 /** Flood mutex: other unlit chunks wait, but they must not stop the ready owner. */
 export function isLightJobBlockedByFlood(floodOwner: string, jobKey: string): boolean {
-  return floodOwner !== '' && floodOwner !== 'region' && floodOwner !== jobKey;
+  return floodOwner !== ''
+    && floodOwner !== LIGHT_FLOOD_REGION
+    && floodOwner !== LIGHT_FLOOD_ADD_EMITTER
+    && floodOwner !== jobKey;
 }
 
 /**
@@ -413,7 +416,7 @@ export function shouldPreemptDistantLightingFlood(
   criticalUnlitCount: number,
 ): boolean {
   if (criticalUnlitCount <= 0) return false;
-  if (floodOwner === '' || floodOwner === 'region') return false;
+  if (floodOwner === '' || floodOwner === LIGHT_FLOOD_REGION || floodOwner === LIGHT_FLOOD_ADD_EMITTER) return false;
   if (unlockKeys.has(floodOwner)) return false;
   const { cx, cz } = parseChunkKey(floodOwner);
   return chebyshevChunkDistance(cx, cz, originCx, originCz) > URGENT_LIGHT_CHEBYSHEV;

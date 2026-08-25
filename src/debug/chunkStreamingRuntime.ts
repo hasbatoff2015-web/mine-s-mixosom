@@ -3,7 +3,7 @@
  */
 
 import { CHUNK_SIZE, chunkKey as worldChunkKey } from '../core/constants';
-import { lightingFloodOwner } from '../world/LightEngine';
+import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightingFloodOwner } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
 import { chebyshevChunkDistance, lightContextReady } from '../world/worldJobs';
 import {
@@ -220,7 +220,10 @@ export function gatherChunkFacts(
     pendingLight: generated && !lightingReady,
     inMeshRadius,
     inGenerateRadius,
-    floodOwnerIsOther: extras.floodOwner !== '' && extras.floodOwner !== 'region' && extras.floodOwner !== key,
+    floodOwnerIsOther: extras.floodOwner !== ''
+      && extras.floodOwner !== LIGHT_FLOOD_REGION
+      && extras.floodOwner !== LIGHT_FLOOD_ADD_EMITTER
+      && extras.floodOwner !== key,
     meshSkippedDueToGenSeparation: view.jobFrame.meshSkippedDueToGenSeparation,
     lightingOnlyDueToBudget: view.jobFrame.lightingOnlyDueToBudget,
     meshReadyButOverBudget: extras.meshReadyKeys.has(chunkKey(cx, cz))

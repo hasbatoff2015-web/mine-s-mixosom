@@ -137,7 +137,7 @@ import { SaveService } from '../save/SaveService';
 import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
 import { SurvivalSystem, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
-import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
+import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
@@ -930,7 +930,7 @@ export class Game {
       }
       if (counters.yielded > 0) {
         const owner = lightingFloodOwner();
-        if (owner && owner !== 'region') {
+        if (owner && owner !== LIGHT_FLOOD_REGION && owner !== LIGHT_FLOOD_ADD_EMITTER) {
           const { cx, cz } = parseChunkKey(owner);
           this.streamingTrace.mark('lightYielded', cx, cz, performance.now());
         }
