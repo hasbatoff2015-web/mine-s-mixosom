@@ -169,3 +169,8 @@ User local QA freeze on this SHA. Do not merge main.
 ## Git
 
 Branch `cursor/fluids-and-items-pass-935a`. Ordinary push. PR #6 remains draft.
+
+- Implementation / HEAD: `d3955a0d090b75b6ede43268479ddea564d42164`
+- Previous verified HEAD: `2edccb0`
+- Working tree clean after push
+- `main` not merged; no force push
