@@ -7,7 +7,7 @@ Base: `main`
 **main was not merged.** **No force push.** Code is frozen pending local visual QA.
 
 Previous HEAD: `11e933883745dd3b6f8f995b8dbc46d61da55167`.  
-This pass: `e2c2a89ccd5deff2444f768d7d9ca57db29ff702`.
+This pass: `6582034d920a493d3d9fb71fd98dd25844ce672f`.
 
 ## Goal
 
@@ -167,7 +167,7 @@ WebGL visual acceptance is **not** claimed from this cloud agent.
 ## Git
 
 branch `cursor/fluids-and-items-pass-935a`  
-SHA `e2c2a89ccd5deff2444f768d7d9ca57db29ff702`  
+SHA `6582034d920a493d3d9fb71fd98dd25844ce672f`  
 working tree clean after this commit  
 PR #6 remains **draft**.  
 `npm run check`: 55 files, 506 tests, 117 modules, 1.15 MiB / 180 files.
