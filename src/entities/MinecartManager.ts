@@ -235,8 +235,9 @@ export class MinecartManager {
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     reach: number,
+    ignoreId?: string,
   ): 'primed' | 'already' | 'none' {
-    const hit = this.raycast(origin, direction, reach);
+    const hit = this.raycast(origin, direction, reach, ignoreId);
     if (hit?.cart.variant !== 'tnt') return 'none';
     return this.primeTnt(hit.cart) ? 'primed' : 'already';
   }
@@ -265,6 +266,18 @@ export class MinecartManager {
     return true;
   }
 
+  /** Removes a cart without exploding. Ignored for the ridden cart and primed TNT carts. */
+  breakCart(cart: MinecartEntity, riddenId?: string): { position: THREE.Vector3; items: readonly string[] } | undefined {
+    if (cart.id === riddenId) return undefined;
+    if (!this.carts.has(cart.id)) return undefined;
+    if (cart.variant === 'tnt' && cart.fuseTicks > 0) return undefined;
+    const items = cart.variant === 'tnt' ? ['minecart', 'tnt'] : ['minecart'];
+    const position = cart.position.clone();
+    this.scene.remove(cart.visual);
+    this.carts.delete(cart.id);
+    return { position, items };
+  }
+
   push(cart: MinecartEntity, direction: THREE.Vector3, strength = 0.18): void {
     const tangent = this.tangentOf(cart);
     const along = (direction.x * tangent.x + direction.z * tangent.z) * strength * 20;
@@ -288,6 +301,7 @@ export class MinecartManager {
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     maxDistance: number,
+    ignoreId?: string,
   ): { cart: MinecartEntity; distance: number } | undefined {
     const inv = 1 / Math.max(1e-8, direction.length());
     const dx = direction.x * inv;
@@ -295,13 +309,15 @@ export class MinecartManager {
     const dz = direction.z * inv;
     let best: { cart: MinecartEntity; distance: number } | undefined;
     for (const cart of this.carts.values()) {
+      if (ignoreId && cart.id === ignoreId) continue;
+      const height = cart.variant === 'tnt' ? CART_HIT_AABB.height : MINECART_HEIGHT;
       const hit = rayAabb(
         origin.x, origin.y, origin.z, dx, dy, dz, maxDistance,
         cart.position.x - CART_HIT_AABB.width * 0.5,
         cart.position.y,
         cart.position.z - CART_HIT_AABB.length * 0.5,
         cart.position.x + CART_HIT_AABB.width * 0.5,
-        cart.position.y + CART_HIT_AABB.height,
+        cart.position.y + height,
         cart.position.z + CART_HIT_AABB.length * 0.5,
       );
       if (hit === undefined) continue;

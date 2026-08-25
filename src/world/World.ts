@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
-import { blockCollisionBoxes, rayAabbDistance } from './collision';
+import { rayAabbDistance } from './collision';
+import { blockSelectionBoxes } from './selection';
 import { CHUNK_SIZE, LIGHTING_HALO_CHUNKS, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
@@ -809,40 +810,31 @@ export class VoxelWorld {
     let maxY = dir.y === 0 ? Infinity : ((stepY > 0 ? y + 1 : y) - origin.y) / dir.y;
     let maxZ = dir.z === 0 ? Infinity : ((stepZ > 0 ? z + 1 : z) - origin.z) / dir.z;
     let distance = 0;
-    const normal = new THREE.Vector3();
     while (distance <= maxDistance) {
       const block = this.getBlock(x, y, z);
       const definition = getBlockDefinition(block);
       if (block !== BlockId.Air && !definition.liquid) {
-        if (definition.solid) {
-          const hit = this.hitSolidBoxes(origin, dir, x, y, z, block, maxDistance);
-          if (hit) return hit;
-        } else {
-          const point = origin.clone().addScaledVector(dir, distance);
-          return { x, y, z, block, normal: normal.clone(), distance, point };
-        }
+        const hit = this.hitSelectionBoxes(origin, dir, x, y, z, block, maxDistance);
+        if (hit) return hit;
       }
       if (maxX < maxY && maxX < maxZ) {
         x += stepX;
         distance = maxX;
         maxX += deltaX;
-        normal.set(-stepX, 0, 0);
       } else if (maxY < maxZ) {
         y += stepY;
         distance = maxY;
         maxY += deltaY;
-        normal.set(0, -stepY, 0);
       } else {
         z += stepZ;
         distance = maxZ;
         maxZ += deltaZ;
-        normal.set(0, 0, -stepZ);
       }
     }
     return undefined;
   }
 
-  private hitSolidBoxes(
+  private hitSelectionBoxes(
     origin: THREE.Vector3,
     dir: THREE.Vector3,
     x: number,
@@ -852,7 +844,7 @@ export class VoxelWorld {
     maxDistance: number,
   ): VoxelHit | undefined {
     let best: ReturnType<typeof rayAabbDistance>;
-    for (const box of blockCollisionBoxes(this, x, y, z)) {
+    for (const box of blockSelectionBoxes(this, x, y, z)) {
       const hit = rayAabbDistance(origin, dir, box);
       if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
       if (!best || hit.distance < best.distance) best = hit;

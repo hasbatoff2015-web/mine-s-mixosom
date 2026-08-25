@@ -43,10 +43,10 @@ export function blockCollisionBoxes(
   if (!definition.solid) return [];
   const state = world.getBlockState?.(x, y, z);
   if (isSlabBlock(block)) {
-    return offsetBoxes(x, y, z, slabLocalBoxes(defaultSlabType(state)));
+    return offsetLocalBoxes(x, y, z, slabLocalBoxes(defaultSlabType(state)));
   }
   if (isStairBlock(block)) {
-    return offsetBoxes(
+    return offsetLocalBoxes(
       x, y, z,
       stairLocalBoxes(
         defaultStairFacing(state),
@@ -56,7 +56,7 @@ export function blockCollisionBoxes(
     );
   }
   if (isFenceBlock(block)) {
-    return offsetBoxes(x, y, z, fenceLocalBoxes(fenceConnections(world, x, y, z), 1.5));
+    return offsetLocalBoxes(x, y, z, fenceLocalBoxes(fenceConnections(world, x, y, z), 1.5));
   }
   if (block === BlockId.Cactus) {
     return [{
@@ -109,7 +109,7 @@ export function doorCollisionBox(
   return slabOnFace(x, y, z, occupied);
 }
 
-function offsetBoxes(x: number, y: number, z: number, locals: readonly LocalBox[]): CollisionBox[] {
+export function offsetLocalBoxes(x: number, y: number, z: number, locals: readonly LocalBox[]): CollisionBox[] {
   return locals.map((box) => ({
     minX: x + box.minX,
     minY: y + box.minY,

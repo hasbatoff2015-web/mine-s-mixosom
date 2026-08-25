@@ -491,15 +491,206 @@ export function isRailAt(world: BlockNeighborView, x: number, y: number, z: numb
 }
 
 export function railLocalBoxes(shape: RailShape): LocalBox[] {
-  const flat: LocalBox = { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 2 / 16, maxZ: 1 };
-  if (shape === 'east_west') return [flat];
-  if (shape === 'north_south') return [flat];
-  if (shape.startsWith('ascending_')) {
+  const h = 2 / 16;
+  const flat: LocalBox = { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: h, maxZ: 1 };
+  switch (shape) {
+    case 'ascending_south':
+      return [
+        { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 0.5 + h, maxZ: 0.5 },
+        { minX: 0, minY: 0.5, minZ: 0.5, maxX: 1, maxY: 1, maxZ: 1 },
+      ];
+    case 'ascending_north':
+      return [
+        { minX: 0, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 0.5 },
+        { minX: 0, minY: 0, minZ: 0.5, maxX: 1, maxY: 0.5 + h, maxZ: 1 },
+      ];
+    case 'ascending_east':
+      return [
+        { minX: 0, minY: 0, minZ: 0, maxX: 0.5, maxY: 0.5 + h, maxZ: 1 },
+        { minX: 0.5, minY: 0.5, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 },
+      ];
+    case 'ascending_west':
+      return [
+        { minX: 0, minY: 0.5, minZ: 0, maxX: 0.5, maxY: 1, maxZ: 1 },
+        { minX: 0.5, minY: 0, minZ: 0, maxX: 1, maxY: 0.5 + h, maxZ: 1 },
+      ];
+    default:
+      return [flat];
+  }
+}
+
+const FULL_BLOCK: LocalBox = { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 };
+const CROSS_BOX: LocalBox = { minX: 0.275, minY: 0, minZ: 0.275, maxX: 0.725, maxY: 0.9, maxZ: 0.725 };
+const COBWEB_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 1, maxZ: 15 / 16 };
+const FIRE_BOX: LocalBox = { minX: 0.2, minY: 0, minZ: 0.2, maxX: 0.8, maxY: 1, maxZ: 0.8 };
+const WIRE_BOX: LocalBox = { minX: 0.05, minY: 0, minZ: 0.05, maxX: 0.95, maxY: 0.0625, maxZ: 0.95 };
+const CACTUS_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 1, maxZ: 15 / 16 };
+const CHEST_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 14 / 16, maxZ: 15 / 16 };
+
+function plateLocalBox(powered: boolean): LocalBox {
+  const height = powered ? 0.03125 : 0.0625;
+  return { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: height, maxZ: 15 / 16 };
+}
+
+function ladderLocalBox(facing: HorizontalFacing): LocalBox {
+  const plane = ladderPlaneLocal(facing);
+  if (plane.axis === 'x') {
+    return { minX: plane.min, minY: 0, minZ: 0, maxX: plane.max, maxY: 1, maxZ: 1 };
+  }
+  return { minX: 0, minY: 0, minZ: plane.min, maxX: 1, maxY: 1, maxZ: plane.max };
+}
+
+function doorLocalBox(state: BlockRenderState | undefined): LocalBox {
+  const occupied = occupiedDoorFacing(
+    state?.facing ?? 'north',
+    state?.open === true,
+    state?.hinge ?? 'left',
+  );
+  const t = DOOR_THICKNESS;
+  switch (occupied) {
+    case 'north': return { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: t };
+    case 'south': return { minX: 0, minY: 0, minZ: 1 - t, maxX: 1, maxY: 1, maxZ: 1 };
+    case 'west': return { minX: 0, minY: 0, minZ: 0, maxX: t, maxY: 1, maxZ: 1 };
+    case 'east': return { minX: 1 - t, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 };
+  }
+}
+
+function torchLocalBoxes(state: BlockRenderState | undefined): LocalBox[] {
+  const attachment = state?.attachment ?? 'floor';
+  const facing = state?.facing ?? 'north';
+  const w = TORCH_WIDTH;
+  const h = TORCH_HEIGHT;
+  if (attachment === 'floor') {
+    return [{ minX: 0.5 - w / 2, minY: 0, minZ: 0.5 - w / 2, maxX: 0.5 + w / 2, maxY: h, maxZ: 0.5 + w / 2 }];
+  }
+  if (attachment === 'ceiling') {
+    return [{ minX: 0.5 - w / 2, minY: 1 - h, minZ: 0.5 - w / 2, maxX: 0.5 + w / 2, maxY: 1, maxZ: 0.5 + w / 2 }];
+  }
+  const depth = w + TORCH_WALL_INSET + 0.04;
+  switch (facing) {
+    case 'east':
+      return [{ minX: 0, minY: 0.12, minZ: 0.5 - w / 2, maxX: depth, maxY: 0.12 + h, maxZ: 0.5 + w / 2 }];
+    case 'west':
+      return [{ minX: 1 - depth, minY: 0.12, minZ: 0.5 - w / 2, maxX: 1, maxY: 0.12 + h, maxZ: 0.5 + w / 2 }];
+    case 'south':
+      return [{ minX: 0.5 - w / 2, minY: 0.12, minZ: 0, maxX: 0.5 + w / 2, maxY: 0.12 + h, maxZ: depth }];
+    case 'north':
+      return [{ minX: 0.5 - w / 2, minY: 0.12, minZ: 1 - depth, maxX: 0.5 + w / 2, maxY: 0.12 + h, maxZ: 1 }];
+  }
+}
+
+function buttonLocalBox(state: BlockRenderState | undefined): LocalBox {
+  const attachment = state?.attachment ?? 'wall';
+  const facing = state?.facing ?? 'south';
+  const depth = state?.powered ? 0.06 : 0.125;
+  const hw = 0.1875;
+  const hh = 0.11;
+  if (attachment === 'floor') {
+    return { minX: 0.5 - hw, minY: 0, minZ: 0.5 - hh, maxX: 0.5 + hw, maxY: depth, maxZ: 0.5 + hh };
+  }
+  if (attachment === 'ceiling') {
+    return { minX: 0.5 - hw, minY: 1 - depth, minZ: 0.5 - hh, maxX: 0.5 + hw, maxY: 1, maxZ: 0.5 + hh };
+  }
+  switch (facing) {
+    case 'east':
+      return { minX: 0, minY: 0.5 - hw, minZ: 0.5 - hh, maxX: depth, maxY: 0.5 + hw, maxZ: 0.5 + hh };
+    case 'west':
+      return { minX: 1 - depth, minY: 0.5 - hw, minZ: 0.5 - hh, maxX: 1, maxY: 0.5 + hw, maxZ: 0.5 + hh };
+    case 'south':
+      return { minX: 0.5 - hw, minY: 0.5 - hh, minZ: 0, maxX: 0.5 + hw, maxY: 0.5 + hh, maxZ: depth };
+    case 'north':
+      return { minX: 0.5 - hw, minY: 0.5 - hh, minZ: 1 - depth, maxX: 0.5 + hw, maxY: 0.5 + hh, maxZ: 1 };
+  }
+}
+
+function leverLocalBoxes(state: BlockRenderState | undefined): LocalBox[] {
+  const attachment = state?.attachment ?? 'floor';
+  const facing = state?.facing ?? 'north';
+  if (attachment === 'floor') {
     return [
-      { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 8 / 16, maxZ: 1 },
+      { minX: 0.25, minY: 0, minZ: 0.3125, maxX: 0.75, maxY: 0.125, maxZ: 0.6875 },
+      { minX: 0.4375, minY: 0.125, minZ: 0.4375, maxX: 0.5625, maxY: 0.75, maxZ: 0.5625 },
     ];
   }
-  return [flat];
+  if (attachment === 'ceiling') {
+    return [
+      { minX: 0.25, minY: 0.875, minZ: 0.3125, maxX: 0.75, maxY: 1, maxZ: 0.6875 },
+      { minX: 0.4375, minY: 0.25, minZ: 0.4375, maxX: 0.5625, maxY: 0.875, maxZ: 0.5625 },
+    ];
+  }
+  switch (facing) {
+    case 'east':
+      return [
+        { minX: 0, minY: 0.25, minZ: 0.3125, maxX: 0.125, maxY: 0.75, maxZ: 0.6875 },
+        { minX: 0.125, minY: 0.4, minZ: 0.4375, maxX: 0.75, maxY: 0.6, maxZ: 0.5625 },
+      ];
+    case 'west':
+      return [
+        { minX: 0.875, minY: 0.25, minZ: 0.3125, maxX: 1, maxY: 0.75, maxZ: 0.6875 },
+        { minX: 0.25, minY: 0.4, minZ: 0.4375, maxX: 0.875, maxY: 0.6, maxZ: 0.5625 },
+      ];
+    case 'south':
+      return [
+        { minX: 0.3125, minY: 0.25, minZ: 0, maxX: 0.6875, maxY: 0.75, maxZ: 0.125 },
+        { minX: 0.4375, minY: 0.4, minZ: 0.125, maxX: 0.5625, maxY: 0.6, maxZ: 0.75 },
+      ];
+    case 'north':
+      return [
+        { minX: 0.3125, minY: 0.25, minZ: 0.875, maxX: 0.6875, maxY: 0.75, maxZ: 1 },
+        { minX: 0.4375, minY: 0.4, minZ: 0.25, maxX: 0.5625, maxY: 0.6, maxZ: 0.875 },
+      ];
+  }
+}
+
+/**
+ * Canonical interaction AABBs in cell-local space. Empty means the cell is not
+ * selectable (air / liquid). Full cube is the default for ordinary blocks.
+ */
+export function selectionLocalBoxes(
+  block: BlockId,
+  state: BlockRenderState | undefined,
+  world?: BlockNeighborView,
+  x = 0,
+  y = 0,
+  z = 0,
+): LocalBox[] {
+  if (block === BlockId.Air) return [];
+  const definition = getBlockDefinition(block);
+  if (definition.liquid) return [];
+  if (block === BlockId.Cobweb) return [COBWEB_BOX];
+  if (block === BlockId.Cactus) return [CACTUS_BOX];
+  switch (definition.renderShape) {
+    case 'torch': return torchLocalBoxes(state);
+    case 'button': return [buttonLocalBox(state)];
+    case 'lever': return leverLocalBoxes(state);
+    case 'pressure_plate': return [plateLocalBox(state?.powered === true)];
+    case 'wire': return [WIRE_BOX];
+    case 'door': return [doorLocalBox(state)];
+    case 'ladder': return [ladderLocalBox(state?.facing ?? 'north')];
+    case 'cross': return [CROSS_BOX];
+    case 'fire': return [FIRE_BOX];
+    case 'stairs':
+      return stairLocalBoxes(
+        defaultStairFacing(state),
+        defaultStairHalf(state),
+        world ? resolveStairShape(world, x, y, z, state) : 'straight',
+      );
+    case 'slab':
+      return [...slabLocalBoxes(defaultSlabType(state))];
+    case 'chest':
+      return [CHEST_BOX];
+    case 'fence': {
+      const connections = world
+        ? fenceConnections(world, x, y, z)
+        : { north: false, south: false, east: false, west: false };
+      return fenceLocalBoxes(connections, 1);
+    }
+    case 'rail':
+      return railLocalBoxes(defaultRailShape(state));
+    case 'cube':
+    default:
+      return [FULL_BLOCK];
+  }
 }
 
 export function selectionBoxesForBlock(

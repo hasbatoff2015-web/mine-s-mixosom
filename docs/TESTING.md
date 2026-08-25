@@ -54,12 +54,12 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-24** (minecart floor / derail / TNT ignition):
+Срез локального запуска **2026-08-25** (shape-aware targeting / minecart LMB break):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       51 test files, 464 tests, 464 passed
-production:   109 modules, 1.13 MiB / 180 files
+Vitest:       52 test files, 485 tests, 485 passed
+production:   111 modules, 1.14 MiB / 180 files
 ```
 
 | Test file | Tests | Что проверяется |
@@ -112,6 +112,7 @@ production:   109 modules, 1.13 MiB / 180 files
 | `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects, cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
 | `tests/fire-arrow-and-fire.test.ts` | 5 | Fire arrow only primes TNT / ignites living (no world fire), periodic burn + water extinguish, 6-plane fire mesh, animated fire strip, flint/fire-arrow icons and handheld models |
 | `tests/fire-contact-sunlight-minecart.test.ts` | 35 | Fire AABB contact vs leave, independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert/fuse/explode, Flint entity-first prime (no Fire), Fire Arrow vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
+| `tests/block-selection-raycast.test.ts` | 21 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; reach |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 

@@ -1,6 +1,6 @@
 # Состояние проекта
 
-Срез: **2026-08-24**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-25**. Версия: `0.1.0`, playable alpha.
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -17,7 +17,7 @@
 | Procedural world | Готово | Seeded chunks `16×16×96`, plains/forest/desert, periodic mountains (+10…+20), deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision, fall damage, water/lava |
-| Mining/building | Готово для alpha | Raycast, 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
+| Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs |
 | Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI, furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT with TNT texture + fuse tint pulse, budgeted batched explosions, save/restore |
@@ -54,6 +54,7 @@
 - Лестница — тонкая cutout-плоскость на боковой опоре (`NORTH/SOUTH/EAST/WEST`). Climbing: контакт с thin climb volume (не целая cell), intent = movement INTO support (`dot(wishXZ, towardSupport)`), скорость `LADDER_CLIMB_SPEED = 4.0`, без input — `LADDER_MAX_DESCENT_SPEED = 3.0`, sneak (C) удерживает. Stairs не являются ladder. `CombatSystem.onLadder` читает тот же `player.onLadder`.
 - Stairs — геометрические две (или больше для corner) AABB, не full cube: facing N/S/E/W, `stairHalf` bottom/top, neighbor-derived `straight/inner_*/outer_*` без сохранения shape. Collision и selection совпадают с boxes. Игрок поднимается generic step-up `0.6`, без ladder/climb mode.
 - Slabs — `slabType` bottom/top/double. Single = высота 0.5; double = полный блок. Одинаковые slab merge, разные материалы нет. Raycast проходит пустую половину.
+- Targeting: `World.raycast` DDA входит в voxel, затем тестирует `selectionLocalBoxes` / `blockSelectionBoxes`. Если луч проходит через пустую часть occupied cell (rail, plate, ladder, torch, …), hit не засчитывается и DDA идёт дальше. Outline, LMB и RMB делят один VoxelHit. Default для ordinary cubes — full block. Collision и selection разделены (rail не solid, но выбирается).
 - `stone_stairs` остаётся legacy ID (`hiddenFromGameplay`), не крафтится и не показывается в Creative. Получаемые stairs: oak/birch/spruce planks, cobblestone, brick, stone brick. Slab counterparts те же плюс `stone_slab`.
 - `stone_pressure_plate` делит `pressure_plate` render/redstone path с oak plate. Wooden trigger = all entities/items; stone = living (player/mobs). Placement только на верхнюю опору.
 
@@ -133,7 +134,7 @@
 - Hostile melee использует реальную 3D-дистанцию между eye positions и voxel line of sight, поэтому не бьёт игрока на другом этаже или через стену.
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
 - Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. **Fire arrow** — shapeless `arrow + lava_bucket` (остаётся empty bucket), projectile с оранжевым tint. Попадание: обычный урон стрелы + `igniteTicks` 100 (5 с) по живой цели; TNT block праймится; TNT minecart детонирует сразу; обычные блоки **не** поджигаются. Горение: `FIRE_CONTACT` / `FIRE_ARROW` / `SUNLIGHT` / lava — раздельные причины, общий overlay. **Все hostile** (`isHostileMob`) горят под прямым дневным солнцем (`daylight ≥ 0.82` и skylight ≥ 14), не vanilla undead whitelist. Player и passive не горят от солнца. Creeper имеет fuse/radial explosion, hostile hits передаются в shield/armor/survival, смерть моба создаёт loot drops.
-- `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; end of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. Player AABB push проектируется на tangent. TNT Use → variant `tnt` (не rideable); Flint entity-first prime, fuse 80 ticks, no Fire block; Fire Arrow — immediate explode (cart AABB taller than the rim so the cargo is hittable). Save `minecarts?` (position/velocity/variant/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
+- `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; end of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. LMB (attack edge) breaks a cart that is nearer than the block hit; Survival drops Minecart (and TNT from an unprimed TNT cart); Creative removes without drop; ridden and primed TNT carts are ignored. Player AABB push проектируется на tangent. TNT Use → variant `tnt` (не rideable); Flint entity-first prime, fuse 80 ticks, no Fire block; Fire Arrow — immediate explode (cart AABB taller than the rim so the cargo is hittable). Save `minecarts?` (position/velocity/variant/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
 - Player knockback применяется только если `SurvivalSystem.damage()` реально нанёс damage; shield/armor/i-frame ignored hit не сдвигает игрока.
 - Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie left limbs берут mirrored classic `64×32` UV (`[40,16]`/`[0,16]`), а forward-arms pose задаётся положительным Three.js Euler (`+1.2` / `+1.55`), не Minecraft-значением `-1.2`. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.
@@ -219,10 +220,10 @@
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     51 files, 464 tests — PASS
-Vite build: 109 modules — PASS
-Size/archive: 1.13 MiB / 180 files — PASS
-Main JS: 917.64 kB / 254.58 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
+Vitest:     52 files, 485 tests — PASS
+Vite build: 111 modules — PASS
+Size/archive: 1.14 MiB / 180 files — PASS
+Main JS: 923.26 kB / 255.78 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
 ```
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.

@@ -21,7 +21,7 @@ import {
   type BlockAttachment,
   type HorizontalFacing,
 } from '../blocks';
-import { CombatSystem, PlayerArrowManager, flamingArrowBlockHit } from '../combat';
+import { CombatSystem, PlayerArrowManager, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
 import { AudioManager } from './AudioManager';
 import {
   AUTOSAVE_INTERVAL_SECONDS,
@@ -69,6 +69,7 @@ import {
   minecartDismountFromSprint,
   resolveFlintAndSteelUse,
   MobManager,
+  type MinecartEntity,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
   type SerializedFallingBlock,
@@ -1619,11 +1620,13 @@ export class Game {
     const origin = session.player.eyePosition();
     const direction = session.player.viewDirection();
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
-    session.worldRenderer.setTarget(session.target);
+    const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
     const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
+    const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
+    session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
     const attackPressed = this.input.consumeAttackPressed();
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
-    if (mobTarget) {
+    if (attack?.kind === 'mob' && mobTarget) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       if (attackPressed) {
@@ -1653,6 +1656,10 @@ export class Game {
         }
         this.audio.playTone(result.critical ? 520 : 310, 0.055, result.critical ? 0.055 : 0.035);
       }
+    } else if (attack?.kind === 'minecart') {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      if (attackPressed) this.breakMinecart(attack.cart);
     } else if (!this.input.mining || !session.target) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
@@ -1714,6 +1721,19 @@ export class Game {
     this.releaseBlockEntityContents(hit);
   }
 
+  private breakMinecart(cart: MinecartEntity): void {
+    const session = this.session!;
+    const broken = session.minecarts.breakCart(cart, session.ridingCartId);
+    if (!broken) return;
+    this.audio.playTone(200, 0.05, 0.03);
+    this.firstPerson?.swing();
+    if (session.summary.mode !== 'survival') return;
+    const origin = broken.position.clone().add(new THREE.Vector3(0, 0.2, 0));
+    for (const itemId of broken.items) {
+      this.spawnDroppedStack(createItemStack(itemId), origin.clone());
+    }
+  }
+
   private releaseBlockEntityContents(hit: VoxelHit): void {
     const session = this.session!;
     const key = `${hit.x},${hit.y},${hit.z}`;
@@ -1731,7 +1751,9 @@ export class Game {
   private useTargetOrItem(): void {
     const session = this.session!;
     const hit = session.target;
-    if (hit) {
+    const cartRay = this.raycastPlayerMinecart(session);
+    const cartCloser = Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
+    if (hit && !cartCloser) {
       if (hit.block === BlockId.CraftingTable) return this.openBlockInventory('crafting-table', hit);
       if (hit.block === BlockId.Chest) return this.openBlockInventory('chest', hit);
       if (hit.block === BlockId.Furnace) return this.openBlockInventory('furnace', hit);
@@ -1775,6 +1797,18 @@ export class Game {
     }
     if (stack?.itemId === ItemId.Bow) {
       session.bowUseTicks = 1;
+      return;
+    }
+    if (cartCloser) {
+      if (stack?.itemId === ItemId.FlintAndSteel) {
+        this.useFlintAndSteel(undefined);
+        return;
+      }
+      if (stack?.itemId === 'tnt' && this.tryInsertTntMinecart(undefined)) return;
+      const targetedCart = cartRay?.cart;
+      if (targetedCart && session.minecarts.isRideable(targetedCart)) {
+        this.mountMinecart(targetedCart.id);
+      }
       return;
     }
     if (stack?.itemId === ItemId.FlintAndSteel) {
@@ -2330,6 +2364,7 @@ export class Game {
       session.player.eyePosition(),
       session.player.viewDirection(),
       PLAYER_REACH,
+      session.ridingCartId,
     );
     const action = resolveFlintAndSteelUse(cart, hit);
     if (action.type === 'prime-cart') {
@@ -2464,6 +2499,7 @@ export class Game {
       session.player.eyePosition(),
       session.player.viewDirection(),
       PLAYER_REACH,
+      session.ridingCartId,
     );
   }
 
