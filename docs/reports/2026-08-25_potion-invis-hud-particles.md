@@ -97,4 +97,7 @@ Local playtest of the four visual checks above. Keep PR #6 draft.
 
 ## Git
 
-Branch `cursor/fluids-and-items-pass-935a`. See commit after push.
+Branch `cursor/fluids-and-items-pass-935a`.
+Implementation: `2b20e25`.
+Previous HEAD: `554713e`.
+`main` was not merged. No force push.
