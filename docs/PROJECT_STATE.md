@@ -1,6 +1,6 @@
 # Состояние проекта
 
-Срез: **2026-08-23**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-25**. Версия: `0.1.0`, playable alpha.
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -12,7 +12,7 @@
 
 | Область | Статус | Фактический результат |
 | --- | --- | --- |
-| Boot/menu/world list | Готово | Boot loading, главное меню, создание/загрузка миров; вход в мир идёт через `LOADING_WORLD` с реальным progress, пока initial radius не готов |
+| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online mock, настроек и read-only управления; создание/выбор/загрузка/удаление миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×96`, plains/forest/desert, periodic mountains (+10…+20), deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
@@ -172,10 +172,10 @@
 
 ### Готово
 
-- DOM/CSS screens: loading, main menu, world list, create world, settings, controls, pause, death.
+- DOM/CSS screens: loading, стилизованное main menu, selectable world list, create world, online server mock, settings, read-only controls, pause, death. Меню использует `public/ui/frontier-menu-background.png`; online entries и таблица фактических клавиш вынесены в `menuModel.ts`.
 - HUD: crosshair, hotbar, selected item, health/hunger, mining progress, attack meter container, toasts и F3 debug.
 - Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
-- Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`.
+- Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`; отсюда открывается отдельная read-only справка по управлению. Значения sliders показываются live.
 - Desktop pointer lock: inventory/chest close = programmatic relock; Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Если Chrome отклоняет relock после Esc, PLAYING остаётся и показывается overlay «Нажмите, чтобы продолжить» только после фактического failure. Focus-lost не считается programmatic и не запрашивает lock сам.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
 - Lifecycle states: `LOADING`, `MENU`, `PLAYING`, `PAUSED`, `AD`, `BACKGROUND`, `DEAD`.
@@ -185,7 +185,7 @@
 ### Alpha approximation
 
 - Attack meter получает фактическую силу текущего `CombatSystem`; расширенный combat browser smoke всё ещё нужен.
-- Настройки не сохраняются между sessions.
+- Настройки не сохраняются между sessions; rebind управления не реализован, controls screen намеренно read-only.
 - Все заданные desktop/mobile размеры прошли browser visibility/count checks; на `667×375` визуально проверены inventory, pause и settings, отдельно проверен portrait overlay.
 - Во время QA найдено и исправлено перекрытие menus/modals touch controls: `controls-suppressed` скрывает look zone, joystick и action buttons вне gameplay.
 - Rotation state-preservation и multi-touch поведение всё ещё нужно проверить на реальных устройствах.
@@ -214,15 +214,17 @@
 
 ## Автоматическая проверка
 
-На момент этого среза локально проходят:
+Срез проверки UI-ветки `codex/main-menu-ui-redesign`:
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     45 files, 382 tests — PASS
-Vite build: 100 modules — PASS
-Size/archive: 1.08 MiB / 167 files — PASS
-Main JS: 870.56 kB / 240.68 kB gzip; CSS: 25.94 kB / 6.03 kB gzip
+UI model:   tests/menu-model.test.ts — 3/3 PASS
+Vite build: 101 modules — PASS
+Size/archive: 3.36 MiB / 168 files — PASS
+Main JS: 876.54 kB / 242.63 kB gzip; CSS: 36.34 kB / 8.45 kB gzip
 ```
+
+Полный Vitest run: `381/385` tests pass. Четыре не-UI проверки не green: fingerprint `GeneratedItemGeometry` расходится из-за Windows working-tree newline representation, хотя Git blob полностью совпадает с `origin/main`; radius-6 lighting benchmark остаётся выше текущего bound; два worldgen cases превышают 5 s timeout. Изменённые UI-файлы эти подсистемы не затрагивают. Полный browser visual smoke не выполнен из-за отказа встроенного browser runtime на Windows ACL; HTTP `200`, asset loading и production build проверены.
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 

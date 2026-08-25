@@ -358,12 +358,12 @@ export class Game {
   private showMainMenu(): void {
     this.lifecycle.setState('MENU');
     this.ui.showMainMenu({
-      play: () => void this.showWorldList(),
+      singleplayer: () => void this.showWorldList(),
+      online: () => this.ui.showOnlineServers(() => this.showMainMenu()),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
       },
-      controls: () => this.ui.showControls(() => this.showMainMenu()),
     });
   }
 
@@ -1263,7 +1263,7 @@ export class Game {
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
       if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
-    }, () => {
+    }, () => this.ui.showControls(() => this.showSettings()), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
           resume: () => this.resumeFromPause(),
