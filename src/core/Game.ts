@@ -135,7 +135,7 @@ import {
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { SaveService } from '../save/SaveService';
 import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
-import { SurvivalSystem, type DamageResult, type DamageSource } from '../survival';
+import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
@@ -2819,6 +2819,7 @@ export class Game {
       selectedSlot: session.selectedSlot,
       health: session.summary.mode === 'creative' ? 20 : session.survival.health,
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
+      armor: getArmorPoints(session.inventory),
       miningProgress: session.miningProgress,
       attackStrength: session.combat.getAttackStrength(this.selectedStack()?.itemId ?? null),
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),

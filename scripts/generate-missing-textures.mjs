@@ -238,6 +238,32 @@ const icons = {
   },
 };
 
+const ARMOR_HUD_SHAPE = [
+  '.##...##.',
+  '##WW#WW##',
+  '#WWWWWWW#',
+  '.#WWWWW#.',
+  '..#WWW#..',
+  '..#WWW#..',
+  '..#WWW#..',
+  '...#W#...',
+  '....#....',
+];
+
+function armorHudPixel(mode, x, y) {
+  const cell = ARMOR_HUD_SHAPE[y]?.[x];
+  if (!cell || cell === '.') return px(0, 0, 0, 0);
+  if (cell === '#') return px(8, 8, 12);
+  const filled = mode === 'full' || (mode === 'half' && x <= 4);
+  if (!filled) return px(32, 32, 38);
+  if (x === 2 && y === 1) return px(246, 246, 252);
+  return px(198, 198, 206);
+}
+
+icons['gui/armor_empty.png'] = (x, y) => armorHudPixel('empty', x, y);
+icons['gui/armor_half.png'] = (x, y) => armorHudPixel('half', x, y);
+icons['gui/armor_full.png'] = (x, y) => armorHudPixel('full', x, y);
+
 export async function generateMissingTextures(force = false) {
   let written = 0;
   for (const [relative, plotter] of Object.entries(icons)) {
@@ -254,7 +280,7 @@ export async function generateMissingTextures(force = false) {
       }
     }
     await mkdir(dirname(path), { recursive: true });
-    const size = relative.startsWith('entity/') ? 32 : 16;
+    const size = relative.startsWith('entity/') ? 32 : relative.startsWith('gui/armor_') ? 9 : 16;
     await writeFile(path, paint(size, size, plotter));
     written += 1;
   }

@@ -41,6 +41,7 @@ import {
 } from './containerInteractions';
 import { stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
+import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 
 export interface MainMenuActions {
   play(): void;
@@ -73,6 +74,7 @@ export interface HudState {
   hunger: number;
   miningProgress: number;
   attackStrength: number;
+  armor?: number;
   effects?: readonly PotionHudEntry[];
   debug?: string;
 }
@@ -99,6 +101,7 @@ export class GameUI {
   private selectedItem: HTMLElement;
   private hearts: HTMLElement;
   private hunger: HTMLElement;
+  private armor: HTMLElement;
   private mining: HTMLElement;
   private attack: HTMLElement;
   private debug: HTMLElement;
@@ -130,6 +133,7 @@ export class GameUI {
   private selectedItemText = '';
   private heartsHtml = '';
   private hungerHtml = '';
+  private armorHtml = '';
   private miningWidth = '';
   private miningVisible = false;
   private attackTransform = '';
@@ -146,7 +150,13 @@ export class GameUI {
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="attack-indicator"><span></span></div>
-        <div id="status-bars"><div class="hearts"></div><div class="hunger"></div></div>
+        <div id="status-bars">
+          <div class="status-left">
+            <div class="armor hidden"></div>
+            <div class="hearts"></div>
+          </div>
+          <div class="hunger"></div>
+        </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
@@ -167,6 +177,7 @@ export class GameUI {
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.hunger = this.root.querySelector('.hunger')!;
+    this.armor = this.root.querySelector('.armor')!;
     this.mining = this.root.querySelector('#mining-progress')!;
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
@@ -438,6 +449,15 @@ export class GameUI {
     if (hungerHtml !== this.hungerHtml) {
       this.hungerHtml = hungerHtml;
       this.hunger.innerHTML = hungerHtml;
+    }
+    const armorHud = armorHudIcons(state.armor ?? 0);
+    const armorHtml = armorHud.visible
+      ? armorHud.icons.map((icon) => this.armorIconHtml(icon)).join('')
+      : '';
+    if (armorHtml !== this.armorHtml) {
+      this.armorHtml = armorHtml;
+      this.armor.innerHTML = armorHtml;
+      this.armor.classList.toggle('hidden', !armorHud.visible);
     }
     const miningVisible = state.miningProgress > 0;
     if (miningVisible !== this.miningVisible) {
@@ -1148,6 +1168,10 @@ export class GameUI {
 
   private effectChipHtml(effect: PotionHudEntry): string {
     return `<div class="effect-chip" data-effect="${this.escape(effect.id)}"><img src="${this.itemIcon(effect.itemId)}" alt="" /><div class="effect-chip-text"><span class="effect-chip-name">${this.escape(effect.name)}</span><span class="effect-chip-timer">${this.escape(effect.timer)}</span></div></div>`;
+  }
+
+  private armorIconHtml(icon: ArmorHudIcon): string {
+    return `<img class="armor-icon" src="${TextureAtlas.url(`gui/armor_${icon}`)}" alt="" draggable="false" />`;
   }
 
   private pips(symbol: string, filled: number, total: number): string {

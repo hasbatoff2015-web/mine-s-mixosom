@@ -10,6 +10,8 @@ import type { VoxelWorld } from '../world/World';
 export const MAX_HEALTH = 20;
 export const MAX_HUNGER = 20;
 export const MAX_AIR_TICKS = 300;
+/** Vanilla Java armor bar: 20 points, 10 icons. */
+export const MAX_ARMOR_POINTS = 20;
 
 export type DamageSource =
   | 'generic'
@@ -119,7 +121,7 @@ export function getArmorStats(source?: ArmorSource): ArmorStats {
   if (!source) return { points: 0, toughness: 0 };
   if ('points' in source) {
     return {
-      points: clamp(Number.isFinite(source.points) ? source.points : 0, 0, 20),
+      points: clamp(Number.isFinite(source.points) ? source.points : 0, 0, MAX_ARMOR_POINTS),
       toughness: Math.max(0, Number.isFinite(source.toughness) ? source.toughness : 0),
     };
   }
@@ -133,7 +135,12 @@ export function getArmorStats(source?: ArmorSource): ArmorStats {
     points += definition.defense;
     toughness += definition.toughness;
   }
-  return { points: clamp(points, 0, 20), toughness: Math.max(0, toughness) };
+  return { points: clamp(points, 0, MAX_ARMOR_POINTS), toughness: Math.max(0, toughness) };
+}
+
+/** Canonical equipped armor total. Damage mitigation and the HUD both read this. */
+export function getArmorPoints(source?: ArmorSource): number {
+  return getArmorStats(source).points;
 }
 
 /** Release-1.9 armor formula. Toughness is only used when explicitly enabled (1.9.1 variant). */
@@ -146,7 +153,7 @@ export function reduceDamageByArmor(
   const stats = getArmorStats(armor);
   if (incoming === 0 || stats.points === 0) return incoming;
   const denominator = useToughness ? 2 + stats.toughness / 4 : 2;
-  const effectiveArmor = Math.min(20, Math.max(stats.points / 5, stats.points - incoming / denominator));
+  const effectiveArmor = Math.min(MAX_ARMOR_POINTS, Math.max(stats.points / 5, stats.points - incoming / denominator));
   return incoming * (1 - effectiveArmor / 25);
 }
 

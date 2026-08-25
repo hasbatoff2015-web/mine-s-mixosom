@@ -50,6 +50,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после frozen-lava / lighting-flicker / Diamond /3 / Fire damage / mob hurt flash: typecheck, 517 tests / 56 files, production build 117 modules, 1.15 MiB / 180 files.
 - [x] Локальный pipeline после enclosed cave lava / Fire-Lava armor rollback / hostile spawn rebalance: typecheck, 529 tests / 57 files, production build 117 modules, 1.16 MiB / 180 files.
 - [x] Локальный pipeline после potion invis arm / effect HUD / swirl particles: typecheck, 535 tests / 58 files, production build 119 modules, 1.16 MiB / 180 files.
+- [x] Локальный pipeline после armor HUD / canonical armor points: typecheck, 542 tests / 59 files, production build 120 modules, 1.16 MiB / 183 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
