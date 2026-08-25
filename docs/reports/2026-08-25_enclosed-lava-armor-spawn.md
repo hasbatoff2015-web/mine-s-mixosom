@@ -138,4 +138,8 @@ Walk several cave chunks. Hostiles sometimes appear, usually one, not a pile in 
 
 ## Git
 
-Branch `cursor/fluids-and-items-pass-935a`. Ordinary push. PR #6 remains draft. `main` not merged.
+Branch `cursor/fluids-and-items-pass-935a`.
+Implementation SHA: `599d56d`.
+HEAD after docs record: see follow-up commit.
+Working tree clean after ordinary push.
+PR #6 remains draft. `main` not merged. No force push.
