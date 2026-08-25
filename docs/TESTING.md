@@ -51,6 +51,31 @@ npm run assets:import
 без локального source pack этот шаг нужно пропустить: готовый whitelist уже
 закоммичен в `public/textures`, а importer завершится до очистки output.
 
+## Main-menu redesign check (2026-08-25)
+
+```text
+npm run typecheck                                      PASS
+npm test -- --run tests/menu-model.test.ts             PASS (3/3)
+npm run build                                          PASS (101 modules)
+npm run check:size / npm run check:archive             PASS (3.36 MiB, 168 files)
+HTTP / and /ui/frontier-menu-background.png            200 / 200
+```
+
+`tests/menu-model.test.ts` фиксирует названия offline server mock, `0 / 300`, фактические Shift/C desktop bindings, отсутствие несуществующего chat binding `T` и форматирование menu values.
+
+Ручной browser checklist для этого pass:
+
+- main: background cover, logo, три primary actions, без scroll на desktop;
+- singleplayer: select, double-click/load, create, delete confirmation, back/Esc;
+- online: два mock server rows, online count, signal bars, disabled connect, back/Esc;
+- settings: четыре существующих sliders, live values, controls, apply/back/Esc;
+- controls: read-only sections, scroll, actual key list, no rebinding;
+- compact landscape: footer/actions не перекрывают scrollable content.
+
+В текущем Windows runner встроенный browser runtime не стартовал (`apply deny-read ACLs`), поэтому screenshot/console visual smoke отложен. Production HTML/background доступны по HTTP, но это не подменяет ручной browser QA.
+
+Полный `npm run check` останавливается на четырёх не-UI baseline checks: source fingerprint при CRLF working tree, radius-6 lighting bound и два 5 s worldgen timeout. UI-model test green; build/size/archive запущены отдельно и green.
+
 ## Текущее автоматическое покрытие
 
 Срез локального запуска **2026-08-23** (lighting halo / flood-head scheduler):

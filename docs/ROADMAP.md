@@ -167,6 +167,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 ### P1.5 UX и accessibility
 
+- [x] Главное меню и связанные screens: оригинальный voxel background, крупный Frontier Cubes logo treatment, одиночная игра с выбранным миром, offline online-server mock, settings и read-only controls; mouse/Esc/back navigation без отдельной второй menu system.
+
 - [ ] Settings persistence, fullscreen toggle, remappable controls и touch-layout presets.
 - [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival 2×2 inventory; Recipe Book слева на crafting/Survival (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter).
 - [x] Chest entity model + opposite-of-look facing + lid-up hinge; furnace facing + lit front + torch-equivalent block light from burn state.
