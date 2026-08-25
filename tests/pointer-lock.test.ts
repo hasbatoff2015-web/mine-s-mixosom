@@ -6,6 +6,7 @@ import {
   shouldExitPointerLock,
   shouldIgnoreEscapeKeydown,
   shouldOpenPauseOnUnlock,
+  shouldTogglePauseOnEscapeKeydown,
   shouldRequestPointerLock,
   shouldShowPointerLockFallback,
 } from '../src/input/pointerLock';
@@ -84,6 +85,8 @@ describe('pointer lock pause resume', () => {
     expect(shouldExitPointerLock(true)).toBe(true);
     expect(shouldIgnoreEscapeKeydown(true)).toBe(true);
     expect(shouldIgnoreEscapeKeydown(false)).toBe(false);
+    expect(shouldTogglePauseOnEscapeKeydown(true, false, false)).toBe(false);
+    expect(shouldTogglePauseOnEscapeKeydown(false, false, false)).toBe(true);
   });
 
   it('Continue after pause issues exactly one request', () => {

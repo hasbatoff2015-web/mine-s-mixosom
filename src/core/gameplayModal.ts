@@ -19,13 +19,13 @@ export function worldSimulationActive(lifecycle: LifecycleState): boolean {
   return lifecycle === 'PLAYING';
 }
 
-/** WASD / look / attack / use / flight — blocked by container modal, not by staying PLAYING. */
-export function playerGameplayAllowed(lifecycle: LifecycleState, inventoryOpen: boolean): boolean {
-  return lifecycle === 'PLAYING' && !inventoryOpen;
+/** WASD / look / attack / use / flight — blocked by container or chat overlay, not by staying PLAYING. */
+export function playerGameplayAllowed(lifecycle: LifecycleState, overlayOpen: boolean): boolean {
+  return lifecycle === 'PLAYING' && !overlayOpen;
 }
 
-export function resolvePlayerMoveInput(inventoryOpen: boolean, live: MoveInput): MoveInput {
-  return inventoryOpen ? BLOCKED_MOVE_INPUT : live;
+export function resolvePlayerMoveInput(overlayOpen: boolean, live: MoveInput): MoveInput {
+  return overlayOpen ? BLOCKED_MOVE_INPUT : live;
 }
 
 export function openingContainerPausesSimulation(_kind: GameplayModalKind): boolean {

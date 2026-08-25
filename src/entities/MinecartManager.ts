@@ -12,6 +12,7 @@ import {
 } from '../rendering/minecartGeometry';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
+import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import {
   entryProgress,
@@ -94,6 +95,11 @@ export function resolveFlintAndSteelUse(
     y: hit.y + hit.normal.y,
     z: hit.z + hit.normal.z,
   };
+}
+
+/** Survival drops the listed items; Creative removes the entity with no world drop. */
+export function dropsForBrokenMinecart(mode: GameMode, items: readonly string[]): readonly string[] {
+  return mode === 'survival' ? items : [];
 }
 
 export interface SerializedMinecart {

@@ -7,6 +7,7 @@ import {
   DroppedItemManager,
   MinecartManager,
   TNT_MINECART_FUSE_TICKS,
+  dropsForBrokenMinecart,
 } from '../src/entities';
 import { Inventory, createItemStack } from '../src/inventory';
 import { ItemId } from '../src/items';
@@ -285,6 +286,13 @@ describe('minecart LMB break', () => {
     expect(drops.count).toBe(0);
     expect(inventory.count(ItemId.Minecart)).toBe(1);
     drops.dispose();
+  });
+
+  it('drops loot only in Survival, never from a Creative break', () => {
+    expect(dropsForBrokenMinecart('survival', ['minecart'])).toEqual(['minecart']);
+    expect(dropsForBrokenMinecart('survival', ['minecart', 'tnt'])).toEqual(['minecart', 'tnt']);
+    expect(dropsForBrokenMinecart('creative', ['minecart'])).toEqual([]);
+    expect(dropsForBrokenMinecart('creative', ['minecart', 'tnt'])).toEqual([]);
   });
 });
 

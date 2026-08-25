@@ -45,6 +45,7 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после fire-contact / sunlight / 3D minecart pass: typecheck, 453 tests / 51 files, production build 109 modules, 1.13 MiB / 180 files.
 - [x] Локальный pipeline после minecart floor / derail / Shift dismount / TNT ignition + primed texture: typecheck, 464 tests / 51 files, production build 109 modules, 1.13 MiB / 180 files.
 - [x] Локальный pipeline после shape-aware block targeting / minecart LMB break: typecheck, 485 tests / 52 files, production build 111 modules, 1.14 MiB / 180 files.
+- [x] Локальный pipeline после chat commands / minecart drop polish: typecheck, 495 tests / 53 files, production build 116 modules, 1.15 MiB / 180 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -134,6 +135,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation, ladder facing, slabType, stairHalf; stair corner shape derived; v1→v2 redstone fallback уже реализован.
 - [x] Door open/close на use; ladder climbing (into-wall wish, slow descent, sneak hold). Корректный two-block bed и sleeping checks ещё нет.
 - [x] Canonical selection shapes + DDA ray-vs-AABB: empty portion of occupied voxels is not a hit (rail/plate/ladder/slab/stairs/fence/torch/…). Outline, LMB and RMB share one VoxelHit. Survival LMB breaks a Minecart into a world drop.
+- [x] Локальный чат + command registry (`/help` `/gamemode` `/time` `/give` `/tp` `/seed` `/clear` `/kill`); T и `/` open, death messages in chat.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Mass TNT больше не вызывает per-block `relightAround`; `ExplosionQueue` + `applyBlockBatch` держат chain в budgeted ticks.
 - [x] Минимальная bounded propagation `0–15` для wire/torch/lever/button/plate/TNT реализована и покрыта unit tests.

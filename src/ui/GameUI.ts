@@ -39,6 +39,7 @@ import {
   takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
+import { stepTypedHistoryIndex } from '../chat';
 
 export interface MainMenuActions {
   play(): void;
@@ -100,6 +101,10 @@ export class GameUI {
   private attack: HTMLElement;
   private debug: HTMLElement;
   private toasts: HTMLElement;
+  private chat: HTMLElement;
+  private chatLogEl: HTMLElement;
+  private chatForm: HTMLFormElement;
+  private chatInput: HTMLInputElement;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private cursorStack: ItemStack | null = null;
@@ -113,6 +118,9 @@ export class GameUI {
   private recipeVariantIndex = 0;
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
+  private chatOpen = false;
+  private chatHistoryIndex = -1;
+  private chatDraft = '';
   private hotbarHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
@@ -134,6 +142,12 @@ export class GameUI {
         <div id="status-bars"><div class="hearts"></div><div class="hunger"></div></div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="chat">
+          <div id="chat-log" aria-live="polite"></div>
+          <form id="chat-form" autocomplete="off">
+            <input id="chat-input" type="text" maxlength="256" spellcheck="false" autocomplete="off" aria-label="Chat" />
+          </form>
+        </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>
@@ -149,12 +163,38 @@ export class GameUI {
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
+    this.chat = this.root.querySelector('#chat')!;
+    this.chatLogEl = this.root.querySelector('#chat-log')!;
+    this.chatForm = this.root.querySelector('#chat-form')!;
+    this.chatInput = this.root.querySelector('#chat-input')!;
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
         cursor.style.left = `${event.clientX}px`;
         cursor.style.top = `${event.clientY}px`;
+      }
+    });
+    this.chatForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = this.chatInput.value;
+      this.onChatSubmit?.(value);
+    });
+    this.chatInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.onChatCancel?.();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        this.stepChatHistory(-1);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        this.stepChatHistory(1);
       }
     });
   }
@@ -325,7 +365,7 @@ export class GameUI {
     this.setScreen(`
       <section class="screen"><div class="menu-card">
         <div class="menu-heading"><h2>Управление</h2><button class="game-button ghost" data-action="back">Назад</button></div>
-        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, двойной Space в творческом — полёт, Shift — бег (на земле) / вниз (в полёте), Ctrl — ускорение полёта, C — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
+        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, двойной Space в творческом — полёт, Shift — бег (на земле) / вниз (в полёте), Ctrl — ускорение полёта, C — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, T — чат, / — команда, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
         <p><strong>Mobile landscape:</strong> левый стик — движение, проводите по правой части для камеры; отдельные кнопки отвечают за прыжок, бег, приседание, добычу, использование, инвентарь и паузу.</p>
       </div></section>`);
     this.bindAction('back', onBack);
@@ -418,6 +458,8 @@ export class GameUI {
   }
 
   onHotbarSelect?: (index: number) => void;
+  onChatSubmit?: (line: string) => void;
+  onChatCancel?: () => void;
 
   toast(message: string, timeout = 1900): void {
     const toast = document.createElement('div');
@@ -425,6 +467,96 @@ export class GameUI {
     toast.textContent = message;
     this.toasts.append(toast);
     window.setTimeout(() => toast.remove(), timeout);
+  }
+
+  appendChat(kind: string, text: string, createdAtMs: number): void {
+    const line = document.createElement('div');
+    line.className = `chat-line kind-${kind}`;
+    line.dataset.at = String(createdAtMs);
+    line.textContent = text;
+    this.chatLogEl.append(line);
+    while (this.chatLogEl.childElementCount > 100) this.chatLogEl.firstElementChild?.remove();
+    this.chatLogEl.scrollTop = this.chatLogEl.scrollHeight;
+  }
+
+  clearChat(): void {
+    this.chatLogEl.replaceChildren();
+    this.closeChat();
+  }
+
+  openChat(prefix = ''): void {
+    this.chatOpen = true;
+    this.chatHistoryIndex = -1;
+    this.chatDraft = '';
+    this.chat.classList.add('open');
+    this.chatInput.value = prefix;
+    this.setControlsSuppressed(true);
+    window.setTimeout(() => {
+      this.chatInput.focus();
+      const caret = this.chatInput.value.length;
+      this.chatInput.setSelectionRange(caret, caret);
+    }, 0);
+  }
+
+  closeChat(): void {
+    if (!this.chatOpen) {
+      this.chat.classList.remove('open');
+      return;
+    }
+    this.chatOpen = false;
+    this.chat.classList.remove('open');
+    this.chatInput.blur();
+    this.chatInput.value = '';
+    this.chatHistoryIndex = -1;
+    this.chatDraft = '';
+    if (!this.inventoryContext) this.setControlsSuppressed(false);
+  }
+
+  isChatOpen(): boolean {
+    return this.chatOpen;
+  }
+
+  isBlockingOverlay(): boolean {
+    return this.modal !== undefined || this.chatOpen;
+  }
+
+  setChatInputHistory(history: readonly string[]): void {
+    this.chatHistorySource = history;
+  }
+
+  fadeChatLines(nowMs: number, opacityOf: (ageMs: number) => number): void {
+    if (this.chatOpen) {
+      for (const node of this.chatLogEl.children) {
+        const line = node as HTMLElement;
+        line.style.opacity = '1';
+        line.style.display = '';
+      }
+      return;
+    }
+    for (const node of this.chatLogEl.children) {
+      const line = node as HTMLElement;
+      const opacity = opacityOf(nowMs - Number(line.dataset.at ?? nowMs));
+      line.style.opacity = String(opacity);
+      line.style.display = opacity <= 0.02 ? 'none' : '';
+    }
+  }
+
+  private chatHistorySource: readonly string[] = [];
+
+  private stepChatHistory(direction: -1 | 1): void {
+    const history = this.chatHistorySource;
+    const step = stepTypedHistoryIndex(this.chatHistoryIndex, direction, history.length);
+    if (step.kind === 'unchanged') return;
+    if (this.chatHistoryIndex < 0) this.chatDraft = this.chatInput.value;
+    if (step.kind === 'draft') {
+      this.chatHistoryIndex = -1;
+      this.chatInput.value = this.chatDraft;
+      return;
+    }
+    this.chatHistoryIndex = step.index;
+    this.chatInput.value = history[step.index] ?? '';
+    const caret = this.chatInput.value.length;
+    this.chatInput.setSelectionRange(caret, caret);
   }
 
   openInventory(context: InventoryContext): void {

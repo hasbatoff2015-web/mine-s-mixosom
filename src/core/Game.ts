@@ -22,6 +22,14 @@ import {
   type HorizontalFacing,
 } from '../blocks';
 import { CombatSystem, PlayerArrowManager, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
+import {
+  ChatLog,
+  PLAYER_CHAT_NAME,
+  chatLineOpacity,
+  deathMessage,
+  dispatchChatLine,
+  type CommandContext,
+} from '../chat';
 import { AudioManager } from './AudioManager';
 import {
   AUTOSAVE_INTERVAL_SECONDS,
@@ -66,6 +74,7 @@ import {
   DroppedItemManager,
   FallingBlockManager,
   MinecartManager,
+  dropsForBrokenMinecart,
   minecartDismountFromSprint,
   resolveFlintAndSteelUse,
   MobManager,
@@ -125,7 +134,7 @@ import {
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { SaveService } from '../save/SaveService';
 import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
-import { SurvivalSystem } from '../survival';
+import { SurvivalSystem, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { collectSpawnColumns } from '../world/Generator';
@@ -247,6 +256,7 @@ export class Game {
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
+  private readonly chat = new ChatLog();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly perfScenario = readPerfScenario();
   private worldLoad?: {
@@ -314,9 +324,10 @@ export class Game {
     this.chunkGrid.setVisible(this.chunkGridVisible);
 
     this.input = new InputManager(this.canvas, {
-      canCapture: () => this.lifecycle.state === 'PLAYING' && !this.ui.isInventoryOpen(),
+      canCapture: () => this.lifecycle.state === 'PLAYING' && !this.ui.isBlockingOverlay(),
       toggleInventory: () => this.toggleInventory(),
       togglePause: () => this.togglePause(),
+      openChat: (prefix) => this.openChat(prefix),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
       onPointerLockAcquired: () => this.ui.hidePointerLockFallback(),
@@ -324,6 +335,8 @@ export class Game {
       onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
     });
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
+    this.ui.onChatSubmit = (line) => this.submitChat(line);
+    this.ui.onChatCancel = () => this.closeChatAndResumeLook();
     this.bindLifecycle();
     this.bindWindowEvents();
   }
@@ -462,7 +475,7 @@ export class Game {
       health: restored?.player.health ?? 20,
       hunger: restored?.player.hunger ?? 20,
       saturation: restored?.player.saturation ?? 5,
-      onDeath: () => this.handleDeath(),
+      onDeath: (source) => this.handleDeath(source),
     });
     survival.setSpawnPoint(restored?.player.spawnPoint ?? spawn);
     const redstone = new RedstoneSystem(world, {
@@ -1177,6 +1190,7 @@ export class Game {
   private enterPlaying(): void {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
+    this.ui.closeChat();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     this.lifecycle.setState('PLAYING');
@@ -1213,14 +1227,14 @@ export class Game {
   }
 
   private handlePointerUnlock(reason: PointerUnlockReason): void {
-    if (!shouldOpenPauseOnUnlock(reason, this.lifecycle.state === 'PLAYING', this.ui.isInventoryOpen())) return;
+    if (!shouldOpenPauseOnUnlock(reason, this.lifecycle.state === 'PLAYING', this.ui.isBlockingOverlay())) return;
     this.openPauseMenu();
   }
 
   private showPointerLockFallbackIfNeeded(): void {
     if (!shouldShowPointerLockFallback({
       playing: this.lifecycle.state === 'PLAYING',
-      inventoryOpen: this.ui.isInventoryOpen(),
+      inventoryOpen: this.ui.isBlockingOverlay(),
       coarsePointer: isCoarsePointer(),
       lockedToCanvas: this.input.isPointerLocked(),
       lastRequestFailed: true,
@@ -1231,6 +1245,7 @@ export class Game {
   private toggleInventory(): void {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
+    if (this.ui.isChatOpen()) this.ui.closeChat();
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -1279,6 +1294,10 @@ export class Game {
 
   private togglePause(): void {
     if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD') return;
+    if (this.ui.isChatOpen()) {
+      this.closeChatAndResumeLook();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -1497,9 +1516,9 @@ export class Game {
     session.combat.tick(FIXED_DT);
     simMark = this.addSimPart('combat', simMark);
 
-    const inventoryOpen = this.ui.isInventoryOpen();
-    const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, inventoryOpen);
-    const movementBefore = resolvePlayerMoveInput(inventoryOpen, this.input.movement());
+    const overlayOpen = this.ui.isBlockingOverlay();
+    const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
+    const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
     const drawingBow = session.bowUseTicks > 0;
     const riding = Boolean(session.ridingCartId);
     const movementMultiplier = drawingBow ? Math.min(0.2, session.combat.movementMultiplier) : session.combat.movementMultiplier;
@@ -1533,7 +1552,7 @@ export class Game {
         sprinting: session.player.sprinting,
         swimming: session.player.inWater,
         jumped: playerResult.jumped,
-        onDeath: () => this.handleDeath(),
+        onDeath: (source) => this.handleDeath(source),
       });
       if (survivalResult.dead) {
         this.handleDeath();
@@ -1611,7 +1630,7 @@ export class Game {
       void this.saveSession();
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
-    if (inventoryOpen) this.ui.refreshOpenInventory();
+    if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
     this.addSimPart('other', simMark);
   }
 
@@ -1727,9 +1746,10 @@ export class Game {
     if (!broken) return;
     this.audio.playTone(200, 0.05, 0.03);
     this.firstPerson?.swing();
-    if (session.summary.mode !== 'survival') return;
+    const loot = dropsForBrokenMinecart(session.summary.mode, broken.items);
+    if (loot.length === 0) return;
     const origin = broken.position.clone().add(new THREE.Vector3(0, 0.2, 0));
-    for (const itemId of broken.items) {
+    for (const itemId of loot) {
       this.spawnDroppedStack(createItemStack(itemId), origin.clone());
     }
   }
@@ -2538,10 +2558,115 @@ export class Game {
     this.refreshHud();
   }
 
-  private handleDeath(): void {
+  private openChat(prefix = ''): void {
+    if (!this.session || this.lifecycle.state !== 'PLAYING') return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen()) return;
+    this.input.releaseActions();
+    this.input.releasePointerLock();
+    this.ui.setChatInputHistory(this.chat.history);
+    this.ui.openChat(prefix);
+  }
+
+  private closeChatAndResumeLook(): void {
+    this.ui.closeChat();
+    if (this.lifecycle.state === 'PLAYING') this.input.tryRequestPointerLock();
+  }
+
+  private submitChat(raw: string): void {
+    const session = this.session;
+    if (!session) return;
+    const trimmed = raw.replace(/\s+$/g, '');
+    if (!trimmed) {
+      this.closeChatAndResumeLook();
+      return;
+    }
+    this.chat.rememberInput(trimmed);
+    this.ui.setChatInputHistory(this.chat.history);
+    const dispatched = dispatchChatLine(trimmed, this.commandContext());
+    if (dispatched.parsed.kind === 'say') {
+      this.pushChat('player', `<${PLAYER_CHAT_NAME}> ${dispatched.parsed.text}`);
+    } else if (dispatched.parsed.kind === 'command') {
+      this.pushChat('command', trimmed);
+      const kind = dispatched.result?.ok ? 'system' : 'error';
+      for (const line of dispatched.result?.lines ?? []) {
+        if (line) this.pushChat(kind, line);
+      }
+    }
+    this.closeChatAndResumeLook();
+  }
+
+  private pushChat(kind: 'system' | 'player' | 'command' | 'death' | 'error', text: string): void {
+    const message = this.chat.push(kind, text);
+    this.ui.appendChat(message.kind, message.text, message.createdAtMs);
+  }
+
+  private commandContext(): CommandContext {
+    const session = this.session!;
+    return {
+      playerName: PLAYER_CHAT_NAME,
+      get mode() { return session.summary.mode; },
+      setMode: (mode) => this.setGameMode(mode),
+      get timeOfDay() { return session.world.timeOfDay; },
+      setTime: (ticks) => {
+        session.world.timeOfDay = ((Math.floor(ticks) % 24_000) + 24_000) % 24_000;
+      },
+      get seed() { return session.summary.seed; },
+      give: (itemId, count) => this.giveItems(itemId, count),
+      teleport: (x, y, z) => this.teleportPlayer(x, y, z),
+      playerPosition: () => ({
+        x: session.player.position.x,
+        y: session.player.position.y,
+        z: session.player.position.z,
+      }),
+      clearInventory: () => {
+        let count = 0;
+        for (const stack of session.inventory.slots) if (stack) count += stack.count;
+        for (const stack of Object.values(session.inventory.armor)) if (stack) count += stack.count;
+        if (session.inventory.offhand) count += session.inventory.offhand.count;
+        session.inventory.clear();
+        this.refreshHud();
+        return count;
+      },
+      kill: () => {
+        session.survival.damage(1000, 'generic', { ignoreInvulnerability: true, bypassArmor: true });
+      },
+    };
+  }
+
+  private setGameMode(mode: GameMode): void {
+    const session = this.session!;
+    session.summary.mode = mode;
+    session.player.creativeFlightAllowed = mode === 'creative';
+    if (mode !== 'creative') session.player.isFlying = false;
+    this.refreshHud();
+  }
+
+  private giveItems(itemId: string, count: number): { given: number; leftover: number } {
+    const session = this.session!;
+    const leftover = session.inventory.addItem(itemId, count);
+    if (leftover > 0) {
+      this.spawnDroppedStack(
+        createItemStack(itemId, leftover),
+        session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)),
+      );
+    }
+    this.refreshHud();
+    return { given: count - leftover, leftover };
+  }
+
+  private teleportPlayer(x: number, y: number, z: number): void {
+    const session = this.session!;
+    session.ridingCartId = undefined;
+    const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
+    session.player.teleport(destination);
+  }
+
+  private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
     this.deathShown = true;
+    this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
+    this.ui.closeChat();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -2588,6 +2713,7 @@ export class Game {
       }
       this.updateEnvironment(session.world.timeOfDay);
     }
+    this.ui.fadeChatLines(performance.now(), chatLineOpacity);
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -2686,6 +2812,8 @@ export class Game {
     this.explosionQueue.clear();
     this.worldLoad = undefined;
     this.session = undefined;
+    this.chat.clear();
+    this.ui.clearChat();
     this.inspectFreeze = null;
     this.inspectorHud = '';
     this.overlayCategories.clear();
