@@ -565,6 +565,24 @@ describe('FirstPersonRenderer', () => {
     factory.dispose();
   });
 
+  it('hides the empty-hand arm while invisible and restores it afterwards', () => {
+    const factory = new ItemVisualFactory();
+    const viewmodel = new FirstPersonRenderer(factory);
+    viewmodel.setHeldItems();
+    const arm = viewmodel.scene.getObjectByName('first-person:right-arm')!;
+    viewmodel.update(0.016, frameState({ invisible: true }));
+    expect(arm.parent?.visible).toBe(false);
+    viewmodel.setHeldItems('apple');
+    viewmodel.update(0.016, frameState({ invisible: true }));
+    expect(arm.parent?.visible).toBe(false);
+    expect(viewmodel.scene.getObjectByName('item-model:apple')).toBeDefined();
+    viewmodel.setHeldItems();
+    viewmodel.update(0.016, frameState({ invisible: false }));
+    expect(arm.parent?.visible).toBe(true);
+    viewmodel.dispose();
+    factory.dispose();
+  });
+
   it('recomputes eat/swing from the shared pose and swaps bow textures at vanilla pull stages', () => {
     const factory = new ItemVisualFactory();
     const viewmodel = new FirstPersonRenderer(factory);

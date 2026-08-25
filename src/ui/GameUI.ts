@@ -40,6 +40,7 @@ import {
   type GhostCraftState,
 } from './containerInteractions';
 import { stepTypedHistoryIndex } from '../chat';
+import type { PotionHudEntry } from './effectHud';
 
 export interface MainMenuActions {
   play(): void;
@@ -72,6 +73,7 @@ export interface HudState {
   hunger: number;
   miningProgress: number;
   attackStrength: number;
+  effects?: readonly PotionHudEntry[];
   debug?: string;
 }
 
@@ -100,6 +102,7 @@ export class GameUI {
   private mining: HTMLElement;
   private attack: HTMLElement;
   private debug: HTMLElement;
+  private effectHud: HTMLElement;
   private toasts: HTMLElement;
   private hurtFlash: HTMLElement;
   private hurtFlashAlpha = -1;
@@ -132,6 +135,7 @@ export class GameUI {
   private attackTransform = '';
   private debugText = '';
   private debugVisible = false;
+  private effectsHtml = '';
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
   private itemIconResolver?: (itemId: string) => string;
 
@@ -145,6 +149,7 @@ export class GameUI {
         <div id="status-bars"><div class="hearts"></div><div class="hunger"></div></div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="effect-hud" class="hidden"></div>
         <div id="chat">
           <div id="chat-log" aria-live="polite"></div>
           <form id="chat-form" autocomplete="off">
@@ -165,6 +170,7 @@ export class GameUI {
     this.mining = this.root.querySelector('#mining-progress')!;
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
+    this.effectHud = this.root.querySelector('#effect-hud')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
     this.hurtFlash = this.root.querySelector('#hurt-flash')!;
     this.chat = this.root.querySelector('#chat')!;
@@ -458,6 +464,13 @@ export class GameUI {
     if (debugVisible !== this.debugVisible) {
       this.debugVisible = debugVisible;
       this.debug.classList.toggle('hidden', !debugVisible);
+    }
+    const effects = state.effects ?? [];
+    const effectsHtml = effects.map((effect) => this.effectChipHtml(effect)).join('');
+    if (effectsHtml !== this.effectsHtml) {
+      this.effectsHtml = effectsHtml;
+      this.effectHud.innerHTML = effectsHtml;
+      this.effectHud.classList.toggle('hidden', effects.length === 0);
     }
   }
 
@@ -1131,6 +1144,10 @@ export class GameUI {
 
   private itemIcon(itemId: string): string {
     return this.itemIconResolver?.(itemId) ?? TextureAtlas.url(getItemDefinition(itemId).texture);
+  }
+
+  private effectChipHtml(effect: PotionHudEntry): string {
+    return `<div class="effect-chip" data-effect="${this.escape(effect.id)}"><img src="${this.itemIcon(effect.itemId)}" alt="" /><div class="effect-chip-text"><span class="effect-chip-name">${this.escape(effect.name)}</span><span class="effect-chip-timer">${this.escape(effect.timer)}</span></div></div>`;
   }
 
   private pips(symbol: string, filled: number, total: number): string {

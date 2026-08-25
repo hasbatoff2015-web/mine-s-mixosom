@@ -14,6 +14,11 @@ import {
   type WeaponItemDefinition,
 } from './types';
 
+/** Invisibility potion: 3 minutes at 20 TPS. */
+export const POTION_INVISIBILITY_DURATION_TICKS = 3600;
+/** Regeneration potion: 1 minute at 20 TPS. Golden apple regen stays separate. */
+export const POTION_REGENERATION_DURATION_TICKS = 1200;
+
 type ResourceOptions = Partial<Pick<BaseItemDefinition, 'maxStack' | 'tags' | 'placesBlockId'>> & {
   readonly durability?: number;
 };
@@ -245,12 +250,12 @@ const foods: readonly ItemDefinition[] = [
   food(ItemId.PotionInvisibility, 0, 0, {
     alwaysEdible: true,
     returnsItem: ItemId.GlassBottle,
-    effects: [{ id: 'invisibility', amplifier: 0, durationTicks: 3600 }],
+    effects: [{ id: 'invisibility', amplifier: 0, durationTicks: POTION_INVISIBILITY_DURATION_TICKS }],
   }),
   food(ItemId.PotionRegeneration, 0, 0, {
     alwaysEdible: true,
     returnsItem: ItemId.GlassBottle,
-    effects: [{ id: 'regeneration', amplifier: 0, durationTicks: 900 }],
+    effects: [{ id: 'regeneration', amplifier: 0, durationTicks: POTION_REGENERATION_DURATION_TICKS }],
   }),
 ];
 

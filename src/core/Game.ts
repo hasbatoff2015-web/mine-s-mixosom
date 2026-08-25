@@ -137,6 +137,7 @@ import { SaveService } from '../save/SaveService';
 import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
 import { SurvivalSystem, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
+import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
@@ -225,6 +226,9 @@ export class Game {
     foodUseProgress: 0,
     bowCharge: 0,
     shieldRaised: false,
+    onFire: false,
+    invisible: false,
+    potionActive: false,
   };
   private atlas?: TextureAtlas;
   private itemVisuals?: ItemVisualFactory;
@@ -2746,6 +2750,15 @@ export class Game {
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
       state.shieldRaised = session.combat.shieldActive;
       state.onFire = session.survival.isOnFire;
+      state.invisible = session.survival.invisible;
+      const invisible = session.survival.hasEffect('invisibility');
+      const regenerating = session.survival.hasEffect('regeneration');
+      state.potionActive = invisible || regenerating;
+      state.potionKind = invisible && regenerating
+        ? 'both'
+        : regenerating
+          ? 'regeneration'
+          : 'invisibility';
     } else {
       state.movementSpeed = 0;
       state.onGround = false;
@@ -2755,6 +2768,9 @@ export class Game {
       state.bowCharge = 0;
       state.shieldRaised = false;
       state.onFire = false;
+      state.invisible = false;
+      state.potionActive = false;
+      state.potionKind = undefined;
     }
     viewmodel.update(deltaSeconds, state);
   }
@@ -2805,6 +2821,7 @@ export class Game {
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
       miningProgress: session.miningProgress,
       attackStrength: session.combat.getAttackStrength(this.selectedStack()?.itemId ?? null),
+      effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
     });
   }

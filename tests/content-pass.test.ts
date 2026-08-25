@@ -60,11 +60,13 @@ describe('new items, blocks and entities', () => {
     inventory.add(createItemStack(ItemId.PotionInvisibility));
     expect(survival.consumeFood(ItemId.PotionInvisibility, inventory)).toBe(true);
     expect(survival.invisible).toBe(true);
+    expect(survival.effectTicks('invisibility')).toBe(3600);
     expect(inventory.has(ItemId.GlassBottle, 1)).toBe(true);
 
     inventory.add(createItemStack(ItemId.PotionRegeneration));
     const before = survival.health;
     survival.consumeFood(ItemId.PotionRegeneration, inventory);
+    expect(survival.effectTicks('regeneration')).toBe(1200);
     for (let tick = 0; tick < 60; tick += 1) survival.tick(0.05);
     expect(survival.health).toBeGreaterThan(before);
   });
