@@ -8,6 +8,8 @@ Base: `main`
 
 Previous HEAD: `b730acb81b9ed347e229978aa2624c06c3285444`.
 
+HEAD: `f43a587de5aa451ba3ec6c4c27ddaea44e8c9218`.
+
 ## Goal
 
 Fix targeting so partial blocks (rail, plates, ladders, …) are only selected when the cursor actually hits their geometry. Allow LMB to break a Minecart into a world drop.
@@ -73,4 +75,4 @@ WebGL/browser screenshot replay was **not** available in this environment. Do no
 
 ## Git
 
-Branch `cursor/fluids-and-items-pass-935a`, draft PR #6, ordinary push. SHA filled after commit.
+Branch `cursor/fluids-and-items-pass-935a`, SHA `f43a587de5aa451ba3ec6c4c27ddaea44e8c9218`, draft PR #6, ordinary push, working tree clean.
