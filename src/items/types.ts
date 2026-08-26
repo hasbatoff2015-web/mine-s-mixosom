@@ -31,12 +31,23 @@ export interface BlockItemDefinition extends BaseItemDefinition {
 
 export interface ResourceItemDefinition extends BaseItemDefinition {
   readonly kind: 'resource';
+  readonly durability?: number;
 }
 
 export interface FoodProperties {
   readonly nutrition: number;
   readonly saturation: number;
   readonly alwaysEdible?: boolean;
+  readonly returnsItem?: string;
+  readonly effects?: readonly StatusEffectSpec[];
+}
+
+export type StatusEffectId = 'absorption' | 'regeneration' | 'invisibility';
+
+export interface StatusEffectSpec {
+  readonly id: StatusEffectId;
+  readonly amplifier: number;
+  readonly durationTicks: number;
 }
 
 export interface FoodItemDefinition extends BaseItemDefinition {
@@ -109,6 +120,16 @@ export const ItemId = Object.freeze({
   Gunpowder: 'gunpowder',
   Book: 'book',
   Arrow: 'arrow',
+  FireArrow: 'fire_arrow',
+  FlintAndSteel: 'flint_and_steel',
+  GoldenApple: 'golden_apple',
+  GlassBottle: 'glass_bottle',
+  PotionInvisibility: 'potion_invisibility',
+  PotionRegeneration: 'potion_regeneration',
+  Bucket: 'bucket',
+  WaterBucket: 'water_bucket',
+  LavaBucket: 'lava_bucket',
+  Minecart: 'minecart',
 
   Apple: 'apple',
   Bread: 'bread',

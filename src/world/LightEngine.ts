@@ -26,6 +26,22 @@ export interface LightRegion {
   readonly maxZ: number;
 }
 
+export const LIGHT_FLOOD_REGION = 'region';
+export const LIGHT_FLOOD_ADD_EMITTER = 'add-emitter';
+
+export type LightJobOrigin = 'fluid' | 'edit' | 'other';
+
+export interface PendingLightJob {
+  region: LightRegion;
+  sky: boolean;
+  block: boolean;
+  origin: LightJobOrigin;
+  /** Linear column index into the region sky AABB. Resume instead of restarting. */
+  skyColumn?: number;
+  /** True after the region block-light AABB has been seeded into the flood queue. */
+  blockSeeded?: boolean;
+}
+
 export interface LightFrameStats {
   jobsActive: number;
   jobsPending: number;
@@ -119,6 +135,31 @@ export function skyOcclusionClass(definition: BlockDefinition | undefined): 'blo
   if (definition.liquid) return 'attenuate';
   if (definition.renderLayer === 'cutout' && definition.renderShape === 'cube') return 'attenuate';
   return 'pass';
+}
+
+export type LightingInvalidation = 'none' | 'localSky' | 'addEmitter' | 'region';
+
+/**
+ * Classifies whether a BlockId change must relight.
+ * Fluid level stays on the same BlockId, so it never reaches this helper.
+ * Air ↔ water: local sky column only. Lava/torch add: add-only emitter flood.
+ * Emission/occlusion drops and opaque swaps: full region.
+ */
+export function lightingInvalidation(previous: BlockId, next: BlockId): LightingInvalidation {
+  const prev = getBlockDefinition(previous);
+  const following = getBlockDefinition(next);
+  const skyA = skyOcclusionClass(prev);
+  const skyB = skyOcclusionClass(following);
+  const emitA = prev.emission ?? 0;
+  const emitB = following.emission ?? 0;
+  const occA = prev.occludesFaces;
+  const occB = following.occludesFaces;
+  if (skyA === skyB && emitA === emitB && occA === occB) return 'none';
+  if (occA !== occB) return 'region';
+  if (emitB > emitA) return 'addEmitter';
+  if (emitA > emitB) return 'region';
+  if (skyA !== skyB) return 'localSky';
+  return 'none';
 }
 
 function skyAttenuation(definition: BlockDefinition): number {
@@ -335,6 +376,19 @@ function continueFlood(world: VoxelWorld, deadline?: number, nodeCap = MAX_PROPA
   return floodHead >= floodTail;
 }
 
+/** Immediate lighting must finish; sliced lighting yields at MAX_NODES_PER_SLICE. */
+function drainFlood(world: VoxelWorld, deadline?: number): boolean {
+  if (deadline === undefined) {
+    let guard = 0;
+    while (floodHead < floodTail && guard < 64) {
+      if (continueFlood(world, undefined)) return true;
+      guard += 1;
+    }
+    return floodHead >= floodTail;
+  }
+  return continueFlood(world, deadline);
+}
+
 function scanEmitterColumn(
   world: VoxelWorld,
   chunk: Chunk,
@@ -357,12 +411,24 @@ export function lightingFloodOwner(): string {
 
 /** If the in-progress flood's chunk was pruned or left the live generate radius, drop the mutex. */
 export function abandonLightingFloodIfOrphaned(keepOwner: (key: string) => boolean): boolean {
-  if (floodOwnerKey === '' || floodOwnerKey === 'region') return false;
+  if (
+    floodOwnerKey === ''
+    || floodOwnerKey === LIGHT_FLOOD_REGION
+    || floodOwnerKey === LIGHT_FLOOD_ADD_EMITTER
+  ) return false;
   if (keepOwner(floodOwnerKey)) return false;
   floodHead = 0;
   floodTail = 0;
   floodOwnerKey = '';
   return true;
+}
+
+/** Drop an in-progress region flood after the pending AABB expands. */
+export function resetRegionLightFlood(): void {
+  if (floodOwnerKey !== LIGHT_FLOOD_REGION) return;
+  floodHead = 0;
+  floodTail = 0;
+  floodOwnerKey = '';
 }
 
 /** Restart block-light seeding after an obsolete flood is dropped. Sky fill is kept. */
@@ -487,6 +553,7 @@ export function relightRegion(
   recomputeSky = true,
   propagateBlock = true,
   deadline?: number,
+  progress?: PendingLightJob,
 ): boolean {
   const started = performance.now();
   const minX = Math.floor(region.minX);
@@ -497,17 +564,21 @@ export function relightRegion(
   const maxZ = Math.floor(region.maxZ);
 
   if (recomputeSky) {
-    if (!updateSkyInRegion(world, minX, maxX, minZ, maxZ, deadline)) {
+    if (!updateSkyInRegion(world, minX, maxX, minZ, maxZ, deadline, progress)) {
       recordSlice(started);
       return false;
     }
   }
   if (propagateBlock && maxY >= minY) {
-    if (!propagateBlockLight(world, minX, minY, minZ, maxX, maxY, maxZ, deadline)) {
+    if (!propagateBlockLight(world, minX, minY, minZ, maxX, maxY, maxZ, deadline, progress)) {
       recordSlice(started);
       return false;
     }
     lightEngineStats.blockPropagations += 1;
+  }
+  if (progress) {
+    progress.skyColumn = 0;
+    progress.blockSeeded = false;
   }
   recordSlice(started);
   return true;
@@ -519,6 +590,10 @@ function recomputeSkyColumn(world: VoxelWorld, x: number, z: number): void {
   fillColumnSky(chunk, positiveMod(x, CHUNK_SIZE), positiveMod(z, CHUNK_SIZE));
 }
 
+export function recomputeSkyColumnAt(world: VoxelWorld, x: number, z: number): void {
+  recomputeSkyColumn(world, x, z);
+}
+
 function updateSkyInRegion(
   world: VoxelWorld,
   minX: number,
@@ -526,25 +601,44 @@ function updateSkyInRegion(
   minZ: number,
   maxZ: number,
   deadline?: number,
+  progress?: PendingLightJob,
 ): boolean {
+  const width = maxX - minX + 1;
+  const depth = maxZ - minZ + 1;
+  const total = width * depth;
+  let index = progress?.skyColumn ?? 0;
   const touchedKeys = new Set<string>();
   let columns = 0;
-  for (let z = minZ; z <= maxZ; z += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      const chunk = loadedChunk(world, x, z);
-      if (!chunk) continue;
-      if (!chunk.skyReady) {
-        if (!continueSkyFill(chunk, deadline)) return false;
-        touchedKeys.add(chunkKey(chunk.x, chunk.z));
-        continue;
-      }
-      if (shouldYield(deadline, columns > 0) && columns % YIELD_COLUMN_STEP === 0) return false;
-      recomputeSkyColumn(world, x, z);
-      touchedKeys.add(chunkKey(chunk.x, chunk.z));
-      columns += 1;
-      lightFrameStats.columns += 1;
+  while (index < total) {
+    if (
+      deadline !== undefined
+      && columns > 0
+      && (columns >= MAX_COLUMNS_PER_SLICE || (shouldYield(deadline, true) && columns % YIELD_COLUMN_STEP === 0))
+    ) {
+      if (progress) progress.skyColumn = index;
+      lightEngineStats.skyRecomputes += touchedKeys.size;
+      return false;
     }
+    const x = minX + (index % width);
+    const z = minZ + Math.floor(index / width);
+    index += 1;
+    const chunk = loadedChunk(world, x, z);
+    if (!chunk) continue;
+    if (!chunk.skyReady) {
+      if (!continueSkyFill(chunk, deadline)) {
+        if (progress) progress.skyColumn = index - 1;
+        lightEngineStats.skyRecomputes += touchedKeys.size;
+        return false;
+      }
+      touchedKeys.add(chunkKey(chunk.x, chunk.z));
+      continue;
+    }
+    recomputeSkyColumn(world, x, z);
+    touchedKeys.add(chunkKey(chunk.x, chunk.z));
+    columns += 1;
+    lightFrameStats.columns += 1;
   }
+  if (progress) progress.skyColumn = total;
   lightEngineStats.skyRecomputes += touchedKeys.size;
   return true;
 }
@@ -562,23 +656,31 @@ function propagateBlockLight(
   maxY: number,
   maxZ: number,
   deadline?: number,
+  progress?: PendingLightJob,
 ): boolean {
-  resetFlood('region');
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let z = minZ; z <= maxZ; z += 1) {
-      for (let x = minX; x <= maxX; x += 1) {
-        const chunk = loadedChunk(world, x, z);
-        if (!chunk) continue;
-        const localX = positiveMod(x, CHUNK_SIZE);
-        const localZ = positiveMod(z, CHUNK_SIZE);
-        const emission = cellEmissionAt(world, chunk, x, y, z);
-        setBlockLightValue(chunk, localX, y, localZ, emission);
-        if (emission > 0) floodPush(x, y, z, emission);
+  const resume = progress?.blockSeeded === true && floodOwnerKey === LIGHT_FLOOD_REGION;
+  if (!resume) {
+    resetFlood(LIGHT_FLOOD_REGION);
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          const chunk = loadedChunk(world, x, z);
+          if (!chunk) continue;
+          const localX = positiveMod(x, CHUNK_SIZE);
+          const localZ = positiveMod(z, CHUNK_SIZE);
+          const emission = cellEmissionAt(world, chunk, x, y, z);
+          setBlockLightValue(chunk, localX, y, localZ, emission);
+          if (emission > 0) floodPush(x, y, z, emission);
+        }
       }
     }
+    if (progress) progress.blockSeeded = true;
   }
-  const done = continueFlood(world, deadline);
-  floodOwnerKey = '';
+  const done = drainFlood(world, deadline);
+  if (done) {
+    floodOwnerKey = '';
+    if (progress) progress.blockSeeded = false;
+  }
   return done;
 }
 
@@ -589,7 +691,7 @@ export function addBlockLightEmitters(
   deadline?: number,
 ): boolean {
   const started = performance.now();
-  resetFlood('region');
+  if (floodOwnerKey !== LIGHT_FLOOD_ADD_EMITTER) resetFlood(LIGHT_FLOOD_ADD_EMITTER);
   for (const [x, y, z] of emitters) {
     if (y < 0 || y >= WORLD_HEIGHT) continue;
     const chunk = loadedChunk(world, x, z);
@@ -599,20 +701,16 @@ export function addBlockLightEmitters(
     setBlockLightValue(chunk, positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE), emission);
     floodPush(x, y, z, emission);
   }
-  const done = continueFlood(world, deadline);
-  floodOwnerKey = '';
-  lightEngineStats.blockPropagations += 1;
+  const done = drainFlood(world, deadline);
+  if (done) {
+    floodOwnerKey = '';
+    lightEngineStats.blockPropagations += 1;
+  }
   recordSlice(started);
   return done;
 }
 
-export interface PendingLightJob {
-  region: LightRegion;
-  sky: boolean;
-  block: boolean;
-}
-
 export function continuePendingLight(world: VoxelWorld, job: PendingLightJob, deadline?: number): boolean {
   lightFrameStats.jobsActive += 1;
-  return relightRegion(world, job.region, job.sky, job.block, deadline);
+  return relightRegion(world, job.region, job.sky, job.block, deadline, job);
 }

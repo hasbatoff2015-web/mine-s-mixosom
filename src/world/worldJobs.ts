@@ -37,6 +37,16 @@ export function neighborMeshOffsets(localX: number, localZ: number): Array<reado
   return offsets;
 }
 
+/** Fluid corners are shared with the diagonal neighbor at chunk corners. */
+export function neighborFluidMeshOffsets(localX: number, localZ: number): Array<readonly [number, number]> {
+  const offsets = neighborMeshOffsets(localX, localZ);
+  if (localX === 0 && localZ === 0) offsets.push([-1, -1]);
+  if (localX === 0 && localZ === CHUNK_SIZE - 1) offsets.push([-1, 1]);
+  if (localX === CHUNK_SIZE - 1 && localZ === 0) offsets.push([1, -1]);
+  if (localX === CHUNK_SIZE - 1 && localZ === CHUNK_SIZE - 1) offsets.push([1, 1]);
+  return offsets;
+}
+
 export function sortedLoadedChunksByDistance(
   world: VoxelWorld,
   blockX: number,

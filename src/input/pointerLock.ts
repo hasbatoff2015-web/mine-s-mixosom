@@ -54,6 +54,16 @@ export function shouldIgnoreEscapeKeydown(lockedToCanvas: boolean): boolean {
   return lockedToCanvas;
 }
 
+/** Chat/search fields own Escape; do not also open pause after they close. */
+export function shouldTogglePauseOnEscapeKeydown(
+  typing: boolean,
+  lockedToCanvas: boolean,
+  swallowEscapeKeyup: boolean,
+): boolean {
+  if (shouldIgnoreEscapeKeydown(lockedToCanvas) || swallowEscapeKeyup) return false;
+  return !typing;
+}
+
 export function classifyPointerUnlock(event: PointerUnlockClassification): PointerUnlockReason | null {
   if (!event.previouslyLocked || event.nowLocked) return null;
   if (event.programmaticReleasePending) return 'programmatic';
@@ -64,9 +74,9 @@ export function classifyPointerUnlock(event: PointerUnlockClassification): Point
 export function shouldOpenPauseOnUnlock(
   reason: PointerUnlockReason,
   playing: boolean,
-  inventoryOpen: boolean,
+  overlayOpen: boolean,
 ): boolean {
-  return reason === 'escape' && playing && !inventoryOpen;
+  return reason === 'escape' && playing && !overlayOpen;
 }
 
 export function shouldShowPointerLockFallback(state: PointerLockFallbackState): boolean {

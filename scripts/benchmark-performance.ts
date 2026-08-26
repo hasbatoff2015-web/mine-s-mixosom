@@ -55,6 +55,7 @@ function disposeMeshed(meshed: ReturnType<ChunkMesher['build']>): void {
   meshed.vegetation.dispose();
   meshed.translucent.dispose();
   meshed.water.dispose();
+  meshed.fire.dispose();
 }
 
 function benchmarkChunks(): { generation: SampleStats; meshing: SampleStats; meshScan: SampleStats; geometryUpload: SampleStats; faces: number } {

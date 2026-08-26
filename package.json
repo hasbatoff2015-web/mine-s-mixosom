@@ -13,6 +13,7 @@
     "benchmark:perf-pass": "vite-node scripts/benchmark-perf-pass.ts",
     "benchmark:streaming": "vite-node scripts/benchmark-streaming-scheduler.ts",
     "benchmark:worldgen": "vite-node scripts/benchmark-worldgen.ts",
+    "benchmark:fluids": "vite-node scripts/benchmark-fluids.ts",
     "build": "tsc --noEmit && vite build",
     "check:size": "node scripts/check-build.mjs",
     "check:archive": "node scripts/check-build.mjs --archive",

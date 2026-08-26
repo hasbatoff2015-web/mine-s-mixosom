@@ -1,13 +1,17 @@
 import { BlockId } from '../blocks';
+import { FIRE_ARROW_IGNITE_TICKS } from '../combat/fireArrow';
+import { FIRE_DAMAGE_INTERVAL_TICKS } from '../combat/fireSources';
 import { FIXED_DT, clamp } from '../core/constants';
 import type { Inventory } from '../inventory';
-import { tryGetItemDefinition, type FoodItemDefinition } from '../items';
+import { tryGetItemDefinition, type FoodItemDefinition, type StatusEffectId, type StatusEffectSpec } from '../items';
 import type { PlayerController } from '../player';
 import type { VoxelWorld } from '../world/World';
 
 export const MAX_HEALTH = 20;
 export const MAX_HUNGER = 20;
 export const MAX_AIR_TICKS = 300;
+/** Vanilla Java armor bar: 20 points, 10 icons. */
+export const MAX_ARMOR_POINTS = 20;
 
 export type DamageSource =
   | 'generic'
@@ -60,6 +64,7 @@ export interface SurvivalTickContext {
   readonly difficulty?: Difficulty;
   readonly inWater?: boolean;
   readonly inLava?: boolean;
+  readonly inFire?: boolean;
   readonly headSubmerged?: boolean;
   readonly touchingCactus?: boolean;
   readonly horizontalDistance?: number;
@@ -78,6 +83,9 @@ export interface SurvivalTickResult {
   readonly saturation: number;
   readonly airTicks: number;
   readonly fireTicks: number;
+  readonly arrowFireTicks: number;
+  readonly contactFire: boolean;
+  readonly onFire: boolean;
   readonly dead: boolean;
   readonly damage: readonly DamageResult[];
 }
@@ -100,6 +108,7 @@ export interface SerializedSurvivalState {
   readonly absorption: number;
   readonly airTicks: number;
   readonly fireTicks: number;
+  readonly arrowFireTicks?: number;
   readonly dead: boolean;
   readonly spawnPoint: [number, number, number];
 }
@@ -112,7 +121,7 @@ export function getArmorStats(source?: ArmorSource): ArmorStats {
   if (!source) return { points: 0, toughness: 0 };
   if ('points' in source) {
     return {
-      points: clamp(Number.isFinite(source.points) ? source.points : 0, 0, 20),
+      points: clamp(Number.isFinite(source.points) ? source.points : 0, 0, MAX_ARMOR_POINTS),
       toughness: Math.max(0, Number.isFinite(source.toughness) ? source.toughness : 0),
     };
   }
@@ -126,7 +135,12 @@ export function getArmorStats(source?: ArmorSource): ArmorStats {
     points += definition.defense;
     toughness += definition.toughness;
   }
-  return { points: clamp(points, 0, 20), toughness: Math.max(0, toughness) };
+  return { points: clamp(points, 0, MAX_ARMOR_POINTS), toughness: Math.max(0, toughness) };
+}
+
+/** Canonical equipped armor total. Damage mitigation and the HUD both read this. */
+export function getArmorPoints(source?: ArmorSource): number {
+  return getArmorStats(source).points;
 }
 
 /** Release-1.9 armor formula. Toughness is only used when explicitly enabled (1.9.1 variant). */
@@ -139,7 +153,7 @@ export function reduceDamageByArmor(
   const stats = getArmorStats(armor);
   if (incoming === 0 || stats.points === 0) return incoming;
   const denominator = useToughness ? 2 + stats.toughness / 4 : 2;
-  const effectiveArmor = Math.min(20, Math.max(stats.points / 5, stats.points - incoming / denominator));
+  const effectiveArmor = Math.min(MAX_ARMOR_POINTS, Math.max(stats.points / 5, stats.points - incoming / denominator));
   return incoming * (1 - effectiveArmor / 25);
 }
 
@@ -152,11 +166,15 @@ export class SurvivalSystem {
   absorption = 0;
   airTicks = MAX_AIR_TICKS;
   fireTicks = 0;
+  arrowFireTicks = 0;
+  contactFire = false;
   dead = false;
   difficulty: Difficulty;
   useArmorToughness: boolean;
   spawnPoint: [number, number, number] = [0.5, 64, 0.5];
   lastDamage?: DamageResult;
+  private readonly effects = new Map<StatusEffectId, { amplifier: number; ticks: number }>();
+  private effectRegenTimer = 0;
 
   private accumulator = 0;
   private hurtResistantTicks = 0;
@@ -262,12 +280,46 @@ export class SurvivalSystem {
     return result;
   }
 
+  applyEffect(effect: StatusEffectSpec): void {
+    const current = this.effects.get(effect.id);
+    if (!current || effect.amplifier > current.amplifier || effect.durationTicks > current.ticks) {
+      this.effects.set(effect.id, { amplifier: effect.amplifier, ticks: effect.durationTicks });
+    }
+    if (effect.id === 'absorption') {
+      this.absorption = Math.max(this.absorption, 4 * (effect.amplifier + 1));
+    }
+  }
+
+  hasEffect(id: StatusEffectId): boolean {
+    return (this.effects.get(id)?.ticks ?? 0) > 0;
+  }
+
+  get invisible(): boolean {
+    return this.hasEffect('invisibility');
+  }
+
+  effectTicks(id: StatusEffectId): number {
+    return this.effects.get(id)?.ticks ?? 0;
+  }
+
+  get isOnFire(): boolean {
+    return this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0;
+  }
+
   ignite(ticks = 160): void {
     if (Number.isFinite(ticks)) this.fireTicks = Math.max(this.fireTicks, Math.max(0, Math.floor(ticks)));
   }
 
+  igniteFromArrow(ticks = FIRE_ARROW_IGNITE_TICKS): void {
+    if (Number.isFinite(ticks)) {
+      this.arrowFireTicks = Math.max(this.arrowFireTicks, Math.max(0, Math.floor(ticks)));
+    }
+  }
+
   extinguish(): void {
     this.fireTicks = 0;
+    this.arrowFireTicks = 0;
+    this.contactFire = false;
     this.fireTimer = 0;
   }
 
@@ -277,14 +329,15 @@ export class SurvivalSystem {
   }
 
   /** Applies a food item and optionally removes one from the supplied inventory. */
-  consumeFood(itemOrId: string | FoodItemDefinition, inventory?: Pick<Inventory, 'has' | 'remove'>): boolean {
+  consumeFood(itemOrId: string | FoodItemDefinition, inventory?: Pick<Inventory, 'has' | 'remove' | 'addItem'>): boolean {
     const item = typeof itemOrId === 'string' ? tryGetItemDefinition(itemOrId) : itemOrId;
     if (item?.kind !== 'food' || !this.canConsumeFood(item.id)) return false;
     if (inventory && !inventory.has(item.id, 1)) return false;
     if (inventory && inventory.remove(item.id, 1) !== 1) return false;
     this.hunger = Math.min(MAX_HUNGER, this.hunger + item.food.nutrition);
     this.saturation = Math.min(this.hunger, this.saturation + item.food.saturation);
-    if (item.id === 'golden_apple') this.absorption = Math.max(this.absorption, 4);
+    for (const effect of item.food.effects ?? []) this.applyEffect(effect);
+    if (item.food.returnsItem) inventory?.addItem(item.food.returnsItem, 1);
     return true;
   }
 
@@ -311,6 +364,8 @@ export class SurvivalSystem {
     this.absorption = 0;
     this.airTicks = MAX_AIR_TICKS;
     this.fireTicks = 0;
+    this.arrowFireTicks = 0;
+    this.contactFire = false;
     this.dead = false;
     this.hurtResistantTicks = 0;
     this.lastRawDamage = 0;
@@ -320,6 +375,8 @@ export class SurvivalSystem {
     this.fireTimer = 0;
     this.regenTimer = 0;
     this.starvationTimer = 0;
+    this.effects.clear();
+    this.effectRegenTimer = 0;
     player?.teleport(position);
   }
 
@@ -332,6 +389,7 @@ export class SurvivalSystem {
       absorption: this.absorption,
       airTicks: this.airTicks,
       fireTicks: this.fireTicks,
+      arrowFireTicks: this.arrowFireTicks,
       dead: this.dead,
       spawnPoint: [...this.spawnPoint],
     };
@@ -345,6 +403,7 @@ export class SurvivalSystem {
     if (state.absorption !== undefined) this.absorption = Math.max(0, state.absorption);
     if (state.airTicks !== undefined) this.airTicks = clamp(Math.floor(state.airTicks), 0, MAX_AIR_TICKS);
     if (state.fireTicks !== undefined) this.fireTicks = Math.max(0, Math.floor(state.fireTicks));
+    if (state.arrowFireTicks !== undefined) this.arrowFireTicks = Math.max(0, Math.floor(state.arrowFireTicks));
     if (state.spawnPoint?.length === 3 && state.spawnPoint.every(Number.isFinite)) this.spawnPoint = [...state.spawnPoint];
     this.dead = state.dead ?? this.health <= 0;
   }
@@ -364,7 +423,11 @@ export class SurvivalSystem {
     const touchingCactus = context.touchingCactus
       ?? (player && world ? player.intersectsBlockType(world, BlockId.Cactus, 0.08) : false);
 
-    if (inWater && !inLava) this.extinguish();
+    if (inWater && !inLava) {
+      this.fireTicks = 0;
+      this.arrowFireTicks = 0;
+    }
+    this.contactFire = context.inFire ?? player?.inFire ?? false;
     if (headSubmerged && inWater && !inLava) {
       this.airTicks = Math.max(0, this.airTicks - 1);
       if (this.airTicks === 0) {
@@ -396,16 +459,38 @@ export class SurvivalSystem {
       }
     } else this.cactusTimer = 0;
 
-    if (this.fireTicks > 0) {
-      this.fireTicks -= 1;
+    if (this.fireTicks > 0) this.fireTicks -= 1;
+    if (this.arrowFireTicks > 0) this.arrowFireTicks -= 1;
+    if (this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0) {
       this.fireTimer += 1;
-      if (this.fireTimer >= 20) {
+      if (this.fireTimer >= FIRE_DAMAGE_INTERVAL_TICKS) {
         this.fireTimer = 0;
         this.dealEnvironmentDamage(1, 'fire', context, events);
       }
     } else this.fireTimer = 0;
 
+    this.tickStatusEffects(context, events);
     this.tickHunger(context, events);
+  }
+
+  private tickStatusEffects(context: SurvivalTickContext, events: DamageResult[]): void {
+    void context;
+    void events;
+    for (const [id, effect] of [...this.effects]) {
+      effect.ticks -= 1;
+      if (id === 'regeneration' && this.health < MAX_HEALTH) {
+        this.effectRegenTimer += 1;
+        const interval = effect.amplifier >= 1 ? 25 : 50;
+        if (this.effectRegenTimer >= interval) {
+          this.effectRegenTimer = 0;
+          this.heal(1);
+        }
+      }
+      if (effect.ticks <= 0) {
+        this.effects.delete(id);
+        if (id === 'regeneration') this.effectRegenTimer = 0;
+      }
+    }
   }
 
   private tickHunger(context: SurvivalTickContext, events: DamageResult[]): void {
@@ -492,6 +577,9 @@ export class SurvivalSystem {
       saturation: this.saturation,
       airTicks: this.airTicks,
       fireTicks: this.fireTicks,
+      arrowFireTicks: this.arrowFireTicks,
+      contactFire: this.contactFire,
+      onFire: this.isOnFire,
       dead: this.dead,
       damage: events,
     };

@@ -3,7 +3,7 @@
  */
 
 import { CHUNK_SIZE, chunkKey as worldChunkKey } from '../core/constants';
-import { lightingFloodOwner } from '../world/LightEngine';
+import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightingFloodOwner } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
 import { chebyshevChunkDistance, lightContextReady } from '../world/worldJobs';
 import {
@@ -220,7 +220,10 @@ export function gatherChunkFacts(
     pendingLight: generated && !lightingReady,
     inMeshRadius,
     inGenerateRadius,
-    floodOwnerIsOther: extras.floodOwner !== '' && extras.floodOwner !== 'region' && extras.floodOwner !== key,
+    floodOwnerIsOther: extras.floodOwner !== ''
+      && extras.floodOwner !== LIGHT_FLOOD_REGION
+      && extras.floodOwner !== LIGHT_FLOOD_ADD_EMITTER
+      && extras.floodOwner !== key,
     meshSkippedDueToGenSeparation: view.jobFrame.meshSkippedDueToGenSeparation,
     lightingOnlyDueToBudget: view.jobFrame.lightingOnlyDueToBudget,
     meshReadyButOverBudget: extras.meshReadyKeys.has(chunkKey(cx, cz))
@@ -604,6 +607,19 @@ export function formatStreamingHud(
     readonly generatedToVisible?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
     readonly wantedToVisible?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
     readonly readyWantedToMesh?: { p50Ms: number; p95Ms: number; maximumMs: number; samples: number };
+    readonly fluid?: {
+      readonly q: number;
+      readonly active: number;
+      readonly updates: number;
+      readonly writes: number;
+      readonly noop: number;
+      readonly dedupe: number;
+      readonly meshDirtyChunks: number;
+      readonly lightDirtyChunks: number;
+      readonly pausedDistant: number;
+      readonly oldest: number;
+    };
+    readonly lightOrigins?: { readonly stream: number; readonly fluid: number; readonly edit: number; readonly other: number };
   },
 ): string {
   const age = (ms: number | null): string => (ms === null ? '—' : formatDurationMs(ms));
@@ -611,6 +627,12 @@ export function formatStreamingHud(
   const lines = [
     `GEN ${snap.gen.pending} pending | oldest ${age(snap.gen.oldestAgeMs)} | head ${snap.gen.headKey ?? '—'} ${snap.gen.headState ?? ''}`,
     `LIGHT ${snap.light.pending} pending | ready ${snap.light.ready} | blocked ${snap.light.blocked} | criticalBlocked ${snap.lightCriticalBlocked} | oldestCritical ${age(snap.lightOldestCriticalAgeMs)}`,
+    extras?.lightOrigins
+      ? `  origin stream=${extras.lightOrigins.stream} fluid=${extras.lightOrigins.fluid} edit=${extras.lightOrigins.edit} other=${extras.lightOrigins.other}`
+      : '',
+    extras?.fluid
+      ? `FLUID q=${extras.fluid.q} active=${extras.fluid.active} updates=${extras.fluid.updates} writes=${extras.fluid.writes} noop=${extras.fluid.noop} dedupe=${extras.fluid.dedupe} meshDirtyChunks=${extras.fluid.meshDirtyChunks} lightDirtyChunks=${extras.fluid.lightDirtyChunks} pausedDistant=${extras.fluid.pausedDistant} oldest=${extras.fluid.oldest}`
+      : '',
     `  head ${snap.light.headKey ?? '—'} ${snap.light.headState ?? ''} | skipsBlockedHead ${yesNo(snap.lightSkipsBlockedHead)} | stopsOnBlockedHead ${yesNo(snap.lightStopsOnBlockedHead)} | floodOwner ${snap.floodOwner || '—'}`,
     `MESH ${snap.mesh.pending} pending | ready ${snap.mesh.ready} | blocked ${snap.mesh.blocked} | oldest ${age(snap.mesh.oldestAgeMs)}`,
     `  head ${snap.mesh.headKey ?? '—'} ${snap.mesh.headState ?? ''} | skipsBlockedHead ${yesNo(snap.meshSkipsBlockedHead)}`,
@@ -666,7 +688,7 @@ export function formatStreamingHud(
     'RED blocked',
   ].join(' | '));
   lines.push('F7 light  F8 chunks  F9 freeze front');
-  return lines.join('\n');
+  return lines.filter((line) => line.length > 0).join('\n');
 }
 
 export function overlayColorAt(

@@ -210,15 +210,20 @@ const PART_NAMES: Readonly<Record<MobKind, {
 };
 
 export function createMobModel(visuals: VoxelVisualFactory, kind: MobKind): MobModel {
-  const built = buildLegacyModel(visuals, `mob:${kind}`, MOB_LEGACY_MODELS[kind]);
-  const names = PART_NAMES[kind];
-  return {
-    root: built.root,
-    parts: built.parts,
-    ...(names.head ? { head: built.parts.get(names.head) } : {}),
-    legs: names.legs.map((name) => built.parts.get(name)!),
-    legSwingSigns: names.legSwingSigns,
-    arms: (names.arms ?? []).map((name) => built.parts.get(name)!),
-    wings: (names.wings ?? []).map((name) => built.parts.get(name)!),
-  };
+  visuals.beginEntityMaterials();
+  try {
+    const built = buildLegacyModel(visuals, `mob:${kind}`, MOB_LEGACY_MODELS[kind]);
+    const names = PART_NAMES[kind];
+    return {
+      root: built.root,
+      parts: built.parts,
+      ...(names.head ? { head: built.parts.get(names.head) } : {}),
+      legs: names.legs.map((name) => built.parts.get(name)!),
+      legSwingSigns: names.legSwingSigns,
+      arms: (names.arms ?? []).map((name) => built.parts.get(name)!),
+      wings: (names.wings ?? []).map((name) => built.parts.get(name)!),
+    };
+  } finally {
+    visuals.endEntityMaterials();
+  }
 }

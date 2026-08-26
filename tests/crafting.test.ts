@@ -65,7 +65,7 @@ describe('crafting matcher', () => {
       'crafting_table', 'chest', 'furnace', 'torch', 'wooden_pickaxe', 'diamond_sword',
       'bow', 'arrows', 'white_bed', 'oak_door', 'oak_slab', 'cobblestone_stairs',
       'birch_stairs', 'stone_pressure_plate', 'brick_stairs',
-      'gold_chestplate', 'tnt',
+      'gold_chestplate', 'tnt', 'minecart',
     ];
     const ids = new Set(CRAFTING_RECIPES.map((recipe) => recipe.id));
     for (const id of expected) expect(ids.has(id), id).toBe(true);

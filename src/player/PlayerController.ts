@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
-import { blockCollisionBoxes, type CollisionBox } from '../world/collision';
+import { blockCollisionBoxes, movementMultiplier, type CollisionBox } from '../world/collision';
 import {
   CREATIVE_FLY_SPEED,
   CREATIVE_SPRINT_FLY_SPEED,
@@ -42,6 +42,8 @@ export interface PlayerInputSource {
   readonly yaw: number;
   readonly pitch: number;
   movement(): MoveInput;
+  /** When false, look/fluids still update but the body does not walk or fall. */
+  readonly locomotion?: boolean;
 }
 
 export interface PlayerAABB {
@@ -78,6 +80,7 @@ export interface PlayerTickResult {
   readonly fallDamage: number;
   readonly inWater: boolean;
   readonly inLava: boolean;
+  readonly inFire: boolean;
   readonly headSubmerged: boolean;
   readonly onLadder: boolean;
 }
@@ -120,6 +123,9 @@ export class PlayerController {
   sprinting = false;
   inWater = false;
   inLava = false;
+  inFire = false;
+  inCobweb = false;
+  private webMultiplier = 1;
   headSubmerged = false;
   onLadder = false;
   isFlying = false;
@@ -252,6 +258,14 @@ export class PlayerController {
 
     const wasOnGround = this.onGround || this.hasGroundSupport(world, this.position);
     this.updateFluidState(world);
+    if (input.locomotion === false) {
+      this.velocity.set(0, 0, 0);
+      this.sprinting = false;
+      this.onGround = true;
+      this.fallDistance = 0;
+      this.updateStance(world, movement.sneak);
+      return this.tickResult(false, 0, 0, 0, false);
+    }
     if (this.isFlying) this.sneaking = false;
     else this.updateStance(world, movement.sneak);
     this.sprinting = this.isFlying
@@ -415,6 +429,7 @@ export class PlayerController {
       fallDamage,
       inWater: this.inWater,
       inLava: this.inLava,
+      inFire: this.inFire,
       headSubmerged: this.headSubmerged,
       onLadder: this.onLadder,
     };
@@ -464,9 +479,10 @@ export class PlayerController {
       wishX /= wishLength;
       wishZ /= wishLength;
     }
-    const speed = this.inWater || this.inLava
+    const speed = (this.inWater || this.inLava
       ? WATER_SPEED * (this.inLava ? 0.55 : 1)
-      : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
+      : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED)
+      * this.webMultiplier;
     const desiredX = wishX * speed;
     const desiredZ = wishZ * speed;
     const response = this.inWater || this.inLava ? 7 : wasOnGround ? 22 : 3.5;
@@ -494,6 +510,10 @@ export class PlayerController {
   private updateFluidState(world: VoxelWorld): void {
     this.inWater = this.overlapsBlock(world, BlockId.Water);
     this.inLava = this.overlapsBlock(world, BlockId.Lava);
+    this.inFire = this.overlapsBlock(world, BlockId.Fire);
+    const box = this.aabb;
+    this.webMultiplier = movementMultiplier(world, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+    this.inCobweb = this.webMultiplier < 1;
     const eye = this.eyePosition();
     const eyeBlock = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
     this.headSubmerged = eyeBlock === BlockId.Water || eyeBlock === BlockId.Lava;

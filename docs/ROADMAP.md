@@ -39,6 +39,20 @@ Feature creep не должен блокировать P0. Всё, что пря
 - [x] Локальный pipeline после player-visible streaming latency metrics (inspector only, no scheduler change): typecheck, 349 tests / 43 files, production build 100 modules, 1.08 MiB / 167 files.
 - [x] Локальный pipeline после lighting halo / flood-head scheduler fix: typecheck, 368 tests / 44 files, production build 100 modules, 1.08 MiB / 167 files.
 - [x] Локальный pipeline после worldgen mountains / deeper bedrock / connected caves / vegetation density: typecheck, 382 tests / 45 files, production build 100 modules, 1.08 MiB / 167 files.
+- [x] Локальный pipeline после fluids / lava lakes / new items pass: typecheck, 398 tests / 47 files, production build 102 modules, 1.11 MiB / 180 files.
+- [x] Локальный pipeline после fluid surface + streaming regression fix: typecheck, 424 tests / 49 files, production build 103 modules, 1.11 MiB / 180 files.
+- [x] Локальный pipeline после fire arrow / fire visual / item icons: typecheck, 429 tests / 50 files, production build 106 modules, 1.12 MiB / 180 files.
+- [x] Локальный pipeline после fire-contact / sunlight / 3D minecart pass: typecheck, 453 tests / 51 files, production build 109 modules, 1.13 MiB / 180 files.
+- [x] Локальный pipeline после minecart floor / derail / Shift dismount / TNT ignition + primed texture: typecheck, 464 tests / 51 files, production build 109 modules, 1.13 MiB / 180 files.
+- [x] Локальный pipeline после shape-aware block targeting / minecart LMB break: typecheck, 485 tests / 52 files, production build 111 modules, 1.14 MiB / 180 files.
+- [x] Локальный pipeline после chat commands / minecart drop polish: typecheck, 495 tests / 53 files, production build 116 modules, 1.15 MiB / 180 files.
+- [x] Локальный pipeline после fire overlay / cave lava ponds / bedrock cap / hurt feedback / ore ×2: typecheck, 506 tests / 55 files, production build 117 modules, 1.15 MiB / 180 files.
+- [x] Локальный pipeline после frozen-lava / lighting-flicker / Diamond /3 / Fire damage / mob hurt flash: typecheck, 517 tests / 56 files, production build 117 modules, 1.15 MiB / 180 files.
+- [x] Локальный pipeline после enclosed cave lava / Fire-Lava armor rollback / hostile spawn rebalance: typecheck, 529 tests / 57 files, production build 117 modules, 1.16 MiB / 180 files.
+- [x] Локальный pipeline после potion invis arm / effect HUD / swirl particles: typecheck, 535 tests / 58 files, production build 119 modules, 1.16 MiB / 180 files.
+- [x] Локальный pipeline после armor HUD / canonical armor points: typecheck, 542 tests / 59 files, production build 120 modules, 1.16 MiB / 183 files.
+- [x] Локальный pipeline после hearts HUD scale / per-entity mob hurt flash: typecheck, 548 tests / 60 files, production build 122 modules, 1.17 MiB / 186 files.
+- [x] Локальный pipeline после merge Codex main-menu UI + Cursor PR #6: typecheck, 551 tests / 61 files, production build 123 modules, 3.44 MiB / 187 files.
 - [ ] Зафиксировать фактические версии Node/npm для CI и README.
 - [ ] Добавить CI с typecheck, tests, production build, archive/path/size checks.
 - [ ] Сформировать ZIP, где `index.html` находится в корне, и проверить его распаковкой.
@@ -127,6 +141,8 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Тонкая 2-block oak door с open/close, collision и UV half/hinge; torch wall/floor; button floor/wall/ceiling; ladder world plane + side placement; stairs/slabs geometry+collision+icons. Bed и chest всё ещё ждут specialized meshes.
 - [x] Расширить compact block states: door half/open/hinge/facing, torch attachment, button/lever orientation, ladder facing, slabType, stairHalf; stair corner shape derived; v1→v2 redstone fallback уже реализован.
 - [x] Door open/close на use; ladder climbing (into-wall wish, slow descent, sneak hold). Корректный two-block bed и sleeping checks ещё нет.
+- [x] Canonical selection shapes + DDA ray-vs-AABB: empty portion of occupied voxels is not a hit (rail/plate/ladder/slab/stairs/fence/torch/…). Outline, LMB and RMB share one VoxelHit. Survival LMB breaks a Minecart into a world drop.
+- [x] Локальный чат + command registry (`/help` `/gamemode` `/time` `/give` `/tp` `/seed` `/clear` `/kill`); T и `/` open, death messages in chat.
 - [x] Powered TNT ignition, visual 4-second fuse, explosion events и chain priming реализованы для alpha.
 - [x] Mass TNT больше не вызывает per-block `relightAround`; `ExplosionQueue` + `applyBlockBatch` держат chain в budgeted ticks.
 - [x] Минимальная bounded propagation `0–15` для wire/torch/lever/button/plate/TNT реализована и покрыта unit tests.
@@ -134,7 +150,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 ### P1.3 World simulation
 
-- [ ] Level-based liquids с bounded updates, боковым потоком и water/lava interaction.
+- [x] Level-based liquids с bounded updates, боковым потоком и water/lava interaction (practical Java-like, не bit-exact; без infinite springs).
 - [x] Gravity-driven primed TNT и falling-block entities для sand/gravel; unloaded-chunk queue всё ещё упрощена.
 - [x] Более разнообразные terrain features без нарушения seed determinism (mountains + connected caves + density; без новых biomes/structures).
 - [x] Spawn finder учитывает новый terrain height и избегает desert/caves/high mountains (покрыто `tests/worldgen-terrain.test.ts`).
@@ -191,7 +207,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 - weather и атмосферные эффекты;
 - biome expansion, структуры и более глубокая exploration progression;
-- experience, enchantments, potion-like effects;
+- experience, enchantments, brewing stand / full potion crafting;
 - farming и animal breeding;
 - advanced redstone, pistons, hoppers и automation;
 - дополнительные dimensions, bosses и late-game progression;

@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import type { MobManager } from '../entities';
+import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
+import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
 
 interface PlayerArrow {
   readonly position: THREE.Vector3;
@@ -15,9 +17,12 @@ interface PlayerArrow {
   age: number;
   critical: boolean;
   inGround: boolean;
+  flaming: boolean;
 }
 
 const FORWARD = new THREE.Vector3(0, 0, -1);
+/** Prefer a cart over a rail/block that is only slightly closer (cart sits on the rail). */
+const CART_BLOCK_SLOP = 0.5;
 
 export class PlayerArrowManager {
   private readonly arrows: PlayerArrow[] = [];
@@ -29,21 +34,41 @@ export class PlayerArrowManager {
     private readonly scene: THREE.Object3D,
     private readonly world: VoxelWorld,
     private readonly mobs: MobManager,
-    options: { readonly visualFactory?: ArrowVisualFactory; readonly random?: () => number } = {},
+    options: {
+      readonly visualFactory?: ArrowVisualFactory;
+      readonly random?: () => number;
+      readonly minecarts?: MinecartManager;
+      readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
+      readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
+    } = {},
   ) {
     this.visuals = options.visualFactory ?? new ArrowVisualFactory();
     this.ownsVisuals = options.visualFactory === undefined;
     this.random = options.random ?? Math.random;
+    this.minecarts = options.minecarts;
+    this.onBlockHit = options.onBlockHit;
+    this.onMinecartHit = options.onMinecartHit;
   }
+
+  private readonly minecarts?: MinecartManager;
+  private readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
+  private readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
 
   get count(): number {
     return this.arrows.length;
   }
 
-  spawn(origin: THREE.Vector3, direction: THREE.Vector3, speedBlocksPerTick: number, _damage: number, critical: boolean): void {
+  spawn(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    speedBlocksPerTick: number,
+    _damage: number,
+    critical: boolean,
+    flaming = false,
+  ): void {
     if (this.arrows.length >= 48) this.remove(0);
     const velocity = inaccurateArrowDirection(direction, this.random).multiplyScalar(speedBlocksPerTick);
-    const visual = this.visuals.create();
+    const visual = this.visuals.create(flaming);
     visual.position.copy(origin);
     this.orient(visual, velocity);
     this.scene.add(visual);
@@ -55,6 +80,7 @@ export class PlayerArrowManager {
       age: 0,
       critical,
       inGround: false,
+      flaming,
     });
   }
 
@@ -77,11 +103,21 @@ export class PlayerArrowManager {
         const direction = movement.clone().multiplyScalar(1 / distance);
         const blockHit = this.world.raycast(arrow.position, direction, distance);
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
+        const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
+        const cartCloser = cartHit && (!mobHit || cartHit.distance <= mobHit.distance)
+          && (!blockHit || cartHit.distance <= blockHit.distance + CART_BLOCK_SLOP);
+        if (cartCloser && cartHit) {
+          this.onMinecartHit?.(cartHit.cart, arrow.flaming);
+          this.remove(index);
+          removed = true;
+          break;
+        }
         if (mobHit && (!blockHit || mobHit.distance < blockHit.distance)) {
           this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
             source: 'projectile',
             attackerPosition: arrow.position,
             knockback: arrow.critical ? 4.2 : 2.4,
+            ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
           });
           this.remove(index);
           removed = true;
@@ -93,6 +129,7 @@ export class PlayerArrowManager {
           arrow.velocity.set(0, 0, 0);
           arrow.previousPosition.copy(arrow.position);
           arrow.visual.position.copy(arrow.position);
+          this.onBlockHit?.(blockHit.x, blockHit.y, blockHit.z, arrow.flaming);
           applySampledEntityLight(
             arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
             worldDaylightUniform.value,
@@ -100,10 +137,11 @@ export class PlayerArrowManager {
           break;
         }
         arrow.position.add(movement);
-        const inWater = this.world.getBlock(
-          Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z),
-        ) === BlockId.Water;
-        applyArrowDragAndGravity(arrow.velocity, inWater);
+        const cell = this.world.getBlock(
+          Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
+        );
+        if (cell === BlockId.Cobweb) arrow.velocity.multiplyScalar(0.25);
+        applyArrowDragAndGravity(arrow.velocity, cell === BlockId.Water);
       }
       if (removed || arrow.inGround) continue;
       this.orient(arrow.visual, arrow.velocity);

@@ -179,9 +179,11 @@ export function createEntityMaterial(options: EntityMaterialOptions = {}): THREE
   const wrapExpression = wrap
     ? `${ENTITY_WRAP_MIN} + ${ENTITY_WRAP_SCALE} * clamp(dot(normalize(mat3(modelMatrix) * normal), vec3(0.18, 0.92, 0.28)), 0.0, 1.0)`
     : '1.0';
-  material.onBeforeCompile = (shader) => {
+  // Use `this` (not a closed-over template) so cloned per-entity materials
+  // each get their own `uEntityLight` uniform instead of writing the source cache.
+  material.onBeforeCompile = function compileEntityLight(this: THREE.MeshBasicMaterial, shader) {
     shader.uniforms.uEntityLight = { value: ENTITY_LIGHT_IDENTITY.clone() };
-    material.userData.uEntityLight = shader.uniforms.uEntityLight;
+    this.userData.uEntityLight = shader.uniforms.uEntityLight;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
       `#include <common>
@@ -227,7 +229,40 @@ function findEntityLight(object: THREE.Object3D): THREE.Vector3 {
   return ENTITY_LIGHT_IDENTITY;
 }
 
-/** Shared-material safe: each mesh copies its root's voxel light just before draw. */
+export const ENTITY_MATERIAL_OWNED = 'entityMaterialOwned';
+
+/**
+ * Lightweight per-entity material instance. Geometry and `map` stay shared.
+ * Call once per renderer entity (or unique template on that entity), not per frame/hit.
+ */
+export function cloneOwnedEntityMaterial(template: THREE.MeshBasicMaterial): THREE.MeshBasicMaterial {
+  const material = template.clone();
+  const onBeforeCompile = template.onBeforeCompile;
+  material.userData = { [ENTITY_MATERIAL_OWNED]: true };
+  if (onBeforeCompile) material.onBeforeCompile = onBeforeCompile;
+  return material;
+}
+
+/** Dispose per-entity material clones. Does not dispose shared textures or geometry. */
+export function disposeOwnedEntityMaterials(object: THREE.Object3D): void {
+  const seen = new Set<THREE.Material>();
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const list = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of list) {
+      if (!material?.userData?.[ENTITY_MATERIAL_OWNED] || seen.has(material)) continue;
+      seen.add(material);
+      material.dispose();
+      material.userData[ENTITY_MATERIAL_OWNED] = false;
+    }
+  });
+}
+
+/**
+ * Copy the owning entity's `entityLight` into this mesh's material uniform.
+ * Requires a per-entity material instance: a shared template uniform would leak
+ * the last writer's tint across every mob of that species.
+ */
 export function bindEntityLightReceiver(object: THREE.Object3D): void {
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;

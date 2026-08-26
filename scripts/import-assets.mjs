@@ -149,6 +149,21 @@ copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);
 copies.push([join('particle', 'particles.png'), join('particle', 'particles.png')]);
 
+const optional = {
+  'items/flint_and_steel.png': 'item/flint_and_steel.png',
+  'items/potion.png': 'item/glass_bottle.png',
+  'items/bucket.png': 'item/bucket.png',
+  'items/bucket_water.png': 'item/water_bucket.png',
+  'items/bucket_lava.png': 'item/lava_bucket.png',
+  'items/minecart_normal.png': 'item/minecart.png',
+  'blocks/web.png': 'block/cobweb.png',
+  'blocks/rail_normal.png': 'block/rail.png',
+  'blocks/fire_layer_0.png': 'block/fire.png',
+};
+for (const [source, target] of Object.entries(optional)) {
+  copies.push([source, target]);
+}
+
 let imported = 0;
 for (const [source, target] of copies) {
   const destination = join(outputRoot, target);
@@ -162,3 +177,11 @@ for (const [source, target] of copies) {
 }
 
 console.log(`Imported ${imported}/${copies.length} selected runtime assets into public/textures.`);
+
+try {
+  const { generateMissingTextures } = await import('./generate-missing-textures.mjs');
+  const generated = await generateMissingTextures(false);
+  if (generated > 0) console.log(`Generated ${generated} fallback gameplay textures.`);
+} catch (error) {
+  console.warn('Fallback texture generation skipped.', error);
+}

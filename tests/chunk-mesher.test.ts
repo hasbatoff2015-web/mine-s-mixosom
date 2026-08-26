@@ -22,5 +22,6 @@ describe('ChunkMesher hot path', () => {
     meshed.vegetation.dispose();
     meshed.translucent.dispose();
     meshed.water.dispose();
+    meshed.fire.dispose();
   });
 });

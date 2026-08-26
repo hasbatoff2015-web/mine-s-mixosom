@@ -36,5 +36,6 @@ export interface SerializedWorldState {
   mobs?: unknown[];
   redstone?: unknown;
   blockStates?: Record<string, unknown>;
+  minecarts?: unknown[];
   fallingBlocks?: unknown[];
 }

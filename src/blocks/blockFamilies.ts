@@ -17,6 +17,7 @@ export interface BlockFamily {
   readonly requiresCorrectTool?: boolean;
   readonly slabId?: BlockId;
   readonly stairId?: BlockId;
+  readonly fenceId?: BlockId;
   /** Keep a legacy stair ID in the registry but hide it from gameplay. */
   readonly hideStairs?: boolean;
 }
@@ -33,6 +34,7 @@ export const BLOCK_FAMILIES: readonly BlockFamily[] = Object.freeze([
     flammable: true,
     slabId: BlockId.OakSlab,
     stairId: BlockId.OakStairs,
+    fenceId: BlockId.OakFence,
   },
   {
     key: 'birch',
@@ -45,6 +47,7 @@ export const BLOCK_FAMILIES: readonly BlockFamily[] = Object.freeze([
     flammable: true,
     slabId: BlockId.BirchSlab,
     stairId: BlockId.BirchStairs,
+    fenceId: BlockId.BirchFence,
   },
   {
     key: 'spruce',
@@ -57,6 +60,7 @@ export const BLOCK_FAMILIES: readonly BlockFamily[] = Object.freeze([
     flammable: true,
     slabId: BlockId.SpruceSlab,
     stairId: BlockId.SpruceStairs,
+    fenceId: BlockId.SpruceFence,
   },
   {
     key: 'stone',
@@ -111,12 +115,14 @@ export const BLOCK_FAMILIES: readonly BlockFamily[] = Object.freeze([
 
 const SLAB_BY_ID = new Map<BlockId, BlockFamily>();
 const STAIR_BY_ID = new Map<BlockId, BlockFamily>();
+const FENCE_BY_ID = new Map<BlockId, BlockFamily>();
 const FAMILY_BY_SOURCE = new Map<BlockId, BlockFamily>();
 
 for (const family of BLOCK_FAMILIES) {
   FAMILY_BY_SOURCE.set(family.sourceBlockId, family);
   if (family.slabId !== undefined) SLAB_BY_ID.set(family.slabId, family);
   if (family.stairId !== undefined) STAIR_BY_ID.set(family.stairId, family);
+  if (family.fenceId !== undefined) FENCE_BY_ID.set(family.fenceId, family);
 }
 
 export function familyForSlab(id: BlockId): BlockFamily | undefined {
@@ -141,6 +147,22 @@ export function isStairBlock(id: BlockId): boolean {
 
 export function isPressurePlateBlock(id: BlockId): boolean {
   return id === BlockId.OakPressurePlate || id === BlockId.StonePressurePlate;
+}
+
+export function isFenceBlock(id: BlockId): boolean {
+  return FENCE_BY_ID.has(id);
+}
+
+export function isRailBlock(id: BlockId): boolean {
+  return id === BlockId.Rail;
+}
+
+export function familyForFence(id: BlockId): BlockFamily | undefined {
+  return FENCE_BY_ID.get(id);
+}
+
+export function fenceFamilies(): readonly BlockFamily[] {
+  return BLOCK_FAMILIES.filter((family) => family.fenceId !== undefined);
 }
 
 /** Plank families that actually exist in the current registry. */

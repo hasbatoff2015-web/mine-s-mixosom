@@ -193,11 +193,14 @@ export function consumeCraftingGrid(
   if (grid.length !== match.consumption.length) {
     throw new RangeError('Crafting match belongs to a different grid');
   }
+  const remainders = match.recipe.remainders ?? {};
   return grid.map((cell, index) => {
     if (cell === null || cell === undefined) return null;
     const stack = typeof cell === 'string' ? createItemStack(cell) : cell;
     const remaining = stack.count - (match.consumption[index] ?? 0);
-    return remaining <= 0 ? null : { ...stack, count: remaining };
+    if (remaining > 0) return { ...stack, count: remaining };
+    const leftover = remainders[stack.itemId];
+    return leftover ? createItemStack(leftover, 1) : null;
   });
 }
 

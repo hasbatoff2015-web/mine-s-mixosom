@@ -92,6 +92,38 @@ const recipes: Recipe[] = [
     key: { G: exact(ItemId.Gunpowder), S: exact('sand') },
     output: { item: 'tnt', count: 1 }, gridSize: 3,
   },
+  {
+    id: 'fire_arrow', type: 'shapeless',
+    ingredients: [exact(ItemId.Arrow), exact(ItemId.LavaBucket)],
+    output: { item: ItemId.FireArrow, count: 1 },
+    remainders: { [ItemId.LavaBucket]: ItemId.Bucket },
+    gridSize: 2,
+  },
+  {
+    id: 'oak_fence', type: 'shaped', pattern: ['PSP', 'PSP'],
+    key: { P: exact('oak_planks'), S: exact(ItemId.Stick) },
+    output: { item: 'oak_fence', count: 3 }, gridSize: 3,
+  },
+  {
+    id: 'birch_fence', type: 'shaped', pattern: ['PSP', 'PSP'],
+    key: { P: exact('birch_planks'), S: exact(ItemId.Stick) },
+    output: { item: 'birch_fence', count: 3 }, gridSize: 3,
+  },
+  {
+    id: 'spruce_fence', type: 'shaped', pattern: ['PSP', 'PSP'],
+    key: { P: exact('spruce_planks'), S: exact(ItemId.Stick) },
+    output: { item: 'spruce_fence', count: 3 }, gridSize: 3,
+  },
+  {
+    id: 'rails', type: 'shaped', pattern: ['I I', 'ISI', 'I I'],
+    key: { I: exact(ItemId.IronIngot), S: exact(ItemId.Stick) },
+    output: { item: 'rail', count: 16 }, gridSize: 3,
+  },
+  {
+    id: 'minecart', type: 'shaped', pattern: ['I I', 'III'],
+    key: { I: exact(ItemId.IronIngot) },
+    output: { item: ItemId.Minecart, count: 1 }, gridSize: 3,
+  },
 ];
 
 const toolMaterials = [

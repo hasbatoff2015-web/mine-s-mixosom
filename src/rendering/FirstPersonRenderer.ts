@@ -26,6 +26,11 @@ import {
   REFERENCE_F2_IRON_PICKAXE,
 } from './heldItemLandmarks';
 import type { GeneratedItemMask } from './GeneratedItemGeometry';
+import { SharedFireTexture } from './fireTexture';
+import {
+  SharedPotionParticles,
+  type PotionParticleKind,
+} from './potionParticles';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -36,6 +41,10 @@ export interface FirstPersonFrameState {
   foodUseProgress: number;
   bowCharge: number;
   shieldRaised: boolean;
+  onFire?: boolean;
+  invisible?: boolean;
+  potionActive?: boolean;
+  potionKind?: PotionParticleKind;
 }
 
 const ARM_BASE_POSITION = Object.freeze([0.53, -0.48, -0.84] as const);
@@ -69,6 +78,9 @@ export class FirstPersonRenderer {
   private swingSeconds = 1;
   private equipProgress = 1;
   private bowTexturePath = 'item/bow';
+  private readonly fireOverlay: THREE.Object3D;
+  private readonly potionOverlay: THREE.Group;
+  private invisible = false;
   private disposed = false;
   private heldQaOverride?: HeldItemQaOverride;
   private loggedHeldQa = false;
@@ -97,6 +109,12 @@ export class FirstPersonRenderer {
     arm.position.y = -0.22;
     this.armPivot.add(arm);
     this.offhandHolder.visible = false;
+    this.fireOverlay = SharedFireTexture.instance().createFirstPersonOverlay();
+    this.fireOverlay.visible = false;
+    this.scene.add(this.fireOverlay);
+    this.potionOverlay = SharedPotionParticles.instance().createFirstPersonOverlay();
+    this.potionOverlay.visible = false;
+    this.scene.add(this.potionOverlay);
   }
 
   get heldItemId(): string | undefined {
@@ -125,7 +143,7 @@ export class FirstPersonRenderer {
       if (this.mainModel) this.itemHolder.add(this.mainModel);
       this.mainItem = mainItemId;
       this.mainCategory = mainItemId ? itemRenderProfile(mainItemId).category : undefined;
-      this.armPivot.visible = mainItemId === undefined;
+      this.syncArmVisibility();
       this.bowTexturePath = 'item/bow';
       this.equipProgress = 0;
     }
@@ -154,6 +172,14 @@ export class FirstPersonRenderer {
       this.walkPhase = 0;
     }
     this.root.visible = state.visible;
+    this.invisible = state.invisible === true;
+    this.syncArmVisibility();
+    this.fireOverlay.visible = state.visible && state.onFire === true;
+    const potionActive = state.potionActive === true;
+    this.potionOverlay.visible = state.visible && potionActive;
+    if (potionActive) {
+      SharedPotionParticles.instance().update(delta, state.potionKind ?? 'invisibility');
+    }
     if (!state.visible) return;
 
     const targetWalk = state.onGround ? THREE.MathUtils.clamp(state.movementSpeed / 4.3, 0, 1) : 0;
@@ -319,7 +345,17 @@ export class FirstPersonRenderer {
     this.armGeometry.dispose();
     this.armMaterial.dispose();
     this.armTexture.dispose();
+    this.fireOverlay.removeFromParent();
+    this.fireOverlay.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.geometry.dispose();
+    });
+    this.potionOverlay.removeFromParent();
+    SharedPotionParticles.instance().release(this.potionOverlay);
     this.disposed = true;
+  }
+
+  private syncArmVisibility(): void {
+    this.armPivot.visible = this.mainItem === undefined && !this.invisible;
   }
 
   private applyEatPose(model: THREE.Object3D, progress: number): void {

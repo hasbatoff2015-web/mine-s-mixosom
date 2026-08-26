@@ -1,6 +1,6 @@
 import { getItemDefinition } from './registry';
 import { getBlockDefinition } from '../blocks';
-import type { ItemDefinition } from './types';
+import { ItemId, type ItemDefinition } from './types';
 
 export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow' | 'shield';
 export type ItemRenderContext = 'firstPersonRightHand' | 'ground' | 'gui';
@@ -131,6 +131,7 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
       || shape === 'door'
       || shape === 'ladder'
       || shape === 'cross'
+      || shape === 'fire'
       || shape === 'wire'
     ) {
       return 'generated';
@@ -139,6 +140,8 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
   }
   if (item.kind === 'shield') return 'shield';
   if (item.id === 'stick' || item.tags?.includes('stick')) return 'handheld';
+  if (item.id === ItemId.FlintAndSteel) return 'handheld';
+  if (item.id === ItemId.FireArrow) return 'handheld';
   if (item.kind === 'tool' || (item.kind === 'weapon' && item.weapon === 'sword')) return 'handheld';
   if (item.kind === 'weapon' && item.weapon === 'bow') return 'bow';
   return 'generated';
@@ -159,6 +162,7 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'ladder':
     case 'door':
     case 'cross':
+    case 'fire':
     case 'wire':
       return 'generated';
     case 'button':
@@ -166,6 +170,8 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'stairs':
     case 'slab':
     case 'chest':
+    case 'fence':
+    case 'rail':
       return 'special_model';
     case 'cube':
       return 'block_cube';

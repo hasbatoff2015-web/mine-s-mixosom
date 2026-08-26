@@ -162,6 +162,7 @@ describe('lighting, physics and interaction polish', () => {
     meshed.vegetation.dispose();
     meshed.translucent.dispose();
     meshed.water.dispose();
+    meshed.fire.dispose();
   });
 
   it('keeps torch/door/ladder items on generated pose and button on the block pose', () => {

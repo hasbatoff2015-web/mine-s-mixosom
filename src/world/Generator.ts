@@ -1,7 +1,7 @@
-import { BlockId } from '../blocks';
+import { BlockId, getBlockDefinition } from '../blocks';
 import { CHUNK_SIZE, SEA_LEVEL, TERRAIN_HEADROOM, WORLD_HEIGHT } from '../core/constants';
 import { Chunk } from './Chunk';
-import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise3D } from './noise';
+import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise2D, valueNoise3D } from './noise';
 
 export type Biome = 'plains' | 'forest' | 'desert';
 
@@ -11,6 +11,8 @@ export interface OreRule {
   readonly maxY: number;
   readonly veins: number;
   readonly size: number;
+  /** Extra independent vein attempt with this probability. Diamond only. */
+  readonly extraVeinChance?: number;
 }
 
 /**
@@ -19,16 +21,59 @@ export interface OreRule {
  */
 export const CAVE_ROOF_DEPTH = 4;
 
+/** Solid Stone that always sits on top of Bedrock and cannot be carved or replaced by lava. */
+export const BEDROCK_COVER_DEPTH = 1;
+/** Inclusive Y of the world-wide Stone cap. Bedrock stays at Y 0–2. */
+export const STONE_CAP_TOP_Y = 3;
+
+export function stoneCapY(_bedrockTop: number): number {
+  return STONE_CAP_TOP_Y;
+}
+
+export function minCaveY(_bedrockTop: number): number {
+  return STONE_CAP_TOP_Y + 1;
+}
+
+/** Deepest Y a generated cave-lava pond surface may occupy. */
+export const LAVA_POND_MAX_SURFACE_Y = 12;
+
+/** Ordinary generated ponds are 1–3 source layers, never a tall lava wall. */
+export const LAVA_POND_MAX_DEPTH = 3;
+
+/** World-space lattice for pond attempts. Ponds may straddle chunk borders. */
+export const LAVA_POND_CELL = 16;
+
+/** Skip tiny fragments that would look like the old scatter. */
+const LAVA_POND_MIN_COLUMNS = 4;
+
+const HORIZONTAL_NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+];
+
+interface LavaPondPlan {
+  readonly cx: number;
+  readonly cz: number;
+  readonly radius: number;
+  readonly depth: number;
+}
+
+interface LavaPondColumn {
+  readonly x: number;
+  readonly z: number;
+  readonly depth: number;
+}
+
 /**
  * Absolute Y bands after the +15 stack shift. Relative shape matches the old
  * compact-world layout (diamond/redstone near bedrock, coal higher).
+ * Vein *attempts* are ~2× the previous pass; vein `size` is unchanged.
  */
 export const ORE_RULES: readonly OreRule[] = [
-  { block: BlockId.CoalOre, minY: 28, maxY: 61, veins: 12, size: 7 },
-  { block: BlockId.IronOre, minY: 8, maxY: 52, veins: 11, size: 6 },
-  { block: BlockId.GoldOre, minY: 4, maxY: 32, veins: 4, size: 5 },
-  { block: BlockId.RedstoneOre, minY: 3, maxY: 18, veins: 5, size: 5 },
-  { block: BlockId.DiamondOre, minY: 3, maxY: 16, veins: 2, size: 4 },
+  { block: BlockId.CoalOre, minY: 28, maxY: 61, veins: 24, size: 7 },
+  { block: BlockId.IronOre, minY: 8, maxY: 52, veins: 22, size: 6 },
+  { block: BlockId.GoldOre, minY: 4, maxY: 32, veins: 8, size: 5 },
+  { block: BlockId.RedstoneOre, minY: 3, maxY: 18, veins: 10, size: 5 },
+  { block: BlockId.DiamondOre, minY: 3, maxY: 16, veins: 1, size: 4, extraVeinChance: 1 / 3 },
 ];
 
 export interface ColumnInfo {
@@ -147,22 +192,25 @@ export class TerrainGenerator {
         }
         roof -= CAVE_ROOF_DEPTH;
         const floor = this.bedrockHeight(x, z);
+        const cap = stoneCapY(floor);
         for (let y = 0; y < WORLD_HEIGHT; y += 1) {
           let block = BlockId.Air;
           if (y <= floor) block = BlockId.Bedrock;
+          else if (y <= cap) block = BlockId.Stone;
           else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
           else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
           else if (y === height) block = desert ? BlockId.Sand : BlockId.GrassBlock;
           else if (y <= SEA_LEVEL) block = BlockId.Water;
 
-          if (block !== BlockId.Bedrock && y <= roof && this.isCave(x, y, z, height)) {
-            block = y < floor + 6 && random01(this.numericSeed + 8128, x, y, z) > 0.94 ? BlockId.Lava : BlockId.Air;
+          if (y > cap && y <= roof && this.isCave(x, y, z, height)) {
+            block = BlockId.Air;
           }
           chunk.set(localX, y, localZ, block);
         }
       }
     }
 
+    this.placeLavaLakes(chunk, heights, halo);
     this.generateOres(chunk);
     this.decorate(chunk);
     chunk.generated = true;
@@ -175,7 +223,7 @@ export class TerrainGenerator {
 
   isCave(x: number, y: number, z: number, surfaceY: number): boolean {
     const floor = this.bedrockHeight(x, z);
-    if (y <= floor || y >= surfaceY) return false;
+    if (y < minCaveY(floor) || y >= surfaceY) return false;
     const main = Math.abs(valueNoise3D(this.numericSeed + 191, x / 52, y / 22, z / 52));
     const slow = valueNoise3D(this.numericSeed + 419, x / 78, y / 26, z / 78);
     if (main < 0.10 + Math.max(0, slow) * 0.02) return true;
@@ -192,15 +240,254 @@ export class TerrainGenerator {
     return true;
   }
 
+  /** Lowest deep-cave stone floor in the lava band, or undefined if none. */
+  caveFloorStoneY(x: number, z: number): number | undefined {
+    const surface = this.columnAt(x, z).height;
+    const cap = stoneCapY(this.bedrockHeight(x, z));
+    const maxY = Math.min(LAVA_POND_MAX_SURFACE_Y, surface - 8);
+    if (maxY <= cap + 1) return undefined;
+    for (let y = cap + 2; y <= maxY; y += 1) {
+      if (!this.isCave(x, y, z, surface) || this.isCave(x, y - 1, z, surface)) continue;
+      const stoneY = y - 1;
+      if (stoneY <= cap) continue;
+      return stoneY;
+    }
+    return undefined;
+  }
+
+  private pondPlan(cellX: number, cellZ: number): LavaPondPlan | undefined {
+    if (random01(this.numericSeed + 8128, cellX, 3, cellZ) > 0.48) return undefined;
+    const jitterX = random01(this.numericSeed + 8129, cellX, 4, cellZ);
+    const jitterZ = random01(this.numericSeed + 8130, cellX, 5, cellZ);
+    const sizeRoll = random01(this.numericSeed + 8131, cellX, 6, cellZ);
+    const depthRoll = random01(this.numericSeed + 8132, cellX, 7, cellZ);
+    const radius = sizeRoll < 0.62
+      ? 1.7 + (sizeRoll / 0.62) * 0.9
+      : sizeRoll < 0.9
+        ? 2.6 + ((sizeRoll - 0.62) / 0.28) * 1.4
+        : 4.0 + ((sizeRoll - 0.9) / 0.1) * 2.0;
+    return {
+      cx: cellX * LAVA_POND_CELL + 2 + Math.floor(jitterX * (LAVA_POND_CELL - 4)),
+      cz: cellZ * LAVA_POND_CELL + 2 + Math.floor(jitterZ * (LAVA_POND_CELL - 4)),
+      radius,
+      depth: 1 + Math.floor(depthRoll * LAVA_POND_MAX_DEPTH),
+    };
+  }
+
+  private inPondFootprint(x: number, z: number, pond: LavaPondPlan): boolean {
+    const dx = x - pond.cx;
+    const dz = z - pond.cz;
+    const warp = valueNoise2D(this.numericSeed + 9041, x / 5.5, z / 5.5);
+    const radius = pond.radius * (0.84 + warp * 0.28);
+    return dx * dx + dz * dz <= radius * radius;
+  }
+
+  private placeLavaLakes(chunk: Chunk, heights: Int16Array, halo: number): void {
+    void heights;
+    void halo;
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
+    const minCellX = Math.floor(worldX / LAVA_POND_CELL) - 1;
+    const maxCellX = Math.floor((worldX + CHUNK_SIZE - 1) / LAVA_POND_CELL) + 1;
+    const minCellZ = Math.floor(worldZ / LAVA_POND_CELL) - 1;
+    const maxCellZ = Math.floor((worldZ + CHUNK_SIZE - 1) / LAVA_POND_CELL) + 1;
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        const pond = this.pondPlan(cellX, cellZ);
+        if (!pond) continue;
+        const reach = Math.ceil(pond.radius + 2);
+        if (pond.cx + reach < worldX || pond.cx - reach >= worldX + CHUNK_SIZE) continue;
+        if (pond.cz + reach < worldZ || pond.cz - reach >= worldZ + CHUNK_SIZE) continue;
+        const centerFloor = this.caveFloorStoneY(pond.cx, pond.cz);
+        if (centerFloor === undefined) continue;
+        const enclosed = this.enclosedPondColumns(pond, centerFloor);
+        if (!enclosed) continue;
+        this.fillPondInChunk(chunk, enclosed, centerFloor);
+      }
+    }
+  }
+
+  /**
+   * Deterministic solid query in world coordinates. Does not treat an
+   * ungenerated neighbor chunk as a wall — cave air on the other side of a
+   * chunk border is still Air.
+   */
+  terrainSolid(x: number, y: number, z: number): boolean {
+    if (y < 0 || y >= WORLD_HEIGHT) return false;
+    const surface = this.columnAt(x, z).height;
+    const floor = this.bedrockHeight(x, z);
+    if (y <= floor) return true;
+    if (y <= stoneCapY(floor)) return true;
+    if (y > surface) return false;
+    return !this.isCave(x, y, z, surface);
+  }
+
+  /**
+   * Flat cave-floor columns inside the irregular ellipse. Columns on a drop
+   * (different `caveFloorStoneY`) are excluded instead of being filled.
+   */
+  private collectFlatPondColumns(pond: LavaPondPlan, centerFloor: number): LavaPondColumn[] {
+    const reach = Math.ceil(pond.radius + 2);
+    const columns: LavaPondColumn[] = [];
+    for (let wz = pond.cz - reach; wz <= pond.cz + reach; wz += 1) {
+      for (let wx = pond.cx - reach; wx <= pond.cx + reach; wx += 1) {
+        if (!this.inPondFootprint(wx, wz, pond)) continue;
+        if (this.caveFloorStoneY(wx, wz) !== centerFloor) continue;
+        const cap = stoneCapY(this.bedrockHeight(wx, wz));
+        const depth = Math.min(pond.depth, centerFloor - (cap + 1), LAVA_POND_MAX_DEPTH);
+        if (depth < 1) continue;
+        const bottom = centerFloor - depth;
+        if (!this.terrainSolid(wx, centerFloor, wz)) continue;
+        if (!this.terrainSolid(wx, bottom - 1, wz)) continue;
+        columns.push({ x: wx, z: wz, depth });
+      }
+    }
+    return columns;
+  }
+
+  private pondColumnLeaks(
+    column: LavaPondColumn,
+    centerFloor: number,
+    depths: ReadonlyMap<string, number>,
+  ): boolean {
+    const lavaTop = centerFloor - 1;
+    const lavaBottom = centerFloor - column.depth;
+    if (!this.terrainSolid(column.x, lavaBottom - 1, column.z)) return true;
+    for (let y = lavaBottom; y <= lavaTop; y += 1) {
+      for (const [dx, dz] of HORIZONTAL_NEIGHBORS) {
+        const nx = column.x + dx;
+        const nz = column.z + dz;
+        const neighborDepth = depths.get(`${nx},${nz}`);
+        if (neighborDepth !== undefined) {
+          const neighborBottom = centerFloor - neighborDepth;
+          if (y >= neighborBottom && y <= lavaTop) continue;
+        }
+        if (!this.terrainSolid(nx, y, nz)) return true;
+      }
+    }
+    for (const [dx, dz] of HORIZONTAL_NEIGHBORS) {
+      const nx = column.x + dx;
+      const nz = column.z + dz;
+      if (depths.has(`${nx},${nz}`)) continue;
+      if (!this.terrainSolid(nx, centerFloor, nz)) return true;
+    }
+    return false;
+  }
+
+  private largestPondComponent(columns: readonly LavaPondColumn[]): LavaPondColumn[] {
+    if (columns.length === 0) return [];
+    const byKey = new Map<string, LavaPondColumn>(
+      columns.map((column) => [`${column.x},${column.z}`, column]),
+    );
+    const seen = new Set<string>();
+    let best: LavaPondColumn[] = [];
+    for (const start of columns) {
+      const startKey = `${start.x},${start.z}`;
+      if (seen.has(startKey)) continue;
+      const stack = [start];
+      const component: LavaPondColumn[] = [];
+      seen.add(startKey);
+      while (stack.length > 0) {
+        const cur = stack.pop()!;
+        component.push(cur);
+        for (const [dx, dz] of HORIZONTAL_NEIGHBORS) {
+          const key = `${cur.x + dx},${cur.z + dz}`;
+          if (seen.has(key) || !byKey.has(key)) continue;
+          seen.add(key);
+          stack.push(byKey.get(key)!);
+        }
+      }
+      if (component.length > best.length) best = component;
+    }
+    return best;
+  }
+
+  /**
+   * Shrink leaking perimeter cells until the remaining footprint is a closed
+   * Stone basin, or reject the candidate. Never builds an artificial box.
+   */
+  private enclosedPondColumns(pond: LavaPondPlan, centerFloor: number): LavaPondColumn[] | undefined {
+    let remaining = this.collectFlatPondColumns(pond, centerFloor);
+    if (remaining.length < LAVA_POND_MIN_COLUMNS) return undefined;
+    for (let iter = 0; iter < 24; iter += 1) {
+      const depths = new Map<string, number>(
+        remaining.map((column) => [`${column.x},${column.z}`, column.depth]),
+      );
+      const kept = remaining.filter((column) => !this.pondColumnLeaks(column, centerFloor, depths));
+      if (kept.length === remaining.length) {
+        const connected = this.largestPondComponent(kept);
+        return connected.length >= LAVA_POND_MIN_COLUMNS ? connected : undefined;
+      }
+      remaining = kept;
+      if (remaining.length < LAVA_POND_MIN_COLUMNS) return undefined;
+    }
+    return undefined;
+  }
+
+  private fillPondInChunk(chunk: Chunk, columns: readonly LavaPondColumn[], centerFloor: number): void {
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
+    const capY = STONE_CAP_TOP_Y;
+    for (const column of columns) {
+      const lx = column.x - worldX;
+      const lz = column.z - worldZ;
+      if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
+      const above = chunk.get(lx, centerFloor + 1, lz);
+      const floor = chunk.get(lx, centerFloor, lz);
+      if (above !== BlockId.Air && above !== BlockId.Lava) continue;
+      if (!this.carvableBasinBlock(floor)) continue;
+      const stack: number[] = [];
+      for (let d = 1; d <= column.depth; d += 1) {
+        const y = centerFloor - d;
+        if (y <= capY) break;
+        const here = chunk.get(lx, y, lz);
+        if (!this.carvableBasinBlock(here)) break;
+        stack.push(y);
+      }
+      if (stack.length === 0) continue;
+      const bottom = stack[stack.length - 1]!;
+      const support = chunk.get(lx, bottom - 1, lz);
+      if (!this.solidSupportBlock(support)) continue;
+      let otherLava = false;
+      for (let y = 1; y <= LAVA_POND_MAX_SURFACE_Y + 1; y += 1) {
+        if (y === centerFloor || stack.includes(y)) continue;
+        if (chunk.get(lx, y, lz) === BlockId.Lava) otherLava = true;
+      }
+      if (otherLava) continue;
+      chunk.set(lx, centerFloor, lz, BlockId.Air);
+      for (const y of stack) chunk.set(lx, y, lz, BlockId.Lava);
+    }
+  }
+
+  private carvableBasinBlock(block: BlockId): boolean {
+    if (block === BlockId.Lava) return true;
+    if (block === BlockId.Air || block === BlockId.Water || block === BlockId.Bedrock) return false;
+    const definition = getBlockDefinition(block);
+    return definition.solid === true && definition.liquid !== true;
+  }
+
+  private solidSupportBlock(block: BlockId): boolean {
+    if (block === BlockId.Air || block === BlockId.Water || block === BlockId.Lava) return false;
+    return getBlockDefinition(block).solid === true && getBlockDefinition(block).liquid !== true;
+  }
+
   private generateOres(chunk: Chunk): void {
     const rng = mulberry32(hashCoords(this.numericSeed + 991, chunk.x, 0, chunk.z));
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
     for (const ore of ORE_RULES) {
-      for (let vein = 0; vein < ore.veins; vein += 1) {
+      let veins = ore.veins;
+      if ((ore.extraVeinChance ?? 0) > 0 && rng() < (ore.extraVeinChance ?? 0)) veins += 1;
+      for (let vein = 0; vein < veins; vein += 1) {
         let x = Math.floor(rng() * CHUNK_SIZE);
         let y = ore.minY + Math.floor(rng() * (ore.maxY - ore.minY + 1));
         let z = Math.floor(rng() * CHUNK_SIZE);
         for (let step = 0; step < ore.size; step += 1) {
-          if (chunk.get(x, y, z) === BlockId.Stone) chunk.set(x, y, z, ore.block);
+          const wx = worldX + x;
+          const wz = worldZ + z;
+          if (y > stoneCapY(this.bedrockHeight(wx, wz)) && chunk.get(x, y, z) === BlockId.Stone) {
+            chunk.set(x, y, z, ore.block);
+          }
           x = Math.max(0, Math.min(CHUNK_SIZE - 1, x + Math.floor(rng() * 3) - 1));
           y = Math.max(ore.minY, Math.min(ore.maxY, y + Math.floor(rng() * 3) - 1));
           z = Math.max(0, Math.min(CHUNK_SIZE - 1, z + Math.floor(rng() * 3) - 1));

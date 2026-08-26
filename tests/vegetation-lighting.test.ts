@@ -37,6 +37,7 @@ function disposeMeshed(meshed: ReturnType<ChunkMesher['build']>): void {
   meshed.vegetation.dispose();
   meshed.translucent.dispose();
   meshed.water.dispose();
+  meshed.fire.dispose();
 }
 
 function plantColor(geometry: THREE.BufferGeometry, x: number, z: number): [number, number, number] {

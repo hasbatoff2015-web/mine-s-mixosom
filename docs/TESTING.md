@@ -31,6 +31,7 @@ npm run benchmark:performance
 npx vite-node scripts/benchmark-perf-pass.ts
 npm run benchmark:lighting
 npm run benchmark:streaming
+npm run benchmark:fluids
 ```
 
 Полный локальный pipeline:
@@ -61,7 +62,7 @@ npm run check:size / npm run check:archive             PASS (3.36 MiB, 168 files
 HTTP / and /ui/frontier-menu-background.png            200 / 200
 ```
 
-`tests/menu-model.test.ts` фиксирует названия offline server mock, `0 / 300`, фактические Shift/C desktop bindings, отсутствие несуществующего chat binding `T` и форматирование menu values.
+`tests/menu-model.test.ts` фиксирует названия offline server mock, `0 / 300`, фактические Shift/C desktop bindings, чат `T` / команду `/` и форматирование menu values.
 
 Ручной browser checklist для этого pass:
 
@@ -78,14 +79,13 @@ HTTP / and /ui/frontier-menu-background.png            200 / 200
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-23** (lighting halo / flood-head scheduler):
+Срез локального запуска **2026-08-26** (Codex UI merge + PR #6):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       44 test files, 368 tests, 368 passed
-Vite build:   100 modules PASS
-Size/archive: PASS, 1.08 MiB uncompressed, 167 files
-Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
+Vitest:       61 test files, 551 tests, 551 passed
+production:   123 modules, 3.44 MiB / 187 files
+Main JS: 958.18 kB / 267.25 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -98,11 +98,11 @@ Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
 | `tests/world-generation.test.ts` | 4 | Negative chunk coordinates, seed determinism, five ore vertical bands/rarity и deterministic biome vegetation across real chunks |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
-| `tests/redstone.test.ts` | 8 | Power `0–15`, timed sources/TNT, all 24 lever attachment/facing/power geometry combinations, v2 orientation round-trip, v1 fallback и bounded propagation |
+| `tests/redstone.test.ts` | 8 | Power `0–15`, timed sources/TNT, primed TNT keeps `block/tnt` map through fuse tint, all 24 lever attachment/facing/power geometry combinations, v2 orientation round-trip, v1 fallback и bounded propagation |
 | `tests/visual-models.test.ts` | 10 | Atlas layout, descriptors/sheets, logical UVs, model-space conversion, corrected sheep layers, zombie classic biped UVs, targeted skeleton double-side/zombie front-side materials, spider constants and articulated rigs |
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
-| `tests/item-rendering.test.ts` | 26 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera |
+| `tests/item-rendering.test.ts` | 27 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera, invisibility hides FP arm |
 | `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
 | `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
@@ -126,12 +126,28 @@ Main assets:  JS 868.74 kB / 240.05 kB gzip; CSS 25.94 kB / 6.03 kB gzip
 | `tests/fixed-step.test.ts` | 3 | ~20 ticks / 60 Hz second, 300 ms stall capped at `MAX_CATCH_UP_TICKS`, leftover accumulator |
 | `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
 | `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
-| `tests/lighting-jobs.test.ts` | 5 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm |
+| `tests/lighting-jobs.test.ts` | 6 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm, lava emitter light stable after settle without remesh churn |
+| `tests/fluids.test.ts` | 9 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap, FLUID HUD counters |
+| `tests/fluid-streaming.test.ts` | 18 | Level-only skip relight, no water region flood, no-op, queue dedupe, remesh coalesce, equilibrium soak, distant pause/resume, generated lava **boundary-only** enqueue, mix, water/lava/both fly streaming, mesh cost |
 | `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
 | `tests/perf-profiler.test.ts` | 4 | `?perf=1` parsing, `chunks=1` overlay flag, spike classification, last-spike timestamp/age, adaptive job budget shrinks when frame is already expensive |
 | `tests/chunk-streaming-inspector.test.ts` | 26 | DEV streaming inspector: state→color, blockers, read-only queue rank, obsolete/wanted counts (halo light ≠ obsolete mesh), durations, F9 freeze, slow-chunk threshold, READY MESH STARVATION uses readyWanted not litAt, LAST SPIKE age, ready vs blocked head, front-target selection, player-visible vs prefetch latency, wanted enter/leave/re-enter, rolling stats exclude never-wanted halo |
 | `tests/lighting-scheduler.test.ts` | 19 | Lighting flood skip past blocked head; 70 blocked + 1 ready; resume near flood owner; mesh-context DAG (no lighting A↔B cycle); A→B→C leaf lighting; near-unlock priority; distant flood preempt; obsolete unlit skip; orphaned/obsolete flood after prune or leave radius; radius-6 wanted set; 2 ms slice; torch border; flat sky seam; rapid break; CPU fly near-hole bound |
+| `tests/fluid-surface.test.ts` | 7 | Corner heights, flat source pool culls internals, flowing slopes, shared edges, fluid-above no top, chunk-border seams, lava geometry, falling column |
+| `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects (invis 3 min, regen potion 1 min), cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
+| `tests/potion-effects-hud.test.ts` | 5 | Potion durations, `M:SS` countdown, HUD chip stack/hide, swirl UV row, FP particle overlay bounds/opacity |
+| `tests/armor-hud.test.ts` | 7 | Vanilla leather/gold/iron/diamond piece+set totals, mixed equipment, HUD full/half/empty mapping, clamp 0–20, Fire/Lava still mitigated via the same `getArmorPoints` |
+| `tests/heart-hud.test.ts` | 3 | 20 HP = 10 hearts, half-heart odd HP, shared armor/heart layout constants |
+| `tests/menu-model.test.ts` | 3 | Offline server mock names/`0 / 300`, desktop bindings including chat `T` / `/`, play-time and setting formatters |
+| `tests/mob-hurt-flash.test.ts` | 8 | Successful mob damage starts per-entity red tint; miss/zero/fire DOT do not; decay + restart; same-type isolation (geometry/texture shared, material/uniform not); three spiders; zombie+spider; owned-material dispose; fire overlay survives |
+| `tests/fire-arrow-and-fire.test.ts` | 5 | Fire arrow only primes TNT / ignites living (no world fire), periodic burn + water extinguish, 6-plane fire mesh, animated fire strip, flint/fire-arrow icons and handheld models |
+| `tests/fire-contact-sunlight-minecart.test.ts` | 39 | Fire AABB contact vs leave, Fire vs Lava cadence, armor reduces Fire/Lava (no bypass), independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert/fuse/explode, Flint entity-first prime (no Fire), Fire Arrow vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
+| `tests/hostile-spawn-balance.test.ts` | 8 | Surface night hostiles ≈ ×0.5, passive day rate independent of the night factor, cave hostiles in dark air not lava/water, min distance / floor / headroom, max 1 new cave hostile per chunk/event, density, respawn after death, global cap |
+| `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |
+| `tests/chat-commands.test.ts` | 9 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
+| `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
+| `tests/lava-bedrock-ore-pass.test.ts` | 10 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/enclosed waterline=0, Coal/Iron/Gold/Redstone ×2, Diamond ≈0.33× current, chunk-border determinism + generator-space neighbor walls, boundary-only enqueue + shore-break + cross-chunk 15/16, idle enclosed pond, ore Y/vein size |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 
@@ -403,21 +419,39 @@ Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run ben
 - surface in `58–84`, sea `63`, generated peaks leave `TERRAIN_HEADROOM = 12`;
 - mountain contribution `+10…+20` на части мира, не на каждом chunk;
 - neighbor height delta ≤ 4, в том числе на biome borders и chunk borders;
-- bedrock `Y 0–2` sealed, caves never carve it; extra ~15 underground vs old surface~49;
+- bedrock `Y 0–2` sealed with Stone cap `Y=3`; caves never carve cap; extra ~15 underground vs old surface~49;
 - cave networks cross `x=15|16`; connected-component size/width vs swiss-cheese ratio;
 - **no 1×1 / 1–2 surface cave pinholes** on plains/forest/desert/mountains; ordinary caves keep `CAVE_ROOF_DEPTH = 4` under the 3×3 local min surface;
 - Forest oak ≈ 35–50% old count; Desert cactus ≈ 20–30% old count;
-- ores only inside shifted `ORE_RULES` bands, including new deep stone;
+- ores only inside shifted `ORE_RULES` bands, including new deep stone; Coal/Iron/Gold/Redstone vein **attempts ×2**; Diamond **≈ current/3** (`veins: 1` + `extraVeinChance: 1/3`); vein `size` unchanged;
+- small irregular **enclosed** cave lava ponds (depth ≤ 3, bounded footprint, Stone shore above waterline, no open cave-edge escape, generator-space chunk-border validation, ordinary pond queue 0);
 - spawn on plains grass above sea, not mountain/cave/desert;
 - old modification linear indices still restore after `WORLD_HEIGHT` 80→96.
 
-DEV: `?worldgenDebug=1` appends `y=` / `mtn=` / `hills=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
+DEV: `?worldgenDebug=1` appends `surfaceY=` / `mtn=` / `hills=` / `cave=` / `cap=` / `blk=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
 
 ```bash
 npm run benchmark:worldgen
 ```
 
 CPU-only (no GPU FPS). Compare plains/forest/desert chunk ms and 81-chunk batch with the numbers in `docs/reports/2026-08-23_worldgen-mountains-caves-density.md`.
+
+Fluids (`tests/fluids.test.ts`, `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`, `npm run benchmark:fluids`):
+
+- water falls before spreading and reaches 7 horizontal cells from a source;
+- lava falls and stops short of water's reach;
+- removing a source dries flowing water;
+- water + lava source → obsidian; water + flowing lava → cobblestone;
+- flow continues across a loaded chunk border;
+- queue stays ≤ 2048 and per-tick updates ≤ 48;
+- render uses four corner heights, culls same-fluid internals, and keeps chunk-border corners identical;
+- settled water/lava extra ticks write 0; distant fluids pause and resume;
+- water/lava level-only changes skip relight; water flood does not queue a lighting region;
+- water/lava/both then Creative-fly streaming stays inside the same 8 s near-hole bound as the no-fluid scheduler test (`WORLD_LIGHT_BUDGET_MS = 2`).
+
+```bash
+npm run benchmark:fluids
+```
 
 ## Combat/entity regression scenarios
 

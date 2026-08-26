@@ -12,12 +12,13 @@ describe('menu model', () => {
     expect(MENU_SERVER_ENTRIES.every((server) => server.online === '0 / 300')).toBe(true);
   });
 
-  it('documents the real origin/main desktop bindings without chat', () => {
+  it('documents the real desktop bindings including chat', () => {
     const bindings = DESKTOP_CONTROL_SECTIONS.flatMap((section) => section.bindings);
     expect(bindings).toContainEqual({ action: 'Бег', key: 'Shift' });
     expect(bindings).toContainEqual({ action: 'Присесть', key: 'C' });
+    expect(bindings).toContainEqual({ action: 'Чат', key: 'T' });
+    expect(bindings).toContainEqual({ action: 'Команда', key: '/' });
     expect(bindings.some((binding) => binding.action === 'Ускорить полёт')).toBe(false);
-    expect(bindings.some((binding) => binding.key === 'T')).toBe(false);
   });
 
   it('formats play time and setting values for the menu', () => {

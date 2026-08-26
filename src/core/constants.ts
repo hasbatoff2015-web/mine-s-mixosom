@@ -10,6 +10,8 @@ export const WORLD_LOADING_JOB_BUDGET_MS = 10;
 export const WORLD_LIGHT_BUDGET_MS = 2;
 /** Loading screen can spend more; the overlay still animates between slices. */
 export const WORLD_LOADING_LIGHT_BUDGET_MS = 8;
+/** Bounded fluid simulation slice. Must stay well below the mesh/light budgets. */
+export const FLUID_JOB_BUDGET_MS = 1.5;
 /** Extra generated+lit ring so visible chunks mesh with neighbor light context. */
 export const LIGHTING_HALO_CHUNKS = 1;
 /** Visual interpolation snap: teleport/spawn/corrections larger than this skip lerp. */

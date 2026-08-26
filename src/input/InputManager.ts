@@ -4,7 +4,7 @@ import {
   classifyPointerUnlock,
   isCoarsePointerMedia,
   shouldExitPointerLock,
-  shouldIgnoreEscapeKeydown,
+  shouldTogglePauseOnEscapeKeydown,
   type PointerUnlockReason,
 } from './pointerLock';
 
@@ -22,6 +22,7 @@ export interface InputCallbacks {
   canCapture(): boolean;
   toggleInventory(): void;
   togglePause(): void;
+  openChat(prefix?: string): void;
   dropItem(): void;
   selectHotbar(index: number): void;
   onPointerLockAcquired(): void;
@@ -161,11 +162,16 @@ export class InputManager {
         return;
       }
       if (event.code === 'Escape' && !event.repeat) {
-        if (shouldIgnoreEscapeKeydown(this.isPointerLocked()) || this.swallowEscapeKeyup) return;
+        if (!shouldTogglePauseOnEscapeKeydown(typing, this.isPointerLocked(), this.swallowEscapeKeyup)) return;
         this.callbacks.togglePause();
         return;
       }
       if (typing) return;
+      if ((event.code === 'KeyT' || event.key === '/') && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        this.callbacks.openChat(event.key === '/' ? '/' : '');
+        return;
+      }
       if (event.code === 'KeyQ' && !event.repeat) {
         this.callbacks.dropItem();
         return;

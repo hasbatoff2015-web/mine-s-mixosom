@@ -39,6 +39,10 @@ import {
   takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
+import { stepTypedHistoryIndex } from '../chat';
+import type { PotionHudEntry } from './effectHud';
+import { armorHudIcons, type ArmorHudIcon } from './armorHud';
+import { heartHudIcons, type HeartHudIcon } from './heartHud';
 import {
   DESKTOP_CONTROL_SECTIONS,
   formatPlayTime,
@@ -77,6 +81,8 @@ export interface HudState {
   hunger: number;
   miningProgress: number;
   attackStrength: number;
+  armor?: number;
+  effects?: readonly PotionHudEntry[];
   debug?: string;
 }
 
@@ -102,10 +108,18 @@ export class GameUI {
   private selectedItem: HTMLElement;
   private hearts: HTMLElement;
   private hunger: HTMLElement;
+  private armor: HTMLElement;
   private mining: HTMLElement;
   private attack: HTMLElement;
   private debug: HTMLElement;
+  private effectHud: HTMLElement;
   private toasts: HTMLElement;
+  private hurtFlash: HTMLElement;
+  private hurtFlashAlpha = -1;
+  private chat: HTMLElement;
+  private chatLogEl: HTMLElement;
+  private chatForm: HTMLFormElement;
+  private chatInput: HTMLInputElement;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private cursorStack: ItemStack | null = null;
@@ -119,15 +133,20 @@ export class GameUI {
   private recipeVariantIndex = 0;
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
+  private chatOpen = false;
+  private chatHistoryIndex = -1;
+  private chatDraft = '';
   private hotbarHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
   private hungerHtml = '';
+  private armorHtml = '';
   private miningWidth = '';
   private miningVisible = false;
   private attackTransform = '';
   private debugText = '';
   private debugVisible = false;
+  private effectsHtml = '';
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
   private itemIconResolver?: (itemId: string) => string;
   private onScreenEscape?: () => void;
@@ -135,12 +154,26 @@ export class GameUI {
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
+        <div id="hurt-flash" aria-hidden="true"></div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="attack-indicator"><span></span></div>
-        <div id="status-bars"><div class="hearts"></div><div class="hunger"></div></div>
+        <div id="status-bars">
+          <div class="status-left">
+            <div class="armor hidden"></div>
+            <div class="hearts"></div>
+          </div>
+          <div class="hunger"></div>
+        </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="effect-hud" class="hidden"></div>
+        <div id="chat">
+          <div id="chat-log" aria-live="polite"></div>
+          <form id="chat-form" autocomplete="off">
+            <input id="chat-input" type="text" maxlength="256" spellcheck="false" autocomplete="off" aria-label="Chat" />
+          </form>
+        </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>
@@ -152,16 +185,45 @@ export class GameUI {
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.hunger = this.root.querySelector('.hunger')!;
+    this.armor = this.root.querySelector('.armor')!;
     this.mining = this.root.querySelector('#mining-progress')!;
     this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
+    this.effectHud = this.root.querySelector('#effect-hud')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
+    this.hurtFlash = this.root.querySelector('#hurt-flash')!;
+    this.chat = this.root.querySelector('#chat')!;
+    this.chatLogEl = this.root.querySelector('#chat-log')!;
+    this.chatForm = this.root.querySelector('#chat-form')!;
+    this.chatInput = this.root.querySelector('#chat-input')!;
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
         cursor.style.left = `${event.clientX}px`;
         cursor.style.top = `${event.clientY}px`;
+      }
+    });
+    this.chatForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = this.chatInput.value;
+      this.onChatSubmit?.(value);
+    });
+    this.chatInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.onChatCancel?.();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        this.stepChatHistory(-1);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        this.stepChatHistory(1);
       }
     });
     window.addEventListener('keydown', (event) => {
@@ -454,7 +516,7 @@ export class GameUI {
       this.selectedItemText = selectedItemText;
       this.selectedItem.textContent = selectedItemText;
     }
-    const heartsHtml = this.pips('♥', Math.ceil(state.health / 2), 10);
+    const heartsHtml = heartHudIcons(state.health).icons.map((icon) => this.heartIconHtml(icon)).join('');
     if (heartsHtml !== this.heartsHtml) {
       this.heartsHtml = heartsHtml;
       this.hearts.innerHTML = heartsHtml;
@@ -463,6 +525,15 @@ export class GameUI {
     if (hungerHtml !== this.hungerHtml) {
       this.hungerHtml = hungerHtml;
       this.hunger.innerHTML = hungerHtml;
+    }
+    const armorHud = armorHudIcons(state.armor ?? 0);
+    const armorHtml = armorHud.visible
+      ? armorHud.icons.map((icon) => this.armorIconHtml(icon)).join('')
+      : '';
+    if (armorHtml !== this.armorHtml) {
+      this.armorHtml = armorHtml;
+      this.armor.innerHTML = armorHtml;
+      this.armor.classList.toggle('hidden', !armorHud.visible);
     }
     const miningVisible = state.miningProgress > 0;
     if (miningVisible !== this.miningVisible) {
@@ -490,9 +561,25 @@ export class GameUI {
       this.debugVisible = debugVisible;
       this.debug.classList.toggle('hidden', !debugVisible);
     }
+    const effects = state.effects ?? [];
+    const effectsHtml = effects.map((effect) => this.effectChipHtml(effect)).join('');
+    if (effectsHtml !== this.effectsHtml) {
+      this.effectsHtml = effectsHtml;
+      this.effectHud.innerHTML = effectsHtml;
+      this.effectHud.classList.toggle('hidden', effects.length === 0);
+    }
   }
 
   onHotbarSelect?: (index: number) => void;
+  onChatSubmit?: (line: string) => void;
+  onChatCancel?: () => void;
+
+  setHurtFlash(alpha: number): void {
+    const next = Math.max(0, Math.min(1, alpha));
+    if (Math.abs(next - this.hurtFlashAlpha) < 0.004) return;
+    this.hurtFlashAlpha = next;
+    this.hurtFlash.style.opacity = next <= 0.01 ? '0' : next.toFixed(3);
+  }
 
   toast(message: string, timeout = 1900): void {
     const toast = document.createElement('div');
@@ -500,6 +587,96 @@ export class GameUI {
     toast.textContent = message;
     this.toasts.append(toast);
     window.setTimeout(() => toast.remove(), timeout);
+  }
+
+  appendChat(kind: string, text: string, createdAtMs: number): void {
+    const line = document.createElement('div');
+    line.className = `chat-line kind-${kind}`;
+    line.dataset.at = String(createdAtMs);
+    line.textContent = text;
+    this.chatLogEl.append(line);
+    while (this.chatLogEl.childElementCount > 100) this.chatLogEl.firstElementChild?.remove();
+    this.chatLogEl.scrollTop = this.chatLogEl.scrollHeight;
+  }
+
+  clearChat(): void {
+    this.chatLogEl.replaceChildren();
+    this.closeChat();
+  }
+
+  openChat(prefix = ''): void {
+    this.chatOpen = true;
+    this.chatHistoryIndex = -1;
+    this.chatDraft = '';
+    this.chat.classList.add('open');
+    this.chatInput.value = prefix;
+    this.setControlsSuppressed(true);
+    window.setTimeout(() => {
+      this.chatInput.focus();
+      const caret = this.chatInput.value.length;
+      this.chatInput.setSelectionRange(caret, caret);
+    }, 0);
+  }
+
+  closeChat(): void {
+    if (!this.chatOpen) {
+      this.chat.classList.remove('open');
+      return;
+    }
+    this.chatOpen = false;
+    this.chat.classList.remove('open');
+    this.chatInput.blur();
+    this.chatInput.value = '';
+    this.chatHistoryIndex = -1;
+    this.chatDraft = '';
+    if (!this.inventoryContext) this.setControlsSuppressed(false);
+  }
+
+  isChatOpen(): boolean {
+    return this.chatOpen;
+  }
+
+  isBlockingOverlay(): boolean {
+    return this.modal !== undefined || this.chatOpen;
+  }
+
+  setChatInputHistory(history: readonly string[]): void {
+    this.chatHistorySource = history;
+  }
+
+  fadeChatLines(nowMs: number, opacityOf: (ageMs: number) => number): void {
+    if (this.chatOpen) {
+      for (const node of this.chatLogEl.children) {
+        const line = node as HTMLElement;
+        line.style.opacity = '1';
+        line.style.display = '';
+      }
+      return;
+    }
+    for (const node of this.chatLogEl.children) {
+      const line = node as HTMLElement;
+      const opacity = opacityOf(nowMs - Number(line.dataset.at ?? nowMs));
+      line.style.opacity = String(opacity);
+      line.style.display = opacity <= 0.02 ? 'none' : '';
+    }
+  }
+
+  private chatHistorySource: readonly string[] = [];
+
+  private stepChatHistory(direction: -1 | 1): void {
+    const history = this.chatHistorySource;
+    const step = stepTypedHistoryIndex(this.chatHistoryIndex, direction, history.length);
+    if (step.kind === 'unchanged') return;
+    if (this.chatHistoryIndex < 0) this.chatDraft = this.chatInput.value;
+    if (step.kind === 'draft') {
+      this.chatHistoryIndex = -1;
+      this.chatInput.value = this.chatDraft;
+      return;
+    }
+    this.chatHistoryIndex = step.index;
+    this.chatInput.value = history[step.index] ?? '';
+    const caret = this.chatInput.value.length;
+    this.chatInput.setSelectionRange(caret, caret);
   }
 
   openInventory(context: InventoryContext): void {
@@ -1063,6 +1240,18 @@ export class GameUI {
 
   private itemIcon(itemId: string): string {
     return this.itemIconResolver?.(itemId) ?? TextureAtlas.url(getItemDefinition(itemId).texture);
+  }
+
+  private effectChipHtml(effect: PotionHudEntry): string {
+    return `<div class="effect-chip" data-effect="${this.escape(effect.id)}"><img src="${this.itemIcon(effect.itemId)}" alt="" /><div class="effect-chip-text"><span class="effect-chip-name">${this.escape(effect.name)}</span><span class="effect-chip-timer">${this.escape(effect.timer)}</span></div></div>`;
+  }
+
+  private armorIconHtml(icon: ArmorHudIcon): string {
+    return `<img class="armor-icon" src="${TextureAtlas.url(`gui/armor_${icon}`)}" alt="" draggable="false" />`;
+  }
+
+  private heartIconHtml(icon: HeartHudIcon): string {
+    return `<img class="heart-icon" src="${TextureAtlas.url(`gui/heart_${icon}`)}" alt="" draggable="false" />`;
   }
 
   private pips(symbol: string, filled: number, total: number): string {
