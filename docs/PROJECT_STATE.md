@@ -218,13 +218,14 @@
 
 ## Автоматическая проверка
 
-Срез проверки после merge Codex main-menu UI + Cursor PR #6 (полный `npm run check` — см. `TESTING.md` после integration run):
+Срез проверки после merge Codex main-menu UI + Cursor PR #6:
 
 ```text
 TypeScript: tsc --noEmit — PASS
-UI model:   tests/menu-model.test.ts
-Vitest:     combined gameplay + menu suite
-Vite build / size/archive: see TESTING.md
+Vitest:     61 files, 551 tests — PASS
+Vite build: 123 modules — PASS
+Size/archive: 3.44 MiB / 187 files — PASS
+Main JS: 958.18 kB / 267.25 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 ```
 
 Codex UI (menu family, online mock, read-only controls) and Cursor PR #6 (fluids, HUD, combat, chat) coexist in the same `GameUI` / `Game` paths.

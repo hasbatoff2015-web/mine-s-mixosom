@@ -79,13 +79,13 @@ HTTP / and /ui/frontier-menu-background.png            200 / 200
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-26** (hearts HUD scale / per-entity mob hurt flash):
+Срез локального запуска **2026-08-26** (Codex UI merge + PR #6):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       60 test files, 548 tests, 548 passed
-production:   122 modules, 1.17 MiB / 186 files
-Main JS: 952.13 kB / 265.41 kB gzip; CSS: 28.53 kB / 6.61 kB gzip
+Vitest:       61 test files, 551 tests, 551 passed
+production:   123 modules, 3.44 MiB / 187 files
+Main JS: 958.18 kB / 267.25 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
