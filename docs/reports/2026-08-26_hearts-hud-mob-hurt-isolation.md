@@ -72,4 +72,8 @@ E. BURNING — burning mob hit: red flash then gone, fire overlay stays.
 
 ## Git
 
-Branch `cursor/fluids-and-items-pass-935a`. Previous accepted HEAD: `d8bccf8`. Draft PR #6. No merge of `main`. No force push.
+Branch `cursor/fluids-and-items-pass-935a`.
+Implementation: `f8aea5b`.
+Previous accepted HEAD: `d8bccf8`.
+Working tree clean after ordinary push.
+Draft PR #6. No merge of `main`. No force push.
