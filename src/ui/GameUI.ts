@@ -43,11 +43,17 @@ import { stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { heartHudIcons, type HeartHudIcon } from './heartHud';
+import {
+  DESKTOP_CONTROL_SECTIONS,
+  formatPlayTime,
+  formatSettingValue,
+  MENU_SERVER_ENTRIES,
+} from './menuModel';
 
 export interface MainMenuActions {
-  play(): void;
+  singleplayer(): void;
+  online(): void;
   settings(): void;
-  controls(): void;
 }
 
 export interface WorldListActions {
@@ -143,6 +149,7 @@ export class GameUI {
   private effectsHtml = '';
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
   private itemIconResolver?: (itemId: string) => string;
+  private onScreenEscape?: () => void;
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -219,6 +226,14 @@ export class GameUI {
         this.stepChatHistory(1);
       }
     });
+    window.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !this.onScreenEscape || !this.screen) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const action = this.onScreenEscape;
+      this.onScreenEscape = undefined;
+      action();
+    }, { capture: true });
   }
 
   overlayRoot(): HTMLElement {
@@ -289,52 +304,99 @@ export class GameUI {
   showMainMenu(actions: MainMenuActions): void {
     this.hideHud();
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="brand"><div class="brand-mark"></div><h1>FRONTIER CUBES</h1><p>survival alpha · 0.1</p></div>
-        <div class="menu-stack">
-          <button class="game-button primary" data-action="play">Играть</button>
-          <button class="game-button" data-action="settings">Настройки</button>
-          <button class="game-button ghost" data-action="controls">Управление</button>
+      <section class="screen menu-screen main-menu-screen">
+        <div class="main-menu-layout">
+          <div class="frontier-logo" aria-label="Frontier Cubes">
+            <span>FRONTIER</span><strong>CUBES</strong><small>survival alpha</small>
+          </div>
+          <div class="menu-stack main-menu-actions">
+            <button class="game-button" data-action="singleplayer">Одиночная игра</button>
+            <button class="game-button" data-action="online">Играть онлайн</button>
+            <button class="game-button" data-action="settings">Настройки</button>
+          </div>
+          <footer class="main-menu-footer"><span>Frontier Cubes 0.1 · playable alpha</span><span>Локальная браузерная версия</span></footer>
         </div>
-      </div></section>`);
-    this.bindAction('play', actions.play);
+      </section>`);
+    this.bindAction('singleplayer', actions.singleplayer);
+    this.bindAction('online', actions.online);
     this.bindAction('settings', actions.settings);
-    this.bindAction('controls', actions.controls);
   }
 
   showWorldList(worlds: readonly WorldSummary[], actions: WorldListActions): void {
     const rows = worlds.length
-      ? worlds.map((world) => `
-        <div class="world-row">
-          <button data-load="${this.escape(world.id)}"><strong>${this.escape(world.name)}</strong><small>${world.mode === 'creative' ? 'Творческий' : 'Выживание'} · seed ${this.escape(world.seed)} · ${new Date(world.updatedAt).toLocaleDateString()}</small></button>
-          <button class="game-button danger" data-delete="${this.escape(world.id)}" aria-label="Удалить мир">×</button>
-        </div>`).join('')
-      : '<div class="empty-state">Сохранённых миров пока нет</div>';
+      ? worlds.map((world, index) => `
+        <button class="world-row${index === 0 ? ' selected' : ''}" data-world-id="${this.escape(world.id)}" aria-pressed="${index === 0}">
+          <span class="world-preview" aria-hidden="true"></span>
+          <span class="world-copy"><strong>${this.escape(world.name)}</strong><small>${world.mode === 'creative' ? 'Творческий режим' : 'Режим выживания'} · ${new Date(world.updatedAt).toLocaleDateString('ru-RU')}</small><small>Seed: ${this.escape(world.seed)} · Игра: ${formatPlayTime(world.playTimeSeconds)}</small></span>
+        </button>`).join('')
+      : '<div class="empty-state"><strong>Сохранённых миров пока нет</strong><span>Создайте первый мир и начните исследование.</span></div>';
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="menu-heading"><h2>Ваши миры</h2><button class="game-button ghost" data-action="back">Назад</button></div>
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window world-window">
+        <header class="menu-heading"><div><span class="eyebrow">Локальные миры</span><h1>Одиночная игра</h1></div></header>
         <div class="world-list">${rows}</div>
-        <button class="game-button primary" data-action="create">Создать новый мир</button>
-      </div></section>`);
+        <footer class="menu-footer world-actions">
+          <button class="game-button" data-action="play-world" ${worlds.length ? '' : 'disabled'}>Играть</button>
+          <button class="game-button" data-action="create">Создать новый мир</button>
+          <button class="game-button danger" data-action="delete-world" ${worlds.length ? '' : 'disabled'}>Удалить</button>
+          <button class="game-button" data-action="back">Назад</button>
+        </footer>
+      </div></section>`, actions.back);
     this.bindAction('back', actions.back);
     this.bindAction('create', actions.create);
-    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-load]')) button.addEventListener('click', () => actions.load(button.dataset.load!));
-    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-delete]')) {
+    let selectedId = worlds[0]?.id;
+    const selectWorld = (button: HTMLButtonElement): void => {
+      selectedId = button.dataset.worldId;
+      for (const row of this.screen!.querySelectorAll<HTMLButtonElement>('[data-world-id]')) {
+        const selected = row === button;
+        row.classList.toggle('selected', selected);
+        row.setAttribute('aria-pressed', String(selected));
+      }
+    };
+    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-world-id]')) {
+      button.addEventListener('click', () => selectWorld(button));
+      button.addEventListener('dblclick', () => actions.load(button.dataset.worldId!));
+    }
+    this.bindAction('play-world', () => { if (selectedId) actions.load(selectedId); });
+    this.bindAction('delete-world', () => {
+      if (selectedId && window.confirm('Удалить этот мир без возможности восстановления?')) actions.delete(selectedId);
+    });
+  }
+
+  showOnlineServers(onBack: () => void): void {
+    const rows = MENU_SERVER_ENTRIES.map((server, index) => `
+      <button class="server-row${index === 0 ? ' selected' : ''}" data-server-id="${server.id}" aria-pressed="${index === 0}">
+        <span class="server-icon" aria-hidden="true">FC</span>
+        <span class="server-copy"><strong>${server.name}</strong><small>${server.description}</small></span>
+        <span class="server-status"><span class="server-online">${server.online}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
+      </button>`).join('');
+    this.setScreen(`
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
+        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">В разработке</span></header>
+        <div class="server-list">${rows}</div>
+        <p class="menu-notice">Онлайн-режим пока недоступен. Серверы показаны как визуальная демонстрация будущего раздела.</p>
+        <footer class="menu-footer"><button class="game-button" disabled>Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
+      </div></section>`, onBack);
+    this.bindAction('back', onBack);
+    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
       button.addEventListener('click', () => {
-        if (window.confirm('Удалить этот мир без возможности восстановления?')) actions.delete(button.dataset.delete!);
+        for (const row of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
+          const selected = row === button;
+          row.classList.toggle('selected', selected);
+          row.setAttribute('aria-pressed', String(selected));
+        }
       });
     }
   }
 
   showCreateWorld(actions: CreateWorldActions): void {
     this.setScreen(`
-      <section class="screen"><form class="menu-card" id="create-world-form">
-        <div class="menu-heading"><h2>Создание мира</h2><button type="button" class="game-button ghost" data-action="back">Назад</button></div>
-        <label class="field">Название мира<input name="name" maxlength="42" value="Новый мир" required /></label>
-        <label class="field">Seed (можно оставить пустым)<input name="seed" maxlength="80" placeholder="Случайный seed" /></label>
-        <label class="field">Режим<select name="mode"><option value="survival">Выживание</option><option value="creative">Творческий</option></select></label>
-        <button class="game-button primary" type="submit">Создать и играть</button>
-      </form></section>`);
+      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window create-world-window" id="create-world-form">
+        <header class="menu-heading"><div><span class="eyebrow">Новый локальный мир</span><h1>Создание мира</h1></div></header>
+        <div class="form-grid"><label class="field"><span>Название мира</span><input name="name" maxlength="42" value="Новый мир" required /></label>
+        <label class="field"><span>Seed <small>можно оставить пустым</small></span><input name="seed" maxlength="80" placeholder="Случайный seed" /></label>
+        <label class="field"><span>Режим игры</span><select name="mode"><option value="survival">Выживание</option><option value="creative">Творческий</option></select></label></div>
+        <footer class="menu-footer"><button class="game-button" type="submit">Создать и играть</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
+      </form></section>`, actions.back);
     this.bindAction('back', actions.back);
     this.screen!.querySelector<HTMLFormElement>('#create-world-form')!.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -358,17 +420,27 @@ export class GameUI {
     this.bindAction('quit', actions.saveAndQuit);
   }
 
-  showSettings(onApply: (settings: typeof this.settings) => void, onBack: () => void): void {
+  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void): void {
     this.setScreen(`
-      <section class="screen"><form class="menu-card" id="settings-form">
-        <div class="menu-heading"><h2>Настройки</h2><button type="button" class="game-button ghost" data-action="back">Назад</button></div>
-        <label class="field">Громкость <input type="range" name="volume" min="0" max="1" step="0.05" value="${this.settings.volume}" /></label>
-        <label class="field">Чувствительность <input type="range" name="sensitivity" min="0.0007" max="0.005" step="0.0001" value="${this.settings.sensitivity}" /></label>
-        <label class="field">Дальность чанков <input type="range" name="renderDistance" min="2" max="6" step="1" value="${this.settings.renderDistance}" /></label>
-        <label class="field">Поле зрения <input type="range" name="fov" min="60" max="100" step="1" value="${this.settings.fov}" /></label>
-        <button class="game-button primary" type="submit">Применить</button>
-      </form></section>`);
+      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window settings-window" id="settings-form">
+        <header class="menu-heading"><div><span class="eyebrow">Параметры игры</span><h1>Настройки</h1></div></header>
+        <div class="settings-grid">
+          ${this.settingRange('Громкость', 'volume', 0, 1, 0.05, this.settings.volume)}
+          ${this.settingRange('Чувствительность мыши', 'sensitivity', 0.0007, 0.005, 0.0001, this.settings.sensitivity)}
+          ${this.settingRange('Дальность чанков', 'renderDistance', 2, 6, 1, this.settings.renderDistance)}
+          ${this.settingRange('Поле зрения', 'fov', 60, 100, 1, this.settings.fov)}
+        </div>
+        <button class="game-button settings-controls-button" type="button" data-action="controls"><span>Управление</span><small>Посмотреть клавиши и действия</small></button>
+        <footer class="menu-footer"><button class="game-button" type="submit">Применить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
+      </form></section>`, onBack);
     this.bindAction('back', onBack);
+    this.bindAction('controls', onControls);
+    for (const input of this.screen!.querySelectorAll<HTMLInputElement>('input[type="range"]')) {
+      input.addEventListener('input', () => {
+        const output = this.screen?.querySelector<HTMLElement>(`[data-setting-output="${input.name}"]`);
+        if (output) output.textContent = formatSettingValue(input.name, Number(input.value));
+      });
+    }
     this.screen!.querySelector<HTMLFormElement>('#settings-form')!.addEventListener('submit', (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget as HTMLFormElement);
@@ -384,15 +456,18 @@ export class GameUI {
   }
 
   showControls(onBack: () => void): void {
+    const sections = DESKTOP_CONTROL_SECTIONS.map((section) => `
+      <section class="control-section"><h2>${section.title}</h2><div class="control-list">
+        ${section.bindings.map((binding) => `<div class="control-row"><span><strong>${binding.action}</strong>${binding.note ? `<small>${binding.note}</small>` : ''}</span><kbd>${binding.key}</kbd></div>`).join('')}
+      </div></section>`).join('');
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="menu-heading"><h2>Управление</h2><button class="game-button ghost" data-action="back">Назад</button></div>
-        <p><strong>Desktop:</strong> WASD — ходьба, Space — прыжок, двойной Space в творческом — полёт, Shift — бег (на земле) / вниз (в полёте), Ctrl — ускорение полёта, C — присесть, мышь — взгляд, ЛКМ — добыча/атака, ПКМ — поставить/использовать/есть, E — инвентарь, T — чат, / — команда, Q — выбросить, 1–9/колесо — hotbar, F3 — отладка, Esc — пауза.</p>
-        <p><strong>Mobile landscape:</strong> левый стик — движение, проводите по правой части для камеры; отдельные кнопки отвечают за прыжок, бег, приседание, добычу, использование, инвентарь и паузу.</p>
-      </div></section>`);
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window controls-window">
+        <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
+        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
+        <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
+      </div></section>`, onBack);
     this.bindAction('back', onBack);
   }
-
   showDeath(onRespawn: () => void, onQuit: () => void): void {
     this.setScreen(`
       <section class="screen"><div class="menu-card">
@@ -1183,11 +1258,16 @@ export class GameUI {
     return Array.from({ length: total }, (_value, index) => `<span class="${index < filled ? '' : 'empty'}">${symbol}</span>`).join('');
   }
 
-  private setScreen(html: string): void {
+  private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {
+    return `<label class="setting-row"><span><strong>${label}</strong><output data-setting-output="${name}">${formatSettingValue(name, value)}</output></span><input type="range" name="${name}" min="${min}" max="${max}" step="${step}" value="${value}" /></label>`;
+  }
+
+  private setScreen(html: string, onEscape?: () => void): void {
     this.removeScreen();
     const template = document.createElement('template');
     template.innerHTML = html.trim();
     this.screen = template.content.firstElementChild as HTMLElement;
+    this.onScreenEscape = onEscape;
     this.root.append(this.screen);
     this.setControlsSuppressed(true);
   }
@@ -1195,6 +1275,7 @@ export class GameUI {
   private removeScreen(): void {
     this.screen?.remove();
     this.screen = undefined;
+    this.onScreenEscape = undefined;
   }
 
   private bindAction(action: string, callback: () => void): void {

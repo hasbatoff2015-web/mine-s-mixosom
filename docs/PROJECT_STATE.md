@@ -12,7 +12,7 @@
 
 | Область | Статус | Фактический результат |
 | --- | --- | --- |
-| Boot/menu/world list | Готово | Boot loading, главное меню, создание/загрузка миров; вход в мир идёт через `LOADING_WORLD` с реальным progress, пока initial radius не готов |
+| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online mock, настроек и read-only управления; создание/выбор/загрузка/удаление миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×96`, plains/forest/desert, periodic mountains (+10…+20), deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
@@ -176,10 +176,10 @@
 
 ### Готово
 
-- DOM/CSS screens: loading, main menu, world list, create world, settings, controls, pause, death.
+- DOM/CSS screens: loading, стилизованное main menu, selectable world list, create world, online server mock, settings, read-only controls, pause, death. Меню использует `public/ui/frontier-menu-background.png`; online entries и таблица фактических клавиш вынесены в `menuModel.ts`.
 - HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, attack meter container, active potion effect chips (bottom-right), toasts и F3 debug.
 - Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
-- Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`.
+- Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`; отсюда открывается отдельная read-only справка по управлению. Значения sliders показываются live.
 - Desktop pointer lock: inventory/chest close = programmatic relock; Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Если Chrome отклоняет relock после Esc, PLAYING остаётся и показывается overlay «Нажмите, чтобы продолжить» только после фактического failure. Focus-lost не считается programmatic и не запрашивает lock сам.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
 - Lifecycle states: `LOADING`, `MENU`, `PLAYING`, `PAUSED`, `AD`, `BACKGROUND`, `DEAD`.
@@ -189,7 +189,7 @@
 ### Alpha approximation
 
 - Attack meter получает фактическую силу текущего `CombatSystem`; расширенный combat browser smoke всё ещё нужен.
-- Настройки не сохраняются между sessions.
+- Настройки не сохраняются между sessions; rebind управления не реализован, controls screen намеренно read-only.
 - Все заданные desktop/mobile размеры прошли browser visibility/count checks; на `667×375` визуально проверены inventory, pause и settings, отдельно проверен portrait overlay.
 - Во время QA найдено и исправлено перекрытие menus/modals touch controls: `controls-suppressed` скрывает look zone, joystick и action buttons вне gameplay.
 - Rotation state-preservation и multi-touch поведение всё ещё нужно проверить на реальных устройствах.
@@ -218,15 +218,16 @@
 
 ## Автоматическая проверка
 
-На момент этого среза локально проходят:
+Срез проверки после merge Codex main-menu UI + Cursor PR #6 (полный `npm run check` — см. `TESTING.md` после integration run):
 
 ```text
 TypeScript: tsc --noEmit — PASS
-Vitest:     53 files, 495 tests — PASS
-Vite build: 116 modules — PASS
-Size/archive: 1.15 MiB / 180 files — PASS
-Main JS: 934.02 kB / 259.29 kB gzip; CSS: 27.02 kB / 6.28 kB gzip
+UI model:   tests/menu-model.test.ts
+Vitest:     combined gameplay + menu suite
+Vite build / size/archive: see TESTING.md
 ```
+
+Codex UI (menu family, online mock, read-only controls) and Cursor PR #6 (fluids, HUD, combat, chat) coexist in the same `GameUI` / `Game` paths.
 
 Покрыты registries, excluded item scope, stack/inventory operations, item render routing/generated geometry (including `iron_pickaxe.png` span counts, outer-shell winding, inspect QA params and closed-baseline source/topology fingerprints), shared first-person sprite pose, `held*` / `qaPose` QA overrides, live pose calibrator helpers, `qaPoseCompare` parse, vanilla idle first-person matrix adapter (not production-wired), crafting/smelting data и runtime furnace flow, combat formulas, shield/bow helpers, survival basics, player physics, generation/state, dropped items, mob manager и basic redstone/TNT. Пробелы и ручная матрица перечислены в `TESTING.md`.
 
