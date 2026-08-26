@@ -4,15 +4,29 @@ import {
   createTexturedCuboidGeometry,
   type TexturedCuboidDefinition,
 } from '../rendering/TexturedCuboid';
-import { bindEntityLightReceiver, createEntityMaterial } from '../rendering/worldLighting';
+import {
+  bindEntityLightReceiver,
+  cloneOwnedEntityMaterial,
+  createEntityMaterial,
+} from '../rendering/worldLighting';
 
 /** Owns the tiny amount of shared geometry/material state used by entity models. */
 export class VoxelVisualFactory {
   private readonly cube = new THREE.BoxGeometry(1, 1, 1);
   private readonly materials = new Map<number, THREE.MeshBasicMaterial>();
-  private readonly texturedMaterials = new Map<string, THREE.Material>();
+  private readonly texturedMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private readonly entityTextures = new Map<string, THREE.Texture>();
   private readonly cuboidGeometries = new Map<string, THREE.BufferGeometry>();
+  /** Per-entity checkout so one mob's parts can share a clone without sharing across mobs. */
+  private entityCheckout?: Map<THREE.Material, THREE.MeshBasicMaterial>;
+
+  beginEntityMaterials(): void {
+    this.entityCheckout = new Map();
+  }
+
+  endEntityMaterials(): void {
+    this.entityCheckout = undefined;
+  }
 
   material(color: number): THREE.MeshBasicMaterial {
     let material = this.materials.get(color);
@@ -35,7 +49,7 @@ export class VoxelVisualFactory {
     const positionX = 'x' in position ? position.x : position[0];
     const positionY = 'y' in position ? position.y : position[1];
     const positionZ = 'z' in position ? position.z : position[2];
-    const mesh = new THREE.Mesh(this.cube, this.material(color));
+    const mesh = new THREE.Mesh(this.cube, this.checkoutMaterial(this.material(color)));
     mesh.scale.set(sizeX, sizeY, sizeZ);
     mesh.position.set(positionX, positionY, positionZ);
     bindEntityLightReceiver(mesh);
@@ -52,7 +66,9 @@ export class VoxelVisualFactory {
   ): THREE.Mesh {
     const mesh = new THREE.Mesh(
       this.texturedCuboidGeometry(definition),
-      this.texturedMaterial(texturePath, options.glow === true, options.doubleSided === true, options.alphaTest),
+      this.checkoutMaterial(
+        this.texturedMaterial(texturePath, options.glow === true, options.doubleSided === true, options.alphaTest),
+      ),
     );
     mesh.position.set(...position);
     if (options.glow !== true) bindEntityLightReceiver(mesh);
@@ -87,6 +103,18 @@ export class VoxelVisualFactory {
     this.cuboidGeometries.clear();
   }
 
+  private checkoutMaterial(template: THREE.MeshBasicMaterial): THREE.MeshBasicMaterial {
+    const checkout = this.entityCheckout;
+    if (checkout) {
+      const existing = checkout.get(template);
+      if (existing) return existing;
+      const owned = cloneOwnedEntityMaterial(template);
+      checkout.set(template, owned);
+      return owned;
+    }
+    return cloneOwnedEntityMaterial(template);
+  }
+
   private texturedCuboidGeometry(definition: TexturedCuboidDefinition): THREE.BufferGeometry {
     const key = JSON.stringify(definition);
     let geometry = this.cuboidGeometries.get(key);
@@ -97,7 +125,12 @@ export class VoxelVisualFactory {
     return geometry;
   }
 
-  private texturedMaterial(texturePath: string, glow: boolean, doubleSided: boolean, requestedAlphaTest?: number): THREE.Material {
+  private texturedMaterial(
+    texturePath: string,
+    glow: boolean,
+    doubleSided: boolean,
+    requestedAlphaTest?: number,
+  ): THREE.MeshBasicMaterial {
     const alphaTest = requestedAlphaTest ?? (glow ? 0.45 : 0.1);
     const key = `${texturePath}:${glow ? 'glow' : 'lit'}:${doubleSided ? 'double' : 'front'}:${alphaTest}`;
     let material = this.texturedMaterials.get(key);

@@ -11,7 +11,7 @@ import {
 import { createItemStack, type ItemStack } from '../inventory';
 import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { SharedFireTexture } from '../rendering/fireTexture';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
+import { applySampledEntityLight, disposeOwnedEntityMaterials, worldDaylightUniform } from '../rendering/worldLighting';
 import { combinedLight } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -1503,6 +1503,7 @@ export class MobManager {
       mob.fireOverlay.geometry.dispose();
       mob.fireOverlay = undefined;
     }
+    disposeOwnedEntityMaterials(mob.visual);
     mob.visual.removeFromParent();
     this.options.onRemove?.(mob, reason);
   }

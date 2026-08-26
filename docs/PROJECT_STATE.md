@@ -1,6 +1,6 @@
 # Состояние проекта
 
-Срез: **2026-08-25**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-26**. Версия: `0.1.0`, playable alpha.
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -106,6 +106,7 @@
 - Визуальные transforms мобов, drops, player arrows и primed TNT/falling blocks интерполируются на render frame (`alpha = accumulator / FIXED_DT`). AI, hitbox, damage и collision читают только simulation pose. Teleport/spawn/коррекции ≥ 6 блоков делают snap.
 - Есть water/lava state, плавучесть/drag, утопление, lava/fire/cactus damage и fall damage после трёх блоков. Fire contact — AABB overlap с `BlockId.Fire` (`PlayerController.inFire` / `aabbOverlapsBlockType`), **1 HP / 20 ticks** while intersecting Fire; damage идёт через canonical armor mitigation (`fire`/`lava` **не** bypass). Выход из Fire сразу гасит `contactFire` (нет afterburn от ordinary Fire). Lava: 4 HP / 10 ticks + linger `ignite(300)`, тоже через armor. `FIRE_ARROW` (≈100 ticks) — отдельный таймер. Вода гасит arrow/lava/sunlight, не ordinary-fire contact (его и так нет вне клетки). First-person burning overlay — два нижних flame quad (shared fire strip, opacity 0.76), не 6-plane block перед камерой. Успешный health damage (`SurvivalSystem.onDamage`, `dealt > 0`) даёт короткий red flash и bounded hurt kick. Cobweb сильно замедляет игрока/мобов (`movementMultiplier` 0.15) и стрелы. Fence collision height 1.5.
 - Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance. Status effects: absorption, regeneration (heal-over-time), invisibility (hostile `playerTargetable` false; first-person empty-hand arm hidden while the effect is active, held item can remain). Drinkable potions: invisibility **3 min** (`3600` ticks), regeneration **1 min** (`1200` ticks). Active invis/regen show a small bottom-right HUD chip (potion icon, Russian name, `M:SS` countdown) and a soft lower-screen swirl particle overlay from `textures/particle/particles.png`. Effects не сериализуются (reload сбрасывает таймеры, absorption в save есть).
+- Health HUD: 10 pixel-art hearts (`gui/heart_{empty,half,full}.png`), same `--hud-status-icon-size` / gap as the 10 armor icons so the rows match in width. Full = 2 HP, half = 1 HP, still 20 HP max. Hunger remains emoji pips.
 - Sprint в Survival доступен только при hunger выше `6`; удержание jump начисляет jump exhaustion только в tick фактического отрыва от земли.
 - Armor использует release-1.9 damage formula; toughness выключена по умолчанию как более поздняя 1.9.1-механика. Piece values уже vanilla Java 1.9 (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.
 - Food use требует удержания, consumable проверяет hunger cap.
@@ -139,7 +140,7 @@
 - Player knockback применяется только если `SurvivalSystem.damage()` реально нанёс damage; shield/armor/i-frame ignored hit не сдвигает игрока.
 - Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie left limbs берут mirrored classic `64×32` UV (`[40,16]`/`[0,16]`), а forward-arms pose задаётся положительным Three.js Euler (`+1.2` / `+1.55`), не Minecraft-значением `-1.2`. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.
-- World entities (mobs, drops, arrows, falling blocks, primed TNT) берут яркость и тёплый torch tint из тех же `skyLight`/`blockLight`, что и terrain: три sample (feet/torso/head), `createEntityMaterial` без Lambert N·L, мягкий wrap-shade не ниже `0.76`. Успешный mob damage (не fire DOT) ставит per-entity `hurtFlashSeconds` (~220 ms) и multiply-tint в `userData.entityLight`; shared `VoxelVisualFactory` materials не мутируются.
+- World entities (mobs, drops, arrows, falling blocks, primed TNT) берут яркость и тёплый torch tint из тех же `skyLight`/`blockLight`, что и terrain: три sample (feet/torso/head), `createEntityMaterial` без Lambert N·L, мягкий wrap-shade не ниже `0.76`. Успешный mob damage (не fire DOT) ставит per-entity `hurtFlashSeconds` (~220 ms) и multiply-tint в `userData.entityLight`. Geometry и textures остаются shared; each living mob renderer clones entity materials once at spawn (`cloneOwnedEntityMaterial`) so `uEntityLight` cannot leak across the same species. Clones dispose on despawn.
 - Generic `TexturedCuboidGeometry` строит шесть независимых UV faces из logical texture offset/size; 2× sheets нормализуются так же, как 1×. Entity sheets используют sRGB/nearest; block atlas использует mipmaps, четырёхпиксельную extrusion-зону и ограниченную anisotropy.
 
 ### Alpha approximation
@@ -176,7 +177,7 @@
 ### Готово
 
 - DOM/CSS screens: loading, main menu, world list, create world, settings, controls, pause, death.
-- HUD: crosshair, hotbar, selected item, health/hunger, **armor bar** (над hearts, hidden at 0), mining progress, attack meter container, active potion effect chips (bottom-right), toasts и F3 debug.
+- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, attack meter container, active potion effect chips (bottom-right), toasts и F3 debug.
 - Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`.
 - Desktop pointer lock: inventory/chest close = programmatic relock; Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Если Chrome отклоняет relock после Esc, PLAYING остаётся и показывается overlay «Нажмите, чтобы продолжить» только после фактического failure. Focus-lost не считается programmatic и не запрашивает lock сам.

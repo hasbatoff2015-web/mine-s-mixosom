@@ -1,7 +1,8 @@
 import { clamp } from '../core/constants';
 import { MAX_ARMOR_POINTS } from '../survival';
+import { HUD_STATUS_ICON_COUNT } from './hudStatusLayout';
 
-export const ARMOR_HUD_ICON_COUNT = 10;
+export const ARMOR_HUD_ICON_COUNT = HUD_STATUS_ICON_COUNT;
 export type ArmorHudIcon = 'empty' | 'half' | 'full';
 
 export interface ArmorHudState {

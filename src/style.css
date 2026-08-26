@@ -396,6 +396,8 @@ button {
 }
 
 #status-bars {
+  --hud-status-icon-size: 0.92em;
+  --hud-status-icon-gap: 1px;
   position: absolute;
   bottom: calc(max(10px, env(safe-area-inset-bottom)) + 68px);
   left: 50%;
@@ -417,21 +419,21 @@ button {
   gap: 1px;
 }
 
-.hearts .empty,
 .hunger .empty { opacity: 0.28; }
-.hearts { color: #ff5757; }
 .hunger { color: #e6a94f; }
 
+.hearts,
 .armor {
   display: flex;
-  gap: 1px;
+  gap: var(--hud-status-icon-gap);
   letter-spacing: 0;
   line-height: 0;
 }
 
+.heart-icon,
 .armor-icon {
-  width: 0.92em;
-  height: 0.92em;
+  width: var(--hud-status-icon-size);
+  height: var(--hud-status-icon-size);
   object-fit: contain;
   image-rendering: pixelated;
   image-rendering: crisp-edges;

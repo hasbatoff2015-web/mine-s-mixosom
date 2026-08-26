@@ -264,6 +264,32 @@ icons['gui/armor_empty.png'] = (x, y) => armorHudPixel('empty', x, y);
 icons['gui/armor_half.png'] = (x, y) => armorHudPixel('half', x, y);
 icons['gui/armor_full.png'] = (x, y) => armorHudPixel('full', x, y);
 
+const HEART_HUD_SHAPE = [
+  '.##...##.',
+  '#HH#.#HH#',
+  '#HHHHHHH#',
+  '#HHHHHHH#',
+  '.#HHHHH#.',
+  '..#HHH#..',
+  '...#H#...',
+  '....#....',
+  '.........',
+];
+
+function heartHudPixel(mode, x, y) {
+  const cell = HEART_HUD_SHAPE[y]?.[x];
+  if (!cell || cell === '.') return px(0, 0, 0, 0);
+  if (cell === '#') return px(40, 4, 8);
+  const filled = mode === 'full' || (mode === 'half' && x <= 4);
+  if (!filled) return px(42, 8, 12);
+  if (x === 2 && y === 1) return px(255, 176, 176);
+  return px(224, 32, 32);
+}
+
+icons['gui/heart_empty.png'] = (x, y) => heartHudPixel('empty', x, y);
+icons['gui/heart_half.png'] = (x, y) => heartHudPixel('half', x, y);
+icons['gui/heart_full.png'] = (x, y) => heartHudPixel('full', x, y);
+
 export async function generateMissingTextures(force = false) {
   let written = 0;
   for (const [relative, plotter] of Object.entries(icons)) {
@@ -280,7 +306,9 @@ export async function generateMissingTextures(force = false) {
       }
     }
     await mkdir(dirname(path), { recursive: true });
-    const size = relative.startsWith('entity/') ? 32 : relative.startsWith('gui/armor_') ? 9 : 16;
+    const size = relative.startsWith('entity/') ? 32
+      : (relative.startsWith('gui/armor_') || relative.startsWith('gui/heart_')) ? 9
+      : 16;
     await writeFile(path, paint(size, size, plotter));
     written += 1;
   }

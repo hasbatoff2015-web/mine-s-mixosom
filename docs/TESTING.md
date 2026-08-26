@@ -54,13 +54,13 @@ npm run assets:import
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-25** (frozen lava / lighting flicker / Diamond /3 / Fire damage / mob hurt flash):
+Срез локального запуска **2026-08-26** (hearts HUD scale / per-entity mob hurt flash):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       56 test files, 517 tests, 517 passed
-production:   117 modules, 1.15 MiB / 180 files
-Main JS: 941.47 kB / 261.92 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
+Vitest:       60 test files, 548 tests, 548 passed
+production:   122 modules, 1.17 MiB / 186 files
+Main JS: 952.13 kB / 265.41 kB gzip; CSS: 28.53 kB / 6.61 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
@@ -113,6 +113,8 @@ Main JS: 941.47 kB / 261.92 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
 | `tests/content-pass.test.ts` | 8 | New items/blocks in creative, fire-arrow leftover bucket, golden apple/potion effects (invis 3 min, regen potion 1 min), cobweb/fence collision, rails+minecart, flint TNT, fire-arrow ignite, clustered lava lakes |
 | `tests/potion-effects-hud.test.ts` | 5 | Potion durations, `M:SS` countdown, HUD chip stack/hide, swirl UV row, FP particle overlay bounds/opacity |
 | `tests/armor-hud.test.ts` | 7 | Vanilla leather/gold/iron/diamond piece+set totals, mixed equipment, HUD full/half/empty mapping, clamp 0–20, Fire/Lava still mitigated via the same `getArmorPoints` |
+| `tests/heart-hud.test.ts` | 3 | 20 HP = 10 hearts, half-heart odd HP, shared armor/heart layout constants |
+| `tests/mob-hurt-flash.test.ts` | 8 | Successful mob damage starts per-entity red tint; miss/zero/fire DOT do not; decay + restart; same-type isolation (geometry/texture shared, material/uniform not); three spiders; zombie+spider; owned-material dispose; fire overlay survives |
 | `tests/fire-arrow-and-fire.test.ts` | 5 | Fire arrow only primes TNT / ignites living (no world fire), periodic burn + water extinguish, 6-plane fire mesh, animated fire strip, flint/fire-arrow icons and handheld models |
 | `tests/fire-contact-sunlight-minecart.test.ts` | 39 | Fire AABB contact vs leave, Fire vs Lava cadence, armor reduces Fire/Lava (no bypass), independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert/fuse/explode, Flint entity-first prime (no Fire), Fire Arrow vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
 | `tests/hostile-spawn-balance.test.ts` | 8 | Surface night hostiles ≈ ×0.5, passive day rate independent of the night factor, cave hostiles in dark air not lava/water, min distance / floor / headroom, max 1 new cave hostile per chunk/event, density, respawn after death, global cap |
@@ -120,7 +122,6 @@ Main JS: 941.47 kB / 261.92 kB gzip; CSS: 27.13 kB / 6.31 kB gzip
 | `tests/chat-commands.test.ts` | 9 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
 | `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
 | `tests/lava-bedrock-ore-pass.test.ts` | 10 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/enclosed waterline=0, Coal/Iron/Gold/Redstone ×2, Diamond ≈0.33× current, chunk-border determinism + generator-space neighbor walls, boundary-only enqueue + shore-break + cross-chunk 15/16, idle enclosed pond, ore Y/vein size |
-| `tests/mob-hurt-flash.test.ts` | 5 | Successful mob damage starts per-entity red tint; miss/zero/fire DOT do not; decay + restart; shared material unchanged; fire overlay survives; death cleanup |
 
 Тесты выполняются в Node и не создают настоящий browser/WebGL context.
 

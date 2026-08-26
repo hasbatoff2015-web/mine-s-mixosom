@@ -42,6 +42,7 @@ import {
 import { stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
+import { heartHudIcons, type HeartHudIcon } from './heartHud';
 
 export interface MainMenuActions {
   play(): void;
@@ -440,7 +441,7 @@ export class GameUI {
       this.selectedItemText = selectedItemText;
       this.selectedItem.textContent = selectedItemText;
     }
-    const heartsHtml = this.pips('♥', Math.ceil(state.health / 2), 10);
+    const heartsHtml = heartHudIcons(state.health).icons.map((icon) => this.heartIconHtml(icon)).join('');
     if (heartsHtml !== this.heartsHtml) {
       this.heartsHtml = heartsHtml;
       this.hearts.innerHTML = heartsHtml;
@@ -1172,6 +1173,10 @@ export class GameUI {
 
   private armorIconHtml(icon: ArmorHudIcon): string {
     return `<img class="armor-icon" src="${TextureAtlas.url(`gui/armor_${icon}`)}" alt="" draggable="false" />`;
+  }
+
+  private heartIconHtml(icon: HeartHudIcon): string {
+    return `<img class="heart-icon" src="${TextureAtlas.url(`gui/heart_${icon}`)}" alt="" draggable="false" />`;
   }
 
   private pips(symbol: string, filled: number, total: number): string {
