@@ -1,5 +1,24 @@
 # Тестирование
 
+## 2026-08-28 gameplay / UI / entity polish
+
+Актуальный отчёт: `reports/2026-08-28_gameplay-ui-entity-polish.md`. Baseline HEAD=`67afc97`.
+
+Targeted polish files: `combat`, `classic-combat-integration`, `mob-polish`, `shield-removal`, `stairs-slabs-icons`, `special-preview-contract`, `container-ui`, `heart-hud`, `visual-models`, `gameplay-ui-entity-polish`, `embedded-arrow-support`, `content-pass`. All green.
+
+Full `npm test -- --maxWorkers=2`: **824 passed / 2 failed / 826**. The two failures are `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures/items/bucket_empty.png` in this environment (unrelated source-pack fixture, not this diff). Historical main baseline was 771/796 with more timeout failures. Unrelated thresholds were not loosened.
+
+`npm run typecheck`, `npm run build`, `npm run check:size`, `npm run check:archive`: PASS. Production **3.46 MiB / 188 files** (two new 9×9 absorption heart PNGs).
+
+- Vertical apex ~0.576 / ~0.841; initial XZ 8/18 unchanged; 20-tick open travel 1.80024 / 4.44323 (earlier landing).
+- Sprint remains true on the next tick with held W+sprint after a successful extra hit.
+- Block items use `special_preview`; apple/sword/bow/torch stay `texture`.
+- 16 stair occupancy fixtures (4 facings × inner/outer × left/right); mesh/collision share boxes.
+- Collision-mode raycast skips TallGrass/flowers/fire and still hits stone/stairs.
+- Player arrow pickup, full-inventory leave-in-world, creative consume-without-grant, skeleton non-pickup.
+- Absorption HUD icons 4→2 full yellow; damage 3 then 2; effect expiry zeros HP; serialize round-trip.
+- Close control is a stage sibling; `MC_CLOSE_HIT_MIN_PX=44`; landscape sizes keep the button in-viewport.
+
 ## 2026-08-27 interaction / support / mouse / mob polish
 
 Актуальный отчёт: `reports/2026-08-27_interaction-support-mouse-mob-polish.md`. Baseline HEAD=origin/main=`3b9e68e`: typecheck PASS, targeted207/207, full692/714 (22 failures +1RPC). Final targeted **330/330,21files,26.04s**. Full **771/796,25failures +2RPC,242.24s**: те же5 числовых ошибок и6 failing files, но fire-contact timeouts17 вместо14. Три дополнительных случая отдельно PASS на baseline и current с почти одинаковым временем; strict full-suite no-worse condition всё ещё не объявлен выполненным. Scheduler thresholds/CRLF fingerprint не ослаблены. Production результаты — в отчёте.

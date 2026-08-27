@@ -5,6 +5,7 @@ import { MobManager } from '../src/entities/MobManager';
 import * as physics from '../src/entities/voxelPhysics';
 import { VoxelWorld } from '../src/world/World';
 import type { MobKind } from '../src/entities/mobDefinitions';
+import { MELEE_EXTRA_VERTICAL, MELEE_KB_VERTICAL } from '../src/combat';
 
 const cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.splice(0).forEach((f) => f()); vi.restoreAllMocks(); });
@@ -63,7 +64,7 @@ describe('fixed tick vertical audit: actual mob physics vs discrete 1.8 travel',
     manager.damage(mob, 1, { source: 'player', attackerPosition: new THREE.Vector3(-1, 1, 0),
       attackerYaw: -Math.PI / 2, extraKnockbackLevel: Number(sprint) });
     const rows = [];
-    let refY = 1, refV = sprint ? 10 : 8, landed = 0;
+    let refY = 1, refV = sprint ? MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL : MELEE_KB_VERTICAL, landed = 0;
     for (let tick = 1; tick <= 20; tick++) {
       // Independent per-tick reference: position += motionY; gravity .08; drag .98.
       refY += refV / 20;
@@ -78,9 +79,11 @@ describe('fixed tick vertical audit: actual mob physics vs discrete 1.8 travel',
       expect(collision.stepped).toBe(false);
     }
     const apex = Math.max(...rows.map((row) => row.y));
-    console.log('VERTICAL TRACE', { sprint, firstDy: rows[0]!.y - 1, apexAboveFeet: apex - 1,
+    const apexRise = apex - 1;
+    console.log('VERTICAL TRACE', { sprint, firstDy: rows[0]!.y - 1, apexAboveFeet: apexRise,
       apexTick: rows.find((row) => row.y === apex)!.tick, landingTick: landed, rows });
-    expect(rows[0]!.y - 1).toBeCloseTo(sprint ? 0.5 : 0.4);
+    expect(rows[0]!.y - 1).toBeCloseTo((sprint ? MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL : MELEE_KB_VERTICAL) / 20, 4);
+    expect(apexRise).toBeCloseTo(sprint ? 0.8544 : 0.5765, 1);
     expect(landed).toBeGreaterThan(0);
   });
 });

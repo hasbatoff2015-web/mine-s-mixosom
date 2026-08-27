@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CombatSystem, applyKnockback, applyExtraKnockback, completeMeleeAttack,
   bowCharge, getAttackProfile, isCriticalHit,
+  MELEE_EXTRA_VERTICAL, MELEE_KB_VERTICAL,
 } from '../src/combat';
 import { HurtResistance, MAX_HURT_RESISTANT_TICKS } from '../src/combat/HurtResistance';
 import { MAX_AIR_TICKS, SurvivalSystem, reduceDamageByArmor, type DamageSource } from '../src/survival';
@@ -123,23 +124,23 @@ describe('knockback velocity transforms in blocks/second', () => {
     expect(applyKnockback(velocity, { x: 3, z: 4 })).toBe(velocity);
     expect(velocity.x).toBeCloseTo(3 + 4.8);
     expect(velocity.z).toBeCloseTo(-2 + 6.4);
-    expect(velocity.y).toBe(Math.min(y / 2 + 8, 8));
+    expect(velocity.y).toBe(Math.min(y / 2 + MELEE_KB_VERTICAL, MELEE_KB_VERTICAL));
   });
 
   it('separates base away direction from sprint facing and extra Y is not level-scaled', () => {
     const velocity = { x: 0, y: 0, z: 0 };
     applyKnockback(velocity, { x: 1, z: 0 });
-    expect(velocity).toEqual({ x: 8, y: 8, z: 0 });
+    expect(velocity).toEqual({ x: 8, y: MELEE_KB_VERTICAL, z: 0 });
     applyExtraKnockback(velocity, 0, 2);
-    expect(velocity).toEqual({ x: 8, y: 10, z: -20 });
+    expect(velocity).toEqual({ x: 8, y: MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL, z: -20 });
   });
 
   it('normal and sprint impulses are 8/18 horizontal and 8/10 vertical from rest', () => {
     const normal = { x: 0, y: 0, z: 0 };
     applyKnockback(normal, { x: 0, z: -1 });
-    expect(normal).toEqual({ x: 0, y: 8, z: -8 });
+    expect(normal).toEqual({ x: 0, y: MELEE_KB_VERTICAL, z: -8 });
     applyExtraKnockback(normal, 0, 1);
-    expect(normal).toEqual({ x: 0, y: 10, z: -18 });
+    expect(normal).toEqual({ x: 0, y: MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL, z: -18 });
   });
 
   it('has a finite coincident-centre fallback and preserves resistance semantics', () => {
@@ -147,18 +148,16 @@ describe('knockback velocity transforms in blocks/second', () => {
     applyKnockback(v, { x: 0, z: 0 }, { resistance: 1, random: () => 0.5 });
     expect(v).toEqual({ x: 2, y: -2, z: 3 });
     applyKnockback(v, { x: 0, z: 0 });
-    expect(v).toEqual({ x: 9, y: 7, z: 1.5 });
+    expect(v).toEqual({ x: 9, y: Math.min(-1 + MELEE_KB_VERTICAL, MELEE_KB_VERTICAL), z: 1.5 });
   });
 
   it('slows only a successful extra-KB attacker, never ordinary/rejected hits', () => {
     for (const sprinting of [false, true]) for (const accepted of [false, true]) {
-      let resets = 0;
-      const attacker = { velocity: { x: 5, y: 3, z: -10 }, resetSprintAfterHit() { resets++; } };
+      const attacker = { velocity: { x: 5, y: 3, z: -10 } };
       const attack = new CombatSystem().attack('iron_sword', { attackerSprinting: sprinting });
       completeMeleeAttack(attack, accepted, attacker);
       const extra = sprinting && accepted;
       expect(attacker.velocity).toEqual({ x: extra ? 3 : 5, y: 3, z: extra ? -6 : -10 });
-      expect(resets).toBe(Number(extra));
     }
   });
 });

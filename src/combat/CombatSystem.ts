@@ -43,6 +43,18 @@ export interface KnockbackOptions {
   readonly random?: () => number;
 }
 
+/**
+ * Frontier visual adaptation: melee apex height is ~½ Java 1.8.
+ * Applied only to Y. Horizontal 1.8 constants stay untouched.
+ * 0.67 is the scale that halves measured flat apex, not initial Y/2
+ * (gravity would otherwise undershoot).
+ */
+export const FRONTIER_MELEE_VERTICAL_SCALE = 0.67;
+const MELEE_KB_HORIZONTAL = 0.4 * TICK_RATE;
+/** Vertical base kick after Frontier apex scaling. Horizontal 8 b/s is unchanged. */
+export const MELEE_KB_VERTICAL = MELEE_KB_HORIZONTAL * FRONTIER_MELEE_VERTICAL_SCALE;
+export const MELEE_EXTRA_VERTICAL = 0.1 * TICK_RATE * FRONTIER_MELEE_VERTICAL_SCALE;
+
 /** Java 1.8 full-hurt transform. Inputs/outputs are blocks/s, never an impulse length. */
 export function applyKnockback<T extends Velocity>(
   velocity: T,
@@ -55,10 +67,9 @@ export function applyKnockback<T extends Velocity>(
   // Coincident centres: deterministic fallback, avoiding NaN/random vector allocations.
   const nx = length > 1e-8 ? directionAwayFromAttacker.x / length : 1;
   const nz = length > 1e-8 ? directionAwayFromAttacker.z / length : 0;
-  const base = 0.4 * TICK_RATE;
-  velocity.x = velocity.x * 0.5 + nx * base;
-  velocity.z = velocity.z * 0.5 + nz * base;
-  velocity.y = Math.min(velocity.y * 0.5 + base, base);
+  velocity.x = velocity.x * 0.5 + nx * MELEE_KB_HORIZONTAL;
+  velocity.z = velocity.z * 0.5 + nz * MELEE_KB_HORIZONTAL;
+  velocity.y = Math.min(velocity.y * 0.5 + MELEE_KB_VERTICAL, MELEE_KB_VERTICAL);
   return velocity;
 }
 
@@ -69,7 +80,7 @@ export function applyExtraKnockback(velocity: Velocity, yaw: number, level: numb
   velocity.x -= Math.sin(yaw) * 0.5 * TICK_RATE * levels;
   // Frontier yaw 0 faces -Z (the Java +Z convention is converted here).
   velocity.z -= Math.cos(yaw) * 0.5 * TICK_RATE * levels;
-  velocity.y += 0.1 * TICK_RATE;
+  velocity.y += MELEE_EXTRA_VERTICAL;
 }
 
 /** Living travel drag, applied after collision/movement, only during melee recoil. */
@@ -82,12 +93,11 @@ export function applyMeleeDrag(velocity: Velocity, groundedBeforeMove: boolean, 
 export function completeMeleeAttack(
   result: MeleeAttackResult,
   accepted: boolean,
-  attacker: { velocity: Velocity; resetSprintAfterHit(): void },
+  attacker: { velocity: Velocity },
 ): void {
   if (!accepted || result.extraKnockbackLevel <= 0) return;
   attacker.velocity.x *= 0.6;
   attacker.velocity.z *= 0.6;
-  attacker.resetSprintAfterHit();
 }
 
 export function getAttackProfile(item?: string | ItemDefinition | null): AttackProfile {

@@ -133,7 +133,7 @@ describe('stair geometry, state and collision', () => {
     writeBlock(world, 5, 40, 4, BlockId.OakStairs);
     world.setBlockState(4, 40, 4, { facing: 'east', stairHalf: 'bottom' });
     world.setBlockState(5, 40, 4, { facing: 'south', stairHalf: 'bottom' });
-    expect(resolveStairShape(world, 4, 40, 4, world.getBlockState(4, 40, 4))).toBe('inner_right');
+    expect(resolveStairShape(world, 4, 40, 4, world.getBlockState(4, 40, 4))).toBe('outer_right');
   });
 
   it('keeps collision and selection matching the stair boxes for each facing', () => {
@@ -296,8 +296,8 @@ describe('special item icons', () => {
     expect(itemIconDescriptor('oak_pressure_plate')).toEqual({ kind: 'special_preview', category: 'pressure_plate' });
     expect(itemIconDescriptor('stone_pressure_plate').category).toBe('pressure_plate');
     expect(specialIconCategory('oak_stairs')).toBe(specialIconCategory('cobblestone_stairs'));
-    expect(itemIconDescriptor('stone')).toEqual({ kind: 'texture', texturePath: 'block/stone' });
-    expect(itemIconDescriptor('oak_planks').kind).toBe('texture');
+    expect(itemIconDescriptor('stone')).toEqual({ kind: 'special_preview', category: 'generic' });
+    expect(itemIconDescriptor('oak_planks').kind).toBe('special_preview');
     expect(itemIconDescriptor('stone_button').kind).toBe('special_preview');
     for (const id of [
       'oak_stairs', 'birch_stairs', 'spruce_stairs', 'cobblestone_stairs', 'brick_stairs', 'stone_brick_stairs',

@@ -1045,16 +1045,21 @@ button {
 }
 
 .mc-close {
-  position: absolute;
-  top: calc(2px * var(--mc-ui-scale));
-  right: calc(2px * var(--mc-ui-scale));
-  width: calc(12px * var(--mc-ui-scale));
-  height: calc(12px * var(--mc-ui-scale));
+  position: relative;
+  flex: none;
+  align-self: flex-start;
+  z-index: 2;
+  box-sizing: border-box;
+  width: max(44px, calc(12px * var(--mc-ui-scale)));
+  height: max(44px, calc(12px * var(--mc-ui-scale)));
+  margin: calc(-2px * var(--mc-ui-scale)) max(0px, env(safe-area-inset-right, 0px)) 0 max(8px, min(16px, calc(8px * var(--mc-ui-scale))));
   padding: 0;
   border: 0;
   color: #373737;
   background: transparent;
   font-size: calc(10px * var(--mc-ui-scale));
+  line-height: 1;
+  cursor: pointer;
 }
 
 .mc-recipe-book {

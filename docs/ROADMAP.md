@@ -1,5 +1,18 @@
 # Roadmap
 
+## 2026-08-28: gameplay / UI / entity polish
+
+- [x] Frontier vertical melee apex ~½ previous height; horizontal 1.8 impulse untouched.
+- [x] Sprint persists after hit while W+sprint stay held; release latch removed.
+- [x] Cached 3D isometric block icons in Creative/Inventory; generated items stay sprites.
+- [x] Inventory close × outside the panel on the right; responsive gutter + 44px hit target.
+- [x] Arrows pass through vegetation/fire; selection targeting unchanged; player+skeleton share collision raycast.
+- [x] Chicken legs visible (pack UV `[29,0]`); other mob rigs unchanged.
+- [x] Stair inner/outer occupancy corrected for all 4 facings × left/right; mesh/collision/selection agree.
+- [x] Player-fired resting arrow pickup; full inventory keeps the entity; skeleton arrows not pickable.
+- [x] Golden Apple yellow absorption hearts to the right of red hearts; effect expiry clears leftover HP.
+- [ ] Native-browser visual QA of catalog 3D icons, close-button layout, chicken walk, stair corners, arrow pickup and golden apple HUD on a real GPU session.
+
 ## 2026-08-27: interaction / support / mouse / mob polish
 
 - [x] Shared button/lever geometry + redstone geometry-state publication; real DDA all mount/state matrix.
@@ -16,7 +29,7 @@
 ## 2026-08-27: classic combat и оставшаяся приёмка
 
 - [x] No-cooldown melee; exact 1.8 damage totals; shared hurt resistance; falling+sprint crit; fixed armor.
-- [x] Canonical base/extra KB, melee travel drag, attacker slowdown и deliberate sprint reset; unit/component flat/wall trajectory validation.
+- [x] Canonical base/extra KB, melee travel drag, attacker slowdown; sprint now persists while input remains (2026-08-28 polish). Unit/component flat/wall trajectory validation.
 - [x] Transient sword blocking, 20% movement, cached first-person pose; input edges не теряются между fixed ticks; legacy save compatibility.
 - [ ] Полная browser classic combat acceptance: spam click/W-tap/crit/armor/block pose, GPU/FPS и mobile input. Browser доступ восстановлен для partial polish QA; native lock всё ещё не получен автоматизированным сеансом.
 - [ ] Отдельно расследовать baseline CRLF fingerprint и scheduler/CPU timeout failures полного suite; этот pass не меняет пороги/ожидания unrelated tests.

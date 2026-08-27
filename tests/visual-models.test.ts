@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { MobKind } from '../src/entities/mobDefinitions';
 import {
+  CHICKEN_MODEL,
   COW_MODEL,
   createMobModel,
   MOB_MODEL_DESCRIPTORS,
@@ -94,6 +95,17 @@ describe('legacy textured mob models', () => {
     ]);
     expect(legs[0]?.rotation).toEqual([0, Math.PI / 4, -Math.PI / 4]);
     expect(legs[7]?.rotation).toEqual([0, Math.PI / 4, Math.PI / 4]);
+  });
+
+  it('keeps chicken 1.8 leg boxes and samples the authored yellow island, not the transparent 26,0 slot', () => {
+    const rightLeg = CHICKEN_MODEL.parts.find((part) => part.name === 'rightLeg')!;
+    const leftLeg = CHICKEN_MODEL.parts.find((part) => part.name === 'leftLeg')!;
+    expect(rightLeg.rotationPoint).toEqual([-2, 19, 1]);
+    expect(leftLeg.rotationPoint).toEqual([1, 19, 1]);
+    expect(rightLeg.boxes[0]).toMatchObject({ origin: [-1, 0, -3], size: [3, 5, 3], textureOffset: [29, 0] });
+    expect(leftLeg.boxes[0]).toMatchObject({ origin: [-1, 0, -3], size: [3, 5, 3], textureOffset: [29, 0], mirror: true });
+    expect(rightLeg.boxes[0]?.textureOffset).not.toEqual([26, 0]);
+    expect(COW_MODEL.parts.filter((part) => part.name.startsWith('leg'))).toHaveLength(4);
   });
 
   it('uses classic 64x32 biped UV slots for zombie limbs instead of empty 64x64 player overlays', () => {

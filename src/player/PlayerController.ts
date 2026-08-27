@@ -122,7 +122,6 @@ export class PlayerController {
   onGround = false;
   sneaking = false;
   sprinting = false;
-  private sprintNeedsRelease = false;
   private meleeKnockback = false;
   inWater = false;
   inLava = false;
@@ -215,7 +214,6 @@ export class PlayerController {
     this.previousPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
     this.sprinting = false;
-    this.sprintNeedsRelease = false;
     this.onGround = false;
     this.onLadder = false;
     this.fallDistance = 0;
@@ -228,12 +226,6 @@ export class PlayerController {
 
   respawn(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
     this.teleport(position);
-  }
-
-  /** A successful sprint hit consumes the current sprint input, not movement. */
-  resetSprintAfterHit(): void {
-    this.sprinting = false;
-    this.sprintNeedsRelease = true;
   }
 
   receiveMeleeKnockback(away: Readonly<{ x: number; z: number }>): void {
@@ -256,7 +248,6 @@ export class PlayerController {
     this.pitch = clamp(finite(input.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
 
     const movement = input.movement();
-    if (!movement.sprint || movement.forward <= 0.05) this.sprintNeedsRelease = false;
     const jumpPressed = movement.jump && !this.jumpHeld;
     this.jumpHeld = movement.jump;
     if (!this.creativeFlightAllowed) {
@@ -291,7 +282,7 @@ export class PlayerController {
     else this.updateStance(world, movement.sneak);
     this.sprinting = this.isFlying
       ? Boolean(movement.flySprint) && (Math.abs(movement.forward) > 0.05 || Math.abs(movement.right) > 0.05)
-      : !this.sprintNeedsRelease && movement.sprint && movement.forward > 0.05
+      : movement.sprint && movement.forward > 0.05
         && !this.sneaking && !this.inWater && !this.inLava;
     const jumped = !this.isFlying && !this.meleeKnockback && movement.jump && wasOnGround && !this.inWater && !this.inLava;
 
@@ -417,7 +408,6 @@ export class PlayerController {
   restore(state: Partial<SerializedPlayerController>): void {
     this.meleeKnockback = false;
     this.sprinting = false;
-    this.sprintNeedsRelease = false;
     if (state.position && state.position.length === 3 && state.position.every(Number.isFinite)) {
       this.position.fromArray(state.position);
       this.previousPosition.copy(this.position);

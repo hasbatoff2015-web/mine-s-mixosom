@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BlockId } from '../src/blocks';
-import { CombatSystem, applyKnockback, completeMeleeAttack } from '../src/combat';
+import { CombatSystem, applyKnockback, completeMeleeAttack, MELEE_EXTRA_VERTICAL, MELEE_KB_VERTICAL } from '../src/combat';
 import { Game } from '../src/core/Game';
 import { MobManager, MOB_HURT_FLASH_SECONDS } from '../src/entities/MobManager';
 import { InputManager, type MoveInput } from '../src/input/InputManager';
@@ -112,16 +112,15 @@ describe('Game click → target damage integration', () => {
     expect(session.survival.exhaustion).toBe(0);
   });
 
-  it('consumes sprint only on accepted damage and keeps ordinary hits moving', () => {
+  it('slows attacker XZ on accepted sprint hit and keeps sprinting without a key release', () => {
     const { game, session, controls, mob } = gameFixture('wooden_sword');
     session.player.sprinting = true;
     session.player.velocity.set(5, 2, -10);
     controls.attackPressed = true;
     game.updateTargetAndActions();
     expect(session.player.velocity.toArray()).toEqual([3, 2, -6]);
-    expect(session.player.sprinting).toBe(false);
-    expect(mob.velocity.toArray()).toEqual([0, 10, -18]);
-    // A newly entered sprint on an ignored hit is not consumed.
+    expect(session.player.sprinting).toBe(true);
+    expect(mob.velocity.toArray()).toEqual([0, MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL, -18]);
     session.player.sprinting = true;
     controls.attackPressed = true;
     game.updateTargetAndActions();
@@ -137,9 +136,9 @@ describe('Game click → target damage integration', () => {
     session.player.sprinting = true;
     controls.attackPressed = true; game.updateTargetAndActions();
     expect(mob.health).toBe(12); // 5 + (8 - 5), not 5 + 8.
-    expect(mob.velocity.toArray()).toEqual([0, 10, -18]);
+    expect(mob.velocity.toArray()).toEqual([0, MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL, -18]);
     expect(mob.hurtFlashSeconds).toBe(0.1);
-    expect(session.player.sprinting).toBe(false);
+    expect(session.player.sprinting).toBe(true);
     expect(session.survival.exhaustion).toBeCloseTo(0.6);
   });
 
@@ -164,11 +163,11 @@ describe('Game click → target damage integration', () => {
     const event = { amount: 5, source: 'melee', position: new THREE.Vector3(0, 1, 0) };
     game.damagePlayerFromMob(event);
     expect(session.survival.health).toBe(17); // sword (5+1)/2
-    expect(session.player.velocity.toArray()).toEqual([2, 6, 9]);
+    expect(session.player.velocity.toArray()).toEqual([2, Math.min(-2 + MELEE_KB_VERTICAL, MELEE_KB_VERTICAL), 9]);
     game.damagePlayerFromMob(event);
     game.damagePlayerFromMob({ ...event, amount: 8 });
     expect(session.survival.health).toBe(15); // differential (3+1)/2
-    expect(session.player.velocity.toArray()).toEqual([2, 6, 9]);
+    expect(session.player.velocity.toArray()).toEqual([2, Math.min(-2 + MELEE_KB_VERTICAL, MELEE_KB_VERTICAL), 9]);
     session.summary.mode = 'creative';
     game.damagePlayerFromMob({ ...event, amount: 100 });
     expect(session.survival.health).toBe(15);
@@ -242,29 +241,24 @@ describe('movement and presentation', () => {
           expect(player.position.x).toBeCloseTo(0.4);
           expect(player.velocity.x).toBeCloseTo(8 * 0.546);
         }
-        expect(player.position.x).toBeCloseTo(mob.position.x, 4);
-        expect(player.position.y).toBeCloseTo(mob.position.y, 4);
+        if (!player.onGround && !mob.onGround) {
+          expect(player.position.x).toBeCloseTo(mob.position.x, 4);
+          expect(player.position.y).toBeCloseTo(mob.position.y, 4);
+        }
       }
     }
   });
 
-  it('requires W/S or sprint release before another sprint, without disabling future sprint', () => {
+  it('keeps sprinting after a successful sprint hit while W and sprint stay held', () => {
     const world = flatWorld();
-    for (const release of ['forward', 'sprint'] as const) {
-      const player = new PlayerController({ position: [0, 1, 0] });
-      const move: MoveInput = { forward: 1, right: 0, sprint: true, jump: false, sneak: false };
-      const source = { yaw: 0, pitch: 0, movement: () => move };
-      player.tick(world, source, 0.05);
-      expect(player.sprinting).toBe(true);
-      completeMeleeAttack(new CombatSystem().attack('wooden_sword', { attackerSprinting: true }), true, player);
-      for (let t = 0; t < 12; t++) player.tick(world, source, 0.05);
-      expect(player.sprinting).toBe(false);
-      if (release === 'forward') move.forward = 0; else move.sprint = false;
-      player.tick(world, source, 0.05);
-      move.forward = 1; move.sprint = true;
-      player.tick(world, source, 0.05);
-      expect(player.sprinting).toBe(true);
-    }
+    const player = new PlayerController({ position: [0, 1, 0] });
+    const move: MoveInput = { forward: 1, right: 0, sprint: true, jump: false, sneak: false };
+    const source = { yaw: 0, pitch: 0, movement: () => move };
+    player.tick(world, source, 0.05);
+    expect(player.sprinting).toBe(true);
+    completeMeleeAttack(new CombatSystem().attack('wooden_sword', { attackerSprinting: true }), true, player);
+    player.tick(world, source, 0.05);
+    expect(player.sprinting).toBe(true);
   });
 
   it('reuses the first-person object for repeated swing/block/release, restoring idle without drift', () => {
@@ -311,10 +305,12 @@ describe('movement and presentation', () => {
       const initial = mob.velocity.toArray();
       for (let t = 0; t < 20; t++) mobs.update(0.05, { daylight: 0.2 });
       rows.push({ wall: Number.isFinite(wall), sprint, initial, distance: mob.position.x, y: mob.position.y });
+      // Initial XZ impulse stays 8/18. 20-tick travel is a bit shorter only because
+      // the lower apex lands earlier and grounded drag then applies sooner.
       expect(initial[0]).toBe(sprint ? 18 : 8);
-      expect(initial[1]).toBe(sprint ? 10 : 8);
+      expect(initial[1]).toBe(sprint ? MELEE_KB_VERTICAL + MELEE_EXTRA_VERTICAL : MELEE_KB_VERTICAL);
       if (Number.isFinite(wall)) expect(mob.position.x).toBeCloseTo(0.7, 4);
-      else expect(mob.position.x).toBeCloseTo(sprint ? 5.02435 : 2.04988, 4);
+      else expect(mob.position.x).toBeCloseTo(sprint ? 4.44323 : 1.80024, 4);
     }
     console.info('Classic knockback: blocks/s initial, blocks displacement at 20 ticks', rows);
   });

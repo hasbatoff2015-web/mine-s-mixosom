@@ -15,7 +15,7 @@ import {
 } from './containerStrings';
 import {
   containerStageSize,
-  containerUiScale,
+  containerUiScaleWithClose,
 } from './containerTheme';
 import {
   allCraftingBookEntries,
@@ -42,7 +42,7 @@ import {
 import { stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
-import { heartHudIcons, type HeartHudIcon } from './heartHud';
+import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import {
   DESKTOP_CONTROL_SECTIONS,
   formatPlayTime,
@@ -81,6 +81,7 @@ export interface HudState {
   hunger: number;
   miningProgress: number;
   armor?: number;
+  absorption?: number;
   effects?: readonly PotionHudEntry[];
   debug?: string;
 }
@@ -511,7 +512,10 @@ export class GameUI {
       this.selectedItemText = selectedItemText;
       this.selectedItem.textContent = selectedItemText;
     }
-    const heartsHtml = heartHudIcons(state.health).icons.map((icon) => this.heartIconHtml(icon)).join('');
+    const heartsHtml = [
+      ...heartHudIcons(state.health).icons.map((icon) => this.heartIconHtml(icon)),
+      ...absorptionHudIcons(state.absorption ?? 0).icons.map((icon) => this.absorptionHeartIconHtml(icon)),
+    ].join('');
     if (heartsHtml !== this.heartsHtml) {
       this.heartsHtml = heartsHtml;
       this.hearts.innerHTML = heartsHtml;
@@ -740,14 +744,13 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     const stage = containerStageSize('creative', false);
-    const scale = containerUiScale(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     const catalog = obtainableItems();
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal.innerHTML = `
       <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
-          <button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>
           <div class="mc-creative-tabs">
             <button type="button" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
             <button type="button" data-creative-tab="inventory" class="${this.creativeTab === 'inventory' ? 'active' : ''}">${CONTAINER_STRINGS.inventory}</button>
@@ -760,6 +763,7 @@ export class GameUI {
           </div>
           <div data-player-hotbar class="mc-creative-hotbar">${hotbar}</div>
         </div>
+        ${this.closeButtonHtml()}
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.root.append(this.modal);
@@ -779,7 +783,7 @@ export class GameUI {
     const bookOpen = this.isRecipeBookOpen(context.kind);
     const showBook = this.showsRecipeBook(context);
     const stage = containerStageSize(context.kind, bookOpen && showBook);
-    const scale = containerUiScale(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     const body = this.containerBodyHtml(context);
     const player = this.playerInventoryHtml(context, context.kind !== 'inventory');
     const recipe = showBook ? this.recipeBookHtml(context) : '';
@@ -800,10 +804,10 @@ export class GameUI {
       <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
-          <button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>
           <div data-container-body>${body}</div>
           <div data-player-inventory>${player}</div>
         </div>
+        ${this.closeButtonHtml()}
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.root.append(this.modal);
@@ -1242,6 +1246,14 @@ export class GameUI {
 
   private heartIconHtml(icon: HeartHudIcon): string {
     return `<img class="heart-icon" src="${TextureAtlas.url(`gui/heart_${icon}`)}" alt="" draggable="false" />`;
+  }
+
+  private absorptionHeartIconHtml(icon: Exclude<HeartHudIcon, 'empty'>): string {
+    return `<img class="heart-icon absorption" src="${TextureAtlas.url(`gui/heart_absorption_${icon}`)}" alt="" draggable="false" />`;
+  }
+
+  private closeButtonHtml(): string {
+    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>`;
   }
 
   private pips(symbol: string, filled: number, total: number): string {

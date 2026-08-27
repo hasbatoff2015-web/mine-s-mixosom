@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_HEALTH } from '../src/survival';
 import { ARMOR_HUD_ICON_COUNT } from '../src/ui/armorHud';
-import { HEART_HUD_ICON_COUNT, heartHudIcons } from '../src/ui/heartHud';
+import { HEART_HUD_ICON_COUNT, absorptionHudIcons, heartHudIcons } from '../src/ui/heartHud';
 import {
   HUD_STATUS_ICON_COUNT,
   HUD_STATUS_ICON_GAP_PX,
@@ -38,5 +38,15 @@ describe('health HUD hearts', () => {
     expect(HEART_HUD_ICON_COUNT).toBe(HUD_STATUS_ICON_COUNT);
     expect(HUD_STATUS_ICON_SIZE_EM).toBe(0.92);
     expect(HUD_STATUS_ICON_GAP_PX).toBe(1);
+  });
+
+  it('places absorption hearts as extra yellow icons, never over red hearts', () => {
+    expect(absorptionHudIcons(0).icons).toEqual([]);
+    expect(absorptionHudIcons(4).icons).toEqual(['full', 'full']);
+    expect(absorptionHudIcons(3).icons).toEqual(['full', 'half']);
+    expect(absorptionHudIcons(2).icons).toEqual(['full']);
+    expect(absorptionHudIcons(1).icons).toEqual(['half']);
+    expect(heartHudIcons(20).icons).toHaveLength(10);
+    expect(absorptionHudIcons(4).icons).not.toContain('empty');
   });
 });

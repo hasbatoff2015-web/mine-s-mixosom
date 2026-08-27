@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
+import { ItemId } from '../items';
+import type { PlayerAABB } from '../player';
 import type { MobManager } from '../entities';
 import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
 import { ARROW_FORWARD, ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
@@ -20,10 +22,17 @@ interface PlayerArrow {
   inGround: boolean;
   embedded?: EmbeddedArrowState;
   flaming: boolean;
+  pickupDelay: number;
 }
 
 /** Prefer a cart over a rail/block that is only slightly closer (cart sits on the rail). */
 const CART_BLOCK_SLOP = 0.5;
+/** Flying arrows keep the existing short lifetime; in-ground player arrows last ~Java 1.8 60 s. */
+export const ARROW_FLYING_LIFETIME_SECONDS = 8;
+export const ARROW_GROUND_LIFETIME_SECONDS = 60;
+export const ARROW_PICKUP_DELAY_SECONDS = 0.25;
+const ARROW_PICKUP_SIZE = 0.5;
+const ARROW_PICKUP_PADDING = 0.2;
 
 export class PlayerArrowManager {
   private readonly arrows: PlayerArrow[] = [];
@@ -82,6 +91,7 @@ export class PlayerArrowManager {
       critical,
       inGround: false,
       flaming,
+      pickupDelay: ARROW_PICKUP_DELAY_SECONDS,
     });
   }
 
@@ -91,15 +101,19 @@ export class PlayerArrowManager {
       const arrow = this.arrows[index]!;
       arrow.previousPosition.copy(arrow.position);
       arrow.age += dt;
-      if (arrow.age > 8) {
+      const lifetime = arrow.inGround ? ARROW_GROUND_LIFETIME_SECONDS : ARROW_FLYING_LIFETIME_SECONDS;
+      if (arrow.age > lifetime) {
         this.remove(index);
         continue;
       }
       if (arrow.inGround) {
+        arrow.pickupDelay = Math.max(0, arrow.pickupDelay - dt);
         if (!arrow.embedded || arrowSupportIntact(this.world, arrow.embedded)) continue;
         releaseEmbeddedArrow(arrow.velocity, arrow.embedded, this.random);
         arrow.embedded = undefined;
         arrow.inGround = false;
+        arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
+        arrow.age = 0;
       }
       let removed = false;
       for (let step = 0; step < tickSteps; step += 1) {
@@ -112,7 +126,7 @@ export class PlayerArrowManager {
           continue;
         }
         const direction = movement.clone().multiplyScalar(1 / distance);
-        const blockHit = this.world.raycast(arrow.position, direction, distance);
+        const blockHit = this.world.raycast(arrow.position, direction, distance, { geometry: 'collision' });
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
         const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
         const cartCloser = cartHit && (!mobHit || cartHit.distance <= mobHit.distance)
@@ -138,6 +152,8 @@ export class PlayerArrowManager {
           arrow.embedded = embedArrow(blockHit, arrow.velocity);
           arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
           arrow.inGround = true;
+          arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
+          arrow.age = 0;
           arrow.velocity.set(0, 0, 0);
           arrow.previousPosition.copy(arrow.position);
           arrow.visual.position.copy(arrow.position);
@@ -180,6 +196,35 @@ export class PlayerArrowManager {
     }
   }
 
+  /**
+   * Java 1.8 player arrows (`canBePickedUp = 1`) enter inventory when resting.
+   * Creative removes the world entity without inflating stacks.
+   * Full Survival inventory leaves the arrow in the world.
+   */
+  tryCollect(
+    player: PlayerAABB,
+    options: {
+      readonly mode: 'survival' | 'creative';
+      readonly addItem: (itemId: string, count: number) => number;
+    },
+  ): number {
+    let collected = 0;
+    for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
+      const arrow = this.arrows[index]!;
+      if (!arrow.inGround || arrow.pickupDelay > 0) continue;
+      if (!arrowOverlapsPlayer(arrow.position, player)) continue;
+      if (options.mode === 'creative') {
+        this.remove(index);
+        collected += 1;
+        continue;
+      }
+      if (options.addItem(ItemId.Arrow, 1) !== 0) continue;
+      this.remove(index);
+      collected += 1;
+    }
+    return collected;
+  }
+
   dispose(): void {
     while (this.arrows.length) this.remove(this.arrows.length - 1);
     if (this.ownsVisuals) this.visuals.dispose();
@@ -196,4 +241,11 @@ export class PlayerArrowManager {
     arrow.visual.removeFromParent();
     this.arrows.splice(index, 1);
   }
+}
+
+function arrowOverlapsPlayer(position: THREE.Vector3, player: PlayerAABB): boolean {
+  const half = ARROW_PICKUP_SIZE * 0.5 + ARROW_PICKUP_PADDING;
+  return position.x - half < player.maxX && position.x + half > player.minX
+    && position.y - half < player.maxY && position.y + half > player.minY
+    && position.z - half < player.maxZ && position.z + half > player.minZ;
 }

@@ -1,6 +1,6 @@
 # Classic combat reference: Java 1.8.9
 
-Проверено 2026-08-27. Этот документ заменяет combat-разделы 1.9 reference для текущего Frontier Cubes. Это reference чисел/порядка операций, не порт Minecraft и не обещание multiplayer parity. Код/брендированные assets не копировались. Остальные системы сохраняют свои текущие контракты.
+Проверено 2026-08-27, vertical/sprint product adaptations 2026-08-28. Этот документ заменяет combat-разделы 1.9 reference для текущего Frontier Cubes. Это reference чисел/порядка операций, не порт Minecraft и не обещание multiplayer parity. Код/брендированные assets не копировались. Остальные системы сохраняют свои текущие контракты.
 
 ## Источники
 
@@ -39,9 +39,7 @@ Player pipeline: raw comparison → optional sword block → fixed armor → abs
 
 Crit: falling (`fallDistance>0`), not grounded/water/ladder/blind/riding, living target; multiplier 1.5. Sprint does **not** forbid crit. No cooldown threshold. Frontier has no blindness feature; the helper accepts the condition, runtime has no status to supply.
 
-Canonical units: player/mob velocity blocks/s, fixed tick 0.05s. Base transform halves XYZ, adds normalized away-from-attacker ×8 to XZ, sets Y=min(Y/2+8,8), grounded or airborne. The 8 is `0.4×20`, converted once.
-
-Accepted sprint attack adds a separate facing-vector XZ ×10 and Y+2 (`0.5×20`, `0.1×20`). Extra level scales horizontal only. Frontier yaw0 faces −Z, so its signs are converted at the helper boundary. Then attacker XZ ×0.6, sprint=false. No slowdown on ordinary or rejected hits. A stronger differential hit may accept extra KB without second base KB.
+Canonical units: player/mob velocity blocks/s, fixed tick 0.05s. Base transform halves XYZ, adds normalized away-from-attacker ×8 to XZ. Horizontal 8 b/s is `0.4×20` and stays Java 1.8. Vertical uses one documented Frontier adapter `FRONTIER_MELEE_VERTICAL_SCALE = 0.67` so flat apex is ~½ the measured 1.8 height (Y/2 undershoots under gravity). Base Y = min(Y/2+5.36, 5.36). Extra sprint still adds facing-vector XZ ×10; extra Y is `0.1×20×0.67 = 1.34`. Extra level scales horizontal only. Frontier yaw0 faces −Z, so its signs are converted at the helper boundary. Then attacker XZ ×0.6. Sprint state is **not** cleared; if W+sprint remain held, the player keeps sprinting. No slowdown on ordinary or rejected hits. A stronger differential hit may accept extra KB without second base KB.
 
 Reference living travel moves before gravity/drag: XZ air0.91, ordinary-ground0.6×0.91; gravity0.08 blocks/tick² =32 blocks/s²; Y drag0.98. Frontier applies this during melee recoil in existing player/mob collision paths. Mob AI must not overwrite recoil while airborne; player input adds steering instead of blending away the impulse. Liquid/ladder/flight remain existing behavior; terrain step-up and collisions are not bit-exact vanilla.
 
@@ -53,7 +51,8 @@ Accepted melee costs exhaustion0.3 in Survival; air/rejected hits cost none. Ref
 
 ## Explicit adaptations and retained behavior
 
-- Sprint re-entry latch requires forward or sprint release before another sprint bonus, as explicitly requested. The vanilla client can re-enter sprint while the sprint key stays held; this latch is a product choice, not a claim of bit-exact client behavior.
+- Sprint persists after a successful sprint-hit while W and the sprint key stay held. This is an intentional simplification versus Java 1.8 (no W-tap / `sprintNeedsRelease` latch). Repeated sprint extras are limited by hurt resistance, not by a hidden input cooldown.
+- Vertical melee apex is a documented Frontier product adaptation (~½ Java 1.8 height). Horizontal impulse 8/18 b/s is unchanged. 20-tick XZ travel is slightly shorter only because the lower apex lands earlier into grounded drag.
 - Melee recoil preserves existing different player/mob collision resolvers and step heights; flat/wall trajectories are tested, arbitrary terrain parity is not claimed. Coincident attacker/target centers use deterministic +X instead of random perturbation. No RNG when resistance0.
 - Fire contact/lava/cactus/explosion/melee/projectile are sword-blockable. Fire DOT/fall/drown/starve/suffocate/void are not. Explicit bypassArmor also bypasses sword block. Existing Frontier Fire DOT and generic armor mitigation remain unchanged, unlike some Java bypass flags, to preserve the task's environmental damage contract.
 - Bow draw remains `(x²+2x)/3`, x=ticks/20, cap1, threshold0.1; launch3×power. Existing air/water drag, critical arrow randomness, fire arrows, impact impulses and geometry are not migrated.
@@ -63,8 +62,8 @@ Accepted melee costs exhaustion0.3 in Survival; air/rejected hits cost none. Ref
 
 ## Verification
 
-Follow-up audit: `tests/mob-polish.test.ts` records20 fixed ticks on a flat floor and compares the entire Y sequence with independent discrete move → gravity0.08 → drag0.98 → floor collision. Normal: initial8b/s, first displacement0.4, apex1.153108 at tick5, landing tick11 (0.55s). Sprint: initial10b/s, first0.5, apex1.708834 at tick6, landing14 (0.70s). Both match reference (floor epsilon0.00001); stepped=false throughout, no extra Frontier pop. No vertical product adaptation was applied. Horizontal20-tick travel remains normal2.049883 / sprint5.024349, wall contact0.69999 in the classic fixture.
+Follow-up audit: `tests/mob-polish.test.ts` records 20 fixed ticks on a flat floor and compares the entire Y sequence with independent discrete move → gravity0.08 → drag0.98 → floor collision. After `FRONTIER_MELEE_VERTICAL_SCALE=0.67`: normal initial 5.36 b/s, first displacement 0.268, apex **0.576** at tick 4, landing tick 8. Sprint initial 6.7 b/s, first 0.335, apex **0.841** at tick 5, landing 10. Horizontal impulse remains 8 / 18 b/s; 20-tick open travel is 1.80024 / 4.44323 because earlier landing applies grounded drag sooner. Wall contact remains 0.69999. `stepped=false` throughout.
 
-AI intent, not velocity, now owns mob facing and walk animation; pure melee recoil leaves gait static. Embedded arrows resume residual motion component×random×0.2 after loss of impact support, following EntityArrow semantics; existing geometry, free-flight drag/gravity and damage remain unchanged.
+AI intent, not velocity, now owns mob facing and walk animation; pure melee recoil leaves gait static. Embedded arrows resume residual motion component×random×0.2 after loss of impact support. Player-fired resting arrows can be picked up; skeleton arrows cannot (Java 1.8 `canBePickedUp=0`). Existing geometry, free-flight drag/gravity and damage remain unchanged.
 
-See `TESTING.md` and `reports/2026-08-27_interaction-support-mouse-mob-polish.md` for current QA. Normal/sprint recoil was inspected in the browser via an explicit DEV fixture UI; native-input/full combat/mobile/GPU acceptance remains pending. The prior classic report's blocked browser result is historical, not a current assertion that no browser inspection occurred.
+See `TESTING.md` and `reports/2026-08-28_gameplay-ui-entity-polish.md` for current QA.
