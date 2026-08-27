@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { migrateLegacyStack } from '../inventory/legacyItems';
 import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
-import { rayAabbDistance } from './collision';
+import { rayAabbDistance, blockCollisionBoxes } from './collision';
 import { blockSelectionBoxes } from './selection';
 import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
 import { CHUNK_SIZE, LIGHTING_HALO_CHUNKS, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
@@ -54,6 +54,12 @@ import {
 
 const SUPPORT_NEIGHBORS = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0],
   [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const;
+
+export interface VoxelRaycastOptions {
+  readonly stopOnLiquids?: boolean;
+  /** Selection is player targeting; collision is projectile/physics blocking. */
+  readonly geometry?: 'selection' | 'collision';
+}
 
 export interface VoxelHit {
   x: number;
@@ -903,7 +909,7 @@ export class VoxelWorld {
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     maxDistance: number,
-    options: { readonly stopOnLiquids?: boolean } = {},
+    options: VoxelRaycastOptions = {},
   ): VoxelHit | undefined {
     const dir = direction.clone().normalize();
     let x = Math.floor(origin.x);
@@ -919,11 +925,12 @@ export class VoxelWorld {
     let maxY = dir.y === 0 ? Infinity : ((stepY > 0 ? y + 1 : y) - origin.y) / dir.y;
     let maxZ = dir.z === 0 ? Infinity : ((stepZ > 0 ? z + 1 : z) - origin.z) / dir.z;
     let distance = 0;
+    const geometry = options.geometry ?? 'selection';
     while (distance <= maxDistance) {
       const block = this.getBlock(x, y, z);
       const definition = getBlockDefinition(block);
       if (block !== BlockId.Air && (!definition.liquid || options.stopOnLiquids)) {
-        const hit = this.hitSelectionBoxes(origin, dir, x, y, z, block, maxDistance, definition.liquid === true);
+        const hit = this.hitVoxelBoxes(origin, dir, x, y, z, block, maxDistance, definition.liquid === true, geometry);
         if (hit) return hit;
       }
       if (maxX < maxY && maxX < maxZ) {
@@ -943,7 +950,7 @@ export class VoxelWorld {
     return undefined;
   }
 
-  private hitSelectionBoxes(
+  private hitVoxelBoxes(
     origin: THREE.Vector3,
     dir: THREE.Vector3,
     x: number,
@@ -952,11 +959,14 @@ export class VoxelWorld {
     block: BlockId,
     maxDistance: number,
     liquid = false,
+    geometry: 'selection' | 'collision' = 'selection',
   ): VoxelHit | undefined {
     let best: ReturnType<typeof rayAabbDistance>;
     const boxes = liquid
       ? [{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 }]
-      : blockSelectionBoxes(this, x, y, z);
+      : geometry === 'collision'
+        ? blockCollisionBoxes(this, x, y, z)
+        : blockSelectionBoxes(this, x, y, z);
     for (const box of boxes) {
       const hit = rayAabbDistance(origin, dir, box);
       if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;

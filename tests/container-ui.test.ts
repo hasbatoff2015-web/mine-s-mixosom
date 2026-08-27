@@ -29,7 +29,7 @@ import {
   RECIPE_BOOK_TAB_ICONS,
   visibleRecipeBookTabs,
 } from '../src/ui/recipeBook';
-import { containerStageSize, containerUiScale, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CREATIVE_SCROLL_GUTTER } from '../src/ui/containerTheme';
+import { containerStageSize, containerUiScale, containerUiScaleWithClose, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CLOSE_GUTTER, MC_CLOSE_HIT_MIN_PX, MC_CREATIVE_SCROLL_GUTTER } from '../src/ui/containerTheme';
 import {
   applySlotSnapshots,
   armorSlotKind,
@@ -65,6 +65,22 @@ describe('container layout', () => {
     expect(large).toBeLessThanOrEqual(4);
     expect(large * 176).toBeLessThanOrEqual(2560);
     expect(containerUiScale(320, 180, 327, 166)).toBeLessThan(1);
+  });
+
+  it('reserves outside-panel close space without shrinking the logical panel size', () => {
+    expect(MC_CLOSE_GUTTER).toBeGreaterThanOrEqual(16);
+    expect(MC_CLOSE_HIT_MIN_PX).toBe(44);
+    const panel = containerStageSize('inventory', false);
+    expect(panel.width).toBe(176);
+    const withClose = containerUiScaleWithClose(667, 375, panel.width, panel.height);
+    const without = containerUiScale(667, 375, panel.width, panel.height);
+    expect(withClose).toBeLessThanOrEqual(without);
+    for (const size of [
+      [932, 430], [844, 390], [800, 360], [768, 360], [740, 360], [720, 360], [667, 375],
+    ] as const) {
+      const scale = containerUiScaleWithClose(size[0], size[1], 195, 222);
+      expect(195 * scale + MC_CLOSE_HIT_MIN_PX).toBeLessThanOrEqual(size[0]);
+    }
   });
 
   it('patches container panels without a Creative catalog node', () => {

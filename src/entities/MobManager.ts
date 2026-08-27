@@ -1387,7 +1387,7 @@ export class MobManager {
       const movement = projectile.velocity.clone();
       const distance = movement.length();
       const blockHit = distance > 0
-        ? this.world.raycast(previous, movement.clone().normalize(), distance)
+        ? this.world.raycast(previous, movement.clone().normalize(), distance, { geometry: 'collision' })
         : undefined;
       if (blockHit) {
         projectile.embedded = embedArrow(blockHit, projectile.velocity);

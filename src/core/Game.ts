@@ -491,6 +491,20 @@ export class Game {
       onDeath: (source) => this.handleDeath(source),
     });
     survival.setSpawnPoint(restored?.player.spawnPoint ?? spawn);
+    if (restored && (restored.player.absorption !== undefined || restored.player.absorptionTicks !== undefined)) {
+      survival.restore({
+        health: survival.health,
+        hunger: survival.hunger,
+        saturation: survival.saturation,
+        exhaustion: survival.exhaustion,
+        absorption: restored.player.absorption ?? 0,
+        absorptionTicks: restored.player.absorptionTicks,
+        airTicks: survival.airTicks,
+        fireTicks: survival.fireTicks,
+        dead: survival.dead,
+        spawnPoint: [...survival.spawnPoint],
+      });
+    }
     const redstone = new RedstoneSystem(world, {
       root: this.scene,
       onSourceChanged: (x, _y, z) => world.markBlockDirty(x, z),
@@ -1389,6 +1403,8 @@ export class Game {
         health: session.survival.health,
         hunger: session.survival.hunger,
         saturation: session.survival.saturation,
+        absorption: session.survival.absorption,
+        absorptionTicks: session.survival.effectTicks('absorption'),
         selectedSlot: session.selectedSlot,
         spawnPoint: [...session.survival.spawnPoint],
         inventory: session.inventory.serialize(),
@@ -1606,6 +1622,11 @@ export class Game {
     simMark = this.addSimPart('other', simMark);
     const entityStart = performance.now();
     session.arrows.tick(FIXED_DT);
+    const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
+      mode: session.summary.mode,
+      addItem: (itemId, count) => session.inventory.addItem(itemId, count),
+    });
+    if (collectedArrows > 0) this.audio.playTone(660, 0.05, 0.025);
     session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
     const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
     const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
@@ -2835,6 +2856,7 @@ export class Game {
       health: session.summary.mode === 'creative' ? 20 : session.survival.health,
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
       armor: getArmorPoints(session.inventory),
+      absorption: session.summary.mode === 'creative' ? 0 : session.survival.absorption,
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),

@@ -200,7 +200,10 @@ export function resolveStairShape(
     const frontFacing = defaultStairFacing(world.getBlockState?.(x + frontOff[0], y, z + frontOff[2]));
     if (facingAxis(frontFacing) !== facingAxis(facing)
       && stairCanTakeShape(world, x, y, z, state, oppositeFacing(frontFacing))) {
-      return frontFacing === counterClockwiseFacing(facing) ? 'inner_left' : 'inner_right';
+      // Geometry authors the high step on `facing`. A perpendicular neighbor
+      // on that high side is the convex outside, so this is OUTER — the
+      // previous front→inner mapping filled the outer corner.
+      return frontFacing === counterClockwiseFacing(facing) ? 'outer_left' : 'outer_right';
     }
   }
   const backOff = HORIZONTAL_OFFSET[oppositeFacing(facing)];
@@ -209,7 +212,7 @@ export function resolveStairShape(
     const backFacing = defaultStairFacing(world.getBlockState?.(x + backOff[0], y, z + backOff[2]));
     if (facingAxis(backFacing) !== facingAxis(facing)
       && stairCanTakeShape(world, x, y, z, state, backFacing)) {
-      return backFacing === counterClockwiseFacing(facing) ? 'outer_left' : 'outer_right';
+      return backFacing === counterClockwiseFacing(facing) ? 'inner_left' : 'inner_right';
     }
   }
   return 'straight';

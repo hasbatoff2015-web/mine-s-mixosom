@@ -38,9 +38,9 @@ describe('generic special preview contract', () => {
 
   it('keeps cube GUI icons on the authored front face instead of the side/back', () => {
     expect(itemHeldMeshKind('furnace')).toBe('block_cube');
-    expect(itemIconDescriptor('furnace')).toEqual({ kind: 'texture', texturePath: 'block/furnace_front' });
+    expect(itemIconDescriptor('furnace')).toEqual({ kind: 'special_preview', category: 'generic' });
     expect(usesFrontFacingGuiTexture('furnace')).toBe(true);
     expect(getItemDefinition('furnace').texture).not.toBe('block/furnace_side');
-    expect(usesCanonicalSpecialPreview('furnace')).toBe(false);
+    expect(usesCanonicalSpecialPreview('furnace')).toBe(true);
   });
 });

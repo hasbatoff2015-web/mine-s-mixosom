@@ -11,6 +11,7 @@ import { restoreBucketInventory } from '../src/items/bucketInteraction';
 import { VoxelWorld } from '../src/world/World';
 import { DroppedItemManager } from '../src/entities/DroppedItemManager';
 import { Game } from '../src/core/Game';
+import { MELEE_KB_VERTICAL } from '../src/combat';
 import { SurvivalSystem } from '../src/survival';
 import { PlayerController } from '../src/player';
 
@@ -73,7 +74,7 @@ describe('removed shield migration and damage', () => {
       const expected = reference.damage(6, source === 'arrow' ? 'projectile' : 'melee', { armor: inventory.clone() });
       game.damagePlayerFromMob({ source, amount: 6, position: new THREE.Vector3(), knockback });
       expect(survival.health).toBe(20 - expected.dealt);
-      expect(velocity).toEqual(source === 'melee' ? new THREE.Vector3(0, 8, -8) : knockback);
+      expect(velocity).toEqual(source === 'melee' ? new THREE.Vector3(0, MELEE_KB_VERTICAL, -8) : knockback);
     }
   });
 

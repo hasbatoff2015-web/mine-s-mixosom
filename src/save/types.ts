@@ -18,6 +18,8 @@ export interface SerializedPlayerState {
   health: number;
   hunger: number;
   saturation: number;
+  absorption?: number;
+  absorptionTicks?: number;
   selectedSlot: number;
   spawnPoint?: [number, number, number];
   inventory: unknown;

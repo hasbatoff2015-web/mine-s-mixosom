@@ -114,8 +114,11 @@ export const CHICKEN_MODEL: LegacyModelDefinition = {
       box([-1, -2, -3], [2, 2, 2], [14, 4]),
     ]),
     modelPart('body', [0, 16, 0], [box([-3, -4, -3], [6, 8, 6], [0, 9])], [Math.PI / 2, 0, 0]),
-    modelPart('rightLeg', [-2, 19, 1], [box([-1, 0, -3], [3, 5, 3], [26, 0])]),
-    modelPart('leftLeg', [1, 19, 1], [box([-1, 0, -3], [3, 5, 3], [26, 0], { mirror: true })]),
+    // 1.8 ModelChicken addBox stays 3×5×3 at pivots 19. This pack's 64×32 sheet
+    // paints the yellow leg/foot at logical ~32,0 — not the vanilla 26,0 island
+    // (that region is transparent here, so legs vanished to alphaTest).
+    modelPart('rightLeg', [-2, 19, 1], [box([-1, 0, -3], [3, 5, 3], [29, 0])]),
+    modelPart('leftLeg', [1, 19, 1], [box([-1, 0, -3], [3, 5, 3], [29, 0], { mirror: true })]),
     modelPart('rightWing', [-4, 13, 0], [box([0, 0, -3], [1, 4, 6], [24, 13])]),
     modelPart('leftWing', [4, 13, 0], [box([-1, 0, -3], [1, 4, 6], [24, 13], { mirror: true })]),
   ],

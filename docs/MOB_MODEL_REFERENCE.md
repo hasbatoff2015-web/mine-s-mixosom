@@ -58,7 +58,9 @@ Base skin и fleece — две отдельные definitions, которые д
 |---|---|---|---|
 | Head/beak/wattle | `(0,15,-4)` | `4×6×3 @ 0,0`; `4×2×2 @ 14,0`; `2×2×2 @ 14,4` | Legacy match |
 | Body | `(0,16,0)`, `rx=π/2` | `(-3,-4,-3); 6×8×6; 0,9` | Legacy match |
-| Legs | `(-2,19,1)`, `(1,19,1)` | `(-1,0,-3); 3×5×3; 26,0` | Legacy match |
+| Legs | `(-2,19,1)`, `(1,19,1)` | `(-1,0,-3); 3×5×3; **29,0**` | Legacy box/pivot; pack UV adaptation |
+
+This pack's `entity/chicken` 64×32 sheet leaves the vanilla `[26,0]` island transparent (`alphaTest` discarded the legs). The yellow leg/foot lives near logical `32,0`; UV `[29,0]` samples that island without changing cuboid size or hip pivots. Cow/pig/sheep/zombie/skeleton/creeper/spider rigs are unchanged.
 | Wings | `(-4,13,0)`, `(4,13,0)` | `1×4×6; 24,13` | Legacy match |
 
 ## Zombie

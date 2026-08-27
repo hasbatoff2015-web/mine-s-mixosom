@@ -17,6 +17,19 @@ export const MC_PLAYER_INV_TOP = 84;
 export const MC_HOTBAR_GAP = 4;
 export const MC_MAX_UI_SCALE = 4;
 export const MC_MIN_UI_SCALE = 0.5;
+/** Logical px reserved so the close control sits outside the panel, not over tabs. */
+export const MC_CLOSE_GUTTER = 20;
+/** Minimum touch target for the outside close control. */
+export const MC_CLOSE_HIT_MIN_PX = 44;
+
+export function containerUiScaleWithClose(
+  viewportWidth: number,
+  viewportHeight: number,
+  logicalWidth: number,
+  logicalHeight: number,
+): number {
+  return containerUiScale(viewportWidth, viewportHeight, logicalWidth + MC_CLOSE_GUTTER, logicalHeight);
+}
 
 export function containerUiScale(
   viewportWidth: number,

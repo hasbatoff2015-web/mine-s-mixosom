@@ -111,6 +111,7 @@ export interface SerializedSurvivalState {
   readonly saturation: number;
   readonly exhaustion: number;
   readonly absorption: number;
+  readonly absorptionTicks?: number;
   readonly airTicks: number;
   readonly fireTicks: number;
   readonly arrowFireTicks?: number;
@@ -391,6 +392,7 @@ export class SurvivalSystem {
       saturation: this.saturation,
       exhaustion: this.exhaustion,
       absorption: this.absorption,
+      absorptionTicks: this.effectTicks('absorption'),
       airTicks: this.airTicks,
       fireTicks: this.fireTicks,
       arrowFireTicks: this.arrowFireTicks,
@@ -406,6 +408,11 @@ export class SurvivalSystem {
     if (state.saturation !== undefined) this.saturation = clamp(state.saturation, 0, this.hunger);
     if (state.exhaustion !== undefined) this.exhaustion = clamp(state.exhaustion, 0, 4);
     if (state.absorption !== undefined) this.absorption = Math.max(0, state.absorption);
+    if (state.absorptionTicks !== undefined) {
+      const ticks = Math.max(0, Math.floor(state.absorptionTicks));
+      if (ticks > 0) this.effects.set('absorption', { amplifier: 0, ticks });
+      else this.effects.delete('absorption');
+    }
     if (state.airTicks !== undefined) this.airTicks = clamp(Math.floor(state.airTicks), 0, MAX_AIR_TICKS);
     if (state.fireTicks !== undefined) this.fireTicks = Math.max(0, Math.floor(state.fireTicks));
     if (state.arrowFireTicks !== undefined) this.arrowFireTicks = Math.max(0, Math.floor(state.arrowFireTicks));
@@ -490,6 +497,7 @@ export class SurvivalSystem {
       }
       if (effect.ticks <= 0) {
         this.effects.delete(id);
+        if (id === 'absorption') this.absorption = 0;
         if (id === 'regeneration') this.effectRegenTimer = 0;
       }
     }

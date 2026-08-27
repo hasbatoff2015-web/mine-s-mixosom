@@ -15,8 +15,8 @@ import { disposeSpecialIconPreview, prepareSpecialIconPreview } from './itemIcon
 const ICON_SIZE = 64;
 
 /**
- * Renders special_model items to cached 2D previews using the game WebGLRenderer.
- * Ordinary cube/generated items keep their atlas/sprite texture.
+ * Bakes block-item isometric previews once via the game WebGLRenderer.
+ * Generated/non-block items keep their atlas/sprite texture.
  */
 export class ItemIconRenderer {
   private readonly cache = new Map<string, string>();

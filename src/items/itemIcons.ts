@@ -68,9 +68,19 @@ export function specialIconPose(category: SpecialIconCategory | undefined): Spec
  * Any special held model uses the canonical preview pipeline.
  * Unknown shapes fall back to `generic` pose; size/color-space stay automatic.
  */
+/**
+ * 3D GUI bake for placeable block models (cubes + special shapes).
+ * Generated sprites (torch, door, ladder, plants) stay 2D item textures.
+ */
+export function usesBlockModelIcon(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  if (item.kind !== 'block') return false;
+  return itemHeldMeshKind(item) !== 'generated';
+}
+
 export function itemIconDescriptor(itemOrId: string | ItemDefinition): ItemIconDescriptor {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
-  if (itemHeldMeshKind(item) === 'special_model') {
+  if (usesBlockModelIcon(item)) {
     return { kind: 'special_preview', category: specialIconCategory(item) ?? 'generic' };
   }
   return { kind: 'texture', texturePath: item.texture };
