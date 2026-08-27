@@ -1,8 +1,37 @@
-import { getBlockDefinition, type BlockId } from '../blocks';
+import { getBlockDefinition, type BlockId, type BlockRenderShape, type BlockRenderState } from '../blocks';
+import { attachmentNormal } from '../rendering/specialBlockGeometry';
 import { blockCollisionBoxes } from './collision';
 import type { BlockNeighborView } from '../rendering/specialBlockGeometry';
 
 export interface PlacementFace { readonly x: number; readonly y: number; readonly z: number }
+
+/** Existing attachment state is authoritative; signs match rendering and placement. */
+const SUPPORT_RULES: Partial<Record<BlockRenderShape, { attachment: 'floor' | 'wall'; facing: 'north' | 'south'; oriented?: boolean }>> = {
+  torch: { attachment: 'floor', facing: 'north', oriented: true },
+  lever: { attachment: 'floor', facing: 'north', oriented: true },
+  button: { attachment: 'wall', facing: 'south', oriented: true },
+  ladder: { attachment: 'wall', facing: 'north' },
+  wire: { attachment: 'floor', facing: 'north' },
+  pressure_plate: { attachment: 'floor', facing: 'north' },
+  rail: { attachment: 'floor', facing: 'north' },
+};
+
+export function needsBlockSupport(block: BlockId): boolean {
+  return SUPPORT_RULES[getBlockDefinition(block).renderShape] !== undefined;
+}
+
+export function supportCellForBlock(block: BlockId, state: BlockRenderState | undefined, x: number, y: number, z: number) {
+  const rule = SUPPORT_RULES[getBlockDefinition(block).renderShape];
+  if (!rule) return undefined;
+  const attachment = rule.oriented ? state?.attachment ?? rule.attachment : rule.attachment;
+  const normal = attachmentNormal(attachment, state?.facing ?? rule.facing);
+  return { x: x - normal.x, y: y - normal.y, z: z - normal.z, normal };
+}
+
+export function isBlockStillSupported(world: BlockNeighborView, x: number, y: number, z: number): boolean {
+  const support = supportCellForBlock(world.getBlock(x, y, z, false), world.getBlockState?.(x, y, z), x, y, z);
+  return !support || canAttachToFace(world, support.x, support.y, support.z, support.normal);
+}
 
 /** A clicked solid shape may anchor a neighboring block, even if not full-cube.
  * Replaceable cells are handled separately (same-cell replacement, not support).

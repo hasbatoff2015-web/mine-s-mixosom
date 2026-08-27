@@ -40,13 +40,14 @@ describe('pointer lock unlock reasons', () => {
     })).toBe('programmatic');
   });
 
-  it('classifies a focused in-document unlock as escape', () => {
+  it('classifies an observed Escape as escape', () => {
     expect(classifyPointerUnlock({
       previouslyLocked: true,
       nowLocked: false,
       programmaticReleasePending: false,
       documentHidden: false,
       documentHasFocus: true,
+      escapePressed: true,
     })).toBe('escape');
   });
 });

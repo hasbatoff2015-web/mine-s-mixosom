@@ -1,19 +1,32 @@
 # Roadmap
 
+## 2026-08-27: interaction / support / mouse / mob polish
+
+- [x] Shared button/lever geometry + redstone geometry-state publication; real DDA all mount/state matrix.
+- [x] Local bounded support-loss, exactly-once drops/redstone/light cleanup; real explosion integration.
+- [x] Separate fluid-displaceable semantics; flowing water wash + unchanged routing/timing/bucket regression.
+- [x] Player/skeleton embedded arrows resume existing physics when support disappears/changes shape.
+- [x] Raw lock fallback + dev diagnostics + conservative mouse sanitation; AI-facing/gait separated from recoil.
+- [x] 20-tick vertical reference audit, flat step=false; no undocumented Y adaptation or horizontal retuning.
+- [x] Partial browser QA through explicit opt-in test-world UI: controls, support, water, five player arrows, normal/sprint mob recoil.
+- [ ] Problem-PC native mouse/lock diagnostics, ordinary fast movement, Escape/inventory/chat lifecycle acceptance.
+- [ ] Remaining real-input combat matrix (crit, wall, W-tap, sword block), skeleton arrow browser QA and GPU/mobile soak; component tests are not these acceptance results.
+- [ ] User gameplay review before any commit/push. See `reports/2026-08-27_interaction-support-mouse-mob-polish.md` for measured results/limitations.
+
 ## 2026-08-27: classic combat и оставшаяся приёмка
 
 - [x] No-cooldown melee; exact 1.8 damage totals; shared hurt resistance; falling+sprint crit; fixed armor.
 - [x] Canonical base/extra KB, melee travel drag, attacker slowdown и deliberate sprint reset; unit/component flat/wall trajectory validation.
 - [x] Transient sword blocking, 20% movement, cached first-person pose; input edges не теряются между fixed ticks; legacy save compatibility.
-- [ ] Browser classic combat acceptance: spam click, normal/sprint/W-tap/crit/armor/block pose; реальное GPU/FPS и mobile input. Browser access заблокирован, unit tests не заменяют эту приёмку.
+- [ ] Полная browser classic combat acceptance: spam click/W-tap/crit/armor/block pose, GPU/FPS и mobile input. Browser доступ восстановлен для partial polish QA; native lock всё ещё не получен автоматизированным сеансом.
 - [ ] Отдельно расследовать baseline CRLF fingerprint и scheduler/CPU timeout failures полного suite; этот pass не меняет пороги/ожидания unrelated tests.
 
 - [x] Authored bucket/potion/minecart pipeline, overwrite stale placeholders и защита от fallback.
 - [x] Тонкий arrow shaft + tip + tail-only fins, shared +Z player/skeleton visual.
 - [x] Placement-anchor отдельно от full sturdy attachment face; запрет опоры на torch/thin blocks.
 - [x] Shield **полностью удалён** из runtime/render/combat/registry; legacy saves очищаются точечно.
-- [ ] Browser acceptance A–F: inventory, held items, stuck arrows с разных углов, torch matrix, отсутствие shield. Заблокирован доступ к localhost, не заменён unit tests.
-- [ ] Support-loss для attachments при разрушении опоры (текущий проход проверяет только placement).
+- [ ] Полная browser acceptance A–F: inventory, held items, stuck arrows с разных углов, torch matrix, отсутствие shield. Partial polish QA не закрывает всю старую matrix.
+- [x] Support-loss для Torch/RedstoneTorch/Button/Lever/Ladder/Wire/Plates/Rail при разрушении опоры реализован в polish pass.
 - [x] Запрошенный после cleanup classic 1.8 melee pass реализован; remaining QA и отличия перечислены в `MINECRAFT_1_8_COMBAT_REFERENCE.md` и свежем report. Multiplayer/netcode parity не заявляется.
 
 Roadmap начинается от фактической playable alpha `0.1.0`. Приоритеты означают:

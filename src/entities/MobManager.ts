@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from '../combat/ArrowPhysics';
 import { BlockId, getBlockDefinition } from '../blocks';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
 import { applyExtraKnockback, applyKnockback, applyMeleeDrag } from '../combat/CombatSystem';
@@ -183,6 +184,7 @@ interface MobProjectile {
   ageSeconds: number;
   damage: number;
   inGround: boolean;
+  embedded?: EmbeddedArrowState;
 }
 
 export class MobEntity {
@@ -210,6 +212,8 @@ export class MobEntity {
   fireDamageTimer = 0;
   farSeconds = 0;
   walkPhase = 0;
+  /** AI locomotion intent, never recoil/separation velocity. */
+  locomotionSpeed = 0;
   previousWalkPhase = 0;
   facingYaw = 0;
   previousFacingYaw = 0;
@@ -407,6 +411,7 @@ export class MobManager {
       mob.previousPosition.copy(mob.position);
       mob.previousFacingYaw = mob.facingYaw;
       mob.previousWalkPhase = mob.walkPhase;
+      mob.locomotionSpeed = 0;
       mob.ageSeconds += delta;
       mob.hurtResistance.advance(delta);
       mob.attackCooldownSeconds = Math.max(0, mob.attackCooldownSeconds - delta);
@@ -437,9 +442,8 @@ export class MobManager {
         continue;
       }
       this.simulateMobPhysics(mob, delta);
-      const speed = Math.hypot(mob.velocity.x, mob.velocity.z);
+      const speed = mob.locomotionSpeed;
       if (speed > 0.05) {
-        mob.facingYaw = Math.atan2(mob.velocity.x, mob.velocity.z) + Math.PI;
         mob.walkPhase += delta * Math.max(3, speed * 4.5);
       }
       this.snapIfTeleported(mob);
@@ -568,6 +572,7 @@ export class MobManager {
       }
       this.beginDeath(mob);
     } else if (hurt.fullHurt && damageOptions.source !== 'fire') {
+      mob.locomotionSpeed = 0;
       // Periodic fire/sunlight DOT must not stun-lock AI (creeper fuse, chase).
       mob.hurtSeconds = 0.28;
       mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
@@ -741,6 +746,7 @@ export class MobManager {
       this.updateWander(mob, delta, 0.55);
       return;
     }
+    if (horizontal.lengthSq() > 1e-8) mob.facingYaw = Math.atan2(horizontal.x, horizontal.z) + Math.PI;
 
     if (mob.kind === 'creeper') {
       this.updateCreeper(mob, delta, playerPosition, distance, context);
@@ -834,7 +840,7 @@ export class MobManager {
     horizontal.y = 0;
     if (lineOfSight && distance <= mob.definition.attackRange) {
       this.changeState(mob, 'attack');
-      if (distance < 5) this.steerToward(mob, horizontal.multiplyScalar(-1), mob.definition.speed);
+      if (distance < 5) this.steerToward(mob, horizontal.multiplyScalar(-1), mob.definition.speed, false);
       else {
         mob.velocity.x *= 0.5;
         mob.velocity.z *= 0.5;
@@ -975,7 +981,7 @@ export class MobManager {
       },
       alpha,
     );
-    const speed = Math.hypot(mob.velocity.x, mob.velocity.z);
+    const speed = mob.locomotionSpeed;
     const walkPhase = pose.walkPhase;
     const swing = Math.sin(walkPhase) * Math.min(0.65, speed * 0.22);
     mob.visual.rotation.y = pose.yaw;
@@ -983,11 +989,11 @@ export class MobManager {
       mob.model.legs.forEach((leg, index) => {
         const side = index % 2 === 0 ? -1 : 1;
         const pair = Math.floor(index / 2);
-        const phase = Math.sin(walkPhase + pair * 0.85);
+        const phase = Math.sin(walkPhase + pair * 0.85) * Math.min(1, speed);
         leg.rotation.x = Number(leg.userData.baseRotationX ?? 0);
         leg.rotation.y = Number(leg.userData.baseRotationY ?? 0) - phase * 0.18 * side;
         leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0)
-          - Math.abs(Math.cos(walkPhase + pair * 0.7)) * 0.08 * side;
+          - Math.abs(Math.cos(walkPhase + pair * 0.7)) * 0.08 * side * Math.min(1, speed);
       });
     } else {
       mob.model.legs.forEach((leg, index) => {
@@ -1075,9 +1081,11 @@ export class MobManager {
     if (light instanceof THREE.Vector3) light.set(tinted[0], tinted[1], tinted[2]);
   }
 
-  private steerToward(mob: MobEntity, direction: Readonly<THREE.Vector3>, speed: number): void {
+  private steerToward(mob: MobEntity, direction: Readonly<THREE.Vector3>, speed: number, faceMovement = true): void {
     const length = Math.hypot(direction.x, direction.z);
     if (length <= 1e-6) return;
+    mob.locomotionSpeed = speed;
+    if (faceMovement) mob.facingYaw = Math.atan2(direction.x, direction.z) + Math.PI;
     mob.velocity.x = direction.x / length * speed;
     mob.velocity.z = direction.z / length * speed;
   }
@@ -1369,7 +1377,12 @@ export class MobManager {
         this.removeProjectile(projectile.id);
         continue;
       }
-      if (projectile.inGround) continue;
+      if (projectile.inGround) {
+        if (!projectile.embedded || arrowSupportIntact(this.world, projectile.embedded)) continue;
+        releaseEmbeddedArrow(projectile.velocity, projectile.embedded, this.random);
+        projectile.embedded = undefined;
+        projectile.inGround = false;
+      }
       const previous = projectile.position.clone();
       const movement = projectile.velocity.clone();
       const distance = movement.length();
@@ -1377,6 +1390,7 @@ export class MobManager {
         ? this.world.raycast(previous, movement.clone().normalize(), distance)
         : undefined;
       if (blockHit) {
+        projectile.embedded = embedArrow(blockHit, projectile.velocity);
         projectile.position.addScaledVector(movement.clone().normalize(), Math.max(0, blockHit.distance - 0.035));
         projectile.visual.position.copy(projectile.position);
         applySampledEntityLight(

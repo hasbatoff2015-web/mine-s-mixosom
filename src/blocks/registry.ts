@@ -34,6 +34,7 @@ interface BlockOptions {
   flammable?: boolean;
   gravity?: boolean;
   replaceable?: boolean;
+  fluidDisplaceable?: boolean;
   liquid?: boolean;
   breakable?: boolean;
   hasItem?: boolean;
@@ -77,6 +78,7 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     ...(options.flammable === undefined ? {} : { flammable: options.flammable }),
     ...(options.gravity === undefined ? {} : { gravity: options.gravity }),
     ...(options.replaceable === undefined ? {} : { replaceable: options.replaceable }),
+    ...(options.fluidDisplaceable === undefined ? {} : { fluidDisplaceable: options.fluidDisplaceable }),
     ...(options.liquid === undefined ? {} : { liquid: options.liquid }),
     ...(options.breakable === undefined ? {} : { breakable: options.breakable }),
     ...(options.hasItem === undefined ? {} : { hasItem: options.hasItem }),
@@ -252,6 +254,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     },
   }),
   block(BlockId.Torch, 'torch', {
+    fluidDisplaceable: true,
     category: 'utility', hardness: 0, solid: false, opaque: false, emission: 14,
     renderLayer: 'cutout', renderShape: 'torch',
   }),
@@ -270,19 +273,23 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   ...woolBlocks,
 
   block(BlockId.RedstoneWire, 'redstone_wire', {
+    fluidDisplaceable: true,
     category: 'redstone', hardness: 0, solid: false, opaque: false,
     drop: { item: 'redstone_dust' }, hasItem: false,
     renderLayer: 'cutout', renderShape: 'wire',
   }),
   block(BlockId.RedstoneTorch, 'redstone_torch', {
+    fluidDisplaceable: true,
     category: 'redstone', hardness: 0, solid: false, opaque: false, emission: 7, redstonePower: 15,
     renderLayer: 'cutout', renderShape: 'torch',
   }),
   block(BlockId.Lever, 'lever', {
+    fluidDisplaceable: true,
     category: 'redstone', hardness: 0.5, solid: false, opaque: false, redstonePower: 15,
     renderLayer: 'cutout', renderShape: 'lever',
   }),
   block(BlockId.StoneButton, 'stone_button', {
+    fluidDisplaceable: true,
     category: 'redstone', hardness: 0.5, solid: false, opaque: false, tool: 'pickaxe', tier: 'hand', redstonePower: 15,
     renderShape: 'button',
   }),
@@ -311,6 +318,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     tool: 'shears', tier: 'hand', drop: { item: 'string', count: 1 },
   }),
   block(BlockId.Rail, 'rail', {
+    fluidDisplaceable: true,
     category: 'utility', hardness: 0.7, solid: false, opaque: false, occludesFaces: false,
     renderLayer: 'cutout', renderShape: 'rail',
     drop: { item: 'rail', count: 1 },

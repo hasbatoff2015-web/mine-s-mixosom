@@ -579,67 +579,25 @@ function torchLocalBoxes(state: BlockRenderState | undefined): LocalBox[] {
   }
 }
 
-function buttonLocalBox(state: BlockRenderState | undefined): LocalBox {
-  const attachment = state?.attachment ?? 'wall';
-  const facing = state?.facing ?? 'south';
-  const depth = state?.powered ? 0.06 : 0.125;
-  const hw = 0.1875;
-  const hh = 0.11;
-  if (attachment === 'floor') {
-    return { minX: 0.5 - hw, minY: 0, minZ: 0.5 - hh, maxX: 0.5 + hw, maxY: depth, maxZ: 0.5 + hh };
+/** Cached local envelopes of the very same oriented cuboids used by mesh/outline.
+ * A tilted lever handle has a small conservative AABB, never a full voxel.
+ */
+const controlBoxCache = new Map<string, LocalBox[]>();
+function controlLocalBoxes(block: BlockId, state: BlockRenderState | undefined): LocalBox[] {
+  const key = `${block}:${state?.attachment}:${state?.facing}:${state?.powered === true}`;
+  let boxes = controlBoxCache.get(key);
+  if (!boxes) {
+    const parts = block === BlockId.StoneButton
+      ? [buttonSelectionBox(0, 0, 0, state)] : leverSelectionBoxes(0, 0, 0, state);
+    boxes = parts.map((part) => {
+      const bounds = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5))
+        .applyMatrix4(part.matrix);
+      return { minX: bounds.min.x, minY: bounds.min.y, minZ: bounds.min.z,
+        maxX: bounds.max.x, maxY: bounds.max.y, maxZ: bounds.max.z };
+    });
+    controlBoxCache.set(key, boxes);
   }
-  if (attachment === 'ceiling') {
-    return { minX: 0.5 - hw, minY: 1 - depth, minZ: 0.5 - hh, maxX: 0.5 + hw, maxY: 1, maxZ: 0.5 + hh };
-  }
-  switch (facing) {
-    case 'east':
-      return { minX: 0, minY: 0.5 - hw, minZ: 0.5 - hh, maxX: depth, maxY: 0.5 + hw, maxZ: 0.5 + hh };
-    case 'west':
-      return { minX: 1 - depth, minY: 0.5 - hw, minZ: 0.5 - hh, maxX: 1, maxY: 0.5 + hw, maxZ: 0.5 + hh };
-    case 'south':
-      return { minX: 0.5 - hw, minY: 0.5 - hh, minZ: 0, maxX: 0.5 + hw, maxY: 0.5 + hh, maxZ: depth };
-    case 'north':
-      return { minX: 0.5 - hw, minY: 0.5 - hh, minZ: 1 - depth, maxX: 0.5 + hw, maxY: 0.5 + hh, maxZ: 1 };
-  }
-}
-
-function leverLocalBoxes(state: BlockRenderState | undefined): LocalBox[] {
-  const attachment = state?.attachment ?? 'floor';
-  const facing = state?.facing ?? 'north';
-  if (attachment === 'floor') {
-    return [
-      { minX: 0.25, minY: 0, minZ: 0.3125, maxX: 0.75, maxY: 0.125, maxZ: 0.6875 },
-      { minX: 0.4375, minY: 0.125, minZ: 0.4375, maxX: 0.5625, maxY: 0.75, maxZ: 0.5625 },
-    ];
-  }
-  if (attachment === 'ceiling') {
-    return [
-      { minX: 0.25, minY: 0.875, minZ: 0.3125, maxX: 0.75, maxY: 1, maxZ: 0.6875 },
-      { minX: 0.4375, minY: 0.25, minZ: 0.4375, maxX: 0.5625, maxY: 0.875, maxZ: 0.5625 },
-    ];
-  }
-  switch (facing) {
-    case 'east':
-      return [
-        { minX: 0, minY: 0.25, minZ: 0.3125, maxX: 0.125, maxY: 0.75, maxZ: 0.6875 },
-        { minX: 0.125, minY: 0.4, minZ: 0.4375, maxX: 0.75, maxY: 0.6, maxZ: 0.5625 },
-      ];
-    case 'west':
-      return [
-        { minX: 0.875, minY: 0.25, minZ: 0.3125, maxX: 1, maxY: 0.75, maxZ: 0.6875 },
-        { minX: 0.25, minY: 0.4, minZ: 0.4375, maxX: 0.875, maxY: 0.6, maxZ: 0.5625 },
-      ];
-    case 'south':
-      return [
-        { minX: 0.3125, minY: 0.25, minZ: 0, maxX: 0.6875, maxY: 0.75, maxZ: 0.125 },
-        { minX: 0.4375, minY: 0.4, minZ: 0.125, maxX: 0.5625, maxY: 0.6, maxZ: 0.75 },
-      ];
-    case 'north':
-      return [
-        { minX: 0.3125, minY: 0.25, minZ: 0.875, maxX: 0.6875, maxY: 0.75, maxZ: 1 },
-        { minX: 0.4375, minY: 0.4, minZ: 0.25, maxX: 0.5625, maxY: 0.6, maxZ: 0.875 },
-      ];
-  }
+  return boxes;
 }
 
 /**
@@ -661,8 +619,8 @@ export function selectionLocalBoxes(
   if (block === BlockId.Cactus) return [CACTUS_BOX];
   switch (definition.renderShape) {
     case 'torch': return torchLocalBoxes(state);
-    case 'button': return [buttonLocalBox(state)];
-    case 'lever': return leverLocalBoxes(state);
+    case 'button':
+    case 'lever': return controlLocalBoxes(block, state);
     case 'pressure_plate': return [plateLocalBox(state?.powered === true)];
     case 'wire': return [WIRE_BOX];
     case 'door': return [doorLocalBox(state)];
@@ -783,7 +741,7 @@ function torchSelectionBox(
   };
 }
 
-function buttonSelectionBox(
+export function buttonSelectionBox(
   x: number,
   y: number,
   z: number,
@@ -799,7 +757,7 @@ function buttonSelectionBox(
   return boxFromSize(center, [0.375, depth, 0.22], basis);
 }
 
-function leverSelectionBoxes(
+export function leverSelectionBoxes(
   x: number,
   y: number,
   z: number,

@@ -246,6 +246,7 @@ export class RedstoneSystem {
     if (source.attachment !== attachment || source.facing !== facing) {
       source.attachment = attachment;
       source.facing = facing;
+      this.publishSourceState(x, y, z);
       this.options.onSourceChanged?.(x, y, z);
     }
     return true;
@@ -265,6 +266,7 @@ export class RedstoneSystem {
     if (source.attachment !== attachment || source.facing !== facing) {
       source.attachment = attachment;
       source.facing = facing;
+      this.publishSourceState(x, y, z);
       this.options.onSourceChanged?.(x, y, z);
     }
     return true;
@@ -602,6 +604,7 @@ export class RedstoneSystem {
   }
 
   private sourceOutputChanged(source: MutableSourceState): void {
+    this.publishSourceState(source.x, source.y, source.z);
     this.options.onSourceChanged?.(source.x, source.y, source.z);
     this.enqueue(source.x, source.y, source.z);
     this.enqueueNeighbours(source.x, source.y, source.z);
@@ -643,6 +646,7 @@ export class RedstoneSystem {
     if (existing?.kind === kind) return existing;
     if (existing) this.sources.delete(key);
     if (this.sources.size >= this.maxSources) return undefined;
+    const state = this.world.getBlockState(x, y, z);
     const source: MutableSourceState = {
       kind,
       x,
@@ -650,11 +654,24 @@ export class RedstoneSystem {
       z,
       active: kind === 'torch',
       remainingSeconds: 0,
-      attachment: 'floor',
-      facing: 'north',
+      attachment: state?.attachment ?? 'floor',
+      facing: state?.facing ?? 'north',
     };
     this.sources.set(key, source);
+    this.publishSourceState(x, y, z);
     return source;
+  }
+
+  /** Publish geometry-affecting state to the world: DDA, support integrity and
+   * outline/mesher must see the same orientation and pressed/tilted state.
+   * The redstone source/timer remains authoritative for power simulation.
+   */
+  private publishSourceState(x: number, y: number, z: number): void {
+    const state = this.getBlockRenderState(x, y, z);
+    if (!state) return;
+    const previous = this.world.getBlockState(x, y, z);
+    if (Object.entries(state).every(([key, value]) => previous?.[key as keyof BlockRenderState] === value)) return;
+    this.world.setBlockState(x, y, z, { ...previous, ...state });
   }
 
   private sourcePowerAt(x: number, y: number, z: number, knownBlock?: BlockId): number {

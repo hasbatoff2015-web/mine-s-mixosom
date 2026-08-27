@@ -6,7 +6,9 @@ import {
   shouldExitPointerLock,
   shouldTogglePauseOnEscapeKeydown,
   type PointerUnlockReason,
+  PointerLockAttempt,
 } from './pointerLock';
+import { PointerMotionFilter } from './pointerMotion';
 
 function isTypingElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -64,6 +66,16 @@ export class InputManager {
   private programmaticReleasePending = false;
   private requestPending = false;
   private swallowEscapeKeyup = false;
+  private escapePressed = false;
+  private readonly pointerMotion = new PointerMotionFilter();
+  private lockAttempt?: PointerLockAttempt;
+  private lockChanges = 0;
+  private lockErrors = 0;
+  private inputDebug?: HTMLPreElement;
+  private inputDebugTimer?: number;
+  private readonly recentDeltas: Array<readonly [number, number]> = [];
+  private inputEvents = 0;
+  private inputEpoch = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -72,6 +84,14 @@ export class InputManager {
     this.bindDesktop();
     this.bindTouch();
     this.bindPointerLock();
+    if (import.meta.env.DEV && new URLSearchParams(location.search).get('inputDebug') === '1') {
+      this.inputDebug = document.createElement('pre');
+      this.inputDebug.id = 'input-debug';
+      this.inputDebug.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9999;pointer-events:none;background:#000c;color:#fff;padding:8px;font:12px monospace';
+      document.body.append(this.inputDebug);
+      this.inputEpoch = performance.now();
+      this.inputDebugTimer = window.setInterval(() => this.refreshInputDebug(), 250);
+    }
   }
 
   setSensitivity(value: number): void {
@@ -98,6 +118,12 @@ export class InputManager {
   set attackPressed(pressed: boolean) {
     if (pressed) this.attackPresses += 1;
     else this.attackPresses = 0;
+  }
+
+  disposeDebug(): void {
+    if (this.inputDebugTimer !== undefined) window.clearInterval(this.inputDebugTimer);
+    this.inputDebug?.remove();
+    this.inputDebug = undefined;
   }
 
   /** Retain every click between fixed ticks; no cooldown or artificial CPS cap. */
@@ -134,6 +160,9 @@ export class InputManager {
    * No-op if the pointer is already free — avoids a second exit after Esc.
    */
   releasePointerLock(): void {
+    this.lockAttempt?.finish();
+    this.requestPending = false;
+    this.resetPointerSession();
     if (!shouldExitPointerLock(this.isPointerLocked())) return;
     this.programmaticReleasePending = true;
     document.exitPointerLock?.();
@@ -144,6 +173,7 @@ export class InputManager {
    * Returns whether a lock request was issued. Failure is reported asynchronously.
    */
   tryRequestPointerLock(): boolean {
+    if (this.requestPending) return false;
     return applyPointerLockRequest({
       canCapture: this.callbacks.canCapture(),
       coarsePointer: isCoarsePointerMedia(),
@@ -154,13 +184,12 @@ export class InputManager {
         return;
       }
       this.requestPending = true;
-      const pending = this.canvas.requestPointerLock();
-      if (pending && typeof (pending as Promise<void>).then === 'function') {
-        void (pending as Promise<void>).then(
-          () => undefined,
-          () => this.notifyRequestFailure(),
-        );
-      }
+      this.lockAttempt = new PointerLockAttempt(
+        (options) => (this.canvas.requestPointerLock as (options?: { unadjustedMovement: boolean }) => Promise<void> | void).call(this.canvas, options),
+        () => this.notifyRequestFailure(),
+        () => this.callbacks.canCapture() && !document.hidden && document.hasFocus(),
+      );
+      this.lockAttempt.start();
     });
   }
 
@@ -174,6 +203,7 @@ export class InputManager {
         return;
       }
       if (event.code === 'Escape' && !event.repeat) {
+        if (this.isPointerLocked()) this.escapePressed = true;
         if (!shouldTogglePauseOnEscapeKeydown(typing, this.isPointerLocked(), this.swallowEscapeKeyup)) return;
         this.callbacks.togglePause();
         return;
@@ -198,14 +228,32 @@ export class InputManager {
       this.keys.delete(event.code);
     });
     window.addEventListener('blur', () => {
+      this.resetPointerSession();
+      this.lockAttempt?.finish();
+      this.requestPending = false;
       this.keys.clear();
       this.releaseActions();
+    });
+    document.addEventListener('visibilitychange', () => {
+      this.resetPointerSession();
+      if (document.hidden) {
+        this.keys.clear();
+        this.releaseActions();
+        this.lockAttempt?.finish();
+        this.requestPending = false;
+      }
     });
 
     this.canvas.addEventListener('click', () => this.tryRequestPointerLock());
     document.addEventListener('mousemove', (event) => {
       if (document.pointerLockElement !== this.canvas) return;
-      this.rotate(event.movementX, event.movementY);
+      if (this.inputDebug) {
+        this.inputEvents++;
+        this.recentDeltas.push([event.movementX, event.movementY]);
+        if (this.recentDeltas.length > 16) this.recentDeltas.shift();
+      }
+      const [dx, dy] = this.pointerMotion.accept(event.movementX, event.movementY);
+      this.rotate(dx, dy);
     });
     this.canvas.addEventListener('mousedown', (event) => {
       if (!this.callbacks.canCapture()) return;
@@ -333,16 +381,27 @@ export class InputManager {
     if (typeof document === 'undefined') return;
     this.lockedToCanvas = document.pointerLockElement === this.canvas;
     document.addEventListener('pointerlockchange', () => this.handlePointerLockChange());
-    document.addEventListener('pointerlockerror', () => this.notifyRequestFailure());
+    document.addEventListener('pointerlockerror', () => {
+      this.lockErrors++;
+      this.lockAttempt?.handleErrorEvent();
+    });
   }
 
   private handlePointerLockChange(): void {
+    this.lockChanges++;
+    this.resetPointerSession();
     const nowLocked = this.isPointerLocked();
     const previouslyLocked = this.lockedToCanvas;
     this.lockedToCanvas = nowLocked;
     if (nowLocked) {
+      this.lockAttempt?.finish();
+      this.escapePressed = false;
       this.requestPending = false;
       this.programmaticReleasePending = false;
+      if (!this.callbacks.canCapture()) {
+        this.releasePointerLock();
+        return;
+      }
       this.callbacks.onPointerLockAcquired();
       return;
     }
@@ -352,7 +411,9 @@ export class InputManager {
       programmaticReleasePending: this.programmaticReleasePending,
       documentHidden: document.hidden,
       documentHasFocus: typeof document.hasFocus === 'function' ? document.hasFocus() : true,
+      escapePressed: this.escapePressed,
     });
+    this.escapePressed = false;
     this.programmaticReleasePending = false;
     if (!reason) return;
     this.lastUnlockReason = reason;
@@ -367,7 +428,35 @@ export class InputManager {
   }
 
   private rotate(dx: number, dy: number): void {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     this.yaw -= dx * this.sensitivity;
     this.pitch = clamp(this.pitch - dy * this.sensitivity, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
+  }
+
+  private resetPointerSession(): void {
+    this.pointerMotion.reset();
+    this.recentDeltas.length = 0;
+    this.inputEvents = 0;
+    this.inputEpoch = performance.now();
+  }
+
+  private refreshInputDebug(): void {
+    if (!this.inputDebug) return;
+    const now = performance.now();
+    const rate = Math.round(this.inputEvents * 1000 / Math.max(1, now - this.inputEpoch));
+    const last = this.recentDeltas.at(-1) ?? [0, 0];
+    const largest = this.recentDeltas.reduce<readonly number[]>((best, value) =>
+      Math.hypot(...value) > Math.hypot(...best) ? value : best, [0, 0]);
+    this.inputDebug.textContent = [
+      'INPUT DEBUG — lock loss ≠ delta spike',
+      `locked=${this.isPointerLocked()} changes=${this.lockChanges} errors=${this.lockErrors} reason=${this.lastUnlockReason}`,
+      `focus=${document.hasFocus()} visibility=${document.visibilityState} events/s=${rate}`,
+      `last dx/dy=${last.join('/')} largest(16)=${largest.join('/')}`,
+      `accepted avg/median=${this.pointerMotion.average.toFixed(1)}/${this.pointerMotion.median.toFixed(1)}`,
+      `discard invalid=${this.pointerMotion.discardedInvalid} spikes=${this.pointerMotion.discardedSpikes}`,
+      `raw requested=${this.lockAttempt?.rawRequested ?? false} plain fallback=${this.lockAttempt?.fallbackUsed ?? false}`,
+    ].join('\n');
+    this.inputEvents = 0;
+    this.inputEpoch = now;
   }
 }

@@ -12,6 +12,7 @@ export interface PointerUnlockClassification {
   readonly programmaticReleasePending: boolean;
   readonly documentHidden: boolean;
   readonly documentHasFocus: boolean;
+  readonly escapePressed?: boolean;
 }
 
 export interface PointerLockFallbackState {
@@ -68,7 +69,7 @@ export function classifyPointerUnlock(event: PointerUnlockClassification): Point
   if (!event.previouslyLocked || event.nowLocked) return null;
   if (event.programmaticReleasePending) return 'programmatic';
   if (event.documentHidden || !event.documentHasFocus) return 'focus-lost';
-  return 'escape';
+  return event.escapePressed ? 'escape' : 'unknown';
 }
 
 export function shouldOpenPauseOnUnlock(
@@ -85,4 +86,54 @@ export function shouldShowPointerLockFallback(state: PointerLockFallbackState): 
     && !state.coarsePointer
     && !state.lockedToCanvas
     && state.lastRequestFailed;
+}
+
+type LockRequest = (options?: { unadjustedMovement: boolean }) => Promise<void> | void;
+
+/** One gesture-owned attempt, with at most one plain fallback. Events own lock
+ * success; promise rejection supplies the reason (pointerlockerror has none).
+ */
+export class PointerLockAttempt {
+  rawRequested = false;
+  fallbackUsed = false;
+  private finished = false;
+  private promiseBased = false;
+  private generation = 0;
+  constructor(private readonly request: LockRequest, private readonly failed: () => void,
+    private readonly canFallback: () => boolean = () => true) {}
+
+  start(): void { this.rawRequested = true; this.issue(true); }
+  finish(): void { this.finished = true; }
+  handleErrorEvent(): void {
+    if (!this.promiseBased) this.fail();
+  }
+
+  private issue(raw: boolean): void {
+    const generation = ++this.generation;
+    this.promiseBased = false;
+    try {
+      const pending = this.request(raw ? { unadjustedMovement: true } : undefined);
+      if (pending && typeof pending.then === 'function') {
+        this.promiseBased = true;
+        void pending.catch((error: unknown) => {
+          if (generation === this.generation) this.reject(error, raw);
+        });
+      }
+    } catch (error) { this.reject(error, raw); }
+  }
+
+  private reject(error: unknown, raw: boolean): void {
+    if (this.finished) return;
+    const name = typeof error === 'object' && error !== null && 'name' in error ? error.name : '';
+    if (raw && !this.fallbackUsed && (name === 'NotSupportedError' || name === 'TypeError') && this.canFallback()) {
+      this.fallbackUsed = true;
+      this.issue(false);
+    } else this.fail();
+  }
+
+  private fail(): void {
+    if (this.finished) return;
+    this.finished = true;
+    this.failed();
+  }
 }

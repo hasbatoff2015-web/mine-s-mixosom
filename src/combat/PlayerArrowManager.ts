@@ -8,6 +8,7 @@ import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
+import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from './ArrowPhysics';
 
 interface PlayerArrow {
   readonly position: THREE.Vector3;
@@ -17,6 +18,7 @@ interface PlayerArrow {
   age: number;
   critical: boolean;
   inGround: boolean;
+  embedded?: EmbeddedArrowState;
   flaming: boolean;
 }
 
@@ -93,12 +95,22 @@ export class PlayerArrowManager {
         this.remove(index);
         continue;
       }
-      if (arrow.inGround) continue;
+      if (arrow.inGround) {
+        if (!arrow.embedded || arrowSupportIntact(this.world, arrow.embedded)) continue;
+        releaseEmbeddedArrow(arrow.velocity, arrow.embedded, this.random);
+        arrow.embedded = undefined;
+        arrow.inGround = false;
+      }
       let removed = false;
       for (let step = 0; step < tickSteps; step += 1) {
         const movement = arrow.velocity.clone();
         const distance = movement.length();
-        if (distance <= 1e-8) continue;
+        if (distance <= 1e-8) {
+          applyArrowDragAndGravity(arrow.velocity, this.world.getBlock(
+            Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
+          ) === BlockId.Water);
+          continue;
+        }
         const direction = movement.clone().multiplyScalar(1 / distance);
         const blockHit = this.world.raycast(arrow.position, direction, distance);
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
@@ -123,6 +135,7 @@ export class PlayerArrowManager {
           break;
         }
         if (blockHit) {
+          arrow.embedded = embedArrow(blockHit, arrow.velocity);
           arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
           arrow.inGround = true;
           arrow.velocity.set(0, 0, 0);

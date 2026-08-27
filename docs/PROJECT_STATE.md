@@ -2,7 +2,19 @@
 
 Срез: **2026-08-27**. Версия: `0.1.0`, playable alpha.
 
-## Последний проход: classic 1.8 combat
+## Последний проход: interaction / support / input / mob polish
+
+- Git baseline: `3b9e68e`, HEAD = origin/main, чистая `feat/playable-voxel-alpha`. Изменения этого прохода **не закоммичены и не отправлены** по заданию.
+- Button/Lever используют общие oriented cuboids для mesh, outline и AABB raycast. Redstone публикует attachment/facing/powered в world state: actual DDA и проверка опор видят то же состояние, что renderer.
+- Локальная deferred support integrity для Torch/RedstoneTorch/Button/Lever/Ladder/Wire/обеих Plates/Rail: changed cell + 6 соседей, dedupe, бюджет256 проверок за проход. Потеря sturdy face → Air, очистка state/light/redstone, ровно один environmental world drop через Game/DroppedItemManager. Работает и после explosion/batch; неизвестная unloaded опора не считается Air.
+- `fluidDisplaceable` отделён от placement `replaceable`: вода смывает Torch/RedstoneTorch/Button/Lever/Wire/Rail. Ladder/door/chest/fence/slab/stair/plates не смываются. Fluid routing, delays и buckets не перенастраивались.
+- Обе системы стрел сохраняют impact block/point/velocity, проверяют поддержку embedded arrow на fixed tick и возвращают её в существующую flight physics при потере блока/формы. Visual geometry/caps не менялись.
+- Desktop: raw Pointer Lock request с одноразовым plain fallback только при unsupported options; `?inputDebug=1` в DEV различает lock events и delta spikes. Нет обычного smoothing/clamp; изолированный экстремальный sample проверяется по tiny history. **Проблемный ПК ещё требует проверки**, автоматизированный браузер не получает native lock.
+- Mob yaw и walking берутся из AI locomotion intent, не recoil velocity. Flat 20-tick trajectory совпадает с discrete1.8: normal apex1.153108/tick5/landing11, sprint1.708834/tick6/landing14. Вертикальные и горизонтальные combat constants сохранены, flat step-up=false.
+- Browser QA выполнен частично через opt-in DEV panel в отдельном мире: button/lever outline+use, support drops, Water в обеих Torch cells, пять освобождённых player arrows, normal/sprint zombie recoil. Это не native mouse/W-tap/GPU-soak acceptance. Результаты тестов и оставшаяся matrix: `reports/2026-08-27_interaction-support-mouse-mob-polish.md`.
+- Validation: targeted330/330; typecheck/build/size/archive PASS,3.45MiB/186files. Full771/796:25failures+2RPC против baseline22+1RPC; добавочные3 таймаута отдельно PASS на baseline/current с одинаковым временем. Строгое full-suite «не хуже baseline» пока не закрыто.
+
+## Сохранённый classic 1.8 combat
 
 - Baseline реализации: чистая `feat/playable-voxel-alpha`, HEAD = origin/main = `5820d7d` после `git fetch origin`. После локальной проверки пользователь отдельно разрешил commit/push classic combat; SHA поставки определяется по Git history, baseline SHA не является текущей версией combat pass.
 - Melee использует Java 1.8.9 reference: полный урон на каждый click attempt, без cooldown/attackSpeed/индикатора; fist 1, swords 5/6/7/8, axes 4/5/6/7, pickaxes 3/4/5/6, shovels 2/3/4/5. Это total damage, без повторного +1.
@@ -10,14 +22,14 @@
 - Canonical melee KB: половина текущей velocity + base 8 b/s, vertical cap 8; extra sprint +10 horizontal/+2 vertical. Target travel сохраняет импульс и применяет drag; successful extra hit замедляет attacker XZ ×0.6 и требует нового ввода sprint/forward для повторного sprint hit.
 - Sword hold-use: transient blocking, `(raw + 1)/2` до fixed armor reduction, движение ×0.2 без sprint, cached first-person pose. Shield не возвращён. Прочность меча/инструмента −1 за accepted hit по явному требованию задания (Java tool wear −2); exhaustion +0.3.
 - Arrow flight/geometry, fluids, placement, assets, world/chunk save format и ordinary movement не перенастраивались. Боевой transient state не сохраняется.
-- Unit/integration validation выполнена; полный suite имеет baseline failures. Browser acceptance **не пройден**: доступ к localhost ранее запрещён browser policy, доступных вкладок сейчас нет. Подробные результаты: `reports/2026-08-27_classic-1-8-combat-pass.md`; актуальная спецификация: `MINECRAFT_1_8_COMBAT_REFERENCE.md`.
+- Unit/integration validation выполнена; полный suite имеет baseline failures. Во время classic pass browser access был заблокирован; текущий polish выполнил частичный browser QA, но полная native-input/combat acceptance ещё pending. История: `reports/2026-08-27_classic-1-8-combat-pass.md`; спецификация: `MINECRAFT_1_8_COMBAT_REFERENCE.md`.
 
 ## Сохранённые item / arrow / placement fixes
 
 - Fluid routing/timing, bucket pickup и item-lava fixes входят в baseline5820d7d и сохранены без изменений.
 - Bucket/WaterBucket/LavaBucket/Minecart/GlassBottle используют найденные authored PNG. Зелья — build-time композиция authored drinkable bottle + tinted overlay, 32×32. Importer перезаписывает старые заглушки, preflight обязателен, fallback даже с `--force` эти assets больше не рисует. `npm run assets:import -- --items-cleanup` обновляет только восемь целевых PNG и удаляет obsolete runtime shield PNG.
 - `ArrowVisualFactory`: 18 triangles, shaft 0.028 толщиной, малый pyramid tip, feathers только у хвоста, правильный crop 64×64 entity sheet и общий +Z axis player/skeleton. Projectile physics/damage не менялись. Вагонетка использует authored 128×64 entity sheet с panel UV и shared geometry cache.
-- `world/placement.ts`: placement anchor и full sturdy support face — разные predicates. Torch/RedstoneTorch и прочие thin/non-solid blocks не являются anchors/supports. Torch floor/wall разрешены на пригодной опоре, ceiling запрещён. Ladder/button/lever/rail/plate/wire/door используют canonical support check; slab/stair full boundary определяется collision rectangles. **Support-loss после разрушения опоры пока не реализован.**
+- `world/placement.ts`: placement anchor и full sturdy support face — разные predicates. Torch/RedstoneTorch и прочие thin/non-solid blocks не являются anchors/supports. Torch floor/wall разрешены на пригодной опоре, ceiling запрещён. Ladder/button/lever/rail/plate/wire/door используют placement support check; slab/stair full boundary определяется collision rectangles. Support-loss decorations теперь реализован в том же модуле и canonical world mutation path (см. последний проход).
 - **Shield удалён полностью**, не скрыт: registry/type/profile/pose/blocking/slowdown/durability/axe-disable/runtime icon отсутствуют. Generic offhand storage сохранён; legacy stack migration для player/armor/offhand/chest/furnace/drops не сбрасывает другие предметы. Старое combat state игнорируется.
 - Classic melee теперь реализован поверх этих fixes; Bow/Arrow physics и geometry не перенастраивались. Финальный targeted набор194/194; typecheck/build/size/archive PASS (3.45MiB/186files). Full-suite failures и browser ограничения — в свежем combat report.
 
@@ -203,7 +215,7 @@
 - HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, active potion effect chips (bottom-right), toasts и F3 debug. Attack meter удалён.
 - Рука и выбранный предмет рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены. Shield отсутствует, блок мечом использует pose существующего предмета.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`; отсюда открывается отдельная read-only справка по управлению. Значения sliders показываются live.
-- Desktop pointer lock: inventory/chest close = programmatic relock; Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Если Chrome отклоняет relock после Esc, PLAYING остаётся и показывается overlay «Нажмите, чтобы продолжить» только после фактического failure. Focus-lost не считается programmatic и не запрашивает lock сам.
+- Desktop pointer lock: inventory/chest close = programmatic relock; наблюдённый Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Unknown/focus-lost unlock и отказ запроса используют click fallback без auto-retry. Если браузер не доставляет Escape keydown, причина честно unknown, не доказанный Esc. Подробности raw fallback/diagnostics — в свежем polish report.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
 - Lifecycle states: `LOADING`, `MENU`, `PLAYING`, `PAUSED`, `AD`, `BACKGROUND`, `DEAD`.
 - Только `PLAYING` продвигает fixed simulation; остальные states останавливают audio и GameplayAPI marker.

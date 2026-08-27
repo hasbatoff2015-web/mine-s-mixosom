@@ -1,5 +1,21 @@
 # Тестирование
 
+## 2026-08-27 interaction / support / mouse / mob polish
+
+Актуальный отчёт: `reports/2026-08-27_interaction-support-mouse-mob-polish.md`. Baseline HEAD=origin/main=`3b9e68e`: typecheck PASS, targeted207/207, full692/714 (22 failures +1RPC). Final targeted **330/330,21files,26.04s**. Full **771/796,25failures +2RPC,242.24s**: те же5 числовых ошибок и6 failing files, но fire-contact timeouts17 вместо14. Три дополнительных случая отдельно PASS на baseline и current с почти одинаковым временем; strict full-suite no-worse condition всё ещё не объявлен выполненным. Scheduler thresholds/CRLF fingerprint не ослаблены. Production результаты — в отчёте.
+
+- `interaction-support-polish.test.ts` (54): actual DDA center/edge/oblique/miss для Button/Lever floor/ceiling/4walls и powered states; real redstone orientation/pulse/restore; support matrix и exactly-once Game→DroppedItemManager, slab-face changes, unloaded support/queue overflow; real ExplosionQueue→support/light/power/arrow; all6 fluid-displaceable blocks при normal5-tick water arrival, light removal, non-displaceable barriers.
+- `embedded-arrow-support.test.ts` (10): player/skeleton impact record, unchanged pose, Air/Water release, changed door shape, unrelated edits, same visual/geometry identity.
+- `pointer-motion-polish.test.ts` (13): ordinary exact deltas, invalid values, isolated spike, sustained high-DPI exact sum, fresh-session reset, bounded history, raw/plain Promise+event fallback, legacy void/TypeError, denied request/cancellation, honest unknown unlock.
+- `mob-polish.test.ts` (5): zombie facing/gait across recoil and AI resume, intentional passive flee, retreating skeleton look, two independent20-tick reference trajectories including hitY/stepped.
+- Existing arrow visual test mock now supplies the complete actual VoxelHit/world support contract; geometry expectations unchanged. Existing Escape classification fixture supplies observed Escape evidence; no weakening of combat/fluids/placement assertions.
+
+Reproducible browser fixture: DEV URL `/?inputDebug=1&polishQa=1`, create a **new** Creative world, seed exactly `interaction-support-polish`. `Build QA platform` explicitly replaces only the test arena (x4..12,z4..14,y71..77); do not use the seed/fixture on a valued save. Buttons invoke real Game targeting/use/break and real World/managers, not injected state. After Build: aim/use controls; remove supports; water→both torches; five arrows→remove log; normal/sprint hit. Browser QA actually inspected these scenarios, but does not substitute for hardware input.
+
+Problem-PC checklist: use DEV `?inputDebug=1` without the fixture, play several minutes. At a failure capture locked, changes/errors, reason, focus/visibility, last/largest dxdy, invalid/spike counts and raw/plain status. Stable lock + spike increment indicates sanitation; lock transition is a separate lifecycle event. Check normal fast turns, Escape pause, inventory/chat close, focus loss/reacquire; no automatic retry. Browser automation here produced pointerlockerror, locked=false and no movement events, so it cannot establish problem-PC root cause or acceptance. If Escape keydown is hidden by the browser, unlock is intentionally classified unknown, not guessed Escape.
+
+Remaining browser matrix: native right-click/edge/oblique control use; all decoration mounts/RedstoneTorch/Ladder support; skeleton arrows; crit/wall/W-tap/armor/block; mobile and10–15min GPU soak. Partial browser results and component PASS must stay distinct.
+
 ## 2026-08-27 classic combat
 
 Текущая спецификация: `MINECRAFT_1_8_COMBAT_REFERENCE.md`; полный baseline/post-change результат: `reports/2026-08-27_classic-1-8-combat-pass.md`. Combat tests выполняются на реальных системах с deterministic collision field, без worldgen/GPU. Browser acceptance pending, не выдавать CPU geometry/pose checks за screenshots.
@@ -42,7 +58,7 @@ Browser QA **не пройден**: браузер ранее отклонил l
 3. `?qaArrow=1&arrowScene=inspect&arrowView=front`: кнопки front/back/side/top/angle; normal/fire.
 4. `?qaArrow=1&arrowScene=ground` и `arrowScene=wall`: tip inside, shaft outside, нет billboard при смене camera angle; затем реальные player и skeleton shots в игре.
 5. `arrowScene=flying` и `arrowScene=stress`: 120 meshes; много раз stress→inspect→stress, normal/fire. HUD geometries/textures должны стабилизироваться; записать renderer.info и FPS. CPU cache test не заменяет GPU leak check.
-6. Torch matrix в Creative и Survival: stone-on-torch / torch-on-torch отклонены без расхода; floor+4 walls stone разрешены; ceiling запрещён; ladder/button/lever и full/partial slabs/stairs. Удаление опоры сейчас **не** вызывает support-loss drop.
+6. Torch matrix в Creative и Survival: stone-on-torch / torch-on-torch отклонены без расхода; floor+4 walls stone разрешены; ceiling запрещён; ladder/button/lever и full/partial slabs/stairs. После polish удаления опоры ожидается exactly-once environmental drop, а не floating decoration.
 7. Empty/sword/axe + hold-use: нет shield/slowdown; bow charge, food/potions, bucket pickup/place работают; legacy save не теряет остальные stacks.
 
 ## Цель

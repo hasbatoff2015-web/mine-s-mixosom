@@ -69,7 +69,8 @@ export function chunkLoaded(world: VoxelWorld, x: number, z: number): boolean {
 export function canReplaceWithFluid(block: BlockId): boolean {
   if (block === BlockId.Air || block === BlockId.Fire) return true;
   const definition = getBlockDefinition(block);
-  return definition.replaceable === true && definition.liquid !== true && definition.solid !== true;
+  return definition.fluidDisplaceable === true
+    || (definition.replaceable === true && definition.liquid !== true && definition.solid !== true);
 }
 
 /**

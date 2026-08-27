@@ -1,4 +1,35 @@
 import * as THREE from 'three';
+import type { VoxelHit, VoxelWorld } from '../world/World';
+import { blockSelectionBoxes } from '../world/selection';
+
+/** Transient support record shared by both projectile owners. */
+export interface EmbeddedArrowState {
+  readonly x: number; readonly y: number; readonly z: number;
+  readonly block: VoxelHit['block'];
+  readonly impactPoint: THREE.Vector3;
+  readonly impactVelocity: THREE.Vector3;
+}
+
+export function embedArrow(hit: VoxelHit, velocity: THREE.Vector3): EmbeddedArrowState {
+  return { x: hit.x, y: hit.y, z: hit.z, block: hit.block,
+    impactPoint: hit.point.clone().addScaledVector(hit.normal, -0.001),
+    impactVelocity: velocity.clone() };
+}
+
+export function arrowSupportIntact(world: VoxelWorld, support: EmbeddedArrowState): boolean {
+  if (world.getBlock(support.x, support.y, support.z, false) !== support.block) return false;
+  const p = support.impactPoint;
+  return blockSelectionBoxes(world, support.x, support.y, support.z).some((box) =>
+    p.x >= box.minX - 1e-6 && p.x <= box.maxX + 1e-6
+    && p.y >= box.minY - 1e-6 && p.y <= box.maxY + 1e-6
+    && p.z >= box.minZ - 1e-6 && p.z <= box.maxZ + 1e-6);
+}
+
+/** 1.8 residual motion: each pre-impact component times random [0, 0.2). */
+export function releaseEmbeddedArrow(velocity: THREE.Vector3, support: EmbeddedArrowState, random: () => number): void {
+  velocity.set(support.impactVelocity.x * random() * 0.2,
+    support.impactVelocity.y * random() * 0.2, support.impactVelocity.z * random() * 0.2);
+}
 
 export const ARROW_AIR_DRAG_PER_TICK = 0.99;
 export const ARROW_WATER_DRAG_PER_TICK = 0.6;

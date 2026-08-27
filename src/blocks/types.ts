@@ -127,6 +127,8 @@ export interface BlockDefinition {
   readonly flammable?: boolean;
   readonly gravity?: boolean;
   readonly replaceable?: boolean;
+  /** Fluid displacement is independent from placement replacement / solidity. */
+  readonly fluidDisplaceable?: boolean;
   readonly liquid?: boolean;
   readonly breakable?: boolean;
   readonly hasItem?: boolean;

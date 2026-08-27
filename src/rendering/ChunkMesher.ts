@@ -28,7 +28,8 @@ import {
   fenceConnections,
   fenceLocalBoxes,
   ladderPlaneLocal,
-  leverHandleAngle,
+  buttonSelectionBox,
+  leverSelectionBoxes,
   railLocalBoxes,
   railTextureYaw,
   resolveRailShape,
@@ -620,70 +621,30 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const attachment = state?.attachment ?? 'floor';
-    const facing = state?.facing ?? 'north';
-    const normal = attachment === 'floor'
-      ? new THREE.Vector3(0, 1, 0)
-      : attachment === 'ceiling'
-        ? new THREE.Vector3(0, -1, 0)
-        : facingVectorFrom(facing);
-    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : facingVectorFrom(facing);
-    const localX = new THREE.Vector3().crossVectors(normal, localZ).normalize();
-    const basis = new THREE.Matrix4().makeBasis(localX, normal, localZ);
-    const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5);
-    const surface = center.clone().addScaledVector(normal, -0.5);
-    const baseThickness = 0.125;
-    const baseCenter = surface.clone().addScaledVector(normal, baseThickness / 2);
-    const baseMatrix = new THREE.Matrix4().makeTranslation(baseCenter.x, baseCenter.y, baseCenter.z).multiply(basis);
-    let faces = this.addCuboid(
-      buffers, 'block/stone', [0.5, baseThickness, 0.375], baseMatrix,
-      world, definition, x, y, z,
-    );
-
-    const handleLength = 0.625;
-    const pivot = surface.clone().addScaledVector(normal, baseThickness);
-    const handleMatrix = new THREE.Matrix4()
-      .makeTranslation(pivot.x, pivot.y, pivot.z)
-      .multiply(basis)
-      .multiply(new THREE.Matrix4().makeRotationX(leverHandleAngle(state?.powered === true)))
-      .multiply(new THREE.Matrix4().makeTranslation(0, handleLength / 2, 0));
-    faces += this.addCuboid(
-      buffers, definition.textures.all ?? 'block/lever', [0.125, handleLength, 0.125], handleMatrix,
-      world, definition, x, y, z, LEVER_HANDLE_UV,
-    );
+    const parts = leverSelectionBoxes(x, y, z, state);
+    let faces = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      const matrix = part.matrix.clone().scale(new THREE.Vector3(
+        1 / part.size[0], 1 / part.size[1], 1 / part.size[2],
+      ));
+      faces += this.addCuboid(
+        buffers, i === 0 ? 'block/stone' : definition.textures.all ?? 'block/lever',
+        part.size, matrix, world, definition, x, y, z, i === 0 ? undefined : LEVER_HANDLE_UV,
+      );
+    }
     return faces;
   }
 
   private addButton(
-    buffers: GeometryBuffers,
-    definition: BlockDefinition,
-    state: BlockRenderState | undefined,
-    world: VoxelWorld,
-    x: number,
-    y: number,
-    z: number,
+    buffers: GeometryBuffers, definition: BlockDefinition, state: BlockRenderState | undefined,
+    world: VoxelWorld, x: number, y: number, z: number,
   ): number {
-    const attachment = state?.attachment ?? 'wall';
-    const facing = state?.facing ?? 'south';
-    const depth = state?.powered ? 0.06 : 0.125;
-    const normal = attachment === 'floor'
-      ? new THREE.Vector3(0, 1, 0)
-      : attachment === 'ceiling'
-        ? new THREE.Vector3(0, -1, 0)
-        : facingVectorFrom(facing);
-    const localZ = attachment === 'wall' ? new THREE.Vector3(0, 1, 0) : facingVectorFrom(facing);
-    const localX = new THREE.Vector3().crossVectors(normal, localZ);
-    if (localX.lengthSq() < 1e-6) localX.set(1, 0, 0);
-    localX.normalize();
-    const basis = new THREE.Matrix4().makeBasis(localX, normal, localZ);
-    const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5);
-    const surface = center.clone().addScaledVector(normal, -0.5);
-    const buttonCenter = surface.clone().addScaledVector(normal, depth / 2);
-    const matrix = new THREE.Matrix4().makeTranslation(buttonCenter.x, buttonCenter.y, buttonCenter.z).multiply(basis);
-    return this.addCuboid(
-      buffers, 'block/stone', [0.375, depth, 0.22], matrix,
-      world, definition, x, y, z,
-    );
+    const part = buttonSelectionBox(x, y, z, state);
+    const matrix = part.matrix.clone().scale(new THREE.Vector3(
+      1 / part.size[0], 1 / part.size[1], 1 / part.size[2],
+    ));
+    return this.addCuboid(buffers, 'block/stone', part.size, matrix, world, definition, x, y, z);
   }
 
   private addDoor(

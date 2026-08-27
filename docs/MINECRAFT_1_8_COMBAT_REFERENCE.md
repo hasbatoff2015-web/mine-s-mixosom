@@ -63,4 +63,8 @@ Accepted melee costs exhaustion0.3 in Survival; air/rejected hits cost none. Ref
 
 ## Verification
 
-See `TESTING.md` and `reports/2026-08-27_classic-1-8-combat-pass.md`. Browser pose/feel/mobile acceptance remains pending because the available browser surface denied localhost access. Automated component tests are not visual acceptance or GPU performance evidence.
+Follow-up audit: `tests/mob-polish.test.ts` records20 fixed ticks on a flat floor and compares the entire Y sequence with independent discrete move → gravity0.08 → drag0.98 → floor collision. Normal: initial8b/s, first displacement0.4, apex1.153108 at tick5, landing tick11 (0.55s). Sprint: initial10b/s, first0.5, apex1.708834 at tick6, landing14 (0.70s). Both match reference (floor epsilon0.00001); stepped=false throughout, no extra Frontier pop. No vertical product adaptation was applied. Horizontal20-tick travel remains normal2.049883 / sprint5.024349, wall contact0.69999 in the classic fixture.
+
+AI intent, not velocity, now owns mob facing and walk animation; pure melee recoil leaves gait static. Embedded arrows resume residual motion component×random×0.2 after loss of impact support, following EntityArrow semantics; existing geometry, free-flight drag/gravity and damage remain unchanged.
+
+See `TESTING.md` and `reports/2026-08-27_interaction-support-mouse-mob-polish.md` for current QA. Normal/sprint recoil was inspected in the browser via an explicit DEV fixture UI; native-input/full combat/mobile/GPU acceptance remains pending. The prior classic report's blocked browser result is historical, not a current assertion that no browser inspection occurred.

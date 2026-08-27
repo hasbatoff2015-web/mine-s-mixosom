@@ -3,6 +3,7 @@ import { migrateLegacyStack } from '../inventory/legacyItems';
 import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
 import { rayAabbDistance } from './collision';
 import { blockSelectionBoxes } from './selection';
+import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
 import { CHUNK_SIZE, LIGHTING_HALO_CHUNKS, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
@@ -51,6 +52,9 @@ import {
   shouldPreemptDistantLightingFlood,
 } from './streamingScheduler';
 
+const SUPPORT_NEIGHBORS = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0],
+  [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const;
+
 export interface VoxelHit {
   x: number;
   y: number;
@@ -59,6 +63,11 @@ export interface VoxelHit {
   normal: THREE.Vector3;
   distance: number;
   point: THREE.Vector3;
+}
+
+export interface DetachedBlockEvent {
+  x: number; y: number; z: number; block: BlockId;
+  reason: 'support' | 'water' | 'lava';
 }
 
 export interface FallingBlockSpawn {
@@ -174,6 +183,8 @@ export class VoxelWorld {
   private readonly scheduled: ScheduledBlockTick[] = [];
   private readonly scheduledKeys = new Set<string>();
   private readonly pendingFalls: FallingBlockSpawn[] = [];
+  private readonly supportQueue = new Map<string, readonly [number, number, number]>();
+  private readonly detachedBlocks: DetachedBlockEvent[] = [];
   private fluidScheduled: ScheduledFluidTick[] = [];
   private readonly fluidKeys = new Map<string, ScheduledFluidTick>();
   private trackFluidDirty = false;
@@ -314,6 +325,7 @@ export class VoxelWorld {
       return false;
     }
     this.blockStates.set(blockKey(x, y, z), state);
+    if (state.fluidLevel === undefined) this.queueSupportAround(x, y, z);
     const chunkX = floorDiv(x, CHUNK_SIZE);
     const chunkZ = floorDiv(z, CHUNK_SIZE);
     const localX = positiveMod(x, CHUNK_SIZE);
@@ -350,6 +362,47 @@ export class VoxelWorld {
 
   consumeFallingBlocks(): FallingBlockSpawn[] {
     return this.pendingFalls.splice(0);
+  }
+
+  consumeDetachedBlocks(): DetachedBlockEvent[] {
+    return this.detachedBlocks.splice(0);
+  }
+
+  private queueSupportAround(x: number, y: number, z: number): void {
+    for (const [dx, dy, dz] of SUPPORT_NEIGHBORS) {
+      const nx = x + dx, ny = y + dy, nz = z + dz;
+      if (needsBlockSupport(this.getBlock(nx, ny, nz, false))) {
+        this.supportQueue.set(blockKey(nx, ny, nz), [nx, ny, nz]);
+      }
+    }
+  }
+
+  /** Deferred to the fixed tick so placement can assign orientation atomically.
+   * Local FIFO/dedupe only; cascades retain overflow, never scan the world.
+   */
+  processSupportIntegrity(budget = 256): number {
+    budget = Math.min(budget, this.supportQueue.size);
+    let processed = 0;
+    const removals: Array<{ x: number; y: number; z: number; block: BlockId }> = [];
+    for (const [key, [x, y, z]] of this.supportQueue) {
+      if (processed >= budget) break;
+      this.supportQueue.delete(key);
+      processed++;
+      const block = this.getBlock(x, y, z, false);
+      const support = supportCellForBlock(block, this.getBlockState(x, y, z), x, y, z);
+      if (!support) continue;
+      // Unloaded neighbor is unknown, not air. Retain one ticket for later loading.
+      if (!this.getChunk(floorDiv(support.x, CHUNK_SIZE), floorDiv(support.z, CHUNK_SIZE), false)) {
+        this.supportQueue.set(key, [x, y, z]);
+        continue;
+      }
+      if (!isBlockStillSupported(this, x, y, z)) {
+        removals.push({ x, y, z, block: BlockId.Air });
+        this.detachedBlocks.push({ x, y, z, block, reason: 'support' });
+      }
+    }
+    if (removals.length) this.applyBlockBatch(removals, { deferLighting: true });
+    return processed;
   }
 
   get dirtyChunkCount(): number {
@@ -556,11 +609,12 @@ export class VoxelWorld {
     this.cancelFluidTick(x, y, z);
     const previousDefinition = getBlockDefinition(previous);
     chunk.set(localX, y, localZ, block);
-    if (block === BlockId.Air || !getBlockDefinition(block).liquid) {
-      const previousState = this.blockStates.get(blockKey(x, y, z));
-      if (previousState && (block === BlockId.Air || previousDefinition.liquid)) {
-        this.blockStates.delete(blockKey(x, y, z));
-      }
+    this.blockStates.delete(blockKey(x, y, z));
+    this.queueSupportAround(x, y, z);
+    if ((block === BlockId.Water || block === BlockId.Lava)
+      && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid
+      && (previousDefinition.fluidDisplaceable || previousDefinition.replaceable)) {
+      this.detachedBlocks.push({ x, y, z, block: previous, reason: block === BlockId.Water ? 'water' : 'lava' });
     }
     if (record) {
       const key = chunkKey(chunkX, chunkZ);
@@ -922,6 +976,7 @@ export class VoxelWorld {
     this.timeOfDay = (this.timeOfDay + 1) % 24_000;
     this.processScheduledTicks();
     processFluidQueue(this);
+    this.processSupportIntegrity();
     this.tickFurnaces();
   }
 

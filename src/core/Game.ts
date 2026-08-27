@@ -162,7 +162,7 @@ import {
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 
-interface GameSession {
+export interface GameSession {
   summary: WorldSummary;
   world: VoxelWorld;
   worldRenderer: WorldRenderer;
@@ -198,6 +198,7 @@ interface RuntimeSettings {
 const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 export class Game {
+  private polishQaDispose?: () => void;
   private readonly canvas: HTMLCanvasElement;
   private readonly ui: GameUI;
   private readonly renderer: THREE.WebGLRenderer;
@@ -375,6 +376,7 @@ export class Game {
 
   dispose(): void {
     cancelAnimationFrame(this.frameHandle);
+    this.input.disposeDebug();
     this.disposeSession();
     this.firstPerson?.dispose();
     this.itemVisuals?.dispose();
@@ -1206,6 +1208,26 @@ export class Game {
     this.lifecycle.setState('PLAYING');
     this.previousTime = performance.now();
     this.accumulator = 0;
+    if (import.meta.env.DEV && !this.polishQaDispose && this.session?.summary.seed === 'interaction-support-polish'
+      && new URLSearchParams(location.search).get('polishQa') === '1') {
+      const session = this.session;
+      this.polishQaDispose = () => {};
+      void import('../dev/GameplayPolishQa').then(({ mountGameplayPolishQa }) => {
+        if (this.session !== session) return;
+        this.polishQaDispose = mountGameplayPolishQa(session, this.input, {
+          use: () => {
+            this.ui.hidePointerLockFallback();
+            session.target = session.world.raycast(session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH);
+            this.useTargetOrItem();
+          },
+          break: () => {
+            this.ui.hidePointerLockFallback();
+            session.target = session.world.raycast(session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH);
+            this.breakTarget();
+          },
+        });
+      });
+    }
   }
 
   /** Close the inventory modal and restore desktop mouse-look. */
@@ -1237,6 +1259,10 @@ export class Game {
   }
 
   private handlePointerUnlock(reason: PointerUnlockReason): void {
+    if (reason === 'unknown' || reason === 'focus-lost') {
+      this.showPointerLockFallbackIfNeeded();
+      return;
+    }
     if (!shouldOpenPauseOnUnlock(reason, this.lifecycle.state === 'PLAYING', this.ui.isBlockingOverlay())) return;
     this.openPauseMenu();
   }
@@ -1509,6 +1535,7 @@ export class Game {
     let simMark = profile ? performance.now() : 0;
     session.playTicks += 1;
     session.world.tick();
+    this.processDetachedBlocks();
     for (const spawn of session.world.consumeFallingBlocks()) {
       session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
     }
@@ -1622,6 +1649,8 @@ export class Game {
       this.handleDeath();
       return;
     }
+    session.world.processSupportIntegrity();
+    this.processDetachedBlocks();
     session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
     this.lastEntityUpdateMs += performance.now() - entityStart;
     simMark = this.addSimPart('entities', simMark);
@@ -2180,6 +2209,21 @@ export class Game {
         radius: event.radius,
         power: event.power,
       });
+    }
+  }
+
+  private processDetachedBlocks(): void {
+    const session = this.session!;
+    const events = session.world.consumeDetachedBlocks();
+    if (events.length) session.redstone.notifyBlocksChanged(events);
+    for (const event of events) {
+      // Environmental drops also exist in Creative; lava destroys without loot.
+      const drop = getBlockDefinition(event.block).drop;
+      if (!drop || event.reason === 'lava') continue;
+      const count = drop.count ?? (drop.min !== undefined
+        ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
+      if (count > 0) this.spawnDroppedStack(createItemStack(drop.item, count),
+        new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
     }
   }
 
@@ -2798,6 +2842,8 @@ export class Game {
   }
 
   private disposeSession(): void {
+    this.polishQaDispose?.();
+    this.polishQaDispose = undefined;
     if (!this.session) return;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();

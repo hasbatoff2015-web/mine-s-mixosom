@@ -5,6 +5,7 @@ import { PlayerArrowManager } from '../src/combat/PlayerArrowManager';
 import type { VoxelWorld } from '../src/world/World';
 import type { MobManager } from '../src/entities/MobManager';
 import { MinecartVisualFactory, minecartFloorMesh } from '../src/rendering/minecartGeometry';
+import { BlockId } from '../src/blocks';
 
 describe('canonical thin arrow visual', () => {
   it('has a thin finite shaft, small head and tail-only fins with bounded sheet UVs', () => {
@@ -29,7 +30,11 @@ describe('canonical thin arrow visual', () => {
   it.each([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]])('embeds the tip, leaving the shaft outside along %s %s %s', (x, y, z) => {
     const factory = new ArrowVisualFactory(), scene = new THREE.Scene();
     const direction = new THREE.Vector3(x, y, z), origin = new THREE.Vector3(5, 40, 5);
-    const world = { raycast: () => ({ x: 5, y: 40, z: 5, distance: 0.6 }),
+    const point = origin.clone().addScaledVector(direction, 0.6);
+    const world = { raycast: () => ({ x: Math.floor(point.x + x * 0.001),
+      y: Math.floor(point.y + y * 0.001), z: Math.floor(point.z + z * 0.001),
+      block: BlockId.Stone, point, normal: direction.clone().negate(), distance: 0.6 }),
+      getBlock: () => BlockId.Stone, getBlockState: () => undefined,
       chunks: new Map() } as unknown as VoxelWorld;
     const manager = new PlayerArrowManager(scene, world, { raycast: () => undefined } as unknown as MobManager,
       { visualFactory: factory, random: () => 1 });
