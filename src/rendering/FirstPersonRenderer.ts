@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../items';
+import { bowPullingTexturePath, itemRenderProfile, tryGetItemDefinition, type ItemRenderCategory } from '../items';
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
 import { TextureAtlas } from './TextureAtlas';
 import { createTexturedCuboidGeometry } from './TexturedCuboid';
@@ -40,6 +40,7 @@ export interface FirstPersonFrameState {
   mining: boolean;
   foodUseProgress: number;
   bowCharge: number;
+  swordBlocking?: boolean;
   onFire?: boolean;
   invisible?: boolean;
   potionActive?: boolean;
@@ -178,7 +179,7 @@ export class FirstPersonRenderer {
     const bobY = -Math.abs(Math.cos(this.walkPhase)) * 0.018 * this.walkStrength * sprintFactor;
     const idle = this.freezeIdleMotion ? 0 : Math.sin(this.elapsedSeconds * 1.35) * 0.004;
 
-    const explicitProgress = THREE.MathUtils.clamp(this.swingSeconds / 0.34, 0, 1);
+    const explicitProgress = THREE.MathUtils.clamp(this.swingSeconds / 0.30, 0, 1);
     const miningProgress = (this.elapsedSeconds * 3.15) % 1;
     const swingProgress = explicitProgress < 1 ? explicitProgress : state.mining ? miningProgress : 1;
     const swingActive = explicitProgress < 1 || state.mining;
@@ -212,6 +213,16 @@ export class FirstPersonRenderer {
         console.info(`[held-qa] ${formatHeldItemQaQuery(heldItemQaValuesFromTransform(resolved))}`);
       }
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
+      const held = tryGetItemDefinition(this.mainItem);
+      if (state.swordBlocking && held?.kind === 'weapon' && held.weapon === 'sword') {
+        // Overlay on the accepted idle pose; no new mesh/material, no accumulated transforms.
+        this.mainModel.position.x -= 0.25;
+        this.mainModel.position.y += 0.13;
+        this.mainModel.position.z += 0.10;
+        this.mainModel.rotation.x -= 0.35;
+        this.mainModel.rotation.y += 0.45;
+        this.mainModel.rotation.z += 0.85;
+      }
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
       if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
     }

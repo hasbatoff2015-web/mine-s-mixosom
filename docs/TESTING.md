@@ -1,5 +1,27 @@
 # Тестирование
 
+## 2026-08-27 classic combat
+
+Текущая спецификация: `MINECRAFT_1_8_COMBAT_REFERENCE.md`; полный baseline/post-change результат: `reports/2026-08-27_classic-1-8-combat-pass.md`. Combat tests выполняются на реальных системах с deterministic collision field, без worldgen/GPU. Browser acceptance pending, не выдавать CPU geometry/pose checks за screenshots.
+
+Финальный targeted набор: **194/194, 14 files**, 22.91s (`--maxWorkers=2`). Full suite:690/713 с23 failures/1RPCerror; canonical `npm run check`:675/713 с38 failures/2RPCerrors при default concurrency, остановился на tests. После этого отдельно build/typecheck/size/archive PASS:127modules,3.45MiB/186files. Full runs были до добавления последнего CPU soak test (теперь total714); soak включён в final194. Unrelated tests/thresholds не изменялись.
+
+- `combat.test.ts` (47): total damage, мгновенные full attempts, crit+sprint/запреты, 20-tick hurt boundary/differences, block-before-armor/absorption, canonical base/extra KB, attacker slowdown, save migration, bow curve и survival smoke.
+- `classic-combat-integration.test.ts` (17): Game click queue → real MobManager/Inventory/Survival; no sweep; accepted-only wear/exhaustion; sprint latch; reach3/wall; held-use movement mapping; shared player/mob trajectory; skeleton arrow impulse; cached first-person object stability; CPU soak24mobs/300ticks/7200attempts без роста object/geometry/material identities.
+- `mob-hurt-flash.test.ts`: rejected hit не обновляет flash; новый full hit на half-window boundary обновляет. Материалы/геометрия/cleanup остаются прежними.
+- `shield-removal.test.ts`: legacy migration сохранена; held sword без active Combat blocking не даёт защиты. Отдельный classic тест проверяет active sword use.
+
+Manual browser matrix (в разрешённом сеансе, новый тестовый мир, `?perf=1`; не изменять пользовательский save):
+
+1. Diamond sword → zombie, 10–20 CPS: swings продолжаются, каждый attempt damage8; target не принимает equal hits чаще 10 ticks. Проверить fist/wood/stone/iron/diamond и переключение без cooldown.
+2. Ровная каменная площадка и высокая стенка: стоячий hit, sprint hit, падение и отрицательная/положительная target Y velocity. Не должно быть повторного base KB на ignored/differential hit или прохода сквозь стену.
+3. Sprint→accepted hit→удерживать W+sprint: sprint не перезапускается автоматически. Отпустить W или sprint, снова нажать: extra hit доступен. Ordinary hit не тормозит attacker.
+4. Прыжок/falling hit ×1.5, в том числе sprinting; rising/ground/water/ladder/riding — без crit.
+5. Incoming melee без armor / iron / diamond: fixed reduction; sword held-use `(raw+1)/2` до armor; источник fall/drown/starve/suffocate не блокируется.
+6. Sword hold-use: видимая block pose, движение 20%, sprint off. Release/switch/сломанный меч/death/pause/inventory снимают block. Быстрые attack↔block переходы без зависания pose; shield/indicator отсутствуют.
+7. Bow короткий/полный draw, Survival ammo/Creative, fire arrows, stuck arrows с разных углов. Старый shield save без потери других stacks; обычный save/reload.
+8. 10–15 min combat soak и mobile landscape attack/use: object/GPU resources/FPS/tick p95 до/после. Автотесты не доказывают эти browser показатели.
+
 ## 2026-08-27 item / arrow / placement / shield cleanup
 
 Targeted suite — 205/205 в 19 файлах; typecheck/build/size/archive PASS. Итог полного suite и baseline failures см. `reports/2026-08-27_item-arrow-placement-shield-cleanup.md`; старые fingerprints/performance thresholds не ослаблялись.
@@ -9,7 +31,7 @@ Targeted suite — 205/205 в 19 файлах; typecheck/build/size/archive PASS
 - `authored-item-assets.test.mjs`: точные bytes source→runtime, deterministic potion tint/alpha/cork, repeated import, forced fallback precedence, missing-required preflight без потери runtime files.
 - `arrow-visual-cleanup.test.ts`: finite geometry/UV/normals, tail-only fins, +Z orientation и embedded tip по шести направлениям, stable inGround quaternion, 240 shots → cap48, geometry1/materials2/texture1, removal без children.
 - `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch.
-- `shield-removal.test.ts`: player/offhand/armor/chest/furnace/drop migration, сохранность metadata/durability/bucket overflow, Game damage+armor+normal knockback при held/use, отсутствие runtime blocking/pose/slowdown. Старые combat/item/inventory/recipe tests заменены соответствующим новым контрактом; `/give shield` обязан завершаться ошибкой.
+- `shield-removal.test.ts`: player/offhand/armor/chest/furnace/drop migration, сохранность metadata/durability/bucket overflow, Game damage+armor+normal knockback без active blocking, отсутствие shield-specific runtime. Sword blocking добавлен последующим classic pass; `/give shield` обязан завершаться ошибкой.
 
 Browser QA **не пройден**: браузер ранее отклонил localhost по policy; сейчас browser/user tabs пусты. Обход через другой host/browser/CDP не использовался. PNG inspection и component tests не означают WebGL acceptance.
 
@@ -121,7 +143,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
 | `tests/crafting.test.ts` | 9 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
-| `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, legacy combat migration, отсутствие blocking/slowdown, axe damage, bow curve, armor formula, survival drowning/food/death/respawn |
+| `tests/combat.test.ts` | 47 | Classic total damage, shared hurt resistance, crit+sprint, canonical KB, armor, sword blocking, legacy migration, bow/survival |
 | `tests/player-physics.test.ts` | 5 | Floor/wall sliding, fall damage, slab collision/step-up, stair generic step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
 | `tests/dropped-item-environment.test.ts` | 5 | Java-1.9-style item health, Lava/Fire destruction, partial AABB overlap, Water safety, old-save default and health round-trip |
@@ -187,7 +209,7 @@ Targeted regression pass также подтвердил кодовые fixes:
 - Survival sprint запрещён при hunger `≤ 6`, Creative не ограничен hunger;
 - Creative player не является hostile AI target;
 - mob melee использует 3D eye distance и voxel line of sight;
-- knockback игрока применяется только при `DamageResult.dealt > 0`.
+- base knockback игрока применяется только при `DamageResult.fullHurt`, включая absorption-only hit; ignored/differential hit не повторяют его.
 
 ## Что пока не покрыто автоматически
 
@@ -316,7 +338,7 @@ Browser viewport matrix закрывает layout baseline, но не замен
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
 8. chest model/facing/lid, chest/furnace/crafting GUI (без Creative catalog), Recipe Book, block destruction drops contents;
 9. food, fall/water/lava/cactus damage, death, respawn и bed spawn;
-10. melee cooldown/crit, отсутствие shield blocking, bow with/without arrow;
+10. classic melee/hurt resistance/crit+sprint, sword blocking, отсутствие shield/attack indicator, bow with/without arrow;
 11. passive/hostile spawn, skeleton shot, creeper fuse/explosion, loot pickup, mob 1-block step-up, zombie limbs;
 12. lever/button/plate → dust levels → primed TNT gravity/fuse/explosion/chain, falling sand entity, torch block light;
 13. F3 overlay, viewmodel без shield, settings FOV/sensitivity/render distance/volume;
@@ -494,10 +516,10 @@ npm run benchmark:fluids
 
 ## Combat/entity regression scenarios
 
-- Удар рукой, sword, pickaxe, shovel и axe на empty/half/full cooldown.
-- Critical только при падении и charge threshold; sprint hit не становится critical.
-- Hold-use с пустой рукой/sword/axe не поднимает shield и не замедляет движение; bow charge сохраняет своё замедление.
-- Melee/projectile damage проходит через armor/SurvivalSystem с обычным knockback; legacy shield не восстанавливается.
+- Удар рукой/sword/pickaxe/shovel/axe всегда с полным damage; quick switch не сбрасывает несуществующий cooldown.
+- Falling crit ×1.5 совместим со sprint; equal/weaker hits в первой половине hurt window ignored, stronger damage — difference.
+- Hold-use sword включает block/pose/movement ×0.2; пустая рука/axe не блокируют; bow draw сохраняет свой slowdown. Shield отсутствует.
+- Melee/projectile damage проходит через shared hurt gate и classic armor; base melee KB только fullHurt, extra sprint отдельно. Legacy shield не восстанавливается.
 - Bow: слишком короткое удержание не стреляет, Survival требует arrow, Creative не требует.
 - Arrow сталкивается с ближайшим mob/block и не проходит сквозь wall.
 - Каждый passive loot stack валиден для item registry.

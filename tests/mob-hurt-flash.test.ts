@@ -86,7 +86,7 @@ describe('mob hurt flash', () => {
     manager.dispose();
   });
 
-  it('decays with elapsed time and restarts on a repeated hit without stacking', () => {
+  it('decays without restarting on ignored hits, then restarts at the half-window boundary', () => {
     expect(MOB_HURT_FLASH_SECONDS).toBeGreaterThanOrEqual(0.15);
     expect(MOB_HURT_FLASH_SECONDS).toBeLessThanOrEqual(0.25);
     const world = new VoxelWorld('mob-flash-decay');
@@ -97,7 +97,11 @@ describe('mob hurt flash', () => {
     manager.update(0.05, { daylight: 0.2, playerPosition: new THREE.Vector3(8, 41, 8) });
     expect(zombie.hurtFlashSeconds).toBeGreaterThan(0);
     expect(zombie.hurtFlashSeconds).toBeLessThan(MOB_HURT_FLASH_SECONDS);
-    manager.damage(zombie, 1, { source: 'player' });
+    const remainingFlash = zombie.hurtFlashSeconds;
+    expect(manager.damage(zombie, 1, { source: 'player' })).toBe(false);
+    expect(zombie.hurtFlashSeconds).toBe(remainingFlash);
+    for (let step = 0; step < 9; step += 1) manager.update(0.05, { daylight: 0.2 });
+    expect(manager.damage(zombie, 1, { source: 'player' })).toBe(true);
     expect(zombie.hurtFlashSeconds).toBe(MOB_HURT_FLASH_SECONDS);
     for (let step = 0; step < 12; step += 1) {
       manager.update(0.05, { daylight: 0.2, playerPosition: new THREE.Vector3(8, 41, 8) });

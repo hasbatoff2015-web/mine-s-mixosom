@@ -80,7 +80,6 @@ export interface HudState {
   health: number;
   hunger: number;
   miningProgress: number;
-  attackStrength: number;
   armor?: number;
   effects?: readonly PotionHudEntry[];
   debug?: string;
@@ -110,7 +109,6 @@ export class GameUI {
   private hunger: HTMLElement;
   private armor: HTMLElement;
   private mining: HTMLElement;
-  private attack: HTMLElement;
   private debug: HTMLElement;
   private effectHud: HTMLElement;
   private toasts: HTMLElement;
@@ -143,7 +141,6 @@ export class GameUI {
   private armorHtml = '';
   private miningWidth = '';
   private miningVisible = false;
-  private attackTransform = '';
   private debugText = '';
   private debugVisible = false;
   private effectsHtml = '';
@@ -157,7 +154,6 @@ export class GameUI {
         <div id="hurt-flash" aria-hidden="true"></div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
-        <div id="attack-indicator"><span></span></div>
         <div id="status-bars">
           <div class="status-left">
             <div class="armor hidden"></div>
@@ -187,7 +183,6 @@ export class GameUI {
     this.hunger = this.root.querySelector('.hunger')!;
     this.armor = this.root.querySelector('.armor')!;
     this.mining = this.root.querySelector('#mining-progress')!;
-    this.attack = this.root.querySelector('#attack-indicator span')!;
     this.debug = this.root.querySelector('#debug-panel')!;
     this.effectHud = this.root.querySelector('#effect-hud')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
@@ -545,11 +540,6 @@ export class GameUI {
     if (miningWidth !== this.miningWidth) {
       this.miningWidth = miningWidth;
       miningBar.style.width = miningWidth;
-    }
-    const attackTransform = `scaleX(${Math.max(0, Math.min(1, state.attackStrength))})`;
-    if (attackTransform !== this.attackTransform) {
-      this.attackTransform = attackTransform;
-      this.attack.style.transform = attackTransform;
     }
     const debugText = state.debug ?? '';
     if (debugText !== this.debugText) {

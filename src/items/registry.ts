@@ -104,23 +104,9 @@ const tiers: readonly TierStats[] = [
 ];
 
 const toolDamage: Readonly<Record<ItemToolType, number>> = {
-  pickaxe: 2,
-  axe: 6,
-  shovel: 2.5,
-};
-
-const axeDamage: Readonly<Record<ItemTier, number>> = {
-  wood: 7,
-  stone: 9,
-  iron: 9,
-  diamond: 9,
-};
-
-const axeSpeed: Readonly<Record<ItemTier, number>> = {
-  wood: 0.8,
-  stone: 0.8,
-  iron: 0.9,
-  diamond: 1,
+  pickaxe: 3,
+  axe: 4,
+  shovel: 2,
 };
 
 const tools: ItemDefinition[] = tiers.flatMap((stats) =>
@@ -137,8 +123,7 @@ const tools: ItemDefinition[] = tiers.flatMap((stats) =>
       tier: stats.tier,
       durability: stats.durability,
       miningSpeed: stats.miningSpeed,
-      attackDamage: tool === 'axe' ? axeDamage[stats.tier] : toolDamage[tool] + stats.damageBonus,
-      attackSpeed: tool === 'pickaxe' ? 1.2 : tool === 'shovel' ? 1 : axeSpeed[stats.tier],
+      attackDamage: toolDamage[tool] + stats.damageBonus,
     });
   }),
 );
@@ -155,8 +140,7 @@ const swords: ItemDefinition[] = tiers.map((stats): WeaponItemDefinition => {
     weapon: 'sword',
     tier: stats.tier,
     durability: stats.durability,
-    attackDamage: 4 + stats.damageBonus,
-    attackSpeed: 1.6,
+    attackDamage: 5 + stats.damageBonus,
   });
 });
 
@@ -264,7 +248,7 @@ const equipment: readonly ItemDefinition[] = [
   ...swords,
   Object.freeze({
     id: ItemId.Bow, name: 'Bow', kind: 'weapon', maxStack: 1, texture: 'item/bow',
-    tags: Object.freeze(['weapon', 'bow']), weapon: 'bow', durability: 384, attackDamage: 0, attackSpeed: 1,
+    tags: Object.freeze(['weapon', 'bow']), weapon: 'bow', durability: 384, attackDamage: 0,
   } satisfies WeaponItemDefinition),
   ...armor,
 ];

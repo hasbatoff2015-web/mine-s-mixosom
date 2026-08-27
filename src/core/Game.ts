@@ -19,7 +19,7 @@ import {
   stairPlacementFromHit,
   torchPlacementFromHit,
 } from '../blocks';
-import { CombatSystem, PlayerArrowManager, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
+import { CombatSystem, PlayerArrowManager, completeMeleeAttack, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
 import {
   ChatLog,
   PLAYER_CHAT_NAME,
@@ -484,6 +484,7 @@ export class Game {
       health: restored?.player.health ?? 20,
       hunger: restored?.player.hunger ?? 20,
       saturation: restored?.player.saturation ?? 5,
+      isSwordBlocking: () => this.session?.combat.swordBlocking ?? false,
       onDamage: (result) => this.onPlayerDamaged(result),
       onDeath: (source) => this.handleDeath(source),
     });
@@ -1518,15 +1519,15 @@ export class Game {
     session.combat.setHeldItem(selected?.itemId);
     session.combat.setOffhand(session.inventory.offhand?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
-    session.combat.tick(FIXED_DT);
     simMark = this.addSimPart('combat', simMark);
 
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
+    session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
     const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
     const drawingBow = session.bowUseTicks > 0;
     const riding = Boolean(session.ridingCartId);
-    const movementMultiplier = drawingBow ? 0.2 : 1;
+    const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
     session.player.creativeFlightAllowed = session.summary.mode === 'creative';
     const playerInput = {
       yaw: this.input.yaw,
@@ -1541,7 +1542,7 @@ export class Game {
           && movementMultiplier === 1
           && (session.summary.mode === 'creative' || session.survival.hunger > 6),
         descend: movementBefore.descend === true,
-        flySprint: movementBefore.flySprint === true,
+        flySprint: movementMultiplier === 1 && movementBefore.flySprint === true,
       }),
     };
     const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
@@ -1648,14 +1649,14 @@ export class Game {
     const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
-    const attackPressed = this.input.consumeAttackPressed();
+    const attackPresses = this.input.consumeAttackPresses();
+    const attackPressed = attackPresses > 0;
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
     if (attack?.kind === 'mob' && mobTarget) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
-      if (attackPressed) {
+      for (let click = 0; click < attackPresses; click += 1) {
         const stack = this.selectedStack();
-        const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
         const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
           critical: {
             fallDistance: session.player.fallDistance,
@@ -1663,22 +1664,25 @@ export class Game {
             sprinting: session.player.sprinting,
             inWater: session.player.inWater,
             onLadder: session.player.onLadder,
+            riding: Boolean(session.ridingCartId),
           },
           attackerSprinting: session.player.sprinting,
           attackerYaw: session.player.yaw,
         });
-        session.mobs.damage(mobTarget.mob, result.damage, {
+        const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
           source: 'player',
-          attackerPosition: origin,
-          knockback: result.knockback.length(),
+          attackerPosition: session.player.position,
+          attackerYaw: result.attackerYaw,
+          extraKnockbackLevel: result.extraKnockbackLevel,
         });
-        if (session.summary.mode === 'survival') {
-          if (stack && (item?.kind === 'tool' || (item?.kind === 'weapon' && item.weapon === 'sword'))) {
-            session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
+        completeMeleeAttack(result, accepted, session.player);
+        if (accepted && session.summary.mode === 'survival') {
+          if (stack && result.profile.durabilityCost > 0) {
+            session.inventory.setSlot(session.selectedSlot, damageItem(stack, result.profile.durabilityCost));
           }
-          session.survival.addExhaustion(0.1);
+          session.survival.recordAttack();
         }
-        this.audio.playTone(result.critical ? 520 : 310, 0.055, result.critical ? 0.055 : 0.035);
+        if (accepted) this.audio.playTone(result.critical ? 520 : 310, 0.055, result.critical ? 0.055 : 0.035);
       }
     } else if (attack?.kind === 'minecart') {
       session.miningTarget = undefined;
@@ -1698,7 +1702,8 @@ export class Game {
         if (session.miningProgress >= 1) this.breakTarget();
       }
     }
-    if (attackPressed) this.firstPerson?.swing();
+    for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
+    session.combat.setHeldItem(this.selectedStack()?.itemId);
     if (this.input.consumeUsePressed()) this.useTargetOrItem();
   }
 
@@ -2231,7 +2236,13 @@ export class Game {
     const damage = session.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
       armor: session.inventory,
     });
-    if (damage.dealt > 0) session.player.velocity.add(event.knockback);
+    if (!damage.fullHurt) return;
+    if (event.source === 'melee') {
+      session.player.receiveMeleeKnockback({
+        x: session.player.position.x - event.position.x,
+        z: session.player.position.z - event.position.z,
+      });
+    } else if (event.knockback) session.player.velocity.add(event.knockback);
   }
 
   private processExplosionQueue(): void {
@@ -2629,7 +2640,7 @@ export class Game {
   }
 
   private onPlayerDamaged(result: DamageResult): void {
-    if (result.ignored || result.dealt <= 0) return;
+    if (!result.fullHurt || result.ignored) return;
     this.hurt.trigger(performance.now(), { periodic: isPeriodicDamageSource(result.source) });
   }
 
@@ -2708,6 +2719,7 @@ export class Game {
       state.mining = this.input.mining && session.target !== undefined;
       state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
+      state.swordBlocking = session.combat.swordBlocking;
       state.onFire = session.survival.isOnFire;
       state.invisible = session.survival.invisible;
       const invisible = session.survival.hasEffect('invisibility');
@@ -2725,6 +2737,7 @@ export class Game {
       state.mining = false;
       state.foodUseProgress = 0;
       state.bowCharge = 0;
+      state.swordBlocking = false;
       state.onFire = false;
       state.invisible = false;
       state.potionActive = false;
@@ -2779,7 +2792,6 @@ export class Game {
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
       armor: getArmorPoints(session.inventory),
       miningProgress: session.miningProgress,
-      attackStrength: session.combat.getAttackStrength(this.selectedStack()?.itemId ?? null),
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
     });
@@ -2868,6 +2880,7 @@ export class Game {
         this.audio.resume();
         this.yandex.gameplayStart();
       } else {
+        this.session?.combat.updateUse(false, false, false);
         this.audio.pause();
         this.yandex.gameplayStop();
       }

@@ -63,8 +63,6 @@ export interface ToolItemDefinition extends BaseItemDefinition {
   readonly durability: number;
   readonly miningSpeed: number;
   readonly attackDamage: number;
-  /** Fully charged melee attacks per second (Java 1.9-style cooldown input). */
-  readonly attackSpeed: number;
 }
 
 export interface WeaponItemDefinition extends BaseItemDefinition {
@@ -73,7 +71,6 @@ export interface WeaponItemDefinition extends BaseItemDefinition {
   readonly weapon: 'sword' | 'bow';
   readonly durability: number;
   readonly attackDamage: number;
-  readonly attackSpeed: number;
   readonly tier?: ItemTier;
 }
 

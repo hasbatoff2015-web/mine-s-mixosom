@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition } from '../blocks';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
+import { applyExtraKnockback, applyKnockback, applyMeleeDrag } from '../combat/CombatSystem';
+import { HurtResistance } from '../combat/HurtResistance';
 import {
   aabbFromBody,
   aabbOverlapsBlockType,
@@ -26,7 +28,7 @@ import {
 import { createMobModel, type MobModel } from './mobModels';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
-import { CHUNK_SIZE, FIXED_DT, floorDiv } from '../core/constants';
+import { CHUNK_SIZE, FIXED_DT, GRAVITY, floorDiv } from '../core/constants';
 import { VoxelVisualFactory } from './voxelVisuals';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
@@ -78,6 +80,9 @@ export interface MobSpawnOptions {
 export interface MobDamageOptions {
   readonly source?: MobDamageSource;
   readonly attackerPosition?: Readonly<THREE.Vector3>;
+  readonly attackerYaw?: number;
+  readonly extraKnockbackLevel?: number;
+  /** Existing projectile/explosion impulse only; never used for melee. Blocks/s. */
   readonly knockback?: number;
   readonly igniteTicks?: number;
 }
@@ -88,7 +93,8 @@ export interface MobPlayerDamageEvent {
   readonly mobId: string;
   readonly mobKind: MobKind;
   readonly position: THREE.Vector3;
-  readonly knockback: THREE.Vector3;
+  /** Projectile impulse only. Melee uses the canonical full-hurt transform. */
+  readonly knockback?: THREE.Vector3;
 }
 
 export interface MobExplosionEvent {
@@ -194,6 +200,9 @@ export class MobEntity {
   stateSeconds = 0;
   decisionSeconds = 0;
   hurtSeconds = 0;
+  readonly hurtResistance = new HurtResistance();
+  /** Transient melee motion: AI must not replace an airborne hurt impulse. */
+  meleeKnockback = false;
   hurtFlashSeconds = 0;
   deathSeconds = 0;
   fuseSeconds = 0;
@@ -399,6 +408,7 @@ export class MobManager {
       mob.previousFacingYaw = mob.facingYaw;
       mob.previousWalkPhase = mob.walkPhase;
       mob.ageSeconds += delta;
+      mob.hurtResistance.advance(delta);
       mob.attackCooldownSeconds = Math.max(0, mob.attackCooldownSeconds - delta);
       mob.stateSeconds += delta;
       mob.decisionSeconds -= delta;
@@ -414,7 +424,7 @@ export class MobManager {
       if (mob.hurtSeconds > 0) {
         mob.hurtSeconds = Math.max(0, mob.hurtSeconds - delta);
         if (mob.hurtSeconds === 0 && mob.alive) this.changeState(mob, mob.resumeState);
-      } else {
+      } else if (!mob.meleeKnockback) {
         this.updateAi(mob, delta, targetPosition, context, daylight);
       }
       if (mob.hurtFlashSeconds > 0) {
@@ -520,28 +530,44 @@ export class MobManager {
     if (!mob || !this.mobsById.has(mob.id) || !mob.alive || !Number.isFinite(amount) || amount <= 0) {
       return false;
     }
-    mob.health = Math.max(0, mob.health - amount);
+    const hurt = mob.hurtResistance.receive(amount);
+    if (!hurt.accepted) return false;
+    mob.health = Math.max(0, mob.health - hurt.rawDamage);
     mob.resumeState = mob.definition.disposition === 'hostile' ? 'chase' : 'wander';
     if (damageOptions.attackerPosition) {
-      const away = new THREE.Vector3().subVectors(mob.position, damageOptions.attackerPosition);
-      away.y = 0;
-      if (away.lengthSq() > 1e-6) away.normalize();
-      const knockback = Math.max(0, damageOptions.knockback ?? 3.2);
-      mob.velocity.addScaledVector(away, knockback);
-      mob.velocity.y = Math.max(mob.velocity.y, 3.2);
-      mob.wanderDirection.copy(away);
+      const dx = mob.position.x - damageOptions.attackerPosition.x;
+      const dz = mob.position.z - damageOptions.attackerPosition.z;
+      const length = Math.hypot(dx, dz);
+      const nx = length > 1e-8 ? dx / length : 1;
+      const nz = length > 1e-8 ? dz / length : 0;
+      if (hurt.fullHurt) {
+        if (damageOptions.source === 'projectile' || damageOptions.source === 'explosion') {
+          const impulse = Math.max(0, damageOptions.knockback ?? 3.2);
+          mob.velocity.x += nx * impulse;
+          mob.velocity.z += nz * impulse;
+          mob.velocity.y = Math.max(mob.velocity.y, 3.2);
+        } else {
+          applyKnockback(mob.velocity, { x: dx, z: dz });
+          mob.meleeKnockback = true;
+        }
+      }
+      mob.wanderDirection.set(nx, 0, nz);
       mob.fleeSeconds = mob.definition.disposition === 'passive' ? 3 : 0;
+    }
+    if (damageOptions.source === 'player') {
+      applyExtraKnockback(mob.velocity, damageOptions.attackerYaw ?? 0, damageOptions.extraKnockbackLevel ?? 0);
+      if ((damageOptions.extraKnockbackLevel ?? 0) > 0) mob.meleeKnockback = true;
     }
     if (damageOptions.igniteTicks) {
       mob.fireTicks = Math.max(mob.fireTicks, damageOptions.igniteTicks);
     }
     if (mob.health <= 0) {
-      if (damageOptions.source !== 'fire') {
+      if (hurt.fullHurt && damageOptions.source !== 'fire') {
         mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
         this.applyMobLight(mob);
       }
       this.beginDeath(mob);
-    } else if (damageOptions.source !== 'fire') {
+    } else if (hurt.fullHurt && damageOptions.source !== 'fire') {
       // Periodic fire/sunlight DOT must not stun-lock AI (creeper fuse, chase).
       mob.hurtSeconds = 0.28;
       mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
@@ -597,12 +623,11 @@ export class MobManager {
     origin: Readonly<THREE.Vector3>,
     direction: Readonly<THREE.Vector3>,
     damage: number,
-    reach = 4.5,
-    knockback = 3.2,
+    reach = 3,
   ): MobRaycastHit | undefined {
     const hit = this.raycast(origin, direction, reach);
     if (!hit) return undefined;
-    this.damage(hit.mob, damage, { source: 'player', attackerPosition: origin, knockback });
+    this.damage(hit.mob, damage, { source: 'player', attackerPosition: origin });
     return hit;
   }
 
@@ -828,18 +853,20 @@ export class MobManager {
     const substeps = Math.max(1, Math.ceil(delta / 0.05));
     const step = delta / substeps;
     for (let index = 0; index < substeps; index += 1) {
+      const groundedBeforeMove = mob.onGround;
       const sampled = getBlockDefinition(this.world.getBlock(
         Math.floor(mob.position.x),
         Math.floor(mob.position.y + mob.definition.height * 0.5),
         Math.floor(mob.position.z),
       ));
       if (sampled.liquid) {
+        mob.meleeKnockback = false;
         mob.velocity.y += 4.5 * step;
         mob.velocity.multiplyScalar(Math.exp(-2.8 * step));
         if (sampled.id === BlockId.Lava) {
           mob.fireTicks = Math.max(mob.fireTicks, 60);
         }
-      } else {
+      } else if (!mob.meleeKnockback) {
         mob.velocity.y -= 20 * step;
       }
       const web = this.world.getBlock(
@@ -868,6 +895,15 @@ export class MobManager {
       if (result.hitZ) {
         mob.velocity.z = 0;
         if (!result.stepped) mob.wanderDirection.z *= -1;
+      }
+      if (mob.meleeKnockback) {
+        // 1.8 living travel: move first, then gravity/drag. Ground friction is
+        // ordinary block slipperiness 0.6 * 0.91; no second velocity conversion.
+        applyMeleeDrag(mob.velocity, groundedBeforeMove, step);
+        if (!result.hitY && !result.stepped) {
+          mob.velocity.y = (mob.velocity.y - GRAVITY * step) * Math.pow(0.98, step / FIXED_DT);
+        }
+        if (result.onGround && mob.velocity.y <= 0) mob.meleeKnockback = false;
       }
     }
   }
@@ -1424,9 +1460,10 @@ export class MobManager {
     source: MobPlayerDamageEvent['source'],
     context: MobUpdateContext,
   ): void {
-    const knockback = new THREE.Vector3().subVectors(playerPosition, mob.position).setY(0);
-    if (knockback.lengthSq() > 0) knockback.normalize().multiplyScalar(source === 'arrow' ? 2.4 : 3.2);
-    knockback.y = source === 'melee' ? 1.2 : 0.5;
+    // Projectile impulse is deliberately unchanged by the melee migration.
+    const knockback = source === 'arrow'
+      ? new THREE.Vector3().subVectors(playerPosition, mob.position).setY(0).normalize().multiplyScalar(2.4).setY(0.5)
+      : undefined;
     const event: MobPlayerDamageEvent = {
       amount,
       source,

@@ -47,7 +47,7 @@ export class InputManager {
   pitch = 0;
   mining = false;
   using = false;
-  attackPressed = false;
+  private attackPresses = 0;
   usePressed = false;
   lastUnlockReason: PointerUnlockReason = 'unknown';
   private readonly keys = new Set<string>();
@@ -93,10 +93,22 @@ export class InputManager {
     };
   }
 
+  get attackPressed(): boolean { return this.attackPresses > 0; }
+
+  set attackPressed(pressed: boolean) {
+    if (pressed) this.attackPresses += 1;
+    else this.attackPresses = 0;
+  }
+
+  /** Retain every click between fixed ticks; no cooldown or artificial CPS cap. */
+  consumeAttackPresses(): number {
+    const count = this.attackPresses;
+    this.attackPresses = 0;
+    return count;
+  }
+
   consumeAttackPressed(): boolean {
-    const value = this.attackPressed;
-    this.attackPressed = false;
-    return value;
+    return this.consumeAttackPresses() > 0;
   }
 
   consumeUsePressed(): boolean {

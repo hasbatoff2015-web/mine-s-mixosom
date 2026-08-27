@@ -2,17 +2,26 @@
 
 Срез: **2026-08-27**. Версия: `0.1.0`, playable alpha.
 
-## Последний проход: item / arrow / placement / shield cleanup
+## Последний проход: classic 1.8 combat
 
-- Работа поверх dirty `feat/playable-voxel-alpha`, HEAD/origin/main `8935772`; предыдущие fluid routing/timing, bucket pickup и item-lava fixes сохранены. Commit/push не выполнялись.
+- Baseline реализации: чистая `feat/playable-voxel-alpha`, HEAD = origin/main = `5820d7d` после `git fetch origin`. После локальной проверки пользователь отдельно разрешил commit/push classic combat; SHA поставки определяется по Git history, baseline SHA не является текущей версией combat pass.
+- Melee использует Java 1.8.9 reference: полный урон на каждый click attempt, без cooldown/attackSpeed/индикатора; fist 1, swords 5/6/7/8, axes 4/5/6/7, pickaxes 3/4/5/6, shovels 2/3/4/5. Это total damage, без повторного +1.
+- Общий `HurtResistance` игрока/мобов: окно 20 ticks, в первой половине equal/weaker hit отвергается, stronger наносит разницу без второго full hurt/base KB. Falling crit ×1.5 совместим со sprint.
+- Canonical melee KB: половина текущей velocity + base 8 b/s, vertical cap 8; extra sprint +10 horizontal/+2 vertical. Target travel сохраняет импульс и применяет drag; successful extra hit замедляет attacker XZ ×0.6 и требует нового ввода sprint/forward для повторного sprint hit.
+- Sword hold-use: transient blocking, `(raw + 1)/2` до fixed armor reduction, движение ×0.2 без sprint, cached first-person pose. Shield не возвращён. Прочность меча/инструмента −1 за accepted hit по явному требованию задания (Java tool wear −2); exhaustion +0.3.
+- Arrow flight/geometry, fluids, placement, assets, world/chunk save format и ordinary movement не перенастраивались. Боевой transient state не сохраняется.
+- Unit/integration validation выполнена; полный suite имеет baseline failures. Browser acceptance **не пройден**: доступ к localhost ранее запрещён browser policy, доступных вкладок сейчас нет. Подробные результаты: `reports/2026-08-27_classic-1-8-combat-pass.md`; актуальная спецификация: `MINECRAFT_1_8_COMBAT_REFERENCE.md`.
+
+## Сохранённые item / arrow / placement fixes
+
+- Fluid routing/timing, bucket pickup и item-lava fixes входят в baseline5820d7d и сохранены без изменений.
 - Bucket/WaterBucket/LavaBucket/Minecart/GlassBottle используют найденные authored PNG. Зелья — build-time композиция authored drinkable bottle + tinted overlay, 32×32. Importer перезаписывает старые заглушки, preflight обязателен, fallback даже с `--force` эти assets больше не рисует. `npm run assets:import -- --items-cleanup` обновляет только восемь целевых PNG и удаляет obsolete runtime shield PNG.
 - `ArrowVisualFactory`: 18 triangles, shaft 0.028 толщиной, малый pyramid tip, feathers только у хвоста, правильный crop 64×64 entity sheet и общий +Z axis player/skeleton. Projectile physics/damage не менялись. Вагонетка использует authored 128×64 entity sheet с panel UV и shared geometry cache.
 - `world/placement.ts`: placement anchor и full sturdy support face — разные predicates. Torch/RedstoneTorch и прочие thin/non-solid blocks не являются anchors/supports. Torch floor/wall разрешены на пригодной опоре, ceiling запрещён. Ladder/button/lever/rail/plate/wire/door используют canonical support check; slab/stair full boundary определяется collision rectangles. **Support-loss после разрушения опоры пока не реализован.**
 - **Shield удалён полностью**, не скрыт: registry/type/profile/pose/blocking/slowdown/durability/axe-disable/runtime icon отсутствуют. Generic offhand storage сохранён; legacy stack migration для player/armor/offhand/chest/furnace/drops не сбрасывает другие предметы. Старое combat state игнорируется.
-- **Следующий отдельный этап — PvP 1.8 pass, НЕ реализован.** Cooldown, attack speed/damage, crit, armor, bow physics и обычный knockback в этом проходе не перенастраивались.
-- Targeted regressions: 205/205; build/typecheck/size/archive PASS (3.45 MiB / 186 files). Полный suite содержит baseline failures; итог и ограничения — в последнем отчёте. Browser WebGL QA заблокирован доступом к localhost, поэтому visual acceptance не заявляется.
+- Classic melee теперь реализован поверх этих fixes; Bow/Arrow physics и geometry не перенастраивались. Финальный targeted набор194/194; typecheck/build/size/archive PASS (3.45MiB/186files). Full-suite failures и browser ограничения — в свежем combat report.
 
-Отчёт: `docs/reports/2026-08-27_item-arrow-placement-shield-cleanup.md`.
+История предыдущего cleanup: `docs/reports/2026-08-27_item-arrow-placement-shield-cleanup.md` (не источник текущих combat contracts).
 
 Этот документ описывает фактическое состояние кода, а не желаемый feature list. Обозначения:
 
@@ -34,7 +43,7 @@
 | Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI, furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT with TNT texture + fuse tint pulse, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
-| Combat | Готово для alpha | 1.9-style cooldown curve, melee, critical, knockback, staged bow draw and shared player/skeleton arrow physics; shield удалён; PvP 1.8 ещё не реализован |
+| Combat | Реализовано; browser acceptance pending | Classic 1.8 click-driven melee, shared hurt resistance, fixed armor, sprint reset, sword blocking; staged bow draw/shared arrows сохранены, shield отсутствует |
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
 | Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
@@ -122,7 +131,7 @@
 - Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance. Status effects: absorption, regeneration (heal-over-time), invisibility (hostile `playerTargetable` false; first-person empty-hand arm hidden while the effect is active, held item can remain). Drinkable potions: invisibility **3 min** (`3600` ticks), regeneration **1 min** (`1200` ticks). Active invis/regen show a small bottom-right HUD chip (potion icon, Russian name, `M:SS` countdown) and a soft lower-screen swirl particle overlay from `textures/particle/particles.png`. Effects не сериализуются (reload сбрасывает таймеры, absorption в save есть).
 - Health HUD: 10 pixel-art hearts (`gui/heart_{empty,half,full}.png`), same `--hud-status-icon-size` / gap as the 10 armor icons so the rows match in width. Full = 2 HP, half = 1 HP, still 20 HP max. Hunger remains emoji pips.
 - Sprint в Survival доступен только при hunger выше `6`; удержание jump начисляет jump exhaustion только в tick фактического отрыва от земли.
-- Armor использует release-1.9 damage formula; toughness выключена по умолчанию как более поздняя 1.9.1-механика. Piece values уже vanilla Java 1.9 (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.
+- Armor использует classic fixed reduction `(25-clamp(points,0,20))/25`, без damage-dependent curve/toughness. Piece values сохранены (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.
 - Food use требует удержания, consumable проверяет hunger cap.
 - Death выбрасывает survival inventory/equipment, показывает экран смерти и возвращает игрока в spawn point. Death messages идут в локальный чат (`deathMessage(source)`).
 - Локальный чат (без сети): T открывает поле, `/` открывает с префиксом `/`, Enter отправляет, Esc закрывает, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
@@ -140,9 +149,9 @@
 
 ### Готово
 
-- CombatSystem реализует quadratic attack cooldown с `+0.5 tick`, item attack profiles, critical conditions и sprint knockback.
+- CombatSystem считает full-damage attacks без cooldown. Registry — единственная таблица damage. Target-owned `HurtResistance` отделяет accepted differential hit от full hurt; armor fixed `(25-A)/25`, toughness не участвует.
 - Melee target выбирается raycast по mob AABB и не проходит сквозь voxels; entity reach ограничен тремя блоками в runtime.
-- Shield полностью удалён: нет blocking, movement slowdown, durability damage, axe-disable и first-person pose. Legacy shield stacks становятся null, остальные предметы сохраняются.
+- Shield полностью удалён. Hold-use меча включает classic sword blocking/pose и movement ×0.2, без shield cone/wind-up/axe-disable. Legacy shield stacks становятся null, остальные предметы сохраняются.
 - Bow использует 20-tick charge curve, три pulling textures, плавный FOV zoom и movement slowdown, расходует arrows в Survival, повреждает bow и создаёт projectile с gravity/block/mob collision.
 - MobManager подключён к main tick и save/restore.
 - Passive: cow, pig, chicken, sheep. Hostile: zombie, skeleton, creeper, spider.
@@ -151,7 +160,7 @@
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
 - Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. **Fire arrow** — shapeless `arrow + lava_bucket` (остаётся empty bucket), projectile с оранжевым tint. Попадание: обычный урон стрелы + `igniteTicks` 100 (5 с) по живой цели; TNT block праймится; TNT minecart детонирует сразу; обычные блоки **не** поджигаются. Горение: `FIRE_CONTACT` / `FIRE_ARROW` / `SUNLIGHT` / lava — раздельные причины, общий overlay. **Все hostile** (`isHostileMob`) горят под прямым дневным солнцем (`daylight ≥ 0.82` и skylight ≥ 14), не vanilla undead whitelist. Player и passive не горят от солнца. Creeper имеет fuse/radial explosion, hostile hits передаются напрямую в armor/SurvivalSystem, смерть моба создаёт loot drops.
 - `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; end of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. LMB (attack edge) breaks a cart that is nearer than the block hit; Survival drops Minecart via `DroppedItemManager` (unprimed TNT cart also drops TNT); Creative removes without a world drop (`dropsForBrokenMinecart`); ridden and primed TNT carts are ignored. Player AABB push проектируется на tangent. TNT Use → variant `tnt` (не rideable); Flint entity-first prime, fuse 80 ticks, no Fire block; Fire Arrow — immediate explode (cart AABB taller than the rim so the cargo is hittable). Save `minecarts?` (position/velocity/variant/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
-- Player knockback применяется только если `SurvivalSystem.damage()` реально нанёс damage; armor/i-frame ignored hit не сдвигает игрока.
+- Base player/mob melee knockback и full hurt flash запускаются только для `fullHurt`, в том числе при полном поглощении absorption. Rejected и differential hit не повторяют base KB/flash. Accepted extra sprint KB обрабатывается отдельно.
 - Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie left limbs берут mirrored classic `64×32` UV (`[40,16]`/`[0,16]`), а forward-arms pose задаётся положительным Three.js Euler (`+1.2` / `+1.55`), не Minecraft-значением `-1.2`. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.
 - World entities (mobs, drops, arrows, falling blocks, primed TNT) берут яркость и тёплый torch tint из тех же `skyLight`/`blockLight`, что и terrain: три sample (feet/torso/head), `createEntityMaterial` без Lambert N·L, мягкий wrap-shade не ниже `0.76`. Успешный mob damage (не fire DOT) ставит per-entity `hurtFlashSeconds` (~220 ms) и multiply-tint в `userData.entityLight`. Geometry и textures остаются shared; each living mob renderer clones entity materials once at spawn (`cloneOwnedEntityMaterial`) so `uEntityLight` cannot leak across the same species. Clones dispose on despawn.
@@ -163,7 +172,7 @@
 - Spawn rules, light checks, despawn, sunlight burning (all hostiles, not vanilla undead-only), loot chance и damage — gameplay approximation, а не полная таблица Java 1.9.
 - Нет breeding, taming, shearing, animal drops по burning state, skeleton equipment, spider climbing и сложных special cases.
 - Projectile/explosion physics не моделируют точный swept volume/exposure/raycast sampling vanilla.
-- PvP 1.8 pass — следующий отдельный этап, НЕ реализован. Текущие cooldown, damage, critical, armor и knockback остаются прежними.
+- Classic melee реализован, но это не multiplayer/netcode parity. Input re-entry sprint latch и tool wear −1 — явные продуктовые адаптации. Browser feel/pose acceptance ещё требуется.
 - Нет enchantments, experience и advanced combat feedback. Potion items (invisibility / regeneration) и golden apple effects есть; brewing stand нет.
 
 ## Basic redstone и TNT
@@ -191,8 +200,8 @@
 ### Готово
 
 - DOM/CSS screens: loading, стилизованное main menu, selectable world list, create world, online server mock, settings, read-only controls, pause, death. Меню использует `public/ui/frontier-menu-background.png`; online entries и таблица фактических клавиш вынесены в `menuModel.ts`.
-- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, attack meter container, active potion effect chips (bottom-right), toasts и F3 debug.
-- Рука, выбранный предмет и щит рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены.
+- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, active potion effect chips (bottom-right), toasts и F3 debug. Attack meter удалён.
+- Рука и выбранный предмет рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены. Shield отсутствует, блок мечом использует pose существующего предмета.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`; отсюда открывается отдельная read-only справка по управлению. Значения sliders показываются live.
 - Desktop pointer lock: inventory/chest close = programmatic relock; Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Если Chrome отклоняет relock после Esc, PLAYING остаётся и показывается overlay «Нажмите, чтобы продолжить» только после фактического failure. Focus-lost не считается programmatic и не запрашивает lock сам.
 - Touch joystick/look/buttons и landscape layout with safe-area insets.
@@ -202,7 +211,7 @@
 
 ### Alpha approximation
 
-- Attack meter получает фактическую силу текущего `CombatSystem`; расширенный combat browser smoke всё ещё нужен.
+- Attack meter удалён; расширенный classic combat browser smoke всё ещё нужен.
 - Настройки не сохраняются между sessions; rebind управления не реализован, controls screen намеренно read-only.
 - Все заданные desktop/mobile размеры прошли browser visibility/count checks; на `667×375` визуально проверены inventory, pause и settings, отдельно проверен portrait overlay.
 - Во время QA найдено и исправлено перекрытие menus/modals touch controls: `controls-suppressed` скрывает look zone, joystick и action buttons вне gameplay.
@@ -225,7 +234,7 @@
 ### Alpha approximation / не реализовано
 
 - Нет save migrations, backup slots, integrity checksum, export/import и recovery UI.
-- Полное survival state не сериализуется: exhaustion, absorption, air/fire timers и combat cooldown восстанавливаются не полностью.
+- Полное survival state не сериализуется: exhaustion, absorption, air/fire timers восстанавливаются не полностью. Hurt resistance, sword blocking и sprint latch намеренно transient; combat cooldown больше не существует.
 - Memory fallback не переживает reload.
 - Нет Yandex player authorization, cloud data, leaderboards, ads, payments и achievements.
 - Pause reasons представлены простым state machine; перед релизом нужно проверить конкуренцию user pause, tab hidden и platform pause/resume.

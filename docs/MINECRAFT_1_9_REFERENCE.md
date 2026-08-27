@@ -1,6 +1,6 @@
 # Minecraft Java Edition 1.9: reference механик
 
-> Product override, 2026-08-27: shield полностью удалён из Frontier Cubes. Исторические Java 1.9 значения щита ниже остаются справкой, не описанием runtime. Cleanup не меняет остальные combat числа. Следующий PvP 1.8 pass — отдельная задача, пока НЕ реализован.
+> Product override, 2026-08-27: melee/armor/hurt resistance/sword blocking переведены на classic 1.8.9. Актуальный контракт — [MINECRAFT_1_8_COMBAT_REFERENCE.md](MINECRAFT_1_8_COMBAT_REFERENCE.md). Shield отсутствует. Исторические cooldown/critical/knockback/shield/armor формулы 1.9 ниже — только справка, **не runtime**. Остальные подсистемы не переводились целиком на 1.8.
 
 Проверено: **2026-08-16**. Целевая историческая версия — **Java Edition 1.9 release от 2016-02-29**, а не расплывчатое «1.9+». Minecraft используется только как механический ориентир: код, название продукта и оригинальные ассеты не копируются.
 
@@ -12,7 +12,7 @@
 - Урон ниже указан в HP: `1 HP = половина сердца`, у игрока `20 HP`.
 - Симуляция Minecraft и проекта работает с частотой `20 TPS`; один tick равен `0.05 s`.
 
-Самые важные несовпадения уже сейчас: alpha использует sneak AABB `0.6 × 1.5` вместо 1.9-высоты `1.65`, sneak eye `1.27` вместо примерно `1.54`, terminal fall speed `50 b/s` вместо `78.4 b/s`, единый reach `5` вместо `4.5` для блоков и `3` для сущностей, а armor toughness относится к **1.9.1**, не к чистой 1.9. Combat cooldown уже учитывает vanilla-смещение `+0.5 tick`.
+Не-combat отличия alpha: sneak AABB `0.6 × 1.5` вместо 1.9-высоты `1.65`, sneak eye `1.27` вместо примерно `1.54`, terminal fall speed `50 b/s` вместо `78.4 b/s`, block reach `5` вместо `4.5`. Entity melee reach — `3`. Cooldown и toughness больше не участвуют в runtime combat.
 
 ## Подтверждённые значения Java Edition 1.9
 
@@ -264,17 +264,16 @@ Idle first-person right-hand vanilla path восстановлен как matrix
 | Eye | `1.62`, sneak `1.27` | Sneak — approximation; 1.9 около `1.54` |
 | Jump/gravity | `8.4 b/s`, `32 b/s²` | Эквивалентны `0.42` и `0.08` per tick до учёта drag |
 | Terminal velocity | `50 b/s` | Gameplay clamp; vanilla около `78.4 b/s` |
-| Reach | единый `5 blocks` | Увеличенный и объединённый; vanilla `4.5` block / `3` entity |
+| Reach | block `5`, entity melee `3 blocks` | Block reach — alpha; melee — classic AABB raycast |
 | Mining | `S/H/30`, иначе `S/H/100`; speeds wood `2`, stone `4`, iron `6`, diamond `8` | Core formula совпадает; эффекты и post-break delay могут быть частичными |
 | Gold tools | speed `12`, tier `0`, durability `32`, если включены | Exact values; gold можно исключить из раннего UI, но не подменять tier |
-| Cooldown | `charge = clamp((ticksSinceAttack + 0.5) / (20 / AS), 0, 1)`; `damage = base × (0.2 + 0.8 × charge²)` | Совпадает с используемым partial-tick offset Java 1.9 |
-| Attack speeds | sword `1.6`, pickaxe `1.2`, shovel `1.0`, axes `0.8/0.8/0.9/1.0/1.0` | Совпадают |
-| Axe damage в текущем registry | wood `6`, stone `7`, iron `8`, diamond `9`, gold `6` | Approximation; exact 1.9: `7/9/9/9/7` |
-| Critical | `×1.5` при падении и full charge | Упрощены environmental conditions; exact threshold допускает charge `>0.9` |
-| Hurt i-frames | около `0.5 s` полного immunity | Approximation сложной vanilla hurt-resistance логики |
-| Knockback | настраиваемый directional impulse + усиление sprint | Approximation; bit-exact momentum/netcode не заявлены |
-| Shield | wind-up `5 ticks`, frontal block, axe disable `5 s` configurable | Wind-up/disable совпадают; полный block сильнее exact 1.9 melee reduction `66%` |
-| Armor | armor points как выше; toughness допускается для diamond | Если toughness включён, это явно **1.9.1 variant**, не 1.9 release |
+| Melee cadence | полный damage на click, без attackSpeed/cooldown | Product override: classic 1.8 |
+| Damage totals | sword 5/6/7/8, axe 4/5/6/7, pick 3/4/5/6, shovel 2/3/4/5 | Wood/stone/iron/diamond; gold tools не добавлены |
+| Critical | falling ×1.5, совместим со sprint | Classic 1.8, не 1.9 |
+| Hurt resistance | 20 ticks, первая половина: reject equal/weaker, stronger difference | Shared player/mob gate |
+| Knockback | halve XYZ; base8 b/s, Y cap8; extra sprint10 XZ/+2Y | Classic transform, bounded alpha collision integration |
+| Shield / blocking | shield отсутствует; sword `(raw+1)/2`, movement ×0.2 | Product override: classic sword use |
+| Armor | damage ×(25-clamp(points,0,20))/25, toughness ignored | Fixed classic reduction |
 | Bow | `power=(x²+2x)/3`, clamp `1`, full `20 ticks` | Draw curve совпадает; projectile damage/randomness могут быть упрощены |
 | Arrow flight | velocity в blocks/tick; air `×0.99`; water `×0.6`; gravity `-0.05/tick`; continuous segment hit | Player/skeleton basis унифицирован; exact critical random/pickup/model не заявлены |
 | Render look | live input yaw/pitch каждый RAF, simulation `20 TPS` | Осознанное client-feel разделение, не simulation change |

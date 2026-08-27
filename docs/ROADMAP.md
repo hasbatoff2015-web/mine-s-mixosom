@@ -1,6 +1,12 @@
 # Roadmap
 
-## 2026-08-27: текущий cleanup и следующий этап
+## 2026-08-27: classic combat и оставшаяся приёмка
+
+- [x] No-cooldown melee; exact 1.8 damage totals; shared hurt resistance; falling+sprint crit; fixed armor.
+- [x] Canonical base/extra KB, melee travel drag, attacker slowdown и deliberate sprint reset; unit/component flat/wall trajectory validation.
+- [x] Transient sword blocking, 20% movement, cached first-person pose; input edges не теряются между fixed ticks; legacy save compatibility.
+- [ ] Browser classic combat acceptance: spam click, normal/sprint/W-tap/crit/armor/block pose; реальное GPU/FPS и mobile input. Browser access заблокирован, unit tests не заменяют эту приёмку.
+- [ ] Отдельно расследовать baseline CRLF fingerprint и scheduler/CPU timeout failures полного suite; этот pass не меняет пороги/ожидания unrelated tests.
 
 - [x] Authored bucket/potion/minecart pipeline, overwrite stale placeholders и защита от fallback.
 - [x] Тонкий arrow shaft + tip + tail-only fins, shared +Z player/skeleton visual.
@@ -8,7 +14,7 @@
 - [x] Shield **полностью удалён** из runtime/render/combat/registry; legacy saves очищаются точечно.
 - [ ] Browser acceptance A–F: inventory, held items, stuck arrows с разных углов, torch matrix, отсутствие shield. Заблокирован доступ к localhost, не заменён unit tests.
 - [ ] Support-loss для attachments при разрушении опоры (текущий проход проверяет только placement).
-- [ ] **Следующий отдельный этап: PvP 1.8 pass. НЕ реализован в cleanup.** Отдельно согласовать sword blocking, no-cooldown melee и соответствующие damage/crit/knockback/invulnerability rules; не считать текущий бой 1.8.
+- [x] Запрошенный после cleanup classic 1.8 melee pass реализован; remaining QA и отличия перечислены в `MINECRAFT_1_8_COMBAT_REFERENCE.md` и свежем report. Multiplayer/netcode parity не заявляется.
 
 Roadmap начинается от фактической playable alpha `0.1.0`. Приоритеты означают:
 
@@ -189,7 +195,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [ ] Довести off-hand, все item categories и transforms до более точного vanilla parity без потери общего cache pipeline.
 - [ ] Выверить projectile sweep и explosion exposure без дорогой полной физики.
 - [ ] Расширить поведение существ: spider climbing, passive flee, burning drops, sheep shearing — только после core stability.
-- [ ] Интеграционные combat scenarios: melee cooldown, crit, отсутствие shield blocking, skeleton projectile, creeper chain damage.
+- [x] Component combat scenarios: full-damage spam, hurt resistance, crit+sprint, sword blocking, no shield, skeleton projectile, flat/wall KB. Browser/creeper-chain soak остаётся отдельной приёмкой.
 
 ### P1.5 UX и accessibility
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
+import { applyKnockback, applyMeleeDrag } from '../combat';
 import { blockCollisionBoxes, movementMultiplier, type CollisionBox } from '../world/collision';
 import {
   CREATIVE_FLY_SPEED,
@@ -121,6 +122,8 @@ export class PlayerController {
   onGround = false;
   sneaking = false;
   sprinting = false;
+  private sprintNeedsRelease = false;
+  private meleeKnockback = false;
   inWater = false;
   inLava = false;
   inFire = false;
@@ -207,9 +210,12 @@ export class PlayerController {
   }
 
   teleport(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
+    this.meleeKnockback = false;
     this.position.copy(vectorFrom(position));
     this.previousPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
+    this.sprinting = false;
+    this.sprintNeedsRelease = false;
     this.onGround = false;
     this.onLadder = false;
     this.fallDistance = 0;
@@ -222,6 +228,17 @@ export class PlayerController {
 
   respawn(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
     this.teleport(position);
+  }
+
+  /** A successful sprint hit consumes the current sprint input, not movement. */
+  resetSprintAfterHit(): void {
+    this.sprinting = false;
+    this.sprintNeedsRelease = true;
+  }
+
+  receiveMeleeKnockback(away: Readonly<{ x: number; z: number }>): void {
+    applyKnockback(this.velocity, away);
+    this.meleeKnockback = true;
   }
 
   tick(
@@ -239,6 +256,7 @@ export class PlayerController {
     this.pitch = clamp(finite(input.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
 
     const movement = input.movement();
+    if (!movement.sprint || movement.forward <= 0.05) this.sprintNeedsRelease = false;
     const jumpPressed = movement.jump && !this.jumpHeld;
     this.jumpHeld = movement.jump;
     if (!this.creativeFlightAllowed) {
@@ -258,6 +276,9 @@ export class PlayerController {
 
     const wasOnGround = this.onGround || this.hasGroundSupport(world, this.position);
     this.updateFluidState(world);
+    if (this.isFlying || this.inWater || this.inLava || this.onLadder || input.locomotion === false) {
+      this.meleeKnockback = false;
+    }
     if (input.locomotion === false) {
       this.velocity.set(0, 0, 0);
       this.sprinting = false;
@@ -270,15 +291,16 @@ export class PlayerController {
     else this.updateStance(world, movement.sneak);
     this.sprinting = this.isFlying
       ? Boolean(movement.flySprint) && (Math.abs(movement.forward) > 0.05 || Math.abs(movement.right) > 0.05)
-      : movement.sprint && movement.forward > 0.05 && !this.sneaking && !this.inWater && !this.inLava;
-    const jumped = !this.isFlying && movement.jump && wasOnGround && !this.inWater && !this.inLava;
+      : !this.sprintNeedsRelease && movement.sprint && movement.forward > 0.05
+        && !this.sneaking && !this.inWater && !this.inLava;
+    const jumped = !this.isFlying && !this.meleeKnockback && movement.jump && wasOnGround && !this.inWater && !this.inLava;
 
     if (this.isFlying) this.updateFlyVelocity(movement, stepDt);
     else this.updateHorizontalVelocity(movement, stepDt, wasOnGround);
     if (this.isFlying) {
       /* Flight owns vertical velocity. */
     } else if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
-    else if (movement.jump && wasOnGround) this.velocity.y = JUMP_VELOCITY;
+    else if (movement.jump && wasOnGround && !this.meleeKnockback) this.velocity.y = JUMP_VELOCITY;
 
     const wish = desiredHorizontalWish(this.yaw, movement.forward, movement.right);
     const ladderAtStart = this.isFlying ? undefined : findLadderContact(world, this.aabb);
@@ -365,6 +387,10 @@ export class PlayerController {
     }
 
     // Avoid keeping tiny floating point momentum forever.
+    if (this.meleeKnockback) {
+      applyMeleeDrag(this.velocity, wasOnGround, stepDt);
+      if (this.onGround && this.velocity.y <= 0) this.meleeKnockback = false;
+    }
     if (Math.abs(this.velocity.x) < 1e-5) this.velocity.x = 0;
     if (Math.abs(this.velocity.z) < 1e-5) this.velocity.z = 0;
     const movedX = this.position.x - this.previousPosition.x;
@@ -389,6 +415,9 @@ export class PlayerController {
   }
 
   restore(state: Partial<SerializedPlayerController>): void {
+    this.meleeKnockback = false;
+    this.sprinting = false;
+    this.sprintNeedsRelease = false;
     if (state.position && state.position.length === 3 && state.position.every(Number.isFinite)) {
       this.position.fromArray(state.position);
       this.previousPosition.copy(this.position);
@@ -483,6 +512,13 @@ export class PlayerController {
       ? WATER_SPEED * (this.inLava ? 0.55 : 1)
       : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED)
       * this.webMultiplier;
+    if (this.meleeKnockback) {
+      // Keep the external impulse; input adds acceleration instead of replacing it.
+      const acceleration = (wasOnGround ? 2 : 0.4) * (this.sprinting ? 1.3 : 1) * dt / 0.05;
+      this.velocity.x += wishX * acceleration * this.webMultiplier;
+      this.velocity.z += wishZ * acceleration * this.webMultiplier;
+      return;
+    }
     const desiredX = wishX * speed;
     const desiredZ = wishZ * speed;
     const response = this.inWater || this.inLava ? 7 : wasOnGround ? 22 : 3.5;

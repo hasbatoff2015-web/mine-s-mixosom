@@ -12,6 +12,7 @@ import { VoxelWorld } from '../src/world/World';
 import { DroppedItemManager } from '../src/entities/DroppedItemManager';
 import { Game } from '../src/core/Game';
 import { SurvivalSystem } from '../src/survival';
+import { PlayerController } from '../src/player';
 
 const obsolete = { itemId: 'shield', count: 1, durability: 123 };
 
@@ -57,20 +58,22 @@ describe('removed shield migration and damage', () => {
     manager.dispose();
   });
 
-  it.each(['melee', 'arrow'])('sends %s damage and full knockback through Game regardless of use/held item', (source) => {
+  it.each(['melee', 'arrow'])('sends unblocked %s damage through Game without offhand protection', (source) => {
     for (const item of [undefined, 'iron_sword', 'iron_axe', 'bow']) {
       const inventory = new Inventory();
       if (item) inventory.setSlot(0, createItemStack(item));
       inventory.setSlot({ section: 'armor', slot: 'chest' }, createItemStack('iron_chestplate'));
       const survival = new SurvivalSystem(), reference = new SurvivalSystem();
-      const knockback = new THREE.Vector3(3, 2, -1), velocity = new THREE.Vector3();
+      const knockback = new THREE.Vector3(3, 2, -1);
+      const player = new PlayerController({ position: [0, 1, -2] });
+      const velocity = player.velocity;
       const game = Object.create(Game.prototype) as any;
       Object.assign(game, { input: { using: true }, session: { summary: { mode: 'survival' },
-        inventory, survival, player: { velocity }, selectedSlot: 0 } });
+        inventory, survival, player, selectedSlot: 0 } });
       const expected = reference.damage(6, source === 'arrow' ? 'projectile' : 'melee', { armor: inventory.clone() });
       game.damagePlayerFromMob({ source, amount: 6, position: new THREE.Vector3(), knockback });
       expect(survival.health).toBe(20 - expected.dealt);
-      expect(velocity).toEqual(knockback);
+      expect(velocity).toEqual(source === 'melee' ? new THREE.Vector3(0, 8, -8) : knockback);
     }
   });
 
@@ -78,7 +81,7 @@ describe('removed shield migration and damage', () => {
     for (const source of [gameSource, combatSource, firstPersonSource, itemTypesSource, registrySource, profilesSource]) {
       expect(source).not.toMatch(/shield/i);
     }
-    expect(gameSource).toContain('const movementMultiplier = drawingBow ? 0.2 : 1');
+    expect(gameSource.includes('drawingBow || session.combat.swordBlocking ? 0.2 : 1')).toBe(true);
     expect(gameSource).toContain('this.input.using');
   });
 });

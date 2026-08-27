@@ -1,5 +1,6 @@
 import { BlockId } from '../blocks';
 import { FIRE_ARROW_IGNITE_TICKS } from '../combat/fireArrow';
+import { HurtResistance } from '../combat/HurtResistance';
 import { FIRE_DAMAGE_INTERVAL_TICKS } from '../combat/fireSources';
 import { FIXED_DT, clamp } from '../core/constants';
 import type { Inventory } from '../inventory';
@@ -40,7 +41,9 @@ export interface DamageOptions {
   readonly armor?: ArmorSource;
   readonly bypassArmor?: boolean;
   readonly ignoreInvulnerability?: boolean;
-  readonly useArmorToughness?: boolean;
+  readonly swordBlocking?: boolean;
+  /** Distinguishes inFire contact from onFire DOT without a new damage-source system. */
+  readonly fireContact?: boolean;
   readonly onDamage?: (result: DamageResult) => void;
   readonly onDeath?: (source: DamageSource) => void;
 }
@@ -55,6 +58,8 @@ export interface DamageResult {
   readonly healthAfter: number;
   readonly killed: boolean;
   readonly ignored: boolean;
+  readonly accepted: boolean;
+  readonly fullHurt: boolean;
 }
 
 export interface SurvivalTickContext {
@@ -95,7 +100,7 @@ export interface SurvivalOptions {
   readonly hunger?: number;
   readonly saturation?: number;
   readonly difficulty?: Difficulty;
-  readonly useArmorToughness?: boolean;
+  readonly isSwordBlocking?: () => boolean;
   readonly onDamage?: (result: DamageResult) => void;
   readonly onDeath?: (source: DamageSource) => void;
 }
@@ -143,18 +148,18 @@ export function getArmorPoints(source?: ArmorSource): number {
   return getArmorStats(source).points;
 }
 
-/** Release-1.9 armor formula. Toughness is only used when explicitly enabled (1.9.1 variant). */
+/** Classic fixed protection: each armor point reduces incoming damage by 4%. */
 export function reduceDamageByArmor(
   damage: number,
   armor: ArmorSource | undefined,
-  useToughness = false,
 ): number {
   const incoming = Math.max(0, damage);
-  const stats = getArmorStats(armor);
-  if (incoming === 0 || stats.points === 0) return incoming;
-  const denominator = useToughness ? 2 + stats.toughness / 4 : 2;
-  const effectiveArmor = Math.min(MAX_ARMOR_POINTS, Math.max(stats.points / 5, stats.points - incoming / denominator));
-  return incoming * (1 - effectiveArmor / 25);
+  return incoming * (25 - getArmorPoints(armor)) / 25;
+}
+
+export function isSwordBlockable(source: DamageSource, fireContact = false): boolean {
+  return source === 'melee' || source === 'projectile' || source === 'explosion'
+    || source === 'lava' || source === 'cactus' || (source === 'fire' && fireContact);
 }
 
 /** Health, hunger and environmental hazards, advanced in deterministic 20 Hz ticks. */
@@ -170,15 +175,13 @@ export class SurvivalSystem {
   contactFire = false;
   dead = false;
   difficulty: Difficulty;
-  useArmorToughness: boolean;
   spawnPoint: [number, number, number] = [0.5, 64, 0.5];
   lastDamage?: DamageResult;
   private readonly effects = new Map<StatusEffectId, { amplifier: number; ticks: number }>();
   private effectRegenTimer = 0;
 
   private accumulator = 0;
-  private hurtResistantTicks = 0;
-  private lastRawDamage = 0;
+  readonly hurtResistance = new HurtResistance();
   private drownTimer = 0;
   private lavaTimer = 0;
   private cactusTimer = 0;
@@ -187,6 +190,7 @@ export class SurvivalSystem {
   private starvationTimer = 0;
   private readonly onDamage?: (result: DamageResult) => void;
   private readonly onDeath?: (source: DamageSource) => void;
+  private readonly isSwordBlocking?: () => boolean;
 
   constructor(options: SurvivalOptions = {}) {
     this.health = clamp(options.health ?? MAX_HEALTH, 0, MAX_HEALTH);
@@ -194,7 +198,7 @@ export class SurvivalSystem {
     this.saturation = clamp(options.saturation ?? 5, 0, this.hunger);
     this.dead = this.health <= 0;
     this.difficulty = options.difficulty ?? 'normal';
-    this.useArmorToughness = options.useArmorToughness ?? false;
+    this.isSwordBlocking = options.isSwordBlocking;
     this.onDamage = options.onDamage;
     this.onDeath = options.onDeath;
   }
@@ -234,25 +238,24 @@ export class SurvivalSystem {
     return this.health - before;
   }
 
+  /** Called once per accepted living-target melee hit, never for an air click. */
+  recordAttack(): void { this.addExhaustion(0.3); }
+
   damage(amount: number, source: DamageSource = 'generic', options: DamageOptions = {}): DamageResult {
     const requested = Number.isFinite(amount) ? Math.max(0, amount) : 0;
     const healthBefore = this.health;
     if (requested <= 0 || this.dead) return this.emptyDamageResult(source, requested, healthBefore);
 
-    let rawToApply = requested;
-    if (!options.ignoreInvulnerability && this.hurtResistantTicks > 0) {
-      if (requested <= this.lastRawDamage) return this.emptyDamageResult(source, requested, healthBefore);
-      rawToApply = requested - this.lastRawDamage;
-      this.lastRawDamage = requested;
-    } else {
-      this.hurtResistantTicks = 10;
-      this.lastRawDamage = requested;
-    }
+    const hurt = this.hurtResistance.receive(requested, options.ignoreInvulnerability);
+    if (!hurt.accepted) return this.emptyDamageResult(source, requested, healthBefore);
+    const blocking = options.swordBlocking ?? this.isSwordBlocking?.() ?? false;
+    const rawToApply = blocking && !options.bypassArmor && isSwordBlockable(source, options.fireContact)
+      ? (1 + hurt.rawDamage) * 0.5 : hurt.rawDamage;
 
     const bypassArmor = options.bypassArmor ?? ARMOR_BYPASS_SOURCES.has(source);
     const afterArmor = bypassArmor
       ? rawToApply
-      : reduceDamageByArmor(rawToApply, options.armor, options.useArmorToughness ?? this.useArmorToughness);
+      : reduceDamageByArmor(rawToApply, options.armor);
     const absorbed = Math.min(this.absorption, afterArmor);
     this.absorption -= absorbed;
     const dealt = Math.max(0, afterArmor - absorbed);
@@ -268,7 +271,9 @@ export class SurvivalSystem {
       healthBefore,
       healthAfter: this.health,
       killed,
-      ignored: dealt <= 0,
+      ignored: false,
+      accepted: true,
+      fullHurt: hurt.fullHurt,
     };
     this.lastDamage = result;
     options.onDamage?.(result);
@@ -367,8 +372,7 @@ export class SurvivalSystem {
     this.arrowFireTicks = 0;
     this.contactFire = false;
     this.dead = false;
-    this.hurtResistantTicks = 0;
-    this.lastRawDamage = 0;
+    this.hurtResistance.reset();
     this.drownTimer = 0;
     this.lavaTimer = 0;
     this.cactusTimer = 0;
@@ -396,6 +400,7 @@ export class SurvivalSystem {
   }
 
   restore(state: Partial<SerializedSurvivalState>): void {
+    this.hurtResistance.reset();
     if (state.health !== undefined) this.health = clamp(state.health, 0, MAX_HEALTH);
     if (state.hunger !== undefined) this.hunger = clamp(state.hunger, 0, MAX_HUNGER);
     if (state.saturation !== undefined) this.saturation = clamp(state.saturation, 0, this.hunger);
@@ -409,10 +414,7 @@ export class SurvivalSystem {
   }
 
   private tickOnce(context: SurvivalTickContext, events: DamageResult[]): void {
-    if (this.hurtResistantTicks > 0) {
-      this.hurtResistantTicks -= 1;
-      if (this.hurtResistantTicks === 0) this.lastRawDamage = 0;
-    }
+    this.hurtResistance.advance(FIXED_DT);
     if (this.dead) return;
 
     const player = context.player;
@@ -538,7 +540,7 @@ export class SurvivalSystem {
     if (context.swimming) this.addExhaustion(distance * 0.01);
     else if (context.sprinting) this.addExhaustion(distance * 0.1);
     if (context.jumped) this.addExhaustion(context.sprinting ? 0.2 : 0.05);
-    if (context.attacked) this.addExhaustion(0.1);
+    if (context.attacked) this.recordAttack();
     if (context.minedBlock) this.addExhaustion(0.005);
   }
 
@@ -550,6 +552,7 @@ export class SurvivalSystem {
   ): void {
     const result = this.damage(amount, source, {
       armor: context.armor,
+      fireContact: this.contactFire,
       onDamage: context.onDamage,
       onDeath: context.onDeath,
     });
@@ -567,6 +570,8 @@ export class SurvivalSystem {
       healthAfter: health,
       killed: false,
       ignored: true,
+      accepted: false,
+      fullHurt: false,
     };
   }
 
