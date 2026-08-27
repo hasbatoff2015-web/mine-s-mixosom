@@ -127,7 +127,9 @@ Every `BLOCKS` key and every `ITEMS` / `obtainableItems()` id has an explicit ma
 
 # Tests
 
-`tests/creeper-fence-plants-tooltip-ru.test.ts` (24). Targeted regression files also run: entities, player-physics, interaction-support-polish, gameplay-ui-entity-polish, heart-hud, container-ui, content-pass, block-registry, chat-commands.
+`tests/creeper-fence-plants-tooltip-ru.test.ts` (24/24). Targeted regression files also green: entities, player-physics, interaction-support-polish, gameplay-ui-entity-polish, heart-hud, container-ui, content-pass, block-registry, chat-commands.
+
+Full `npm test -- --maxWorkers=2`: **848 passed / 2 failed / 850**. The two failures are the same pre-existing `authored-item-assets.test.mjs` missing source-pack files as on `main`. Typecheck / build / `check:size` / `check:archive` PASS (3.46 MiB / 188 files). Unrelated timeout thresholds were not changed.
 
 # Browser QA
 
@@ -164,4 +166,4 @@ Automated cloud session cannot claim native pointer-lock / GPU inventory hover. 
 
 # Git / PR
 
-Feature branch `cursor/mob-collision-tooltip-ru-polish-b257` off `origin/main`. PR against `main`, not merged.
+Feature branch `cursor/mob-collision-tooltip-ru-polish-b257` off `origin/main` (`9dc3300`). Commit `202b2f8`. PR against `main`, not merged.
