@@ -118,6 +118,8 @@ describe('command registry', () => {
 
   it('gives known items and reports unknown ids', () => {
     const ctx = context();
+    expect(dispatchChatLine('/give shield 1', ctx).result?.ok).toBe(false);
+    expect(ctx.inventory.slots.every((stack) => stack === null)).toBe(true);
     const given = dispatchChatLine('/give minecart 8', ctx);
     expect(given.result?.ok).toBe(true);
     expect(ctx.inventory.count(ItemId.Minecart)).toBe(8);

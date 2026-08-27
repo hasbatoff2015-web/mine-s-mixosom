@@ -2,7 +2,7 @@ import type { BlockId } from '../blocks';
 
 export type ItemId = string;
 
-export type ItemKind = 'block' | 'resource' | 'food' | 'tool' | 'weapon' | 'shield' | 'armor';
+export type ItemKind = 'block' | 'resource' | 'food' | 'tool' | 'weapon' | 'armor';
 export type ItemToolType = 'pickaxe' | 'axe' | 'shovel';
 export type ItemTier = 'wood' | 'stone' | 'iron' | 'diamond';
 export type ArmorSlot = 'head' | 'chest' | 'legs' | 'feet';
@@ -77,12 +77,6 @@ export interface WeaponItemDefinition extends BaseItemDefinition {
   readonly tier?: ItemTier;
 }
 
-export interface ShieldItemDefinition extends BaseItemDefinition {
-  readonly kind: 'shield';
-  readonly maxStack: 1;
-  readonly durability: number;
-}
-
 export interface ArmorItemDefinition extends BaseItemDefinition {
   readonly kind: 'armor';
   readonly maxStack: 1;
@@ -99,7 +93,6 @@ export type ItemDefinition =
   | FoodItemDefinition
   | ToolItemDefinition
   | WeaponItemDefinition
-  | ShieldItemDefinition
   | ArmorItemDefinition;
 
 /** Common non-block item keys. Block items use their block key (for example `stone`). */
@@ -158,7 +151,6 @@ export const ItemId = Object.freeze({
   IronSword: 'iron_sword',
   DiamondSword: 'diamond_sword',
   Bow: 'bow',
-  Shield: 'shield',
 
   LeatherHelmet: 'leather_helmet',
   LeatherChestplate: 'leather_chestplate',

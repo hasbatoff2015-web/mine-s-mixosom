@@ -245,7 +245,7 @@ export async function startItemQaHarness(
 
   const state: FirstPersonFrameState = {
     visible: mode !== 'drops' && !inspect, movementSpeed: 0, onGround: true, sprinting: false,
-    mining: false, foodUseProgress: 0, bowCharge: 0, shieldRaised: false,
+    mining: false, foodUseProgress: 0, bowCharge: 0,
   };
   let frame = 0;
   let previous = performance.now();
@@ -266,7 +266,6 @@ export async function startItemQaHarness(
       state.bowCharge = currentItem === 'bow'
         ? requestedPose === 'partial' ? 0.5 : requestedPose === 'full' ? 1 : requestedPose === 'base' || !requestedPose ? 0 : (elapsed % 2.2) / 2.2
         : 0;
-      state.shieldRaised = currentItem === 'shield' && requestedPose !== 'idle';
       viewmodel.update(delta, state);
       const facing = viewmodel.measureHeldFrontCameraDot();
       const front = viewmodel.heldFrontWorldNormal();

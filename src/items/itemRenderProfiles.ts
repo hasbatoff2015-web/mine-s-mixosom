@@ -2,7 +2,7 @@ import { getItemDefinition } from './registry';
 import { getBlockDefinition } from '../blocks';
 import { ItemId, type ItemDefinition } from './types';
 
-export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow' | 'shield';
+export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow';
 export type ItemRenderContext = 'firstPersonRightHand' | 'ground' | 'gui';
 export type RenderVector = readonly [x: number, y: number, z: number];
 /**
@@ -113,12 +113,6 @@ export const ITEM_RENDER_PROFILES: Readonly<Record<ItemRenderCategory, ItemRende
     transform([0, 0, 0], [0, 0, -12], [0.40, 0.40, 0.40]),
     UNIFORM_GUI,
   ),
-  shield: profile(
-    'shield',
-    transform([0.47, -0.31, -0.82], [5, -18, -8], [0.42, 0.42, 0.42]),
-    transform([0, 0, 0], [0, 0, 0], [0.40, 0.40, 0.40]),
-    UNIFORM_GUI,
-  ),
 });
 
 export function classifyItemForRendering(itemOrId: string | ItemDefinition): ItemRenderCategory {
@@ -138,7 +132,6 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
     }
     return 'block';
   }
-  if (item.kind === 'shield') return 'shield';
   if (item.id === 'stick' || item.tags?.includes('stick')) return 'handheld';
   if (item.id === ItemId.FlintAndSteel) return 'handheld';
   if (item.id === ItemId.FireArrow) return 'handheld';

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { getBlockDefinition } from '../blocks';
+import { migrateLegacyStack } from '../inventory/legacyItems';
+import { BlockId } from '../blocks';
+import { aabbFromBody, aabbOverlapsBlockType } from '../combat/fireSources';
 import {
   canStacksMerge,
   cloneStack,
@@ -16,8 +18,10 @@ import { moveVoxelBody } from './voxelPhysics';
 const ITEM_WIDTH = 0.28;
 const ITEM_HEIGHT = 0.28;
 const ITEM_SHAPE = Object.freeze({ width: ITEM_WIDTH, height: ITEM_HEIGHT });
+export const DROPPED_ITEM_MAX_HEALTH = 5;
+const ENVIRONMENT_DAMAGE_TICK_SECONDS = 0.05;
 
-export type DroppedItemRemovalReason = 'picked-up' | 'despawned' | 'merged' | 'capacity' | 'removed' | 'cleared';
+export type DroppedItemRemovalReason = 'picked-up' | 'despawned' | 'merged' | 'capacity' | 'removed' | 'cleared' | 'burned';
 export type PickupDecision = number | boolean | void;
 
 export interface SerializedDroppedItem {
@@ -28,12 +32,15 @@ export interface SerializedDroppedItem {
   readonly velocity: readonly [number, number, number];
   readonly ageSeconds: number;
   readonly pickupDelaySeconds: number;
+  /** Optional for backward compatibility with saves made before item fire damage. */
+  readonly environmentHealth?: number;
 }
 
 export interface DroppedItemSpawnOptions {
   readonly velocity?: Readonly<THREE.Vector3>;
   readonly pickupDelaySeconds?: number;
   readonly ageSeconds?: number;
+  readonly environmentHealth?: number;
   /** Used by restore; normal callers should let the manager assign an ID. */
   readonly id?: string;
 }
@@ -76,6 +83,8 @@ export class DroppedItemEntity {
   readonly velocity: THREE.Vector3;
   ageSeconds: number;
   pickupDelaySeconds: number;
+  environmentHealth: number;
+  environmentDamageSeconds = 0;
   onGround = false;
   readonly visual: THREE.Group;
   readonly bobPhase: number;
@@ -87,6 +96,7 @@ export class DroppedItemEntity {
     velocity: Readonly<THREE.Vector3>,
     ageSeconds: number,
     pickupDelaySeconds: number,
+    environmentHealth: number,
     visual: THREE.Group,
     bobPhase: number,
   ) {
@@ -96,6 +106,7 @@ export class DroppedItemEntity {
     this.velocity = new THREE.Vector3(velocity.x, velocity.y, velocity.z);
     this.ageSeconds = ageSeconds;
     this.pickupDelaySeconds = pickupDelaySeconds;
+    this.environmentHealth = environmentHealth;
     this.visual = visual;
     this.bobPhase = bobPhase;
   }
@@ -169,6 +180,7 @@ export class DroppedItemManager {
       velocity,
       Math.max(0, spawnOptions.ageSeconds ?? 0),
       Math.max(0, spawnOptions.pickupDelaySeconds ?? this.defaultPickupDelay),
+      this.normalizedEnvironmentHealth(spawnOptions.environmentHealth),
       visual,
       this.idCounter * 1.618,
     );
@@ -198,13 +210,23 @@ export class DroppedItemManager {
     const totalDelta = Math.min(deltaSeconds, 0.25);
     const substeps = Math.max(1, Math.ceil(totalDelta / 0.05));
     const step = totalDelta / substeps;
-    const expired: DroppedItemEntity[] = [];
+    const expired: Array<{ entity: DroppedItemEntity; reason: 'despawned' | 'burned' }> = [];
 
     for (const entity of this.itemsById.values()) {
       entity.previousPosition.copy(entity.position);
       entity.ageSeconds += totalDelta;
       entity.pickupDelaySeconds = Math.max(0, entity.pickupDelaySeconds - totalDelta);
-      for (let substep = 0; substep < substeps; substep += 1) this.simulateEntity(entity, step);
+      let burned = false;
+      for (let substep = 0; substep < substeps; substep += 1) {
+        if (this.simulateEntity(entity, step)) {
+          burned = true;
+          break;
+        }
+      }
+      if (burned) {
+        expired.push({ entity, reason: 'burned' });
+        continue;
+      }
       applySampledEntityLight(
         entity.visual,
         this.world,
@@ -214,9 +236,11 @@ export class DroppedItemManager {
         ITEM_HEIGHT,
         worldDaylightUniform.value,
       );
-      if (entity.ageSeconds >= this.despawnSeconds || entity.position.y < -32) expired.push(entity);
+      if (entity.ageSeconds >= this.despawnSeconds || entity.position.y < -32) {
+        expired.push({ entity, reason: 'despawned' });
+      }
     }
-    for (const entity of expired) this.removeEntity(entity, 'despawned');
+    for (const removal of expired) this.removeEntity(removal.entity, removal.reason);
 
     this.mergeTimer += totalDelta;
     if (this.mergeTimer >= 0.25) {
@@ -270,6 +294,7 @@ export class DroppedItemManager {
       velocity: [entity.velocity.x, entity.velocity.y, entity.velocity.z],
       ageSeconds: entity.ageSeconds,
       pickupDelaySeconds: entity.pickupDelaySeconds,
+      environmentHealth: entity.environmentHealth,
     }));
   }
 
@@ -279,16 +304,19 @@ export class DroppedItemManager {
     let restored = 0;
     for (const entry of serialized.slice(-this.maxItems)) {
       try {
+        const stack = migrateLegacyStack(entry.stack);
+        if (!stack) continue;
         if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) continue;
         if (!Number.isFinite(entry.ageSeconds) || entry.ageSeconds >= this.despawnSeconds) continue;
         this.spawn(
-          entry.stack,
+          stack,
           new THREE.Vector3(...entry.position),
           {
             id: entry.id,
             velocity: new THREE.Vector3(...entry.velocity),
             ageSeconds: entry.ageSeconds,
             pickupDelaySeconds: entry.pickupDelaySeconds,
+            environmentHealth: entry.environmentHealth,
           },
         );
         restored += 1;
@@ -310,17 +338,22 @@ export class DroppedItemManager {
     this.disposed = true;
   }
 
-  private simulateEntity(entity: DroppedItemEntity, deltaSeconds: number): void {
-    const sampleBlock = this.world.getBlock(
-      Math.floor(entity.position.x),
-      Math.floor(entity.position.y + ITEM_HEIGHT * 0.5),
-      Math.floor(entity.position.z),
+  private simulateEntity(entity: DroppedItemEntity, deltaSeconds: number): boolean {
+    const beforeBox = aabbFromBody(
+      entity.position.x,
+      entity.position.y,
+      entity.position.z,
+      ITEM_WIDTH,
+      ITEM_HEIGHT,
     );
-    const inLiquid = getBlockDefinition(sampleBlock).liquid === true;
-    if (inLiquid) {
-      entity.velocity.y += 7 * deltaSeconds;
-      const liquidDrag = Math.exp(-4 * deltaSeconds);
-      entity.velocity.multiplyScalar(liquidDrag);
+    const wasInLava = aabbOverlapsBlockType(this.world, beforeBox, BlockId.Lava);
+    if (wasInLava) {
+      // EntityItem in Java 1.9 receives an upward lava kick; water has no
+      // equivalent modern item-buoyancy rule.
+      entity.velocity.y = Math.max(entity.velocity.y, 4);
+      const lavaDrag = Math.exp(-0.4 * deltaSeconds);
+      entity.velocity.x *= lavaDrag;
+      entity.velocity.z *= lavaDrag;
     } else {
       entity.velocity.y += this.gravity * deltaSeconds;
       const airDrag = Math.exp(-0.45 * deltaSeconds);
@@ -341,6 +374,29 @@ export class DroppedItemManager {
       entity.velocity.x *= friction;
       entity.velocity.z *= friction;
     }
+
+    const afterBox = aabbFromBody(
+      entity.position.x,
+      entity.position.y,
+      entity.position.z,
+      ITEM_WIDTH,
+      ITEM_HEIGHT,
+    );
+    const inLava = wasInLava || aabbOverlapsBlockType(this.world, afterBox, BlockId.Lava);
+    const inFire = aabbOverlapsBlockType(this.world, beforeBox, BlockId.Fire)
+      || aabbOverlapsBlockType(this.world, afterBox, BlockId.Fire);
+    const damage = inLava ? 4 : (inFire ? 1 : 0);
+    if (damage <= 0) {
+      entity.environmentDamageSeconds = 0;
+      return false;
+    }
+    entity.environmentDamageSeconds += deltaSeconds;
+    while (entity.environmentDamageSeconds + 1e-9 >= ENVIRONMENT_DAMAGE_TICK_SECONDS) {
+      entity.environmentDamageSeconds -= ENVIRONMENT_DAMAGE_TICK_SECONDS;
+      entity.environmentHealth -= damage;
+      if (entity.environmentHealth <= 0) return true;
+    }
+    return false;
   }
 
   interpolateVisuals(alpha: number): void {
@@ -455,6 +511,11 @@ export class DroppedItemManager {
 
   private validTuple(tuple: readonly number[]): tuple is readonly [number, number, number] {
     return tuple.length === 3 && tuple.every(Number.isFinite);
+  }
+
+  private normalizedEnvironmentHealth(value: number | undefined): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return DROPPED_ITEM_MAX_HEALTH;
+    return Math.max(1, Math.min(DROPPED_ITEM_MAX_HEALTH, Math.floor(value)));
   }
 
   private assertActive(): void {

@@ -225,9 +225,9 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.FireArrow, { tags: ['arrow'] }),
   resource(ItemId.FlintAndSteel, { durability: 64 }),
   resource(ItemId.GlassBottle),
-  resource(ItemId.Bucket),
-  resource(ItemId.WaterBucket, { placesBlockId: BlockId.Water }),
-  resource(ItemId.LavaBucket, { placesBlockId: BlockId.Lava }),
+  resource(ItemId.Bucket, { maxStack: 16 }),
+  resource(ItemId.WaterBucket, { placesBlockId: BlockId.Water, maxStack: 1 }),
+  resource(ItemId.LavaBucket, { placesBlockId: BlockId.Lava, maxStack: 1 }),
   resource(ItemId.Minecart),
 ];
 
@@ -266,11 +266,6 @@ const equipment: readonly ItemDefinition[] = [
     id: ItemId.Bow, name: 'Bow', kind: 'weapon', maxStack: 1, texture: 'item/bow',
     tags: Object.freeze(['weapon', 'bow']), weapon: 'bow', durability: 384, attackDamage: 0, attackSpeed: 1,
   } satisfies WeaponItemDefinition),
-  Object.freeze({
-    id: ItemId.Shield, name: 'Shield', kind: 'shield', maxStack: 1, texture: 'item/shield',
-    tags: Object.freeze(['shield']), durability: 336,
-    hiddenFromGameplay: true,
-  } as const),
   ...armor,
 ];
 

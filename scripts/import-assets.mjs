@@ -1,5 +1,6 @@
-import { access, copyFile, mkdir, rm } from 'node:fs/promises';
+import { access, copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { prepareAuthoredItems } from './authored-item-assets.mjs';
 
 const sourceRoot = join(process.cwd(), 'assets', 'minecraft', 'textures');
 const outputRoot = join(process.cwd(), 'public', 'textures');
@@ -13,9 +14,10 @@ try {
   );
 }
 
-// `public/textures` is generated exclusively by this whitelist importer. Clear
-// old generated names so renamed/removed mappings cannot leak into production.
-await rm(outputRoot, { recursive: true, force: true });
+// Never recursively clear the curated runtime pack. Missing required sources
+// fail before writes; this scoped option preserves unrelated curated textures.
+const authoredItems = await prepareAuthoredItems(sourceRoot);
+const itemsOnly = process.argv.includes('--items-cleanup');
 
 const blocks = {
   stone: 'stone.png',
@@ -144,18 +146,12 @@ for (const [target, source] of Object.entries(blocks)) copies.push([join('blocks
 for (const [target, source] of Object.entries(items)) copies.push([join('items', source), join('item', `${target}.png`)]);
 for (const [target, source] of Object.entries(entities)) copies.push([join('entity', source), join('entity', `${target}.png`)]);
 copies.push([join('entity', 'chest', 'normal.png'), join('entity', 'chest', 'normal.png')]);
-copies.push([join('entity', 'shield_base_nopattern.png'), join('item', 'shield.png')]);
 copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);
 copies.push([join('particle', 'particles.png'), join('particle', 'particles.png')]);
 
 const optional = {
   'items/flint_and_steel.png': 'item/flint_and_steel.png',
-  'items/potion.png': 'item/glass_bottle.png',
-  'items/bucket.png': 'item/bucket.png',
-  'items/bucket_water.png': 'item/water_bucket.png',
-  'items/bucket_lava.png': 'item/lava_bucket.png',
-  'items/minecart_normal.png': 'item/minecart.png',
   'blocks/web.png': 'block/cobweb.png',
   'blocks/rail_normal.png': 'block/rail.png',
   'blocks/fire_layer_0.png': 'block/fire.png',
@@ -165,7 +161,7 @@ for (const [source, target] of Object.entries(optional)) {
 }
 
 let imported = 0;
-for (const [source, target] of copies) {
+for (const [source, target] of itemsOnly ? [] : copies) {
   const destination = join(outputRoot, target);
   await mkdir(dirname(destination), { recursive: true });
   try {
@@ -178,9 +174,20 @@ for (const [source, target] of copies) {
 
 console.log(`Imported ${imported}/${copies.length} selected runtime assets into public/textures.`);
 
+for (const [target, bytes] of authoredItems) {
+  const destination = join(outputRoot, target);
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(destination, bytes);
+}
+// Exact obsolete runtime asset only; the source pack is never modified.
+await unlink(join(outputRoot, 'item', 'shield.png')).catch((error) => {
+  if (error.code !== 'ENOENT') throw error;
+});
+console.log(`Imported ${authoredItems.length} required authored item textures (including potion compositions).`);
+
 try {
   const { generateMissingTextures } = await import('./generate-missing-textures.mjs');
-  const generated = await generateMissingTextures(false);
+  const generated = itemsOnly ? 0 : await generateMissingTextures(false);
   if (generated > 0) console.log(`Generated ${generated} fallback gameplay textures.`);
 } catch (error) {
   console.warn('Fallback texture generation skipped.', error);

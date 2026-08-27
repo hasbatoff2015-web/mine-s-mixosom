@@ -65,7 +65,6 @@ function frameState(overrides: Partial<FirstPersonFrameState> = {}): FirstPerson
     mining: false,
     foodUseProgress: 0,
     bowCharge: 0,
-    shieldRaised: false,
     ...overrides,
   };
 }
@@ -223,21 +222,16 @@ describe('item render profiles and assets', () => {
     expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
     expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.60);
     const block = itemRenderProfile('stone').transforms.firstPersonRightHand;
-    const shield = itemRenderProfile('shield').transforms.firstPersonRightHand;
+    expect(() => itemRenderProfile('shield')).toThrow();
     expect(block.position).toEqual([0.46, -0.31, -0.80]);
     expect(block.scale).toEqual([0.28, 0.28, 0.28]);
     expect(block.rotation[0]).toBeCloseTo(24 * Math.PI / 180);
     expect(block.rotation[1]).toBeCloseTo(-42 * Math.PI / 180);
     expect(block.rotation[2]).toBeCloseTo(16 * Math.PI / 180);
-    expect(shield.position).toEqual([0.47, -0.31, -0.82]);
-    expect(shield.scale).toEqual([0.42, 0.42, 0.42]);
-    expect(shield.rotation[0]).toBeCloseTo(5 * Math.PI / 180);
-    expect(shield.rotation[1]).toBeCloseTo(-18 * Math.PI / 180);
-    expect(shield.rotation[2]).toBeCloseTo(-8 * Math.PI / 180);
   });
 
   it('provides independent first-person, ground and GUI transform contexts', () => {
-    for (const item of ['stone', 'apple', 'iron_pickaxe', 'bow', 'shield']) {
+    for (const item of ['stone', 'apple', 'iron_pickaxe', 'bow', 'bucket', 'potion_invisibility', 'minecart']) {
       const transforms = itemRenderProfile(item).transforms;
       expect(transforms.firstPersonRightHand).not.toBe(transforms.ground);
       expect(transforms.ground).not.toBe(transforms.gui);

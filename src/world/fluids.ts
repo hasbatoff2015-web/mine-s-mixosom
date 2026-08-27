@@ -13,6 +13,20 @@ const HORIZONTAL: ReadonlyArray<readonly [number, number]> = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
 ];
 
+const FLOW_COST_NOT_FOUND = 1_000;
+const MAX_FLOW_SEARCH_RADIUS = 4;
+const FLOW_SEARCH_DIAMETER = MAX_FLOW_SEARCH_RADIUS * 2 + 3;
+const FLOW_SEARCH_CENTER = Math.floor(FLOW_SEARCH_DIAMETER / 2);
+const FLOW_SEARCH_CAPACITY = FLOW_SEARCH_DIAMETER * FLOW_SEARCH_DIAMETER;
+const flowSearchQueueX = new Int8Array(FLOW_SEARCH_CAPACITY);
+const flowSearchQueueZ = new Int8Array(FLOW_SEARCH_CAPACITY);
+const flowSearchTraversable = new Uint8Array(FLOW_SEARCH_CAPACITY);
+const flowSearchDistance = new Uint8Array(FLOW_SEARCH_CAPACITY);
+const HORIZONTAL_SELECTIONS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = Array.from(
+  { length: 1 << HORIZONTAL.length },
+  (_, mask) => HORIZONTAL.filter((_, index) => (mask & (1 << index)) !== 0),
+);
+
 export function isFluidBlock(block: BlockId): boolean {
   return block === BlockId.Water || block === BlockId.Lava;
 }
@@ -81,7 +95,7 @@ export function generatedFluidNeedsActivation(world: VoxelWorld, x: number, y: n
 }
 
 function scheduleIfGeneratedBoundary(world: VoxelWorld, x: number, y: number, z: number): void {
-  if (generatedFluidNeedsActivation(world, x, y, z)) world.scheduleFluid(x, y, z, 1);
+  if (generatedFluidNeedsActivation(world, x, y, z)) world.scheduleFluid(x, y, z);
 }
 
 function activateEdgeFluidsToward(
@@ -171,40 +185,101 @@ function hasDownDrop(world: VoxelWorld, x: number, y: number, z: number, type: B
   return below === type && !isFluidSource(world, x, y - 1, z);
 }
 
-function pathHasDrop(
+function canRouteFluidThrough(
   world: VoxelWorld,
   x: number,
   y: number,
   z: number,
-  dx: number,
-  dz: number,
-  radius: number,
   type: BlockId,
 ): boolean {
-  let cx = x;
-  let cz = z;
-  for (let step = 1; step <= radius; step += 1) {
-    cx += dx;
-    cz += dz;
-    if (!chunkLoaded(world, cx, cz)) return false;
-    const block = world.getBlock(cx, y, cz, false);
-    if (block === type) {
-      if (hasDownDrop(world, cx, y, cz, type)) return true;
-      continue;
+  if (!chunkLoaded(world, x, z)) return false;
+  const block = world.getBlock(x, y, z, false);
+  if (block === type) return !isFluidSource(world, x, y, z);
+  return canReplaceWithFluid(block);
+}
+
+/** Builds a bounded reverse distance field to all local drops once per update. */
+function optimalHorizontalMask(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  radius: number,
+  type: BlockId,
+): number {
+  flowSearchTraversable.fill(0);
+  flowSearchDistance.fill(255);
+  const extent = radius + 1;
+  let tail = 0;
+  for (let offsetZ = -extent; offsetZ <= extent; offsetZ += 1) {
+    const remainingX = extent - Math.abs(offsetZ);
+    for (let offsetX = -remainingX; offsetX <= remainingX; offsetX += 1) {
+      if (offsetX === 0 && offsetZ === 0) continue;
+      const index = (offsetZ + FLOW_SEARCH_CENTER) * FLOW_SEARCH_DIAMETER
+        + offsetX + FLOW_SEARCH_CENTER;
+      const cellX = x + offsetX;
+      const cellZ = z + offsetZ;
+      if (!canRouteFluidThrough(world, cellX, y, cellZ, type)) continue;
+      flowSearchTraversable[index] = 1;
+      if (!hasDownDrop(world, cellX, y, cellZ, type)) continue;
+      flowSearchDistance[index] = 0;
+      flowSearchQueueX[tail] = offsetX;
+      flowSearchQueueZ[tail] = offsetZ;
+      tail += 1;
     }
-    if (!canReplaceWithFluid(block)) return false;
-    if (hasDownDrop(world, cx, y, cz, type)) return true;
   }
-  return false;
+
+  let head = 0;
+  while (head < tail) {
+    const offsetX = flowSearchQueueX[head]!;
+    const offsetZ = flowSearchQueueZ[head]!;
+    const index = (offsetZ + FLOW_SEARCH_CENTER) * FLOW_SEARCH_DIAMETER
+      + offsetX + FLOW_SEARCH_CENTER;
+    const cost = flowSearchDistance[index]!;
+    head += 1;
+    if (cost >= radius) continue;
+
+    for (const [stepX, stepZ] of HORIZONTAL) {
+      const nextOffsetX = offsetX + stepX;
+      const nextOffsetZ = offsetZ + stepZ;
+      const indexX = nextOffsetX + FLOW_SEARCH_CENTER;
+      const indexZ = nextOffsetZ + FLOW_SEARCH_CENTER;
+      if (indexX < 0 || indexX >= FLOW_SEARCH_DIAMETER || indexZ < 0 || indexZ >= FLOW_SEARCH_DIAMETER) continue;
+      const visitedIndex = indexZ * FLOW_SEARCH_DIAMETER + indexX;
+      if (flowSearchTraversable[visitedIndex] === 0) continue;
+      const nextCost = cost + 1;
+      if (flowSearchDistance[visitedIndex]! <= nextCost) continue;
+      flowSearchDistance[visitedIndex] = nextCost;
+      if (tail >= FLOW_SEARCH_CAPACITY) continue;
+      flowSearchQueueX[tail] = nextOffsetX;
+      flowSearchQueueZ[tail] = nextOffsetZ;
+      tail += 1;
+    }
+  }
+
+  let minimumCost = FLOW_COST_NOT_FOUND;
+  let selectedMask = 0;
+  for (let index = 0; index < HORIZONTAL.length; index += 1) {
+    const [dx, dz] = HORIZONTAL[index]!;
+    const distanceIndex = (dz + FLOW_SEARCH_CENTER) * FLOW_SEARCH_DIAMETER
+      + dx + FLOW_SEARCH_CENTER;
+    const cost = flowSearchTraversable[distanceIndex] === 0
+      ? FLOW_COST_NOT_FOUND
+      : flowSearchDistance[distanceIndex]!;
+    if (cost > radius || cost > minimumCost) continue;
+    if (cost < minimumCost) {
+      minimumCost = cost;
+      selectedMask = 0;
+    }
+    selectedMask |= 1 << index;
+  }
+  return selectedMask;
 }
 
 function preferredHorizontalDirs(world: VoxelWorld, x: number, y: number, z: number, type: BlockId): ReadonlyArray<readonly [number, number]> {
   const radius = type === BlockId.Lava ? 2 : 4;
-  const drops: Array<readonly [number, number]> = [];
-  for (const dir of HORIZONTAL) {
-    if (pathHasDrop(world, x, y, z, dir[0], dir[1], radius, type)) drops.push(dir);
-  }
-  return drops.length > 0 ? drops : HORIZONTAL;
+  const selectedMask = optimalHorizontalMask(world, x, y, z, radius, type);
+  return selectedMask === 0 ? HORIZONTAL : HORIZONTAL_SELECTIONS[selectedMask]!;
 }
 
 function expectedFlowingLevel(world: VoxelWorld, x: number, y: number, z: number, type: BlockId): {
@@ -255,13 +330,6 @@ function tryMixNeighbors(
     return true;
   }
   return false;
-}
-
-function enqueueNeighbors(world: VoxelWorld, x: number, y: number, z: number, delay: number): void {
-  world.scheduleFluid(x, y, z, delay);
-  world.scheduleFluid(x, y + 1, z, delay);
-  world.scheduleFluid(x, y - 1, z, delay);
-  for (const [dx, dz] of HORIZONTAL) world.scheduleFluid(x + dx, y, z + dz, delay);
 }
 
 export function applyFluidWrites(world: VoxelWorld, writes: readonly FluidWrite[]): number {
@@ -373,7 +441,9 @@ export function computeFluidUpdate(world: VoxelWorld, x: number, y: number, z: n
     ? FLUID_SOURCE_LEVEL
     : (writes[0]?.level ?? currentLevel);
 
-  if (tryEnter(world, type, x, y, z, x, y - 1, z, FLUID_SOURCE_LEVEL, true, writes)) {
+  const downwardRouteOpen = hasDownDrop(world, x, y, z, type);
+  if (tryEnter(world, type, x, y, z, x, y - 1, z, FLUID_SOURCE_LEVEL, true, writes)
+    || downwardRouteOpen) {
     return writes;
   }
 
@@ -393,18 +463,20 @@ export function processFluidQueue(world: VoxelWorld): { updates: number; writes:
   let writes = 0;
   for (const next of due) {
     if (performance.now() - started >= FLUID_JOB_BUDGET_MS) {
-      world.scheduleFluid(next.x, next.y, next.z, 1);
+      world.retryDueFluid(next);
       continue;
     }
+    if (!world.consumeDueFluid(next)) continue;
     updates += 1;
     const produced = computeFluidUpdate(world, next.x, next.y, next.z);
     if (produced.length === 0) continue;
     const applied = applyFluidWrites(world, produced);
     writes += applied;
     if (applied <= 0) continue;
-    const delay = fluidTickDelay(world.getBlock(next.x, next.y, next.z, false) || BlockId.Water);
-    for (const write of produced) enqueueNeighbors(world, write.x, write.y, write.z, delay);
-    enqueueNeighbors(world, next.x, next.y, next.z, delay);
+    // Each surviving/new receiver chooses its own material rate. The origin may
+    // now be Air/Stone; never infer a lava follow-up delay from that replacement.
+    for (const write of produced) world.scheduleFluidAround(write.x, write.y, write.z);
+    world.scheduleFluidAround(next.x, next.y, next.z);
   }
   world.endFluidTick(updates, writes);
   return { updates, writes, ms: performance.now() - started };

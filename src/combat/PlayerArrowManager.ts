@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import type { MobManager } from '../entities';
 import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
-import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
+import { ARROW_FORWARD, ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
@@ -20,7 +20,6 @@ interface PlayerArrow {
   flaming: boolean;
 }
 
-const FORWARD = new THREE.Vector3(0, 0, -1);
 /** Prefer a cart over a rail/block that is only slightly closer (cart sits on the rail). */
 const CART_BLOCK_SLOP = 0.5;
 
@@ -175,7 +174,7 @@ export class PlayerArrowManager {
 
   private orient(visual: THREE.Object3D, velocity: Readonly<THREE.Vector3>): void {
     if (velocity.lengthSq() <= 1e-8) return;
-    visual.quaternion.setFromUnitVectors(FORWARD, new THREE.Vector3(velocity.x, velocity.y, velocity.z).normalize());
+    visual.quaternion.setFromUnitVectors(ARROW_FORWARD, new THREE.Vector3(velocity.x, velocity.y, velocity.z).normalize());
   }
 
   private remove(index: number): void {

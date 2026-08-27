@@ -1,5 +1,28 @@
 # Тестирование
 
+## 2026-08-27 item / arrow / placement / shield cleanup
+
+Targeted suite — 205/205 в 19 файлах; typecheck/build/size/archive PASS. Итог полного suite и baseline failures см. `reports/2026-08-27_item-arrow-placement-shield-cleanup.md`; старые fingerprints/performance thresholds не ослаблялись.
+
+Новые tests:
+
+- `authored-item-assets.test.mjs`: точные bytes source→runtime, deterministic potion tint/alpha/cork, repeated import, forced fallback precedence, missing-required preflight без потери runtime files.
+- `arrow-visual-cleanup.test.ts`: finite geometry/UV/normals, tail-only fins, +Z orientation и embedded tip по шести направлениям, stable inGround quaternion, 240 shots → cap48, geometry1/materials2/texture1, removal без children.
+- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch.
+- `shield-removal.test.ts`: player/offhand/armor/chest/furnace/drop migration, сохранность metadata/durability/bucket overflow, Game damage+armor+normal knockback при held/use, отсутствие runtime blocking/pose/slowdown. Старые combat/item/inventory/recipe tests заменены соответствующим новым контрактом; `/give shield` обязан завершаться ошибкой.
+
+Browser QA **не пройден**: браузер ранее отклонил localhost по policy; сейчас browser/user tabs пусты. Обход через другой host/browser/CDP не использовался. PNG inspection и component tests не означают WebGL acceptance.
+
+После восстановления разрешённого сеанса выполнить:
+
+1. Inventory/hotbar: bucket, water_bucket, lava_bucket, minecart, glass_bottle, potion_invisibility, potion_regeneration; silhouettes и прозрачность.
+2. `?qaItem=<id>&qaView=held&pose=idle` для каждого; guard items iron_pickaxe/diamond_sword/apple/coal/torch/bow без изменения pose.
+3. `?qaArrow=1&arrowScene=inspect&arrowView=front`: кнопки front/back/side/top/angle; normal/fire.
+4. `?qaArrow=1&arrowScene=ground` и `arrowScene=wall`: tip inside, shaft outside, нет billboard при смене camera angle; затем реальные player и skeleton shots в игре.
+5. `arrowScene=flying` и `arrowScene=stress`: 120 meshes; много раз stress→inspect→stress, normal/fire. HUD geometries/textures должны стабилизироваться; записать renderer.info и FPS. CPU cache test не заменяет GPU leak check.
+6. Torch matrix в Creative и Survival: stone-on-torch / torch-on-torch отклонены без расхода; floor+4 walls stone разрешены; ceiling запрещён; ladder/button/lever и full/partial slabs/stairs. Удаление опоры сейчас **не** вызывает support-loss drop.
+7. Empty/sword/axe + hold-use: нет shield/slowdown; bow charge, food/potions, bucket pickup/place работают; legacy save не теряет остальные stacks.
+
 ## Цель
 
 Проверки разделены на три уровня:
@@ -75,27 +98,33 @@ HTTP / and /ui/frontier-menu-background.png            200 / 200
 
 В текущем Windows runner встроенный browser runtime не стартовал (`apply deny-read ACLs`), поэтому screenshot/console visual smoke отложен. Production HTML/background доступны по HTTP, но это не подменяет ручной browser QA.
 
-Полный `npm run check` останавливается на четырёх не-UI baseline checks: source fingerprint при CRLF working tree, radius-6 lighting bound и два 5 s worldgen timeout. UI-model test green; build/size/archive запущены отдельно и green.
+Полный `npm run check` на clean baseline `8935772` останавливается в Vitest: 30/551 failures (CRLF-sensitive source fingerprint, radius-6 streaming bounds и CPU-heavy timeout tests). После fluid-routing/item-lava pass полный параллельный run: 34/563 failures тех же baseline-классов; 12 новых tests все green. Build/size/archive запускаются отдельно и green. Не трактовать вариативное число timeout как regression без isolated reproduction.
 
 ## Текущее автоматическое покрытие
 
-Срез локального запуска **2026-08-26** (Codex UI merge + PR #6):
+Срез локального запуска **2026-08-27** (fluid timing + bucket follow-up, поверх local routing patch):
 
 ```text
 tsc --noEmit: PASS
-Vitest:       61 test files, 551 tests, 551 passed
-production:   123 modules, 3.44 MiB / 187 files
-Main JS: 958.18 kB / 267.25 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
+Targeted:     7 test files, 77 tests, 77 passed
+Vitest full:  570/598 passed, 28 failures
+npm run check: 573/601 passed, 28 failures + 2 worker RPC timeouts; stops at test stage
+Final count:  603 tests; 2 legacy bucket tests added after check, included in targeted 77
+production:   124 modules, 3.44 MiB / 187 files
+Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 ```
 
 | Test file | Tests | Что проверяется |
 | --- | ---: | --- |
+| `tests/fluid-timing.test.ts` | 9 | Exact first-arrival ticks, parallel Water/Lava fronts, generic edits/legacy +1 cannot accelerate, Air not queued, material/lifetime replacement, already-due retry, Lava drain cadence |
+| `tests/bucket-interaction.test.ts` | 31 | Same-DDA liquid hits vs ordinary targeting, source/flow/falling/occlusion/reach, source removal/save delta/mesh, inventory modes/full fallback, source placement and promotion delay, drain, deferred Lava light removal, legacy player bucket stacks |
 | `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
 | `tests/crafting.test.ts` | 9 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
-| `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, shield timing/reduction, axe chance, bow curve, armor formula, survival drowning/food/death/respawn |
+| `tests/combat.test.ts` | 7 | Cooldown/damage curve, 1.9 profiles, legacy combat migration, отсутствие blocking/slowdown, axe damage, bow curve, armor formula, survival drowning/food/death/respawn |
 | `tests/player-physics.test.ts` | 5 | Floor/wall sliding, fall damage, slab collision/step-up, stair generic step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
+| `tests/dropped-item-environment.test.ts` | 5 | Java-1.9-style item health, Lava/Fire destruction, partial AABB overlap, Water safety, old-save default and health round-trip |
 | `tests/world-generation.test.ts` | 4 | Negative chunk coordinates, seed determinism, five ore vertical bands/rarity и deterministic biome vegetation across real chunks |
 | `tests/world-state.test.ts` | 3 | Runtime furnace flow, modified blocks/chests/furnaces restore и placement collision guard |
 | `tests/redstone.test.ts` | 8 | Power `0–15`, timed sources/TNT, primed TNT keeps `block/tnt` map through fuse tint, all 24 lever attachment/facing/power geometry combinations, v2 orientation round-trip, v1 fallback и bounded propagation |
@@ -103,7 +132,7 @@ Main JS: 958.18 kB / 267.25 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/chunk-mesher.test.ts` | 1 | Generated column cache is reused without per-face noise resampling |
 | `tests/performance-stats.test.ts` | 1 | Bounded rolling average/p95/spike telemetry |
 | `tests/item-rendering.test.ts` | 27 | Routing generated/handheld/block/bow, shared FP pose, bow 0.65/0.9, one front/back quad, no row-span fronts, depth `1/16`, alpha==0 span merge, 32×32 size, cache reuse, torch/arrow/lever/ladder/door generated held path, held* QA parse/defaults, idle front-facing camera, invisibility hides FP arm |
-| `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield hidden from obtainable paths |
+| `tests/special-block-items.test.ts` | 7 | Lever/ladder/door held ≠ cube, placed lever intact, ladder thin N/S/E/W + selection, door UV/half/hinge/open routing, shield отсутствует в registry/obtainable/render paths |
 | `tests/stairs-slabs-icons.test.ts` | 22 | Stair/slab families, hidden stone_stairs, geometry/corners/collision/selection, slab merge/raycast, stone plate, special icon categories, pose lock |
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
 | `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
@@ -127,7 +156,8 @@ Main JS: 958.18 kB / 267.25 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
 | `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
 | `tests/lighting-jobs.test.ts` | 6 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm, lava emitter light stable after settle without remesh churn |
-| `tests/fluids.test.ts` | 9 | Water/lava fall and horizontal spread, source removal dries flow, water+lava mix, chunk-border flow, queue cap, FLUID HUD counters |
+| `tests/fluids.test.ts` | 11 | Exact Water `8→1` / Lava `8→6→4→2` flat levels, downward-only waterfall, lower-level range reset without global cap, source removal idle/late-write guard, mixing, loaded/unloaded borders, queue/HUD |
+| `tests/fluid-routing.test.ts` | 5 | Different/equal minimum flow costs, turning path, no-drop four-way fallback and exclusive direct-down priority |
 | `tests/fluid-streaming.test.ts` | 18 | Level-only skip relight, no water region flood, no-op, queue dedupe, remesh coalesce, equilibrium soak, distant pause/resume, generated lava **boundary-only** enqueue, mix, water/lava/both fly streaming, mesh cost |
 | `tests/lighting-seams.test.ts` | 10 | Flat chunk-border sky match, cross-chunk torch, cave/roof-hole, torch/furnace skip sky, stale mesh versions, halo ready, light-context activation, resumable slice, `?chunks=1` |
 | `tests/block-break-batch.test.ts` | 3 | 30 interior breaks one mesh job, 100 deferred edits one light job, batch sky ≤ 2 chunks |
@@ -168,7 +198,7 @@ Targeted regression pass также подтвердил кодовые fixes:
 - WebGL renderer, texture loading и missing-texture detection;
 - DOM inventory end-to-end gestures;
 - touch pointer capture, orientation change и safe-area devices;
-- runtime melee/shield/bow/mob/explosion chain;
+- runtime melee/bow/mob/explosion chain без shield;
 - полный `Game`-level redstone path от use/placement до chain explosion и save through `SaveService`;
 - autosave при visibility/pagehide;
 - Yandex SDK draft/debug-panel behavior;
@@ -202,7 +232,7 @@ Visual parity pass дополнительно использовал три де
 
 First-person/items pass добавил dev-only `?qaItem=` harness и реальный Survival smoke:
 
-- пустая рука, apple, stone block, iron pickaxe, bow и shield визуально проверены как отдельная WebGL geometry, а не DOM-картинка;
+- пустая рука, apple, stone block, iron pickaxe, bow визуально проверены (историческая проверка щита больше не применима) как отдельная WebGL geometry, а не DOM-картинка;
 - drops-сцена подтвердила textured generated items, atlas-cube block item и bounded stack copies;
 - Q-drop в Survival уменьшил hotbar stack и создал тот же textured world visual;
 - F3 после world + viewmodel passes показал `180 FPS`, frame `5.56 ms`, fixed `20 TPS`, `112290` triangles и `88` calls; item cache сохранил один generated texture;
@@ -286,10 +316,10 @@ Browser viewport matrix закрывает layout baseline, но не замен
 7. inventory left/right click, armor/off-hand, crafting 2×2/3×3;
 8. chest model/facing/lid, chest/furnace/crafting GUI (без Creative catalog), Recipe Book, block destruction drops contents;
 9. food, fall/water/lava/cactus damage, death, respawn и bed spawn;
-10. melee cooldown/crit, shield front/back, bow with/without arrow;
+10. melee cooldown/crit, отсутствие shield blocking, bow with/without arrow;
 11. passive/hostile spawn, skeleton shot, creeper fuse/explosion, loot pickup, mob 1-block step-up, zombie limbs;
 12. lever/button/plate → dust levels → primed TNT gravity/fuse/explosion/chain, falling sand entity, torch block light;
-13. F3 overlay, 3D shield/viewmodel, settings FOV/sensitivity/render distance/volume;
+13. F3 overlay, viewmodel без shield, settings FOV/sensitivity/render distance/volume;
 14. pause/background/resume without hidden simulation;
 15. save/quit/reload and world/redstone/block-state/falling-block comparison.
 
@@ -387,7 +417,7 @@ Responsive browser layout считается пройденным; реальн�
 
 1. добыть блоки по обе стороны chunk boundary;
 2. поставить несколько blocks, chest, furnace и bed;
-3. положить уникальные stacks в chest/furnace, экипировать armor/shield;
+3. положить уникальные stacks в chest/furnace, экипировать armor; проверить legacy shield migration;
 4. выбросить item и оставить его неподобранным;
 5. дождаться/создать mobs, нанести одному damage;
 6. включить lever/button, запустить TNT и сохранить мир с незавершённым fuse;
@@ -436,18 +466,27 @@ npm run benchmark:worldgen
 
 CPU-only (no GPU FPS). Compare plains/forest/desert chunk ms and 81-chunk batch with the numbers in `docs/reports/2026-08-23_worldgen-mountains-caves-density.md`.
 
-Fluids (`tests/fluids.test.ts`, `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`, `npm run benchmark:fluids`):
+Fluids (`tests/fluids.test.ts`, `tests/fluid-routing.test.ts`, `tests/fluid-timing.test.ts`, `tests/bucket-interaction.test.ts`, `tests/fluid-surface.test.ts`, `tests/fluid-streaming.test.ts`, `npm run benchmark:fluids`):
 
-- water falls before spreading and reaches 7 horizontal cells from a source;
-- lava falls and stops short of water's reach;
-- removing a source dries flowing water;
+- exact causal first-arrival ticks: Water5/10/15/20, Lava30/60/90; timing fixture freezes CPU-budget clock only, arrivals are measured by `world.tickNumber`, not FPS;
+- real parallel fronts, generic edit notifications and legacy+1 calls cannot shorten material delay; removed/recreated cells cannot inherit extracted tickets;
+- empty bucket uses the same DDA with liquid-stop option, rejects flowing/falling foreground, solid occlusion and out-of-reach sources; default targeting still skips fluids;
+- source pickup/placement, gradual drain, deferred Lava emission removal, Survival stack/full-inventory fallback and Creative active-slot behavior; max stacks16/1/1; legacy player bucket stacks preserved;
+- water falls before spreading and reaches exact flat levels `7..1`, then Air;
+- lava falls and reaches exact overworld flat levels `6,4,2`, then Air;
+- bounded flow-cost routing can turn, excludes more expensive initial directions and keeps equal-minimum ties;
+- a filled falling column remains down-only; landing starts a new range, so total original-source distance may exceed 7/3 without a global cap;
+- removing a source dries flowing water, queue reaches 0 and 100 late ticks write 0;
 - water + lava source → obsidian; water + flowing lava → cobblestone;
 - flow continues across a loaded chunk border;
 - queue stays ≤ 2048 and per-tick updates ≤ 48;
 - render uses four corner heights, culls same-fluid internals, and keeps chunk-border corners identical;
 - settled water/lava extra ticks write 0; distant fluids pause and resume;
 - water/lava level-only changes skip relight; water flood does not queue a lighting region;
-- water/lava/both then Creative-fly streaming stays inside the same 8 s near-hole bound as the no-fluid scheduler test (`WORLD_LIGHT_BUDGET_MS = 2`).
+- deterministic terraced-hill stats record initial branches, cells/Y, footprint, queue peak, writes, settle and late writes for BEFORE/AFTER comparison;
+- current clean baseline does **not** satisfy the old `<8 s` radius-6 near-hole assertion: fluid/no-fluid simulations report the same existing lighting-streaming issue (`14.816–22.233 s` depending scenario). `WORLD_LIGHT_BUDGET_MS = 2` remains unchanged; this pass does not hide it by raising budgets.
+
+Follow-up browser gate: current Browser connection works, but navigation/reload of the local game was denied by its URL security policy. No bypass; real cadence/pickup/drain/light gameplay QA is still required. See `docs/reports/2026-08-27_fluid-timing-and-bucket-interaction.md` for the remaining manual matrix and full validation results.
 
 ```bash
 npm run benchmark:fluids
@@ -457,8 +496,8 @@ npm run benchmark:fluids
 
 - Удар рукой, sword, pickaxe, shovel и axe на empty/half/full cooldown.
 - Critical только при падении и charge threshold; sprint hit не становится critical.
-- Shield неактивен первые 4 ticks, активен с 5-го; фронт и тыл дают разные результаты.
-- Projectile shield block и durability damage.
+- Hold-use с пустой рукой/sword/axe не поднимает shield и не замедляет движение; bow charge сохраняет своё замедление.
+- Melee/projectile damage проходит через armor/SurvivalSystem с обычным knockback; legacy shield не восстанавливается.
 - Bow: слишком короткое удержание не стреляет, Survival требует arrow, Creative не требует.
 - Arrow сталкивается с ближайшим mob/block и не проходит сквозь wall.
 - Каждый passive loot stack валиден для item registry.

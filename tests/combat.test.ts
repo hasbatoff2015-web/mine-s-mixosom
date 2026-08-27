@@ -5,7 +5,6 @@ import {
   attackStrength,
   bowCharge,
   getAttackProfile,
-  shieldDisableChance,
 } from '../src/combat';
 import { MAX_AIR_TICKS, SurvivalSystem, reduceDamageByArmor } from '../src/survival';
 
@@ -22,23 +21,20 @@ describe('Java 1.9 combat helpers', () => {
     expect(getAttackProfile()).toMatchObject({ baseDamage: 1, attackSpeed: 4 });
   });
 
-  it('activates a shield after five ticks and applies 1.9 melee reduction', () => {
-    const combat = new CombatSystem({ offhandItemId: 'shield' });
-    combat.setUsingShield(true);
-    combat.tick(0.25);
-    expect(combat.shieldActive).toBe(true);
-    const result = combat.resolveShieldHit({
-      damage: 10,
-      defenderYaw: 0,
-      directionToAttacker: { x: 0, z: -1 },
-    });
-    expect(result.blockedDamage).toBeCloseTo(6.6, 6);
-    expect(result.receivedDamage).toBeCloseTo(3.4, 6);
+  it('ignores obsolete shield save state without restoring blocking or slowdown', () => {
+    const combat = new CombatSystem();
+    const legacy = { ticksSinceAttack: 12, heldItemId: 'iron_sword', offhandItemId: 'shield',
+      usingShield: true, shieldUseTicks: 20, shieldDisabledTicks: 100 };
+    combat.restore(legacy);
+    expect(combat.serialize()).toEqual({ ticksSinceAttack: 12, heldItemId: 'iron_sword', offhandItemId: null });
+    for (const key of ['shieldActive', 'usingShield', 'setUsingShield', 'resolveShieldHit', 'movementMultiplier']) {
+      expect(key in combat).toBe(false);
+    }
+    expect(combat.performMeleeAttack().damage).toBe(6);
   });
 
-  it('supports the configurable axe disable roll and bow curve', () => {
-    expect(shieldDisableChance(0, false)).toBe(0.25);
-    expect(shieldDisableChance(0, true)).toBe(1);
+  it('keeps axe damage and the bow curve without axe disable mechanics', () => {
+    expect(new CombatSystem().performMeleeAttack('iron_axe').damage).toBe(9);
     expect(bowCharge(20)).toMatchObject({ power: 1, launchSpeed: 3, canFire: true, critical: true });
     expect(bowCharge(1).canFire).toBe(false);
   });

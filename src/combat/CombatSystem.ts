@@ -3,8 +3,6 @@ import { TICK_RATE, clamp } from '../core/constants';
 import { tryGetItemDefinition, type ItemDefinition } from '../items';
 
 export const FULL_ATTACK_THRESHOLD = 0.9;
-export const DEFAULT_SHIELD_WINDUP_TICKS = 5;
-export const DEFAULT_SHIELD_DISABLE_TICKS = 100;
 
 export interface AttackProfile {
   readonly itemId?: string;
@@ -53,40 +51,6 @@ export interface KnockbackOptions {
   readonly random?: () => number;
 }
 
-export interface ShieldConfig {
-  readonly windupTicks: number;
-  readonly disableTicks: number;
-  /** Exact Java 1.9 release melee reduction was 66%, not a complete block. */
-  readonly meleeDamageReduction: number;
-  readonly projectileDamageReduction: number;
-  readonly frontalArcDegrees: number;
-  readonly axeBaseDisableChance: number;
-  readonly axeEfficiencyBonusChance: number;
-  readonly axeSprintingBonusChance: number;
-}
-
-export interface ShieldHitOptions {
-  readonly damage: number;
-  /** Normalized or non-normalized direction from defender to attacker. */
-  readonly directionToAttacker: Readonly<{ x: number; z: number }>;
-  readonly defenderYaw: number;
-  readonly projectile?: boolean;
-  readonly attackerItemId?: string;
-  readonly attackerSprinting?: boolean;
-  readonly axeEfficiencyLevel?: number;
-  readonly random?: () => number;
-}
-
-export interface ShieldHitResult {
-  readonly blocked: boolean;
-  readonly blockedDamage: number;
-  readonly receivedDamage: number;
-  /** Amount the inventory layer should subtract from the shield stack. */
-  readonly shieldDurabilityDamage: number;
-  readonly shieldDisabled: boolean;
-  readonly disableChance: number;
-}
-
 export interface BowChargeResult {
   readonly ticksHeld: number;
   readonly power: number;
@@ -98,7 +62,6 @@ export interface BowChargeResult {
 }
 
 export interface CombatOptions {
-  readonly shield?: Partial<ShieldConfig>;
   readonly heldItemId?: string;
   readonly offhandItemId?: string;
 }
@@ -107,21 +70,7 @@ export interface SerializedCombatState {
   readonly ticksSinceAttack: number;
   readonly heldItemId: string | null;
   readonly offhandItemId: string | null;
-  readonly usingShield: boolean;
-  readonly shieldUseTicks: number;
-  readonly shieldDisabledTicks: number;
 }
-
-const DEFAULT_SHIELD_CONFIG: ShieldConfig = Object.freeze({
-  windupTicks: DEFAULT_SHIELD_WINDUP_TICKS,
-  disableTicks: DEFAULT_SHIELD_DISABLE_TICKS,
-  meleeDamageReduction: 0.66,
-  projectileDamageReduction: 1,
-  frontalArcDegrees: 180,
-  axeBaseDisableChance: 0.25,
-  axeEfficiencyBonusChance: 0.05,
-  axeSprintingBonusChance: 0.75,
-});
 
 const EXACT_ITEM_PROFILES: Readonly<Record<string, Omit<AttackProfile, 'itemId'>>> = Object.freeze({
   wooden_sword: { baseDamage: 4, attackSpeed: 1.6, weapon: 'sword' },
@@ -232,77 +181,23 @@ export function bowCharge(ticksHeld: number): BowChargeResult {
   };
 }
 
-export function shieldDisableChance(
-  efficiencyLevel: number,
-  attackerSprinting: boolean,
-  config: ShieldConfig = DEFAULT_SHIELD_CONFIG,
-): number {
-  return clamp(
-    config.axeBaseDisableChance
-      + Math.max(0, Math.floor(efficiencyLevel)) * config.axeEfficiencyBonusChance
-      + (attackerSprinting ? config.axeSprintingBonusChance : 0),
-    0,
-    1,
-  );
-}
-
-export function isAttackInShieldArc(
-  defenderYaw: number,
-  directionToAttacker: Readonly<{ x: number; z: number }>,
-  arcDegrees = DEFAULT_SHIELD_CONFIG.frontalArcDegrees,
-): boolean {
-  const length = Math.hypot(directionToAttacker.x, directionToAttacker.z);
-  if (length < 1e-8) return true;
-  const forwardX = -Math.sin(defenderYaw);
-  const forwardZ = -Math.cos(defenderYaw);
-  const dot = (forwardX * directionToAttacker.x + forwardZ * directionToAttacker.z) / length;
-  return dot >= Math.cos(clamp(arcDegrees, 0, 360) * Math.PI / 360);
-}
-
-/** Stateful cooldown and shield helper; entity health remains owned by SurvivalSystem. */
+/** Stateful attack cooldown; entity health remains owned by SurvivalSystem. */
 export class CombatSystem {
   ticksSinceAttack = Number.POSITIVE_INFINITY;
   heldItemId: string | null;
   offhandItemId: string | null;
-  usingShield = false;
-  shieldUseTicks = 0;
-  shieldDisabledTicks = 0;
-  readonly shieldConfig: ShieldConfig;
-
-  private tickRemainder = 0;
   private heldItemInitialized: boolean;
 
   constructor(options: CombatOptions = {}) {
     this.heldItemId = options.heldItemId ?? null;
     this.offhandItemId = options.offhandItemId ?? null;
     this.heldItemInitialized = options.heldItemId !== undefined;
-    this.shieldConfig = Object.freeze({ ...DEFAULT_SHIELD_CONFIG, ...options.shield });
-  }
-
-  get shieldActive(): boolean {
-    return this.usingShield
-      && this.shieldDisabledTicks <= 0
-      && this.shieldUseTicks >= this.shieldConfig.windupTicks
-      && (this.offhandItemId === 'shield' || this.heldItemId === 'shield');
-  }
-
-  get movementMultiplier(): number {
-    return this.usingShield ? 0.3 : 1;
   }
 
   tick(dt: number): void {
     if (!Number.isFinite(dt) || dt <= 0) return;
     const elapsedTicks = dt * TICK_RATE;
-    const ticks = elapsedTicks + this.tickRemainder;
-    const wholeTicks = Math.floor(ticks + 1e-9);
-    this.tickRemainder = ticks - wholeTicks;
     if (Number.isFinite(this.ticksSinceAttack)) this.ticksSinceAttack += elapsedTicks;
-    if (wholeTicks <= 0) return;
-    this.shieldDisabledTicks = Math.max(0, this.shieldDisabledTicks - wholeTicks);
-    if (this.usingShield && this.shieldDisabledTicks === 0
-      && (this.offhandItemId === 'shield' || this.heldItemId === 'shield')) {
-      this.shieldUseTicks += wholeTicks;
-    } else this.shieldUseTicks = 0;
   }
 
   setHeldItem(itemId?: string | null): void {
@@ -312,18 +207,10 @@ export class CombatSystem {
     this.heldItemId = next;
     this.heldItemInitialized = true;
     if (initialized) this.resetCooldown();
-    if (next !== 'shield' && this.offhandItemId !== 'shield') this.setUsingShield(false);
   }
 
   setOffhand(itemId?: string | null): void {
     this.offhandItemId = itemId ?? null;
-    if (this.offhandItemId !== 'shield' && this.heldItemId !== 'shield') this.setUsingShield(false);
-  }
-
-  setUsingShield(using: boolean): void {
-    const canUse = this.shieldDisabledTicks <= 0 && (this.offhandItemId === 'shield' || this.heldItemId === 'shield');
-    this.usingShield = using && canUse;
-    if (!this.usingShield) this.shieldUseTicks = 0;
   }
 
   resetCooldown(): void {
@@ -368,7 +255,6 @@ export class CombatSystem {
     knockback.multiplyScalar((0.4 + knockbackLevels * 0.5) * TICK_RATE);
     if (knockbackLevels > 0) knockback.y = 0.1 * TICK_RATE;
     this.resetCooldown();
-    this.setUsingShield(false);
     return {
       profile,
       strength,
@@ -387,51 +273,6 @@ export class CombatSystem {
     return this.performMeleeAttack(item, options);
   }
 
-  resolveShieldHit(options: ShieldHitOptions): ShieldHitResult {
-    const damage = Math.max(0, options.damage);
-    if (!this.shieldActive
-      || !isAttackInShieldArc(options.defenderYaw, options.directionToAttacker, this.shieldConfig.frontalArcDegrees)) {
-      return {
-        blocked: false,
-        blockedDamage: 0,
-        receivedDamage: damage,
-        shieldDurabilityDamage: 0,
-        shieldDisabled: false,
-        disableChance: 0,
-      };
-    }
-    const attackerProfile = getAttackProfile(options.attackerItemId);
-    let disableChance = 0;
-    let shieldDisabled = false;
-    if (attackerProfile.weapon === 'axe' && !options.projectile) {
-      disableChance = shieldDisableChance(
-        options.axeEfficiencyLevel ?? 0,
-        options.attackerSprinting ?? false,
-        this.shieldConfig,
-      );
-      shieldDisabled = (options.random ?? Math.random)() < disableChance;
-      if (shieldDisabled) this.disableShield();
-    }
-    const reduction = options.projectile
-      ? this.shieldConfig.projectileDamageReduction
-      : this.shieldConfig.meleeDamageReduction;
-    const blockedDamage = damage * clamp(reduction, 0, 1);
-    return {
-      blocked: blockedDamage > 0,
-      blockedDamage,
-      receivedDamage: damage - blockedDamage,
-      shieldDurabilityDamage: blockedDamage > 0 ? 1 + Math.floor(damage) : 0,
-      shieldDisabled,
-      disableChance,
-    };
-  }
-
-  disableShield(ticks = this.shieldConfig.disableTicks): void {
-    this.shieldDisabledTicks = Math.max(this.shieldDisabledTicks, Math.max(0, Math.floor(ticks)));
-    this.usingShield = false;
-    this.shieldUseTicks = 0;
-  }
-
   bowCharge(ticksHeld: number): BowChargeResult {
     return bowCharge(ticksHeld);
   }
@@ -441,22 +282,17 @@ export class CombatSystem {
       ticksSinceAttack: Number.isFinite(this.ticksSinceAttack) ? this.ticksSinceAttack : 1_000_000,
       heldItemId: this.heldItemId,
       offhandItemId: this.offhandItemId,
-      usingShield: this.usingShield,
-      shieldUseTicks: this.shieldUseTicks,
-      shieldDisabledTicks: this.shieldDisabledTicks,
     };
   }
 
   restore(state: Partial<SerializedCombatState>): void {
     if (state.ticksSinceAttack !== undefined) this.ticksSinceAttack = Math.max(0, state.ticksSinceAttack);
     if (state.heldItemId !== undefined) {
-      this.heldItemId = state.heldItemId;
+      this.heldItemId = state.heldItemId && tryGetItemDefinition(state.heldItemId) ? state.heldItemId : null;
       this.heldItemInitialized = true;
     }
-    if (state.offhandItemId !== undefined) this.offhandItemId = state.offhandItemId;
-    if (state.shieldDisabledTicks !== undefined) this.shieldDisabledTicks = Math.max(0, Math.floor(state.shieldDisabledTicks));
-    if (state.shieldUseTicks !== undefined) this.shieldUseTicks = Math.max(0, Math.floor(state.shieldUseTicks));
-    this.usingShield = state.usingShield === true && this.shieldDisabledTicks <= 0
-      && (this.offhandItemId === 'shield' || this.heldItemId === 'shield');
+    if (state.offhandItemId !== undefined) {
+      this.offhandItemId = state.offhandItemId && tryGetItemDefinition(state.offhandItemId) ? state.offhandItemId : null;
+    }
   }
 }

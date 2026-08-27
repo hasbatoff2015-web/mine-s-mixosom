@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-27: текущий cleanup и следующий этап
+
+- [x] Authored bucket/potion/minecart pipeline, overwrite stale placeholders и защита от fallback.
+- [x] Тонкий arrow shaft + tip + tail-only fins, shared +Z player/skeleton visual.
+- [x] Placement-anchor отдельно от full sturdy attachment face; запрет опоры на torch/thin blocks.
+- [x] Shield **полностью удалён** из runtime/render/combat/registry; legacy saves очищаются точечно.
+- [ ] Browser acceptance A–F: inventory, held items, stuck arrows с разных углов, torch matrix, отсутствие shield. Заблокирован доступ к localhost, не заменён unit tests.
+- [ ] Support-loss для attachments при разрушении опоры (текущий проход проверяет только placement).
+- [ ] **Следующий отдельный этап: PvP 1.8 pass. НЕ реализован в cleanup.** Отдельно согласовать sword blocking, no-cooldown melee и соответствующие damage/crit/knockback/invulnerability rules; не считать текущий бой 1.8.
+
 Roadmap начинается от фактической playable alpha `0.1.0`. Приоритеты означают:
 
 - **P0** — необходимо для надёжной публичной alpha и отправки в Яндекс Игры;
@@ -85,7 +95,7 @@ Definition of done: принудительный reload/закрытие вкл�
 
 - [x] Runtime furnace переведён на `SMELTING_RECIPES` и `FUEL_BURN_TICKS`; glass и charcoal входят в общий path.
 - [x] Последний visual QA pointer-lock overlay / icons / Creative scroll / ladder закрыт в PR #2 (`76ce4a1`). Container UI / Recipe Book / Creative flight — отдельный pass на `cursor/container-ui-recipebook-flight`.
-- [ ] Проверить реальный attack meter, shield wind-up/arc, bow release, mob hit selection и weapon durability через browser smoke.
+- [ ] Проверить реальный attack meter, bow release, mob hit selection и weapon durability через browser smoke.
 - [ ] Пройти end-to-end redstone scenario в browser: source → dust → TNT → visual fuse → explosion/chain → save/reload active fuse.
 - [x] Закрыты targeted regressions: takeoff-only jump exhaustion, hunger sprint gate, Creative non-targetability, 3D+voxel-LOS melee и knockback only on dealt damage.
 - [ ] Проверить lifecycle disposal при многократном create/load/quit: world meshes, mobs, arrows, drops и event listeners не должны накапливаться.
@@ -160,7 +170,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 
 - [x] Практичный 1-block mob step-up без отдельного pathfinder; полный voxel-aware search всё ещё P1.
 - [ ] Улучшить spawn/despawn/light rules и obstacle recovery; bounded soft separation между мобами уже реализована.
-- [x] Подключить базовые first-person arm/item poses для swing/mining, walk, еды, bow charge и shield block.
+- [x] Подключить базовые first-person arm/item poses для swing/mining, walk, еды, bow charge (shield pose удалён 2026-08-27).
 - [x] Убрать 20 TPS quantization из render camera, разделив live input look и fixed simulation state.
 - [x] Добавить cached alpha-silhouette depth geometry для generated held/dropped items и три стадии bow texture.
 - [x] Phase 1 vanilla-like `item/generated`: один front/back quad, толщина `1/16`, span detection `alpha == 0`, 32×32 в тех же 16×16 model units, общий first-person pose для generated/handheld, held torch sprite, bow pull `0.65/0.9`.
@@ -179,7 +189,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [ ] Довести off-hand, все item categories и transforms до более точного vanilla parity без потери общего cache pipeline.
 - [ ] Выверить projectile sweep и explosion exposure без дорогой полной физики.
 - [ ] Расширить поведение существ: spider climbing, passive flee, burning drops, sheep shearing — только после core stability.
-- [ ] Интеграционные combat scenarios: melee cooldown, crit, shield front/back, skeleton projectile, creeper chain damage.
+- [ ] Интеграционные combat scenarios: melee cooldown, crit, отсутствие shield blocking, skeleton projectile, creeper chain damage.
 
 ### P1.5 UX и accessibility
 

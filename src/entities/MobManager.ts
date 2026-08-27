@@ -9,7 +9,7 @@ import {
   isSunHighEnough,
 } from '../combat/fireSources';
 import { createItemStack, type ItemStack } from '../inventory';
-import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
+import { ARROW_FORWARD, ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { SharedFireTexture } from '../rendering/fireTexture';
 import { applySampledEntityLight, disposeOwnedEntityMaterials, worldDaylightUniform } from '../rendering/worldLighting';
 import { combinedLight } from '../world/LightEngine';
@@ -60,7 +60,6 @@ export function applyMobHurtTint(
 const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
 const PASSIVE_KINDS: readonly MobKind[] = ['cow', 'pig', 'chicken', 'sheep'];
 const UP = new THREE.Vector3(0, 1, 0);
-const PROJECTILE_FORWARD = new THREE.Vector3(0, 0, -1);
 const MAX_SEPARATION_PAIRS = 1_024;
 
 export type MobRemovalReason = 'death' | 'explosion' | 'despawn' | 'removed' | 'cleared' | 'capacity';
@@ -1297,7 +1296,7 @@ export class MobManager {
     const velocity = inaccurateArrowDirection(aim, this.random, 0.028).multiplyScalar(1.6);
     const visual = this.arrowVisuals.create();
     visual.position.copy(position);
-    visual.quaternion.setFromUnitVectors(PROJECTILE_FORWARD, velocity.clone().normalize());
+    visual.quaternion.setFromUnitVectors(ARROW_FORWARD, velocity.clone().normalize());
     this.scene.add(visual);
     const projectile: MobProjectile = {
       id,
@@ -1374,7 +1373,7 @@ export class MobManager {
       );
       if (projectile.velocity.lengthSq() > 0) {
         projectile.visual.quaternion.setFromUnitVectors(
-          PROJECTILE_FORWARD,
+          ARROW_FORWARD,
           projectile.velocity.clone().normalize(),
         );
       }

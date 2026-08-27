@@ -54,10 +54,9 @@ describe('crafting matcher', () => {
     expect(consumeCraftingGrid(input, match!)[0]).toEqual({ itemId: 'oak_log', count: 4 });
   });
 
-  it('does not expose the shield recipe while the registry entry remains', () => {
-    expect(CRAFTING_RECIPES.some((recipe) => recipe.id === 'shield' || recipe.output.item === ItemId.Shield)).toBe(false);
-    expect(getItemDefinition(ItemId.Shield).kind).toBe('shield');
-    expect(getItemDefinition(ItemId.Shield).hiddenFromGameplay).toBe(true);
+  it('has neither a shield recipe nor a registry entry', () => {
+    expect(CRAFTING_RECIPES.some((recipe) => recipe.id === 'shield' || recipe.output.item === 'shield')).toBe(false);
+    expect(() => getItemDefinition('shield')).toThrow();
   });
 
   it('contains valid outputs for core, equipment, armor and building recipes', () => {

@@ -40,6 +40,9 @@ describe('fluid flow', () => {
     tickWorld(world, 80);
     expect(world.getBlock(8, 21, 8)).toBe(BlockId.Water);
     expect(isFluidSource(world, 8, 28, 8)).toBe(true);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      expect(world.getBlock(8 + dx, 27, 8 + dz)).toBe(BlockId.Air);
+    }
   });
 
   it('spreads water horizontally up to seven cells from a source', () => {
@@ -48,10 +51,11 @@ describe('fluid flow', () => {
     world.setBlock(8, 31, 8, BlockId.Water);
     world.scheduleFluidAround(8, 31, 8, 1);
     tickWorld(world, 200);
-    expect(world.getBlock(8 + 7, 31, 8)).toBe(BlockId.Water);
+    for (let distance = 1; distance <= 7; distance += 1) {
+      expect(world.getBlock(8 + distance, 31, 8)).toBe(BlockId.Water);
+      expect(readFluidLevel(world, 8 + distance, 31, 8)).toBe(FLUID_SOURCE_LEVEL - distance);
+    }
     expect(world.getBlock(8 + 8, 31, 8)).toBe(BlockId.Air);
-    expect(readFluidLevel(world, 8 + 7, 31, 8)).toBeGreaterThan(0);
-    expect(readFluidLevel(world, 8 + 7, 31, 8)).toBeLessThan(FLUID_SOURCE_LEVEL);
   });
 
   it('spreads lava a shorter distance than water', () => {
@@ -60,7 +64,10 @@ describe('fluid flow', () => {
     world.setBlock(8, 31, 8, BlockId.Lava);
     world.scheduleFluidAround(8, 31, 8, 1);
     tickWorld(world, 400);
-    expect(world.getBlock(8 + 1, 31, 8)).toBe(BlockId.Lava);
+    for (let distance = 1; distance <= 3; distance += 1) {
+      expect(world.getBlock(8 + distance, 31, 8)).toBe(BlockId.Lava);
+      expect(readFluidLevel(world, 8 + distance, 31, 8)).toBe(FLUID_SOURCE_LEVEL - distance * 2);
+    }
     expect(world.getBlock(8 + 4, 31, 8)).toBe(BlockId.Air);
   });
 
@@ -85,6 +92,45 @@ describe('fluid flow', () => {
     world.scheduleFluidAround(8, 31, 8, 1);
     tickWorld(world, 160);
     expect(world.getBlock(10, 31, 8)).toBe(BlockId.Air);
+    tickWorld(world, 200);
+    expect(world.fluidQueueSize).toBe(0);
+    let lateWrites = 0;
+    for (let tick = 0; tick < 100; tick += 1) {
+      world.tick();
+      lateWrites += world.fluidWrites;
+    }
+    expect(lateWrites).toBe(0);
+  });
+
+  it('starts a new horizontal range after landing without a global source-distance cap', () => {
+    const water = new VoxelWorld('fluid-water-terrace-range');
+    loadFlat(water, 30);
+    water.setBlock(8, 35, 8, BlockId.Water);
+    water.scheduleFluidAround(8, 35, 8, 1);
+    tickWorld(water, 320);
+    expect(water.getBlock(15, 31, 8)).toBe(BlockId.Water);
+    expect(Math.abs(15 - 8) + Math.abs(31 - 35)).toBeGreaterThan(7);
+
+    const lava = new VoxelWorld('fluid-lava-terrace-range');
+    loadFlat(lava, 30);
+    lava.setBlock(8, 35, 8, BlockId.Lava);
+    lava.scheduleFluidAround(8, 35, 8, 1);
+    tickWorld(lava, 700);
+    expect(lava.getBlock(11, 31, 8)).toBe(BlockId.Lava);
+    expect(Math.abs(11 - 8) + Math.abs(31 - 35)).toBeGreaterThan(3);
+  });
+
+  it('does not treat an unloaded neighboring chunk as air', () => {
+    const world = new VoxelWorld('fluid-unloaded-border');
+    const chunk = world.getChunk(0, 0)!;
+    chunk.blocks.fill(BlockId.Air);
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      for (let x = 0; x < CHUNK_SIZE; x += 1) chunk.set(x, 30, z, BlockId.Stone);
+    }
+    world.setBlock(15, 31, 8, BlockId.Water);
+    const writes = computeFluidUpdate(world, 15, 31, 8);
+    expect(writes.some((write) => write.x === 16)).toBe(false);
+    expect(world.getChunk(1, 0, false)).toBeUndefined();
   });
 
   it('turns water + lava source into obsidian and flowing lava into cobblestone', () => {

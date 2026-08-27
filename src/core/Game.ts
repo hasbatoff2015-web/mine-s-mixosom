@@ -18,8 +18,6 @@ import {
   slabTypeFromHit,
   stairPlacementFromHit,
   torchPlacementFromHit,
-  type BlockAttachment,
-  type HorizontalFacing,
 } from '../blocks';
 import { CombatSystem, PlayerArrowManager, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
 import {
@@ -93,6 +91,8 @@ import {
 } from '../input/pointerLock';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
+import { pickupFluidSource, placeBucketFluid, restoreBucketInventory } from '../items/bucketInteraction';
+import { canAttachToFace, canUseAsPlacementAnchor } from '../world/placement';
 import { PlayerController } from '../player';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
@@ -225,7 +225,6 @@ export class Game {
     mining: false,
     foodUseProgress: 0,
     bowCharge: 0,
-    shieldRaised: false,
     onFire: false,
     invisible: false,
     potionActive: false,
@@ -436,13 +435,17 @@ export class Game {
     const world = new VoxelWorld(state.summary.seed);
     world.restore(state);
     let inventory: Inventory;
+    let bucketOverflow: ItemStack[] = [];
     try {
-      inventory = Inventory.deserialize(state.player.inventory);
+      const restored = restoreBucketInventory(state.player.inventory);
+      inventory = restored.inventory;
+      bucketOverflow = restored.overflow;
     } catch (error) {
       console.warn('Inventory save was invalid; starting with an empty inventory.', error);
       inventory = new Inventory();
     }
     await this.startSession(state.summary, world, inventory, state);
+    for (const stack of bucketOverflow) this.spawnDroppedStack(stack);
   }
 
   private async startSession(
@@ -591,7 +594,6 @@ export class Game {
     this.canvas.dataset.hotbar = String(this.session.selectedSlot);
     this.firstPerson?.setHeldItems(
       inventory.getSlot(this.session.selectedSlot)?.itemId,
-      inventory.offhand?.itemId,
     );
     this.deathShown = false;
     this.beginWorldLoading(!restored);
@@ -1515,11 +1517,7 @@ export class Game {
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     session.combat.setOffhand(session.inventory.offhand?.itemId);
-    this.firstPerson?.setHeldItems(selected?.itemId, session.inventory.offhand?.itemId);
-    const holdingShield = selected?.itemId === ItemId.Shield || session.inventory.offhand?.itemId === ItemId.Shield;
-    session.combat.setUsingShield(
-      this.input.using && holdingShield && session.foodUseTicks <= 0 && session.bowUseTicks <= 0,
-    );
+    this.firstPerson?.setHeldItems(selected?.itemId);
     session.combat.tick(FIXED_DT);
     simMark = this.addSimPart('combat', simMark);
 
@@ -1528,7 +1526,7 @@ export class Game {
     const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
     const drawingBow = session.bowUseTicks > 0;
     const riding = Boolean(session.ridingCartId);
-    const movementMultiplier = drawingBow ? Math.min(0.2, session.combat.movementMultiplier) : session.combat.movementMultiplier;
+    const movementMultiplier = drawingBow ? 0.2 : 1;
     session.player.creativeFlightAllowed = session.summary.mode === 'creative';
     const playerInput = {
       yaw: this.input.yaw,
@@ -1777,6 +1775,11 @@ export class Game {
 
   private useTargetOrItem(): void {
     const session = this.session!;
+    // Empty buckets need the first liquid hit, not the solid target behind it.
+    if (this.selectedStack()?.itemId === ItemId.Bucket) {
+      this.useBucket();
+      return;
+    }
     const hit = session.target;
     const cartRay = this.raycastPlayerMinecart(session);
     const cartCloser = Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
@@ -1855,14 +1858,15 @@ export class Game {
       this.mountMinecart(targetedCart.id);
       return;
     }
-    if (stack?.itemId === ItemId.Bucket) {
-      this.useEmptyBucket(hit);
+    if (stack?.itemId === ItemId.WaterBucket || stack?.itemId === ItemId.LavaBucket) {
+      this.useBucket(hit);
       return;
     }
     if (!hit || !stack || item?.placesBlockId === undefined) return;
     if (this.tryMergeSlab(hit, item.placesBlockId)) return;
     const hitDefinition = getBlockDefinition(hit.block);
     const replaceHit = hitDefinition.replaceable === true;
+    if (!replaceHit && !canUseAsPlacementAnchor(hit.block)) return;
     const x = replaceHit ? hit.x : hit.x + hit.normal.x;
     const y = replaceHit ? hit.y : hit.y + hit.normal.y;
     const z = replaceHit ? hit.z : hit.z + hit.normal.z;
@@ -1870,13 +1874,21 @@ export class Game {
     const existing = getBlockDefinition(session.world.getBlock(x, y, z));
     if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
     const placed = getBlockDefinition(item.placesBlockId);
+    // Replacement is in the clicked cell, attached to the floor below it.
+    // Thin raycast targets never lend their neighbor face to another block.
+    const attachmentNormal = replaceHit ? new THREE.Vector3(0, 1, 0) : hit.normal;
+    if (['torch', 'button', 'lever', 'ladder'].includes(placed.renderShape)
+      && !canAttachToFace(session.world,
+        x - attachmentNormal.x, y - attachmentNormal.y, z - attachmentNormal.z, attachmentNormal)) return;
+    if (['wire', 'rail', 'pressure_plate', 'door'].includes(placed.renderShape)
+      && !canAttachToFace(session.world, x, y - 1, z, { x: 0, y: 1, z: 0 })) return;
     if (item.placesBlockId === BlockId.OakDoor) {
       this.placeDoor(x, y, z);
       return;
     }
     if (item.placesBlockId === BlockId.Torch || item.placesBlockId === BlockId.RedstoneTorch) {
       const view = session.player.viewDirection();
-      const orientation = torchPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
+      const orientation = torchPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
       if (!orientation) {
         this.ui.toast('Факел нельзя поставить на потолок');
         return;
@@ -1887,7 +1899,7 @@ export class Game {
     }
     if (item.placesBlockId === BlockId.StoneButton) {
       const view = session.player.viewDirection();
-      const orientation = buttonPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
+      const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
       session.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
       return;
@@ -1898,7 +1910,7 @@ export class Game {
         this.ui.toast('Лестницу можно поставить только на боковую сторону блока');
         return;
       }
-      if (replaceHit || !hitDefinition.solid) {
+      if (replaceHit) {
         this.ui.toast('Лестнице нужна сплошная боковая опора');
         return;
       }
@@ -1907,11 +1919,6 @@ export class Game {
       return;
     }
     if (isPressurePlateBlock(item.placesBlockId)) {
-      const support = getBlockDefinition(session.world.getBlock(x, y - 1, z, false));
-      if (!support.solid) {
-        this.ui.toast('Нажимную пластину можно поставить только сверху блока');
-        return;
-      }
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
       return;
     }
@@ -1959,11 +1966,6 @@ export class Game {
       return;
     }
     if (isRailBlock(item.placesBlockId)) {
-      const support = getBlockDefinition(session.world.getBlock(x, y - 1, z, false));
-      if (!support.solid) {
-        this.ui.toast('Рельсы нужны на опоре');
-        return;
-      }
       if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
       session.world.setBlockState(x, y, z, {
         railShape: isolatedRailShapeFromYaw(session.player.yaw),
@@ -1982,23 +1984,13 @@ export class Game {
     if (session.world.setBlock(x, y, z, item.placesBlockId)) {
       session.redstone.notifyBlockChanged(x, y, z);
       if (item.placesBlockId === BlockId.Lever) {
-        const orientation = this.leverPlacement(hit);
+        const view = session.player.viewDirection();
+        const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
         session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
-      }
-      if (item.placesBlockId === BlockId.Water || item.placesBlockId === BlockId.Lava) {
-        session.world.setBlockState(x, y, z, { fluidLevel: 8 });
-        session.world.scheduleFluidAround(x, y, z, 1);
-        if (stack?.itemId === ItemId.WaterBucket || stack?.itemId === ItemId.LavaBucket) {
-          if (session.summary.mode === 'survival') {
-            session.inventory.setSlot(session.selectedSlot, createItemStack(ItemId.Bucket));
-          }
-        }
       }
       this.audio.playTone(230, 0.04, 0.025);
       this.firstPerson?.swing();
-      if (session.summary.mode === 'survival'
-        && stack?.itemId !== ItemId.WaterBucket
-        && stack?.itemId !== ItemId.LavaBucket) {
+      if (session.summary.mode === 'survival') {
         this.consumeSelected(1);
       }
     }
@@ -2038,11 +2030,6 @@ export class Game {
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
     return true;
-  }
-
-  private leverPlacement(hit: VoxelHit): { attachment: BlockAttachment; facing: HorizontalFacing } {
-    const view = this.session!.player.viewDirection();
-    return buttonPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, view.x, view.z);
   }
 
   private finishPlacingBlock(x: number, y: number, z: number, block: BlockId, solid: boolean): boolean {
@@ -2241,39 +2228,10 @@ export class Game {
   private damagePlayerFromMob(event: MobPlayerDamageEvent): void {
     const session = this.session!;
     if (session.summary.mode === 'creative') return;
-    const directionToAttacker = new THREE.Vector3().subVectors(event.position, session.player.position);
-    const shield = session.combat.resolveShieldHit({
-      damage: event.amount,
-      directionToAttacker,
-      defenderYaw: session.player.yaw,
-      projectile: event.source === 'arrow',
+    const damage = session.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
+      armor: session.inventory,
     });
-    if (shield.shieldDurabilityDamage > 0) this.damageEquippedShield(shield.shieldDurabilityDamage);
-    if (shield.receivedDamage > 0) {
-      const damage = session.survival.damage(shield.receivedDamage, event.source === 'arrow' ? 'projectile' : 'melee', {
-        armor: session.inventory,
-      });
-      if (damage.dealt > 0) {
-        const knockbackScale = event.amount > 0 ? shield.receivedDamage / event.amount : 0;
-        session.player.velocity.addScaledVector(event.knockback, knockbackScale);
-      }
-    } else if (shield.blocked) {
-      this.audio.playTone(185, 0.06, 0.045);
-    }
-  }
-
-  private damageEquippedShield(amount: number): void {
-    const session = this.session!;
-    if (session.summary.mode === 'creative') return;
-    const offhand = session.inventory.getSlot({ section: 'offhand' });
-    if (offhand?.itemId === ItemId.Shield) {
-      session.inventory.setSlot({ section: 'offhand' }, damageItem(offhand, amount));
-      return;
-    }
-    const selected = this.selectedStack();
-    if (selected?.itemId === ItemId.Shield) {
-      session.inventory.setSlot(session.selectedSlot, damageItem(selected, amount));
-    }
+    if (damage.dealt > 0) session.player.velocity.add(event.knockback);
   }
 
   private processExplosionQueue(): void {
@@ -2433,21 +2391,23 @@ export class Game {
     const definition = getBlockDefinition(block);
     if (block !== BlockId.Air && definition.replaceable !== true) return false;
     if (!session.world.setBlock(x, y, z, BlockId.Fire)) return false;
-    session.world.scheduleFluidAround(x, y, z, 1);
     return true;
   }
 
-  private useEmptyBucket(hit: VoxelHit | undefined): void {
+  private useBucket(hit?: VoxelHit): void {
     const session = this.session!;
-    if (!hit) return;
-    if (hit.block !== BlockId.Water && hit.block !== BlockId.Lava) return;
-    const source = (session.world.getBlockState(hit.x, hit.y, hit.z)?.fluidLevel ?? 8) >= 8
-      && session.world.getBlockState(hit.x, hit.y, hit.z)?.fluidFalling !== true;
-    if (!source) return;
-    const filled = hit.block === BlockId.Water ? ItemId.WaterBucket : ItemId.LavaBucket;
-    session.world.setBlock(hit.x, hit.y, hit.z, BlockId.Air);
-    session.world.scheduleFluidAround(hit.x, hit.y, hit.z, 1);
-    session.inventory.setSlot(session.selectedSlot, createItemStack(filled));
+    const context = {
+      world: session.world,
+      inventory: session.inventory,
+      selectedSlot: session.selectedSlot,
+      mode: session.summary.mode,
+      onDrop: (stack: ItemStack) => this.spawnDroppedStack(stack),
+    };
+    const changed = this.selectedStack()?.itemId === ItemId.Bucket
+      ? pickupFluidSource(context, session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH)
+      : placeBucketFluid(context, hit);
+    if (!changed) return;
+    session.redstone.notifyBlockChanged(changed.x, changed.y, changed.z);
     this.audio.playTone(260, 0.04, 0.025);
     this.firstPerson?.swing();
   }
@@ -2748,7 +2708,6 @@ export class Game {
       state.mining = this.input.mining && session.target !== undefined;
       state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
-      state.shieldRaised = session.combat.shieldActive;
       state.onFire = session.survival.isOnFire;
       state.invisible = session.survival.invisible;
       const invisible = session.survival.hasEffect('invisibility');
@@ -2766,7 +2725,6 @@ export class Game {
       state.mining = false;
       state.foodUseProgress = 0;
       state.bowCharge = 0;
-      state.shieldRaised = false;
       state.onFire = false;
       state.invisible = false;
       state.potionActive = false;

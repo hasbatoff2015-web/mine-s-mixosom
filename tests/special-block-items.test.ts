@@ -227,12 +227,12 @@ describe('oak door world model', () => {
   });
 });
 
-describe('shield gameplay hide', () => {
-  it('keeps the internal item but removes obtainable UI/recipe paths', () => {
-    expect(ITEMS.some((item) => item.id === ItemId.Shield)).toBe(true);
-    expect(isItemObtainable(ItemId.Shield)).toBe(false);
-    expect(obtainableItems().some((item) => item.id === ItemId.Shield)).toBe(false);
-    expect(CRAFTING_RECIPES.some((recipe) => recipe.output.item === ItemId.Shield)).toBe(false);
-    expect(itemHeldMeshKind('shield')).toBe('generated');
+describe('shield removal', () => {
+  it('has no internal, obtainable, recipe or render path', () => {
+    expect(ITEMS.some((item) => item.id === 'shield')).toBe(false);
+    expect(isItemObtainable('shield')).toBe(false);
+    expect(obtainableItems().some((item) => item.id === 'shield')).toBe(false);
+    expect(CRAFTING_RECIPES.some((recipe) => recipe.output.item === 'shield')).toBe(false);
+    expect(() => itemHeldMeshKind('shield')).toThrow();
   });
 });

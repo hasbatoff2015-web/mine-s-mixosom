@@ -1,5 +1,29 @@
 # Аудит локальных ассетов
 
+## Обновление 2026-08-27: authored items вместо generated placeholders
+
+Проверены реальные PNG и их содержимое; исходники не менялись. Это локальный импорт существующего пользовательского pack, не утверждение о лицензии/авторстве.
+
+| Source относительно assets/minecraft/textures | Runtime относительно public/textures | Размер |
+| --- | --- | --- |
+| items/bucket_empty.png | item/bucket.png | 32×32 |
+| items/bucket_water.png | item/water_bucket.png | 32×32 |
+| items/bucket_lava.png | item/lava_bucket.png | 32×32 |
+| items/minecart_normal.png | item/minecart.png | 32×32 |
+| entity/minecart.png | entity/minecart.png | 128×64 |
+| items/potion_bottle_empty.png | item/glass_bottle.png | 32×32 |
+| items/potion_bottle_drinkable.png + items/potion_overlay.png | item/potion_invisibility.png | 32×32 |
+| те же authored layers | item/potion_regeneration.png | 32×32 |
+| entity/projectiles/arrow.png (уже точная копия) | entity/arrow.png, без изменения PNG | 64×64 |
+
+Root cause: неверные optional names `items/bucket.png` / `items/potion.png`, отсутствующие potion compositions/entity minecart mapping; сохранённые 16px прямоугольные fallback items и 32px entity placeholder не перезаписывались обычной missing-only генерацией. Correct Water/Lava/Minecart mappings существовали optional, но текущие runtime PNG всё равно были placeholders. Теперь восемь целевых outputs принадлежат required authored pipeline, всегда overwrite; forced fallback их не рисует. Для сохранения остальных curated textures запускать `npm run assets:import -- --items-cleanup`. Полный import также использует эти правила, но может обновить остальные whitelist assets.
+
+Potion composition: tint overlay `[127,131,146]` invisibility / `[205,92,171]` regeneration из data table, authored bottle сверху; сохраняются alpha, cork/glass pixels и pixel grid, без resize/blur/procedural silhouette. PNG byte equality и повторяемость проверены тестами. `GeneratedItemGeometry`, extrusion, GUI/ground/held factory и общий pose не менялись.
+
+Arrow sheet не является item sprite: top row содержит два mirrored 32×10 профиля, нижняя 20×10 область — cross/end patch, остальное transparent. Новый mesh использует wood/head/feather crops первого профиля, не весь sheet на длинных crossed planes. Minecart exterior использует logical64×32 panel UV, не full sheet на каждой стенке.
+
+`public/textures/item/shield.png` удалён вместе с импортным mapping; source shield sheets оставлены. Восстановить прежний runtime PNG можно из Git, но runtime механика намеренно удалена.
+
 Дата аудита: 2026-08-16; runtime whitelist пересверен 2026-08-17
 Источник: `assets/`
 Исходная папка во время аудита не изменялась.
@@ -204,7 +228,7 @@ assets/
 - Iron tools: `iron_pickaxe.png`, `iron_axe.png`, `iron_shovel.png`, `iron_sword.png`.
 - Diamond tools: `diamond_pickaxe.png`, `diamond_axe.png`, `diamond_shovel.png`, `diamond_sword.png`.
 - Bow: `bow_standby.png`, `bow_pulling_0.png`, `bow_pulling_1.png`, `bow_pulling_2.png`; ammunition `arrow.png`; projectile UV также есть в `minecraft/textures/entity/projectiles/arrow.png`.
-- Shield: world/held texture `minecraft/textures/entity/shield_base_nopattern.png`; slot marker `items/empty_armor_slot_shield.png`. Отдельного плоского `items/shield.png` нет, поэтому inventory icon нужно рендерить из модели или заменить нейтральным собственным icon.
+- Shield source sheets остаются нетронутыми в assets, но не импортируются и не используются runtime (полное удаление механики 2026-08-27).
 - Leather armor icons: `leather_helmet.png`, `leather_chestplate.png`, `leather_leggings.png`, `leather_boots.png`. Overlay-файлы тоже присутствуют, но окрашивание не требуется.
 - Iron armor icons: `iron_helmet.png`, `iron_chestplate.png`, `iron_leggings.png`, `iron_boots.png`.
 - Gold armor icons: `gold_helmet.png`, `gold_chestplate.png`, `gold_leggings.png`, `gold_boots.png`.
@@ -292,7 +316,7 @@ Runtime whitelist после feel/polish pass включает все три `bo
 | Облачная текстура overworld | `clouds.png` отсутствует | Процедурные плоские облака или временно без облаков |
 | Mobile/touch icons и rotate-device art | Старый Java pack этого не покрывает | CSS/inline SVG из простых геометрических форм или текстовые labels |
 | Отдельные sprites для slab/stairs/button/pressure plate | Named PNG нет | Наследовать block material; это нормальная практика и не требует placeholder art |
-| Плоский shield item sprite | Есть entity UV и empty-slot marker, но нет `items/shield.png` | Рендерить icon из модели или создать оригинальный нейтральный placeholder |
+| Shield source sheets | Исходные entity UV остаются в assets | Не импортировать: механика и runtime asset удалены |
 | Рецепты, loot tables, registry data, локализация | В `assets` только визуальные ресурсы | Описать в собственных TypeScript data registries |
 
 ## Технические рекомендации импорта

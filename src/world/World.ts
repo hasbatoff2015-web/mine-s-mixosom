@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { migrateLegacyStack } from '../inventory/legacyItems';
 import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
 import { rayAabbDistance } from './collision';
 import { blockSelectionBoxes } from './selection';
@@ -38,6 +39,8 @@ import { chebyshevChunkDistance, neighborFluidMeshOffsets, neighborMeshOffsets }
 import {
   FLUID_QUEUE_CAP,
   activateGeneratedFluidBoundaries,
+  fluidTickDelay,
+  isFluidBlock,
   processFluidQueue,
 } from './fluids';
 import {
@@ -112,6 +115,7 @@ export interface ScheduledFluidTick {
   y: number;
   z: number;
   due: number;
+  readonly block: BlockId;
 }
 
 export interface FluidHudStats {
@@ -171,7 +175,7 @@ export class VoxelWorld {
   private readonly scheduledKeys = new Set<string>();
   private readonly pendingFalls: FallingBlockSpawn[] = [];
   private fluidScheduled: ScheduledFluidTick[] = [];
-  private readonly fluidKeys = new Set<string>();
+  private readonly fluidKeys = new Map<string, ScheduledFluidTick>();
   private trackFluidDirty = false;
   private readonly fluidMeshDirtyKeys = new Set<string>();
   private readonly fluidLightDirtyKeys = new Set<string>();
@@ -187,8 +191,14 @@ export class VoxelWorld {
       for (const [index, block] of Object.entries(entries)) delta.set(Number(index), block as BlockId);
       this.modifications.set(key, delta);
     }
-    for (const [key, value] of Object.entries(state.chests)) this.chests.set(key, value as ChestState);
-    for (const [key, value] of Object.entries(state.furnaces)) this.furnaces.set(key, value as FurnaceState);
+    for (const [key, value] of Object.entries(state.chests)) {
+      const chest = value as ChestState;
+      this.chests.set(key, { ...chest, slots: chest.slots.map(migrateLegacyStack) });
+    }
+    for (const [key, value] of Object.entries(state.furnaces)) {
+      const furnace = value as FurnaceState;
+      this.furnaces.set(key, { ...furnace, slots: furnace.slots.map(migrateLegacyStack) as FurnaceState['slots'] });
+    }
     if (state.blockStates) {
       for (const [key, value] of Object.entries(state.blockStates)) {
         this.blockStates.set(key, value as BlockRenderState);
@@ -424,7 +434,7 @@ export class VoxelWorld {
       if (scheduleNeighbors) {
         this.schedule(mutation.x, mutation.y, mutation.z, 1);
         this.schedule(mutation.x, mutation.y + 1, mutation.z, 1);
-        this.scheduleFluidAround(mutation.x, mutation.y, mutation.z, 1);
+        this.scheduleFluidAround(mutation.x, mutation.y, mutation.z);
       }
     }
 
@@ -542,6 +552,8 @@ export class VoxelWorld {
     const chunk = this.getChunk(chunkX, chunkZ)!;
     const previous = chunk.get(localX, y, localZ) as BlockId;
     if (previous === block) return undefined;
+    // A new material/lifetime must not inherit an old pending (or in-flight) deadline.
+    this.cancelFluidTick(x, y, z);
     const previousDefinition = getBlockDefinition(previous);
     chunk.set(localX, y, localZ, block);
     if (block === BlockId.Air || !getBlockDefinition(block).liquid) {
@@ -833,7 +845,12 @@ export class VoxelWorld {
     return getBlockDefinition(this.getBlock(x, y, z)).liquid === true;
   }
 
-  raycast(origin: THREE.Vector3, direction: THREE.Vector3, maxDistance: number): VoxelHit | undefined {
+  raycast(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    maxDistance: number,
+    options: { readonly stopOnLiquids?: boolean } = {},
+  ): VoxelHit | undefined {
     const dir = direction.clone().normalize();
     let x = Math.floor(origin.x);
     let y = Math.floor(origin.y);
@@ -851,8 +868,8 @@ export class VoxelWorld {
     while (distance <= maxDistance) {
       const block = this.getBlock(x, y, z);
       const definition = getBlockDefinition(block);
-      if (block !== BlockId.Air && !definition.liquid) {
-        const hit = this.hitSelectionBoxes(origin, dir, x, y, z, block, maxDistance);
+      if (block !== BlockId.Air && (!definition.liquid || options.stopOnLiquids)) {
+        const hit = this.hitSelectionBoxes(origin, dir, x, y, z, block, maxDistance, definition.liquid === true);
         if (hit) return hit;
       }
       if (maxX < maxY && maxX < maxZ) {
@@ -880,9 +897,13 @@ export class VoxelWorld {
     z: number,
     block: BlockId,
     maxDistance: number,
+    liquid = false,
   ): VoxelHit | undefined {
     let best: ReturnType<typeof rayAabbDistance>;
-    for (const box of blockSelectionBoxes(this, x, y, z)) {
+    const boxes = liquid
+      ? [{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 }]
+      : blockSelectionBoxes(this, x, y, z);
+    for (const box of boxes) {
       const hit = rayAabbDistance(origin, dir, box);
       if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
       if (!best || hit.distance < best.distance) best = hit;
@@ -931,24 +952,44 @@ export class VoxelWorld {
     return chebyshevChunkDistance(cx, cz, this.viewChunkX, this.viewChunkZ) > fluidRadius;
   }
 
-  scheduleFluid(x: number, y: number, z: number, delay = 1): void {
+  /** New work always observes the receiving material's rate, including legacy delay=1 callers. */
+  scheduleFluid(x: number, y: number, z: number, delay = 0): void {
     if (y < 0 || y >= WORLD_HEIGHT) return;
+    const block = this.getBlock(x, y, z, false);
+    if (!isFluidBlock(block)) return;
+    this.enqueueFluid(x, y, z, block, this.tickNumber + Math.max(fluidTickDelay(block), delay));
+  }
+
+  private cancelFluidTick(x: number, y: number, z: number): void {
     const key = blockKey(x, y, z);
-    const due = this.tickNumber + Math.max(1, delay);
-    if (this.fluidKeys.has(key)) {
+    const entry = this.fluidKeys.get(key);
+    if (!entry) return;
+    this.fluidKeys.delete(key);
+    this.fluidScheduled = this.fluidScheduled.filter((scheduled) => scheduled !== entry);
+  }
+
+  /** Promoting existing flow to a placed source starts a new causal lifetime. */
+  restartFluidSchedule(x: number, y: number, z: number): void {
+    this.cancelFluidTick(x, y, z);
+    this.scheduleFluidAround(x, y, z);
+  }
+
+  private enqueueFluid(x: number, y: number, z: number, block: BlockId, due: number): void {
+    const key = blockKey(x, y, z);
+    const existing = this.fluidKeys.get(key);
+    if (existing) {
       this.fluidDedupe += 1;
-      const existing = this.fluidScheduled.find((entry) => entry.x === x && entry.y === y && entry.z === z);
-      if (existing && existing.due <= due) return;
-      if (existing) existing.due = due;
+      if (existing.due > due) existing.due = due;
       return;
     }
     if (this.fluidScheduled.length >= FLUID_QUEUE_CAP) return;
-    this.fluidKeys.add(key);
-    this.fluidScheduled.push({ x, y, z, due });
+    const entry = { x, y, z, block, due };
+    this.fluidKeys.set(key, entry);
+    this.fluidScheduled.push(entry);
     this.fluidQueuePeak = Math.max(this.fluidQueuePeak, this.fluidScheduled.length);
   }
 
-  scheduleFluidAround(x: number, y: number, z: number, delay = 1): void {
+  scheduleFluidAround(x: number, y: number, z: number, delay = 0): void {
     this.scheduleFluid(x, y, z, delay);
     this.scheduleFluid(x + 1, y, z, delay);
     this.scheduleFluid(x - 1, y, z, delay);
@@ -956,6 +997,20 @@ export class VoxelWorld {
     this.scheduleFluid(x, y - 1, z, delay);
     this.scheduleFluid(x, y, z + 1, delay);
     this.scheduleFluid(x, y, z - 1, delay);
+  }
+
+  /** Consume only a still-live due ticket; mutations may invalidate an extracted job. */
+  consumeDueFluid(entry: ScheduledFluidTick): boolean {
+    const key = blockKey(entry.x, entry.y, entry.z);
+    if (entry.due > this.tickNumber || this.fluidKeys.get(key) !== entry) return false;
+    this.fluidKeys.delete(key);
+    return this.getBlock(entry.x, entry.y, entry.z, false) === entry.block;
+  }
+
+  /** Budget retry only: this ticket has already waited its material delay. */
+  retryDueFluid(entry: ScheduledFluidTick): void {
+    if (!this.consumeDueFluid(entry)) return;
+    this.enqueueFluid(entry.x, entry.y, entry.z, entry.block, this.tickNumber + 1);
   }
 
   takeDueFluids(max: number): ScheduledFluidTick[] {
@@ -978,7 +1033,6 @@ export class VoxelWorld {
         kept.push(scheduled);
         continue;
       }
-      this.fluidKeys.delete(blockKey(scheduled.x, scheduled.y, scheduled.z));
       due.push(scheduled);
     }
     this.fluidScheduled = kept;

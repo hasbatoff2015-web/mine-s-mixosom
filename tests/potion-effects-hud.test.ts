@@ -29,7 +29,6 @@ function frameState(overrides: Partial<FirstPersonFrameState> = {}): FirstPerson
     mining: false,
     foodUseProgress: 0,
     bowCharge: 0,
-    shieldRaised: false,
     ...overrides,
   };
 }

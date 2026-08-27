@@ -169,54 +169,6 @@ const icons = {
     Y: px(255, 236, 96),
     F: px(255, 132, 22),
   }),
-  'item/glass_bottle.png': (x, y) => {
-    const dx = Math.abs(x - 7.5);
-    const neck = y >= 1 && y <= 4 && dx <= 2;
-    const body = y >= 5 && y <= 14 && dx <= 4 + (y - 5) * 0.05;
-    if (!neck && !body) return px(0, 0, 0, 0);
-    if (dx >= 3.6 || y === 5 || y === 14 || (neck && dx >= 1.6)) return px(210, 230, 235);
-    return px(160, 200, 210, 90);
-  },
-  'item/potion_invisibility.png': (x, y) => {
-    const dx = Math.abs(x - 7.5);
-    const neck = y >= 1 && y <= 4 && dx <= 2;
-    const body = y >= 5 && y <= 14 && dx <= 4;
-    if (!neck && !body) return px(0, 0, 0, 0);
-    if (dx >= 3.6 || y === 5 || y === 14 || (neck && dx >= 1.6)) return px(210, 230, 235);
-    if (y >= 7) return px(180, 170, 210);
-    return px(160, 200, 210, 80);
-  },
-  'item/potion_regeneration.png': (x, y) => {
-    const dx = Math.abs(x - 7.5);
-    const neck = y >= 1 && y <= 4 && dx <= 2;
-    const body = y >= 5 && y <= 14 && dx <= 4;
-    if (!neck && !body) return px(0, 0, 0, 0);
-    if (dx >= 3.6 || y === 5 || y === 14 || (neck && dx >= 1.6)) return px(210, 230, 235);
-    if (y >= 7) return px(255, 90, 150);
-    return px(160, 200, 210, 80);
-  },
-  'item/bucket.png': (x, y) => {
-    if (y < 4 || y > 14 || x < 2 || x > 13) return px(0, 0, 0, 0);
-    if (x === 2 || x === 13 || y === 14 || y === 4) return px(90, 90, 95);
-    return px(150, 150, 158);
-  },
-  'item/water_bucket.png': (x, y) => {
-    if (y < 4 || y > 14 || x < 2 || x > 13) return px(0, 0, 0, 0);
-    if (x === 2 || x === 13 || y === 14 || y === 4) return px(90, 90, 95);
-    if (y >= 7) return px(40, 90, 200);
-    return px(150, 150, 158);
-  },
-  'item/lava_bucket.png': (x, y) => {
-    if (y < 4 || y > 14 || x < 2 || x > 13) return px(0, 0, 0, 0);
-    if (x === 2 || x === 13 || y === 14 || y === 4) return px(90, 90, 95);
-    if (y >= 7) return px(220, 90, 20);
-    return px(150, 150, 158);
-  },
-  'item/minecart.png': (x, y) => {
-    if (y < 6 || y > 14 || x < 1 || x > 14) return px(0, 0, 0, 0);
-    if (y >= 11) return (x + y) % 2 === 0 ? px(50, 50, 55) : px(80, 80, 86);
-    return px(120, 120, 128);
-  },
   'block/cobweb.png': (x, y) => {
     const diag = Math.abs(x - y) <= 1 || Math.abs(x + y - 15) <= 1;
     const plus = x === 7 || x === 8 || y === 7 || y === 8;
@@ -230,11 +182,6 @@ const icons = {
     if (rail) return px(140, 140, 148);
     if (sleeper && x >= 2 && x <= 13) return px(110, 70, 30);
     return px(0, 0, 0, 0);
-  },
-  'entity/minecart.png': (x, y) => {
-    if (y < 8) return px(0, 0, 0, 0);
-    if (y >= 20) return (x + y) % 2 === 0 ? px(40, 40, 44) : px(70, 70, 76);
-    return px(110, 110, 118);
   },
 };
 

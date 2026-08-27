@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TextureAtlas } from './TextureAtlas';
+import { createTexturedCuboidGeometry } from './TexturedCuboid';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 
 export const MINECART_ENTITY_KIND = 'minecart-entity';
@@ -49,6 +50,7 @@ export function minecartFloorMesh(visual: THREE.Object3D): THREE.Mesh | undefine
  */
 export class MinecartVisualFactory {
   private readonly geometries: THREE.BufferGeometry[] = [];
+  private readonly geometryCache = new Map<string, THREE.BufferGeometry>();
   private readonly materials: THREE.Material[] = [];
   private readonly textures: THREE.Texture[] = [];
   private outer?: THREE.MeshBasicMaterial;
@@ -139,6 +141,7 @@ export class MinecartVisualFactory {
     for (const material of this.materials) material.dispose();
     for (const texture of this.textures) texture.dispose();
     this.geometries.length = 0;
+    this.geometryCache.clear();
     this.materials.length = 0;
     this.textures.length = 0;
   }
@@ -149,8 +152,23 @@ export class MinecartVisualFactory {
     position: readonly [number, number, number],
     material: THREE.Material,
   ): THREE.Mesh {
-    const geometry = new THREE.BoxGeometry(size[0], size[1], size[2]);
-    this.geometries.push(geometry);
+    const exterior = material === this.outer;
+    const key = `${exterior}:${size.join(',')}`;
+    let geometry = this.geometryCache.get(key);
+    if (!geometry) {
+      if (exterior) {
+        // Authored 128×64 entity sheet, logical 64×32 box-unfold layout.
+        // Each wall uses its 0,0 panel, not the entire sheet on every face.
+        const rotated = size[0] < size[2];
+        geometry = createTexturedCuboidGeometry({
+          size: [rotated ? 16 : 20, 8, 2], textureOffset: [0, 0], logicalTextureSize: [64, 32],
+          physicalSize: rotated ? [size[2], size[1], size[0]] : size,
+        });
+        if (rotated) geometry.rotateY(Math.PI / 2);
+      } else geometry = new THREE.BoxGeometry(size[0], size[1], size[2]);
+      this.geometryCache.set(key, geometry);
+      this.geometries.push(geometry);
+    }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(position[0], position[1], position[2]);
     bindEntityLightReceiver(mesh);

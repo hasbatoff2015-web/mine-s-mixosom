@@ -40,7 +40,6 @@ export interface FirstPersonFrameState {
   mining: boolean;
   foodUseProgress: number;
   bowCharge: number;
-  shieldRaised: boolean;
   onFire?: boolean;
   invisible?: boolean;
   potionActive?: boolean;
@@ -49,7 +48,6 @@ export interface FirstPersonFrameState {
 
 const ARM_BASE_POSITION = Object.freeze([0.53, -0.48, -0.84] as const);
 const ARM_BASE_ROTATION = Object.freeze([-0.48, 0.18, -0.30] as const);
-const OFFHAND_SHIELD_POSITION = Object.freeze([-0.52, -0.33, -0.82] as const);
 
 /** Separate camera-space scene rendered after the world with a fresh depth buffer. */
 export class FirstPersonRenderer {
@@ -58,7 +56,6 @@ export class FirstPersonRenderer {
   readonly root = new THREE.Group();
   private readonly armPivot = new THREE.Group();
   private readonly itemHolder = new THREE.Group();
-  private readonly offhandHolder = new THREE.Group();
   private readonly armGeometry = createTexturedCuboidGeometry({
     size: [4, 12, 4],
     textureOffset: [40, 16],
@@ -68,9 +65,7 @@ export class FirstPersonRenderer {
   private readonly armTexture: THREE.Texture;
   private readonly armMaterial: THREE.MeshLambertMaterial;
   private mainModel?: THREE.Group;
-  private offhandModel?: THREE.Group;
   private mainItem?: string;
-  private offhandItem?: string;
   private mainCategory?: ItemRenderCategory;
   private elapsedSeconds = 0;
   private walkPhase = 0;
@@ -101,14 +96,13 @@ export class FirstPersonRenderer {
     const key = new THREE.DirectionalLight(0xffe4c2, 1.9);
     key.position.set(-2, 4, 3);
     this.scene.add(key, this.root);
-    this.root.add(this.armPivot, this.itemHolder, this.offhandHolder);
+    this.root.add(this.armPivot, this.itemHolder);
     this.armTexture = this.createDefaultArmTexture();
     this.armMaterial = new THREE.MeshLambertMaterial({ map: this.armTexture, flatShading: true });
     const arm = new THREE.Mesh(this.armGeometry, this.armMaterial);
     arm.name = 'first-person:right-arm';
     arm.position.y = -0.22;
     this.armPivot.add(arm);
-    this.offhandHolder.visible = false;
     this.fireOverlay = SharedFireTexture.instance().createFirstPersonOverlay();
     this.fireOverlay.visible = false;
     this.scene.add(this.fireOverlay);
@@ -136,7 +130,7 @@ export class FirstPersonRenderer {
     this.heldQaOverride = override;
   }
 
-  setHeldItems(mainItemId?: string, offhandItemId?: string): void {
+  setHeldItems(mainItemId?: string): void {
     if (mainItemId !== this.mainItem) {
       this.mainModel?.removeFromParent();
       this.mainModel = mainItemId ? this.visuals.createItemModel(mainItemId) : undefined;
@@ -146,12 +140,6 @@ export class FirstPersonRenderer {
       this.syncArmVisibility();
       this.bowTexturePath = 'item/bow';
       this.equipProgress = 0;
-    }
-    if (offhandItemId !== this.offhandItem) {
-      this.offhandModel?.removeFromParent();
-      this.offhandModel = offhandItemId ? this.visuals.createItemModel(offhandItemId) : undefined;
-      if (this.offhandModel) this.offhandHolder.add(this.offhandModel);
-      this.offhandItem = offhandItemId;
     }
   }
 
@@ -226,15 +214,8 @@ export class FirstPersonRenderer {
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
       if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
-      if (this.mainCategory === 'shield' && state.shieldRaised) this.applyShieldPose(this.mainModel, false);
     }
 
-    const offhandShieldRaised = this.offhandItem === 'shield' && state.shieldRaised && this.mainItem !== 'shield';
-    this.offhandHolder.visible = offhandShieldRaised;
-    if (offhandShieldRaised && this.offhandModel) {
-      applyItemViewTransform(this.offhandModel, itemRenderProfile('shield').transforms.firstPersonRightHand);
-      this.applyShieldPose(this.offhandModel, true);
-    }
   }
 
   render(renderer: THREE.WebGLRenderer): void {
@@ -341,7 +322,6 @@ export class FirstPersonRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.mainModel?.removeFromParent();
-    this.offhandModel?.removeFromParent();
     this.armGeometry.dispose();
     this.armMaterial.dispose();
     this.armTexture.dispose();
@@ -374,16 +354,6 @@ export class FirstPersonRenderer {
     if (texturePath === this.bowTexturePath) return;
     this.visuals.setGeneratedTextureVariant(model, texturePath);
     this.bowTexturePath = texturePath;
-  }
-
-  private applyShieldPose(model: THREE.Object3D, leftHand: boolean): void {
-    model.position.set(
-      leftHand ? OFFHAND_SHIELD_POSITION[0] : 0.20,
-      OFFHAND_SHIELD_POSITION[1] + 0.12,
-      OFFHAND_SHIELD_POSITION[2] + 0.18,
-    );
-    model.rotation.set(-0.16, leftHand ? 0.58 : -0.58, leftHand ? 0.10 : -0.10);
-    model.scale.setScalar(0.72);
   }
 
   private createDefaultArmTexture(): THREE.Texture {

@@ -83,7 +83,6 @@ function idleFrame(overrides: Partial<FirstPersonFrameState> = {}): FirstPersonF
     mining: false,
     foodUseProgress: 0,
     bowCharge: 0,
-    shieldRaised: false,
     ...overrides,
   };
 }

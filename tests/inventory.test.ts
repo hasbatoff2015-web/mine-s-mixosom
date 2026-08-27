@@ -40,14 +40,14 @@ describe('Inventory', () => {
     expect(cursor).toBeNull();
   });
 
-  it('enforces armor slots while allowing a shield in offhand', () => {
+  it('enforces armor slots while retaining generic offhand storage', () => {
     const inventory = new Inventory();
     const helmet = createItemStack(ItemId.IronHelmet);
     inventory.setSlot({ section: 'armor', slot: 'head' }, helmet);
-    inventory.setSlot({ section: 'offhand' }, createItemStack(ItemId.Shield));
+    inventory.setSlot({ section: 'offhand' }, createItemStack('torch'));
 
     expect(inventory.armor.head?.itemId).toBe(ItemId.IronHelmet);
-    expect(inventory.offhand?.itemId).toBe(ItemId.Shield);
+    expect(inventory.offhand?.itemId).toBe('torch');
     expect(() => inventory.setSlot(
       { section: 'armor', slot: 'feet' },
       createItemStack(ItemId.IronHelmet),

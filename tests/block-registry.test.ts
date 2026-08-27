@@ -127,9 +127,10 @@ describe('item registry', () => {
     });
   });
 
-  it('hides the shield from obtainable gameplay lists', () => {
-    expect(getItemDefinition(ItemId.Shield).hiddenFromGameplay).toBe(true);
-    expect(ITEMS.filter((item) => item.hiddenFromGameplay !== true).some((item) => item.id === ItemId.Shield)).toBe(false);
+  it('removes shield from the registry, not just obtainable lists', () => {
+    expect(() => getItemDefinition('shield')).toThrow();
+    expect(ITEMS.some((item) => item.id === 'shield')).toBe(false);
+    expect('Shield' in ItemId).toBe(false);
   });
 
   it('hides legacy stone_stairs from obtainable gameplay lists', () => {

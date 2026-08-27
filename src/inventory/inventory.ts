@@ -1,4 +1,5 @@
 import { getItemDefinition, type ArmorSlot } from '../items';
+import { migrateLegacyStack } from './legacyItems';
 import {
   applySlotClick,
   canStacksMerge,
@@ -32,6 +33,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseStack(value: unknown): ItemStack | null {
+  value = migrateLegacyStack(value);
   if (value === null) return null;
   if (!isRecord(value) || typeof value.itemId !== 'string' || typeof value.count !== 'number') {
     throw new TypeError('Serialized item stack is malformed');
@@ -232,11 +234,6 @@ export class Inventory {
           this.setSlot(ref, null);
           return true;
         }
-      }
-      if (definition.kind === 'shield' && this.#offhand === null) {
-        this.#offhand = cloneStack(source);
-        this.setSlot(ref, null);
-        return true;
       }
 
       const targetIndices = ref < Inventory.HOTBAR_SIZE
