@@ -2,7 +2,17 @@
 
 Срез: **2026-08-28**. Версия: `0.1.0`, playable alpha.
 
-## Последний проход: gameplay / UI / entity polish
+## Последний проход: creeper / fence / plants / tooltip / RU localization
+
+- Git baseline: `9dc3300` (`origin/main`), ветка `cursor/mob-collision-tooltip-ru-polish-b257`.
+- Creeper death uses the generic corpse pose: `state === 'die'` has priority over fuse pulse. `beginDeath` zeros `fuseSeconds`. Self-explosion still removes immediately without a corpse or gunpowder drop.
+- Fence collision stays visual 1 / collision 1.5. Player and mob broadphase use `collisionCandidateCellRange` with `MAX_BLOCK_COLLISION_Y_OVERHANG = 0.5` so an airborne AABB still sees the fence cell below. Jump velocity and step height are unchanged; slabs/stairs still step up.
+- Vegetation (TallGrass, Fern, Dandelion, Poppy, OxeyeDaisy, DeadBush) joins the existing support-integrity queue. Grass/fern/flowers need GrassBlock or Dirt; DeadBush needs Sand. Unsupported plants become Air without new inventory items. Cobweb/Fire are not plants. Water can still replace plants.
+- Golden Apple Absorption I remains 4 HP / 2400 ticks and does not stack past 4; re-eating replenishes to 4 and refreshes duration. HUD reads `session.survival.absorption` in Survival **and** Creative.
+- Item hover uses one shared `.mc-item-tooltip` (delegated pointer events). Native `title` is removed from item slots. Internal IDs stay English; `src/i18n/ru.ts` supplies explicit Russian display names for all registry items/blocks. Recipe Book search matches Russian names.
+- Report: `docs/reports/2026-08-28_creeper-fence-plants-tooltip-ru-polish.md`.
+
+## Сохранённый проход: gameplay / UI / entity polish
 
 - Git baseline: `67afc97` (`origin/main`), ветка `cursor/gameplay-ui-entity-polish-935a`.
 - Vertical melee KB is a documented Frontier adaptation: `FRONTIER_MELEE_VERTICAL_SCALE = 0.67` applies **only to Y**. Flat apex ≈ 0.576 / 0.841 (normal/sprint), half of the previous 1.153 / 1.709. Horizontal impulse stays 8 / 18 b/s. 20-tick open XZ is slightly shorter only because the mob lands earlier into grounded drag.
@@ -13,13 +23,13 @@
 - Chicken legs sample pack UV `[29,0]` (vanilla `[26,0]` is transparent on this sheet). Box/pivots unchanged.
 - Stair `resolveStairShape` maps a perpendicular neighbor on the high/`facing` side to **outer** occupancy (3/4 inner vs 1/4 outer were inverted). Mesh, collision and selection share the same shape.
 - Player-fired resting/embedded arrows are pickable (`Inventory.addItem`). Full inventory leaves the entity. Creative consumes the world arrow without inflating stacks. Skeleton arrows follow Java 1.8 `canBePickedUp=0`. Ground lifetime 60s; flying timeout stays 8s.
-- Golden Apple Absorption I + Regeneration II backend unchanged. HUD shows yellow hearts to the **right** of the 10 red hearts. Effect expiry zeros remaining absorption HP. Save stores `absorption` + `absorptionTicks`.
+- Golden Apple Absorption I + Regeneration II. HUD shows yellow hearts to the **right** of the 10 red hearts in Survival and Creative. Ordinary apples set absorption to 4 HP (not stacked). Effect expiry zeros remaining absorption HP. Save stores `absorption` + `absorptionTicks`.
 - Report: `docs/reports/2026-08-28_gameplay-ui-entity-polish.md`.
 
 ## Сохранённый interaction / support / input / mob polish
 
 - Git baseline at that pass: `3b9e68e`. Button/Lever используют общие oriented cuboids для mesh, outline и AABB raycast. Redstone публикует attachment/facing/powered в world state: actual DDA и проверка опор видят то же состояние, что renderer.
-- Локальная deferred support integrity для Torch/RedstoneTorch/Button/Lever/Ladder/Wire/обеих Plates/Rail: changed cell + 6 соседей, dedupe, бюджет256 проверок за проход. Потеря sturdy face → Air, очистка state/light/redstone, ровно один environmental world drop через Game/DroppedItemManager. Работает и после explosion/batch; неизвестная unloaded опора не считается Air.
+- Локальная deferred support integrity для Torch/RedstoneTorch/Button/Lever/Ladder/Wire/обеих Plates/Rail **и vegetation** (tall grass/fern/flowers/dead bush): changed cell + 6 соседей, dedupe, бюджет256 проверок за проход. Потеря sturdy face → Air, очистка state/light/redstone, ровно один environmental world drop через Game/DroppedItemManager. Plants with `drop:false` vanish without an item. Работает и после explosion/batch; неизвестная unloaded опора не считается Air.
 - `fluidDisplaceable` отделён от placement `replaceable`: вода смывает Torch/RedstoneTorch/Button/Lever/Wire/Rail. Ladder/door/chest/fence/slab/stair/plates не смываются. Fluid routing, delays и buckets не перенастраивались.
 - Обе системы стрел сохраняют impact block/point/velocity, проверяют поддержку embedded arrow на fixed tick и возвращают её в существующую flight physics при потере блока/формы. Visual geometry/caps не менялись; player-fired resting arrows теперь pickable (см. текущий polish).
 - Desktop: raw Pointer Lock request с одноразовым plain fallback только при unsupported options; `?inputDebug=1` в DEV различает lock events и delta spikes. Нет обычного smoothing/clamp; изолированный экстремальный sample проверяется по tiny history. **Проблемный ПК ещё требует проверки**, автоматизированный браузер не получает native lock.
@@ -61,9 +71,9 @@
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×96`, plains/forest/desert, periodic mountains (+10…+20), deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
-| Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision, fall damage, water/lava |
+| Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
-| Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, 3D cached block icons, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs, close × outside panel |
+| Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs, close × outside panel |
 | Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI, furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT with TNT texture + fuse tint pulse, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |

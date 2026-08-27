@@ -30,6 +30,41 @@ export interface CollisionBox {
   readonly maxZ: number;
 }
 
+export interface CollisionCellRange {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+  readonly minZ: number;
+  readonly maxZ: number;
+}
+
+/** Fence collision is 1.5 high while occupying the Y=n voxel, so queries must look one cell down. */
+export const MAX_BLOCK_COLLISION_Y_OVERHANG = 0.5;
+
+/**
+ * Candidate voxel cells whose authored collision may intersect the AABB.
+ * Expands minY by at most one cell for upward overhang; does not scan a wide halo.
+ */
+export function collisionCandidateCellRange(
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number,
+  epsilon = 1e-5,
+): CollisionCellRange {
+  return {
+    minX: Math.floor(minX + epsilon),
+    maxX: Math.floor(maxX - epsilon),
+    minY: Math.floor(minY - MAX_BLOCK_COLLISION_Y_OVERHANG + epsilon),
+    maxY: Math.floor(maxY - epsilon),
+    minZ: Math.floor(minZ + epsilon),
+    maxZ: Math.floor(maxZ - epsilon),
+  };
+}
+
 const DOOR_THICKNESS = 3 / 16;
 
 export function blockCollisionBoxes(

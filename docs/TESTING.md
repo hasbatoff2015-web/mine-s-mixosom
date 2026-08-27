@@ -1,5 +1,20 @@
 # Тестирование
 
+## 2026-08-28 creeper / fence / plants / tooltip / RU polish
+
+Актуальный отчёт: `reports/2026-08-28_creeper-fence-plants-tooltip-ru-polish.md`. Baseline `origin/main`=`9dc3300`.
+
+Targeted file: `tests/creeper-fence-plants-tooltip-ru.test.ts` plus retained `entities`, `player-physics`, `interaction-support-polish`, `gameplay-ui-entity-polish`, `heart-hud`, `container-ui`, `content-pass`, `block-registry`, `chat-commands`.
+
+- Creeper player-kill death pose (`rotation.z > 0` at half duration), primed-fuse cancel, self-explosion still removes immediately without drops.
+- Fence 1.5 collision during walk/jump/elevated feet; connected/corner; slab/stairs step-up; mob broadphase; visual height remains 1.
+- TallGrass/Fern/Flower/DeadBush support-loss via existing queue; cobweb/fire excluded; water replaceable plants drop nothing.
+- Golden Apple absorption 0→4, 1→4, 4→4; duration refresh 300→2400; Creative HUD no longer zeros absorption; expiry and save/restore.
+- Item slot HTML has no native item `title`; tooltip clamp; dynamic hover metadata patch.
+- Exhaustive Russian mapping for `obtainableItems()` and every `BLOCKS` key; Recipe Book search `меч` / `алмаз` / `доски`.
+
+Unrelated timeout thresholds were not changed.
+
 ## 2026-08-28 gameplay / UI / entity polish
 
 Актуальный отчёт: `reports/2026-08-28_gameplay-ui-entity-polish.md`. Baseline HEAD=`67afc97`.

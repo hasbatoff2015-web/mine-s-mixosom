@@ -819,6 +819,29 @@ button {
   transform: translate(8px, 8px);
 }
 
+.mc-item-tooltip {
+  position: fixed;
+  z-index: 55;
+  display: none;
+  pointer-events: none;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 3px 6px;
+  color: #ffffff;
+  background: rgba(16, 0, 16, 0.94);
+  border: 2px solid #21004a;
+  box-shadow: inset 0 0 0 1px #5000b4;
+  border-radius: 0;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: 1px 1px #3f3f3f;
+}
+
+.mc-item-tooltip.is-visible {
+  display: block;
+}
+
 .mc-backdrop {
   align-items: center;
   justify-content: center;

@@ -130,8 +130,15 @@ function patchKeyedHost(host: Element, nextHtml: string, keyAttr: 'data-slot' | 
     if ((current.dataset.sig ?? '') === (incoming.dataset.sig ?? '')) continue;
     current.className = incoming.className;
     current.innerHTML = incoming.innerHTML;
-    current.title = incoming.title;
+    current.removeAttribute('title');
     current.dataset.sig = incoming.dataset.sig ?? '';
+    if (incoming.dataset.itemTooltip) current.dataset.itemTooltip = incoming.dataset.itemTooltip;
+    else delete current.dataset.itemTooltip;
+    if (incoming.dataset.itemId) current.dataset.itemId = incoming.dataset.itemId;
+    else delete current.dataset.itemId;
+    const aria = incoming.getAttribute('aria-label');
+    if (aria) current.setAttribute('aria-label', aria);
+    else current.removeAttribute('aria-label');
     if (incoming.dataset.ghost) current.dataset.ghost = incoming.dataset.ghost;
     else delete current.dataset.ghost;
     if (incoming.dataset.armor) current.dataset.armor = incoming.dataset.armor;

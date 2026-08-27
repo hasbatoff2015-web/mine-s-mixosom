@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
-import { blockCollisionBoxes } from '../world/collision';
+import { blockCollisionBoxes, collisionCandidateCellRange } from '../world/collision';
 
 const COLLISION_EPSILON = 1e-5;
 
@@ -65,16 +65,13 @@ function collidingBoxes(
   shape: VoxelBodyShape,
 ): Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }> {
   const body = bodyAabb(position, shape);
-  const minX = Math.floor(body.minX + COLLISION_EPSILON);
-  const maxX = Math.floor(body.maxX - COLLISION_EPSILON);
-  const minY = Math.floor(body.minY + COLLISION_EPSILON);
-  const maxY = Math.floor(body.maxY - COLLISION_EPSILON);
-  const minZ = Math.floor(body.minZ + COLLISION_EPSILON);
-  const maxZ = Math.floor(body.maxZ - COLLISION_EPSILON);
+  const cells = collisionCandidateCellRange(
+    body.minX, body.minY, body.minZ, body.maxX, body.maxY, body.maxZ, COLLISION_EPSILON,
+  );
   const collected = [];
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let z = minZ; z <= maxZ; z += 1) {
-      for (let x = minX; x <= maxX; x += 1) {
+  for (let y = cells.minY; y <= cells.maxY; y += 1) {
+    for (let z = cells.minZ; z <= cells.maxZ; z += 1) {
+      for (let x = cells.minX; x <= cells.maxX; x += 1) {
         const solids = blockCollisionBoxes(world, x, y, z);
         for (const box of solids) {
           if (boxesOverlap(body, box)) collected.push(box);

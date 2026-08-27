@@ -1,4 +1,5 @@
 import { BLOCKS, BlockId, type BlockDefinition } from '../blocks';
+import { requiredDisplayName } from '../i18n';
 import { blockItemIconTexture } from '../blocks/placement';
 import {
   ItemId,
@@ -22,11 +23,6 @@ export const POTION_REGENERATION_DURATION_TICKS = 1200;
 type ResourceOptions = Partial<Pick<BaseItemDefinition, 'maxStack' | 'tags' | 'placesBlockId'>> & {
   readonly durability?: number;
 };
-
-const title = (key: string): string =>
-  key.replace(/(^|_)([a-z])/g, (_match, separator: string, letter: string) =>
-    `${separator ? ' ' : ''}${letter.toUpperCase()}`,
-  );
 
 function blockTags(definition: BlockDefinition): readonly string[] {
   const tags = ['block'];
@@ -56,7 +52,7 @@ const blockItems: ItemDefinition[] = BLOCKS
 function resource(id: string, options: ResourceOptions = {}): ResourceItemDefinition {
   return Object.freeze({
     id,
-    name: title(id),
+    name: requiredDisplayName(id),
     kind: 'resource',
     maxStack: options.durability !== undefined ? 1 : (options.maxStack ?? 64),
     texture: `item/${id}`,
@@ -74,7 +70,7 @@ function food(
 ): FoodItemDefinition {
   return Object.freeze({
     id,
-    name: title(id),
+    name: requiredDisplayName(id),
     kind: 'food',
     maxStack: 64,
     texture: `item/${id}`,
@@ -114,7 +110,7 @@ const tools: ItemDefinition[] = tiers.flatMap((stats) =>
     const id = `${stats.prefix}_${tool}`;
     return Object.freeze({
       id,
-      name: title(id),
+      name: requiredDisplayName(id),
       kind: 'tool',
       maxStack: 1,
       texture: `item/${id}`,
@@ -132,7 +128,7 @@ const swords: ItemDefinition[] = tiers.map((stats): WeaponItemDefinition => {
   const id = `${stats.prefix}_sword`;
   return Object.freeze({
     id,
-    name: title(id),
+    name: requiredDisplayName(id),
     kind: 'weapon',
     maxStack: 1,
     texture: `item/${id}`,
@@ -180,7 +176,7 @@ const armor: ItemDefinition[] = (Object.keys(armorStats) as Array<keyof typeof a
     const stats = armorStats[material];
     return Object.freeze({
       id,
-      name: title(id),
+      name: requiredDisplayName(id),
       kind: 'armor',
       maxStack: 1,
       texture: `item/${id}`,
@@ -247,7 +243,7 @@ const equipment: readonly ItemDefinition[] = [
   ...tools,
   ...swords,
   Object.freeze({
-    id: ItemId.Bow, name: 'Bow', kind: 'weapon', maxStack: 1, texture: 'item/bow',
+    id: ItemId.Bow, name: requiredDisplayName(ItemId.Bow), kind: 'weapon', maxStack: 1, texture: 'item/bow',
     tags: Object.freeze(['weapon', 'bow']), weapon: 'bow', durability: 384, attackDamage: 0,
   } satisfies WeaponItemDefinition),
   ...armor,
