@@ -12,8 +12,8 @@ describe('dirty mesh queue', () => {
   it('coalesces 20 edits of one chunk into a single pending mesh job', () => {
     const world = new VoxelWorld('dirty-20');
     world.ensureChunks(8, 8, 1);
+    for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
     for (const chunk of world.chunks.values()) {
-      world.ensureChunkLighting(chunk);
       chunk.dirty = false;
     }
     world.pendingMesh.clear();
@@ -33,8 +33,8 @@ describe('dirty mesh queue', () => {
     expect(neighborMeshOffsets(8, 8)).toEqual([]);
     const world = new VoxelWorld('dirty-boundary');
     world.ensureChunks(0, 0, 1);
+    for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
     for (const chunk of world.chunks.values()) {
-      world.ensureChunkLighting(chunk);
       chunk.dirty = false;
     }
     world.pendingMesh.clear();
@@ -49,8 +49,8 @@ describe('dirty mesh queue', () => {
   it('does not remesh neighbor chunks for an interior edit when lighting stays local', () => {
     const world = new VoxelWorld('dirty-interior');
     world.ensureChunks(8, 8, 1);
+    for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
     for (const chunk of world.chunks.values()) {
-      world.ensureChunkLighting(chunk);
       chunk.dirty = false;
     }
     world.pendingMesh.clear();

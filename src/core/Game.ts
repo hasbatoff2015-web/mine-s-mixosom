@@ -156,7 +156,7 @@ import type { GameMode, SerializedServerWorld, SerializedWorldState, WorldSummar
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
-import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
+import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
@@ -459,6 +459,7 @@ export class Game {
     if (startup.action === 'restore') {
       const state = startup.state;
       const world = new VoxelWorld(state.summary.seed);
+      world.deferredLighting = true;
       world.restore(state);
       let inventory: Inventory;
       let bucketOverflow: ItemStack[] = [];
@@ -480,6 +481,7 @@ export class Game {
 
     const summary = createAnarchySummary();
     const world = new VoxelWorld(summary.seed);
+    world.deferredLighting = true;
     const inventory = new Inventory();
     inventory.addItem('apple', 3);
     const spawn = this.estimateSpawn(world);
@@ -510,6 +512,7 @@ export class Game {
   private async createWorld(name: string, seed: string, mode: GameMode): Promise<void> {
     const summary = this.saves.createSummary(name, seed, mode);
     const world = new VoxelWorld(summary.seed);
+    world.deferredLighting = true;
     const inventory = new Inventory();
     if (mode === 'survival') inventory.addItem('apple', 3);
     await this.startSession(summary, world, inventory);
@@ -525,6 +528,7 @@ export class Game {
       return;
     }
     const world = new VoxelWorld(state.summary.seed);
+    world.deferredLighting = true;
     world.restore(state);
     let inventory: Inventory;
     let bucketOverflow: ItemStack[] = [];
@@ -1058,7 +1062,7 @@ export class Game {
         }
       }
       if (counters.yielded > 0) {
-        const owner = lightingFloodOwner();
+        const owner = lightingFloodOwner(session.world);
         if (owner && owner !== LIGHT_FLOOD_REGION && owner !== LIGHT_FLOOD_ADD_EMITTER) {
           const { cx, cz } = parseChunkKey(owner);
           this.streamingTrace.mark('lightYielded', cx, cz, performance.now());
@@ -1084,7 +1088,7 @@ export class Game {
 
   private snapshotLightingActiveKeys(session: GameSession): Set<string> {
     const keys = new Set<string>();
-    const owner = lightingFloodOwner();
+    const owner = lightingFloodOwner(session.world);
     for (const chunk of session.world.chunks.values()) {
       const key = inspectChunkKey(chunk.x, chunk.z);
       if (lightingIsActive(chunk.lightingReady, chunk.skyFillCursor, chunk.blockScanCursor, owner, key)) {
@@ -3122,6 +3126,7 @@ export class Game {
     this.session.redstone.dispose();
     this.session.drops.dispose();
     this.session.falling.dispose();
+    disposeWorldLighting(this.session.world);
     this.explosionQueue.clear();
     resetMiningSound(this.miningSound);
     resetFootsteps(this.footsteps);

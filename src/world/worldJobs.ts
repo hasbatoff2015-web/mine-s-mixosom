@@ -7,6 +7,14 @@ export interface ChunkJobRef {
   readonly distanceSq: number;
 }
 
+/** Every horizontal neighbor read by the mesher's surface/corner sampler. */
+export const MESH_LIGHT_NEIGHBORS = [
+  { dir: 'E', dx: 1, dz: 0 }, { dir: 'W', dx: -1, dz: 0 },
+  { dir: 'S', dx: 0, dz: 1 }, { dir: 'N', dx: 0, dz: -1 },
+  { dir: 'SE', dx: 1, dz: 1 }, { dir: 'SW', dx: -1, dz: 1 },
+  { dir: 'NE', dx: 1, dz: -1 }, { dir: 'NW', dx: -1, dz: -1 },
+] as const;
+
 export interface InitialAreaProgress {
   readonly generated: number;
   readonly lit: number;
@@ -37,7 +45,7 @@ export function neighborMeshOffsets(localX: number, localZ: number): Array<reado
   return offsets;
 }
 
-/** Fluid corners are shared with the diagonal neighbor at chunk corners. */
+/** Shared corners: fluid geometry and smooth light/AO also have diagonal readers. */
 export function neighborFluidMeshOffsets(localX: number, localZ: number): Array<readonly [number, number]> {
   const offsets = neighborMeshOffsets(localX, localZ);
   if (localX === 0 && localZ === 0) offsets.push([-1, -1]);
@@ -109,19 +117,19 @@ export function lightContextReady(
   centerChunkZ: number,
   generationRadius: number,
 ): boolean {
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
-  for (const [dx, dz] of dirs) {
+  if (!chunk.lightingReady || world.hasPendingLighting(chunk)) return false;
+  for (const { dx, dz } of MESH_LIGHT_NEIGHBORS) {
     const neighborX = chunk.x + dx;
     const neighborZ = chunk.z + dz;
     if (chebyshevChunkDistance(neighborX, neighborZ, centerChunkX, centerChunkZ) > generationRadius) continue;
     const neighbor = world.chunks.get(chunkKey(neighborX, neighborZ));
-    if (!neighbor?.lightingReady) return false;
+    if (!neighbor?.lightingReady || world.hasPendingLighting(neighbor)) return false;
   }
   return true;
 }
 
 export function chunkVisuallyLit(chunk: Chunk, hasMesh: boolean): boolean {
-  if (!hasMesh || chunk.dirty || !chunk.lightingReady) return false;
+  if (!hasMesh || chunk.dirty || !chunk.lightingReady || chunk.lightPending) return false;
   if (chunk.meshedLightVersion < 0) return true;
   return chunk.meshedLightVersion === chunk.lightVersion;
 }

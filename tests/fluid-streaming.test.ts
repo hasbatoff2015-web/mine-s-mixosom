@@ -77,16 +77,16 @@ describe('fluid lighting signature and queue', () => {
     expect(lightingInvalidation(BlockId.Lava, BlockId.Lava)).toBe('none');
   });
 
-  it('classifies air↔water as local sky and air↔lava as add-emitter', () => {
-    expect(lightingInvalidation(BlockId.Air, BlockId.Water)).toBe('localSky');
-    expect(lightingInvalidation(BlockId.Water, BlockId.Air)).toBe('localSky');
-    expect(lightingInvalidation(BlockId.Air, BlockId.Lava)).toBe('addEmitter');
+  it('recomputes lateral sky when water/lava changes the column filter', () => {
+    expect(lightingInvalidation(BlockId.Air, BlockId.Water)).toBe('region');
+    expect(lightingInvalidation(BlockId.Water, BlockId.Air)).toBe('region');
+    expect(lightingInvalidation(BlockId.Air, BlockId.Lava)).toBe('region');
     expect(lightingInvalidation(BlockId.Lava, BlockId.Air)).toBe('region');
     expect(lightingInvalidation(BlockId.Lava, BlockId.Obsidian)).toBe('region');
     expect(WORLD_LIGHT_BUDGET_MS).toBe(2);
   });
 
-  it('does not queue a lighting region for a water flood', () => {
+  it('coalesces water filter changes into one deferred lighting region', () => {
     const world = new VoxelWorld('fluid-water-no-region');
     loadFlat(world, 30);
     for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
@@ -94,7 +94,8 @@ describe('fluid lighting signature and queue', () => {
     world.setBlock(8, 31, 8, BlockId.Water);
     world.scheduleFluidAround(8, 31, 8, 1);
     tickWorld(world, 80);
-    expect(world.lightQueueMarks).toBe(before);
+    expect(world.lightQueueMarks).toBeGreaterThan(before);
+    expect(world.pendingLightJobs).toBeLessThanOrEqual(1);
     expect(world.getBlock(8 + 7, 31, 8)).toBe(BlockId.Water);
   });
 

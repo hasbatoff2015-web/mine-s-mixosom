@@ -1,221 +1,196 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { BlockId } from '../src/blocks';
 import { CHUNK_SIZE } from '../src/core/constants';
-import { createItemStack } from '../src/inventory';
-import { ItemId } from '../src/items';
-import {
-  lightEngineStats,
-  lightFrameStats,
-  resetLightEngineStats,
-  resetLightFrameStats,
-} from '../src/world/LightEngine';
-import { VoxelWorld } from '../src/world/World';
+import { createLightingQaScene, lightingQaOpening, lightingQaRoofHole, lightingQaSkyLine } from '../src/dev/lightingQaScenes';
 
-function percentile(values: readonly number[], ratio: number): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)] ?? 0;
+// --baseline uses the same scenes and measurement code against an untouched detached worktree.
+const baseline = process.argv.includes('--baseline');
+const only = process.argv.find((arg) => arg.startsWith('--case='))?.slice(7);
+const root = resolve(baseline ? '.local/lighting-baseline/src' : 'src').replaceAll('\\', '/');
+const { VoxelWorld } = await import(root + '/world/World.ts');
+const { Chunk } = await import(root + '/world/Chunk.ts');
+const light = await import(root + '/world/LightEngine.ts');
+const { collectReadyMeshJobs, completeCpuMesh } = await import(root + '/world/streamingScheduler.ts');
+const { runStreamingPath, STREAMING_SPEEDS } = await import(root + '/world/streamingSim.ts');
+const { WORLD_HEIGHT } = await import(root + '/core/constants.ts');
+const { importVoxelsIntoWorld } = await import(root + '/world/import/placeStructure.ts');
+
+function scene(kind: Parameters<typeof createLightingQaScene>[0]) {
+  return createLightingQaScene(kind, VoxelWorld, Chunk);
 }
-
-function fillFlat(world: VoxelWorld, y = 50): void {
-  for (const chunk of world.chunks.values()) {
-    chunk.blocks.fill(BlockId.Air);
-    for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
-      for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
-        for (let height = 0; height <= y; height += 1) {
-          chunk.set(lx, height, lz, height === y ? BlockId.GrassBlock : BlockId.Dirt);
-        }
-      }
-    }
-  }
-}
-
-function lightAll(world: VoxelWorld): void {
+function lightAll(world: InstanceType<typeof VoxelWorld>): void {
   for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
+  for (const chunk of world.chunks.values()) completeCpuMesh(world, chunk);
 }
-
-function measureSlices(world: VoxelWorld, originX: number, originZ: number, budgetMs: number): {
-  totalMs: number;
-  maxSlice: number;
-  jobs: number;
-  columns: number;
-  nodes: number;
-} {
-  resetLightFrameStats();
+function measure(world: InstanceType<typeof VoxelWorld>, edit?: (frame: number) => void, editFrames = 0) {
   let totalMs = 0;
-  let maxSlice = 0;
-  let jobs = 0;
+  let editMs = 0;
+  let maxSliceMs = 0;
+  let maxEditMs = 0;
   let columns = 0;
   let nodes = 0;
-  let guard = 0;
-  while ((world.unlitChunkCount > 0 || world.pendingLightJobs > world.unlitChunkCount) && guard < 4_000) {
-    const slice = world.processLighting(budgetMs, originX, originZ);
-    totalMs += slice;
-    maxSlice = Math.max(maxSlice, lightFrameStats.maxSlice, slice);
-    jobs += lightFrameStats.jobsActive;
-    columns += lightFrameStats.columns;
-    nodes += lightFrameStats.nodes;
-    guard += 1;
-    if (slice === 0 && world.unlitChunkCount === 0) break;
-  }
-  return { totalMs, maxSlice, jobs, columns, nodes };
-}
-
-function scenarioInitialSky(): unknown {
-  const world = new VoxelWorld('bench-initial-sky');
-  for (let z = -4; z <= 4; z += 1) {
-    for (let x = -4; x <= 4; x += 1) world.getChunk(x, z);
-  }
-  const syncStart = performance.now();
-  lightAll(world);
-  const syncMs = performance.now() - syncStart;
-
-  const sliced = new VoxelWorld('bench-initial-sky-sliced');
-  for (let z = -4; z <= 4; z += 1) {
-    for (let x = -4; x <= 4; x += 1) sliced.getChunk(x, z);
-  }
-  const slices = measureSlices(sliced, 8, 8, 2);
-  return {
-    chunks: 81,
-    syncEnsureMs: Number(syncMs.toFixed(3)),
-    slicedTotalMs: Number(slices.totalMs.toFixed(3)),
-    slicedMaxSliceMs: Number(slices.maxSlice.toFixed(3)),
-    slicedJobs: slices.jobs,
-    columns: slices.columns,
-    nodes: slices.nodes,
-  };
-}
-
-function scenarioOneChunk(): unknown {
-  const world = new VoxelWorld('bench-one-chunk');
-  const chunk = world.getChunk(0, 0)!;
-  resetLightEngineStats();
-  const started = performance.now();
-  world.ensureChunkLighting(chunk);
-  return {
-    ms: Number((performance.now() - started).toFixed(3)),
-    skyRecomputes: lightEngineStats.skyRecomputes,
-  };
-}
-
-function scenarioTorch(): unknown {
-  const world = new VoxelWorld('bench-torch');
-  world.ensureChunks(8, 8, 1);
-  lightAll(world);
-  const y = world.surfaceY(8, 8) + 2;
-  world.setBlock(8, y, 8, BlockId.Air);
-  resetLightEngineStats();
-  const placeStart = performance.now();
-  world.setBlock(8, y, 8, BlockId.Torch);
-  const placeMs = performance.now() - placeStart;
-  const skyAfterPlace = lightEngineStats.skyRecomputes;
-  const removeStart = performance.now();
-  world.setBlock(8, y, 8, BlockId.Air);
-  return {
-    placeMs: Number(placeMs.toFixed(3)),
-    removeMs: Number((performance.now() - removeStart).toFixed(3)),
-    skyRecomputes: lightEngineStats.skyRecomputes,
-    skyAfterPlace,
-    blockPropagations: lightEngineStats.blockPropagations,
-    visualUpdates: world.pendingMeshJobs,
-  };
-}
-
-function scenarioFurnace(): unknown {
-  const world = new VoxelWorld('bench-furnace');
-  world.ensureChunks(8, 8, 1);
-  lightAll(world);
-  world.setBlock(8, 50, 8, BlockId.Furnace);
-  resetLightEngineStats();
-  const furnace = world.getFurnace(8, 50, 8);
-  furnace.slots[0] = createItemStack('iron_ore');
-  furnace.slots[1] = createItemStack(ItemId.Coal);
-  const onStart = performance.now();
-  world.tick();
-  const onMs = performance.now() - onStart;
-  furnace.burnTime = 1;
-  const offStart = performance.now();
-  world.tick();
-  return {
-    onMs: Number(onMs.toFixed(3)),
-    offMs: Number((performance.now() - offStart).toFixed(3)),
-    skyRecomputes: lightEngineStats.skyRecomputes,
-    emissionOn: world.blockEmissionAt(8, 50, 8) === 0,
-  };
-}
-
-function scenarioRoofHole(): unknown {
-  const world = new VoxelWorld('bench-roof');
-  const chunk = world.getChunk(0, 0)!;
-  chunk.blocks.fill(BlockId.Stone);
-  for (let x = 4; x <= 11; x += 1) {
-    for (let z = 4; z <= 11; z += 1) {
-      for (let y = 40; y <= 50; y += 1) chunk.set(x, y, z, BlockId.Air);
+  let jobs = 0;
+  let completedJobs = 0;
+  let slices = 0;
+  let remeshCount = 0;
+  let peakDirtyChunks = 0;
+  do {
+    if (slices < editFrames && edit) {
+      const start = performance.now();
+      edit(slices);
+      const elapsed = performance.now() - start;
+      editMs += elapsed;
+      maxEditMs = Math.max(maxEditMs, elapsed);
     }
+    const counters = { attempted: 0, completed: 0, yielded: 0, blocked: 0 };
+    const elapsed = world.processLighting(2, 8, 8, counters);
+    totalMs += elapsed;
+    maxSliceMs = Math.max(maxSliceMs, elapsed, light.lightFrameStats.maxSlice);
+    columns += light.lightFrameStats.columns;
+    nodes += light.lightFrameStats.nodes;
+    jobs += light.lightFrameStats.jobsActive;
+    completedJobs += counters.completed;
+    peakDirtyChunks = Math.max(peakDirtyChunks, world.dirtyChunkCount);
+    // Count production-gated mesh commits; CPU stand-in, not GPU rendering or mesh timing.
+    for (const job of collectReadyMeshJobs(world, 8, 8, world.meshRadius).slice(0, 2)) {
+      completeCpuMesh(world, job.chunk);
+      remeshCount += 1;
+    }
+    slices += 1;
+    if (slices > 20000) throw new Error('Lighting did not settle; no partial benchmark success.');
+  } while (slices < editFrames || world.pendingLightJobs > 0 || light.lightingFloodOwner(world));
+  for (const job of collectReadyMeshJobs(world, 8, 8, world.meshRadius)) {
+    completeCpuMesh(world, job.chunk);
+    remeshCount += 1;
   }
-  world.ensureChunkLighting(chunk);
-  resetLightEngineStats();
-  const started = performance.now();
-  for (let y = 51; y < 80; y += 1) world.setBlock(8, y, 8, BlockId.Air);
-  return {
-    ms: Number((performance.now() - started).toFixed(3)),
-    skyRecomputes: lightEngineStats.skyRecomputes,
-    skyInChamber: world.skyLightAt(8, 44, 8),
-  };
+  return { totalMs, maxSliceMs, editMs, maxEditMs, columns, nodes, jobs, completedJobs,
+    slices, peakDirtyChunks, remeshCount, memory: light.lightingMemoryUsage?.(world) };
 }
-
-function scenarioOcclusionBatch(): unknown {
-  const world = new VoxelWorld('bench-occ-30');
-  world.ensureChunks(8, 8, 1);
-  lightAll(world);
-  for (const chunk of world.chunks.values()) chunk.dirty = false;
-  world.pendingMesh.clear();
-  resetLightEngineStats();
-  const samples: number[] = [];
-  const started = performance.now();
-  for (let index = 0; index < 30; index += 1) {
-    const x = 4 + (index % 8);
-    const z = 4;
-    const y = 40 + (index % 3);
-    const one = performance.now();
-    world.applyBlockBatch([{ x, y, z, block: BlockId.Stone }]);
-    world.applyBlockBatch([{ x, y, z, block: BlockId.Air }]);
-    samples.push(performance.now() - one);
+const cases: Record<string, unknown> = {};
+for (let i = 0; i < 2; i += 1) lightAll(scene('room'));
+function run(name: string, create: () => InstanceType<typeof VoxelWorld>,
+  prepare?: (world: InstanceType<typeof VoxelWorld>) => void,
+  edit?: (world: InstanceType<typeof VoxelWorld>, frame: number) => void,
+  frames = 0, sample?: (world: InstanceType<typeof VoxelWorld>) => unknown) {
+  if (only && name !== only) return;
+  const trials = [];
+  for (let trial = 0; trial < 3; trial += 1) {
+    const world = create();
+    prepare?.(world);
+    const result = measure(world, edit ? (frame) => edit(world, frame) : undefined, frames);
+    trials.push({ ...result, sample: sample?.(world) });
   }
-  return {
-    totalMs: Number((performance.now() - started).toFixed(3)),
-    averageMs: Number((samples.reduce((sum, value) => sum + value, 0) / samples.length).toFixed(3)),
-    p95Ms: Number(percentile(samples, 0.95).toFixed(3)),
-    skyRecomputes: lightEngineStats.skyRecomputes,
-    pendingMesh: world.pendingMeshJobs,
-    dirtyChunks: world.dirtyChunkCount,
-  };
+  cases[name] = trials;
 }
+const ready = (world: InstanceType<typeof VoxelWorld>) => lightAll(world);
+const edit = (world: InstanceType<typeof VoxelWorld>, mutations: unknown[]) =>
+  world.applyBlockBatch(mutations, { deferLighting: true, scheduleNeighbors: false });
 
-function scenarioCrossChunkTorch(): unknown {
-  const world = new VoxelWorld('bench-cross-torch');
+run('initialChunk', () => {
+  const world = new VoxelWorld('bench-one-chunk');
   world.getChunk(0, 0);
-  world.getChunk(1, 0);
-  fillFlat(world, 40);
-  lightAll(world);
-  resetLightEngineStats();
-  const started = performance.now();
-  world.setBlock(15, 44, 8, BlockId.Torch);
-  return {
-    ms: Number((performance.now() - started).toFixed(3)),
-    skyRecomputes: lightEngineStats.skyRecomputes,
-    source: world.blockLightAt(15, 44, 8),
-    neighbor: world.blockLightAt(16, 44, 8),
-    visualUpdates: world.pendingMeshJobs,
-  };
+  return world;
+});
+run('initial81StreamingSlices', () => {
+  const world = new VoxelWorld('bench-initial-sky-sliced');
+  world.setViewCenter(8, 8, 3);
+  world.ensureChunks(8, 8, 4);
+  return world;
+});
+run('openRoom', () => scene('room'), undefined, undefined, 0, lightingQaSkyLine);
+run('caveEntrance', () => scene('cave'), undefined, undefined, 0, lightingQaSkyLine);
+run('forest', () => scene('forest'), undefined, undefined, 0,
+  (world) => [3, 4, 8, 15].map((x) => world.skyLightAt(x, 43, 12)));
+run('roofOpen', () => scene('closed'), ready,
+  (world) => edit(world, lightingQaRoofHole(true)), 1, lightingQaSkyLine);
+run('roofClose', () => scene('hole'), ready,
+  (world) => edit(world, lightingQaRoofHole(false)), 1, lightingQaSkyLine);
+for (const [name, id] of [['torch', BlockId.Torch], ['glowstone', BlockId.Glowstone], ['lantern', BlockId.Lantern]] as const) {
+  run(name + 'Add', () => scene('closed'), ready,
+    (world) => edit(world, [{ x: 15, y: 43, z: 16, block: id }]), 1,
+    (world) => world.blockLightAt(16, 43, 16));
+  run(name + 'Remove', () => scene('closed'), (world) => {
+    lightAll(world);
+    world.setBlock(15, 43, 16, id);
+    for (const chunk of world.chunks.values()) completeCpuMesh(world, chunk);
+  }, (world) => edit(world, [{ x: 15, y: 43, z: 16, block: BlockId.Air }]), 1,
+  (world) => world.blockLightAt(16, 43, 16));
 }
+run('externalRegionSource', () => scene('closed'), (world) => {
+  lightAll(world);
+  world.setBlock(14, 43, 16, BlockId.Glowstone);
+  for (const chunk of world.chunks.values()) completeCpuMesh(world, chunk);
+}, (world) => world.queueLight({ minX: 16, maxX: 20, minY: 41, maxY: 45, minZ: 13, maxZ: 20 }, false, true), 1,
+(world) => world.blockLightAt(16, 43, 16));
+run('cardinalBorder', () => scene('room'), ready,
+  (world) => edit(world, [{ x: 15, y: 43, z: 16, block: BlockId.Torch }]), 1,
+  (world) => [world.skyLightAt(15, 43, 16), world.skyLightAt(16, 43, 16), world.blockLightAt(16, 43, 16)]);
+run('diagonalCorner', () => scene('closed'), ready,
+  (world) => edit(world, [{ x: 15, y: 43, z: 15, block: BlockId.Glowstone }]), 1,
+  (world) => [[15, 15], [16, 15], [15, 16], [16, 16]].map(([x, z]) => world.blockLightAt(x, 43, z)));
+run('repeatedEdits30Frames', () => scene('room'), ready,
+  (world, frame) => edit(world, [{ x: 7 + (Math.floor(frame / 2) % 4), y: 47, z: 16,
+    block: frame % 2 === 0 ? BlockId.Air : BlockId.OakPlanks }]), 30);
+const burstBlocks = Array.from({ length: 100 }, (_, i) => ({
+  x: 4 + i % 10, y: 43, z: 8 + Math.floor(i / 10), block: BlockId.Stone,
+}));
+run('creativeBurst100', () => scene('room'), (world) => {
+  lightAll(world);
+  world.applyBlockBatch(burstBlocks, { scheduleNeighbors: false });
+  for (const chunk of world.chunks.values()) completeCpuMesh(world, chunk);
+}, (world) => {
+  for (const block of burstBlocks) edit(world, [{ ...block, block: BlockId.Air }]);
+}, 1);
+run('wallCloseOpen', () => scene('room'), ready,
+  (world, frame) => edit(world, lightingQaOpening(frame === 1)), 2, lightingQaSkyLine);
 
-resetLightEngineStats();
-console.info(JSON.stringify({
-  scenario: 'lighting-performance',
-  initial9x9: scenarioInitialSky(),
-  oneChunk: scenarioOneChunk(),
-  torch: scenarioTorch(),
-  furnace: scenarioFurnace(),
-  roofHole: scenarioRoofHole(),
-  occlusion30: scenarioOcclusionBatch(),
-  crossChunkTorch: scenarioCrossChunkTorch(),
-}, null, 2));
+run('highYRoom', () => scene('high'), undefined, undefined, 0, (world) => lightingQaSkyLine(world, 192));
+run('highYEmitter', () => scene('closed'), ready,
+  (world) => edit(world, [{ x: 15, y: 230, z: 15, block: BlockId.Lantern }]), 1,
+  (world) => [world.blockLightAt(16, 230, 16), world.skyLightAt(15, 230, 15)]);
+const structure = [];
+for (let z = -16; z <= 47; z += 1) for (let x = -16; x <= 47; x += 1) {
+  structure.push({ x, y: 192, z, block: BlockId.Stone }, { x, y: 200, z, block: BlockId.OakPlanks });
+  if (x === -16 || x === 47 || z === -16 || z === 47) {
+    for (let y = 193; y < 200; y += 1) structure.push({ x, y, z, block: BlockId.OakPlanks });
+  }
+}
+run('importedStructureLighting', () => scene('room'), ready,
+  (world) => importVoxelsIntoWorld(world, structure), 1,
+  (world) => [world.skyLightAt(8, 196, 8), world.getChunk(0, 0)!.occupancyTop]);
+
+const memory = [];
+if (!only) for (const radius of [2, 4, 6]) {
+  const world = new VoxelWorld('lighting-memory-' + radius);
+  world.setViewCenter(8, 8, radius);
+  world.ensureChunks(8, 8, radius + 1);
+  measure(world);
+  edit(world, [{ x: 15, y: 70, z: 15, block: BlockId.Glowstone }]);
+  measure(world);
+  const chunks = [...world.chunks.values()];
+  memory.push({ radius, loadedChunks: chunks.length,
+    blocksBytes: chunks.reduce((sum, chunk) => sum + chunk.blocks.byteLength, 0),
+    skyBytes: chunks.reduce((sum, chunk) => sum + chunk.skyLight.byteLength, 0),
+    blockLightBytes: chunks.reduce((sum, chunk) => sum + chunk.blockLight.byteLength, 0),
+    metadataBytes: chunks.reduce((sum, chunk) => sum + chunk.surfaceHeights.byteLength + chunk.biomeCodes.byteLength
+      + (chunk.skyFilterHeights?.byteLength ?? 0) + (chunk.skyStoredHeights?.byteLength ?? 0), 0),
+    lighting: light.lightingMemoryUsage?.(world),
+    naiveFullFlagsBytes: chunks.length * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT,
+    naiveFullSnapshotsBytes: chunks.length * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT * 2,
+  });
+}
+const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'), {
+  meshRadius: 6, lightBudgetMs: 2, pruneEveryFrames: 80, warmupFrames: 48,
+  instantLight: false, policy: 'fair', speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
+  path: [{ x: 8, z: 8 }, { x: 8 + 12 * CHUNK_SIZE, z: 8 }],
+}) : undefined;
+const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...streamingSummary } = streaming ?? {};
+const result = { runtime: 'Node CPU; no browser FPS claim', baseline, worldHeight: WORLD_HEIGHT, trials: 3, budgetMs: 2,
+  remeshCount: 'production-gated CPU mesh acknowledgements; no GPU work',
+  memoryScope: 'Typed arrays only; excludes JS object overhead, world deltas, import voxel objects, GPU and renderer caches',
+  cases, memory, streaming: streamingSummary };
+const path = '.local/lighting-benchmark-' + WORLD_HEIGHT + '-' + (only ? only + '-' : '') + (baseline ? 'before' : 'after') + '.json';
+mkdirSync('.local', { recursive: true });
+writeFileSync(path, JSON.stringify(result, null, 2) + '\n');
+console.info(JSON.stringify(result, null, 2));

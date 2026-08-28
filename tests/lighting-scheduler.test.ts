@@ -24,7 +24,10 @@ import { runStreamingPath, STREAMING_SPEEDS } from '../src/world/streamingSim';
 function yieldDuringBlockSeed(world: VoxelWorld, chunk: Chunk): void {
   continueSkyFill(chunk);
   expect(chunk.skyReady).toBe(true);
-  const finished = processChunkLighting(world, chunk, performance.now());
+  let finished = false;
+  for (let step = 0; chunk.blockScanCursor === 0 && step < 512; step += 1) {
+    finished = processChunkLighting(world, chunk, performance.now());
+  }
   expect(finished).toBe(false);
   expect(lightingFloodOwner()).toBe(`${chunk.x},${chunk.z}`);
 }
@@ -34,6 +37,10 @@ function generateCardinalNeighbors(world: VoxelWorld, cx: number, cz: number): v
   world.getChunk(cx - 1, cz);
   world.getChunk(cx, cz + 1);
   world.getChunk(cx, cz - 1);
+  world.getChunk(cx - 1, cz - 1);
+  world.getChunk(cx - 1, cz + 1);
+  world.getChunk(cx + 1, cz - 1);
+  world.getChunk(cx + 1, cz + 1);
 }
 
 function counters() {
@@ -118,6 +125,7 @@ describe('halo lighting dependencies', () => {
     world.ensureChunkLighting(world.getChunk(1, 0)!);
     world.ensureChunkLighting(world.getChunk(-1, 0)!);
     world.ensureChunkLighting(world.getChunk(0, -1)!);
+    for (const dx of [-1, 1]) for (const dz of [-1, 1]) world.ensureChunkLighting(world.getChunk(dx, dz)!);
     const b = world.getChunk(0, 1)!;
     const c = world.getChunk(0, 2)!;
     expect(lightContextReady(world, a, 0, 0, 3)).toBe(false);

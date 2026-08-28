@@ -24,11 +24,13 @@ describe('localized lighting jobs', () => {
     const world = new VoxelWorld('light-torch');
     world.ensureChunks(8, 8, 1);
     for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
+    const chamber = [];
     for (let x = 6; x <= 10; x += 1) {
       for (let z = 6; z <= 10; z += 1) {
-        for (let y = 40; y <= 50; y += 1) world.setBlock(x, y, z, BlockId.Air);
+        for (let y = 40; y <= 50; y += 1) chamber.push({ x, y, z, block: BlockId.Air });
       }
     }
+    world.applyBlockBatch(chamber);
     expect(world.setBlock(8, 44, 8, BlockId.Torch)).toBe(true);
     expect(world.blockLightAt(8, 44, 8)).toBe(14);
     expect(world.blockLightAt(9, 44, 8)).toBeGreaterThan(0);
@@ -85,11 +87,13 @@ describe('localized lighting jobs', () => {
     world.setViewCenter(8, 8, 2);
     world.ensureChunks(8, 8, 2);
     for (const chunk of world.chunks.values()) world.ensureChunkLighting(chunk);
+    const chamber = [];
     for (let x = 4; x <= 12; x += 1) {
       for (let z = 4; z <= 12; z += 1) {
-        for (let y = 40; y <= 48; y += 1) world.setBlock(x, y, z, BlockId.Air);
+        for (let y = 40; y <= 48; y += 1) chamber.push({ x, y, z, block: BlockId.Air });
       }
     }
+    world.applyBlockBatch(chamber);
     world.setBlock(8, 40, 8, BlockId.Stone);
     world.applyBlockBatch([{ x: 8, y: 41, z: 8, block: BlockId.Lava }], { deferLighting: true, scheduleNeighbors: true });
     world.applyBlockBatch([{ x: 9, y: 41, z: 8, block: BlockId.Air }], { deferLighting: true, scheduleNeighbors: true });

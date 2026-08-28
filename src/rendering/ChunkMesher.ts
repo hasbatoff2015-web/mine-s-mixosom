@@ -49,6 +49,7 @@ import {
 } from './specialBlockGeometry';
 import { fluidCellGeometry } from '../world/fluidSurface';
 import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
+import { sampleSurfaceVertexLight, type SurfaceLight } from '../world/lightSampling';
 
 export { leverHandleAngle } from './specialBlockGeometry';
 export { bakedVertexLight } from './worldLighting';
@@ -99,6 +100,7 @@ interface VertexLighting {
   readonly block: number;
   readonly emission: number;
   readonly shade: number;
+  readonly origin?: readonly [number, number, number];
 }
 
 // The legacy lever tile is a transparent 16x16 sprite; the handle occupies
@@ -294,6 +296,8 @@ export class ChunkMesher {
   private lightNorthWest?: Chunk;
   private lightSouthEast?: Chunk;
   private lightSouthWest?: Chunk;
+  private readonly surfaceLight: SurfaceLight = { sky: 0, block: 0, ao: 1 };
+  private readonly readLightCell = (x: number, y: number, z: number): number => this.packedLightCell(x, y, z);
   lastProfile: ChunkMeshProfile = { scanMs: 0, geometryMs: 0 };
 
   constructor(
@@ -470,7 +474,7 @@ export class ChunkMesher {
         sky: cornerLight.sky / 15,
         block: cornerLight.block / 15,
         emission,
-        shade: face.shade,
+        shade: face.shade * cornerLight.ao,
       });
     }
     buffers.uvs.push(
@@ -1127,7 +1131,7 @@ export class ChunkMesher {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);
       buffers.uvs.push(...uv[index]!);
-      this.pushLighting(buffers, lighting);
+      this.pushSurfaceLighting(buffers, lighting, corners[index]!, normal);
     }
     buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
@@ -1144,7 +1148,7 @@ export class ChunkMesher {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);
       buffers.uvs.push(...uv[index]!);
-      this.pushLighting(buffers, lighting);
+      this.pushSurfaceLighting(buffers, lighting, corners[index]!, normal);
     }
     buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
@@ -1154,6 +1158,20 @@ export class ChunkMesher {
     buffers.skyLights.push(lighting.sky);
     buffers.blockLights.push(lighting.block);
     buffers.faceShades.push(lighting.shade);
+    buffers.emissions.push(lighting.emission);
+  }
+
+  private pushSurfaceLighting(
+    buffers: GeometryBuffers, lighting: VertexLighting,
+    vertex: readonly [number, number, number], normal: readonly [number, number, number],
+  ): void {
+    const origin = lighting.origin;
+    if (!origin) { this.pushLighting(buffers, lighting); return; }
+    const light = sampleSurfaceVertexLight(this.readLightCell, ...vertex, ...normal, ...origin, this.surfaceLight);
+    buffers.colors.push(...lighting.tint);
+    buffers.skyLights.push(light.sky / 15);
+    buffers.blockLights.push(light.block / 15);
+    buffers.faceShades.push(lighting.shade * light.ao);
     buffers.emissions.push(lighting.emission);
   }
 
@@ -1185,44 +1203,27 @@ export class ChunkMesher {
       block,
       emission,
       shade,
+      origin: [x, y, z],
     };
   }
 
   private fastCornerLight(
-    x: number,
-    y: number,
-    z: number,
+    x: number, y: number, z: number,
     normal: readonly [number, number, number],
     corner: readonly [number, number, number],
-  ): { sky: number; block: number } {
-    const nx = normal[0];
-    const ny = normal[1];
-    const nz = normal[2];
-    const startX = nx !== 0 ? x + nx : x + corner[0] - 1;
-    const startY = ny !== 0 ? y + ny : y + corner[1] - 1;
-    const startZ = nz !== 0 ? z + nz : z + corner[2] - 1;
-    const countX = nx !== 0 ? 1 : 2;
-    const countY = ny !== 0 ? 1 : 2;
-    const countZ = nz !== 0 ? 1 : 2;
-    let sky = 0;
-    let block = 0;
-    let samples = 0;
-    for (let iz = 0; iz < countZ; iz += 1) {
-      for (let iy = 0; iy < countY; iy += 1) {
-        for (let ix = 0; ix < countX; ix += 1) {
-          sky += this.packedLight('sky', startX + ix, startY + iy, startZ + iz);
-          block += this.packedLight('block', startX + ix, startY + iy, startZ + iz);
-          samples += 1;
-        }
-      }
-    }
-    const inv = 1 / Math.max(1, samples);
-    return { sky: sky * inv, block: block * inv };
+  ): SurfaceLight {
+    return sampleSurfaceVertexLight(this.readLightCell, x + corner[0], y + corner[1], z + corner[2],
+      ...normal, x, y, z, this.surfaceLight);
   }
 
   private packedLight(kind: 'sky' | 'block', x: number, y: number, z: number): number {
-    if (y < 0) return 0;
-    if (y >= WORLD_HEIGHT) return kind === 'sky' ? 15 : 0;
+    const packed = this.packedLightCell(x, y, z);
+    return kind === 'sky' ? packed & 15 : (packed >>> 4) & 15;
+  }
+
+  private packedLightCell(x: number, y: number, z: number): number {
+    if (y < 0) return 256;
+    if (y >= WORLD_HEIGHT) return 15;
     let localX = x - this.columnOriginX;
     let localZ = z - this.columnOriginZ;
     let ox = 0;
@@ -1244,7 +1245,8 @@ export class ChunkMesher {
     const chunk = this.lightNeighbor(ox, oz);
     if (!chunk || localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) return 0;
     const index = y * CHUNK_SIZE * CHUNK_SIZE + localZ * CHUNK_SIZE + localX;
-    return (kind === 'sky' ? chunk.skyLight[index] : chunk.blockLight[index]) ?? 0;
+    return chunk.skyLightAtIndex(index) | (chunk.blockLight[index]! << 4)
+      | (getBlockDefinition(chunk.blocks[index]!).occludesFaces ? 256 : 0);
   }
 
   private lightNeighbor(ox: number, oz: number): Chunk | undefined {

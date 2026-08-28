@@ -415,7 +415,7 @@ export function runStreamingPath(
         maxNearWantedMissingMs = Math.max(maxNearWantedMissingMs, nearMissingFrames * frameMs);
       } else nearMissingFrames = 0;
 
-      const floodOwner = lightingFloodOwner();
+      const floodOwner = lightingFloodOwner(world);
       const lightJobs = collectUnlitLightJobs(world, originX, originZ, generateRadius);
       let lightBlocked = 0;
       for (const job of lightJobs) {

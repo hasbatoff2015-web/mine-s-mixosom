@@ -160,18 +160,21 @@ describe('streaming scheduler cleanup and priority', () => {
   });
 
   it('does not stop the live mesh lane when the first dirty chunk is unlit', () => {
-    const world = litWorld('blocked-head', 8, 8, 2);
-    world.setViewCenter(8, 8, 1);
+    const world = litWorld('blocked-head', 8, 8, 3);
+    world.setViewCenter(8, 8, 2);
     for (const chunk of world.chunks.values()) {
       chunk.dirty = true;
       chunk.skyReady = true;
+      chunk.skyLateralReady = true;
       chunk.blockLightReady = true;
       chunk.meshedLightVersion = -1;
     }
     const head = world.getChunk(0, 0)!;
     head.skyReady = false;
     head.blockLightReady = false;
-    const jobs = collectReadyMeshJobs(world, 8, 8, 1, performance.now());
+    // The inner 3x3 all read the unlit center, including its diagonals.
+    // Ready jobs on the next ring must still run.
+    const jobs = collectReadyMeshJobs(world, 8, 8, 2, performance.now());
     expect(jobs.some((job) => job.chunk === head)).toBe(false);
     expect(jobs.length).toBeGreaterThan(0);
     const { taken } = takeReadyMeshJobs(jobs, (job) => !job.chunk.lightingReady, 1);

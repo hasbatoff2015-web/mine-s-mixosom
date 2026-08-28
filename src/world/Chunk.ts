@@ -2,10 +2,14 @@ import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
 
 export class Chunk {
   readonly blocks = new Uint16Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
-  /** Packed 0–15 sky light, vertical columns only. */
+  /** Stored sky through each column's materialized extent; higher sky is implicit 15. Use skyLightAtIndex. */
   readonly skyLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
   /** Packed 0–15 block light from emissive sources. */
   readonly blockLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
+  /** Highest sky filter + 1 per column; frontier scans skip uniformly open sky above it. */
+  readonly skyFilterHeights = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE);
+  /** Stored sky extent per column. Zero means not filled; growth by transparent blocks keeps upper sky implicit. */
+  readonly skyStoredHeights = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE);
   /** Generation-time terrain column cache reused by meshing and biome tint. */
   readonly surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   /** 0 plains, 1 forest, 2 desert. */
@@ -15,10 +19,17 @@ export class Chunk {
    * Sky/emitter/fluid/mesh scans use this instead of walking empty Y=85..255.
    */
   occupancyTop = 0;
+  /** Conservative high-water mark of block light, including spill above occupied geometry. */
+  blockLightTop = 0;
   dirty = true;
   generated = false;
   skyReady = false;
+  skyLateralReady = false;
   blockLightReady = false;
+  /** In-place light work may not be baked into a mesh until its job commits. */
+  lightPending = false;
+  /** Boundary readers affected by the last committed light change (eight neighbor bits). */
+  changedLightBorders = 0;
   /** Incremented once per lighting job that changes this chunk's light arrays. */
   lightVersion = 0;
   /** Light version baked into the current mesh. `-1` = never meshed. */
@@ -46,6 +57,12 @@ export class Chunk {
     return Math.min(WORLD_HEIGHT - 1, Math.max(0, this.occupancyTop));
   }
 
+  skyLightAtIndex(index: number): number {
+    const columns = CHUNK_SIZE * CHUNK_SIZE;
+    const height = this.skyStoredHeights[index % columns] || this.occupancyTop + 1;
+    return index >= height * columns ? 15 : this.skyLight[index]!;
+  }
+
   get(x: number, y: number, z: number): number {
     if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return 0;
     return this.blocks[Chunk.index(x, y, z)] ?? 0;
@@ -66,7 +83,7 @@ export class Chunk {
   }
 
   get lightingReady(): boolean {
-    return this.skyReady && this.blockLightReady;
+    return this.skyReady && this.skyLateralReady && this.blockLightReady;
   }
 
   get lightMeshStale(): boolean {

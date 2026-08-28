@@ -4,6 +4,9 @@ import type { Biome } from '../world/Generator';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { VoxelWorld } from '../world/World';
+import { disposeWorldLighting, lightFrameStats } from '../world/LightEngine';
+import { setWorldLightDebug } from '../rendering/worldLighting';
+import { createLightingQaScene, lightingQaOpening, lightingQaRoofHole, lightingQaSkyLine, type LightingQaScene } from './lightingQaScenes';
 
 export type VegetationQaTime = 'day' | 'night';
 
@@ -12,6 +15,7 @@ export async function startVegetationQaHarness(
   uiRoot: HTMLElement,
   biome: Biome,
   time: VegetationQaTime = 'day',
+  lightingScene?: LightingQaScene,
 ): Promise<() => void> {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -29,18 +33,66 @@ export async function startVegetationQaHarness(
   sun.position.set(40, night ? 12 : 70, 25);
   scene.add(sun);
   const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
-  const world = new VoxelWorld(`vegetation-qa-${biome}`);
-  const center = findBiomeCenter(world, biome);
-  world.ensureChunks(center.x, center.z, 2, 25);
-  const surface = world.surfaceY(center.x, center.z);
-  if (night) placeNightTorch(world, center.x, surface, center.z);
+  const world = lightingScene ? createLightingQaScene(lightingScene) : new VoxelWorld(`vegetation-qa-${biome}`);
+  const center = lightingScene ? { x: 14, z: 16 } : findBiomeCenter(world, biome);
+  if (!lightingScene) world.ensureChunks(center.x, center.z, 2, 25);
+  const surface = lightingScene === 'high' ? 192 : lightingScene ? 39 : world.surfaceY(center.x, center.z);
+  if (night && !lightingScene) placeNightTorch(world, center.x, surface, center.z);
+  world.setViewCenter(center.x, center.z, 1);
+  world.deferredLighting = true;
   const worldRenderer = new WorldRenderer(world, atlas);
   worldRenderer.setDaylight(night ? 0.08 : 1);
   scene.add(worldRenderer.group);
-  worldRenderer.rebuildDirty(100, 1_000);
   const camera = new THREE.PerspectiveCamera(58, 1, 0.05, 140);
   const look = new THREE.Vector3(center.x, surface + 1.3, center.z);
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">vegetation QA · ${biome} · ${time}</div>`;
+  let wallOpen = lightingScene === 'room' || lightingScene === 'cave' || lightingScene === 'sources' || lightingScene === 'high';
+  let holeOpen = lightingScene === 'hole';
+  let isNight = night;
+  let lightMode = 0;
+  let peakSlice = 0;
+  const label = uiRoot.querySelector<HTMLDivElement>('#qa-label')!;
+  if (lightingScene) {
+    label.style.pointerEvents = 'auto';
+    label.style.fontSize = '12px';
+    label.style.maxWidth = 'calc(100vw - 56px)';
+    label.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <strong>Lighting QA: ${lightingScene}</strong>
+      <button data-action="wall">Wall</button><button data-action="hole">Roof hole</button>
+      <button data-action="day">Day / night</button><button data-action="mode">FINAL</button>
+      <select aria-label="Light source"><option value="0">No source</option><option value="${BlockId.Torch}">Torch</option>
+      <option value="${BlockId.Glowstone}">Glowstone</option><option value="${BlockId.Lantern}">Lantern</option></select>
+      </div><pre data-lighting-stats style="white-space:pre-wrap;margin:6px 0 0"></pre>`;
+    for (const control of label.querySelectorAll<HTMLElement>('button, select')) {
+      control.style.cssText = 'color:#fff;background:#34383d;border:1px solid #8d949b;border-radius:2px;min-height:32px;padding:2px 8px';
+    }
+  }
+  const cycleMode = (): void => {
+    lightMode = (lightMode + 1) % 3;
+    setWorldLightDebug(lightMode);
+    const button = label.querySelector('[data-action="mode"]');
+    if (button) button.textContent = ['FINAL', 'SKY', 'BLOCK'][lightMode]!;
+  };
+  const click = (event: Event): void => {
+    const action = (event.target as HTMLElement).dataset.action;
+    if (action === 'wall') world.applyBlockBatch(lightingQaOpening(wallOpen = !wallOpen, surface));
+    if (action === 'hole') world.applyBlockBatch(lightingQaRoofHole(holeOpen = !holeOpen, surface));
+    if (action === 'mode') cycleMode();
+    if (action === 'day') {
+      isNight = !isNight;
+      worldRenderer.setDaylight(isNight ? 0.08 : 1);
+      scene.background = new THREE.Color(isNight ? 0x0b1020 : 0x83b9d8);
+    }
+  };
+  const change = (event: Event): void => {
+    world.setBlock(11, surface + 1, 16, Number((event.target as HTMLSelectElement).value) as BlockId);
+  };
+  const key = (event: KeyboardEvent): void => {
+    if (event.code === 'F7') { event.preventDefault(); cycleMode(); }
+  };
+  label.addEventListener('click', click);
+  label.addEventListener('change', change);
+  addEventListener('keydown', key);
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
@@ -52,14 +104,28 @@ export async function startVegetationQaHarness(
   addEventListener('resize', resize);
   let frame = 0;
   let angle = 0.55;
+  let statsAt = 0;
   const render = (): void => {
+    world.processLighting(2, center.x, center.z);
+    peakSlice = Math.max(peakSlice, lightFrameStats.maxSlice);
+    worldRenderer.rebuildDirty(2, 4, center.x, center.z, { requireNeighborLight: true });
     angle += 0.0035;
-    camera.position.set(
-      look.x + Math.cos(angle) * 14,
-      surface + 6.8,
-      look.z + Math.sin(angle) * 14,
-    );
-    camera.lookAt(look);
+    if (lightingScene && lightingScene !== 'forest') {
+      camera.position.set(3.4, surface + 4.6, 16);
+      camera.lookAt(18, surface + 2.8, 16);
+    } else {
+      camera.position.set(
+        look.x + Math.cos(angle) * 14,
+        surface + (lightingScene === 'forest' ? 4 : 6.8),
+        look.z + Math.sin(angle) * 14,
+      );
+      camera.lookAt(look);
+    }
+    if (lightingScene && performance.now() - statsAt > 250) {
+      const stats = label.querySelector('[data-lighting-stats]');
+      if (stats) stats.textContent = `SKY ${lightingQaSkyLine(world, surface).join(' ')}\nLIGHT pending ${world.pendingLightJobs} | maxSlice ${peakSlice.toFixed(2)} ms | meshes ${worldRenderer.chunkCount}`;
+      statsAt = performance.now();
+    }
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);
   };
@@ -67,7 +133,12 @@ export async function startVegetationQaHarness(
   return () => {
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
+    removeEventListener('keydown', key);
+    label.removeEventListener('click', click);
+    label.removeEventListener('change', change);
+    setWorldLightDebug(0);
     worldRenderer.dispose();
+    disposeWorldLighting(world);
     atlas.dispose();
     renderer.dispose();
   };

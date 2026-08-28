@@ -1,5 +1,18 @@
 # Roadmap
 
+## 2026-08-29: lateral skylight / lighting quality
+
+- [x] Vertical baseline + bounded resumable lateral frontier, 14-step falloff, typed ring and deadline/hard work caps; 2 ms PLAYING budget and render distances retained.
+- [x] All eight mesh lighting dependencies; skip-blocked/near-unlock scheduling preserved.
+- [x] Regional sky removal/recompute, six-face external block-light import, same-bounds restart, coalesced final versions and reader refresh.
+- [x] Canonical cube/special exposed-cell sampling with separate modest AO; no ambient/gamma increase.
+- [x] Gameplay lighting deferred, including furnace/getters; direct sun remains distinct from lateral light.
+- [x] 228-test targeted pass, extended before/after CPU benchmark and existing DEV scene/browser checks.
+- [x] Integrate main `25fb847` at height256: occupancy/implicit sky, paged snapshots, bitset queue flags, import restart and all four deferred Game paths. Same Draft PR #13, no merge to main.
+- [x] Height256 high-roof/hole/emitter/border/import/save regressions, 274-test targeted pass, 22-case CPU256 benchmark and radius2/4/6 memory audit. Historical96 data retained separately.
+- [ ] Native-device checklist and GPU soak: Creative flight/breaking, F8 borders and real mobile input.
+- [ ] Resolve pre-existing full-suite CRLF/extractor/CPU-RPC failures separately. No main merge is part of this task.
+
 ## 2026-08-28: world height 256 + Anarchy spawn import
 
 - [x] `WORLD_HEIGHT=256` (`Y 0..255`); generated surface still capped at 84; ores/bedrock/caves unscaled.
@@ -208,12 +221,12 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [ ] Внедрить greedy meshing или эквивалентное объединение coplanar faces.
 - [x] Добавить budgets по jobs/миллисекундам, generation/mesh scheduling и F3 telemetry для chunk rebuild; frustum/distance priority остаётся следующим этапом.
 - [x] Adaptive per-frame world-job budget, dirty-mesh Set-dedupe, neighbor remesh только на X/Z boundary, `LOADING_WORLD` until initial radius ready, entity render interpolation at 20 TPS.
-- [x] Simplified column sky + bounded block light, resumable light jobs (`WORLD_LIGHT_BUDGET_MS`), lighting halo, `lightVersion`/`meshedLightVersion`, DEV chunk-border overlay.
+- [x] Vertical baseline + bounded lateral sky/block light, resumable jobs, eight-neighbor halo readiness and `lightVersion`/`meshedLightVersion`.
 - [x] Lighting flood mutex no longer stops the queue on a blocked head; near unlock neighbors outrank distant halo; obsolete floods are abandoned.
 - [x] Разделить opaque/cutout/glass/water passes; leaves переведены на depth-writing alpha test.
 - [ ] Улучшить сортировку отдельных translucent water/glass faces.
 - [x] Добавить lightweight skylight/block-light contribution в chunk meshing; torch/lava обновляют свет локально, без full-world rebuild.
-- [x] Block-break path: skip lighting when sky-class+emission unchanged; vertical sky columns only (no 6-pass); light writes no longer dirty neighbor meshes.
+- [x] Block-break path: skip unchanged filter/emission, coalesce bounded sliced sky/block recompute, no full-chunk six-pass or per-node remesh.
 - [x] Убрать Lambert N·L с terrain (pitch-black bottoms), тёплый torch block-light в shader, shape-aware selection outline.
 - [x] Wall torch flush to supporting face, thicker cuboid matching outline; entity lighting from voxel sky/block (feet/torso/head); cube-face 4-tap smooth lighting at cave openings.
 - [x] Добавить power-of-two atlas, mipmaps, `4 px` padding/extrusion и ограниченную anisotropy для снижения bleeding/shimmer.
