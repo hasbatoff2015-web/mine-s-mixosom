@@ -103,4 +103,8 @@ Local QA with the real schematic: connect Anarchy, confirm structure, lighting, 
 
 ## Git
 
-Ordinary commit + push on `cursor/spawn-map-import-256-height`. Draft PR. Do not merge main. No force push.
+- Branch: `cursor/spawn-map-import-256-height`
+- Base: `6e27b93` (`origin/main`)
+- Implementation: see HEAD after this docs commit
+- Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/12
+- Ordinary push. No force push. Do not merge `main`.
