@@ -8,6 +8,7 @@
 - [x] Local Minecraft 1.8 extractor (`npm run audio:extract-reference`); originals not committed.
 - [x] Headless Chromium session: 26/26 SFX decoded, real dirt/sand footsteps with pitch variation, catalog `play()` path, pause until PLAYING (`/?audioDebug=1`).
 - [x] Interactive Chromium: `block.break.dirt` / `block.step.dirt`, pause/resume AudioContext, overlay `files ok` / `events ok`.
+- [x] Player footsteps local (`positional: false`); catalog `block.step.*` remains positional; world SFX stay 3D.
 - [ ] Native-device speaker listen of TNT/creeper, bow/arrow, combat, door/chest (Cloud VM has no audible output).
 
 ## 2026-08-28: creeper / fence / plants / tooltip / RU polish

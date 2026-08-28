@@ -26,7 +26,9 @@ Frontier Cubes core SFX pack. Gameplay talks to `SoundEventId` / `AudioManager.p
 | `fire.ignite` | `fire_ignite.mp3` | — | 0.50 | 0.94–1.08 | yes | same |
 | `water.splash` | `water_splash.mp3` | — | 0.50 | 0.94–1.08 | yes | same |
 
-Runtime files live in `public/audio/sfx/`. Format: short mono MP3, 22.05 kHz, 48 kbps. Total pack ≈ 0.11 MiB.
+Runtime files live in `public/audio/sfx/`. Format: short **mono** MP3, 22.05 kHz, 48 kbps. Total pack ≈ 0.11 MiB. Generator writes a 1-channel WAV then `ffmpeg -ac 1`. Audited 2026-08-28: all 26 files are `mp3, 1 channel, mono` (`ffprobe`). The rear-footstep bug was spatial routing (PannerNode at the block under the camera), not stereo assets.
+
+Catalog `block.*.step` stays positional (`yes` above) for world/mob callers. The **player** footstep caller passes `{ positional: false }` so first-person steps are centered.
 
 Regenerate (deterministic seed):
 

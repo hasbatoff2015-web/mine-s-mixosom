@@ -4,15 +4,15 @@
 
 Актуальный отчёт: `reports/2026-08-28_core-audio-sfx-pass.md`. Catalog: `AUDIO_ASSETS.md`.
 
-Targeted: `tests/audio-sfx.test.ts` (19), `tests/minecraft-reference-extractor.test.mjs` (5), plus retained `classic-combat-integration`, `placement-support`, `block-registry`.
+Targeted: `tests/audio-sfx.test.ts` (20), `tests/minecraft-reference-extractor.test.mjs` (6), plus retained `classic-combat-integration`, `placement-support`, `block-registry`.
 
-Full `npm test -- --maxWorkers=2`: **872 passed / 2 failed / 874**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures/items/bucket_empty.png` (unrelated source-pack fixture). Previous main polish baseline was 848/2/850 with the same two failures.
+Full `npm test -- --maxWorkers=2`: **874 passed / 2 failed / 876**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures/items/bucket_empty.png` (unrelated source-pack fixture). Previous audio-pass baseline was 872/2/874 with the same two failures.
 
 `npm run typecheck`, `npm run build`, `npm run check:size`, `npm run check:archive`: PASS. Production **3.53 MiB / 214 files** (26 new short MP3).
 
 Unit coverage (no speakers): catalog resolution, block sound groups, variant/pitch/volume, distance skip, mining cadence, footsteps, explosion dedupe, potion vs food, missing sample does not throw, pause/mute/volume, `debugSnapshot` recent plays. Extractor copies fake 1.8 index objects to friendly `.ogg` names without storing hashes in the repo.
 
-DEV browser overlay: `/?audioDebug=1`. Headless Chromium: 26/26 decoded, real `block.step.dirt` → `block.step.sand`. Interactive Chromium: `block.break.dirt` + `block.step.dirt`, pause/resume suspends/resumes AudioContext, no audio console errors. Speaker listen of TNT/bow/combat/UI remains a local-device gate.
+DEV browser overlay: `/?audioDebug=1`. Headless Chromium after local-footstep fix: walk overlay `block.step.dirt dirt_2.mp3 p0.98 v0.16` (**no `3d`**); `block.break.dirt` still ends with `3d`. Production MP3 pack is 26× mono. Speaker listen of TNT/bow/combat/UI remains a local-device gate.
 
 ## 2026-08-28 creeper / fence / plants / tooltip / RU polish
 

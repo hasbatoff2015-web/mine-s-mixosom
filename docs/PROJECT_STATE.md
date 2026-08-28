@@ -7,7 +7,7 @@
 - Git baseline: `3c9cf45` (`origin/main`), ветка `cursor/core-audio-sfx-0b75`.
 - `AudioManager` plays cached `AudioBuffer` samples from `public/audio/sfx/` (~26 short mono MP3). `playTone` is DEV fallback only.
 - Data-driven `SoundEventId` + `BlockDefinition.soundGroup`. Mining hits every 4 ticks; break/place/step reuse the same material family. Footsteps follow grounded travel; sprint is a shorter stride.
-- World SFX are positional with max-distance skip. Explosion/TNT/creeper share one event with per-tick/nearby dedupe. Pickup/eat/drink/door/chest/click/ignite/splash replace the old beeps.
+- World SFX are positional with max-distance skip. Player footsteps are local (`positional: false`); catalog `block.step.*` stays positional for future mobs. Explosion/TNT/creeper share one event with per-tick/nearby dedupe. Pickup/eat/drink/door/chest/click/ignite/splash replace the old beeps.
 - Minecraft Java 1.8 oggs are local reference only via `npm run audio:extract-reference` → `.local/minecraft-reference-audio/` (gitignored, never shipped).
 - DEV `/?audioDebug=1` overlay + F3 SFX line. Headless Chromium: 26/26 decoded, real dirt→sand footsteps. Interactive Chromium: dirt break + step events, pause/resume context.
 - Report: `docs/reports/2026-08-28_core-audio-sfx-pass.md`. Catalog: `docs/AUDIO_ASSETS.md`.

@@ -60,7 +60,13 @@ describe('sound catalog', () => {
     expect(stoneHit?.files).toEqual(['stone_1.mp3', 'stone_2.mp3']);
     expect(stoneHit?.positional).toBe(true);
     expect(stoneHit?.pitchMax).toBeGreaterThan(stoneHit!.pitchMin);
-    expect(getSoundProfile('explosion')?.maxDistance).toBeGreaterThan(getSoundProfile('block.step.stone')!.maxDistance);
+    expect(getSoundProfile('explosion')?.positional).toBe(true);
+    expect(getSoundProfile('block.break.stone')?.positional).toBe(true);
+    expect(getSoundProfile('block.step.dirt')?.positional).toBe(true);
+    expect(getSoundProfile('bow.shoot')?.positional).toBe(false);
+    expect(getSoundProfile('item.pickup')?.positional).toBe(false);
+    expect(getSoundProfile('food.eat')?.positional).toBe(false);
+    expect(getSoundProfile('player.hurt')?.positional).toBe(false);
     expect(resolveCatalogEvent('glass.break')?.files).toEqual(['glass_1.mp3']);
     expect(SFX_BASE_PATH).toBe('audio/sfx/');
   });
@@ -239,6 +245,7 @@ describe('AudioManager samples, pause, mute, missing files', () => {
 
   function mockContext() {
     const created: Array<{ start: ReturnType<typeof vi.fn>; playbackRate: { value: number }; onended: (() => void) | null }> = [];
+    const panners: unknown[] = [];
     const context = {
       currentTime: 0,
       state: 'running',
@@ -269,22 +276,26 @@ describe('AudioManager samples, pause, mute, missing files', () => {
         gain: { value: 1, setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
         connect: vi.fn(), disconnect: vi.fn(),
       }),
-      createPanner: () => ({
-        panningModel: 'equalpower',
-        distanceModel: 'linear',
-        refDistance: 1,
-        maxDistance: 16,
-        rolloffFactor: 1,
-        positionX: { value: 0 }, positionY: { value: 0 }, positionZ: { value: 0 },
-        connect: vi.fn(), disconnect: vi.fn(), setPosition: vi.fn(),
-      }),
+      createPanner: () => {
+        const panner = {
+          panningModel: 'equalpower',
+          distanceModel: 'linear',
+          refDistance: 1,
+          maxDistance: 16,
+          rolloffFactor: 1,
+          positionX: { value: 0 }, positionY: { value: 0 }, positionZ: { value: 0 },
+          connect: vi.fn(), disconnect: vi.fn(), setPosition: vi.fn(),
+        };
+        panners.push(panner);
+        return panner;
+      },
       createOscillator: () => ({
         type: 'square', frequency: { value: 0 },
         connect: vi.fn(() => ({ connect: vi.fn() })),
         disconnect: vi.fn(), start: vi.fn(), stop: vi.fn(), onended: null,
       }),
     };
-    return { context: context as unknown as AudioContext, created };
+    return { context: context as unknown as AudioContext, created, panners };
   }
 
   it('decodes once, reuses buffers, and never throws on missing samples', async () => {
@@ -356,5 +367,58 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     audio.setVolume(0.7);
     audio.playBlock('place', BlockId.OakPlanks, { x: 1, y: 2, z: 3 }, { x: 1, y: 2, z: 3 });
     expect(created.length).toBe(2);
+  });
+
+  it('keeps player footsteps local without changing catalog step positional default', async () => {
+    const { context, created, panners } = mockContext();
+    const audio = new AudioManager({
+      fetch: (async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })) as unknown as typeof fetch,
+      audioContextFactory: () => context,
+      isDev: false,
+      random: () => 0,
+    });
+    await audio.preload();
+    const feet = { x: 8.5, y: 63.5, z: 8.5 };
+    const listener = { x: 8.5, y: 65.62, z: 8.5 };
+    const endLast = () => created.at(-1)?.onended?.();
+
+    audio.playBlock('step', BlockId.Dirt, feet, listener, { positional: false });
+    endLast();
+    audio.playBlock('step', BlockId.Stone, feet, listener, { positional: false });
+    endLast();
+    audio.playBlock('step', BlockId.Sand, feet, listener, { positional: false });
+    endLast();
+    audio.playBlock('step', BlockId.OakPlanks, feet, listener, { positional: false });
+    endLast();
+    expect(panners).toHaveLength(0);
+    const localSteps = audio.debugSnapshot().recentPlays.slice(-4);
+    expect(localSteps.map((play) => play.event)).toEqual([
+      'block.step.dirt', 'block.step.stone', 'block.step.sand', 'block.step.wood',
+    ]);
+    expect(localSteps.every((play) => play.positional === false)).toBe(true);
+
+    audio.playBlock('step', BlockId.Dirt, feet, listener);
+    expect(panners).toHaveLength(1);
+    expect(audio.debugSnapshot().recentPlays.at(-1)).toMatchObject({
+      event: 'block.step.dirt',
+      positional: true,
+    });
+    endLast();
+
+    audio.playBlock('break', BlockId.Stone, { x: 4.5, y: 64.5, z: 2.5 }, listener);
+    audio.playAt('explosion', { x: 12, y: 64, z: 8 }, listener);
+    expect(audio.debugSnapshot().recentPlays.at(-2)).toMatchObject({ event: 'block.break.stone', positional: true });
+    expect(audio.debugSnapshot().recentPlays.at(-1)).toMatchObject({ event: 'explosion', positional: true });
+    expect(panners.length).toBeGreaterThanOrEqual(3);
+    endLast();
+    endLast();
+
+    audio.play('bow.shoot');
+    audio.play('item.pickup');
+    audio.play('food.eat');
+    audio.play('player.hurt');
+    const local = audio.debugSnapshot().recentPlays.slice(-4);
+    expect(local.map((play) => play.event)).toEqual(['bow.shoot', 'item.pickup', 'food.eat', 'player.hurt']);
+    expect(local.every((play) => play.positional === false)).toBe(true);
   });
 });

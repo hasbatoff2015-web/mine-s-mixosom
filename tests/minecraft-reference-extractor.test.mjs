@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +24,24 @@ describe('production SFX files', () => {
       expect(existsSync(join('public/audio/sfx', name)), name).toBe(true);
     }
   });
+
+  it('ships every production MP3 as a single channel (mono)', () => {
+    const files = readdirSync('public/audio/sfx').filter((name) => name.endsWith('.mp3'));
+    expect(files.length).toBe(26);
+    for (const name of files) {
+      expect(mp3ChannelCount(readFileSync(join('public/audio/sfx', name))), name).toBe(1);
+    }
+  });
 });
+
+/** MPEG channel mode in the first frame header: 3 = mono. */
+function mp3ChannelCount(bytes) {
+  for (let i = 0; i < bytes.length - 4; i += 1) {
+    if (bytes[i] !== 0xff || (bytes[i + 1] & 0xe0) !== 0xe0) continue;
+    return ((bytes[i + 3] >> 6) & 0x3) === 3 ? 1 : 2;
+  }
+  return 0;
+}
 
 describe('Minecraft 1.8 reference extractor', () => {
   it('never stores SHA-1 hashes in the request catalog', () => {

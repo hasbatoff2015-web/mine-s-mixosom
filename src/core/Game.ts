@@ -2777,8 +2777,15 @@ export class Game {
     this.audio.playAt(event, { x, y, z }, this.listenerPose(), options);
   }
 
-  private playBlockSound(action: BlockSoundAction, blockId: BlockId, x: number, y: number, z: number): void {
-    this.audio.playBlock(action, blockId, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, this.listenerPose());
+  private playBlockSound(
+    action: BlockSoundAction,
+    blockId: BlockId,
+    x: number,
+    y: number,
+    z: number,
+    options?: PlaySoundOptions,
+  ): void {
+    this.audio.playBlock(action, blockId, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, this.listenerPose(), options);
   }
 
   private closeOpenChestAudio(): void {
@@ -2802,7 +2809,8 @@ export class Game {
       block = session.world.getBlock(feet.x, feet.y - 1, feet.z, false);
       feet.y -= 1;
     }
-    this.playBlockSound('step', block, feet.x, feet.y, feet.z);
+    // Player-local: keep material from the block underfoot, but do not pan below the camera.
+    this.playBlockSound('step', block, feet.x, feet.y, feet.z, { positional: false });
   }
 
   private onPlayerDamaged(result: DamageResult): void {
