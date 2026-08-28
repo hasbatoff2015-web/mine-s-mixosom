@@ -389,6 +389,7 @@ export class AudioManager {
   }
 
   private async decodePending(): Promise<void> {
+    this.ensureContext();
     if (!this.context) return;
     await Promise.all([...this.raw.keys()].map((file) => this.decodeFile(file)));
   }

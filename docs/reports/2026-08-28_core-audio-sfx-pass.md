@@ -77,7 +77,9 @@ Cloud agents without a Windows Minecraft install cannot extract; that is expecte
 
 # Tests
 
-`tests/audio-sfx.test.ts`, `tests/minecraft-reference-extractor.test.mjs`. Mocks WebAudio. Placement/combat fixtures gained `play` / `playAt` / `playBlock`.
+`tests/audio-sfx.test.ts` (19), `tests/minecraft-reference-extractor.test.mjs` (5). Placement/combat fixtures mock `play` / `playAt` / `playBlock`.
+
+Full suite: **872 passed / 2 failed / 874**. The two failures are the pre-existing authored-item-assets ENOENT (missing source-pack fixture), same as main. Typecheck / build / size / archive PASS. Production **3.53 MiB / 214 files**.
 
 # Browser QA
 

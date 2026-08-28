@@ -12,18 +12,19 @@ export function createMiningSoundState(): MiningSoundState {
   return { targetKey: undefined, ticksOnTarget: 0 };
 }
 
-export function resetMiningSound(state: MiningSoundState): void {
+export function resetMiningSound(state?: MiningSoundState | null): void {
+  if (!state) return;
   state.targetKey = undefined;
   state.ticksOnTarget = 0;
 }
 
 export function nextMiningSound(
-  state: MiningSoundState,
+  state: MiningSoundState | undefined,
   targetKey: string | undefined,
   progressBefore: number,
   delta: number,
 ): MiningSoundKind {
-  if (!targetKey || !(delta > 0)) {
+  if (!state || !targetKey || !(delta > 0)) {
     resetMiningSound(state);
     return 'none';
   }
