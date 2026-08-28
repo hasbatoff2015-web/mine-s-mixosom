@@ -1,5 +1,21 @@
 # Тестирование
 
+## 2026-08-29 lateral skylight / lighting consistency
+
+Report and full 25-step manual checklist: `reports/2026-08-29_lighting-quality-lateral-sky.md`.
+
+All results below are for the original height96 base `6e27b93`, not the late-arriving height256 main `25fb847`. Integration conflicts remain in LightEngine/World. Use transient DEV fixtures or a fresh browser profile/new world; do not load saves from the newer main in this branch.
+
+Targeted run: **228/228, 14 files**, `--maxWorkers=1`, unchanged timeout/assertion thresholds. Files: lighting-seams/jobs/scheduler/physics-interaction/torch-selection, entity-lighting, vegetation-lighting, glowstone-lantern-chain, furnace-orientation-lit, streaming-scheduler, fluid-streaming, dirty-queue, block-break-batch and interaction-support-polish. Final focused checks: **74/74**, including the 56th lighting-seams regression for an opaque cold furnace at a relight boundary. A separate 5/5 sunlight integration diagnostic used an explicit 30 s timeout; see the report, not a default-suite green claim.
+
+New coverage: lateral room/cave gradients, roof hole closure/same-bounds restart, canopy filters, all-six-face external emission, torch/glowstone/lantern removal, sliced furnace on/off/break, >8192 emitters, frozen-clock caps, per-world ownership, unchanged-region no-remesh, eight-neighbor readiness/build order, real cube/special vertex attributes, uniform-only daylight and direct-sun semantics. Old vertical-only neighbor-zero expectations were replaced; fixtures include diagonals and clear dirty state only after all initial lighting settles.
+
+CPU benchmark: `npm run benchmark:lighting`; `.local/lighting-benchmark-after.json` contains 3 trials per scenario with total/max slice, edit cost, columns/nodes/jobs, dirty chunks and production-gated CPU mesh acknowledgements. Acknowledgements are not GPU draws or mesh-build timing. For identical before/after comparison, create a detached `.local/lighting-baseline` worktree at the report base and run `npm run benchmark:lighting -- --baseline`; remove that clean worktree before full Vitest discovery. `npm run benchmark:streaming` remains the canonical streaming sweep.
+
+DEV browser fixtures reuse `VegetationQaHarness` and `WorldRenderer`: `/?qaLighting=room`, `closed`, `hole`, `cave`, `forest`, `sources`. Wall / roof hole / light source / day-night controls invoke actual world paths; F7 uses existing SKY/BLOCK/FINAL. Fixture worlds are transient and do not touch IndexedDB saves. Screenshots/pixel checks are distinct from long native-GPU and real-mobile acceptance.
+
+Full `npm run check` is **not green** on this Windows checkout: final run 919 passed / 20 failed / 939 tests, one failed suite and two RPC errors. Unlike older reports below, the current baseline failure is not a missing authored asset pack: CRLF source fingerprint, reference-audio extractor syntax, CPU timing/RPC failures were observed before edits. An intermittent entity-separation failure passes on rerun but is not proven baseline. Full-run results, new failures and their resolution are recorded in the report; unrelated tests were not rewritten to hide them. Separate build/size/archive checks pass: 3.59 MiB / 219 files.
+
 ## 2026-08-28 glowstone / lantern / chain
 
 Актуальный отчёт: `reports/2026-08-28_glowstone-lantern-chain.md`. Baseline `origin/main`=`73a78f4`.
