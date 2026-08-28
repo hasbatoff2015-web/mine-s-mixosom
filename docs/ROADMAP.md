@@ -5,8 +5,8 @@
 - [x] `WORLD_HEIGHT=256` (`Y 0..255`); generated surface still capped at 84; ores/bedrock/caves unscaled.
 - [x] occupancyTop sky/emitter/fluid/mesh scans; light budget stays 2 ms.
 - [x] Sponge `.schem` importer + Diamond Block fallback with replacement report.
-- [x] Jungle log/wood → Oak Log (not planks); other unsupported stay Diamond.
-- [x] Anarchy spawn extra `Y -= 28` after auto-fit; `importVersion` 2 rebuilds stale v1 worlds once.
+- [x] Jungle log/wood → Oak Log (not planks); cocoa/jungle pods → Air; other unsupported stay Diamond.
+- [x] Anarchy spawn extra `Y -= 28` after auto-fit; `importVersion` 3 rebuilds stale v1/v2 worlds once.
 - [x] Anarchy = local persistent world, import-once marker, singleplayer untouched.
 - [ ] Native QA after Y-28 / oak-log: structure height, no duplicate import, oak logs where diamonds were.
 

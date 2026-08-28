@@ -28,6 +28,7 @@ async function tinySpawnSchematic() {
     'minecraft:lantern[hanging=true]',
     'minecraft:water[level=0]',
     'minecraft:jungle_log[axis=y]',
+    'minecraft:cocoa[age=2,facing=east]',
   ];
   const blocks = new Uint16Array(width * height * length);
   const set = (x: number, y: number, z: number, paletteIndex: number) => {
@@ -41,6 +42,7 @@ async function tinySpawnSchematic() {
   set(2, 2, 1, 5);
   set(3, 0, 1, 6);
   set(0, 0, 1, 7);
+  set(2, 0, 2, 8);
   return encodeSpongeSchematicGzip({
     width,
     height,
@@ -106,6 +108,27 @@ describe('schematic import', () => {
     expect(stillDiamond.jungleToOak).toBeUndefined();
   });
 
+  it('maps cocoa / jungle-tree pods to air, not diamond and not oak log', () => {
+    const cases = [
+      'minecraft:cocoa',
+      'minecraft:cocoa[age=2,facing=north]',
+      'minecraft:cocoa[age=0,facing=west]',
+      'minecraft:cocoa_pod',
+      'minecraft:cocoa_beans',
+      'cocoa',
+    ];
+    for (const raw of cases) {
+      const mapped = mapMinecraftBlock(raw);
+      expect(mapped.block, raw).toBe(BlockId.Air);
+      expect(mapped.block, raw).not.toBe(BlockId.DiamondBlock);
+      expect(mapped.block, raw).not.toBe(BlockId.OakLog);
+      expect(mapped.supported, raw).toBe(true);
+      expect(mapped.cocoaToAir, raw).toBe(true);
+    }
+    expect(mapMinecraftBlock('minecraft:jungle_log').block).toBe(BlockId.OakLog);
+    expect(mapMinecraftBlock('minecraft:andesite').block).toBe(BlockId.DiamondBlock);
+  });
+
   it('chooses a Y translation that stays inside 0..255', () => {
     const fit = chooseVerticalOffset(10, 40, 66);
     expect(fit.lowestWorldY).toBeGreaterThanOrEqual(MIN_WORLD_Y);
@@ -135,6 +158,8 @@ describe('schematic import', () => {
     expect(report.replacements['minecraft:completely_unknown_mod:foo']).toBe(1);
     expect(report.jungleToOak).toBe(1);
     expect(report.jungleReplacements['minecraft:jungle_log']).toBe(1);
+    expect(report.cocoaToAir).toBe(1);
+    expect(report.cocoaReplacements['minecraft:cocoa']).toBe(1);
     expect(report.skippedEntities).toEqual(['minecraft:pig']);
     expect(report.skippedBlockEntities).toEqual(['minecraft:chest']);
     expect(report.lowestImportedY).toBeGreaterThanOrEqual(0);
@@ -147,6 +172,8 @@ describe('schematic import', () => {
     expect(world.getBlock(1, report.offset[1] + 1, 1)).toBe(BlockId.Torch);
     expect(world.getBlock(0, report.offset[1], 1)).toBe(BlockId.OakLog);
     expect(world.getBlock(0, report.offset[1], 1)).not.toBe(BlockId.OakPlanks);
+    expect(world.getBlock(2, report.offset[1], 2)).toBe(BlockId.Air);
+    expect(world.getBlock(2, report.offset[1], 2)).not.toBe(BlockId.DiamondBlock);
     expect(world.getBlockState(1, report.offset[1], 2)).toMatchObject({ facing: 'east', stairHalf: 'top' });
     expect(world.getBlock(2, report.offset[1] + 2, 1)).toBe(BlockId.Lantern);
     expect(world.getBlockState(2, report.offset[1] + 2, 1)).toMatchObject({ attachment: 'ceiling' });
@@ -196,6 +223,8 @@ describe('schematic import', () => {
     expect(restored.getBlock(1, report.offset[1], 1)).toBe(BlockId.Stone);
     expect(restored.getBlock(2, report.offset[1] + 1, 1)).toBe(BlockId.DiamondBlock);
     expect(restored.getBlock(0, report.offset[1], 1)).toBe(BlockId.OakLog);
+    expect(restored.getBlock(2, report.offset[1], 2)).toBe(BlockId.Air);
+    expect(restored.getBlock(2, report.offset[1], 2)).not.toBe(BlockId.DiamondBlock);
     expect(restored.getBlockState(1, report.offset[1], 2)?.facing).toBe('east');
   });
 });

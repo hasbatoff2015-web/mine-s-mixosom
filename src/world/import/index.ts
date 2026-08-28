@@ -1,6 +1,6 @@
 export { parseNbt } from './nbt';
 export { parseSchematic, parseSchematicNbt, encodeSpongeSchematicV2, encodeSpongeSchematicGzip, schematicIndex } from './schematic';
-export { mapMinecraftBlock, mapPalette, parseMinecraftBlockId, isJungleLogOrWood } from './blockMapper';
+export { mapMinecraftBlock, mapPalette, parseMinecraftBlockId, isJungleLogOrWood, isCocoaPod } from './blockMapper';
 export {
   applyVerticalShift,
   chooseVerticalOffset,

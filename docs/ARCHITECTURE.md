@@ -200,7 +200,7 @@ index = y × 16 × 16 + z × 16 + x
 
 `WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера. Generator заполняет только `0..max(surface, sea)`; `Chunk.occupancyTop` ограничивает sky fill, emitter scan, fluid activation и mesher, чтобы пустой столб Y=85..255 не стоил как полный мир. `WORLD_LIGHT_BUDGET_MS = 2` не поднимается из‑за высоты.
 
-Schematic import живёт в `src/world/import/` (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` (и 1.12 `log[variant=jungle]`) становятся `oak_log`. Прочие unknown blocks — `diamond_block`. Anarchy spawn дополнительно сдвигается на `ANARCHY_SPAWN_Y_SHIFT = -28` после auto-fit; если результат выходит из `Y 0..255`, import бросает ошибку и не обрезает. `Играть онлайн → Анархия PvP` грузит IndexedDB world `anarchy` и импортирует spawn только если `serverWorld.spawnImported` и `importVersion === 2`.
+Schematic import живёт в `src/world/import/` (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` (и 1.12 `log[variant=jungle]`) становятся `oak_log`. `cocoa` (pods / jungle beans, включая legacy `cocoa_beans` / `cocoa_pod`) становится Air. Прочие unknown blocks — `diamond_block`. Anarchy spawn дополнительно сдвигается на `ANARCHY_SPAWN_Y_SHIFT = -28` после auto-fit; если результат выходит из `Y 0..255`, import бросает ошибку и не обрезает. `Играть онлайн → Анархия PvP` грузит IndexedDB world `anarchy` и импортирует spawn только если `serverWorld.spawnImported` и `importVersion === 3`.
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 

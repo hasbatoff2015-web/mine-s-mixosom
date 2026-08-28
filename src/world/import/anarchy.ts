@@ -8,7 +8,7 @@ export const ANARCHY_SERVER_ID = 'anarchy-pvp';
 export const ANARCHY_WORLD_SEED = 'anarchy-spawn-v1';
 export const ANARCHY_SPAWN_MAP_URL = '/maps/frontier_spawn2.schem';
 /** Bumped when spawn mapping/placement changes so a stale IndexedDB world is rebuilt once. */
-export const ANARCHY_IMPORT_VERSION = 2;
+export const ANARCHY_IMPORT_VERSION = 3;
 /** Extra world Y translation after the auto surface fit. X/Z stay 0. */
 export const ANARCHY_SPAWN_Y_SHIFT = -28;
 
@@ -28,6 +28,8 @@ export interface AnarchyServerWorld {
     | 'unsupportedToDiamond'
     | 'jungleToOak'
     | 'jungleReplacements'
+    | 'cocoaToAir'
+    | 'cocoaReplacements'
     | 'replacements'
     | 'skippedEntities'
     | 'skippedBlockEntities'
@@ -104,6 +106,8 @@ export async function importAnarchySpawn(world: VoxelWorld, bytes: Uint8Array): 
       unsupportedToDiamond: result.unsupportedToDiamond,
       jungleToOak: result.jungleToOak,
       jungleReplacements: result.jungleReplacements,
+      cocoaToAir: result.cocoaToAir,
+      cocoaReplacements: result.cocoaReplacements,
       replacements: result.replacements,
       skippedEntities: result.skippedEntities,
       skippedBlockEntities: result.skippedBlockEntities,

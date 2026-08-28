@@ -29,6 +29,8 @@ export interface ImportReport {
   readonly unsupportedToDiamond: number;
   readonly jungleToOak: number;
   readonly jungleReplacements: Record<string, number>;
+  readonly cocoaToAir: number;
+  readonly cocoaReplacements: Record<string, number>;
   readonly replacements: Record<string, number>;
   readonly skippedEntities: readonly string[];
   readonly skippedBlockEntities: readonly string[];
@@ -138,17 +140,21 @@ export function mappedVoxels(
   voxels: ImportedVoxel[];
   replacements: Record<string, number>;
   jungleReplacements: Record<string, number>;
+  cocoaReplacements: Record<string, number>;
   mapped: number;
   diamond: number;
   jungleToOak: number;
+  cocoaToAir: number;
   nonAir: number;
 } {
   const voxels: ImportedVoxel[] = [];
   const replacements: Record<string, number> = {};
   const jungleReplacements: Record<string, number> = {};
+  const cocoaReplacements: Record<string, number> = {};
   let mapped = 0;
   let diamond = 0;
   let jungleToOak = 0;
+  let cocoaToAir = 0;
   let nonAir = 0;
   for (let y = 0; y < schematic.height; y += 1) {
     for (let z = 0; z < schematic.length; z += 1) {
@@ -163,6 +169,9 @@ export function mappedVoxels(
         if (!cell.supported) {
           diamond += 1;
           replacements[cell.namespaced] = (replacements[cell.namespaced] ?? 0) + 1;
+        } else if (cell.cocoaToAir) {
+          cocoaToAir += 1;
+          cocoaReplacements[cell.namespaced] = (cocoaReplacements[cell.namespaced] ?? 0) + 1;
         } else if (cell.block !== BlockId.Air) {
           mapped += 1;
           if (cell.jungleToOak) {
@@ -174,7 +183,7 @@ export function mappedVoxels(
       }
     }
   }
-  return { voxels, replacements, jungleReplacements, mapped, diamond, jungleToOak, nonAir };
+  return { voxels, replacements, jungleReplacements, cocoaReplacements, mapped, diamond, jungleToOak, cocoaToAir, nonAir };
 }
 
 export function importVoxelsIntoWorld(world: VoxelWorld, voxels: readonly ImportedVoxel[]): {
@@ -272,6 +281,8 @@ export function importSchematicIntoWorld(
     unsupportedToDiamond: packed.diamond,
     jungleToOak: packed.jungleToOak,
     jungleReplacements: packed.jungleReplacements,
+    cocoaToAir: packed.cocoaToAir,
+    cocoaReplacements: packed.cocoaReplacements,
     replacements: packed.replacements,
     skippedEntities,
     skippedBlockEntities,

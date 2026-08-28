@@ -24,6 +24,8 @@ export interface MappedFrontierBlock {
   readonly namespaced: string;
   /** True when Minecraft jungle log/wood was remapped to Oak Log (not Diamond, not planks). */
   readonly jungleToOak?: boolean;
+  /** True when cocoa / jungle-tree pods were dropped as Air instead of Diamond. */
+  readonly cocoaToAir?: boolean;
 }
 
 const HORIZONTAL: ReadonlySet<string> = new Set(['north', 'south', 'east', 'west']);
@@ -177,6 +179,11 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   oxeye_daisy: 'oxeye_daisy',
   deadbush: 'dead_bush',
   dead_bush: 'dead_bush',
+  cocoa: 'air',
+  cocoa_pod: 'air',
+  cocoa_pods: 'air',
+  cocoa_bean: 'air',
+  cocoa_beans: 'air',
   diamond_block: 'diamond_block',
 });
 
@@ -223,6 +230,20 @@ export function isJungleLogOrWood(parsed: ParsedMinecraftBlock): boolean {
     return woodVariant(parsed) === 'jungle';
   }
   return false;
+}
+
+const COCOA_NAMES: ReadonlySet<string> = new Set([
+  'cocoa',
+  'cocoa_pod',
+  'cocoa_pods',
+  'cocoa_bean',
+  'cocoa_beans',
+  'cocoaplant',
+]);
+
+/** Cocoa pods / jungle-tree beans. Frontier has no cocoa; import as Air, never Diamond. */
+export function isCocoaPod(parsed: ParsedMinecraftBlock): boolean {
+  return COCOA_NAMES.has(parsed.name);
 }
 
 function aliasKey(parsed: ParsedMinecraftBlock): string {
@@ -325,6 +346,14 @@ function mapSpecialState(block: BlockId, states: Readonly<Record<string, string>
 
 export function mapMinecraftBlock(raw: string): MappedFrontierBlock {
   const parsed = parseMinecraftBlockId(raw);
+  if (isCocoaPod(parsed)) {
+    return {
+      block: BlockId.Air,
+      supported: true,
+      cocoaToAir: true,
+      namespaced: parsed.namespaced,
+    };
+  }
   if (isJungleLogOrWood(parsed)) {
     const oak = getBlockByKey('oak_log');
     if (oak) {

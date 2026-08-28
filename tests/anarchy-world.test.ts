@@ -57,11 +57,12 @@ async function fixtureBytes() {
   const width = 3;
   const height = 2;
   const length = 3;
-  const palette = ['minecraft:air', 'minecraft:stone', 'minecraft:glowstone', 'minecraft:jungle_wood'];
+  const palette = ['minecraft:air', 'minecraft:stone', 'minecraft:glowstone', 'minecraft:jungle_wood', 'minecraft:cocoa[age=2,facing=north]'];
   const blocks = new Uint16Array(width * height * length);
   blocks[schematicIndex(1, 0, 1, width, length)] = 1;
   blocks[schematicIndex(1, 1, 1, width, length)] = 2;
   blocks[schematicIndex(0, 0, 1, width, length)] = 3;
+  blocks[schematicIndex(2, 0, 1, width, length)] = 4;
   return encodeSpongeSchematicGzip({ width, height, length, palette, blocks });
 }
 
@@ -84,9 +85,9 @@ describe('anarchy local server world', () => {
   });
 
   it('treats a previous import version as uninitialized so spawn is rebuilt once', () => {
-    expect(ANARCHY_IMPORT_VERSION).toBe(2);
+    expect(ANARCHY_IMPORT_VERSION).toBe(3);
     expect(ANARCHY_SPAWN_Y_SHIFT).toBe(-28);
-    const stale = {
+    const staleV1 = {
       serverWorld: {
         id: ANARCHY_WORLD_ID,
         initialized: true,
@@ -95,13 +96,20 @@ describe('anarchy local server world', () => {
         spawn: [0.5, 80, 0.5] as const,
       },
     };
+    const staleV2 = {
+      serverWorld: {
+        ...staleV1.serverWorld,
+        importVersion: 2,
+      },
+    };
     const current = {
       serverWorld: {
-        ...stale.serverWorld,
+        ...staleV1.serverWorld,
         importVersion: ANARCHY_IMPORT_VERSION,
       },
     };
-    expect(anarchyAlreadyImported(stale)).toBe(false);
+    expect(anarchyAlreadyImported(staleV1)).toBe(false);
+    expect(anarchyAlreadyImported(staleV2)).toBe(false);
     expect(anarchyAlreadyImported(current)).toBe(true);
   });
 
@@ -109,7 +117,7 @@ describe('anarchy local server world', () => {
     const world = new VoxelWorld(ANARCHY_WORLD_SEED);
     const imported = await importAnarchySpawn(world, await fixtureBytes());
     expect(imported.serverWorld.spawnImported).toBe(true);
-    expect(imported.serverWorld.importVersion).toBe(2);
+    expect(imported.serverWorld.importVersion).toBe(3);
     expect(anarchyAlreadyImported({ serverWorld: imported.serverWorld })).toBe(true);
     expect(imported.report.yShift).toBe(-28);
     expect(imported.report.offset[0]).toBe(0);
@@ -123,7 +131,10 @@ describe('anarchy local server world', () => {
     expect(world.getBlock(1, imported.report.lowestImportedY, 1)).toBe(BlockId.Stone);
     expect(world.getBlock(1, glowY, 1)).toBe(BlockId.Glowstone);
     expect(world.getBlock(0, imported.report.lowestImportedY, 1)).toBe(BlockId.OakLog);
+    expect(world.getBlock(2, imported.report.lowestImportedY, 1)).toBe(BlockId.Air);
+    expect(world.getBlock(2, imported.report.lowestImportedY, 1)).not.toBe(BlockId.DiamondBlock);
     expect(imported.report.jungleToOak).toBe(1);
+    expect(imported.report.cocoaToAir).toBe(1);
     expect(imported.report.unsupportedToDiamond).toBe(0);
     expect(world.setBlock(1, imported.report.lowestImportedY, 1, BlockId.Dirt)).toBe(true);
 
@@ -158,6 +169,7 @@ describe('anarchy local server world', () => {
     expect(restored.getBlock(1, imported.report.lowestImportedY, 1)).toBe(BlockId.Dirt);
     expect(restored.getBlock(1, glowY, 1)).toBe(BlockId.Glowstone);
     expect(restored.getBlock(0, imported.report.lowestImportedY, 1)).toBe(BlockId.OakLog);
+    expect(restored.getBlock(2, imported.report.lowestImportedY, 1)).toBe(BlockId.Air);
     expect(snapshot.player.position[1]).toBeCloseTo(imported.spawn[1], 5);
   });
 

@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-28 Anarchy cocoa → air
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-cocoa-to-air.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Contracts: `minecraft:cocoa` (и legacy pod/beans ids) → Air, не Diamond и не Oak Log; jungle_log → Oak Log; unknown → Diamond; `importVersion` 3.
+
 ## 2026-08-28 Anarchy jungle→oak log and Y-28
 
 Актуальный отчёт: `reports/2026-08-28_anarchy-jungle-oak-y-shift.md`. Ветка `cursor/spawn-map-import-256-height`.
