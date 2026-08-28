@@ -9,6 +9,7 @@
 - Data-driven `SoundEventId` + `BlockDefinition.soundGroup`. Mining hits every 4 ticks; break/place/step reuse the same material family. Footsteps follow grounded travel; sprint is a shorter stride.
 - World SFX are positional with max-distance skip. Explosion/TNT/creeper share one event with per-tick/nearby dedupe. Pickup/eat/drink/door/chest/click/ignite/splash replace the old beeps.
 - Minecraft Java 1.8 oggs are local reference only via `npm run audio:extract-reference` → `.local/minecraft-reference-audio/` (gitignored, never shipped).
+- DEV `/?audioDebug=1` overlay + F3 SFX line. Headless Chromium: 26/26 decoded, real dirt→sand footsteps.
 - Report: `docs/reports/2026-08-28_core-audio-sfx-pass.md`. Catalog: `docs/AUDIO_ASSETS.md`.
 
 ## Сохранённый проход: creeper / fence / plants / tooltip / RU localization

@@ -10,7 +10,9 @@ Full `npm test -- --maxWorkers=2`: **872 passed / 2 failed / 874**. The two fail
 
 `npm run typecheck`, `npm run build`, `npm run check:size`, `npm run check:archive`: PASS. Production **3.53 MiB / 214 files** (26 new short MP3).
 
-Unit coverage (no speakers): catalog resolution, block sound groups, variant/pitch/volume, distance skip, mining cadence, footsteps, explosion dedupe, potion vs food, missing sample does not throw, pause/mute/volume. Extractor copies fake 1.8 index objects to friendly `.ogg` names without storing hashes in the repo.
+Unit coverage (no speakers): catalog resolution, block sound groups, variant/pitch/volume, distance skip, mining cadence, footsteps, explosion dedupe, potion vs food, missing sample does not throw, pause/mute/volume, `debugSnapshot` recent plays. Extractor copies fake 1.8 index objects to friendly `.ogg` names without storing hashes in the repo.
+
+DEV browser overlay: `/?audioDebug=1`. Headless Chromium Creative session: 26/26 buffers decoded, real `block.step.dirt` → `block.step.sand` with pitch variation, no missing files, voices returned to 0. Mining look/pointer-lock and speaker listen remain a local-device gate.
 
 ## 2026-08-28 creeper / fence / plants / tooltip / RU polish
 

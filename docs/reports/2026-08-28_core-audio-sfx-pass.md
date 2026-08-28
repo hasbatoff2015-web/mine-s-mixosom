@@ -83,11 +83,21 @@ Full suite: **872 passed / 2 failed / 874**. The two failures are the pre-existi
 
 # Browser QA
 
-Headless Cloud cannot prove speakers. Intended listen-through: stone/dirt mine cadence + break, wood place, footsteps including sprint, TNT/creeper explosion, bow + wall impact, combat hit, pickup, eat/drink, door/chest/button. Implementation is wired for that matrix; native-device listen remains an open gate.
+DEV `/?audioDebug=1` overlay (`#audio-debug`) plus `AudioManager.debugSnapshot()`. F3 also shows SFX buffer/voice/context counts.
+
+Headless Chromium (SwiftShader, `127.0.0.1:4173/?audioDebug=1`) created a Creative world and drove real input:
+
+- Preload: **26/26 decoded**, `files ok` / `events ok`, no console audio errors.
+- Menu/loading: context **suspended/paused** until `PLAYING` (lifecycle preserved).
+- Walk (KeyW, no pointer lock): **six** `block.step.dirt` then **`block.step.sand`** when the surface changed. Pitch varied (~0.94–1.06) at step volume 0.16, positional. Voices returned to **0** after clips ended (no leak).
+- Burst `play()` of the catalog: pickup/eat/hurt/bow/explosion/combat/arrow/door/click/glass/stone/wood/dirt/sand events started; far `playAt` stone (~200 m) was skipped. Same-tick dump hits the global 20-voice cap, so a few lower-priority one-shots (e.g. potion/chest/ignite) are correctly dropped in that artificial burst — not a gameplay path.
+- Headless left-click did **not** produce mining hits (no look-down / pointer lock). Mining cadence remains covered by unit tests and Game wiring.
+- Speakers themselves cannot be certified in this Cloud VM. Native listen-through of TNT/bow/combat/UI is still recommended on a local machine after `npm run audio:extract-reference` if A/B against Java 1.8 is desired.
 
 # Files changed
 
 - `src/core/AudioManager.ts`, `src/core/Game.ts`
+- DEV `?audioDebug=1` overlay + `debugSnapshot()` (not shipped in production behavior beyond F3 counts)
 - `src/audio/*`, `src/blocks/types.ts`, `src/blocks/registry.ts`, `src/blocks/soundGroups.ts`, `src/blocks/index.ts`
 - `src/combat/PlayerArrowManager.ts`, `src/entities/MobManager.ts` (audio hooks only)
 - `public/audio/sfx/*.mp3`
@@ -98,4 +108,4 @@ Headless Cloud cannot prove speakers. Intended listen-through: stone/dirt mine c
 
 # Git / PR
 
-Branch `cursor/core-audio-sfx-0b75` → Draft PR to `main`. Do not merge from this pass.
+Branch `cursor/core-audio-sfx-0b75` → Draft PR #9 to `main`. Do not merge from this pass.
