@@ -1,5 +1,6 @@
 import { BlockId } from '../blocks';
 import type { VoxelWorld } from '../world/World';
+import { getDirectSkyLight } from '../world/LightEngine';
 
 /** Tick-based fire HP interval: 1 damage per second at 20 TPS. */
 export const FIRE_DAMAGE_INTERVAL_TICKS = 20;
@@ -71,5 +72,6 @@ export function isSunHighEnough(daylight: number): boolean {
 }
 
 export function hasDirectSkyLight(world: VoxelWorld, x: number, y: number, z: number): boolean {
-  return world.skyLightAt(x, y, z) >= SUNLIGHT_SKY_MIN;
+  return world.skyLightAt(x, y, z) >= SUNLIGHT_SKY_MIN
+    && getDirectSkyLight(world, x, y, z) >= SUNLIGHT_SKY_MIN;
 }

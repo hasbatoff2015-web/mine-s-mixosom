@@ -14,6 +14,8 @@ export const WORLD_LOADING_LIGHT_BUDGET_MS = 8;
 export const FLUID_JOB_BUDGET_MS = 1.5;
 /** Extra generated+lit ring so visible chunks mesh with neighbor light context. */
 export const LIGHTING_HALO_CHUNKS = 1;
+/** Sky loses at least one level per indirect step: 15 -> 1 -> 0, within one chunk halo. */
+export const LATERAL_SKY_RADIUS = 14;
 /** Visual interpolation snap: teleport/spawn/corrections larger than this skip lerp. */
 export const ENTITY_SNAP_DISTANCE = 6;
 

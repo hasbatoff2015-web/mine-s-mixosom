@@ -143,7 +143,7 @@ export class WorldRenderer {
     let rebuilt = 0;
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
-      if (!chunk.lightingReady) {
+      if (!chunk.lightingReady || this.world.hasPendingLighting(chunk)) {
         // Skip blocked head; keep scanning for a later ready chunk.
         if (counters) {
           counters.attempted += 1;

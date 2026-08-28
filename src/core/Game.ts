@@ -449,6 +449,7 @@ export class Game {
   private async createWorld(name: string, seed: string, mode: GameMode): Promise<void> {
     const summary = this.saves.createSummary(name, seed, mode);
     const world = new VoxelWorld(summary.seed);
+    world.deferredLighting = true;
     const inventory = new Inventory();
     if (mode === 'survival') inventory.addItem('apple', 3);
     await this.startSession(summary, world, inventory);
@@ -464,6 +465,7 @@ export class Game {
       return;
     }
     const world = new VoxelWorld(state.summary.seed);
+    world.deferredLighting = true;
     world.restore(state);
     let inventory: Inventory;
     let bucketOverflow: ItemStack[] = [];
@@ -986,7 +988,7 @@ export class Game {
         }
       }
       if (counters.yielded > 0) {
-        const owner = lightingFloodOwner();
+        const owner = lightingFloodOwner(session.world);
         if (owner && owner !== LIGHT_FLOOD_REGION && owner !== LIGHT_FLOOD_ADD_EMITTER) {
           const { cx, cz } = parseChunkKey(owner);
           this.streamingTrace.mark('lightYielded', cx, cz, performance.now());
@@ -1012,7 +1014,7 @@ export class Game {
 
   private snapshotLightingActiveKeys(session: GameSession): Set<string> {
     const keys = new Set<string>();
-    const owner = lightingFloodOwner();
+    const owner = lightingFloodOwner(session.world);
     for (const chunk of session.world.chunks.values()) {
       const key = inspectChunkKey(chunk.x, chunk.z);
       if (lightingIsActive(chunk.lightingReady, chunk.skyFillCursor, chunk.blockScanCursor, owner, key)) {

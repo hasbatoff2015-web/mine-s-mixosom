@@ -8,14 +8,7 @@ import { CHUNK_SIZE, TARGET_FRAME_MS, chunkKey, floorDiv } from '../core/constan
 import type { Chunk } from './Chunk';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightingFloodOwner } from './LightEngine';
 import type { VoxelWorld } from './World';
-import { chebyshevChunkDistance, lightContextReady } from './worldJobs';
-
-export const CARDINAL_CHUNK_DIRS = [
-  { dir: 'E' as const, dx: 1, dz: 0 },
-  { dir: 'W' as const, dx: -1, dz: 0 },
-  { dir: 'S' as const, dx: 0, dz: 1 },
-  { dir: 'N' as const, dx: 0, dz: -1 },
-];
+import { chebyshevChunkDistance, lightContextReady, MESH_LIGHT_NEIGHBORS } from './worldJobs';
 
 /** Nearby unlit work that unlocks a wanted mesh is urgent. */
 export const URGENT_LIGHT_CHEBYSHEV = 2;
@@ -329,7 +322,7 @@ export function lightJobSortScore(
 }
 
 /**
- * Keys that unlock nearby wanted mesh: unlit/missing cardinal neighbors of
+ * Keys that unlock nearby wanted mesh: all eight unlit/missing neighbors of
  * chebyshev ≤ 2 wanted chunks, plus those near chunks themselves if unlit.
  */
 export function lightingUnlockNeighborKeys(
@@ -356,7 +349,7 @@ export function lightingUnlockNeighborKeys(
         continue;
       }
       if (lightContextReady(world, chunk, originCx, originCz, generateRadius)) continue;
-      for (const dir of CARDINAL_CHUNK_DIRS) {
+      for (const dir of MESH_LIGHT_NEIGHBORS) {
         const nx = cx + dir.dx;
         const nz = cz + dir.dz;
         if (chebyshevChunkDistance(nx, nz, originCx, originCz) > generateRadius) continue;
@@ -378,7 +371,7 @@ export function collectUnlitLightJobs(
   const originCx = floorDiv(originX, CHUNK_SIZE);
   const originCz = floorDiv(originZ, CHUNK_SIZE);
   const unlock = unlockKeys ?? lightingUnlockNeighborKeys(world, originCx, originCz, world.meshRadius, generateRadius);
-  const floodOwner = lightingFloodOwner();
+  const floodOwner = lightingFloodOwner(world);
   const jobs: LightJob[] = [];
   for (const chunk of world.chunks.values()) {
     if (chunk.lightingReady) continue;
@@ -499,7 +492,7 @@ export function walkMeshLightDependencyChain(
     }
     steps.push({ cx: curX, cz: curZ, dir, state: 'lit-waiting-context' });
     let next: { cx: number; cz: number; dir: string } | null = null;
-    for (const card of CARDINAL_CHUNK_DIRS) {
+    for (const card of MESH_LIGHT_NEIGHBORS) {
       const nx = curX + card.dx;
       const nz = curZ + card.dz;
       if (chebyshevChunkDistance(nx, nz, originCx, originCz) > generateRadius) continue;

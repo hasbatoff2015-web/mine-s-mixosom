@@ -17,6 +17,8 @@ if (import.meta.env.DEV) {
   const qaItem = search.get('qaItem');
   const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
   const qaBiome = search.get('qaBiome');
+  const qaLighting = search.get('qaLighting');
+  const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
   const requestedView = search.get('view');
@@ -27,14 +29,15 @@ if (import.meta.env.DEV) {
     void import('./dev/ArrowQaHarness').then(({ startArrowQaHarness }) => {
       disposeApplication = startArrowQaHarness(canvas, uiRoot);
     });
-  } else if (qaBiome && ['plains', 'forest', 'desert'].includes(qaBiome)) {
+  } else if ((qaBiome && ['plains', 'forest', 'desert'].includes(qaBiome)) || (qaLighting && lightingScenes.includes(qaLighting))) {
     runningDevHarness = true;
     void import('./dev/VegetationQaHarness').then(async ({ startVegetationQaHarness }) => {
       disposeApplication = await startVegetationQaHarness(
         canvas,
         uiRoot,
-        qaBiome as 'plains' | 'forest' | 'desert',
+        (qaBiome ?? 'plains') as 'plains' | 'forest' | 'desert',
         qaTime,
+        qaLighting && lightingScenes.includes(qaLighting) ? qaLighting as import('./dev/lightingQaScenes').LightingQaScene : undefined,
       );
     });
   } else if (qaItem || qaPoseCompare) {

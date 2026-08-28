@@ -4,7 +4,7 @@ import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState 
 import { rayAabbDistance, blockCollisionBoxes } from './collision';
 import { blockSelectionBoxes } from './selection';
 import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
-import { CHUNK_SIZE, LIGHTING_HALO_CHUNKS, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
+import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
 import { getItemDefinition } from '../items';
@@ -29,14 +29,15 @@ import {
   resetLightFrameStats,
   skyOcclusionClass,
   lightingInvalidation,
-  recomputeSkyColumnAt,
   LIGHT_FLOOD_ADD_EMITTER,
   LIGHT_FLOOD_REGION,
+  MAX_LIGHT_COLUMNS_PER_SLICE,
+  MAX_LIGHT_NODES_PER_SLICE,
   type LightJobOrigin,
   type LightRegion,
   type PendingLightJob,
 } from './LightEngine';
-import { chebyshevChunkDistance, neighborFluidMeshOffsets, neighborMeshOffsets } from './worldJobs';
+import { chebyshevChunkDistance, MESH_LIGHT_NEIGHBORS, neighborFluidMeshOffsets } from './worldJobs';
 import {
   FLUID_QUEUE_CAP,
   activateGeneratedFluidBoundaries,
@@ -180,8 +181,9 @@ export class VoxelWorld {
   lightOriginCounts: LightOriginHudCounts = { stream: 0, fluid: 0, edit: 0, other: 0 };
   readonly pendingMesh = new Set<string>();
   private pendingLight?: PendingLightJob;
+  /** Runtime sessions defer every mutation/getter; synchronous utilities remain available to tests/QA. */
+  deferredLighting = false;
   private pendingEmitters: Array<readonly [number, number, number]> = [];
-  private readonly pendingEmitterLightKeys = new Set<string>();
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
   viewChunkX = 0;
@@ -273,52 +275,34 @@ export class VoxelWorld {
     this.markMeshDirty(chunk);
   }
 
-  /** After a chunk first becomes lit: remesh it and any already-drawn neighbors. */
+  /** Commit actual light differences once, including boundary vertices read by neighbors. */
   applyInitialLightingVersions(chunk: Chunk): void {
-    const touched = consumeLightTouched();
-    this.noteLightDataChanged(chunk);
-    if (chunk.dirty && chunk.readyToMeshAt === 0) chunk.readyToMeshAt = performance.now();
-    for (const other of touched) {
-      if (other === chunk) continue;
-      if (other.meshedLightVersion >= 0) this.noteLightDataChanged(other);
-    }
+    this.commitLightChanges(chunk);
+    if (chunk.readyToMeshAt === 0) chunk.readyToMeshAt = performance.now();
   }
 
-  private bumpDirtyLightVersions(keys: Iterable<string>): void {
-    consumeLightTouched();
-    for (const key of keys) {
-      const chunk = this.chunks.get(key);
-      if (chunk?.lightingReady) chunk.bumpLightVersion();
+  private commitLightChanges(initial?: Chunk): void {
+    const dirty = new Set<Chunk>();
+    if (initial) dirty.add(initial);
+    for (const chunk of consumeLightTouched(this)) {
+      if (chunk.lightingReady) dirty.add(chunk);
+      MESH_LIGHT_NEIGHBORS.forEach(({ dx, dz }, bit) => {
+        if (!(chunk.changedLightBorders & (1 << bit))) return;
+        const neighbor = this.chunks.get(chunkKey(chunk.x + dx, chunk.z + dz));
+        if (neighbor?.lightingReady) dirty.add(neighbor);
+      });
     }
+    for (const chunk of dirty) this.noteLightDataChanged(chunk);
   }
 
-  private bumpDirtyInRegion(region: LightRegion): void {
-    consumeLightTouched();
-    const minChunkX = floorDiv(region.minX, CHUNK_SIZE);
-    const maxChunkX = floorDiv(region.maxX, CHUNK_SIZE);
-    const minChunkZ = floorDiv(region.minZ, CHUNK_SIZE);
-    const maxChunkZ = floorDiv(region.maxZ, CHUNK_SIZE);
-    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ += 1) {
-      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
-        const chunk = this.chunks.get(chunkKey(chunkX, chunkZ));
-        if (chunk?.dirty && chunk.lightingReady) chunk.bumpLightVersion();
-      }
-    }
-  }
-
-  private collectEmitterLightTouches(): void {
-    for (const chunk of consumeLightTouched()) {
-      if (chunk.lightingReady) this.pendingEmitterLightKeys.add(chunkKey(chunk.x, chunk.z));
-    }
-  }
-
-  private commitEmitterLightVersions(): void {
-    consumeLightTouched();
-    for (const key of this.pendingEmitterLightKeys) {
-      const chunk = this.chunks.get(key);
-      if (chunk?.lightingReady) chunk.bumpLightVersion();
-    }
-    this.pendingEmitterLightKeys.clear();
+  hasPendingLighting(chunk: Chunk): boolean {
+    if (chunk.lightPending) return true;
+    const r = this.pendingLight?.region;
+    if (r && chunk.x * CHUNK_SIZE <= r.maxX && (chunk.x + 1) * CHUNK_SIZE > r.minX
+      && chunk.z * CHUNK_SIZE <= r.maxZ && (chunk.z + 1) * CHUNK_SIZE > r.minZ) return true;
+    return this.pendingEmitters.some(([x, , z]) =>
+      chunk.x * CHUNK_SIZE <= x + 15 && (chunk.x + 1) * CHUNK_SIZE > x - 15
+      && chunk.z * CHUNK_SIZE <= z + 15 && (chunk.z + 1) * CHUNK_SIZE > z - 15);
   }
 
   getBlockState(x: number, y: number, z: number): BlockRenderState | undefined {
@@ -438,11 +422,12 @@ export class VoxelWorld {
 
   /**
    * Applies many voxel writes as one logical operation: one dirty per chunk,
-   * one sky recompute per affected chunk, one block-light pass for the union region.
+   * one coalesced sky/block job for the bounded union region.
    */
   applyBlockBatch(mutations: readonly BlockMutation[], options: BlockBatchOptions = {}): BlockBatchStats {
     const record = options.record !== false;
     const updateLighting = options.updateLighting !== false;
+    const deferLighting = options.deferLighting ?? this.deferredLighting;
     const scheduleNeighbors = options.scheduleNeighbors !== false;
     const mutationStart = performance.now();
     const dirtyChunks = new Set<string>();
@@ -454,11 +439,9 @@ export class VoxelWorld {
     }
     this.mutationMarks += unique.size;
 
-    const skyColumns = new Set<string>();
     const addedEmitters: Array<readonly [number, number, number]> = [];
     let regionSky = false;
     let regionBlock = false;
-    let regionEmission = false;
     let rMinX = Infinity;
     let rMinY = Infinity;
     let rMinZ = Infinity;
@@ -471,17 +454,14 @@ export class VoxelWorld {
       const wrote = this.writeBlockRaw(mutation.x, mutation.y, mutation.z, mutation.block, record, dirtyChunks);
       if (!wrote) continue;
       applied += 1;
-      const action = lightingInvalidation(wrote.previous, mutation.block);
-      if (action === 'localSky' || action === 'addEmitter') {
-        skyColumns.add(`${mutation.x},${mutation.z}`);
-      }
+      const signatureAction = lightingInvalidation(wrote.previous, mutation.block);
+      const action = signatureAction === 'none' && wrote.emissionChanged ? 'region' : signatureAction;
       if (action === 'addEmitter' && (getBlockDefinition(mutation.block).emission ?? 0) > 0) {
         addedEmitters.push([mutation.x, mutation.y, mutation.z]);
       }
-      if (action === 'region') {
+      if (action === 'region' || action === 'addEmitter') {
         regionSky = regionSky || wrote.skyChanged;
-        regionBlock = regionBlock || wrote.emissionChanged || wrote.occlusionChanged;
-        regionEmission = regionEmission || wrote.emissionChanged;
+        regionBlock = regionBlock || (action === 'region' && (wrote.emissionChanged || wrote.occlusionChanged));
         regionRadius = Math.max(regionRadius, wrote.lightRadius);
         rMinX = Math.min(rMinX, mutation.x);
         rMinY = Math.min(rMinY, mutation.y);
@@ -503,69 +483,22 @@ export class VoxelWorld {
     const hasRegion = Number.isFinite(rMinX) && (regionSky || regionBlock);
     if (applied > 0 && updateLighting) {
       const relightStart = performance.now();
-      for (const key of skyColumns) {
-        const split = key.split(',');
-        const columnX = Number(split[0]);
-        const columnZ = Number(split[1]);
-        recomputeSkyColumnAt(this, columnX, columnZ);
-        this.noteLightDirtyChunk(floorDiv(columnX, CHUNK_SIZE), floorDiv(columnZ, CHUNK_SIZE));
-      }
       if (addedEmitters.length > 0 && !hasRegion) {
-        if (options.deferLighting) {
-          this.pendingEmitters.push(...addedEmitters);
-        } else {
-          addBlockLightEmitters(this, addedEmitters);
-        }
+        if (deferLighting) this.pendingEmitters.push(...addedEmitters);
+        else addBlockLightEmitters(this, addedEmitters);
       }
       if (hasRegion) {
-        const skyRadius = regionSky ? 4 : 0;
-        const blockRadius = regionBlock ? regionRadius : 0;
-        const radius = Math.max(skyRadius, blockRadius);
+        const radius = Math.max(regionSky ? LATERAL_SKY_RADIUS : 0, regionBlock ? regionRadius : 0);
         const region: LightRegion = {
-          minX: rMinX - radius,
-          minY: rMinY - (regionBlock ? blockRadius : 0),
-          minZ: rMinZ - radius,
-          maxX: rMaxX + radius,
-          maxY: rMaxY + (regionBlock ? blockRadius : 0),
-          maxZ: rMaxZ + radius,
+          minX: rMinX - radius, minY: rMinY - regionRadius, minZ: rMinZ - radius,
+          maxX: rMaxX + radius, maxY: rMaxY + regionRadius, maxZ: rMaxZ + radius,
         };
-        if (options.deferLighting) {
-          this.queueLight(region, regionSky, regionBlock, options.lightOrigin ?? 'edit');
-        } else {
-          if (regionSky) {
-            relightRegion(this, {
-              minX: rMinX - skyRadius,
-              minY: 0,
-              minZ: rMinZ - skyRadius,
-              maxX: rMaxX + skyRadius,
-              maxY: WORLD_HEIGHT - 1,
-              maxZ: rMaxZ + skyRadius,
-            }, true, false);
-          }
-          if (regionBlock) {
-            relightRegion(this, {
-              minX: rMinX - blockRadius,
-              minY: rMinY - blockRadius,
-              minZ: rMinZ - blockRadius,
-              maxX: rMaxX + blockRadius,
-              maxY: rMaxY + blockRadius,
-              maxZ: rMaxZ + blockRadius,
-            }, false, true);
-          }
-        }
-        if (regionEmission) {
-          this.markLightRegionDirty(
-            rMinX - regionRadius,
-            rMinZ - regionRadius,
-            rMaxX + regionRadius,
-            rMaxZ + regionRadius,
-          );
-        }
+        // Mixed batches must also include add-only emitters in the regional reset.
+        const block = regionBlock || addedEmitters.length > 0;
+        if (deferLighting) this.queueLight(region, regionSky, block, options.lightOrigin ?? 'edit');
+        else relightRegion(this, region, regionSky, block);
       }
-      for (const chunk of consumeLightTouched()) {
-        if (chunk.lightingReady) chunk.bumpLightVersion();
-      }
-      if (!options.deferLighting) this.bumpDirtyLightVersions(this.pendingMesh);
+      if (!deferLighting) this.commitLightChanges();
       relightMs = performance.now() - relightStart;
     }
 
@@ -580,19 +513,6 @@ export class VoxelWorld {
 
   private skyRecomputeSnapshot(): number {
     return lightEngineStats.skyRecomputes;
-  }
-
-  private markLightRegionDirty(minX: number, minZ: number, maxX: number, maxZ: number): void {
-    const minChunkX = floorDiv(minX, CHUNK_SIZE);
-    const maxChunkX = floorDiv(maxX, CHUNK_SIZE);
-    const minChunkZ = floorDiv(minZ, CHUNK_SIZE);
-    const maxChunkZ = floorDiv(maxZ, CHUNK_SIZE);
-    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ += 1) {
-      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
-        const chunk = this.getChunk(chunkX, chunkZ, false);
-        if (chunk) this.markMeshDirty(chunk);
-      }
-    }
   }
 
   private writeBlockRaw(
@@ -614,6 +534,7 @@ export class VoxelWorld {
     // A new material/lifetime must not inherit an old pending (or in-flight) deadline.
     this.cancelFluidTick(x, y, z);
     const previousDefinition = getBlockDefinition(previous);
+    const previousEmission = previous === BlockId.Furnace ? this.blockEmissionAt(x, y, z) : previousDefinition.emission ?? 0;
     chunk.set(localX, y, localZ, block);
     this.blockStates.delete(blockKey(x, y, z));
     this.queueSupportAround(x, y, z);
@@ -634,18 +555,17 @@ export class VoxelWorld {
     this.markMeshDirty(chunk);
     dirtyChunks.add(chunkKey(chunkX, chunkZ));
     const nextDefinition = getBlockDefinition(block);
-    const liquidTouch = previousDefinition.liquid === true || nextDefinition.liquid === true;
-    const offsets = liquidTouch ? neighborFluidMeshOffsets(localX, localZ) : neighborMeshOffsets(localX, localZ);
+    const offsets = neighborFluidMeshOffsets(localX, localZ);
     for (const [dx, dz] of offsets) {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirtyChunks);
     }
     const occlusionChanged = previousDefinition.occludesFaces !== nextDefinition.occludesFaces;
-    const emissionChanged = (previousDefinition.emission ?? 0) !== (nextDefinition.emission ?? 0);
+    const emissionChanged = previousEmission !== (nextDefinition.emission ?? 0);
     const skyChanged = skyOcclusionClass(previousDefinition) !== skyOcclusionClass(nextDefinition);
     const lightRadius = Math.min(15, Math.max(
-      previousDefinition.emission ?? 0,
+      previousEmission,
       nextDefinition.emission ?? 0,
-      occlusionChanged || skyChanged ? 8 : 0,
+      occlusionChanged ? 14 : skyChanged ? LATERAL_SKY_RADIUS : 0,
     ));
     return { previous, occlusionChanged, emissionChanged, skyChanged, lightRadius };
   }
@@ -655,11 +575,6 @@ export class VoxelWorld {
     if (!neighbor) return;
     this.markMeshDirty(neighbor);
     dirtyChunks.add(chunkKey(chunkX, chunkZ));
-  }
-
-  private noteLightDirtyChunk(chunkX: number, chunkZ: number): void {
-    if (!this.trackFluidDirty) return;
-    this.fluidLightDirtyKeys.add(chunkKey(chunkX, chunkZ));
   }
 
   private noteRegionLightDirty(region: LightRegion): void {
@@ -693,16 +608,10 @@ export class VoxelWorld {
     this.lightQueueMarks += 1;
     this.noteRegionLightDirty(region);
     if (!this.pendingLight) {
-      this.pendingLight = { region: { ...region }, sky, block, origin, skyColumn: 0, blockSeeded: false };
+      this.pendingLight = { region: { ...region }, sky, block, origin };
       return;
     }
     const current = this.pendingLight.region;
-    const expanded = region.minX < current.minX
-      || region.minY < current.minY
-      || region.minZ < current.minZ
-      || region.maxX > current.maxX
-      || region.maxY > current.maxY
-      || region.maxZ > current.maxZ;
     const mergedOrigin: LightJobOrigin = this.pendingLight.origin === origin
       ? origin
       : (this.pendingLight.origin === 'edit' || origin === 'edit' ? 'edit' : origin);
@@ -710,8 +619,6 @@ export class VoxelWorld {
       sky: this.pendingLight.sky || sky,
       block: this.pendingLight.block || block,
       origin: mergedOrigin,
-      skyColumn: expanded ? 0 : (this.pendingLight.skyColumn ?? 0),
-      blockSeeded: expanded ? false : this.pendingLight.blockSeeded === true,
       region: {
         minX: Math.min(current.minX, region.minX),
         minY: Math.min(current.minY, region.minY),
@@ -721,7 +628,8 @@ export class VoxelWorld {
         maxZ: Math.max(current.maxZ, region.maxZ),
       },
     };
-    if (expanded) resetRegionLightFlood();
+    // An edit inside unchanged bounds can invalidate already-scanned columns too.
+    resetRegionLightFlood(this);
   }
 
   flushLighting(): number {
@@ -731,18 +639,17 @@ export class VoxelWorld {
     this.pendingEmitters = [];
     const start = performance.now();
     if (emitters.length > 0) addBlockLightEmitters(this, emitters);
-    this.collectEmitterLightTouches();
-    this.commitEmitterLightVersions();
+
     if (pending) {
       relightRegion(this, pending.region, pending.sky, pending.block);
-      this.bumpDirtyInRegion(pending.region);
     }
+    this.commitLightChanges();
     return performance.now() - start;
   }
 
   /**
-   * Time-sliced lighting. Never runs a monolithic 30 ms sky job: each call
-   * yields at `budgetMs` and resumes cursors on the next frame.
+   * Time-sliced lighting with deadline checks and hard work caps. Cursors
+   * resume on the next frame; small check intervals may overshoot the deadline.
    */
   processLighting(
     budgetMs: number,
@@ -757,7 +664,7 @@ export class VoxelWorld {
     const originCz = floorDiv(originZ, CHUNK_SIZE);
     const generateRadius = this.generationRadius;
     const unlock = lightingUnlockNeighborKeys(this, originCx, originCz, this.meshRadius, generateRadius);
-    const previousOwner = lightingFloodOwner();
+    const previousOwner = lightingFloodOwner(this);
     const keepFlood = (key: string): boolean => {
       const chunk = this.chunks.get(key);
       if (!chunk) return false;
@@ -765,26 +672,30 @@ export class VoxelWorld {
       const critical = criticalUnlitKeys(this, originCx, originCz, this.meshRadius, generateRadius);
       return !shouldPreemptDistantLightingFlood(key, originCx, originCz, unlock, critical.length);
     };
-    if (abandonLightingFloodIfOrphaned(keepFlood)) {
+    if (abandonLightingFloodIfOrphaned(keepFlood, this)) {
       const leftover = this.chunks.get(previousOwner);
       if (leftover) resetIncompleteBlockLighting(leftover);
+      this.commitLightChanges();
     }
 
     const unlit = collectUnlitLightJobs(this, originX, originZ, generateRadius, unlock);
-    lightFrameStats.jobsPending = unlit.length + (this.pendingLight ? 1 : 0);
+    const emitterWork = this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER;
+    lightFrameStats.jobsPending = unlit.length + (this.pendingLight ? 1 : 0) + Number(emitterWork);
     this.lightOriginCounts = {
       stream: unlit.length,
       fluid: this.pendingLight?.origin === 'fluid' ? 1 : 0,
       edit: this.pendingLight?.origin === 'edit' ? 1 : 0,
       other: this.pendingLight?.origin === 'other' ? 1 : 0,
     };
-    const liveOwner = lightingFloodOwner();
-    const resumeSharedFlood = liveOwner === LIGHT_FLOOD_REGION || liveOwner === LIGHT_FLOOD_ADD_EMITTER;
+    const liveOwner = lightingFloodOwner(this);
+    const resumeSharedFlood = liveOwner === LIGHT_FLOOD_REGION || liveOwner === LIGHT_FLOOD_ADD_EMITTER
+      || (liveOwner === '' && (this.pendingLight !== undefined || this.pendingEmitters.length > 0));
     if (!resumeSharedFlood) {
       for (const job of unlit) {
-        if (performance.now() >= deadline) break;
+        if (performance.now() >= deadline || lightFrameStats.columns >= MAX_LIGHT_COLUMNS_PER_SLICE
+          || lightFrameStats.nodes >= MAX_LIGHT_NODES_PER_SLICE) break;
         const key = chunkKey(job.chunk.x, job.chunk.z);
-        const floodOwner = lightingFloodOwner();
+        const floodOwner = lightingFloodOwner(this);
         if (isLightJobBlockedByFlood(floodOwner, key)) {
           if (counters) counters.blocked += 1;
           continue;
@@ -801,24 +712,21 @@ export class VoxelWorld {
       }
     }
 
-    if (performance.now() < deadline && lightingFloodOwner() === LIGHT_FLOOD_ADD_EMITTER) {
+    if (performance.now() < deadline && lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER) {
       addBlockLightEmitters(this, this.pendingEmitters, deadline);
       this.pendingEmitters = [];
-      this.collectEmitterLightTouches();
-      if (lightingFloodOwner() === '') this.commitEmitterLightVersions();
-    } else if (performance.now() < deadline && this.pendingLight && (lightingFloodOwner() === '' || lightingFloodOwner() === LIGHT_FLOOD_REGION)) {
-      const region = this.pendingLight.region;
+      if (lightingFloodOwner(this) === '') this.commitLightChanges();
+    } else if (performance.now() < deadline && this.pendingLight && (lightingFloodOwner(this) === '' || lightingFloodOwner(this) === LIGHT_FLOOD_REGION)) {
       const done = continuePendingLight(this, this.pendingLight, deadline);
       if (done) {
         this.pendingLight = undefined;
-        this.bumpDirtyInRegion(region);
+        this.commitLightChanges();
       }
-    } else if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner() === '') {
+    } else if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner(this) === '') {
       const emitters = this.pendingEmitters;
       this.pendingEmitters = [];
       addBlockLightEmitters(this, emitters, deadline);
-      this.collectEmitterLightTouches();
-      if (lightingFloodOwner() === '') this.commitEmitterLightVersions();
+      if (lightingFloodOwner(this) === '') this.commitLightChanges();
     }
 
     let dirtyLight = 0;
@@ -831,7 +739,8 @@ export class VoxelWorld {
   }
 
   get pendingLightJobs(): number {
-    return (this.pendingLight ? 1 : 0) + this.unlitChunkCount;
+    return (this.pendingLight ? 1 : 0) + this.unlitChunkCount
+      + (this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER ? 1 : 0);
   }
 
   /** In-radius dirty/stale keys after `discardObsoletePendingMesh`. Not a historical leak. */
@@ -842,7 +751,7 @@ export class VoxelWorld {
   get unlitChunkCount(): number {
     let count = 0;
     for (const chunk of this.chunks.values()) {
-      if (!chunk.skyReady || !chunk.blockLightReady) count += 1;
+      if (!chunk.lightingReady) count += 1;
     }
     return count;
   }
@@ -881,7 +790,7 @@ export class VoxelWorld {
       this.pendingMesh.delete(key);
       removed.push(key);
     }
-    abandonLightingFloodIfOrphaned((key) => this.chunks.has(key));
+    abandonLightingFloodIfOrphaned((key) => this.chunks.has(key), this);
     return removed;
   }
 
@@ -1260,23 +1169,14 @@ export class VoxelWorld {
   }
 
   private syncFurnaceEmission(x: number, y: number, z: number): void {
-    const radius = Math.max(1, torchBlockEmission());
-    const minChunkX = floorDiv(x - radius, CHUNK_SIZE);
-    const maxChunkX = floorDiv(x + radius, CHUNK_SIZE);
-    const minChunkZ = floorDiv(z - radius, CHUNK_SIZE);
-    const maxChunkZ = floorDiv(z + radius, CHUNK_SIZE);
-    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ += 1) {
-      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
-        this.markBlockDirty(chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
-      }
-    }
-    relightAround(this, x, y, z, radius, false);
-    consumeLightTouched();
-    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ += 1) {
-      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX += 1) {
-        const chunk = this.chunks.get(chunkKey(chunkX, chunkZ));
-        if (chunk?.lightingReady) chunk.bumpLightVersion();
-      }
+    const radius = torchBlockEmission();
+    this.markBlockDirty(x, z);
+    if (this.deferredLighting) {
+      this.queueLight({ minX: x - radius, minY: y - radius, minZ: z - radius,
+        maxX: x + radius, maxY: y + radius, maxZ: z + radius }, false, true);
+    } else {
+      relightAround(this, x, y, z, radius, false);
+      this.commitLightChanges();
     }
   }
 }

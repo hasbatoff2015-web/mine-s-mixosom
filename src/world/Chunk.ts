@@ -2,10 +2,12 @@ import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
 
 export class Chunk {
   readonly blocks = new Uint16Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
-  /** Packed 0–15 sky light, vertical columns only. */
+  /** 0-15 direct and propagated sky light, independent of daylight. */
   readonly skyLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
   /** Packed 0–15 block light from emissive sources. */
   readonly blockLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
+  /** Highest sky filter + 1 per column; frontier scans skip uniformly open sky above it. */
+  readonly skyFilterHeights = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE);
   /** Generation-time terrain column cache reused by meshing and biome tint. */
   readonly surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   /** 0 plains, 1 forest, 2 desert. */
@@ -13,7 +15,12 @@ export class Chunk {
   dirty = true;
   generated = false;
   skyReady = false;
+  skyLateralReady = false;
   blockLightReady = false;
+  /** In-place light work may not be baked into a mesh until its job commits. */
+  lightPending = false;
+  /** Boundary readers affected by the last committed light change (eight neighbor bits). */
+  changedLightBorders = 0;
   /** Incremented once per lighting job that changes this chunk's light arrays. */
   lightVersion = 0;
   /** Light version baked into the current mesh. `-1` = never meshed. */
@@ -44,7 +51,7 @@ export class Chunk {
   }
 
   get lightingReady(): boolean {
-    return this.skyReady && this.blockLightReady;
+    return this.skyReady && this.skyLateralReady && this.blockLightReady;
   }
 
   get lightMeshStale(): boolean {
