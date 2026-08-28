@@ -4,11 +4,11 @@
 
 Актуальный отчёт: `reports/2026-08-28_glowstone-lantern-chain.md`. Baseline `origin/main`=`73a78f4`.
 
-Targeted: `tests/glowstone-lantern-chain.test.ts` (20) plus retained `block-registry`, `crafting`, `block-selection-raycast`, `placement-support`, `creeper-fence-plants-tooltip-ru`, `special-preview-contract`, `lighting-torch-selection`, `interaction-support-polish`.
+Targeted: `tests/glowstone-lantern-chain.test.ts` (22) + `tests/glowstone-pack-textures.test.mjs` (2) plus retained `block-registry`, `crafting`, `block-selection-raycast`, `placement-support`, `creeper-fence-plants-tooltip-ru`, `special-preview-contract`, `lighting-torch-selection`, `interaction-support-polish`.
 
-Light contracts: Glowstone = 15, Lantern = 15, Torch = 14. Placement covers standing/hanging lantern, chain-under-chain, lantern-under-chain, support cascade, thin selection, save/load, chunk border x=15/16.
+Light contracts: Glowstone = 15, Lantern = 15, Torch = 14. Placement covers standing/hanging lantern, chain-under-chain, lantern-under-chain, support cascade, thin selection, save/load, chunk border x=15/16. Icons: Faithful 32px glowstone; lantern/chain GUI sprites; held atlas UVs.
 
-`npm run typecheck`: PASS. Full vitest: **894 passed / 2 failed / 896**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures`. Vite build / size / archive: PASS, **3.59 MiB / 217 files**.
+`npm run typecheck`: PASS. Full vitest: **898 passed / 2 failed / 900**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures`. Vite build / size / archive: PASS, **3.59 MiB / 219 files**.
 
 ## 2026-08-28 core sample SFX
 

@@ -39,14 +39,19 @@ Implemented on branch `cursor/glowstone-lantern-chain` from `73a78f4`. Glowstone
 
 ## Assets
 
-| Runtime | Source mapping | This environment |
-| --- | --- | --- |
-| `block/glowstone.png` | `assets/.../blocks/glowstone.png` (1.12 pack name) | Pack absent → generate-missing fallback |
-| `block/lantern.png` | optional `blocks/lantern.png` (1.14+ layout) | Pack absent → fallback painted to vanilla UV regions |
-| `block/chain.png` | optional `blocks/chain.png` (1.16+ two 3px strips) | Pack absent → fallback |
-| `item/lantern.png`, `item/chain.png` | optional item sprites | Not required; inventory/hand use 3D `special_model` |
+`public/textures/block/stone.png` and `gold_ore.png` are byte-identical to Faithful 32x Java 1.12.2. Glowstone was taken from that same pack (`assets/minecraft/textures/blocks/glowstone.png` → 32×32), not generated.
 
-No new textures were invented when a pack file was present: the Cloud checkout has no gitignored `assets/`. Fallbacks exist so `npm run check` and local play work; a later `npm run assets:import` overwrites glowstone/lantern/chain if the local Faithful tree contains them.
+| Runtime | Source |
+| --- | --- |
+| `block/glowstone.png` | Faithful 32x 1.12.2 `blocks/glowstone.png` |
+| `block/lantern.png` | Faithful 32x 1.16.5 `block/lantern.png` (32×96 animation strip; atlas uses the first 32×32 frame) |
+| `block/chain.png` | Faithful 32x 1.16.5 `block/chain.png` |
+| `item/lantern.png` | Faithful 32x 1.16.5 item sprite — inventory/hotbar |
+| `item/chain.png` | Faithful 32x 1.16.5 item sprite — inventory/hotbar |
+
+Lantern/chain empty inventory slots were caused by `geometryFromLocalBoxes` stretching the UV-atlas PNG across cuboids (mostly transparent). GUI now uses the authored item sprites. Held/dropped `special_model` samples the same atlas rectangles as `ChunkMesher`.
+
+Import also tries 1.13+ `block/` and `item/` paths so a local `npm run assets:import` overwrites these from the user's pack when present. Generate-missing no longer paints glowstone/lantern/chain.
 
 ## Light levels
 
@@ -84,9 +89,9 @@ Retained: fluids, lighting-torch, minecart, potion/armor HUD, chat, menu tests a
 ## `npm run check`
 
 - TypeScript: PASS
-- Vitest: **894 passed / 2 failed / 896**. Failures are pre-existing `authored-item-assets.test.mjs` (no local `assets/` pack).
+- Vitest: **898 passed / 2 failed / 900**. Failures are pre-existing `authored-item-assets.test.mjs` (no local `assets/` pack).
 - Vite build: PASS (141 modules)
-- Size/archive: PASS, **3.59 MiB / 217 files** (three new block PNGs)
+- Size/archive: PASS, **3.59 MiB / 219 files**
 
 ## Visual QA
 

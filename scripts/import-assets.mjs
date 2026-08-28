@@ -156,10 +156,15 @@ const optional = {
   'blocks/web.png': 'block/cobweb.png',
   'blocks/rail_normal.png': 'block/rail.png',
   'blocks/fire_layer_0.png': 'block/fire.png',
+  'block/glowstone.png': 'block/glowstone.png',
   'blocks/lantern.png': 'block/lantern.png',
+  'block/lantern.png': 'block/lantern.png',
   'blocks/chain.png': 'block/chain.png',
+  'block/chain.png': 'block/chain.png',
   'items/lantern.png': 'item/lantern.png',
+  'item/lantern.png': 'item/lantern.png',
   'items/chain.png': 'item/chain.png',
+  'item/chain.png': 'item/chain.png',
 };
 for (const [source, target] of Object.entries(optional)) {
   copies.push([source, target]);

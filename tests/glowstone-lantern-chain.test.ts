@@ -18,14 +18,16 @@ import {
   itemHeldMeshKind,
   itemIconDescriptor,
   obtainableItems,
+  usesBlockModelIcon,
 } from '../src/items';
-import { selectionLocalBoxes } from '../src/rendering/specialBlockGeometry';
+import { selectionLocalBoxes, CHAIN_PLANE_B_UV, LANTERN_BODY_UV } from '../src/rendering/specialBlockGeometry';
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
 import { canSupportHanger, isBlockStillSupported, needsBlockSupport } from '../src/world/placement';
 import { blockCollisionBoxes } from '../src/world/collision';
 import { blockSelectionBoxes } from '../src/world/selection';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
+import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 
 const atlasStub = {
@@ -124,8 +126,11 @@ describe('glowstone / lantern / chain registry', () => {
     expect(itemHeldMeshKind('glowstone')).toBe('block_cube');
     expect(itemHeldMeshKind('lantern')).toBe('special_model');
     expect(itemHeldMeshKind('chain')).toBe('special_model');
-    expect(itemIconDescriptor('lantern').kind).toBe('special_preview');
-    expect(itemIconDescriptor('chain').kind).toBe('special_preview');
+    expect(itemIconDescriptor('lantern')).toEqual({ kind: 'texture', texturePath: 'item/lantern' });
+    expect(itemIconDescriptor('chain')).toEqual({ kind: 'texture', texturePath: 'item/chain' });
+    expect(getItemDefinition('lantern').texture).toBe('item/lantern');
+    expect(getItemDefinition('chain').texture).toBe('item/chain');
+    expect(itemIconDescriptor('glowstone').kind).toBe('special_preview');
   });
 });
 
@@ -385,5 +390,36 @@ describe('meshing is special, not a full cube', () => {
     meshed.translucent.dispose();
     meshed.water.dispose();
     meshed.fire.dispose();
+  });
+});
+
+describe('pack textures and inventory icons', () => {
+  it('does not bake lantern/chain GUI from the block UV atlas', () => {
+    expect(usesBlockModelIcon('glowstone')).toBe(true);
+    expect(usesBlockModelIcon('lantern')).toBe(false);
+    expect(usesBlockModelIcon('chain')).toBe(false);
+  });
+
+  it('builds held lantern/chain meshes from world UV rects, not full-tile box mapping', () => {
+    const factory = new ItemVisualFactory();
+    const lantern = factory.createItemModel('lantern');
+    const chain = factory.createItemModel('chain');
+    const lanternGeometry = (lantern.children[0] as THREE.Mesh).geometry;
+    const chainGeometry = (chain.children[0] as THREE.Mesh).geometry;
+    expect(lanternGeometry.userData.specialHeldAtlasUv).toBe(true);
+    expect(chainGeometry.userData.specialHeldAtlasUv).toBe(true);
+    const lanternUv = lanternGeometry.getAttribute('uv');
+    let lanternMinU = Infinity;
+    for (let index = 0; index < lanternUv.count; index += 1) {
+      lanternMinU = Math.min(lanternMinU, lanternUv.getX(index));
+    }
+    expect(lanternMinU).toBeCloseTo(LANTERN_BODY_UV[0], 5);
+    const chainUv = chainGeometry.getAttribute('uv');
+    let chainMaxU = -Infinity;
+    for (let index = 0; index < chainUv.count; index += 1) {
+      chainMaxU = Math.max(chainMaxU, chainUv.getX(index));
+    }
+    expect(chainMaxU).toBeCloseTo(CHAIN_PLANE_B_UV[2], 5);
+    factory.dispose();
   });
 });

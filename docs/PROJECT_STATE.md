@@ -9,7 +9,7 @@
 - Lantern standing (`attachment: floor`) or hanging (`ceiling`); hanging attaches to a sturdy down-face or a Chain. Chain is vertical only and stores the same attachment so a hanging column is not self-supporting.
 - Selection/collision use thin AABBs (not a full 1×1×1 voxel). Canonical `World.raycast` DDA unchanged.
 - Custom recipes: shapeless Torch+Gold Ingot → Glowstone; shapeless Torch+Iron Ingot → Lantern; shaped `ISI/ISI/ISI` → **16** Chain.
-- Runtime textures: `public/textures/block/{glowstone,lantern,chain}.png`. Source-pack mapping in `import-assets.mjs`; this environment had no `assets/`, so generate-missing fallbacks were committed.
+- Runtime textures: Faithful 32x `block/glowstone.png` (byte-family match with `stone.png`), Faithful lantern/chain block sheets, and authored `item/lantern.png` / `item/chain.png` for inventory/hotbar. Held lantern/chain keep `special_model` with world atlas UVs.
 - Report: `docs/reports/2026-08-28_glowstone-lantern-chain.md`.
 
 ## Последний проход: core sample-based SFX

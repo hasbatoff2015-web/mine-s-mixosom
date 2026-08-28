@@ -1,4 +1,4 @@
-import type { BlockAttachment, DoorHinge, HorizontalFacing } from './types';
+import type { BlockAttachment, BlockRenderShape, DoorHinge, HorizontalFacing } from './types';
 import { BlockId } from './types';
 
 export interface OrientedPlacement {
@@ -84,11 +84,14 @@ export function furnaceFaceTextureKey(
 /**
  * 2D inventory/hotbar tile for a cube block. Prefer the authored FRONT
  * (furnace opening, crafting-table tools) over the side/back.
+ * UV-atlas shapes (lantern/chain) use the authored item sprite, not the block sheet.
  */
 export function blockItemIconTexture(
   textures: { front?: string; all?: string; side?: string; top?: string },
   fallbackKey: string,
+  renderShape?: BlockRenderShape,
 ): string {
+  if (renderShape === 'lantern' || renderShape === 'chain') return `item/${fallbackKey}`;
   return textures.front
     ?? textures.all
     ?? textures.side

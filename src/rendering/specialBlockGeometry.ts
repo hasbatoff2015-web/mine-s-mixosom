@@ -632,10 +632,6 @@ export function lanternHangerPlanes(state: BlockRenderState | undefined): readon
   ];
 }
 
-export function lanternHeldLocalBoxes(): readonly LocalBox[] {
-  return lanternMeshCuboids({ attachment: 'floor' }).map((part) => part.box);
-}
-
 export interface ChainMeshPlane {
   readonly corners: readonly (readonly [number, number, number])[];
   readonly uv: TextureUvRect;
@@ -665,14 +661,6 @@ export function chainMeshPlanes(): readonly ChainMeshPlane[] {
       ],
       uv: CHAIN_PLANE_B_UV,
     },
-  ];
-}
-
-/** Plus-shaped solid links for inventory / first-person, not a full cube. */
-export function chainHeldLocalBoxes(): readonly LocalBox[] {
-  return [
-    { minX: 6.5 / 16, minY: 0, minZ: 7.5 / 16, maxX: 9.5 / 16, maxY: 1, maxZ: 8.5 / 16 },
-    { minX: 7.5 / 16, minY: 0, minZ: 6.5 / 16, maxX: 8.5 / 16, maxY: 1, maxZ: 9.5 / 16 },
   ];
 }
 
