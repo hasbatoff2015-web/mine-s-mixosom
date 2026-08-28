@@ -1,5 +1,39 @@
 # Тестирование
 
+## 2026-08-28 Anarchy persistent canonical world
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-canonical-persistent.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Contracts: production Anarchy restores IndexedDB without `.schem`; stale `importVersion` does not rebuild; canonical spawn is `serverWorld.spawn`; modifications survive restart; missing schematic does not block; singleplayer list still hides Anarchy. DEV `importAnarchySpawn` remains for offline baking.
+
+## 2026-08-28 Anarchy cocoa → air
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-cocoa-to-air.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Contracts: `minecraft:cocoa` (и legacy pod/beans ids) → Air, не Diamond и не Oak Log; jungle_log → Oak Log; unknown → Diamond; `importVersion` 3.
+
+`npx tsc --noEmit`: PASS. Full vitest: **918 passed / 2 failed / 920** (pre-existing authored-asset ENOENT). Production **3.61 MiB / 221 files**.
+
+## 2026-08-28 Anarchy jungle→oak log and Y-28
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-jungle-oak-y-shift.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Targeted: `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`.
+
+Contracts: jungle_log/jungle_wood → Oak Log (not Diamond, not planks); unknown → Diamond; Anarchy `yShift === -28`; X/Z = 0; bounds 0..255; `importVersion` 1 is stale, 2 imports once; save/load keeps shifted structure and oak logs.
+
+`npx tsc --noEmit`: PASS. Full vitest: **917 passed / 2 failed / 919**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/`. Vite build / size / archive: PASS, **3.61 MiB / 221 files**.
+
+## 2026-08-28 world height 256 + Anarchy spawn import
+
+Актуальный отчёт: `reports/2026-08-28_spawn-map-import-256-height.md`. Baseline `origin/main`=`6e27b93`.
+
+Targeted: `tests/world-height-256.test.ts`, `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`, plus retained worldgen/lighting/menu.
+
+Contracts: `WORLD_HEIGHT=256`, Y=0/255 valid, Y=-1/256 invalid, save/load at Y=255, high-Y light/fluid/raycast, schematic palette mapping, unsupported→Diamond, import-once Anarchy, singleplayer list filter.
+
+`npx tsc --noEmit`: PASS. Full vitest: **913 passed / 2 failed / 915**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/` (Cloud has no Faithful tree). Vite build / size / archive: PASS, **3.61 MiB / 221 files**.
+
 ## 2026-08-28 glowstone / lantern / chain
 
 Актуальный отчёт: `reports/2026-08-28_glowstone-lantern-chain.md`. Baseline `origin/main`=`73a78f4`.
@@ -546,7 +580,7 @@ Decoration у края chunk нужно проверять отдельно, п�
 Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run benchmark:worldgen`):
 
 - same seed → identical heights/caves/trees/cacti; other seed → different terrain;
-- surface in `58–84`, sea `63`, generated peaks leave `TERRAIN_HEADROOM = 12`;
+- surface in `58–84`, sea `63`, generated peaks capped by `MAX_GENERATED_SURFACE = 84` (independent of `WORLD_HEIGHT = 256`);
 - mountain contribution `+10…+20` на части мира, не на каждом chunk;
 - neighbor height delta ≤ 4, в том числе на biome borders и chunk borders;
 - bedrock `Y 0–2` sealed with Stone cap `Y=3`; caves never carve cap; extra ~15 underground vs old surface~49;
@@ -556,7 +590,7 @@ Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run ben
 - ores only inside shifted `ORE_RULES` bands, including new deep stone; Coal/Iron/Gold/Redstone vein **attempts ×2**; Diamond **≈ current/3** (`veins: 1` + `extraVeinChance: 1/3`); vein `size` unchanged;
 - small irregular **enclosed** cave lava ponds (depth ≤ 3, bounded footprint, Stone shore above waterline, no open cave-edge escape, generator-space chunk-border validation, ordinary pond queue 0);
 - spawn on plains grass above sea, not mountain/cave/desert;
-- old modification linear indices still restore after `WORLD_HEIGHT` 80→96.
+- old modification linear indices still restore after `WORLD_HEIGHT` 80→96→256.
 
 DEV: `?worldgenDebug=1` appends `surfaceY=` / `mtn=` / `hills=` / `cave=` / `cap=` / `blk=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
 

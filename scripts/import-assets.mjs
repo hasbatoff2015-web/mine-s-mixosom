@@ -99,6 +99,7 @@ const blocks = {
   oxeye_daisy: 'flower_oxeye_daisy.png',
   dead_bush: 'deadbush.png',
   glowstone: 'glowstone.png',
+  diamond_block: 'diamond_block.png',
 };
 
 for (const color of ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black']) {
@@ -157,6 +158,8 @@ const optional = {
   'blocks/rail_normal.png': 'block/rail.png',
   'blocks/fire_layer_0.png': 'block/fire.png',
   'block/glowstone.png': 'block/glowstone.png',
+  'blocks/diamond_block.png': 'block/diamond_block.png',
+  'block/diamond_block.png': 'block/diamond_block.png',
   'blocks/lantern.png': 'block/lantern.png',
   'block/lantern.png': 'block/lantern.png',
   'blocks/chain.png': 'block/chain.png',

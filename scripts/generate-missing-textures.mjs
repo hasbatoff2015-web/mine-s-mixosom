@@ -280,6 +280,27 @@ export async function generateMissingTextures(force = false) {
     }));
     written += 1;
   }
+  const diamondPath = join(root, 'block/diamond_block.png');
+  let writeDiamond = force;
+  if (!writeDiamond) {
+    try {
+      await readFile(diamondPath);
+    } catch {
+      writeDiamond = true;
+    }
+  }
+  if (writeDiamond) {
+    await mkdir(dirname(diamondPath), { recursive: true });
+    await writeFile(diamondPath, paint(32, 32, (x, y) => {
+      const gx = x % 8;
+      const gy = y % 8;
+      if (gx === 0 || gy === 0 || gx === 7 || gy === 7) return px(12, 78, 80);
+      if (gx + gy < 6) return px(168, 252, 252);
+      if ((x + y) % 9 === 0) return px(230, 255, 255);
+      return px(46, 214, 214);
+    }));
+    written += 1;
+  }
   return written;
 }
 

@@ -1,4 +1,5 @@
 import type { GameMode, SerializedWorldState, WorldSummary } from './types';
+import { isServerWorldSummary } from '../world/import/anarchy';
 
 const DATABASE = 'frontier-cubes-saves';
 const STORE = 'worlds';
@@ -38,7 +39,10 @@ export class SaveService {
     const worlds = this.database
       ? await this.request<SerializedWorldState[]>('readonly', (store) => store.getAll())
       : [...this.memory.values()];
-    return worlds.map((world) => world.summary).sort((a, b) => b.updatedAt - a.updatedAt);
+    return worlds
+      .map((world) => world.summary)
+      .filter((summary) => !isServerWorldSummary(summary))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async loadWorld(id: string): Promise<SerializedWorldState | undefined> {

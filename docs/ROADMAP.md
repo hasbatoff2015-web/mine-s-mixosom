@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-28: world height 256 + Anarchy spawn import
+
+- [x] `WORLD_HEIGHT=256` (`Y 0..255`); generated surface still capped at 84; ores/bedrock/caves unscaled.
+- [x] occupancyTop sky/emitter/fluid/mesh scans; light budget stays 2 ms.
+- [x] Sponge `.schem` importer + Diamond Block fallback with replacement report.
+- [x] Jungle log/wood → Oak Log (not planks); cocoa/jungle pods → Air; other unsupported stay Diamond.
+- [x] Anarchy spawn extra `Y -= 28` after auto-fit; cocoa → Air; jungle → oak log.
+- [x] Anarchy = persistent canonical IndexedDB world; **no runtime schematic import**; `importVersion` does not rebuild.
+- [ ] Native QA: Anarchy opens without `.schem`, spawn/edits persist, no reimport.
+
 ## 2026-08-28: glowstone / lantern / chain
 
 - [x] Glowstone cube light 15; lantern 3D model light 15; torch stays 14. Existing LightEngine, streaming budget and fluid lighting untouched.

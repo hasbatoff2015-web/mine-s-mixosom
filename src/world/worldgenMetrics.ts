@@ -375,7 +375,7 @@ export function measureLavaPonds(chunks: Map<string, Chunk>): LavaPondStats {
   for (const chunk of chunks.values()) {
     for (let z = 0; z < CHUNK_SIZE; z += 1) {
       for (let x = 0; x < CHUNK_SIZE; x += 1) {
-        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let y = 0; y <= chunk.scanMaxY(); y += 1) {
           if (chunk.get(x, y, z) !== BlockId.Lava) continue;
           const startX = chunk.x * CHUNK_SIZE + x;
           const startZ = chunk.z * CHUNK_SIZE + z;
@@ -479,7 +479,7 @@ export function measureOreComponentSizes(chunks: Map<string, Chunk>, ore: number
   for (const chunk of chunks.values()) {
     for (let z = 0; z < CHUNK_SIZE; z += 1) {
       for (let x = 0; x < CHUNK_SIZE; x += 1) {
-        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let y = 0; y <= chunk.scanMaxY(); y += 1) {
           if (chunk.get(x, y, z) !== ore) continue;
           const sx = chunk.x * CHUNK_SIZE + x;
           const sz = chunk.z * CHUNK_SIZE + z;
@@ -538,7 +538,7 @@ export function measureLavaContainment(chunks: Map<string, Chunk>): LavaContainm
   for (const chunk of chunks.values()) {
     for (let z = 0; z < CHUNK_SIZE; z += 1) {
       for (let x = 0; x < CHUNK_SIZE; x += 1) {
-        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let y = 0; y <= chunk.scanMaxY(); y += 1) {
           if (chunk.get(x, y, z) !== BlockId.Lava) continue;
           lavaCells += 1;
           const wx = chunk.x * CHUNK_SIZE + x;
@@ -574,7 +574,7 @@ export function countExposedBedrock(chunks: Map<string, Chunk>, generator: Terra
           const block = chunk.get(x, y, z);
           if (block === BlockId.Air || block === BlockId.Lava) exposed += 1;
         }
-        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let y = 0; y <= chunk.scanMaxY(); y += 1) {
           if (chunk.get(x, y, z) !== BlockId.Bedrock) continue;
           for (const [dx, dy, dz] of [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]] as const) {
             const nx = wx + dx;
@@ -600,7 +600,7 @@ export function measureOreCounts(chunks: Map<string, Chunk>): OreCounts {
   for (const chunk of chunks.values()) {
     for (let z = 0; z < CHUNK_SIZE; z += 1) {
       for (let x = 0; x < CHUNK_SIZE; x += 1) {
-        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let y = 0; y <= chunk.scanMaxY(); y += 1) {
           const block = chunk.get(x, y, z);
           if (block === BlockId.CoalOre) counts.coal += 1;
           else if (block === BlockId.IronOre) counts.iron += 1;
