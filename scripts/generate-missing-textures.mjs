@@ -183,6 +183,50 @@ const icons = {
     if (sleeper && x >= 2 && x <= 13) return px(110, 70, 30);
     return px(0, 0, 0, 0);
   },
+  'block/glowstone.png': (x, y) => {
+    const n = hash2(x, y, 3);
+    if (n > 0.82) return px(255, 248, 176);
+    if (n > 0.58) return px(232, 178, 46);
+    if (n > 0.32) return px(196, 128, 28);
+    return px(92, 58, 18);
+  },
+  'block/lantern.png': (x, y) => {
+    const metal = px(42, 38, 36);
+    const metalHi = px(86, 78, 70);
+    const glass = px(255, 186, 54);
+    const glassHi = px(255, 236, 140);
+    const glassDeep = px(198, 96, 18);
+    // Vanilla lantern.png regions (16×16, y from top).
+    if (x >= 1 && x <= 4 && y >= 1 && y <= 2) return x === 1 || x === 4 || y === 1 ? metal : metalHi;
+    if (x >= 0 && x <= 5 && y >= 3 && y <= 8) {
+      const edge = x === 0 || x === 5 || y === 3 || y === 8;
+      if (edge) return metal;
+      return (x + y) % 3 === 0 ? glassHi : glass;
+    }
+    if (x >= 0 && x <= 5 && y >= 9 && y <= 14) {
+      if (x === 0 || x === 5 || y === 9 || y === 14) return metal;
+      if (x === 1 || x === 4) return metalHi;
+      return y === 11 || y === 12 ? glassHi : glassDeep;
+    }
+    if (x >= 1 && x <= 4 && y >= 10 && y <= 13) return (x + y) % 2 === 0 ? metalHi : metal;
+    if (x >= 11 && x <= 13 && y >= 1 && y <= 4) return x === 12 ? metalHi : metal;
+    if (x >= 11 && x <= 13 && y >= 10 && y <= 12) return metal;
+    return px(0, 0, 0, 0);
+  },
+  'block/chain.png': (x, y) => {
+    const iron = px(58, 62, 70);
+    const hi = px(148, 152, 160);
+    const hole = px(0, 0, 0, 0);
+    const link = (col, localX) => {
+      const along = (y + col * 2) % 6;
+      if (localX === 1 && (along === 1 || along === 4)) return hole;
+      if (localX === 0 || localX === 2) return along === 2 || along === 5 ? hi : iron;
+      return iron;
+    };
+    if (x <= 2) return link(0, x);
+    if (x >= 3 && x <= 5) return link(1, x - 3);
+    return hole;
+  },
 };
 
 const ARMOR_HUD_SHAPE = [

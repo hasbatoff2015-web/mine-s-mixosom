@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-08-28 glowstone / lantern / chain
+
+Актуальный отчёт: `reports/2026-08-28_glowstone-lantern-chain.md`. Baseline `origin/main`=`73a78f4`.
+
+Targeted: `tests/glowstone-lantern-chain.test.ts` (20) plus retained `block-registry`, `crafting`, `block-selection-raycast`, `placement-support`, `creeper-fence-plants-tooltip-ru`, `special-preview-contract`, `lighting-torch-selection`, `interaction-support-polish`.
+
+Light contracts: Glowstone = 15, Lantern = 15, Torch = 14. Placement covers standing/hanging lantern, chain-under-chain, lantern-under-chain, support cascade, thin selection, save/load, chunk border x=15/16.
+
+`npm run typecheck`: PASS. Full vitest: **894 passed / 2 failed / 896**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures`. Vite build / size / archive: PASS, **3.59 MiB / 217 files**.
+
 ## 2026-08-28 core sample SFX
 
 Актуальный отчёт: `reports/2026-08-28_core-audio-sfx-pass.md`. Catalog: `AUDIO_ASSETS.md`.

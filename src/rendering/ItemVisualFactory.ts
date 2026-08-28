@@ -17,6 +17,8 @@ import {
   stairLocalBoxes,
   fenceLocalBoxes,
   railLocalBoxes,
+  lanternHeldLocalBoxes,
+  chainHeldLocalBoxes,
   type LocalBox,
 } from './specialBlockGeometry';
 import {
@@ -288,6 +290,12 @@ export class ItemVisualFactory {
         break;
       case 'rail':
         geometry = this.geometryFromLocalBoxes(railLocalBoxes('north_south'), texture);
+        break;
+      case 'lantern':
+        geometry = this.geometryFromLocalBoxes(lanternHeldLocalBoxes(), texture);
+        break;
+      case 'chain':
+        geometry = this.geometryFromLocalBoxes(chainHeldLocalBoxes(), texture);
         break;
       default:
         throw new Error(`No special held model for ${itemId}`);

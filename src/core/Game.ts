@@ -18,6 +18,8 @@ import {
   slabTypeFromHit,
   stairPlacementFromHit,
   torchPlacementFromHit,
+  lanternPlacementFromHit,
+  chainPlacementFromHit,
 } from '../blocks';
 import { CombatSystem, PlayerArrowManager, completeMeleeAttack, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
 import {
@@ -107,7 +109,7 @@ import {
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { pickupFluidSource, placeBucketFluid, restoreBucketInventory } from '../items/bucketInteraction';
-import { canAttachToFace, canUseAsPlacementAnchor } from '../world/placement';
+import { canAttachToFace, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';
 import { PlayerController } from '../player';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
@@ -173,6 +175,8 @@ import {
   isolatedRailShapeFromYaw,
   slabLocalBoxes,
   stairLocalBoxes,
+  lanternSelectionLocalBox,
+  chainSelectionLocalBox,
 } from '../rendering/specialBlockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
@@ -1982,6 +1986,59 @@ export class Game {
     // Replacement is in the clicked cell, attached to the floor below it.
     // Thin raycast targets never lend their neighbor face to another block.
     const attachmentNormal = replaceHit ? new THREE.Vector3(0, 1, 0) : hit.normal;
+    if (item.placesBlockId === BlockId.Lantern) {
+      const orientation = lanternPlacementFromHit(
+        attachmentNormal.x, attachmentNormal.y, attachmentNormal.z,
+      );
+      if (!orientation) {
+        this.ui.toast('Светильник можно поставить только сверху или снизу блока');
+        return;
+      }
+      const hanging = orientation.attachment === 'ceiling';
+      const supported = hanging
+        ? canSupportHanger(session.world, x, y + 1, z, 'down')
+        : canSupportHanger(session.world, x, y - 1, z, 'up');
+      if (!supported) {
+        this.ui.toast('Светильнику нужна опора');
+        return;
+      }
+      const boxes = [lanternSelectionLocalBox(orientation)].map((box) => ({
+        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
+        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
+      }));
+      if (session.player.intersectsCollisionBoxes(boxes)) {
+        this.ui.toast('Нельзя поставить блок внутри игрока');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      session.world.setBlockState(x, y, z, { attachment: orientation.attachment });
+      return;
+    }
+    if (item.placesBlockId === BlockId.Chain) {
+      if (!chainPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z)) {
+        this.ui.toast('Цепь ставится только вертикально');
+        return;
+      }
+      const hanging = attachmentNormal.y < -0.5;
+      const supported = hanging
+        ? canSupportHanger(session.world, x, y + 1, z, 'down')
+        : canSupportHanger(session.world, x, y - 1, z, 'up');
+      if (!supported) {
+        this.ui.toast('Цепи нужна точка крепления');
+        return;
+      }
+      const boxes = [chainSelectionLocalBox()].map((box) => ({
+        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
+        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
+      }));
+      if (session.player.intersectsCollisionBoxes(boxes)) {
+        this.ui.toast('Нельзя поставить блок внутри игрока');
+        return;
+      }
+      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
+      session.world.setBlockState(x, y, z, { attachment: hanging ? 'ceiling' : 'floor' });
+      return;
+    }
     if (['torch', 'button', 'lever', 'ladder'].includes(placed.renderShape)
       && !canAttachToFace(session.world,
         x - attachmentNormal.x, y - attachmentNormal.y, z - attachmentNormal.z, attachmentNormal)) return;

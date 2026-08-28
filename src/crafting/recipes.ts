@@ -124,6 +124,21 @@ const recipes: Recipe[] = [
     key: { I: exact(ItemId.IronIngot) },
     output: { item: ItemId.Minecart, count: 1 }, gridSize: 3,
   },
+  {
+    id: 'glowstone', type: 'shapeless',
+    ingredients: [exact('torch'), exact(ItemId.GoldIngot)],
+    output: { item: 'glowstone', count: 1 }, gridSize: 2,
+  },
+  {
+    id: 'lantern', type: 'shapeless',
+    ingredients: [exact('torch'), exact(ItemId.IronIngot)],
+    output: { item: 'lantern', count: 1 }, gridSize: 2,
+  },
+  {
+    id: 'chain', type: 'shaped', pattern: ['ISI', 'ISI', 'ISI'],
+    key: { I: exact(ItemId.IronIngot), S: exact(ItemId.Stick) },
+    output: { item: 'chain', count: 16 }, gridSize: 3,
+  },
 ];
 
 const toolMaterials = [

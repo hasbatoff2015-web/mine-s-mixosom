@@ -40,6 +40,9 @@ import {
   TORCH_TEXTURE_UV,
   TORCH_WIDTH,
   torchLocalMatrix,
+  lanternHangerPlanes,
+  lanternMeshCuboids,
+  chainMeshPlanes,
   type DoorFaceRole,
   type LocalBox,
   type TextureUvRect,
@@ -499,6 +502,8 @@ export class ChunkMesher {
       case 'slab': return this.addSlab(buffers, definition, state, world, x, y, z);
       case 'fence': return this.addFence(buffers, definition, world, x, y, z);
       case 'rail': return this.addRail(buffers, definition, state, world, x, y, z);
+      case 'lantern': return this.addLantern(buffers, definition, state, world, x, y, z);
+      case 'chain': return this.addChain(buffers, definition, world, x, y, z);
       case 'chest': return 0;
       case 'cube': return 0;
     }
@@ -581,6 +586,92 @@ export class ChunkMesher {
       buffers, texture, [TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH], matrix,
       world, definition, x, y, z, TORCH_TEXTURE_UV,
     );
+  }
+
+  private addLantern(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? 'block/lantern';
+    let faces = 0;
+    for (const part of lanternMeshCuboids(state)) {
+      for (const face of FACES) {
+        const uv = face.normal[1] > 0.5
+          ? part.uvUp
+          : face.normal[1] < -0.5
+            ? part.uvDown
+            : part.uvSide;
+        const corners = face.corners.map((corner) => [
+          x + part.box.minX + corner[0] * (part.box.maxX - part.box.minX),
+          y + part.box.minY + corner[1] * (part.box.maxY - part.box.minY),
+          z + part.box.minZ + corner[2] * (part.box.maxZ - part.box.minZ),
+        ] as [number, number, number]);
+        this.addQuad(
+          buffers,
+          texture,
+          corners,
+          face.normal,
+          this.lightingFor(world, definition, texture, x, y, z, face.normal, face.shade),
+          uv,
+        );
+        faces += 1;
+      }
+    }
+    for (const plane of lanternHangerPlanes(state)) {
+      const corners = plane.corners.map((corner) => [
+        x + corner[0], y + corner[1], z + corner[2],
+      ] as [number, number, number]);
+      const normal = this.quadNormal(corners);
+      const lighting = this.lightingFor(world, definition, texture, x, y, z, normal, 1);
+      this.addQuad(buffers, texture, corners, normal, lighting, plane.uv);
+      this.addQuad(
+        buffers,
+        texture,
+        [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
+        [-normal[0], -normal[1], -normal[2]],
+        lighting,
+        plane.uv,
+        true,
+      );
+      faces += 2;
+    }
+    return faces;
+  }
+
+  private addChain(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? 'block/chain';
+    let faces = 0;
+    for (const plane of chainMeshPlanes()) {
+      const corners = plane.corners.map((corner) => [
+        x + corner[0], y + corner[1], z + corner[2],
+      ] as [number, number, number]);
+      const normal = this.quadNormal(corners);
+      const lighting = this.lightingFor(world, definition, texture, x, y, z, normal, 1);
+      this.addQuad(buffers, texture, corners, normal, lighting, plane.uv);
+      this.addQuad(
+        buffers,
+        texture,
+        [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
+        [-normal[0], -normal[1], -normal[2]],
+        lighting,
+        plane.uv,
+        true,
+      );
+      faces += 2;
+    }
+    return faces;
   }
 
   private addWire(

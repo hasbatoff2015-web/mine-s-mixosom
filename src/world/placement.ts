@@ -34,16 +34,55 @@ export function isVegetationBlock(block: BlockId): boolean {
   return VEGETATION_SUBSTRATES.has(block);
 }
 
+export function isLanternBlock(block: BlockId): boolean {
+  return block === BlockId.Lantern;
+}
+
+export function isChainBlock(block: BlockId): boolean {
+  return block === BlockId.Chain;
+}
+
+/** Chain and lantern can hang from / stand on each other as a vertical column. */
+export function isVerticalHangerBlock(block: BlockId): boolean {
+  return block === BlockId.Chain || block === BlockId.Lantern;
+}
+
 export function vegetationSubstrates(block: BlockId): ReadonlySet<BlockId> | undefined {
   return VEGETATION_SUBSTRATES.get(block);
 }
 
 export function needsBlockSupport(block: BlockId): boolean {
-  return SUPPORT_RULES[getBlockDefinition(block).renderShape] !== undefined || isVegetationBlock(block);
+  return SUPPORT_RULES[getBlockDefinition(block).renderShape] !== undefined
+    || isVegetationBlock(block)
+    || isLanternBlock(block)
+    || isChainBlock(block);
+}
+
+const DOWN: PlacementFace = { x: 0, y: -1, z: 0 };
+
+/**
+ * Sturdy cube/slab/stair face, or another chain/lantern in the vertical column.
+ * `face` is the support block's face the decoration attaches to.
+ */
+export function canSupportHanger(
+  world: BlockNeighborView,
+  x: number,
+  y: number,
+  z: number,
+  face: 'up' | 'down',
+): boolean {
+  const block = world.getBlock(x, y, z, false);
+  if (isVerticalHangerBlock(block)) return true;
+  return canAttachToFace(world, x, y, z, face === 'up' ? UP : DOWN);
 }
 
 export function supportCellForBlock(block: BlockId, state: BlockRenderState | undefined, x: number, y: number, z: number) {
   if (isVegetationBlock(block)) return { x, y: y - 1, z, normal: UP };
+  if (isLanternBlock(block) || isChainBlock(block)) {
+    return state?.attachment === 'ceiling'
+      ? { x, y: y + 1, z, normal: DOWN }
+      : { x, y: y - 1, z, normal: UP };
+  }
   const rule = SUPPORT_RULES[getBlockDefinition(block).renderShape];
   if (!rule) return undefined;
   const attachment = rule.oriented ? state?.attachment ?? rule.attachment : rule.attachment;
@@ -55,6 +94,12 @@ export function isBlockStillSupported(world: BlockNeighborView, x: number, y: nu
   const block = world.getBlock(x, y, z, false);
   const substrates = vegetationSubstrates(block);
   if (substrates) return substrates.has(world.getBlock(x, y - 1, z, false));
+  if (isLanternBlock(block) || isChainBlock(block)) {
+    const hanging = world.getBlockState?.(x, y, z)?.attachment === 'ceiling';
+    return hanging
+      ? canSupportHanger(world, x, y + 1, z, 'down')
+      : canSupportHanger(world, x, y - 1, z, 'up');
+  }
   const support = supportCellForBlock(block, world.getBlockState?.(x, y, z), x, y, z);
   return !support || canAttachToFace(world, support.x, support.y, support.z, support.normal);
 }

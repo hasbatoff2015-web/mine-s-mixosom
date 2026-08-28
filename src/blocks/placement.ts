@@ -243,6 +243,26 @@ export interface StairPlacement {
  * Vanilla stairs: facing is the player's horizontal look. Half is bottom unless
  * the clicked face is the underside or a side hit above the midline.
  */
+/** Lantern attaches to a floor (standing) or ceiling/chain (hanging). No wall lantern. */
+export function lanternPlacementFromHit(
+  nx: number,
+  ny: number,
+  nz: number,
+): OrientedPlacement | undefined {
+  void nx;
+  void nz;
+  if (ny > 0.5) return { attachment: 'floor', facing: 'north' };
+  if (ny < -0.5) return { attachment: 'ceiling', facing: 'north' };
+  return undefined;
+}
+
+/** Chains are vertical only: top face continues up, bottom face continues down. */
+export function chainPlacementFromHit(nx: number, ny: number, nz: number): boolean {
+  void nx;
+  void nz;
+  return Math.abs(ny) > 0.5;
+}
+
 export function stairPlacementFromHit(
   nx: number,
   ny: number,

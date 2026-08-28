@@ -1,5 +1,15 @@
 # Архитектура
 
+## Glowstone / lantern / chain — 2026-08-28
+
+Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry; `ItemVisualFactory` reuses the same local boxes for held/GUI `special_model`.
+
+Placement stays in `Game.useTargetOrItem` plus `world/placement.ts`. Vertical hit only. `attachment: floor | ceiling` is stored in existing `blockStates`. `canSupportHanger` accepts a sturdy cube/slab/stair face **or** another chain/lantern so a hanging lantern continues a chain. Support integrity is the existing neighbor queue; hanging chains are not supported by the chain below, so breaking the ceiling cascades.
+
+Light uses `BlockDefinition.emission` and the current add-emitter / region relight path. Torch stays 14. No extra per-frame scans and no lighting budget change.
+
+Recipes live in `CRAFTING_RECIPES`. Import mapping: `blocks/glowstone.png` required-style, `blocks/lantern.png` and `blocks/chain.png` optional (1.14+/1.16+ names). Missing pack files get `generate-missing-textures` fallbacks.
+
 ## Creeper / fence / plants / tooltip / RU — 2026-08-28
 
 `MobManager.syncVisual` applies generic death rotation/shrink whenever `state === 'die'`, including creepers. Fuse pulse is kind-specific idle only. `beginDeath` zeros `fuseSeconds` so a primed creeper killed by the player cannot finish fuse. `explodeCreeper` still `removeMob(..., 'explosion')` with no corpse and no death loot.

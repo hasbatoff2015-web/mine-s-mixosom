@@ -324,6 +324,20 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     renderLayer: 'cutout', renderShape: 'rail',
     drop: { item: 'rail', count: 1 },
   }),
+  block(BlockId.Glowstone, 'glowstone', {
+    category: 'building', hardness: 0.3, tool: 'pickaxe', tier: 'hand',
+    emission: 15, soundGroup: 'glass',
+  }),
+  block(BlockId.Lantern, 'lantern', {
+    category: 'utility', hardness: 3.5, tool: 'pickaxe', tier: 'hand',
+    solid: true, opaque: false, occludesFaces: false, emission: 15,
+    renderLayer: 'cutout', renderShape: 'lantern',
+  }),
+  block(BlockId.Chain, 'chain', {
+    category: 'building', hardness: 5, tool: 'pickaxe', tier: 'hand',
+    solid: true, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'chain',
+  }),
 
   ...BLOCK_FAMILIES.flatMap((family) => {
     const shaped: BlockDefinition[] = [];
@@ -448,4 +462,13 @@ export function isKnownBlockId(id: number): id is BlockId {
 /** Canonical torch light level. Lit furnace uses this instead of a copied constant. */
 export function torchBlockEmission(): number {
   return getBlockDefinition(BlockId.Torch).emission ?? 0;
+}
+
+/** Vanilla Java glowstone / lantern block light (15). */
+export function glowstoneBlockEmission(): number {
+  return getBlockDefinition(BlockId.Glowstone).emission ?? 0;
+}
+
+export function lanternBlockEmission(): number {
+  return getBlockDefinition(BlockId.Lantern).emission ?? 0;
 }

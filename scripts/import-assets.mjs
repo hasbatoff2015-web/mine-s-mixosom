@@ -98,6 +98,7 @@ const blocks = {
   poppy: 'flower_rose.png',
   oxeye_daisy: 'flower_oxeye_daisy.png',
   dead_bush: 'deadbush.png',
+  glowstone: 'glowstone.png',
 };
 
 for (const color of ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black']) {
@@ -155,6 +156,10 @@ const optional = {
   'blocks/web.png': 'block/cobweb.png',
   'blocks/rail_normal.png': 'block/rail.png',
   'blocks/fire_layer_0.png': 'block/fire.png',
+  'blocks/lantern.png': 'block/lantern.png',
+  'blocks/chain.png': 'block/chain.png',
+  'items/lantern.png': 'item/lantern.png',
+  'items/chain.png': 'item/chain.png',
 };
 for (const [source, target] of Object.entries(optional)) {
   copies.push([source, target]);
