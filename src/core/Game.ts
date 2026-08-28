@@ -214,6 +214,8 @@ const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 export class Game {
   private polishQaDispose?: () => void;
+  private audioDebug?: HTMLPreElement;
+  private audioDebugTimer?: number;
   private readonly canvas: HTMLCanvasElement;
   private readonly ui: GameUI;
   private readonly renderer: THREE.WebGLRenderer;
@@ -383,6 +385,7 @@ export class Game {
       this.audio.preload(),
     ]);
     this.audio.setVolume(this.settings.volume);
+    this.mountAudioDebug();
     this.itemVisuals = new ItemVisualFactory({ atlas: this.atlas });
     await this.itemVisuals.preload();
     this.itemIcons = new ItemIconRenderer(this.renderer, this.itemVisuals);
@@ -398,6 +401,7 @@ export class Game {
   dispose(): void {
     cancelAnimationFrame(this.frameHandle);
     this.input.disposeDebug();
+    this.disposeAudioDebug();
     this.disposeSession();
     this.firstPerson?.dispose();
     this.itemVisuals?.dispose();
@@ -2947,7 +2951,8 @@ export class Game {
       const tickTiming = this.tickTimings.snapshot();
       const renderInfo = this.renderer.info.render;
       const itemCache = this.itemVisuals?.cacheStats;
-      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      const sfx = this.audio.debugSnapshot();
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
@@ -3069,6 +3074,41 @@ export class Game {
 
   private resumeFromPlatform(): void {
     if (this.lifecycle.state === 'AD' && this.session) this.enterPlaying();
+  }
+
+  private mountAudioDebug(): void {
+    if (!import.meta.env.DEV) return;
+    (window as Window & { __frontierAudio?: AudioManager }).__frontierAudio = this.audio;
+    if (new URLSearchParams(location.search).get('audioDebug') !== '1') return;
+    this.audioDebug = document.createElement('pre');
+    this.audioDebug.id = 'audio-debug';
+    this.audioDebug.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;pointer-events:none;background:#000c;color:#9f9;padding:8px;font:12px monospace;max-width:min(520px,92vw);white-space:pre-wrap';
+    document.body.append(this.audioDebug);
+    this.audioDebugTimer = window.setInterval(() => this.refreshAudioDebug(), 200);
+    this.refreshAudioDebug();
+  }
+
+  private refreshAudioDebug(): void {
+    if (!this.audioDebug) return;
+    const snap = this.audio.debugSnapshot();
+    const recent = snap.recentPlays.slice(-12).map((play) =>
+      `${play.event} ${play.file} p${play.pitch.toFixed(2)} v${play.volume.toFixed(2)}${play.positional ? ' 3d' : ''}`).join('\n');
+    this.audioDebug.textContent = [
+      `SFX ${snap.bufferCount}/${snap.catalogFiles} decoded · voices ${snap.voiceCount} · ctx ${snap.contextState}`,
+      `vol ${snap.masterVolume.toFixed(2)}${snap.muted ? ' muted' : ''}${snap.paused ? ' paused' : ''}`,
+      snap.missingFiles.length ? `missing files: ${snap.missingFiles.join(', ')}` : 'files ok',
+      snap.missingEvents.length ? `missing events: ${snap.missingEvents.join(', ')}` : 'events ok',
+      recent || '(no plays yet)',
+    ].join('\n');
+  }
+
+  private disposeAudioDebug(): void {
+    if (this.audioDebugTimer !== undefined) window.clearInterval(this.audioDebugTimer);
+    this.audioDebugTimer = undefined;
+    this.audioDebug?.remove();
+    this.audioDebug = undefined;
+    const host = window as Window & { __frontierAudio?: AudioManager };
+    if (host.__frontierAudio === this.audio) delete host.__frontierAudio;
   }
 
   private bindWindowEvents(): void {

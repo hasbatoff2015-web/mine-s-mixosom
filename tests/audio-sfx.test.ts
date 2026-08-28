@@ -310,6 +310,10 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     audio.play('item.pickup');
     expect(created.length).toBe(2);
     expect(created[0]!.playbackRate.value).not.toBe(0);
+    const snap = audio.debugSnapshot();
+    expect(snap.bufferCount).toBeGreaterThan(0);
+    expect(snap.recentPlays.map((play) => play.event)).toEqual(['item.pickup', 'item.pickup']);
+    expect(snap.missingFiles).toEqual([]);
     await audio.preload();
     expect(fetchImpl.mock.calls.length).toBe(calls);
 

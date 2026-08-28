@@ -32,6 +32,29 @@ interface ActiveVoice {
   readonly nodes: Array<{ disconnect(): void }>;
 }
 
+export interface AudioPlayRecord {
+  readonly event: SoundEventId;
+  readonly file: string;
+  readonly pitch: number;
+  readonly volume: number;
+  readonly positional: boolean;
+}
+
+export interface AudioDebugSnapshot {
+  readonly bufferCount: number;
+  readonly catalogFiles: number;
+  readonly voiceCount: number;
+  readonly paused: boolean;
+  readonly muted: boolean;
+  readonly masterVolume: number;
+  readonly contextState: string;
+  readonly missingFiles: readonly string[];
+  readonly missingEvents: readonly string[];
+  readonly recentPlays: readonly AudioPlayRecord[];
+}
+
+const RECENT_PLAY_CAP = 24;
+
 export interface AudioManagerOptions {
   readonly fetch?: typeof fetch;
   readonly baseUrl?: string;
@@ -68,6 +91,7 @@ export class AudioManager {
     world: 0,
   };
   private preloadTask?: Promise<void>;
+  private readonly recentPlays: AudioPlayRecord[] = [];
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string;
   private readonly random: () => number;
@@ -124,6 +148,21 @@ export class AudioManager {
     options?: PlaySoundOptions,
   ): void {
     this.playInternal(event, worldPosition, listener, options);
+  }
+
+  debugSnapshot(): AudioDebugSnapshot {
+    return {
+      bufferCount: this.buffers.size,
+      catalogFiles: catalogFiles().length,
+      voiceCount: this.voices.length,
+      paused: this.paused,
+      muted: this.muted,
+      masterVolume: this.masterVolume,
+      contextState: this.context?.state ?? 'none',
+      missingFiles: [...this.missingFiles],
+      missingEvents: [...this.missingEvents],
+      recentPlays: this.recentPlays.slice(),
+    };
   }
 
   playBlock(
@@ -224,7 +263,7 @@ export class AudioManager {
     }
 
     try {
-      this.startBuffer(context, buffer, profile, worldPosition, listener, options, positional);
+      this.startBuffer(context, buffer, file, profile, worldPosition, listener, options, positional);
     } catch (error) {
       this.warn('SFX playback failed.', error);
     }
@@ -233,6 +272,7 @@ export class AudioManager {
   private startBuffer(
     context: AudioContext,
     buffer: AudioBuffer,
+    file: string,
     profile: NonNullable<ReturnType<typeof resolveCatalogEvent>>,
     worldPosition: AudioVec3 | undefined,
     listener: AudioListenerPose | undefined,
@@ -274,6 +314,14 @@ export class AudioManager {
     const voice: ActiveVoice = { bus: profile.bus, priority: profile.priority, source, nodes };
     this.voices.push(voice);
     this.busActive[profile.bus] += 1;
+    this.recentPlays.push({
+      event: profile.event,
+      file,
+      pitch: source.playbackRate.value,
+      volume,
+      positional,
+    });
+    if (this.recentPlays.length > RECENT_PLAY_CAP) this.recentPlays.shift();
     source.onended = () => this.releaseVoice(voice);
     source.start(0);
   }
