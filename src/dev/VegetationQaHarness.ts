@@ -4,7 +4,7 @@ import type { Biome } from '../world/Generator';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { VoxelWorld } from '../world/World';
-import { lightFrameStats } from '../world/LightEngine';
+import { disposeWorldLighting, lightFrameStats } from '../world/LightEngine';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { createLightingQaScene, lightingQaOpening, lightingQaRoofHole, lightingQaSkyLine, type LightingQaScene } from './lightingQaScenes';
 
@@ -36,7 +36,7 @@ export async function startVegetationQaHarness(
   const world = lightingScene ? createLightingQaScene(lightingScene) : new VoxelWorld(`vegetation-qa-${biome}`);
   const center = lightingScene ? { x: 14, z: 16 } : findBiomeCenter(world, biome);
   if (!lightingScene) world.ensureChunks(center.x, center.z, 2, 25);
-  const surface = lightingScene ? 39 : world.surfaceY(center.x, center.z);
+  const surface = lightingScene === 'high' ? 192 : lightingScene ? 39 : world.surfaceY(center.x, center.z);
   if (night && !lightingScene) placeNightTorch(world, center.x, surface, center.z);
   world.setViewCenter(center.x, center.z, 1);
   world.deferredLighting = true;
@@ -46,7 +46,7 @@ export async function startVegetationQaHarness(
   const camera = new THREE.PerspectiveCamera(58, 1, 0.05, 140);
   const look = new THREE.Vector3(center.x, surface + 1.3, center.z);
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">vegetation QA · ${biome} · ${time}</div>`;
-  let wallOpen = lightingScene === 'room' || lightingScene === 'cave' || lightingScene === 'sources';
+  let wallOpen = lightingScene === 'room' || lightingScene === 'cave' || lightingScene === 'sources' || lightingScene === 'high';
   let holeOpen = lightingScene === 'hole';
   let isNight = night;
   let lightMode = 0;
@@ -75,8 +75,8 @@ export async function startVegetationQaHarness(
   };
   const click = (event: Event): void => {
     const action = (event.target as HTMLElement).dataset.action;
-    if (action === 'wall') world.applyBlockBatch(lightingQaOpening(wallOpen = !wallOpen));
-    if (action === 'hole') world.applyBlockBatch(lightingQaRoofHole(holeOpen = !holeOpen));
+    if (action === 'wall') world.applyBlockBatch(lightingQaOpening(wallOpen = !wallOpen, surface));
+    if (action === 'hole') world.applyBlockBatch(lightingQaRoofHole(holeOpen = !holeOpen, surface));
     if (action === 'mode') cycleMode();
     if (action === 'day') {
       isNight = !isNight;
@@ -85,7 +85,7 @@ export async function startVegetationQaHarness(
     }
   };
   const change = (event: Event): void => {
-    world.setBlock(11, 40, 16, Number((event.target as HTMLSelectElement).value) as BlockId);
+    world.setBlock(11, surface + 1, 16, Number((event.target as HTMLSelectElement).value) as BlockId);
   };
   const key = (event: KeyboardEvent): void => {
     if (event.code === 'F7') { event.preventDefault(); cycleMode(); }
@@ -111,8 +111,8 @@ export async function startVegetationQaHarness(
     worldRenderer.rebuildDirty(2, 4, center.x, center.z, { requireNeighborLight: true });
     angle += 0.0035;
     if (lightingScene && lightingScene !== 'forest') {
-      camera.position.set(3.4, 43.6, 16);
-      camera.lookAt(18, 41.8, 16);
+      camera.position.set(3.4, surface + 4.6, 16);
+      camera.lookAt(18, surface + 2.8, 16);
     } else {
       camera.position.set(
         look.x + Math.cos(angle) * 14,
@@ -123,7 +123,7 @@ export async function startVegetationQaHarness(
     }
     if (lightingScene && performance.now() - statsAt > 250) {
       const stats = label.querySelector('[data-lighting-stats]');
-      if (stats) stats.textContent = `SKY ${lightingQaSkyLine(world).join(' ')}\nLIGHT pending ${world.pendingLightJobs} | maxSlice ${peakSlice.toFixed(2)} ms | meshes ${worldRenderer.chunkCount}`;
+      if (stats) stats.textContent = `SKY ${lightingQaSkyLine(world, surface).join(' ')}\nLIGHT pending ${world.pendingLightJobs} | maxSlice ${peakSlice.toFixed(2)} ms | meshes ${worldRenderer.chunkCount}`;
       statsAt = performance.now();
     }
     renderer.render(scene, camera);
@@ -138,6 +138,7 @@ export async function startVegetationQaHarness(
     label.removeEventListener('change', change);
     setWorldLightDebug(0);
     worldRenderer.dispose();
+    disposeWorldLighting(world);
     atlas.dispose();
     renderer.dispose();
   };

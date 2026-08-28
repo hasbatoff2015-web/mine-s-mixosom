@@ -8,9 +8,20 @@
 - [x] Canonical cube/special exposed-cell sampling with separate modest AO; no ambient/gamma increase.
 - [x] Gameplay lighting deferred, including furnace/getters; direct sun remains distinct from lateral light.
 - [x] 228-test targeted pass, extended before/after CPU benchmark and existing DEV scene/browser checks.
-- [ ] Integrate late main `25fb847` (height256/Anarchy) into this tested height96 feature and repeat validation. Engine/World conflicts are confirmed; the draft is not merge-ready.
+- [x] Integrate main `25fb847` at height256: occupancy/implicit sky, paged snapshots, bitset queue flags, import restart and all four deferred Game paths. Same Draft PR #13, no merge to main.
+- [x] Height256 high-roof/hole/emitter/border/import/save regressions, 274-test targeted pass, 22-case CPU256 benchmark and radius2/4/6 memory audit. Historical96 data retained separately.
 - [ ] Native-device checklist and GPU soak: Creative flight/breaking, F8 borders and real mobile input.
 - [ ] Resolve pre-existing full-suite CRLF/extractor/CPU-RPC failures separately. No main merge is part of this task.
+
+## 2026-08-28: world height 256 + Anarchy spawn import
+
+- [x] `WORLD_HEIGHT=256` (`Y 0..255`); generated surface still capped at 84; ores/bedrock/caves unscaled.
+- [x] occupancyTop sky/emitter/fluid/mesh scans; light budget stays 2 ms.
+- [x] Sponge `.schem` importer + Diamond Block fallback with replacement report.
+- [x] Jungle log/wood → Oak Log (not planks); cocoa/jungle pods → Air; other unsupported stay Diamond.
+- [x] Anarchy spawn extra `Y -= 28` after auto-fit; cocoa → Air; jungle → oak log.
+- [x] Anarchy = persistent canonical IndexedDB world; **no runtime schematic import**; `importVersion` does not rebuild.
+- [ ] Native QA: Anarchy opens without `.schem`, spawn/edits persist, no reimport.
 
 ## 2026-08-28: glowstone / lantern / chain
 

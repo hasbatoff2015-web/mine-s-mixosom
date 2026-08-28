@@ -8,6 +8,8 @@ const VOLUME = COLUMNS * WORLD_HEIGHT;
 const SLOT_SHIFT = Math.ceil(Math.log2(VOLUME));
 const SLOT_SIZE = 2 ** SLOT_SHIFT;
 const SLOT_MASK = SLOT_SIZE - 1;
+const SNAPSHOT_PAGE_SIZE = 4096;
+const RETAINED_FLAG_BUFFERS = 16;
 const DX = [1, -1, 0, 0, 0, 0] as const;
 const DZ = [0, 0, 0, 0, 1, -1] as const;
 const HORIZONTAL = [0, 1, 4, 5] as const;
@@ -62,14 +64,14 @@ export function lightingInvalidation(previous: BlockId, next: BlockId): Lighting
   return 'none';
 }
 
-interface Snapshot { sky?: Uint8Array; block?: Uint8Array; initial: boolean }
+type LightPages = Array<Uint8Array | undefined>;
+interface Snapshot { sky?: LightPages; block?: LightPages; initial: boolean }
 interface Entry {
   readonly chunk: Chunk;
   readonly slot: number;
-  readonly queued: Uint8Array;
+  readonly queued: Uint32Array;
   readonly neighbors: Array<Entry | undefined>;
-  skyTouched: boolean;
-  blockTouched: boolean;
+  snapshot?: Snapshot;
 }
 type Phase = 'sky-clear' | 'sky-seed' | 'sky-flood' | 'block-clear' | 'block-seed' | 'block-flood' | 'done';
 interface LightState {
@@ -85,16 +87,25 @@ interface LightState {
   targets: Chunk[];
   entries: Entry[];
   readonly entryMap: Map<Chunk, Entry>;
-  readonly flagPool: Uint8Array[];
+  readonly flagPool: Uint32Array[];
   queue: Uint32Array;
   head: number;
   size: number;
   readonly touched: Map<Chunk, Snapshot>;
   emitters: Array<readonly [number, number, number]>;
   emitterCursor: number;
+  snapshotBytes: number;
+  peakSnapshotBytes: number;
+  peakFlagsBytes: number;
+  peakQueueBytes: number;
 }
 const states = new WeakMap<VoxelWorld, LightState>();
 let lastState: LightState | undefined;
+/** Session teardown must also release the legacy diagnostic reference to the last world. */
+export function disposeWorldLighting(world: VoxelWorld): void {
+  if (lastState === states.get(world)) lastState = undefined;
+  states.delete(world);
+}
 function stateFor(world: VoxelWorld): LightState {
   let state = states.get(world);
   if (!state) {
@@ -102,6 +113,7 @@ function stateFor(world: VoxelWorld): LightState {
       world, owner: '', phase: 'done', channel: 'block', cursor: 0, block: false,
       targets: [], entries: [], entryMap: new Map(), flagPool: [], queue: new Uint32Array(32768),
       head: 0, size: 0, touched: new Map(), emitters: [], emitterCursor: 0,
+      snapshotBytes: 0, peakSnapshotBytes: 0, peakFlagsBytes: 0, peakQueueBytes: 32768 * 4,
     };
     states.set(world, state);
   }
@@ -112,9 +124,10 @@ function entryFor(state: LightState, chunk: Chunk): Entry {
   let entry = state.entryMap.get(chunk);
   if (entry) return entry;
   const slot = state.entries.length;
-  const queued = state.flagPool[slot] ?? (state.flagPool[slot] = new Uint8Array(VOLUME));
+  const queued = state.flagPool[slot] ?? (state.flagPool[slot] = new Uint32Array(Math.ceil(VOLUME / 32)));
+  state.peakFlagsBytes = Math.max(state.peakFlagsBytes, state.flagPool.length * queued.byteLength);
   queued.fill(0);
-  entry = { chunk, slot, queued, neighbors: [], skyTouched: false, blockTouched: false };
+  entry = { chunk, slot, queued, neighbors: [] };
   state.entries.push(entry);
   state.entryMap.set(chunk, entry);
   return entry;
@@ -122,45 +135,59 @@ function entryFor(state: LightState, chunk: Chunk): Entry {
 function loadedChunk(world: VoxelWorld, x: number, z: number): Chunk | undefined {
   return world.chunks.get(chunkKey(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE)));
 }
-function touch(state: LightState, entry: Entry, channel: 'sky' | 'block'): void {
-  if (channel === 'sky' ? entry.skyTouched : entry.blockTouched) return;
+function touch(state: LightState, entry: Entry, index: number, channel: 'sky' | 'block'): void {
   const chunk = entry.chunk;
-  let snapshot = state.touched.get(chunk);
+  let snapshot = entry.snapshot ?? state.touched.get(chunk);
   if (!snapshot) {
     snapshot = { initial: !chunk.lightingReady };
     state.touched.set(chunk, snapshot);
   }
-  if (channel === 'sky') {
-    if (!snapshot.initial && !snapshot.sky) snapshot.sky = chunk.skyLight.slice();
-    entry.skyTouched = true;
-  } else {
-    if (!snapshot.initial && !snapshot.block) snapshot.block = chunk.blockLight.slice();
-    entry.blockTouched = true;
+  entry.snapshot = snapshot;
+  if (!snapshot.initial) {
+    const pages = snapshot[channel] ?? (snapshot[channel] = []);
+    const page = Math.floor(index / SNAPSHOT_PAGE_SIZE);
+    if (!pages[page]) {
+      const values = channel === 'sky' ? chunk.skyLight : chunk.blockLight;
+      pages[page] = values.slice(page * SNAPSHOT_PAGE_SIZE, (page + 1) * SNAPSHOT_PAGE_SIZE);
+      if (channel === 'sky') {
+        const before = pages[page]!;
+        for (let offset = 0; offset < before.length; offset += 1) before[offset] = chunk.skyLightAtIndex(page * SNAPSHOT_PAGE_SIZE + offset);
+      }
+      state.snapshotBytes += pages[page]!.byteLength;
+      state.peakSnapshotBytes = Math.max(state.peakSnapshotBytes, state.snapshotBytes);
+    }
   }
   chunk.lightPending = true;
 }
 function write(state: LightState, entry: Entry, index: number, value: number, channel: 'sky' | 'block'): void {
   const values = channel === 'sky' ? entry.chunk.skyLight : entry.chunk.blockLight;
+  const previous = channel === 'sky' ? entry.chunk.skyLightAtIndex(index) : values[index];
+  if (previous !== value) touch(state, entry, index, channel);
   if (values[index] === value) return;
-  touch(state, entry, channel);
   values[index] = value;
+  if (channel === 'block' && value > 0) entry.chunk.blockLightTop = Math.max(entry.chunk.blockLightTop, Math.floor(index / COLUMNS));
 }
-function changedBorders(before: Uint8Array | undefined, after: Uint8Array): number {
-  if (!before) return -1;
+function changedBorders(pages: LightPages | undefined, chunk: Chunk, sky: boolean): number {
+  if (!pages) return -1;
   let mask = -1;
-  for (let i = 0; i < before.length; i += 1) {
-    if (before[i] === after[i]) continue;
-    if (mask < 0) mask = 0;
-    const x = i % CHUNK_SIZE;
-    const z = Math.floor(i / CHUNK_SIZE) % CHUNK_SIZE;
-    if (x === CHUNK_SIZE - 1) mask |= 1;
-    if (x === 0) mask |= 2;
-    if (z === CHUNK_SIZE - 1) mask |= 4;
-    if (z === 0) mask |= 8;
-    if (x === CHUNK_SIZE - 1 && z === CHUNK_SIZE - 1) mask |= 16;
-    if (x === 0 && z === CHUNK_SIZE - 1) mask |= 32;
-    if (x === CHUNK_SIZE - 1 && z === 0) mask |= 64;
-    if (x === 0 && z === 0) mask |= 128;
+  for (let page = 0; page < pages.length; page += 1) {
+    const before = pages[page];
+    if (!before) continue;
+    for (let offset = 0; offset < before.length; offset += 1) {
+      const i = page * SNAPSHOT_PAGE_SIZE + offset;
+      if (before[offset] === (sky ? chunk.skyLightAtIndex(i) : chunk.blockLight[i])) continue;
+      if (mask < 0) mask = 0;
+      const x = i % CHUNK_SIZE;
+      const z = Math.floor(i / CHUNK_SIZE) % CHUNK_SIZE;
+      if (x === CHUNK_SIZE - 1) mask |= 1;
+      if (x === 0) mask |= 2;
+      if (z === CHUNK_SIZE - 1) mask |= 4;
+      if (z === 0) mask |= 8;
+      if (x === CHUNK_SIZE - 1 && z === CHUNK_SIZE - 1) mask |= 16;
+      if (x === 0 && z === CHUNK_SIZE - 1) mask |= 32;
+      if (x === CHUNK_SIZE - 1 && z === 0) mask |= 64;
+      if (x === 0 && z === 0) mask |= 128;
+    }
   }
   return mask;
 }
@@ -169,14 +196,25 @@ export function consumeLightTouched(world?: VoxelWorld): Chunk[] {
   if (!state) return [];
   const result: Chunk[] = [];
   for (const [chunk, snapshot] of state.touched) {
-    const sky = changedBorders(snapshot.sky, chunk.skyLight);
-    const block = changedBorders(snapshot.block, chunk.blockLight);
+    const sky = changedBorders(snapshot.sky, chunk, true);
+    const block = changedBorders(snapshot.block, chunk, false);
     if (!snapshot.initial && sky < 0 && block < 0) continue;
     chunk.changedLightBorders = snapshot.initial ? 255 : Math.max(0, sky) | Math.max(0, block);
     result.push(chunk);
   }
   state.touched.clear();
-  for (const entry of state.entries) { entry.skyTouched = false; entry.blockTouched = false; }
+  state.snapshotBytes = 0;
+  for (const entry of state.entries) entry.snapshot = undefined;
+  if (!state.owner) {
+    state.entries = [];
+    state.entryMap.clear();
+    state.targets = [];
+    state.initial = undefined;
+    state.job = undefined;
+    state.region = undefined;
+    state.flagPool.length = Math.min(RETAINED_FLAG_BUFFERS, state.flagPool.length);
+    if (state.queue.length > 32768) state.queue = new Uint32Array(32768);
+  }
   return result;
 }
 export function peekLightTouched(world?: VoxelWorld): ReadonlySet<Chunk> {
@@ -200,18 +238,21 @@ function clearQueue(state: LightState): void {
   for (const entry of state.entries) entry.queued.fill(0);
 }
 function push(state: LightState, entry: Entry, index: number): void {
-  if (entry.queued[index]) return;
+  const word = index >>> 5;
+  const bit = 1 << (index & 31);
+  if (entry.queued[word]! & bit) return;
   // One pending entry per voxel. Capacity is bounded by loaded job voxels;
   // unlike the old append-only 8192 cap, exhaustion never discards light.
   if (state.size === state.queue.length) {
     const next = new Uint32Array(Math.min(state.queue.length * 2, state.entries.length * VOLUME));
     for (let i = 0; i < state.size; i += 1) next[i] = state.queue[(state.head + i) % state.queue.length]!;
     state.queue = next;
+    state.peakQueueBytes = Math.max(state.peakQueueBytes, next.byteLength);
     state.head = 0;
   }
   state.queue[(state.head + state.size) % state.queue.length] = entry.slot * SLOT_SIZE + index;
   state.size += 1;
-  entry.queued[index] = 1;
+  entry.queued[word] = entry.queued[word]! | bit;
 }
 function neighbor(state: LightState, entry: Entry, index: number, dir: number): number {
   const x = index % CHUNK_SIZE;
@@ -249,9 +290,9 @@ function floodNode(state: LightState): void {
   state.size -= 1;
   const entry = state.entries[packed >>> SLOT_SHIFT]!;
   const index = packed & SLOT_MASK;
-  entry.queued[index] = 0;
+  entry.queued[index >>> 5] = entry.queued[index >>> 5]! & ~(1 << (index & 31));
   const sky = state.channel === 'sky';
-  const level = (sky ? entry.chunk.skyLight : entry.chunk.blockLight)[index]!;
+  const level = sky ? entry.chunk.skyLightAtIndex(index) : entry.chunk.blockLight[index]!;
   if (level <= 1) return;
   for (let dir = 0; dir < 6; dir += 1) {
     const cell = neighbor(state, entry, index, dir);
@@ -264,8 +305,8 @@ function floodNode(state: LightState): void {
     if (sky ? FILTER[id] === 16 : OCCLUDES[id] && !EMISSION[id]) continue;
     const next = level - 1 - (sky ? FILTER[id]! : 0);
     if (sky && next < 15 - LATERAL_SKY_RADIUS) continue;
-    const values = sky ? target.chunk.skyLight : target.chunk.blockLight;
-    if (next <= values[at]!) continue;
+    const value = sky ? target.chunk.skyLightAtIndex(at) : target.chunk.blockLight[at]!;
+    if (next <= value) continue;
     write(state, target, at, next, state.channel);
     push(state, target, at);
   }
@@ -281,7 +322,7 @@ function fillColumn(chunk: Chunk, x: number, z: number, state?: LightState): voi
   let sky = 15;
   let filterHeight = 0;
   const entry = state ? entryFor(state, chunk) : undefined;
-  for (let index = (WORLD_HEIGHT - 1) * COLUMNS + z * CHUNK_SIZE + x; index >= 0; index -= COLUMNS) {
+  for (let index = chunk.scanMaxY() * COLUMNS + z * CHUNK_SIZE + x; index >= 0; index -= COLUMNS) {
     const attenuation = FILTER[chunk.blocks[index]!]!;
     if (attenuation > 0 && filterHeight === 0) filterHeight = Math.floor(index / COLUMNS) + 1;
     if (attenuation === 16) sky = 0;
@@ -290,6 +331,7 @@ function fillColumn(chunk: Chunk, x: number, z: number, state?: LightState): voi
     sky = Math.max(0, sky - attenuation);
   }
   chunk.skyFilterHeights[z * CHUNK_SIZE + x] = filterHeight;
+  chunk.skyStoredHeights[z * CHUNK_SIZE + x] = chunk.scanMaxY() + 1;
 }
 export function fillColumnSky(chunk: Chunk, x: number, z: number): void { fillColumn(chunk, x, z); }
 export function continueSkyFill(chunk: Chunk, deadline?: number): boolean {
@@ -323,7 +365,7 @@ function seedSkyColumn(state: LightState, entry: Entry, column: number): void {
   for (let index = column; index < Math.min(WORLD_HEIGHT, maxY) * COLUMNS; index += COLUMNS) {
     const id = chunk.blocks[index]!;
     if (FILTER[id] === 16) continue;
-    let value = chunk.skyLight[index]!;
+    let value = chunk.skyLightAtIndex(index);
     if (value <= 1 && !boundary) continue;
     for (const dir of HORIZONTAL) {
       const packed = neighbor(state, entry, index, dir);
@@ -332,19 +374,24 @@ function seedSkyColumn(state: LightState, entry: Entry, column: number): void {
       const at = packed & SLOT_MASK;
       if (!other.chunk.skyReady && !(state.region && inside(state, other, at, true))) continue;
       const external = state.region ? !inside(state, other, at, true) : other.chunk !== chunk;
-      const incoming = other.chunk.skyLight[at]! - 1 - FILTER[id]!;
+      const incoming = other.chunk.skyLightAtIndex(at) - 1 - FILTER[id]!;
       if (external && incoming > value && incoming >= 15 - LATERAL_SKY_RADIUS) {
         write(state, entry, index, incoming, 'sky');
         value = incoming;
         push(state, entry, index);
       }
-      if (value > 1 && value - 1 - FILTER[other.chunk.blocks[at]!]! > other.chunk.skyLight[at]!) push(state, entry, index);
+      if (value > 1 && value - 1 - FILTER[other.chunk.blocks[at]!]! > other.chunk.skyLightAtIndex(at)) push(state, entry, index);
     }
   }
 }
 function seedBlockColumn(state: LightState, entry: Entry, column: number): void {
   const minY = Math.max(0, Math.ceil(state.region?.minY ?? 0));
-  const maxY = Math.min(WORLD_HEIGHT - 1, Math.floor(state.region?.maxY ?? WORLD_HEIGHT - 1));
+  let top = Math.max(entry.chunk.scanMaxY(), entry.chunk.blockLightTop);
+  for (const dir of HORIZONTAL) {
+    const packed = neighbor(state, entry, column, dir);
+    if (packed >= 0) top = Math.max(top, state.entries[packed >>> SLOT_SHIFT]!.chunk.blockLightTop);
+  }
+  const maxY = Math.min(top, Math.floor(state.region?.maxY ?? WORLD_HEIGHT - 1));
   const x = entry.chunk.x * CHUNK_SIZE + column % CHUNK_SIZE;
   const z = entry.chunk.z * CHUNK_SIZE + Math.floor(column / CHUNK_SIZE);
   const minX = state.region?.minX ?? entry.chunk.x * CHUNK_SIZE;
@@ -364,6 +411,8 @@ function seedBlockColumn(state: LightState, entry: Entry, column: number): void 
       if (packed < 0) continue;
       const other = state.entries[packed >>> SLOT_SHIFT]!;
       const at = packed & SLOT_MASK;
+      // Invalidated import chunks still contain old arrays until their own clear stage.
+      if (state.initial && !other.chunk.blockLightReady) continue;
       const external = state.region ? !inside(state, other, at, false) : other.chunk !== entry.chunk;
       if (!external) continue;
       const incoming = other.chunk.blockLight[at]! - 1;
@@ -464,7 +513,7 @@ function continueWork(state: LightState, deadline?: number): boolean {
         else if (state.phase === 'sky-seed') seedSkyColumn(state, entry, column);
         else if (state.phase === 'block-clear') {
           const minY = Math.max(0, Math.ceil(state.region?.minY ?? 0));
-          const maxY = Math.min(WORLD_HEIGHT - 1, Math.floor(state.region?.maxY ?? WORLD_HEIGHT - 1));
+          const maxY = Math.min(Math.max(chunk.scanMaxY(), chunk.blockLightTop), Math.floor(state.region?.maxY ?? WORLD_HEIGHT - 1));
           for (let y = minY; y <= maxY; y += 1) {
             const index = y * COLUMNS + column;
             write(state, entry, index, emissionAt(state, entry, index), 'block');
@@ -495,6 +544,22 @@ export function resetRegionLightFlood(world?: VoxelWorld): void {
 }
 export function resetIncompleteBlockLighting(chunk: Chunk): void {
   if (!chunk.blockLightReady) chunk.blockScanCursor = 0;
+}
+/** Imports invalidate cursors, not individual voxels; queued emission work must survive a restart. */
+export function restartLightingAfterImport(world: VoxelWorld): Array<readonly [number, number, number]> {
+  const state = states.get(world);
+  if (!state?.owner) return [];
+  const emitters = state.emitters;
+  if (state.initial) {
+    state.initial.skyReady = false;
+    state.initial.skyLateralReady = false;
+    state.initial.blockLightReady = false;
+    state.initial.skyFillCursor = 0;
+    state.initial.blockScanCursor = 0;
+  }
+  clearQueue(state);
+  finishWork(state);
+  return emitters;
 }
 export function processChunkLighting(world: VoxelWorld, chunk: Chunk, deadline?: number): boolean {
   if (chunk.lightingReady) return true;
@@ -580,8 +645,9 @@ export function getSkyLight(world: VoxelWorld, x: number, y: number, z: number):
   if (y >= WORLD_HEIGHT) return 15;
   const chunk = loadedChunk(world, x, z);
   if (!chunk) return 0;
+  if (y > chunk.occupancyTop) return 15;
   if (!world.deferredLighting && !chunk.skyReady && !lightingFloodOwner(world)) ensureChunkSky(world, chunk);
-  return chunk.skyLight[Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE))]!;
+  return chunk.skyLightAtIndex(Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE)));
 }
 export function getBlockLight(world: VoxelWorld, x: number, y: number, z: number): number {
   if (y < 0 || y >= WORLD_HEIGHT) return 0;
@@ -598,7 +664,7 @@ export function getDirectSkyLight(world: VoxelWorld, x: number, y: number, z: nu
   if (!chunk) return 0;
   let sky = 15;
   const column = positiveMod(z, CHUNK_SIZE) * CHUNK_SIZE + positiveMod(x, CHUNK_SIZE);
-  for (let cy = WORLD_HEIGHT - 1; cy >= y; cy -= 1) {
+  for (let cy = chunk.scanMaxY(); cy >= y; cy -= 1) {
     const attenuation = FILTER[chunk.blocks[cy * COLUMNS + column]!]!;
     if (attenuation === 16) return 0;
     if (cy === y) return sky;
@@ -609,6 +675,19 @@ export function getDirectSkyLight(world: VoxelWorld, x: number, y: number, z: nu
 }
 export function combinedLight(world: VoxelWorld, x: number, y: number, z: number, daylight = 1): number {
   return Math.max(getSkyLight(world, x, y, z) * Math.max(0, Math.min(1, daylight)), getBlockLight(world, x, y, z));
+}
+
+/** On-demand CPU/DEV accounting only; excludes JS object overhead and GPU allocations. */
+export function lightingMemoryUsage(world: VoxelWorld): {
+  flagsBytes: number; queueBytes: number; snapshotBytes: number; snapshotPages: number; entries: number;
+  peakSnapshotBytes: number; peakFlagsBytes: number; peakQueueBytes: number;
+} {
+  const state = states.get(world);
+  const snapshotBytes = state?.snapshotBytes ?? 0;
+  return { flagsBytes: state?.flagPool.reduce((sum, flags) => sum + flags.byteLength, 0) ?? 0,
+    queueBytes: state?.queue.byteLength ?? 0, snapshotBytes, snapshotPages: snapshotBytes / SNAPSHOT_PAGE_SIZE,
+    entries: state?.entries.length ?? 0, peakSnapshotBytes: state?.peakSnapshotBytes ?? 0,
+    peakFlagsBytes: state?.peakFlagsBytes ?? 0, peakQueueBytes: state?.peakQueueBytes ?? 0 };
 }
 export function sampleVoxelLightLevels(world: VoxelWorld, x: number, y: number, z: number): { sky: number; block: number } {
   let sky = getSkyLight(world, x, y, z);

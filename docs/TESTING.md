@@ -4,17 +4,55 @@
 
 Report and full 25-step manual checklist: `reports/2026-08-29_lighting-quality-lateral-sky.md`.
 
-All results below are for the original height96 base `6e27b93`, not the late-arriving height256 main `25fb847`. Integration conflicts remain in LightEngine/World. Use transient DEV fixtures or a fresh browser profile/new world; do not load saves from the newer main in this branch.
+Current branch integrates height256 main `25fb847`. New height256 targeted run: **274/274 in 18 files**, `--maxWorkers=1`, before the final teardown regression. It includes the 14 suites below plus lighting-height-256, world-height-256, schematic-import and anarchy-world. Current save schema1/high-Y and all four Game creation/load paths are covered. Detailed full-check/build/WebGL follow-up results are in the report's **Height-256 integration** section. Use transient DEV fixtures or fresh-origin throwaway worlds for QA; no save downgrade is involved.
+
+The next targeted/full-check counts are **historical height96** results, preserved for comparison, not the final height256 acceptance numbers.
+
+Height256 follow-up after the last code edit:50/50 in5 files; full check962 passed/24 failed/986, one failed suite and two RPC errors versus fresh main880 passed/36 failed. A new observed dismount default timeout remains6.64 s vs5 s; explicit30 s diagnostic passes6 sunlight/dismount cases but does not make default check green. Build/size/archive PASS:3.60 MiB/221 files. WebGL all7 fixtures at1280x720/844x390 plus real Creative/Anarchy new-save-load smoke; native pointer lock/manual gameplay acceptance remains open.
 
 Targeted run: **228/228, 14 files**, `--maxWorkers=1`, unchanged timeout/assertion thresholds. Files: lighting-seams/jobs/scheduler/physics-interaction/torch-selection, entity-lighting, vegetation-lighting, glowstone-lantern-chain, furnace-orientation-lit, streaming-scheduler, fluid-streaming, dirty-queue, block-break-batch and interaction-support-polish. Final focused checks: **74/74**, including the 56th lighting-seams regression for an opaque cold furnace at a relight boundary. A separate 5/5 sunlight integration diagnostic used an explicit 30 s timeout; see the report, not a default-suite green claim.
 
 New coverage: lateral room/cave gradients, roof hole closure/same-bounds restart, canopy filters, all-six-face external emission, torch/glowstone/lantern removal, sliced furnace on/off/break, >8192 emitters, frozen-clock caps, per-world ownership, unchanged-region no-remesh, eight-neighbor readiness/build order, real cube/special vertex attributes, uniform-only daylight and direct-sun semantics. Old vertical-only neighbor-zero expectations were replaced; fixtures include diagonals and clear dirty state only after all initial lighting settles.
 
-CPU benchmark: `npm run benchmark:lighting`; `.local/lighting-benchmark-after.json` contains 3 trials per scenario with total/max slice, edit cost, columns/nodes/jobs, dirty chunks and production-gated CPU mesh acknowledgements. Acknowledgements are not GPU draws or mesh-build timing. For identical before/after comparison, create a detached `.local/lighting-baseline` worktree at the report base and run `npm run benchmark:lighting -- --baseline`; remove that clean worktree before full Vitest discovery. `npm run benchmark:streaming` remains the canonical streaming sweep.
+CPU benchmark: `npm run benchmark:lighting`; `.local/lighting-benchmark-256-after.json` contains 3 trials per scenario plus radius2/4/6 memory accounting. Includes highYRoom, highYEmitter and a multi-batch importedStructureLighting. `--case=initial81StreamingSlices` repeats one case into a separate file without overwriting the full sweep. For identical before/after comparison, create a detached `.local/lighting-baseline` worktree at `25fb847` and run `npm run benchmark:lighting -- --baseline`; remove the clean worktree before full Vitest discovery. Archived `benchmarks/*lighting256-*.json` is current; `*lighting-before/after.json` remains historical96. Mesh acknowledgements are not GPU draws or mesh-build timings. `npm run benchmark:streaming` remains the canonical streaming sweep.
 
-DEV browser fixtures reuse `VegetationQaHarness` and `WorldRenderer`: `/?qaLighting=room`, `closed`, `hole`, `cave`, `forest`, `sources`. Wall / roof hole / light source / day-night controls invoke actual world paths; F7 uses existing SKY/BLOCK/FINAL. Fixture worlds are transient and do not touch IndexedDB saves. Screenshots/pixel checks are distinct from long native-GPU and real-mobile acceptance.
+DEV browser fixtures reuse `VegetationQaHarness` and `WorldRenderer`: `/?qaLighting=room`, `closed`, `hole`, `cave`, `forest`, `sources`, `high` (floor192/roof200). Wall / roof hole / light source / day-night controls invoke actual world paths; F7 uses existing SKY/BLOCK/FINAL. Fixture worlds are transient and do not touch IndexedDB saves. Screenshots/pixel checks are distinct from long native-GPU and real-mobile acceptance.
 
 Full `npm run check` is **not green** on this Windows checkout: final run 919 passed / 20 failed / 939 tests, one failed suite and two RPC errors. Unlike older reports below, the current baseline failure is not a missing authored asset pack: CRLF source fingerprint, reference-audio extractor syntax, CPU timing/RPC failures were observed before edits. An intermittent entity-separation failure passes on rerun but is not proven baseline. Full-run results, new failures and their resolution are recorded in the report; unrelated tests were not rewritten to hide them. Separate build/size/archive checks pass: 3.59 MiB / 219 files.
+
+## 2026-08-28 Anarchy persistent canonical world
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-canonical-persistent.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Contracts: production Anarchy restores IndexedDB without `.schem`; stale `importVersion` does not rebuild; canonical spawn is `serverWorld.spawn`; modifications survive restart; missing schematic does not block; singleplayer list still hides Anarchy. DEV `importAnarchySpawn` remains for offline baking.
+
+## 2026-08-28 Anarchy cocoa → air
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-cocoa-to-air.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Contracts: `minecraft:cocoa` (и legacy pod/beans ids) → Air, не Diamond и не Oak Log; jungle_log → Oak Log; unknown → Diamond; `importVersion` 3.
+
+`npx tsc --noEmit`: PASS. Full vitest: **918 passed / 2 failed / 920** (pre-existing authored-asset ENOENT). Production **3.61 MiB / 221 files**.
+
+## 2026-08-28 Anarchy jungle→oak log and Y-28
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-jungle-oak-y-shift.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Targeted: `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`.
+
+Contracts: jungle_log/jungle_wood → Oak Log (not Diamond, not planks); unknown → Diamond; Anarchy `yShift === -28`; X/Z = 0; bounds 0..255; `importVersion` 1 is stale, 2 imports once; save/load keeps shifted structure and oak logs.
+
+`npx tsc --noEmit`: PASS. Full vitest: **917 passed / 2 failed / 919**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/`. Vite build / size / archive: PASS, **3.61 MiB / 221 files**.
+
+## 2026-08-28 world height 256 + Anarchy spawn import
+
+Актуальный отчёт: `reports/2026-08-28_spawn-map-import-256-height.md`. Baseline `origin/main`=`6e27b93`.
+
+Targeted: `tests/world-height-256.test.ts`, `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`, plus retained worldgen/lighting/menu.
+
+Contracts: `WORLD_HEIGHT=256`, Y=0/255 valid, Y=-1/256 invalid, save/load at Y=255, high-Y light/fluid/raycast, schematic palette mapping, unsupported→Diamond, import-once Anarchy, singleplayer list filter.
+
+`npx tsc --noEmit`: PASS. Full vitest: **913 passed / 2 failed / 915**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/` (Cloud has no Faithful tree). Vite build / size / archive: PASS, **3.61 MiB / 221 files**.
 
 ## 2026-08-28 glowstone / lantern / chain
 
@@ -562,7 +600,7 @@ Decoration у края chunk нужно проверять отдельно, п�
 Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run benchmark:worldgen`):
 
 - same seed → identical heights/caves/trees/cacti; other seed → different terrain;
-- surface in `58–84`, sea `63`, generated peaks leave `TERRAIN_HEADROOM = 12`;
+- surface in `58–84`, sea `63`, generated peaks capped by `MAX_GENERATED_SURFACE = 84` (independent of `WORLD_HEIGHT = 256`);
 - mountain contribution `+10…+20` на части мира, не на каждом chunk;
 - neighbor height delta ≤ 4, в том числе на biome borders и chunk borders;
 - bedrock `Y 0–2` sealed with Stone cap `Y=3`; caves never carve cap; extra ~15 underground vs old surface~49;
@@ -572,7 +610,7 @@ Worldgen mountains/caves/density (`tests/worldgen-terrain.test.ts`, `npm run ben
 - ores only inside shifted `ORE_RULES` bands, including new deep stone; Coal/Iron/Gold/Redstone vein **attempts ×2**; Diamond **≈ current/3** (`veins: 1` + `extraVeinChance: 1/3`); vein `size` unchanged;
 - small irregular **enclosed** cave lava ponds (depth ≤ 3, bounded footprint, Stone shore above waterline, no open cave-edge escape, generator-space chunk-border validation, ordinary pond queue 0);
 - spawn on plains grass above sea, not mountain/cave/desert;
-- old modification linear indices still restore after `WORLD_HEIGHT` 80→96.
+- old modification linear indices still restore after `WORLD_HEIGHT` 80→96→256.
 
 DEV: `?worldgenDebug=1` appends `surfaceY=` / `mtn=` / `hills=` / `cave=` / `cap=` / `blk=` on the chunk HUD. Visual QA только на **новых** мирах: сохранённые deltas не мигрируются, unexplored chunks получают новый generator.
 

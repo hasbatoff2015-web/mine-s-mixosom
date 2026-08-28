@@ -22,16 +22,23 @@ export const ENTITY_SNAP_DISTANCE = 6;
 export const CHUNK_SIZE = 16;
 /**
  * Vertical world size in blocks (Y in `0 .. WORLD_HEIGHT-1`).
- * Raised 80 → 96 so we can keep sea/plains relationship, add ~15 underground,
- * and still fit +10…+20 mountains plus build headroom. Indexing is
- * `y * 16 * 16 + z * 16 + x` and does not embed WORLD_HEIGHT, so old
+ * Raised 96 → 256 so imported structures can occupy build space up to Y=255.
+ * Procedural terrain does **not** scale with this bound; see MAX_GENERATED_SURFACE.
+ * Indexing is `y * 16 * 16 + z * 16 + x` and does not embed WORLD_HEIGHT, so old
  * modification deltas remain valid.
  */
-export const WORLD_HEIGHT = 96;
+export const MIN_WORLD_Y = 0;
+export const WORLD_HEIGHT = 256;
+export const MAX_WORLD_Y = WORLD_HEIGHT - 1;
 /** Still ~1 block below typical plains, shifted +15 with the terrain stack. */
 export const SEA_LEVEL = 63;
-/** Generated terrain stays this many blocks below WORLD_HEIGHT for player builds. */
+/**
+ * Historical generated-mountain headroom vs the old 96-high world.
+ * Not `WORLD_HEIGHT - 12` — generated peaks stay pinned so empty sky is cheap.
+ */
 export const TERRAIN_HEADROOM = 12;
+/** Inclusive generated surface cap. Ordinary terrain stays around Y 58–84. */
+export const MAX_GENERATED_SURFACE = 84;
 export const DEFAULT_RENDER_DISTANCE_DESKTOP = 4;
 export const DEFAULT_RENDER_DISTANCE_MOBILE = 2;
 
@@ -70,6 +77,11 @@ export function parseBlockKey(key: string): { x: number; y: number; z: number } 
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+/** Inclusive block Y in `0 .. 255`. Y=256 and Y&lt;0 are invalid. */
+export function isValidWorldY(y: number): boolean {
+  return Number.isInteger(y) && y >= MIN_WORLD_Y && y <= MAX_WORLD_Y;
 }
 
 export function lerp(a: number, b: number, alpha: number): number {

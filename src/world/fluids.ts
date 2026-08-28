@@ -109,8 +109,9 @@ function activateEdgeFluidsToward(
   const originZ = chunk.z * CHUNK_SIZE;
   if (towardDx !== 0) {
     const localX = towardDx > 0 ? CHUNK_SIZE - 1 : 0;
+    const maxY = chunk.scanMaxY();
     for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
-      for (let y = 1; y < WORLD_HEIGHT; y += 1) {
+      for (let y = 1; y <= maxY; y += 1) {
         if (!isFluidBlock(chunk.get(localX, y, localZ) as BlockId)) continue;
         scheduleIfGeneratedBoundary(world, originX + localX, y, originZ + localZ);
       }
@@ -118,8 +119,9 @@ function activateEdgeFluidsToward(
     return;
   }
   const localZ = towardDz > 0 ? CHUNK_SIZE - 1 : 0;
+  const maxY = chunk.scanMaxY();
   for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
-    for (let y = 1; y < WORLD_HEIGHT; y += 1) {
+    for (let y = 1; y <= maxY; y += 1) {
       if (!isFluidBlock(chunk.get(localX, y, localZ) as BlockId)) continue;
       scheduleIfGeneratedBoundary(world, originX + localX, y, originZ + localZ);
     }
@@ -134,9 +136,10 @@ function activateEdgeFluidsToward(
 export function activateGeneratedFluidBoundaries(world: VoxelWorld, chunk: Chunk): void {
   const originX = chunk.x * CHUNK_SIZE;
   const originZ = chunk.z * CHUNK_SIZE;
+  const maxY = chunk.scanMaxY();
   for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
     for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
-      for (let y = 1; y < WORLD_HEIGHT; y += 1) {
+      for (let y = 1; y <= maxY; y += 1) {
         if (!isFluidBlock(chunk.get(localX, y, localZ) as BlockId)) continue;
         scheduleIfGeneratedBoundary(world, originX + localX, y, originZ + localZ);
       }

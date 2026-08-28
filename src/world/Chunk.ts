@@ -2,16 +2,25 @@ import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
 
 export class Chunk {
   readonly blocks = new Uint16Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
-  /** 0-15 direct and propagated sky light, independent of daylight. */
+  /** Stored sky through each column's materialized extent; higher sky is implicit 15. Use skyLightAtIndex. */
   readonly skyLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
   /** Packed 0–15 block light from emissive sources. */
   readonly blockLight = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
   /** Highest sky filter + 1 per column; frontier scans skip uniformly open sky above it. */
   readonly skyFilterHeights = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE);
+  /** Stored sky extent per column. Zero means not filled; growth by transparent blocks keeps upper sky implicit. */
+  readonly skyStoredHeights = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE);
   /** Generation-time terrain column cache reused by meshing and biome tint. */
   readonly surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   /** 0 plains, 1 forest, 2 desert. */
   readonly biomeCodes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+  /**
+   * Highest non-air Y written into this chunk (conservative: never shrinks).
+   * Sky/emitter/fluid/mesh scans use this instead of walking empty Y=85..255.
+   */
+  occupancyTop = 0;
+  /** Conservative high-water mark of block light, including spill above occupied geometry. */
+  blockLightTop = 0;
   dirty = true;
   generated = false;
   skyReady = false;
@@ -39,6 +48,21 @@ export class Chunk {
     return y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
   }
 
+  static yFromIndex(index: number): number {
+    return Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+  }
+
+  /** Inclusive Y to scan for occupied cells. Empty sky above this is implicit air. */
+  scanMaxY(): number {
+    return Math.min(WORLD_HEIGHT - 1, Math.max(0, this.occupancyTop));
+  }
+
+  skyLightAtIndex(index: number): number {
+    const columns = CHUNK_SIZE * CHUNK_SIZE;
+    const height = this.skyStoredHeights[index % columns] || this.occupancyTop + 1;
+    return index >= height * columns ? 15 : this.skyLight[index]!;
+  }
+
   get(x: number, y: number, z: number): number {
     if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return 0;
     return this.blocks[Chunk.index(x, y, z)] ?? 0;
@@ -46,7 +70,15 @@ export class Chunk {
 
   set(x: number, y: number, z: number, block: number): void {
     if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return;
-    this.blocks[Chunk.index(x, y, z)] = block;
+    this.writeIndex(Chunk.index(x, y, z), block);
+  }
+
+  writeIndex(index: number, block: number): void {
+    this.blocks[index] = block;
+    if (block !== 0) {
+      const y = Chunk.yFromIndex(index);
+      if (y > this.occupancyTop) this.occupancyTop = y;
+    }
     this.dirty = true;
   }
 

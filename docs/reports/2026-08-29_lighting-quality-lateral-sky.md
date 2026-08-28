@@ -8,11 +8,13 @@ Fix roof-shaped rectangular darkness beside wide openings, over-columnar canopy 
 
 ## Result
 
+Current follow-up: main `25fb847` is integrated at height256. Targeted274/274 plus final50/50; full check962 passed/24 failed with two RPC errors; separate build/size/archive PASS,3.60 MiB/221 files. Actual WebGL fixtures passed at1280x720 and844x390; Creative and Anarchy new/save/load smoke passed. Native pointer lock/manual building/flight remain unverified. See **Height-256 integration** for current results. The following original result and benchmark sections are historical96.
+
 The canonical lighting path now computes a vertical baseline followed by bounded, resumable lateral propagation. Open-room/cave samples decay 13,12,...,1,0; sealing the opening removes them. A small roof hole gives a local 15 peak, with the far interior still zero. Meshes wait for every sampled neighbor and stable pending work. No ambient/gamma increase, new renderer, second lighting system, worker, gameplay feature or asset pack was added.
 
 Targeted production-path checks passed 228/228 across 14 files, followed by 74/74 focused checks after the final guard change. Browser fixture checks cover actual WebGL rendering and control-driven mutations; native gameplay/GPU/mobile soak remains open. Full `npm run check` is not claimed green; see Tests. Production build/size/archive checks pass: 3.59 MiB, 219 files.
 
-**Integration gate:** the final fetch found a newer main (`25fb847`) with WORLD_HEIGHT=256 and Anarchy/import changes. This branch and all reported measurements use the original base, whose actual WORLD_HEIGHT is **96** (the standing AGENTS scope still says 80). A non-mutating merge-tree check found engine/world conflicts. No automatic integration was performed; the PR is draft and must not be merged until the 256-height integration and repeat validation are complete.
+**Historical height96 delivery:** the sections below preserve the original measurements and integration gate as history. The follow-up integrates main `25fb847` at WORLD_HEIGHT=256; see **Height-256 integration** at the end for current contracts, validation and risks. PR #13 remains Draft and must not be merged without user acceptance.
 
 ## Confirmed Root Causes
 
@@ -164,7 +166,7 @@ Local evidence is under `.local/lighting-*.jpg` (not shipped or committed). Earl
 
 ## Known Issues
 
-- Latest main advanced to WORLD_HEIGHT=256 during this task. Integration is deliberately unperformed, with confirmed content conflicts in LightEngine/World and overlapping current documentation. Neither the benchmark nor the green focused runs certify that combination. Do not merge the draft as-is.
+- Historical height96 gate, superseded by Height-256 integration below: main advanced to WORLD_HEIGHT=256 during the initial delivery; those old measurements did not certify the combination.
 - Full repository check remains red: baseline CRLF/extractor and CPU/RPC failures plus the separately classified intermittent entity-separation observation. No blanket green-suite or all-failures-pre-existing claim.
 - Native pointer lock, gameplay Creative flight/breaking on the user's GPU, multi-minute soak and physical mobile touch are not established by the fixture viewer.
 - Skylight is an integer, finite-distance approximation. Glass/small geometry does not simulate directional or partial voxel shadowing; there is no light from unloaded space outside the existing halo.
@@ -179,7 +181,7 @@ No weather, new blocks, gameplay expansion, worker meshing, advanced redstone, d
 
 ## Manual QA Checklist
 
-Use a new throwaway Creative world on this branch, not a valuable save. DEV fixtures are transient, but ordinary gameplay still autosaves. Do **not** open a save created by the newer 256-height main with this 96-height branch; use the isolated DEV fixture routes or a separate browser profile for gameplay.
+Use a new throwaway Creative world, not a valuable save. DEV fixtures are transient, but ordinary gameplay still autosaves. The integrated branch now supports height256/current schema; the original height96 warning no longer applies to this head. A separate localhost origin/profile still protects valuable worlds during QA.
 
 1. Spawn on an open field: daylight is bright; compare FINAL and SKY.
 2. Find a dense forest: it is darker than the field without isolated black column holes.
@@ -209,7 +211,7 @@ Use a new throwaway Creative world on this branch, not a valuable save. DEV fixt
 
 ## Next Work
 
-Before accepting the draft PR, integrate the newer main on this feature branch without rewriting history: reconcile occupancyTop/implicit empty-sky optimization with the new stored sky field, retain import options in World, invalidate lateral readiness and all sampled neighbors after imports, and enable deferred lighting for the new Anarchy create/restore session paths. Repeat lighting, import/height and streaming suites plus comparable CPU benchmarks at height256. This is a real integration task, not a mechanical conflict-marker removal.
+The original integration prerequisite is handled in the Height-256 integration follow-up below. Keep the draft for user acceptance; do not repeat the merge or replace either side's implementation.
 
 Then run the native checklist. Investigate full-suite baseline environment/timing failures separately; profile pathological wide-AABB edits only if actual device traces show a problem.
 
@@ -225,3 +227,108 @@ Then run the native checklist. Investigate full-suite baseline environment/timin
 - Required status/branch/30-commit graph were inspected after fetch. `git merge-tree --write-tree --name-only HEAD origin/main` (no checkout/index/ref changes) returned content conflicts in `src/world/LightEngine.ts` and `src/world/World.ts`. All four current docs also overlap the incoming change and will need a combined state description. Decision: publish the reviewed 96-height implementation as a draft; leave integration explicitly blocked, not silently overwrite the 256-height work or claim it tested.
 - Temporary clean baseline worktree was removed. No main commit/push, history rewrite, force push or PR merge.
 - GitHub connector creation returned403. The PR was created through GitHub's API using the existing local Git credential helper, without logging or persisting its credential. Browser comparison showed no signed-in session. Local helper scripts/body under `.local/` are not part of the change set.
+
+## Height-256 integration
+
+### Scope and conflicts
+
+Integrated main: `25fb847fc3762b99f8b10b6a6f24f0b2d234c998`, into the existing `codex/lighting-quality-lateral-sky` branch, continuing the already-resolved working tree and in-progress ordinary merge. Original feature head: `04e023534b5c33d14d4db876fdbb772718a969f6`. Conflicts in `LightEngine.ts`, `World.ts`, `ROADMAP.md` and `TESTING.md` were resolved semantically; neither side was selected wholesale. Incoming height256, importer, Anarchy and save changes remain present. No reset, new feature branch, rebase, force push, new PR or PR merge.
+
+### Height, implicit sky and import contracts
+
+- WORLD_HEIGHT is 256, valid Y is 0..255. Terrain still caps at 84. `occupancyTop`/`writeIndex`/`scanMaxY` remain authoritative and conservative; removal never requires a full occupancy rescan.
+- Vertical fill and direct-sun scans start at `scanMaxY`. Frontier seeding uses `skyFilterHeights`; block clear/seed uses the greater of occupied height and conservative `blockLightTop`, including neighbor spill above its own low occupancy.
+- Effective sky is 15 above each column's materialized extent. `skyStoredHeights` preserves this when transparent high geometry raises global occupancy without a sky job. This was necessary: the first new run caught Lantern230 changing previously implicit sky to raw zero. The fix is shared by flood, getter and packed mesher access via `skyLightAtIndex`.
+- High opaque roof/import invalidation recomputes required columns before readiness, so stale implicit 15 is never baked through a Y200 roof. Column extents can differ after a partial regional pass; unchanged columns remain valid. Stored sky still includes direct plus lateral; gameplay direct-sun queries stay distinct.
+- Import preserves `skipSupport`, `deferChunkLighting`, 8192-write batches and current save deltas. It cancels/restarts the single continuation while preserving emission seeds, invalidates all eight mesh readers and all three light readiness flags. Initial block seeding ignores unready neighbors' stale arrays. No per-voxel synchronous import relights.
+- All four Game paths set deferred lighting before setup: singleplayer new/load, Anarchy new/persisted. Actual-path tests restore schema1 Y255 modifications and retain canonical Anarchy id/spawn/old metadata without fetch or rebuild. Production still never imports `.schem`; no save migration or identity change.
+- Radius14 remains horizontal/path-distance bounded inside the unchanged 16-block generated halo. Eight-neighbor mesh readiness, skip-blocked scheduling, regional six-face external seeds, dynamic furnace emission, same-bounds restart, stable versions and shared cube/special sampling remain intact.
+
+### Memory audit
+
+Dense voxel storage remains 128 KiB blocks + 64 KiB sky + 64 KiB block light = 256 KiB/chunk, versus 96 KiB at the historical height96. This unavoidable 2.667x storage change comes from height256, not snapshots. The new engine uses one-bit queued flags (8 KiB/active entry), not 64 KiB byte flags. Snapshots copy only first-written 4 KiB channel pages and compare effective sky, not whole light arrays.
+
+| Render radius | Loaded with one-chunk halo | Blocks MiB | Sky MiB | Block light MiB | Metadata KiB | Measured peak snapshots KiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 49 | 6.125 | 3.0625 | 3.0625 | 73.5 | 36 |
+| 4 | 121 | 15.125 | 7.5625 | 7.5625 | 181.5 | 48 |
+| 6 | 225 | 28.125 | 14.0625 | 14.0625 | 337.5 | 48 |
+
+These measured generated-world + emitter workloads retained 64 KiB flags and a 128 KiB ring; snapshots and entry references returned to zero after completion. Metadata includes surface/biome caches plus both 512-byte sky height arrays. Across the full scenario sweep, the largest snapshot peak was 48 KiB (highYEmitter). A one-cell no-op relight regression copies exactly one 4 KiB page and does not bump the light version. Idle flag retention is capped at 16 buffers (128 KiB), and an expanded ring shrinks back to 128 KiB.
+
+The audit also found a strong legacy diagnostics reference (`lastState`) retaining the most recent world after session exit despite the WeakMap. `disposeWorldLighting` now clears the matching reference and state during Game/DEV teardown; the regression checks released buffers and isolation from another live world. This lifecycle-only follow-up does not change benchmark execution paths.
+
+For scale, naively retaining full byte flags plus both full light-array snapshots for every loaded chunk would add 9.1875 / 22.6875 / 42.1875 MiB at radii2/4/6. This is a hypothetical allocation bound for mechanically porting the old design, not a measured allocation of main's different engine. Lazy pages can still cover a full channel if an edit genuinely changes every page; the reduction is workload dependent. Temporary Maps/entries/targets are per active job/chunk, not per voxel string maps, and released on completion. `pruneChunks` retains radius+1, but flight can temporarily accumulate more chunks between its 80-tick calls. JS objects, pending edits/import voxel objects, renderer caches and GPU buffers are excluded, so these figures are not total browser RSS or a mobile memory guarantee.
+
+### CPU benchmark at 256
+
+Same script, seed, scenes, 2 ms budget and three trials; baseline dynamically imports untouched main `25fb847` from a temporary detached worktree. Historical96 JSON above is unchanged. Current raw data: [before256](../benchmarks/2026-08-29_lighting256-before.json), [after256](../benchmarks/2026-08-29_lighting256-after.json). Columns/nodes below are phase visits/work, dirty/commits are after maxima. CPU mesh acknowledgements are not geometry timings or GPU FPS. Baseline has incorrect vertical-only room/external light, so equal appearance is not implied.
+
+| Scenario | Before median ms | After median ms | Before worst slice ms | After worst slice ms | After columns | After nodes | Dirty | CPU mesh commits |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| initialChunk | 16.77 | 6.74 | 2.72 | 2.07 | 1024 | 703 | 1 | 0 |
+| initial81StreamingSlices | 980.59 | 475.68 | 4.19 | 19.45 | 82944 | 31257 | 81 | 49 |
+| openRoom | 102.20 | 35.29 | 2.23 | 2.04 | 16384 | 2518 | 16 | 4 |
+| caveEntrance | 99.62 | 38.26 | 2.28 | 3.19 | 16384 | 2518 | 16 | 4 |
+| forest | 105.35 | 46.91 | 2.30 | 2.08 | 16384 | 5616 | 16 | 4 |
+| roofOpen | 11.84 | 16.34 | 6.84 | 2.69 | 3364 | 2155 | 4 | 4 |
+| roofClose | 9.77 | 9.82 | 5.82 | 1.70 | 3364 | 0 | 4 | 4 |
+| torchAdd | 10.25 | 2.13 | 2.61 | 2.13 | 0 | 1956 | 4 | 4 |
+| torchRemove | 22.61 | 3.31 | 23.53 | 0.94 | 1682 | 0 | 4 | 4 |
+| glowstoneAdd | 51.81 | 12.64 | 32.22 | 2.05 | 3844 | 2275 | 4 | 4 |
+| glowstoneRemove | 45.11 | 9.30 | 32.60 | 3.65 | 3844 | 0 | 4 | 4 |
+| lanternAdd | 8.86 | 1.92 | 2.66 | 2.03 | 0 | 2276 | 4 | 4 |
+| lanternRemove | 24.09 | 3.92 | 25.05 | 1.23 | 1922 | 0 | 4 | 4 |
+| externalRegionSource | 0.20 | 1.16 | 0.26 | 1.83 | 80 | 223 | 0 | 0 |
+| cardinalBorder | 6.56 | 2.00 | 2.43 | 2.24 | 0 | 1957 | 4 | 4 |
+| diagonalCorner | 52.75 | 14.71 | 27.38 | 2.76 | 3844 | 2275 | 4 | 4 |
+| repeatedEdits30Frames | 67.34 | 19.93 | 17.09 | 2.06 | 6554 | 2518 | 2 | 2 |
+| creativeBurst100 | 19.75 | 18.23 | 9.86 | 2.06 | 5776 | 2518 | 4 | 4 |
+| wallCloseOpen | 22.98 | 19.59 | 13.43 | 2.06 | 6152 | 2518 | 2 | 2 |
+| highYRoom | 462.26 | 259.37 | 4.03 | 2.57 | 16384 | 2518 | 16 | 4 |
+| highYEmitter | 14.20 | 5.40 | 2.21 | 3.37 | 0 | 4090 | 4 | 4 |
+| importedStructureLighting | 475.70 | 268.37 | 4.25 | 2.62 | 16384 | 0 | 16 | 4 |
+
+Initial81 after trials had maxima 2.77 / 19.45 / 2.20 ms. An isolated three-trial repeat gave 3.59 / 2.17 / 2.29 ms, with unchanged 82944 columns / 31257 nodes / 49 commits and only 20 KiB peak snapshots. The >10 ms event did not repeat; its exact cause is not established (no trace proving GC/OS), and the original value is retained. Common edit cases did not show recurring 20-30 ms LIGHT stalls. High-Y and page comparison can exceed 2 ms modestly; no hard-real-time claim.
+
+The actual 9956-voxel imported room spans 16 chunks and multiple 8192-write batches: mutation/import call 32.56-41.44 ms after, then sliced light median268.37 ms / worst2.62 ms. There is no multi-second synchronous relight. Import itself remains synchronous/batched infrastructure, so arbitrarily huge offline imports are not promised stall-free. RoofOpen takes more total CPU than main because it now performs correct lateral propagation; externalRegionSource returns correct13 instead of wrong0.
+
+Comparable 12-chunk radius6 simulation: near-wanted worst absence 8900 -> 2333.3 simulated ms, player absence 0 -> 0, visible completions62 -> 120. Canonical `benchmark:streaming` radius6 flight/reverse/zigzag: player absence0/0/0; near-wanted2316.7/2283.3/2533.3 ms; ready-wanted-to-mesh max16.7/0/16.7 ms; obsolete mesh0. Prefetch/far latency remains, including reverse wanted-to-visible max14800 ms. Thirty-break regression is one dirty chunk / one pending mesh. Cold actual CPU mesh samples47.79-66.22 ms are geometry costs, not LIGHT or GPU FPS.
+
+### Tests256
+
+- Immediately after conflict resolution, before the optimization pass:78/78 across lighting-seams, world-height-256, schematic-import and anarchy-world. Initial optimization compatibility run82/82 including dirty-queue.
+- New `lighting-height-256.test.ts`:24 tests covering roof200/direct-vs-lateral/open-close, local hole220, Glowstone/Lantern230 and removal, all requested Y0/84/95/96/128/200/254/255 and invalid bounds, high diagonal mesh ordering, low-occupancy neighbor spill, imported high roof/ghost emission/in-flight restart, transparent occupancy growth/partial column materialization, page snapshots/no-op versions, disposal isolation and all four actual Game creation/load paths with current schema1.
+- Broad targeted:274/274 in18 files,102.73 s, `--maxWorkers=1`, before the final disposal regression. Final follow-up:50/50 in5 files,13.61 s (height lighting24, dirty4, height6, import9, Anarchy7), after the last code edit. No assertion/timeout relaxation.
+- Fresh untouched main256 `npm run check`: typecheck PASS,880 passed/36 failed/916 tests,12 failed/71 passed files, one failed suite and two worker-RPC errors,174.56 s. Temporary clean baseline worktree removed before integrated full discovery.
+- Integrated `npm run check`: typecheck PASS,962 passed/24 failed/986 tests,9 failed/75 passed files, one failed suite and two RPC errors,255.38 s. All24 new high-Y tests passed in this full run. Build was not reached because tests failed; it was run separately.
+- Matching failure names: CRLF source fingerprint (`e71967bd` vs `be428190`), reference-audio extractor SyntaxError, fire/sunlight/minecart, worldgen/lava/spawn and lighting/fluid/streaming CPU timing. Under full parallel load, water-flight exceeded20 s and lava-flight measured8366.7 simulated ms versus its8000 limit; both passed the isolated broad run unchanged.
+- **Additional observed default-timeout failure:** minecart Shift dismount `places the player beside the cart...` passed this main baseline but timed out integrated; isolated default rerun also timed out at6.64 s versus5 s. Its assertions pass with an explicit30 s CLI diagnostic. The shared legacy fixture clears terrain with thousands of synchronous `setBlock` calls; runtime Game worlds defer lighting. This timeout is not labelled pre-existing or fixed, and unrelated fixture code/timeouts were not changed.
+- Explicit diagnostic: `npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t 'sunlight burning|places the player beside' --maxWorkers=1 --testTimeout=30000`:6 passed/33 skipped,47.42 s, including all5 sunlight cases and dismount. This is behavioral evidence with an increased command-line timeout, not a default full-check pass.
+- Local logs: `.local/lighting256-{merge-baseline-tests,optimization-tests,targeted-final,followup-tests,check-main,check-final,dismount-rerun,sunlight-diagnostic}.log`. CPU JSON and separate spike repeat remain locally; the two complete256 JSON files are committed.
+
+### Build256
+
+`npm run build`, `npm run check:size`, `npm run check:archive`:PASS. Vite149 modules,8.04 s; production3.60 MiB/221 files; JS1010.18 kB (gzip285.10), CSS39.27 kB. Expected `/sdk.js` external-script and >500 kB chunk warnings remain. Archive check validates the output directory and root index/paths/no debug sources; it does not create a ZIP. DEV lighting routes/labels/benchmark case names are absent from built assets. No SDK path, production Anarchy behavior or assets scope change from this lighting integration.
+
+### WebGL QA256
+
+Actual in-app Browser against the integrated Vite source on separate origin `http://127.0.0.1:4174/`, protecting existing4173 saves. All7 fixtures (room/closed/hole/cave/forest/sources/high) rendered at both1280x720 and844x390, with actual textures and stable nine-mesh completion. One early high-mobile capture at7 meshes was replaced after all9 completed. No console errors observed. Controls fit without overlap, document scrollWidth844 at844 width. Viewer slice maxima were1.9-3.2 ms; these are observations, not native-GPU FPS certification.
+
+Room and high-room wall close gave all-zero SKY; reopen restored13..1..0. Roof hole gave a local15 peak with zero far interior. Torch/Glowstone/Lantern were selected through controls in the closed room, night retained localized block light, and removing the source in BLOCK mode left a black scene. Forest edge15/14 transitions to interior6; separate orbit captures changed, demonstrating live rendering. No ambient/gamma tuning was used.
+
+Canvas-region screenshot pixel samples (every8 pixels, below y130 UI) confirm nonblank assets: desktop room523 colors/mean55.29; closed284/34.61; hole434/59.07; Torch1467/55.63; Glowstone1635/58.27; Lantern-night1514/51.68. Mobile high498/63.03, closed209/35.54. Removed BLOCK scene1 color/mean0. Forest moving frames435/115.30 and365/114.75. These are image checks, not physical luminance. Evidence: `.local/lighting256-*.png`, not shipped.
+
+Real gameplay smoke: created `Lighting256 QA throwaway`, seed`lighting256-browser`, Creative, via ordinary menus; initial chunks settled81/121 with sky15 and fixed20 TPS. Actual terrain/canopy and assets rendered. Pause/save/exit and reload preserved mode/seed/position56.50,66.01,0.50. Anarchy new entry and persisted re-entry both rendered the procedural world, seed`anarchy-spawn-v1`, Survival, spawn0.50,69.01,0.50, three starter apples and81/121 chunks. Anarchy stayed out of the singleplayer list. No schematic dependency appeared; no-fetch/no-rebuild behavior is established by actual Game-path tests and unchanged production importer/save code, not a claimed browser network trace.
+
+**Input limitation:** pointer capture failed in this automation browser even with a visible tab, leaving the continue overlay. Chat opened but Enter did not submit the command through the supported input API. Thus real manual flight, building a large roof, source placement/removal and day/night through ordinary gameplay were not completed; fixture mutations/night are separately verified. No hidden runtime mutation or direct IndexedDB edit was used to bypass this limitation. Native input, device/GPU soak and physical mobile acceptance remain for the user. An F3 read briefly retained prior-session text until toggled; subsequent readings showed the correct Anarchy session. No unrelated HUD rewrite was made.
+
+### Remaining risks and local acceptance
+
+Keep Draft. Full check remains red as classified above, including the additional synchronous-fixture timeout. Wide-AABB batches can touch more snapshot pages; commit comparison and queue growth are not independent sliced phases. Conservative occupied/light tops can retain extra scan cost after tall geometry/source removal. Import writes themselves are still synchronous batches. Far-prefetch latency and cold mesh costs remain. Rare OS/GC scheduling spikes cannot be ruled out; the19.45 ms observation is preserved rather than attributed without a trace.
+
+Run `npm run dev -- --port 4174` if the provided local server is stopped, then open `http://127.0.0.1:4174/?qaLighting=high` and use Wall/Roof hole/source/day controls. For native acceptance use a new throwaway Creative world and the25-step checklist above, including roof200, hole220, emitters230 and Y255 boundary, F7/F8, rapid flight/reversal, then Anarchy save/exit/re-entry. Do not delete/migrate valuable saves or merge PR13 as part of QA.
+
+### Integration Git
+
+This section is part of the ordinary integration merge commit; its first parent is feature04e0235 and second parent is main25fb847. The immutable resulting SHA is identified by the final delivery and PR13 head (a commit cannot embed its own hash). Publication target stays `origin/codex/lighting-quality-lateral-sky`, PR13 remains Draft. No new branch/PR, no main push and no PR merge. Working-tree/PR-base diff checks pass; cached merge diff against the old feature also reports nine pre-existing Markdown hard-break trailing spaces from incoming main reports, which were deliberately preserved rather than rewriting unrelated history.

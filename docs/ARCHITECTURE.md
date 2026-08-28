@@ -192,13 +192,15 @@ Recipes в `src/crafting/recipes.ts` поддерживают exact item, `anyOf
 
 ### Chunks
 
-`Chunk` хранит blocks в плотном `Uint16Array` длиной `16 × WORLD_HEIGHT × 16` (`WORLD_HEIGHT = 96`). Индекс:
+`Chunk` хранит blocks в плотном `Uint16Array` длиной `16 × WORLD_HEIGHT × 16` (`WORLD_HEIGHT = 256`, `Y 0..255`). Индекс:
 
 ```text
 index = y × 16 × 16 + z × 16 + x
 ```
 
-`WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера, mesher/collision/raycast крутят `0 .. WORLD_HEIGHT-1`.
+`WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера. Generator заполняет только `0..max(surface, sea)`; `Chunk.occupancyTop` ограничивает sky fill, emitter scan, fluid activation и mesher, чтобы пустой столб Y=85..255 не стоил как полный мир. `WORLD_LIGHT_BUDGET_MS = 2` не поднимается из‑за высоты.
+
+Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production path `Играть онлайн → Анархия PvP` не вызывает importer:** грузит IndexedDB world `anarchy` как есть. Canonical spawn — `serverWorld.spawn`. `importVersion` не запускает reimport. Если save отсутствует — procedural world с тем же world id, без `.schem`.
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
@@ -207,7 +209,7 @@ index = y × 16 × 16 + z × 16 + x
 `TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers (`smoothstep` для mountain mask). Column generation выбирает biome (dryness/climate, без отдельного mountain biome) и height:
 
 ```text
-height = clamp(BASE(66) + broad×4 + detail×1.5×biomeDetail + hills(0–8) + mountainMask×amp(10–20), 58, 84)
+height = clamp(BASE(66) + broad×4 + detail×1.5×biomeDetail + hills(0–8) + mountainMask×amp(10–20), 58, MAX_GENERATED_SURFACE=84)
 ```
 
 Mountain mask — low-frequency fBm (`x/260`) с `smoothstep(0.16, 0.46)`, поэтому возвышенности широкие и пересекают несколько chunks. Biome влияет на surface/material/vegetation и только на detail amplitude, не на macro height, чтобы не было cliff на Forest↔Plains↔Desert.
@@ -233,7 +235,15 @@ Map<chunkKey, Map<linearBlockIndex, BlockId>>
 
 Каждый chunk хранит два `Uint8Array` света, `skyFilterHeights` (256 column frontiers), `skyReady` / `skyLateralReady` / `blockLightReady`, transient `lightPending`, and `lightVersion` / `meshedLightVersion`. Sky is a vertical direct baseline plus a resumable lateral frontier, not the removed six-pass full-chunk relaxation. `LATERAL_SKY_RADIUS = 14`: 15 -> 14 -> ... -> 1 -> 0, within the existing one-chunk halo. Opaque blocks stop sky; leaves/cutout cubes and liquids attenuate vertical sky by 1 and cost 2 per indirect step; glass/ice and small geometry pass. The vertical cell stores incoming sky before its own filter. Shader ambient/gamma/face shade and uniform-only daylight are unchanged.
 
-`getChunk` generates terrain without light. Initial work: resumable vertical fill -> sky frontier seeding/flood -> block clear/seed/flood. `processLighting` checks a deadline every 4 scanned columns / 32 nodes and has finite hard caps (256 columns per engine continuation, 4096 queue nodes; an initial call may also fill up to 256 vertical columns). PLAYING budget stays 2 ms, loading 8 ms; JavaScript scheduling/allocation and commit bookkeeping can overshoot, so this is not a hard real-time guarantee. The reusable packed Uint32 ring deduplicates with per-active-chunk flags, grows only to active loaded voxel capacity and never silently drops entries at the former 8192 limit. `WeakMap<VoxelWorld, LightState>` owns one sky/block queue per world, not a second lighting system.
+`getChunk` generates terrain without light. Initial work: resumable vertical fill -> sky frontier seeding/flood -> block clear/seed/flood. `processLighting` checks a deadline every 4 scanned columns / 32 nodes and has finite hard caps (256 columns per engine continuation, 4096 queue nodes; an initial call may also fill up to 256 vertical columns). PLAYING budget stays 2 ms, loading 8 ms; JavaScript scheduling/allocation and commit bookkeeping can overshoot, so this is not a hard real-time guarantee. The reusable packed Uint32 ring deduplicates with per-active-chunk bitsets (8 KiB at height256), grows only to active loaded voxel capacity and never silently drops entries at the former 8192 limit. `WeakMap<VoxelWorld, LightState>` owns one sky/block queue per world, not a second lighting system.
+
+Height256 contract: `occupancyTop` remains a conservative, non-shrinking highest authored/generated/imported block. Vertical fill and direct-sun queries start at `scanMaxY()`, not a hard-coded terrain ceiling. `skyFilterHeights` limits frontier scans. `skyStoredHeights` stores each column's materialized extent (512 bytes/chunk); `Chunk.skyLightAtIndex` returns implicit 15 above that extent, including when a transparent Lantern/Glass raises occupancy without sky invalidation. Flood and packed mesher reads use this accessor, never raw zero-filled upper sky. Opaque high-Y edits/imports invalidate and materialize the required columns before mesh readiness. `blockLightTop` separately bounds old light spill, which may extend above a neighbor's occupancy; block clear/seed must include it and incoming neighbor spill.
+
+Light snapshots are lazy 4096-byte pages per changed channel, copied before the first logical write. Sky snapshots capture effective implicit values. Final page comparison preserves no-op/coalesced versions and cardinal/diagonal reader masks. Completion releases snapshot pages and chunk-entry references, retains at most 16 flag buffers and shrinks an enlarged ring to 128 KiB. The commit comparison is not independently time-sliced. `lightingMemoryUsage(world)` is on-demand CPU/DEV accounting, not a per-frame heap scan; it excludes JS object overhead and GPU resources.
+
+`disposeWorldLighting` is called by Game session teardown and the DEV viewer. It deletes the weak-map state and the matching legacy `lastState` diagnostics reference, so returning to the menu does not retain the previous world's dense arrays through the engine.
+
+All four runtime Game paths (singleplayer new/load and Anarchy new/persisted) set `deferredLighting` before restore/setup. Import retains `skipSupport`, `deferChunkLighting` and 8192-write batches. Import invalidation restarts the current continuation without losing queued emitters, invalidates all eight sampled neighbors, resets all three readiness flags, and skips stale unready external arrays during initial block seeding. Production Anarchy remains a canonical persisted save with no runtime schematic import or metadata-triggered rebuild.
 
 PLAYING job fairness (`src/world/streamingScheduler.ts`): budgets **не** поднимались (`WORLD_JOB_BUDGET_MS = 4`, light slice 2 ms). Если в кадре была generation, mesh больше не пропускается целиком. Nearby ready mesh (chebyshev ≤ 2 или wait ≥ 150 ms) может взять **один** mesh slot; иначе generation может вытеснить mesh не чаще одного кадра подряд. Priority: ring (player / neighbors / ring-2 / rest) + age boost + лёгкий movement-ahead tie-break + distanceSq; score пересчитывается каждый mesh pass от текущего player chunk. `discardObsoletePendingMesh` снимает `pendingMesh` вне wanted mesh radius (generated data и `dirty` сохраняются). `pruneChunks` удаляет pending key вместе с chunk. Mesh lane по-прежнему `continue` мимо blocked head.
 

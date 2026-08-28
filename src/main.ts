@@ -18,7 +18,7 @@ if (import.meta.env.DEV) {
   const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
   const qaBiome = search.get('qaBiome');
   const qaLighting = search.get('qaLighting');
-  const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources'];
+  const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
   const requestedView = search.get('view');

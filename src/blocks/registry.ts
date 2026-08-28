@@ -338,6 +338,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     solid: true, opaque: false, occludesFaces: false,
     renderLayer: 'cutout', renderShape: 'chain',
   }),
+  stone(BlockId.DiamondBlock, 'diamond_block', 5, 'iron', 'building'),
 
   ...BLOCK_FAMILIES.flatMap((family) => {
     const shaped: BlockDefinition[] = [];

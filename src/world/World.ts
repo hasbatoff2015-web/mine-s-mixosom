@@ -4,7 +4,7 @@ import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState 
 import { rayAabbDistance, blockCollisionBoxes } from './collision';
 import { blockSelectionBoxes } from './selection';
 import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
-import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
+import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, MAX_GENERATED_SURFACE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
 import { getItemDefinition } from '../items';
@@ -27,6 +27,7 @@ import {
   relightRegion,
   addBlockLightEmitters,
   resetLightFrameStats,
+  restartLightingAfterImport,
   skyOcclusionClass,
   lightingInvalidation,
   LIGHT_FLOOD_ADD_EMITTER,
@@ -98,6 +99,13 @@ export interface BlockBatchOptions {
   /** Queue lighting instead of flushing immediately. Gameplay flushes once per frame. */
   readonly deferLighting?: boolean;
   readonly lightOrigin?: LightJobOrigin;
+  /** Import/structure writes: do not enqueue support checks for each cell. */
+  readonly skipSupport?: boolean;
+  /**
+   * After a large import, leave chunks unlit so the ordinary scheduler lights
+   * them. Skips per-edit sky/region floods.
+   */
+  readonly deferChunkLighting?: boolean;
 }
 
 export interface BlockBatchStats {
@@ -233,7 +241,7 @@ export class VoxelWorld {
       chunk = new Chunk(chunkX, chunkZ);
       this.generator.generate(chunk);
       const delta = this.modifications.get(key);
-      if (delta) for (const [index, block] of delta) chunk.blocks[index] = block;
+      if (delta) for (const [index, block] of delta) chunk.writeIndex(index, block);
       this.chunks.set(key, chunk);
       activateGeneratedFluidBoundaries(this, chunk);
       const generationMilliseconds = performance.now() - generationStart;
@@ -327,6 +335,15 @@ export class VoxelWorld {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirty);
     }
     return true;
+  }
+
+  /**
+   * Import-only: store authored state without support/fluid side effects.
+   * Mesh dirty is still required so stairs/doors/rails appear correctly.
+   */
+  replaceBlockState(x: number, y: number, z: number, state: BlockRenderState): void {
+    this.blockStates.set(blockKey(x, y, z), state);
+    this.markBlockDirty(x, z);
   }
 
   private fluidStateUnchanged(previous: BlockRenderState | undefined, next: BlockRenderState): boolean {
@@ -426,7 +443,7 @@ export class VoxelWorld {
    */
   applyBlockBatch(mutations: readonly BlockMutation[], options: BlockBatchOptions = {}): BlockBatchStats {
     const record = options.record !== false;
-    const updateLighting = options.updateLighting !== false;
+    const updateLighting = options.updateLighting !== false && !options.deferChunkLighting;
     const deferLighting = options.deferLighting ?? this.deferredLighting;
     const scheduleNeighbors = options.scheduleNeighbors !== false;
     const mutationStart = performance.now();
@@ -451,7 +468,15 @@ export class VoxelWorld {
     let regionRadius = 0;
 
     for (const mutation of unique.values()) {
-      const wrote = this.writeBlockRaw(mutation.x, mutation.y, mutation.z, mutation.block, record, dirtyChunks);
+      const wrote = this.writeBlockRaw(
+        mutation.x,
+        mutation.y,
+        mutation.z,
+        mutation.block,
+        record,
+        dirtyChunks,
+        options.skipSupport === true,
+      );
       if (!wrote) continue;
       applied += 1;
       const signatureAction = lightingInvalidation(wrote.previous, mutation.block);
@@ -502,6 +527,10 @@ export class VoxelWorld {
       relightMs = performance.now() - relightStart;
     }
 
+    if (applied > 0 && options.deferChunkLighting) {
+      this.invalidateImportedChunkLighting(dirtyChunks);
+    }
+
     return {
       applied,
       chunksDirtied: dirtyChunks.size,
@@ -509,6 +538,29 @@ export class VoxelWorld {
       mutationMs,
       relightMs,
     };
+  }
+
+  private invalidateImportedChunkLighting(dirtyChunks: Set<string>): void {
+    for (const emitter of restartLightingAfterImport(this)) this.pendingEmitters.push(emitter);
+    const keys = new Set(dirtyChunks);
+    for (const key of dirtyChunks) {
+      const [chunkX, chunkZ] = key.split(',').map(Number);
+      for (const { dx, dz } of MESH_LIGHT_NEIGHBORS) {
+        keys.add(chunkKey((chunkX ?? 0) + dx, (chunkZ ?? 0) + dz));
+      }
+    }
+    for (const key of keys) {
+      const chunk = this.chunks.get(key);
+      if (!chunk) continue;
+      chunk.skyReady = false;
+      chunk.skyLateralReady = false;
+      chunk.blockLightReady = false;
+      chunk.skyFillCursor = 0;
+      chunk.blockScanCursor = 0;
+      chunk.meshedLightVersion = -1;
+      this.markMeshDirty(chunk);
+    }
+    this.commitLightChanges();
   }
 
   private skyRecomputeSnapshot(): number {
@@ -522,6 +574,7 @@ export class VoxelWorld {
     block: BlockId,
     record: boolean,
     dirtyChunks: Set<string>,
+    skipSupport = false,
   ): { previous: BlockId; occlusionChanged: boolean; emissionChanged: boolean; skyChanged: boolean; lightRadius: number } | undefined {
     if (y < 0 || y >= WORLD_HEIGHT) return undefined;
     const chunkX = floorDiv(x, CHUNK_SIZE);
@@ -537,7 +590,7 @@ export class VoxelWorld {
     const previousEmission = previous === BlockId.Furnace ? this.blockEmissionAt(x, y, z) : previousDefinition.emission ?? 0;
     chunk.set(localX, y, localZ, block);
     this.blockStates.delete(blockKey(x, y, z));
-    this.queueSupportAround(x, y, z);
+    if (!skipSupport) this.queueSupportAround(x, y, z);
     if ((block === BlockId.Water || block === BlockId.Lava)
       && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid
       && (previousDefinition.fluidDisplaceable || previousDefinition.replaceable)) {
@@ -795,7 +848,13 @@ export class VoxelWorld {
   }
 
   surfaceY(x: number, z: number): number {
-    for (let y = WORLD_HEIGHT - 1; y >= 0; y -= 1) {
+    const chunk = this.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE));
+    const localX = positiveMod(x, CHUNK_SIZE);
+    const localZ = positiveMod(z, CHUNK_SIZE);
+    const start = chunk
+      ? Math.max(chunk.scanMaxY(), chunk.surfaceHeights[localZ * CHUNK_SIZE + localX] ?? 0)
+      : MAX_GENERATED_SURFACE;
+    for (let y = start; y >= 0; y -= 1) {
       const block = this.getBlock(x, y, z);
       if (getBlockDefinition(block).solid && block !== BlockId.OakLeaves) return y;
     }

@@ -4,14 +4,25 @@
 
 ## Последний проход: lateral sky / lighting quality
 
-- Baseline `origin/main`: `6e27b93bb0b05e1bc7e115d262603c866fa153a5`; feature branch `codex/lighting-quality-lateral-sky`.
-- Integration gate: final fetch found main `25fb847` with height256/Anarchy changes. This feature remains on the tested height96 base; merge-tree found LightEngine/World conflicts. Draft PR must not merge before explicit integration/revalidation. Do not load a newer 256-height save in this branch.
+- Integrated `origin/main`: `25fb847fc3762b99f8b10b6a6f24f0b2d234c998`; same feature branch `codex/lighting-quality-lateral-sky`, same Draft PR #13. WORLD_HEIGHT=256 is canonical. Historical height96 results remain in the report, not current acceptance numbers.
+- Height256: conservative occupancy/scanMaxY, implicit sky via per-column materialized extents, high-Y block-light spill bounds, 4 KiB changed-page snapshots and 8 KiB queued bitsets. Completed jobs release references; session teardown releases the legacy last-world diagnostics reference.
 - Canonical LightEngine: vertical sky + resumable lateral frontier, radius 14, typed ring queue, deadline and hard work caps. No return to full-chunk six-pass sky; PLAYING budget remains 2 ms.
 - All eight mesh lighting neighbors must be ready. Regional block relight imports all six AABB faces. Cube/special vertices share exposed-cell sampling; opaque zeros do not darken intensity averages, AO is separate (0.8..1).
 - Gameplay mutations/getters/furnace use sliced lighting; same-bounds edits restart the region; final touched chunks and border readers get coalesced version updates. Day/night stays uniform-only. Direct-sun burning does not mistake lateral level 14 for open sky.
-- Targeted validation: 228/228 in 14 files, then 74/74 focused checks after the final cold-furnace boundary guard. Full check: 919 passed / 20 failed, with baseline and intermittent failures classified in the report. Build/size/archive pass: 3.59 MiB / 219 files.
-- Browser fixture QA: room close/open, local roof hole, source add/remove, night, raw modes, cave/canopy and landscape 844x390. Native input/device/GPU soak remains pending. DEV routes: `?qaLighting=room|closed|hole|cave|forest|sources`, existing F7 SKY/BLOCK/FINAL.
+- Height256 validation: 274/274 in 18 files before the final teardown regression, then50/50 focused. Full check962 passed/24 failed, two RPC errors; fresh main baseline880/36. One additional dismount timeout is explicitly unresolved. Build/size/archive PASS:3.60 MiB/221 files. Four actual Game paths, schema1 Y255 deltas, importer and canonical Anarchy are covered; details in report.
+- CPU256 initial81 median475.68 ms versus main980.59; highYRoom259.37 versus462.26. Common edit worst slices <=3.65 ms; isolated initial81 spike19.45 ms did not repeat (3.59/2.17/2.29). Measured snapshot peaks36-48 KiB at radii2/4/6, not whole-volume duplicates. CPU timings are not GPU FPS.
+- DEV routes: `?qaLighting=room|closed|hole|cave|forest|sources|high`, existing F7 SKY/BLOCK/FINAL. High fixture floor192/roof200. Native input/device/GPU soak remains pending; use throwaway gameplay saves.
+- WebGL256: all7 fixtures at1280x720/844x390, screenshot pixels and no console errors; Creative and Anarchy new/save/load smoke passed on separate4174 origin. Pointer lock/chat submission unavailable in automation, so manual gameplay building/flight/source/time acceptance is not claimed complete.
 - Algorithm, measurements, validation caveats and manual checklist: `docs/reports/2026-08-29_lighting-quality-lateral-sky.md`.
+
+## Последний проход: world height 256 + Anarchy spawn import
+
+- Git baseline: `6e27b93` (`origin/main`), ветка `cursor/spawn-map-import-256-height`.
+- `WORLD_HEIGHT = 256` (`Y 0..255`). `Y=255` валиден, `Y=256` и `Y<0` — нет. Процедурный terrain **не** масштабируется: `MAX_GENERATED_SURFACE = 84`, sea `63`, ores/bedrock/caves без vertical scaling.
+- Chunk `16×256×16`; `occupancyTop` ограничивает sky/emitter/fluid/mesh scan пустого неба. `WORLD_LIGHT_BUDGET_MS = 2` не поднимали.
+- Importer: `src/world/import/` остаётся DEV/offline tool (NBT + Sponge `.schem`). **Production Anarchy не импортирует `.schem`.** `Играть онлайн → Анархия PvP` всегда грузит persistent IndexedDB world `anarchy` (chunks, spawn, metadata). `importVersion` / `spawnImported` больше не вызывают rebuild. Если мира ещё нет — обычный procedural create, не schematic. Singleplayer не затронут. `Выживание PvP` — заглушка.
+- `frontier_spawn2.schem` не удалять: backup/source asset. Runtime от него не зависит.
+- Report: `docs/reports/2026-08-28_spawn-map-import-256-height.md`. Canonical persistent Anarchy (no runtime schematic): `docs/reports/2026-08-28_anarchy-canonical-persistent.md`.
 
 ## Последний проход: glowstone / lantern / chain
 
@@ -98,9 +109,9 @@
 
 | Область | Статус | Фактический результат |
 | --- | --- | --- |
-| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online mock, настроек и read-only управления; создание/выбор/загрузка/удаление миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
+| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = локальный persistent world, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
-| Procedural world | Готово | Seeded chunks `16×16×96`, plains/forest/desert, periodic mountains (+10…+20), deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются |
+| Procedural world | Готово | Seeded chunks `16×16×256` (`Y 0..255`), plains/forest/desert, periodic mountains (+10…+20) with generated surface still `≤84`, deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются; empty sky above occupancy is not full-column work |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
@@ -124,15 +135,15 @@
 
 ### Готово
 
-- Чанк хранит `16 × 96 × 16` numeric block IDs в `Uint16Array`. Индекс `y × 256 + z × 16 + x` не содержит `WORLD_HEIGHT`, поэтому старые modification deltas остаются валидными.
+- Чанк хранит `16 × 256 × 16` numeric block IDs в `Uint16Array`. Индекс `y × 256 + z × 16 + x` не содержит `WORLD_HEIGHT`, поэтому старые modification deltas остаются валидными. `occupancyTop` — conservative highest non-air Y для scan пустого неба.
 - Горизонтальные координаты процедурно не ограничены; вокруг игрока загружается настраиваемый радиус, дальние chunks удаляются из runtime cache.
 - Генерация детерминирована строковым seed.
 - Реализованы три биома: `plains`, `forest`, `desert`.
-- Высота поверхности типично `63–84` (sea level `63`); periodic mountain mask даёт широкие возвышенности примерно `+10…+20` над local baseline, с headroom `12` блоков до `WORLD_HEIGHT`.
+- Высота поверхности типично `63–84` (sea level `63`); periodic mountain mask даёт широкие возвышенности примерно `+10…+20` над local baseline. `MAX_GENERATED_SURFACE = 84` закреплён отдельно от `WORLD_HEIGHT`, чтобы горы не уезжали к Y=244.
 - Есть bedrock floor (`Y 0–2`) plus a world-wide **Stone cap at Y=3** (`STONE_CAP_TOP_Y`) that caves, lava ponds and ores cannot remove, ridged 3D-noise cave networks (ветвления и chambers, carve только `y ≥ 4` и `≤ localMin(surface) - 4`), небольшие irregular cave **lava ponds** (footprint ~3–12, depth 1–3, **closed Stone basin**: shrink/reject open waterline and cave-edge drops using generator-space `terrainSolid`, not missing-chunk-as-wall; after generate ordinary ponds stay idle, queue 0; **only actually exposed** cells enter `scheduleFluid` as a safety net) и veins для coal, iron, gold, redstone (**vein attempts ×2**) и diamond (**attempts ≈ current/3**: 1 vein + 1/3 extra chance, `size` прежний).
 - Forest oak density ≈ 40% прежней, desert cactus ≈ 25–30% прежней; biome-specific cross-plants без изменения самих моделей.
 - Terrain decor включает oak trees, cactus и детерминированные растения: tall grass/flowers в plains, tall grass/fern/flowers в forest, dead bush в desert.
-- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone, slabs/stairs, **oak/birch/spruce fences**, **rail**, **cobweb**, **fire** (без item, `renderShape: fire`), **glowstone** (cube, light 15), **lantern** (cutout 3D, light 15, standing/hanging) и **chain** (вертикальная thin geometry). Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint. Fire — отдельный cutout layer: 4 крайние плоскости + 2 диагонали крестом, анимированный vertical strip (`block/fire.png`), не cube и не plant-cross.
+- Реестр содержит stable-ID definitions для шести replaceable `cross`-растений поверх прежних air/liquids, terrain, древесины, руд, utility/building blocks, wool, redstone, slabs/stairs, **oak/birch/spruce fences**, **rail**, **cobweb**, **fire** (без item, `renderShape: fire`), **glowstone** (cube, light 15), **lantern** (cutout 3D, light 15, standing/hanging), **chain** (вертикальная thin geometry) и **diamond block** (fallback для schematic import). Tall grass/fern несут `lightingMode: vegetation` и `biomeTint: grass`; flowers/dead bush — тот же lighting mode без grass tint. Fire — отдельный cutout layer: 4 крайние плоскости + 2 диагонали крестом, анимированный vertical strip (`block/fire.png`), не cube и не plant-cross.
 - Изменения мира записываются как chunk deltas, поэтому исходные procedural chunks не сохраняются целиком. Старые saves загружаются без crash; **неизменённый** terrain при reload перегенерируется новым worldgen (возможен seam на границе уже изменённого и нового chunk). Для visual QA гор/пещер нужен новый мир.
 - Chunk дополнительно хранит компактные `Uint8Array` skyLight/blockLight (`0–15`) того же размера, что и blocks.
 - Sand и gravel при потере опоры удаляются из сетки и становятся falling-block entity с gravity/mesh, затем возвращаются в world.

@@ -6,12 +6,15 @@ import { createLightingQaScene, lightingQaOpening, lightingQaRoofHole, lightingQ
 
 // --baseline uses the same scenes and measurement code against an untouched detached worktree.
 const baseline = process.argv.includes('--baseline');
+const only = process.argv.find((arg) => arg.startsWith('--case='))?.slice(7);
 const root = resolve(baseline ? '.local/lighting-baseline/src' : 'src').replaceAll('\\', '/');
 const { VoxelWorld } = await import(root + '/world/World.ts');
 const { Chunk } = await import(root + '/world/Chunk.ts');
 const light = await import(root + '/world/LightEngine.ts');
 const { collectReadyMeshJobs, completeCpuMesh } = await import(root + '/world/streamingScheduler.ts');
 const { runStreamingPath, STREAMING_SPEEDS } = await import(root + '/world/streamingSim.ts');
+const { WORLD_HEIGHT } = await import(root + '/core/constants.ts');
+const { importVoxelsIntoWorld } = await import(root + '/world/import/placeStructure.ts');
 
 function scene(kind: Parameters<typeof createLightingQaScene>[0]) {
   return createLightingQaScene(kind, VoxelWorld, Chunk);
@@ -62,7 +65,7 @@ function measure(world: InstanceType<typeof VoxelWorld>, edit?: (frame: number) 
     remeshCount += 1;
   }
   return { totalMs, maxSliceMs, editMs, maxEditMs, columns, nodes, jobs, completedJobs,
-    slices, peakDirtyChunks, remeshCount };
+    slices, peakDirtyChunks, remeshCount, memory: light.lightingMemoryUsage?.(world) };
 }
 const cases: Record<string, unknown> = {};
 for (let i = 0; i < 2; i += 1) lightAll(scene('room'));
@@ -70,6 +73,7 @@ function run(name: string, create: () => InstanceType<typeof VoxelWorld>,
   prepare?: (world: InstanceType<typeof VoxelWorld>) => void,
   edit?: (world: InstanceType<typeof VoxelWorld>, frame: number) => void,
   frames = 0, sample?: (world: InstanceType<typeof VoxelWorld>) => unknown) {
+  if (only && name !== only) return;
   const trials = [];
   for (let trial = 0; trial < 3; trial += 1) {
     const world = create();
@@ -141,16 +145,52 @@ run('creativeBurst100', () => scene('room'), (world) => {
 run('wallCloseOpen', () => scene('room'), ready,
   (world, frame) => edit(world, lightingQaOpening(frame === 1)), 2, lightingQaSkyLine);
 
-const streaming = runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'), {
+run('highYRoom', () => scene('high'), undefined, undefined, 0, (world) => lightingQaSkyLine(world, 192));
+run('highYEmitter', () => scene('closed'), ready,
+  (world) => edit(world, [{ x: 15, y: 230, z: 15, block: BlockId.Lantern }]), 1,
+  (world) => [world.blockLightAt(16, 230, 16), world.skyLightAt(15, 230, 15)]);
+const structure = [];
+for (let z = -16; z <= 47; z += 1) for (let x = -16; x <= 47; x += 1) {
+  structure.push({ x, y: 192, z, block: BlockId.Stone }, { x, y: 200, z, block: BlockId.OakPlanks });
+  if (x === -16 || x === 47 || z === -16 || z === 47) {
+    for (let y = 193; y < 200; y += 1) structure.push({ x, y, z, block: BlockId.OakPlanks });
+  }
+}
+run('importedStructureLighting', () => scene('room'), ready,
+  (world) => importVoxelsIntoWorld(world, structure), 1,
+  (world) => [world.skyLightAt(8, 196, 8), world.getChunk(0, 0)!.occupancyTop]);
+
+const memory = [];
+if (!only) for (const radius of [2, 4, 6]) {
+  const world = new VoxelWorld('lighting-memory-' + radius);
+  world.setViewCenter(8, 8, radius);
+  world.ensureChunks(8, 8, radius + 1);
+  measure(world);
+  edit(world, [{ x: 15, y: 70, z: 15, block: BlockId.Glowstone }]);
+  measure(world);
+  const chunks = [...world.chunks.values()];
+  memory.push({ radius, loadedChunks: chunks.length,
+    blocksBytes: chunks.reduce((sum, chunk) => sum + chunk.blocks.byteLength, 0),
+    skyBytes: chunks.reduce((sum, chunk) => sum + chunk.skyLight.byteLength, 0),
+    blockLightBytes: chunks.reduce((sum, chunk) => sum + chunk.blockLight.byteLength, 0),
+    metadataBytes: chunks.reduce((sum, chunk) => sum + chunk.surfaceHeights.byteLength + chunk.biomeCodes.byteLength
+      + (chunk.skyFilterHeights?.byteLength ?? 0) + (chunk.skyStoredHeights?.byteLength ?? 0), 0),
+    lighting: light.lightingMemoryUsage?.(world),
+    naiveFullFlagsBytes: chunks.length * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT,
+    naiveFullSnapshotsBytes: chunks.length * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT * 2,
+  });
+}
+const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'), {
   meshRadius: 6, lightBudgetMs: 2, pruneEveryFrames: 80, warmupFrames: 48,
   instantLight: false, policy: 'fair', speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
   path: [{ x: 8, z: 8 }, { x: 8 + 12 * CHUNK_SIZE, z: 8 }],
-});
-const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...streamingSummary } = streaming;
-const result = { runtime: 'Node CPU; no browser FPS claim', baseline, trials: 3, budgetMs: 2,
+}) : undefined;
+const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...streamingSummary } = streaming ?? {};
+const result = { runtime: 'Node CPU; no browser FPS claim', baseline, worldHeight: WORLD_HEIGHT, trials: 3, budgetMs: 2,
   remeshCount: 'production-gated CPU mesh acknowledgements; no GPU work',
-  cases, streaming: streamingSummary };
-const path = '.local/lighting-benchmark-' + (baseline ? 'before' : 'after') + '.json';
+  memoryScope: 'Typed arrays only; excludes JS object overhead, world deltas, import voxel objects, GPU and renderer caches',
+  cases, memory, streaming: streamingSummary };
+const path = '.local/lighting-benchmark-' + WORLD_HEIGHT + '-' + (only ? only + '-' : '') + (baseline ? 'before' : 'after') + '.json';
 mkdirSync('.local', { recursive: true });
 writeFileSync(path, JSON.stringify(result, null, 2) + '\n');
 console.info(JSON.stringify(result, null, 2));

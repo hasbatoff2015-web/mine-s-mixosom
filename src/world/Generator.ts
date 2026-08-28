@@ -1,5 +1,5 @@
 import { BlockId, getBlockDefinition } from '../blocks';
-import { CHUNK_SIZE, SEA_LEVEL, TERRAIN_HEADROOM, WORLD_HEIGHT } from '../core/constants';
+import { CHUNK_SIZE, MAX_GENERATED_SURFACE, SEA_LEVEL, WORLD_HEIGHT } from '../core/constants';
 import { Chunk } from './Chunk';
 import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise2D, valueNoise3D } from './noise';
 
@@ -129,7 +129,7 @@ export function collectSpawnColumns(
 
 const MIN_SURFACE = 58;
 const BASE_HEIGHT = 66;
-const MAX_SURFACE = WORLD_HEIGHT - TERRAIN_HEADROOM;
+const MAX_SURFACE = MAX_GENERATED_SURFACE;
 
 export class TerrainGenerator {
   readonly numericSeed: number;
@@ -193,7 +193,8 @@ export class TerrainGenerator {
         roof -= CAVE_ROOF_DEPTH;
         const floor = this.bedrockHeight(x, z);
         const cap = stoneCapY(floor);
-        for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        const fillTop = Math.max(height, SEA_LEVEL);
+        for (let y = 0; y <= fillTop; y += 1) {
           let block = BlockId.Air;
           if (y <= floor) block = BlockId.Bedrock;
           else if (y <= cap) block = BlockId.Stone;
