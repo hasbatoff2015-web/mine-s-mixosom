@@ -160,6 +160,7 @@ import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingF
 import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
+  ANARCHY_IMPORT_VERSION,
   ANARCHY_SERVER_ID,
   ANARCHY_WORLD_ID,
   anarchyAlreadyImported,
@@ -470,6 +471,15 @@ export class Game {
       await this.startSession(existing.summary, world, inventory, existing, { snapSpawn: false });
       for (const stack of bucketOverflow) this.spawnDroppedStack(stack);
       return;
+    }
+
+    if (existing?.serverWorld) {
+      console.info(
+        '[anarchy] rebuilding spawn',
+        existing.serverWorld.importVersion,
+        '→',
+        ANARCHY_IMPORT_VERSION,
+      );
     }
 
     try {

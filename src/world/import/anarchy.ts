@@ -7,7 +7,10 @@ export const ANARCHY_WORLD_ID = 'anarchy';
 export const ANARCHY_SERVER_ID = 'anarchy-pvp';
 export const ANARCHY_WORLD_SEED = 'anarchy-spawn-v1';
 export const ANARCHY_SPAWN_MAP_URL = '/maps/frontier_spawn2.schem';
-export const ANARCHY_IMPORT_VERSION = 1;
+/** Bumped when spawn mapping/placement changes so a stale IndexedDB world is rebuilt once. */
+export const ANARCHY_IMPORT_VERSION = 2;
+/** Extra world Y translation after the auto surface fit. X/Z stay 0. */
+export const ANARCHY_SPAWN_Y_SHIFT = -28;
 
 export interface AnarchyServerWorld {
   readonly id: string;
@@ -23,9 +26,13 @@ export interface AnarchyServerWorld {
     | 'nonAirBlocks'
     | 'mappedBlocks'
     | 'unsupportedToDiamond'
+    | 'jungleToOak'
+    | 'jungleReplacements'
     | 'replacements'
     | 'skippedEntities'
     | 'skippedBlockEntities'
+    | 'baseOffset'
+    | 'yShift'
     | 'offset'
     | 'lowestImportedY'
     | 'highestImportedY'
@@ -79,7 +86,9 @@ export async function importAnarchySpawn(world: VoxelWorld, bytes: Uint8Array): 
   serverWorld: AnarchyServerWorld;
 }> {
   const schematic = await parseSchematic(bytes);
-  const result = importSchematicIntoWorld(world, schematic);
+  const result = importSchematicIntoWorld(world, schematic, world.generator.columnAt(0, 0).height, {
+    yShift: ANARCHY_SPAWN_Y_SHIFT,
+  });
   const serverWorld: AnarchyServerWorld = {
     id: ANARCHY_WORLD_ID,
     initialized: true,
@@ -93,9 +102,13 @@ export async function importAnarchySpawn(world: VoxelWorld, bytes: Uint8Array): 
       nonAirBlocks: result.nonAirBlocks,
       mappedBlocks: result.mappedBlocks,
       unsupportedToDiamond: result.unsupportedToDiamond,
+      jungleToOak: result.jungleToOak,
+      jungleReplacements: result.jungleReplacements,
       replacements: result.replacements,
       skippedEntities: result.skippedEntities,
       skippedBlockEntities: result.skippedBlockEntities,
+      baseOffset: result.baseOffset,
+      yShift: result.yShift,
       offset: result.offset,
       lowestImportedY: result.lowestImportedY,
       highestImportedY: result.highestImportedY,

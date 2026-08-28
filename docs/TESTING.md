@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-08-28 Anarchy jungle→oak log and Y-28
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-jungle-oak-y-shift.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Targeted: `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`.
+
+Contracts: jungle_log/jungle_wood → Oak Log (not Diamond, not planks); unknown → Diamond; Anarchy `yShift === -28`; X/Z = 0; bounds 0..255; `importVersion` 1 is stale, 2 imports once; save/load keeps shifted structure and oak logs.
+
 ## 2026-08-28 world height 256 + Anarchy spawn import
 
 Актуальный отчёт: `reports/2026-08-28_spawn-map-import-256-height.md`. Baseline `origin/main`=`6e27b93`.

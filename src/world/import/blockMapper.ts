@@ -19,8 +19,11 @@ export interface ParsedMinecraftBlock {
 export interface MappedFrontierBlock {
   readonly block: BlockId;
   readonly state?: BlockRenderState;
+  /** False only for the Diamond Block fallback. Jungle → Oak Log stays supported. */
   readonly supported: boolean;
   readonly namespaced: string;
+  /** True when Minecraft jungle log/wood was remapped to Oak Log (not Diamond, not planks). */
+  readonly jungleToOak?: boolean;
 }
 
 const HORIZONTAL: ReadonlySet<string> = new Set(['north', 'south', 'east', 'west']);
@@ -66,6 +69,11 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   oak_wood: 'oak_log',
   birch_wood: 'birch_log',
   spruce_wood: 'spruce_log',
+  // Frontier has no jungle wood; spawn uses Oak Log (not planks, not Diamond).
+  jungle_log: 'oak_log',
+  jungle_wood: 'oak_log',
+  stripped_jungle_log: 'oak_log',
+  stripped_jungle_wood: 'oak_log',
   leaves: 'oak_leaves',
   leaves2: 'oak_leaves',
   oak_leaves: 'oak_leaves',
@@ -197,8 +205,28 @@ export function parseMinecraftBlockId(raw: string): ParsedMinecraftBlock {
   return { namespaced, name: withoutNs, states };
 }
 
+const JUNGLE_LOG_NAMES: ReadonlySet<string> = new Set([
+  'jungle_log',
+  'jungle_wood',
+  'stripped_jungle_log',
+  'stripped_jungle_wood',
+]);
+
+function woodVariant(parsed: ParsedMinecraftBlock): string | undefined {
+  return parsed.states.variant ?? parsed.states.wood ?? parsed.states.type ?? parsed.states.tree;
+}
+
+/** Jungle log / wood (1.12 variant states and 1.13+ ids), including stripped bark. */
+export function isJungleLogOrWood(parsed: ParsedMinecraftBlock): boolean {
+  if (JUNGLE_LOG_NAMES.has(parsed.name)) return true;
+  if (parsed.name === 'log' || parsed.name === 'log2' || parsed.name === 'wood') {
+    return woodVariant(parsed) === 'jungle';
+  }
+  return false;
+}
+
 function aliasKey(parsed: ParsedMinecraftBlock): string {
-  const variant = parsed.states.variant ?? parsed.states.wood ?? parsed.states.type;
+  const variant = woodVariant(parsed);
   if (parsed.name === 'log' || parsed.name === 'log2') {
     if (variant === 'birch') return 'birch_log';
     if (variant === 'spruce') return 'spruce_log';
@@ -297,6 +325,17 @@ function mapSpecialState(block: BlockId, states: Readonly<Record<string, string>
 
 export function mapMinecraftBlock(raw: string): MappedFrontierBlock {
   const parsed = parseMinecraftBlockId(raw);
+  if (isJungleLogOrWood(parsed)) {
+    const oak = getBlockByKey('oak_log');
+    if (oak) {
+      return {
+        block: oak.id,
+        supported: true,
+        jungleToOak: true,
+        namespaced: parsed.namespaced,
+      };
+    }
+  }
   const key = aliasKey(parsed);
   const definition = getBlockByKey(key);
   if (!definition) {

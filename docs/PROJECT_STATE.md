@@ -7,10 +7,10 @@
 - Git baseline: `6e27b93` (`origin/main`), ветка `cursor/spawn-map-import-256-height`.
 - `WORLD_HEIGHT = 256` (`Y 0..255`). `Y=255` валиден, `Y=256` и `Y<0` — нет. Процедурный terrain **не** масштабируется: `MAX_GENERATED_SURFACE = 84`, sea `63`, ores/bedrock/caves без vertical scaling.
 - Chunk `16×256×16`; `occupancyTop` ограничивает sky/emitter/fluid/mesh scan пустого неба. `WORLD_LIGHT_BUDGET_MS = 2` не поднимали.
-- Importer: `src/world/import/` (NBT + Sponge `.schem` + mapper). Unsupported Minecraft block → **Diamond Block** (не Air), с отчётом ID/count. Entities / block-entity contents пропускаются явно.
-- `Играть онлайн → Анархия PvP` открывает локальный persistent world `anarchy`. Import spawn только при первом создании (`serverWorld.spawnImported`). Singleplayer list этот мир не показывает. `Выживание PvP` остаётся заглушкой.
+- Importer: `src/world/import/` (NBT + Sponge `.schem` + mapper). Jungle log/wood → **Oak Log** (не planks). Прочие unsupported Minecraft blocks → **Diamond Block** (не Air), с отчётом ID/count. Entities / block-entity contents пропускаются явно.
+- `Играть онлайн → Анархия PvP` открывает локальный persistent world `anarchy`. Import spawn только при `serverWorld.spawnImported` и `importVersion === 2`. Версия 1 (первый import) при следующем входе пересобирается один раз на свежем мире: Y offset −28, jungle → oak log, без второй копии структуры. Singleplayer list этот мир не показывает. `Выживание PvP` остаётся заглушкой.
 - Файл `frontier_spawn2.schem` в Cloud VM отсутствует. Для local QA: `node scripts/copy-frontier-spawn.mjs <path>` → `public/maps/frontier_spawn2.schem` (исходник не меняется).
-- Report: `docs/reports/2026-08-28_spawn-map-import-256-height.md`.
+- Report: `docs/reports/2026-08-28_spawn-map-import-256-height.md`. Follow-up (jungle→oak, Y-28, importVersion 2): `docs/reports/2026-08-28_anarchy-jungle-oak-y-shift.md`.
 
 ## Последний проход: glowstone / lantern / chain
 

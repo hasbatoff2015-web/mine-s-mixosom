@@ -27,14 +27,23 @@ export interface ImportReport {
   readonly nonAirBlocks: number;
   readonly mappedBlocks: number;
   readonly unsupportedToDiamond: number;
+  readonly jungleToOak: number;
+  readonly jungleReplacements: Record<string, number>;
   readonly replacements: Record<string, number>;
   readonly skippedEntities: readonly string[];
   readonly skippedBlockEntities: readonly string[];
+  /** Placement before `yShift` (Anarchy spawn is then moved by `ANARCHY_SPAWN_Y_SHIFT`). */
+  readonly baseOffset: readonly [number, number, number];
+  readonly yShift: number;
   readonly offset: readonly [number, number, number];
   readonly lowestImportedY: number;
   readonly highestImportedY: number;
   readonly affectedChunks: number;
   readonly applied: number;
+}
+
+export interface ImportPlacementOptions {
+  readonly yShift?: number;
 }
 
 export class SchematicHeightError extends Error {
@@ -107,15 +116,39 @@ export function chooseVerticalOffset(
   return { offsetY, lowestWorldY: lowest, highestWorldY: highest };
 }
 
+/** Apply an extra world Y translation. Does not crop; throws if the result leaves 0..255. */
+export function applyVerticalShift(fit: VerticalFit, yShift: number): VerticalFit {
+  if (yShift === 0) return fit;
+  const offsetY = fit.offsetY + yShift;
+  const lowestWorldY = fit.lowestWorldY + yShift;
+  const highestWorldY = fit.highestWorldY + yShift;
+  if (lowestWorldY < MIN_WORLD_Y || highestWorldY > MAX_WORLD_Y) {
+    throw new SchematicHeightError(
+      `Y shift ${yShift} places structure at Y ${lowestWorldY}..${highestWorldY}, outside ${MIN_WORLD_Y}..${MAX_WORLD_Y}`,
+    );
+  }
+  return { offsetY, lowestWorldY, highestWorldY };
+}
+
 export function mappedVoxels(
   schematic: ParsedSchematic,
   offset: readonly [number, number, number],
   mappedPalette: readonly MappedFrontierBlock[],
-): { voxels: ImportedVoxel[]; replacements: Record<string, number>; mapped: number; diamond: number; nonAir: number } {
+): {
+  voxels: ImportedVoxel[];
+  replacements: Record<string, number>;
+  jungleReplacements: Record<string, number>;
+  mapped: number;
+  diamond: number;
+  jungleToOak: number;
+  nonAir: number;
+} {
   const voxels: ImportedVoxel[] = [];
   const replacements: Record<string, number> = {};
+  const jungleReplacements: Record<string, number> = {};
   let mapped = 0;
   let diamond = 0;
+  let jungleToOak = 0;
   let nonAir = 0;
   for (let y = 0; y < schematic.height; y += 1) {
     for (let z = 0; z < schematic.length; z += 1) {
@@ -132,12 +165,16 @@ export function mappedVoxels(
           replacements[cell.namespaced] = (replacements[cell.namespaced] ?? 0) + 1;
         } else if (cell.block !== BlockId.Air) {
           mapped += 1;
+          if (cell.jungleToOak) {
+            jungleToOak += 1;
+            jungleReplacements[cell.namespaced] = (jungleReplacements[cell.namespaced] ?? 0) + 1;
+          }
         }
         voxels.push({ x: worldX, y: worldY, z: worldZ, block: cell.block, state: cell.state });
       }
     }
   }
-  return { voxels, replacements, mapped, diamond, nonAir };
+  return { voxels, replacements, jungleReplacements, mapped, diamond, jungleToOak, nonAir };
 }
 
 export function importVoxelsIntoWorld(world: VoxelWorld, voxels: readonly ImportedVoxel[]): {
@@ -203,10 +240,14 @@ export function importSchematicIntoWorld(
   world: VoxelWorld,
   schematic: ParsedSchematic,
   preferredSurfaceY = world.generator.columnAt(0, 0).height,
+  options?: ImportPlacementOptions,
 ): ImportReport & { spawn: [number, number, number] } {
   const mappedPalette = mapPalette(schematic.palette);
   const extent = extentOfNonAir(schematic);
-  const vertical = chooseVerticalOffset(extent.lowest, extent.highest, preferredSurfaceY);
+  const yShift = options?.yShift ?? 0;
+  const baseVertical = chooseVerticalOffset(extent.lowest, extent.highest, preferredSurfaceY);
+  const vertical = applyVerticalShift(baseVertical, yShift);
+  const baseOffset: [number, number, number] = [0, baseVertical.offsetY, 0];
   const offset: [number, number, number] = [0, vertical.offsetY, 0];
   const packed = mappedVoxels(schematic, offset, mappedPalette);
   const placed = importVoxelsIntoWorld(world, packed.voxels);
@@ -229,9 +270,13 @@ export function importSchematicIntoWorld(
     nonAirBlocks: packed.nonAir,
     mappedBlocks: packed.mapped,
     unsupportedToDiamond: packed.diamond,
+    jungleToOak: packed.jungleToOak,
+    jungleReplacements: packed.jungleReplacements,
     replacements: packed.replacements,
     skippedEntities,
     skippedBlockEntities,
+    baseOffset,
+    yShift,
     offset,
     lowestImportedY: vertical.lowestWorldY,
     highestImportedY: vertical.highestWorldY,
