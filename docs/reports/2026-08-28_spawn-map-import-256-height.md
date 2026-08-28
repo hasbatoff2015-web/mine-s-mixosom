@@ -105,6 +105,7 @@ Local QA with the real schematic: connect Anarchy, confirm structure, lighting, 
 
 - Branch: `cursor/spawn-map-import-256-height`
 - Base: `6e27b93` (`origin/main`)
-- Implementation: see HEAD after this docs commit
+- Implementation: `f83a2a0`
+- Docs/results: this commit
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/12
 - Ordinary push. No force push. Do not merge `main`.
