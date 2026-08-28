@@ -12,8 +12,10 @@ import {
   type ToolTier,
   type ToolType,
   type PressurePlateTrigger,
+  type BlockSoundGroup,
 } from './types';
 import { BLOCK_FAMILIES } from './blockFamilies';
+import { inferBlockSoundGroup } from './soundGroups';
 import { requiredDisplayName } from '../i18n';
 
 interface BlockOptions {
@@ -43,6 +45,7 @@ interface BlockOptions {
   contactDamage?: number;
   hiddenFromGameplay?: boolean;
   pressurePlateTrigger?: PressurePlateTrigger;
+  soundGroup?: BlockSoundGroup | false;
 }
 
 function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefinition {
@@ -52,6 +55,7 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
 
   const renderShape = options.renderShape ?? 'cube';
   const lightingMode = options.lightingMode ?? (renderShape === 'cross' ? 'vegetation' : undefined);
+  const soundGroup = inferBlockSoundGroup(id, key, options);
 
   return Object.freeze({
     id,
@@ -83,6 +87,7 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
     ...(options.translucentMaterial === undefined ? {} : { translucentMaterial: options.translucentMaterial }),
     ...(options.hiddenFromGameplay === undefined ? {} : { hiddenFromGameplay: options.hiddenFromGameplay }),
     ...(options.pressurePlateTrigger === undefined ? {} : { pressurePlateTrigger: options.pressurePlateTrigger }),
+    ...(soundGroup === undefined ? {} : { soundGroup }),
   });
 }
 

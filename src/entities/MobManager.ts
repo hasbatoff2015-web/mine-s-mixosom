@@ -154,6 +154,8 @@ export interface MobManagerOptions {
   readonly onPlayerDamage?: (event: MobPlayerDamageEvent) => void;
   readonly onExplosion?: (event: MobExplosionEvent) => void;
   readonly onProjectileSpawn?: (event: MobProjectileSpawnEvent) => void;
+  /** Fired once when a skeleton arrow embeds in a collision block. */
+  readonly onArrowBlockHit?: (x: number, y: number, z: number) => void;
 }
 
 export interface MobRaycastHit {
@@ -1405,6 +1407,7 @@ export class MobManager {
         );
         projectile.velocity.set(0, 0, 0);
         projectile.inGround = true;
+        this.options.onArrowBlockHit?.(blockHit.x, blockHit.y, blockHit.z);
         continue;
       }
       projectile.position.add(movement);

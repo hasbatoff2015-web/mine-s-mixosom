@@ -30,6 +30,21 @@ import {
 } from '../chat';
 import { AudioManager } from './AudioManager';
 import {
+  advanceFootsteps,
+  blockUnderFeet,
+  createExplosionLog,
+  createFootstepState,
+  createMiningSoundState,
+  nextMiningSound,
+  resetFootsteps,
+  resetMiningSound,
+  shouldPlayExplosion,
+  consumableSoundEvent,
+  type BlockSoundAction,
+  type PlaySoundOptions,
+  type SoundEventId,
+} from '../audio';
+import {
   AUTOSAVE_INTERVAL_SECONDS,
   DEFAULT_RENDER_DISTANCE_DESKTOP,
   DEFAULT_RENDER_DISTANCE_MOBILE,
@@ -237,6 +252,10 @@ export class Game {
   private firstPerson?: FirstPersonRenderer;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
+  private readonly miningSound = createMiningSoundState();
+  private readonly footsteps = createFootstepState();
+  private readonly explosionSounds = createExplosionLog();
+  private openChestKey?: string;
   private lastConsumedArrow: string | undefined;
   private minecartDismountHeld = false;
   private settings: RuntimeSettings = {
@@ -361,7 +380,9 @@ export class Game {
         this.renderer.capabilities.getMaxAnisotropy(),
         isCoarsePointer() ? 4 : 8,
       )).then((atlas) => { this.atlas = atlas; }),
+      this.audio.preload(),
     ]);
+    this.audio.setVolume(this.settings.volume);
     this.itemVisuals = new ItemVisualFactory({ atlas: this.atlas });
     await this.itemVisuals.preload();
     this.itemIcons = new ItemIconRenderer(this.renderer, this.itemVisuals);
@@ -542,7 +563,7 @@ export class Game {
         const remainder = inventory.add(stack as ItemStack);
         const accepted = stack.count - (remainder?.count ?? 0);
         if (accepted > 0) {
-          this.audio.playTone(660, 0.05, 0.025);
+          this.playLocal('item.pickup');
           this.ui.toast(`Подобрано: ${getItemDefinition(stack.itemId).name}`);
         }
         return accepted;
@@ -561,6 +582,7 @@ export class Game {
       hostileCap: isCoarsePointer() ? 14 : 24,
       maxProjectiles: isCoarsePointer() ? 20 : 40,
       arrowVisualFactory: arrowVisuals,
+      onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
     const combat = new CombatSystem({
@@ -574,10 +596,14 @@ export class Game {
       minecarts,
       onBlockHit: (x, y, z, flaming) => {
         const session = this.session;
+        this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5);
         if (!session || !flaming) return;
         if (flamingArrowBlockHit(session.world.getBlock(x, y, z, false)) === 'prime_tnt') {
           session.redstone.primeTnt(x, y, z);
         }
+      },
+      onMobHit: (accepted, position) => {
+        if (accepted) this.playWorld('combat.hit', position.x, position.y + 0.9, position.z);
       },
       onMinecartHit: (cart, flaming) => {
         const session = this.session;
@@ -1246,6 +1272,7 @@ export class Game {
 
   /** Close the inventory modal and restore desktop mouse-look. */
   private closeInventoryAndResumeLook(): void {
+    this.closeOpenChestAudio();
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.enterPlaying();
@@ -1326,7 +1353,14 @@ export class Game {
     const session = this.session!;
     if (this.lifecycle.state !== 'PLAYING') return;
     this.openGameplayModal();
-    if (kind === 'chest') session.worldRenderer.setOpenChest(blockKey(hit.x, hit.y, hit.z));
+    if (kind === 'chest') {
+      const key = blockKey(hit.x, hit.y, hit.z);
+      if (this.openChestKey !== key) {
+        this.playWorld('chest.open', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+        this.openChestKey = key;
+      }
+      session.worldRenderer.setOpenChest(key);
+    }
     this.ui.openInventory({
       inventory: session.inventory,
       mode: session.summary.mode,
@@ -1591,6 +1625,7 @@ export class Game {
     const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
       if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
     });
+    this.updateFootsteps(session, playerResult.horizontalDistance);
     if (session.summary.mode === 'survival') {
       const survivalResult = session.survival.tick(FIXED_DT, {
         player: session.player,
@@ -1618,6 +1653,7 @@ export class Game {
       this.input.consumeUsePressed();
       session.miningProgress = 0;
       session.miningTarget = undefined;
+      resetMiningSound(this.miningSound);
     }
     simMark = this.addSimPart('other', simMark);
     const entityStart = performance.now();
@@ -1626,7 +1662,7 @@ export class Game {
       mode: session.summary.mode,
       addItem: (itemId, count) => session.inventory.addItem(itemId, count),
     });
-    if (collectedArrows > 0) this.audio.playTone(660, 0.05, 0.025);
+    if (collectedArrows > 0) this.playLocal('item.pickup');
     session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
     const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
     const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
@@ -1732,15 +1768,17 @@ export class Game {
           }
           session.survival.recordAttack();
         }
-        if (accepted) this.audio.playTone(result.critical ? 520 : 310, 0.055, result.critical ? 0.055 : 0.035);
+        if (accepted) this.playWorld('combat.hit', mobTarget.mob.position.x, mobTarget.mob.position.y + 0.9, mobTarget.mob.position.z);
       }
     } else if (attack?.kind === 'minecart') {
       session.miningTarget = undefined;
       session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
       if (attackPressed) this.breakMinecart(attack.cart);
     } else if (!this.input.mining || !session.target) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
     } else {
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
@@ -1748,8 +1786,13 @@ export class Game {
       }
       const definition = getBlockDefinition(session.target.block);
       if (definition.breakable !== false && definition.hardness >= 0) {
-        session.miningProgress += session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
-        if (session.miningProgress >= 1) this.breakTarget();
+        const delta = session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
+        const kind = nextMiningSound(this.miningSound, targetKey, session.miningProgress, delta);
+        session.miningProgress += delta;
+        if (kind === 'break' || session.miningProgress >= 1) this.breakTarget();
+        else if (kind === 'hit') {
+          this.playBlockSound('hit', session.target.block, session.target.x, session.target.y, session.target.z);
+        }
       }
     }
     for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
@@ -1778,7 +1821,8 @@ export class Game {
     }
     session.miningProgress = 0;
     session.miningTarget = undefined;
-    this.audio.playTone(145 + (hit.block % 9) * 12, 0.045, 0.035);
+    resetMiningSound(this.miningSound);
+    this.playBlockSound('break', hit.block, hit.x, hit.y, hit.z);
     this.firstPerson?.swing();
 
     if (session.summary.mode === 'survival') {
@@ -1804,7 +1848,7 @@ export class Game {
     const session = this.session!;
     const broken = session.minecarts.breakCart(cart, session.ridingCartId);
     if (!broken) return;
-    this.audio.playTone(200, 0.05, 0.03);
+    this.playWorld('block.break.stone', broken.position.x, broken.position.y, broken.position.z);
     this.firstPerson?.swing();
     const loot = dropsForBrokenMinecart(session.summary.mode, broken.items);
     if (loot.length === 0) return;
@@ -1845,7 +1889,7 @@ export class Game {
       if (hit.block === BlockId.Lever) {
         const active = session.redstone.toggleLever(hit.x, hit.y, hit.z);
         if (active !== undefined) {
-          this.audio.playTone(active ? 480 : 260, 0.045, 0.03);
+          this.playWorld('redstone.click', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, { pitch: active ? 1.08 : 0.92 });
           this.ui.toast(active ? 'Рычаг включён' : 'Рычаг выключен');
           this.firstPerson?.swing();
         }
@@ -1853,14 +1897,16 @@ export class Game {
       }
       if (hit.block === BlockId.StoneButton) {
         if (session.redstone.pressButton(hit.x, hit.y, hit.z)) {
-          this.audio.playTone(420, 0.035, 0.025);
+          this.playWorld('redstone.click', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, { pitch: 1.06 });
           this.firstPerson?.swing();
         }
         return;
       }
       if (hit.block === BlockId.OakDoor) {
+        const { lowerY } = this.doorHalves(hit.x, hit.y, hit.z);
+        const opening = session.world.getBlockState(hit.x, lowerY, hit.z)?.open !== true;
         this.toggleDoor(hit.x, hit.y, hit.z);
-        this.audio.playTone(310, 0.04, 0.03);
+        this.playWorld(opening ? 'door.open' : 'door.close', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
         this.firstPerson?.swing();
         return;
       }
@@ -2043,7 +2089,7 @@ export class Game {
         const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
         session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
       }
-      this.audio.playTone(230, 0.04, 0.025);
+      this.playBlockSound('place', item.placesBlockId, x, y, z);
       this.firstPerson?.swing();
       if (session.summary.mode === 'survival') {
         this.consumeSelected(1);
@@ -2081,7 +2127,7 @@ export class Game {
     }
     session.world.setBlockState(x, y, z, { slabType: 'double' });
     session.redstone.notifyBlockChanged(x, y, z);
-    this.audio.playTone(230, 0.04, 0.025);
+    this.playBlockSound('place', session.world.getBlock(x, y, z, false), x, y, z);
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
     return true;
@@ -2095,7 +2141,7 @@ export class Game {
     }
     if (!session.world.setBlock(x, y, z, block)) return false;
     session.redstone.notifyBlockChanged(x, y, z);
-    this.audio.playTone(230, 0.04, 0.025);
+    this.playBlockSound('place', block, x, y, z);
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
     return true;
@@ -2136,7 +2182,7 @@ export class Game {
     session.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
     session.redstone.notifyBlockChanged(x, y, z);
     session.redstone.notifyBlockChanged(x, y + 1, z);
-    this.audio.playTone(230, 0.04, 0.025);
+    this.playBlockSound('place', BlockId.OakDoor, x, y, z);
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
   }
@@ -2185,12 +2231,15 @@ export class Game {
       return;
     }
     session.foodUseTicks += 1;
+    const eatOrDrink = consumableSoundEvent(item);
     if (session.foodUseTicks >= 32) {
       if (session.survival.consumeFood(item, session.inventory)) {
-        this.audio.playTone(420, 0.08, 0.035);
+        this.playLocal(eatOrDrink);
         this.ui.toast(`Съедено: ${item.name}`);
       }
       session.foodUseTicks = 0;
+    } else if (session.foodUseTicks % 8 === 0) {
+      this.playLocal(eatOrDrink, { volume: 0.55 });
     }
   }
 
@@ -2212,7 +2261,7 @@ export class Game {
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
-    this.audio.playTone(charge.critical ? 760 : 540, 0.07, 0.035);
+    this.playLocal('bow.shoot');
     this.firstPerson?.swing();
   }
 
@@ -2315,12 +2364,17 @@ export class Game {
     if (this.explosionQueue.pendingCount === 0) return;
     const mobile = isCoarsePointer();
     const changed: Array<{ x: number; y: number; z: number }> = [];
-    const stats = this.explosionQueue.process(session.world, {
+    this.explosionQueue.process(session.world, {
       budgetMs: mobile ? 1.8 : 3.5,
       maxJobs: mobile ? 6 : 12,
       maxVoxels: mobile ? 256 : 512,
       remainingPrimedCapacity: session.redstone.primedCapacityRemaining,
-      onResolved: (job) => this.applyExplosionDamage(job.x, job.y, job.z, job.radius, job.power),
+      onResolved: (job) => {
+        this.applyExplosionDamage(job.x, job.y, job.z, job.radius, job.power);
+        if (shouldPlayExplosion(this.explosionSounds, job, session.playTicks)) {
+          this.playWorld('explosion', job.x, job.y, job.z);
+        }
+      },
       onContents: (block) => {
         changed.push({ x: block.x, y: block.y, z: block.z });
         this.releaseBlockEntityContents({
@@ -2338,11 +2392,6 @@ export class Game {
       },
     });
     if (changed.length > 0) session.redstone.notifyBlocksChanged(changed);
-    if (stats.processed > 0) {
-      const sounds = Math.min(2, stats.processed);
-      const gain = Math.min(0.14, 0.09 + (stats.processed - 1) * 0.01);
-      for (let index = 0; index < sounds; index += 1) this.audio.playTone(72, 0.18, gain);
-    }
   }
 
   private applyExplosionDamage(x: number, y: number, z: number, radius: number, power: number): void {
@@ -2430,7 +2479,6 @@ export class Game {
     const action = resolveFlintAndSteelUse(cart, hit);
     if (action.type === 'prime-cart') {
       this.wearFlint();
-      this.audio.playTone(220, 0.12, 0.04);
       return;
     }
     if (action.type === 'already-primed') {
@@ -2451,7 +2499,12 @@ export class Game {
     const session = this.session!;
     const stack = this.selectedStack();
     if (!stack) return;
-    this.audio.playTone(480, 0.05, 0.03);
+    this.playWorld(
+      'fire.ignite',
+      session.player.position.x,
+      session.player.position.y + 1,
+      session.player.position.z,
+    );
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
@@ -2484,7 +2537,9 @@ export class Game {
       : placeBucketFluid(context, hit);
     if (!changed) return;
     session.redstone.notifyBlockChanged(changed.x, changed.y, changed.z);
-    this.audio.playTone(260, 0.04, 0.025);
+    if (changed.block === BlockId.Water) {
+      this.playWorld('water.splash', changed.x + 0.5, changed.y + 0.5, changed.z + 0.5);
+    }
     this.firstPerson?.swing();
   }
 
@@ -2499,7 +2554,7 @@ export class Game {
       return;
     }
     if (!session.minecarts.spawn(x, y, z)) return;
-    this.audio.playTone(220, 0.04, 0.03);
+    this.playBlockSound('place', BlockId.Rail, x, y, z);
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
   }
@@ -2511,7 +2566,7 @@ export class Game {
         ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
         : session.minecarts.nearest(session.player.position, 1.6));
     if (!cart || !session.minecarts.insertTnt(cart)) return false;
-    this.audio.playTone(260, 0.05, 0.03);
+    this.playBlockSound('place', BlockId.Tnt, cart.position.x, cart.position.y, cart.position.z);
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
     if (session.ridingCartId === cart.id) session.ridingCartId = undefined;
@@ -2527,7 +2582,6 @@ export class Game {
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
     session.player.previousPosition.copy(session.player.position);
     session.player.velocity.set(0, 0, 0);
-    this.audio.playTone(300, 0.04, 0.02);
   }
 
   private updateMinecartRiding(session: GameSession): void {
@@ -2704,7 +2758,53 @@ export class Game {
     session.player.teleport(destination);
   }
 
+  private listenerPose() {
+    const session = this.session;
+    if (!session) return undefined;
+    const eye = session.player.eyePosition();
+    return { x: eye.x, y: eye.y, z: eye.z, yaw: session.player.yaw, pitch: session.player.pitch };
+  }
+
+  private playLocal(event: SoundEventId, options?: PlaySoundOptions): void {
+    this.audio.play(event, options);
+  }
+
+  private playWorld(event: SoundEventId, x: number, y: number, z: number, options?: PlaySoundOptions): void {
+    this.audio.playAt(event, { x, y, z }, this.listenerPose(), options);
+  }
+
+  private playBlockSound(action: BlockSoundAction, blockId: BlockId, x: number, y: number, z: number): void {
+    this.audio.playBlock(action, blockId, { x: x + 0.5, y: y + 0.5, z: z + 0.5 }, this.listenerPose());
+  }
+
+  private closeOpenChestAudio(): void {
+    if (!this.openChestKey) return;
+    const [x, y, z] = this.openChestKey.split(',').map(Number) as [number, number, number];
+    this.playWorld('chest.close', x + 0.5, y + 0.5, z + 0.5);
+    this.openChestKey = undefined;
+  }
+
+  private updateFootsteps(session: GameSession, horizontalDistance: number): void {
+    if (!advanceFootsteps(this.footsteps, {
+      grounded: session.player.onGround,
+      flying: session.player.isFlying,
+      inWater: session.player.inWater,
+      sprinting: session.player.sprinting,
+      horizontalDistance,
+    })) return;
+    const feet = blockUnderFeet(session.player.position.x, session.player.position.y, session.player.position.z);
+    let block = session.world.getBlock(feet.x, feet.y, feet.z, false);
+    if (block === BlockId.Air && feet.y > 0) {
+      block = session.world.getBlock(feet.x, feet.y - 1, feet.z, false);
+      feet.y -= 1;
+    }
+    this.playBlockSound('step', block, feet.x, feet.y, feet.z);
+  }
+
   private onPlayerDamaged(result: DamageResult): void {
+    if (result.accepted && !result.ignored && (result.dealt > 0 || result.fullHurt)) {
+      this.playLocal('player.hurt');
+    }
     if (!result.fullHurt || result.ignored) return;
     this.hurt.trigger(performance.now(), { periodic: isPeriodicDamageSource(result.source) });
   }
@@ -2876,6 +2976,9 @@ export class Game {
     this.session.drops.dispose();
     this.session.falling.dispose();
     this.explosionQueue.clear();
+    resetMiningSound(this.miningSound);
+    resetFootsteps(this.footsteps);
+    this.openChestKey = undefined;
     this.worldLoad = undefined;
     this.session = undefined;
     this.chat.clear();

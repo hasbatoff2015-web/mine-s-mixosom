@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-08-28 core sample SFX
+
+Актуальный отчёт: `reports/2026-08-28_core-audio-sfx-pass.md`. Catalog: `AUDIO_ASSETS.md`.
+
+Targeted: `tests/audio-sfx.test.ts`, `tests/minecraft-reference-extractor.test.mjs`, plus retained combat/placement fixtures that mock `audio.play` / `playAt` / `playBlock`.
+
+Unit coverage (no speakers): catalog resolution, block sound groups, variant/pitch/volume, distance skip, mining cadence, footsteps, explosion dedupe, potion vs food, missing sample does not throw, pause/mute/volume.
+
+Extractor copies fake 1.8 index objects to friendly `.ogg` names without storing hashes in the repo.
+
 ## 2026-08-28 creeper / fence / plants / tooltip / RU polish
 
 Актуальный отчёт: `reports/2026-08-28_creeper-fence-plants-tooltip-ru-polish.md`. Baseline `origin/main`=`9dc3300`.

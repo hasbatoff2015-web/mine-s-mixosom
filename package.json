@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "assets:import": "node scripts/import-assets.mjs",
+    "audio:extract-reference": "node scripts/extract-minecraft-reference-sounds.mjs",
+    "audio:generate-sfx": "node scripts/generate-core-sfx.mjs",
     "dev": "vite --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

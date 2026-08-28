@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-08-28: core sample-based SFX
+
+- [x] Extend canonical `AudioManager` to cached AudioBuffer samples; keep pause/mute/masterVolume and Yandex lifecycle.
+- [x] Data-driven sound events + block `soundGroup` (no per-BlockId files, no Game.ts sound switch).
+- [x] ~26 short original MP3; mining cadence, footsteps, explosion dedupe, bow/arrow/combat/pickup/food/door/chest/click.
+- [x] Local Minecraft 1.8 extractor (`npm run audio:extract-reference`); originals not committed.
+- [ ] Native-browser listen-through of mining/footsteps/TNT/bow/UI SFX on a real device session (headless cannot prove speakers).
+
 ## 2026-08-28: creeper / fence / plants / tooltip / RU polish
 
 - [x] Creeper generic death animation; primed fuse cancelled on player kill; self-explosion path unchanged.
@@ -227,7 +235,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Chest world/item visual: entity atlas, body/lid/latch, held special_model. Double chest всё ещё вне scope.
 - [x] Унифицировать player/skeleton arrow physics/visual basis и оставить попавшие в блок стрелы видимыми до timeout.
 - [x] Добавить deterministic biome vegetation через chunk-batched crossed quads без отдельных scene objects.
-- [ ] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и собственные SFX.
+- [x] Добавить damage flash, hit particles, расширенный bow feedback, use-анимации для дополнительных предметов и **core sample SFX** (2026-08-28). Music / ambients / mob voices remain later.
 - [ ] Довести off-hand, все item categories и transforms до более точного vanilla parity без потери общего cache pipeline.
 - [ ] Выверить projectile sweep и explosion exposure без дорогой полной физики.
 - [ ] Расширить поведение существ: spider climbing, passive flee, burning drops, sheep shearing — только после core stability.
