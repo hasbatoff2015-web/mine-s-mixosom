@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
-import { CHUNK_SIZE, SEA_LEVEL, TERRAIN_HEADROOM, WORLD_HEIGHT } from '../src/core/constants';
+import { CHUNK_SIZE, MAX_GENERATED_SURFACE, SEA_LEVEL, WORLD_HEIGHT } from '../src/core/constants';
 import { Chunk } from '../src/world/Chunk';
 import { collectSpawnColumns, CAVE_ROOF_DEPTH, ORE_RULES, TerrainGenerator } from '../src/world/Generator';
 import {
@@ -17,9 +17,9 @@ const OLD_TREES_PER_FOREST = 7.073;
 const OLD_CACTUS_PER_DESERT = 2.107;
 
 describe('worldgen mountains, caves and density', () => {
-  it('keeps WORLD_HEIGHT and headroom large enough for +20 mountains', () => {
-    expect(WORLD_HEIGHT).toBe(96);
-    expect(WORLD_HEIGHT - TERRAIN_HEADROOM).toBeGreaterThanOrEqual(84);
+  it('keeps WORLD_HEIGHT 256 while generated terrain stays in the historical surface band', () => {
+    expect(WORLD_HEIGHT).toBe(256);
+    expect(MAX_GENERATED_SURFACE).toBe(84);
     expect(SEA_LEVEL).toBe(63);
   });
 
@@ -55,7 +55,7 @@ describe('worldgen mountains, caves and density', () => {
     expect(maxM).toBeLessThanOrEqual(21);
     expect(share).toBeGreaterThan(0.04);
     expect(share).toBeLessThan(0.35);
-    expect(Math.max(...heights)).toBeLessThanOrEqual(WORLD_HEIGHT - TERRAIN_HEADROOM);
+    expect(Math.max(...heights)).toBeLessThanOrEqual(MAX_GENERATED_SURFACE);
     expect(Math.min(...heights)).toBeGreaterThan(SEA_LEVEL - 8);
   });
 

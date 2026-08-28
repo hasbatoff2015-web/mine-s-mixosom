@@ -4,6 +4,7 @@ export interface MenuServerEntry {
   description: string;
   online: string;
   signal: number;
+  connectable?: boolean;
 }
 
 export interface ControlBinding {
@@ -24,6 +25,7 @@ export const MENU_SERVER_ENTRIES: readonly MenuServerEntry[] = [
     description: 'Свободное выживание без защиты территорий',
     online: '0 / 300',
     signal: 4,
+    connectable: true,
   },
   {
     id: 'survival-pvp',
@@ -31,6 +33,7 @@ export const MENU_SERVER_ENTRIES: readonly MenuServerEntry[] = [
     description: 'Классическое выживание и честные сражения',
     online: '0 / 300',
     signal: 3,
+    connectable: false,
   },
 ] as const;
 

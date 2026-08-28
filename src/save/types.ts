@@ -8,6 +8,9 @@ export interface WorldSummary {
   createdAt: number;
   updatedAt: number;
   playTimeSeconds: number;
+  /** Absent/undefined = ordinary singleplayer world. */
+  kind?: 'singleplayer' | 'server';
+  serverId?: string;
 }
 
 export interface SerializedPlayerState {
@@ -25,6 +28,15 @@ export interface SerializedPlayerState {
   inventory: unknown;
 }
 
+export interface SerializedServerWorld {
+  id: string;
+  initialized: boolean;
+  spawnImported: boolean;
+  importVersion: number;
+  spawn: readonly [number, number, number];
+  report?: unknown;
+}
+
 export interface SerializedWorldState {
   schemaVersion: 1;
   summary: WorldSummary;
@@ -40,4 +52,5 @@ export interface SerializedWorldState {
   blockStates?: Record<string, unknown>;
   minecarts?: unknown[];
   fallingBlocks?: unknown[];
+  serverWorld?: SerializedServerWorld;
 }

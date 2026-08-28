@@ -316,8 +316,8 @@ describe('lighting scheduler production path / regressions', () => {
       speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
       path: [{ x: 8, z: 8 }, { x: 8 + 20 * CHUNK_SIZE, z: 8 }],
     });
-    // WORLD_HEIGHT 96 plus larger caves add sky-fill/flood work vs the old 80-high
-    // compact world. This still forbids the 20–160 s halo starvation the scheduler pass fixed.
+    // WORLD_HEIGHT 256 adds empty sky above occupancy; sky fill still stops at occupancyTop.
+    // This still forbids the 20–160 s halo starvation the scheduler pass fixed.
     expect(result.maxNearWantedMissingMs).toBeLessThan(8_000);
     expect(result.playerChunkMissMs).toBeLessThan(2_000);
     const wanted = result.wantedToVisibleMs;

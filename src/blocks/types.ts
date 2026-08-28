@@ -258,7 +258,8 @@ export enum BlockId {
   BirchFence = 143,
   SpruceFence = 144,
   Rail = 145,
-  Glowstone = 146,
+    Glowstone = 146,
   Lantern = 147,
   Chain = 148,
+  DiamondBlock = 149,
 }

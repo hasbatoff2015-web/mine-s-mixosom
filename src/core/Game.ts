@@ -55,8 +55,9 @@ import {
   MAX_FRAME_DELTA,
   PLAYER_REACH,
   TICK_RATE,
-  WORLD_HEIGHT,
-  WORLD_JOB_BUDGET_MS,
+    WORLD_HEIGHT,
+    isValidWorldY,
+    WORLD_JOB_BUDGET_MS,
   WORLD_LOADING_JOB_BUDGET_MS,
   WORLD_LIGHT_BUDGET_MS,
   WORLD_LOADING_LIGHT_BUDGET_MS,
@@ -151,13 +152,21 @@ import {
 } from '../debug/chunkStreamingRuntime';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { SaveService } from '../save/SaveService';
-import type { GameMode, SerializedWorldState, WorldSummary } from '../save/types';
+import type { GameMode, SerializedServerWorld, SerializedWorldState, WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
+import {
+  ANARCHY_SERVER_ID,
+  ANARCHY_WORLD_ID,
+  anarchyAlreadyImported,
+  createAnarchySummary,
+  importAnarchySpawn,
+  loadSchematicBytes,
+} from '../world/import';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -205,6 +214,7 @@ export interface GameSession {
   bowUseTicks: number;
   playTicks: number;
   lastAutosaveTick: number;
+  serverWorld?: SerializedServerWorld;
 }
 
 interface RuntimeSettings {
@@ -422,12 +432,66 @@ export class Game {
     this.lifecycle.setState('MENU');
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
-      online: () => this.ui.showOnlineServers(() => this.showMainMenu()),
+      online: () => this.ui.showOnlineServers({
+        back: () => this.showMainMenu(),
+        connect: (id) => void this.connectOnlineServer(id),
+      }),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
       },
     });
+  }
+
+  private async connectOnlineServer(id: string): Promise<void> {
+    if (id === ANARCHY_SERVER_ID) {
+      await this.openAnarchyWorld();
+      return;
+    }
+    this.ui.toast('Этот сервер пока недоступен');
+  }
+
+  private async openAnarchyWorld(): Promise<void> {
+    this.ui.showLoading('Открываем Анархию…', 8, 'Локальный мир сервера');
+    const existing = await this.saves.loadWorld(ANARCHY_WORLD_ID);
+    if (existing && anarchyAlreadyImported(existing)) {
+      const world = new VoxelWorld(existing.summary.seed);
+      world.restore(existing);
+      let inventory: Inventory;
+      let bucketOverflow: ItemStack[] = [];
+      try {
+        const restored = restoreBucketInventory(existing.player.inventory);
+        inventory = restored.inventory;
+        bucketOverflow = restored.overflow;
+      } catch (error) {
+        console.warn('Anarchy inventory save was invalid; starting empty.', error);
+        inventory = new Inventory();
+      }
+      await this.startSession(existing.summary, world, inventory, existing, { snapSpawn: false });
+      for (const stack of bucketOverflow) this.spawnDroppedStack(stack);
+      return;
+    }
+
+    try {
+      this.ui.showLoading('Импортируем spawn Анархии…', 12, 'Читаем schematic');
+      const bytes = await loadSchematicBytes();
+      const summary = createAnarchySummary();
+      const world = new VoxelWorld(summary.seed);
+      const imported = await importAnarchySpawn(world, bytes);
+      console.info('[anarchy] spawn import', imported.report);
+      const inventory = new Inventory();
+      inventory.addItem('apple', 3);
+      await this.startSession(summary, world, inventory, undefined, {
+        spawn: imported.spawn,
+        snapSpawn: false,
+        serverWorld: imported.serverWorld,
+      });
+      await this.saveSession();
+    } catch (error) {
+      console.error(error);
+      this.ui.toast(error instanceof Error ? error.message : 'Не удалось открыть Анархию');
+      this.showMainMenu();
+    }
   }
 
   private async showWorldList(): Promise<void> {
@@ -484,6 +548,11 @@ export class Game {
     world: VoxelWorld,
     inventory: Inventory,
     restored?: SerializedWorldState,
+    options?: {
+      spawn?: [number, number, number];
+      snapSpawn?: boolean;
+      serverWorld?: SerializedServerWorld;
+    },
   ): Promise<void> {
     this.disposeSession();
     this.ui.showLoading(restored ? 'Восстанавливаем чанки…' : 'Генерируем новый мир…');
@@ -495,7 +564,7 @@ export class Game {
     if (!arrowVisuals) throw new Error('Arrow visual factory is not ready.');
 
     const player = new PlayerController();
-    const spawn = restored?.player.position ?? this.estimateSpawn(world);
+    const spawn = restored?.player.position ?? options?.spawn ?? this.estimateSpawn(world);
     player.teleport(spawn);
     if (restored) {
       player.restore({
@@ -641,13 +710,14 @@ export class Game {
       bowUseTicks: 0,
       playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
       lastAutosaveTick: 0,
+      serverWorld: restored?.serverWorld ?? options?.serverWorld,
     };
     this.canvas.dataset.hotbar = String(this.session.selectedSlot);
     this.firstPerson?.setHeldItems(
       inventory.getSlot(this.session.selectedSlot)?.itemId,
     );
     this.deathShown = false;
-    this.beginWorldLoading(!restored);
+    this.beginWorldLoading(options?.snapSpawn ?? !restored);
   }
 
   private estimateSpawn(world: VoxelWorld): [number, number, number] {
@@ -1460,6 +1530,7 @@ export class Game {
       blockStates: session.world.serializeBlockStates(),
       mobs: session.mobs.serialize(),
       redstone: session.redstone.serialize(),
+      ...(session.serverWorld ? { serverWorld: session.serverWorld } : {}),
     };
     session.summary = state.summary;
     this.lastSavePromise = this.lastSavePromise.then(() => this.saves.saveWorld(state)).catch((error) => {
@@ -1979,6 +2050,10 @@ export class Game {
     const x = replaceHit ? hit.x : hit.x + hit.normal.x;
     const y = replaceHit ? hit.y : hit.y + hit.normal.y;
     const z = replaceHit ? hit.z : hit.z + hit.normal.z;
+    if (!isValidWorldY(y)) {
+      this.ui.toast('Нельзя ставить блок за пределами мира');
+      return;
+    }
     if (this.tryMergeSlabAt(x, y, z, item.placesBlockId)) return;
     const existing = getBlockDefinition(session.world.getBlock(x, y, z));
     if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;

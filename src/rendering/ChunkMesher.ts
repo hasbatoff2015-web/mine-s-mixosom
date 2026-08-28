@@ -322,7 +322,10 @@ export class ChunkMesher {
     this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
     let faces = 0;
     const chests: Array<{ x: number; y: number; z: number }> = [];
-    const chunkHeight = chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE);
+    const chunkHeight = Math.min(
+      chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE),
+      chunk.scanMaxY() + 1,
+    );
     const blocks = chunk.blocks;
     const eastChunk = this.lightEast;
     const westChunk = this.lightWest;

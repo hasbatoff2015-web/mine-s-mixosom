@@ -193,7 +193,7 @@ function cellEmission(world: VoxelWorld, chunk: Chunk, localX: number, y: number
 
 export function fillColumnSky(chunk: Chunk, localX: number, localZ: number): void {
   let sky = 15;
-  for (let y = WORLD_HEIGHT - 1; y >= 0; y -= 1) {
+  for (let y = chunk.scanMaxY(); y >= 0; y -= 1) {
     const definition = getBlockDefinition(chunk.get(localX, y, localZ));
     if (skyOcclusionClass(definition) === 'block') {
       setSky(chunk, localX, y, localZ, 0);
@@ -210,6 +210,7 @@ export function getSkyLight(world: VoxelWorld, x: number, y: number, z: number):
   if (y >= WORLD_HEIGHT) return 15;
   const chunk = loadedChunk(world, x, z);
   if (!chunk) return 0;
+  if (y > chunk.occupancyTop) return 15;
   if (!chunk.skyReady) ensureChunkSky(world, chunk);
   return chunk.skyLight[chunkIndex(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE))] ?? 0;
 }
@@ -397,7 +398,8 @@ function scanEmitterColumn(
 ): void {
   const worldX = chunk.x * CHUNK_SIZE + localX;
   const worldZ = chunk.z * CHUNK_SIZE + localZ;
-  for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+  const maxY = chunk.scanMaxY();
+  for (let y = 0; y <= maxY; y += 1) {
     const emission = cellEmission(world, chunk, localX, y, localZ, worldX, worldZ);
     if (emission <= 0) continue;
     setBlockLightValue(chunk, localX, y, localZ, emission);
@@ -449,7 +451,8 @@ function absorbBorderBlockLight(world: VoxelWorld, chunk: Chunk): void {
     if (!neighbor) continue;
     const neighborLocalX = positiveMod(originX + localX + dx, CHUNK_SIZE);
     const neighborLocalZ = positiveMod(originZ + localZ + dz, CHUNK_SIZE);
-    for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+    const maxY = Math.max(chunk.scanMaxY(), neighbor.scanMaxY());
+    for (let y = 0; y <= maxY; y += 1) {
       const incoming = neighbor.blockLight[chunkIndex(neighborLocalX, y, neighborLocalZ)] ?? 0;
       if (incoming <= 1) continue;
       const definition = getBlockDefinition(chunk.get(localX, y, localZ));

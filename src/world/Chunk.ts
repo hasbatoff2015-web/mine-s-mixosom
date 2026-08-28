@@ -10,6 +10,11 @@ export class Chunk {
   readonly surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   /** 0 plains, 1 forest, 2 desert. */
   readonly biomeCodes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+  /**
+   * Highest non-air Y written into this chunk (conservative: never shrinks).
+   * Sky/emitter/fluid/mesh scans use this instead of walking empty Y=85..255.
+   */
+  occupancyTop = 0;
   dirty = true;
   generated = false;
   skyReady = false;
@@ -32,6 +37,15 @@ export class Chunk {
     return y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
   }
 
+  static yFromIndex(index: number): number {
+    return Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+  }
+
+  /** Inclusive Y to scan for occupied cells. Empty sky above this is implicit air. */
+  scanMaxY(): number {
+    return Math.min(WORLD_HEIGHT - 1, Math.max(0, this.occupancyTop));
+  }
+
   get(x: number, y: number, z: number): number {
     if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return 0;
     return this.blocks[Chunk.index(x, y, z)] ?? 0;
@@ -39,7 +53,15 @@ export class Chunk {
 
   set(x: number, y: number, z: number, block: number): void {
     if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return;
-    this.blocks[Chunk.index(x, y, z)] = block;
+    this.writeIndex(Chunk.index(x, y, z), block);
+  }
+
+  writeIndex(index: number, block: number): void {
+    this.blocks[index] = block;
+    if (block !== 0) {
+      const y = Chunk.yFromIndex(index);
+      if (y > this.occupancyTop) this.occupancyTop = y;
+    }
     this.dirty = true;
   }
 

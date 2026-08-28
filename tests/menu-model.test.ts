@@ -10,6 +10,8 @@ describe('menu model', () => {
   it('keeps the requested online mock entries', () => {
     expect(MENU_SERVER_ENTRIES.map((server) => server.name)).toEqual(['Анархия PvP', 'Выживание PvP']);
     expect(MENU_SERVER_ENTRIES.every((server) => server.online === '0 / 300')).toBe(true);
+    expect(MENU_SERVER_ENTRIES[0]?.connectable).toBe(true);
+    expect(MENU_SERVER_ENTRIES[1]?.connectable).toBeFalsy();
   });
 
   it('documents the real desktop bindings including chat', () => {

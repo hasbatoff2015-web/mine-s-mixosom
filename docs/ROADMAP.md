@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-08-28: world height 256 + Anarchy spawn import
+
+- [x] `WORLD_HEIGHT=256` (`Y 0..255`); generated surface still capped at 84; ores/bedrock/caves unscaled.
+- [x] occupancyTop sky/emitter/fluid/mesh scans; light budget stays 2 ms.
+- [x] Sponge `.schem` importer + Diamond Block fallback with replacement report.
+- [x] Anarchy = local persistent world, import-once marker, singleplayer untouched.
+- [ ] Native QA: copy `frontier_spawn2.schem` into `public/maps/`, connect Anarchy, verify spawn, persistence, lighting, no freeze.
+
 ## 2026-08-28: glowstone / lantern / chain
 
 - [x] Glowstone cube light 15; lantern 3D model light 15; torch stays 14. Existing LightEngine, streaming budget and fluid lighting untouched.
