@@ -7,7 +7,8 @@
 - [x] ~26 short original MP3; mining cadence, footsteps, explosion dedupe, bow/arrow/combat/pickup/food/door/chest/click.
 - [x] Local Minecraft 1.8 extractor (`npm run audio:extract-reference`); originals not committed.
 - [x] Headless Chromium session: 26/26 SFX decoded, real dirt/sand footsteps with pitch variation, catalog `play()` path, pause until PLAYING (`/?audioDebug=1`).
-- [ ] Native-device speaker listen of mining cadence, TNT/creeper, bow/arrow, combat, door/chest (Cloud VM has no audible output).
+- [x] Interactive Chromium: `block.break.dirt` / `block.step.dirt`, pause/resume AudioContext, overlay `files ok` / `events ok`.
+- [ ] Native-device speaker listen of TNT/creeper, bow/arrow, combat, door/chest (Cloud VM has no audible output).
 
 ## 2026-08-28: creeper / fence / plants / tooltip / RU polish
 

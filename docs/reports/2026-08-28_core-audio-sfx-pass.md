@@ -91,7 +91,8 @@ Headless Chromium (SwiftShader, `127.0.0.1:4173/?audioDebug=1`) created a Creati
 - Menu/loading: context **suspended/paused** until `PLAYING` (lifecycle preserved).
 - Walk (KeyW, no pointer lock): **six** `block.step.dirt` then **`block.step.sand`** when the surface changed. Pitch varied (~0.94–1.06) at step volume 0.16, positional. Voices returned to **0** after clips ended (no leak).
 - Burst `play()` of the catalog: pickup/eat/hurt/bow/explosion/combat/arrow/door/click/glass/stone/wood/dirt/sand events started; far `playAt` stone (~200 m) was skipped. Same-tick dump hits the global 20-voice cap, so a few lower-priority one-shots (e.g. potion/chest/ignite) are correctly dropped in that artificial burst — not a gameplay path.
-- Headless left-click did **not** produce mining hits (no look-down / pointer lock). Mining cadence remains covered by unit tests and Game wiring.
+- Headless left-click did **not** produce mining hits (no look-down / pointer lock).
+- Interactive Chromium Creative session (`/?audioDebug=1`): overlay stayed `26/26 decoded` / `files ok` / `events ok`; context **running** in PLAYING and **suspended** on Escape pause / resume via «Продолжить». Breaking grass/dirt logged `block.break.dirt` (`dirt_*.mp3`, volume 0.72, pitch ~0.92–0.98, 3d). Walking logged `block.step.dirt` (volume 0.16). No audio console errors. Stone/TNT/bow/combat/UI were not in the spawn path.
 - Speakers themselves cannot be certified in this Cloud VM. Native listen-through of TNT/bow/combat/UI is still recommended on a local machine after `npm run audio:extract-reference` if A/B against Java 1.8 is desired.
 
 # Files changed
