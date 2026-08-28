@@ -6,9 +6,9 @@
 - [x] occupancyTop sky/emitter/fluid/mesh scans; light budget stays 2 ms.
 - [x] Sponge `.schem` importer + Diamond Block fallback with replacement report.
 - [x] Jungle log/wood → Oak Log (not planks); cocoa/jungle pods → Air; other unsupported stay Diamond.
-- [x] Anarchy spawn extra `Y -= 28` after auto-fit; `importVersion` 3 rebuilds stale v1/v2 worlds once.
-- [x] Anarchy = local persistent world, import-once marker, singleplayer untouched.
-- [ ] Native QA after Y-28 / oak-log: structure height, no duplicate import, oak logs where diamonds were.
+- [x] Anarchy spawn extra `Y -= 28` after auto-fit; cocoa → Air; jungle → oak log.
+- [x] Anarchy = persistent canonical IndexedDB world; **no runtime schematic import**; `importVersion` does not rebuild.
+- [ ] Native QA: Anarchy opens without `.schem`, spawn/edits persist, no reimport.
 
 ## 2026-08-28: glowstone / lantern / chain
 

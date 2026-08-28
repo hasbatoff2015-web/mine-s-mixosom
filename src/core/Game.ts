@@ -160,13 +160,12 @@ import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightFrameStats, lightingF
 import { collectSpawnColumns, stoneCapY } from '../world/Generator';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
-  ANARCHY_IMPORT_VERSION,
   ANARCHY_SERVER_ID,
   ANARCHY_WORLD_ID,
-  anarchyAlreadyImported,
   createAnarchySummary,
-  importAnarchySpawn,
-  loadSchematicBytes,
+  createCanonicalAnarchyServerWorld,
+  isFiniteSpawn,
+  resolveAnarchyStartup,
 } from '../world/import';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -455,53 +454,41 @@ export class Game {
   private async openAnarchyWorld(): Promise<void> {
     this.ui.showLoading('Открываем Анархию…', 8, 'Локальный мир сервера');
     const existing = await this.saves.loadWorld(ANARCHY_WORLD_ID);
-    if (existing && anarchyAlreadyImported(existing)) {
-      const world = new VoxelWorld(existing.summary.seed);
-      world.restore(existing);
+    const startup = resolveAnarchyStartup(existing);
+
+    if (startup.action === 'restore') {
+      const state = startup.state;
+      const world = new VoxelWorld(state.summary.seed);
+      world.restore(state);
       let inventory: Inventory;
       let bucketOverflow: ItemStack[] = [];
       try {
-        const restored = restoreBucketInventory(existing.player.inventory);
+        const restored = restoreBucketInventory(state.player.inventory);
         inventory = restored.inventory;
         bucketOverflow = restored.overflow;
       } catch (error) {
         console.warn('Anarchy inventory save was invalid; starting empty.', error);
         inventory = new Inventory();
       }
-      await this.startSession(existing.summary, world, inventory, existing, { snapSpawn: false });
+      await this.startSession(state.summary, world, inventory, state, {
+        snapSpawn: false,
+        serverWorld: createCanonicalAnarchyServerWorld(startup.spawn, state.serverWorld),
+      });
       for (const stack of bucketOverflow) this.spawnDroppedStack(stack);
       return;
     }
 
-    if (existing?.serverWorld) {
-      console.info(
-        '[anarchy] rebuilding spawn',
-        existing.serverWorld.importVersion,
-        '→',
-        ANARCHY_IMPORT_VERSION,
-      );
-    }
-
-    try {
-      this.ui.showLoading('Импортируем spawn Анархии…', 12, 'Читаем schematic');
-      const bytes = await loadSchematicBytes();
-      const summary = createAnarchySummary();
-      const world = new VoxelWorld(summary.seed);
-      const imported = await importAnarchySpawn(world, bytes);
-      console.info('[anarchy] spawn import', imported.report);
-      const inventory = new Inventory();
-      inventory.addItem('apple', 3);
-      await this.startSession(summary, world, inventory, undefined, {
-        spawn: imported.spawn,
-        snapSpawn: false,
-        serverWorld: imported.serverWorld,
-      });
-      await this.saveSession();
-    } catch (error) {
-      console.error(error);
-      this.ui.toast(error instanceof Error ? error.message : 'Не удалось открыть Анархию');
-      this.showMainMenu();
-    }
+    const summary = createAnarchySummary();
+    const world = new VoxelWorld(summary.seed);
+    const inventory = new Inventory();
+    inventory.addItem('apple', 3);
+    const spawn = this.estimateSpawn(world);
+    await this.startSession(summary, world, inventory, undefined, {
+      spawn,
+      snapSpawn: true,
+      serverWorld: createCanonicalAnarchyServerWorld(spawn),
+    });
+    await this.saveSession();
   }
 
   private async showWorldList(): Promise<void> {
@@ -598,7 +585,12 @@ export class Game {
       onDamage: (result) => this.onPlayerDamaged(result),
       onDeath: (source) => this.handleDeath(source),
     });
-    survival.setSpawnPoint(restored?.player.spawnPoint ?? spawn);
+    const savedServerSpawn = restored?.serverWorld?.spawn ?? options?.serverWorld?.spawn;
+    survival.setSpawnPoint(
+      isFiniteSpawn(savedServerSpawn)
+        ? [savedServerSpawn[0], savedServerSpawn[1], savedServerSpawn[2]]
+        : restored?.player.spawnPoint ?? spawn,
+    );
     if (restored && (restored.player.absorption !== undefined || restored.player.absorptionTicks !== undefined)) {
       survival.restore({
         health: survival.health,

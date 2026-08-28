@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Copies frontier_spawn2.schem into public/maps/ without modifying the source.
+ * DEV/offline helper: copies frontier_spawn2.schem into public/maps/ without modifying the source.
+ * Production Anarchy loads the persisted IndexedDB world and does not need this file at runtime.
  * Tries argv, FRONTIER_SPAWN_SCHEM, and a few local/Windows paths.
  */
 import { copyFile, mkdir, access } from 'node:fs/promises';

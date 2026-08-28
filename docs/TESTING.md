@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-28 Anarchy persistent canonical world
+
+Актуальный отчёт: `reports/2026-08-28_anarchy-canonical-persistent.md`. Ветка `cursor/spawn-map-import-256-height`.
+
+Contracts: production Anarchy restores IndexedDB without `.schem`; stale `importVersion` does not rebuild; canonical spawn is `serverWorld.spawn`; modifications survive restart; missing schematic does not block; singleplayer list still hides Anarchy. DEV `importAnarchySpawn` remains for offline baking.
+
 ## 2026-08-28 Anarchy cocoa → air
 
 Актуальный отчёт: `reports/2026-08-28_anarchy-cocoa-to-air.md`. Ветка `cursor/spawn-map-import-256-height`.
