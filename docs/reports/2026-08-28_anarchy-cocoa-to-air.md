@@ -14,7 +14,7 @@ Local QA still saw Diamond Blocks where jungle-tree cocoa pods / beans hang. Map
 - Counted in `ImportReport.cocoaToAir` / `cocoaReplacements` (not Diamond, not Oak Log).
 - `ANARCHY_IMPORT_VERSION = 3`. Versions 1–2 rebuild once on a fresh world (no stacked copy).
 
-The real `frontier_spawn2.schem` is not in Cloud; the cocoa cell count for that file appears in `[anarchy] spawn import` after the v3 rebuild.
+The real `frontier_spawn2.schem` is not in Cloud; the cocoa cell count for that file appears in `[anarchy] spawn import` (`cocoaToAir` / `cocoaReplacements`) after the v3 rebuild.
 
 ## Changed files
 
@@ -22,7 +22,19 @@ The real `frontier_spawn2.schem` is not in Cloud; the cocoa cell count for that 
 - `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`
 - docs: PROJECT_STATE, ARCHITECTURE, ROADMAP, TESTING, this report
 
+## Tests
+
+Targeted: schematic-import 9, anarchy-world 5.
+
+`npx tsc --noEmit`: PASS.
+
+Full vitest: **918 passed / 2 failed / 920**. Failures are pre-existing `authored-item-assets.test.mjs` ENOENT.
+
+Production: **3.61 MiB / 221 files**.
+
 ## Git
 
 - Branch: `cursor/spawn-map-import-256-height`
+- Implementation: `45800f6`
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/12
+- Ordinary push. No force push. Do not merge `main`.

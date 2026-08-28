@@ -6,6 +6,8 @@
 
 Contracts: `minecraft:cocoa` (и legacy pod/beans ids) → Air, не Diamond и не Oak Log; jungle_log → Oak Log; unknown → Diamond; `importVersion` 3.
 
+`npx tsc --noEmit`: PASS. Full vitest: **918 passed / 2 failed / 920** (pre-existing authored-asset ENOENT). Production **3.61 MiB / 221 files**.
+
 ## 2026-08-28 Anarchy jungle→oak log and Y-28
 
 Актуальный отчёт: `reports/2026-08-28_anarchy-jungle-oak-y-shift.md`. Ветка `cursor/spawn-map-import-256-height`.
