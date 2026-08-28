@@ -8,7 +8,7 @@ Targeted: `tests/world-height-256.test.ts`, `tests/schematic-import.test.ts`, `t
 
 Contracts: `WORLD_HEIGHT=256`, Y=0/255 valid, Y=-1/256 invalid, save/load at Y=255, high-Y light/fluid/raycast, schematic palette mapping, unsupported→Diamond, import-once Anarchy, singleplayer list filter.
 
-Copy spawn for browser QA: `node scripts/copy-frontier-spawn.mjs <path-to-frontier_spawn2.schem>`.
+`npx tsc --noEmit`: PASS. Full vitest: **913 passed / 2 failed / 915**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/` (Cloud has no Faithful tree). Vite build / size / archive: PASS, **3.61 MiB / 221 files**.
 
 ## 2026-08-28 glowstone / lantern / chain
 

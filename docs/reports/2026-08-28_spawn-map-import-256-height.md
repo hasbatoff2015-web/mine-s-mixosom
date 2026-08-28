@@ -65,9 +65,17 @@ The copy script does not modify the source file. First Anarchy connect without t
 
 ## Tests
 
-Targeted (this pass): world-height, schematic-import, anarchy, menu, worldgen, world-generation, world-state, glowstone, RU registry — 85/85.
+Targeted: `world-height-256` (6), `schematic-import` (5), `anarchy-world` (4), plus retained worldgen/lighting/menu/glowstone/RU.
 
-Full `npm run check` numbers are filled after the suite run.
+`npx tsc --noEmit`: PASS.
+
+Full vitest: **913 passed / 2 failed / 915**. Failures are pre-existing `tests/authored-item-assets.test.mjs` ENOENT (no `assets/` in Cloud). Minecart suite passed (no timeout this run).
+
+`npm run build` / `check:size` / `check:archive`: PASS. Production **3.61 MiB / 221 files**.
+
+`npm run benchmark:worldgen`: plains ~7.3 ms, forest ~5.6 ms, desert ~6.7 ms, 81-chunk batch **507 ms**. Sample maxHeight **83** (still under 84). Empty sky did not turn generation into “old generator × 3”.
+
+`npm run check` exits 1 only because of the two authored-asset tests.
 
 ## Visual QA
 
@@ -75,7 +83,7 @@ Not run in Cloud (no `frontier_spawn2.schem`). Manual checklist is in the task r
 
 ## Performance
 
-Generator no longer walks Y=85..255 as solid fill. Sky/light/fluid/mesh use occupancy (~surface+trees). Light budget unchanged at 2 ms. Import batches 8192 writes and defers lighting/mesh to the scheduler.
+Generator no longer walks Y=85..255 as solid fill. Sky/light/fluid/mesh use occupancy (~surface+trees). Light budget unchanged at 2 ms. Import batches 8192 writes and defers lighting/mesh to the scheduler. Worldgen 81-chunk batch 507 ms with max surface 83.
 
 ## Known issues
 
