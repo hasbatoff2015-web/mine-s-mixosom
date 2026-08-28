@@ -103,6 +103,9 @@ export type BlockCategory =
   | 'redstone'
   | 'liquid';
 
+/** Shared SFX family. Many BlockIds reuse one small sample set. */
+export type BlockSoundGroup = 'stone' | 'wood' | 'dirt' | 'sand' | 'wool' | 'glass';
+
 export interface BlockDefinition {
   readonly id: BlockId;
   readonly key: string;
@@ -141,6 +144,8 @@ export interface BlockDefinition {
    */
   readonly hiddenFromGameplay?: boolean;
   readonly pressurePlateTrigger?: PressurePlateTrigger;
+  /** Material family for hit/break/place/step samples. Absent = silent (air/liquids). */
+  readonly soundGroup?: BlockSoundGroup;
 }
 
 export function blockLightingMode(

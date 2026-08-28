@@ -2,7 +2,17 @@
 
 Срез: **2026-08-28**. Версия: `0.1.0`, playable alpha.
 
-## Последний проход: creeper / fence / plants / tooltip / RU localization
+## Последний проход: core sample-based SFX
+
+- Git baseline: `3c9cf45` (`origin/main`), ветка `cursor/core-audio-sfx-0b75`.
+- `AudioManager` plays cached `AudioBuffer` samples from `public/audio/sfx/` (~26 short mono MP3). `playTone` is DEV fallback only.
+- Data-driven `SoundEventId` + `BlockDefinition.soundGroup`. Mining hits every 4 ticks; break/place/step reuse the same material family. Footsteps follow grounded travel; sprint is a shorter stride.
+- World SFX are positional with max-distance skip. Player footsteps are local (`positional: false`); catalog `block.step.*` stays positional for future mobs. Explosion/TNT/creeper share one event with per-tick/nearby dedupe. Pickup/eat/drink/door/chest/click/ignite/splash replace the old beeps.
+- Minecraft Java 1.8 oggs are local reference only via `npm run audio:extract-reference` → `.local/minecraft-reference-audio/` (gitignored, never shipped).
+- DEV `/?audioDebug=1` overlay + F3 SFX line. Headless Chromium: 26/26 decoded, real dirt→sand footsteps. Interactive Chromium: dirt break + step events, pause/resume context.
+- Report: `docs/reports/2026-08-28_core-audio-sfx-pass.md`. Catalog: `docs/AUDIO_ASSETS.md`.
+
+## Сохранённый проход: creeper / fence / plants / tooltip / RU localization
 
 - Git baseline: `9dc3300` (`origin/main`), ветка `cursor/mob-collision-tooltip-ru-polish-b257`.
 - Creeper death uses the generic corpse pose: `state === 'die'` has priority over fuse pulse. `beginDeath` zeros `fuseSeconds`. Self-explosion still removes immediately without a corpse or gunpowder drop.
@@ -84,7 +94,7 @@
 | Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
-| Audio | Alpha approximation | Central pause/mute/volume path and small procedural WebAudio tones; no authored SFX/music |
+| Audio | Готово для alpha | Cached sample SFX (`AudioManager.play` / `playAt` / `playBlock`), ~26 short MP3, material sound groups, restrained mining/footsteps, positional world events; pause/mute/volume; no music |
 | Yandex SDK | Alpha integration | `/sdk.js`, init fallback, LoadingAPI ready, GameplayAPI start/stop and pause/resume events |
 | Automated QA | Частично готово | unit/component tests (см. `docs/TESTING.md`), CPU job + lighting + streaming-scheduler + worldgen benchmarks и DEV `?perf=1` overlay (F8 colored chunk states, F7 light debug, F9 freeze front chunk, streaming inspector + mesh fairness HUD); no automated WebGL/IndexedDB/full browser E2E suite |
 | Public release | Не готово | Нужны provenance approval, реальные device tests, Yandex draft audit and final moderation pass |

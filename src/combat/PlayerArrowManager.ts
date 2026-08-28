@@ -49,6 +49,7 @@ export class PlayerArrowManager {
       readonly random?: () => number;
       readonly minecarts?: MinecartManager;
       readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
+      readonly onMobHit?: (accepted: boolean, position: THREE.Vector3) => void;
       readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
     } = {},
   ) {
@@ -57,11 +58,13 @@ export class PlayerArrowManager {
     this.random = options.random ?? Math.random;
     this.minecarts = options.minecarts;
     this.onBlockHit = options.onBlockHit;
+    this.onMobHit = options.onMobHit;
     this.onMinecartHit = options.onMinecartHit;
   }
 
   private readonly minecarts?: MinecartManager;
   private readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
+  private readonly onMobHit?: (accepted: boolean, position: THREE.Vector3) => void;
   private readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
 
   get count(): number {
@@ -138,12 +141,13 @@ export class PlayerArrowManager {
           break;
         }
         if (mobHit && (!blockHit || mobHit.distance < blockHit.distance)) {
-          this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
+          const accepted = this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
             source: 'projectile',
             attackerPosition: arrow.position,
             knockback: arrow.critical ? 4.2 : 2.4,
             ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
           });
+          this.onMobHit?.(accepted, arrow.position);
           this.remove(index);
           removed = true;
           break;
