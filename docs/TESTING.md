@@ -8,6 +8,8 @@ Targeted: `tests/schematic-import.test.ts`, `tests/anarchy-world.test.ts`.
 
 Contracts: jungle_log/jungle_wood → Oak Log (not Diamond, not planks); unknown → Diamond; Anarchy `yShift === -28`; X/Z = 0; bounds 0..255; `importVersion` 1 is stale, 2 imports once; save/load keeps shifted structure and oak logs.
 
+`npx tsc --noEmit`: PASS. Full vitest: **917 passed / 2 failed / 919**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/`. Vite build / size / archive: PASS, **3.61 MiB / 221 files**.
+
 ## 2026-08-28 world height 256 + Anarchy spawn import
 
 Актуальный отчёт: `reports/2026-08-28_spawn-map-import-256-height.md`. Baseline `origin/main`=`6e27b93`.

@@ -38,7 +38,15 @@ After local QA of `frontier_spawn2.schem`: map jungle wood to Oak Log (not Diamo
 
 ## Tests
 
-Targeted schematic + anarchy suites (see TESTING.md). Full check recorded after the commit.
+Targeted: schematic-import 8, anarchy-world 5, world-height-256 6.
+
+`npx tsc --noEmit`: PASS.
+
+Full vitest: **917 passed / 2 failed / 919**. Failures are pre-existing `authored-item-assets.test.mjs` ENOENT (no `assets/` in Cloud).
+
+`npm run build` / `check:size` / `check:archive`: PASS. Production **3.61 MiB / 221 files**.
+
+`npm run check` exits 1 only because of the two authored-asset tests.
 
 ## Visual QA
 
@@ -60,4 +68,6 @@ Local QA checklist in the task (height, oak logs, no duplicate, spawn point).
 ## Git
 
 - Branch: `cursor/spawn-map-import-256-height`
+- Implementation: `1f97474`
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/12
+- Ordinary push. No force push. Do not merge `main`.
