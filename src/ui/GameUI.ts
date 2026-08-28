@@ -44,6 +44,11 @@ import type { PotionHudEntry } from './effectHud';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import {
+  attachItemTooltip,
+  itemHoverAttributeString,
+  type ItemTooltipHandle,
+} from './itemTooltip';
+import {
   DESKTOP_CONTROL_SECTIONS,
   formatPlayTime,
   formatSettingValue,
@@ -121,6 +126,7 @@ export class GameUI {
   private chatInput: HTMLInputElement;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
+  private itemTooltip?: ItemTooltipHandle;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
   private ghostCraft?: GhostCraftState;
@@ -697,6 +703,8 @@ export class GameUI {
       }
       context.onChanged();
     }
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
     this.modal?.remove();
     this.modal = undefined;
     this.inventoryContext = undefined;
@@ -740,6 +748,8 @@ export class GameUI {
       this.syncCreativeTabs();
       return;
     }
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
@@ -764,6 +774,7 @@ export class GameUI {
           <div data-player-hotbar class="mc-creative-hotbar">${hotbar}</div>
         </div>
         ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.root.append(this.modal);
@@ -796,6 +807,8 @@ export class GameUI {
       this.syncRecipeBookChrome(context);
       return;
     }
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
@@ -808,6 +821,7 @@ export class GameUI {
           <div data-player-inventory>${player}</div>
         </div>
         ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.root.append(this.modal);
@@ -823,12 +837,17 @@ export class GameUI {
   }
 
   private bindContainerChrome(context: InventoryContext): void {
+    this.itemTooltip?.dispose();
+    this.itemTooltip = attachItemTooltip(this.modal!, {
+      cursorStackPresent: () => this.cursorStack !== null,
+    });
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => context.onClose());
     this.modal!.addEventListener('pointerdown', (event) => {
       const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-creative-tab]');
       if (tab?.dataset.creativeTab === 'catalog' || tab?.dataset.creativeTab === 'inventory') {
         event.preventDefault();
         this.creativeTab = tab.dataset.creativeTab;
+        this.itemTooltip?.hide();
         this.renderInventory();
         return;
       }
@@ -836,6 +855,7 @@ export class GameUI {
       if (toggle) {
         event.preventDefault();
         this.toggleRecipeBook(context.kind);
+        this.itemTooltip?.hide();
         this.renderInventory();
         return;
       }
@@ -965,7 +985,7 @@ export class GameUI {
     if (!ghost) return this.slotHtml(null, `craft-${index}`);
     const missing = this.ghostCraft?.missing[index] === true;
     const sig = slotStateSignature({ itemId: ghost.itemId, ghost: true, missing });
-    return `<button class="slot mc-slot ghost${missing ? ' missing' : ''}" data-slot="craft-${index}" data-ghost="1" data-sig="${sig}" title="${this.escape(getItemDefinition(ghost.itemId).name)}"><img src="${this.itemIcon(ghost.itemId)}" alt="" /></button>`;
+    return `<button class="slot mc-slot ghost${missing ? ' missing' : ''}" data-slot="craft-${index}" data-ghost="1" data-sig="${sig}"${this.itemHoverAttrs(ghost.itemId)}"><img src="${this.itemIcon(ghost.itemId)}" alt="" /></button>`;
   }
 
   private playerInventoryHtml(context: InventoryContext, labeled = false): string {
@@ -1059,7 +1079,7 @@ export class GameUI {
     return page.entries.map((entry) => {
       const craftable = recipeEntryCraftable(entry, counts);
       const sig = `${entry.id}:${craftable ? 1 : 0}:${entry.resultCount}`;
-      return `<button type="button" class="mc-recipe-btn${craftable ? '' : ' uncraftable'}" data-recipe-id="${this.escape(entry.id)}" data-sig="${sig}" title="${this.escape(getItemDefinition(entry.resultId).name)}">
+      return `<button type="button" class="mc-recipe-btn${craftable ? '' : ' uncraftable'}" data-recipe-id="${this.escape(entry.id)}" data-sig="${sig}"${this.itemHoverAttrs(entry.resultId)}>
         <img src="${this.itemIcon(entry.resultId)}" alt="" />
         ${entry.resultCount > 1 ? `<span class="count">${entry.resultCount}</span>` : ''}
       </button>`;
@@ -1229,7 +1249,11 @@ export class GameUI {
     if (!stack) {
       return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}" title="${this.escape(definition!.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${this.itemHoverAttrs(stack.itemId, definition!.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+  }
+
+  private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {
+    return itemHoverAttributeString(name, itemId, (value) => this.escape(value));
   }
 
   private itemIcon(itemId: string): string {

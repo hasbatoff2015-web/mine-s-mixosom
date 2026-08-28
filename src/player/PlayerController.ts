@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import { applyKnockback, applyMeleeDrag } from '../combat';
-import { blockCollisionBoxes, movementMultiplier, type CollisionBox } from '../world/collision';
+import { blockCollisionBoxes, collisionCandidateCellRange, movementMultiplier, type CollisionBox } from '../world/collision';
 import {
   CREATIVE_FLY_SPEED,
   CREATIVE_SPRINT_FLY_SPEED,
@@ -584,9 +584,12 @@ export class PlayerController {
 
   private collidesAt(world: VoxelWorld, position: THREE.Vector3, height: number): boolean {
     const box = this.aabbAt(position, height);
-    for (let y = Math.floor(box.minY + COLLISION_EPSILON); y <= Math.floor(box.maxY - COLLISION_EPSILON); y += 1) {
-      for (let z = Math.floor(box.minZ + COLLISION_EPSILON); z <= Math.floor(box.maxZ - COLLISION_EPSILON); z += 1) {
-        for (let x = Math.floor(box.minX + COLLISION_EPSILON); x <= Math.floor(box.maxX - COLLISION_EPSILON); x += 1) {
+    const cells = collisionCandidateCellRange(
+      box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, COLLISION_EPSILON,
+    );
+    for (let y = cells.minY; y <= cells.maxY; y += 1) {
+      for (let z = cells.minZ; z <= cells.maxZ; z += 1) {
+        for (let x = cells.minX; x <= cells.maxX; x += 1) {
           const collisions = this.blockCollisionBoxes(world, x, y, z);
           for (const collision of collisions) {
             if (this.boxesOverlap(box, collision)) return true;
@@ -600,17 +603,20 @@ export class PlayerController {
   private moveAxis(world: VoxelWorld, axis: 'x' | 'y' | 'z', requested: number): MoveResult {
     if (Math.abs(requested) <= COLLISION_EPSILON) return { actual: 0, collided: false };
     const player = this.aabb;
-    const minX = Math.floor(Math.min(player.minX, player.minX + (axis === 'x' ? requested : 0)) + COLLISION_EPSILON);
-    const maxX = Math.floor(Math.max(player.maxX, player.maxX + (axis === 'x' ? requested : 0)) - COLLISION_EPSILON);
-    const minY = Math.floor(Math.min(player.minY, player.minY + (axis === 'y' ? requested : 0)) + COLLISION_EPSILON);
-    const maxY = Math.floor(Math.max(player.maxY, player.maxY + (axis === 'y' ? requested : 0)) - COLLISION_EPSILON);
-    const minZ = Math.floor(Math.min(player.minZ, player.minZ + (axis === 'z' ? requested : 0)) + COLLISION_EPSILON);
-    const maxZ = Math.floor(Math.max(player.maxZ, player.maxZ + (axis === 'z' ? requested : 0)) - COLLISION_EPSILON);
+    const cells = collisionCandidateCellRange(
+      Math.min(player.minX, player.minX + (axis === 'x' ? requested : 0)),
+      Math.min(player.minY, player.minY + (axis === 'y' ? requested : 0)),
+      Math.min(player.minZ, player.minZ + (axis === 'z' ? requested : 0)),
+      Math.max(player.maxX, player.maxX + (axis === 'x' ? requested : 0)),
+      Math.max(player.maxY, player.maxY + (axis === 'y' ? requested : 0)),
+      Math.max(player.maxZ, player.maxZ + (axis === 'z' ? requested : 0)),
+      COLLISION_EPSILON,
+    );
     let allowed = requested;
 
-    for (let y = minY; y <= maxY; y += 1) {
-      for (let z = minZ; z <= maxZ; z += 1) {
-        for (let x = minX; x <= maxX; x += 1) {
+    for (let y = cells.minY; y <= cells.maxY; y += 1) {
+      for (let z = cells.minZ; z <= cells.maxZ; z += 1) {
+        for (let x = cells.minX; x <= cells.maxX; x += 1) {
           const collisions = this.blockCollisionBoxes(world, x, y, z);
           for (const block of collisions) {
             if (!this.overlapsOtherAxes(player, block, axis)) continue;

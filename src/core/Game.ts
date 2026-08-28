@@ -2856,7 +2856,7 @@ export class Game {
       health: session.summary.mode === 'creative' ? 20 : session.survival.health,
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
       armor: getArmorPoints(session.inventory),
-      absorption: session.summary.mode === 'creative' ? 0 : session.survival.absorption,
+      absorption: session.survival.absorption,
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),

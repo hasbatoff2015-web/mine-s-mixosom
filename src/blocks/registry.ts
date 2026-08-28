@@ -14,6 +14,7 @@ import {
   type PressurePlateTrigger,
 } from './types';
 import { BLOCK_FAMILIES } from './blockFamilies';
+import { requiredDisplayName } from '../i18n';
 
 interface BlockOptions {
   category?: BlockCategory;
@@ -44,11 +45,6 @@ interface BlockOptions {
   pressurePlateTrigger?: PressurePlateTrigger;
 }
 
-const title = (key: string): string =>
-  key.replace(/(^|_)([a-z])/g, (_match, separator: string, letter: string) =>
-    `${separator ? ' ' : ''}${letter.toUpperCase()}`,
-  );
-
 function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefinition {
   const drop = options.drop === false
     ? undefined
@@ -60,7 +56,7 @@ function block(id: BlockId, key: string, options: BlockOptions = {}): BlockDefin
   return Object.freeze({
     id,
     key,
-    name: title(key),
+    name: requiredDisplayName(key),
     category: options.category ?? 'building',
     hardness: options.hardness ?? 1,
     solid: options.solid ?? true,

@@ -1,5 +1,24 @@
 # Тестирование
 
+## 2026-08-28 creeper / fence / plants / tooltip / RU polish
+
+Актуальный отчёт: `reports/2026-08-28_creeper-fence-plants-tooltip-ru-polish.md`. Baseline `origin/main`=`9dc3300`.
+
+Targeted file: `tests/creeper-fence-plants-tooltip-ru.test.ts` (24/24) plus retained `entities`, `player-physics`, `interaction-support-polish`, `gameplay-ui-entity-polish`, `heart-hud`, `container-ui`, `content-pass`, `block-registry`, `chat-commands`.
+
+Full `npm test -- --maxWorkers=2`: **848 passed / 2 failed / 850**. The two failures are the pre-existing `authored-item-assets.test.mjs` ENOENT on missing `assets/minecraft/textures/items/bucket_empty.png` in this environment (unrelated source-pack fixture). Previous main polish baseline was 824/2/826 with the same two failures. Unrelated timeout thresholds were not changed.
+
+`npm run typecheck`, `npm run build`, `npm run check:size`, `npm run check:archive`: PASS. Production **3.46 MiB / 188 files**.
+
+- Creeper player-kill death pose (`rotation.z > 0` at half duration), primed-fuse cancel, self-explosion still removes immediately without drops.
+- Fence 1.5 collision during walk/jump/elevated feet; connected/corner; slab/stairs step-up; mob broadphase; visual height remains 1.
+- TallGrass/Fern/Flower/DeadBush support-loss via existing queue; cobweb/fire excluded; water replaceable plants drop nothing.
+- Golden Apple absorption 0→4, 1→4, 4→4; duration refresh 300→2400; Creative HUD no longer zeros absorption; expiry and save/restore.
+- Item slot HTML has no native item `title`; tooltip clamp; dynamic hover metadata patch.
+- Exhaustive Russian mapping for `obtainableItems()` and every `BLOCKS` key; Recipe Book search `меч` / `алмаз` / `доски`.
+
+Unrelated timeout thresholds were not changed.
+
 ## 2026-08-28 gameplay / UI / entity polish
 
 Актуальный отчёт: `reports/2026-08-28_gameplay-ui-entity-polish.md`. Baseline HEAD=`67afc97`.

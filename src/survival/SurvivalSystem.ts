@@ -287,12 +287,14 @@ export class SurvivalSystem {
   }
 
   applyEffect(effect: StatusEffectSpec): void {
+    if (effect.id === 'absorption') {
+      this.absorption = 4 * (effect.amplifier + 1);
+      this.effects.set(effect.id, { amplifier: effect.amplifier, ticks: effect.durationTicks });
+      return;
+    }
     const current = this.effects.get(effect.id);
     if (!current || effect.amplifier > current.amplifier || effect.durationTicks > current.ticks) {
       this.effects.set(effect.id, { amplifier: effect.amplifier, ticks: effect.durationTicks });
-    }
-    if (effect.id === 'absorption') {
-      this.absorption = Math.max(this.absorption, 4 * (effect.amplifier + 1));
     }
   }
 

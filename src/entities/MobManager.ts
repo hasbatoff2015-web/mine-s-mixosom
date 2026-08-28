@@ -1029,16 +1029,17 @@ export class MobManager {
         arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
       });
     }
-    if (mob.kind === 'creeper') {
+    if (mob.state === 'die') {
+      const progress = THREE.MathUtils.clamp(mob.deathSeconds / 0.7, 0, 1);
+      mob.visual.rotation.z = progress * Math.PI * 0.5;
+      mob.visual.scale.setScalar(1 - progress * 0.25);
+    } else if (mob.kind === 'creeper') {
       const fuseProgress = THREE.MathUtils.clamp(mob.fuseSeconds / 1.5, 0, 1);
       const pulse = fuseProgress > 0
         ? Math.sin(mob.fuseSeconds * (10 + fuseProgress * 18)) * 0.025 * fuseProgress
         : 0;
       mob.visual.scale.set(1 + pulse, 1 + fuseProgress * 0.08, 1 + pulse);
-    } else if (mob.state === 'die') {
-      const progress = THREE.MathUtils.clamp(mob.deathSeconds / 0.7, 0, 1);
-      mob.visual.rotation.z = progress * Math.PI * 0.5;
-      mob.visual.scale.setScalar(1 - progress * 0.25);
+      mob.visual.rotation.z = 0;
     } else {
       mob.visual.scale.setScalar(1);
       mob.visual.rotation.z = 0;
@@ -1509,6 +1510,7 @@ export class MobManager {
     mob.velocity.x = 0;
     mob.velocity.z = 0;
     mob.deathSeconds = 0;
+    mob.fuseSeconds = 0;
     this.changeState(mob, 'die');
   }
 

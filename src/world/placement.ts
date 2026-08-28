@@ -1,9 +1,11 @@
-import { getBlockDefinition, type BlockId, type BlockRenderShape, type BlockRenderState } from '../blocks';
+import { BlockId, getBlockDefinition, type BlockRenderShape, type BlockRenderState } from '../blocks';
 import { attachmentNormal } from '../rendering/specialBlockGeometry';
 import { blockCollisionBoxes } from './collision';
 import type { BlockNeighborView } from '../rendering/specialBlockGeometry';
 
 export interface PlacementFace { readonly x: number; readonly y: number; readonly z: number }
+
+const UP: PlacementFace = { x: 0, y: 1, z: 0 };
 
 /** Existing attachment state is authoritative; signs match rendering and placement. */
 const SUPPORT_RULES: Partial<Record<BlockRenderShape, { attachment: 'floor' | 'wall'; facing: 'north' | 'south'; oriented?: boolean }>> = {
@@ -16,11 +18,32 @@ const SUPPORT_RULES: Partial<Record<BlockRenderShape, { attachment: 'floor' | 'w
   rail: { attachment: 'floor', facing: 'north' },
 };
 
+const GRASS_PLANT_SUBSTRATES: ReadonlySet<BlockId> = new Set([BlockId.GrassBlock, BlockId.Dirt]);
+const DEAD_BUSH_SUBSTRATES: ReadonlySet<BlockId> = new Set([BlockId.Sand]);
+
+const VEGETATION_SUBSTRATES: ReadonlyMap<BlockId, ReadonlySet<BlockId>> = new Map([
+  [BlockId.TallGrass, GRASS_PLANT_SUBSTRATES],
+  [BlockId.Fern, GRASS_PLANT_SUBSTRATES],
+  [BlockId.Dandelion, GRASS_PLANT_SUBSTRATES],
+  [BlockId.Poppy, GRASS_PLANT_SUBSTRATES],
+  [BlockId.OxeyeDaisy, GRASS_PLANT_SUBSTRATES],
+  [BlockId.DeadBush, DEAD_BUSH_SUBSTRATES],
+]);
+
+export function isVegetationBlock(block: BlockId): boolean {
+  return VEGETATION_SUBSTRATES.has(block);
+}
+
+export function vegetationSubstrates(block: BlockId): ReadonlySet<BlockId> | undefined {
+  return VEGETATION_SUBSTRATES.get(block);
+}
+
 export function needsBlockSupport(block: BlockId): boolean {
-  return SUPPORT_RULES[getBlockDefinition(block).renderShape] !== undefined;
+  return SUPPORT_RULES[getBlockDefinition(block).renderShape] !== undefined || isVegetationBlock(block);
 }
 
 export function supportCellForBlock(block: BlockId, state: BlockRenderState | undefined, x: number, y: number, z: number) {
+  if (isVegetationBlock(block)) return { x, y: y - 1, z, normal: UP };
   const rule = SUPPORT_RULES[getBlockDefinition(block).renderShape];
   if (!rule) return undefined;
   const attachment = rule.oriented ? state?.attachment ?? rule.attachment : rule.attachment;
@@ -29,7 +52,10 @@ export function supportCellForBlock(block: BlockId, state: BlockRenderState | un
 }
 
 export function isBlockStillSupported(world: BlockNeighborView, x: number, y: number, z: number): boolean {
-  const support = supportCellForBlock(world.getBlock(x, y, z, false), world.getBlockState?.(x, y, z), x, y, z);
+  const block = world.getBlock(x, y, z, false);
+  const substrates = vegetationSubstrates(block);
+  if (substrates) return substrates.has(world.getBlock(x, y - 1, z, false));
+  const support = supportCellForBlock(block, world.getBlockState?.(x, y, z), x, y, z);
   return !support || canAttachToFace(world, support.x, support.y, support.z, support.normal);
 }
 

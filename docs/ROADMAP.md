@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-28: creeper / fence / plants / tooltip / RU polish
+
+- [x] Creeper generic death animation; primed fuse cancelled on player kill; self-explosion path unchanged.
+- [x] Fence 1.5 collision broadphase so a jump cannot pass through; visual height stays 1; slabs/stairs unchanged.
+- [x] Vegetation included in existing support integrity (no PlantSystem, no world scan).
+- [x] Golden Apple absorption replenishes to 4 and never stacks; Creative HUD shows yellow hearts.
+- [x] Custom Minecraft-like item tooltip; native item `title` removed.
+- [x] Explicit Russian display names for all obtainable items/blocks; Recipe Book Russian search.
+- [ ] Native-browser visual QA of creeper death, fence jump, plant break, Golden Apple HUD, tooltips and Russian catalog names on a real GPU session.
+
 ## 2026-08-28: gameplay / UI / entity polish
 
 - [x] Frontier vertical melee apex ~½ previous height; horizontal 1.8 impulse untouched.
