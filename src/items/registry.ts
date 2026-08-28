@@ -42,7 +42,7 @@ const blockItems: ItemDefinition[] = BLOCKS
     name: definition.name,
     kind: 'block' as const,
     maxStack: 64 as const,
-    texture: blockItemIconTexture(definition.textures, definition.key),
+    texture: blockItemIconTexture(definition.textures, definition.key, definition.renderShape),
     blockId: definition.id,
     placesBlockId: definition.id,
     tags: blockTags(definition),

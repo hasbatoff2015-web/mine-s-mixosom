@@ -17,7 +17,11 @@ import {
   stairLocalBoxes,
   fenceLocalBoxes,
   railLocalBoxes,
+  lanternMeshCuboids,
+  lanternHangerPlanes,
+  chainMeshPlanes,
   type LocalBox,
+  type TextureUvRect,
 } from './specialBlockGeometry';
 import {
   createGeneratedItemGeometry,
@@ -289,6 +293,16 @@ export class ItemVisualFactory {
       case 'rail':
         geometry = this.geometryFromLocalBoxes(railLocalBoxes('north_south'), texture);
         break;
+      case 'lantern':
+        geometry = this.geometryFromAtlasParts(
+          lanternMeshCuboids({ attachment: 'floor' }),
+          lanternHangerPlanes({ attachment: 'floor' }),
+          texture,
+        );
+        break;
+      case 'chain':
+        geometry = this.geometryFromAtlasParts([], chainMeshPlanes(), texture);
+        break;
       default:
         throw new Error(`No special held model for ${itemId}`);
     }
@@ -304,24 +318,121 @@ export class ItemVisualFactory {
     const tile = this.atlas?.tile(textureKey) ?? FULL_TILE;
     for (const box of boxes) {
       for (const face of CUBE_FACES) {
-        const base = positions.length / 3;
-        const uv = heldLocalFaceUv(face.normal, box);
-        const u0 = lerp(tile.u0, tile.u1, uv[0]);
-        const v0 = lerp(tile.v0, tile.v1, uv[1]);
-        const u1 = lerp(tile.u0, tile.u1, uv[2]);
-        const v1 = lerp(tile.v0, tile.v1, uv[3]);
-        for (const corner of face.corners) {
-          positions.push(
+        this.appendHeldQuad(
+          positions, normals, uvs, indices,
+          face.corners.map((corner) => [
             box.minX + corner[0] * (box.maxX - box.minX) - 0.5,
             box.minY + corner[1] * (box.maxY - box.minY) - 0.5,
             box.minZ + corner[2] * (box.maxZ - box.minZ) - 0.5,
-          );
-          normals.push(...face.normal);
-        }
-        uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
-        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+          ]),
+          face.normal,
+          heldLocalFaceUv(face.normal, box),
+          tile,
+        );
       }
     }
+    return this.finishSpecialHeldGeometry(positions, normals, uvs, indices, boxes.length);
+  }
+
+  /**
+   * Held/GUI mesh for UV-atlas blocks (lantern, chain). Uses the same tile
+   * rectangles as ChunkMesher instead of stretching the full PNG across each cuboid.
+   */
+  private geometryFromAtlasParts(
+    cuboids: readonly { readonly box: LocalBox; readonly uvDown: TextureUvRect; readonly uvUp: TextureUvRect; readonly uvSide: TextureUvRect }[],
+    planes: readonly { readonly corners: readonly (readonly [number, number, number])[]; readonly uv: TextureUvRect }[],
+    textureKey: string,
+  ): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const tile = this.atlas?.tile(textureKey) ?? FULL_TILE;
+    for (const part of cuboids) {
+      for (const face of CUBE_FACES) {
+        const ny = face.normal[1];
+        const uv = ny > 0.5 ? part.uvUp : ny < -0.5 ? part.uvDown : part.uvSide;
+        this.appendHeldQuad(
+          positions, normals, uvs, indices,
+          face.corners.map((corner) => [
+            part.box.minX + corner[0] * (part.box.maxX - part.box.minX) - 0.5,
+            part.box.minY + corner[1] * (part.box.maxY - part.box.minY) - 0.5,
+            part.box.minZ + corner[2] * (part.box.maxZ - part.box.minZ) - 0.5,
+          ]),
+          face.normal,
+          uv,
+          tile,
+        );
+      }
+    }
+    for (const plane of planes) {
+      const corners = plane.corners.map((corner) => [
+        corner[0] - 0.5,
+        corner[1] - 0.5,
+        corner[2] - 0.5,
+      ] as [number, number, number]);
+      const ax = corners[1]![0] - corners[0]![0];
+      const ay = corners[1]![1] - corners[0]![1];
+      const az = corners[1]![2] - corners[0]![2];
+      const bx = corners[3]![0] - corners[0]![0];
+      const by = corners[3]![1] - corners[0]![1];
+      const bz = corners[3]![2] - corners[0]![2];
+      const nx = ay * bz - az * by;
+      const ny = az * bx - ax * bz;
+      const nz = ax * by - ay * bx;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      const normal: [number, number, number] = [nx / len, ny / len, nz / len];
+      this.appendHeldQuad(positions, normals, uvs, indices, corners, normal, plane.uv, tile);
+      this.appendHeldQuad(
+        positions, normals, uvs, indices,
+        [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
+        [-normal[0], -normal[1], -normal[2]],
+        plane.uv,
+        tile,
+        true,
+      );
+    }
+    const geometry = this.finishSpecialHeldGeometry(
+      positions, normals, uvs, indices, cuboids.length + planes.length,
+    );
+    geometry.userData.specialHeldAtlasUv = true;
+    return geometry;
+  }
+
+  private appendHeldQuad(
+    positions: number[],
+    normals: number[],
+    uvs: number[],
+    indices: number[],
+    corners: readonly (readonly [number, number, number])[],
+    normal: readonly [number, number, number],
+    textureUv: readonly [number, number, number, number],
+    tile: AtlasTile,
+    backFace = false,
+  ): void {
+    const base = positions.length / 3;
+    const u0 = lerp(tile.u0, tile.u1, textureUv[0]);
+    const v0 = lerp(tile.v0, tile.v1, textureUv[1]);
+    const u1 = lerp(tile.u0, tile.u1, textureUv[2]);
+    const v1 = lerp(tile.v0, tile.v1, textureUv[3]);
+    const uv = backFace
+      ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
+      : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
+    for (let index = 0; index < 4; index += 1) {
+      positions.push(...corners[index]!);
+      normals.push(...normal);
+      uvs.push(...uv[index]!);
+    }
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+
+  private finishSpecialHeldGeometry(
+    positions: number[],
+    normals: number[],
+    uvs: number[],
+    indices: number[],
+    partCount: number,
+  ): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -329,7 +440,7 @@ export class ItemVisualFactory {
     geometry.setIndex(indices);
     geometry.computeBoundingSphere();
     geometry.userData.specialHeldModel = true;
-    geometry.userData.specialHeldBoxes = boxes.length;
+    geometry.userData.specialHeldBoxes = partCount;
     return geometry;
   }
 

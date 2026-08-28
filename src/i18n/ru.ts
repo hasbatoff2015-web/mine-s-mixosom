@@ -76,6 +76,9 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   fire: 'Огонь',
   cobweb: 'Паутина',
   rail: 'Рельсы',
+  glowstone: 'Светокамень',
+  lantern: 'Светильник',
+  chain: 'Цепь',
 
   oak_slab: 'Дубовая плита',
   oak_stairs: 'Дубовые ступени',

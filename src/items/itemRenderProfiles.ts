@@ -165,6 +165,8 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'chest':
     case 'fence':
     case 'rail':
+    case 'lantern':
+    case 'chain':
       return 'special_model';
     case 'cube':
       return 'block_cube';

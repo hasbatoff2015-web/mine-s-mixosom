@@ -253,7 +253,7 @@ describe('item render profiles and assets', () => {
     const itemPaths = Object.keys(ITEM_TEXTURES);
     const blockPaths = Object.keys(BLOCK_TEXTURES);
     for (const item of ITEMS) {
-      if (item.kind !== 'block') {
+      if (item.kind !== 'block' || item.texture.startsWith('item/')) {
         expect(itemPaths.some((path) => path.endsWith(`/${item.texture}.png`)), item.id).toBe(true);
       }
     }

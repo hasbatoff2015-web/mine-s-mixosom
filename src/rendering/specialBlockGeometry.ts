@@ -530,6 +530,140 @@ const WIRE_BOX: LocalBox = { minX: 0.05, minY: 0, minZ: 0.05, maxX: 0.95, maxY: 
 const CACTUS_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 1, maxZ: 15 / 16 };
 const CHEST_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 14 / 16, maxZ: 15 / 16 };
 
+/** Vanilla lantern.png UV in tile space (v=0 at image bottom). Minecraft v is from the top. */
+function lanternMcUv(u0: number, vTop: number, u1: number, vBottom: number): TextureUvRect {
+  return [u0 / 16, 1 - vBottom / 16, u1 / 16, 1 - vTop / 16];
+}
+
+export const LANTERN_BODY_UV = lanternMcUv(0, 9, 6, 15);
+export const LANTERN_BODY_TOP_UV = lanternMcUv(0, 3, 6, 9);
+export const LANTERN_CAP_SIDE_UV = lanternMcUv(1, 1, 5, 3);
+export const LANTERN_CAP_END_UV = lanternMcUv(1, 10, 5, 14);
+export const LANTERN_HANGER_UV = lanternMcUv(11, 1, 14, 3);
+export const CHAIN_PLANE_A_UV: TextureUvRect = [0, 0, 3 / 16, 1];
+export const CHAIN_PLANE_B_UV: TextureUvRect = [3 / 16, 0, 6 / 16, 1];
+
+export function isHangingLantern(state: BlockRenderState | undefined): boolean {
+  return state?.attachment === 'ceiling';
+}
+
+/** Vanilla standing (5,0,5)–(11,9,11) / hanging (5,1,5)–(11,10,11). */
+export function lanternSelectionLocalBox(state: BlockRenderState | undefined): LocalBox {
+  if (isHangingLantern(state)) {
+    return { minX: 5 / 16, minY: 1 / 16, minZ: 5 / 16, maxX: 11 / 16, maxY: 10 / 16, maxZ: 11 / 16 };
+  }
+  return { minX: 5 / 16, minY: 0, minZ: 5 / 16, maxX: 11 / 16, maxY: 9 / 16, maxZ: 11 / 16 };
+}
+
+/** Vanilla chain collision column 6.5–9.5 on XZ, full height. */
+export function chainSelectionLocalBox(): LocalBox {
+  return { minX: 6.5 / 16, minY: 0, minZ: 6.5 / 16, maxX: 9.5 / 16, maxY: 1, maxZ: 9.5 / 16 };
+}
+
+export interface LanternMeshCuboid {
+  readonly box: LocalBox;
+  readonly uvDown: TextureUvRect;
+  readonly uvUp: TextureUvRect;
+  readonly uvSide: TextureUvRect;
+}
+
+export interface LanternMeshPlane {
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly uv: TextureUvRect;
+}
+
+/**
+ * Minecraft-style lantern: metal cage, inner glow, cap, and a short hanger
+ * (standing) or a chain that continues to the ceiling (hanging).
+ */
+export function lanternMeshCuboids(state: BlockRenderState | undefined): readonly LanternMeshCuboid[] {
+  const hang = isHangingLantern(state);
+  const bodyY = hang ? 2 / 16 : 1 / 16;
+  const bodyTop = bodyY + 6 / 16;
+  const capTop = bodyTop + 2 / 16;
+  return [
+    {
+      box: { minX: 5 / 16, minY: bodyY, minZ: 5 / 16, maxX: 11 / 16, maxY: bodyTop, maxZ: 11 / 16 },
+      uvDown: LANTERN_BODY_UV,
+      uvUp: LANTERN_BODY_TOP_UV,
+      uvSide: LANTERN_BODY_UV,
+    },
+    {
+      box: { minX: 6.5 / 16, minY: bodyY + 0.5 / 16, minZ: 6.5 / 16, maxX: 9.5 / 16, maxY: bodyTop - 0.5 / 16, maxZ: 9.5 / 16 },
+      uvDown: LANTERN_BODY_TOP_UV,
+      uvUp: LANTERN_BODY_TOP_UV,
+      uvSide: LANTERN_BODY_TOP_UV,
+    },
+    {
+      box: { minX: 6 / 16, minY: bodyTop, minZ: 6 / 16, maxX: 10 / 16, maxY: capTop, maxZ: 10 / 16 },
+      uvDown: LANTERN_CAP_END_UV,
+      uvUp: LANTERN_CAP_END_UV,
+      uvSide: LANTERN_CAP_SIDE_UV,
+    },
+  ];
+}
+
+/** Crossed hanger / hanging-chain quads in cell-local space. */
+export function lanternHangerPlanes(state: BlockRenderState | undefined): readonly LanternMeshPlane[] {
+  const hang = isHangingLantern(state);
+  const y0 = hang ? 10 / 16 : 9 / 16;
+  const y1 = hang ? 1 : 12 / 16;
+  const mid = 8 / 16;
+  const half = 1.5 / 16;
+  return [
+    {
+      corners: [
+        [mid - half, y0, mid],
+        [mid + half, y0, mid],
+        [mid + half, y1, mid],
+        [mid - half, y1, mid],
+      ],
+      uv: LANTERN_HANGER_UV,
+    },
+    {
+      corners: [
+        [mid, y0, mid - half],
+        [mid, y0, mid + half],
+        [mid, y1, mid + half],
+        [mid, y1, mid - half],
+      ],
+      uv: LANTERN_HANGER_UV,
+    },
+  ];
+}
+
+export interface ChainMeshPlane {
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly uv: TextureUvRect;
+}
+
+/** Two vertical 3/16 planes, matching vanilla chain.json. */
+export function chainMeshPlanes(): readonly ChainMeshPlane[] {
+  const lo = 6.5 / 16;
+  const hi = 9.5 / 16;
+  const mid = 8 / 16;
+  return [
+    {
+      corners: [
+        [lo, 0, mid],
+        [hi, 0, mid],
+        [hi, 1, mid],
+        [lo, 1, mid],
+      ],
+      uv: CHAIN_PLANE_A_UV,
+    },
+    {
+      corners: [
+        [mid, 0, lo],
+        [mid, 0, hi],
+        [mid, 1, hi],
+        [mid, 1, lo],
+      ],
+      uv: CHAIN_PLANE_B_UV,
+    },
+  ];
+}
+
 function plateLocalBox(powered: boolean): LocalBox {
   const height = powered ? 0.03125 : 0.0625;
   return { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: height, maxZ: 15 / 16 };
@@ -648,6 +782,10 @@ export function selectionLocalBoxes(
     }
     case 'rail':
       return railLocalBoxes(defaultRailShape(state));
+    case 'lantern':
+      return [lanternSelectionLocalBox(state)];
+    case 'chain':
+      return [chainSelectionLocalBox()];
     case 'cube':
     default:
       return [FULL_BLOCK];
@@ -695,6 +833,10 @@ export function selectionBoxesForBlock(
     }
     case 'rail':
       return selectionBoxesFromLocal(x, y, z, railLocalBoxes(defaultRailShape(state)));
+    case 'lantern':
+      return selectionBoxesFromLocal(x, y, z, [lanternSelectionLocalBox(state)]);
+    case 'chain':
+      return selectionBoxesFromLocal(x, y, z, [chainSelectionLocalBox()]);
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }

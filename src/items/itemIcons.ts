@@ -75,6 +75,7 @@ export function specialIconPose(category: SpecialIconCategory | undefined): Spec
 export function usesBlockModelIcon(itemOrId: string | ItemDefinition): boolean {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
   if (item.kind !== 'block') return false;
+  if (item.texture.startsWith('item/')) return false;
   return itemHeldMeshKind(item) !== 'generated';
 }
 

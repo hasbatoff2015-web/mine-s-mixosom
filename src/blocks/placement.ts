@@ -1,4 +1,4 @@
-import type { BlockAttachment, DoorHinge, HorizontalFacing } from './types';
+import type { BlockAttachment, BlockRenderShape, DoorHinge, HorizontalFacing } from './types';
 import { BlockId } from './types';
 
 export interface OrientedPlacement {
@@ -84,11 +84,14 @@ export function furnaceFaceTextureKey(
 /**
  * 2D inventory/hotbar tile for a cube block. Prefer the authored FRONT
  * (furnace opening, crafting-table tools) over the side/back.
+ * UV-atlas shapes (lantern/chain) use the authored item sprite, not the block sheet.
  */
 export function blockItemIconTexture(
   textures: { front?: string; all?: string; side?: string; top?: string },
   fallbackKey: string,
+  renderShape?: BlockRenderShape,
 ): string {
+  if (renderShape === 'lantern' || renderShape === 'chain') return `item/${fallbackKey}`;
   return textures.front
     ?? textures.all
     ?? textures.side
@@ -243,6 +246,26 @@ export interface StairPlacement {
  * Vanilla stairs: facing is the player's horizontal look. Half is bottom unless
  * the clicked face is the underside or a side hit above the midline.
  */
+/** Lantern attaches to a floor (standing) or ceiling/chain (hanging). No wall lantern. */
+export function lanternPlacementFromHit(
+  nx: number,
+  ny: number,
+  nz: number,
+): OrientedPlacement | undefined {
+  void nx;
+  void nz;
+  if (ny > 0.5) return { attachment: 'floor', facing: 'north' };
+  if (ny < -0.5) return { attachment: 'ceiling', facing: 'north' };
+  return undefined;
+}
+
+/** Chains are vertical only: top face continues up, bottom face continues down. */
+export function chainPlacementFromHit(nx: number, ny: number, nz: number): boolean {
+  void nx;
+  void nz;
+  return Math.abs(ny) > 0.5;
+}
+
 export function stairPlacementFromHit(
   nx: number,
   ny: number,

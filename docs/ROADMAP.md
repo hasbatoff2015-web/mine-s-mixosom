@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-08-28: glowstone / lantern / chain
+
+- [x] Glowstone cube light 15; lantern 3D model light 15; torch stays 14. Existing LightEngine, streaming budget and fluid lighting untouched.
+- [x] Lantern standing/hanging via canonical raycast + `attachment` state; hanging attaches to chain or a sturdy ceiling.
+- [x] Vertical chain with thin selection/collision; hanging columns use ceiling attachment so they are not self-supporting.
+- [x] Custom recipes: Torch+Gold → Glowstone; Torch+Iron Ingot → Lantern; shaped iron/stick grid → 16 Chain.
+- [x] Creative, RU names, 3D special_model icons/held items, drops, save/load.
+- [ ] Native-browser visual QA of lantern hanging from chain, glowstone cave lighting, chunk-border seams and first-person scale.
+
 ## 2026-08-28: core sample-based SFX
 
 - [x] Extend canonical `AudioManager` to cached AudioBuffer samples; keep pause/mute/masterVolume and Yandex lifecycle.

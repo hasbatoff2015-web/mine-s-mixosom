@@ -10,6 +10,11 @@ describe('generic special preview contract', () => {
     expect(specials.length).toBeGreaterThan(0);
     for (const item of specials) {
       const descriptor = itemIconDescriptor(item);
+      if (item.texture.startsWith('item/')) {
+        expect(descriptor.kind, item.id).toBe('texture');
+        expect(descriptor.texturePath, item.id).toBe(item.texture);
+        continue;
+      }
       expect(descriptor.kind, item.id).toBe('special_preview');
       expect(usesCanonicalSpecialPreview(item), item.id).toBe(true);
       expect(descriptor.category, item.id).toBeDefined();
