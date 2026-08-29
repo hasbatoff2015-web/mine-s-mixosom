@@ -178,7 +178,13 @@ import {
   splitPlayerSnapshots,
   stepTowardTarget,
 } from '../net/authoritativeMotion';
-import { applyEntitySnapshots } from '../net/applyEntitySnapshots';
+import {
+  applyEntitySnapshots,
+  applyInterpolatedEntityVisuals,
+  applyNetworkEntityEvents,
+} from '../net/applyEntitySnapshots';
+import { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
+import { stepVisualBowUseTicks } from '../input/gameplayKeys';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -235,6 +241,7 @@ export interface OnlineAnarchySession {
   client: AnarchyClient;
   playerId: string;
   remotes: Map<string, RemotePlayerView>;
+  interpolator: EntityInterpolationBuffer;
   inputSeq: number;
   lastViewKey?: string;
   lastStateTick: number;
@@ -400,6 +407,7 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
+    this.canvas.tabIndex = 0;
     this.ui = new GameUI(uiRoot);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -422,13 +430,21 @@ export class Game {
       openChat: (prefix) => this.openChat(prefix),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
-      onPointerLockAcquired: () => this.ui.hidePointerLockFallback(),
+      onPointerLockAcquired: () => {
+        this.lifecycle.resumePlayingIfVisible();
+        this.ui.hidePointerLockFallback();
+      },
       onPointerLockReleased: (reason) => this.handlePointerUnlock(reason),
       onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
+      isChatOpen: () => this.ui.isChatOpen(),
     });
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.ui.onChatSubmit = (line) => this.submitChat(line);
     this.ui.onChatCancel = () => this.closeChatAndResumeLook();
+    this.canvas.addEventListener('click', () => {
+      this.lifecycle.resumePlayingIfVisible();
+      this.canvas.focus({ preventScroll: true });
+    });
     this.bindLifecycle();
     this.bindWindowEvents();
   }
@@ -546,6 +562,7 @@ export class Game {
         client,
         playerId: welcome.playerId,
         remotes,
+        interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
         lastStateTick: -1,
         motion: { target: { x: welcome.you.x, y: welcome.you.y, z: welcome.you.z } },
@@ -627,7 +644,14 @@ export class Game {
         return;
       }
       case 'entity_snapshot':
-        applyEntitySnapshots(session, message.entities);
+        applyEntitySnapshots(session, message.entities, {
+          interpolator: session.online.interpolator,
+          tick: message.tick,
+          now: performance.now(),
+        });
+        return;
+      case 'entity_event':
+        applyNetworkEntityEvents(session, message.events);
         return;
       case 'health': {
         const previous = session.survival.health;
@@ -1719,6 +1743,7 @@ export class Game {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.ui.closeChat();
+    this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     this.lifecycle.setState('PLAYING');
@@ -2127,6 +2152,11 @@ export class Game {
       );
       session.worldRenderer.removeChunks(removed);
     }
+    session.mobs.tickRemoteVisuals(FIXED_DT);
+    const holdingBow = gameplayAllowed
+      && this.input.using
+      && this.selectedStack()?.itemId === ItemId.Bow;
+    session.bowUseTicks = stepVisualBowUseTicks(session.bowUseTicks, holdingBow);
     if (session.playTicks % 2 === 0) this.refreshHud();
   }
 
@@ -3366,6 +3396,9 @@ export class Game {
 
   private closeChatAndResumeLook(): void {
     this.ui.closeChat();
+    this.input.clearHeldKeys();
+    this.lifecycle.resumePlayingIfVisible();
+    this.canvas.focus({ preventScroll: true });
     if (this.lifecycle.state === 'PLAYING') this.input.tryRequestPointerLock();
   }
 
@@ -3564,12 +3597,16 @@ export class Game {
       }
       applyImmediateRenderLook(this.camera, this.input, this.hurt.cameraRoll(now));
       session.online?.remotes.forEach((remote) => remote.interpolate(now));
-      session.falling.interpolate(clamp(alpha, 0, 1));
-      session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
-      session.mobs.interpolateVisuals(alpha);
-      session.drops.interpolateVisuals(alpha);
-      session.arrows.interpolateVisuals(alpha);
-      session.minecarts.interpolateVisuals(alpha);
+      if (session.online) {
+        applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
+      } else {
+        session.falling.interpolate(clamp(alpha, 0, 1));
+        session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
+        session.mobs.interpolateVisuals(alpha);
+        session.drops.interpolateVisuals(alpha);
+        session.arrows.interpolateVisuals(alpha);
+        session.minecarts.interpolateVisuals(alpha);
+      }
       const sprintFov = session.player.sprinting ? 7 : 0;
       const bowZoom = session.bowUseTicks > 0
         ? session.combat.bowCharge(session.bowUseTicks).power * 8

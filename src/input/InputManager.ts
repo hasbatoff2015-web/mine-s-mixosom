@@ -9,6 +9,7 @@ import {
   PointerLockAttempt,
 } from './pointerLock';
 import { PointerMotionFilter } from './pointerMotion';
+import { shouldBlurStaleTextField, shouldCaptureGameplayKey } from './gameplayKeys';
 
 function isTypingElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -30,6 +31,7 @@ export interface InputCallbacks {
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
+  isChatOpen?(): boolean;
 }
 
 export interface MoveInput {
@@ -151,6 +153,17 @@ export class InputManager {
     this.touchJump = false;
   }
 
+  /** Drop held WASD/Space/Shift so a lost keyup cannot stick, and so chat cannot leave W=true. */
+  clearHeldKeys(): void {
+    this.keys.clear();
+    this.touchForward = 0;
+    this.touchRight = 0;
+    this.touchJump = false;
+    this.touchSprint = false;
+    this.touchSneak = false;
+    this.releaseActions();
+  }
+
   isPointerLocked(): boolean {
     return typeof document !== 'undefined' && document.pointerLockElement === this.canvas;
   }
@@ -208,7 +221,15 @@ export class InputManager {
         this.callbacks.togglePause();
         return;
       }
-      if (typing) return;
+      if (typing) {
+        const chatOpen = this.callbacks.isChatOpen?.() === true;
+        if (!shouldCaptureGameplayKey({ typingInField: true, chatOpen })) return;
+        if (shouldBlurStaleTextField({ typingInField: true, chatOpen })) {
+          if (event.target instanceof HTMLElement) event.target.blur();
+        } else {
+          return;
+        }
+      }
       if ((event.code === 'KeyT' || event.key === '/') && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         this.callbacks.openChat(event.key === '/' ? '/' : '');
@@ -231,14 +252,12 @@ export class InputManager {
       this.resetPointerSession();
       this.lockAttempt?.finish();
       this.requestPending = false;
-      this.keys.clear();
-      this.releaseActions();
+      this.clearHeldKeys();
     });
     document.addEventListener('visibilitychange', () => {
       this.resetPointerSession();
       if (document.hidden) {
-        this.keys.clear();
-        this.releaseActions();
+        this.clearHeldKeys();
         this.lockAttempt?.finish();
         this.requestPending = false;
       }

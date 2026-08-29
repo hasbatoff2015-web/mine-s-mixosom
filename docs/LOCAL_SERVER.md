@@ -103,13 +103,17 @@ After restart the server **loads** this folder. It does **not** regenerate terra
 
 SERVER owns: world blocks/chunks, spawn, player position/health/hunger/effects/gamemode, inventory/equipment/crafting, drops and pickups, mobs, melee (including PvP) and arrows, fluids/fire/TNT/explosions, minecarts, commands, 20 TPS tick, filesystem persist.
 
-CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote interpolation, local chunk mesh/light, visual mining overlay.
+CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light, visual mining overlay, visual-only bow charge while RMB is held.
 
 CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 
 Local player: input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
 
 Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
+
+Mobs / drops / arrows / minecarts / TNT / falling blocks: the same ~80 ms snapshot buffer (`EntityInterpolationBuffer`). Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
+
+Server → client also includes `entity_event` (`hurt`, `death`, `projectile_spawn`, `projectile_hit`) keyed by `entityId`. Interest snapshots put arrows/TNT before mobs/items so the cap of 96 cannot starve projectiles.
 
 **Singleplayer** is unchanged: IndexedDB via `SaveService`, no server required.
 
@@ -141,7 +145,7 @@ Client `/give` `/time` `/tp` `/clear` `/kill` still work in **singleplayer only*
 
 Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`, `ping`
 
-Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`
+Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`, `entity_snapshot`, `entity_event`, `health`, `effects`, `time`, `command_result`
 
 `block_result` is sent to the requester on every break/place (ok or reason: `reach` / `bounds` / `empty` / `occupied` / `inventory` / …). `player_state.tick` is monotonic; clients drop stale snapshots.
 
@@ -179,7 +183,7 @@ Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/rev
 
 ## Gameplay on the server
 
-`WorldInstance` ticks players then `ServerGameplay.tick`: world (fluids/furnaces/time/support) → falling → arrows (including player hitboxes) → minecarts → mobs → drops/pickup → redstone → explosions. Block deltas flush as one `block_update` or `block_batch`. Per-player `entity_snapshot` uses interest radius 48.
+`WorldInstance` ticks players then `ServerGameplay.tick`: world (fluids/furnaces/time/support) → falling → arrows (including player hitboxes) → minecarts → mobs → drops/pickup → redstone → explosions. Block deltas flush as one `block_update` or `block_batch`. Per-player `entity_snapshot` uses interest radius 48 (arrows packed first). `entity_event` is broadcast the same tick.
 
 Commands: `/help` `/gamemode` `/seed` `/spawn` `/give` `/time` `/tp` `/clear` `/kill`. `playerCommand` is cancellable. Results go out as `command_result`.
 

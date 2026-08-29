@@ -168,6 +168,10 @@ export interface MobManagerOptions {
   readonly onPlayerDamage?: (event: MobPlayerDamageEvent) => void;
   readonly onExplosion?: (event: MobExplosionEvent) => void;
   readonly onProjectileSpawn?: (event: MobProjectileSpawnEvent) => void;
+  /** Server-authoritative visual events (one entity id). */
+  readonly onHurt?: (mob: Readonly<MobEntity>) => void;
+  readonly onDeath?: (mob: Readonly<MobEntity>) => void;
+  readonly onProjectileRemove?: (id: string) => void;
   /** Fired once when a skeleton arrow embeds in a collision block. */
   readonly onArrowBlockHit?: (x: number, y: number, z: number) => void;
 }
@@ -241,6 +245,10 @@ export class MobEntity {
   readonly wanderDirection = new THREE.Vector3();
   resumeState: MobState = 'idle';
   deathDropsEmitted = false;
+  /** Last snapshot `hurt` flag; rising edge starts a per-entity flash. */
+  networkHurt = false;
+  /** Render pose from snapshot interpolation; hitboxes keep `position`. */
+  networkRenderPose?: { x: number; y: number; z: number; yaw: number };
 
   constructor(
     readonly id: string,
@@ -348,6 +356,74 @@ export class MobManager {
 
   get(id: string): MobEntity | undefined {
     return this.mobsById.get(id);
+  }
+
+  networkProjectiles(): ReadonlyArray<{
+    readonly id: string;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly vx: number;
+    readonly vy: number;
+    readonly vz: number;
+  }> {
+    return [...this.projectiles.values()].map((projectile) => ({
+      id: projectile.id,
+      x: projectile.position.x,
+      y: projectile.position.y,
+      z: projectile.position.z,
+      vx: projectile.velocity.x,
+      vy: projectile.velocity.y,
+      vz: projectile.velocity.z,
+    }));
+  }
+
+  applyAuthoritativeHurt(id: string): boolean {
+    const mob = this.mobsById.get(id);
+    if (!mob) return false;
+    mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
+    this.applyMobLight(mob);
+    return true;
+  }
+
+  applyAuthoritativeDeath(id: string): boolean {
+    const mob = this.mobsById.get(id);
+    if (!mob) return false;
+    if (mob.state !== 'die') this.beginDeath(mob);
+    return true;
+  }
+
+  shouldKeepRemoteDeath(id: string): boolean {
+    const mob = this.mobsById.get(id);
+    return Boolean(mob && mob.state === 'die' && mob.deathSeconds < 0.7);
+  }
+
+  setNetworkRenderPose(id: string, x?: number, y?: number, z?: number, yaw?: number): void {
+    const mob = this.mobsById.get(id);
+    if (!mob) return;
+    if (x === undefined || y === undefined || z === undefined) {
+      mob.networkRenderPose = undefined;
+      return;
+    }
+    mob.networkRenderPose = { x, y, z, yaw: yaw ?? mob.facingYaw };
+  }
+
+  tickRemoteVisuals(delta: number): void {
+    for (const mob of this.mobsById.values()) {
+      if (mob.hurtFlashSeconds > 0) {
+        mob.hurtFlashSeconds = Math.max(0, mob.hurtFlashSeconds - delta);
+        this.applyMobLight(mob);
+      }
+      const speed = Math.hypot(mob.velocity.x, mob.velocity.z);
+      mob.locomotionSpeed = speed;
+      if (speed > 0.05) {
+        mob.previousWalkPhase = mob.walkPhase;
+        mob.walkPhase += delta * Math.max(3, speed * 4.5);
+      }
+      if (mob.state === 'die') {
+        mob.deathSeconds += delta;
+      }
+    }
   }
 
   countByDisposition(disposition: MobDisposition): number {
@@ -592,6 +668,7 @@ export class MobManager {
       if (hurt.fullHurt && damageOptions.source !== 'fire') {
         mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
         this.applyMobLight(mob);
+        this.options.onHurt?.(mob);
       }
       this.beginDeath(mob);
     } else if (hurt.fullHurt && damageOptions.source !== 'fire') {
@@ -601,6 +678,7 @@ export class MobManager {
       mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
       this.changeState(mob, 'hurt');
       this.applyMobLight(mob);
+      this.options.onHurt?.(mob);
     }
     return true;
   }
@@ -987,23 +1065,31 @@ export class MobManager {
   }
 
   private syncVisual(mob: MobEntity, _delta: number, alpha = 1): void {
-    const pose = interpolatePose(
-      {
-        x: mob.previousPosition.x,
-        y: mob.previousPosition.y,
-        z: mob.previousPosition.z,
-        yaw: mob.previousFacingYaw,
-        walkPhase: mob.previousWalkPhase,
-      },
-      {
-        x: mob.position.x,
-        y: mob.position.y,
-        z: mob.position.z,
-        yaw: mob.facingYaw,
+    const pose = mob.networkRenderPose
+      ? {
+        x: mob.networkRenderPose.x,
+        y: mob.networkRenderPose.y,
+        z: mob.networkRenderPose.z,
+        yaw: mob.networkRenderPose.yaw,
         walkPhase: mob.walkPhase,
-      },
-      alpha,
-    );
+      }
+      : interpolatePose(
+        {
+          x: mob.previousPosition.x,
+          y: mob.previousPosition.y,
+          z: mob.previousPosition.z,
+          yaw: mob.previousFacingYaw,
+          walkPhase: mob.previousWalkPhase,
+        },
+        {
+          x: mob.position.x,
+          y: mob.position.y,
+          z: mob.position.z,
+          yaw: mob.facingYaw,
+          walkPhase: mob.walkPhase,
+        },
+        alpha,
+      );
     const speed = mob.locomotionSpeed;
     const walkPhase = pose.walkPhase;
     const swing = Math.sin(walkPhase) * Math.min(0.65, speed * 0.22);
@@ -1070,6 +1156,7 @@ export class MobManager {
     const hurtJolt = mob.state === 'hurt' ? Math.sin(mob.stateSeconds * 45) * 0.035 : 0;
     mob.visual.position.set(pose.x + hurtJolt, pose.y, pose.z);
     this.syncFireOverlay(mob);
+    if (mob.hurtFlashSeconds > 0) this.applyMobLight(mob);
   }
 
   private syncFireOverlay(mob: MobEntity): void {
@@ -1536,6 +1623,7 @@ export class MobManager {
     mob.deathSeconds = 0;
     mob.fuseSeconds = 0;
     this.changeState(mob, 'die');
+    this.options.onDeath?.(mob);
   }
 
   private finishDeath(mob: MobEntity): void {
@@ -1589,6 +1677,7 @@ export class MobManager {
     if (!projectile) return;
     projectile.visual.removeFromParent();
     this.projectiles.delete(id);
+    this.options.onProjectileRemove?.(id);
   }
 
   private hasPopulationRoom(disposition: MobDisposition): boolean {

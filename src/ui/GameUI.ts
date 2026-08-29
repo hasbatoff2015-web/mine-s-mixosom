@@ -137,6 +137,7 @@ export class GameUI {
   private chatLogEl: HTMLElement;
   private chatForm: HTMLFormElement;
   private chatInput: HTMLInputElement;
+  private chatFocusToken = 0;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private itemTooltip?: ItemTooltipHandle;
@@ -643,6 +644,8 @@ export class GameUI {
   }
 
   openChat(prefix = ''): void {
+    this.chatFocusToken += 1;
+    const token = this.chatFocusToken;
     this.chatOpen = true;
     this.chatHistoryIndex = -1;
     this.chatDraft = '';
@@ -650,6 +653,7 @@ export class GameUI {
     this.chatInput.value = prefix;
     this.setControlsSuppressed(true);
     window.setTimeout(() => {
+      if (token !== this.chatFocusToken || !this.chatOpen) return;
       this.chatInput.focus();
       const caret = this.chatInput.value.length;
       this.chatInput.setSelectionRange(caret, caret);
@@ -657,8 +661,10 @@ export class GameUI {
   }
 
   closeChat(): void {
+    this.chatFocusToken += 1;
     if (!this.chatOpen) {
       this.chat.classList.remove('open');
+      this.chatInput.blur();
       return;
     }
     this.chatOpen = false;

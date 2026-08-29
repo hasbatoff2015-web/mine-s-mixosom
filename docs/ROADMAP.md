@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-08-29: entity interpolation / input / visual sync
+
+- [x] Time-based remote entity interpolation (snapshot history + delay, not FPS lerp).
+- [x] WASD recovery after chat / blur / visibility / pointer lock / tab switch.
+- [x] Server-driven hurt / death / bow visual / arrow render mapping.
+- [x] Targeted interpolation + input + visual-event tests.
+- [ ] Owner two-client localhost QA (smooth mobs, WASD after tab/chat, hurt/death/bow/arrow).
+- [ ] Do not merge main until that QA.
+
 ## 2026-08-29: full Anarchy server gameplay
 
 - [x] One integration pass: listed Anarchy systems request → server validate → mutate → sync. Reuse existing managers in `ServerGameplay`.

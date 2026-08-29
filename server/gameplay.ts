@@ -64,12 +64,34 @@ import { ExplosionQueue } from '../src/world/ExplosionQueue';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
-import type { ClientInventoryActionMessage, EntitySnapshot, GameMode } from '../shared/protocol';
+import type { ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
 import type { EventBus } from './events';
 import type { WorldDiskState } from './persistence';
 
 export const ENTITY_INTEREST_RADIUS = 48;
 const INTEREST_SQ = ENTITY_INTEREST_RADIUS * ENTITY_INTEREST_RADIUS;
+export const ENTITY_SNAPSHOT_CAP = 96;
+
+export function packEntitySnapshots(
+  groups: {
+    readonly arrows?: readonly EntitySnapshot[];
+    readonly tnt?: readonly EntitySnapshot[];
+    readonly falling?: readonly EntitySnapshot[];
+    readonly minecarts?: readonly EntitySnapshot[];
+    readonly mobs?: readonly EntitySnapshot[];
+    readonly items?: readonly EntitySnapshot[];
+  },
+  cap = ENTITY_SNAPSHOT_CAP,
+): EntitySnapshot[] {
+  return [
+    ...(groups.arrows ?? []),
+    ...(groups.tnt ?? []),
+    ...(groups.falling ?? []),
+    ...(groups.minecarts ?? []),
+    ...(groups.mobs ?? []),
+    ...(groups.items ?? []),
+  ].slice(0, cap);
+}
 
 export function daylightFactor(timeOfDay: number): number {
   const phase = (timeOfDay / DAY_TICKS) * Math.PI * 2;
@@ -133,6 +155,7 @@ export class ServerGameplay {
   private activePressurePlates = new Set<string>();
   private readonly tmpEye = new THREE.Vector3();
   private readonly tmpDir = new THREE.Vector3();
+  private readonly pendingEntityEvents: NetworkEntityEvent[] = [];
 
   constructor(
     readonly world: VoxelWorld,
@@ -155,7 +178,12 @@ export class ServerGameplay {
     const visuals = new ItemVisualFactory();
     this.drops = new DroppedItemManager(this.scene, world, { visualFactory: visuals });
     this.falling = new FallingBlockManager(this.scene, world, visuals);
-    this.mobs = new MobManager(this.scene, world);
+    this.mobs = new MobManager(this.scene, world, {
+      onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
+      onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
+      onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
+      onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
+    });
     this.minecarts = new MinecartManager(this.scene, world, visuals);
     this.arrows = new PlayerArrowManager(this.scene, world, this.mobs, {
       minecarts: this.minecarts,
@@ -167,6 +195,8 @@ export class ServerGameplay {
       onMinecartHit: (cart, flaming) => {
         if (flaming && cart.variant === 'tnt') this.minecarts.explodeNow(cart);
       },
+      onSpawn: (id) => this.pushEntityEvent(id, 'projectile_spawn'),
+      onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
     });
     this.redstone = new RedstoneSystem(world, { root: this.scene });
   }
@@ -175,6 +205,15 @@ export class ServerGameplay {
     const list = [...this.blockDelta.values()];
     this.blockDelta.clear();
     return list;
+  }
+
+  consumeEntityEvents(): NetworkEntityEvent[] {
+    const events = this.pendingEntityEvents.splice(0);
+    return events;
+  }
+
+  private pushEntityEvent(entityId: string, kind: NetworkEntityEvent['kind']): void {
+    this.pendingEntityEvents.push({ entityId, kind });
   }
 
   tick(players: readonly GameplayPlayer[], dt: number): GameplayMetrics {
@@ -315,35 +354,54 @@ export class ServerGameplay {
   }
 
   snapshotsNear(origin: THREE.Vector3, passengers?: ReadonlyMap<string, string>): EntitySnapshot[] {
-    const list: EntitySnapshot[] = [];
     const inRange = (x: number, y: number, z: number): boolean => {
       const dx = x - origin.x;
       const dy = y - origin.y;
       const dz = z - origin.z;
       return dx * dx + dy * dy + dz * dz <= INTEREST_SQ;
     };
-    for (const item of this.drops.entities) {
-      if (!inRange(item.position.x, item.position.y, item.position.z)) continue;
-      list.push({
-        id: item.id, kind: 'item',
-        x: item.position.x, y: item.position.y, z: item.position.z,
-        vx: item.velocity.x, vy: item.velocity.y, vz: item.velocity.z,
-        itemId: item.stack.itemId, count: item.stack.count,
+    const arrows: EntitySnapshot[] = [];
+    for (const arrow of this.arrows.entities) {
+      if (!inRange(arrow.position.x, arrow.position.y, arrow.position.z)) continue;
+      arrows.push({
+        id: arrow.id, kind: 'arrow',
+        x: arrow.position.x, y: arrow.position.y, z: arrow.position.z,
+        vx: arrow.velocity.x, vy: arrow.velocity.y, vz: arrow.velocity.z,
+        onFire: arrow.flaming,
       });
     }
-    for (const mob of this.mobs.entities) {
-      if (!inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
-      list.push({
-        id: mob.id, kind: 'mob',
-        x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw,
-        vx: mob.velocity.x, vy: mob.velocity.y, vz: mob.velocity.z,
-        mobKind: mob.kind, health: mob.health, maxHealth: mob.definition.maxHealth,
-        onFire: mob.isOnFire, hurt: mob.hurtFlashSeconds > 0, state: mob.state,
+    for (const projectile of this.mobs.networkProjectiles()) {
+      if (!inRange(projectile.x, projectile.y, projectile.z)) continue;
+      arrows.push({
+        id: projectile.id, kind: 'arrow',
+        x: projectile.x, y: projectile.y, z: projectile.z,
+        vx: projectile.vx, vy: projectile.vy, vz: projectile.vz,
       });
     }
+    const tnt: EntitySnapshot[] = [];
+    for (const primed of this.redstone.primedTnt) {
+      if (!inRange(primed.position.x, primed.position.y, primed.position.z)) continue;
+      tnt.push({
+        id: primed.id, kind: 'tnt',
+        x: primed.position.x, y: primed.position.y, z: primed.position.z,
+        vx: primed.velocity.x, vy: primed.velocity.y, vz: primed.velocity.z,
+        primed: true, fuse: primed.fuseSeconds,
+      });
+    }
+    const falling: EntitySnapshot[] = [];
+    for (const entity of this.falling.list) {
+      if (!inRange(entity.position.x, entity.position.y, entity.position.z)) continue;
+      falling.push({
+        id: entity.id, kind: 'falling',
+        x: entity.position.x, y: entity.position.y, z: entity.position.z,
+        vx: entity.velocity.x, vy: entity.velocity.y, vz: entity.velocity.z,
+        blockId: entity.block,
+      });
+    }
+    const minecarts: EntitySnapshot[] = [];
     for (const cart of this.minecarts.entities) {
       if (!inRange(cart.position.x, cart.position.y, cart.position.z)) continue;
-      list.push({
+      minecarts.push({
         id: cart.id, kind: 'minecart',
         x: cart.position.x, y: cart.position.y, z: cart.position.z,
         yaw: cart.yaw, pitch: cart.pitch,
@@ -352,34 +410,28 @@ export class ServerGameplay {
         passengerId: passengers?.get(cart.id),
       });
     }
-    for (const tnt of this.redstone.primedTnt) {
-      if (!inRange(tnt.position.x, tnt.position.y, tnt.position.z)) continue;
-      list.push({
-        id: tnt.id, kind: 'tnt',
-        x: tnt.position.x, y: tnt.position.y, z: tnt.position.z,
-        vx: tnt.velocity.x, vy: tnt.velocity.y, vz: tnt.velocity.z,
-        primed: true, fuse: tnt.fuseSeconds,
+    const mobs: EntitySnapshot[] = [];
+    for (const mob of this.mobs.entities) {
+      if (!inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
+      mobs.push({
+        id: mob.id, kind: 'mob',
+        x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw,
+        vx: mob.velocity.x, vy: mob.velocity.y, vz: mob.velocity.z,
+        mobKind: mob.kind, health: mob.health, maxHealth: mob.definition.maxHealth,
+        onFire: mob.isOnFire, hurt: mob.hurtFlashSeconds > 0, state: mob.state,
       });
     }
-    for (const arrow of this.arrows.entities) {
-      if (!inRange(arrow.position.x, arrow.position.y, arrow.position.z)) continue;
-      list.push({
-        id: arrow.id, kind: 'arrow',
-        x: arrow.position.x, y: arrow.position.y, z: arrow.position.z,
-        vx: arrow.velocity.x, vy: arrow.velocity.y, vz: arrow.velocity.z,
-        onFire: arrow.flaming,
+    const items: EntitySnapshot[] = [];
+    for (const item of this.drops.entities) {
+      if (!inRange(item.position.x, item.position.y, item.position.z)) continue;
+      items.push({
+        id: item.id, kind: 'item',
+        x: item.position.x, y: item.position.y, z: item.position.z,
+        vx: item.velocity.x, vy: item.velocity.y, vz: item.velocity.z,
+        itemId: item.stack.itemId, count: item.stack.count,
       });
     }
-    for (const entity of this.falling.list) {
-      if (!inRange(entity.position.x, entity.position.y, entity.position.z)) continue;
-      list.push({
-        id: entity.id, kind: 'falling',
-        x: entity.position.x, y: entity.position.y, z: entity.position.z,
-        vx: entity.velocity.x, vy: entity.velocity.y, vz: entity.velocity.z,
-        blockId: entity.block,
-      });
-    }
-    return list.slice(0, 96);
+    return packEntitySnapshots({ arrows, tnt, falling, minecarts, mobs, items });
   }
 
   persistEntities(): Pick<WorldDiskState, 'droppedItems' | 'mobs' | 'minecarts' | 'fallingBlocks' | 'redstone' | 'chests' | 'furnaces'> {

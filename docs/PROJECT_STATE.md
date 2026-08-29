@@ -2,6 +2,16 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: entity interpolation / input recovery / visual sync
+
+- Ветка `cursor/entity-interpolation-input-visual-sync-bbb1` от gameplay `fe1509f` (`cursor/full-anarchy-server-gameplay-bbb1`). **Не merge в main.** Не работать поверх чужого `main`.
+- Two-client QA PR #15: authority ок, но remote mobs/entities дёргались, WASD мог «умереть» после chat/tab, hurt/death/bow/arrow visuals не доезжали.
+- Root cause jitter: `applyEntitySnapshots` писал `previousPosition = position` + `position = snapshot` в момент пакета; `interpolateVisuals(alpha)` использовал **client tick alpha**, не время между server ticks. Remote players уже были на delayed history (`RemotePlayerView` ~80 ms).
+- Fix: `EntityInterpolationBuffer` — tick-ordered snapshot history, render sample at `now - 80ms`, shortest-yaw, teleport snap (`ENTITY_SNAP_DISTANCE`), spawn immediate, remove drops history. Local player chase / remote players / other entities остаются тремя режимами.
+- Input: `window.blur` больше не ставит BACKGROUND, если `document.hasFocus()` (pointer-lock/chat spurious blur). Tab hide (`visibilitychange`) по-прежнему BACKGROUND. Chat close / canvas click / pointer lock / focus вызывают `resumePlayingIfVisible` + `clearHeldKeys` + canvas focus. Stale chat INPUT больше не глотает WASD.
+- Visual events: server `entity_event` (`hurt` / `death` / `projectile_spawn` / `projectile_hit`) + snapshot state. Per-entity hurt flash и death pose; client не emit'ит loot. Bow draw — visual-only `bowUseTicks` из hold RMB. Arrows packed first in interest snapshots (cap 96) + interpolator.
+- IndexedDB Anarchy spawn **не** импортируется. Новых gameplay systems нет.
+
 ## Последний проход: full Anarchy server gameplay
 
 - Ветка `cursor/full-anarchy-server-gameplay-bbb1` от foundation `15ca54f` / `origin/main` `a056e6f`. **Не merge в main.** Отдельный draft PR (не #14).

@@ -70,6 +70,8 @@ export class PlayerArrowManager {
       readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
       readonly onMobHit?: (accepted: boolean, position: THREE.Vector3) => void;
       readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
+      readonly onSpawn?: (id: string) => void;
+      readonly onRemove?: (id: string) => void;
     } = {},
   ) {
     this.visuals = options.visualFactory ?? new ArrowVisualFactory();
@@ -79,12 +81,16 @@ export class PlayerArrowManager {
     this.onBlockHit = options.onBlockHit;
     this.onMobHit = options.onMobHit;
     this.onMinecartHit = options.onMinecartHit;
+    this.onSpawn = options.onSpawn;
+    this.onRemove = options.onRemove;
   }
 
   private readonly minecarts?: MinecartManager;
   private readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
   private readonly onMobHit?: (accepted: boolean, position: THREE.Vector3) => void;
   private readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
+  private readonly onSpawn?: (id: string) => void;
+  private readonly onRemove?: (id: string) => void;
 
   get count(): number {
     return this.arrows.length;
@@ -123,6 +129,7 @@ export class PlayerArrowManager {
       flaming,
       pickupDelay: ARROW_PICKUP_DELAY_SECONDS,
     });
+    this.onSpawn?.(this.arrows[this.arrows.length - 1]!.id);
   }
 
   applyNetwork(
@@ -134,6 +141,7 @@ export class PlayerArrowManager {
     vy: number,
     vz: number,
     flaming: boolean,
+    options?: { readonly snapVisual?: boolean },
   ): void {
     const existing = this.arrows.find((arrow) => arrow.id === id);
     if (existing) {
@@ -141,8 +149,10 @@ export class PlayerArrowManager {
       existing.position.set(x, y, z);
       existing.velocity.set(vx, vy, vz);
       existing.flaming = flaming;
-      existing.visual.position.copy(existing.position);
-      this.orient(existing.visual, existing.velocity);
+      if (options?.snapVisual !== false) {
+        existing.visual.position.copy(existing.position);
+        this.orient(existing.visual, existing.velocity);
+      }
       return;
     }
     const speed = Math.hypot(vx, vy, vz) || 1;
@@ -155,6 +165,20 @@ export class PlayerArrowManager {
       created.visual.position.copy(created.position);
       this.orient(created.visual, created.velocity);
     }
+  }
+
+  applyRenderPose(id: string, x: number, y: number, z: number, vx: number, vy: number, vz: number): void {
+    const arrow = this.arrows.find((entry) => entry.id === id);
+    if (!arrow) return;
+    arrow.visual.position.set(x, y, z);
+    const speedSq = vx * vx + vy * vy + vz * vz;
+    if (speedSq > 1e-8) arrow.velocity.set(vx, vy, vz);
+    this.orient(arrow.visual, arrow.velocity);
+  }
+
+  removeById(id: string): void {
+    const index = this.arrows.findIndex((arrow) => arrow.id === id);
+    if (index >= 0) this.remove(index);
   }
 
   retain(ids: ReadonlySet<string>): void {
@@ -347,6 +371,7 @@ export class PlayerArrowManager {
   private remove(index: number): void {
     const arrow = this.arrows[index];
     if (!arrow) return;
+    this.onRemove?.(arrow.id);
     arrow.visual.removeFromParent();
     this.arrows.splice(index, 1);
   }

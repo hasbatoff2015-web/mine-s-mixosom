@@ -7,3 +7,8 @@ export {
   stepTowardTarget,
 } from './authoritativeMotion';
 export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
+export {
+  EntityInterpolationBuffer,
+  sampleEntityPose,
+  ENTITY_INTERP_DELAY_MS,
+} from './entitySnapshotInterpolation';

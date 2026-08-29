@@ -592,6 +592,10 @@ export class WorldInstance {
       this.flushPlayerInventory(player, false);
       this.flushHealth(player);
     }
+    const entityEvents = this.gameplay.consumeEntityEvents();
+    if (entityEvents.length > 0) {
+      this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
+    }
     if (this.tickNumber % 20 === 0) {
       this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
     }

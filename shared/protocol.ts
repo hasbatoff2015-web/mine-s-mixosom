@@ -91,6 +91,13 @@ export interface EntitySnapshot {
   readonly blockId?: number;
 }
 
+export type NetworkEntityEventKind = 'hurt' | 'death' | 'projectile_spawn' | 'projectile_hit';
+
+export interface NetworkEntityEvent {
+  readonly entityId: string;
+  readonly kind: NetworkEntityEventKind;
+}
+
 export interface BlockChange {
   readonly x: number;
   readonly y: number;
@@ -347,6 +354,12 @@ export interface ServerEntitySnapshotMessage {
   readonly entities: readonly EntitySnapshot[];
 }
 
+export interface ServerEntityEventMessage {
+  readonly type: 'entity_event';
+  readonly tick: number;
+  readonly events: readonly NetworkEntityEvent[];
+}
+
 export interface ServerCommandResultMessage {
   readonly type: 'command_result';
   readonly ok: boolean;
@@ -377,6 +390,7 @@ export type ServerMessage =
   | ServerHealthMessage
   | ServerEffectsMessage
   | ServerEntitySnapshotMessage
+  | ServerEntityEventMessage
   | ServerCommandResultMessage
   | ServerTimeMessage;
 
@@ -414,6 +428,7 @@ export const SERVER_MESSAGE_TYPES = [
   'health',
   'effects',
   'entity_snapshot',
+  'entity_event',
   'command_result',
   'time',
 ] as const satisfies readonly ServerMessage['type'][];
@@ -709,6 +724,21 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'entity_snapshot invalid' };
       }
       return raw as unknown as ServerEntitySnapshotMessage;
+    }
+    case 'entity_event': {
+      if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.events)) {
+        return { error: 'entity_event invalid' };
+      }
+      const events: NetworkEntityEvent[] = [];
+      for (const entry of raw.events) {
+        if (!isRecord(entry) || typeof entry.entityId !== 'string' || entry.entityId.length === 0) continue;
+        if (entry.kind !== 'hurt' && entry.kind !== 'death'
+          && entry.kind !== 'projectile_spawn' && entry.kind !== 'projectile_hit') {
+          continue;
+        }
+        events.push({ entityId: entry.entityId, kind: entry.kind });
+      }
+      return { type: 'entity_event', tick: raw.tick, events };
     }
     case 'health': {
       if (!finite(raw.health) || !finite(raw.hunger) || !bool(raw.dead) || !bool(raw.fire)) {

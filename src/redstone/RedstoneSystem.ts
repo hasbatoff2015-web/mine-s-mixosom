@@ -149,8 +149,10 @@ export class RedstoneSystem {
       readonly vz: number;
       readonly fuse: number;
     }>,
+    options?: { readonly snapVisual?: boolean },
   ): void {
     const seen = new Set<string>();
+    const snapVisual = options?.snapVisual !== false;
     for (const entry of entries) {
       seen.add(entry.id);
       const existing = this.primedById.get(entry.id);
@@ -159,7 +161,7 @@ export class RedstoneSystem {
         existing.position.set(entry.x, entry.y, entry.z);
         existing.velocity.set(entry.vx, entry.vy, entry.vz);
         existing.fuseSeconds = Math.max(0.05, entry.fuse);
-        existing.visual?.position.copy(existing.position);
+        if (snapVisual) existing.visual?.position.copy(existing.position);
         continue;
       }
       this.createPrimedTnt(
