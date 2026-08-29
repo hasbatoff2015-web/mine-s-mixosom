@@ -4,7 +4,7 @@
 
 - [x] Resume/re-entry after Anarchy→SP→Anarchy accepts a new client input seq (server resets lastInputSeq).
 - [x] Stale AnarchyClient / old websocket callbacks ignored.
-- [x] PR #19 death→respawn contract kept.
+- [x] PR #19 death→respawn contract kept. Draft PR **#20** stacked on #19 (not origin/main).
 - [ ] Owner local QA (fresh / menu / SP / Anarchy transitions, repeat). **Do not merge main.**
 
 ## 2026-08-29: online respawn WASD (stabilization)
