@@ -10,7 +10,8 @@
 - Block state: live `block_update`/`block_batch` несут optional `state`. `onCommittedBlockState` включает fluid level / door / button. Клиент `applyNetworkBlockChanges` — id затем state; `writeBlockRaw` больше не оставляет жидкости без level.
 - Interact: RMB online только `interact`; server `useHeld` + raycast/look. Placement orientation уже был в `applyPlacementState`.
 - Fluids: не новый renderer. Live updates теперь с `fluidLevel`/`fluidFalling`; neighbor `neighborFluidMeshOffsets` dirty; batch затем один remesh. Client online не тикает fluids.
-- Report: `docs/reports/2026-08-29_online-blockstates-fluid-render-respawn.md`. Draft PR. **Не merge.** Owner local QA.
+- Targeted: `network-block-state-respawn` + `network-input-recovery` + `anarchy-gameplay` **35/35**. `tsc` clean. Production build/size PASS 3.63 MiB / 221 files. Full `npm run check` **1056 passed / 7 failed** (authored ENOENT `bucket_empty.png` + minecart 5s timeouts, same pre-existing class as PR #16) + 1 vitest RPC timeout.
+- Report: `docs/reports/2026-08-29_online-blockstates-fluid-render-respawn.md`. Draft PR **#17**. **Не merge.** Owner local QA.
 
 ## Последний проход: entity interpolation / input recovery / visual sync
 

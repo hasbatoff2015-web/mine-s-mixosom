@@ -6,7 +6,8 @@
 - [x] Network `BlockRenderState` on live block packets; server `onCommittedBlockState`.
 - [x] Client `applyNetworkBlockChanges` so live fluids keep corner slopes (reuse `fluidCornerHeight`).
 - [x] Server interact/placement from look + raycast; button/door state broadcast.
-- [x] Targeted tests (respawn movement, directional states, live fluid remesh, persist).
+- [x] Targeted tests (respawn movement, directional states, live fluid remesh, persist) 35/35; production build/size PASS.
+- [x] Draft PR #17 stacked on PR #16 (not origin/main).
 - [ ] Owner two-client localhost QA (respawn WASD, directional place, button/door, live water/lava slope).
 - [ ] Do not merge main until that QA.
 

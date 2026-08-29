@@ -76,6 +76,8 @@ Placement orientation, interaction outcomes, and fluid sim stay server-side. Cli
 - `tests/network-input-recovery.test.ts` — respawn PLAYING contract.
 - `tests/server/anarchy-gameplay.test.ts` — WASD after `/kill`; two-client respawn move; chest/furnace facing; wall vs floor torch; ladder/button/door interact; stairs/rails/lantern/chain; live fluid levels; persist door/button/fluid.
 
+Targeted three files **35/35**. `tsc --noEmit` clean. Production `vite build` + `check:size` PASS (3.63 MiB / 221 files). Full `npm run check` **1056 passed / 7 failed**: authored-item-assets ENOENT (`assets/minecraft/textures/items/bucket_empty.png`) and minecart tests timed out at 5s — same pre-existing class as PR #16, not introduced here — plus 1 vitest worker RPC timeout.
+
 ## Performance
 
 Server still 20 TPS. Fluid updates still batched. Remesh is dirty-chunk, not full world. `WORLD_LIGHT_BUDGET_MS` unchanged. Network apply skips client fluid/support scheduling.
@@ -111,4 +113,8 @@ Owner localhost QA per the task checklist, then iterate. Do not merge main.
 
 ## Git
 
-Branch `cursor/online-blockstates-fluid-render-respawn-bbb1` from PR #16 `76b8f87`, not `origin/main`.
+- Branch: `cursor/online-blockstates-fluid-render-respawn-bbb1` (cloud suffix `-bbb1`; requested name without suffix).
+- Base: PR #16 `cursor/entity-interpolation-input-visual-sync-bbb1` @ `76b8f87`, **not** `origin/main` (`a056e6f`).
+- Implementation HEAD: `23ff65c`.
+- Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/17
+- Status: pushed, freeze for owner local QA. Do not merge main.
