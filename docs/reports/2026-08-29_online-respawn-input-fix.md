@@ -92,4 +92,5 @@ Owner local QA, then stop. Do not merge main.
 
 - Branch: `cursor/online-respawn-input-fix-bbb1`
 - Base: `cursor/shared-game-core-kernel-bbb1` @ `c75497b`
+- HEAD: `c97565d` (implementation)
 - Do not merge `origin/main`
