@@ -4,7 +4,7 @@
 
 Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
 
-Placement stays in `Game.useTargetOrItem` plus `world/placement.ts`. Vertical hit only. `attachment: floor | ceiling` is stored in existing `blockStates`. `canSupportHanger` accepts a sturdy cube/slab/stair face **or** another chain/lantern so a hanging lantern continues a chain. Support integrity is the existing neighbor queue; hanging chains are not supported by the chain below, so breaking the ceiling cascades.
+Placement lives in `src/gameplay/useInteraction.ts` (`placeFromHit` / `placeBlockAt`) plus `world/placement.ts` support tests. Singleplayer `Game.useTargetOrItem` and Anarchy `ServerGameplay.useHeld` / `placeBlock` call that one simulation. Vertical hit only. `attachment: floor | ceiling` is stored in existing `blockStates`. `canSupportHanger` accepts a sturdy cube/slab/stair face **or** another chain/lantern so a hanging lantern continues a chain. Support integrity is the existing neighbor queue; hanging chains are not supported by the chain below, so breaking the ceiling cascades.
 
 Light uses `BlockDefinition.emission` and the current add-emitter / region relight path. Torch stays 14. No extra per-frame scans and no lighting budget change.
 
@@ -82,7 +82,7 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
-Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. `ServerGameplay` still owns a dummy `THREE.Group` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions). `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Use is `interact` only; `ServerGameplay.useHeld` / `placeAt` resolve facing from server look + raycast.
+Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. RMB use/placement is **`src/gameplay/useInteraction.ts`**: SP and the server share `performUseHeld` / `placeBlockAt`; hosts keep UI vs plugin/window effects. `ServerGameplay` still owns a dummy `THREE.Group` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions). `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Use is `interact` only; the server runs the shared `performUseHeld` from authoritative look + raycast. `place_block` still exists for look-validated creative/explicit coords and uses the same `placeBlockAt`.
 
 Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `craft` / `interact` / `attack` / `pickup` / `vehicle_input` plus `input.mining` / `use` / `vehicleForward`; server `block_batch` / `block_update` (optional `state`) / `health` / `effects` / `entity_snapshot` / `entity_event` / `command_result` / `time`. Unknown server types still reject.
 
@@ -174,6 +174,27 @@ world.tick
 Host extras after a completed kernel tick: SP autosave/HUD; server riding snapshot flush, `block_batch`, `player_state`, `entity_snapshot`.
 
 Такой порядок даёт простой детерминированный каркас, но не заявляет bit-exact vanilla ordering.
+
+### Shared interaction (Phase 2)
+
+
+`src/gameplay/useInteraction.ts` is the shared **use and placement simulation**. It does not own UI, audio, plugins, or networking.
+
+```text
+              performUseHeld / placeBlockAt
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+         Game (SP)            ServerGameplay
+              │                     │
+     toasts / SFX / UI      events / window / dirty
+```
+
+**In the module:** empty-bucket pickup, use-target blocks (when closer than a cart), food/bow start, flint, TNT-cart, minecart-on-rail, nearby cart mount, filled bucket, placement (anchors, lantern/chain support, slab merge, facing/attachment).
+
+**Hosts:** SP `Game.useTargetOrItem` (online: send `interact` only). Server `useHeld` (no hit: raycast from look) and `placeBlock` (look-validated cell → `placeBlockAt`). `world/placement.ts` remains the support/anchor tests.
+
+**Not here:** combat/mining, GameplayKernel order, protocol, EntityHost, geometry extraction.
 
 ## Lifecycle
 

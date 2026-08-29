@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-29 Phase 2 shared interaction
+
+Report: `reports/2026-08-29_shared-interaction.md`.
+
+Targeted: `tests/use-interaction.test.ts` (intent order, `placeFromHit`, online `interact`-only) plus retained `placement-support` (still `Game.useTargetOrItem`), `glowstone-lantern-chain`, `gameplay-kernel`, `tests/server/anarchy-gameplay.test.ts` / `anarchy-server.test.ts`, bucket + network block-state/input packs.
+
 ## 2026-08-29 Anarchy server QA fixes
 
 Report: `reports/2026-08-29_local-server-qa-fixes.md`.
@@ -174,7 +180,8 @@ Targeted suite — 205/205 в 19 файлах; typecheck/build/size/archive PASS
 
 - `authored-item-assets.test.mjs`: точные bytes source→runtime, deterministic potion tint/alpha/cork, repeated import, forced fallback precedence, missing-required preflight без потери runtime files.
 - `arrow-visual-cleanup.test.ts`: finite geometry/UV/normals, tail-only fins, +Z orientation и embedded tip по шести направлениям, stable inGround quaternion, 240 shots → cap48, geometry1/materials2/texture1, removal без children.
-- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch.
+- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch. После Phase 2 это тот же `performUseHeld`.
+- `use-interaction.test.ts`: чистый `resolveUseIntent` (bucket / lever / door / cartCloser / food / place), `placeFromHit` torch+lantern support, online client шлёт только `interact`.
 - `shield-removal.test.ts`: player/offhand/armor/chest/furnace/drop migration, сохранность metadata/durability/bucket overflow, Game damage+armor+normal knockback без active blocking, отсутствие shield-specific runtime. Sword blocking добавлен последующим classic pass; `/give shield` обязан завершаться ошибкой.
 
 Browser QA **не пройден**: браузер ранее отклонил localhost по policy; сейчас browser/user tabs пусты. Обход через другой host/browser/CDP не использовался. PNG inspection и component tests не означают WebGL acceptance.

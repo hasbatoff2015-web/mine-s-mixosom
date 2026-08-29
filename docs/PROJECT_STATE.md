@@ -2,6 +2,16 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Phase 2 shared interaction
+
+- Ветка `cursor/shared-interaction-bbb1` от PR #20 HEAD `05e77a8` (`cursor/online-session-transition-input-fix-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Одна simulation-level use/placement: `src/gameplay/useInteraction.ts` (`performUseHeld` / `placeFromHit` / `placeBlockAt`). Hosts: SP `Game.useTargetOrItem`, server `ServerGameplay.useHeld` + `placeBlock`.
+- UI/audio/toasts/swing/save — SP effects. Plugin events / `player.window` / `inventoryDirty` — server effects. Online client по-прежнему только `interact`; local use не симулируется.
+- Канонический порядок и placement rules — бывший SP path (anchors, lantern/chain support, slab merge, rail-only minecart, cartCloser перед block-use). Серверный `placeAt`/`applyPlacementState` не дублирует правила.
+- Не тронуты: GameplayKernel, interpolation, fluids/block-state protocol, respawn/session input (#19/#20), Phase 3+ (geometry, EntityHost, persistence, RNG, plugins architecture).
+- Targeted: `use-interaction` 10 + placement/glowstone/kernel/anarchy/network/bucket pack **115 + 120** focused greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Report: `docs/reports/2026-08-29_shared-interaction.md`. Draft PR stacked on #20. **Не merge.** Owner local QA (SP place/use + Anarchy interact same rules). **Не начинать Phase 3.**
+
 ## Последний проход: online session transition WASD
 
 - Ветка `cursor/online-session-transition-input-fix-bbb1` от PR #19 HEAD `0723c6e`. **Не merge в main.**

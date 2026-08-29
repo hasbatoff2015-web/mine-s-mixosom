@@ -1,11 +1,22 @@
 # Roadmap
 
+## 2026-08-29: Phase 2 shared interaction
+
+- [x] One simulation `useHeld` / placement path for SP and Anarchy server (`src/gameplay/useInteraction.ts`).
+- [x] Host effects stay split: SP UI/SFX vs server events/window/inventoryDirty.
+- [x] Online client still sends `interact` only (no local place/use sim).
+- [x] No Phase 3+ (geometry, EntityHost, persistence, RNG, plugins, renderer moves). Protocol unchanged.
+- [x] Draft PR stacked on PR #20 (not origin/main).
+- [ ] Owner local QA: SP place/use (torch/door/lantern/slab/bucket) and Anarchy interact/place match; death→respawn WASD and Anarchy→menu→Anarchy still work.
+- [ ] Do not merge main. Do not start Phase 3.
+
 ## 2026-08-29: online session transition WASD
 
 - [x] Resume/re-entry after Anarchy→SP→Anarchy accepts a new client input seq (server resets lastInputSeq).
 - [x] Stale AnarchyClient / old websocket callbacks ignored.
 - [x] PR #19 death→respawn contract kept. Draft PR **#20** stacked on #19 (not origin/main).
 - [ ] Owner local QA (fresh / menu / SP / Anarchy transitions, repeat). **Do not merge main.**
+- [x] Phase 2 interaction unify is on `cursor/shared-interaction-bbb1` (stacked on #20). **Do not start Phase 3.**
 
 ## 2026-08-29: online respawn WASD (stabilization)
 
@@ -14,7 +25,6 @@
 - [x] Not a `/kill` special case; not client-authoritative movement; GameplayKernel / interpolation / fluids untouched.
 - [x] Targeted tests: death paths, consecutive deaths, two clients, chat/tab/pointer-lock lifecycle. Draft PR **#19** stacked on #18 (not origin/main).
 - [ ] Owner local QA (zombie/fall/fire/lava/TNT/`/kill`, chat, ESC, two clients, repeat deaths). **Stop for that QA. Do not merge main.**
-- [ ] Phase 2 interaction unify is **not started**.
 
 ## 2026-08-29: GameplayKernel (Phase 1)
 
@@ -24,7 +34,7 @@
 - [x] Draft PR #18 stacked on PR #17 (not origin/main).
 - [ ] Owner SP + two-client QA: movement, mobs, fluids, minecart, TNT, combat — behavior should match PR #17.
 - [ ] Do not merge main until that QA.
-- [ ] Next (not started): Phase 2 interaction unify (`useHeld` / `useTargetOrItem`).
+- [x] Next: Phase 2 interaction unify (`useHeld` / `useTargetOrItem`) — see section above. **Do not start Phase 3.**
 
 ## 2026-08-29: online blockstates / live fluids / respawn input
 

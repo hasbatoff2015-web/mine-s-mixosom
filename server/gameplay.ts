@@ -2,23 +2,11 @@ import * as THREE from 'three';
 import {
   BlockId,
   getBlockDefinition,
-  isKnownBlockId,
   isPressurePlateBlock,
-  isRailBlock,
   isSlabBlock,
-  isStairBlock,
   miningProgressPerTick,
   miningToolFromItemId,
   canHarvestBlock,
-  buttonPlacementFromHit,
-  chestFacingFromYaw,
-  doorFacingFromYaw,
-  furnaceFacingFromYaw,
-  ladderPlacementFromHit,
-  lanternPlacementFromHit,
-  slabTypeFromHit,
-  stairPlacementFromHit,
-  torchPlacementFromHit,
   type BlockRenderState,
 } from '../src/blocks';
 import {
@@ -33,12 +21,18 @@ import {
   FIXED_DT,
   PLAYER_NET_REACH,
   PLAYER_REACH,
-  WORLD_HEIGHT,
   blockKey,
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
-import { daylightFactor, tickGameplayKernel } from '../src/gameplay';
+import {
+  clearDoorBlocks,
+  daylightFactor,
+  performUseHeld,
+  placeBlockAt,
+  tickGameplayKernel,
+  type UseSimulationContext,
+} from '../src/gameplay';
 import {
   DroppedItemManager,
   FallingBlockManager,
@@ -46,18 +40,14 @@ import {
   MobManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
-  resolveFlintAndSteelUse,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { ItemId, tryGetItemDefinition } from '../src/items';
-import { pickupFluidSource, placeBucketFluid } from '../src/items/bucketInteraction';
 import { PlayerController } from '../src/player';
 import { RedstoneSystem } from '../src/redstone';
 import {
   defaultSlabType,
-  isolatedRailShapeFromYaw,
-  resolveRailShape,
 } from '../src/rendering/specialBlockGeometry';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { SurvivalSystem } from '../src/survival';
@@ -591,87 +581,65 @@ export class ServerGameplay {
         }
       }
     }
-    return this.placeAt(player, x, y, z, requestedBlock, hit);
+    return placeBlockAt(this.useContext(player), x, y, z, requestedBlock, hit);
   }
 
   useHeld(player: GameplayPlayer): void {
     if (player.survival.dead) return;
-    const origin = player.controller.eyePosition(this.tmpEye);
-    const direction = player.controller.viewDirection(this.tmpDir);
-    const hit = this.world.raycast(origin, direction, PLAYER_REACH);
-    const cartRay = this.minecarts.raycast(origin, direction, PLAYER_REACH, player.ridingCartId);
-    const stack = player.inventory.getSlot(player.selectedSlot);
-    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
+    performUseHeld(this.useContext(player));
+  }
 
-    if (stack?.itemId === ItemId.Bucket) {
-      pickupFluidSource({
-        world: this.world, inventory: player.inventory, selectedSlot: player.selectedSlot,
-        mode: player.gamemode, onDrop: (dropped) => this.dropFromPlayer(player, dropped),
-      }, origin, direction, PLAYER_REACH);
-      player.inventoryDirty = true;
-      return;
-    }
-    if (hit) {
-      const interact = this.events.createPlayerInteract(player.id, hit.x, hit.y, hit.z, hit.block);
-      this.events.emit('playerInteract', interact);
-      if (interact.cancelled) return;
-      if (hit.block === BlockId.CraftingTable) {
-        player.window = { kind: 'crafting-table', x: hit.x, y: hit.y, z: hit.z };
-        player.craftSlots = Array.from({ length: 9 }, () => null);
-        player.inventoryDirty = true;
-        return;
-      }
-      if (hit.block === BlockId.Chest) {
-        player.window = { kind: 'chest', x: hit.x, y: hit.y, z: hit.z };
-        player.inventoryDirty = true;
-        return;
-      }
-      if (hit.block === BlockId.Furnace) {
-        player.window = { kind: 'furnace', x: hit.x, y: hit.y, z: hit.z };
-        player.inventoryDirty = true;
-        return;
-      }
-      if (hit.block === BlockId.Lever) { this.redstone.toggleLever(hit.x, hit.y, hit.z); return; }
-      if (hit.block === BlockId.StoneButton) { this.redstone.pressButton(hit.x, hit.y, hit.z); return; }
-      if (hit.block === BlockId.OakDoor) { this.toggleDoor(hit.x, hit.y, hit.z); return; }
-      if (hit.block === BlockId.WhiteBed) {
-        player.survival.setSpawnPoint([hit.x + 0.5, hit.y + 1.01, hit.z + 0.5]);
-        if (this.world.timeOfDay > 12_500 && this.world.timeOfDay < 23_500) this.world.timeOfDay = 1_000;
-        return;
-      }
-    }
-    if (item?.kind === 'food') { player.foodUseTicks = 1; return; }
-    if (stack?.itemId === ItemId.Bow) { player.bowUseTicks = 1; return; }
-
-    const cartCloser = Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
-    if (cartCloser && cartRay) {
-      if (stack?.itemId === ItemId.FlintAndSteel) { this.useFlint(player, undefined); return; }
-      if (stack?.itemId === 'tnt' && this.insertTntCart(player, undefined)) return;
-      if (this.minecarts.isRideable(cartRay.cart)) this.enterVehicle(player, cartRay.cart.id);
-      return;
-    }
-    if (stack?.itemId === ItemId.FlintAndSteel) { this.useFlint(player, hit); return; }
-    if (stack?.itemId === 'tnt' && this.insertTntCart(player, hit)) return;
-    if (stack?.itemId === ItemId.Minecart) { this.placeMinecart(player, hit); return; }
-    if (stack?.itemId === ItemId.WaterBucket || stack?.itemId === ItemId.LavaBucket) {
-      placeBucketFluid({
-        world: this.world, inventory: player.inventory, selectedSlot: player.selectedSlot,
-        mode: player.gamemode, onDrop: (dropped) => this.dropFromPlayer(player, dropped),
-      }, hit);
-      player.inventoryDirty = true;
-      return;
-    }
-    if (hit && stack && item?.placesBlockId !== undefined) {
-      const replaceHit = getBlockDefinition(hit.block).replaceable === true;
-      this.placeAt(
-        player,
-        replaceHit ? hit.x : hit.x + hit.normal.x,
-        replaceHit ? hit.y : hit.y + hit.normal.y,
-        replaceHit ? hit.z : hit.z + hit.normal.z,
-        item.placesBlockId,
-        hit,
-      );
-    }
+  private useContext(player: GameplayPlayer): UseSimulationContext {
+    const gameplay = this;
+    return {
+      world: this.world,
+      inventory: player.inventory,
+      get selectedSlot() { return player.selectedSlot; },
+      set selectedSlot(value) { player.selectedSlot = value; },
+      gamemode: player.gamemode,
+      reach: PLAYER_REACH,
+      eyePosition: () => player.controller.eyePosition(gameplay.tmpEye).clone(),
+      viewDirection: () => player.controller.viewDirection(gameplay.tmpDir).clone(),
+      get yaw() { return player.controller.yaw; },
+      get position() { return player.controller.position; },
+      intersectsBlock: (x, y, z) => player.controller.intersectsBlock(x, y, z),
+      intersectsCollisionBoxes: (boxes) => player.controller.intersectsCollisionBoxes(boxes),
+      get foodUseTicks() { return player.foodUseTicks; },
+      set foodUseTicks(value) { player.foodUseTicks = value; },
+      get bowUseTicks() { return player.bowUseTicks; },
+      set bowUseTicks(value) { player.bowUseTicks = value; },
+      get ridingCartId() { return player.ridingCartId; },
+      set ridingCartId(value) { player.ridingCartId = value; },
+      minecarts: this.minecarts,
+      redstone: this.redstone,
+      setSpawnPoint: (position) => player.survival.setSpawnPoint(position),
+      allowInteract: (x, y, z, block) => {
+        const event = gameplay.events.createPlayerInteract(player.id, x, y, z, block);
+        gameplay.events.emit('playerInteract', event);
+        return !event.cancelled;
+      },
+      allowPlace: (x, y, z, block) => {
+        const event = gameplay.events.createBlockPlace(player.id, x, y, z, block);
+        gameplay.events.emit('blockPlace', event);
+        return !event.cancelled;
+      },
+      enterVehicle: (cartId) => gameplay.enterVehicle(player, cartId),
+      effects: {
+        openContainer: (kind, x, y, z) => {
+          if (kind === 'crafting-table') {
+            player.window = { kind: 'crafting-table', x, y, z };
+            player.craftSlots = Array.from({ length: 9 }, () => null);
+          } else if (kind === 'chest') {
+            player.window = { kind: 'chest', x, y, z };
+          } else {
+            player.window = { kind: 'furnace', x, y, z };
+          }
+          player.inventoryDirty = true;
+        },
+        onInventoryChanged: () => { player.inventoryDirty = true; },
+        dropOverflow: (stack) => gameplay.dropFromPlayer(player, stack),
+      },
+    };
   }
 
   attack(player: GameplayPlayer, others: readonly GameplayPlayer[] = []): void {
@@ -899,191 +867,8 @@ export class ServerGameplay {
     return dx * dx + dy * dy + dz * dz <= PLAYER_NET_REACH * PLAYER_NET_REACH;
   }
 
-  private placeAt(
-    player: GameplayPlayer,
-    x: number,
-    y: number,
-    z: number,
-    requestedBlock: number | undefined,
-    hit?: VoxelHit,
-  ): { ok: true } | { ok: false; reason: string } {
-    if (!isValidWorldY(y)) return { ok: false, reason: 'bounds' };
-    const existing = this.world.getBlock(x, y, z);
-    const existingDef = getBlockDefinition(existing);
-    if (existing !== BlockId.Air && existingDef.replaceable !== true) return { ok: false, reason: 'occupied' };
-    let blockId: number | undefined;
-    if (player.gamemode === 'creative' && requestedBlock !== undefined && isKnownBlockId(requestedBlock) && requestedBlock !== BlockId.Air) {
-      blockId = requestedBlock;
-    } else {
-      const stack = player.inventory.getSlot(player.selectedSlot);
-      blockId = stack ? tryGetItemDefinition(stack.itemId)?.placesBlockId : undefined;
-      if (blockId === undefined) return { ok: false, reason: 'inventory' };
-    }
-    if (!isKnownBlockId(blockId) || blockId === BlockId.Air) return { ok: false, reason: 'block' };
-    const placed = getBlockDefinition(blockId);
-    if (placed.solid !== false && player.controller.intersectsBlock(x, y, z)) return { ok: false, reason: 'collision' };
-    const event = this.events.createBlockPlace(player.id, x, y, z, blockId);
-    this.events.emit('blockPlace', event);
-    if (event.cancelled) return { ok: false, reason: 'cancelled' };
-    if (blockId === BlockId.OakDoor) this.placeDoor(player, x, y, z);
-    else if (!this.world.setBlock(x, y, z, blockId)) return { ok: false, reason: 'rejected' };
-    else this.applyPlacementState(player, x, y, z, blockId, hit);
-    if (player.gamemode === 'survival') {
-      const stack = player.inventory.getSlot(player.selectedSlot);
-      if (!stack) {
-        this.world.setBlock(x, y, z, existing);
-        return { ok: false, reason: 'inventory' };
-      }
-      player.inventory.setSlot(player.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-      player.inventoryDirty = true;
-    }
-    return { ok: true };
-  }
-
-  private applyPlacementState(player: GameplayPlayer, x: number, y: number, z: number, blockId: number, hit?: VoxelHit): void {
-    const normal = hit && getBlockDefinition(hit.block).replaceable === true
-      ? new THREE.Vector3(0, 1, 0)
-      : hit?.normal ?? new THREE.Vector3(0, 1, 0);
-    if (blockId === BlockId.Lantern) {
-      const orientation = lanternPlacementFromHit(normal.x, normal.y, normal.z);
-      if (orientation) this.world.setBlockState(x, y, z, { attachment: orientation.attachment });
-    } else if (blockId === BlockId.Chain) {
-      this.world.setBlockState(x, y, z, { attachment: normal.y < -0.5 ? 'ceiling' : 'floor' });
-    } else if (blockId === BlockId.Torch || blockId === BlockId.RedstoneTorch) {
-      const view = player.controller.viewDirection();
-      const orientation = torchPlacementFromHit(normal.x, normal.y, normal.z, view.x, view.z);
-      if (orientation) this.world.setBlockState(x, y, z, orientation);
-    } else if (blockId === BlockId.StoneButton) {
-      const view = player.controller.viewDirection();
-      const orientation = buttonPlacementFromHit(normal.x, normal.y, normal.z, view.x, view.z);
-      this.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
-    } else if (blockId === BlockId.Ladder && hit) {
-      const orientation = ladderPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z);
-      if (orientation) this.world.setBlockState(x, y, z, { facing: orientation.facing });
-    } else if (isSlabBlock(blockId) && hit) {
-      const localY = hit.point ? hit.point.y - hit.y : 0.25;
-      this.world.setBlockState(x, y, z, { slabType: slabTypeFromHit(hit.normal.x, hit.normal.y, hit.normal.z, localY) });
-    } else if (isStairBlock(blockId) && hit) {
-      const view = player.controller.viewDirection();
-      const localY = hit.point ? hit.point.y - hit.y : 0.25;
-      const placement = stairPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z, localY, view.x, view.z);
-      this.world.setBlockState(x, y, z, { facing: placement.facing, stairHalf: placement.stairHalf });
-    } else if (blockId === BlockId.Chest) {
-      this.world.setBlockState(x, y, z, { facing: chestFacingFromYaw(player.controller.yaw) });
-    } else if (blockId === BlockId.Furnace) {
-      this.world.setBlockState(x, y, z, { facing: furnaceFacingFromYaw(player.controller.yaw) });
-    } else if (isRailBlock(blockId)) {
-      this.world.setBlockState(x, y, z, { railShape: isolatedRailShapeFromYaw(player.controller.yaw) });
-      this.refreshRails(x, y, z);
-    } else if (blockId === BlockId.Lever) {
-      const view = player.controller.viewDirection();
-      const orientation = buttonPlacementFromHit(normal.x, normal.y, normal.z, view.x, view.z);
-      this.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
-    }
-  }
-
-  private placeDoor(player: GameplayPlayer, x: number, y: number, z: number): void {
-    if (y + 1 >= WORLD_HEIGHT) return;
-    if (!this.world.setBlock(x, y, z, BlockId.OakDoor)) return;
-    if (!this.world.setBlock(x, y + 1, z, BlockId.OakDoor)) {
-      this.world.setBlock(x, y, z, BlockId.Air);
-      return;
-    }
-    const facing = doorFacingFromYaw(player.controller.yaw);
-    this.world.setBlockState(x, y, z, { facing, hinge: 'left', open: false, half: 'lower' });
-    this.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
-  }
-
-  private toggleDoor(x: number, y: number, z: number): void {
-    const { lowerY, upperY } = this.doorHalves(x, y, z);
-    const current = this.world.getBlockState(x, lowerY, z) ?? this.world.getBlockState(x, y, z);
-    const next = { facing: current?.facing ?? 'north', hinge: current?.hinge ?? 'left' as const, open: current?.open !== true };
-    this.world.setBlockState(x, lowerY, z, { ...next, half: 'lower' });
-    if (this.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
-      this.world.setBlockState(x, upperY, z, { ...next, half: 'upper' });
-    }
-  }
-
   private removeDoor(x: number, y: number, z: number): void {
-    const { lowerY, upperY } = this.doorHalves(x, y, z);
-    this.world.setBlock(x, lowerY, z, BlockId.Air);
-    if (this.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) this.world.setBlock(x, upperY, z, BlockId.Air);
-  }
-
-  private doorHalves(x: number, y: number, z: number): { lowerY: number; upperY: number } {
-    const half = this.world.getBlockState(x, y, z)?.half
-      ?? (this.world.getBlock(x, y - 1, z, false) === BlockId.OakDoor ? 'upper' : 'lower');
-    const lowerY = half === 'upper' ? y - 1 : y;
-    return { lowerY, upperY: lowerY + 1 };
-  }
-
-  private useFlint(player: GameplayPlayer, hit: VoxelHit | undefined): void {
-    const cart = this.minecarts.handleFlintUse(
-      player.controller.eyePosition(), player.controller.viewDirection(), PLAYER_REACH, player.ridingCartId,
-    );
-    const action = resolveFlintAndSteelUse(cart, hit);
-    if (action.type === 'prime-cart' || action.type === 'already-primed') {
-      if (action.wear && player.gamemode === 'survival') this.wearHeld(player);
-      return;
-    }
-    if (action.type === 'prime-tnt-block') {
-      this.redstone.primeTnt(action.x, action.y, action.z);
-      if (action.wear && player.gamemode === 'survival') this.wearHeld(player);
-      return;
-    }
-    if (action.type === 'ignite-cell' && isValidWorldY(action.y)) {
-      const dest = this.world.getBlock(action.x, action.y, action.z);
-      if (dest !== BlockId.Air && !getBlockDefinition(dest).replaceable) return;
-      this.world.setBlock(action.x, action.y, action.z, BlockId.Fire);
-      if (player.gamemode === 'survival') this.wearHeld(player);
-    }
-  }
-
-  private wearHeld(player: GameplayPlayer): void {
-    const stack = player.inventory.getSlot(player.selectedSlot);
-    if (!stack) return;
-    player.inventory.setSlot(player.selectedSlot, damageItem(stack, 1));
-    player.inventoryDirty = true;
-  }
-
-  private insertTntCart(player: GameplayPlayer, hit: VoxelHit | undefined): boolean {
-    const origin = player.controller.eyePosition();
-    const direction = player.controller.viewDirection();
-    const cart = this.minecarts.raycast(origin, direction, PLAYER_REACH, player.ridingCartId)?.cart
-      ?? (hit ? this.minecarts.cartAt(hit.x, hit.y, hit.z) : this.minecarts.nearest(player.controller.position, 1.6));
-    if (!cart || !this.minecarts.insertTnt(cart)) return false;
-    if (player.gamemode === 'survival') {
-      const stack = player.inventory.getSlot(player.selectedSlot);
-      if (stack) player.inventory.setSlot(player.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-      player.inventoryDirty = true;
-    }
-    if (player.ridingCartId === cart.id) player.ridingCartId = undefined;
-    return true;
-  }
-
-  private placeMinecart(player: GameplayPlayer, hit: VoxelHit | undefined): void {
-    if (!hit) return;
-    const replace = getBlockDefinition(hit.block).replaceable === true;
-    const spawned = this.minecarts.spawn(
-      replace ? hit.x : hit.x + hit.normal.x,
-      replace ? hit.y : hit.y + hit.normal.y,
-      replace ? hit.z : hit.z + hit.normal.z,
-    );
-    if (!spawned) return;
-    if (player.gamemode === 'survival') {
-      const stack = player.inventory.getSlot(player.selectedSlot);
-      if (stack) player.inventory.setSlot(player.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-      player.inventoryDirty = true;
-    }
-  }
-
-  private refreshRails(x: number, y: number, z: number): void {
-    for (const [cx, cy, cz] of [
-      [x, y, z], [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1],
-    ] as const) {
-      if (this.world.getBlock(cx, cy, cz, false) !== BlockId.Rail) continue;
-      this.world.setBlockState(cx, cy, cz, { railShape: resolveRailShape(this.world, cx, cy, cz) });
-    }
+    clearDoorBlocks(this.world, x, y, z);
   }
 
   private releaseContents(player: GameplayPlayer, x: number, y: number, z: number, block: number): void {

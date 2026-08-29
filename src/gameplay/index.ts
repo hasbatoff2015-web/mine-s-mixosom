@@ -7,3 +7,21 @@ export {
   type GameplayKernelHost,
   type GameplayKernelStep,
 } from './GameplayKernel';
+export {
+  cartIsCloser,
+  clearDoorBlocks,
+  doorHalves,
+  performUseHeld,
+  placeBlockAt,
+  placeFailToast,
+  placeFromHit,
+  refreshNeighborRails,
+  resolveUseIntent,
+  toggleDoorState,
+  type PlaceFailReason,
+  type PlaceResult,
+  type UseHostEffects,
+  type UseIntentInput,
+  type UseIntentKind,
+  type UseSimulationContext,
+} from './useInteraction';

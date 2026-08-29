@@ -1,25 +1,12 @@
 import * as THREE from 'three';
 import {
   BlockId,
-  buttonPlacementFromHit,
   canHarvestBlock,
-  doorFacingFromYaw,
-  chestFacingFromYaw,
-  furnaceFacingFromYaw,
   getBlockDefinition,
-  isFenceBlock,
   isPressurePlateBlock,
-  isRailBlock,
   isSlabBlock,
-  isStairBlock,
-  ladderPlacementFromHit,
   miningProgressPerTick,
   miningToolFromItemId,
-  slabTypeFromHit,
-  stairPlacementFromHit,
-  torchPlacementFromHit,
-  lanternPlacementFromHit,
-  chainPlacementFromHit,
 } from '../blocks';
 import { CombatSystem, PlayerArrowManager, completeMeleeAttack, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
 import {
@@ -58,7 +45,6 @@ import {
   PLAYER_WIDTH,
   TICK_RATE,
     WORLD_HEIGHT,
-    isValidWorldY,
     WORLD_JOB_BUDGET_MS,
   WORLD_LOADING_JOB_BUDGET_MS,
   WORLD_LIGHT_BUDGET_MS,
@@ -94,7 +80,6 @@ import {
   MinecartManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
-  resolveFlintAndSteelUse,
   MobManager,
   type MinecartEntity,
   type MobPlayerDamageEvent,
@@ -111,8 +96,7 @@ import {
 } from '../input/pointerLock';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
-import { pickupFluidSource, placeBucketFluid, restoreBucketInventory } from '../items/bucketInteraction';
-import { canAttachToFace, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';
+import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController } from '../player';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
@@ -197,9 +181,12 @@ import {
   shouldHandleOnlineClientEvent,
 } from './onlineSession';
 import {
+  clearDoorBlocks,
   daylightFactor,
   formatGameplayKernelTrace,
+  performUseHeld,
   tickGameplayKernel,
+  type UseSimulationContext,
 } from '../gameplay';
 import { applyNetworkBlockChanges } from '../world/networkBlockUpdates';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
@@ -214,14 +201,6 @@ import {
 import { blockCollisionBoxes, rayAabbDistance } from '../world/collision';
 import {
   defaultSlabType,
-  defaultStairFacing,
-  defaultStairHalf,
-  resolveRailShape,
-  isolatedRailShapeFromYaw,
-  slabLocalBoxes,
-  stairLocalBoxes,
-  lanternSelectionLocalBox,
-  chainSelectionLocalBox,
 } from '../rendering/specialBlockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
@@ -2608,429 +2587,83 @@ export class Game {
       session.online.client.send({ type: 'interact' });
       return;
     }
-    // Empty buckets need the first liquid hit, not the solid target behind it.
-    if (this.selectedStack()?.itemId === ItemId.Bucket) {
-      this.useBucket();
-      return;
-    }
-    const hit = session.target;
-    const cartRay = this.raycastPlayerMinecart(session);
-    const cartCloser = Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
-    if (hit && !cartCloser) {
-      if (hit.block === BlockId.CraftingTable) return this.openBlockInventory('crafting-table', hit);
-      if (hit.block === BlockId.Chest) return this.openBlockInventory('chest', hit);
-      if (hit.block === BlockId.Furnace) return this.openBlockInventory('furnace', hit);
-      if (hit.block === BlockId.Lever) {
-        const active = session.redstone.toggleLever(hit.x, hit.y, hit.z);
-        if (active !== undefined) {
-          this.playWorld('redstone.click', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, { pitch: active ? 1.08 : 0.92 });
-          this.ui.toast(active ? 'Рычаг включён' : 'Рычаг выключен');
-          this.firstPerson?.swing();
-        }
-        return;
-      }
-      if (hit.block === BlockId.StoneButton) {
-        if (session.redstone.pressButton(hit.x, hit.y, hit.z)) {
-          this.playWorld('redstone.click', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, { pitch: 1.06 });
-          this.firstPerson?.swing();
-        }
-        return;
-      }
-      if (hit.block === BlockId.OakDoor) {
-        const { lowerY } = this.doorHalves(hit.x, hit.y, hit.z);
-        const opening = session.world.getBlockState(hit.x, lowerY, hit.z)?.open !== true;
-        this.toggleDoor(hit.x, hit.y, hit.z);
-        this.playWorld(opening ? 'door.open' : 'door.close', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
-        this.firstPerson?.swing();
-        return;
-      }
-      if (hit.block === BlockId.WhiteBed) {
-        session.survival.setSpawnPoint([hit.x + 0.5, hit.y + 1.01, hit.z + 0.5]);
-        if (session.world.timeOfDay > 12_500 && session.world.timeOfDay < 23_500) {
-          session.world.timeOfDay = 1_000;
-          this.ui.toast('Ночь пропущена. Точка возрождения установлена.');
-        } else this.ui.toast('Точка возрождения установлена');
-        void this.saveSession();
-        return;
-      }
-    }
-    const stack = this.selectedStack();
-    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
-    if (item?.kind === 'food') {
-      session.foodUseTicks = 1;
-      return;
-    }
-    if (stack?.itemId === ItemId.Bow) {
-      session.bowUseTicks = 1;
-      return;
-    }
-    if (cartCloser) {
-      if (stack?.itemId === ItemId.FlintAndSteel) {
-        this.useFlintAndSteel(undefined);
-        return;
-      }
-      if (stack?.itemId === 'tnt' && this.tryInsertTntMinecart(undefined)) return;
-      const targetedCart = cartRay?.cart;
-      if (targetedCart && session.minecarts.isRideable(targetedCart)) {
-        this.mountMinecart(targetedCart.id);
-      }
-      return;
-    }
-    if (stack?.itemId === ItemId.FlintAndSteel) {
-      this.useFlintAndSteel(hit);
-      return;
-    }
-    if (stack?.itemId === 'tnt' && this.tryInsertTntMinecart(hit)) return;
-    if (stack?.itemId === ItemId.Minecart) {
-      this.placeMinecart(hit);
-      return;
-    }
-    const targetedCart = this.raycastPlayerMinecart(session)?.cart
-      ?? (hit
-        ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-        : session.minecarts.nearest(session.player.position, 1.5));
-    if (targetedCart && session.minecarts.isRideable(targetedCart)) {
-      this.mountMinecart(targetedCart.id);
-      return;
-    }
-    if (stack?.itemId === ItemId.WaterBucket || stack?.itemId === ItemId.LavaBucket) {
-      this.useBucket(hit);
-      return;
-    }
-    if (!hit || !stack || item?.placesBlockId === undefined) return;
-    if (this.tryMergeSlab(hit, item.placesBlockId)) return;
-    const hitDefinition = getBlockDefinition(hit.block);
-    const replaceHit = hitDefinition.replaceable === true;
-    if (!replaceHit && !canUseAsPlacementAnchor(hit.block)) return;
-    const x = replaceHit ? hit.x : hit.x + hit.normal.x;
-    const y = replaceHit ? hit.y : hit.y + hit.normal.y;
-    const z = replaceHit ? hit.z : hit.z + hit.normal.z;
-    if (!isValidWorldY(y)) {
-      this.ui.toast('Нельзя ставить блок за пределами мира');
-      return;
-    }
-    if (this.tryMergeSlabAt(x, y, z, item.placesBlockId)) return;
-    const existing = getBlockDefinition(session.world.getBlock(x, y, z));
-    if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
-    const placed = getBlockDefinition(item.placesBlockId);
-    // Replacement is in the clicked cell, attached to the floor below it.
-    // Thin raycast targets never lend their neighbor face to another block.
-    const attachmentNormal = replaceHit ? new THREE.Vector3(0, 1, 0) : hit.normal;
-    if (item.placesBlockId === BlockId.Lantern) {
-      const orientation = lanternPlacementFromHit(
-        attachmentNormal.x, attachmentNormal.y, attachmentNormal.z,
-      );
-      if (!orientation) {
-        this.ui.toast('Светильник можно поставить только сверху или снизу блока');
-        return;
-      }
-      const hanging = orientation.attachment === 'ceiling';
-      const supported = hanging
-        ? canSupportHanger(session.world, x, y + 1, z, 'down')
-        : canSupportHanger(session.world, x, y - 1, z, 'up');
-      if (!supported) {
-        this.ui.toast('Светильнику нужна опора');
-        return;
-      }
-      const boxes = [lanternSelectionLocalBox(orientation)].map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { attachment: orientation.attachment });
-      return;
-    }
-    if (item.placesBlockId === BlockId.Chain) {
-      if (!chainPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z)) {
-        this.ui.toast('Цепь ставится только вертикально');
-        return;
-      }
-      const hanging = attachmentNormal.y < -0.5;
-      const supported = hanging
-        ? canSupportHanger(session.world, x, y + 1, z, 'down')
-        : canSupportHanger(session.world, x, y - 1, z, 'up');
-      if (!supported) {
-        this.ui.toast('Цепи нужна точка крепления');
-        return;
-      }
-      const boxes = [chainSelectionLocalBox()].map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { attachment: hanging ? 'ceiling' : 'floor' });
-      return;
-    }
-    if (['torch', 'button', 'lever', 'ladder'].includes(placed.renderShape)
-      && !canAttachToFace(session.world,
-        x - attachmentNormal.x, y - attachmentNormal.y, z - attachmentNormal.z, attachmentNormal)) return;
-    if (['wire', 'rail', 'pressure_plate', 'door'].includes(placed.renderShape)
-      && !canAttachToFace(session.world, x, y - 1, z, { x: 0, y: 1, z: 0 })) return;
-    if (item.placesBlockId === BlockId.OakDoor) {
-      this.placeDoor(x, y, z);
-      return;
-    }
-    if (item.placesBlockId === BlockId.Torch || item.placesBlockId === BlockId.RedstoneTorch) {
-      const view = session.player.viewDirection();
-      const orientation = torchPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
-      if (!orientation) {
-        this.ui.toast('Факел нельзя поставить на потолок');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, orientation);
-      return;
-    }
-    if (item.placesBlockId === BlockId.StoneButton) {
-      const view = session.player.viewDirection();
-      const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
-      return;
-    }
-    if (item.placesBlockId === BlockId.Ladder) {
-      const orientation = ladderPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z);
-      if (!orientation) {
-        this.ui.toast('Лестницу можно поставить только на боковую сторону блока');
-        return;
-      }
-      if (replaceHit) {
-        this.ui.toast('Лестнице нужна сплошная боковая опора');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, { facing: orientation.facing });
-      return;
-    }
-    if (isPressurePlateBlock(item.placesBlockId)) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      return;
-    }
-    if (isSlabBlock(item.placesBlockId)) {
-      const localY = hit.point ? hit.point.y - hit.y : 0.25;
-      const slabType = slabTypeFromHit(hit.normal.x, hit.normal.y, hit.normal.z, localY);
-      const boxes = slabLocalBoxes(slabType).map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { slabType });
-      return;
-    }
-    if (isStairBlock(item.placesBlockId)) {
-      const view = session.player.viewDirection();
-      const localY = hit.point ? hit.point.y - hit.y : 0.25;
-      const placement = stairPlacementFromHit(
-        hit.normal.x, hit.normal.y, hit.normal.z, localY, view.x, view.z,
-      );
-      const boxes = stairLocalBoxes(placement.facing, placement.stairHalf, 'straight').map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { facing: placement.facing, stairHalf: placement.stairHalf });
-      return;
-    }
-    if (item.placesBlockId === BlockId.Chest) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, { facing: chestFacingFromYaw(session.player.yaw) });
-      return;
-    }
-    if (item.placesBlockId === BlockId.Furnace) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, { facing: furnaceFacingFromYaw(session.player.yaw) });
-      return;
-    }
-    if (isRailBlock(item.placesBlockId)) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, {
-        railShape: isolatedRailShapeFromYaw(session.player.yaw),
-      });
-      this.refreshRailsAround(x, y, z);
-      return;
-    }
-    if (isFenceBlock(item.placesBlockId)) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, true)) return;
-      return;
-    }
-    if (placed.solid && session.player.intersectsBlock(x, y, z)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return;
-    }
-    if (session.world.setBlock(x, y, z, item.placesBlockId)) {
-      session.redstone.notifyBlockChanged(x, y, z);
-      if (item.placesBlockId === BlockId.Lever) {
-        const view = session.player.viewDirection();
-        const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
-        session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
-      }
-      this.playBlockSound('place', item.placesBlockId, x, y, z);
-      this.firstPerson?.swing();
-      if (session.summary.mode === 'survival') {
-        this.consumeSelected(1);
-      }
-    }
+    performUseHeld(this.singleplayerUseContext());
   }
 
-  private tryMergeSlab(hit: VoxelHit, placing: BlockId): boolean {
-    if (!isSlabBlock(placing) || hit.block !== placing) return false;
-    const existing = defaultSlabType(this.session!.world.getBlockState(hit.x, hit.y, hit.z));
-    if (existing === 'double') return false;
-    const ny = hit.normal.y;
-    const merge = (existing === 'bottom' && ny > 0.5) || (existing === 'top' && ny < -0.5);
-    if (!merge) return false;
-    return this.mergeSlab(hit.x, hit.y, hit.z);
-  }
-
-  private tryMergeSlabAt(x: number, y: number, z: number, placing: BlockId): boolean {
+  private singleplayerUseContext(): UseSimulationContext {
     const session = this.session!;
-    const dest = session.world.getBlock(x, y, z, false);
-    if (!isSlabBlock(placing) || dest !== placing) return false;
-    if (defaultSlabType(session.world.getBlockState(x, y, z)) === 'double') return false;
-    return this.mergeSlab(x, y, z);
-  }
-
-  private mergeSlab(x: number, y: number, z: number): boolean {
-    const session = this.session!;
-    const boxes = slabLocalBoxes('double').map((box) => ({
-      minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-      maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-    }));
-    if (session.player.intersectsCollisionBoxes(boxes)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return true;
-    }
-    session.world.setBlockState(x, y, z, { slabType: 'double' });
-    session.redstone.notifyBlockChanged(x, y, z);
-    this.playBlockSound('place', session.world.getBlock(x, y, z, false), x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-    return true;
-  }
-
-  private requestOnlinePlace(session: GameSession): void {
-    const hit = session.target;
-    const stack = this.selectedStack();
-    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
-    if (!hit || !stack || item?.placesBlockId === undefined) return;
-    const hitDefinition = getBlockDefinition(hit.block);
-    const replaceHit = hitDefinition.replaceable === true;
-    const x = replaceHit ? hit.x : hit.x + hit.normal.x;
-    const y = replaceHit ? hit.y : hit.y + hit.normal.y;
-    const z = replaceHit ? hit.z : hit.z + hit.normal.z;
-    if (!isValidWorldY(y)) {
-      this.ui.toast('Нельзя ставить блок за пределами мира');
-      return;
-    }
-    const pending = session.online?.pendingBlockAction;
-    if (pending && pending.kind === 'place' && pending.x === x && pending.y === y && pending.z === z) return;
-    if (session.online) {
-      session.online.pendingBlockAction = { kind: 'place', x, y, z };
-    }
-    session.online?.client.send({
-      type: 'place_block',
-      x,
-      y,
-      z,
-      blockId: item.placesBlockId,
-    });
-    this.firstPerson?.swing();
-  }
-
-  private finishPlacingBlock(x: number, y: number, z: number, block: BlockId, solid: boolean): boolean {
-    const session = this.session!;
-    if (solid && session.player.intersectsBlock(x, y, z)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return false;
-    }
-    if (!session.world.setBlock(x, y, z, block)) return false;
-    session.redstone.notifyBlockChanged(x, y, z);
-    this.playBlockSound('place', block, x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-    return true;
-  }
-
-  private doorHalves(x: number, y: number, z: number): { lowerY: number; upperY: number } {
-    const session = this.session!;
-    const state = session.world.getBlockState(x, y, z);
-    const half = state?.half
-      ?? (session.world.getBlock(x, y - 1, z, false) === BlockId.OakDoor ? 'upper' : 'lower');
-    const lowerY = half === 'upper' ? y - 1 : y;
-    return { lowerY, upperY: lowerY + 1 };
-  }
-
-  private placeDoor(x: number, y: number, z: number): void {
-    const session = this.session!;
-    if (y + 1 >= WORLD_HEIGHT) {
-      this.ui.toast('Нет места для двери');
-      return;
-    }
-    const upperBlock = session.world.getBlock(x, y + 1, z);
-    const upperDefinition = getBlockDefinition(upperBlock);
-    if (upperBlock !== BlockId.Air && !upperDefinition.replaceable) {
-      this.ui.toast('Нет места для двери');
-      return;
-    }
-    if (session.player.intersectsBlock(x, y, z) || session.player.intersectsBlock(x, y + 1, z)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return;
-    }
-    if (!session.world.setBlock(x, y, z, BlockId.OakDoor)) return;
-    if (!session.world.setBlock(x, y + 1, z, BlockId.OakDoor)) {
-      session.world.setBlock(x, y, z, BlockId.Air);
-      return;
-    }
-    const facing = doorFacingFromYaw(session.player.yaw);
-    session.world.setBlockState(x, y, z, { facing, hinge: 'left', open: false, half: 'lower' });
-    session.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
-    session.redstone.notifyBlockChanged(x, y, z);
-    session.redstone.notifyBlockChanged(x, y + 1, z);
-    this.playBlockSound('place', BlockId.OakDoor, x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-  }
-
-  private toggleDoor(x: number, y: number, z: number): void {
-    const session = this.session!;
-    const { lowerY, upperY } = this.doorHalves(x, y, z);
-    const current = session.world.getBlockState(x, lowerY, z) ?? session.world.getBlockState(x, y, z);
-    const next = {
-      facing: current?.facing ?? 'north',
-      hinge: current?.hinge ?? 'left' as const,
-      open: current?.open !== true,
+    const game = this;
+    return {
+      world: session.world,
+      inventory: session.inventory,
+      get selectedSlot() { return session.selectedSlot; },
+      set selectedSlot(value) { session.selectedSlot = value; },
+      gamemode: session.summary.mode,
+      reach: PLAYER_REACH,
+      hit: session.target,
+      eyePosition: () => session.player.eyePosition(),
+      viewDirection: () => session.player.viewDirection(),
+      get yaw() { return session.player.yaw; },
+      get position() { return session.player.position; },
+      intersectsBlock: (x, y, z) => session.player.intersectsBlock(x, y, z),
+      intersectsCollisionBoxes: (boxes) => session.player.intersectsCollisionBoxes(boxes),
+      get foodUseTicks() { return session.foodUseTicks; },
+      set foodUseTicks(value) { session.foodUseTicks = value; },
+      get bowUseTicks() { return session.bowUseTicks; },
+      set bowUseTicks(value) { session.bowUseTicks = value; },
+      get ridingCartId() { return session.ridingCartId; },
+      set ridingCartId(value) { session.ridingCartId = value; },
+      minecarts: session.minecarts,
+      redstone: session.redstone,
+      setSpawnPoint: (position) => session.survival?.setSpawnPoint(position),
+      enterVehicle: (cartId) => {
+        game.mountMinecart(cartId);
+        return session.ridingCartId === cartId;
+      },
+      effects: {
+        toast: (message) => game.ui.toast(message),
+        swing: () => game.firstPerson?.swing(),
+        playWorld: (event, x, y, z, options) => game.playWorld(event as SoundEventId, x, y, z, options),
+        playBlock: (_action, block, x, y, z) => game.playBlockSound('place', block, x, y, z),
+        openContainer: (kind, x, y, z) => {
+          const hit = session.target
+            && session.target.x === x && session.target.y === y && session.target.z === z
+            ? session.target
+            : {
+              x, y, z,
+              block: session.world.getBlock(x, y, z, false),
+              normal: new THREE.Vector3(0, 1, 0),
+              distance: 0,
+              point: new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+            };
+          game.openBlockInventory(kind, hit);
+        },
+        onBedUsed: (skippedNight) => {
+          game.ui.toast(skippedNight
+            ? 'Ночь пропущена. Точка возрождения установлена.'
+            : 'Точка возрождения установлена');
+          void game.saveSession();
+        },
+        onFlintIgnite: () => {
+          game.playWorld(
+            'fire.ignite',
+            session.player.position.x,
+            session.player.position.y + 1,
+            session.player.position.z,
+          );
+          game.firstPerson?.swing();
+        },
+        onFlintAlreadyPrimed: () => { game.firstPerson?.swing(); },
+        dropOverflow: (stack) => game.spawnDroppedStack(stack),
+      },
     };
-    session.world.setBlockState(x, lowerY, z, { ...next, half: 'lower' });
-    if (session.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
-      session.world.setBlockState(x, upperY, z, { ...next, half: 'upper' });
-    }
   }
 
   private removeDoor(x: number, y: number, z: number): void {
     const session = this.session!;
-    const { lowerY, upperY } = this.doorHalves(x, y, z);
-    session.world.setBlock(x, lowerY, z, BlockId.Air);
+    const { lowerY, upperY } = clearDoorBlocks(session.world, x, y, z);
     session.redstone.notifyBlockChanged(x, lowerY, z);
-    if (session.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
-      session.world.setBlock(x, upperY, z, BlockId.Air);
-      session.redstone.notifyBlockChanged(x, upperY, z);
-    }
+    session.redstone.notifyBlockChanged(x, upperY, z);
   }
 
   private updateFoodUse(): void {
@@ -3296,111 +2929,6 @@ export class Game {
     return false;
   }
 
-  private useFlintAndSteel(hit: VoxelHit | undefined): void {
-    const session = this.session!;
-    const cart = session.minecarts.handleFlintUse(
-      session.player.eyePosition(),
-      session.player.viewDirection(),
-      PLAYER_REACH,
-      session.ridingCartId,
-    );
-    const action = resolveFlintAndSteelUse(cart, hit);
-    if (action.type === 'prime-cart') {
-      this.wearFlint();
-      return;
-    }
-    if (action.type === 'already-primed') {
-      this.firstPerson?.swing();
-      return;
-    }
-    if (action.type === 'prime-tnt-block') {
-      session.redstone.primeTnt(action.x, action.y, action.z);
-      this.wearFlint();
-      return;
-    }
-    if (action.type === 'ignite-cell' && this.tryIgniteAt(action.x, action.y, action.z, session)) {
-      this.wearFlint();
-    }
-  }
-
-  private wearFlint(): void {
-    const session = this.session!;
-    const stack = this.selectedStack();
-    if (!stack) return;
-    this.playWorld(
-      'fire.ignite',
-      session.player.position.x,
-      session.player.position.y + 1,
-      session.player.position.z,
-    );
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') {
-      session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
-    }
-  }
-
-  private tryIgniteAt(x: number, y: number, z: number, session: GameSession): boolean {
-    const block = session.world.getBlock(x, y, z, false);
-    if (block === BlockId.Tnt) {
-      session.redstone.primeTnt(x, y, z);
-      return true;
-    }
-    const definition = getBlockDefinition(block);
-    if (block !== BlockId.Air && definition.replaceable !== true) return false;
-    if (!session.world.setBlock(x, y, z, BlockId.Fire)) return false;
-    return true;
-  }
-
-  private useBucket(hit?: VoxelHit): void {
-    const session = this.session!;
-    const context = {
-      world: session.world,
-      inventory: session.inventory,
-      selectedSlot: session.selectedSlot,
-      mode: session.summary.mode,
-      onDrop: (stack: ItemStack) => this.spawnDroppedStack(stack),
-    };
-    const changed = this.selectedStack()?.itemId === ItemId.Bucket
-      ? pickupFluidSource(context, session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH)
-      : placeBucketFluid(context, hit);
-    if (!changed) return;
-    session.redstone.notifyBlockChanged(changed.x, changed.y, changed.z);
-    if (changed.block === BlockId.Water) {
-      this.playWorld('water.splash', changed.x + 0.5, changed.y + 0.5, changed.z + 0.5);
-    }
-    this.firstPerson?.swing();
-  }
-
-  private placeMinecart(hit: VoxelHit | undefined): void {
-    const session = this.session!;
-    if (!hit) return;
-    const x = hit.block === BlockId.Rail ? hit.x : hit.x + hit.normal.x;
-    const y = hit.block === BlockId.Rail ? hit.y : hit.y + hit.normal.y;
-    const z = hit.block === BlockId.Rail ? hit.z : hit.z + hit.normal.z;
-    if (session.world.getBlock(x, y, z, false) !== BlockId.Rail) {
-      this.ui.toast('Вагонетку можно поставить только на рельсы');
-      return;
-    }
-    if (!session.minecarts.spawn(x, y, z)) return;
-    this.playBlockSound('place', BlockId.Rail, x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-  }
-
-  private tryInsertTntMinecart(hit: VoxelHit | undefined): boolean {
-    const session = this.session!;
-    const cart = this.raycastPlayerMinecart(session)?.cart
-      ?? (hit
-        ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-        : session.minecarts.nearest(session.player.position, 1.6));
-    if (!cart || !session.minecarts.insertTnt(cart)) return false;
-    this.playBlockSound('place', BlockId.Tnt, cart.position.x, cart.position.y, cart.position.z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-    if (session.ridingCartId === cart.id) session.ridingCartId = undefined;
-    return true;
-  }
-
   private mountMinecart(id: string): void {
     const session = this.session!;
     const cart = session.minecarts.get(id);
@@ -3437,34 +2965,6 @@ export class Game {
     session.player.previousPosition.set(cart.previousPosition.x, cart.previousPosition.y + 0.2, cart.previousPosition.z);
     session.player.velocity.copy(cart.velocity);
     session.player.fallDistance = 0;
-  }
-
-  private raycastPlayerMinecart(session: GameSession) {
-    return session.minecarts.raycast(
-      session.player.eyePosition(),
-      session.player.viewDirection(),
-      PLAYER_REACH,
-      session.ridingCartId,
-    );
-  }
-
-  private refreshRailsAround(x: number, y: number, z: number): void {
-    const session = this.session!;
-    const cells = [
-      [x, y, z], [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1],
-      [x + 1, y + 1, z], [x - 1, y + 1, z], [x, y + 1, z + 1], [x, y + 1, z - 1],
-    ];
-    for (const [cx, cy, cz] of cells) {
-      if (session.world.getBlock(cx!, cy!, cz!, false) !== BlockId.Rail) continue;
-      session.world.setBlockState(cx!, cy!, cz!, { railShape: resolveRailShape(session.world, cx!, cy!, cz!) });
-    }
-  }
-
-  private consumeSelected(count: number): void {
-    const session = this.session!;
-    const stack = this.selectedStack();
-    if (!stack) return;
-    session.inventory.setSlot(session.selectedSlot, stack.count <= count ? null : { ...stack, count: stack.count - count });
   }
 
   private selectedStack(): ItemStack | null {
