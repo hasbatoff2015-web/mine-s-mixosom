@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-29 Anarchy server QA fixes
+
+Report: `reports/2026-08-29_local-server-qa-fixes.md`.
+
+Targeted: `tests/authoritative-motion.test.ts`, `tests/remote-player-view.test.ts`, `tests/server/anarchy-server.test.ts` (plus retained `tests/anarchy-world.test.ts`). Covers stale snapshots, no local hard-teleport, camera look isolation, remote delay lerp, input seq, break/place accept/reject, two-client broadcast, persist, reconnect.
+
 ## 2026-08-29 local authoritative Anarchy server
 
 Report: `reports/2026-08-29_local-authoritative-server.md`. Docs: `docs/LOCAL_SERVER.md`.

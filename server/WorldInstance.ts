@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
-import { PLAYER_REACH, TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { PLAYER_NET_REACH, TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { Inventory } from '../src/inventory';
 import { tryGetItemDefinition } from '../src/items';
 import { PlayerController } from '../src/player';
@@ -21,7 +21,7 @@ import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { EventBus } from './events';
 import { PluginManager, type PlayerView, type WorldView } from './PluginManager';
 import { WorldPersistence, type StoredPlayer, type WorldDiskState, type WorldReadyState } from './persistence';
-import { serverLog } from './log';
+import { netDebug, serverLog } from './log';
 
 export interface ConnectedSink {
   send(payload: unknown): void;
@@ -46,6 +46,7 @@ export class ServerPlayer implements PlayerView {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
+  lastInputSeq = -1;
   viewCx = 0;
   viewCz = 0;
   viewRadius = 4;
@@ -166,7 +167,7 @@ export class WorldInstance {
       }
       this.preloadSpawnChunks();
       this.readyState = 'READY';
-      serverLog(`world loaded: ${this.worldId}`);
+      serverLog(`world loaded: ${this.worldId} from ${this.persistence.directory}`);
       return;
     }
     this.spawn = estimateWorldSpawn(this.world);
@@ -174,7 +175,10 @@ export class WorldInstance {
     this.dirty = true;
     await this.save();
     this.readyState = 'READY';
-    serverLog(`world created: ${this.worldId}`);
+    serverLog(`world created: ${this.worldId} at ${this.persistence.directory}`);
+    serverLog(
+      'Fresh procedural Anarchy world. Browser IndexedDB is not imported. To load an exported dump: npm run server:import -- <dump.json>',
+    );
   }
 
   startLoops(): void {
@@ -302,15 +306,27 @@ export class WorldInstance {
     }
   }
 
-  applyInput(player: ServerPlayer, input: ClientInputMessage): void {
+  applyInput(player: ServerPlayer, input: ClientInputMessage): boolean {
+    if (input.seq < player.lastInputSeq) {
+      netDebug('player input', `stale seq ${input.seq} < ${player.lastInputSeq} for ${player.id}`);
+      return false;
+    }
+    if (input.seq === player.lastInputSeq) {
+      netDebug('player input', `duplicate seq ${input.seq} for ${player.id}`);
+      return false;
+    }
+    player.lastInputSeq = input.seq;
     player.lastInput = input;
     player.selectedSlot = input.selectedSlot;
+    player.controller.yaw = input.yaw;
+    player.controller.pitch = input.pitch;
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
+    return true;
   }
 
   tryBreak(player: ServerPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
-    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air) return { ok: false, reason: 'empty' };
     const definition = getBlockDefinition(block);
@@ -321,12 +337,13 @@ export class WorldInstance {
     if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
     this.dirty = true;
     this.broadcast({ type: 'block_update', x, y, z, blockId: BlockId.Air });
+    netDebug('break accepted', `${player.name} ${x},${y},${z}`);
     return { ok: true };
   }
 
   tryPlace(player: ServerPlayer, x: number, y: number, z: number, requestedBlock?: number): { ok: true } | { ok: false; reason: string } {
-    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const existing = this.world.getBlock(x, y, z);
     const existingDef = getBlockDefinition(existing);
     if (existing !== BlockId.Air && existingDef.replaceable !== true) return { ok: false, reason: 'occupied' };
@@ -351,7 +368,10 @@ export class WorldInstance {
     if (!this.world.setBlock(x, y, z, blockId)) return { ok: false, reason: 'rejected' };
     if (player.gamemode === 'survival') {
       const stack = player.inventory.getSlot(player.selectedSlot);
-      if (!stack) return { ok: false, reason: 'inventory' };
+      if (!stack) {
+        this.world.setBlock(x, y, z, existing);
+        return { ok: false, reason: 'inventory' };
+      }
       player.inventory.setSlot(player.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
       this.sendTo(player, {
         type: 'inventory',
@@ -362,6 +382,7 @@ export class WorldInstance {
     }
     this.dirty = true;
     this.broadcast({ type: 'block_update', x, y, z, blockId });
+    netDebug('place accepted', `${player.name} ${x},${y},${z} -> ${blockId}`);
     return { ok: true };
   }
 
@@ -497,7 +518,7 @@ export class WorldInstance {
     const dx = eye.x - (x + 0.5);
     const dy = eye.y - (y + 0.5);
     const dz = eye.z - (z + 0.5);
-    const limit = PLAYER_REACH + 0.75;
+    const limit = PLAYER_NET_REACH;
     return dx * dx + dy * dy + dz * dz <= limit * limit;
   }
 

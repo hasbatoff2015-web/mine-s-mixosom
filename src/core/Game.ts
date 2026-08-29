@@ -169,7 +169,14 @@ import {
   resolveAnarchyStartup,
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
-import type { PlayerSnapshot, ServerMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import {
+  clientLookAfterSnapshot,
+  ingestAuthoritativePosition,
+  shouldAcceptSnapshot,
+  splitPlayerSnapshots,
+  stepTowardTarget,
+} from '../net/authoritativeMotion';
+import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -227,6 +234,10 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   inputSeq: number;
   lastViewKey?: string;
+  lastStateTick: number;
+  motion: { target: { x: number; y: number; z: number } };
+  pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
+  rejectedBlockKey?: string;
 }
 
 interface RuntimeSettings {
@@ -503,7 +514,14 @@ export class Game {
       spawn: [welcome.you.x, welcome.you.y, welcome.you.z],
       snapSpawn: false,
       serverWorld: createCanonicalAnarchyServerWorld(welcome.spawn),
-      online: { client, playerId: welcome.playerId, remotes, inputSeq: 0 },
+      online: {
+        client,
+        playerId: welcome.playerId,
+        remotes,
+        inputSeq: 0,
+        lastStateTick: -1,
+        motion: { target: { x: welcome.you.x, y: welcome.you.y, z: welcome.you.z } },
+      },
     });
     const session = this.session;
     if (!session?.online) return;
@@ -552,7 +570,7 @@ export class Game {
         this.removeRemotePlayer(session, message.playerId);
         return;
       case 'player_state':
-        this.applyOnlinePlayerState(session, message.players);
+        this.applyOnlinePlayerState(session, message);
         return;
       case 'block_update': {
         const previous = session.world.getBlock(message.x, message.y, message.z, false);
@@ -560,6 +578,7 @@ export class Game {
           [{ x: message.x, y: message.y, z: message.z, block: message.blockId as BlockId }],
           { deferLighting: true },
         );
+        this.clearOnlineBlockPending(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
           this.playBlockSound('break', previous, message.x, message.y, message.z);
         } else {
@@ -567,6 +586,9 @@ export class Game {
         }
         return;
       }
+      case 'block_result':
+        this.handleOnlineBlockResult(session, message);
+        return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
         return;
@@ -589,6 +611,7 @@ export class Game {
       case 'error':
         this.ui.toast(message.message);
         return;
+      case 'pong':
       case 'status':
         return;
       default:
@@ -596,41 +619,81 @@ export class Game {
     }
   }
 
-  private applyOnlinePlayerState(session: GameSession, players: readonly PlayerSnapshot[]): void {
+  private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
     const online = session.online;
     if (!online) return;
+    if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) return;
+    online.lastStateTick = message.tick;
+    const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
     const seen = new Set<string>();
-    for (const snap of players) {
-      seen.add(snap.id);
-      if (snap.id === online.playerId) {
-        const dx = snap.x - session.player.position.x;
-        const dy = snap.y - session.player.position.y;
-        const dz = snap.z - session.player.position.z;
-        const distance = Math.hypot(dx, dy, dz);
-        if (distance > 6) session.player.previousPosition.set(snap.x, snap.y, snap.z);
-        else session.player.previousPosition.copy(session.player.position);
-        session.player.position.set(snap.x, snap.y, snap.z);
-        session.player.velocity.set(snap.vx, snap.vy, snap.vz);
-        session.player.sneaking = snap.sneaking;
-        session.player.sprinting = snap.sprinting;
-        session.player.onGround = snap.onGround;
-        session.survival.restore({ health: snap.health });
-        if (snap.gamemode !== session.summary.mode) {
-          session.summary.mode = snap.gamemode;
-          session.player.creativeFlightAllowed = snap.gamemode === 'creative';
-        }
-        continue;
+    if (local) {
+      const look = clientLookAfterSnapshot(
+        { yaw: this.input.yaw, pitch: this.input.pitch },
+        { yaw: local.yaw, pitch: local.pitch },
+      );
+      this.input.yaw = look.yaw;
+      this.input.pitch = look.pitch;
+      session.player.yaw = look.yaw;
+      session.player.pitch = look.pitch;
+      const ingested = ingestAuthoritativePosition(session.player.position, local);
+      online.motion.target = ingested.target;
+      if (ingested.snapped) {
+        session.player.position.set(ingested.position.x, ingested.position.y, ingested.position.z);
+        session.player.previousPosition.copy(session.player.position);
       }
+      session.player.velocity.set(local.vx, local.vy, local.vz);
+      session.player.sneaking = local.sneaking;
+      session.player.sprinting = local.sprinting;
+      session.player.onGround = local.onGround;
+      session.survival.restore({ health: local.health });
+      if (local.gamemode !== session.summary.mode) {
+        session.summary.mode = local.gamemode;
+        session.player.creativeFlightAllowed = local.gamemode === 'creative';
+      }
+    }
+    for (const snap of remotes) {
+      seen.add(snap.id);
       let remote = online.remotes.get(snap.id);
       if (!remote) {
         this.spawnRemotePlayer(session, snap);
         remote = online.remotes.get(snap.id);
       }
-      remote?.applySnapshot(snap);
+      remote?.applySnapshot(snap, performance.now(), message.tick);
     }
     for (const id of [...online.remotes.keys()]) {
       if (!seen.has(id)) this.removeRemotePlayer(session, id);
     }
+  }
+
+  private handleOnlineBlockResult(
+    session: GameSession,
+    message: Extract<ServerMessage, { type: 'block_result' }>,
+  ): void {
+    this.clearOnlineBlockPending(session, message.x, message.y, message.z);
+    if (message.ok) return;
+    const key = `${message.x},${message.y},${message.z}`;
+    if (session.online) session.online.rejectedBlockKey = key;
+    console.warn(
+      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`,
+    );
+  }
+
+  private clearOnlineBlockPending(session: GameSession, x: number, y: number, z: number): void {
+    const online = session.online;
+    if (!online?.pendingBlockAction) return;
+    const pending = online.pendingBlockAction;
+    if (pending.x !== x || pending.y !== y || pending.z !== z) return;
+    online.pendingBlockAction = undefined;
+  }
+
+  private stepOnlineAuthority(session: GameSession, dt: number): void {
+    const online = session.online;
+    if (!online) return;
+    session.player.yaw = this.input.yaw;
+    session.player.pitch = this.input.pitch;
+    const next = stepTowardTarget(session.player.position, online.motion.target, dt);
+    session.player.position.set(next.x, next.y, next.z);
+    session.player.previousPosition.copy(session.player.position);
   }
 
   private sendOnlineIdle(session: GameSession): void {
@@ -1779,6 +1842,7 @@ export class Game {
       this.simParts.other = 0;
       const tickStart = performance.now();
       for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
+      if (this.session?.online) this.stepOnlineAuthority(this.session, rawElapsed);
       tickMs = performance.now() - tickStart;
       this.lastSimParts = { ...this.simParts, ticks: stepped.ticks };
       if (stepped.ticks > 0) this.tickTimings.add(tickMs / stepped.ticks);
@@ -1868,6 +1932,8 @@ export class Game {
   private tickOnline(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    session.player.yaw = this.input.yaw;
+    session.player.pitch = this.input.pitch;
     session.playTicks += 1;
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
@@ -2084,6 +2150,9 @@ export class Game {
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
+    if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
+      session.online.rejectedBlockKey = undefined;
+    }
     if (attack?.kind === 'mob' && mobTarget) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
@@ -2155,6 +2224,12 @@ export class Game {
     const hit = session.target;
     if (!hit) return;
     if (session.online) {
+      const pending = session.online.pendingBlockAction;
+      if (session.online.rejectedBlockKey === `${hit.x},${hit.y},${hit.z}`) return;
+      if (pending && pending.kind === 'break' && pending.x === hit.x && pending.y === hit.y && pending.z === hit.z) {
+        return;
+      }
+      session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
       session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
       session.miningProgress = 0;
       session.miningTarget = undefined;
@@ -2561,6 +2636,11 @@ export class Game {
     if (!isValidWorldY(y)) {
       this.ui.toast('Нельзя ставить блок за пределами мира');
       return;
+    }
+    const pending = session.online?.pendingBlockAction;
+    if (pending && pending.kind === 'place' && pending.x === x && pending.y === y && pending.z === z) return;
+    if (session.online) {
+      session.online.pendingBlockAction = { kind: 'place', x, y, z };
     }
     session.online?.client.send({
       type: 'place_block',
@@ -3291,11 +3371,15 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
-      const position = this.interpolatedPlayerPosition
-        .copy(session.player.previousPosition)
-        .lerp(session.player.position, clamp(alpha, 0, 1));
-      const eyeHeight = session.player.eyeHeight;
-      this.camera.position.set(position.x, position.y + eyeHeight, position.z);
+      if (session.online) {
+        const position = session.player.position;
+        this.camera.position.set(position.x, position.y + session.player.eyeHeight, position.z);
+      } else {
+        const position = this.interpolatedPlayerPosition
+          .copy(session.player.previousPosition)
+          .lerp(session.player.position, clamp(alpha, 0, 1));
+        this.camera.position.set(position.x, position.y + session.player.eyeHeight, position.z);
+      }
       applyImmediateRenderLook(this.camera, this.input, this.hurt.cameraRoll(now));
       session.online?.remotes.forEach((remote) => remote.interpolate(now));
       session.falling.interpolate(clamp(alpha, 0, 1));

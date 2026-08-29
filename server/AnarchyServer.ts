@@ -243,12 +243,38 @@ export class AnarchyServer {
       case 'input':
         this.world.applyInput(player, message);
         return;
-      case 'break_block':
-        this.world.tryBreak(player, message.x, message.y, message.z);
+      case 'break_block': {
+        const result = this.world.tryBreak(player, message.x, message.y, message.z);
+        this.world.sendTo(player, {
+          type: 'block_result',
+          ok: result.ok,
+          action: 'break',
+          x: message.x,
+          y: message.y,
+          z: message.z,
+          ...(result.ok ? {} : { reason: result.reason }),
+        });
+        if (!result.ok) {
+          serverLog(`break rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
+        }
         return;
-      case 'place_block':
-        this.world.tryPlace(player, message.x, message.y, message.z, message.blockId);
+      }
+      case 'place_block': {
+        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId);
+        this.world.sendTo(player, {
+          type: 'block_result',
+          ok: result.ok,
+          action: 'place',
+          x: message.x,
+          y: message.y,
+          z: message.z,
+          ...(result.ok ? {} : { reason: result.reason }),
+        });
+        if (!result.ok) {
+          serverLog(`place rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
+        }
         return;
+      }
       case 'chat':
         this.world.handleChat(player, message.text);
         return;

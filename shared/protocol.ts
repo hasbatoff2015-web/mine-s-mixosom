@@ -145,6 +145,16 @@ export interface ServerBlockUpdateMessage {
   readonly blockId: number;
 }
 
+export interface ServerBlockResultMessage {
+  readonly type: 'block_result';
+  readonly ok: boolean;
+  readonly action: 'break' | 'place';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly reason?: string;
+}
+
 export interface ServerChunkMessage {
   readonly type: 'chunk_data';
   readonly cx: number;
@@ -197,6 +207,7 @@ export type ServerMessage =
   | ServerPlayerLeftMessage
   | ServerPlayerStateMessage
   | ServerBlockUpdateMessage
+  | ServerBlockResultMessage
   | ServerChunkMessage
   | ServerUnloadChunkMessage
   | ServerChatMessage
@@ -221,6 +232,7 @@ export const SERVER_MESSAGE_TYPES = [
   'player_left',
   'player_state',
   'block_update',
+  'block_result',
   'chunk_data',
   'unload_chunk',
   'chat',
@@ -348,6 +360,58 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
     }
     default:
       return { error: `unknown message type ${raw.type}` };
+  }
+}
+
+export function parseServerMessage(raw: unknown): ServerMessage | { readonly error: string } {
+  if (!isRecord(raw) || typeof raw.type !== 'string') {
+    return { error: 'message must be an object with a type' };
+  }
+  if (!(SERVER_MESSAGE_TYPES as readonly string[]).includes(raw.type)) {
+    return { error: `unknown message type ${raw.type}` };
+  }
+  switch (raw.type) {
+    case 'player_state': {
+      if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.players)) {
+        return { error: 'player_state invalid' };
+      }
+      return raw as unknown as ServerPlayerStateMessage;
+    }
+    case 'block_update': {
+      if (
+        !finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !finite(raw.blockId)
+        || !Number.isInteger(raw.x) || !Number.isInteger(raw.y) || !Number.isInteger(raw.z) || !Number.isInteger(raw.blockId)
+      ) {
+        return { error: 'block_update invalid' };
+      }
+      return {
+        type: 'block_update',
+        x: raw.x,
+        y: raw.y,
+        z: raw.z,
+        blockId: raw.blockId,
+      };
+    }
+    case 'block_result': {
+      if (!bool(raw.ok) || (raw.action !== 'break' && raw.action !== 'place')) {
+        return { error: 'block_result invalid' };
+      }
+      if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !Number.isInteger(raw.x) || !Number.isInteger(raw.y) || !Number.isInteger(raw.z)) {
+        return { error: 'block_result coordinates invalid' };
+      }
+      const reason = typeof raw.reason === 'string' ? raw.reason.slice(0, 64) : undefined;
+      return {
+        type: 'block_result',
+        ok: raw.ok,
+        action: raw.action,
+        x: raw.x,
+        y: raw.y,
+        z: raw.z,
+        ...(reason ? { reason } : {}),
+      };
+    }
+    default:
+      return raw as unknown as ServerMessage;
   }
 }
 

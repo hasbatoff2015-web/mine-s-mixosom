@@ -48,6 +48,9 @@ export const PLAYER_SNEAK_HEIGHT = 1.5;
 export const PLAYER_EYE_HEIGHT = 1.62;
 export const PLAYER_SNEAK_EYE_HEIGHT = 1.27;
 export const PLAYER_REACH = 5;
+/** Extra metres allowed for server reach checks vs lagged client raycasts. */
+export const PLAYER_NET_REACH_SLACK = 1.5;
+export const PLAYER_NET_REACH = PLAYER_REACH + PLAYER_NET_REACH_SLACK;
 
 export const WALK_SPEED = 4.317;
 export const SPRINT_SPEED = 5.612;

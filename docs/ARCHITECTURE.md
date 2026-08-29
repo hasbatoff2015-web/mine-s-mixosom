@@ -213,6 +213,8 @@ Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT 
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
+Online local motion: the client does **not** run `PlayerController.tick` and does **not** hard-assign `player.position` from every `player_state`. Server simulates at 20 TPS from `input.seq`; the client chases the last accepted tick with exponential smoothing (`src/net/authoritativeMotion.ts`). Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id.
+
 ### Generation
 
 `TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers (`smoothstep` для mountain mask). Column generation выбирает biome (dryness/climate, без отдельного mountain biome) и height:

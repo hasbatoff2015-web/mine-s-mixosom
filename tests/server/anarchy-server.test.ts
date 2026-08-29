@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '../../shared/config';
-import { parseClientMessage, type ServerMessage } from '../../shared/protocol';
+import { parseClientMessage, parseServerMessage, type ClientInputMessage, type ServerMessage } from '../../shared/protocol';
 import { BlockId } from '../../src/blocks';
+import { PLAYER_NET_REACH } from '../../src/core/constants';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { SaveService } from '../../src/save/SaveService';
 import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
+import { WorldInstance } from '../../server/WorldInstance';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
 
 async function tempDir(): Promise<string> {
@@ -86,6 +88,31 @@ class TestClient {
   }
 }
 
+function moveInput(seq: number, extra: Partial<ClientInputMessage> = {}): ClientInputMessage {
+  return {
+    type: 'input',
+    seq,
+    forward: 0,
+    right: 0,
+    jump: false,
+    sneak: false,
+    sprint: false,
+    descend: false,
+    flySprint: false,
+    yaw: 0,
+    pitch: 0,
+    selectedSlot: 0,
+    ...extra,
+  };
+}
+
+class MemorySink {
+  readonly payloads: unknown[] = [];
+  send(payload: unknown): void {
+    this.payloads.push(payload);
+  }
+}
+
 describe('protocol validation', () => {
   it('rejects unknown message types and non-integer block coords', () => {
     expect(parseClientMessage({ type: 'explode_world' })).toEqual({ error: 'unknown message type explode_world' });
@@ -96,6 +123,23 @@ describe('protocol validation', () => {
       type: 'input',
       forward: 1,
       selectedSlot: 3,
+    });
+  });
+
+  it('rejects unknown and malformed server messages instead of swallowing them', () => {
+    expect(parseServerMessage({ type: 'teleport_all' })).toEqual({ error: 'unknown message type teleport_all' });
+    expect(parseServerMessage({ type: 'player_state', tick: 1.5, players: [] })).toEqual({ error: 'player_state invalid' });
+    expect(parseServerMessage({ type: 'block_result', ok: true, action: 'break', x: 1.2, y: 2, z: 3 })).toEqual({
+      error: 'block_result coordinates invalid',
+    });
+    expect(parseServerMessage({ type: 'block_result', ok: false, action: 'break', x: 1, y: 2, z: 3, reason: 'reach' })).toEqual({
+      type: 'block_result',
+      ok: false,
+      action: 'break',
+      x: 1,
+      y: 2,
+      z: 3,
+      reason: 'reach',
     });
   });
 });
@@ -196,18 +240,23 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(placedAt).toBeDefined();
     const [px, py, pz] = placedAt!;
     expect(b.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Dirt });
+    expect(a.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Dirt });
+    expect(a.latest('block_result')).toMatchObject({ ok: true, action: 'place', x: px, y: py, z: pz });
     expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Dirt);
 
     const updatesBeforeBreak = b.messages.filter((message) => message.type === 'block_update').length;
     a.send({ type: 'break_block', x: px, y: py, z: pz });
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(b.messages.filter((message) => message.type === 'block_update').length).toBeGreaterThan(updatesBeforeBreak);
+    expect(a.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Air });
+    expect(a.latest('block_result')).toMatchObject({ ok: true, action: 'break', x: px, y: py, z: pz });
     expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Air);
 
     const updatesBeforeReject = b.messages.filter((message) => message.type === 'block_update').length;
     a.send({ type: 'break_block', x: px + 80, y: py, z: pz });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(b.messages.filter((message) => message.type === 'block_update').length).toBe(updatesBeforeReject);
+    expect(a.latest('block_result')).toMatchObject({ ok: false, action: 'break', reason: 'reach' });
 
     a.send({ type: 'chat', text: 'hello anarchy' });
     await b.waitFor('chat');
@@ -364,3 +413,136 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(list.some((world) => world.id === 'anarchy')).toBe(false);
   });
 });
+
+describe('WorldInstance foundation simulation', () => {
+  const dirs: string[] = [];
+  const worlds: WorldInstance[] = [];
+
+  afterEach(async () => {
+    for (const world of worlds.splice(0)) await world.stop();
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function bootWorld(): Promise<WorldInstance> {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    return world;
+  }
+
+  function join(world: WorldInstance, name = 'Sim'): ReturnType<WorldInstance['join']> {
+    return world.join({ sink: new MemorySink(), name });
+  }
+
+  it('applies one input once per tick and ignores duplicate or stale seq', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    expect(world.applyInput(player, moveInput(1, { forward: 1 }))).toBe(true);
+    world.tick();
+    const afterFirst = player.controller.position.clone();
+    expect(Math.hypot(afterFirst.x - start.x, afterFirst.z - start.z)).toBeGreaterThan(0.05);
+
+    expect(world.applyInput(player, moveInput(1, { forward: 0 }))).toBe(false);
+    expect(player.lastInput.forward).toBe(1);
+    expect(world.applyInput(player, moveInput(0, { forward: 0 }))).toBe(false);
+    expect(player.lastInputSeq).toBe(1);
+
+    const beforeHeld = player.controller.position.clone();
+    world.tick();
+    expect(player.lastInput.seq).toBe(1);
+    expect(Math.hypot(
+      player.controller.position.x - beforeHeld.x,
+      player.controller.position.z - beforeHeld.z,
+    )).toBeGreaterThan(0.01);
+
+    expect(world.applyInput(player, moveInput(2, { forward: 0 }))).toBe(true);
+    expect(player.lastInput.forward).toBe(0);
+    expect(player.lastInputSeq).toBe(2);
+  });
+
+  it('accepts a valid break, mutates the world, and rejects air/reach/bounds', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const origin = [
+      Math.floor(player.controller.position.x),
+      Math.floor(player.controller.position.y),
+      Math.floor(player.controller.position.z),
+    ] as const;
+    let target: readonly [number, number, number] | undefined;
+    for (let y = origin[1]; y >= origin[1] - 4 && !target; y -= 1) {
+      for (let dx = -2; dx <= 2 && !target; dx += 1) {
+        for (let dz = -2; dz <= 2 && !target; dz += 1) {
+          const x = origin[0] + dx;
+          const z = origin[2] + dz;
+          const block = world.world.getBlock(x, y, z);
+          if (block !== BlockId.Air) target = [x, y, z];
+        }
+      }
+    }
+    expect(target).toBeDefined();
+    const [x, y, z] = target!;
+    const before = world.world.getBlock(x, y, z);
+    expect(world.tryBreak(player, x, y, z)).toEqual({ ok: true });
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
+    expect(before).not.toBe(BlockId.Air);
+
+    expect(world.tryBreak(player, x, y, z)).toEqual({ ok: false, reason: 'empty' });
+    expect(world.tryBreak(player, x + 80, y, z)).toEqual({ ok: false, reason: 'reach' });
+    expect(world.tryBreak(player, x, -1, z)).toEqual({ ok: false, reason: 'bounds' });
+    expect(PLAYER_NET_REACH).toBeGreaterThan(5);
+  });
+
+  it('places in creative, consumes in survival, and rejects occupied/inventory/invalid', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const ox = Math.floor(player.controller.position.x);
+    const oy = Math.floor(player.controller.position.y) + 3;
+    const oz = Math.floor(player.controller.position.z) + 2;
+    if (world.world.getBlock(ox, oy, oz) !== BlockId.Air) world.world.setBlock(ox, oy, oz, BlockId.Air);
+
+    world.setGameMode(player, 'creative');
+    expect(world.tryPlace(player, ox, oy, oz, BlockId.Cobblestone)).toEqual({ ok: true });
+    expect(world.world.getBlock(ox, oy, oz)).toBe(BlockId.Cobblestone);
+    expect(world.tryPlace(player, ox, oy, oz, BlockId.Dirt)).toEqual({ ok: false, reason: 'occupied' });
+
+    world.world.setBlock(ox, oy, oz, BlockId.Air);
+    world.setGameMode(player, 'survival');
+    const beforeCount = player.inventory.getSlot(0)?.count ?? 0;
+    expect(beforeCount).toBeGreaterThan(0);
+    expect(world.tryPlace(player, ox, oy, oz)).toEqual({ ok: true });
+    expect(world.world.getBlock(ox, oy, oz)).toBe(BlockId.Dirt);
+    expect(player.inventory.getSlot(0)?.count).toBe(beforeCount - 1);
+
+    player.inventory.setSlot(0, null);
+    world.world.setBlock(ox, oy + 1, oz, BlockId.Air);
+    expect(world.tryPlace(player, ox, oy + 1, oz)).toEqual({ ok: false, reason: 'inventory' });
+    expect(world.tryPlace(player, ox, -4, oz)).toEqual({ ok: false, reason: 'bounds' });
+  });
+
+  it('two simulated clients coexist and reconnect does not duplicate', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'A');
+    const b = join(world, 'B');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    expect(world.onlineCount()).toBe(2);
+    expect(a.player.id).not.toBe(b.player.id);
+    world.disconnect(a.player.id);
+    expect(world.onlineCount()).toBe(1);
+    const resumed = world.join({ sink: new MemorySink(), name: 'A', sessionToken: a.player.sessionToken });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.player.id).toBe(a.player.id);
+    expect(world.onlineCount()).toBe(2);
+    expect(world.players.size).toBe(2);
+  });
+});
+

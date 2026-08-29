@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-08-29: Anarchy server QA fixes (no new features)
+
+- [x] Diagnose missing accepted spawn (IndexedDB vs procedural server world); do not fake `.schem` import.
+- [x] Fix local rubber-banding: server-authoritative 20 TPS + smooth client chase, stale snapshot drop, client-side look.
+- [x] Fix break/place: look-sync raycast, `block_result`, reach slack, broadcast + persist.
+- [x] Regression tests for motion, break/place, two-client, reconnect, persist.
+- [ ] Owner localhost QA (one client / two clients / restart / no-server toast) before any main merge.
+- [ ] Explicit IndexedDB → server dump import of the accepted spawn map (owner export, then `npm run server:import`).
+
 ## 2026-08-29: local authoritative Anarchy server (foundation)
 
 - [x] Architecture audit of actual `origin/main`; no Colyseus remnants; IndexedDB Anarchy was client-authoritative.

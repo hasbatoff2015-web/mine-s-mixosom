@@ -7,6 +7,7 @@ import {
 import {
   decodeJson,
   encodeMessage,
+  parseServerMessage,
   type ClientMessage,
   type ConnectionState,
   type ServerMessage,
@@ -86,8 +87,14 @@ export class AnarchyClient {
       socket.addEventListener('message', (event) => {
         let payload: ServerMessage;
         try {
-          payload = decodeJson(String(event.data)) as ServerMessage;
+          const parsed = parseServerMessage(decodeJson(String(event.data)));
+          if ('error' in parsed) {
+            console.warn('[anarchy] invalid server message:', parsed.error);
+            return;
+          }
+          payload = parsed;
         } catch {
+          console.warn('[anarchy] invalid server JSON');
           return;
         }
         if (payload.type === 'welcome') {

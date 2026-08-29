@@ -2,6 +2,15 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Anarchy server QA fixes (movement / break / place)
+
+- Ветка та же: `cursor/local-authoritative-server-bbb1`. **Не merge в main.** Draft PR #14.
+- Local QA foundation **не принят**: rubber-banding, break не работал, spawn карты IndexedDB на сервере нет.
+- Spawn: сервер **не** подхватывает браузерный IndexedDB и **не** импортирует `.schem`. Текущий server world — filesystem `server/data/worlds/anarchy/` (первый старт = procedural + `estimateWorldSpawn`). Accepted spawn живёт только в IndexedDB пользователя. Перенос — отдельный explicit `npm run server:import`, не в этом pass.
+- Movement: убран hard overwrite локального transform каждым snapshot. Server 20 TPS authority; client — input + smooth chase + ignore stale `player_state.tick`. Камера не берёт yaw/pitch с сервера. Remote interpolation с delay, не на local id.
+- Break/place: raycast смотрит тем же look, что камера; `block_result` с причиной; reach slack `PLAYER_NET_REACH`; persist по-прежнему только server.
+- Report: `docs/reports/2026-08-29_local-server-qa-fixes.md`.
+
 ## Последний проход: local authoritative Anarchy server (foundation)
 
 - Base: актуального `origin/main` `a056e6f` (lighting PR #13). Ветка `cursor/local-authoritative-server-bbb1`. **Не merge в main** до ручного QA.

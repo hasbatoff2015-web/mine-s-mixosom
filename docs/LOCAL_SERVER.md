@@ -102,9 +102,13 @@ After restart the server **loads** this folder. It does **not** regenerate terra
 
 SERVER owns: world blocks, spawn, player position/health/gamemode, inventory used for place/break, simulation tick, persistence, chat broadcast, commands.
 
-CLIENT owns: rendering, input collection, UI, interpolation/cache, local chunk mesh/light.
+CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote interpolation, local chunk mesh/light.
 
-CLIENT MUST NOT: write authoritative voxels, set authoritative position, give itself items, change gamemode locally, decide damage.
+CLIENT MUST NOT: write authoritative voxels, set authoritative position from a guessed client simulation, persist Anarchy to IndexedDB, give itself items, change gamemode locally, decide damage.
+
+Local player (foundation): input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks.
+
+Remote players: snapshot history → interpolation with ~80 ms delay. The local id is never added to that path.
 
 **Singleplayer** is unchanged: IndexedDB via `SaveService`, no server required.
 
@@ -136,7 +140,9 @@ Client `/give` `/time` `/tp` `/clear` `/kill` still work in **singleplayer only*
 
 Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`, `ping`
 
-Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`
+Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`
+
+`block_result` is sent to the requester on every break/place (ok or reason: `reach` / `bounds` / `empty` / `occupied` / `inventory` / …). `player_state.tick` is monotonic; clients drop stale snapshots.
 
 Shared types: `shared/protocol.ts`. Incoming messages are type-checked; client coordinates/inventory/gamemode are not trusted.
 
