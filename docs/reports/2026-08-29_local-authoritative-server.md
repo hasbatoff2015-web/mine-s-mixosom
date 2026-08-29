@@ -68,8 +68,9 @@ No new server/network failures.
 ## Git
 
 - branch: `cursor/local-authoritative-server-bbb1`
-- base: `origin/main` `a056e6f` (lighting PR #13)
-- HEAD: filled after docs commit
+- base: `origin/main` `a056e6f5d4b7f2e206b697f0a774ece921cbbefa` (lighting PR #13)
+- implementation: `37ec539`
+- HEAD: `ad777b49a9f5bd9019541e17241e9b294020cef0`
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/14
 - **Do not merge.**
 
