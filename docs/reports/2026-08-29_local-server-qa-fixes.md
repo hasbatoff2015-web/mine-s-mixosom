@@ -154,6 +154,7 @@ Owner QA on the frozen branch. Then explicit spawn import when a dump is availab
 ## Git
 
 - branch: `cursor/local-authoritative-server-bbb1`
-- QA-fix: `5bd8f13` (plus follow-up report SHA after this file)
+- HEAD: `682f88e7a3bc3c39d64f07aad90a7018199c67d5`
+- implementation: `5bd8f13` Fix Anarchy rubber-banding and silent block interactions
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/14
 - **Do not merge.** Branch frozen for owner QA.
