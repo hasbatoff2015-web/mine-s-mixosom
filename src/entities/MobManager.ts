@@ -119,6 +119,14 @@ export interface MobProjectileSpawnEvent {
   readonly velocity: THREE.Vector3;
 }
 
+export interface MobPlayerFocus {
+  readonly position: Readonly<THREE.Vector3>;
+  readonly eyePosition?: Readonly<THREE.Vector3>;
+  readonly alive?: boolean;
+  /** False keeps the player in spawn/despawn interest but disables hostile targeting. */
+  readonly targetable?: boolean;
+}
+
 export interface MobUpdateContext {
   /** Feet-anchored player position. Omitting it pauses player-aware AI and auto-spawning. */
   readonly playerPosition?: Readonly<THREE.Vector3>;
@@ -126,6 +134,12 @@ export interface MobUpdateContext {
   readonly playerAlive?: boolean;
   /** False keeps spawning/despawning centred on the player but disables hostile targeting. */
   readonly playerTargetable?: boolean;
+  /**
+   * Multiplayer foci. When present, each mob targets the nearest targetable player
+   * and despawn uses the nearest living player. Automatic spawn still runs once per
+   * interval against one randomly chosen living player so density is not doubled.
+   */
+  readonly players?: readonly MobPlayerFocus[];
   /** 0..1; if omitted it is derived from `world.timeOfDay`. */
   readonly daylight?: number;
   readonly lightLevelAt?: (position: Readonly<THREE.Vector3>) => number;
@@ -395,15 +409,15 @@ export class MobManager {
     if (this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
     const delta = Math.min(deltaSeconds, 0.25);
     const daylight = THREE.MathUtils.clamp(context.daylight ?? this.daylightFactor(), 0, 1);
-    const playerAlive = context.playerAlive ?? true;
-    const playerPosition = playerAlive ? context.playerPosition : undefined;
-    const targetPosition = context.playerTargetable === false ? undefined : playerPosition;
+    const foci = this.resolvePlayerFoci(context);
+    const spawnCandidates = foci.filter((focus) => focus.alive !== false);
 
-    if (this.automaticSpawning && playerPosition) {
+    if (this.automaticSpawning && spawnCandidates.length > 0) {
       this.spawnTimer += delta;
       while (this.spawnTimer >= this.spawnIntervalSeconds) {
         this.spawnTimer -= this.spawnIntervalSeconds;
-        this.tryAutomaticSpawn(playerPosition, daylight, context.lightLevelAt);
+        const focus = spawnCandidates[Math.floor(this.random() * spawnCandidates.length)]!;
+        this.tryAutomaticSpawn(focus.position, daylight, context.lightLevelAt);
       }
     }
 
@@ -428,11 +442,17 @@ export class MobManager {
         continue;
       }
 
+      const nearestAlive = this.nearestFocus(mob, foci, false);
+      const nearestTarget = this.nearestFocus(mob, foci, true);
+      const aiContext: MobUpdateContext = nearestTarget?.eyePosition
+        ? { ...context, playerEyePosition: nearestTarget.eyePosition }
+        : context;
+
       if (mob.hurtSeconds > 0) {
         mob.hurtSeconds = Math.max(0, mob.hurtSeconds - delta);
         if (mob.hurtSeconds === 0 && mob.alive) this.changeState(mob, mob.resumeState);
       } else if (!mob.meleeKnockback) {
-        this.updateAi(mob, delta, targetPosition, context, daylight);
+        this.updateAi(mob, delta, nearestTarget?.position, aiContext, daylight);
       }
       if (mob.hurtFlashSeconds > 0) {
         mob.hurtFlashSeconds = Math.max(0, mob.hurtFlashSeconds - delta);
@@ -449,11 +469,12 @@ export class MobManager {
         mob.walkPhase += delta * Math.max(3, speed * 4.5);
       }
       this.snapIfTeleported(mob);
-      this.updateDistanceDespawn(mob, delta, playerPosition);
+      this.updateDistanceDespawn(mob, delta, nearestAlive?.position);
       this.applyMobLight(mob);
     }
 
-    this.updateProjectiles(delta, targetPosition, context);
+    const projectileTarget = foci.find((focus) => focus.alive !== false && focus.targetable !== false);
+    this.updateProjectiles(delta, projectileTarget?.position, context);
   }
 
   /**
@@ -1595,6 +1616,36 @@ export class MobManager {
     if (time < 13_000) return 1 - (time - 11_000) / 2_000 * 0.8;
     if (time < 22_000) return 0.2;
     return 0.2 + (time - 22_000) / 2_000 * 0.8;
+  }
+
+  private resolvePlayerFoci(context: MobUpdateContext): MobPlayerFocus[] {
+    if (context.players && context.players.length > 0) return [...context.players];
+    if (!context.playerPosition) return [];
+    return [{
+      position: context.playerPosition,
+      eyePosition: context.playerEyePosition,
+      alive: context.playerAlive,
+      targetable: context.playerTargetable,
+    }];
+  }
+
+  private nearestFocus(
+    mob: MobEntity,
+    foci: readonly MobPlayerFocus[],
+    targetableOnly: boolean,
+  ): MobPlayerFocus | undefined {
+    let best: MobPlayerFocus | undefined;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const focus of foci) {
+      if (focus.alive === false) continue;
+      if (targetableOnly && focus.targetable === false) continue;
+      const distance = mob.position.distanceToSquared(focus.position);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = focus;
+      }
+    }
+    return best;
   }
 
   private playerEye(

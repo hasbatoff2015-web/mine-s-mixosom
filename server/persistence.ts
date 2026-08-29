@@ -28,6 +28,8 @@ export interface StoredPlayer {
   readonly inventory: unknown;
   readonly sessionToken?: string;
   readonly updatedAt: number;
+  readonly survival?: unknown;
+  readonly cursor?: unknown;
 }
 
 export interface WorldDiskState {
@@ -36,6 +38,13 @@ export interface WorldDiskState {
   readonly modifications: WorldModifications;
   readonly blockStates: WorldBlockStates;
   readonly players: Record<string, StoredPlayer>;
+  readonly chests?: Record<string, unknown>;
+  readonly furnaces?: Record<string, unknown>;
+  readonly droppedItems?: unknown[];
+  readonly mobs?: unknown[];
+  readonly minecarts?: unknown[];
+  readonly fallingBlocks?: unknown[];
+  readonly redstone?: unknown;
 }
 
 async function readJson(path: string): Promise<unknown | undefined> {
@@ -66,6 +75,14 @@ function parseSpawn(value: unknown): Vec3 | undefined {
   const z = Number(value[2]);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return undefined;
   return [x, y, z];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 export class WorldPersistence {
@@ -115,6 +132,13 @@ export class WorldPersistence {
       modifications,
       blockStates,
       players,
+      chests: asRecord(world.chests),
+      furnaces: asRecord(world.furnaces),
+      droppedItems: asArray(world.droppedItems),
+      mobs: asArray(world.mobs),
+      minecarts: asArray(world.minecarts),
+      fallingBlocks: asArray(world.fallingBlocks),
+      redstone: world.redstone,
     };
   }
 
@@ -130,6 +154,13 @@ export class WorldPersistence {
       timeOfDay: state.timeOfDay,
       modifications: state.modifications,
       blockStates: state.blockStates,
+      chests: state.chests ?? {},
+      furnaces: state.furnaces ?? {},
+      droppedItems: state.droppedItems ?? [],
+      mobs: state.mobs ?? [],
+      minecarts: state.minecarts ?? [],
+      fallingBlocks: state.fallingBlocks ?? [],
+      ...(state.redstone !== undefined ? { redstone: state.redstone } : {}),
     });
     await writeJsonAtomic(this.playersPath, { players: state.players });
     serverLog('world saved');

@@ -82,6 +82,12 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
+Online Anarchy simulation kernel is `server/gameplay.ts` (`ServerGameplay`). It owns a dummy `THREE.Group` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions). `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` batches voxel deltas into `block_update` / `block_batch` so fluid ticks do not flood one packet per cell. Entity interest snapshots (radius 48, cap 96) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation.
+
+Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `craft` / `interact` / `attack` / `pickup` / `vehicle_input` plus `input.mining` / `use` / `vehicleForward`; server `block_batch` / `health` / `effects` / `entity_snapshot` / `command_result` / `time`. Unknown server types still reject.
+
+Singleplayer IndexedDB path is unchanged. Online never writes Anarchy to IndexedDB.
+
 ## Карта подсистем
 
 ```mermaid
@@ -102,7 +108,7 @@ flowchart TD
   Game --> Save["SaveService / IndexedDB (singleplayer)"]
   Game --> Net["AnarchyClient WebSocket"]
   Net --> Server["Frontier Cubes Server (Node)"]
-  Server --> WorldInst["WorldInstance + VoxelWorld"]
+  Server --> WorldInst["WorldInstance + ServerGameplay + VoxelWorld"]
   Server --> Persist["server/data/worlds/anarchy"]
   Game --> Platform["YandexGamesService"]
   World --> Blocks["Block registry"]

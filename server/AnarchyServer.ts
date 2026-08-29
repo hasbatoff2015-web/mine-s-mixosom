@@ -284,6 +284,29 @@ export class AnarchyServer {
       case 'ping':
         this.world.sendTo(player, { type: 'pong', t: message.t });
         return;
+      case 'inventory_action':
+        this.world.applyInventoryAction(player, message);
+        return;
+      case 'craft':
+        this.world.applyInventoryAction(player, {
+          type: 'inventory_action',
+          action: 'click',
+          key: 'result',
+          shift: message.shift === true,
+        });
+        return;
+      case 'interact':
+        this.world.interact(player);
+        return;
+      case 'attack':
+        this.world.attack(player);
+        return;
+      case 'pickup':
+        this.world.pickup(player);
+        return;
+      case 'vehicle_input':
+        this.world.vehicleInput(player, message);
+        return;
     }
   }
 

@@ -59,6 +59,81 @@ export interface EntityDamageEvent extends Cancellable {
   readonly cause: string;
 }
 
+export interface EntityDeathEvent {
+  readonly entityId: string;
+  readonly cause: string;
+  readonly playerId?: string;
+}
+
+export interface ItemDropEvent extends Cancellable {
+  readonly playerId?: string;
+  readonly itemId: string;
+  readonly count: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface ItemPickupEvent extends Cancellable {
+  readonly playerId: string;
+  readonly entityId: string;
+  readonly itemId: string;
+  readonly count: number;
+}
+
+export interface CraftEvent extends Cancellable {
+  readonly playerId: string;
+  readonly recipeId?: string;
+  readonly outputId: string;
+  readonly count: number;
+}
+
+export interface PlayerInteractEvent extends Cancellable {
+  readonly playerId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly blockId: number;
+}
+
+export interface ProjectileHitEvent {
+  readonly entityId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly playerId?: string;
+}
+
+export interface ExplosionEvent extends Cancellable {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly radius: number;
+  readonly power: number;
+}
+
+export interface FluidUpdateEvent {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly blockId: number;
+}
+
+export interface PlayerCommandEvent extends Cancellable {
+  readonly playerId: string;
+  readonly command: string;
+}
+
+export interface VehicleEnterEvent extends Cancellable {
+  readonly playerId: string;
+  readonly entityId: string;
+}
+
+export interface VehicleExitEvent extends Cancellable {
+  readonly playerId: string;
+  readonly entityId: string;
+}
+
 export interface ServerEvents {
   playerJoin: PlayerJoinEvent;
   playerQuit: PlayerQuitEvent;
@@ -67,6 +142,17 @@ export interface ServerEvents {
   blockPlace: BlockPlaceEvent;
   playerDamage: PlayerDamageEvent;
   entityDamage: EntityDamageEvent;
+  entityDeath: EntityDeathEvent;
+  itemDrop: ItemDropEvent;
+  itemPickup: ItemPickupEvent;
+  craft: CraftEvent;
+  playerInteract: PlayerInteractEvent;
+  projectileHit: ProjectileHitEvent;
+  explosion: ExplosionEvent;
+  fluidUpdate: FluidUpdateEvent;
+  playerCommand: PlayerCommandEvent;
+  vehicleEnter: VehicleEnterEvent;
+  vehicleExit: VehicleExitEvent;
 }
 
 export type ServerEventName = keyof ServerEvents;
@@ -111,5 +197,48 @@ export class EventBus {
 
   createPlayerDamage(playerId: string, amount: number, cause: string): PlayerDamageEvent {
     return cancellable({ playerId, amount, cause });
+  }
+
+  createEntityDamage(entityId: string, amount: number, cause: string): EntityDamageEvent {
+    return cancellable({ entityId, amount, cause });
+  }
+
+  createItemDrop(
+    itemId: string,
+    count: number,
+    x: number,
+    y: number,
+    z: number,
+    playerId?: string,
+  ): ItemDropEvent {
+    return cancellable({ itemId, count, x, y, z, ...(playerId ? { playerId } : {}) });
+  }
+
+  createItemPickup(playerId: string, entityId: string, itemId: string, count: number): ItemPickupEvent {
+    return cancellable({ playerId, entityId, itemId, count });
+  }
+
+  createCraft(playerId: string, outputId: string, count: number, recipeId?: string): CraftEvent {
+    return cancellable({ playerId, outputId, count, ...(recipeId ? { recipeId } : {}) });
+  }
+
+  createPlayerInteract(playerId: string, x: number, y: number, z: number, blockId: number): PlayerInteractEvent {
+    return cancellable({ playerId, x, y, z, blockId });
+  }
+
+  createExplosion(x: number, y: number, z: number, radius: number, power: number): ExplosionEvent {
+    return cancellable({ x, y, z, radius, power });
+  }
+
+  createPlayerCommand(playerId: string, command: string): PlayerCommandEvent {
+    return cancellable({ playerId, command });
+  }
+
+  createVehicleEnter(playerId: string, entityId: string): VehicleEnterEvent {
+    return cancellable({ playerId, entityId });
+  }
+
+  createVehicleExit(playerId: string, entityId: string): VehicleExitEvent {
+    return cancellable({ playerId, entityId });
   }
 }

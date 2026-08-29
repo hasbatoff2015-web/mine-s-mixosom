@@ -191,6 +191,17 @@ export class VoxelWorld {
   private pendingLight?: PendingLightJob;
   /** Runtime sessions defer every mutation/getter; synchronous utilities remain available to tests/QA. */
   deferredLighting = false;
+  /**
+   * Authoritative servers subscribe here to batch/dedupe resulting voxel writes
+   * (fluids, TNT, support, furnaces) without a second world representation.
+   */
+  onCommittedBlocks?: (changes: readonly {
+    x: number;
+    y: number;
+    z: number;
+    previous: BlockId;
+    block: BlockId;
+  }[]) => void;
   private pendingEmitters: Array<readonly [number, number, number]> = [];
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
@@ -455,6 +466,7 @@ export class VoxelWorld {
       unique.set(blockKey(mutation.x, mutation.y, mutation.z), mutation);
     }
     this.mutationMarks += unique.size;
+    const committed: Array<{ x: number; y: number; z: number; previous: BlockId; block: BlockId }> = [];
 
     const addedEmitters: Array<readonly [number, number, number]> = [];
     let regionSky = false;
@@ -479,6 +491,13 @@ export class VoxelWorld {
       );
       if (!wrote) continue;
       applied += 1;
+      committed.push({
+        x: mutation.x,
+        y: mutation.y,
+        z: mutation.z,
+        previous: wrote.previous,
+        block: mutation.block,
+      });
       const signatureAction = lightingInvalidation(wrote.previous, mutation.block);
       const action = signatureAction === 'none' && wrote.emissionChanged ? 'region' : signatureAction;
       if (action === 'addEmitter' && (getBlockDefinition(mutation.block).emission ?? 0) > 0) {
@@ -530,6 +549,8 @@ export class VoxelWorld {
     if (applied > 0 && options.deferChunkLighting) {
       this.invalidateImportedChunkLighting(dirtyChunks);
     }
+
+    if (committed.length > 0) this.onCommittedBlocks?.(committed);
 
     return {
       applied,

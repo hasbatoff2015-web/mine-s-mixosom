@@ -138,6 +138,44 @@ export class RedstoneSystem {
     return [...this.primedById.values()];
   }
 
+  syncNetworkPrimed(
+    entries: ReadonlyArray<{
+      readonly id: string;
+      readonly x: number;
+      readonly y: number;
+      readonly z: number;
+      readonly vx: number;
+      readonly vy: number;
+      readonly vz: number;
+      readonly fuse: number;
+    }>,
+  ): void {
+    const seen = new Set<string>();
+    for (const entry of entries) {
+      seen.add(entry.id);
+      const existing = this.primedById.get(entry.id);
+      if (existing) {
+        existing.previousPosition.copy(existing.position);
+        existing.position.set(entry.x, entry.y, entry.z);
+        existing.velocity.set(entry.vx, entry.vy, entry.vz);
+        existing.fuseSeconds = Math.max(0.05, entry.fuse);
+        existing.visual?.position.copy(existing.position);
+        continue;
+      }
+      this.createPrimedTnt(
+        entry.id,
+        new THREE.Vector3(entry.x, entry.y, entry.z),
+        Math.max(0.05, entry.fuse),
+        [entry.vx, entry.vy, entry.vz],
+      );
+    }
+    for (const [id, entity] of this.primedById) {
+      if (seen.has(id)) continue;
+      entity.visual?.removeFromParent();
+      this.primedById.delete(id);
+    }
+  }
+
   /** Registers/reconciles a changed coordinate and its six neighbours. */
   notifyBlockChanged(x: number, y: number, z: number): void {
     this.notifyBlocksChanged([{ x, y, z }]);

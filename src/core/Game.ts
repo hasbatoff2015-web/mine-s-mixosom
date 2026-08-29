@@ -53,7 +53,9 @@ import {
   FIXED_DT,
   MAX_CATCH_UP_TICKS,
   MAX_FRAME_DELTA,
+  PLAYER_HEIGHT,
   PLAYER_REACH,
+  PLAYER_WIDTH,
   TICK_RATE,
     WORLD_HEIGHT,
     isValidWorldY,
@@ -176,6 +178,7 @@ import {
   splitPlayerSnapshots,
   stepTowardTarget,
 } from '../net/authoritativeMotion';
+import { applyEntitySnapshots } from '../net/applyEntitySnapshots';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -185,7 +188,7 @@ import {
   pendingMeshInRadius,
   planMeshFrame,
 } from '../world/streamingScheduler';
-import { blockCollisionBoxes } from '../world/collision';
+import { blockCollisionBoxes, rayAabbDistance } from '../world/collision';
 import {
   defaultSlabType,
   defaultStairFacing,
@@ -248,6 +251,31 @@ interface RuntimeSettings {
 }
 
 const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
+
+function raycastRemotePlayers(
+  remotes: Map<string, RemotePlayerView>,
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  maxDistance: number,
+): { id: string; distance: number } | undefined {
+  const half = PLAYER_WIDTH * 0.5;
+  let closest: { id: string; distance: number } | undefined;
+  for (const [id, view] of remotes) {
+    const position = view.group.position;
+    const hit = rayAabbDistance(origin, direction, {
+      minX: position.x - half,
+      maxX: position.x + half,
+      minY: position.y,
+      maxY: position.y + PLAYER_HEIGHT,
+      minZ: position.z - half,
+      maxZ: position.z + half,
+    });
+    if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
+    if (closest && hit.distance >= closest.distance) continue;
+    closest = { id, distance: hit.distance };
+  }
+  return closest;
+}
 
 export class Game {
   private polishQaDispose?: () => void;
@@ -586,6 +614,53 @@ export class Game {
         }
         return;
       }
+      case 'block_batch': {
+        session.world.applyBlockBatch(
+          message.changes.map((change) => ({
+            x: change.x, y: change.y, z: change.z, block: change.blockId as BlockId,
+          })),
+          { deferLighting: true },
+        );
+        for (const change of message.changes) {
+          this.clearOnlineBlockPending(session, change.x, change.y, change.z);
+        }
+        return;
+      }
+      case 'entity_snapshot':
+        applyEntitySnapshots(session, message.entities);
+        return;
+      case 'health': {
+        const previous = session.survival.health;
+        session.survival.restore({
+          health: message.health,
+          hunger: message.hunger,
+          saturation: message.saturation,
+          absorption: message.absorption,
+          airTicks: message.air,
+          dead: message.dead,
+        });
+        if (message.health < previous - 0.01) {
+          this.hurt.trigger(performance.now(), { periodic: false });
+          this.playLocal('player.hurt');
+        }
+        this.refreshHud();
+        return;
+      }
+      case 'effects':
+        session.survival.restore({
+          effects: message.effects.map((effect) => ({
+            id: effect.id as 'invisibility' | 'regeneration' | 'absorption',
+            amplifier: effect.amplifier,
+            ticks: effect.remainingTicks,
+          })),
+        });
+        this.refreshHud();
+        return;
+      case 'time':
+        session.world.timeOfDay = message.timeOfDay;
+        return;
+      case 'command_result':
+        return;
       case 'block_result':
         this.handleOnlineBlockResult(session, message);
         return;
@@ -606,6 +681,11 @@ export class Game {
           session.summary.mode = message.gamemode;
           session.player.creativeFlightAllowed = message.gamemode === 'creative';
         }
+        if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
+        this.ui.applyAuthoritativeCursor(this.parseOnlineStack(message.cursor), this.parseOnlineStacks(message.craftSlots));
+        if (message.window?.kind && message.window.kind !== 'inventory' && !this.ui.isInventoryOpen()) {
+          this.openOnlineContainer(session, message.window.kind, message.window);
+        }
         this.refreshHud();
         return;
       case 'error':
@@ -617,6 +697,48 @@ export class Game {
       default:
         return;
     }
+  }
+
+  private parseOnlineStack(value: unknown): ItemStack | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as { itemId?: unknown; count?: unknown };
+    if (typeof record.itemId !== 'string' || typeof record.count !== 'number') return null;
+    try {
+      return createItemStack(record.itemId, record.count);
+    } catch {
+      return null;
+    }
+  }
+
+  private parseOnlineStacks(value: unknown): Array<ItemStack | null> | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return value.map((entry) => this.parseOnlineStack(entry));
+  }
+
+  private openOnlineContainer(
+    session: GameSession,
+    kind: 'crafting-table' | 'chest' | 'furnace',
+    window: { readonly x?: number; readonly y?: number; readonly z?: number; readonly slots?: unknown },
+  ): void {
+    const x = window.x ?? 0;
+    const y = window.y ?? 0;
+    const z = window.z ?? 0;
+    if (kind === 'chest' && Array.isArray(window.slots)) {
+      const chest = session.world.getChest(x, y, z);
+      chest.slots = window.slots.map((entry) => this.parseOnlineStack(entry));
+    }
+    if (kind === 'furnace' && Array.isArray(window.slots)) {
+      const furnace = session.world.getFurnace(x, y, z);
+      const parsed = window.slots.map((entry) => this.parseOnlineStack(entry));
+      furnace.slots = [parsed[0] ?? null, parsed[1] ?? null, parsed[2] ?? null];
+    }
+    this.openBlockInventory(kind, {
+      x, y, z,
+      block: kind === 'chest' ? BlockId.Chest : kind === 'furnace' ? BlockId.Furnace : BlockId.CraftingTable,
+      normal: new THREE.Vector3(0, 1, 0),
+      distance: 0,
+      point: new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+    });
   }
 
   private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
@@ -645,7 +767,11 @@ export class Game {
       session.player.sneaking = local.sneaking;
       session.player.sprinting = local.sprinting;
       session.player.onGround = local.onGround;
-      session.survival.restore({ health: local.health });
+      session.survival.restore({ health: local.health, hunger: local.hunger });
+      session.ridingCartId = local.ridingEntityId;
+      if (local.invisible) {
+        /* local first-person hide is driven by survival effects */
+      }
       if (local.gamemode !== session.summary.mode) {
         session.summary.mode = local.gamemode;
         session.player.creativeFlightAllowed = local.gamemode === 'creative';
@@ -659,6 +785,7 @@ export class Game {
         remote = online.remotes.get(snap.id);
       }
       remote?.applySnapshot(snap, performance.now(), message.tick);
+      if (remote) remote.group.visible = snap.invisible !== true;
     }
     for (const id of [...online.remotes.keys()]) {
       if (!seen.has(id)) this.removeRemotePlayer(session, id);
@@ -931,6 +1058,7 @@ export class Game {
       hostileCap: isCoarsePointer() ? 14 : 24,
       maxProjectiles: isCoarsePointer() ? 20 : 40,
       arrowVisualFactory: arrowVisuals,
+      automaticSpawning: !options?.online,
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
@@ -1622,7 +1750,12 @@ export class Game {
   private closeInventoryAndResumeLook(): void {
     this.closeOpenChestAudio();
     this.session?.worldRenderer.setOpenChest(undefined);
-    this.ui.closeInventory();
+    if (this.session?.online) {
+      this.session.online.client.send({ type: 'inventory_action', action: 'close' });
+      this.ui.closeInventory(false);
+    } else {
+      this.ui.closeInventory();
+    }
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -1685,7 +1818,11 @@ export class Game {
       onClose: () => this.closeInventoryAndResumeLook(),
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
+      submitAction: session.online
+        ? (message) => session.online?.client.send(message)
+        : undefined,
     });
+    session.online?.client.send({ type: 'inventory_action', action: 'open', kind: 'inventory' });
   }
 
   private openGameplayModal(): void {
@@ -1722,6 +1859,9 @@ export class Game {
       },
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
+      submitAction: session.online
+        ? (message) => session.online?.client.send(message)
+        : undefined,
     });
   }
 
@@ -1938,21 +2078,25 @@ export class Game {
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
     const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
-    online.inputSeq += 1;
-    online.client.send({
-      type: 'input',
-      seq: online.inputSeq,
-      forward: movement.forward,
-      right: movement.right,
-      jump: movement.jump,
-      sneak: movement.sneak,
-      sprint: movement.sprint,
-      descend: movement.descend === true,
-      flySprint: movement.flySprint === true,
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
-      selectedSlot: session.selectedSlot,
-    });
+      const riding = Boolean(session.ridingCartId);
+      online.inputSeq += 1;
+      online.client.send({
+        type: 'input',
+        seq: online.inputSeq,
+        forward: movement.forward,
+        right: movement.right,
+        jump: movement.jump,
+        sneak: movement.sneak,
+        sprint: movement.sprint,
+        descend: movement.descend === true,
+        flySprint: movement.flySprint === true,
+        yaw: this.input.yaw,
+        pitch: this.input.pitch,
+        selectedSlot: session.selectedSlot,
+        mining: gameplayAllowed && this.input.mining,
+        use: gameplayAllowed && this.input.using,
+        vehicleForward: riding ? movement.forward : 0,
+      });
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
@@ -2145,6 +2289,15 @@ export class Game {
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
     const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
+    const remoteHit = session.online
+      ? raycastRemotePlayers(session.online.remotes, origin, direction, Math.min(3, PLAYER_REACH))
+      : undefined;
+    const remoteCloser = Boolean(
+      remoteHit
+      && (!mobTarget || remoteHit.distance <= mobTarget.distance)
+      && (!cartHit || remoteHit.distance <= cartHit.distance)
+      && (!session.target || remoteHit.distance < session.target.distance)
+    );
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
     const attackPresses = this.input.consumeAttackPresses();
@@ -2153,43 +2306,58 @@ export class Game {
     if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
       session.online.rejectedBlockKey = undefined;
     }
-    if (attack?.kind === 'mob' && mobTarget) {
+    if (remoteCloser && session.online) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       for (let click = 0; click < attackPresses; click += 1) {
-        const stack = this.selectedStack();
-        const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
-          critical: {
-            fallDistance: session.player.fallDistance,
-            onGround: session.player.onGround,
-            sprinting: session.player.sprinting,
-            inWater: session.player.inWater,
-            onLadder: session.player.onLadder,
-            riding: Boolean(session.ridingCartId),
-          },
-          attackerSprinting: session.player.sprinting,
-          attackerYaw: session.player.yaw,
-        });
-        const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
-          source: 'player',
-          attackerPosition: session.player.position,
-          attackerYaw: result.attackerYaw,
-          extraKnockbackLevel: result.extraKnockbackLevel,
-        });
-        completeMeleeAttack(result, accepted, session.player);
-        if (accepted && session.summary.mode === 'survival') {
-          if (stack && result.profile.durabilityCost > 0) {
-            session.inventory.setSlot(session.selectedSlot, damageItem(stack, result.profile.durabilityCost));
-          }
-          session.survival.recordAttack();
+        session.online.client.send({ type: 'attack' });
+      }
+    } else if (attack?.kind === 'mob' && mobTarget) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      if (session.online) {
+        for (let click = 0; click < attackPresses; click += 1) {
+          session.online.client.send({ type: 'attack' });
         }
-        if (accepted) this.playWorld('combat.hit', mobTarget.mob.position.x, mobTarget.mob.position.y + 0.9, mobTarget.mob.position.z);
+      } else {
+        for (let click = 0; click < attackPresses; click += 1) {
+          const stack = this.selectedStack();
+          const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
+            critical: {
+              fallDistance: session.player.fallDistance,
+              onGround: session.player.onGround,
+              sprinting: session.player.sprinting,
+              inWater: session.player.inWater,
+              onLadder: session.player.onLadder,
+              riding: Boolean(session.ridingCartId),
+            },
+            attackerSprinting: session.player.sprinting,
+            attackerYaw: session.player.yaw,
+          });
+          const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
+            source: 'player',
+            attackerPosition: session.player.position,
+            attackerYaw: result.attackerYaw,
+            extraKnockbackLevel: result.extraKnockbackLevel,
+          });
+          completeMeleeAttack(result, accepted, session.player);
+          if (accepted && session.summary.mode === 'survival') {
+            if (stack && result.profile.durabilityCost > 0) {
+              session.inventory.setSlot(session.selectedSlot, damageItem(stack, result.profile.durabilityCost));
+            }
+            session.survival.recordAttack();
+          }
+          if (accepted) this.playWorld('combat.hit', mobTarget.mob.position.x, mobTarget.mob.position.y + 0.9, mobTarget.mob.position.z);
+        }
       }
     } else if (attack?.kind === 'minecart') {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
-      if (attackPressed) this.breakMinecart(attack.cart);
+      if (attackPressed) {
+        if (session.online) session.online.client.send({ type: 'attack' });
+        else this.breakMinecart(attack.cart);
+      }
     } else if (!this.input.mining || !session.target) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
@@ -2212,7 +2380,14 @@ export class Game {
     }
     for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
     session.combat.setHeldItem(this.selectedStack()?.itemId);
-    if (this.input.consumeUsePressed()) this.useTargetOrItem();
+    if (this.input.consumeUsePressed()) {
+      if (session.online) {
+        session.online.client.send({ type: 'interact' });
+        this.requestOnlinePlace(session);
+      } else {
+        this.useTargetOrItem();
+      }
+    }
   }
 
   private miningDelta(definition: ReturnType<typeof getBlockDefinition>, tool: ItemStack | null): number {
@@ -2231,9 +2406,6 @@ export class Game {
       }
       session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
       session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
-      session.miningProgress = 0;
-      session.miningTarget = undefined;
-      resetMiningSound(this.miningSound);
       this.firstPerson?.swing();
       return;
     }
@@ -2955,6 +3127,15 @@ export class Game {
     if (!session || this.lifecycle.state !== 'PLAYING') return;
     const stack = this.selectedStack();
     if (!stack) return;
+    if (session.online) {
+      session.online.client.send({
+        type: 'inventory_action',
+        action: 'drop_selected',
+        slot: session.selectedSlot,
+        count: 1,
+      });
+      return;
+    }
     const dropped = { ...stack, count: 1 };
     session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
     session.drops.drop(dropped, session.player.eyePosition(), session.player.viewDirection());
@@ -2963,7 +3144,7 @@ export class Game {
 
   private spawnDroppedStack(stack: ItemStack, position?: THREE.Vector3): void {
     const session = this.session;
-    if (!session) return;
+    if (!session || session.online) return;
     session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
       velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2.2, (Math.random() - 0.5) * 1.4),
     });
@@ -3344,6 +3525,7 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
+    if (session.online) return;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();

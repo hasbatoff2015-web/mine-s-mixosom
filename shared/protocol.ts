@@ -6,6 +6,21 @@ export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecte
 
 export type Vec3 = readonly [number, number, number];
 
+export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace';
+
+export type InventoryActionKind =
+  | 'click'
+  | 'drop_selected'
+  | 'drop_cursor'
+  | 'select'
+  | 'open'
+  | 'close'
+  | 'recipe';
+
+export type EntityKind = 'item' | 'mob' | 'minecart' | 'tnt' | 'arrow' | 'falling';
+
+export type VehicleAction = 'enter' | 'exit' | 'steer';
+
 export interface PlayerSnapshot {
   readonly id: string;
   readonly name: string;
@@ -23,6 +38,11 @@ export interface PlayerSnapshot {
   readonly sprinting: boolean;
   readonly onGround: boolean;
   readonly selectedSlot: number;
+  readonly invisible?: boolean;
+  readonly onFire?: boolean;
+  readonly hunger?: number;
+  readonly armor?: number;
+  readonly ridingEntityId?: string;
 }
 
 export interface RemotePlayerInfo {
@@ -37,6 +57,46 @@ export interface RemotePlayerInfo {
 
 export type WorldModifications = Record<string, Record<string, number>>;
 export type WorldBlockStates = Record<string, unknown>;
+
+export interface EffectSnapshot {
+  readonly id: string;
+  readonly amplifier: number;
+  readonly remainingTicks: number;
+}
+
+export interface EntitySnapshot {
+  readonly id: string;
+  readonly kind: EntityKind;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly yaw?: number;
+  readonly pitch?: number;
+  readonly vx?: number;
+  readonly vy?: number;
+  readonly vz?: number;
+  readonly itemId?: string;
+  readonly count?: number;
+  readonly mobKind?: string;
+  readonly health?: number;
+  readonly maxHealth?: number;
+  readonly onFire?: boolean;
+  readonly hurt?: boolean;
+  readonly invisible?: boolean;
+  readonly variant?: string;
+  readonly primed?: boolean;
+  readonly fuse?: number;
+  readonly passengerId?: string;
+  readonly state?: string;
+  readonly blockId?: number;
+}
+
+export interface BlockChange {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly blockId: number;
+}
 
 export interface ClientJoinMessage {
   readonly type: 'join';
@@ -58,6 +118,9 @@ export interface ClientInputMessage {
   readonly yaw: number;
   readonly pitch: number;
   readonly selectedSlot: number;
+  readonly mining?: boolean;
+  readonly use?: boolean;
+  readonly vehicleForward?: number;
 }
 
 export interface ClientBreakBlockMessage {
@@ -92,6 +155,46 @@ export interface ClientPingMessage {
   readonly t: number;
 }
 
+export interface ClientInventoryActionMessage {
+  readonly type: 'inventory_action';
+  readonly action: InventoryActionKind;
+  readonly key?: string;
+  readonly button?: 'left' | 'right';
+  readonly shift?: boolean;
+  readonly slot?: number;
+  readonly count?: number;
+  readonly kind?: ContainerKind;
+  readonly x?: number;
+  readonly y?: number;
+  readonly z?: number;
+  readonly recipeId?: string;
+}
+
+export interface ClientCraftMessage {
+  readonly type: 'craft';
+  readonly shift?: boolean;
+}
+
+export interface ClientInteractMessage {
+  readonly type: 'interact';
+}
+
+export interface ClientAttackMessage {
+  readonly type: 'attack';
+}
+
+export interface ClientPickupMessage {
+  readonly type: 'pickup';
+  readonly entityId?: string;
+}
+
+export interface ClientVehicleInputMessage {
+  readonly type: 'vehicle_input';
+  readonly action: VehicleAction;
+  readonly entityId?: string;
+  readonly forward?: number;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientInputMessage
@@ -99,7 +202,13 @@ export type ClientMessage =
   | ClientPlaceBlockMessage
   | ClientChatMessage
   | ClientViewMessage
-  | ClientPingMessage;
+  | ClientPingMessage
+  | ClientInventoryActionMessage
+  | ClientCraftMessage
+  | ClientInteractMessage
+  | ClientAttackMessage
+  | ClientPickupMessage
+  | ClientVehicleInputMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -143,6 +252,11 @@ export interface ServerBlockUpdateMessage {
   readonly y: number;
   readonly z: number;
   readonly blockId: number;
+}
+
+export interface ServerBlockBatchMessage {
+  readonly type: 'block_batch';
+  readonly changes: readonly BlockChange[];
 }
 
 export interface ServerBlockResultMessage {
@@ -199,6 +313,50 @@ export interface ServerInventoryMessage {
   readonly inventory: unknown;
   readonly selectedSlot: number;
   readonly gamemode: GameMode;
+  readonly cursor?: unknown;
+  readonly craftSlots?: unknown;
+  readonly window?: {
+    readonly kind: ContainerKind;
+    readonly x?: number;
+    readonly y?: number;
+    readonly z?: number;
+    readonly slots?: unknown;
+  };
+}
+
+export interface ServerHealthMessage {
+  readonly type: 'health';
+  readonly health: number;
+  readonly hunger: number;
+  readonly saturation: number;
+  readonly absorption: number;
+  readonly air: number;
+  readonly armor: number;
+  readonly fire: boolean;
+  readonly dead: boolean;
+}
+
+export interface ServerEffectsMessage {
+  readonly type: 'effects';
+  readonly effects: readonly EffectSnapshot[];
+}
+
+export interface ServerEntitySnapshotMessage {
+  readonly type: 'entity_snapshot';
+  readonly tick: number;
+  readonly entities: readonly EntitySnapshot[];
+}
+
+export interface ServerCommandResultMessage {
+  readonly type: 'command_result';
+  readonly ok: boolean;
+  readonly name: string;
+  readonly lines: readonly string[];
+}
+
+export interface ServerTimeMessage {
+  readonly type: 'time';
+  readonly timeOfDay: number;
 }
 
 export type ServerMessage =
@@ -207,6 +365,7 @@ export type ServerMessage =
   | ServerPlayerLeftMessage
   | ServerPlayerStateMessage
   | ServerBlockUpdateMessage
+  | ServerBlockBatchMessage
   | ServerBlockResultMessage
   | ServerChunkMessage
   | ServerUnloadChunkMessage
@@ -214,7 +373,12 @@ export type ServerMessage =
   | ServerErrorMessage
   | ServerPongMessage
   | ServerStatusMessage
-  | ServerInventoryMessage;
+  | ServerInventoryMessage
+  | ServerHealthMessage
+  | ServerEffectsMessage
+  | ServerEntitySnapshotMessage
+  | ServerCommandResultMessage
+  | ServerTimeMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -224,6 +388,12 @@ export const CLIENT_MESSAGE_TYPES = [
   'chat',
   'view',
   'ping',
+  'inventory_action',
+  'craft',
+  'interact',
+  'attack',
+  'pickup',
+  'vehicle_input',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -232,6 +402,7 @@ export const SERVER_MESSAGE_TYPES = [
   'player_left',
   'player_state',
   'block_update',
+  'block_batch',
   'block_result',
   'chunk_data',
   'unload_chunk',
@@ -240,7 +411,22 @@ export const SERVER_MESSAGE_TYPES = [
   'pong',
   'status',
   'inventory',
+  'health',
+  'effects',
+  'entity_snapshot',
+  'command_result',
+  'time',
 ] as const satisfies readonly ServerMessage['type'][];
+
+const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
+  'click', 'drop_selected', 'drop_cursor', 'select', 'open', 'close', 'recipe',
+];
+
+const CONTAINER_KINDS: readonly ContainerKind[] = [
+  'inventory', 'crafting-table', 'chest', 'furnace',
+];
+
+const VEHICLE_ACTIONS: readonly VehicleAction[] = ['enter', 'exit', 'steer'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -262,6 +448,18 @@ function sanitizeName(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim().slice(0, MAX_PLAYER_NAME_LENGTH);
   if (!/^[A-Za-z0-9_А-Яа-яЁё -]+$/.test(trimmed)) return undefined;
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalInteger(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || !finite(value)) return undefined;
+  return value;
+}
+
+function optionalString(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
@@ -296,6 +494,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (!finite(raw.selectedSlot) || !Number.isInteger(raw.selectedSlot)) {
         return { error: 'input.selectedSlot invalid' };
       }
+      if (raw.mining !== undefined && !bool(raw.mining)) return { error: 'input.mining invalid' };
+      if (raw.use !== undefined && !bool(raw.use)) return { error: 'input.use invalid' };
+      const vehicleForward = raw.vehicleForward === undefined
+        ? undefined
+        : finite(raw.vehicleForward) ? clampNumber(raw.vehicleForward, -1, 1) : undefined;
+      if (raw.vehicleForward !== undefined && vehicleForward === undefined) {
+        return { error: 'input.vehicleForward invalid' };
+      }
       return {
         type: 'input',
         seq: raw.seq,
@@ -309,6 +515,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         yaw: raw.yaw,
         pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2),
         selectedSlot: clampNumber(Math.floor(raw.selectedSlot), 0, 8),
+        ...(raw.mining === true ? { mining: true } : {}),
+        ...(raw.use === true ? { use: true } : {}),
+        ...(vehicleForward !== undefined ? { vehicleForward } : {}),
       };
     }
     case 'break_block':
@@ -358,6 +567,78 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (!finite(raw.t)) return { error: 'ping.t invalid' };
       return { type: 'ping', t: raw.t };
     }
+    case 'inventory_action': {
+      if (typeof raw.action !== 'string' || !(INVENTORY_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'inventory_action.action invalid' };
+      }
+      if (raw.button !== undefined && raw.button !== 'left' && raw.button !== 'right') {
+        return { error: 'inventory_action.button invalid' };
+      }
+      if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'inventory_action.shift invalid' };
+      if (raw.kind !== undefined && !(CONTAINER_KINDS as readonly string[]).includes(raw.kind as string)) {
+        return { error: 'inventory_action.kind invalid' };
+      }
+      const slot = optionalInteger(raw.slot);
+      if (raw.slot !== undefined && slot === undefined) return { error: 'inventory_action.slot invalid' };
+      const count = optionalInteger(raw.count);
+      if (raw.count !== undefined && (count === undefined || count < 1 || count > 64)) {
+        return { error: 'inventory_action.count invalid' };
+      }
+      const x = optionalInteger(raw.x);
+      const y = optionalInteger(raw.y);
+      const z = optionalInteger(raw.z);
+      if ((raw.x !== undefined && x === undefined)
+        || (raw.y !== undefined && y === undefined)
+        || (raw.z !== undefined && z === undefined)) {
+        return { error: 'inventory_action coordinates invalid' };
+      }
+      const key = optionalString(raw.key, 64);
+      const recipeId = optionalString(raw.recipeId, 64);
+      return {
+        type: 'inventory_action',
+        action: raw.action as InventoryActionKind,
+        ...(key ? { key } : {}),
+        ...(raw.button ? { button: raw.button } : {}),
+        ...(raw.shift === true ? { shift: true } : {}),
+        ...(slot !== undefined ? { slot } : {}),
+        ...(count !== undefined ? { count } : {}),
+        ...(raw.kind ? { kind: raw.kind as ContainerKind } : {}),
+        ...(x !== undefined ? { x } : {}),
+        ...(y !== undefined ? { y } : {}),
+        ...(z !== undefined ? { z } : {}),
+        ...(recipeId ? { recipeId } : {}),
+      };
+    }
+    case 'craft': {
+      if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'craft.shift invalid' };
+      return { type: 'craft', ...(raw.shift === true ? { shift: true } : {}) };
+    }
+    case 'interact':
+      return { type: 'interact' };
+    case 'attack':
+      return { type: 'attack' };
+    case 'pickup': {
+      const entityId = optionalString(raw.entityId, 64);
+      return { type: 'pickup', ...(entityId ? { entityId } : {}) };
+    }
+    case 'vehicle_input': {
+      if (typeof raw.action !== 'string' || !(VEHICLE_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'vehicle_input.action invalid' };
+      }
+      const entityId = optionalString(raw.entityId, 64);
+      const forward = raw.forward === undefined
+        ? undefined
+        : finite(raw.forward) ? clampNumber(raw.forward, -1, 1) : undefined;
+      if (raw.forward !== undefined && forward === undefined) {
+        return { error: 'vehicle_input.forward invalid' };
+      }
+      return {
+        type: 'vehicle_input',
+        action: raw.action as VehicleAction,
+        ...(entityId ? { entityId } : {}),
+        ...(forward !== undefined ? { forward } : {}),
+      };
+    }
     default:
       return { error: `unknown message type ${raw.type}` };
   }
@@ -392,6 +673,19 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         blockId: raw.blockId,
       };
     }
+    case 'block_batch': {
+      if (!Array.isArray(raw.changes)) return { error: 'block_batch invalid' };
+      const changes: BlockChange[] = [];
+      for (const entry of raw.changes.slice(0, 512)) {
+        if (!isRecord(entry)) continue;
+        if (!Number.isInteger(entry.x) || !Number.isInteger(entry.y) || !Number.isInteger(entry.z) || !Number.isInteger(entry.blockId)) {
+          continue;
+        }
+        if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z) || !finite(entry.blockId)) continue;
+        changes.push({ x: entry.x, y: entry.y, z: entry.z, blockId: entry.blockId });
+      }
+      return { type: 'block_batch', changes };
+    }
     case 'block_result': {
       if (!bool(raw.ok) || (raw.action !== 'break' && raw.action !== 'place')) {
         return { error: 'block_result invalid' };
@@ -409,6 +703,28 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         z: raw.z,
         ...(reason ? { reason } : {}),
       };
+    }
+    case 'entity_snapshot': {
+      if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.entities)) {
+        return { error: 'entity_snapshot invalid' };
+      }
+      return raw as unknown as ServerEntitySnapshotMessage;
+    }
+    case 'health': {
+      if (!finite(raw.health) || !finite(raw.hunger) || !bool(raw.dead) || !bool(raw.fire)) {
+        return { error: 'health invalid' };
+      }
+      return raw as unknown as ServerHealthMessage;
+    }
+    case 'effects': {
+      if (!Array.isArray(raw.effects)) return { error: 'effects invalid' };
+      return raw as unknown as ServerEffectsMessage;
+    }
+    case 'command_result': {
+      if (!bool(raw.ok) || typeof raw.name !== 'string' || !Array.isArray(raw.lines)) {
+        return { error: 'command_result invalid' };
+      }
+      return raw as unknown as ServerCommandResultMessage;
     }
     default:
       return raw as unknown as ServerMessage;

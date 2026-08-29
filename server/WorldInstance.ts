@@ -1,14 +1,20 @@
 import { mkdir } from 'node:fs/promises';
-import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
-import { PLAYER_NET_REACH, TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
-import { Inventory } from '../src/inventory';
-import { tryGetItemDefinition } from '../src/items';
+import { isKnownBlockId } from '../src/blocks';
+import { CombatSystem } from '../src/combat';
+import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
+import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
+import type { InventoryWindow } from '../src/inventory/inventoryUiAction';
+import { isKnownItemId } from '../src/items';
 import { PlayerController } from '../src/player';
+import { SurvivalSystem, getArmorPoints } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   ClientInputMessage,
+  ClientInventoryActionMessage,
+  ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
   RemotePlayerInfo,
@@ -20,6 +26,7 @@ import { worldDirectory } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { EventBus } from './events';
 import { PluginManager, type PlayerView, type WorldView } from './PluginManager';
+import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { WorldPersistence, type StoredPlayer, type WorldDiskState, type WorldReadyState } from './persistence';
 import { netDebug, serverLog } from './log';
 
@@ -42,7 +49,7 @@ const IDLE_INPUT: ClientInputMessage = {
   selectedSlot: 0,
 };
 
-export class ServerPlayer implements PlayerView {
+export class ServerPlayer implements PlayerView, GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
@@ -52,6 +59,22 @@ export class ServerPlayer implements PlayerView {
   viewRadius = 4;
   knownChunks = new Set<string>();
   sink: ConnectedSink | null = null;
+  readonly survival: SurvivalSystem;
+  readonly combat = new CombatSystem();
+  cursor: ItemStack | null = null;
+  craftSlots: Array<ItemStack | null> = [null, null, null, null];
+  window: InventoryWindow = { kind: 'inventory' };
+  ridingCartId?: string;
+  miningTarget?: { x: number; y: number; z: number };
+  miningProgress = 0;
+  bowUseTicks = 0;
+  foodUseTicks = 0;
+  lastUse = false;
+  lastSprint = false;
+  vehicleForward = 0;
+  inventoryDirty = false;
+  healthSignature = '';
+  effectSignature = '';
 
   constructor(
     readonly id: string,
@@ -59,10 +82,16 @@ export class ServerPlayer implements PlayerView {
     public name: string,
     readonly controller: PlayerController,
     readonly inventory: Inventory,
-    public health: number,
     public gamemode: GameMode,
     public selectedSlot: number,
-  ) {}
+    survival?: SurvivalSystem,
+  ) {
+    this.survival = survival ?? new SurvivalSystem({ health: 20 });
+  }
+
+  get health(): number {
+    return this.survival.health;
+  }
 
   snapshot(): PlayerSnapshot {
     const position = this.controller.position;
@@ -78,12 +107,17 @@ export class ServerPlayer implements PlayerView {
       vx: velocity.x,
       vy: velocity.y,
       vz: velocity.z,
-      health: this.health,
+      health: this.survival.health,
       gamemode: this.gamemode,
       sneaking: this.controller.sneaking,
       sprinting: this.controller.sprinting,
       onGround: this.controller.onGround,
       selectedSlot: this.selectedSlot,
+      invisible: this.survival.invisible,
+      onFire: this.survival.isOnFire,
+      hunger: this.survival.hunger,
+      armor: getArmorPoints(this.inventory),
+      ridingEntityId: this.ridingCartId,
     };
   }
 
@@ -117,8 +151,11 @@ export class WorldInstance {
   readonly plugins = new PluginManager(this.events, this.commands);
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
+  readonly gameplay: ServerGameplay;
   tickNumber = 0;
   spawn: [number, number, number];
+  lastTickMs = 0;
+  maxTickMs = 0;
   private dirty = false;
   private readonly persistence: WorldPersistence;
   private storedPlayers: Record<string, StoredPlayer> = {};
@@ -131,6 +168,7 @@ export class WorldInstance {
   constructor(readonly config: ServerConfig) {
     this.persistence = new WorldPersistence(worldDirectory(config));
     this.world = new VoxelWorld(config.worldSeed);
+    this.gameplay = new ServerGameplay(this.world, this.events);
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
@@ -156,8 +194,8 @@ export class WorldInstance {
       this.world.restore({
         timeOfDay: existing.timeOfDay,
         modifications: existing.modifications,
-        chests: {},
-        furnaces: {},
+        chests: (existing.chests ?? {}) as never,
+        furnaces: (existing.furnaces ?? {}) as never,
         blockStates: existing.blockStates,
       });
       this.spawn = [existing.meta.spawn[0], existing.meta.spawn[1], existing.meta.spawn[2]];
@@ -165,6 +203,7 @@ export class WorldInstance {
       for (const stored of Object.values(existing.players)) {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
       }
+      this.gameplay.restoreEntities(existing);
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.persistence.directory}`);
@@ -202,6 +241,7 @@ export class WorldInstance {
       players[player.id] = this.toStored(player);
     }
     this.storedPlayers = players;
+    const entities = this.gameplay.persistEntities();
     const state: WorldDiskState = {
       meta: {
         worldId: this.worldId,
@@ -215,6 +255,7 @@ export class WorldInstance {
       modifications: this.world.serializeModifications(),
       blockStates: this.world.serializeBlockStates(),
       players,
+      ...entities,
     };
     await this.persistence.save(state);
     this.dirty = false;
@@ -270,7 +311,6 @@ export class WorldInstance {
       name,
       controller,
       inventory,
-      20,
       'survival',
       0,
     );
@@ -321,75 +361,83 @@ export class WorldInstance {
     player.controller.yaw = input.yaw;
     player.controller.pitch = input.pitch;
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
+    player.vehicleForward = input.vehicleForward
+      ?? (player.ridingCartId ? input.forward : 0);
     return true;
   }
 
   tryBreak(player: ServerPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
-    if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
-    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
-    const block = this.world.getBlock(x, y, z);
-    if (block === BlockId.Air) return { ok: false, reason: 'empty' };
-    const definition = getBlockDefinition(block);
-    if (definition.breakable === false) return { ok: false, reason: 'unbreakable' };
-    const event = this.events.createBlockBreak(player.id, x, y, z, block);
-    this.events.emit('blockBreak', event);
-    if (event.cancelled) return { ok: false, reason: 'cancelled' };
-    if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
-    this.dirty = true;
-    this.broadcast({ type: 'block_update', x, y, z, blockId: BlockId.Air });
-    netDebug('break accepted', `${player.name} ${x},${y},${z}`);
-    return { ok: true };
+    const result = this.gameplay.breakBlock(player, x, y, z);
+    if (result.ok) {
+      this.dirty = true;
+      this.flushBlockChanges();
+      this.flushPlayerInventory(player);
+      netDebug('break accepted', `${player.name} ${x},${y},${z}`);
+    }
+    return result;
   }
 
   tryPlace(player: ServerPlayer, x: number, y: number, z: number, requestedBlock?: number): { ok: true } | { ok: false; reason: string } {
-    if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
-    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
-    const existing = this.world.getBlock(x, y, z);
-    const existingDef = getBlockDefinition(existing);
-    if (existing !== BlockId.Air && existingDef.replaceable !== true) return { ok: false, reason: 'occupied' };
+    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock);
+    if (result.ok) {
+      this.dirty = true;
+      this.flushBlockChanges();
+      this.flushPlayerInventory(player);
+      netDebug('place accepted', `${player.name} ${x},${y},${z} -> ${requestedBlock ?? 'held'}`);
+    }
+    return result;
+  }
 
-    let blockId: number | undefined;
-    if (player.gamemode === 'creative' && requestedBlock !== undefined && isKnownBlockId(requestedBlock) && requestedBlock !== BlockId.Air) {
-      blockId = requestedBlock;
-    } else {
-      const stack = player.inventory.getSlot(player.selectedSlot);
-      const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
-      blockId = item?.placesBlockId;
-      if (blockId === undefined) return { ok: false, reason: 'inventory' };
-    }
-    if (!isKnownBlockId(blockId) || blockId === BlockId.Air) return { ok: false, reason: 'block' };
-    const placed = getBlockDefinition(blockId);
-    if (placed.solid !== false && player.controller.intersectsBlock(x, y, z)) {
-      return { ok: false, reason: 'collision' };
-    }
-    const event = this.events.createBlockPlace(player.id, x, y, z, blockId);
-    this.events.emit('blockPlace', event);
-    if (event.cancelled) return { ok: false, reason: 'cancelled' };
-    if (!this.world.setBlock(x, y, z, blockId)) return { ok: false, reason: 'rejected' };
-    if (player.gamemode === 'survival') {
-      const stack = player.inventory.getSlot(player.selectedSlot);
-      if (!stack) {
-        this.world.setBlock(x, y, z, existing);
-        return { ok: false, reason: 'inventory' };
-      }
-      player.inventory.setSlot(player.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-      this.sendTo(player, {
-        type: 'inventory',
-        inventory: player.inventory.serialize(),
-        selectedSlot: player.selectedSlot,
-        gamemode: player.gamemode,
-      });
-    }
+  applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
+    this.gameplay.applyInventory(player, action);
     this.dirty = true;
-    this.broadcast({ type: 'block_update', x, y, z, blockId });
-    netDebug('place accepted', `${player.name} ${x},${y},${z} -> ${blockId}`);
-    return { ok: true };
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+  }
+
+  attack(player: ServerPlayer): void {
+    this.gameplay.attack(player, [...this.players.values()]);
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+  }
+
+  interact(player: ServerPlayer): void {
+    this.gameplay.useHeld(player);
+    this.dirty = true;
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+  }
+
+  pickup(player: ServerPlayer): void {
+    this.gameplay.collectFor(player);
+    this.flushPlayerInventory(player);
+  }
+
+  vehicleInput(player: ServerPlayer, message: ClientVehicleInputMessage): void {
+    if (message.action === 'exit') this.gameplay.exitVehicle(player);
+    else if (message.action === 'enter' && message.entityId) this.gameplay.enterVehicle(player, message.entityId);
+    else if (message.action === 'steer' && message.forward !== undefined) {
+      player.vehicleForward = Math.max(-1, Math.min(1, message.forward));
+    }
   }
 
   handleChat(player: ServerPlayer, text: string): void {
     if (text.startsWith('/')) {
+      const commandEvent = this.events.createPlayerCommand(player.id, text);
+      this.events.emit('playerCommand', commandEvent);
+      if (commandEvent.cancelled) {
+        this.sendTo(player, { type: 'command_result', ok: false, name: text.slice(1).split(/\s+/)[0] ?? '', lines: ['Command cancelled.'] });
+        return;
+      }
       const dispatched = this.commands.dispatch(text, player.commandSender());
       const kind = dispatched.result?.ok ? 'command' : 'error';
+      const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
+      this.sendTo(player, {
+        type: 'command_result',
+        ok: dispatched.result?.ok ?? false,
+        name,
+        lines: dispatched.result?.lines ?? [],
+      });
       this.sendTo(player, {
         type: 'chat',
         from: 'server',
@@ -406,6 +454,8 @@ export class WorldInstance {
           kind: dispatched.result?.ok ? 'system' : 'error',
         });
       }
+      this.flushPlayerInventory(player);
+      this.flushBlockChanges();
       return;
     }
     this.broadcastChat('player', player.id, text, player.name);
@@ -451,6 +501,7 @@ export class WorldInstance {
   }
 
   tick(): void {
+    const started = performance.now();
     this.tickNumber += 1;
     const dt = this.dt;
     for (const player of this.players.values()) {
@@ -458,13 +509,15 @@ export class WorldInstance {
       const input = player.lastInput;
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
+      const riding = Boolean(player.ridingCartId);
       player.controller.tick(this.world, {
         yaw: input.yaw,
         pitch: input.pitch,
+        locomotion: !riding,
         movement: () => ({
-          forward: input.forward,
-          right: input.right,
-          jump: input.jump,
+          forward: riding ? 0 : input.forward,
+          right: riding ? 0 : input.right,
+          jump: riding ? false : input.jump,
           sneak: input.sneak,
           sprint: input.sprint,
           descend: input.descend,
@@ -475,12 +528,29 @@ export class WorldInstance {
         const event = this.events.createPlayerDamage(player.id, amount, cause);
         this.events.emit('playerDamage', event);
         if (event.cancelled) return;
-        player.health = Math.max(0, player.health - amount);
-        if (player.health <= 0) {
-          player.health = 20;
-          player.controller.teleport(this.spawn);
-        }
+        player.survival.damage(amount, cause === 'fall' ? 'fall' : 'generic', { armor: player.inventory });
+        this.gameplay.respawnIfDead(player);
       });
+      player.combat.setHeldItem(player.inventory.getSlot(player.selectedSlot)?.itemId);
+      player.combat.setOffhand(player.inventory.offhand?.itemId);
+      player.combat.updateUse(input.use === true, true, !player.survival.dead);
+      if (player.gamemode === 'survival') {
+        player.survival.tick(dt, {
+          player: player.controller,
+          world: this.world,
+          armor: player.inventory,
+          inFire: player.controller.inFire,
+          sprinting: player.controller.sprinting,
+          swimming: player.controller.inWater,
+        });
+        this.gameplay.respawnIfDead(player);
+      }
+      if (input.mining) this.gameplay.advanceMining(player);
+      else {
+        player.miningProgress = 0;
+        player.miningTarget = undefined;
+      }
+      this.gameplay.advanceUseHold(player, input.use === true);
       const moved = player.controller.position.distanceTo(before);
       if (moved > 1e-4) {
         const event = this.events.createPlayerMove(
@@ -495,9 +565,41 @@ export class WorldInstance {
         }
       }
     }
+
+    const metrics = this.gameplay.tick([...this.players.values()], dt);
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      this.gameplay.updateRiding(player, player.lastInput.sprint);
+    }
+    this.lastTickMs = performance.now() - started;
+    this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
+    this.flushBlockChanges();
+
+    const passengers = new Map<string, string>();
+    for (const player of this.players.values()) {
+      if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
+    }
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     if (snapshots.length > 0) {
       this.broadcast({ type: 'player_state', tick: this.tickNumber, players: snapshots });
+    }
+    for (const player of this.connectedPlayers()) {
+      this.sendTo(player, {
+        type: 'entity_snapshot',
+        tick: this.tickNumber,
+        entities: this.gameplay.snapshotsNear(player.controller.position, passengers),
+      });
+      this.flushPlayerInventory(player, false);
+      this.flushHealth(player);
+    }
+    if (this.tickNumber % 20 === 0) {
+      this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
+    }
+    if (this.tickNumber % 200 === 0) {
+      serverLog(
+        `tick ${this.tickNumber} ${this.lastTickMs.toFixed(2)}ms max ${this.maxTickMs.toFixed(2)}ms `
+        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}`,
+      );
     }
     this.sweepDisconnected();
   }
@@ -513,13 +615,70 @@ export class WorldInstance {
     }
   }
 
-  private inReach(player: ServerPlayer, x: number, y: number, z: number): boolean {
-    const eye = player.controller.eyePosition();
-    const dx = eye.x - (x + 0.5);
-    const dy = eye.y - (y + 0.5);
-    const dz = eye.z - (z + 0.5);
-    const limit = PLAYER_NET_REACH;
-    return dx * dx + dy * dy + dz * dz <= limit * limit;
+  private flushBlockChanges(): void {
+    const changes = this.gameplay.consumeBlockChanges();
+    if (changes.length === 0) return;
+    this.dirty = true;
+    if (changes.length === 1) {
+      this.broadcast({ type: 'block_update', ...changes[0] });
+      return;
+    }
+    this.broadcast({ type: 'block_batch', changes });
+  }
+
+  private flushPlayerInventory(player: ServerPlayer, force = true): void {
+    if (!force && !player.inventoryDirty) return;
+    player.inventoryDirty = false;
+    const chest = player.window.kind === 'chest' && player.window.x !== undefined
+      ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
+      : undefined;
+    const furnace = player.window.kind === 'furnace' && player.window.x !== undefined
+      ? this.world.getFurnace(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
+      : undefined;
+    this.sendTo(player, {
+      type: 'inventory',
+      inventory: player.inventory.serialize(),
+      selectedSlot: player.selectedSlot,
+      gamemode: player.gamemode,
+      cursor: player.cursor,
+      craftSlots: player.craftSlots,
+      window: {
+        kind: player.window.kind,
+        x: player.window.x,
+        y: player.window.y,
+        z: player.window.z,
+        slots: chest?.slots ?? furnace?.slots,
+      },
+    });
+  }
+
+  private flushHealth(player: ServerPlayer): void {
+    const health = {
+      type: 'health' as const,
+      health: player.survival.health,
+      hunger: player.survival.hunger,
+      saturation: player.survival.saturation,
+      absorption: player.survival.absorption,
+      air: player.survival.airTicks,
+      armor: getArmorPoints(player.inventory),
+      fire: player.survival.isOnFire,
+      dead: player.survival.dead,
+    };
+    const signature = JSON.stringify(health);
+    if (signature !== player.healthSignature) {
+      player.healthSignature = signature;
+      this.sendTo(player, health);
+    }
+    const effects = player.survival.activeEffects().map((effect) => ({
+      id: effect.id,
+      amplifier: effect.amplifier,
+      remainingTicks: effect.ticks,
+    }));
+    const effectSignature = JSON.stringify(effects);
+    if (effectSignature !== player.effectSignature) {
+      player.effectSignature = effectSignature;
+      this.sendTo(player, { type: 'effects', effects });
+    }
   }
 
   private preloadSpawnChunks(): void {
@@ -539,7 +698,8 @@ export class WorldInstance {
   private ensureChunk(cx: number, cz: number, announce = true): void {
     const key = chunkKey(cx, cz);
     const already = this.generatedChunks.has(key);
-    this.world.getChunk(cx, cz, true);
+    const chunk = this.world.getChunk(cx, cz, true);
+    if (chunk && !chunk.lightingReady) this.world.ensureChunkLighting(chunk);
     if (already) return;
     this.generatedChunks.add(key);
     if (announce) serverLog(`chunk loaded ${key}`);
@@ -584,7 +744,7 @@ export class WorldInstance {
         }
         if (!instance.world.setBlock(x, y, z, blockId)) return false;
         instance.dirty = true;
-        instance.broadcast({ type: 'block_update', x, y, z, blockId });
+        instance.flushBlockChanges();
         return true;
       },
     });
@@ -597,16 +757,31 @@ export class WorldInstance {
       pitch: stored.pitch,
     });
     const token = stored.sessionToken ?? crypto.randomUUID();
+    const survival = new SurvivalSystem({ health: stored.health });
+    if (stored.survival) {
+      try {
+        survival.restore(stored.survival as never);
+      } catch {
+        survival.restore({ health: stored.health });
+      }
+    }
     const player = new ServerPlayer(
       stored.id,
       token,
       name ?? stored.name,
       controller,
       this.restoreInventory(stored.inventory),
-      stored.health,
       isGameMode(stored.gamemode) ? stored.gamemode : 'survival',
       stored.selectedSlot,
+      survival,
     );
+    if (stored.cursor) {
+      try {
+        player.cursor = stored.cursor as ItemStack;
+      } catch {
+        player.cursor = null;
+      }
+    }
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     this.players.set(player.id, player);
@@ -643,6 +818,8 @@ export class WorldInstance {
       inventory: player.inventory.serialize(),
       sessionToken: player.sessionToken,
       updatedAt: Date.now(),
+      survival: player.survival.serialize(),
+      cursor: player.cursor,
     };
   }
 
@@ -704,6 +881,95 @@ export class WorldInstance {
         if (!player) return fail('Player not found.');
         player.controller.teleport(this.spawn);
         return ok('Teleported to spawn.');
+      },
+    });
+    this.commands.register({
+      name: 'give',
+      usage: '/give <item> [count]',
+      description: 'Give an item to yourself',
+      execute: (args, sender) => {
+        const player = this.players.get(sender.playerId);
+        if (!player) return fail('Player not found.');
+        if (!args[0]) return fail('Usage: /give <item> [count]');
+        const itemId = resolveItemId(args[0]);
+        if (!itemId || !isKnownItemId(itemId)) return fail(`Unknown item '${args[0]}'.`);
+        const rawCount = args[1] === undefined || args[1] === '' ? 1 : Number(args[1]);
+        if (!Number.isInteger(rawCount) || rawCount < 1 || rawCount > 2304) {
+          return fail('Count must be an integer from 1 to 2304.');
+        }
+        const leftover = player.inventory.addItem(itemId, rawCount);
+        const given = rawCount - leftover;
+        player.inventoryDirty = true;
+        if (leftover > 0) {
+          this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+        }
+        this.flushPlayerInventory(player);
+        if (given <= 0) return fail('Could not give item: inventory is full.');
+        if (leftover > 0) return ok(`Gave ${given} ${itemId} (${leftover} dropped, inventory full)`);
+        return ok(`Gave ${given} ${itemId}`);
+      },
+    });
+    this.commands.register({
+      name: 'time',
+      usage: '/time <day|noon|night|midnight>',
+      description: 'Set the time of day',
+      execute: (args) => {
+        const key = args[0]?.toLowerCase() as keyof typeof TIME_PRESETS | undefined;
+        if (!key || TIME_PRESETS[key] === undefined) return fail('Usage: /time <day|noon|night|midnight>');
+        this.world.timeOfDay = TIME_PRESETS[key];
+        this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
+        this.dirty = true;
+        return ok(`Set time to ${key} (${TIME_PRESETS[key]})`);
+      },
+    });
+    this.commands.register({
+      name: 'tp',
+      aliases: ['teleport'],
+      usage: '/tp <x> <y> <z>',
+      description: 'Teleport to coordinates',
+      execute: (args, sender) => {
+        const player = this.players.get(sender.playerId);
+        if (!player) return fail('Player not found.');
+        const x = Number(args[0]);
+        const y = Number(args[1]);
+        const z = Number(args[2]);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+          return fail('Usage: /tp <x> <y> <z>');
+        }
+        if (!isValidWorldY(y)) return fail('Y is outside the world.');
+        player.controller.teleport([x, y, z]);
+        return ok(`Teleported to ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`);
+      },
+    });
+    this.commands.register({
+      name: 'clear',
+      usage: '/clear',
+      description: 'Clear your inventory',
+      execute: (_args, sender) => {
+        const player = this.players.get(sender.playerId);
+        if (!player) return fail('Player not found.');
+        let count = 0;
+        for (const stack of player.inventory.slots) if (stack) count += stack.count;
+        for (const stack of Object.values(player.inventory.armor)) if (stack) count += stack.count;
+        if (player.inventory.offhand) count += player.inventory.offhand.count;
+        player.inventory.clear();
+        player.cursor = null;
+        player.craftSlots = player.craftSlots.map(() => null);
+        player.inventoryDirty = true;
+        this.flushPlayerInventory(player);
+        return ok(count > 0 ? `Cleared ${count} item(s) from inventory` : 'Inventory is already empty');
+      },
+    });
+    this.commands.register({
+      name: 'kill',
+      usage: '/kill',
+      description: 'Kill yourself',
+      execute: (_args, sender) => {
+        const player = this.players.get(sender.playerId);
+        if (!player) return fail('Player not found.');
+        player.survival.damage(1000, 'generic', { ignoreInvulnerability: true, bypassArmor: true });
+        this.gameplay.respawnIfDead(player);
+        return { ok: true, lines: [] };
       },
     });
   }

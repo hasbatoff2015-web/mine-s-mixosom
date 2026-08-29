@@ -6,7 +6,7 @@ import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '../../shared/config';
 import { parseClientMessage, parseServerMessage, type ClientInputMessage, type ServerMessage } from '../../shared/protocol';
 import { BlockId } from '../../src/blocks';
-import { PLAYER_NET_REACH } from '../../src/core/constants';
+import { PLAYER_EYE_HEIGHT, PLAYER_NET_REACH } from '../../src/core/constants';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { SaveService } from '../../src/save/SaveService';
 import { AnarchyServer } from '../../server/AnarchyServer';
@@ -79,6 +79,25 @@ class TestClient {
     });
   }
 
+  async waitForMatch<T extends ServerMessage['type']>(
+    type: T,
+    match: (message: Extract<ServerMessage, { type: T }>) => boolean,
+    timeoutMs = 5000,
+  ): Promise<Extract<ServerMessage, { type: T }>> {
+    const existing = this.messages.find((message) => message.type === type && match(message as Extract<ServerMessage, { type: T }>));
+    if (existing) return existing as Extract<ServerMessage, { type: T }>;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`timed out waiting for ${type}`)), timeoutMs);
+      const timer = setInterval(() => {
+        const found = this.messages.find((message) => message.type === type && match(message as Extract<ServerMessage, { type: T }>));
+        if (!found) return;
+        clearInterval(timer);
+        clearTimeout(timeout);
+        resolve(found as Extract<ServerMessage, { type: T }>);
+      }, 10);
+    });
+  }
+
   latest<T extends ServerMessage['type']>(type: T): Extract<ServerMessage, { type: T }> | undefined {
     return [...this.messages].reverse().find((message) => message.type === type) as Extract<ServerMessage, { type: T }> | undefined;
   }
@@ -86,6 +105,18 @@ class TestClient {
   close(): void {
     this.socket?.close();
   }
+}
+
+function lookAngles(
+  from: { x: number; y: number; z: number },
+  x: number,
+  y: number,
+  z: number,
+): { yaw: number; pitch: number } {
+  const dx = x + 0.5 - from.x;
+  const dy = y + 0.5 - (from.y + PLAYER_EYE_HEIGHT);
+  const dz = z + 0.5 - from.z;
+  return { yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)) };
 }
 
 function moveInput(seq: number, extra: Partial<ClientInputMessage> = {}): ClientInputMessage {
@@ -119,6 +150,8 @@ describe('protocol validation', () => {
     expect(parseClientMessage({ type: 'break_block', x: 1.5, y: 2, z: 3 })).toEqual({
       error: 'block coordinates must be integers',
     });
+    expect(parseClientMessage({ type: 'inventory_action', action: 'yeet' })).toEqual({ error: 'inventory_action.action invalid' });
+    expect(parseClientMessage({ type: 'attack' })).toEqual({ type: 'attack' });
     expect(parseClientMessage({ type: 'input', seq: 1, forward: 99, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 3 })).toMatchObject({
       type: 'input',
       forward: 1,
@@ -226,31 +259,35 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     const origin = [Math.floor(welcomeA.you.x), Math.floor(welcomeA.you.y), Math.floor(welcomeA.you.z)] as const;
     let placedAt: readonly [number, number, number] | undefined;
+    let seq = 2;
     for (let dz = 1; dz <= 4 && !placedAt; dz += 1) {
       for (let dx = -2; dx <= 2 && !placedAt; dx += 1) {
         const x = origin[0] + dx;
         const y = origin[1] + 3;
         const z = origin[2] + dz;
         if (server.world.world.getBlock(x, y, z) !== BlockId.Air) continue;
+        const look = lookAngles(welcomeA.you, x, y, z);
+        a.send(moveInput(seq, look));
+        seq += 1;
         a.send({ type: 'place_block', x, y, z, blockId: BlockId.Dirt });
-        await b.waitFor('block_update');
-        placedAt = [x, y, z];
+        try {
+          await a.waitForMatch('block_result', (message) => message.ok && message.action === 'place' && message.x === x && message.y === y && message.z === z, 400);
+          placedAt = [x, y, z];
+        } catch {
+          /* try next cell */
+        }
       }
     }
     expect(placedAt).toBeDefined();
     const [px, py, pz] = placedAt!;
-    expect(b.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Dirt });
-    expect(a.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Dirt });
-    expect(a.latest('block_result')).toMatchObject({ ok: true, action: 'place', x: px, y: py, z: pz });
     expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Dirt);
+    expect(a.messages.some((message) => message.type === 'block_update' && message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Dirt)).toBe(true);
+    expect(b.messages.some((message) => message.type === 'block_update' && message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Dirt)).toBe(true);
 
-    const updatesBeforeBreak = b.messages.filter((message) => message.type === 'block_update').length;
     a.send({ type: 'break_block', x: px, y: py, z: pz });
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    expect(b.messages.filter((message) => message.type === 'block_update').length).toBeGreaterThan(updatesBeforeBreak);
-    expect(a.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Air });
-    expect(a.latest('block_result')).toMatchObject({ ok: true, action: 'break', x: px, y: py, z: pz });
+    await a.waitForMatch('block_result', (message) => message.ok && message.action === 'break' && message.x === px && message.y === py && message.z === pz);
     expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Air);
+    expect(b.messages.some((message) => message.type === 'block_update' && message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Air)).toBe(true);
 
     const updatesBeforeReject = b.messages.filter((message) => message.type === 'block_update').length;
     a.send({ type: 'break_block', x: px + 80, y: py, z: pz });
@@ -282,8 +319,10 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     if (first.world.world.getBlock(x, y, z) !== BlockId.Air) {
       first.world.world.setBlock(x, y, z, BlockId.Air);
     }
+    const look = lookAngles(welcome.you, x, y, z);
+    client.send(moveInput(1, look));
     client.send({ type: 'place_block', x, y, z, blockId: BlockId.Cobblestone });
-    await client.waitFor('block_update');
+    await client.waitForMatch('block_result', (message) => message.ok && message.action === 'place' && message.x === x && message.y === y && message.z === z);
     expect(first.world.world.getBlock(x, y, z)).toBe(BlockId.Cobblestone);
     client.close();
     await first.stop();
@@ -488,6 +527,7 @@ describe('WorldInstance foundation simulation', () => {
     }
     expect(target).toBeDefined();
     const [x, y, z] = target!;
+    world.setGameMode(player, 'creative');
     const before = world.world.getBlock(x, y, z);
     expect(world.tryBreak(player, x, y, z)).toEqual({ ok: true });
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
@@ -508,6 +548,12 @@ describe('WorldInstance foundation simulation', () => {
     const oy = Math.floor(player.controller.position.y) + 3;
     const oz = Math.floor(player.controller.position.z) + 2;
     if (world.world.getBlock(ox, oy, oz) !== BlockId.Air) world.world.setBlock(ox, oy, oz, BlockId.Air);
+    const look = lookAngles(
+      { x: player.controller.position.x, y: player.controller.position.y, z: player.controller.position.z },
+      ox, oy, oz,
+    );
+    player.controller.yaw = look.yaw;
+    player.controller.pitch = look.pitch;
 
     world.setGameMode(player, 'creative');
     expect(world.tryPlace(player, ox, oy, oz, BlockId.Cobblestone)).toEqual({ ok: true });
@@ -524,6 +570,12 @@ describe('WorldInstance foundation simulation', () => {
 
     player.inventory.setSlot(0, null);
     world.world.setBlock(ox, oy + 1, oz, BlockId.Air);
+    const lookUp = lookAngles(
+      { x: player.controller.position.x, y: player.controller.position.y, z: player.controller.position.z },
+      ox, oy + 1, oz,
+    );
+    player.controller.yaw = lookUp.yaw;
+    player.controller.pitch = lookUp.pitch;
     expect(world.tryPlace(player, ox, oy + 1, oz)).toEqual({ ok: false, reason: 'inventory' });
     expect(world.tryPlace(player, ox, -4, oz)).toEqual({ ok: false, reason: 'bounds' });
   });

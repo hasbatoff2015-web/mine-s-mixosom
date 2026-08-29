@@ -77,7 +77,8 @@ Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarch
 1. Start `npm run dev:server` and `npm run dev`.
 2. Browser A: connect Anarchy.
 3. Browser B (another window/profile): same origin, connect Anarchy.
-4. A and B should see each other, movement, block break/place, and chat.
+4. A and B should see each other, movement, block break/place, chat, entity snapshots, and isolated `/give`.
+5. Inventory/craft/attack are server-authoritative: one client cannot loot or damage as a local decision.
 
 Same-machine two tabs share `sessionStorage` **per tab**, so they get distinct players.
 
@@ -88,8 +89,8 @@ Runtime files (gitignored):
 ```
 server/data/worlds/anarchy/
   meta.json      # seed, spawn, timestamps
-  world.json     # modifications + blockStates (same delta format as saves)
-  players.json   # last known player snapshots
+  world.json     # modifications, blockStates, chests, furnaces, droppedItems, mobs, minecarts, fallingBlocks, redstone
+  players.json   # last known player snapshots (inventory, survival, cursor)
 ```
 
 Paths are relative to the process working directory. Do not put `C:\Users\...` in server code.
@@ -100,15 +101,15 @@ After restart the server **loads** this folder. It does **not** regenerate terra
 
 **Online Anarchy (`Играть онлайн → Анархия PvP`)**
 
-SERVER owns: world blocks, spawn, player position/health/gamemode, inventory used for place/break, simulation tick, persistence, chat broadcast, commands.
+SERVER owns: world blocks/chunks, spawn, player position/health/hunger/effects/gamemode, inventory/equipment/crafting, drops and pickups, mobs, melee (including PvP) and arrows, fluids/fire/TNT/explosions, minecarts, commands, 20 TPS tick, filesystem persist.
 
-CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote interpolation, local chunk mesh/light.
+CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote interpolation, local chunk mesh/light, visual mining overlay.
 
-CLIENT MUST NOT: write authoritative voxels, set authoritative position from a guessed client simulation, persist Anarchy to IndexedDB, give itself items, change gamemode locally, decide damage.
+CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 
-Local player (foundation): input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks.
+Local player: input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
 
-Remote players: snapshot history → interpolation with ~80 ms delay. The local id is never added to that path.
+Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
 
 **Singleplayer** is unchanged: IndexedDB via `SaveService`, no server required.
 
@@ -176,6 +177,14 @@ Use `--force` only if a server world already exists and you intend to overwrite 
 
 Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/reverse proxy). Do not rewrite world simulation. There is no Docker requirement in this pass.
 
+## Gameplay on the server
+
+`WorldInstance` ticks players then `ServerGameplay.tick`: world (fluids/furnaces/time/support) → falling → arrows (including player hitboxes) → minecarts → mobs → drops/pickup → redstone → explosions. Block deltas flush as one `block_update` or `block_batch`. Per-player `entity_snapshot` uses interest radius 48.
+
+Commands: `/help` `/gamemode` `/seed` `/spawn` `/give` `/time` `/tp` `/clear` `/kill`. `playerCommand` is cancellable. Results go out as `command_result`.
+
+Lighting is not a second online engine: server computes with `deferredLighting = false`; client meshes with deferred lighting as before.
+
 ## Foundation limits (intentional)
 
-Not ported yet: fluids, mobs, combat, TNT, minecarts, full inventory/crafting, lighting as a server system, anti-cheat, accounts.
+Not in this pass: VPS deploy, accounts, auth, anti-cheat beyond reach/look/mining-progress checks, production plugins, runtime `.schem`, auto IndexedDB import on server start.

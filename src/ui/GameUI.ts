@@ -41,6 +41,7 @@ import {
 } from './containerInteractions';
 import { stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
+import type { ClientInventoryActionMessage } from '../../shared/protocol';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import {
@@ -111,6 +112,7 @@ export interface InventoryContext {
   onClose(): void;
   onDrop(stack: ItemStack): void;
   onChanged(): void;
+  submitAction?: (message: ClientInventoryActionMessage) => void;
 }
 
 interface ContainerAdapter {
@@ -715,6 +717,12 @@ export class GameUI {
     this.chatInput.setSelectionRange(caret, caret);
   }
 
+  applyAuthoritativeCursor(cursor: ItemStack | null, craftSlots?: Array<ItemStack | null>): void {
+    this.cursorStack = cursor;
+    if (craftSlots) this.craftSlots = craftSlots;
+    if (this.inventoryContext) this.renderInventory();
+  }
+
   openInventory(context: InventoryContext): void {
     this.closeInventory(false);
     this.inventoryContext = context;
@@ -1134,6 +1142,10 @@ export class GameUI {
   private handleRecipeClick(recipeId: string, right: boolean, shift: boolean): void {
     const context = this.inventoryContext;
     if (!context || context.kind === 'furnace' || context.kind === 'chest') return;
+    if (context.submitAction) {
+      context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId, shift });
+      return;
+    }
     const gridSize = context.kind === 'crafting-table' ? 3 : 2;
     const variants = allCraftingBookEntries().filter((entry) => {
       const current = allCraftingBookEntries().find((item) => item.id === recipeId);
@@ -1162,6 +1174,10 @@ export class GameUI {
   private handleInventorySlot(key: string, button: 'left' | 'right', shift: boolean): void {
     const context = this.inventoryContext;
     if (!context || key === 'cursor') return;
+    if (context.submitAction) {
+      context.submitAction({ type: 'inventory_action', action: 'click', key, button, shift });
+      return;
+    }
     if (key.startsWith('inventory-')) {
       const index = Number(key.slice('inventory-'.length));
       if (shift && context.kind === 'chest' && context.chest) this.quickMoveInventoryToContainer(index, context.chest);

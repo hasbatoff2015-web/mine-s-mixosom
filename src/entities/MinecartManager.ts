@@ -233,6 +233,14 @@ export class MinecartManager {
     return this.carts.get(id);
   }
 
+  removeById(id: string): boolean {
+    const cart = this.carts.get(id);
+    if (!cart) return false;
+    this.scene.remove(cart.visual);
+    this.carts.delete(id);
+    return true;
+  }
+
   isOnRail(cart: MinecartEntity): boolean {
     return cart.rail !== undefined;
   }

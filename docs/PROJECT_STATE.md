@@ -2,6 +2,16 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: full Anarchy server gameplay
+
+- Ветка `cursor/full-anarchy-server-gameplay-bbb1` от foundation `15ca54f` / `origin/main` `a056e6f`. **Не merge в main.** Отдельный draft PR (не #14).
+- Один integration pass: listed Anarchy gameplay на server authority. Не новые фичи, не второй game loop. `ServerGameplay` (`server/gameplay.ts`) крутит существующие World / MobManager / CombatSystem / SurvivalSystem / RedstoneSystem / ExplosionQueue / DroppedItemManager / MinecartManager / PlayerArrowManager / recipes.
+- SERVER owns: world/blocks/chunks, entities, player pose/health/inventory/equipment, drops, crafting, melee PvP + mobs, fluids (existing queue + `block_batch`), fire/TNT, minecarts, potions/effects, gamemode, commands, filesystem persist.
+- CLIENT online: input/requests, render, UI, interpolation. `tickOnline` не тикает world/mobs/fluids/combat/drops. Inventory clicks/`attack`/`interact`/`break_block`/`place_block` — запросы. Singleplayer IndexedDB + local `tick()` без изменений.
+- Spawn: accepted IndexedDB карта **не** импортируется на старте. Сервер — `server/data/worlds/anarchy/` (procedural + `estimateWorldSpawn` если пусто). Явный шаг: `npm run server:import -- dump.json`. Нет runtime `.schem`.
+- Targeted: `anarchy-server.test.ts` 12/12, `anarchy-gameplay.test.ts` 10/10. `tsc --noEmit` clean.
+- Report: `docs/reports/2026-08-29_full-anarchy-server-gameplay.md`. **Не merge.** Owner two-client QA.
+
 ## Последний проход: Anarchy server QA fixes (movement / break / place)
 
 - Ветка та же: `cursor/local-authoritative-server-bbb1`. **Не merge в main.** Draft PR #14.
@@ -19,7 +29,7 @@
 - Server owns Anarchy world/chunks/players/tick/spawn/filesystem persist (`server/data/worlds/anarchy/`). Client: input, render, interpolation.
 - Foundation sync: join/spawn, two clients, movement, break/place, chat, `/gamemode` registry, PluginManager/events.
 - **Accepted IndexedDB spawn map не в git.** Первый server world — procedural + `estimateWorldSpawn`. Явный import: `npm run server:import`. Нет runtime `.schem`.
-- Fluids/mobs/combat/TNT/minecarts/full inventory **не** портированы на server в этом pass.
+- Fluids/mobs/combat/TNT/minecarts/full inventory **портированы на server** в pass `cursor/full-anarchy-server-gameplay-bbb1` (не в этом foundation commit).
 - Targeted tests 14/14; lighting/world height 30/30. Full suite 992 passed / 7 failed (authored ENOENT + minecart timeouts, pre-existing) + 1 vitest RPC. Build/size PASS 3.61 MiB / 221 files.
 - Docs: `docs/LOCAL_SERVER.md`. Report: `docs/reports/2026-08-29_local-authoritative-server.md`. Draft PR #14. **Не merge.**
 
@@ -130,7 +140,7 @@
 
 | Область | Статус | Фактический результат |
 | --- | --- | --- |
-| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = localhost authoritative server, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
+| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = localhost authoritative server with full gameplay kernel, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×256` (`Y 0..255`), plains/forest/desert, periodic mountains (+10…+20) with generated surface still `≤84`, deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются; empty sky above occupancy is not full-column work |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |

@@ -41,6 +41,10 @@ export class FallingBlockManager {
     return this.entities.size;
   }
 
+  get list(): readonly FallingBlockEntity[] {
+    return [...this.entities.values()];
+  }
+
   spawn(block: BlockId, x: number, y: number, z: number, id?: string): FallingBlockEntity | undefined {
     if (this.disposed || this.entities.size >= this.maxEntities) return undefined;
     const definition = getBlockDefinition(block);
@@ -82,7 +86,7 @@ export class FallingBlockManager {
         continue;
       }
       if (entity.position.y < -8 || entity.ageSeconds > 12) this.land(entity);
-      else {
+      else if (typeof document !== 'undefined') {
         applySampledEntityLight(
           entity.visual,
           this.world,
@@ -105,6 +109,18 @@ export class FallingBlockManager {
         THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t),
       );
     }
+  }
+
+  get(id: string): FallingBlockEntity | undefined {
+    return this.entities.get(id);
+  }
+
+  remove(id: string): boolean {
+    const entity = this.entities.get(id);
+    if (!entity) return false;
+    entity.visual.removeFromParent();
+    this.entities.delete(id);
+    return true;
   }
 
   serialize(): SerializedFallingBlock[] {

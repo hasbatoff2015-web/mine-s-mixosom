@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-08-29: full Anarchy server gameplay
+
+- [x] One integration pass: listed Anarchy systems request → server validate → mutate → sync. Reuse existing managers in `ServerGameplay`.
+- [x] Online client skips local simulation; snapshots + inventory/health/effects/time/block_batch.
+- [x] Shared inventory actions; melee PvP; death drops; potions/effects; TNT; fluids on server World.tick.
+- [x] Persist entities/inventory; explicit `npm run server:import` only (no auto IndexedDB, no `.schem`).
+- [x] Targeted tests 22/22 (`anarchy-server` + `anarchy-gameplay`). Docs + draft PR. **No main merge.**
+- [ ] Owner two-client localhost QA before any main merge.
+- [ ] Explicit IndexedDB → `npm run server:import` of the accepted spawn map (not in git).
+- [ ] Later: VPS deploy, accounts, anti-cheat beyond look/reach/mining checks.
+
 ## 2026-08-29: Anarchy server QA fixes (no new features)
 
 - [x] Diagnose missing accepted spawn (IndexedDB vs procedural server world); do not fake `.schem` import.
@@ -20,7 +31,7 @@
 - [x] Targeted server tests 14/14; tsc/build/size PASS. Full suite baseline failures unchanged (authored assets ENOENT, minecart timeouts).
 - [ ] User localhost QA (two browsers, persistence, chat) before any main merge.
 - [ ] Explicit IndexedDB → server dump import of the accepted spawn map (not in git).
-- [ ] Later: fluids/mobs/combat/inventory/TNT on server; VPS deploy; accounts.
+- [ ] Later: VPS deploy; accounts. Gameplay systems from the foundation pass are on the server in the full-gameplay branch.
 
 ## 2026-08-29: lateral skylight / lighting quality
 

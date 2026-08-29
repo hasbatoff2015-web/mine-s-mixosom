@@ -43,6 +43,8 @@ export interface DroppedItemSpawnOptions {
   readonly environmentHealth?: number;
   /** Used by restore; normal callers should let the manager assign an ID. */
   readonly id?: string;
+  /** Network snapshots must keep server IDs and must not merge into a different entity. */
+  readonly merge?: boolean;
 }
 
 export interface DroppedItemUpdateContext {
@@ -164,7 +166,9 @@ export class DroppedItemManager {
     this.assertActive();
     validateItemStack(stack as ItemStack);
     const clonedStack = cloneStack(stack as ItemStack) as ItemStack;
-    const merged = this.mergeSpawnIntoNearby(clonedStack, position);
+    const merged = spawnOptions.merge === false
+      ? undefined
+      : this.mergeSpawnIntoNearby(clonedStack, position);
     if (merged) return merged;
 
     if (this.itemsById.size >= this.maxItems) this.evictOldest();
@@ -227,15 +231,17 @@ export class DroppedItemManager {
         expired.push({ entity, reason: 'burned' });
         continue;
       }
-      applySampledEntityLight(
-        entity.visual,
-        this.world,
-        entity.position.x,
-        entity.position.y,
-        entity.position.z,
-        ITEM_HEIGHT,
-        worldDaylightUniform.value,
-      );
+      if (typeof document !== 'undefined') {
+        applySampledEntityLight(
+          entity.visual,
+          this.world,
+          entity.position.x,
+          entity.position.y,
+          entity.position.z,
+          ITEM_HEIGHT,
+          worldDaylightUniform.value,
+        );
+      }
       if (entity.ageSeconds >= this.despawnSeconds || entity.position.y < -32) {
         expired.push({ entity, reason: 'despawned' });
       }

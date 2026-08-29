@@ -52,6 +52,13 @@ async function main(): Promise<void> {
     timeOfDay: typeof raw.timeOfDay === 'number' ? raw.timeOfDay : 0,
     modifications: raw.modifications ?? {},
     blockStates: raw.blockStates ?? {},
+    chests: raw.chests ?? {},
+    furnaces: raw.furnaces ?? {},
+    droppedItems: raw.droppedItems ?? [],
+    mobs: raw.mobs ?? [],
+    minecarts: raw.minecarts ?? [],
+    fallingBlocks: raw.fallingBlocks ?? [],
+    redstone: raw.redstone ?? undefined,
   }, null, 2)}\n`);
   await writeFile(join(directory, 'players.json'), `${JSON.stringify({ players: {} }, null, 2)}\n`);
   serverLog(`imported IndexedDB dump into ${directory}`);

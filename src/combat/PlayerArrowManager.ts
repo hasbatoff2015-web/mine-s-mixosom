@@ -11,8 +11,11 @@ import { interpolateVec3 } from '../core/entityInterpolation';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
 import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from './ArrowPhysics';
+import { rayAabbDistance } from '../world/collision';
 
 interface PlayerArrow {
+  readonly id: string;
+  readonly ownerId?: string;
   readonly position: THREE.Vector3;
   readonly previousPosition: THREE.Vector3;
   readonly velocity: THREE.Vector3;
@@ -23,6 +26,21 @@ interface PlayerArrow {
   embedded?: EmbeddedArrowState;
   flaming: boolean;
   pickupDelay: number;
+}
+
+export interface ArrowPlayerTarget {
+  readonly id: string;
+  readonly aabb: PlayerAABB;
+}
+
+export interface ArrowTickOptions {
+  readonly players?: readonly ArrowPlayerTarget[];
+  readonly onPlayerHit?: (
+    playerId: string,
+    damage: number,
+    flaming: boolean,
+    position: THREE.Vector3,
+  ) => void;
 }
 
 /** Prefer a cart over a rail/block that is only slightly closer (cart sits on the rail). */
@@ -39,6 +57,7 @@ export class PlayerArrowManager {
   private readonly visuals: ArrowVisualFactory;
   private readonly ownsVisuals: boolean;
   private readonly random: () => number;
+  private idCounter = 0;
 
   constructor(
     private readonly scene: THREE.Object3D,
@@ -71,6 +90,10 @@ export class PlayerArrowManager {
     return this.arrows.length;
   }
 
+  get entities(): readonly PlayerArrow[] {
+    return this.arrows;
+  }
+
   spawn(
     origin: THREE.Vector3,
     direction: THREE.Vector3,
@@ -78,6 +101,8 @@ export class PlayerArrowManager {
     _damage: number,
     critical: boolean,
     flaming = false,
+    id?: string,
+    ownerId?: string,
   ): void {
     if (this.arrows.length >= 48) this.remove(0);
     const velocity = inaccurateArrowDirection(direction, this.random).multiplyScalar(speedBlocksPerTick);
@@ -86,6 +111,8 @@ export class PlayerArrowManager {
     this.orient(visual, velocity);
     this.scene.add(visual);
     this.arrows.push({
+      id: id ?? `arrow-${this.idCounter += 1}`,
+      ownerId,
       position: origin.clone(),
       previousPosition: origin.clone(),
       velocity,
@@ -98,7 +125,45 @@ export class PlayerArrowManager {
     });
   }
 
-  tick(dt: number): void {
+  applyNetwork(
+    id: string,
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    flaming: boolean,
+  ): void {
+    const existing = this.arrows.find((arrow) => arrow.id === id);
+    if (existing) {
+      existing.previousPosition.copy(existing.position);
+      existing.position.set(x, y, z);
+      existing.velocity.set(vx, vy, vz);
+      existing.flaming = flaming;
+      existing.visual.position.copy(existing.position);
+      this.orient(existing.visual, existing.velocity);
+      return;
+    }
+    const speed = Math.hypot(vx, vy, vz) || 1;
+    this.spawn(new THREE.Vector3(x, y, z), new THREE.Vector3(vx, vy, vz), speed, 0, false, flaming, id);
+    const created = this.arrows[this.arrows.length - 1];
+    if (created && created.id === id) {
+      created.velocity.set(vx, vy, vz);
+      created.position.set(x, y, z);
+      created.previousPosition.set(x, y, z);
+      created.visual.position.copy(created.position);
+      this.orient(created.visual, created.velocity);
+    }
+  }
+
+  retain(ids: ReadonlySet<string>): void {
+    for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
+      if (!ids.has(this.arrows[index]!.id)) this.remove(index);
+    }
+  }
+
+  tick(dt: number, options: ArrowTickOptions = {}): void {
     const tickSteps = Math.max(1, Math.round(dt * 20));
     for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
       const arrow = this.arrows[index]!;
@@ -132,10 +197,28 @@ export class PlayerArrowManager {
         const blockHit = this.world.raycast(arrow.position, direction, distance, { geometry: 'collision' });
         const mobHit = this.mobs.raycast(arrow.position, direction, distance);
         const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
-        const cartCloser = cartHit && (!mobHit || cartHit.distance <= mobHit.distance)
+        const playerHit = this.raycastPlayers(arrow, direction, distance, options.players);
+        const livingDistance = Math.min(
+          mobHit?.distance ?? Infinity,
+          playerHit?.distance ?? Infinity,
+        );
+        const cartCloser = cartHit && livingDistance >= cartHit.distance
           && (!blockHit || cartHit.distance <= blockHit.distance + CART_BLOCK_SLOP);
         if (cartCloser && cartHit) {
           this.onMinecartHit?.(cartHit.cart, arrow.flaming);
+          this.remove(index);
+          removed = true;
+          break;
+        }
+        const playerCloser = playerHit && (!mobHit || playerHit.distance <= mobHit.distance)
+          && (!blockHit || playerHit.distance < blockHit.distance);
+        if (playerCloser && playerHit) {
+          options.onPlayerHit?.(
+            playerHit.id,
+            arrowDamageFromVelocity(arrow.velocity, arrow.critical),
+            arrow.flaming,
+            arrow.position,
+          );
           this.remove(index);
           removed = true;
           break;
@@ -162,10 +245,12 @@ export class PlayerArrowManager {
           arrow.previousPosition.copy(arrow.position);
           arrow.visual.position.copy(arrow.position);
           this.onBlockHit?.(blockHit.x, blockHit.y, blockHit.z, arrow.flaming);
-          applySampledEntityLight(
-            arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
-            worldDaylightUniform.value,
-          );
+          if (typeof document !== 'undefined') {
+            applySampledEntityLight(
+              arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
+              worldDaylightUniform.value,
+            );
+          }
           break;
         }
         arrow.position.add(movement);
@@ -177,11 +262,31 @@ export class PlayerArrowManager {
       }
       if (removed || arrow.inGround) continue;
       this.orient(arrow.visual, arrow.velocity);
-      applySampledEntityLight(
-        arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
-        worldDaylightUniform.value,
-      );
+      if (typeof document !== 'undefined') {
+        applySampledEntityLight(
+          arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
+          worldDaylightUniform.value,
+        );
+      }
     }
+  }
+
+  private raycastPlayers(
+    arrow: PlayerArrow,
+    direction: THREE.Vector3,
+    maxDistance: number,
+    players: readonly ArrowPlayerTarget[] | undefined,
+  ): { id: string; distance: number } | undefined {
+    if (!players?.length) return undefined;
+    let closest: { id: string; distance: number } | undefined;
+    for (const player of players) {
+      if (player.id === arrow.ownerId) continue;
+      const hit = rayAabbDistance(arrow.position, direction, player.aabb);
+      if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
+      if (closest && hit.distance >= closest.distance) continue;
+      closest = { id: player.id, distance: hit.distance };
+    }
+    return closest;
   }
 
   interpolateVisuals(alpha: number): void {
