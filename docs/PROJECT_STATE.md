@@ -9,7 +9,7 @@
 - SERVER owns: world/blocks/chunks, entities, player pose/health/inventory/equipment, drops, crafting, melee PvP + mobs, fluids (existing queue + `block_batch`), fire/TNT, minecarts, potions/effects, gamemode, commands, filesystem persist.
 - CLIENT online: input/requests, render, UI, interpolation. `tickOnline` не тикает world/mobs/fluids/combat/drops. Inventory clicks/`attack`/`interact`/`break_block`/`place_block` — запросы. Singleplayer IndexedDB + local `tick()` без изменений.
 - Spawn: accepted IndexedDB карта **не** импортируется на старте. Сервер — `server/data/worlds/anarchy/` (procedural + `estimateWorldSpawn` если пусто). Явный шаг: `npm run server:import -- dump.json`. Нет runtime `.schem`.
-- Targeted: `anarchy-server.test.ts` 12/12, `anarchy-gameplay.test.ts` 10/10. `tsc --noEmit` clean.
+- Targeted: `anarchy-server.test.ts` 12/12, `anarchy-gameplay.test.ts` 10/10. `tsc --noEmit` clean. Full suite 1014 passed / 7 failed (authored ENOENT + minecart timeouts, pre-existing) + 1 vitest RPC. Build/size PASS 3.62 MiB / 221 files.
 - Report: `docs/reports/2026-08-29_full-anarchy-server-gameplay.md`. **Не merge.** Owner two-client QA.
 
 ## Последний проход: Anarchy server QA fixes (movement / break / place)

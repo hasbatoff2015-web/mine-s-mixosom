@@ -52,7 +52,7 @@ Targeted:
 
 `npx tsc --noEmit` — clean.
 
-Full `npm run check` results are recorded below after the run. Pre-existing full-suite failures must not be “fixed” by deleting tests: authored-item assets ENOENT in Cloud, `tests/fire-contact-sunlight-minecart.test.ts` timeouts, occasional vitest RPC `onTaskUpdate`.
+Full `npm run check`: typecheck PASS; tests **1014 passed / 7 failed** (same pre-existing 7: authored ENOENT + minecart timeouts) + 1 vitest RPC `onTaskUpdate`; `npm run build` PASS; size/archive PASS **3.62 MiB / 221 files**. Check script exits non-zero because it runs tests before build; build/size were run separately after.
 
 ## Visual QA
 
@@ -83,7 +83,12 @@ Owner: two-client QA (movement, break/place, inventory, PvP, reconnect, persist)
 
 ## Git
 
-See the PR body and the closing summary for SHAs after commit/push.
+- Branch: `cursor/full-anarchy-server-gameplay-bbb1`
+- Base: `origin/main` `a056e6f`
+- Foundation (QA-fix, not this PR): `15ca54f` / draft PR #14
+- Implementation commit: `1474c2f`
+- Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/15
+- **Do not merge main.** Owner two-client QA next.
 
 ## Migration Summary
 
