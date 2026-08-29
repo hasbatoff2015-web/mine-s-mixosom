@@ -11,7 +11,8 @@
 - Foundation sync: join/spawn, two clients, movement, break/place, chat, `/gamemode` registry, PluginManager/events.
 - **Accepted IndexedDB spawn map не в git.** Первый server world — procedural + `estimateWorldSpawn`. Явный import: `npm run server:import`. Нет runtime `.schem`.
 - Fluids/mobs/combat/TNT/minecarts/full inventory **не** портированы на server в этом pass.
-- Docs: `docs/LOCAL_SERVER.md`. Report: `docs/reports/2026-08-29_local-authoritative-server.md`.
+- Targeted tests 14/14; lighting/world height 30/30. Full suite 992 passed / 7 failed (authored ENOENT + minecart timeouts, pre-existing) + 1 vitest RPC. Build/size PASS 3.61 MiB / 221 files.
+- Docs: `docs/LOCAL_SERVER.md`. Report: `docs/reports/2026-08-29_local-authoritative-server.md`. Draft PR #14. **Не merge.**
 
 ## Последний проход: lateral sky / lighting quality
 

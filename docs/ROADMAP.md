@@ -8,6 +8,7 @@
 - [x] Client connect from **Анархия PvP**; unavailable server → toast, stay in menu.
 - [x] Authoritative join/spawn, input movement, two-client visibility, break/place, chat, command registry, PluginManager.
 - [x] Singleplayer path kept; online vs SP ownership split documented.
+- [x] Targeted server tests 14/14; tsc/build/size PASS. Full suite baseline failures unchanged (authored assets ENOENT, minecart timeouts).
 - [ ] User localhost QA (two browsers, persistence, chat) before any main merge.
 - [ ] Explicit IndexedDB → server dump import of the accepted spawn map (not in git).
 - [ ] Later: fluids/mobs/combat/inventory/TNT on server; VPS deploy; accounts.

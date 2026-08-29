@@ -54,7 +54,24 @@ Accepted playtested spawn exists only in the owner's IndexedDB, not in git. Serv
 
 ## Tests
 
-See report body after the check run.
+Targeted: `tests/server/anarchy-server.test.ts` **7/7** + `tests/anarchy-world.test.ts` **7/7** (14/14). Retained Game-path `lighting-height-256` **24/24** and `world-height-256` **6/6**.
+
+Full `npm run test`: **992 passed / 7 failed / 999**, plus 1 vitest worker RPC timeout. Failures are **pre-existing / unrelated**:
+
+- `tests/authored-item-assets.test.mjs` (2) — `assets/` missing in Cloud (`bucket_empty.png` ENOENT)
+- `tests/fire-contact-sunlight-minecart.test.ts` (5) — 5s default timeouts
+
+No new server/network failures.
+
+`npx tsc --noEmit` PASS. Production build PASS. Size/archive PASS: **3.61 MiB / 221 files**.
+
+## Git
+
+- branch: `cursor/local-authoritative-server-bbb1`
+- base: `origin/main` `a056e6f` (lighting PR #13)
+- HEAD: filled after docs commit
+- Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/14
+- **Do not merge.**
 
 ## Performance
 
