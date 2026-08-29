@@ -2,6 +2,16 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: online blockstates / live fluids / respawn input
+
+- Ветка `cursor/online-blockstates-fluid-render-respawn-bbb1` от PR #16 HEAD `76b8f87` (`cursor/entity-interpolation-input-visual-sync-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) по-прежнему без Anarchy gameplay.
+- Local QA после PR #16: WASD пропадал после death/respawn; directional blocks всегда в default facing; button/door не нажимались визуально; live Water/Lava — квадраты, а загруженные из chunk state жидкости с наклоном.
+- Respawn: online пропускал SP death UI; `health` после instant respawn мог не отличаться от pre-death 20 HP. Сервер шлёт dead→alive; клиент `restoreOnlinePlayingFromRespawn` возвращает PLAYING, focus, pointer lock, закрывает chat/inventory.
+- Block state: live `block_update`/`block_batch` несут optional `state`. `onCommittedBlockState` включает fluid level / door / button. Клиент `applyNetworkBlockChanges` — id затем state; `writeBlockRaw` больше не оставляет жидкости без level.
+- Interact: RMB online только `interact`; server `useHeld` + raycast/look. Placement orientation уже был в `applyPlacementState`.
+- Fluids: не новый renderer. Live updates теперь с `fluidLevel`/`fluidFalling`; neighbor `neighborFluidMeshOffsets` dirty; batch затем один remesh. Client online не тикает fluids.
+- Report: `docs/reports/2026-08-29_online-blockstates-fluid-render-respawn.md`. Draft PR. **Не merge.** Owner local QA.
+
 ## Последний проход: entity interpolation / input recovery / visual sync
 
 - Ветка `cursor/entity-interpolation-input-visual-sync-bbb1` от gameplay `fe1509f` (`cursor/full-anarchy-server-gameplay-bbb1`). **Не merge в main.** Не работать поверх чужого `main`.

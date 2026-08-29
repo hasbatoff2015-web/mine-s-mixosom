@@ -185,6 +185,11 @@ import {
 } from '../net/applyEntitySnapshots';
 import { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
 import { stepVisualBowUseTicks } from '../input/gameplayKeys';
+import {
+  shouldRestoreGameplayAfterRespawn,
+} from './onlineRespawn';
+import { shouldRunClientWorldSimulation } from './onlineSimulation';
+import { applyNetworkBlockChanges } from '../world/networkBlockUpdates';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -619,10 +624,13 @@ export class Game {
         return;
       case 'block_update': {
         const previous = session.world.getBlock(message.x, message.y, message.z, false);
-        session.world.applyBlockBatch(
-          [{ x: message.x, y: message.y, z: message.z, block: message.blockId as BlockId }],
-          { deferLighting: true },
-        );
+        applyNetworkBlockChanges(session.world, [{
+          x: message.x,
+          y: message.y,
+          z: message.z,
+          blockId: message.blockId,
+          ...(message.state ? { state: message.state } : {}),
+        }]);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
           this.playBlockSound('break', previous, message.x, message.y, message.z);
@@ -632,12 +640,7 @@ export class Game {
         return;
       }
       case 'block_batch': {
-        session.world.applyBlockBatch(
-          message.changes.map((change) => ({
-            x: change.x, y: change.y, z: change.z, block: change.blockId as BlockId,
-          })),
-          { deferLighting: true },
-        );
+        applyNetworkBlockChanges(session.world, message.changes);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
         }
@@ -654,7 +657,10 @@ export class Game {
         applyNetworkEntityEvents(session, message.events);
         return;
       case 'health': {
-        const previous = session.survival.health;
+        const previous = {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        };
         session.survival.restore({
           health: message.health,
           hunger: message.hunger,
@@ -663,7 +669,13 @@ export class Game {
           airTicks: message.air,
           dead: message.dead,
         });
-        if (message.health < previous - 0.01) {
+        if (shouldRestoreGameplayAfterRespawn(previous, {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        })) {
+          this.restoreOnlinePlayingFromRespawn();
+        }
+        if (message.health < previous.health - 0.01) {
           this.hurt.trigger(performance.now(), { periodic: false });
           this.playLocal('player.hurt');
         }
@@ -791,7 +803,18 @@ export class Game {
       session.player.sneaking = local.sneaking;
       session.player.sprinting = local.sprinting;
       session.player.onGround = local.onGround;
-      session.survival.restore({ health: local.health, hunger: local.hunger });
+      const previousLife = { health: session.survival.health, dead: session.survival.dead };
+      session.survival.restore({
+        health: local.health,
+        hunger: local.hunger,
+        dead: local.dead ?? local.health <= 0,
+      });
+      if (shouldRestoreGameplayAfterRespawn(previousLife, {
+        health: session.survival.health,
+        dead: session.survival.dead,
+      })) {
+        this.restoreOnlinePlayingFromRespawn();
+      }
       session.ridingCartId = local.ridingEntityId;
       if (local.invisible) {
         /* local first-person hide is driven by survival effects */
@@ -2163,7 +2186,7 @@ export class Game {
   private tick(): void {
     const session = this.session;
     if (!session) return;
-    if (session.online) {
+    if (!shouldRunClientWorldSimulation(Boolean(session.online))) {
       this.tickOnline(session);
       return;
     }
@@ -2412,8 +2435,8 @@ export class Game {
     session.combat.setHeldItem(this.selectedStack()?.itemId);
     if (this.input.consumeUsePressed()) {
       if (session.online) {
+        // Server useHeld owns interact + placement from authoritative look/raycast.
         session.online.client.send({ type: 'interact' });
-        this.requestOnlinePlace(session);
       } else {
         this.useTargetOrItem();
       }
@@ -2506,7 +2529,7 @@ export class Game {
   private useTargetOrItem(): void {
     const session = this.session!;
     if (session.online) {
-      this.requestOnlinePlace(session);
+      session.online.client.send({ type: 'interact' });
       return;
     }
     // Empty buckets need the first liquid hit, not the solid target behind it.
@@ -3553,6 +3576,25 @@ export class Game {
     }
     if (!result.fullHurt || result.ignored) return;
     this.hurt.trigger(performance.now(), { periodic: isPeriodicDamageSource(result.source) });
+  }
+
+  /** Close overlays and restore PLAYING input after an online respawn. */
+  private restoreOnlinePlayingFromRespawn(): void {
+    const session = this.session;
+    if (!session?.online) return;
+    this.deathShown = false;
+    session.ridingCartId = undefined;
+    session.miningProgress = 0;
+    session.miningTarget = undefined;
+    session.worldRenderer.setOpenChest(undefined);
+    this.ui.closeInventory(false);
+    this.ui.closeChat();
+    this.input.clearHeldKeys();
+    this.ui.hidePointerLockFallback();
+    this.ui.enterGame();
+    this.lifecycle.setState('PLAYING');
+    this.canvas.focus({ preventScroll: true });
+    this.input.tryRequestPointerLock();
   }
 
   private handleDeath(source?: DamageSource): void {

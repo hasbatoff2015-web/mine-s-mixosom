@@ -118,6 +118,7 @@ export class ServerPlayer implements PlayerView, GameplayPlayer {
       hunger: this.survival.hunger,
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
+      dead: this.survival.dead,
     };
   }
 
@@ -529,7 +530,7 @@ export class WorldInstance {
         this.events.emit('playerDamage', event);
         if (event.cancelled) return;
         player.survival.damage(amount, cause === 'fall' ? 'fall' : 'generic', { armor: player.inventory });
-        this.gameplay.respawnIfDead(player);
+        this.flushHealthIfDeadThenRespawn(player);
       });
       player.combat.setHeldItem(player.inventory.getSlot(player.selectedSlot)?.itemId);
       player.combat.setOffhand(player.inventory.offhand?.itemId);
@@ -543,7 +544,7 @@ export class WorldInstance {
           sprinting: player.controller.sprinting,
           swimming: player.controller.inWater,
         });
-        this.gameplay.respawnIfDead(player);
+        this.flushHealthIfDeadThenRespawn(player);
       }
       if (input.mining) this.gameplay.advanceMining(player);
       else {
@@ -654,6 +655,15 @@ export class WorldInstance {
         slots: chest?.slots ?? furnace?.slots,
       },
     });
+  }
+
+  private flushHealthIfDeadThenRespawn(player: ServerPlayer): void {
+    if (!player.survival.dead) return;
+    this.flushHealth(player);
+    this.gameplay.respawnIfDead(player);
+    player.healthSignature = '';
+    player.effectSignature = '';
+    this.flushHealth(player);
   }
 
   private flushHealth(player: ServerPlayer): void {
@@ -972,7 +982,7 @@ export class WorldInstance {
         const player = this.players.get(sender.playerId);
         if (!player) return fail('Player not found.');
         player.survival.damage(1000, 'generic', { ignoreInvulnerability: true, bypassArmor: true });
-        this.gameplay.respawnIfDead(player);
+        this.flushHealthIfDeadThenRespawn(player);
         return { ok: true, lines: [] };
       },
     });

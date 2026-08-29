@@ -101,9 +101,9 @@ After restart the server **loads** this folder. It does **not** regenerate terra
 
 **Online Anarchy (`Играть онлайн → Анархия PvP`)**
 
-SERVER owns: world blocks/chunks, spawn, player position/health/hunger/effects/gamemode, inventory/equipment/crafting, drops and pickups, mobs, melee (including PvP) and arrows, fluids/fire/TNT/explosions, minecarts, commands, 20 TPS tick, filesystem persist.
+SERVER owns: world blocks/chunks **including `BlockRenderState`** (facing, door/button, fluid level), spawn, player position/health/hunger/effects/gamemode, inventory/equipment/crafting, drops and pickups, mobs, melee (including PvP) and arrows, fluids/fire/TNT/explosions, minecarts, commands, 20 TPS tick, filesystem persist.
 
-CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light, visual mining overlay, visual-only bow charge while RMB is held.
+CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
 
 CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 

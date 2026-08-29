@@ -19,6 +19,7 @@ import {
   slabTypeFromHit,
   stairPlacementFromHit,
   torchPlacementFromHit,
+  type BlockRenderState,
 } from '../src/blocks';
 import {
   completeMeleeAttack,
@@ -64,7 +65,7 @@ import { ExplosionQueue } from '../src/world/ExplosionQueue';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
-import type { ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
+import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
 import type { EventBus } from './events';
 import type { WorldDiskState } from './persistence';
 
@@ -131,6 +132,7 @@ export interface GameplayPlayer {
   lastSprint: boolean;
   vehicleForward: number;
   inventoryDirty: boolean;
+  lastInput?: ClientInputMessage;
 }
 
 export interface GameplayMetrics {
@@ -164,9 +166,7 @@ export class ServerGameplay {
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
       for (const change of changes) {
-        this.blockDelta.set(`${change.x},${change.y},${change.z}`, {
-          x: change.x, y: change.y, z: change.z, blockId: change.block,
-        });
+        this.noteBlockDelta(change.x, change.y, change.z, change.block);
         this.redstone.notifyBlockChanged(change.x, change.y, change.z);
         if (isFluidBlock(change.block) || isFluidBlock(change.previous)) {
           this.events.emit('fluidUpdate', {
@@ -174,6 +174,9 @@ export class ServerGameplay {
           });
         }
       }
+    };
+    world.onCommittedBlockState = (change) => {
+      this.noteBlockDelta(change.x, change.y, change.z, change.block);
     };
     const visuals = new ItemVisualFactory();
     this.drops = new DroppedItemManager(this.scene, world, { visualFactory: visuals });
@@ -201,10 +204,21 @@ export class ServerGameplay {
     this.redstone = new RedstoneSystem(world, { root: this.scene });
   }
 
-  consumeBlockChanges(): Array<{ x: number; y: number; z: number; blockId: number }> {
-    const list = [...this.blockDelta.values()];
+  consumeBlockChanges(): Array<{ x: number; y: number; z: number; blockId: number; state?: BlockRenderState }> {
+    const list: Array<{ x: number; y: number; z: number; blockId: number; state?: BlockRenderState }> = [];
+    for (const pending of this.blockDelta.values()) {
+      const blockId = this.world.getBlock(pending.x, pending.y, pending.z, false);
+      const state = this.world.getBlockState(pending.x, pending.y, pending.z);
+      list.push(state
+        ? { x: pending.x, y: pending.y, z: pending.z, blockId, state }
+        : { x: pending.x, y: pending.y, z: pending.z, blockId });
+    }
     this.blockDelta.clear();
     return list;
+  }
+
+  private noteBlockDelta(x: number, y: number, z: number, blockId: number): void {
+    this.blockDelta.set(`${x},${y},${z}`, { x, y, z, blockId });
   }
 
   consumeEntityEvents(): NetworkEntityEvent[] {
@@ -534,6 +548,7 @@ export class ServerGameplay {
     z: number,
     requestedBlock?: number,
   ): { ok: true } | { ok: false; reason: string } {
+    if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
     if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const hit = this.lookHit(player);
@@ -552,6 +567,7 @@ export class ServerGameplay {
   }
 
   useHeld(player: GameplayPlayer): void {
+    if (player.survival.dead) return;
     const origin = player.controller.eyePosition(this.tmpEye);
     const direction = player.controller.viewDirection(this.tmpDir);
     const hit = this.world.raycast(origin, direction, PLAYER_REACH);
@@ -786,6 +802,29 @@ export class ServerGameplay {
 
   respawnIfDead(player: GameplayPlayer): void {
     if (!player.survival.dead) return;
+    if (player.ridingCartId) this.exitVehicle(player);
+    player.window = { kind: 'inventory' };
+    player.miningTarget = undefined;
+    player.miningProgress = 0;
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.lastUse = false;
+    player.lastSprint = false;
+    if (player.lastInput) {
+      player.lastInput = {
+        ...player.lastInput,
+        forward: 0,
+        right: 0,
+        jump: false,
+        sneak: false,
+        sprint: false,
+        descend: false,
+        flySprint: false,
+        mining: false,
+        use: false,
+        vehicleForward: 0,
+      };
+    }
     if (player.gamemode === 'survival') {
       for (const stack of player.inventory.slots) if (stack) this.dropFromPlayer(player, stack);
       for (const stack of Object.values(player.inventory.armor)) if (stack) this.dropFromPlayer(player, stack);

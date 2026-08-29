@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-29: online blockstates / live fluids / respawn input
+
+- [x] WASD after death/respawn: health dead→alive + restore PLAYING input lifecycle (not a per-key hack).
+- [x] Network `BlockRenderState` on live block packets; server `onCommittedBlockState`.
+- [x] Client `applyNetworkBlockChanges` so live fluids keep corner slopes (reuse `fluidCornerHeight`).
+- [x] Server interact/placement from look + raycast; button/door state broadcast.
+- [x] Targeted tests (respawn movement, directional states, live fluid remesh, persist).
+- [ ] Owner two-client localhost QA (respawn WASD, directional place, button/door, live water/lava slope).
+- [ ] Do not merge main until that QA.
+
 ## 2026-08-29: entity interpolation / input / visual sync
 
 - [x] Time-based remote entity interpolation (snapshot history + delay, not FPS lerp).

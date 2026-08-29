@@ -202,6 +202,16 @@ export class VoxelWorld {
     previous: BlockId;
     block: BlockId;
   }[]) => void;
+  /**
+   * State-only writes (fluid level, door open, button powered) never go through
+   * `applyBlockBatch`. Servers subscribe here so live packets include full state.
+   */
+  onCommittedBlockState?: (change: {
+    x: number;
+    y: number;
+    z: number;
+    block: BlockId;
+  }) => void;
   private pendingEmitters: Array<readonly [number, number, number]> = [];
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
@@ -345,6 +355,10 @@ export class VoxelWorld {
     for (const [dx, dz] of neighborFluidMeshOffsets(localX, localZ)) {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirty);
     }
+    this.onCommittedBlockState?.({
+      x, y, z,
+      block: this.getBlock(x, y, z, false),
+    });
     return true;
   }
 

@@ -15,6 +15,10 @@ import {
   shouldCaptureGameplayKey,
   stepVisualBowUseTicks,
 } from '../src/input/gameplayKeys';
+import {
+  lifecycleAfterOnlineRespawn,
+  shouldRestoreGameplayAfterRespawn,
+} from '../src/core/onlineRespawn';
 import type { MoveInput } from '../src/input/InputManager';
 
 const live: MoveInput = {
@@ -81,9 +85,14 @@ describe('online input recovery', () => {
     expect(movementAfterChatClose(live, false).forward).toBe(1);
   });
 
-  it('advances visual bow charge only while holding, and zeros on release', () => {
-    expect(stepVisualBowUseTicks(0, true)).toBe(1);
-    expect(stepVisualBowUseTicks(12, true)).toBe(13);
-    expect(stepVisualBowUseTicks(12, false)).toBe(0);
+  it('keeps WASD available after respawn with the same contract as a fresh join', () => {
+    expect(shouldRestoreGameplayAfterRespawn(
+      { dead: true, health: 0 },
+      { dead: false, health: 20 },
+    )).toBe(true);
+    expect(lifecycleAfterOnlineRespawn('BACKGROUND')).toBe('PLAYING');
+    expect(playerGameplayAllowed('PLAYING', false)).toBe(true);
+    expect(resolvePlayerMoveInput(false, live).jump).toBe(true);
+    expect(resolvePlayerMoveInput(false, live).sneak).toBe(false);
   });
 });

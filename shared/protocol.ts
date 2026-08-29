@@ -43,6 +43,7 @@ export interface PlayerSnapshot {
   readonly hunger?: number;
   readonly armor?: number;
   readonly ridingEntityId?: string;
+  readonly dead?: boolean;
 }
 
 export interface RemotePlayerInfo {
@@ -98,11 +99,42 @@ export interface NetworkEntityEvent {
   readonly kind: NetworkEntityEventKind;
 }
 
+export type NetworkBlockAttachment = 'floor' | 'wall' | 'ceiling';
+export type NetworkHorizontalFacing = 'north' | 'south' | 'east' | 'west';
+export type NetworkRailShape =
+  | 'north_south'
+  | 'east_west'
+  | 'north_east'
+  | 'north_west'
+  | 'south_east'
+  | 'south_west'
+  | 'ascending_north'
+  | 'ascending_south'
+  | 'ascending_east'
+  | 'ascending_west';
+
+/** Subset of `BlockRenderState` that travels on live block packets. */
+export interface NetworkBlockState {
+  readonly powered?: boolean;
+  readonly power?: number;
+  readonly attachment?: NetworkBlockAttachment;
+  readonly facing?: NetworkHorizontalFacing;
+  readonly open?: boolean;
+  readonly half?: 'lower' | 'upper';
+  readonly hinge?: 'left' | 'right';
+  readonly slabType?: 'bottom' | 'top' | 'double';
+  readonly stairHalf?: 'bottom' | 'top';
+  readonly fluidLevel?: number;
+  readonly fluidFalling?: boolean;
+  readonly railShape?: NetworkRailShape;
+}
+
 export interface BlockChange {
   readonly x: number;
   readonly y: number;
   readonly z: number;
   readonly blockId: number;
+  readonly state?: NetworkBlockState;
 }
 
 export interface ClientJoinMessage {
@@ -259,6 +291,7 @@ export interface ServerBlockUpdateMessage {
   readonly y: number;
   readonly z: number;
   readonly blockId: number;
+  readonly state?: NetworkBlockState;
 }
 
 export interface ServerBlockBatchMessage {
@@ -478,6 +511,72 @@ function optionalString(value: unknown, max: number): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+const NETWORK_ATTACHMENTS: ReadonlySet<string> = new Set(['floor', 'wall', 'ceiling']);
+const NETWORK_FACINGS: ReadonlySet<string> = new Set(['north', 'south', 'east', 'west']);
+const NETWORK_RAIL_SHAPES: ReadonlySet<string> = new Set([
+  'north_south', 'east_west', 'north_east', 'north_west', 'south_east', 'south_west',
+  'ascending_north', 'ascending_south', 'ascending_east', 'ascending_west',
+]);
+
+export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefined {
+  if (!isRecord(raw)) return undefined;
+  const state: {
+    powered?: boolean;
+    power?: number;
+    attachment?: NetworkBlockAttachment;
+    facing?: NetworkHorizontalFacing;
+    open?: boolean;
+    half?: 'lower' | 'upper';
+    hinge?: 'left' | 'right';
+    slabType?: 'bottom' | 'top' | 'double';
+    stairHalf?: 'bottom' | 'top';
+    fluidLevel?: number;
+    fluidFalling?: boolean;
+    railShape?: NetworkRailShape;
+  } = {};
+  if (typeof raw.powered === 'boolean') state.powered = raw.powered;
+  if (Number.isInteger(raw.power) && finite(raw.power)) {
+    state.power = clampNumber(Math.floor(raw.power), 0, 15);
+  }
+  if (typeof raw.attachment === 'string' && NETWORK_ATTACHMENTS.has(raw.attachment)) {
+    state.attachment = raw.attachment as NetworkBlockAttachment;
+  }
+  if (typeof raw.facing === 'string' && NETWORK_FACINGS.has(raw.facing)) {
+    state.facing = raw.facing as NetworkHorizontalFacing;
+  }
+  if (typeof raw.open === 'boolean') state.open = raw.open;
+  if (raw.half === 'lower' || raw.half === 'upper') state.half = raw.half;
+  if (raw.hinge === 'left' || raw.hinge === 'right') state.hinge = raw.hinge;
+  if (raw.slabType === 'bottom' || raw.slabType === 'top' || raw.slabType === 'double') {
+    state.slabType = raw.slabType;
+  }
+  if (raw.stairHalf === 'bottom' || raw.stairHalf === 'top') state.stairHalf = raw.stairHalf;
+  if (Number.isInteger(raw.fluidLevel) && finite(raw.fluidLevel)) {
+    state.fluidLevel = clampNumber(Math.floor(raw.fluidLevel), 1, 8);
+  }
+  if (typeof raw.fluidFalling === 'boolean') state.fluidFalling = raw.fluidFalling;
+  if (typeof raw.railShape === 'string' && NETWORK_RAIL_SHAPES.has(raw.railShape)) {
+    state.railShape = raw.railShape as NetworkRailShape;
+  }
+  return Object.keys(state).length > 0 ? state : undefined;
+}
+
+function parseBlockChange(entry: unknown): BlockChange | undefined {
+  if (!isRecord(entry)) return undefined;
+  if (!Number.isInteger(entry.x) || !Number.isInteger(entry.y) || !Number.isInteger(entry.z) || !Number.isInteger(entry.blockId)) {
+    return undefined;
+  }
+  if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z) || !finite(entry.blockId)) return undefined;
+  const state = parseNetworkBlockState(entry.state);
+  return {
+    x: entry.x,
+    y: entry.y,
+    z: entry.z,
+    blockId: entry.blockId,
+    ...(state ? { state } : {}),
+  };
+}
+
 export function parseClientMessage(raw: unknown): ClientMessage | { readonly error: string } {
   if (!isRecord(raw) || typeof raw.type !== 'string') {
     return { error: 'message must be an object with a type' };
@@ -674,30 +773,23 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       return raw as unknown as ServerPlayerStateMessage;
     }
     case 'block_update': {
-      if (
-        !finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !finite(raw.blockId)
-        || !Number.isInteger(raw.x) || !Number.isInteger(raw.y) || !Number.isInteger(raw.z) || !Number.isInteger(raw.blockId)
-      ) {
-        return { error: 'block_update invalid' };
-      }
+      const change = parseBlockChange(raw);
+      if (!change) return { error: 'block_update invalid' };
       return {
         type: 'block_update',
-        x: raw.x,
-        y: raw.y,
-        z: raw.z,
-        blockId: raw.blockId,
+        x: change.x,
+        y: change.y,
+        z: change.z,
+        blockId: change.blockId,
+        ...(change.state ? { state: change.state } : {}),
       };
     }
     case 'block_batch': {
       if (!Array.isArray(raw.changes)) return { error: 'block_batch invalid' };
       const changes: BlockChange[] = [];
       for (const entry of raw.changes.slice(0, 512)) {
-        if (!isRecord(entry)) continue;
-        if (!Number.isInteger(entry.x) || !Number.isInteger(entry.y) || !Number.isInteger(entry.z) || !Number.isInteger(entry.blockId)) {
-          continue;
-        }
-        if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z) || !finite(entry.blockId)) continue;
-        changes.push({ x: entry.x, y: entry.y, z: entry.z, blockId: entry.blockId });
+        const change = parseBlockChange(entry);
+        if (change) changes.push(change);
       }
       return { type: 'block_batch', changes };
     }
