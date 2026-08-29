@@ -54,9 +54,10 @@ Three modes stay separate: local player chase (`authoritativeMotion`), remote pl
 
 ## Tests
 
-Targeted (this pass): interpolation, input recovery, visual events, plus existing remote-player / entity-lerp / modal / hurt-flash files.
-
-Full `npm run check` recorded after the verification commit in this report’s Git section (or the follow-up pin commit).
+- Targeted: interpolation 10/10, input recovery 9/9, visual events 7/7, plus remote-player / entity-lerp / modal / hurt-flash / anarchy-server / anarchy-gameplay / arrow-cleanup all green in the focused run (84/84).
+- `tsc --noEmit` clean. Production build + size/archive PASS: **3.63 MiB / 221 files**.
+- Full `npm run check` stops on the pre-existing suite: **1039 passed / 8 failed** (2 authored-asset ENOENT, 6 minecart 5s timeouts) + 1 vitest RPC timeout. Same class as PR #15 (1014/7); one extra cart timeout under the longer run. Not caused by interpolation/input changes.
+- Browser two-client visual QA was **not** performed here.
 
 ## Changed files
 
@@ -96,4 +97,6 @@ Owner localhost QA on this branch. Do not merge main.
 
 Branch: `cursor/entity-interpolation-input-visual-sync-bbb1`  
 Base: `cursor/full-anarchy-server-gameplay-bbb1` (`fe1509f`), not a main merge.  
-PR: draft, stacked on the gameplay branch.
+Implementation: `90cdea1`  
+PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/16 (draft)  
+Working tree: clean after the pin commit.

@@ -10,7 +10,8 @@
 - Fix: `EntityInterpolationBuffer` — tick-ordered snapshot history, render sample at `now - 80ms`, shortest-yaw, teleport snap (`ENTITY_SNAP_DISTANCE`), spawn immediate, remove drops history. Local player chase / remote players / other entities остаются тремя режимами.
 - Input: `window.blur` больше не ставит BACKGROUND, если `document.hasFocus()` (pointer-lock/chat spurious blur). Tab hide (`visibilitychange`) по-прежнему BACKGROUND. Chat close / canvas click / pointer lock / focus вызывают `resumePlayingIfVisible` + `clearHeldKeys` + canvas focus. Stale chat INPUT больше не глотает WASD.
 - Visual events: server `entity_event` (`hurt` / `death` / `projectile_spawn` / `projectile_hit`) + snapshot state. Per-entity hurt flash и death pose; client не emit'ит loot. Bow draw — visual-only `bowUseTicks` из hold RMB. Arrows packed first in interest snapshots (cap 96) + interpolator.
-- IndexedDB Anarchy spawn **не** импортируется. Новых gameplay systems нет.
+- Targeted: interpolation 10, input 9, visual events 7; focused pack with Anarchy/hurt-flash 84/84. `tsc` clean. Build/size PASS 3.63 MiB / 221 files. Full suite 1039 passed / 8 failed (authored ENOENT + minecart timeouts, pre-existing class) + vitest RPC.
+- Report: `docs/reports/2026-08-29_entity-interpolation-input-visual-sync.md`. Draft PR #16. **Не merge.** Owner two-client QA.
 
 ## Последний проход: full Anarchy server gameplay
 
