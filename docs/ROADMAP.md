@@ -6,7 +6,7 @@
 - [x] Host effects stay split: SP UI/SFX vs server events/window/inventoryDirty.
 - [x] Online client still sends `interact` only (no local place/use sim).
 - [x] No Phase 3+ (geometry, EntityHost, persistence, RNG, plugins, renderer moves). Protocol unchanged.
-- [x] Draft PR stacked on PR #20 (not origin/main).
+- [x] Draft PR **#21** stacked on PR #20 (not origin/main).
 - [ ] Owner local QA: SP place/use (torch/door/lantern/slab/bucket) and Anarchy interact/place match; death→respawn WASD and Anarchy→menu→Anarchy still work.
 - [ ] Do not merge main. Do not start Phase 3.
 

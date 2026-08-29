@@ -110,5 +110,5 @@ Owner local QA of this PR on top of #20. **Do not start Phase 3.** Do not merge 
 - Branch: `cursor/shared-interaction-bbb1` from PR #20 `05e77a8`, **not** `origin/main`.
 - Merge-base with `origin/main`: `a056e6f` (lighting PR #13).
 - Implementation HEAD: `3622e20`
-- Draft PR stacked on `cursor/online-session-transition-input-fix-bbb1`.
+- Draft PR **#21**: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/21
 - Status: pushed for owner local QA. Do not merge main.
