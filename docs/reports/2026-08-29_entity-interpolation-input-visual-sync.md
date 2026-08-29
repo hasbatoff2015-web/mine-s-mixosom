@@ -98,5 +98,6 @@ Owner localhost QA on this branch. Do not merge main.
 Branch: `cursor/entity-interpolation-input-visual-sync-bbb1`  
 Base: `cursor/full-anarchy-server-gameplay-bbb1` (`fe1509f`), not a main merge.  
 Implementation: `90cdea1`  
+Verification (this report): `2966d0b`  
 PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/16 (draft)  
-Working tree: clean after the pin commit.
+Working tree: clean.
