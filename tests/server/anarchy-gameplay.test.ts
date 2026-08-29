@@ -686,4 +686,14 @@ describe('Anarchy server gameplay authority', () => {
     expect(second.world.getBlockState(x + 1, y, z)?.facing).toBe('south');
     expect(second.world.getBlockState(x + 2, y, z)?.fluidLevel).toBe(3);
   });
+
+  it('ticks VoxelWorld fluids once per server tick through GameplayKernel', async () => {
+    const world = await bootWorld();
+    join(world);
+    const before = world.world.tickNumber;
+    world.tick();
+    expect(world.world.tickNumber).toBe(before + 1);
+    world.tick();
+    expect(world.world.tickNumber).toBe(before + 2);
+  });
 });

@@ -189,6 +189,11 @@ import {
   shouldRestoreGameplayAfterRespawn,
 } from './onlineRespawn';
 import { shouldRunClientWorldSimulation } from './onlineSimulation';
+import {
+  daylightFactor,
+  formatGameplayKernelTrace,
+  tickGameplayKernel,
+} from '../gameplay';
 import { applyNetworkBlockChanges } from '../world/networkBlockUpdates';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
@@ -356,6 +361,8 @@ export class Game {
   private debugVisible = false;
   private debugNextTick = 0;
   private cachedDebugText = '';
+  private readonly debugTickOrder: boolean;
+  private readonly kernelTrace: string[] = [];
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
@@ -413,6 +420,8 @@ export class Game {
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
     this.canvas.tabIndex = 0;
+    this.debugTickOrder = typeof location !== 'undefined'
+      && new URLSearchParams(location.search).get('debugTick') === '1';
     this.ui = new GameUI(uiRoot);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2193,138 +2202,169 @@ export class Game {
     const profile = this.profiler.enabled;
     let simMark = profile ? performance.now() : 0;
     session.playTicks += 1;
-    session.world.tick();
-    this.processDetachedBlocks();
-    for (const spawn of session.world.consumeFallingBlocks()) {
-      session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
-    }
-    session.falling.update(FIXED_DT);
-    simMark = this.addSimPart('world', simMark);
-
-    const selected = this.selectedStack();
-    session.combat.setHeldItem(selected?.itemId);
-    session.combat.setOffhand(session.inventory.offhand?.itemId);
-    this.firstPerson?.setHeldItems(selected?.itemId);
-    simMark = this.addSimPart('combat', simMark);
+    if (this.debugTickOrder) this.kernelTrace.length = 0;
 
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
-    session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
     const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
-    const drawingBow = session.bowUseTicks > 0;
     const riding = Boolean(session.ridingCartId);
-    const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
-    session.player.creativeFlightAllowed = session.summary.mode === 'creative';
-    const playerInput = {
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
-      locomotion: !riding,
-      movement: () => ({
-        ...movementBefore,
-        forward: riding ? 0 : movementBefore.forward * movementMultiplier,
-        right: riding ? 0 : movementBefore.right * movementMultiplier,
-        jump: riding ? false : movementBefore.jump,
-        sprint: !riding && !drawingBow && movementBefore.sprint
-          && movementMultiplier === 1
-          && (session.summary.mode === 'creative' || session.survival.hunger > 6),
-        descend: movementBefore.descend === true,
-        flySprint: movementMultiplier === 1 && movementBefore.flySprint === true,
-      }),
-    };
-    const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
-      if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
-    });
-    this.updateFootsteps(session, playerResult.horizontalDistance);
-    if (session.summary.mode === 'survival') {
-      const survivalResult = session.survival.tick(FIXED_DT, {
-        player: session.player,
-        world: session.world,
-        armor: session.inventory,
-        inFire: session.player.inFire,
-        horizontalDistance: playerResult.horizontalDistance,
-        sprinting: session.player.sprinting,
-        swimming: session.player.inWater,
-        jumped: playerResult.jumped,
-        onDeath: (source) => this.handleDeath(source),
-      });
-      if (survivalResult.dead) {
-        this.handleDeath();
-        return;
-      }
-    }
-    simMark = this.addSimPart('player', simMark);
+    let entityStart = 0;
 
-    if (gameplayAllowed) {
-      this.updateTargetAndActions();
-      this.updateFoodUse();
-    } else {
-      this.input.consumeAttackPressed();
-      this.input.consumeUsePressed();
-      session.miningProgress = 0;
-      session.miningTarget = undefined;
-      resetMiningSound(this.miningSound);
-    }
-    simMark = this.addSimPart('other', simMark);
-    const entityStart = performance.now();
-    session.arrows.tick(FIXED_DT);
-    const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
-      mode: session.summary.mode,
-      addItem: (itemId, count) => session.inventory.addItem(itemId, count),
-    });
-    if (collectedArrows > 0) this.playLocal('item.pickup');
-    session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
-    const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
-    const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
-    session.minecarts.update(FIXED_DT, {
-      riderId: session.ridingCartId,
-      forward: riding && steerOnRail ? movementBefore.forward : 0,
-      strafe: riding && steerOnRail ? movementBefore.right : 0,
-      riderYaw: session.player.yaw,
-    });
-    this.updateMinecartRiding(session);
-    if (session.playTicks % 80 === 0) {
-      const removed = session.world.pruneChunks(
-        Math.floor(session.player.position.x),
-        Math.floor(session.player.position.z),
-        this.settings.renderDistance,
-      );
-      session.worldRenderer.removeChunks(removed);
-    }
-    for (const boom of session.minecarts.consumeExplosions()) {
-      this.explosionQueue.enqueue({
-        x: boom.position.x,
-        y: boom.position.y,
-        z: boom.position.z,
-        radius: boom.radius,
-        power: boom.power,
-      });
-      if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
-    }
-    simMark = this.addSimPart('entities', simMark);
-    session.mobs.update(FIXED_DT, {
-      playerPosition: session.player.position,
-      playerEyePosition: session.player.eyePosition(),
-      playerAlive: !session.survival.dead,
-      playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
-      daylight: this.daylightFactor(session.world.timeOfDay),
-    });
-    this.processMobEvents();
-    simMark = this.addSimPart('mobs', simMark);
-    this.processExplosionQueue();
-    if (session.summary.mode === 'survival' && session.survival.dead) {
-      this.handleDeath();
-      return;
-    }
-    session.world.processSupportIntegrity();
-    this.processDetachedBlocks();
-    session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
-    this.lastEntityUpdateMs += performance.now() - entityStart;
-    simMark = this.addSimPart('entities', simMark);
-    this.updateRedstone();
-    if (session.summary.mode === 'survival' && session.survival.dead) {
-      this.handleDeath();
-      return;
-    }
+    const aborted = tickGameplayKernel({
+      tickWorld: () => {
+        session.world.tick();
+        this.processDetachedBlocks();
+      },
+      tickFalling: () => {
+        for (const spawn of session.world.consumeFallingBlocks()) {
+          session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
+        }
+        session.falling.update(FIXED_DT);
+        simMark = this.addSimPart('world', simMark);
+      },
+      tickPlayers: () => {
+        const selected = this.selectedStack();
+        session.combat.setHeldItem(selected?.itemId);
+        session.combat.setOffhand(session.inventory.offhand?.itemId);
+        this.firstPerson?.setHeldItems(selected?.itemId);
+        simMark = this.addSimPart('combat', simMark);
+
+        session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
+        const drawingBow = session.bowUseTicks > 0;
+        const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
+        session.player.creativeFlightAllowed = session.summary.mode === 'creative';
+        const playerInput = {
+          yaw: this.input.yaw,
+          pitch: this.input.pitch,
+          locomotion: !riding,
+          movement: () => ({
+            ...movementBefore,
+            forward: riding ? 0 : movementBefore.forward * movementMultiplier,
+            right: riding ? 0 : movementBefore.right * movementMultiplier,
+            jump: riding ? false : movementBefore.jump,
+            sprint: !riding && !drawingBow && movementBefore.sprint
+              && movementMultiplier === 1
+              && (session.summary.mode === 'creative' || session.survival.hunger > 6),
+            descend: movementBefore.descend === true,
+            flySprint: movementMultiplier === 1 && movementBefore.flySprint === true,
+          }),
+        };
+        const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
+          if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
+        });
+        this.updateFootsteps(session, playerResult.horizontalDistance);
+        if (session.summary.mode === 'survival') {
+          const survivalResult = session.survival.tick(FIXED_DT, {
+            player: session.player,
+            world: session.world,
+            armor: session.inventory,
+            inFire: session.player.inFire,
+            horizontalDistance: playerResult.horizontalDistance,
+            sprinting: session.player.sprinting,
+            swimming: session.player.inWater,
+            jumped: playerResult.jumped,
+            onDeath: (source) => this.handleDeath(source),
+          });
+          if (survivalResult.dead) {
+            this.handleDeath();
+            return 'abort';
+          }
+        }
+        simMark = this.addSimPart('player', simMark);
+      },
+      tickPlayerActions: () => {
+        if (gameplayAllowed) {
+          this.updateTargetAndActions();
+          this.updateFoodUse();
+        } else {
+          this.input.consumeAttackPressed();
+          this.input.consumeUsePressed();
+          session.miningProgress = 0;
+          session.miningTarget = undefined;
+          resetMiningSound(this.miningSound);
+        }
+        simMark = this.addSimPart('other', simMark);
+      },
+      tickProjectiles: () => {
+        entityStart = performance.now();
+        session.arrows.tick(FIXED_DT);
+        const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
+          mode: session.summary.mode,
+          addItem: (itemId, count) => session.inventory.addItem(itemId, count),
+        });
+        if (collectedArrows > 0) this.playLocal('item.pickup');
+      },
+      tickVehicles: () => {
+        session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
+        const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
+        const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
+        session.minecarts.update(FIXED_DT, {
+          riderId: session.ridingCartId,
+          forward: riding && steerOnRail ? movementBefore.forward : 0,
+          strafe: riding && steerOnRail ? movementBefore.right : 0,
+          riderYaw: session.player.yaw,
+        });
+        this.updateMinecartRiding(session);
+        if (session.playTicks % 80 === 0) {
+          const removed = session.world.pruneChunks(
+            Math.floor(session.player.position.x),
+            Math.floor(session.player.position.z),
+            this.settings.renderDistance,
+          );
+          session.worldRenderer.removeChunks(removed);
+        }
+        for (const boom of session.minecarts.consumeExplosions()) {
+          this.explosionQueue.enqueue({
+            x: boom.position.x,
+            y: boom.position.y,
+            z: boom.position.z,
+            radius: boom.radius,
+            power: boom.power,
+          });
+          if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
+        }
+        simMark = this.addSimPart('entities', simMark);
+      },
+      tickMobs: () => {
+        session.mobs.update(FIXED_DT, {
+          playerPosition: session.player.position,
+          playerEyePosition: session.player.eyePosition(),
+          playerAlive: !session.survival.dead,
+          playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
+          daylight: daylightFactor(session.world.timeOfDay),
+        });
+      },
+      handleMobEvents: () => {
+        this.processMobEvents();
+        simMark = this.addSimPart('mobs', simMark);
+        this.processExplosionQueue();
+        if (session.summary.mode === 'survival' && session.survival.dead) {
+          this.handleDeath();
+          return 'abort';
+        }
+      },
+      tickPreDropSupport: () => {
+        session.world.processSupportIntegrity();
+        this.processDetachedBlocks();
+      },
+      tickDrops: () => {
+        session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
+        this.lastEntityUpdateMs += performance.now() - entityStart;
+        simMark = this.addSimPart('entities', simMark);
+      },
+      tickRedstone: () => {
+        this.updateRedstone();
+      },
+      processExplosions: () => {
+        this.processExplosionQueue();
+        if (session.summary.mode === 'survival' && session.survival.dead) {
+          this.handleDeath();
+          return 'abort';
+        }
+      },
+    }, this.debugTickOrder ? this.kernelTrace : undefined);
+
+    if (aborted) return;
 
     if (session.playTicks - session.lastAutosaveTick >= AUTOSAVE_INTERVAL_SECONDS * TICK_RATE) {
       session.lastAutosaveTick = session.playTicks;
@@ -3085,7 +3125,6 @@ export class Game {
         power: event.power,
       });
     }
-    this.processExplosionQueue();
   }
 
   private damagePlayerFromMob(event: MobPlayerDamageEvent): void {
@@ -3712,7 +3751,7 @@ export class Game {
   private updateEnvironment(time: number): void {
     const phase = (time / 24_000) * Math.PI * 2;
     const sunHeight = Math.sin(phase);
-    const daylight = this.daylightFactor(time);
+    const daylight = daylightFactor(time);
     const sky = sunHeight > -0.18
       ? this.currentSkyColor.copy(this.duskSkyColor).lerp(this.daySkyColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
       : this.currentSkyColor.copy(this.nightSkyColor).lerp(this.duskSkyColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
@@ -3730,11 +3769,6 @@ export class Game {
     this.moon.visible = sunHeight < 0.25;
   }
 
-  private daylightFactor(time: number): number {
-    const phase = (time / 24_000) * Math.PI * 2;
-    return clamp((Math.sin(phase) + 0.22) / 0.75, 0.08, 1);
-  }
-
   private refreshHud(): void {
     const session = this.session;
     if (!session) return;
@@ -3747,6 +3781,9 @@ export class Game {
       const itemCache = this.itemVisuals?.cacheStats;
       const sfx = this.audio.debugSnapshot();
       this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      if (this.debugTickOrder && this.kernelTrace.length > 0) {
+        this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
+      }
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({

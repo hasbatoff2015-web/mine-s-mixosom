@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-29: GameplayKernel (Phase 1)
+
+- [x] Shared simulation order in `src/gameplay/GameplayKernel.ts` for SP `Game` and Anarchy server.
+- [x] Unify `daylightFactor`; no second daylight curve for sky/mobs/sunlight.
+- [x] Server player physics runs in the kernel `players` step (after world/falling).
+- [x] Kernel tests + Anarchy gameplay regression. Protocol/save/EntityHost not in this pass.
+- [ ] Owner SP + two-client QA: movement, mobs, fluids, minecart, TNT, combat — behavior should match PR #17.
+- [ ] Do not merge main until that QA.
+- [ ] Next (not started): Phase 2 interaction unify (`useHeld` / `useTargetOrItem`).
+
 ## 2026-08-29: online blockstates / live fluids / respawn input
 
 - [x] WASD after death/respawn: health dead→alive + restore PLAYING input lifecycle (not a per-key hack).

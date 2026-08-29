@@ -82,7 +82,7 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
-Online Anarchy simulation kernel is `server/gameplay.ts` (`ServerGameplay`). It owns a dummy `THREE.Group` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions). `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen; a `health` dead→alive pair restores PLAYING input (`src/core/onlineRespawn.ts`). Use is `interact` only; `ServerGameplay.useHeld` / `placeAt` resolve facing from server look + raycast.
+Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. `ServerGameplay` still owns a dummy `THREE.Group` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions). `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen; a `health` dead→alive pair restores PLAYING input (`src/core/onlineRespawn.ts`). Use is `interact` only; `ServerGameplay.useHeld` / `placeAt` resolve facing from server look + raycast.
 
 Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `craft` / `interact` / `attack` / `pickup` / `vehicle_input` plus `input.mining` / `use` / `vehicleForward`; server `block_batch` / `block_update` (optional `state`) / `health` / `effects` / `entity_snapshot` / `entity_event` / `command_result` / `time`. Unknown server types still reject.
 
@@ -96,7 +96,8 @@ flowchart TD
   Game --> Life["LifecycleManager"]
   Game --> Input["InputManager"]
   Game --> UI["GameUI"]
-  Game --> World["VoxelWorld + TerrainGenerator"]
+  Game --> Kernel["GameplayKernel.tick"]
+  Kernel --> World["VoxelWorld + TerrainGenerator"]
   Game --> Render["WorldRenderer + ChunkMesher + TextureAtlas"]
   Game --> Audio["AudioManager + SFX catalog"]
   Game --> Items3D["ItemVisualFactory + FirstPersonRenderer"]
@@ -108,7 +109,8 @@ flowchart TD
   Game --> Save["SaveService / IndexedDB (singleplayer)"]
   Game --> Net["AnarchyClient WebSocket"]
   Net --> Server["Frontier Cubes Server (Node)"]
-  Server --> WorldInst["WorldInstance + ServerGameplay + VoxelWorld"]
+  Server --> WorldInst["WorldInstance + ServerGameplay"]
+  WorldInst --> Kernel
   Server --> Persist["server/data/worlds/anarchy"]
   Game --> Platform["YandexGamesService"]
   World --> Blocks["Block registry"]
@@ -140,19 +142,36 @@ Render loop использует `requestAnimationFrame`. `advanceFixedStep()` �
 
 Simulation продвигается только в lifecycle state `PLAYING`. `LOADING_WORLD` готовит initial radius без player physics, mining и pointer lock. Container GUI (Survival/Creative inventory, chest, furnace, crafting table, Recipe Book) **не** является pause: мир остаётся в `PLAYING`, tick продолжается, а player gameplay input блокируется отдельно (`gameplayModal.ts`). Настоящая остановка simulation — Pause menu (`Esc` → `PAUSED`) и platform/background/ad/death. Furnace burn/cook всегда идёт через `VoxelWorld.tickFurnaces()` в общем world tick, без UI-таймера.
 
+### GameplayKernel
+
+`src/gameplay/GameplayKernel.ts` is the shared simulation **order**. It does not reimplement physics, fluids, mobs, or combat. Hosts (`Game` for singleplayer, `ServerGameplay` + `WorldInstance` for Anarchy) pass existing manager methods.
+
+**In the kernel:** `world.tick` (time, scheduled, fluids, support, furnaces — once), falling, player physics, player actions (SP targeting; server mining/use is inside the players hook), projectiles, vehicles, mobs, mob events, optional SP post-explosion support, drops, redstone, explosions.
+
+**Not in the kernel:** DOM, Three.js meshes, WebSocket, IndexedDB, filesystem, audio, HUD, interpolation, protocol. Online `Game.tickOnline` still skips the kernel (server is authoritative).
+
+**Daylight:** `src/gameplay/daylight.ts` `daylightFactor(timeOfDay)` is the only curve for sky, mob spawn/sunlight, and server mob updates.
+
+**Debug:** `?debugTick=1` appends the last kernel order to F3. Server `FC_DEBUG_TICK=1` appends the same order to the existing 200-tick log line (no per-tick spam).
+
 Текущий tick логически выполняет:
 
-1. world clock, scheduled block ticks, **budgeted fluid queue** и furnaces;
-2. combat state: held/off-hand IDs и sword use-state; click count обрабатывается на fixed tick, cooldown отсутствует;
-3. player input, hunger-aware sprint gate, AABB physics и survival/environment update;
-4. chunk ensure/prune и ограниченный dirty rebuild;
-5. block/mob targeting, mining, melee и use action;
-6. food/bow use и player projectiles;
-7. mob AI/physics/projectiles;
-8. mob damage, drops и explosion events;
-9. dropped-item physics/pickup;
-10. pressure-plate occupancy, bounded redstone propagation, primed TNT fuse, explosion queue (budgeted batch apply) и explosion events;
-11. autosave check и HUD refresh.
+```text
+world.tick
+↓ falling
+↓ players (physics + survival)
+↓ playerActions (SP use/mine overlay)
+↓ projectiles
+↓ vehicles
+↓ mobs
+↓ mobEvents (drops/damage/enqueue explosions; SP may drain queue)
+↓ preDropSupport (SP only)
+↓ drops
+↓ redstone
+↓ explosions (drain queue)
+```
+
+Host extras after a completed kernel tick: SP autosave/HUD; server riding snapshot flush, `block_batch`, `player_state`, `entity_snapshot`.
 
 Такой порядок даёт простой детерминированный каркас, но не заявляет bit-exact vanilla ordering.
 

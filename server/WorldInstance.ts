@@ -27,6 +27,7 @@ import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { EventBus } from './events';
 import { PluginManager, type PlayerView, type WorldView } from './PluginManager';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
+import { formatGameplayKernelTrace } from '../src/gameplay';
 import { WorldPersistence, type StoredPlayer, type WorldDiskState, type WorldReadyState } from './persistence';
 import { netDebug, serverLog } from './log';
 
@@ -165,6 +166,8 @@ export class WorldInstance {
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private readonly dt: number;
   private worldView: WorldView;
+  private readonly debugTickOrder = process.env.FC_DEBUG_TICK === '1';
+  private readonly kernelTrace: string[] = [];
 
   constructor(readonly config: ServerConfig) {
     this.persistence = new WorldPersistence(worldDirectory(config));
@@ -505,6 +508,57 @@ export class WorldInstance {
     const started = performance.now();
     this.tickNumber += 1;
     const dt = this.dt;
+    if (this.debugTickOrder) this.kernelTrace.length = 0;
+    const metrics = this.gameplay.tick([...this.players.values()], dt, {
+      tickPlayers: () => this.tickConnectedPlayers(dt),
+      trace: this.debugTickOrder ? this.kernelTrace : undefined,
+    });
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      this.gameplay.updateRiding(player, player.lastInput.sprint);
+    }
+    this.lastTickMs = performance.now() - started;
+    this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
+    this.flushBlockChanges();
+
+    const passengers = new Map<string, string>();
+    for (const player of this.players.values()) {
+      if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
+    }
+    const snapshots = this.connectedPlayers().map((player) => player.snapshot());
+    if (snapshots.length > 0) {
+      this.broadcast({ type: 'player_state', tick: this.tickNumber, players: snapshots });
+    }
+    for (const player of this.connectedPlayers()) {
+      this.sendTo(player, {
+        type: 'entity_snapshot',
+        tick: this.tickNumber,
+        entities: this.gameplay.snapshotsNear(player.controller.position, passengers),
+      });
+      this.flushPlayerInventory(player, false);
+      this.flushHealth(player);
+    }
+    const entityEvents = this.gameplay.consumeEntityEvents();
+    if (entityEvents.length > 0) {
+      this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
+    }
+    if (this.tickNumber % 20 === 0) {
+      this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
+    }
+    if (this.tickNumber % 200 === 0) {
+      const kernel = this.debugTickOrder && this.kernelTrace.length > 0
+        ? ` kernel ${formatGameplayKernelTrace(this.kernelTrace)}`
+        : '';
+      serverLog(
+        `tick ${this.tickNumber} ${this.lastTickMs.toFixed(2)}ms max ${this.maxTickMs.toFixed(2)}ms `
+        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}${kernel}`,
+      );
+    }
+    this.sweepDisconnected();
+  }
+
+  /** Player physics + survival + mining/use hold. Invoked from GameplayKernel `players` step. */
+  private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
       const input = player.lastInput;
@@ -566,47 +620,6 @@ export class WorldInstance {
         }
       }
     }
-
-    const metrics = this.gameplay.tick([...this.players.values()], dt);
-    for (const player of this.players.values()) {
-      if (!player.connected) continue;
-      this.gameplay.updateRiding(player, player.lastInput.sprint);
-    }
-    this.lastTickMs = performance.now() - started;
-    this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
-    this.flushBlockChanges();
-
-    const passengers = new Map<string, string>();
-    for (const player of this.players.values()) {
-      if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
-    }
-    const snapshots = this.connectedPlayers().map((player) => player.snapshot());
-    if (snapshots.length > 0) {
-      this.broadcast({ type: 'player_state', tick: this.tickNumber, players: snapshots });
-    }
-    for (const player of this.connectedPlayers()) {
-      this.sendTo(player, {
-        type: 'entity_snapshot',
-        tick: this.tickNumber,
-        entities: this.gameplay.snapshotsNear(player.controller.position, passengers),
-      });
-      this.flushPlayerInventory(player, false);
-      this.flushHealth(player);
-    }
-    const entityEvents = this.gameplay.consumeEntityEvents();
-    if (entityEvents.length > 0) {
-      this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
-    }
-    if (this.tickNumber % 20 === 0) {
-      this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
-    }
-    if (this.tickNumber % 200 === 0) {
-      serverLog(
-        `tick ${this.tickNumber} ${this.lastTickMs.toFixed(2)}ms max ${this.maxTickMs.toFixed(2)}ms `
-        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}`,
-      );
-    }
-    this.sweepDisconnected();
   }
 
   private sweepDisconnected(): void {

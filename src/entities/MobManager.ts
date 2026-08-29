@@ -30,6 +30,7 @@ import { createMobModel, type MobModel } from './mobModels';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
 import { CHUNK_SIZE, FIXED_DT, GRAVITY, floorDiv } from '../core/constants';
+import { daylightFactor } from '../gameplay/daylight';
 import { VoxelVisualFactory } from './voxelVisuals';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
@@ -484,7 +485,7 @@ export class MobManager {
   update(deltaSeconds: number, context: MobUpdateContext = {}): void {
     if (this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
     const delta = Math.min(deltaSeconds, 0.25);
-    const daylight = THREE.MathUtils.clamp(context.daylight ?? this.daylightFactor(), 0, 1);
+    const daylight = THREE.MathUtils.clamp(context.daylight ?? daylightFactor(this.world.timeOfDay), 0, 1);
     const foci = this.resolvePlayerFoci(context);
     const spawnCandidates = foci.filter((focus) => focus.alive !== false);
 
@@ -780,7 +781,7 @@ export class MobManager {
     return restored;
   }
 
-  getApproximateLight(position: Readonly<THREE.Vector3>, daylight = this.daylightFactor()): number {
+  getApproximateLight(position: Readonly<THREE.Vector3>, daylight = daylightFactor(this.world.timeOfDay)): number {
     return THREE.MathUtils.clamp(
       Math.round(combinedLight(
         this.world,
@@ -1697,14 +1698,6 @@ export class MobManager {
       }
     }
     if (selected) this.removeMob(selected, 'capacity');
-  }
-
-  private daylightFactor(): number {
-    const time = ((this.world.timeOfDay % 24_000) + 24_000) % 24_000;
-    if (time < 11_000) return 1;
-    if (time < 13_000) return 1 - (time - 11_000) / 2_000 * 0.8;
-    if (time < 22_000) return 0.2;
-    return 0.2 + (time - 22_000) / 2_000 * 0.8;
   }
 
   private resolvePlayerFoci(context: MobUpdateContext): MobPlayerFocus[] {

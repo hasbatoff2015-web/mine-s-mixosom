@@ -2,6 +2,16 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: GameplayKernel (Phase 1 shared sim order)
+
+- Ветка `cursor/shared-game-core-kernel-bbb1` от PR #17 HEAD `bdab232`. **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Один sequencer `src/gameplay/GameplayKernel.ts`: world → falling → players → playerActions → projectiles → vehicles → mobs → mobEvents → preDropSupport → drops → redstone → explosions.
+- Hosts: SP `Game.tick` (online still `tickOnline` only); server `WorldInstance` → `ServerGameplay.tick` → kernel. Механики не переписаны.
+- Server player physics теперь внутри kernel **после** `world.tick`/falling (как SP). Mining/use hold остаются в `tickConnectedPlayers`.
+- `daylightFactor` один (`src/gameplay/daylight.ts`) для sky, mobs, sunlight. DEV `?debugTick=1` / `FC_DEBUG_TICK=1`.
+- Targeted: `gameplay-kernel` 6/6; anarchy-gameplay 19/19; physics/combat/fluids/worldgen pack 122/122. `tsc` clean. Full check **1063 passed / 7 failed** (authored ENOENT + minecart 5s timeouts, same pre-existing class as PR #17) + 1 vitest RPC.
+- Report: `docs/reports/2026-08-29_shared-game-core-kernel.md`. Draft PR. **Не merge.** Owner local QA (behavior should match PR #17).
+
 ## Последний проход: online blockstates / live fluids / respawn input
 
 - Ветка `cursor/online-blockstates-fluid-render-respawn-bbb1` от PR #16 HEAD `76b8f87` (`cursor/entity-interpolation-input-visual-sync-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) по-прежнему без Anarchy gameplay.

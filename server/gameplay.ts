@@ -30,7 +30,6 @@ import {
   applyExtraKnockback,
 } from '../src/combat';
 import {
-  DAY_TICKS,
   FIXED_DT,
   PLAYER_NET_REACH,
   PLAYER_REACH,
@@ -39,6 +38,7 @@ import {
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
+import { daylightFactor, tickGameplayKernel } from '../src/gameplay';
 import {
   DroppedItemManager,
   FallingBlockManager,
@@ -94,10 +94,7 @@ export function packEntitySnapshots(
   ].slice(0, cap);
 }
 
-export function daylightFactor(timeOfDay: number): number {
-  const phase = (timeOfDay / DAY_TICKS) * Math.PI * 2;
-  return clamp((Math.sin(phase) + 0.22) / 0.75, 0.08, 1);
-}
+export { daylightFactor } from '../src/gameplay';
 
 export function rollBlockDropCount(
   drop: { readonly count?: number; readonly min?: number; readonly max?: number },
@@ -230,100 +227,130 @@ export class ServerGameplay {
     this.pendingEntityEvents.push({ entityId, kind });
   }
 
-  tick(players: readonly GameplayPlayer[], dt: number): GameplayMetrics {
+  tick(
+    players: readonly GameplayPlayer[],
+    dt: number,
+    host: { readonly tickPlayers: () => void; readonly trace?: string[] },
+  ): GameplayMetrics {
     const started = performance.now();
     const connected = players.filter((player) => player.connected);
     const focus = connected[0]?.controller.position;
     if (focus) this.world.setViewCenter(focus.x, focus.z, 8);
 
-    this.world.tick();
-    for (const spawn of this.world.consumeFallingBlocks()) {
-      this.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
-    }
-    this.falling.update(dt);
-    this.processDetachedBlocks();
-    this.arrows.tick(dt, {
-      players: connected
-        .filter((player) => player.gamemode === 'survival' && !player.survival.dead)
-        .map((player) => ({ id: player.id, aabb: player.controller.aabb })),
-      onPlayerHit: (playerId, damage, flaming, position) => {
-        const victim = connected.find((player) => player.id === playerId);
-        if (!victim) return;
-        this.hurtPlayer(victim, damage, 'projectile', position, {
-          knockback: flaming ? 4.2 : 2.4,
-          ignite: flaming,
-        });
+    tickGameplayKernel({
+      tickWorld: () => {
+        this.world.tick();
       },
-    });
-
-    for (const player of connected) {
-      if (player.gamemode === 'survival') {
-        this.arrows.tryCollect(player.controller.aabb, {
-          mode: player.gamemode,
-          addItem: (itemId, count) => {
-            const leftover = player.inventory.addItem(itemId, count);
-            if (leftover < count) player.inventoryDirty = true;
-            return leftover;
+      tickFalling: () => {
+        for (const spawn of this.world.consumeFallingBlocks()) {
+          this.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
+        }
+        this.falling.update(dt);
+        this.processDetachedBlocks();
+      },
+      tickPlayers: () => {
+        host.tickPlayers();
+      },
+      tickPlayerActions: () => {
+        // Mining/use hold stay next to physics in WorldInstance.tickConnectedPlayers.
+      },
+      tickProjectiles: () => {
+        this.arrows.tick(dt, {
+          players: connected
+            .filter((player) => player.gamemode === 'survival' && !player.survival.dead)
+            .map((player) => ({ id: player.id, aabb: player.controller.aabb })),
+          onPlayerHit: (playerId, damage, flaming, position) => {
+            const victim = connected.find((player) => player.id === playerId);
+            if (!victim) return;
+            this.hurtPlayer(victim, damage, 'projectile', position, {
+              knockback: flaming ? 4.2 : 2.4,
+              ignite: flaming,
+            });
           },
         });
-      }
-      this.minecarts.tryPushFromPlayer(player.controller, player.ridingCartId);
-    }
+      },
+      tickVehicles: () => {
+        for (const player of connected) {
+          if (player.gamemode === 'survival') {
+            this.arrows.tryCollect(player.controller.aabb, {
+              mode: player.gamemode,
+              addItem: (itemId, count) => {
+                const leftover = player.inventory.addItem(itemId, count);
+                if (leftover < count) player.inventoryDirty = true;
+                return leftover;
+              },
+            });
+          }
+          this.minecarts.tryPushFromPlayer(player.controller, player.ridingCartId);
+        }
 
-    const rider = connected.find((player) => player.ridingCartId);
-    const ridingCart = rider?.ridingCartId ? this.minecarts.get(rider.ridingCartId) : undefined;
-    const steer = Boolean(ridingCart && rider && this.minecarts.isOnRail(ridingCart));
-    this.minecarts.update(dt, {
-      riderId: rider?.ridingCartId,
-      forward: steer ? rider!.vehicleForward : 0,
-      riderYaw: rider?.controller.yaw,
-    });
-    for (const boom of this.minecarts.consumeExplosions()) {
-      this.enqueueExplosion(boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power);
-      for (const player of players) {
-        if (player.ridingCartId === boom.id) player.ridingCartId = undefined;
-      }
-    }
-
-    this.mobs.update(dt, {
-      players: connected.map((player) => ({
-        position: player.controller.position,
-        eyePosition: player.controller.eyePosition(),
-        alive: !player.survival.dead,
-        targetable: player.gamemode === 'survival' && !player.survival.invisible,
-      })),
-      daylight: daylightFactor(this.world.timeOfDay),
-    });
-    for (const drop of this.mobs.consumeDrops()) {
-      this.drops.spawn(drop.stack, drop.position, { velocity: drop.velocity });
-    }
-    for (const event of this.mobs.consumePlayerDamage()) {
-      const victim = this.nearestSurvivalPlayer(connected, event.position);
-      if (!victim) continue;
-      const damageEvent = this.events.createPlayerDamage(victim.id, event.amount, event.source);
-      this.events.emit('playerDamage', damageEvent);
-      if (damageEvent.cancelled) continue;
-      const result = victim.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
-        armor: victim.inventory,
-      });
-      if (result.fullHurt && event.source === 'melee') {
-        victim.controller.receiveMeleeKnockback({
-          x: victim.controller.position.x - event.position.x,
-          z: victim.controller.position.z - event.position.z,
+        const rider = connected.find((player) => player.ridingCartId);
+        const ridingCart = rider?.ridingCartId ? this.minecarts.get(rider.ridingCartId) : undefined;
+        const steer = Boolean(ridingCart && rider && this.minecarts.isOnRail(ridingCart));
+        this.minecarts.update(dt, {
+          riderId: rider?.ridingCartId,
+          forward: steer ? rider!.vehicleForward : 0,
+          riderYaw: rider?.controller.yaw,
         });
-      } else if (result.fullHurt && event.knockback) {
-        victim.controller.velocity.add(event.knockback);
-      }
-      this.respawnIfDead(victim);
-    }
-    for (const boom of this.mobs.consumeExplosions()) {
-      this.enqueueExplosion(boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power);
-    }
-
-    this.drops.update(dt);
-    for (const player of connected) this.collectFor(player);
-    this.updateRedstone(connected);
-    this.processExplosions(connected);
+        for (const boom of this.minecarts.consumeExplosions()) {
+          this.enqueueExplosion(boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power);
+          for (const player of players) {
+            if (player.ridingCartId === boom.id) player.ridingCartId = undefined;
+          }
+        }
+      },
+      tickMobs: () => {
+        this.mobs.update(dt, {
+          players: connected.map((player) => ({
+            position: player.controller.position,
+            eyePosition: player.controller.eyePosition(),
+            alive: !player.survival.dead,
+            targetable: player.gamemode === 'survival' && !player.survival.invisible,
+          })),
+          daylight: daylightFactor(this.world.timeOfDay),
+        });
+      },
+      handleMobEvents: () => {
+        for (const drop of this.mobs.consumeDrops()) {
+          this.drops.spawn(drop.stack, drop.position, { velocity: drop.velocity });
+        }
+        for (const event of this.mobs.consumePlayerDamage()) {
+          const victim = this.nearestSurvivalPlayer(connected, event.position);
+          if (!victim) continue;
+          const damageEvent = this.events.createPlayerDamage(victim.id, event.amount, event.source);
+          this.events.emit('playerDamage', damageEvent);
+          if (damageEvent.cancelled) continue;
+          const result = victim.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
+            armor: victim.inventory,
+          });
+          if (result.fullHurt && event.source === 'melee') {
+            victim.controller.receiveMeleeKnockback({
+              x: victim.controller.position.x - event.position.x,
+              z: victim.controller.position.z - event.position.z,
+            });
+          } else if (result.fullHurt && event.knockback) {
+            victim.controller.velocity.add(event.knockback);
+          }
+          this.respawnIfDead(victim);
+        }
+        for (const boom of this.mobs.consumeExplosions()) {
+          this.enqueueExplosion(boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power);
+        }
+      },
+      tickPreDropSupport: () => {
+        // Extra support after mid-tick explosions is a singleplayer-only pass.
+      },
+      tickDrops: () => {
+        this.drops.update(dt);
+        for (const player of connected) this.collectFor(player);
+      },
+      tickRedstone: () => {
+        this.updateRedstone(connected);
+      },
+      processExplosions: () => {
+        this.processExplosions(connected);
+      },
+    }, host.trace);
 
     const elapsed = performance.now() - started;
     this.lastTickMs = elapsed;

@@ -8,8 +8,8 @@ export const FIRE_DAMAGE_INTERVAL_SECONDS = 1;
 
 /**
  * Daylight factor at which the sun is high enough for hostile burning.
- * Continuous (not a one-shot dawn event). Matches the existing day/night curve
- * used by mob spawning (~full day until 11_000, night 0.2).
+ * Continuous (not a one-shot dawn event). Uses shared `daylightFactor`
+ * (`src/gameplay/daylight.ts`) — the same curve as sky and mob spawning.
  */
 export const SUNLIGHT_DAYLIGHT_MIN = 0.82;
 
