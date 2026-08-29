@@ -866,4 +866,20 @@ describe('Anarchy server gameplay authority', () => {
     expect(a.player.survival.dead).toBe(false);
     expect(b.player.survival.dead).toBe(false);
   });
+
+  it('death then disconnect/resume still accepts WASD from seq 1', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    world.handleChat(player, '/kill');
+    expect(player.survival.dead).toBe(false);
+    expectWalks(world, player, 50);
+    world.disconnect(player.id);
+    const resumed = world.join({ sink: new MemorySink(), name: 'Sim', sessionToken: player.sessionToken });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.lastInputSeq).toBe(-1);
+    expectWalks(world, resumed.player, 1);
+  });
 });

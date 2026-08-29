@@ -193,6 +193,10 @@ import {
 } from './onlineRespawn';
 import { shouldRunClientWorldSimulation } from './onlineSimulation';
 import {
+  lifecycleAfterWorldSessionEnter,
+  shouldHandleOnlineClientEvent,
+} from './onlineSession';
+import {
   daylightFactor,
   formatGameplayKernelTrace,
   tickGameplayKernel,
@@ -604,9 +608,12 @@ export class Game {
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
-    client.onMessage((message) => this.handleOnlineMessage(message));
+    client.onMessage((message) => {
+      if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
+      this.handleOnlineMessage(message);
+    });
     client.onDisconnect(() => {
-      if (!this.session?.online) return;
+      if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
       this.ui.toast('Сервер недоступен');
       this.disposeSession();
       this.showMainMenu();
@@ -1806,7 +1813,8 @@ export class Game {
     this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
-    this.lifecycle.setState('PLAYING');
+    this.lifecycle.endOnlineRespawnRestore();
+    this.lifecycle.setState(lifecycleAfterWorldSessionEnter(this.lifecycle.state));
     this.previousTime = performance.now();
     this.accumulator = 0;
     if (import.meta.env.DEV && !this.polishQaDispose && this.session?.summary.seed === 'interaction-support-polish'

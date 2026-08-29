@@ -3,6 +3,7 @@ import { isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
 import type { InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId } from '../src/items';
@@ -293,6 +294,7 @@ export class WorldInstance {
         existing.disconnectedAt = 0;
         existing.sink = options.sink;
         if (options.name) existing.name = options.name;
+        this.resetConnectionInput(existing);
         serverLog(`player joined: ${existing.name} (${existing.id}, resume)`);
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
         return { player: existing, resumed: true };
@@ -342,7 +344,7 @@ export class WorldInstance {
     player.connected = false;
     player.disconnectedAt = Date.now();
     player.sink = null;
-    player.lastInput = { ...IDLE_INPUT, yaw: player.controller.yaw, pitch: player.controller.pitch, selectedSlot: player.selectedSlot };
+    this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
     this.broadcast({ type: 'player_left', playerId: player.id }, playerId);
@@ -557,6 +559,21 @@ export class WorldInstance {
       );
     }
     this.sweepDisconnected();
+  }
+
+  /**
+   * A new browser client always starts input seq at 0. Keep lastInputSeq
+   * only for the live socket; otherwise re-entry after Anarchy→SP→Anarchy
+   * rejects every WASD packet as stale while look/chat still work.
+   */
+  private resetConnectionInput(player: ServerPlayer): void {
+    player.lastInputSeq = inputSeqAfterReconnect();
+    player.lastInput = {
+      ...IDLE_INPUT,
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+      selectedSlot: player.selectedSlot,
+    };
   }
 
   /** Player physics + survival + mining/use hold. Invoked from GameplayKernel `players` step. */

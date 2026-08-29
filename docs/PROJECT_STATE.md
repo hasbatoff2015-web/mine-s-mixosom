@@ -2,6 +2,14 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: online session transition WASD
+
+- Ветка `cursor/online-session-transition-input-fix-bbb1` от PR #19 HEAD `0723c6e`. **Не merge в main.**
+- Owner QA PR #19: death→respawn WASD ок. Regression: Anarchy → Singleplayer → Anarchy — WASD мёртв **с входа**, look и chat живы. Не после смерти.
+- Root cause: `sessionStorage` token resume'ит того же server player с `lastInputSeq` от прошлого сокета. Новый `AnarchyClient` всегда шлёт `inputSeq` с 0. `applyInput` отбрасывает seq < last как stale. Look/chat не используют seq. `tickOnline` при этом шёл.
+- Fix: disconnect и resume join сбрасывают `lastInputSeq` / lastInput. Сообщения только от текущего client (generation + identity). enterPlaying всегда PLAYING. PR #19 death path не тронут.
+- Report: `docs/reports/2026-08-29_online-session-transition-input.md`. **Не merge.** Owner local QA.
+
 ## Последний проход: online respawn WASD (stabilization)
 
 - Ветка `cursor/online-respawn-input-fix-bbb1` от Phase 1 HEAD `c75497b` (`cursor/shared-game-core-kernel-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.

@@ -13,6 +13,7 @@ import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
+import { inputSeqAfterReconnect } from '../../src/core/onlineSession';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-anarchy-'));
@@ -595,6 +596,50 @@ describe('WorldInstance foundation simulation', () => {
     expect(resumed.player.id).toBe(a.player.id);
     expect(world.onlineCount()).toBe(2);
     expect(world.players.size).toBe(2);
+  });
+
+  it('resume after disconnect accepts WASD seq restarting at 1', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    expect(world.applyInput(player, moveInput(1, { forward: 1 }))).toBe(true);
+    world.tick();
+    expect(world.applyInput(player, moveInput(40, { forward: 1 }))).toBe(true);
+    expect(player.lastInputSeq).toBe(40);
+    world.disconnect(player.id);
+    expect(player.lastInputSeq).toBe(inputSeqAfterReconnect());
+    expect(player.lastInput.forward).toBe(0);
+
+    const resumed = world.join({ sink: new MemorySink(), name: 'Sim', sessionToken: player.sessionToken });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.player.id).toBe(player.id);
+    expect(resumed.player.lastInputSeq).toBe(inputSeqAfterReconnect());
+    const origin = resumed.player.controller.position.clone();
+    expect(world.applyInput(resumed.player, moveInput(1, { forward: 1, yaw: 0.5 }))).toBe(true);
+    world.tick();
+    expect(resumed.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
+  });
+
+  it('multiple disconnect/resume cycles keep accepting seq 1', async () => {
+    const world = await bootWorld();
+    const joined = join(world, 'Loop');
+    if ('error' in joined) throw new Error(joined.error);
+    const token = joined.player.sessionToken;
+    let seqOwner = joined.player;
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      expect(world.applyInput(seqOwner, moveInput(8 + cycle, { forward: 1 }))).toBe(true);
+      world.disconnect(seqOwner.id);
+      const again = world.join({ sink: new MemorySink(), name: 'Loop', sessionToken: token });
+      if ('error' in again) throw new Error(again.error);
+      expect(again.player.lastInputSeq).toBe(inputSeqAfterReconnect());
+      const origin = again.player.controller.position.clone();
+      expect(world.applyInput(again.player, moveInput(1, { forward: 1, yaw: cycle * 0.4 }))).toBe(true);
+      world.tick();
+      expect(again.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
+      seqOwner = again.player;
+    }
   });
 });
 

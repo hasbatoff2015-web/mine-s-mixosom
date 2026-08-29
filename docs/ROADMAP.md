@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-08-29: online session transition WASD
+
+- [x] Resume/re-entry after Anarchy→SP→Anarchy accepts a new client input seq (server resets lastInputSeq).
+- [x] Stale AnarchyClient / old websocket callbacks ignored.
+- [x] PR #19 death→respawn contract kept.
+- [ ] Owner local QA (fresh / menu / SP / Anarchy transitions, repeat). **Do not merge main.**
+
 ## 2026-08-29: online respawn WASD (stabilization)
 
 - [x] Canonical server death: every lethal path flushes `health` dead→alive then respawns (`respawnIfDead`).

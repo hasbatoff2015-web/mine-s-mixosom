@@ -43,6 +43,7 @@ export class AnarchyClient {
   private disconnectHandler: (() => void) | null = null;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private intentionalClose = false;
+  private generation = 0;
   state: ConnectionState = 'idle';
   lastWelcome: ServerWelcomeMessage | undefined;
   lastError: string | undefined;
@@ -60,22 +61,27 @@ export class AnarchyClient {
     this.state = 'connecting';
     this.lastError = undefined;
     this.intentionalClose = false;
+    this.generation += 1;
+    const generation = this.generation;
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
       this.socket = socket;
       const timeout = window.setTimeout(() => {
+        if (this.generation !== generation || this.socket !== socket) return;
         this.lastError = 'timeout';
         this.state = 'error';
         socket.close();
         reject(new Error('Сервер недоступен'));
       }, 5000);
       const fail = (message: string): void => {
+        if (this.generation !== generation || this.socket !== socket) return;
         window.clearTimeout(timeout);
         this.lastError = message;
         this.state = 'error';
         reject(new Error(message));
       };
       socket.addEventListener('open', () => {
+        if (this.generation !== generation || this.socket !== socket) return;
         const sessionToken = sessionStorage.getItem(SESSION_KEY) ?? undefined;
         this.send({
           type: 'join',
@@ -85,6 +91,7 @@ export class AnarchyClient {
         });
       });
       socket.addEventListener('message', (event) => {
+        if (this.generation !== generation || this.socket !== socket) return;
         let payload: ServerMessage;
         try {
           const parsed = parseServerMessage(decodeJson(String(event.data)));
@@ -111,10 +118,12 @@ export class AnarchyClient {
         this.handler?.(payload);
       });
       socket.addEventListener('error', () => {
+        if (this.generation !== generation || this.socket !== socket) return;
         if (this.state === 'connecting') fail('Сервер недоступен');
         else this.state = 'error';
       });
       socket.addEventListener('close', () => {
+        if (this.generation !== generation) return;
         this.stopPing();
         if (this.state === 'connecting') fail('Сервер недоступен');
         else if (this.state === 'connected') {
@@ -133,6 +142,9 @@ export class AnarchyClient {
   disconnect(): void {
     this.intentionalClose = true;
     this.stopPing();
+    this.generation += 1;
+    this.handler = null;
+    this.disconnectHandler = null;
     const socket = this.socket;
     this.socket = null;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
