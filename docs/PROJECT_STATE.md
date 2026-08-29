@@ -10,7 +10,7 @@
 - Канонический порядок и placement rules — бывший SP path (anchors, lantern/chain support, slab merge, rail-only minecart, cartCloser перед block-use). Серверный `placeAt`/`applyPlacementState` не дублирует правила.
 - Не тронуты: GameplayKernel, interpolation, fluids/block-state protocol, respawn/session input (#19/#20), Phase 3+ (geometry, EntityHost, persistence, RNG, plugins architecture).
 - Targeted: `use-interaction` 10 + placement/glowstone/kernel/anarchy/network/bucket pack **115 + 120** focused greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
-- Report: `docs/reports/2026-08-29_shared-interaction.md`. Draft PR stacked on #20. **Не merge.** Owner local QA (SP place/use + Anarchy interact same rules). **Не начинать Phase 3.**
+- Report: `docs/reports/2026-08-29_shared-interaction.md`. Implementation `3622e20`. Draft PR stacked on #20. **Не merge.** Owner local QA (SP place/use + Anarchy interact same rules). **Не начинать Phase 3.**
 
 ## Последний проход: online session transition WASD
 
