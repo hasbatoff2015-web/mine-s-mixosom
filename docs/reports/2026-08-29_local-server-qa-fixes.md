@@ -118,7 +118,16 @@ Do not restore `frontier_spawn2.schem` at runtime. Do not copy arbitrary Indexed
 
 ## Tests
 
-See the Git / Tests section after the verification run.
+Targeted: **26/26** in 4 files (`authoritative-motion` 5, `remote-player-view` 2, `anarchy-server` 12, `anarchy-world` 7).
+
+Full `npm run test`: **1004 passed / 7 failed / 1011**, plus 1 vitest worker RPC timeout. Failures are **pre-existing / unrelated**:
+
+- `tests/authored-item-assets.test.mjs` (2) — `assets/` missing in Cloud (`bucket_empty.png` ENOENT)
+- `tests/fire-contact-sunlight-minecart.test.ts` (5) — 5s default timeouts
+
+No new server/network failures. Added coverage is the 12 extra tests vs the previous 992/7/999 baseline.
+
+`npx tsc --noEmit` PASS. Production build PASS. Size/archive PASS: **3.61 MiB / 221 files**.
 
 ## Visual QA
 
@@ -145,5 +154,6 @@ Owner QA on the frozen branch. Then explicit spawn import when a dump is availab
 ## Git
 
 - branch: `cursor/local-authoritative-server-bbb1`
+- QA-fix: `5bd8f13` (plus follow-up report SHA after this file)
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/14
-- **Do not merge.**
+- **Do not merge.** Branch frozen for owner QA.
