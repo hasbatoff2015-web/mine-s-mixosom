@@ -10,7 +10,7 @@
 - Server player physics теперь внутри kernel **после** `world.tick`/falling (как SP). Mining/use hold остаются в `tickConnectedPlayers`.
 - `daylightFactor` один (`src/gameplay/daylight.ts`) для sky, mobs, sunlight. DEV `?debugTick=1` / `FC_DEBUG_TICK=1`.
 - Targeted: `gameplay-kernel` 6/6; anarchy-gameplay 19/19; physics/combat/fluids/worldgen pack 122/122. `tsc` clean. Full check **1063 passed / 7 failed** (authored ENOENT + minecart 5s timeouts, same pre-existing class as PR #17) + 1 vitest RPC.
-- Report: `docs/reports/2026-08-29_shared-game-core-kernel.md`. Draft PR. **Не merge.** Owner local QA (behavior should match PR #17).
+- Report: `docs/reports/2026-08-29_shared-game-core-kernel.md`. Draft PR **#18**. **Не merge.** Owner local QA (behavior should match PR #17).
 
 ## Последний проход: online blockstates / live fluids / respawn input
 

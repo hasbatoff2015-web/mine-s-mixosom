@@ -5,7 +5,7 @@
 - [x] Shared simulation order in `src/gameplay/GameplayKernel.ts` for SP `Game` and Anarchy server.
 - [x] Unify `daylightFactor`; no second daylight curve for sky/mobs/sunlight.
 - [x] Server player physics runs in the kernel `players` step (after world/falling).
-- [x] Kernel tests + Anarchy gameplay regression. Protocol/save/EntityHost not in this pass.
+- [x] Draft PR #18 stacked on PR #17 (not origin/main).
 - [ ] Owner SP + two-client QA: movement, mobs, fluids, minecart, TNT, combat — behavior should match PR #17.
 - [ ] Do not merge main until that QA.
 - [ ] Next (not started): Phase 2 interaction unify (`useHeld` / `useTargetOrItem`).

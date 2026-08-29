@@ -98,5 +98,5 @@ Phase 2: unify interaction (`useHeld` / placement). Do not start it in this PR.
 
 - Branch: `cursor/shared-game-core-kernel-bbb1` from PR #17 `bdab232`, **not** `origin/main`.
 - HEAD: `f2a1b72`
-- Draft PR stacked on `cursor/online-blockstates-fluid-render-respawn-bbb1`.
+- Draft PR **#18**: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/18
 - Status: pushed for owner local QA. Do not merge main.
