@@ -83,4 +83,5 @@ Phase 2 `useHeld`. Owner local QA of transitions.
 
 - Branch: `cursor/online-session-transition-input-fix-bbb1`
 - Base: PR #19 `cursor/online-respawn-input-fix-bbb1` @ `0723c6e`
+- HEAD: `e38af85` (implementation)
 - Do not merge `origin/main`

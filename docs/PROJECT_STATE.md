@@ -8,7 +8,7 @@
 - Owner QA PR #19: death→respawn WASD ок. Regression: Anarchy → Singleplayer → Anarchy — WASD мёртв **с входа**, look и chat живы. Не после смерти.
 - Root cause: `sessionStorage` token resume'ит того же server player с `lastInputSeq` от прошлого сокета. Новый `AnarchyClient` всегда шлёт `inputSeq` с 0. `applyInput` отбрасывает seq < last как stale. Look/chat не используют seq. `tickOnline` при этом шёл.
 - Fix: disconnect и resume join сбрасывают `lastInputSeq` / lastInput. Сообщения только от текущего client (generation + identity). enterPlaying всегда PLAYING. PR #19 death path не тронут.
-- Report: `docs/reports/2026-08-29_online-session-transition-input.md`. **Не merge.** Owner local QA.
+- Report: `docs/reports/2026-08-29_online-session-transition-input.md`. HEAD `e38af85`. **Не merge.** Owner local QA.
 
 ## Последний проход: online respawn WASD (stabilization)
 
