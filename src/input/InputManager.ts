@@ -4,6 +4,7 @@ import {
   classifyPointerUnlock,
   isCoarsePointerMedia,
   shouldExitPointerLock,
+  shouldReleasePointerLockAfterAcquire,
   shouldTogglePauseOnEscapeKeydown,
   type PointerUnlockReason,
   PointerLockAttempt,
@@ -166,6 +167,10 @@ export class InputManager {
 
   isPointerLocked(): boolean {
     return typeof document !== 'undefined' && document.pointerLockElement === this.canvas;
+  }
+
+  isLockRequestPending(): boolean {
+    return this.requestPending;
   }
 
   /**
@@ -417,11 +422,10 @@ export class InputManager {
       this.escapePressed = false;
       this.requestPending = false;
       this.programmaticReleasePending = false;
-      if (!this.callbacks.canCapture()) {
-        this.releasePointerLock();
-        return;
-      }
       this.callbacks.onPointerLockAcquired();
+      if (shouldReleasePointerLockAfterAcquire(this.callbacks.canCapture())) {
+        this.releasePointerLock();
+      }
       return;
     }
     const reason = classifyPointerUnlock({

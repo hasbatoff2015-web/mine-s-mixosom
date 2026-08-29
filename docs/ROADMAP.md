@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-08-29: online respawn WASD (stabilization)
+
+- [x] Canonical server death: every lethal path flushes `health` dead→alive then respawns (`respawnIfDead`).
+- [x] Client stays PLAYING after respawn: no BACKGROUND from pointer-lock/focus blur; lock acquire resumes first.
+- [x] Not a `/kill` special case; not client-authoritative movement; GameplayKernel / interpolation / fluids untouched.
+- [x] Targeted tests: death paths, consecutive deaths, two clients, chat/tab/pointer-lock lifecycle.
+- [ ] Owner local QA (zombie/fall/fire/lava/TNT/`/kill`, chat, ESC, two clients, repeat deaths). **Stop for that QA. Do not merge main.**
+- [ ] Phase 2 interaction unify is **not started**.
+
 ## 2026-08-29: GameplayKernel (Phase 1)
 
 - [x] Shared simulation order in `src/gameplay/GameplayKernel.ts` for SP `Game` and Anarchy server.

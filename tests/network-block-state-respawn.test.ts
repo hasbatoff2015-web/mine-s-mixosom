@@ -5,6 +5,7 @@ import {
   shouldRestoreGameplayAfterRespawn,
   lifecycleAfterOnlineRespawn,
   onlineRespawnAllowsMovement,
+  planOnlineRespawnInputRestore,
 } from '../src/core/onlineRespawn';
 import { shouldRunClientFluidSimulation, shouldRunClientWorldSimulation } from '../src/core/onlineSimulation';
 import {
@@ -65,6 +66,15 @@ describe('online respawn input lifecycle', () => {
     expect(resolvePlayerMoveInput(false, live).forward).toBe(1);
     expect(playerGameplayAllowed('PLAYING', true)).toBe(false);
     expect(playerGameplayAllowed(lifecycleAfterOnlineRespawn('BACKGROUND'), false)).toBe(true);
+    const plan = planOnlineRespawnInputRestore({
+      state: 'BACKGROUND',
+      pointerLocked: false,
+      chatOpen: true,
+      inventoryOpen: false,
+    });
+    expect(plan.lifecycle).toBe('PLAYING');
+    expect(plan.clearHeldKeys).toBe(true);
+    expect(worldSimulationActive(plan.lifecycle)).toBe(true);
   });
 
   it('treats pointer lock resume as compatible with post-respawn PLAYING', () => {

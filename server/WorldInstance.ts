@@ -172,7 +172,9 @@ export class WorldInstance {
   constructor(readonly config: ServerConfig) {
     this.persistence = new WorldPersistence(worldDirectory(config));
     this.world = new VoxelWorld(config.worldSeed);
-    this.gameplay = new ServerGameplay(this.world, this.events);
+    this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
+      this.flushHealth(player as ServerPlayer);
+    });
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
@@ -671,12 +673,7 @@ export class WorldInstance {
   }
 
   private flushHealthIfDeadThenRespawn(player: ServerPlayer): void {
-    if (!player.survival.dead) return;
-    this.flushHealth(player);
     this.gameplay.respawnIfDead(player);
-    player.healthSignature = '';
-    player.effectSignature = '';
-    this.flushHealth(player);
   }
 
   private flushHealth(player: ServerPlayer): void {

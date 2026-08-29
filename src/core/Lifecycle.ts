@@ -7,10 +7,23 @@ import {
 
 export type LifecycleState = 'LOADING' | 'LOADING_WORLD' | 'MENU' | 'PLAYING' | 'PAUSED' | 'AD' | 'BACKGROUND' | 'DEAD';
 
+export interface LifecycleBlurContext {
+  readonly pointerLocked: boolean;
+  readonly pointerLockRequestPending: boolean;
+}
+
+const RESPAWN_RESTORE_GUARD_MS = 400;
+
 export class GameLifecycleManager {
   readonly changed = new Signal<LifecycleState>();
   private previous: LifecycleState = 'LOADING';
   state: LifecycleState = 'LOADING';
+  private suppressBlurBackground = false;
+  private restoreGuardTimer: number | undefined;
+  private blurContext: () => LifecycleBlurContext = () => ({
+    pointerLocked: typeof document !== 'undefined' && Boolean(document.pointerLockElement),
+    pointerLockRequestPending: false,
+  });
 
   constructor() {
     document.addEventListener('visibilitychange', () => {
@@ -29,9 +42,13 @@ export class GameLifecycleManager {
         if (this.state !== 'PLAYING') return;
         const stillHidden = document.hidden;
         const stillFocused = typeof document.hasFocus === 'function' ? document.hasFocus() : hasFocus;
+        const context = this.blurContext();
         if (!shouldEnterBackgroundFromBlur({
           documentHidden: stillHidden || hidden,
           documentHasFocus: stillFocused,
+          pointerLocked: context.pointerLocked,
+          pointerLockRequestPending: context.pointerLockRequestPending,
+          suppressBackground: this.suppressBlurBackground,
         })) return;
         this.previous = this.state;
         this.setState('BACKGROUND');
@@ -42,6 +59,26 @@ export class GameLifecycleManager {
         this.setState(this.previous === 'PLAYING' ? 'PLAYING' : this.previous);
       }
     });
+  }
+
+  setBlurContext(query: () => LifecycleBlurContext): void {
+    this.blurContext = query;
+  }
+
+  /** Hold BACKGROUND off while respawn restores pointer lock / canvas focus. */
+  beginOnlineRespawnRestore(): void {
+    this.suppressBlurBackground = true;
+    if (typeof window === 'undefined') return;
+    if (this.restoreGuardTimer !== undefined) window.clearTimeout(this.restoreGuardTimer);
+    this.restoreGuardTimer = window.setTimeout(() => this.endOnlineRespawnRestore(), RESPAWN_RESTORE_GUARD_MS);
+  }
+
+  endOnlineRespawnRestore(): void {
+    this.suppressBlurBackground = false;
+    if (this.restoreGuardTimer !== undefined && typeof window !== 'undefined') {
+      window.clearTimeout(this.restoreGuardTimer);
+      this.restoreGuardTimer = undefined;
+    }
   }
 
   /** Pointer lock / chat close / canvas click: leave BACKGROUND while the tab is visible. */

@@ -186,6 +186,9 @@ import {
 import { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
 import { stepVisualBowUseTicks } from '../input/gameplayKeys';
 import {
+  planOnlineRespawnInputRestore,
+  recordAliveSnapshotTick,
+  shouldIgnoreStaleDeadSnapshot,
   shouldRestoreGameplayAfterRespawn,
 } from './onlineRespawn';
 import { shouldRunClientWorldSimulation } from './onlineSimulation';
@@ -255,6 +258,7 @@ export interface OnlineAnarchySession {
   inputSeq: number;
   lastViewKey?: string;
   lastStateTick: number;
+  lastAliveTick?: number;
   motion: { target: { x: number; y: number; z: number } };
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
@@ -446,12 +450,20 @@ export class Game {
       selectHotbar: (index) => this.selectHotbar(index),
       onPointerLockAcquired: () => {
         this.lifecycle.resumePlayingIfVisible();
+        this.lifecycle.endOnlineRespawnRestore();
         this.ui.hidePointerLockFallback();
       },
       onPointerLockReleased: (reason) => this.handlePointerUnlock(reason),
-      onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
+      onPointerLockRequestFailed: () => {
+        this.lifecycle.endOnlineRespawnRestore();
+        this.showPointerLockFallbackIfNeeded();
+      },
       isChatOpen: () => this.ui.isChatOpen(),
     });
+    this.lifecycle.setBlurContext(() => ({
+      pointerLocked: this.input.isPointerLocked(),
+      pointerLockRequestPending: this.input.isLockRequestPending(),
+    }));
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.ui.onChatSubmit = (line) => this.submitChat(line);
     this.ui.onChatCancel = () => this.closeChatAndResumeLook();
@@ -683,6 +695,12 @@ export class Game {
           dead: session.survival.dead,
         })) {
           this.restoreOnlinePlayingFromRespawn();
+          if (session.online) {
+            session.online.lastAliveTick = recordAliveSnapshotTick(
+              session.online.lastAliveTick,
+              session.online.lastStateTick,
+            );
+          }
         }
         if (message.health < previous.health - 0.01) {
           this.hurt.trigger(performance.now(), { periodic: false });
@@ -813,16 +831,26 @@ export class Game {
       session.player.sprinting = local.sprinting;
       session.player.onGround = local.onGround;
       const previousLife = { health: session.survival.health, dead: session.survival.dead };
-      session.survival.restore({
-        health: local.health,
-        hunger: local.hunger,
-        dead: local.dead ?? local.health <= 0,
-      });
-      if (shouldRestoreGameplayAfterRespawn(previousLife, {
-        health: session.survival.health,
-        dead: session.survival.dead,
+      const snapshotDead = local.dead ?? local.health <= 0;
+      if (!shouldIgnoreStaleDeadSnapshot({
+        snapshotTick: message.tick,
+        lastAliveTick: online.lastAliveTick,
+        dead: snapshotDead,
       })) {
-        this.restoreOnlinePlayingFromRespawn();
+        session.survival.restore({
+          health: local.health,
+          hunger: local.hunger,
+          dead: snapshotDead,
+        });
+        if (shouldRestoreGameplayAfterRespawn(previousLife, {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        })) {
+          this.restoreOnlinePlayingFromRespawn();
+        }
+        if (!snapshotDead && local.health > 0) {
+          online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
+        }
       }
       session.ridingCartId = local.ridingEntityId;
       if (local.invisible) {
@@ -3621,19 +3649,33 @@ export class Game {
   private restoreOnlinePlayingFromRespawn(): void {
     const session = this.session;
     if (!session?.online) return;
+    this.lifecycle.beginOnlineRespawnRestore();
     this.deathShown = false;
     session.ridingCartId = undefined;
     session.miningProgress = 0;
     session.miningTarget = undefined;
     session.worldRenderer.setOpenChest(undefined);
+    const chatOpen = this.ui.isChatOpen();
+    const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
     this.ui.closeChat();
-    this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
-    this.lifecycle.setState('PLAYING');
-    this.canvas.focus({ preventScroll: true });
-    this.input.tryRequestPointerLock();
+    const plan = planOnlineRespawnInputRestore({
+      state: this.lifecycle.state,
+      pointerLocked: this.input.isPointerLocked(),
+      chatOpen,
+      inventoryOpen,
+    });
+    if (plan.clearHeldKeys) this.input.clearHeldKeys();
+    this.lifecycle.setState(plan.lifecycle);
+    this.lifecycle.resumePlayingIfVisible();
+    if (plan.focusCanvas) this.canvas.focus({ preventScroll: true });
+    let requestedLock = false;
+    if (plan.requestPointerLock && this.lifecycle.state === 'PLAYING') {
+      requestedLock = this.input.tryRequestPointerLock();
+    }
+    if (!requestedLock) this.lifecycle.endOnlineRespawnRestore();
   }
 
   private handleDeath(source?: DamageSource): void {

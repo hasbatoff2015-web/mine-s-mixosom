@@ -9,7 +9,7 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { applyFluidWrites, computeFluidUpdate } from '../../src/world/fluids';
 import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
-import { WorldInstance } from '../../server/WorldInstance';
+import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
 import type { ClientInputMessage } from '../../shared/protocol';
 
 async function tempDir(): Promise<string> {
@@ -695,5 +695,175 @@ describe('Anarchy server gameplay authority', () => {
     expect(world.world.tickNumber).toBe(before + 1);
     world.tick();
     expect(world.world.tickNumber).toBe(before + 2);
+  });
+
+  function healthPackets(sink: MemorySink) {
+    return sink.payloads.filter((payload): payload is { type: 'health'; dead: boolean; health: number } => {
+      if (!payload || typeof payload !== 'object') return false;
+      return (payload as { type?: unknown }).type === 'health';
+    });
+  }
+
+  function expectCanonicalDeadThenAlive(sink: MemorySink, fromIndex: number): void {
+    const health = healthPackets(sink).slice(fromIndex);
+    expect(health.some((entry) => entry.dead === true)).toBe(true);
+    expect(health.at(-1)?.dead).toBe(false);
+    expect(health.at(-1)?.health).toBe(20);
+  }
+
+  function expectWalks(world: WorldInstance, player: ServerPlayer, seq: number): void {
+    expect(player.survival.dead).toBe(false);
+    expect(player.survival.health).toBeGreaterThan(0);
+    const origin = player.controller.position.clone();
+    world.applyInput(player, walkInput(seq, 0.4 + seq * 0.07));
+    world.tick();
+    expect(player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
+  }
+
+  function tickUntilCanonicalRespawn(
+    world: WorldInstance,
+    player: { survival: { dead: boolean; health: number } },
+    sink: MemorySink,
+    fromIndex: number,
+    maxTicks = 280,
+  ): void {
+    for (let tick = 0; tick < maxTicks; tick += 1) {
+      world.tick();
+      const health = healthPackets(sink).slice(fromIndex);
+      if (
+        health.some((entry) => entry.dead === true)
+        && health.at(-1)?.dead === false
+        && !player.survival.dead
+        && player.survival.health > 0
+      ) return;
+    }
+    expect.fail(
+      `canonical respawn missing; dead=${player.survival.dead} health=${player.survival.health} `
+      + `packets=${JSON.stringify(healthPackets(sink).slice(fromIndex))}`,
+    );
+  }
+
+  function standInBlock(world: WorldInstance, player: { controller: { position: { x: number; y: number; z: number }; teleport: (p: [number, number, number]) => void } }, block: number): void {
+    const x = Math.floor(player.controller.position.x);
+    const y = Math.floor(player.controller.position.y);
+    const z = Math.floor(player.controller.position.z);
+    world.world.setBlock(x, y - 1, z, BlockId.Stone);
+    world.world.setBlock(x, y, z, block);
+    world.world.setBlock(x, y + 1, z, block === BlockId.Lava ? BlockId.Lava : BlockId.Air);
+    player.controller.teleport([x + 0.5, y, z + 0.5]);
+  }
+
+  it('fall death respawns through dead→alive health and still accepts input', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    const from = healthPackets(joined.sink).length;
+    const x = player.controller.position.x;
+    const z = player.controller.position.z;
+    const baseY = Math.floor(player.controller.position.y);
+    for (let y = baseY + 1; y <= baseY + 50; y += 1) {
+      world.world.setBlock(Math.floor(x), y, Math.floor(z), BlockId.Air);
+    }
+    player.controller.teleport([x, baseY + 48, z]);
+    player.controller.velocity.set(0, 0, 0);
+    tickUntilCanonicalRespawn(world, player, joined.sink, from);
+    expectCanonicalDeadThenAlive(joined.sink, from);
+    expectWalks(world, player, 11);
+  });
+
+  it('fire death respawns through dead→alive health and still accepts input', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ health: 1, dead: false });
+    const from = healthPackets(joined.sink).length;
+    standInBlock(world, player, BlockId.Fire);
+    tickUntilCanonicalRespawn(world, player, joined.sink, from);
+    expectCanonicalDeadThenAlive(joined.sink, from);
+    expectWalks(world, player, 12);
+  });
+
+  it('lava death respawns through dead→alive health and still accepts input', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ health: 4, dead: false });
+    const from = healthPackets(joined.sink).length;
+    standInBlock(world, player, BlockId.Lava);
+    tickUntilCanonicalRespawn(world, player, joined.sink, from);
+    expectCanonicalDeadThenAlive(joined.sink, from);
+    expectWalks(world, player, 13);
+  });
+
+  it('TNT/explosion death respawns through dead→alive health and still accepts input', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ health: 1, dead: false });
+    const from = healthPackets(joined.sink).length;
+    const pos = player.controller.position;
+    world.gameplay.explosions.enqueue({
+      x: pos.x, y: pos.y + 0.5, z: pos.z, radius: 4, power: 6,
+    });
+    tickUntilCanonicalRespawn(world, player, joined.sink, from, 40);
+    expectCanonicalDeadThenAlive(joined.sink, from);
+    expectWalks(world, player, 14);
+  });
+
+  it('mob melee death respawns through dead→alive health and still accepts input', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    world.world.timeOfDay = 18_000;
+    player.survival.restore({ health: 1, dead: false });
+    const from = healthPackets(joined.sink).length;
+    const mob = world.gameplay.mobs.spawn('zombie', player.controller.position.clone(), { force: true });
+    if (!mob) throw new Error('zombie spawn failed');
+    tickUntilCanonicalRespawn(world, player, joined.sink, from, 400);
+    expectCanonicalDeadThenAlive(joined.sink, from);
+    expectWalks(world, player, 15);
+  });
+
+  it('multiple consecutive deaths keep accepting input', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'survival');
+    let seq = 20;
+    expectWalks(world, player, seq += 1);
+    for (let i = 0; i < 3; i += 1) {
+      const from = healthPackets(joined.sink).length;
+      world.handleChat(player, '/kill');
+      expectCanonicalDeadThenAlive(joined.sink, from);
+      expectWalks(world, player, seq += 1);
+    }
+  });
+
+  it('two clients: A respawns and moves, then B respawns and moves', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'A');
+    const b = join(world, 'B');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    const fromA = healthPackets(a.sink).length;
+    world.handleChat(a.player, '/kill');
+    expectCanonicalDeadThenAlive(a.sink, fromA);
+    expectWalks(world, a.player, 31);
+    const fromB = healthPackets(b.sink).length;
+    world.handleChat(b.player, '/kill');
+    expectCanonicalDeadThenAlive(b.sink, fromB);
+    expectWalks(world, b.player, 32);
+    expect(a.player.survival.dead).toBe(false);
+    expect(b.player.survival.dead).toBe(false);
   });
 });

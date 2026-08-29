@@ -2,6 +2,15 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: online respawn WASD (stabilization)
+
+- Ветка `cursor/online-respawn-input-fix-bbb1` от Phase 1 HEAD `c75497b` (`cursor/shared-game-core-kernel-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Owner QA после Phase 1: SP ок, Anarchy коннектится, WASD до смерти ок, после death→respawn WASD иногда мёртв (mouse look и chat живы). `/kill` не workaround.
+- Root cause: (1) mob/TNT/PvP звали `respawnIfDead` без `health` dead→alive, клиент мог не сделать restore; (2) restore делал `canvas.focus` + pointer-lock request → `window.blur` при `hasFocus()===false` → **BACKGROUND** → `tickOnline` не шлёт input. Look рендерится каждый кадр, chat — DOM.
+- Fix: один canonical `respawnIfDead` с flush dead/alive; blur не ставит BACKGROUND при pointer lock / pending lock / respawn guard; acquire сначала resume PLAYING; не фокусить canvas если уже locked; keys clear только если chat/inventory владели клавиатурой.
+- Не тронуты: GameplayKernel, interpolation, fluids, block states, rendering, bow/arrow, SP tick.
+- Report: `docs/reports/2026-08-29_online-respawn-input-fix.md`. **Не merge.** Owner local QA, затем остановиться.
+
 ## Последний проход: GameplayKernel (Phase 1 shared sim order)
 
 - Ветка `cursor/shared-game-core-kernel-bbb1` от PR #17 HEAD `bdab232`. **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.

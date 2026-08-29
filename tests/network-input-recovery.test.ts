@@ -62,6 +62,11 @@ describe('online input recovery', () => {
 
   it('does not permanently disable movement after pointer-lock loss while the page still has focus', () => {
     expect(shouldEnterBackgroundFromBlur({ documentHidden: false, documentHasFocus: true })).toBe(false);
+    expect(shouldEnterBackgroundFromBlur({
+      documentHidden: false,
+      documentHasFocus: false,
+      pointerLocked: true,
+    })).toBe(false);
     expect(playerGameplayAllowed('PLAYING', false)).toBe(true);
     expect(resolvePlayerMoveInput(false, live).forward).toBe(1);
   });

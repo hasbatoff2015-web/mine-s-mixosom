@@ -159,6 +159,7 @@ export class ServerGameplay {
   constructor(
     readonly world: VoxelWorld,
     readonly events: EventBus,
+    private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
   ) {
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
@@ -829,6 +830,7 @@ export class ServerGameplay {
 
   respawnIfDead(player: GameplayPlayer): void {
     if (!player.survival.dead) return;
+    this.flushPlayerLife?.(player);
     if (player.ridingCartId) this.exitVehicle(player);
     player.window = { kind: 'inventory' };
     player.miningTarget = undefined;
@@ -864,6 +866,7 @@ export class ServerGameplay {
       player.inventoryDirty = true;
     }
     player.survival.respawn(player.controller, player.survival.spawnPoint);
+    this.flushPlayerLife?.(player);
   }
 
   private releaseBow(player: GameplayPlayer): void {

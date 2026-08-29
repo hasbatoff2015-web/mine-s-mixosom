@@ -7,6 +7,7 @@ import {
   shouldIgnoreEscapeKeydown,
   shouldOpenPauseOnUnlock,
   shouldTogglePauseOnEscapeKeydown,
+  shouldReleasePointerLockAfterAcquire,
   shouldRequestPointerLock,
   shouldShowPointerLockFallback,
 } from '../src/input/pointerLock';
@@ -158,5 +159,10 @@ describe('pointer lock pause resume', () => {
       coarsePointer: false,
       lockedToCanvas: true,
     })).toBe(false);
+  });
+
+  it('resumes capture before releasing an illegal lock after acquire', () => {
+    expect(shouldReleasePointerLockAfterAcquire(true)).toBe(false);
+    expect(shouldReleasePointerLockAfterAcquire(false)).toBe(true);
   });
 });
