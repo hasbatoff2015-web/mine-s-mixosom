@@ -78,6 +78,12 @@ export interface OnlineServersActions {
   connect(id: string): void;
 }
 
+export interface OnlineServerLiveStatus {
+  reachable: boolean;
+  online: number;
+  maxPlayers: number;
+}
+
 export interface PauseActions {
   resume(): void;
   settings(): void;
@@ -369,20 +375,26 @@ export class GameUI {
     });
   }
 
-  showOnlineServers(actions: OnlineServersActions): void {
+  showOnlineServers(actions: OnlineServersActions, live?: OnlineServerLiveStatus): void {
     let selectedId = MENU_SERVER_ENTRIES[0]?.id ?? '';
-    const rows = MENU_SERVER_ENTRIES.map((server, index) => `
+    const rows = MENU_SERVER_ENTRIES.map((server, index) => {
+      const anarchy = server.id === 'anarchy-pvp';
+      const onlineLabel = anarchy && live
+        ? (live.reachable ? `${live.online} / ${live.maxPlayers}` : 'оффлайн')
+        : server.online;
+      return `
       <button class="server-row${index === 0 ? ' selected' : ''}" data-server-id="${server.id}" aria-pressed="${index === 0}">
         <span class="server-icon" aria-hidden="true">FC</span>
         <span class="server-copy"><strong>${server.name}</strong><small>${server.description}</small></span>
-        <span class="server-status"><span class="server-online">${server.online}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
-      </button>`).join('');
+        <span class="server-status"><span class="server-online">${onlineLabel}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
+      </button>`;
+    }).join('');
     const connectable = (id: string): boolean => MENU_SERVER_ENTRIES.find((server) => server.id === id)?.connectable === true;
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
-        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">Локальный мир</span></header>
+        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">localhost</span></header>
         <div class="server-list">${rows}</div>
-        <p class="menu-notice">Анархия открывает отдельный локальный мир сервера. Сетевой мультиплеер пока не реализован. «Выживание PvP» остаётся заглушкой.</p>
+        <p class="menu-notice">Анархия PvP подключается к локальному серверу (<code>npm run dev:server</code>). Если процесс не запущен, появится «Сервер недоступен». «Выживание PvP» пока недоступно.</p>
         <footer class="menu-footer"><button class="game-button primary" data-action="connect"${connectable(selectedId) ? '' : ' disabled'}>Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
       </div></section>`, actions.back);
     const connectButton = this.screen!.querySelector<HTMLButtonElement>('[data-action="connect"]')!;

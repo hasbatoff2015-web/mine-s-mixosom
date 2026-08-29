@@ -8,6 +8,9 @@
     "audio:extract-reference": "node scripts/extract-minecraft-reference-sounds.mjs",
     "audio:generate-sfx": "node scripts/generate-core-sfx.mjs",
     "dev": "vite --host 0.0.0.0",
+    "dev:server": "vite-node server/index.ts",
+    "dev:anarchy": "node scripts/dev-anarchy.mjs",
+    "server:import": "vite-node server/importWorld.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "benchmark:performance": "vite-node scripts/benchmark-performance.ts",
@@ -22,12 +25,15 @@
     "check": "npm run typecheck && npm run test && npm run build && npm run check:size && npm run check:archive"
   },
   "dependencies": {
-    "three": "^0.179.1"
+    "three": "^0.179.1",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/three": "^0.179.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
+    "vite-node": "^3.2.4",
     "vitest": "^3.2.4"
   }
 }

@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-29 local authoritative Anarchy server
+
+Report: `reports/2026-08-29_local-authoritative-server.md`. Docs: `docs/LOCAL_SERVER.md`.
+
+Targeted: `tests/server/anarchy-server.test.ts` (start/load/join/spawn/two clients/movement/break/place/reach reject/persist/plugins/API surface/singleplayer isolation) plus retained `tests/anarchy-world.test.ts` (IndexedDB identity still valid for the legacy helper / SP list filter).
+
 ## 2026-08-29 lateral skylight / lighting consistency
 
 Report and full 25-step manual checklist: `reports/2026-08-29_lighting-quality-lateral-sky.md`.

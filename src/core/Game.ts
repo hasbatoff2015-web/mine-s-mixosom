@@ -157,7 +157,8 @@ import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } 
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
-import { collectSpawnColumns, stoneCapY } from '../world/Generator';
+import { stoneCapY } from '../world/Generator';
+import { estimateWorldSpawn } from '../world/spawn';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
   ANARCHY_SERVER_ID,
@@ -167,6 +168,8 @@ import {
   isFiniteSpawn,
   resolveAnarchyStartup,
 } from '../world/import';
+import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import type { PlayerSnapshot, ServerMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -215,6 +218,15 @@ export interface GameSession {
   playTicks: number;
   lastAutosaveTick: number;
   serverWorld?: SerializedServerWorld;
+  online?: OnlineAnarchySession;
+}
+
+export interface OnlineAnarchySession {
+  client: AnarchyClient;
+  playerId: string;
+  remotes: Map<string, RemotePlayerView>;
+  inputSeq: number;
+  lastViewKey?: string;
 }
 
 interface RuntimeSettings {
@@ -432,10 +444,7 @@ export class Game {
     this.lifecycle.setState('MENU');
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
-      online: () => this.ui.showOnlineServers({
-        back: () => this.showMainMenu(),
-        connect: (id) => void this.connectOnlineServer(id),
-      }),
+      online: () => void this.showOnlineServerList(),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
@@ -443,12 +452,205 @@ export class Game {
     });
   }
 
+  private async showOnlineServerList(): Promise<void> {
+    const live = await fetchAnarchyStatus();
+    this.ui.showOnlineServers({
+      back: () => this.showMainMenu(),
+      connect: (id) => void this.connectOnlineServer(id),
+    }, live);
+  }
+
   private async connectOnlineServer(id: string): Promise<void> {
-    if (id === ANARCHY_SERVER_ID) {
-      await this.openAnarchyWorld();
+    if (id !== ANARCHY_SERVER_ID) {
+      this.ui.toast('Этот сервер пока недоступен');
       return;
     }
-    this.ui.toast('Этот сервер пока недоступен');
+    this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
+    const client = new AnarchyClient();
+    try {
+      const welcome = await client.connect();
+      await this.startOnlineAnarchy(client, welcome);
+    } catch {
+      client.disconnect();
+      this.ui.toast('Сервер недоступен');
+      await this.showOnlineServerList();
+    }
+  }
+
+  private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {
+    const world = new VoxelWorld(welcome.seed);
+    world.deferredLighting = true;
+    world.restore({
+      timeOfDay: welcome.timeOfDay,
+      modifications: welcome.modifications,
+      chests: {},
+      furnaces: {},
+      blockStates: welcome.blockStates,
+    });
+    let inventory: Inventory;
+    try {
+      inventory = Inventory.deserialize(welcome.inventory);
+    } catch {
+      inventory = new Inventory();
+    }
+    const summary = {
+      ...createAnarchySummary(),
+      seed: welcome.seed,
+      mode: welcome.you.gamemode,
+    };
+    const remotes = new Map<string, RemotePlayerView>();
+    await this.startSession(summary, world, inventory, undefined, {
+      spawn: [welcome.you.x, welcome.you.y, welcome.you.z],
+      snapSpawn: false,
+      serverWorld: createCanonicalAnarchyServerWorld(welcome.spawn),
+      online: { client, playerId: welcome.playerId, remotes, inputSeq: 0 },
+    });
+    const session = this.session;
+    if (!session?.online) return;
+    session.player.teleport([welcome.you.x, welcome.you.y, welcome.you.z]);
+    session.player.yaw = welcome.you.yaw;
+    session.player.pitch = welcome.you.pitch;
+    this.input.yaw = welcome.you.yaw;
+    this.input.pitch = welcome.you.pitch;
+    for (const info of welcome.players) {
+      this.spawnRemotePlayer(session, info);
+    }
+    client.onMessage((message) => this.handleOnlineMessage(message));
+    client.onDisconnect(() => {
+      if (!this.session?.online) return;
+      this.ui.toast('Сервер недоступен');
+      this.disposeSession();
+      this.showMainMenu();
+    });
+  }
+
+  private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
+    if (!session.online || info.id === session.online.playerId || session.online.remotes.has(info.id)) return;
+    const view = new RemotePlayerView(info);
+    session.online.remotes.set(info.id, view);
+    this.scene.add(view.group);
+  }
+
+  private removeRemotePlayer(session: GameSession, playerId: string): void {
+    const view = session.online?.remotes.get(playerId);
+    if (!view) return;
+    this.scene.remove(view.group);
+    view.dispose();
+    session.online?.remotes.delete(playerId);
+  }
+
+  private handleOnlineMessage(message: ServerMessage): void {
+    const session = this.session;
+    if (!session?.online) return;
+    switch (message.type) {
+      case 'welcome':
+        return;
+      case 'player_joined':
+        this.spawnRemotePlayer(session, message.player);
+        return;
+      case 'player_left':
+        this.removeRemotePlayer(session, message.playerId);
+        return;
+      case 'player_state':
+        this.applyOnlinePlayerState(session, message.players);
+        return;
+      case 'block_update': {
+        const previous = session.world.getBlock(message.x, message.y, message.z, false);
+        session.world.applyBlockBatch(
+          [{ x: message.x, y: message.y, z: message.z, block: message.blockId as BlockId }],
+          { deferLighting: true },
+        );
+        if (message.blockId === BlockId.Air) {
+          this.playBlockSound('break', previous, message.x, message.y, message.z);
+        } else {
+          this.playBlockSound('place', message.blockId as BlockId, message.x, message.y, message.z);
+        }
+        return;
+      }
+      case 'chunk_data':
+        session.world.getChunk(message.cx, message.cz, true);
+        return;
+      case 'chat':
+        if (message.kind === 'player') this.pushChat('player', `<${message.from}> ${message.text}`);
+        else this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+        return;
+      case 'inventory':
+        try {
+          session.inventory.restore(Inventory.deserialize(message.inventory).serialize());
+        } catch {
+          /* keep local copy until next valid snapshot */
+        }
+        if (message.gamemode !== session.summary.mode) {
+          session.summary.mode = message.gamemode;
+          session.player.creativeFlightAllowed = message.gamemode === 'creative';
+        }
+        this.refreshHud();
+        return;
+      case 'error':
+        this.ui.toast(message.message);
+        return;
+      case 'status':
+        return;
+      default:
+        return;
+    }
+  }
+
+  private applyOnlinePlayerState(session: GameSession, players: readonly PlayerSnapshot[]): void {
+    const online = session.online;
+    if (!online) return;
+    const seen = new Set<string>();
+    for (const snap of players) {
+      seen.add(snap.id);
+      if (snap.id === online.playerId) {
+        const dx = snap.x - session.player.position.x;
+        const dy = snap.y - session.player.position.y;
+        const dz = snap.z - session.player.position.z;
+        const distance = Math.hypot(dx, dy, dz);
+        if (distance > 6) session.player.previousPosition.set(snap.x, snap.y, snap.z);
+        else session.player.previousPosition.copy(session.player.position);
+        session.player.position.set(snap.x, snap.y, snap.z);
+        session.player.velocity.set(snap.vx, snap.vy, snap.vz);
+        session.player.sneaking = snap.sneaking;
+        session.player.sprinting = snap.sprinting;
+        session.player.onGround = snap.onGround;
+        session.survival.restore({ health: snap.health });
+        if (snap.gamemode !== session.summary.mode) {
+          session.summary.mode = snap.gamemode;
+          session.player.creativeFlightAllowed = snap.gamemode === 'creative';
+        }
+        continue;
+      }
+      let remote = online.remotes.get(snap.id);
+      if (!remote) {
+        this.spawnRemotePlayer(session, snap);
+        remote = online.remotes.get(snap.id);
+      }
+      remote?.applySnapshot(snap);
+    }
+    for (const id of [...online.remotes.keys()]) {
+      if (!seen.has(id)) this.removeRemotePlayer(session, id);
+    }
+  }
+
+  private sendOnlineIdle(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    online.inputSeq += 1;
+    online.client.send({
+      type: 'input',
+      seq: online.inputSeq,
+      forward: 0,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: this.input.yaw,
+      pitch: this.input.pitch,
+      selectedSlot: session.selectedSlot,
+    });
   }
 
   private async openAnarchyWorld(): Promise<void> {
@@ -553,6 +755,7 @@ export class Game {
       spawn?: [number, number, number];
       snapSpawn?: boolean;
       serverWorld?: SerializedServerWorld;
+      online?: OnlineAnarchySession;
     },
   ): Promise<void> {
     this.disposeSession();
@@ -717,6 +920,7 @@ export class Game {
       playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
       lastAutosaveTick: 0,
       serverWorld: restored?.serverWorld ?? options?.serverWorld,
+      online: options?.online,
     };
     this.canvas.dataset.hotbar = String(this.session.selectedSlot);
     this.firstPerson?.setHeldItems(
@@ -727,10 +931,7 @@ export class Game {
   }
 
   private estimateSpawn(world: VoxelWorld): [number, number, number] {
-    const best = collectSpawnColumns(world.generator)[0];
-    if (best) return [best.x + 0.5, best.height + 1.01, best.z + 0.5];
-    const fallback = world.generator.columnAt(0, 0);
-    return [0.5, Math.max(SEA_LEVEL + 2, fallback.height + 2), 0.5];
+    return estimateWorldSpawn(world);
   }
 
   private snapPlayerToTerrain(): void {
@@ -1372,7 +1573,8 @@ export class Game {
   private openPauseMenu(): void {
     this.ui.hidePointerLockFallback();
     if (openingPauseMenuPausesSimulation()) this.lifecycle.setState('PAUSED');
-    void this.saveSession();
+    if (this.session?.online) this.sendOnlineIdle(this.session);
+    else void this.saveSession();
     this.ui.showPause({
       resume: () => this.resumeFromPause(),
       settings: () => {
@@ -1503,7 +1705,7 @@ export class Game {
 
   private async saveSession(): Promise<void> {
     const session = this.session;
-    if (!session) return;
+    if (!session || session.online) return;
     const state: SerializedWorldState = {
       schemaVersion: 1,
       summary: {
@@ -1663,9 +1865,68 @@ export class Game {
     return performance.now();
   }
 
+  private tickOnline(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    session.playTicks += 1;
+    const overlayOpen = this.ui.isBlockingOverlay();
+    const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
+    const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    online.inputSeq += 1;
+    online.client.send({
+      type: 'input',
+      seq: online.inputSeq,
+      forward: movement.forward,
+      right: movement.right,
+      jump: movement.jump,
+      sneak: movement.sneak,
+      sprint: movement.sprint,
+      descend: movement.descend === true,
+      flySprint: movement.flySprint === true,
+      yaw: this.input.yaw,
+      pitch: this.input.pitch,
+      selectedSlot: session.selectedSlot,
+    });
+    const selected = this.selectedStack();
+    session.combat.setHeldItem(selected?.itemId);
+    this.firstPerson?.setHeldItems(selected?.itemId);
+    if (gameplayAllowed) this.updateTargetAndActions();
+    else {
+      this.input.consumeAttackPressed();
+      this.input.consumeUsePressed();
+      session.miningProgress = 0;
+      session.miningTarget = undefined;
+    }
+    const cx = floorDiv(Math.floor(session.player.position.x), 16);
+    const cz = floorDiv(Math.floor(session.player.position.z), 16);
+    const viewKey = `${cx},${cz},${this.settings.renderDistance}`;
+    if (online.lastViewKey !== viewKey) {
+      online.lastViewKey = viewKey;
+      online.client.send({
+        type: 'view',
+        cx,
+        cz,
+        radius: Math.max(1, Math.min(8, this.settings.renderDistance)),
+      });
+    }
+    if (session.playTicks % 80 === 0) {
+      const removed = session.world.pruneChunks(
+        Math.floor(session.player.position.x),
+        Math.floor(session.player.position.z),
+        this.settings.renderDistance,
+      );
+      session.worldRenderer.removeChunks(removed);
+    }
+    if (session.playTicks % 2 === 0) this.refreshHud();
+  }
+
   private tick(): void {
     const session = this.session;
     if (!session) return;
+    if (session.online) {
+      this.tickOnline(session);
+      return;
+    }
     const profile = this.profiler.enabled;
     let simMark = profile ? performance.now() : 0;
     session.playTicks += 1;
@@ -1893,6 +2154,14 @@ export class Game {
     const session = this.session!;
     const hit = session.target;
     if (!hit) return;
+    if (session.online) {
+      session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
+      session.miningProgress = 0;
+      session.miningTarget = undefined;
+      resetMiningSound(this.miningSound);
+      this.firstPerson?.swing();
+      return;
+    }
     const definition = getBlockDefinition(hit.block);
     const toolStack = this.selectedStack();
     const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
@@ -1959,6 +2228,10 @@ export class Game {
 
   private useTargetOrItem(): void {
     const session = this.session!;
+    if (session.online) {
+      this.requestOnlinePlace(session);
+      return;
+    }
     // Empty buckets need the first liquid hit, not the solid target behind it.
     if (this.selectedStack()?.itemId === ItemId.Bucket) {
       this.useBucket();
@@ -2273,6 +2546,30 @@ export class Game {
     this.firstPerson?.swing();
     if (session.summary.mode === 'survival') this.consumeSelected(1);
     return true;
+  }
+
+  private requestOnlinePlace(session: GameSession): void {
+    const hit = session.target;
+    const stack = this.selectedStack();
+    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
+    if (!hit || !stack || item?.placesBlockId === undefined) return;
+    const hitDefinition = getBlockDefinition(hit.block);
+    const replaceHit = hitDefinition.replaceable === true;
+    const x = replaceHit ? hit.x : hit.x + hit.normal.x;
+    const y = replaceHit ? hit.y : hit.y + hit.normal.y;
+    const z = replaceHit ? hit.z : hit.z + hit.normal.z;
+    if (!isValidWorldY(y)) {
+      this.ui.toast('Нельзя ставить блок за пределами мира');
+      return;
+    }
+    session.online?.client.send({
+      type: 'place_block',
+      x,
+      y,
+      z,
+      blockId: item.placesBlockId,
+    });
+    this.firstPerson?.swing();
   }
 
   private finishPlacingBlock(x: number, y: number, z: number, block: BlockId, solid: boolean): boolean {
@@ -2821,6 +3118,11 @@ export class Game {
     }
     this.chat.rememberInput(trimmed);
     this.ui.setChatInputHistory(this.chat.history);
+    if (session.online) {
+      session.online.client.send({ type: 'chat', text: trimmed });
+      this.closeChatAndResumeLook();
+      return;
+    }
     const dispatched = dispatchChatLine(trimmed, this.commandContext());
     if (dispatched.parsed.kind === 'say') {
       this.pushChat('player', `<${PLAYER_CHAT_NAME}> ${dispatched.parsed.text}`);
@@ -2995,6 +3297,7 @@ export class Game {
       const eyeHeight = session.player.eyeHeight;
       this.camera.position.set(position.x, position.y + eyeHeight, position.z);
       applyImmediateRenderLook(this.camera, this.input, this.hurt.cameraRoll(now));
+      session.online?.remotes.forEach((remote) => remote.interpolate(now));
       session.falling.interpolate(clamp(alpha, 0, 1));
       session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
       session.mobs.interpolateVisuals(alpha);
@@ -3118,6 +3421,14 @@ export class Game {
     this.polishQaDispose?.();
     this.polishQaDispose = undefined;
     if (!this.session) return;
+    if (this.session.online) {
+      for (const view of this.session.online.remotes.values()) {
+        this.scene.remove(view.group);
+        view.dispose();
+      }
+      this.session.online.remotes.clear();
+      this.session.online.client.disconnect();
+    }
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.arrows.dispose();

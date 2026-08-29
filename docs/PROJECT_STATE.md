@@ -2,6 +2,17 @@
 
 Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: local authoritative Anarchy server (foundation)
+
+- Base: актуального `origin/main` `a056e6f` (lighting PR #13). Ветка `cursor/local-authoritative-server-bbb1`. **Не merge в main** до ручного QA.
+- Отдельный Node process: `npm run dev:server` (`ws://127.0.0.1:2567`, Vite остаётся на 4173). Транспорт native WebSocket/`ws`, не Colyseus (в репозитории его не было).
+- Online `Анархия PvP` → localhost server. Нет silent IndexedDB fallback. Singleplayer без сервера. `Выживание PvP` mock.
+- Server owns Anarchy world/chunks/players/tick/spawn/filesystem persist (`server/data/worlds/anarchy/`). Client: input, render, interpolation.
+- Foundation sync: join/spawn, two clients, movement, break/place, chat, `/gamemode` registry, PluginManager/events.
+- **Accepted IndexedDB spawn map не в git.** Первый server world — procedural + `estimateWorldSpawn`. Явный import: `npm run server:import`. Нет runtime `.schem`.
+- Fluids/mobs/combat/TNT/minecarts/full inventory **не** портированы на server в этом pass.
+- Docs: `docs/LOCAL_SERVER.md`. Report: `docs/reports/2026-08-29_local-authoritative-server.md`.
+
 ## Последний проход: lateral sky / lighting quality
 
 - Integrated `origin/main`: `25fb847fc3762b99f8b10b6a6f24f0b2d234c998`; same feature branch `codex/lighting-quality-lateral-sky`, same Draft PR #13. WORLD_HEIGHT=256 is canonical. Historical height96 results remain in the report, not current acceptance numbers.
@@ -109,7 +120,7 @@
 
 | Область | Статус | Фактический результат |
 | --- | --- | --- |
-| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = локальный persistent world, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
+| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = localhost authoritative server, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×256` (`Y 0..255`), plains/forest/desert, periodic mountains (+10…+20) with generated surface still `≤84`, deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются; empty sky above occupancy is not full-column work |
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
@@ -122,7 +133,7 @@
 | Combat | Реализовано; browser acceptance pending | Classic 1.8 click-driven melee, shared hurt resistance, fixed armor, sprint persistence after hit, sword blocking, Frontier vertical KB height; staged bow draw/shared arrows сохранены, shield отсутствует |
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
-| Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
+| Saves | Готово для alpha | IndexedDB schema 1 для **singleplayer**; online Anarchy persist — filesystem `server/data/worlds/anarchy/` |
 | Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |

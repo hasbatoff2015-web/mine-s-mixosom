@@ -75,7 +75,12 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 - независимая local playability при отсутствии platform SDK;
 - минимальное число production dependencies: Three.js для WebGL, Vite/TypeScript для toolchain.
 
-Это single-player client-only приложение. Server authority, networking и ECS framework отсутствуют намеренно.
+Это браузерная voxel alpha с **двумя режимами мира**:
+
+- **Singleplayer** — client-authoritative, IndexedDB (`SaveService`).
+- **Online Anarchy** — отдельный Node process (`npm run dev:server`), WebSocket JSON protocol, server-authoritative world/player/blocks. Localhost now; VPS later is config, not a rewrite.
+
+Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
 ## Карта подсистем
 
@@ -94,7 +99,11 @@ flowchart TD
   Game --> Combat["CombatSystem + PlayerArrowManager"]
   Game --> Entities["MobManager + DroppedItemManager + MinecartManager"]
   Game --> Redstone["RedstoneSystem"]
-  Game --> Save["SaveService / IndexedDB"]
+  Game --> Save["SaveService / IndexedDB (singleplayer)"]
+  Game --> Net["AnarchyClient WebSocket"]
+  Net --> Server["Frontier Cubes Server (Node)"]
+  Server --> WorldInst["WorldInstance + VoxelWorld"]
+  Server --> Persist["server/data/worlds/anarchy"]
   Game --> Platform["YandexGamesService"]
   World --> Blocks["Block registry"]
   UI --> Inventory["Inventory + crafting"]
@@ -200,7 +209,7 @@ index = y × 16 × 16 + z × 16 + x
 
 `WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера. Generator заполняет только `0..max(surface, sea)`; `Chunk.occupancyTop` ограничивает sky fill, emitter scan, fluid activation и mesher, чтобы пустой столб Y=85..255 не стоил как полный мир. `WORLD_LIGHT_BUDGET_MS = 2` не поднимается из‑за высоты.
 
-Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production path `Играть онлайн → Анархия PvP` не вызывает importer:** грузит IndexedDB world `anarchy` как есть. Canonical spawn — `serverWorld.spawn`. `importVersion` не запускает reimport. Если save отсутствует — procedural world с тем же world id, без `.schem`.
+Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production `Играть онлайн → Анархия PvP` больше не читает IndexedDB и не вызывает importer.** Клиент коннектится к `ws://127.0.0.1:2567`. Сервер владеет world id `anarchy`, seed `anarchy-spawn-v1`, filesystem persist. Если server data пустой — procedural create + `estimateWorldSpawn`, без `.schem`. Исторический IndexedDB `anarchy` остаётся local-only и не является online authority. Явный перенос: `npm run server:import -- dump.json` (см. `docs/LOCAL_SERVER.md`). `openAnarchyWorld()` сохранён для тестов/legacy IndexedDB path и **не** вызывается из UI connect.
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
@@ -432,6 +441,8 @@ flowchart LR
 `SaveService` делает structured clones на границе storage и сортирует summaries по `updatedAt`. Autosaves сериализуются через promise chain, чтобы параллельные записи не обгоняли друг друга.
 
 Если IndexedDB отсутствует, используется in-memory Map. Это graceful degradation, но не durable save.
+
+**Online Anarchy** не пишет IndexedDB. Authoritative persist — `server/data/worlds/<worldId>/` (`meta.json`, `world.json`, `players.json`). Тот же `VoxelWorld.serializeModifications()` / `restore()` формат, что и singleplayer deltas.
 
 ## Yandex adapter
 

@@ -1,5 +1,17 @@
 # Roadmap
 
+## 2026-08-29: local authoritative Anarchy server (foundation)
+
+- [x] Architecture audit of actual `origin/main`; no Colyseus remnants; IndexedDB Anarchy was client-authoritative.
+- [x] Separate Node server process, localhost WebSocket, configurable host/port, graceful shutdown.
+- [x] Server-side Anarchy world lifecycle + filesystem persist; no silent `.schem` import.
+- [x] Client connect from **Анархия PvP**; unavailable server → toast, stay in menu.
+- [x] Authoritative join/spawn, input movement, two-client visibility, break/place, chat, command registry, PluginManager.
+- [x] Singleplayer path kept; online vs SP ownership split documented.
+- [ ] User localhost QA (two browsers, persistence, chat) before any main merge.
+- [ ] Explicit IndexedDB → server dump import of the accepted spawn map (not in git).
+- [ ] Later: fluids/mobs/combat/inventory/TNT on server; VPS deploy; accounts.
+
 ## 2026-08-29: lateral skylight / lighting quality
 
 - [x] Vertical baseline + bounded resumable lateral frontier, 14-step falloff, typed ring and deadline/hard work caps; 2 ms PLAYING budget and render distances retained.

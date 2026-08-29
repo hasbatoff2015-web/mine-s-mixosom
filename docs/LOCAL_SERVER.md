@@ -1,0 +1,175 @@
+# Local authoritative Anarchy server
+
+Foundation pass: your PC runs a Node.js process that owns the Anarchy world. The browser client is not the source of truth for online play.
+
+## Prerequisites
+
+- Node.js 20+
+- Repository dependencies: `npm install`
+- Two terminals, or `npm run dev:anarchy`
+
+No VPS, Docker, database, or public IP is required.
+
+## Install
+
+```bash
+npm install
+```
+
+## Start server
+
+```bash
+npm run dev:server
+```
+
+Default bind: `ws://127.0.0.1:2567` (Vite client stays on **4173**).
+
+Console should include:
+
+```
+[server] started
+Frontier Cubes Server listening on ws://127.0.0.1:2567
+[server] world loaded: anarchy
+Anarchy server ready
+```
+
+Configurable env (never bake a machine-specific path or public hostname into gameplay):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HOST` / `FC_HOST` | `127.0.0.1` | Bind address |
+| `PORT` / `FC_PORT` | `2567` | Bind port |
+| `WORLD` / `FC_WORLD` | `anarchy` | World id |
+| `WORLD_PATH` / `FC_WORLD_PATH` | `server/data/worlds` | Relative directory for worlds |
+| `WORLD_SEED` | `anarchy-spawn-v1` | Used only when creating a **new** world |
+| `TICK_RATE` | `20` | Simulation ticks per second |
+| `CHUNK_VIEW_RADIUS` | `4` | Chunk interest radius |
+| `MAX_PLAYERS` | `300` | Join cap |
+| `SERVER_NAME` | `Frontier Cubes Anarchy` | Status name |
+| `PERSIST_INTERVAL_MS` | `30000` | Periodic save |
+
+HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
+
+## Start client
+
+```bash
+npm run dev
+```
+
+Optional one-command both:
+
+```bash
+npm run dev:anarchy
+```
+
+## Connect
+
+1. Open the Vite URL (port **4173**).
+2. **Играть онлайн** → **Анархия PvP** → **Подключиться**.
+3. If the server is down, the menu stays up and shows **Сервер недоступен**. There is no silent IndexedDB fallback.
+
+**Выживание PvP** remains unavailable.
+
+Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarchyPort=`.
+
+## Two-client test
+
+1. Start `npm run dev:server` and `npm run dev`.
+2. Browser A: connect Anarchy.
+3. Browser B (another window/profile): same origin, connect Anarchy.
+4. A and B should see each other, movement, block break/place, and chat.
+
+Same-machine two tabs share `sessionStorage` **per tab**, so they get distinct players.
+
+## Server data location
+
+Runtime files (gitignored):
+
+```
+server/data/worlds/anarchy/
+  meta.json      # seed, spawn, timestamps
+  world.json     # modifications + blockStates (same delta format as saves)
+  players.json   # last known player snapshots
+```
+
+Paths are relative to the process working directory. Do not put `C:\Users\...` in server code.
+
+After restart the server **loads** this folder. It does **not** regenerate terrain deltas and does **not** import `.schem`.
+
+## Authority
+
+**Online Anarchy (`Играть онлайн → Анархия PvP`)**
+
+SERVER owns: world blocks, spawn, player position/health/gamemode, inventory used for place/break, simulation tick, persistence, chat broadcast, commands.
+
+CLIENT owns: rendering, input collection, UI, interpolation/cache, local chunk mesh/light.
+
+CLIENT MUST NOT: write authoritative voxels, set authoritative position, give itself items, change gamemode locally, decide damage.
+
+**Singleplayer** is unchanged: IndexedDB via `SaveService`, no server required.
+
+IndexedDB may still hold a historical `anarchy` world from before this pass. That copy is **not** shared across machines and is **not** the online authority.
+
+## Plugin API overview
+
+Plugins run **only** on the server. They receive a frozen `ServerAPI`:
+
+- `onLoad` / `onEnable` / `onDisable`
+- `getWorld()` / `getPlayers()` / `getPlayer(id)`
+- `broadcast(text)`
+- `registerCommand(handler)`
+- `registerEvent(name, handler)`
+
+Events (cancellable where noted): `playerJoin`, `playerQuit`, `playerMove`, `blockBreak`, `blockPlace`, `playerDamage`, `entityDamage`.
+
+This is a Frontier Cubes plugin API inspired by Bukkit concepts. Bukkit/Spigot/Paper jars are not loaded.
+
+Starter plugins such as homes/economy/kits/tpa are **not** implemented in this pass.
+
+## Commands (server registry)
+
+Implemented now: `/help`, `/gamemode` (authoritative), `/seed`, `/spawn`.
+
+Client `/give` `/time` `/tp` `/clear` `/kill` still work in **singleplayer only**. Online chat lines starting with `/` go to the server registry.
+
+## Protocol (JSON over WebSocket)
+
+Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`, `ping`
+
+Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`
+
+Shared types: `shared/protocol.ts`. Incoming messages are type-checked; client coordinates/inventory/gamemode are not trusted.
+
+Join bootstrap reuses the existing save representation: **seed + modification deltas + blockStates**. Unmodified terrain is generated from the same seed on both sides. Live edits are `block_update` deltas. `view` / `chunk_data` / `unload_chunk` are the interest-radius streaming hooks.
+
+## Current accepted spawn map
+
+The playtested Anarchy spawn (schematic baked into **your browser IndexedDB**) is **not** in git and **not** on the server disk.
+
+This pass:
+
+- does **not** auto-import `frontier_spawn2.schem` on startup;
+- creates a new server world with seed `anarchy-spawn-v1` and a **procedural** spawn (`estimateWorldSpawn`) if `server/data/worlds/anarchy/` is empty.
+
+### Missing migration step
+
+To move the IndexedDB world onto the server:
+
+1. Export the IndexedDB record `frontier-cubes-saves` / `worlds` / id `anarchy` as JSON (`SerializedWorldState`).
+2. Run **explicitly** (never on ordinary startup):
+
+```bash
+npm run server:import -- path/to/anarchy-idb.json
+```
+
+3. Restart `npm run dev:server`.
+
+Use `--force` only if a server world already exists and you intend to overwrite it.
+
+## Future VPS migration
+
+Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/reverse proxy). Do not rewrite world simulation. There is no Docker requirement in this pass.
+
+## Foundation limits (intentional)
+
+Not ported yet: fluids, mobs, combat, TNT, minecarts, full inventory/crafting, lighting as a server system, anti-cheat, accounts.

@@ -1,0 +1,366 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
+import { PROTOCOL_VERSION } from '../../shared/config';
+import { parseClientMessage, type ServerMessage } from '../../shared/protocol';
+import { BlockId } from '../../src/blocks';
+import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
+import { SaveService } from '../../src/save/SaveService';
+import { AnarchyServer } from '../../server/AnarchyServer';
+import { loadServerConfig } from '../../server/config';
+import type { Plugin, ServerAPI } from '../../server/PluginManager';
+
+async function tempDir(): Promise<string> {
+  return mkdtemp(join(tmpdir(), 'fc-anarchy-'));
+}
+
+function testConfig(dataDir: string, port = 0) {
+  return {
+    ...loadServerConfig({
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      WORLD: 'anarchy',
+      WORLD_SEED: ANARCHY_WORLD_SEED,
+      MAX_PLAYERS: '8',
+      CHUNK_VIEW_RADIUS: '1',
+      TICK_RATE: '20',
+      PERSIST_INTERVAL_MS: '60000',
+    }, process.cwd()),
+    dataDir,
+    port,
+    chunkViewRadius: 1,
+    persistIntervalMs: 60_000,
+  };
+}
+
+class TestClient {
+  readonly messages: ServerMessage[] = [];
+  private socket: WebSocket | undefined;
+
+  async connect(url: string, extra?: { name?: string; sessionToken?: string }): Promise<Extract<ServerMessage, { type: 'welcome' }>> {
+    const socket = new WebSocket(url);
+    this.socket = socket;
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', () => resolve());
+      socket.once('error', reject);
+    });
+    socket.on('message', (data) => {
+      this.messages.push(JSON.parse(String(data)) as ServerMessage);
+    });
+    this.send({
+      type: 'join',
+      protocol: PROTOCOL_VERSION,
+      ...(extra?.name ? { name: extra.name } : {}),
+      ...(extra?.sessionToken ? { sessionToken: extra.sessionToken } : {}),
+    });
+    return this.waitFor('welcome');
+  }
+
+  send(payload: unknown): void {
+    this.socket?.send(JSON.stringify(payload));
+  }
+
+  async waitFor<T extends ServerMessage['type']>(type: T, timeoutMs = 5000): Promise<Extract<ServerMessage, { type: T }>> {
+    const existing = this.messages.find((message) => message.type === type);
+    if (existing) return existing as Extract<ServerMessage, { type: T }>;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`timed out waiting for ${type}`)), timeoutMs);
+      const timer = setInterval(() => {
+        const found = this.messages.find((message) => message.type === type);
+        if (!found) return;
+        clearInterval(timer);
+        clearTimeout(timeout);
+        resolve(found as Extract<ServerMessage, { type: T }>);
+      }, 10);
+    });
+  }
+
+  latest<T extends ServerMessage['type']>(type: T): Extract<ServerMessage, { type: T }> | undefined {
+    return [...this.messages].reverse().find((message) => message.type === type) as Extract<ServerMessage, { type: T }> | undefined;
+  }
+
+  close(): void {
+    this.socket?.close();
+  }
+}
+
+describe('protocol validation', () => {
+  it('rejects unknown message types and non-integer block coords', () => {
+    expect(parseClientMessage({ type: 'explode_world' })).toEqual({ error: 'unknown message type explode_world' });
+    expect(parseClientMessage({ type: 'break_block', x: 1.5, y: 2, z: 3 })).toEqual({
+      error: 'block coordinates must be integers',
+    });
+    expect(parseClientMessage({ type: 'input', seq: 1, forward: 99, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 3 })).toMatchObject({
+      type: 'input',
+      forward: 1,
+      selectedSlot: 3,
+    });
+  });
+});
+
+describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
+  const servers: AnarchyServer[] = [];
+  const dirs: string[] = [];
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) await server.stop();
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function boot(): Promise<AnarchyServer> {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const server = new AnarchyServer(testConfig(dir));
+    servers.push(server);
+    await server.start();
+    return server;
+  }
+
+  it('starts, loads Anarchy, and serves status', async () => {
+    const server = await boot();
+    expect(server.world.readyState).toBe('READY');
+    expect(server.world.seed).toBe(ANARCHY_WORLD_SEED);
+    const response = await fetch(`http://127.0.0.1:${server.port}/status`);
+    const status = await response.json() as { ready: boolean; world: string; online: number };
+    expect(status.ready).toBe(true);
+    expect(status.world).toBe('anarchy');
+    expect(status.online).toBe(0);
+  });
+
+  it('assigns authoritative spawn on join and resumes without duplicates', async () => {
+    const server = await boot();
+    const client = new TestClient();
+    const welcome = await client.connect(server.wsUrl(), { name: 'Alpha' });
+    expect(welcome.you.x).toBeCloseTo(server.world.spawn[0], 5);
+    expect(welcome.you.y).toBeCloseTo(server.world.spawn[1], 5);
+    expect(welcome.you.z).toBeCloseTo(server.world.spawn[2], 5);
+    expect(welcome.seed).toBe(ANARCHY_WORLD_SEED);
+    expect(server.world.onlineCount()).toBe(1);
+    client.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.world.onlineCount()).toBe(0);
+    const resumed = new TestClient();
+    const second = await resumed.connect(server.wsUrl(), { name: 'Alpha', sessionToken: welcome.sessionToken });
+    expect(second.playerId).toBe(welcome.playerId);
+    expect(server.world.onlineCount()).toBe(1);
+    resumed.close();
+  });
+
+  it('lets two clients see each other, movement, break and place', async () => {
+    const server = await boot();
+    const a = new TestClient();
+    const b = new TestClient();
+    const welcomeA = await a.connect(server.wsUrl(), { name: 'A' });
+    const welcomeB = await b.connect(server.wsUrl(), { name: 'B' });
+    expect(welcomeB.players.some((player) => player.id === welcomeA.playerId)).toBe(true);
+    await a.waitFor('player_joined');
+    expect(a.latest('player_joined')?.player.id).toBe(welcomeB.playerId);
+
+    const start = { x: welcomeA.you.x, z: welcomeA.you.z };
+    a.send({
+      type: 'input',
+      seq: 1,
+      forward: 1,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: 0,
+      pitch: 0,
+      selectedSlot: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const moved = b.latest('player_state')?.players.find((player) => player.id === welcomeA.playerId);
+    expect(moved).toBeDefined();
+    expect(Math.hypot((moved?.x ?? 0) - start.x, (moved?.z ?? 0) - start.z)).toBeGreaterThan(0.05);
+
+    a.send({ type: 'chat', text: '/gamemode creative' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const origin = [Math.floor(welcomeA.you.x), Math.floor(welcomeA.you.y), Math.floor(welcomeA.you.z)] as const;
+    let placedAt: readonly [number, number, number] | undefined;
+    for (let dz = 1; dz <= 4 && !placedAt; dz += 1) {
+      for (let dx = -2; dx <= 2 && !placedAt; dx += 1) {
+        const x = origin[0] + dx;
+        const y = origin[1] + 3;
+        const z = origin[2] + dz;
+        if (server.world.world.getBlock(x, y, z) !== BlockId.Air) continue;
+        a.send({ type: 'place_block', x, y, z, blockId: BlockId.Dirt });
+        await b.waitFor('block_update');
+        placedAt = [x, y, z];
+      }
+    }
+    expect(placedAt).toBeDefined();
+    const [px, py, pz] = placedAt!;
+    expect(b.latest('block_update')).toMatchObject({ x: px, y: py, z: pz, blockId: BlockId.Dirt });
+    expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Dirt);
+
+    const updatesBeforeBreak = b.messages.filter((message) => message.type === 'block_update').length;
+    a.send({ type: 'break_block', x: px, y: py, z: pz });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(b.messages.filter((message) => message.type === 'block_update').length).toBeGreaterThan(updatesBeforeBreak);
+    expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Air);
+
+    const updatesBeforeReject = b.messages.filter((message) => message.type === 'block_update').length;
+    a.send({ type: 'break_block', x: px + 80, y: py, z: pz });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(b.messages.filter((message) => message.type === 'block_update').length).toBe(updatesBeforeReject);
+
+    a.send({ type: 'chat', text: 'hello anarchy' });
+    await b.waitFor('chat');
+    expect(b.latest('chat')?.text).toBe('hello anarchy');
+
+    a.close();
+    b.close();
+  });
+
+  it('persists block changes across restart', async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const first = new AnarchyServer(testConfig(dir));
+    servers.push(first);
+    await first.start();
+    const client = new TestClient();
+    const welcome = await client.connect(first.wsUrl(), { name: 'Builder' });
+    client.send({ type: 'chat', text: '/gamemode creative' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const x = Math.floor(welcome.you.x) + 1;
+    const y = Math.floor(welcome.you.y) + 3;
+    const z = Math.floor(welcome.you.z) + 1;
+    if (first.world.world.getBlock(x, y, z) !== BlockId.Air) {
+      first.world.world.setBlock(x, y, z, BlockId.Air);
+    }
+    client.send({ type: 'place_block', x, y, z, blockId: BlockId.Cobblestone });
+    await client.waitFor('block_update');
+    expect(first.world.world.getBlock(x, y, z)).toBe(BlockId.Cobblestone);
+    client.close();
+    await first.stop();
+    servers.pop();
+
+    const second = new AnarchyServer(testConfig(dir));
+    servers.push(second);
+    await second.start();
+    expect(second.world.world.getBlock(x, y, z)).toBe(BlockId.Cobblestone);
+    const again = new TestClient();
+    const restored = await again.connect(second.wsUrl());
+    const keyMods = Object.values(restored.modifications).some((chunk) => Object.values(chunk).includes(BlockId.Cobblestone));
+    expect(keyMods).toBe(true);
+    again.close();
+  });
+
+  it('exposes a plugin API without leaking the runtime', async () => {
+    const server = await boot();
+    let loaded: ServerAPI | undefined;
+    const plugin: Plugin = {
+      name: 'test-kit',
+      onLoad(api) {
+        loaded = api;
+      },
+      onEnable(api) {
+        api.registerCommand({
+          name: 'ping-plugin',
+          usage: '/ping-plugin',
+          description: 'plugin ping',
+          execute: () => ({ ok: true, lines: ['pong'] }),
+        });
+      },
+    };
+    server.world.plugins.register(plugin);
+    expect(loaded).toBeDefined();
+    expect(Reflect.ownKeys(loaded!)).toEqual([
+      'getWorld',
+      'getPlayers',
+      'getPlayer',
+      'broadcast',
+      'registerCommand',
+      'registerEvent',
+      'log',
+    ]);
+    expect((loaded as unknown as { world?: unknown }).world).toBeUndefined();
+    expect((loaded as unknown as { runtime?: unknown }).runtime).toBeUndefined();
+    const client = new TestClient();
+    await client.connect(server.wsUrl());
+    client.send({ type: 'chat', text: '/ping-plugin' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(client.messages.some((message) => message.type === 'chat' && message.text === 'pong')).toBe(true);
+    const spawn = server.world.spawn;
+    const tx = Math.floor(spawn[0]) + 3;
+    const ty = Math.floor(spawn[1]);
+    const tz = Math.floor(spawn[2]) + 3;
+    expect(loaded!.getWorld().setBlock(tx, ty, tz, BlockId.Stone)).toBe(true);
+    expect(server.world.world.getBlock(tx, ty, tz)).toBe(BlockId.Stone);
+    client.close();
+  });
+
+  it('does not treat IndexedDB Anarchy as the online authority', async () => {
+    const saves = new SaveService();
+    await saves.saveWorld({
+      schemaVersion: 1,
+      summary: {
+        id: 'anarchy',
+        name: 'Анархия',
+        seed: 'client-only',
+        mode: 'survival',
+        kind: 'server',
+        createdAt: 1,
+        updatedAt: 1,
+        playTimeSeconds: 0,
+      },
+      timeOfDay: 0,
+      weather: 'clear',
+      player: {
+        position: [1, 2, 3],
+        velocity: [0, 0, 0],
+        yaw: 0,
+        pitch: 0,
+        health: 20,
+        hunger: 20,
+        saturation: 5,
+        selectedSlot: 0,
+        inventory: { version: 1, slots: Array.from({ length: 36 }, () => null), armor: { head: null, chest: null, legs: null, feet: null }, offhand: null },
+      },
+      modifications: { '0,0': { '1': BlockId.DiamondBlock } },
+      chests: {},
+      furnaces: {},
+      droppedItems: [],
+    });
+    await saves.saveWorld({
+      schemaVersion: 1,
+      summary: {
+        id: 'sp-keep',
+        name: 'Одиночный',
+        seed: 'sp',
+        mode: 'survival',
+        createdAt: 1,
+        updatedAt: 1,
+        playTimeSeconds: 0,
+      },
+      timeOfDay: 0,
+      weather: 'clear',
+      player: {
+        position: [0.5, 70, 0.5],
+        velocity: [0, 0, 0],
+        yaw: 0,
+        pitch: 0,
+        health: 20,
+        hunger: 20,
+        saturation: 5,
+        selectedSlot: 0,
+        inventory: { version: 1, slots: Array.from({ length: 36 }, () => null), armor: { head: null, chest: null, legs: null, feet: null }, offhand: null },
+      },
+      modifications: {},
+      chests: {},
+      furnaces: {},
+      droppedItems: [],
+    });
+    const server = await boot();
+    expect(server.world.seed).toBe(ANARCHY_WORLD_SEED);
+    expect(server.world.world.serializeModifications()['0,0']?.['1']).not.toBe(BlockId.DiamondBlock);
+    const list = await saves.listWorlds();
+    expect(list.some((world) => world.id === 'sp-keep')).toBe(true);
+    expect(list.some((world) => world.id === 'anarchy')).toBe(false);
+  });
+});
