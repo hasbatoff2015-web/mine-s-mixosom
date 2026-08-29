@@ -87,6 +87,7 @@ Owner: two-client QA (movement, break/place, inventory, PvP, reconnect, persist)
 - Base: `origin/main` `a056e6f`
 - Foundation (QA-fix, not this PR): `15ca54f` / draft PR #14
 - Implementation commit: `1474c2f`
+- Verification/docs HEAD: `ec8a505`
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/15
 - **Do not merge main.** Owner two-client QA next.
 
