@@ -10,8 +10,9 @@
 - Lighting: `LightingAdapter` классифицирует `deferred` (client) vs `immediate` (server). `processDeferredLighting` no-op на immediate world, чтобы сервер не гонял client scheduler. Flood остаётся в `LightEngine`. `WORLD_LIGHT_BUDGET_MS = 2` не поднимали. Lateral sky radius 14 не трогали.
 - Simulation light queries (`combinedLight`, `getDirectSkyLight`, `sampleVoxelLightLevels`) реэкспорт из `world/lightingState.ts`. Shader compose остаётся в `rendering/worldLighting.ts`.
 - Не тронуты: GameplayKernel order, useInteraction, blockGeometry, EntityHost, persistence, protocol, chest GUI sync (#27), death visual clock, fluids, combat numbers, worldgen algorithms, spawn, Anarchy id/path.
-- Targeted: `random-source`, `lighting-adapter`, plus kernel / lighting-jobs / lighting-height-256 / lighting-scheduler / combat / explosion / anarchy-gameplay / use / entity-host. `tsc` clean.
-- Report: `docs/reports/2026-08-30_shared-rng-lighting-adapters.md`. Draft PR stacked on **#27**. Owner local QA. **Не merge. Не начинать Phase 7.**
+- Targeted: 12 files **167/167** (`random-source` 6, `lighting-adapter` 4, lighting-jobs/height-256/scheduler, kernel, combat, explosion, hostile-spawn, anarchy-gameplay, use, entity-host). `tsc` clean. Production **3.65 MiB / 221 files**.
+- Full `npm run check`: **1169 passed / 8 failed** (2 authored ENOENT `bucket_empty.png` + 6 minecart 5s timeouts) + 1 vitest RPC `onTaskUpdate`. Same class as PR **#27** (1160/7); +10 new tests, one extra minecart flake under full-suite load. Not hidden.
+- Report: `docs/reports/2026-08-30_shared-rng-lighting-adapters.md`. Draft PR **#29** stacked on **#27**. Owner local QA. **Не merge. Не начинать Phase 7.**
 
 ## Последний проход: Online Anarchy chest GUI sync
 

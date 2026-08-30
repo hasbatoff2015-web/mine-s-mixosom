@@ -84,6 +84,9 @@ See git diff. New: `src/gameplay/random.ts`, `src/world/LightingAdapter.ts`, `sr
 
 - `tests/random-source.test.ts` — seed determinism, `rollDropCount`, scatter envelope, explosion injected RNG, `systemRandomFn` unit interval.
 - `tests/lighting-adapter.test.ts` — budget still 2, immediate vs deferred, no-op on immediate, deferred still uses existing `processLighting`.
+- Targeted pack (12 files): **167/167**. `npx tsc --noEmit` clean.
+- Full `npm run check`: **1169 passed / 8 failed** (2 authored ENOENT `bucket_empty.png` + 6 minecart 5s timeouts in `fire-contact-sunlight-minecart.test.ts`) + 1 vitest RPC `onTaskUpdate`. Same class as PR #27 (1160/7). Extra minecart flake is the 5s default timeout under full-suite load, not an assertion from this pass.
+- Production `npm run build` + size/archive: **3.65 MiB / 221 files**.
 
 ## Visual QA
 
@@ -95,7 +98,7 @@ No extra per-tick work. Adapter is a boolean + function call. Playing light budg
 
 ## Known issues
 
-Same full-check baseline as PR #27: authored ENOENT `bucket_empty.png` and minecart 5s timeouts. Not from this pass.
+Same full-check baseline class as PR #27: authored ENOENT `bucket_empty.png` and minecart 5s timeouts. This run had 6 cart timeouts instead of 5 (the W/S accelerate case also hit 5s under suite load). Not hidden; not treated as a lighting/RNG regression.
 
 ## Deferred
 
@@ -109,4 +112,4 @@ Owner local QA of this PR on top of #27. **Do not merge main. Do not start Phase
 
 ## Git
 
-Branch `cursor/shared-rng-lighting-adapters-bbb1` from chest-sync `a8c9579`. Draft PR stacked on **#27**, not `origin/main`.
+Branch `cursor/shared-rng-lighting-adapters-bbb1` from chest-sync `a8c9579`. Implementation `8db4317`. Draft PR **#29** stacked on **#27**, not `origin/main`.
