@@ -195,7 +195,7 @@ Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/rev
 
 Commands: `/help` `/gamemode` `/seed` `/spawn` `/give` `/time` `/tp` `/clear` `/kill`. `playerCommand` is cancellable. Results go out as `command_result`.
 
-Lighting is not a second online engine: server computes with `deferredLighting = false`; client meshes with deferred lighting as before.
+Lighting is not a second online engine. `LightingAdapter` classifies the server world as **immediate** (`deferredLighting = false`): `setBlock` relights before return, and `processDeferredLighting` is a no-op so the Node tick cannot run the client budgeted scheduler. The client stays **deferred** and drains with `WORLD_LIGHT_BUDGET_MS = 2`. Flood code remains `LightEngine`. Simulation RNG on the server is `systemRandomFn` (`RandomSource`), the same adapter as Singleplayer; it is not a world-seeded live stream.
 
 ## Foundation limits (intentional)
 

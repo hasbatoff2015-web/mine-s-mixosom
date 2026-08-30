@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-30 Phase 6 RNG + lighting adapters
+
+Report: `reports/2026-08-30_shared-rng-lighting-adapters.md`.
+
+Targeted: `tests/random-source.test.ts` (seed determinism, drop counts, scatter envelope, explosion injected RNG) and `tests/lighting-adapter.test.ts` (`WORLD_LIGHT_BUDGET_MS === 2`, immediate vs deferred, `processDeferredLighting` no-op on server worlds). Retain lighting-jobs / lighting-height-256 / lighting-scheduler, combat, explosion, gameplay-kernel, anarchy-gameplay, use-interaction, entity-host.
+
 ## 2026-08-29 Phase 2 shared interaction
 
 Report: `reports/2026-08-29_shared-interaction.md`.

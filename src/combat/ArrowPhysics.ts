@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { systemRandomFn, type RandomFn } from '../gameplay/random';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { blockSelectionBoxes } from '../world/selection';
 
@@ -48,7 +49,7 @@ export function arrowDamageFromVelocity(velocity: Readonly<THREE.Vector3>, criti
 
 export function inaccurateArrowDirection(
   direction: Readonly<THREE.Vector3>,
-  random: () => number = Math.random,
+  random: RandomFn = systemRandomFn,
   spread = 0.0075,
 ): THREE.Vector3 {
   const result = new THREE.Vector3(direction.x, direction.y, direction.z).normalize();

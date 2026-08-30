@@ -13,7 +13,7 @@ import {
 } from '../combat/fireSources';
 import { createItemStack, type ItemStack } from '../inventory';
 import type { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
-import { combinedLight } from '../world/LightEngine';
+import { combinedLight } from '../world/lightingState';
 import type { VoxelWorld } from '../world/World';
 import {
   MOB_DEFINITIONS,
@@ -29,6 +29,7 @@ import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
 import { CHUNK_SIZE, FIXED_DT, GRAVITY, floorDiv } from '../core/constants';
 import { daylightFactor } from '../gameplay/daylight';
+import { systemRandomFn } from '../gameplay/random';
 import type { EntityHost, MobVisualState } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
@@ -368,7 +369,7 @@ export class MobManager {
       4,
       options.caveHostileDensityRadius ?? CAVE_HOSTILE_DENSITY_RADIUS,
     );
-    this.random = options.random ?? Math.random;
+    this.random = options.random ?? systemRandomFn;
   }
 
   get count(): number {
@@ -710,7 +711,7 @@ export class MobManager {
           mob.velocity.z += nz * impulse;
           mob.velocity.y = Math.max(mob.velocity.y, 3.2);
         } else {
-          applyKnockback(mob.velocity, { x: dx, z: dz });
+          applyKnockback(mob.velocity, { x: dx, z: dz }, { random: this.random });
           mob.meleeKnockback = true;
         }
       }

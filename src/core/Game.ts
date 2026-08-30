@@ -144,6 +144,7 @@ import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } 
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
+import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
 import { VoxelWorld, type VoxelHit } from '../world/World';
@@ -190,8 +191,11 @@ import {
 import {
   clearDoorBlocks,
   daylightFactor,
+  dropScatterVelocity,
   formatGameplayKernelTrace,
   performUseHeld,
+  rollDropCount,
+  systemRandomFn,
   tickGameplayKernel,
   type UseSimulationContext,
 } from '../gameplay';
@@ -331,6 +335,7 @@ export class Game {
   private firstPerson?: FirstPersonRenderer;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
+  private readonly simRandom = systemRandomFn;
   private readonly miningSound = createMiningSoundState();
   private readonly footsteps = createFootstepState();
   private readonly explosionSounds = createExplosionLog();
@@ -1125,6 +1130,7 @@ export class Game {
       hostileCap: isCoarsePointer() ? 14 : 24,
       maxProjectiles: isCoarsePointer() ? 20 : 40,
       automaticSpawning: !options?.online,
+      random: this.simRandom,
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
@@ -1136,6 +1142,7 @@ export class Game {
     if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
     const arrows = new PlayerArrowManager(entityHost, world, mobs, {
       minecarts,
+      random: this.simRandom,
       onBlockHit: (x, y, z, flaming) => {
         const session = this.session;
         this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5);
@@ -1506,7 +1513,7 @@ export class Game {
         if (!chunk.lightingReady) this.streamingTrace.mark('lightQueued', chunk.x, chunk.z, inspectNow);
       }
     }
-    const elapsed = session.world.processLighting(budgetMs, originX, originZ, counters);
+    const elapsed = processDeferredLighting(session.world, budgetMs, originX, originZ, counters);
     if (inspect && counters) {
       this.jobFrame.lightAttempted = counters.attempted;
       this.jobFrame.lightCompleted = counters.completed;
@@ -2536,7 +2543,7 @@ export class Game {
     if (session.summary.mode === 'survival') {
       const drop = definition.drop;
       if (drop && harvestable) {
-        const count = drop.count ?? (drop.min !== undefined ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
+        const count = rollDropCount(drop, this.simRandom);
         const slabExtra = isSlabBlock(hit.block)
           && defaultSlabType(session.world.getBlockState(hit.x, hit.y, hit.z)) === 'double' ? count : 0;
         this.spawnDroppedStack(
@@ -2742,8 +2749,7 @@ export class Game {
       // Environmental drops also exist in Creative; lava destroys without loot.
       const drop = getBlockDefinition(event.block).drop;
       if (!drop || event.reason === 'lava') continue;
-      const count = drop.count ?? (drop.min !== undefined
-        ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
+      const count = rollDropCount(drop, this.simRandom);
       if (count > 0) this.spawnDroppedStack(createItemStack(drop.item, count),
         new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
     }
@@ -2820,6 +2826,7 @@ export class Game {
       maxJobs: mobile ? 6 : 12,
       maxVoxels: mobile ? 256 : 512,
       remainingPrimedCapacity: session.redstone.primedCapacityRemaining,
+      random: this.simRandom,
       onResolved: (job) => {
         this.applyExplosionDamage(job.x, job.y, job.z, job.radius, job.power);
         if (shouldPlayExplosion(this.explosionSounds, job, session.playTicks)) {
@@ -2906,7 +2913,7 @@ export class Game {
     const session = this.session;
     if (!session || session.online) return;
     session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
-      velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2.2, (Math.random() - 0.5) * 1.4),
+      velocity: new THREE.Vector3(...dropScatterVelocity(this.simRandom)),
     });
   }
 

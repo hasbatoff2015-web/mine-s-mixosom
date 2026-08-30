@@ -28,8 +28,11 @@ import {
 import {
   clearDoorBlocks,
   daylightFactor,
+  dropScatterVelocity,
   performUseHeld,
   placeBlockAt,
+  rollBlockDropCount,
+  systemRandomFn,
   tickGameplayKernel,
   type UseSimulationContext,
 } from '../src/gameplay';
@@ -84,19 +87,7 @@ export function packEntitySnapshots(
   ].slice(0, cap);
 }
 
-export { daylightFactor } from '../src/gameplay';
-
-export function rollBlockDropCount(
-  drop: { readonly count?: number; readonly min?: number; readonly max?: number },
-  random = Math.random,
-): number {
-  if (drop.count !== undefined) return drop.count;
-  if (drop.min !== undefined) {
-    const max = drop.max ?? drop.min;
-    return drop.min + Math.floor(random() * (max - drop.min + 1));
-  }
-  return 1;
-}
+export { daylightFactor, rollBlockDropCount } from '../src/gameplay';
 
 export interface GameplayPlayer {
   readonly id: string;
@@ -138,6 +129,7 @@ export class ServerGameplay {
   readonly arrows: PlayerArrowManager;
   readonly redstone: RedstoneSystem;
   readonly explosions = new ExplosionQueue();
+  readonly random = systemRandomFn;
   lastTickMs = 0;
   maxTickMs = 0;
   private readonly blockDelta = new Map<string, { x: number; y: number; z: number; blockId: number }>();
@@ -170,6 +162,7 @@ export class ServerGameplay {
     this.drops = new DroppedItemManager(host, world);
     this.falling = new FallingBlockManager(host, world);
     this.mobs = new MobManager(host, world, {
+      random: this.random,
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
@@ -178,6 +171,7 @@ export class ServerGameplay {
     this.minecarts = new MinecartManager(host, world);
     this.arrows = new PlayerArrowManager(host, world, this.mobs, {
       minecarts: this.minecarts,
+      random: this.random,
       onBlockHit: (x, y, z, flaming) => {
         if (flaming && flamingArrowBlockHit(this.world.getBlock(x, y, z, false)) === 'prime_tnt') {
           this.redstone.primeTnt(x, y, z);
@@ -381,7 +375,7 @@ export class ServerGameplay {
     this.events.emit('itemDrop', event);
     if (event.cancelled) return;
     this.drops.spawn(stack, position, {
-      velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2.2, (Math.random() - 0.5) * 1.4),
+      velocity: new THREE.Vector3(...dropScatterVelocity(this.random)),
     });
   }
 
@@ -545,7 +539,7 @@ export class ServerGameplay {
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
     if (player.gamemode === 'survival' && harvestable && definition.drop) {
-      const count = rollBlockDropCount(definition.drop);
+      const count = rollBlockDropCount(definition.drop, this.random);
       const extra = isSlabBlock(block) && defaultSlabType(this.world.getBlockState(x, y, z)) === 'double' ? count : 0;
       if (count + extra > 0) {
         this.spawnDroppedStack(createItemStack(definition.drop.item, count + extra), new THREE.Vector3(x + 0.5, y + 0.3, z + 0.5), player.id);
@@ -896,7 +890,7 @@ export class ServerGameplay {
     for (const event of events) {
       const drop = getBlockDefinition(event.block).drop;
       if (!drop || event.reason === 'lava') continue;
-      const count = rollBlockDropCount(drop);
+      const count = rollBlockDropCount(drop, this.random);
       if (count > 0) {
         this.spawnDroppedStack(createItemStack(drop.item, count), new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
       }
@@ -946,6 +940,7 @@ export class ServerGameplay {
     this.explosions.process(this.world, {
       budgetMs: 3.5, maxJobs: 12, maxVoxels: 512,
       remainingPrimedCapacity: this.redstone.primedCapacityRemaining,
+      random: this.random,
       onResolved: (job) => this.applyExplosionDamage(players, job.x, job.y, job.z, job.radius, job.power),
       onChainedTnt: (tnt) => {
         this.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, { blockAlreadyRemoved: true });

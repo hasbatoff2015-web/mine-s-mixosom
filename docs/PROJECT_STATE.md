@@ -2,6 +2,17 @@
 
 Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Phase 6 RNG + lighting adapters
+
+- Ветка `cursor/shared-rng-lighting-adapters-bbb1` от chest-sync HEAD `a8c9579` (`cursor/chest-online-sync-fix-bbb1`, PR **#27**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 7.**
+- Simulation RNG больше не вызывает `Math.random` напрямую. `RandomSource` / `systemRandomFn` / `seededRandomFn` в `src/gameplay/random.ts`. Live SP `Game` и Anarchy `ServerGameplay` инжектят `SYSTEM_RANDOM` (тот же `Math.random` под адаптером), чтобы spawn/loot sequences не сдвинулись. Тесты могут подставить seeded source.
+- Visual RNG остаётся client-only `Math.random`: potion particles, audio pitch/variant. Save world id / default seed — identity, не tick simulation. Terrain по-прежнему `mulberry32` / `hashCoords` в `Generator` (не смешивать с tick RNG).
+- Lighting: `LightingAdapter` классифицирует `deferred` (client) vs `immediate` (server). `processDeferredLighting` no-op на immediate world, чтобы сервер не гонял client scheduler. Flood остаётся в `LightEngine`. `WORLD_LIGHT_BUDGET_MS = 2` не поднимали. Lateral sky radius 14 не трогали.
+- Simulation light queries (`combinedLight`, `getDirectSkyLight`, `sampleVoxelLightLevels`) реэкспорт из `world/lightingState.ts`. Shader compose остаётся в `rendering/worldLighting.ts`.
+- Не тронуты: GameplayKernel order, useInteraction, blockGeometry, EntityHost, persistence, protocol, chest GUI sync (#27), death visual clock, fluids, combat numbers, worldgen algorithms, spawn, Anarchy id/path.
+- Targeted: `random-source`, `lighting-adapter`, plus kernel / lighting-jobs / lighting-height-256 / lighting-scheduler / combat / explosion / anarchy-gameplay / use / entity-host. `tsc` clean.
+- Report: `docs/reports/2026-08-30_shared-rng-lighting-adapters.md`. Draft PR stacked on **#27**. Owner local QA. **Не merge. Не начинать Phase 7.**
+
 ## Последний проход: Online Anarchy chest GUI sync
 
 - Ветка `cursor/chest-online-sync-fix-bbb1` от Phase 5 HEAD `cc74c11` (`cursor/shared-persistence-port-bbb1`, PR **#26**). **Не merge в main.** Не Phase 6. Persistence / GameplayKernel / protocol types не менялись.

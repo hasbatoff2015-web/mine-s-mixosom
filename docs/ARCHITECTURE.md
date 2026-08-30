@@ -268,6 +268,33 @@ Simulation talks to `WorldSnapshot` + `WorldStore`. Adapters own IndexedDB vs fi
 - **Empty vs corrupt:** missing `meta.json` → `null` (create). Existing corrupt/incomplete files throw `PersistenceError` — no silent procedural overwrite.
 - **Import:** `npm run server:import` parses a dump as `WorldSnapshot` then `FsWorldStore.save`. Not startup. Not `.schem`.
 
+### Shared RNG + lighting adapters (Phase 6)
+
+Simulation must not call `Math.random()` directly. Visuals may.
+
+```text
+RandomSource.next()  →  SYSTEM_RANDOM (Math.random under the adapter)
+                     →  seededRandomSource(seed)  (tests)
+```
+
+- **Interface:** `src/gameplay/random.ts` `RandomSource` / `RandomFn`. Helpers: `rollDropCount` / `rollBlockDropCount`, `dropScatterVelocity`, `nextIntInclusive`.
+- **Live hosts:** `Game.simRandom` and `ServerGameplay.random` are `systemRandomFn`. Injected into `MobManager`, `PlayerArrowManager`, explosion queue, block-drop counts, drop scatter. Default manager fallback is also `systemRandomFn`, not a second `Math.random` site.
+- **Not here:** reseeding live Anarchy/SP from the world seed (would change spawn/loot). Terrain stays on `mulberry32` / `hashCoords` in `Generator` / `noise.ts` — coordinate-hashed, not the tick stream.
+- **Visual/identity:** `potionParticles.ts`, `AudioManager` pitch/variant, `SaveService` world id / default seed still use `Math.random` / `crypto.randomUUID`.
+
+Lighting **mode** is a host concern. Flood implementation stays in `LightEngine`.
+
+```text
+deferred (Game)     → queue dirty regions → processDeferredLighting(budget)
+immediate (server)  → setBlock relights before return; processDeferredLighting = 0
+```
+
+- `LightingAdapter.lightingModeOf(world)` reads `VoxelWorld.deferredLighting`.
+- Client `Game.runLightingJobs` calls `processDeferredLighting` with existing `WORLD_LIGHT_BUDGET_MS = 2` (loading 8). Do not raise the playing budget.
+- Server never runs the client scheduler. `deferredLighting = false` as before.
+- Simulation queries (`combinedLight`, `getDirectSkyLight`, `sampleVoxelLightLevels`) are re-exported from `world/lightingState.ts`. Shader compose stays in `rendering/worldLighting.ts`.
+- Lateral sky (`LATERAL_SKY_RADIUS = 14`), typed ring queue, and flood caps are unchanged.
+
 ## Lifecycle
 
 `GameLifecycleManager` использует состояния:
@@ -349,7 +376,7 @@ Chunk pass заполняет bedrock (`Y 0–2`), world-wide Stone cap (`Y=3`, 
 
 Новый spawn (`collectSpawnColumns`) ранжирует plains с низким mountain contribution в радиусе 192, без generation hitch на create. DEV `?worldgenDebug=1` показывает `surfaceY` / `mtn` / `hills` / `cave` / `cap` / `blk` на chunk HUD.
 
-Генератор не читает browser state или wall clock, поэтому базовый terrain воспроизводим по seed. Loot, часть explosions и некоторые runtime decisions используют `Math.random()` и не являются replay-deterministic.
+Генератор не читает browser state или wall clock, поэтому базовый terrain воспроизводим по seed. Tick simulation (loot, explosions, mob spawn/AI, arrow spread) идёт через `RandomSource`; live hosts use `SYSTEM_RANDOM`, so they are not replay-deterministic unless a test injects `seededRandomFn`. Visual particles/audio keep `Math.random()`.
 
 ### Modifications и block entities
 

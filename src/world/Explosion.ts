@@ -1,5 +1,6 @@
 import { BlockId, getBlockDefinition } from '../blocks';
 import { WORLD_HEIGHT } from '../core/constants';
+import { systemRandomFn, type RandomFn } from '../gameplay/random';
 import type { VoxelWorld, BlockMutation } from './World';
 
 export interface ExplosionJob {
@@ -34,12 +35,12 @@ export function resolveExplosion(
   world: VoxelWorld,
   job: ExplosionJob,
   options: {
-    readonly random?: () => number;
+    readonly random?: RandomFn;
     remainingPrimedCapacity?: number;
     readonly ignore?: ReadonlySet<string>;
   } = {},
 ): ExplosionResolution {
-  const random = options.random ?? Math.random;
+  const random = options.random ?? systemRandomFn;
   let remainingCapacity = options.remainingPrimedCapacity ?? Number.POSITIVE_INFINITY;
   const ignore = options.ignore;
   const radius = Math.ceil(job.radius);

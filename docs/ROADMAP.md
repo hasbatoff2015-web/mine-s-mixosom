@@ -1,12 +1,22 @@
 # Roadmap
 
+## 2026-08-30: Phase 6 RNG + lighting adapters
+
+- [x] `RandomSource` / `RandomFn` for simulation; live hosts use `SYSTEM_RANDOM` (no world-seeded live stream).
+- [x] Simulation call sites (drops, explosions, mobs, arrows, knockback resistance) go through the injected source. Visual/audio keep `Math.random`.
+- [x] `LightingAdapter`: deferred client vs immediate server. `processDeferredLighting` is a no-op on immediate worlds.
+- [x] LightEngine flood / lateral sky / `WORLD_LIGHT_BUDGET_MS = 2` unchanged.
+- [x] Tests: `random-source`, `lighting-adapter` + retained lighting/combat/kernel packs.
+- [ ] Owner local QA: SP + Anarchy lighting look the same; spawn/loot not obviously reseeded; no client scheduler on server.
+- [ ] Do not merge main. Do not start Phase 7. Draft PR stacked on **#27**.
+
 ## 2026-08-30: Online Anarchy chest GUI sync
 
 - [x] Apply `inventory.window.slots` to the live chest/furnace object while the container GUI is already open.
 - [x] Flush the existing `inventory` message to every connected player viewing the same chest/furnace.
 - [x] No new protocol type. No GameplayKernel / persistence / Phase 6 changes.
 - [x] Tests: `online-container-sync`, `anarchy-chest-sync`, existing container/inventory/anarchy packs.
-- [ ] Owner local QA: put/take visible immediately; two clients; close/reopen still matches. **Do not merge main. Do not start Phase 6.**
+- [ ] Owner local QA: put/take visible immediately; two clients; close/reopen still matches. Stacked under Phase 6. **Do not merge main.**
 
 ## 2026-08-30: Phase 5 persistence port
 

@@ -189,7 +189,11 @@ export class VoxelWorld {
   lightOriginCounts: LightOriginHudCounts = { stream: 0, fluid: 0, edit: 0, other: 0 };
   readonly pendingMesh = new Set<string>();
   private pendingLight?: PendingLightJob;
-  /** Runtime sessions defer every mutation/getter; synchronous utilities remain available to tests/QA. */
+  /**
+   * Host lighting mode (see `LightingAdapter`).
+   * Client `Game` sets true (budgeted `processDeferredLighting`).
+   * Server/tests leave false so `setBlock` relights before returning.
+   */
   deferredLighting = false;
   /**
    * Authoritative servers subscribe here to batch/dedupe resulting voxel writes

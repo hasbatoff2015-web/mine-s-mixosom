@@ -1,5 +1,17 @@
 export { daylightFactor } from './daylight';
 export {
+  SYSTEM_RANDOM,
+  asRandomFn,
+  dropScatterVelocity,
+  rollBlockDropCount,
+  rollDropCount,
+  seededRandomFn,
+  seededRandomSource,
+  systemRandomFn,
+  type RandomFn,
+  type RandomSource,
+} from './random';
+export {
   GAMEPLAY_KERNEL_STEPS,
   formatGameplayKernelTrace,
   tickGameplayKernel,

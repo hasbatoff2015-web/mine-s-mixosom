@@ -13,6 +13,7 @@ import { resolveEntityHost } from '../entities/resolveEntityHost';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
 import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from './ArrowPhysics';
+import { systemRandomFn } from '../gameplay/random';
 import { rayAabbDistance } from '../world/collision';
 
 interface PlayerArrow {
@@ -81,7 +82,7 @@ export class PlayerArrowManager {
       arrowVisuals: options.visualFactory,
       ownsArrowVisuals: options.visualFactory ? false : undefined,
     });
-    this.random = options.random ?? Math.random;
+    this.random = options.random ?? systemRandomFn;
     this.minecarts = options.minecarts;
     this.onBlockHit = options.onBlockHit;
     this.onMobHit = options.onMobHit;
