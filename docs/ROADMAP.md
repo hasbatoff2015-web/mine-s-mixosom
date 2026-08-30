@@ -4,7 +4,7 @@
 
 - [x] `EntityHost` / `HeadlessEntityHost` / `ThreeEntityHost` — entity simulation without constructing Mesh / Geometry / Material.
 - [x] Managers accept `Object3D | EntityHost`; SP shares one Three host; Anarchy server uses Headless (no `ItemVisualFactory`, no dummy scene, redstone without `root`).
-- [x] Draft PR stacked on PR #23 (not origin/main).
+- [x] Draft PR **#24** stacked on PR #23 (not origin/main).
 - [ ] Owner local QA: SP mobs/drops/arrows/minecarts/TNT look the same; Anarchy server still simulates entities; death→respawn WASD and Anarchy→menu→Anarchy still work.
 - [ ] Do not merge main. Do not start Phase 5+ (persistence envelopes, RNG, plugins, renderer folder moves, protocol).
 

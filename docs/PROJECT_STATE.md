@@ -9,7 +9,7 @@
 - `DroppedItemManager` / `FallingBlockManager` / `MinecartManager` / `MobManager` / `PlayerArrowManager` принимают `Object3D | EntityHost`. Tests wrapping `THREE.Scene` остаются через `resolveEntityHost`.
 - `ServerGameplay` больше не создаёт `THREE.Group` entity scene и не конструирует `ItemVisualFactory`. `RedstoneSystem` на сервере без `root` (primed TNT без mesh).
 - Не тронуты: GameplayKernel order, Phase 2 useInteraction, Phase 3 blockGeometry, interpolation, fluids, respawn/session WASD (#19/#20), protocol, persistence/RNG/plugins, renderer folder moves.
-- Report: `docs/reports/2026-08-30_shared-entity-host.md`. Draft PR stacked on #23. **Не merge.** Owner local QA. **Не начинать Phase 5+.**
+- Targeted: `entity-host` 5/5 + entity/anarchy/kernel/use/geometry/interpolation/respawn pack greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
 
 ## Последний проход: Phase 3 shared block geometry
 

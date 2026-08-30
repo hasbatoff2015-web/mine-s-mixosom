@@ -32,7 +32,7 @@ function platform(world: VoxelWorld, y = 40): void {
 describe('entity host import boundary', () => {
   it('keeps the headless host free of Mesh / Geometry / Material and item factories', () => {
     const text = source('src/entities/EntityHost.ts');
-    expect(text).not.toMatch(/\bMesh\b/);
+    expect(text).not.toMatch(/from ['"]three['"]/);
     expect(text).not.toMatch(/BoxGeometry/);
     expect(text).not.toMatch(/MeshBasicMaterial/);
     expect(text).not.toMatch(/ItemVisualFactory/);

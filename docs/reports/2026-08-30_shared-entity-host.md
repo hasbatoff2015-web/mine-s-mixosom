@@ -71,7 +71,12 @@ Do not start Phase 5+ (persistence envelopes, RNG, plugins, renderer folder move
 
 ## Tests
 
-See verification commit / PR body after targeted packs.
+- `tsc --noEmit` clean.
+- `tests/entity-host.test.ts` **5/5** (import boundary, headless spawn/tick/serialize, Scene wrap still creates Object3D).
+- Targeted packs (entities, mob-hurt-flash, mob-polish, hostile-spawn, drops, arrows, creeper, kernel, use-interaction, block-geometry, interpolation, visual-events, input recovery, Anarchy server/gameplay, redstone, classic combat, gameplay-ui, fire-arrow, block-selection, respawn/session, content-pass, lighting-physics, interaction-support, network block-state): **all green** (359 tests across those files; entity-host counted once).
+- Production `npm run build` + `check:size` + `check:archive` PASS **3.64 MiB / 221 files**.
+
+Full `npm run check` was not re-run; baseline failures (authored ENOENT `bucket_empty.png`, minecart 5s timeouts, vitest RPC) are pre-existing.
 
 ## Visual QA
 
@@ -79,7 +84,7 @@ Not performed here (cloud agent). Owner local QA: SP entities look unchanged; An
 
 ## Performance
 
-No new per-tick systems. Server avoids factory/mesh construction. Client still one set of shared factories.
+No new per-tick systems. Server avoids factory/mesh construction. Client still one set of shared factories. Bundle size unchanged at 3.64 MiB / 221 files.
 
 ## Known issues
 
