@@ -64,7 +64,11 @@ Online GUI uses `submitAction` (network only). SP still mutates locally via `app
 - `tests/online-container-sync.test.ts`
 - `tests/server/anarchy-chest-sync.test.ts` (put/take both clients, reopen, concurrent take, closed reject, full inventory, invalid slot, persist restart)
 
-Targeted packs also green: container-ui, inventory, anarchy-server, kernel, use-interaction.
+Targeted packs also green: container-ui, inventory, anarchy-server, kernel, use-interaction. `tsc` clean.
+
+Full `npm run check`: **1160 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts) + 1 vitest RPC. Same baseline as PR #26. Not hidden.
+
+Production `npm run build` + size/archive: **3.65 MiB / 221 files**.
 
 ## Performance
 
@@ -76,4 +80,4 @@ Owner local QA. Do not start Phase 6 (RNG + lighting adapters).
 
 ## Git
 
-Branch `cursor/chest-online-sync-fix-bbb1` from Phase 5 `cc74c11`. Stacked on PR **#26**, not `origin/main`.
+Branch `cursor/chest-online-sync-fix-bbb1` from Phase 5 `cc74c11`. Implementation `b8a2b76`. Draft PR **#27** stacked on **#26**, not `origin/main`.
