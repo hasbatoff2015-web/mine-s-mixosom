@@ -166,7 +166,7 @@ Main JS: ~1017 kB / ~287 kB gzip.
 
 ## Validation
 
-See Tests above. Native GPU/mobile checklist remains open; DEV harness is `/?qaBreaking=1`.
+See Tests above. DEV harness browser pass is recorded under Manual QA. Native Survival/mobile mining checklist remains open.
 
 ## Manual QA
 
