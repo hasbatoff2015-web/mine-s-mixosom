@@ -44,11 +44,15 @@ Same numbers, one source. Button/lever sim envelopes are 8-corner AABBs of the s
 
 ## Tests
 
-- New `tests/block-geometry.test.ts`: import boundary (sim files must not mention `specialBlockGeometry`; `blockGeometry.ts` must not import `three` or `rendering/`); re-export identity; slab/stair/lantern/rail numbers; button/lever AABB vs THREE mesh envelopes.
+- New `tests/block-geometry.test.ts` (5): import boundary (sim files must not mention `specialBlockGeometry`; `blockGeometry.ts` must not import `three` or `rendering/`); re-export identity; slab/stair/lantern/rail numbers; button/lever AABB vs THREE mesh envelopes.
 
-Retained packs: `placement-support`, `glowstone-lantern-chain`, `block-selection-raycast`, `interaction-support-polish`, `ladder-climbing`, `stairs-slabs-icons`, `anarchy-gameplay`, `use-interaction`, `gameplay-kernel`.
+Retained: `placement-support` 36, `glowstone-lantern-chain` 22, `block-selection-raycast` 22, `interaction-support-polish` 54, `ladder-climbing` 13, `stairs-slabs-icons` 22, `use-interaction` 10, `gameplay-kernel` 6, `anarchy-gameplay` 27, `anarchy-server` 14, `special-block-items` 7, `lighting-torch-selection` 11, `content-pass` 8, `creeper-fence-plants-tooltip-ru` 24, `gameplay-ui-entity-polish` 27.
 
-Results filled after verification in this pass.
+Targeted pack **308/308**. `fire-contact-sunlight-minecart` still has the **5 authored 5s timeouts** (same pre-existing class as PR #17/#21).
+
+`tsc --noEmit` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+
+Full `npm run check` not required to be green: authored ENOENT `bucket_empty.png` + minecart timeouts remain the pre-existing class from PR #17/#21.
 
 ## Visual QA
 
@@ -56,11 +60,11 @@ Not run here (no gameplay browser pass). Owner: collision/selection on stairs/sl
 
 ## Performance
 
-No extra world scans. Button/lever envelopes still cached by attachment/facing/powered. Outline still uses existing THREE matrices.
+No extra world scans. Button/lever envelopes still cached by attachment/facing/powered. Outline still uses existing THREE matrices. Production JS chunk 1026 KiB (was same order as Phase 2).
 
 ## Known issues
 
-None intended. Full suite baseline: authored ENOENT `bucket_empty.png`, minecart 5s timeouts, occasional vitest RPC (same class as PR #21).
+None introduced in targeted tests. Full suite baseline failures unchanged (authored asset ENOENT, minecart timeouts, occasional vitest RPC).
 
 ## Deferred
 
@@ -78,3 +82,5 @@ Owner local QA of this PR on top of #21. **Do not start Phase 4.** Do not merge 
 
 - Branch: `cursor/shared-block-geometry-bbb1` from PR #21 `7e67419`, **not** `origin/main`.
 - Merge-base with `origin/main` remains `a056e6f`.
+- Draft PR **#23** stacked on #21.
+- Implementation: `e18d51e`.

@@ -9,7 +9,8 @@
 - Rendering `src/rendering/specialBlockGeometry.ts` — UV, torch matrices, outline, lantern/chain mesh. Re-export тех же sim-функций; второй таблицы AABB нет.
 - Collision / selection / placement / `useInteraction` / ladder / rails / `Game` / `ServerGameplay` больше не импортируют `specialBlockGeometry`. Server collision/placement считает формы без rendering.
 - Не тронуты: GameplayKernel, Phase 2 useInteraction, interpolation, fluids, respawn/session WASD (#19/#20), protocol, EntityHost, ItemVisualFactory на сервере (Phase 4).
-- Report: `docs/reports/2026-08-30_shared-block-geometry.md`. Draft PR stacked on #21. **Не merge.** Owner local QA. **Не начинать Phase 4.**
+- Targeted: `block-geometry` 5 + placement/glowstone/selection/polish/ladder/stairs/use/kernel/anarchy pack **308/308**. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Report: `docs/reports/2026-08-30_shared-block-geometry.md`. Draft PR **#23** stacked on #21. **Не merge.** Owner local QA. **Не начинать Phase 4.**
 
 ## Последний проход: Phase 2 shared interaction
 

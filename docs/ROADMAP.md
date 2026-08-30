@@ -5,7 +5,7 @@
 - [x] Simulation AABB / neighbor shapes / attachment normals in `src/world/blockGeometry.ts` (no Three.js).
 - [x] Rendering `specialBlockGeometry` keeps UV, torch matrices, outline, lantern/chain mesh; re-exports the same sim definitions (no second AABB table).
 - [x] Server and world collision/selection/placement/use/rails/ladders import `world/blockGeometry`, not `rendering/specialBlockGeometry`.
-- [x] Draft PR stacked on PR #21 (not origin/main).
+- [x] Draft PR **#23** stacked on PR #21 (not origin/main).
 - [ ] Owner local QA: SP + Anarchy collision, selection, place torch/stair/slab/lantern/chain/fence/rail/button. Death→respawn WASD and Anarchy→menu→Anarchy still work.
 - [ ] Do not merge main. Do not start Phase 4 (EntityHost / persistence / RNG / plugins / renderer moves).
 
@@ -25,7 +25,7 @@
 - [x] Stale AnarchyClient / old websocket callbacks ignored.
 - [x] PR #19 death→respawn contract kept. Draft PR **#20** stacked on #19 (not origin/main).
 - [ ] Owner local QA (fresh / menu / SP / Anarchy transitions, repeat). **Do not merge main.**
-- [x] Phase 2 interaction unify is on `cursor/shared-interaction-bbb1` (stacked on #20). **Do not start Phase 3.**
+- [x] Phase 2 interaction unify is on `cursor/shared-interaction-bbb1` (stacked on #20). Phase 3 geometry is on `cursor/shared-block-geometry-bbb1`. **Do not start Phase 4.**
 
 ## 2026-08-29: online respawn WASD (stabilization)
 
@@ -43,7 +43,7 @@
 - [x] Draft PR #18 stacked on PR #17 (not origin/main).
 - [ ] Owner SP + two-client QA: movement, mobs, fluids, minecart, TNT, combat — behavior should match PR #17.
 - [ ] Do not merge main until that QA.
-- [x] Next: Phase 2 interaction unify (`useHeld` / `useTargetOrItem`) — see section above. **Do not start Phase 3.**
+- [x] Next: Phase 2 interaction unify (`useHeld` / `useTargetOrItem`) — see section above. Phase 3 geometry extracted. **Do not start Phase 4.**
 
 ## 2026-08-29: online blockstates / live fluids / respawn input
 
