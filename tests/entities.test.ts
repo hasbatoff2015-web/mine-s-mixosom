@@ -26,8 +26,8 @@ describe('DroppedItemManager', () => {
     expect(second).toBe(first);
     expect(manager.count).toBe(1);
     expect(first.stack.count).toBe(5);
-    expect(first.visual.userData.visualCopies).toBe(2);
-    const texturedMesh = first.visual.getObjectByName('item-model:dirt:block') as THREE.Mesh;
+    expect(first.visual!.userData.visualCopies).toBe(2);
+    const texturedMesh = first.visual!.getObjectByName('item-model:dirt:block') as THREE.Mesh;
     expect(texturedMesh).toBeInstanceOf(THREE.Mesh);
     expect((texturedMesh.material as THREE.MeshBasicMaterial).map).toBeInstanceOf(THREE.Texture);
     expect(manager.collectNearby(position, () => 2)).toBe(2);

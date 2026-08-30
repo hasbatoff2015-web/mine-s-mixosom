@@ -4,16 +4,17 @@ import { FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../c
 import { interpolateVec3 } from '../core/entityInterpolation';
 import {
   isMinecartEntityVisual,
-  MinecartVisualFactory,
   MINECART_HEIGHT,
   MINECART_HIT_HEIGHT,
   MINECART_LENGTH,
   MINECART_WIDTH,
 } from '../rendering/minecartGeometry';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
+import type { EntityHost } from './EntityHost';
+import { isEntityHost } from './EntityHost';
+import { resolveEntityHost } from './resolveEntityHost';
 import {
   entryProgress,
   findRailCell,
@@ -117,7 +118,7 @@ export interface MinecartEntity {
   readonly position: THREE.Vector3;
   readonly previousPosition: THREE.Vector3;
   readonly velocity: THREE.Vector3;
-  readonly visual: THREE.Object3D;
+  readonly visual?: THREE.Object3D;
   yaw: number;
   pitch: number;
   rider: boolean;
@@ -158,17 +159,21 @@ export interface MinecartPushSource {
 
 export class MinecartManager {
   private readonly carts = new Map<string, MinecartEntity>();
-  private readonly visuals = new MinecartVisualFactory();
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private readonly pendingExplosions: MinecartExplosionEvent[] = [];
   private idCounter = 0;
   private disposed = false;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: THREE.Object3D | EntityHost,
     private readonly world: VoxelWorld,
     _unusedVisuals?: unknown,
     private readonly maxCarts = 16,
-  ) {}
+  ) {
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost);
+  }
 
   get entities(): readonly MinecartEntity[] {
     return [...this.carts.values()];
@@ -181,9 +186,8 @@ export class MinecartManager {
   spawn(x: number, y: number, z: number, id?: string, variant: MinecartVariant = 'normal'): MinecartEntity | undefined {
     if (this.disposed || this.carts.size >= this.maxCarts) return undefined;
     const entityId = id ?? `cart-${this.idCounter += 1}`;
-    const visual = this.visuals.create();
-    this.visuals.setVariant(visual, variant);
-    this.scene.add(visual);
+    const visual = this.host.createMinecart(variant) as THREE.Object3D | undefined;
+    if (visual) this.host.attach(visual);
     const entity: MinecartEntity = {
       id: entityId,
       position: new THREE.Vector3(x + 0.5, y, z + 0.5),
@@ -236,7 +240,7 @@ export class MinecartManager {
   removeById(id: string): boolean {
     const cart = this.carts.get(id);
     if (!cart) return false;
-    this.scene.remove(cart.visual);
+    if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(id);
     return true;
   }
@@ -263,7 +267,7 @@ export class MinecartManager {
   insertTnt(cart: MinecartEntity): boolean {
     if (cart.variant === 'tnt') return false;
     cart.variant = 'tnt';
-    this.visuals.setVariant(cart.visual, 'tnt');
+    if (cart.visual) this.host.setMinecartVariant(cart.visual, 'tnt');
     return true;
   }
 
@@ -287,7 +291,7 @@ export class MinecartManager {
     if (cart.variant === 'tnt' && cart.fuseTicks > 0) return undefined;
     const items = cart.variant === 'tnt' ? ['minecart', 'tnt'] : ['minecart'];
     const position = cart.position.clone();
-    this.scene.remove(cart.visual);
+    if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(cart.id);
     return { position, items };
   }
@@ -381,7 +385,7 @@ export class MinecartManager {
       cart.previousPosition.copy(cart.position);
       if (cart.fuseTicks > 0) {
         cart.fuseTicks -= 1;
-        this.visuals.pulsePrimed(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
+        if (cart.visual) this.host.pulseMinecartTnt(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
         if (cart.fuseTicks <= 0) {
           this.detonate(cart);
           continue;
@@ -395,14 +399,14 @@ export class MinecartManager {
   interpolateVisuals(alpha: number): void {
     const t = Math.max(0, Math.min(1, alpha));
     for (const cart of this.carts.values()) {
+      if (!cart.visual) continue;
       const visual = interpolateVec3(
         cart.previousPosition.x, cart.previousPosition.y, cart.previousPosition.z,
         cart.position.x, cart.position.y, cart.position.z,
         t,
       );
-      cart.visual.position.set(visual.x, visual.y, visual.z);
-      cart.visual.rotation.y = cart.yaw;
-      cart.visual.rotation.x = cart.pitch;
+      this.host.setPosition(cart.visual, visual.x, visual.y, visual.z);
+      this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
     }
   }
 
@@ -446,13 +450,15 @@ export class MinecartManager {
   }
 
   clear(): void {
-    for (const cart of this.carts.values()) this.scene.remove(cart.visual);
+    for (const cart of this.carts.values()) {
+      if (cart.visual) this.host.detach(cart.visual);
+    }
     this.carts.clear();
   }
 
   dispose(): void {
     this.clear();
-    this.visuals.dispose();
+    if (this.ownsHost) this.host.dispose();
     this.disposed = true;
   }
 
@@ -633,17 +639,17 @@ export class MinecartManager {
       power: TNT_MINECART_EXPLOSION_POWER,
       radius: TNT_MINECART_EXPLOSION_RADIUS,
     });
-    this.scene.remove(cart.visual);
+    if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(cart.id);
   }
 
   private syncVisual(cart: MinecartEntity): void {
-    cart.visual.position.set(cart.position.x, cart.position.y, cart.position.z);
-    cart.visual.rotation.set(cart.pitch, cart.yaw, 0);
-    this.visuals.setVariant(cart.visual, cart.variant);
-    applySampledEntityLight(
+    if (!cart.visual) return;
+    this.host.setPosition(cart.visual, cart.position.x, cart.position.y, cart.position.z);
+    this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+    this.host.setMinecartVariant(cart.visual, cart.variant);
+    this.host.applyLight(
       cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,
-      worldDaylightUniform.value,
     );
   }
 }

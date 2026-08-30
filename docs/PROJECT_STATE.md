@@ -2,15 +2,24 @@
 
 Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Phase 4 EntityHost
+
+- Ветка `cursor/shared-entity-host-bbb1` от PR #23 HEAD `ff5bef0` (`cursor/shared-block-geometry-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- `EntityHost` — rendering seam. Simulation managers spawn/tick/serialize без `new Mesh` / Geometry / Material. `HeadlessEntityHost` на Anarchy server. Client: один `ThreeEntityHost` на `Game.scene` (shared `ItemVisualFactory` / `ArrowVisualFactory`).
+- `DroppedItemManager` / `FallingBlockManager` / `MinecartManager` / `MobManager` / `PlayerArrowManager` принимают `Object3D | EntityHost`. Tests wrapping `THREE.Scene` остаются через `resolveEntityHost`.
+- `ServerGameplay` больше не создаёт `THREE.Group` entity scene и не конструирует `ItemVisualFactory`. `RedstoneSystem` на сервере без `root` (primed TNT без mesh).
+- Не тронуты: GameplayKernel order, Phase 2 useInteraction, Phase 3 blockGeometry, interpolation, fluids, respawn/session WASD (#19/#20), protocol, persistence/RNG/plugins, renderer folder moves.
+- Report: `docs/reports/2026-08-30_shared-entity-host.md`. Draft PR stacked on #23. **Не merge.** Owner local QA. **Не начинать Phase 5+.**
+
 ## Последний проход: Phase 3 shared block geometry
 
 - Ветка `cursor/shared-block-geometry-bbb1` от PR #21 HEAD `7e67419` (`cursor/shared-interaction-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
 - Simulation geometry: `src/world/blockGeometry.ts` (AABB, neighbor stair/rail/fence, attachment normals, selection/collision boxes). **Без** Three.js / meshes / textures.
 - Rendering `src/rendering/specialBlockGeometry.ts` — UV, torch matrices, outline, lantern/chain mesh. Re-export тех же sim-функций; второй таблицы AABB нет.
 - Collision / selection / placement / `useInteraction` / ladder / rails / `Game` / `ServerGameplay` больше не импортируют `specialBlockGeometry`. Server collision/placement считает формы без rendering.
-- Не тронуты: GameplayKernel, Phase 2 useInteraction, interpolation, fluids, respawn/session WASD (#19/#20), protocol, EntityHost, ItemVisualFactory на сервере (Phase 4).
+- Не тронуты: GameplayKernel, Phase 2 useInteraction, interpolation, fluids, respawn/session WASD (#19/#20), protocol. EntityHost — Phase 4 (этот проход).
 - Targeted: `block-geometry` 5 + placement/glowstone/selection/polish/ladder/stairs/use/kernel/anarchy pack **308/308**. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
-- Report: `docs/reports/2026-08-30_shared-block-geometry.md`. Draft PR **#23** stacked on #21. **Не merge.** Owner local QA. **Не начинать Phase 4.**
+- Report: `docs/reports/2026-08-30_shared-block-geometry.md`. Draft PR **#23** stacked on #21. **Не merge.** Owner local QA **принят.** Phase 4 EntityHost — этот проход.
 
 ## Последний проход: Phase 2 shared interaction
 

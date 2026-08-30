@@ -5,3 +5,5 @@ export * from './mobDefinitions';
 export * from './mobModels';
 export * from './MinecartManager';
 export * from './railPath';
+export * from './EntityHost';
+export * from './ThreeEntityHost';

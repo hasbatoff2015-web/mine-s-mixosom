@@ -194,7 +194,7 @@ Host extras after a completed kernel tick: SP autosave/HUD; server riding snapsh
 
 **Hosts:** SP `Game.useTargetOrItem` (online: send `interact` only). Server `useHeld` (no hit: raycast from look) and `placeBlock` (look-validated cell → `placeBlockAt`). `world/placement.ts` remains the support/anchor tests.
 
-**Not here:** combat/mining, GameplayKernel order, protocol, EntityHost.
+**Not here:** combat/mining, GameplayKernel order, protocol. EntityHost is Phase 4 (below).
 
 ### Shared block geometry (Phase 3)
 
@@ -216,7 +216,30 @@ Host extras after a completed kernel tick: SP autosave/HUD; server riding snapsh
 
 Rendering still wraps `facingVector` / `attachmentNormal` as `THREE.Vector3` for outline tests; simulation uses plain `{x,y,z}`.
 
-**Not here:** EntityHost, moving renderer folders, protocol, GameplayKernel order.
+**Not here:** moving renderer folders, protocol, GameplayKernel order. EntityHost is Phase 4 (below).
+
+### Shared entity host (Phase 4)
+
+`src/entities/EntityHost.ts` is the rendering seam for entity managers. Simulation (spawn, physics, AI, damage, serialize) talks to the host instead of constructing Mesh / Geometry / Material.
+
+```text
+                ENTITY SIMULATION
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+          SERVER               CLIENT
+             │                   │
+        no rendering        EntityHost
+                            Three.js
+```
+
+- **Server:** `HeadlessEntityHost` — all `create*` return `undefined`. `ServerGameplay` does not construct `ItemVisualFactory` or a dummy `THREE.Group` entity scene. `RedstoneSystem` omits `root`, so primed TNT has no mesh.
+- **Client:** one `ThreeEntityHost` on `Game.scene`, sharing first-person `ItemVisualFactory` / `ArrowVisualFactory` (`owns*Visuals: false`). Lazy voxel / minecart / item / arrow factories so wrapping a Scene for one manager does not eagerly build unused meshes.
+- **Managers:** `DroppedItemManager`, `FallingBlockManager`, `MinecartManager`, `MobManager`, `PlayerArrowManager` accept `THREE.Object3D | EntityHost`. Existing tests that pass `new THREE.Scene()` go through `resolveEntityHost`.
+- **Stay in sim:** Vector3 pose/velocity, kernel order, Phase 2 useInteraction, Phase 3 blockGeometry, serialize/restore.
+- **Stay in ThreeEntityHost:** `ItemVisualFactory`, `ArrowVisualFactory`, `MinecartVisualFactory`, `VoxelVisualFactory` / `createMobModel`, fire overlay, sampled entity light, primed-TNT mesh.
+
+**Not here:** second MobManager, moving `src/rendering/` folders, EntityHost as a gameplay loop, protocol, persistence/RNG/plugins.
 
 ## Lifecycle
 
@@ -423,11 +446,11 @@ Sword use вычисляется на fixed tick из selected sword + held use 
 
 ### DroppedItemManager
 
-Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. Маленький feet-anchored AABB (`0.28×0.28`) переиспользует `fireSources.ts` overlap: Lava наносит 4, Fire 1 damage за fixed 20-TPS contact tick, health начинается с 5, уничтожение использует обычный manager removal (`burned`) до merge/pickup. Water damage = 0. Java-1.9-style Lava kick сохранён, modern generic Water buoyancy не применяется. `environmentHealth?` optional в serialized entry: старые saves default к 5 без schema-version bump. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Менеджер получает тот же `ItemVisualFactory`, что и first-person renderer: настоящие item textures/atlas cubes bob-ятся и медленно вращаются, а thresholds `1/2/17/33` показывают `1/2/3/4` bounded visual copies. World-dropped meshes получают `sampleEntityLight` на 20 TPS; visual position интерполируется на render frame.
+Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. Маленький feet-anchored AABB (`0.28×0.28`) переиспользует `fireSources.ts` overlap: Lava наносит 4, Fire 1 damage за fixed 20-TPS contact tick, health начинается с 5, уничтожение использует обычный manager removal (`burned`) до merge/pickup. Water damage = 0. Java-1.9-style Lava kick сохранён, modern generic Water buoyancy не применяется. `environmentHealth?` optional в serialized entry: старые saves default к 5 без schema-version bump. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Visuals идут через `EntityHost` (`createDroppedItem` / bob / count copies). SP `Game` шарит тот же `ItemVisualFactory`, что и first-person renderer. Headless server не создаёт mesh. World-dropped meshes на клиенте получают `sampleEntityLight` на 20 TPS; visual position интерполируется на render frame.
 
 ### MobManager
 
-MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Automatic spawn: passive path unchanged; hostile **surface night** uses `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5`; dark cave hostiles are a separate candidate (low sky, solid floor, no liquid) with max one new cave hostile per chunk per event and a 12-block density guard. Skeleton projectiles используют те же `ArrowPhysics` и переданный Game-owned `ArrowVisualFactory`, поэтому их scale, orientation, drag, gravity, collision и cleanup не расходятся с player arrows.
+MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Automatic spawn: passive path unchanged; hostile **surface night** uses `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5`; dark cave hostiles are a separate candidate (low sky, solid floor, no liquid) with max one new cave hostile per chunk per event and a 12-block density guard. Skeleton projectiles используют те же `ArrowPhysics`. Visuals (mob models, skeleton arrows, hurt tint, fire overlay) принадлежат `EntityHost.syncMob` / `createArrow`, не менеджеру. SP шарит Game-owned `ArrowVisualFactory` через `ThreeEntityHost`.
 
 Освещение мобов идёт из voxel `skyLight`/`blockLight`: `sampleEntityLight` усредняет feet/torso/head на simulation tick, `createEntityMaterial` (`MeshBasicMaterial` + wrap ≥ 0.76) умножает на этот RGB. Visual root/yaw/walkPhase считаются в `interpolateVisuals(alpha)` через `entityInterpolation.ts` (lerp + shortest-yaw, snap при ≥ 6 блоков). Gameplay/AI/hitboxes остаются на simulation transform.
 
@@ -437,7 +460,7 @@ Caps зависят от coarse pointer profile. Restore может принуд
 
 ### FallingBlockManager
 
-Когда gravity-блок теряет опору, `VoxelWorld` кладёт spawn в bounded queue. `Game` создаёт falling entity с block mesh, gravity `-32` и voxel AABB; при земле блок возвращается в grid. Save schema 1 опционально сериализует in-flight entities.
+Когда gravity-блок теряет опору, `VoxelWorld` кладёт spawn в bounded queue. Host создаёт falling entity; на сервере visual отсутствует. Gravity `-32` и voxel AABB; при земле блок возвращается в grid. Save schema 1 опционально сериализует in-flight entities.
 
 ### MinecartManager
 
@@ -463,7 +486,7 @@ Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отд�
 
 Dust распространяет сигнал по шести voxel-соседям, уменьшая уровень на единицу. Torch постоянна, lever переключается use action, button хранит оставшееся pulse time, pressure plate получает occupancy из positions игрока, мобов и dropped items.
 
-Powered TNT удаляется из мира и становится отдельной Three.js entity с fuse `4 s`, gravity и voxel AABB. Mesh uses `block/tnt` (`PRIMED_TNT_TEXTURE_KEY`); fuse flash tints `material.color` white ↔ warm, never replacing the map with a solid red cube. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event. `Game` кладёт event в `ExplosionQueue`: resolve (скан без мутаций, scalar distance) → `applyBlockBatch` → один `relightRegion` на union bounds → `notifyBlocksChanged` с Set-dedupe → chain TNT через `primeTnt(..., { blockAlreadyRemoved: true })`. За tick обрабатывается ограниченный budget (jobs + voxels + ~2–3.5 ms). Одиночный TNT обычно укладывается в один tick; mass chain растягивается, не блокируя render. Explosion не вызывает immediate mesh rebuild.
+Powered TNT удаляется из мира и становится отдельной entity с fuse `4 s`, gravity и voxel AABB. На клиенте mesh uses `block/tnt` (`PRIMED_TNT_TEXTURE_KEY`) via `RedstoneSystem` `root` (SP scene); Anarchy server omits `root`. Fuse flash tints `material.color` white ↔ warm, never replacing the map with a solid red cube. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event. `Game` кладёт event в `ExplosionQueue`: resolve (скан без мутаций, scalar distance) → `applyBlockBatch` → один `relightRegion` на union bounds → `notifyBlocksChanged` с Set-dedupe → chain TNT через `primeTnt(..., { blockAlreadyRemoved: true })`. За tick обрабатывается ограниченный budget (jobs + voxels + ~2–3.5 ms). Одиночный TNT обычно укладывается в один tick; mass chain растягивается, не блокируя render. Explosion не вызывает immediate mesh rebuild.
 
 Serialization version 2 хранит active sources, lever/button attachment/facing, остаток timed button и primed TNT с fuse и velocity. Restore принимает version 1. Wire power намеренно не сохраняется. Optional `blockStates` и `fallingBlocks` лежат в том же schema 1 snapshot.
 

@@ -23,7 +23,8 @@ function platform(world: VoxelWorld, y = 40): void {
   }
 }
 
-function ownedMeshes(root: THREE.Object3D): THREE.Mesh[] {
+function ownedMeshes(root: THREE.Object3D | undefined): THREE.Mesh[] {
+  if (!root) return [];
   const meshes: THREE.Mesh[] = [];
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
@@ -35,7 +36,7 @@ function ownedMeshes(root: THREE.Object3D): THREE.Mesh[] {
   return meshes;
 }
 
-function firstOwnedMesh(root: THREE.Object3D): THREE.Mesh {
+function firstOwnedMesh(root: THREE.Object3D | undefined): THREE.Mesh {
   const mesh = ownedMeshes(root)[0];
   if (!mesh) throw new Error('expected an owned entity mesh');
   return mesh;
@@ -80,7 +81,7 @@ describe('mob hurt flash', () => {
     expect(manager.damage(cow, 2, { source: 'player' })).toBe(true);
     expect(cow.hurtFlashSeconds).toBe(MOB_HURT_FLASH_SECONDS);
     expect(mobHurtFlashIntensity(cow.hurtFlashSeconds)).toBe(1);
-    const light = cow.visual.userData.entityLight as THREE.Vector3;
+    const light = cow.visual!.userData.entityLight as THREE.Vector3;
     expect(light.x).toBeGreaterThan(light.y);
     expect(light.x).toBeGreaterThan(light.z);
     manager.dispose();
@@ -133,8 +134,8 @@ describe('mob hurt flash', () => {
     expect(hit.hurtFlashSeconds).toBeGreaterThan(0);
     expect(other.hurtFlashSeconds).toBe(0);
     expect(mobHurtFlashIntensity(other.hurtFlashSeconds)).toBe(0);
-    const lightA = hit.visual.userData.entityLight as THREE.Vector3;
-    const lightB = other.visual.userData.entityLight as THREE.Vector3;
+    const lightA = hit.visual!.userData.entityLight as THREE.Vector3;
+    const lightB = other.visual!.userData.entityLight as THREE.Vector3;
     expect(lightA).not.toBe(lightB);
     expect(lightA.x - lightA.y).toBeGreaterThan(lightB.x - lightB.y);
     expect(bindAndReadLight(meshA).x).toBeGreaterThan(bindAndReadLight(meshB).x);

@@ -118,8 +118,8 @@ describe('creeper death animation', () => {
     expect(mob.fuseSeconds).toBe(0);
     manager.update(0.35);
     manager.interpolateVisuals(1);
-    expect(mob.visual.rotation.z).toBeGreaterThan(0);
-    expect(mob.visual.scale.x).toBeLessThan(1);
+    expect(mob.visual!.rotation.z).toBeGreaterThan(0);
+    expect(mob.visual!.scale.x).toBeLessThan(1);
     for (let tick = 0; tick < 12; tick += 1) manager.update(0.1);
     expect(manager.count).toBe(0);
   });

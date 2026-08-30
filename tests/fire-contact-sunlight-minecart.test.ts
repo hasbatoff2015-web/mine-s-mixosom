@@ -387,9 +387,9 @@ describe('minecart 3D entity, riding and rail motion', () => {
     world.setBlockState(5, 41, 6, { railShape: 'north_south' });
     const manager = carts(world);
     const cart = manager.spawn(5, 41, 6)!;
-    expect(isMinecartEntityVisual(cart.visual)).toBe(true);
-    expect(cart.visual.userData.heldMeshKind).toBeUndefined();
-    expect(cart.visual.children.length).toBeGreaterThan(5);
+    expect(isMinecartEntityVisual(cart.visual!)).toBe(true);
+    expect(cart.visual!.userData.heldMeshKind).toBeUndefined();
+    expect(cart.visual!.children.length).toBeGreaterThan(5);
     expect(cart.position.x).toBeCloseTo(5.5, 3);
     expect(cart.position.z).toBeCloseTo(6.5, 3);
     expect(cart.rail?.shape).toBe('north_south');
@@ -568,7 +568,7 @@ describe('TNT minecart', () => {
     inventory.setSlot(0, createItemStack('tnt', 4));
     expect(manager.insertTnt(cart)).toBe(true);
     expect(cart.variant).toBe('tnt');
-    expect(cart.visual.getObjectByName('tnt-cargo')?.visible).toBe(true);
+    expect(cart.visual!.getObjectByName('tnt-cargo')?.visible).toBe(true);
     expect(manager.isRideable(cart)).toBe(false);
     expect(inventory.remove('tnt', 1)).toBe(1);
     expect(inventory.getSlot(0)?.count).toBe(3);
@@ -670,7 +670,7 @@ describe('minecart solid inner floor', () => {
     world.setBlockState(5, 41, 5, { railShape: 'north_south' });
     const manager = carts(world);
     const cart = manager.spawn(5, 41, 5)!;
-    const floor = minecartFloorMesh(cart.visual);
+    const floor = minecartFloorMesh(cart.visual!);
     expect(floor).toBeDefined();
     expect(floor!.name).toBe(MINECART_FLOOR_NAME);
     const geometry = floor!.geometry as THREE.BoxGeometry;
@@ -690,7 +690,7 @@ describe('minecart solid inner floor', () => {
     expect(material.side).toBe(THREE.DoubleSide);
 
     manager.insertTnt(cart);
-    const cargo = cart.visual.getObjectByName(MINECART_TNT_CARGO_NAME) as THREE.Mesh;
+    const cargo = cart.visual!.getObjectByName(MINECART_TNT_CARGO_NAME) as THREE.Mesh;
     expect(cargo.visible).toBe(true);
     const cargoBottom = cargo.position.y - MINECART_TNT_SIZE / 2;
     expect(cargoBottom).toBeCloseTo(MINECART_FLOOR_TOP + MINECART_TNT_SEAT, 5);

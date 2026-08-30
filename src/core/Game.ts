@@ -81,6 +81,7 @@ import {
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
   MobManager,
+  ThreeEntityHost,
   type MinecartEntity,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
@@ -218,6 +219,7 @@ export interface GameSession {
   mobs: MobManager;
   arrows: PlayerArrowManager;
   minecarts: MinecartManager;
+  entityHost: ThreeEntityHost;
   ridingCartId?: string;
   redstone: RedstoneSystem;
   activePressurePlates: Set<string>;
@@ -1103,8 +1105,13 @@ export class Game {
       },
     );
     this.scene.add(worldRenderer.group);
-    const drops = new DroppedItemManager(this.scene, world, {
-      visualFactory: itemVisuals,
+    const entityHost = new ThreeEntityHost(this.scene, {
+      itemVisuals,
+      arrowVisuals,
+      ownsItemVisuals: false,
+      ownsArrowVisuals: false,
+    });
+    const drops = new DroppedItemManager(entityHost, world, {
       onPickup: (stack) => {
         const remainder = inventory.add(stack as ItemStack);
         const accepted = stack.count - (remainder?.count ?? 0);
@@ -1116,18 +1123,17 @@ export class Game {
       },
     });
     if (restored?.droppedItems) drops.restore(restored.droppedItems as SerializedDroppedItem[]);
-    const falling = new FallingBlockManager(this.scene, world, itemVisuals);
+    const falling = new FallingBlockManager(entityHost, world);
     if (restored?.fallingBlocks) {
       falling.restore(restored.fallingBlocks as SerializedFallingBlock[]);
     }
 
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
-    const mobs = new MobManager(this.scene, world, {
+    const mobs = new MobManager(entityHost, world, {
       maxMobs: isCoarsePointer() ? 24 : 40,
       passiveCap: isCoarsePointer() ? 10 : 16,
       hostileCap: isCoarsePointer() ? 14 : 24,
       maxProjectiles: isCoarsePointer() ? 20 : 40,
-      arrowVisualFactory: arrowVisuals,
       automaticSpawning: !options?.online,
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
     });
@@ -1136,10 +1142,9 @@ export class Game {
       heldItemId: inventory.getSlot(selectedSlot)?.itemId,
       offhandItemId: inventory.offhand?.itemId,
     });
-    const minecarts = new MinecartManager(this.scene, world, itemVisuals);
+    const minecarts = new MinecartManager(entityHost, world);
     if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
-    const arrows = new PlayerArrowManager(this.scene, world, mobs, {
-      visualFactory: arrowVisuals,
+    const arrows = new PlayerArrowManager(entityHost, world, mobs, {
       minecarts,
       onBlockHit: (x, y, z, flaming) => {
         const session = this.session;
@@ -1172,6 +1177,7 @@ export class Game {
       mobs,
       arrows,
       minecarts,
+      entityHost,
       redstone,
       activePressurePlates,
       selectedSlot,
@@ -1781,7 +1787,9 @@ export class Game {
     session.mobs.interpolateVisuals(0.5);
     console.info('[perf] MOB_SMOOTHNESS', {
       sim: [mob.position.x, mob.position.z],
-      visual: [mob.visual.position.x, mob.visual.position.z],
+      visual: mob.visual
+        ? [mob.visual.position.x, mob.visual.position.z]
+        : [mob.position.x, mob.position.z],
     });
   }
 
@@ -3369,6 +3377,7 @@ export class Game {
     this.session.redstone.dispose();
     this.session.drops.dispose();
     this.session.falling.dispose();
+    this.session.entityHost.dispose();
     disposeWorldLighting(this.session.world);
     this.explosionQueue.clear();
     resetMiningSound(this.miningSound);

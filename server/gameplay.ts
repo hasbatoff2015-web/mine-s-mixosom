@@ -36,6 +36,7 @@ import {
 import {
   DroppedItemManager,
   FallingBlockManager,
+  HeadlessEntityHost,
   MinecartManager,
   MobManager,
   dropsForBrokenMinecart,
@@ -49,7 +50,6 @@ import { RedstoneSystem } from '../src/redstone';
 import {
   defaultSlabType,
 } from '../src/world/blockGeometry';
-import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { SurvivalSystem } from '../src/survival';
 import { ExplosionQueue } from '../src/world/ExplosionQueue';
 import { isFluidBlock } from '../src/world/fluids';
@@ -130,7 +130,7 @@ export interface GameplayMetrics {
 }
 
 export class ServerGameplay {
-  readonly scene = new THREE.Group();
+  readonly host = new HeadlessEntityHost();
   readonly drops: DroppedItemManager;
   readonly falling: FallingBlockManager;
   readonly mobs: MobManager;
@@ -166,17 +166,17 @@ export class ServerGameplay {
     world.onCommittedBlockState = (change) => {
       this.noteBlockDelta(change.x, change.y, change.z, change.block);
     };
-    const visuals = new ItemVisualFactory();
-    this.drops = new DroppedItemManager(this.scene, world, { visualFactory: visuals });
-    this.falling = new FallingBlockManager(this.scene, world, visuals);
-    this.mobs = new MobManager(this.scene, world, {
+    const host = this.host;
+    this.drops = new DroppedItemManager(host, world);
+    this.falling = new FallingBlockManager(host, world);
+    this.mobs = new MobManager(host, world, {
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
     });
-    this.minecarts = new MinecartManager(this.scene, world, visuals);
-    this.arrows = new PlayerArrowManager(this.scene, world, this.mobs, {
+    this.minecarts = new MinecartManager(host, world);
+    this.arrows = new PlayerArrowManager(host, world, this.mobs, {
       minecarts: this.minecarts,
       onBlockHit: (x, y, z, flaming) => {
         if (flaming && flamingArrowBlockHit(this.world.getBlock(x, y, z, false)) === 'prime_tnt') {
@@ -189,7 +189,7 @@ export class ServerGameplay {
       onSpawn: (id) => this.pushEntityEvent(id, 'projectile_spawn'),
       onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
     });
-    this.redstone = new RedstoneSystem(world, { root: this.scene });
+    this.redstone = new RedstoneSystem(world);
   }
 
   consumeBlockChanges(): Array<{ x: number; y: number; z: number; blockId: number; state?: BlockRenderState }> {

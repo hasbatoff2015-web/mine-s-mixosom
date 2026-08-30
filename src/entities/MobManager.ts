@@ -12,9 +12,7 @@ import {
   isSunHighEnough,
 } from '../combat/fireSources';
 import { createItemStack, type ItemStack } from '../inventory';
-import { ARROW_FORWARD, ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
-import { SharedFireTexture } from '../rendering/fireTexture';
-import { applySampledEntityLight, disposeOwnedEntityMaterials, worldDaylightUniform } from '../rendering/worldLighting';
+import type { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { combinedLight } from '../world/LightEngine';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -26,12 +24,14 @@ import {
   type MobKind,
   type MobState,
 } from './mobDefinitions';
-import { createMobModel, type MobModel } from './mobModels';
+import type { MobModel } from './mobModels';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
 import { CHUNK_SIZE, FIXED_DT, GRAVITY, floorDiv } from '../core/constants';
 import { daylightFactor } from '../gameplay/daylight';
-import { VoxelVisualFactory } from './voxelVisuals';
+import type { EntityHost, MobVisualState } from './EntityHost';
+import { isEntityHost } from './EntityHost';
+import { resolveEntityHost } from './resolveEntityHost';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
 /** Night surface hostile attempts relative to the previous unrestricted rate. */
@@ -198,7 +198,7 @@ interface MobProjectile {
   readonly id: string;
   readonly ownerId: string;
   readonly ownerKind: MobKind;
-  readonly visual: THREE.Object3D;
+  readonly visual?: THREE.Object3D;
   readonly position: THREE.Vector3;
   readonly previousPosition: THREE.Vector3;
   readonly velocity: THREE.Vector3;
@@ -213,8 +213,8 @@ export class MobEntity {
   readonly position: THREE.Vector3;
   readonly previousPosition = new THREE.Vector3();
   readonly velocity: THREE.Vector3;
-  readonly visual: THREE.Group;
-  readonly model: MobModel;
+  readonly visual?: THREE.Object3D;
+  readonly model?: MobModel;
   health: number;
   state: MobState;
   ageSeconds: number;
@@ -242,7 +242,7 @@ export class MobEntity {
   fireTicks = 0;
   contactBurning = false;
   sunlightBurning = false;
-  fireOverlay?: THREE.Mesh;
+  fireOverlay?: THREE.Object3D;
   readonly wanderDirection = new THREE.Vector3();
   resumeState: MobState = 'idle';
   deathDropsEmitted = false;
@@ -259,7 +259,8 @@ export class MobEntity {
     health: number,
     state: MobState,
     ageSeconds: number,
-    model: MobModel,
+    model?: MobModel,
+    visual?: THREE.Object3D,
   ) {
     this.definition = getMobDefinition(kind);
     this.position = new THREE.Vector3(position.x, position.y, position.z);
@@ -269,7 +270,7 @@ export class MobEntity {
     this.state = state;
     this.ageSeconds = ageSeconds;
     this.model = model;
-    this.visual = model.root;
+    this.visual = visual ?? model?.root;
   }
 
   get alive(): boolean {
@@ -292,9 +293,8 @@ export class MobEntity {
 export class MobManager {
   private readonly mobsById = new Map<string, MobEntity>();
   private readonly projectiles = new Map<string, MobProjectile>();
-  private readonly visuals = new VoxelVisualFactory();
-  private readonly arrowVisuals: ArrowVisualFactory;
-  private readonly ownsArrowVisuals: boolean;
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private readonly pendingDrops: MobDrop[] = [];
   private readonly pendingPlayerDamage: MobPlayerDamageEvent[] = [];
   private readonly pendingExplosions: MobExplosionEvent[] = [];
@@ -315,10 +315,15 @@ export class MobManager {
   private disposed = false;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: THREE.Object3D | EntityHost,
     private readonly world: VoxelWorld,
     private readonly options: MobManagerOptions = {},
   ) {
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost, {
+      arrowVisuals: options.arrowVisualFactory,
+      ownsArrowVisuals: options.arrowVisualFactory ? false : undefined,
+    });
     this.maxMobs = Math.max(1, Math.floor(options.maxMobs ?? 48));
     this.passiveCap = Math.max(0, Math.min(this.maxMobs, Math.floor(options.passiveCap ?? 20)));
     this.hostileCap = Math.max(0, Math.min(this.maxMobs, Math.floor(options.hostileCap ?? 28)));
@@ -339,8 +344,6 @@ export class MobManager {
       options.caveHostileDensityRadius ?? CAVE_HOSTILE_DENSITY_RADIUS,
     );
     this.random = options.random ?? Math.random;
-    this.arrowVisuals = options.arrowVisualFactory ?? new ArrowVisualFactory();
-    this.ownsArrowVisuals = options.arrowVisualFactory === undefined;
   }
 
   get count(): number {
@@ -453,10 +456,15 @@ export class MobManager {
       if (!spawnOptions.force) return undefined;
       this.evictFarthestOrOldest(position);
     }
-    const model = createMobModel(this.visuals, kind);
+    const created = this.host.createMob(kind);
+    const visual = created?.visual as THREE.Object3D | undefined;
+    const model = created?.model;
     const id = this.allocateMobId(spawnOptions.id);
-    model.root.userData.entityId = id;
-    model.root.userData.mobKind = kind;
+    if (visual) {
+      visual.userData.entityId = id;
+      visual.userData.mobKind = kind;
+      this.host.attach(visual);
+    }
     const velocity = spawnOptions.velocity ?? new THREE.Vector3();
     const health = THREE.MathUtils.clamp(
       spawnOptions.health ?? definition.maxHealth,
@@ -473,9 +481,9 @@ export class MobManager {
       state,
       Math.max(0, spawnOptions.ageSeconds ?? 0),
       model,
+      visual,
     );
     this.mobsById.set(id, mob);
-    this.scene.add(model.root);
     this.syncVisual(mob, 0, 1);
     this.applyMobLight(mob);
     this.options.onSpawn?.(mob);
@@ -572,7 +580,12 @@ export class MobManager {
         projectile.position.z,
         t,
       );
-      projectile.visual.position.set(visual.x, visual.y, visual.z);
+      projectile.visual && this.host.setPosition(
+        projectile.visual,
+        visual.x,
+        visual.y,
+        visual.z,
+      );
     }
   }
 
@@ -809,7 +822,9 @@ export class MobManager {
 
   clear(): void {
     for (const mob of [...this.mobsById.values()]) this.removeMob(mob, 'cleared');
-    for (const projectile of this.projectiles.values()) projectile.visual.removeFromParent();
+    for (const projectile of this.projectiles.values()) {
+      if (projectile.visual) this.host.detach(projectile.visual);
+    }
     this.projectiles.clear();
     this.pendingDrops.length = 0;
     this.pendingPlayerDamage.length = 0;
@@ -819,8 +834,7 @@ export class MobManager {
   dispose(): void {
     if (this.disposed) return;
     this.clear();
-    this.visuals.dispose();
-    if (this.ownsArrowVisuals) this.arrowVisuals.dispose();
+    if (this.ownsHost) this.host.dispose();
     this.disposed = true;
   }
 
@@ -1066,6 +1080,7 @@ export class MobManager {
   }
 
   private syncVisual(mob: MobEntity, _delta: number, alpha = 1): void {
+    if (!mob.visual || !mob.model) return;
     const pose = mob.networkRenderPose
       ? {
         x: mob.networkRenderPose.x,
@@ -1091,106 +1106,54 @@ export class MobManager {
         },
         alpha,
       );
-    const speed = mob.locomotionSpeed;
-    const walkPhase = pose.walkPhase;
-    const swing = Math.sin(walkPhase) * Math.min(0.65, speed * 0.22);
-    mob.visual.rotation.y = pose.yaw;
-    if (mob.kind === 'spider') {
-      mob.model.legs.forEach((leg, index) => {
-        const side = index % 2 === 0 ? -1 : 1;
-        const pair = Math.floor(index / 2);
-        const phase = Math.sin(walkPhase + pair * 0.85) * Math.min(1, speed);
-        leg.rotation.x = Number(leg.userData.baseRotationX ?? 0);
-        leg.rotation.y = Number(leg.userData.baseRotationY ?? 0) - phase * 0.18 * side;
-        leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0)
-          - Math.abs(Math.cos(walkPhase + pair * 0.7)) * 0.08 * side * Math.min(1, speed);
-      });
-    } else {
-      mob.model.legs.forEach((leg, index) => {
-        leg.rotation.x = Number(leg.userData.baseRotationX ?? 0)
-          + swing * (mob.model.legSwingSigns[index] ?? (index % 2 === 0 ? 1 : -1));
-        leg.rotation.y = Number(leg.userData.baseRotationY ?? 0);
-        leg.rotation.z = Number(leg.userData.baseRotationZ ?? 0);
-      });
-    }
-    if (mob.kind === 'chicken') {
-      const visualAge = mob.ageSeconds - FIXED_DT * (1 - alpha);
-      const flap = Math.sin(visualAge * (speed > 0.1 ? 14 : 4)) * (speed > 0.1 ? 0.35 : 0.08);
-      mob.model.wings.forEach((wing, index) => {
-        wing.rotation.x = Number(wing.userData.baseRotationX ?? 0);
-        wing.rotation.y = Number(wing.userData.baseRotationY ?? 0);
-        wing.rotation.z = Number(wing.userData.baseRotationZ ?? 0) + (index === 0 ? flap : -flap);
-      });
-    }
-    if (mob.kind === 'zombie') {
-      const poseArms = mob.state === 'attack' ? 1.55 : 1.2;
-      mob.model.arms.forEach((arm, index) => {
-        arm.rotation.x = Number(arm.userData.baseRotationX ?? 0)
-          + poseArms + (index % 2 === 0 ? swing : -swing) * 0.25;
-        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
-        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
-      });
-    } else if (mob.kind === 'skeleton') {
-      mob.model.arms.forEach((arm, index) => {
-        arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) + (mob.state === 'attack'
-          ? -1.15
-          : (index % 2 === 0 ? swing : -swing) * 0.5);
-        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
-        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
-      });
-    }
-    if (mob.state === 'die') {
-      const progress = THREE.MathUtils.clamp(mob.deathSeconds / 0.7, 0, 1);
-      mob.visual.rotation.z = progress * Math.PI * 0.5;
-      mob.visual.scale.setScalar(1 - progress * 0.25);
-    } else if (mob.kind === 'creeper') {
-      const fuseProgress = THREE.MathUtils.clamp(mob.fuseSeconds / 1.5, 0, 1);
-      const pulse = fuseProgress > 0
-        ? Math.sin(mob.fuseSeconds * (10 + fuseProgress * 18)) * 0.025 * fuseProgress
-        : 0;
-      mob.visual.scale.set(1 + pulse, 1 + fuseProgress * 0.08, 1 + pulse);
-      mob.visual.rotation.z = 0;
-    } else {
-      mob.visual.scale.setScalar(1);
-      mob.visual.rotation.z = 0;
-    }
-    const hurtJolt = mob.state === 'hurt' ? Math.sin(mob.stateSeconds * 45) * 0.035 : 0;
-    mob.visual.position.set(pose.x + hurtJolt, pose.y, pose.z);
-    this.syncFireOverlay(mob);
+    const state: MobVisualState = {
+      kind: mob.kind,
+      model: mob.model,
+      visual: mob.visual,
+      x: pose.x,
+      y: pose.y,
+      z: pose.z,
+      yaw: pose.yaw,
+      walkPhase: pose.walkPhase,
+      visualAge: mob.ageSeconds - FIXED_DT * (1 - alpha),
+      locomotionSpeed: mob.locomotionSpeed,
+      state: mob.state,
+      stateSeconds: mob.stateSeconds,
+      deathSeconds: mob.deathSeconds,
+      fuseSeconds: mob.fuseSeconds,
+      onFire: mob.isOnFire,
+      width: mob.definition.width,
+      height: mob.definition.height,
+      hurtFlashSeconds: mob.hurtFlashSeconds,
+      fireOverlay: mob.fireOverlay,
+    };
+    mob.fireOverlay = this.host.syncMob(state) as THREE.Object3D | undefined;
     if (mob.hurtFlashSeconds > 0) this.applyMobLight(mob);
   }
 
-  private syncFireOverlay(mob: MobEntity): void {
-    if (mob.isOnFire) {
-      if (!mob.fireOverlay) {
-        mob.fireOverlay = SharedFireTexture.instance().createScaledOverlay(
-          mob.definition.width,
-          mob.definition.height,
-        );
-        mob.visual.add(mob.fireOverlay);
-      }
-      mob.fireOverlay.visible = true;
-      mob.fireOverlay.rotation.y = -mob.visual.rotation.y;
-    } else if (mob.fireOverlay) {
-      mob.fireOverlay.visible = false;
-    }
-  }
-
   private applyMobLight(mob: MobEntity): void {
-    const sample = applySampledEntityLight(
+    if (!mob.visual) return;
+    const flash = mobHurtFlashIntensity(mob.hurtFlashSeconds);
+    if (flash > 0) {
+      this.host.applyMobHurtLight(
+        mob.visual,
+        this.world,
+        mob.position.x,
+        mob.position.y,
+        mob.position.z,
+        mob.definition.height,
+        flash,
+      );
+      return;
+    }
+    this.host.applyLight(
       mob.visual,
       this.world,
       mob.position.x,
       mob.position.y,
       mob.position.z,
       mob.definition.height,
-      worldDaylightUniform.value,
     );
-    const flash = mobHurtFlashIntensity(mob.hurtFlashSeconds);
-    if (flash <= 0) return;
-    const tinted = applyMobHurtTint(sample.rgb, flash);
-    const light = mob.visual.userData.entityLight as THREE.Vector3 | undefined;
-    if (light instanceof THREE.Vector3) light.set(tinted[0], tinted[1], tinted[2]);
   }
 
   private steerToward(mob: MobEntity, direction: Readonly<THREE.Vector3>, speed: number, faceMovement = true): void {
@@ -1450,10 +1413,12 @@ export class MobManager {
     if (distance <= 1e-6) return;
     aim.y += distance * 0.025;
     const velocity = inaccurateArrowDirection(aim, this.random, 0.028).multiplyScalar(1.6);
-    const visual = this.arrowVisuals.create();
-    visual.position.copy(position);
-    visual.quaternion.setFromUnitVectors(ARROW_FORWARD, velocity.clone().normalize());
-    this.scene.add(visual);
+    const visual = this.host.createArrow() as THREE.Object3D | undefined;
+    if (visual) {
+      this.host.setPosition(visual, position.x, position.y, position.z);
+      this.host.orientArrow(visual, velocity.x, velocity.y, velocity.z);
+      this.host.attach(visual);
+    }
     const projectile: MobProjectile = {
       id,
       ownerId: owner.id,
@@ -1504,16 +1469,22 @@ export class MobManager {
       if (blockHit) {
         projectile.embedded = embedArrow(blockHit, projectile.velocity);
         projectile.position.addScaledVector(movement.clone().normalize(), Math.max(0, blockHit.distance - 0.035));
-        projectile.visual.position.copy(projectile.position);
-        applySampledEntityLight(
-          projectile.visual,
-          this.world,
-          projectile.position.x,
-          projectile.position.y,
-          projectile.position.z,
-          0.25,
-          worldDaylightUniform.value,
-        );
+        if (projectile.visual) {
+          this.host.setPosition(
+            projectile.visual,
+            projectile.position.x,
+            projectile.position.y,
+            projectile.position.z,
+          );
+          this.host.applyLight(
+            projectile.visual,
+            this.world,
+            projectile.position.x,
+            projectile.position.y,
+            projectile.position.z,
+            0.25,
+          );
+        }
         projectile.velocity.set(0, 0, 0);
         projectile.inGround = true;
         this.options.onArrowBlockHit?.(blockHit.x, blockHit.y, blockHit.z);
@@ -1524,21 +1495,29 @@ export class MobManager {
         Math.floor(projectile.position.x), Math.floor(projectile.position.y), Math.floor(projectile.position.z),
       ) === BlockId.Water;
       applyArrowDragAndGravity(projectile.velocity, inWater);
-      projectile.visual.position.copy(projectile.position);
-      applySampledEntityLight(
-        projectile.visual,
-        this.world,
-        projectile.position.x,
-        projectile.position.y,
-        projectile.position.z,
-        0.25,
-        worldDaylightUniform.value,
-      );
-      if (projectile.velocity.lengthSq() > 0) {
-        projectile.visual.quaternion.setFromUnitVectors(
-          ARROW_FORWARD,
-          projectile.velocity.clone().normalize(),
+      if (projectile.visual) {
+        this.host.setPosition(
+          projectile.visual,
+          projectile.position.x,
+          projectile.position.y,
+          projectile.position.z,
         );
+        this.host.applyLight(
+          projectile.visual,
+          this.world,
+          projectile.position.x,
+          projectile.position.y,
+          projectile.position.z,
+          0.25,
+        );
+        if (projectile.velocity.lengthSq() > 0) {
+          this.host.orientArrow(
+            projectile.visual,
+            projectile.velocity.x,
+            projectile.velocity.y,
+            projectile.velocity.z,
+          );
+        }
       }
       if (playerPosition && this.projectileHitsPlayer(previous, projectile.position, playerPosition)) {
         const source = this.mobsById.get(projectile.ownerId);
@@ -1663,20 +1642,15 @@ export class MobManager {
 
   private removeMob(mob: MobEntity, reason: MobRemovalReason): void {
     if (!this.mobsById.delete(mob.id)) return;
-    if (mob.fireOverlay) {
-      mob.fireOverlay.removeFromParent();
-      mob.fireOverlay.geometry.dispose();
-      mob.fireOverlay = undefined;
-    }
-    disposeOwnedEntityMaterials(mob.visual);
-    mob.visual.removeFromParent();
+    if (mob.fireOverlay) this.host.disposeVisual(mob.fireOverlay);
+    if (mob.visual) this.host.disposeVisual(mob.visual, { materials: true });
     this.options.onRemove?.(mob, reason);
   }
 
   private removeProjectile(id: string): void {
     const projectile = this.projectiles.get(id);
     if (!projectile) return;
-    projectile.visual.removeFromParent();
+    if (projectile.visual) this.host.detach(projectile.visual);
     this.projectiles.delete(id);
     this.options.onProjectileRemove?.(id);
   }

@@ -9,11 +9,13 @@ import {
   type ItemStack,
 } from '../inventory';
 import { getItemDefinition } from '../items';
-import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
+import type { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import { moveVoxelBody } from './voxelPhysics';
+import type { EntityHost } from './EntityHost';
+import { isEntityHost } from './EntityHost';
+import { resolveEntityHost } from './resolveEntityHost';
 
 const ITEM_WIDTH = 0.28;
 const ITEM_HEIGHT = 0.28;
@@ -88,7 +90,7 @@ export class DroppedItemEntity {
   environmentHealth: number;
   environmentDamageSeconds = 0;
   onGround = false;
-  readonly visual: THREE.Group;
+  readonly visual?: THREE.Object3D;
   readonly bobPhase: number;
 
   constructor(
@@ -99,7 +101,7 @@ export class DroppedItemEntity {
     ageSeconds: number,
     pickupDelaySeconds: number,
     environmentHealth: number,
-    visual: THREE.Group,
+    visual: THREE.Object3D | undefined,
     bobPhase: number,
   ) {
     this.stack = stack;
@@ -117,8 +119,8 @@ export class DroppedItemEntity {
 /** Lightweight, capped item-entity simulation suitable for the fixed 20 TPS game loop. */
 export class DroppedItemManager {
   private readonly itemsById = new Map<string, DroppedItemEntity>();
-  private readonly visuals: ItemVisualFactory;
-  private readonly ownsVisuals: boolean;
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private readonly maxItems: number;
   private readonly defaultPickupDelay: number;
   private readonly despawnSeconds: number;
@@ -130,12 +132,15 @@ export class DroppedItemManager {
   private disposed = false;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: THREE.Object3D | EntityHost,
     private readonly world: VoxelWorld,
     private readonly options: DroppedItemManagerOptions = {},
   ) {
-    this.visuals = options.visualFactory ?? new ItemVisualFactory();
-    this.ownsVisuals = options.visualFactory === undefined;
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost, {
+      itemVisuals: options.visualFactory,
+      ownsItemVisuals: options.visualFactory ? false : undefined,
+    });
     this.maxItems = Math.max(1, Math.floor(options.maxItems ?? 128));
     this.defaultPickupDelay = Math.max(0, options.pickupDelaySeconds ?? 0.6);
     this.despawnSeconds = Math.max(1, options.despawnSeconds ?? 300);
@@ -173,9 +178,8 @@ export class DroppedItemManager {
 
     if (this.itemsById.size >= this.maxItems) this.evictOldest();
     const id = this.allocateId(spawnOptions.id);
-    const visual = this.visuals.createDroppedItemVisual(clonedStack.itemId, clonedStack.count);
-    visual.userData.entityId = id;
-    this.scene.add(visual);
+    const visual = this.host.createDroppedItem(clonedStack.itemId, clonedStack.count) as THREE.Object3D | undefined;
+    if (visual) this.host.attach(visual);
     const velocity = spawnOptions.velocity ?? new THREE.Vector3();
     const entity = new DroppedItemEntity(
       id,
@@ -231,15 +235,14 @@ export class DroppedItemManager {
         expired.push({ entity, reason: 'burned' });
         continue;
       }
-      if (typeof document !== 'undefined') {
-        applySampledEntityLight(
+      if (this.host.hasVisuals && entity.visual && typeof document !== 'undefined') {
+        this.host.applyLight(
           entity.visual,
           this.world,
           entity.position.x,
           entity.position.y,
           entity.position.z,
           ITEM_HEIGHT,
-          worldDaylightUniform.value,
         );
       }
       if (entity.ageSeconds >= this.despawnSeconds || entity.position.y < -32) {
@@ -340,7 +343,7 @@ export class DroppedItemManager {
   dispose(): void {
     if (this.disposed) return;
     this.clear();
-    if (this.ownsVisuals) this.visuals.dispose();
+    if (this.ownsHost) this.host.dispose();
     this.disposed = true;
   }
 
@@ -411,6 +414,7 @@ export class DroppedItemManager {
   }
 
   private syncVisual(entity: DroppedItemEntity, alpha = 1): void {
+    if (!entity.visual) return;
     const visual = interpolateVec3(
       entity.previousPosition.x,
       entity.previousPosition.y,
@@ -423,12 +427,13 @@ export class DroppedItemManager {
     const bob = entity.onGround
       ? Math.sin(entity.ageSeconds * 2.5 + entity.bobPhase) * 0.035 + 0.045
       : 0;
-    entity.visual.position.set(
+    this.host.setPosition(
+      entity.visual,
       visual.x,
       visual.y + ITEM_HEIGHT * 0.5 + bob,
       visual.z,
     );
-    entity.visual.rotation.y = entity.ageSeconds * 1.35 + entity.bobPhase;
+    this.host.setRotation(entity.visual, 0, entity.ageSeconds * 1.35 + entity.bobPhase, 0);
   }
 
   private mergeSpawnIntoNearby(
@@ -475,10 +480,11 @@ export class DroppedItemManager {
   }
 
   private updateCountScale(entity: DroppedItemEntity): void {
-    this.visuals.updateDroppedItemVisual(entity.visual, entity.stack.itemId, entity.stack.count);
+    if (!entity.visual) return;
+    this.host.updateDroppedItem(entity.visual, entity.stack.itemId, entity.stack.count);
     const maximum = getItemDefinition(entity.stack.itemId).maxStack;
     const fullness = maximum <= 1 ? 0 : entity.stack.count / maximum;
-    entity.visual.scale.setScalar(0.9 + Math.min(0.22, fullness * 0.22));
+    this.host.setScalarScale(entity.visual, 0.9 + Math.min(0.22, fullness * 0.22));
   }
 
   private evictOldest(): void {
@@ -491,7 +497,7 @@ export class DroppedItemManager {
 
   private removeEntity(entity: DroppedItemEntity, reason: DroppedItemRemovalReason): void {
     if (!this.itemsById.delete(entity.id)) return;
-    entity.visual.removeFromParent();
+    if (entity.visual) this.host.detach(entity.visual);
     this.options.onRemove?.(entity, reason);
   }
 

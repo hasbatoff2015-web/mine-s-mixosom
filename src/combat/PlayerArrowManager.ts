@@ -4,10 +4,12 @@ import { ItemId } from '../items';
 import type { PlayerAABB } from '../player';
 import type { MobManager } from '../entities';
 import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
-import { ARROW_FORWARD, ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
+import type { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
+import type { EntityHost } from '../entities/EntityHost';
+import { isEntityHost } from '../entities/EntityHost';
+import { resolveEntityHost } from '../entities/resolveEntityHost';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
 import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
 import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from './ArrowPhysics';
@@ -19,7 +21,7 @@ interface PlayerArrow {
   readonly position: THREE.Vector3;
   readonly previousPosition: THREE.Vector3;
   readonly velocity: THREE.Vector3;
-  readonly visual: THREE.Object3D;
+  readonly visual?: THREE.Object3D;
   age: number;
   critical: boolean;
   inGround: boolean;
@@ -54,13 +56,13 @@ const ARROW_PICKUP_PADDING = 0.2;
 
 export class PlayerArrowManager {
   private readonly arrows: PlayerArrow[] = [];
-  private readonly visuals: ArrowVisualFactory;
-  private readonly ownsVisuals: boolean;
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private readonly random: () => number;
   private idCounter = 0;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: THREE.Object3D | EntityHost,
     private readonly world: VoxelWorld,
     private readonly mobs: MobManager,
     options: {
@@ -74,8 +76,11 @@ export class PlayerArrowManager {
       readonly onRemove?: (id: string) => void;
     } = {},
   ) {
-    this.visuals = options.visualFactory ?? new ArrowVisualFactory();
-    this.ownsVisuals = options.visualFactory === undefined;
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost, {
+      arrowVisuals: options.visualFactory,
+      ownsArrowVisuals: options.visualFactory ? false : undefined,
+    });
     this.random = options.random ?? Math.random;
     this.minecarts = options.minecarts;
     this.onBlockHit = options.onBlockHit;
@@ -112,10 +117,12 @@ export class PlayerArrowManager {
   ): void {
     if (this.arrows.length >= 48) this.remove(0);
     const velocity = inaccurateArrowDirection(direction, this.random).multiplyScalar(speedBlocksPerTick);
-    const visual = this.visuals.create(flaming);
-    visual.position.copy(origin);
-    this.orient(visual, velocity);
-    this.scene.add(visual);
+    const visual = this.host.createArrow(flaming) as THREE.Object3D | undefined;
+    if (visual) {
+      this.host.setPosition(visual, origin.x, origin.y, origin.z);
+      this.host.orientArrow(visual, velocity.x, velocity.y, velocity.z);
+      this.host.attach(visual);
+    }
     this.arrows.push({
       id: id ?? `arrow-${this.idCounter += 1}`,
       ownerId,
@@ -149,10 +156,7 @@ export class PlayerArrowManager {
       existing.position.set(x, y, z);
       existing.velocity.set(vx, vy, vz);
       existing.flaming = flaming;
-      if (options?.snapVisual !== false) {
-        existing.visual.position.copy(existing.position);
-        this.orient(existing.visual, existing.velocity);
-      }
+      if (options?.snapVisual !== false) this.syncArrowVisual(existing);
       return;
     }
     const speed = Math.hypot(vx, vy, vz) || 1;
@@ -162,18 +166,19 @@ export class PlayerArrowManager {
       created.velocity.set(vx, vy, vz);
       created.position.set(x, y, z);
       created.previousPosition.set(x, y, z);
-      created.visual.position.copy(created.position);
-      this.orient(created.visual, created.velocity);
+      this.syncArrowVisual(created);
     }
   }
 
   applyRenderPose(id: string, x: number, y: number, z: number, vx: number, vy: number, vz: number): void {
     const arrow = this.arrows.find((entry) => entry.id === id);
     if (!arrow) return;
-    arrow.visual.position.set(x, y, z);
     const speedSq = vx * vx + vy * vy + vz * vz;
     if (speedSq > 1e-8) arrow.velocity.set(vx, vy, vz);
-    this.orient(arrow.visual, arrow.velocity);
+    if (arrow.visual) {
+      this.host.setPosition(arrow.visual, x, y, z);
+      this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+    }
   }
 
   removeById(id: string): void {
@@ -267,14 +272,9 @@ export class PlayerArrowManager {
           arrow.age = 0;
           arrow.velocity.set(0, 0, 0);
           arrow.previousPosition.copy(arrow.position);
-          arrow.visual.position.copy(arrow.position);
+          this.syncArrowVisual(arrow);
           this.onBlockHit?.(blockHit.x, blockHit.y, blockHit.z, arrow.flaming);
-          if (typeof document !== 'undefined') {
-            applySampledEntityLight(
-              arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
-              worldDaylightUniform.value,
-            );
-          }
+          this.applyArrowLight(arrow);
           break;
         }
         arrow.position.add(movement);
@@ -285,13 +285,8 @@ export class PlayerArrowManager {
         applyArrowDragAndGravity(arrow.velocity, cell === BlockId.Water);
       }
       if (removed || arrow.inGround) continue;
-      this.orient(arrow.visual, arrow.velocity);
-      if (typeof document !== 'undefined') {
-        applySampledEntityLight(
-          arrow.visual, this.world, arrow.position.x, arrow.position.y, arrow.position.z, 0.25,
-          worldDaylightUniform.value,
-        );
-      }
+      this.orientArrow(arrow);
+      this.applyArrowLight(arrow);
     }
   }
 
@@ -325,7 +320,8 @@ export class PlayerArrowManager {
         arrow.position.z,
         t,
       );
-      arrow.visual.position.set(visual.x, visual.y, visual.z);
+      if (!arrow.visual) continue;
+      this.host.setPosition(arrow.visual, visual.x, visual.y, visual.z);
     }
   }
 
@@ -360,19 +356,37 @@ export class PlayerArrowManager {
 
   dispose(): void {
     while (this.arrows.length) this.remove(this.arrows.length - 1);
-    if (this.ownsVisuals) this.visuals.dispose();
+    if (this.ownsHost) this.host.dispose();
   }
 
-  private orient(visual: THREE.Object3D, velocity: Readonly<THREE.Vector3>): void {
-    if (velocity.lengthSq() <= 1e-8) return;
-    visual.quaternion.setFromUnitVectors(ARROW_FORWARD, new THREE.Vector3(velocity.x, velocity.y, velocity.z).normalize());
+  private syncArrowVisual(arrow: PlayerArrow): void {
+    if (!arrow.visual) return;
+    this.host.setPosition(arrow.visual, arrow.position.x, arrow.position.y, arrow.position.z);
+    this.orientArrow(arrow);
+  }
+
+  private orientArrow(arrow: PlayerArrow): void {
+    if (!arrow.visual) return;
+    this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+  }
+
+  private applyArrowLight(arrow: PlayerArrow): void {
+    if (!arrow.visual || typeof document === 'undefined') return;
+    this.host.applyLight(
+      arrow.visual,
+      this.world,
+      arrow.position.x,
+      arrow.position.y,
+      arrow.position.z,
+      0.25,
+    );
   }
 
   private remove(index: number): void {
     const arrow = this.arrows[index];
     if (!arrow) return;
     this.onRemove?.(arrow.id);
-    arrow.visual.removeFromParent();
+    if (arrow.visual) this.host.detach(arrow.visual);
     this.arrows.splice(index, 1);
   }
 }
