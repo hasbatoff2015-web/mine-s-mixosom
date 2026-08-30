@@ -2,6 +2,15 @@
 
 Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: entity death animation smoothness
+
+- Ветка `cursor/entity-death-animation-smoothness-bbb1` от Phase 4 HEAD `fee6604` (`cursor/shared-entity-host-bbb1`, PR **#24**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 5+.**
+- Root cause после EntityHost: death pose (`rotation.z` / scale) брала `mob.deathSeconds`, который тикает только на **20 TPS**. Online `applyInterpolatedEntityVisuals(..., interpolateVisuals(1))` не сглаживает этот clock (в отличие от chicken `visualAge`). Получалось ~14 поз за 0.7 s.
+- Fix: client-only `deathVisualElapsed` / `deathVisualActive` на `MobEntity`. `Game.frame` вызывает `advanceDeathVisuals(rawElapsed)` в том же loop, что fire animation. `syncMob` получает `mobDeathVisualSeconds(...)`. Формула позы **не** менялась: 0.7 s, `π/2`, scale `1 - progress * 0.25`.
+- Server по-прежнему authoritative для died / `deathSeconds` lifetime / removal. Snapshots не шлют animation frames. `applyAuthoritativeDeath` стартует clock один раз. Interpolator задаёт base x/y/z/yaw; death z-rotation/scale поверх.
+- Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost interface, hurt-flash sharing, server 20 TPS, protocol, interpolation buffer (кроме использования как base pose).
+- Report: `docs/reports/2026-08-30_entity-death-animation-smoothness.md`. Draft PR stacked on **#24**. Owner local QA (SP kill + Anarchy kill + two clients). **Не merge.**
+
 ## Последний проход: Phase 4 EntityHost
 
 - Ветка `cursor/shared-entity-host-bbb1` от PR #23 HEAD `ff5bef0` (`cursor/shared-block-geometry-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
@@ -10,6 +19,7 @@
 - `ServerGameplay` больше не создаёт `THREE.Group` entity scene и не конструирует `ItemVisualFactory`. `RedstoneSystem` на сервере без `root` (primed TNT без mesh).
 - Не тронуты: GameplayKernel order, Phase 2 useInteraction, Phase 3 blockGeometry, interpolation, fluids, respawn/session WASD (#19/#20), protocol, persistence/RNG/plugins, renderer folder moves.
 - Targeted: `entity-host` 5/5 + entity/anarchy/kernel/use/geometry/interpolation/respawn pack greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Report: `docs/reports/2026-08-30_shared-entity-host.md`. Draft PR **#24** stacked on #23. **Не merge.** Owner local QA. **Не начинать Phase 5+.**
 
 ## Последний проход: Phase 3 shared block geometry
 

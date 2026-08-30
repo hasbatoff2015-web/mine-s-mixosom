@@ -34,6 +34,8 @@ import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
+/** Client death pose duration. Simulation removal uses the same window. */
+export const MOB_DEATH_ANIMATION_SECONDS = 0.7;
 /** Night surface hostile attempts relative to the previous unrestricted rate. */
 export const SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5;
 /** Skip a new cave hostile if another living hostile is already this close. */
@@ -59,6 +61,23 @@ export function applyMobHurtTint(
     rgb[1] * (1 - t * 0.82),
     rgb[2] * (1 - t * 0.82),
   ];
+}
+
+/**
+ * Death pose clock for rendering. Prefer a render-loop elapsed time so the fall
+ * is not quantized to 20 TPS. Tests that never call `advanceDeathVisuals` keep
+ * the tick-interpolated `deathSeconds` fallback (same curve, chicken-flap style).
+ */
+export function mobDeathVisualSeconds(
+  deathSeconds: number,
+  alpha = 1,
+  renderElapsed?: number,
+): number {
+  if (renderElapsed !== undefined && Number.isFinite(renderElapsed)) {
+    return Math.max(0, renderElapsed);
+  }
+  const t = Math.max(0, Math.min(1, alpha));
+  return Math.max(0, deathSeconds - FIXED_DT * (1 - t));
 }
 
 const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
@@ -228,6 +247,12 @@ export class MobEntity {
   meleeKnockback = false;
   hurtFlashSeconds = 0;
   deathSeconds = 0;
+  /**
+   * Client-only render elapsed for the death pose. Advanced from the frame loop,
+   * not from server snapshots or the 20 TPS tick.
+   */
+  deathVisualElapsed = 0;
+  deathVisualActive = false;
   fuseSeconds = 0;
   burnAccumulator = 0;
   fireDamageTimer = 0;
@@ -399,7 +424,7 @@ export class MobManager {
 
   shouldKeepRemoteDeath(id: string): boolean {
     const mob = this.mobsById.get(id);
-    return Boolean(mob && mob.state === 'die' && mob.deathSeconds < 0.7);
+    return Boolean(mob && mob.state === 'die' && mob.deathSeconds < MOB_DEATH_ANIMATION_SECONDS);
   }
 
   setNetworkRenderPose(id: string, x?: number, y?: number, z?: number, yaw?: number): void {
@@ -427,6 +452,27 @@ export class MobManager {
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
       }
+    }
+  }
+
+  /**
+   * Render-loop death pose clock. Call once per frame with the real frame dt.
+   * Does not start or restart on snapshots; `beginDeath` arms the clock once.
+   */
+  advanceDeathVisuals(deltaSeconds: number): void {
+    if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
+    const dt = Math.min(deltaSeconds, 0.25);
+    for (const mob of this.mobsById.values()) {
+      if (mob.state !== 'die') {
+        mob.deathVisualActive = false;
+        mob.deathVisualElapsed = 0;
+        continue;
+      }
+      if (!mob.deathVisualActive) {
+        mob.deathVisualElapsed = mob.deathSeconds;
+        mob.deathVisualActive = true;
+      }
+      mob.deathVisualElapsed += dt;
     }
   }
 
@@ -523,7 +569,7 @@ export class MobManager {
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
         this.snapMobRender(mob);
-        if (mob.deathSeconds >= 0.7) this.finishDeath(mob);
+        if (mob.deathSeconds >= MOB_DEATH_ANIMATION_SECONDS) this.finishDeath(mob);
         continue;
       }
 
@@ -1119,7 +1165,11 @@ export class MobManager {
       locomotionSpeed: mob.locomotionSpeed,
       state: mob.state,
       stateSeconds: mob.stateSeconds,
-      deathSeconds: mob.deathSeconds,
+      deathSeconds: mobDeathVisualSeconds(
+        mob.deathSeconds,
+        alpha,
+        mob.deathVisualActive ? mob.deathVisualElapsed : undefined,
+      ),
       fuseSeconds: mob.fuseSeconds,
       onFire: mob.isOnFire,
       width: mob.definition.width,
@@ -1601,6 +1651,8 @@ export class MobManager {
     mob.velocity.x = 0;
     mob.velocity.z = 0;
     mob.deathSeconds = 0;
+    mob.deathVisualElapsed = 0;
+    mob.deathVisualActive = false;
     mob.fuseSeconds = 0;
     this.changeState(mob, 'die');
     this.options.onDeath?.(mob);

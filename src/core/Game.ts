@@ -2071,6 +2071,7 @@ export class Game {
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
       updateSharedFireAnimation(rawElapsed);
+      this.session.mobs.advanceDeathVisuals(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
       const inspectClock = performance.now();
       if (

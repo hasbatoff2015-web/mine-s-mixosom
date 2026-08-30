@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-30: entity death animation smoothness
+
+- [x] Client render-clock for mob death pose (`deathVisualElapsed` from `Game.frame` / `rawElapsed`). Simulation `deathSeconds` stays 20 TPS for lifetime/removal.
+- [x] Same pose as before: 0.7 s, 90° fall, 25% shrink. No new animation. No 60 FPS server ticks.
+- [x] Death event starts the visual clock once; repeated `dead` snapshots do not restart it.
+- [x] Interpolation supplies base x/y/z/yaw; death rotation.z / scale applied on top in `syncMob`.
+- [x] Regression tests in `tests/entity-death-animation.test.ts` (headless elapsed + mesh pose).
+- [ ] Owner local QA: SP kill unchanged; Anarchy + two clients smooth death; other living mobs keep moving.
+- [ ] Do not merge main. Do not start Phase 5+. Stacked on PR **#24**, not `origin/main`.
+
 ## 2026-08-30: Phase 4 EntityHost
 
 - [x] `EntityHost` / `HeadlessEntityHost` / `ThreeEntityHost` — entity simulation without constructing Mesh / Geometry / Material.
