@@ -1,14 +1,23 @@
 # Roadmap
 
+## 2026-08-30: Phase 3 shared block geometry
+
+- [x] Simulation AABB / neighbor shapes / attachment normals in `src/world/blockGeometry.ts` (no Three.js).
+- [x] Rendering `specialBlockGeometry` keeps UV, torch matrices, outline, lantern/chain mesh; re-exports the same sim definitions (no second AABB table).
+- [x] Server and world collision/selection/placement/use/rails/ladders import `world/blockGeometry`, not `rendering/specialBlockGeometry`.
+- [x] Draft PR stacked on PR #21 (not origin/main).
+- [ ] Owner local QA: SP + Anarchy collision, selection, place torch/stair/slab/lantern/chain/fence/rail/button. Death→respawn WASD and Anarchy→menu→Anarchy still work.
+- [ ] Do not merge main. Do not start Phase 4 (EntityHost / persistence / RNG / plugins / renderer moves).
+
 ## 2026-08-29: Phase 2 shared interaction
 
 - [x] One simulation `useHeld` / placement path for SP and Anarchy server (`src/gameplay/useInteraction.ts`).
 - [x] Host effects stay split: SP UI/SFX vs server events/window/inventoryDirty.
 - [x] Online client still sends `interact` only (no local place/use sim).
-- [x] No Phase 3+ (geometry, EntityHost, persistence, RNG, plugins, renderer moves). Protocol unchanged.
+- [x] No Phase 4+ (EntityHost, persistence, RNG, plugins, renderer moves). Protocol unchanged.
 - [x] Draft PR **#21** stacked on PR #20 (not origin/main).
-- [ ] Owner local QA: SP place/use (torch/door/lantern/slab/bucket) and Anarchy interact/place match; death→respawn WASD and Anarchy→menu→Anarchy still work.
-- [ ] Do not merge main. Do not start Phase 3.
+- [x] Owner local QA: SP place/use (torch/door/lantern/slab/bucket) and Anarchy interact/place match; death→respawn WASD and Anarchy→menu→Anarchy still work.
+- [x] Phase 3 geometry extraction is on `cursor/shared-block-geometry-bbb1` (stacked on #21). **Do not start Phase 4.**
 
 ## 2026-08-29: online session transition WASD
 

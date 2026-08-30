@@ -48,7 +48,7 @@ import { PlayerController } from '../src/player';
 import { RedstoneSystem } from '../src/redstone';
 import {
   defaultSlabType,
-} from '../src/rendering/specialBlockGeometry';
+} from '../src/world/blockGeometry';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { SurvivalSystem } from '../src/survival';
 import { ExplosionQueue } from '../src/world/ExplosionQueue';

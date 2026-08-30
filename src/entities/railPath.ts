@@ -1,6 +1,6 @@
 import { BlockId, type RailShape } from '../blocks';
 import { CHUNK_SIZE, floorDiv } from '../core/constants';
-import { defaultRailShape } from '../rendering/specialBlockGeometry';
+import { defaultRailShape } from '../world/blockGeometry';
 import type { VoxelWorld } from '../world/World';
 
 export interface RailCell {

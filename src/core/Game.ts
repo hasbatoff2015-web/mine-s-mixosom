@@ -201,7 +201,7 @@ import {
 import { blockCollisionBoxes, rayAabbDistance } from '../world/collision';
 import {
   defaultSlabType,
-} from '../rendering/specialBlockGeometry';
+} from '../world/blockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 

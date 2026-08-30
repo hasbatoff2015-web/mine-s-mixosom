@@ -1,6 +1,15 @@
 # Состояние проекта
 
-Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: Phase 3 shared block geometry
+
+- Ветка `cursor/shared-block-geometry-bbb1` от PR #21 HEAD `7e67419` (`cursor/shared-interaction-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Simulation geometry: `src/world/blockGeometry.ts` (AABB, neighbor stair/rail/fence, attachment normals, selection/collision boxes). **Без** Three.js / meshes / textures.
+- Rendering `src/rendering/specialBlockGeometry.ts` — UV, torch matrices, outline, lantern/chain mesh. Re-export тех же sim-функций; второй таблицы AABB нет.
+- Collision / selection / placement / `useInteraction` / ladder / rails / `Game` / `ServerGameplay` больше не импортируют `specialBlockGeometry`. Server collision/placement считает формы без rendering.
+- Не тронуты: GameplayKernel, Phase 2 useInteraction, interpolation, fluids, respawn/session WASD (#19/#20), protocol, EntityHost, ItemVisualFactory на сервере (Phase 4).
+- Report: `docs/reports/2026-08-30_shared-block-geometry.md`. Draft PR stacked on #21. **Не merge.** Owner local QA. **Не начинать Phase 4.**
 
 ## Последний проход: Phase 2 shared interaction
 
@@ -8,9 +17,9 @@
 - Одна simulation-level use/placement: `src/gameplay/useInteraction.ts` (`performUseHeld` / `placeFromHit` / `placeBlockAt`). Hosts: SP `Game.useTargetOrItem`, server `ServerGameplay.useHeld` + `placeBlock`.
 - UI/audio/toasts/swing/save — SP effects. Plugin events / `player.window` / `inventoryDirty` — server effects. Online client по-прежнему только `interact`; local use не симулируется.
 - Канонический порядок и placement rules — бывший SP path (anchors, lantern/chain support, slab merge, rail-only minecart, cartCloser перед block-use). Серверный `placeAt`/`applyPlacementState` не дублирует правила.
-- Не тронуты: GameplayKernel, interpolation, fluids/block-state protocol, respawn/session input (#19/#20), Phase 3+ (geometry, EntityHost, persistence, RNG, plugins architecture).
+- Не тронуты: GameplayKernel, interpolation, fluids/block-state protocol, respawn/session input (#19/#20), Phase 4+ (EntityHost, persistence, RNG, plugins architecture).
 - Targeted: `use-interaction` 10 + placement/glowstone/kernel/anarchy/network/bucket pack **115 + 120** focused greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
-- Report: `docs/reports/2026-08-29_shared-interaction.md`. Implementation `3622e20`. Draft PR **#21** stacked on #20. **Не merge.** Owner local QA (SP place/use + Anarchy interact same rules). **Не начинать Phase 3.**
+- Report: `docs/reports/2026-08-29_shared-interaction.md`. Implementation `3622e20`. Draft PR **#21** stacked on #20. **Не merge.** Owner local QA (SP place/use + Anarchy interact same rules) **принят.** Phase 3 geometry — этот проход.
 
 ## Последний проход: online session transition WASD
 

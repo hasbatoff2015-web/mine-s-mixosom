@@ -49,7 +49,7 @@ import {
   resolveRailShape,
   slabLocalBoxes,
   stairLocalBoxes,
-} from '../rendering/specialBlockGeometry';
+} from '../world/blockGeometry';
 import type { CollisionBox } from '../world/collision';
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { canAttachToFace, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';

@@ -2,7 +2,7 @@
 
 ## Glowstone / lantern / chain — 2026-08-28
 
-Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
+Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Selection/collision AABBs live in `world/blockGeometry.ts`; mesh UVs and hanger/chain planes stay in `specialBlockGeometry` and re-export the same sim boxes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
 
 Placement lives in `src/gameplay/useInteraction.ts` (`placeFromHit` / `placeBlockAt`) plus `world/placement.ts` support tests. Singleplayer `Game.useTargetOrItem` and Anarchy `ServerGameplay.useHeld` / `placeBlock` call that one simulation. Vertical hit only. `attachment: floor | ceiling` is stored in existing `blockStates`. `canSupportHanger` accepts a sturdy cube/slab/stair face **or** another chain/lantern so a hanging lantern continues a chain. Support integrity is the existing neighbor queue; hanging chains are not supported by the chain below, so breaking the ceiling cascades.
 
@@ -38,7 +38,7 @@ Chicken leg UV is `[29,0]` on this pack's sheet; cuboid/pivots stay ModelChicken
 
 ## Interaction / support / input / mob polish — 2026-08-27
 
-`specialBlockGeometry.buttonSelectionBox/leverSelectionBoxes` — canonical oriented cuboids (dimensions + matrices) для ChunkMesher и outline. `controlLocalBoxes` кэширует их AABB envelopes по block/attachment/facing/powered; existing DDA использует эти boxes. У наклонной ручки lever небольшой неизбежный AABB envelope, не full voxel и не отдельный raycaster. `RedstoneSystem.publishSourceState` синхронизирует только изменившийся geometry state в World; source map/timers остаются authority для power. Никакого второго redstone simulation.
+`world/blockGeometry.controlLocalBoxes` — AABB envelopes кнопки/рычага (те же размеры, что у mesh cuboids; без Three.js). `specialBlockGeometry.buttonSelectionBox/leverSelectionBoxes` — oriented cuboids (matrices) для ChunkMesher и outline. Existing DDA читает sim envelopes. У наклонной ручки lever небольшой неизбежный AABB envelope, не full voxel и не отдельный raycaster. `RedstoneSystem.publishSourceState` синхронизирует только изменившийся geometry state в World; source map/timers остаются authority для power. Никакого второго redstone simulation.
 
 `placement.ts` содержит shape-keyed SUPPORT_RULES **и explicit vegetation IDs**, `supportCellForBlock`, `isBlockStillSupported`. Общие attachmentNormal и sturdy-face collision rectangles определяют поддержку decorations. Plants use the block below plus substrate sets (GrassBlock/Dirt vs Sand). `World.writeBlockRaw` и non-fluid `setBlockState` ставят dependent changed cell + шесть соседей в Map-dedupe. `processSupportIntegrity(256)` выполняется после fluid queue в world tick и после gameplay/explosions в Game; overflow/unloaded-support tickets остаются. Никакого chunk scan/generation. Material replacement удаляет старый block state. Detach применяет batch Air через прежний mesh/light path, `consumeDetachedBlocks` отдаёт события ровно один раз; Game уведомляет redstone и создаёт canonical dropped stack (включая Creative environmental drops). Plants with `drop:false` produce no item. World не зависит от renderer/drop manager. Door two-cell lifecycle не добавлялся в этот decoration contract.
 
@@ -194,7 +194,29 @@ Host extras after a completed kernel tick: SP autosave/HUD; server riding snapsh
 
 **Hosts:** SP `Game.useTargetOrItem` (online: send `interact` only). Server `useHeld` (no hit: raycast from look) and `placeBlock` (look-validated cell → `placeBlockAt`). `world/placement.ts` remains the support/anchor tests.
 
-**Not here:** combat/mining, GameplayKernel order, protocol, EntityHost, geometry extraction.
+**Not here:** combat/mining, GameplayKernel order, protocol, EntityHost.
+
+### Shared block geometry (Phase 3)
+
+`src/world/blockGeometry.ts` is the simulation source for local AABBs, neighbor stair/rail/fence resolution, attachment normals, slab/stair/lantern/chain/door/ladder/torch/button/lever boxes. No Three.js, meshes, materials, or textures.
+
+```text
+                SIMULATION GEOMETRY
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+           SERVER              CLIENT
+             │                   │
+        collision/AI       mesh generation
+        raycast            visual geometry
+        placement
+```
+
+`src/rendering/specialBlockGeometry.ts` imports those definitions for torch matrices, selection outline, and lantern/chain mesh UVs, and re-exports the sim functions so ChunkMesher / ItemVisualFactory stay on one table. Collision, selection, placement, `useInteraction`, ladders, rails, `Game`, and `ServerGameplay` import `world/blockGeometry` directly.
+
+Rendering still wraps `facingVector` / `attachmentNormal` as `THREE.Vector3` for outline tests; simulation uses plain `{x,y,z}`.
+
+**Not here:** EntityHost, moving renderer folders, protocol, GameplayKernel order.
 
 ## Lifecycle
 
