@@ -179,6 +179,7 @@ export class PlayerArrowManager {
     if (arrow.visual) {
       this.host.setPosition(arrow.visual, x, y, z);
       this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+      this.applyArrowLight(arrow, x, y, z);
     }
   }
 
@@ -364,6 +365,7 @@ export class PlayerArrowManager {
     if (!arrow.visual) return;
     this.host.setPosition(arrow.visual, arrow.position.x, arrow.position.y, arrow.position.z);
     this.orientArrow(arrow);
+    this.applyArrowLight(arrow);
   }
 
   private orientArrow(arrow: PlayerArrow): void {
@@ -371,14 +373,14 @@ export class PlayerArrowManager {
     this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
   }
 
-  private applyArrowLight(arrow: PlayerArrow): void {
-    if (!arrow.visual || typeof document === 'undefined') return;
+  private applyArrowLight(arrow: PlayerArrow, x?: number, y?: number, z?: number): void {
+    if (!arrow.visual) return;
     this.host.applyLight(
       arrow.visual,
       this.world,
-      arrow.position.x,
-      arrow.position.y,
-      arrow.position.z,
+      x ?? arrow.position.x,
+      y ?? arrow.position.y,
+      z ?? arrow.position.z,
       0.25,
     );
   }

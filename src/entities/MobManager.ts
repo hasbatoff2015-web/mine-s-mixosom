@@ -1179,19 +1179,24 @@ export class MobManager {
       fireOverlay: mob.fireOverlay,
     };
     mob.fireOverlay = this.host.syncMob(state) as THREE.Object3D | undefined;
-    if (mob.hurtFlashSeconds > 0) this.applyMobLight(mob);
+    // Online clients skip `update()`; visual sync is the only light refresh.
+    // Sampling only on hurt left join-time mobs stuck at the unlit spawn sample.
+    this.applyMobLight(mob, pose.x, pose.y, pose.z);
   }
 
-  private applyMobLight(mob: MobEntity): void {
+  private applyMobLight(mob: MobEntity, x?: number, y?: number, z?: number): void {
     if (!mob.visual) return;
+    const px = x ?? mob.position.x;
+    const py = y ?? mob.position.y;
+    const pz = z ?? mob.position.z;
     const flash = mobHurtFlashIntensity(mob.hurtFlashSeconds);
     if (flash > 0) {
       this.host.applyMobHurtLight(
         mob.visual,
         this.world,
-        mob.position.x,
-        mob.position.y,
-        mob.position.z,
+        px,
+        py,
+        pz,
         mob.definition.height,
         flash,
       );
@@ -1200,9 +1205,9 @@ export class MobManager {
     this.host.applyLight(
       mob.visual,
       this.world,
-      mob.position.x,
-      mob.position.y,
-      mob.position.z,
+      px,
+      py,
+      pz,
       mob.definition.height,
     );
   }

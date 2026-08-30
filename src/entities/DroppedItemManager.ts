@@ -235,7 +235,7 @@ export class DroppedItemManager {
         expired.push({ entity, reason: 'burned' });
         continue;
       }
-      if (this.host.hasVisuals && entity.visual && typeof document !== 'undefined') {
+      if (this.host.hasVisuals && entity.visual) {
         this.host.applyLight(
           entity.visual,
           this.world,
@@ -434,6 +434,14 @@ export class DroppedItemManager {
       visual.z,
     );
     this.host.setRotation(entity.visual, 0, entity.ageSeconds * 1.35 + entity.bobPhase, 0);
+    this.host.applyLight(
+      entity.visual,
+      this.world,
+      visual.x,
+      visual.y,
+      visual.z,
+      ITEM_HEIGHT,
+    );
   }
 
   private mergeSpawnIntoNearby(

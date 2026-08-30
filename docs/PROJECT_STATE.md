@@ -2,6 +2,14 @@
 
 Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online Anarchy initial entity lighting
+
+- Ветка `cursor/entity-initial-light-fix-bbb1` от Phase 6 HEAD `2e21bf3` (`cursor/shared-rng-lighting-adapters-bbb1`, PR **#29**). **Не merge в main.** Не Phase 7.
+- Root cause: online client не вызывает `MobManager.update()` (нет второй симуляции). `spawn()` семплирует `entityLight` один раз, часто до `chunk_data` / deferred `processLighting`. `syncVisual` / `tickRemoteVisuals` обновляли свет **только при hurt flash**. Hit → `applyAuthoritativeHurt` → повторный sample уже по lit chunk. Dynamic spawn после streaming попадал в готовый свет.
+- Fix: visual sync всегда вызывает `applyMobLight` (pose coords). Тот же contract для drops / falling / arrows / primed TNT interpolate. Headless server без Three. LightEngine / budget **2** / daylight formula не трогали.
+- Targeted: `entity-initial-lighting` 7 + hurt-flash, entity-lighting, entity-host, death-animation, lighting-adapter. `tsc` clean.
+- Report: `docs/reports/2026-08-30_entity-initial-lighting.md`. Draft PR stacked on **#29**. Owner local QA (A11). **Не merge.** Phase 7 tooling split — отдельная ветка после этого фикса.
+
 ## Последний проход: Phase 6 RNG + lighting adapters
 
 - Ветка `cursor/shared-rng-lighting-adapters-bbb1` от chest-sync HEAD `a8c9579` (`cursor/chest-online-sync-fix-bbb1`, PR **#27**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 7.**

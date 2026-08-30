@@ -96,7 +96,7 @@ export class FallingBlockManager {
         continue;
       }
       if (entity.position.y < -8 || entity.ageSeconds > 12) this.land(entity);
-      else if (entity.visual && typeof document !== 'undefined') {
+      else if (entity.visual) {
         this.host.applyLight(
           entity.visual,
           this.world,
@@ -113,12 +113,11 @@ export class FallingBlockManager {
     const t = Math.max(0, Math.min(1, alpha));
     for (const entity of this.entities.values()) {
       if (!entity.visual) continue;
-      this.host.setPosition(
-        entity.visual,
-        THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t),
-        THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t) + 0.5,
-        THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t),
-      );
+      const x = THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t);
+      const y = THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t);
+      const z = THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t);
+      this.host.setPosition(entity.visual, x, y + 0.5, z);
+      this.host.applyLight(entity.visual, this.world, x, y, z, 1);
     }
   }
 

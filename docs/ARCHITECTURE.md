@@ -295,6 +295,8 @@ immediate (server)  → setBlock relights before return; processDeferredLighting
 - Simulation queries (`combinedLight`, `getDirectSkyLight`, `sampleVoxelLightLevels`) are re-exported from `world/lightingState.ts`. Shader compose stays in `rendering/worldLighting.ts`.
 - Lateral sky (`LATERAL_SKY_RADIUS = 14`), typed ring queue, and flood caps are unchanged.
 
+Online entity **visual** light is a client host concern. `MobManager.update` still samples light every sim tick in Singleplayer. The Anarchy client does **not** run that tick, so `syncVisual` / interpolate must apply `EntityHost.applyLight` every visual refresh — not only when `hurtFlashSeconds > 0`. Spawn may sample an unloaded or unlit deferred chunk; later interpolate re-samples once LightEngine has filled the arrays. Hurt flash tints that already-correct sample; it is not the initializer. Drops, falling blocks, arrows, minecarts, and primed TNT follow the same visual-sync contract. Server `HeadlessEntityHost.applyLight` stays empty.
+
 ## Lifecycle
 
 `GameLifecycleManager` использует состояния:

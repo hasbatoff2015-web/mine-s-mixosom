@@ -569,10 +569,18 @@ export class RedstoneSystem {
     const t = Math.max(0, Math.min(1, alpha));
     for (const entity of this.primedById.values()) {
       if (!entity.visual) continue;
-      entity.visual.position.set(
-        THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t),
-        THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t) + 0.49,
-        THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t),
+      const x = THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t);
+      const y = THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t);
+      const z = THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t);
+      entity.visual.position.set(x, y + 0.49, z);
+      applySampledEntityLight(
+        entity.visual,
+        this.world,
+        x,
+        y,
+        z,
+        0.98,
+        worldDaylightUniform.value,
       );
     }
   }

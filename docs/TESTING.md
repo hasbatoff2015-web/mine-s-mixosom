@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-08-30 initial entity lighting (online join)
+
+Report: `reports/2026-08-30_entity-initial-lighting.md`.
+
+`tests/entity-initial-lighting.test.ts`: join-time mob dark until chunk light + `interpolateVisuals` (no hurt); dynamic spawn already lit; hurt is not the initializer; day vs night compose; `entity_snapshot` restore path; dropped-item visual sync. Retain `mob-hurt-flash`, `entity-lighting`.
+
 ## 2026-08-30 Phase 6 RNG + lighting adapters
 
 Report: `reports/2026-08-30_shared-rng-lighting-adapters.md`.

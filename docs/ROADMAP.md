@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-30: Online Anarchy initial entity lighting
+
+- [x] Visual sync always samples current world light (not only hurt flash).
+- [x] Join-time / restored mobs pick up light after chunk lighting without a hit.
+- [x] Dynamic spawns stay correct. Drops/falling/arrows/TNT interpolate use the same contract.
+- [x] No LightEngine rewrite. `WORLD_LIGHT_BUDGET_MS = 2`. Server remains headless.
+- [x] Tests: `entity-initial-lighting` (join vs dynamic vs hurt-not-required, day/night, snapshot path).
+- [ ] Owner local QA: A11 (day, night, hit already lit, later spawn, chunk move, two clients).
+- [ ] Do not merge main. Phase 7 tooling split is a **separate** branch after this fix.
+
 ## 2026-08-30: Phase 6 RNG + lighting adapters
 
 - [x] `RandomSource` / `RandomFn` for simulation; live hosts use `SYSTEM_RANDOM` (no world-seeded live stream).
