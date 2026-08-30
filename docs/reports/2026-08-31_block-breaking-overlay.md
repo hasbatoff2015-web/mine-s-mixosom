@@ -198,7 +198,7 @@ DEV harness: `/?qaBreaking=1` — cube, slab, stairs, fence, door; keys `0–9`,
 19. Stages visible on slow breaks  
 20. No extra desktop-only pointer-lock listeners in the overlay  
 
-This Cloud pass did not run a native GPU/mobile session. CPU tests and typecheck/build cover the contract; visual checklist remains for a real browser.
+Cloud browser harness (`http://localhost:4173/?qaBreaking=1`): cube/slab/stairs/fence/door loaded; cube stage 0 sparse vs stage 9 dense; overlay stayed on the selected surface; yellow selection outline remained readable on top. The outline is LineSegments (expected), not a missing cube texture. Native Survival mining (dirt/stone/tools, cancel, cave, mobile long-press) is still an open device checklist.
 
 ## Parallel server / UI work
 
