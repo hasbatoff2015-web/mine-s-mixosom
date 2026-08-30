@@ -3,7 +3,7 @@ import { BlockId } from '../src/blocks';
 import { IdbWorldStore } from '../src/save/IdbWorldStore';
 import { SaveService } from '../src/save/SaveService';
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
-import { sampleSnapshot } from './world-snapshot.test';
+import { sampleSnapshot } from './persistFixture';
 
 describe('IdbWorldStore', () => {
   it('loads a pre-port schemaVersion 1 record without renaming the database', async () => {

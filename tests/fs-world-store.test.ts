@@ -10,7 +10,7 @@ import { importWorldDump } from '../server/importDump';
 import { WorldInstance } from '../server/WorldInstance';
 import { loadServerConfig } from '../server/config';
 import { ANARCHY_WORLD_ID, ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
-import { sampleSnapshot } from './world-snapshot.test';
+import { sampleSnapshot } from './persistFixture';
 
 const dirs: string[] = [];
 
