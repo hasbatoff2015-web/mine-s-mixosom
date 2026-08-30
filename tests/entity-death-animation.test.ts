@@ -149,10 +149,11 @@ describe('entity death animation smoothness', () => {
     interpolator.ingest('z-pose', { x: 5, y: 64, z: 2, yaw: 1.2 }, 2, 1_050);
 
     const mob = spawnDyingZombie(session.mobs, 'z-pose');
-    session.mobs.advanceDeathVisuals(0.35);
+    for (let i = 0; i < 7; i += 1) session.mobs.advanceDeathVisuals(0.05);
     applyInterpolatedEntityVisuals(session, interpolator, 1_050 + 80);
 
     expect(mob.visual).toBeDefined();
+    expect(mob.deathVisualElapsed).toBeCloseTo(0.35, 5);
     const progress = 0.35 / MOB_DEATH_ANIMATION_SECONDS;
     expect(mob.visual!.rotation.y).toBeCloseTo(1.2, 3);
     expect(mob.visual!.rotation.z).toBeCloseTo(progress * Math.PI * 0.5, 4);
@@ -195,7 +196,7 @@ describe('entity death animation smoothness', () => {
     const mobs = new MobManager(new HeadlessEntityHost(), world, { automaticSpawning: false });
     cleanup.push(() => mobs.dispose());
     spawnDyingZombie(mobs, 'z-old');
-    mobs.advanceDeathVisuals(0.4);
+    for (let i = 0; i < 8; i += 1) mobs.advanceDeathVisuals(0.05);
     expect(mobs.get('z-old')!.deathVisualElapsed).toBeGreaterThan(0.3);
 
     mobs.remove('z-old');
@@ -231,7 +232,7 @@ describe('entity death animation smoothness', () => {
     const session = sessionOf(world);
     const mob = session.mobs.spawn('creeper', new THREE.Vector3(0, 72, 2), { force: true })!;
     expect(session.mobs.damage(mob, 40)).toBe(true);
-    session.mobs.update(0.35);
+    for (let i = 0; i < 7; i += 1) session.mobs.update(0.05);
     session.mobs.interpolateVisuals(1);
     const progress = 0.35 / MOB_DEATH_ANIMATION_SECONDS;
     expect(mob.visual!.rotation.z).toBeCloseTo(progress * Math.PI * 0.5, 4);
