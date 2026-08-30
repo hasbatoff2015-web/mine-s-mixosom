@@ -1,6 +1,19 @@
 # Состояние проекта
 
-Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: единая UI visual system / HUD / loading / Creative / World Select
+
+- Ветка поставки: `codex/ui-visual-system-pass`, baseline `origin/main` = `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`. Задача UI-only: gameplay, fixed 20 TPS, world simulation, input/pointer-lock ownership и save schema не менялись.
+- Production typography теперь self-hosted: Press Start 2P для display/game identity, Inter для интерфейсного текста, системный monospace только для debug. Локальные Cyrillic/Latin WOFF2 и OFL-записи описаны в `docs/FONT_ASSETS.md`; CDN/runtime network dependency нет.
+- Loading имеет отдельные brand/phase/progress/detail уровни, determinate `role=progressbar`, `aria-valuenow` и видимый процент. `updateWorldLoading` продолжает патчить существующие DOM-узлы без полного remount.
+- HUD получил общую responsive width model для status bars и 9-slot hotbar: desktop 50 px slots (60 px на wide desktop), low-height landscape 35 px. Hearts, absorption и armor сохранены. Hunger больше не использует OS glyph: десять authored full/half/empty SVG drumsticks строятся pure helper'ом.
+- Creative расширяет существующий `GameUI`/`.mc-stage`: catalog остаётся scroll host, `onClose` остаётся canonical callback. `MC_CREATIVE_HEIGHT=166`; catalog ограничен шестью logical rows, hotbar больше не прижимается через `margin-top:auto`. Close — отдельный beveled stage sibling, фактический hit target 44–56 px; scale учитывает panel + gap + close.
+- World Select сохраняет single click selection, double click load и существующие callbacks. Добавлены mode badge, дата/время/seed hierarchy, явный selected marker, primary Play и danger Delete. Native `window.confirm` заменён локальным accessible dialog с фокусом, Cancel/Escape/backdrop и тем же `actions.delete`.
+- DEV-only `?qaUi=loading|hud-full|hud-low|hud-absorption|creative|world-list` монтирует только `GameUI`, не создаёт WebGL world и не читает/пишет IndexedDB saves. Production import tree-shaken через `import.meta.env.DEV`.
+- Validation: typecheck PASS; UI targeted **46/46**; build/size/archive PASS, **3.73 MiB / 228 files**. Actual in-app Chromium responsive matrix Loading/HUD/Creative/World Select: **28/28** at 1920×1080, 1366×768, 1280×720, 932×430, 896×414, 844×390, 740×360; no clipping, overlap, document overflow, loading-card scrollbar or console diagnostics. Creative scroll/tabs/close and World Select selection/double-click/dialog Cancel/Escape/delete passed.
+- Full `npm test -- --maxWorkers=2`: **982 passed / 14 failed / 996**, plus one Vitest worker RPC error. All new/retained UI suites pass. Failures are outside this diff: 12 default 5 s CPU timeouts (worldgen/sunlight/minecart), existing GeneratedItemGeometry source fingerprint mismatch, intermittent mob separation, and reference-extractor parse failure; thresholds and unrelated code were not changed.
+- Full details and handoff: `docs/reports/2026-08-30_ui-visual-system-hud-menu-polish.md`.
 
 ## Последний проход: lateral sky / lighting quality
 

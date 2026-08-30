@@ -52,6 +52,7 @@ describe('container layout', () => {
     const withBook = containerStageSize('crafting-table', true);
     expect(withBook.width).toBeGreaterThan(176);
     expect(containerStageSize('creative', false).width).toBe(195);
+    expect(containerStageSize('creative', false).height).toBe(166);
     expect(MC_BOOK_BUTTON_IN_CRAFT_ROW).toBe(true);
     const creativeInner = 195 - 14;
     expect(9 * 18).toBeLessThanOrEqual(creativeInner);
@@ -78,8 +79,10 @@ describe('container layout', () => {
     for (const size of [
       [932, 430], [844, 390], [800, 360], [768, 360], [740, 360], [720, 360], [667, 375],
     ] as const) {
-      const scale = containerUiScaleWithClose(size[0], size[1], 195, 222);
-      expect(195 * scale + MC_CLOSE_HIT_MIN_PX).toBeLessThanOrEqual(size[0]);
+      const creative = containerStageSize('creative', false);
+      const scale = containerUiScaleWithClose(size[0], size[1], creative.width, creative.height);
+      expect(creative.width * scale + MC_CLOSE_HIT_MIN_PX).toBeLessThanOrEqual(size[0] - 24);
+      expect(creative.height * scale).toBeLessThanOrEqual(size[1] - 24);
     }
   });
 

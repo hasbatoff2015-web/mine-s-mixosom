@@ -3,9 +3,12 @@ import { MAX_HEALTH } from '../src/survival';
 import { ARMOR_HUD_ICON_COUNT } from '../src/ui/armorHud';
 import { HEART_HUD_ICON_COUNT, absorptionHudIcons, heartHudIcons } from '../src/ui/heartHud';
 import {
+  HUD_COMPACT_LANDSCAPE_SCALE,
+  HUD_DESKTOP_SCALE_MAX,
+  HUD_HOTBAR_SLOT_SIZE_PX,
   HUD_STATUS_ICON_COUNT,
   HUD_STATUS_ICON_GAP_PX,
-  HUD_STATUS_ICON_SIZE_EM,
+  HUD_STATUS_ICON_SIZE_PX,
 } from '../src/ui/hudStatusLayout';
 
 function iconCounts(health: number): { full: number; half: number; empty: number } {
@@ -36,8 +39,11 @@ describe('health HUD hearts', () => {
   it('aligns heart and armor bars through shared layout constants', () => {
     expect(HEART_HUD_ICON_COUNT).toBe(ARMOR_HUD_ICON_COUNT);
     expect(HEART_HUD_ICON_COUNT).toBe(HUD_STATUS_ICON_COUNT);
-    expect(HUD_STATUS_ICON_SIZE_EM).toBe(0.92);
+    expect(HUD_STATUS_ICON_SIZE_PX).toBe(18);
     expect(HUD_STATUS_ICON_GAP_PX).toBe(1);
+    expect(HUD_HOTBAR_SLOT_SIZE_PX).toBe(50);
+    expect(HUD_DESKTOP_SCALE_MAX).toBe(1.2);
+    expect(HUD_COMPACT_LANDSCAPE_SCALE).toBe(0.7);
   });
 
   it('places absorption hearts as extra yellow icons, never over red hearts', () => {

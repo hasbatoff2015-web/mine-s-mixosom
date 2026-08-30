@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-08-30 UI visual system / responsive HUD and menus
+
+Report: `reports/2026-08-30_ui-visual-system-hud-menu-polish.md`. Branch baseline: `origin/main` at `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`.
+
+Automated UI gate: `npx vitest run tests/ui-visual-system.test.ts tests/ui-visual-contract.test.mjs tests/container-ui.test.ts tests/heart-hud.test.ts tests/armor-hud.test.ts tests/menu-model.test.ts --maxWorkers=2` → **46/46 PASS**. Coverage includes local font/license assets, forbidden fallback-family removal, loading semantics and Russian strings, hunger full/half/empty mapping, HUD constants, Creative compact height/stage+close fit, canonical close callback/catalog scroll contracts, World Select selection/double-click/disabled state and in-game delete callback.
+
+`npm run typecheck`, `npm run build`, `npm run check:size`, `npm run check:archive`: PASS. Production output is **3.73 MiB / 228 files**; Inter WOFF2 subsets are 71.2/28.9 KiB and Press Start 2P Latin is 12.2 KiB. Vite still reports the established `/sdk.js` non-module and >500 KiB main-chunk warnings.
+
+Actual in-app Chromium QA used the isolated `?qaUi=` fixtures. Loading, HUD, Creative and World Select each passed at **1920×1080, 1366×768, 1280×720, 932×430, 896×414, 844×390 and 740×360**: 28/28 geometry cases, zero clipping/overlap/document overflow, no loading-card inner scroll, Creative close ≥44 px and scrollHeight > clientHeight, and no console errors/warnings. Interaction smoke: all three HUD health/absorption/hunger variants; Creative catalog scroll 322/396, both ARIA tabs, close → 9-slot HUD; World Select single selection/`aria-pressed`, double-click load toast, modal autofocus, Escape, Cancel, destructive callback and 4→3 row update. Computed primary Play background differs from neutral Back.
+
+Full `npm test -- --maxWorkers=2`: **982 passed / 14 failed / 996**, one unhandled Vitest worker RPC timeout. UI suites are green. Unrelated failures: 12 default 5-second timeouts (two worldgen plus sunlight/minecart cases), GeneratedItemGeometry source hash mismatch, intermittent mob-separation assertion, and a separate `minecraft-reference-extractor.test.mjs` parse failure. No unrelated expectation or timeout was changed.
+
 ## 2026-08-29 lateral skylight / lighting consistency
 
 Report and full 25-step manual checklist: `reports/2026-08-29_lighting-quality-lateral-sky.md`.

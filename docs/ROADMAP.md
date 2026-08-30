@@ -1,5 +1,18 @@
 # Roadmap
 
+## 2026-08-30: UI visual system / HUD / loading / Creative / World Select
+
+- [x] Self-host Press Start 2P + Inter Cyrillic/Latin WOFF2, add canonical UI tokens and preserve a dedicated debug monospace role.
+- [x] Split loading brand/phase/progress/detail hierarchy; visible determinate percent and accessible progress semantics without remounting updates.
+- [x] Unify desktop HUD/status width, enlarge the 9-slot hotbar, retain armor/red/absorption hearts and replace hunger glyphs with authored full/half/empty icons.
+- [x] Remove Creative catalog dead space while retaining the existing stage, scroll host, dynamic patch path, context callback and pointer-lock lifecycle.
+- [x] Keep the Creative close control outside the panel with a measured 44–56 px responsive target and no panel overlap.
+- [x] Improve World Select hierarchy, mode badge, selected marker, primary Play and danger Delete; replace native confirm with an accessible in-game dialog using the same callbacks.
+- [x] Add isolated DEV `?qaUi=` fixtures and automated UI/font/layout contracts; typecheck, targeted 46/46, build/size/archive pass.
+- [x] Actual-browser 28-case desktop/mobile matrix plus Creative and World Select interaction smoke; zero browser console diagnostics.
+- [ ] Native-device review with actual touch safe-area insets, OS browser chrome and gameplay pointer lock; automated viewport emulation does not close that hardware gate.
+- [ ] Resolve unrelated full-suite CPU timeouts/fingerprint/parser/RPC baseline separately; do not relax them inside a UI task.
+
 ## 2026-08-29: lateral skylight / lighting quality
 
 - [x] Vertical baseline + bounded resumable lateral frontier, 14-step falloff, typed ring and deadline/hard work caps; 2 ms PLAYING budget and render distances retained.

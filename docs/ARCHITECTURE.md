@@ -1,5 +1,17 @@
 # Архитектура
 
+## UI visual system — 2026-08-30
+
+`src/uiTokens.css` is the single production typography/token entry point imported before `style.css`. It declares local Cyrillic/Latin WOFF2 faces for Press Start 2P and Inter plus display/UI/debug font roles, color, spacing and target-size tokens. Font binaries are static assets under `public/fonts`; their OFL records and upstream mapping are documented in `docs/FONT_ASSETS.md`. Runtime does not fetch fonts.
+
+`GameUI` remains the only DOM UI owner. Loading creates stable label/bar/percent/detail nodes; `updateWorldLoading` patches them and ARIA progress attributes instead of replacing the screen. HUD remains a fixed-tick state projection: `hungerHudIcons` is a pure 0..20 → ten-icon mapper parallel to the existing heart/armor helpers. CSS owns responsive size only; it does not introduce a render-loop or simulation dependency.
+
+Creative continues through `renderCreativeInventory`, `.mc-stage`, `patchCreativeDynamic`, `bindContainerChrome` and the caller's `InventoryContext.onClose`. `containerUiScaleWithClose` fits the logical panel and a minimum 44 px close target as one stage. The catalog is the only scrolling region; the reduced 166 logical-pixel Creative body is content-derived and the player hotbar follows it directly. No second inventory implementation or pointer-lock path exists.
+
+World Select keeps the existing `WorldListActions` contract. Rows own selection state and double-click calls `load`; footer buttons call the same `back`, `create`, `load` and `delete` callbacks. The delete confirmation is an in-screen `role=dialog`; it restores the prior Escape handler and focus when dismissed. It does not touch save storage directly.
+
+`src/dev/UiQaHarness.ts` is an opt-in DEV adapter selected by `?qaUi=` in `main.ts`. It instantiates the real `GameUI` with deterministic inventory/world summaries and callbacks, while deliberately skipping `Game`, WebGL, simulation and persistence. This is a layout/interaction fixture, not a parallel UI or gameplay system, and is excluded from production by the `import.meta.env.DEV` branch plus dynamic import.
+
 ## Glowstone / lantern / chain — 2026-08-28
 
 Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
