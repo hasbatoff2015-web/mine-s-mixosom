@@ -1,5 +1,9 @@
 # Архитектура
 
+## Block breaking overlay — 2026-08-31
+
+`BlockBreakingOverlay` is a visual consumer of `GameSession.miningProgress`. `WorldRenderer.setBreakingProgress(hit, progress)` is the only gameplay hook. Overlay geometry is independent of `ChunkMesher`; stage changes swap a cached nearest-filter texture. Selection outline stays `renderOrder=10`. Production crack masks live at `public/textures/gui/destroy/` and are original Frontier art, not committed Mojang `destroy_stage_*` sheets. Local-player only; not break authority for the future online branch.
+
 ## Glowstone / lantern / chain — 2026-08-28
 
 Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
@@ -282,6 +286,8 @@ DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN
 Все шесть шейдеров делят `worldDaylightUniform` (fire glow material его не умножает на baked light), который `Game` обновляет каждый render frame. Dirty chunks перестраиваются с лимитом jobs и бюджетом миллисекунд; на PLAYING generation-кадре допускается один urgent/fair mesh slot, repeated dirty changes coalesce. Дальние chunk visuals освобождают geometry.
 
 Selection outline — тот же `LineSegments` в `WorldRenderer`. `selectionBoxesForBlock()` строит oriented boxes из фактической special geometry (cube / torch / button / lever / plate / wire / door / ladder / cross / fire / stairs / slab / chest / fence / rail); геометрии кэшируются по shape key. `World.raycast` сохраняет voxel DDA. Default `geometry: 'selection'` пересекает `blockSelectionBoxes`. Projectiles pass `geometry: 'collision'` and use `blockCollisionBoxes`, so non-solid vegetation is skipped while player targeting is unchanged. Outline, mining и use читают selection `VoxelHit`.
+
+Block breaking overlay — `BlockBreakingOverlay`, владение у `WorldRenderer`. Это отдельный transparent mesh (`depthTest=true`, `depthWrite=false`, `polygonOffset`, `renderOrder=5`, ниже жёлтого outline `10`). Он читает уже готовый `miningProgress` и не является break authority: не вызывает `setBlock` и не dirty/remesh chunk. `setBreakingProgress(hit, progress)` прячет overlay при `progress <= 0`, `progress >= 1`, смене/пропаже target и Air. Stage = `min(9, floor(progress * 10))` для открытого интервала `(0, 1)`. Каждая face overlay использует UV 0..1 отдельной nearest-filter текстуры `public/textures/gui/destroy/destroy_stage_N.png` (оригинальные Frontier masks, не Mojang destroy sheets). Геометрия строится из тех же selection boxes, включая fence connections; cache key = `selectionShapeKey` + fence flags. Сейчас один local-player overlay; API намеренно простой для будущего `breakerId`. Instant-break (hardness ≤ 0, Creative) по-прежнему завершается в том же tick, поэтому staged cracks обычно не видны. HUD mining bar пока сохранён: его снимет отдельная UI branch.
 
 Chest не идёт в chunk cube mesh. `ChunkMesher` собирает `meshed.chests`; `ChestRenderer` держит shared body/lid/latch geometry + entity material (`entity/chest/normal`) и lightweight per-visible-chest groups. Lid hinge сзади, `targetOpen` только у открытого сундука, `openProgress` интерполируется по render dt (FPS-independent lerp). Facing пишется в `blockStates` при placement (`chestFacingFromYaw`); legacy без facing → north. Хранилище 27 slots по `x,y,z` не менялось.
 

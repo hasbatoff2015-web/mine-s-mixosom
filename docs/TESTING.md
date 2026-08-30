@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-08-31 block breaking overlay
+
+Report: `reports/2026-08-31_block-breaking-overlay.md`. Baseline `origin/main`=`a056e6f`. Branch `cursor/block-breaking-overlay-3f86`.
+
+Targeted: `tests/block-breaking-overlay.test.ts` plus retained `mining` and `lighting-torch-selection`.
+
+Contracts: stage mapping (`<=0`/`>=1` hidden, `0.01→0` … `0.9→9`), texture path `gui/destroy/destroy_stage_N`, UV 0..1 per face, shape keys for cube/slab/stairs/fence/door, target change resets visual stage, vanished block hides, same stage reuses material/map/geometry, no chunk dirty/remesh, world coordinates at x=15/16, dispose.
+
+DEV harness: `/?qaBreaking=1` (cube/slab/stairs/fence/door, keys `0–9`, `[` `]`, `C` auto-cycle). Production builds do not import the harness.
+
+Manual desktop/mobile checklist lives in the report. HUD mining bar is intentionally still present.
+
 ## 2026-08-29 lateral skylight / lighting consistency
 
 Report and full 25-step manual checklist: `reports/2026-08-29_lighting-quality-lateral-sky.md`.

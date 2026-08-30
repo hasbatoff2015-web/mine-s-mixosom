@@ -3011,6 +3011,7 @@ export class Game {
         this.camera.updateProjectionMatrix();
       }
       this.updateEnvironment(session.world.timeOfDay);
+      this.updateBreakingOverlay();
     }
     this.ui.setHurtFlash(this.hurt.flashAlpha(now));
     this.ui.fadeChatLines(now, chatLineOpacity);
@@ -3085,6 +3086,22 @@ export class Game {
   private daylightFactor(time: number): number {
     const phase = (time / 24_000) * Math.PI * 2;
     return clamp((Math.sin(phase) + 0.22) / 0.75, 0.08, 1);
+  }
+
+  private updateBreakingOverlay(): void {
+    const session = this.session;
+    if (!session) return;
+    const target = session.target;
+    const mining = this.lifecycle.state === 'PLAYING'
+      && session.miningTarget !== undefined
+      && target !== undefined
+      && session.miningTarget === `${target.x},${target.y},${target.z}`
+      && session.miningProgress > 0
+      && session.miningProgress < 1;
+    session.worldRenderer.setBreakingProgress(
+      mining ? target : undefined,
+      mining ? session.miningProgress : 0,
+    );
   }
 
   private refreshHud(): void {

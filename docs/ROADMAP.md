@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-31: block breaking overlay
+
+- [x] Visual-only 10-stage crack overlay consuming `session.miningProgress`; mining gameplay unchanged.
+- [x] Canonical `BlockBreakingOverlay` + `WorldRenderer.setBreakingProgress`; no chunk remesh on stage change.
+- [x] Shape-aware overlay from existing selection boxes (cube/slab/stairs/fence/door required; other selection shapes reuse the same path).
+- [x] Original production masks at `public/textures/gui/destroy/`; Mojang reference sheets not committed.
+- [x] DEV `/?qaBreaking=1` harness; HUD mining bar kept for the parallel UI branch.
+- [ ] Native desktop/mobile visual QA of the report checklist (dirt/stone/tools, cancel, chunk border, cave, selection outline).
+- [ ] Later integrate with the in-progress server-authoritative gameplay branch and the HUD branch that will remove the crosshair mining bar.
+
 ## 2026-08-29: lateral skylight / lighting quality
 
 - [x] Vertical baseline + bounded resumable lateral frontier, 14-step falloff, typed ring and deadline/hard work caps; 2 ms PLAYING budget and render distances retained.
