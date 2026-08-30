@@ -1,4 +1,3 @@
-import { mkdir } from 'node:fs/promises';
 import { isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
@@ -10,7 +9,7 @@ import { isKnownItemId } from '../src/items';
 import { PlayerController } from '../src/player';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
-import { ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
+import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   ClientInputMessage,
@@ -23,13 +22,16 @@ import type {
   WorldModifications,
 } from '../shared/protocol';
 import type { ServerConfig } from './config';
-import { worldDirectory } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { EventBus } from './events';
 import { PluginManager, type PlayerView, type WorldView } from './PluginManager';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { formatGameplayKernelTrace } from '../src/gameplay';
-import { WorldPersistence, type StoredPlayer, type WorldDiskState, type WorldReadyState } from './persistence';
+import { FsWorldStore } from './FsWorldStore';
+import type { WorldReadyState } from './persistence';
+import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
+import { WORLD_SCHEMA_VERSION } from '../src/save/types';
+import { placeholderPlayer } from '../src/save/snapshot';
 import { netDebug, serverLog } from './log';
 
 export interface ConnectedSink {
@@ -160,8 +162,9 @@ export class WorldInstance {
   lastTickMs = 0;
   maxTickMs = 0;
   private dirty = false;
-  private readonly persistence: WorldPersistence;
-  private storedPlayers: Record<string, StoredPlayer> = {};
+  private readonly worldStore: FsWorldStore;
+  private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
+  private createdAt = Date.now();
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
   private tickTimer: ReturnType<typeof setInterval> | undefined;
@@ -171,7 +174,7 @@ export class WorldInstance {
   private readonly kernelTrace: string[] = [];
 
   constructor(readonly config: ServerConfig) {
-    this.persistence = new WorldPersistence(worldDirectory(config));
+    this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
@@ -195,9 +198,9 @@ export class WorldInstance {
 
   async initialize(): Promise<void> {
     this.readyState = 'INITIALIZING';
-    await mkdir(this.persistence.directory, { recursive: true });
-    const existing = await this.persistence.load();
+    const existing = await this.worldStore.load(this.worldId);
     if (existing) {
+      this.createdAt = existing.summary.createdAt;
       this.world.restore({
         timeOfDay: existing.timeOfDay,
         modifications: existing.modifications,
@@ -205,23 +208,25 @@ export class WorldInstance {
         furnaces: (existing.furnaces ?? {}) as never,
         blockStates: existing.blockStates,
       });
-      this.spawn = [existing.meta.spawn[0], existing.meta.spawn[1], existing.meta.spawn[2]];
-      this.storedPlayers = existing.players;
-      for (const stored of Object.values(existing.players)) {
+      const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
+      this.spawn = [spawn[0], spawn[1], spawn[2]];
+      this.storedPlayers = existing.players ?? {};
+      for (const stored of Object.values(this.storedPlayers)) {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
       }
       this.gameplay.restoreEntities(existing);
       this.preloadSpawnChunks();
       this.readyState = 'READY';
-      serverLog(`world loaded: ${this.worldId} from ${this.persistence.directory}`);
+      serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
       return;
     }
     this.spawn = estimateWorldSpawn(this.world);
+    this.createdAt = Date.now();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
     this.readyState = 'READY';
-    serverLog(`world created: ${this.worldId} at ${this.persistence.directory}`);
+    serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
     serverLog(
       'Fresh procedural Anarchy world. Browser IndexedDB is not imported. To load an exported dump: npm run server:import -- <dump.json>',
     );
@@ -243,28 +248,41 @@ export class WorldInstance {
   }
 
   async save(): Promise<void> {
-    const players: Record<string, StoredPlayer> = { ...this.storedPlayers };
+    const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
     for (const player of this.players.values()) {
       players[player.id] = this.toStored(player);
     }
     this.storedPlayers = players;
     const entities = this.gameplay.persistEntities();
-    const state: WorldDiskState = {
-      meta: {
-        worldId: this.worldId,
+    const snapshot: WorldSnapshot = {
+      schemaVersion: WORLD_SCHEMA_VERSION,
+      summary: {
+        id: this.worldId,
+        name: this.worldId === ANARCHY_WORLD_ID ? 'Анархия' : this.worldId,
         seed: this.seed,
-        spawn: this.spawn,
-        createdAt: Date.now(),
+        mode: 'survival',
+        kind: 'server',
+        ...(this.worldId === ANARCHY_WORLD_ID ? { serverId: ANARCHY_SERVER_ID } : {}),
+        createdAt: this.createdAt,
         updatedAt: Date.now(),
-        readyState: 'READY',
+        playTimeSeconds: 0,
       },
       timeOfDay: this.world.timeOfDay,
+      weather: 'clear',
+      player: placeholderPlayer(this.spawn),
+      players,
       modifications: this.world.serializeModifications(),
       blockStates: this.world.serializeBlockStates(),
-      players,
       ...entities,
+      serverWorld: {
+        id: this.worldId,
+        initialized: true,
+        spawnImported: true,
+        importVersion: ANARCHY_IMPORT_VERSION,
+        spawn: this.spawn,
+      },
     };
-    await this.persistence.save(state);
+    await this.worldStore.save(snapshot);
     this.dirty = false;
   }
 
@@ -791,7 +809,7 @@ export class WorldInstance {
     });
   }
 
-  private materializeStoredPlayer(stored: StoredPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
+  private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
     const controller = new PlayerController({
       position: [stored.x, stored.y, stored.z],
       yaw: stored.yaw,
@@ -843,7 +861,7 @@ export class WorldInstance {
     return createStarterInventory();
   }
 
-  private toStored(player: ServerPlayer): StoredPlayer {
+  private toStored(player: ServerPlayer): SerializedPersistedPlayer {
     const snap = player.snapshot();
     return {
       id: player.id,

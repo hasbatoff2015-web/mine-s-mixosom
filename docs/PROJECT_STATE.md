@@ -2,6 +2,14 @@
 
 Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Phase 5 persistence port
+
+- Ветка `cursor/shared-persistence-port-bbb1` от death-animation HEAD `7ae826b` (`cursor/entity-death-animation-smoothness-bbb1`, PR **#25**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 6 (RNG/lighting adapters).**
+- Canonical gameplay record: `WorldSnapshot` (`SerializedWorldState`, `WORLD_SCHEMA_VERSION = 1`). `WorldStore`: load/save/exists (+ delete/list). SP `IdbWorldStore` (тот же IndexedDB `frontier-cubes-saves` / `worlds`). Server `FsWorldStore` → `server/data/worlds/<id>/{meta,world,players}.json`.
+- Mapper `snapshotToFsRecords` / `fsRecordsToSnapshot`. Import: dump → `parseWorldSnapshot` → `FsWorldStore`. Corrupt existing FS throws `PersistenceError` (no silent procedural reset). Concurrent FS saves queued. Snapshot только на save/export.
+- Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost, protocol, spawn, Anarchy world id/directory, IDB names, visual clocks.
+- Report: `docs/reports/2026-08-30_shared-persistence-port.md`. Draft PR stacked on **#25**. Owner local QA (SP save/load + Anarchy restart). **Не merge.**
+
 ## Последний проход: entity death animation smoothness
 
 - Ветка `cursor/entity-death-animation-smoothness-bbb1` от Phase 4 HEAD `fee6604` (`cursor/shared-entity-host-bbb1`, PR **#24**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 5+.**
@@ -11,7 +19,7 @@
 - Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost interface, hurt-flash sharing, server 20 TPS, protocol, interpolation buffer (кроме использования как base pose).
 - Targeted: `entity-death-animation` **11/11**. Also entity-host, interpolation, visual-events, hurt-flash, creeper death, kernel, arrows, anarchy-gameplay packs green. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
 - Full `npm run check`: **1133 passed / 7 failed** (authored ENOENT `bucket_empty.png` + minecart 5s timeouts, same pre-existing class as PR #24) + 1 vitest RPC timeout. Not hidden; not from this pass.
-- Report: `docs/reports/2026-08-30_entity-death-animation-smoothness.md`. Draft PR **#25** stacked on **#24**. Owner local QA (SP kill + Anarchy kill + two clients). **Не merge.**
+- Report: `docs/reports/2026-08-30_entity-death-animation-smoothness.md`. Draft PR **#25** stacked on **#24**. Owner local QA **принят.** Phase 5 persistence — этот проход.
 
 ## Последний проход: Phase 4 EntityHost
 

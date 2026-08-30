@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-08-30: Phase 5 persistence port
+
+- [x] Canonical `WorldSnapshot` (`schemaVersion` 1) shared by Singleplayer and Server.
+- [x] `WorldStore` + `IdbWorldStore` (existing IndexedDB names) + `FsWorldStore` (existing `meta`/`world`/`players` files).
+- [x] Mapper layer; `server:import` goes dump → snapshot → store.
+- [x] Corrupt FS save throws; empty dir still creates. Anarchy id/path/spawn policy unchanged.
+- [x] Tests: `world-snapshot`, `idb-world-store`, `fs-world-store` + existing anarchy persist.
+- [ ] Owner local QA: SP existing world round-trip; Anarchy restart; two clients after restart.
+- [ ] Do not merge main. Do not start Phase 6 (RNG + lighting adapters). Draft PR stacked on **#25**.
+
 ## 2026-08-30: entity death animation smoothness
 
 - [x] Client render-clock for mob death pose (`deathVisualElapsed` from `Game.frame` / `rawElapsed`). Simulation `deathSeconds` stays 20 TPS for lifetime/removal.
@@ -8,8 +18,8 @@
 - [x] Interpolation supplies base x/y/z/yaw; death rotation.z / scale applied on top in `syncMob`.
 - [x] Regression tests in `tests/entity-death-animation.test.ts` (11, headless elapsed + mesh pose).
 - [x] Targeted packs + `tsc` + production build 3.64 MiB / 221 files. Full check 1133/7 baseline failures unchanged.
-- [ ] Owner local QA: SP kill unchanged; Anarchy + two clients smooth death; other living mobs keep moving.
-- [ ] Do not merge main. Do not start Phase 5+. Draft PR **#25** stacked on PR **#24**, not `origin/main`.
+- [x] Owner local QA: SP kill unchanged; Anarchy + two clients smooth death; other living mobs keep moving.
+- [x] Phase 5 persistence port is on `cursor/shared-persistence-port-bbb1` (stacked on #25). **Do not start Phase 6.**
 
 ## 2026-08-30: Phase 4 EntityHost
 

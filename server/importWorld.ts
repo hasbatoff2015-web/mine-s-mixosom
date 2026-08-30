@@ -1,10 +1,11 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { loadServerConfig, worldDirectory } from './config';
+import { readFile } from 'node:fs/promises';
+import { loadServerConfig } from './config';
+import { FsWorldStore } from './FsWorldStore';
+import { importWorldDump } from './importDump';
 import { serverLog } from './log';
 
 /**
- * Explicit one-shot import of a SerializedWorldState JSON dump (IndexedDB export)
+ * Explicit one-shot import of a WorldSnapshot JSON dump (IndexedDB export)
  * into server filesystem storage. Never runs on ordinary server startup.
  *
  * Usage: npm run server:import -- path/to/anarchy-idb.json
@@ -18,50 +19,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const config = loadServerConfig();
-  const directory = worldDirectory(config);
-  const raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
-  const summary = raw.summary as { id?: string; seed?: string } | undefined;
-  const serverWorld = raw.serverWorld as { spawn?: number[] } | undefined;
-  const player = raw.player as { position?: number[]; spawnPoint?: number[] } | undefined;
-  const spawn = serverWorld?.spawn ?? player?.spawnPoint ?? player?.position;
-  if (!Array.isArray(spawn) || spawn.length < 3) {
-    throw new Error('Dump is missing spawn/player position.');
-  }
-  await mkdir(directory, { recursive: true });
-  const metaPath = join(directory, 'meta.json');
-  try {
-    await readFile(metaPath, 'utf8');
-    if (!force) {
-      throw new Error(`World already exists at ${directory}. Pass --force to overwrite.`);
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && error instanceof Error && error.message.includes('already exists')) {
-      throw error;
-    }
-  }
-  const now = Date.now();
-  await writeFile(metaPath, `${JSON.stringify({
-    worldId: summary?.id ?? config.worldId,
-    seed: summary?.seed ?? config.worldSeed,
-    spawn,
-    createdAt: now,
-    updatedAt: now,
-    readyState: 'READY',
-  }, null, 2)}\n`);
-  await writeFile(join(directory, 'world.json'), `${JSON.stringify({
-    timeOfDay: typeof raw.timeOfDay === 'number' ? raw.timeOfDay : 0,
-    modifications: raw.modifications ?? {},
-    blockStates: raw.blockStates ?? {},
-    chests: raw.chests ?? {},
-    furnaces: raw.furnaces ?? {},
-    droppedItems: raw.droppedItems ?? [],
-    mobs: raw.mobs ?? [],
-    minecarts: raw.minecarts ?? [],
-    fallingBlocks: raw.fallingBlocks ?? [],
-    redstone: raw.redstone ?? undefined,
-  }, null, 2)}\n`);
-  await writeFile(join(directory, 'players.json'), `${JSON.stringify({ players: {} }, null, 2)}\n`);
-  serverLog(`imported IndexedDB dump into ${directory}`);
+  const store = new FsWorldStore(config.dataDir);
+  const raw = JSON.parse(await readFile(file, 'utf8')) as unknown;
+  await importWorldDump({
+    store,
+    worldId: config.worldId,
+    fallbackSeed: config.worldSeed,
+    raw,
+    force,
+  });
+  serverLog(`imported IndexedDB dump into ${store.directoryFor(config.worldId)}`);
   console.log('Restart the server to load the imported Anarchy world. Schematic files were not used.');
 }
 

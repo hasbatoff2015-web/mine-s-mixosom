@@ -1,5 +1,9 @@
 export type GameMode = 'survival' | 'creative';
 
+/** Serialized gameplay state schema. Independent of network protocol and schematic import version. */
+export const WORLD_SCHEMA_VERSION = 1;
+export type WorldSchemaVersion = typeof WORLD_SCHEMA_VERSION;
+
 export interface WorldSummary {
   id: string;
   name: string;
@@ -13,6 +17,7 @@ export interface WorldSummary {
   serverId?: string;
 }
 
+/** Singleplayer local player, and the host blob in IndexedDB Anarchy dumps. */
 export interface SerializedPlayerState {
   position: [number, number, number];
   velocity: [number, number, number];
@@ -28,6 +33,28 @@ export interface SerializedPlayerState {
   inventory: unknown;
 }
 
+/**
+ * Authoritative multiplayer player row (filesystem `players.json`).
+ * Session token is identity for reconnect, not a visual field.
+ */
+export interface SerializedPersistedPlayer {
+  readonly id: string;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly health: number;
+  readonly gamemode: GameMode;
+  readonly selectedSlot: number;
+  readonly inventory: unknown;
+  readonly sessionToken?: string;
+  readonly updatedAt: number;
+  readonly survival?: unknown;
+  readonly cursor?: unknown;
+}
+
 export interface SerializedServerWorld {
   id: string;
   initialized: boolean;
@@ -37,12 +64,18 @@ export interface SerializedServerWorld {
   report?: unknown;
 }
 
-export interface SerializedWorldState {
-  schemaVersion: 1;
+/**
+ * Canonical gameplay snapshot. Storage adapters map this to IndexedDB or
+ * meta.json / world.json / players.json. Not a Three.js / input / HUD dump.
+ */
+export interface WorldSnapshot {
+  schemaVersion: WorldSchemaVersion;
   summary: WorldSummary;
   timeOfDay: number;
   weather: 'clear';
   player: SerializedPlayerState;
+  /** Server roster. Omitted on ordinary singleplayer IndexedDB records. */
+  players?: Record<string, SerializedPersistedPlayer>;
   modifications: Record<string, Record<string, number>>;
   chests: Record<string, unknown>;
   furnaces: Record<string, unknown>;
@@ -54,3 +87,6 @@ export interface SerializedWorldState {
   fallingBlocks?: unknown[];
   serverWorld?: SerializedServerWorld;
 }
+
+/** Historical name of the IndexedDB record. Same object as `WorldSnapshot`. */
+export type SerializedWorldState = WorldSnapshot;

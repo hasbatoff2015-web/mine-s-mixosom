@@ -57,7 +57,7 @@ import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
 import type { EventBus } from './events';
-import type { WorldDiskState } from './persistence';
+import type { WorldSnapshot } from '../src/save/types';
 
 export const ENTITY_INTEREST_RADIUS = 48;
 const INTEREST_SQ = ENTITY_INTEREST_RADIUS * ENTITY_INTEREST_RADIUS;
@@ -466,7 +466,10 @@ export class ServerGameplay {
     return packEntitySnapshots({ arrows, tnt, falling, minecarts, mobs, items });
   }
 
-  persistEntities(): Pick<WorldDiskState, 'droppedItems' | 'mobs' | 'minecarts' | 'fallingBlocks' | 'redstone' | 'chests' | 'furnaces'> {
+  persistEntities(): Pick<
+    WorldSnapshot,
+    'droppedItems' | 'mobs' | 'minecarts' | 'fallingBlocks' | 'redstone' | 'chests' | 'furnaces'
+  > {
     return {
       droppedItems: this.drops.serialize(),
       mobs: this.mobs.serialize(),
@@ -478,7 +481,10 @@ export class ServerGameplay {
     };
   }
 
-  restoreEntities(state: WorldDiskState): void {
+  restoreEntities(state: Pick<
+    WorldSnapshot,
+    'droppedItems' | 'mobs' | 'minecarts' | 'fallingBlocks' | 'redstone'
+  >): void {
     if (state.droppedItems?.length) this.drops.restore(state.droppedItems as never);
     if (state.mobs?.length) this.mobs.restore(state.mobs as never);
     if (state.minecarts?.length) this.minecarts.restore(state.minecarts as never);

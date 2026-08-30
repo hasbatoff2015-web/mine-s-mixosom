@@ -138,8 +138,8 @@ import {
   maybeSlowSnapshot,
 } from '../debug/chunkStreamingRuntime';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
-import { SaveService } from '../save/SaveService';
-import type { GameMode, SerializedServerWorld, SerializedWorldState, WorldSummary } from '../save/types';
+import { IdbWorldStore } from '../save/IdbWorldStore';
+import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
@@ -294,7 +294,7 @@ export class Game {
   private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.05, 650);
   private readonly lifecycle = new GameLifecycleManager();
   private readonly audio = new AudioManager();
-  private readonly saves = new SaveService();
+  private readonly worldStore = new IdbWorldStore();
   private readonly yandex = new YandexGamesService();
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
@@ -465,7 +465,7 @@ export class Game {
     this.resize();
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
     await Promise.all([
-      this.saves.initialize().catch((error) => console.warn('IndexedDB unavailable, saves remain in memory.', error)),
+      this.worldStore.initialize().catch((error) => console.warn('IndexedDB unavailable, saves remain in memory.', error)),
       this.yandex.initialize(
         () => this.pauseForPlatform(),
         () => this.resumeFromPlatform(),
@@ -501,7 +501,7 @@ export class Game {
     this.arrowVisuals?.dispose();
     this.atlas?.dispose();
     this.renderer.dispose();
-    this.saves.close();
+    this.worldStore.close();
     this.yandex.dispose();
     this.profiler.dispose();
   }
@@ -917,7 +917,7 @@ export class Game {
 
   private async openAnarchyWorld(): Promise<void> {
     this.ui.showLoading('Открываем Анархию…', 8, 'Локальный мир сервера');
-    const existing = await this.saves.loadWorld(ANARCHY_WORLD_ID);
+    const existing = await this.worldStore.loadWorld(ANARCHY_WORLD_ID);
     const startup = resolveAnarchyStartup(existing);
 
     if (startup.action === 'restore') {
@@ -958,7 +958,7 @@ export class Game {
   }
 
   private async showWorldList(): Promise<void> {
-    const worlds = await this.saves.listWorlds();
+    const worlds = await this.worldStore.listWorlds();
     this.ui.showWorldList(worlds, {
       load: (id) => void this.loadWorld(id),
       create: () => this.ui.showCreateWorld({
@@ -966,7 +966,7 @@ export class Game {
         back: () => void this.showWorldList(),
       }),
       delete: async (id) => {
-        await this.saves.deleteWorld(id);
+        await this.worldStore.deleteWorld(id);
         await this.showWorldList();
       },
       back: () => this.showMainMenu(),
@@ -974,7 +974,7 @@ export class Game {
   }
 
   private async createWorld(name: string, seed: string, mode: GameMode): Promise<void> {
-    const summary = this.saves.createSummary(name, seed, mode);
+    const summary = this.worldStore.createSummary(name, seed, mode);
     const world = new VoxelWorld(summary.seed);
     world.deferredLighting = true;
     const inventory = new Inventory();
@@ -985,7 +985,7 @@ export class Game {
 
   private async loadWorld(id: string): Promise<void> {
     this.ui.showLoading('Читаем сохранённый мир…');
-    const state = await this.saves.loadWorld(id);
+    const state = await this.worldStore.loadWorld(id);
     if (!state) {
       this.ui.toast('Сохранение не найдено');
       await this.showWorldList();
@@ -1990,7 +1990,7 @@ export class Game {
     const session = this.session;
     if (!session || session.online) return;
     const state: SerializedWorldState = {
-      schemaVersion: 1,
+      schemaVersion: WORLD_SCHEMA_VERSION,
       summary: {
         ...session.summary,
         playTimeSeconds: session.playTicks / TICK_RATE,
@@ -2024,7 +2024,7 @@ export class Game {
       ...(session.serverWorld ? { serverWorld: session.serverWorld } : {}),
     };
     session.summary = state.summary;
-    this.lastSavePromise = this.lastSavePromise.then(() => this.saves.saveWorld(state)).catch((error) => {
+    this.lastSavePromise = this.lastSavePromise.then(() => this.worldStore.saveWorld(state)).catch((error) => {
       console.error('Autosave failed.', error);
       this.ui.toast('Не удалось сохранить мир');
     });

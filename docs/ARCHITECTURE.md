@@ -77,7 +77,7 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 
 Это браузерная voxel alpha с **двумя режимами мира**:
 
-- **Singleplayer** — client-authoritative, IndexedDB (`SaveService`).
+- **Singleplayer** — client-authoritative, `WorldSnapshot` via `IdbWorldStore` (IndexedDB `frontier-cubes-saves` / `worlds`).
 - **Online Anarchy** — отдельный Node process (`npm run dev:server`), WebSocket JSON protocol, server-authoritative world/player/blocks. Localhost now; VPS later is config, not a rewrite.
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
@@ -106,12 +106,12 @@ flowchart TD
   Game --> Combat["CombatSystem + PlayerArrowManager"]
   Game --> Entities["MobManager + DroppedItemManager + MinecartManager"]
   Game --> Redstone["RedstoneSystem"]
-  Game --> Save["SaveService / IndexedDB (singleplayer)"]
+  Game --> Save["IdbWorldStore / IndexedDB"]
   Game --> Net["AnarchyClient WebSocket"]
   Net --> Server["Frontier Cubes Server (Node)"]
   Server --> WorldInst["WorldInstance + ServerGameplay"]
   WorldInst --> Kernel
-  Server --> Persist["server/data/worlds/anarchy"]
+  Server --> Persist["FsWorldStore / server/data/worlds/anarchy"]
   Game --> Platform["YandexGamesService"]
   World --> Blocks["Block registry"]
   UI --> Inventory["Inventory + crafting"]
@@ -119,7 +119,7 @@ flowchart TD
   Entities --> World
   Redstone --> World
   Combat --> Entities
-  Save --> Serialized["SerializedWorldState v1"]
+  Save --> Serialized["WorldSnapshot schema v1"]
 ```
 
 Главный принцип: `Game` соединяет системы, но правила blocks/items/crafting, player physics, survival formulas и entity simulation остаются в отдельных модулях, которые можно тестировать без WebGL UI.
@@ -242,6 +242,29 @@ Rendering still wraps `facingVector` / `attachmentNormal` as `THREE.Vector3` for
 **Not here:** second MobManager, moving `src/rendering/` folders, EntityHost as a gameplay loop, protocol, persistence/RNG/plugins.
 
 Death pose is **not** a 20 TPS network animation. Server/sim `MobEntity.deathSeconds` still advances on the fixed tick for `finishDeath` / `shouldKeepRemoteDeath`. Client-only `deathVisualElapsed` advances from `Game.frame` via `MobManager.advanceDeathVisuals(rawElapsed)` (one pass over living mobs, same loop as shared fire animation). `ThreeEntityHost.syncMob` still uses the existing curve (`deathSeconds / 0.7` → `rotation.z = progress * π/2`, `scale = 1 - progress * 0.25`); the field is fed render elapsed when the visual clock is active. `applyAuthoritativeDeath` / `beginDeath` arm that clock once. Entity interpolator samples base x/y/z/yaw; death visual transform is applied after that pose.
+
+### Shared persistence port (Phase 5)
+
+Simulation talks to `WorldSnapshot` + `WorldStore`. Adapters own IndexedDB vs filesystem. GameplayKernel / useInteraction / blockGeometry / EntityHost / protocol are unchanged.
+
+```text
+             WorldSnapshot (schema v1)
+                       │
+             ┌─────────┴──────────┐
+             │                    │
+        IdbWorldStore        FsWorldStore
+             │                    │
+     frontier-cubes-saves   server/data/worlds/<id>/
+```
+
+- **Snapshot:** `src/save/types.ts` `WorldSnapshot` (alias `SerializedWorldState`). `WORLD_SCHEMA_VERSION = 1`, independent of protocol version and schematic `importVersion`.
+- **Player:** SP `player: SerializedPlayerState`. Server roster `players?: Record<id, SerializedPersistedPlayer>` (filesystem `players.json`).
+- **Entities:** existing manager `serialize()` blobs (drops, mobs, minecarts, falling, redstone). No meshes, interpolators, `deathVisualElapsed`, hurt flash.
+- **Store:** `load` / `save` / `exists` / optional `delete` / `list`.
+- **IDB:** database name and store key unchanged. `SaveService` remains the IDB engine; `IdbWorldStore` parses/validates.
+- **FS:** still `meta.json` + `world.json` + `players.json`. Mapper `snapshotToFsRecords` / `fsRecordsToSnapshot`. Writes are queued; files use temp+rename; `world.json`/`players.json` then `meta.json`.
+- **Empty vs corrupt:** missing `meta.json` → `null` (create). Existing corrupt/incomplete files throw `PersistenceError` — no silent procedural overwrite.
+- **Import:** `npm run server:import` parses a dump as `WorldSnapshot` then `FsWorldStore.save`. Not startup. Not `.schem`.
 
 ## Lifecycle
 
@@ -526,20 +549,27 @@ HUD обновляется с частотой `10 Hz` и меняет DOM то�
 flowchart LR
   Generator["Seeded base terrain"] --> World["VoxelWorld"]
   Delta["Chunk modifications"] --> World
-  World --> Snapshot["SerializedWorldState v1"]
+  World --> Snapshot["WorldSnapshot schema v1"]
   Player["Player + inventory"] --> Snapshot
   Containers["Chests + furnaces"] --> Snapshot
-  Entities["Drops + mobs"] --> Snapshot
+  Entities["Drops + mobs + carts"] --> Snapshot
   RedstoneSave["Sources + primed TNT"] --> Snapshot
-  Snapshot --> IDB["IndexedDB worlds store"]
+  Snapshot --> Store["WorldStore"]
+  Store --> IDB["IdbWorldStore"]
+  Store --> FS["FsWorldStore"]
   IDB --> Restore["Generate + apply deltas + restore session"]
+  FS --> ServerRestore["WorldInstance restore"]
 ```
 
-`SaveService` делает structured clones на границе storage и сортирует summaries по `updatedAt`. Autosaves сериализуются через promise chain, чтобы параллельные записи не обгоняли друг друга.
+`WorldSnapshot` is the canonical gameplay record (`SerializedWorldState` is the same type). `WORLD_SCHEMA_VERSION` is 1. Future versions fail parse instead of wiping the world. Visual clocks and Three.js objects are not stored.
 
-Если IndexedDB отсутствует, используется in-memory Map. Это graceful degradation, но не durable save.
+`IdbWorldStore` wraps `SaveService`: IndexedDB database `frontier-cubes-saves`, store `worlds`, key `summary.id`. Structured clone on the storage boundary; summaries sorted by `updatedAt`; autosaves still chained in `Game`. Missing IndexedDB falls back to an in-memory Map (not durable).
 
-**Online Anarchy** не пишет IndexedDB. Authoritative persist — `server/data/worlds/<worldId>/` (`meta.json`, `world.json`, `players.json`). Тот же `VoxelWorld.serializeModifications()` / `restore()` формат, что и singleplayer deltas.
+`FsWorldStore` maps the snapshot onto `server/data/worlds/<worldId>/` (`meta.json`, `world.json`, `players.json`). Layout is not a single JSON file. Concurrent `save` calls are serialized. Corrupt existing files throw `PersistenceError`.
+
+**Online Anarchy** does not write IndexedDB. Server persist interval and shutdown save are unchanged. Snapshot creation runs only on save/export, not per tick.
+
+`npm run server:import -- dump.json` is IndexedDB dump → `WorldSnapshot` → `FsWorldStore`. It does not run at startup and does not read `.schem`.
 
 ## Yandex adapter
 
@@ -577,7 +607,7 @@ DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution **with LAST S
 
 - Новый block: выделить новый stable `BlockId`, добавить registry definition, runtime texture whitelist и tests; при special shape добавить model/collision/state явно.
 - Новый item: definition + texture + recipe/drop path + stack/equipment tests.
-- Новая save field: обновить `SerializedWorldState`, validation, round-trip test и migration policy.
+- Новая save field: обновить `WorldSnapshot` / `SerializedWorldState`, `parseWorldSnapshot`, round-trip test и schema version policy.
 - Новая simulation system: fixed tick ownership у `Game`, bounded collections, explicit dispose и serializable state при необходимости.
 - Redstone extension: сохранять derived/sourced state boundary, bounded propagation и общий explosion event contract; advanced component не должен обходить эти ограничения.
 - Platform feature: держать за adapter boundary; local mode должен оставаться playable.

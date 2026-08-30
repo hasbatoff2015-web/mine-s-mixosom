@@ -93,9 +93,13 @@ server/data/worlds/anarchy/
   players.json   # last known player snapshots (inventory, survival, cursor)
 ```
 
+Logical gameplay state is `WorldSnapshot` (`src/save/types.ts`). `FsWorldStore` maps that snapshot onto the three files. Do not treat `WorldDiskState` as a second independent format.
+
 Paths are relative to the process working directory. Do not put `C:\Users\...` in server code.
 
 After restart the server **loads** this folder. It does **not** regenerate terrain deltas and does **not** import `.schem`.
+
+Missing `meta.json` = empty world (procedural create). Corrupt or incomplete existing files throw `PersistenceError` and must not be overwritten with a new procedural world.
 
 ## Authority
 
@@ -117,7 +121,7 @@ Mobs / drops / arrows / minecarts / TNT / falling blocks: the same ~80 ms snapsh
 
 Server → client also includes `entity_event` (`hurt`, `death`, `projectile_spawn`, `projectile_hit`) keyed by `entityId`. Interest snapshots put arrows/TNT before mobs/items so the cap of 96 cannot starve projectiles.
 
-**Singleplayer** is unchanged: IndexedDB via `SaveService`, no server required.
+**Singleplayer** uses `IdbWorldStore` (IndexedDB `frontier-cubes-saves` / `worlds`). No server required. Logical record is `WorldSnapshot` (`schemaVersion` 1).
 
 IndexedDB may still hold a historical `anarchy` world from before this pass. That copy is **not** shared across machines and is **not** the online authority.
 
@@ -168,7 +172,7 @@ This pass:
 
 To move the IndexedDB world onto the server:
 
-1. Export the IndexedDB record `frontier-cubes-saves` / `worlds` / id `anarchy` as JSON (`SerializedWorldState`).
+1. Export the IndexedDB record `frontier-cubes-saves` / `worlds` / id `anarchy` as JSON (`WorldSnapshot` / `SerializedWorldState`).
 2. Run **explicitly** (never on ordinary startup):
 
 ```bash
