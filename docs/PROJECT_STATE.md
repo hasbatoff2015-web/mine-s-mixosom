@@ -2,6 +2,14 @@
 
 Срез: **2026-08-30**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online Anarchy chest GUI sync
+
+- Ветка `cursor/chest-online-sync-fix-bbb1` от Phase 5 HEAD `cc74c11` (`cursor/shared-persistence-port-bbb1`, PR **#26**). **Не merge в main.** Не Phase 6. Persistence / GameplayKernel / protocol types не менялись.
+- Root cause: server already sent `inventory.window.slots` after each click, but the client applied those slots only when opening the GUI (`!isInventoryOpen()`). An already-open chest kept the stale `getChest().slots` array; player inventory/cursor did refresh. Close→reopen looked correct.
+- Fix: `applyAuthoritativeContainerSlots` always; `shouldOpenOnlineContainer` only for the first open. Server `flushSharedContainerViewers` sends the same `inventory` packet to other players with that chest/furnace open.
+- Targeted: `online-container-sync` + `anarchy-chest-sync` + container/inventory/anarchy-server/kernel/use. `tsc` clean.
+- Report: `docs/reports/2026-08-30_chest-online-sync.md`. Draft PR stacked on **#26**. Owner local QA. **Не merge. Не начинать Phase 6.**
+
 ## Последний проход: Phase 5 persistence port
 
 - Ветка `cursor/shared-persistence-port-bbb1` от death-animation HEAD `7ae826b` (`cursor/entity-death-animation-smoothness-bbb1`, PR **#25**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 6 (RNG/lighting adapters).**

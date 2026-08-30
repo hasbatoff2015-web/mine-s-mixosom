@@ -1,5 +1,11 @@
 export { AnarchyClient, anarchyClientUrl, anarchyStatusUrl, fetchAnarchyStatus } from './AnarchyClient';
 export {
+  applyAuthoritativeContainerSlots,
+  parseNetworkItemStack,
+  parseNetworkItemStacks,
+  shouldOpenOnlineContainer,
+} from './onlineContainerSync';
+export {
   clientLookAfterSnapshot,
   ingestAuthoritativePosition,
   shouldAcceptSnapshot,

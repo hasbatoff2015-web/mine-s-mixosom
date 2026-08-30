@@ -4,7 +4,7 @@ import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
-import type { InventoryWindow } from '../src/inventory/inventoryUiAction';
+import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId } from '../src/items';
 import { PlayerController } from '../src/player';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
@@ -419,6 +419,7 @@ export class WorldInstance {
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    this.flushSharedContainerViewers(player);
   }
 
   attack(player: ServerPlayer): void {
@@ -705,6 +706,15 @@ export class WorldInstance {
         slots: chest?.slots ?? furnace?.slots,
       },
     });
+  }
+
+  /** Other clients with the same chest/furnace open must see the mutation immediately. */
+  private flushSharedContainerViewers(actor: ServerPlayer): void {
+    for (const other of this.players.values()) {
+      if (other.id === actor.id || !other.connected) continue;
+      if (!sameSharedContainerWindow(actor.window, other.window)) continue;
+      this.flushPlayerInventory(other, true);
+    }
   }
 
   private flushHealthIfDeadThenRespawn(player: ServerPlayer): void {

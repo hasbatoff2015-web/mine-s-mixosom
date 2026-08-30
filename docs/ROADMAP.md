@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-08-30: Online Anarchy chest GUI sync
+
+- [x] Apply `inventory.window.slots` to the live chest/furnace object while the container GUI is already open.
+- [x] Flush the existing `inventory` message to every connected player viewing the same chest/furnace.
+- [x] No new protocol type. No GameplayKernel / persistence / Phase 6 changes.
+- [x] Tests: `online-container-sync`, `anarchy-chest-sync`, existing container/inventory/anarchy packs.
+- [ ] Owner local QA: put/take visible immediately; two clients; close/reopen still matches. **Do not merge main. Do not start Phase 6.**
+
 ## 2026-08-30: Phase 5 persistence port
 
 - [x] Canonical `WorldSnapshot` (`schemaVersion` 1) shared by Singleplayer and Server.

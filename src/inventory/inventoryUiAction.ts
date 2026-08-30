@@ -23,6 +23,21 @@ export interface InventoryWindow {
   z?: number;
 }
 
+export function isSharedContainerWindow(window: InventoryWindow): boolean {
+  return (window.kind === 'chest' || window.kind === 'furnace')
+    && window.x !== undefined
+    && window.y !== undefined
+    && window.z !== undefined;
+}
+
+export function sameSharedContainerWindow(a: InventoryWindow, b: InventoryWindow): boolean {
+  return isSharedContainerWindow(a)
+    && a.kind === b.kind
+    && a.x === b.x
+    && a.y === b.y
+    && a.z === b.z;
+}
+
 export interface InventoryUiState {
   inventory: Inventory;
   cursor: ItemStack | null;

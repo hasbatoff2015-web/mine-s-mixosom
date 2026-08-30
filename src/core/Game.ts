@@ -157,6 +157,12 @@ import {
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
 import {
+  applyAuthoritativeContainerSlots,
+  parseNetworkItemStack,
+  parseNetworkItemStacks,
+  shouldOpenOnlineContainer,
+} from '../net/onlineContainerSync';
+import {
   clientLookAfterSnapshot,
   ingestAuthoritativePosition,
   shouldAcceptSnapshot,
@@ -733,8 +739,16 @@ export class Game {
           session.player.creativeFlightAllowed = message.gamemode === 'creative';
         }
         if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
-        this.ui.applyAuthoritativeCursor(this.parseOnlineStack(message.cursor), this.parseOnlineStacks(message.craftSlots));
-        if (message.window?.kind && message.window.kind !== 'inventory' && !this.ui.isInventoryOpen()) {
+        applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
+        this.ui.applyAuthoritativeCursor(
+          parseNetworkItemStack(message.cursor),
+          parseNetworkItemStacks(message.craftSlots),
+        );
+        if (
+          shouldOpenOnlineContainer(message.window?.kind, this.ui.isInventoryOpen())
+          && message.window?.kind
+          && message.window.kind !== 'inventory'
+        ) {
           this.openOnlineContainer(session, message.window.kind, message.window);
         }
         this.refreshHud();
@@ -750,22 +764,6 @@ export class Game {
     }
   }
 
-  private parseOnlineStack(value: unknown): ItemStack | null {
-    if (!value || typeof value !== 'object') return null;
-    const record = value as { itemId?: unknown; count?: unknown };
-    if (typeof record.itemId !== 'string' || typeof record.count !== 'number') return null;
-    try {
-      return createItemStack(record.itemId, record.count);
-    } catch {
-      return null;
-    }
-  }
-
-  private parseOnlineStacks(value: unknown): Array<ItemStack | null> | undefined {
-    if (!Array.isArray(value)) return undefined;
-    return value.map((entry) => this.parseOnlineStack(entry));
-  }
-
   private openOnlineContainer(
     session: GameSession,
     kind: 'crafting-table' | 'chest' | 'furnace',
@@ -774,15 +772,7 @@ export class Game {
     const x = window.x ?? 0;
     const y = window.y ?? 0;
     const z = window.z ?? 0;
-    if (kind === 'chest' && Array.isArray(window.slots)) {
-      const chest = session.world.getChest(x, y, z);
-      chest.slots = window.slots.map((entry) => this.parseOnlineStack(entry));
-    }
-    if (kind === 'furnace' && Array.isArray(window.slots)) {
-      const furnace = session.world.getFurnace(x, y, z);
-      const parsed = window.slots.map((entry) => this.parseOnlineStack(entry));
-      furnace.slots = [parsed[0] ?? null, parsed[1] ?? null, parsed[2] ?? null];
-    }
+    applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack);
     this.openBlockInventory(kind, {
       x, y, z,
       block: kind === 'chest' ? BlockId.Chest : kind === 'furnace' ? BlockId.Furnace : BlockId.CraftingTable,

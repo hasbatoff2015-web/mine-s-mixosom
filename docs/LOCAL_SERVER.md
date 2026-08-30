@@ -153,6 +153,8 @@ Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`
 
 Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`, `entity_snapshot`, `entity_event`, `health`, `effects`, `time`, `command_result`
 
+`inventory` is also the chest/furnace GUI sync: `window.slots` is applied to the live container even while that GUI is already open. Other players viewing the same chest receive the same message (their inventory + shared slots). No extra protocol type.
+
 `block_result` is sent to the requester on every break/place (ok or reason: `reach` / `bounds` / `empty` / `occupied` / `inventory` / …). `player_state.tick` is monotonic; clients drop stale snapshots.
 
 Shared types: `shared/protocol.ts`. Incoming messages are type-checked; client coordinates/inventory/gamemode are not trusted.
