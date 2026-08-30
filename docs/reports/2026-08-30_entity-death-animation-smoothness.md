@@ -105,7 +105,11 @@ SP `Game.frame` calls the same `advanceDeathVisuals(rawElapsed)` before `render(
 
 ## Tests
 
-Targeted: `entity-death-animation` (start once, no restart, render delta vs snapshot rate, interpolation does not zero death pose, A vs B, remove/new id, hurt flash isolation, creeper fallback without render clock). Plus existing creeper death, mob-hurt-flash, network-entity-visual-events, interpolation, arrows/minecart/TNT/server packs, `npm run check`.
+Targeted: `entity-death-animation` **11/11**. `entity-host` 5, interpolation packs, `network-entity-visual-events`, `mob-hurt-flash`, creeper death, `gameplay-kernel`, arrows, `anarchy-gameplay` / `anarchy-server` green. `tsc --noEmit` clean.
+
+Full `npm run check`: **1133 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts, same baseline class as PR #24) + 1 vitest RPC `onTaskUpdate` timeout. Not caused by this pass; not “fixed.”
+
+Production `npm run build` + `check:size` + `check:archive`: **3.64 MiB / 221 files** (same as Phase 4).
 
 ## Visual QA
 
@@ -134,4 +138,4 @@ Owner local QA of this PR on top of #24. **Do not merge main. Do not start Phase
 
 ## Git
 
-Branch `cursor/entity-death-animation-smoothness-bbb1` from Phase 4 `fee6604`. Stacked on draft PR **#24**, not `origin/main`.
+Branch `cursor/entity-death-animation-smoothness-bbb1` from Phase 4 `fee6604`. Implementation `66eda7c`, test-dt follow-up `78df955`. Draft PR **#25** stacked on **#24**, not `origin/main`.

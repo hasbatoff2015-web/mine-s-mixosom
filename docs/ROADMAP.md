@@ -6,9 +6,10 @@
 - [x] Same pose as before: 0.7 s, 90° fall, 25% shrink. No new animation. No 60 FPS server ticks.
 - [x] Death event starts the visual clock once; repeated `dead` snapshots do not restart it.
 - [x] Interpolation supplies base x/y/z/yaw; death rotation.z / scale applied on top in `syncMob`.
-- [x] Regression tests in `tests/entity-death-animation.test.ts` (headless elapsed + mesh pose).
+- [x] Regression tests in `tests/entity-death-animation.test.ts` (11, headless elapsed + mesh pose).
+- [x] Targeted packs + `tsc` + production build 3.64 MiB / 221 files. Full check 1133/7 baseline failures unchanged.
 - [ ] Owner local QA: SP kill unchanged; Anarchy + two clients smooth death; other living mobs keep moving.
-- [ ] Do not merge main. Do not start Phase 5+. Stacked on PR **#24**, not `origin/main`.
+- [ ] Do not merge main. Do not start Phase 5+. Draft PR **#25** stacked on PR **#24**, not `origin/main`.
 
 ## 2026-08-30: Phase 4 EntityHost
 

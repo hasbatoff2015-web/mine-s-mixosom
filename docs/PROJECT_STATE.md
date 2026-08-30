@@ -9,7 +9,9 @@
 - Fix: client-only `deathVisualElapsed` / `deathVisualActive` на `MobEntity`. `Game.frame` вызывает `advanceDeathVisuals(rawElapsed)` в том же loop, что fire animation. `syncMob` получает `mobDeathVisualSeconds(...)`. Формула позы **не** менялась: 0.7 s, `π/2`, scale `1 - progress * 0.25`.
 - Server по-прежнему authoritative для died / `deathSeconds` lifetime / removal. Snapshots не шлют animation frames. `applyAuthoritativeDeath` стартует clock один раз. Interpolator задаёт base x/y/z/yaw; death z-rotation/scale поверх.
 - Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost interface, hurt-flash sharing, server 20 TPS, protocol, interpolation buffer (кроме использования как base pose).
-- Report: `docs/reports/2026-08-30_entity-death-animation-smoothness.md`. Draft PR stacked on **#24**. Owner local QA (SP kill + Anarchy kill + two clients). **Не merge.**
+- Targeted: `entity-death-animation` **11/11**. Also entity-host, interpolation, visual-events, hurt-flash, creeper death, kernel, arrows, anarchy-gameplay packs green. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Full `npm run check`: **1133 passed / 7 failed** (authored ENOENT `bucket_empty.png` + minecart 5s timeouts, same pre-existing class as PR #24) + 1 vitest RPC timeout. Not hidden; not from this pass.
+- Report: `docs/reports/2026-08-30_entity-death-animation-smoothness.md`. Draft PR **#25** stacked on **#24**. Owner local QA (SP kill + Anarchy kill + two clients). **Не merge.**
 
 ## Последний проход: Phase 4 EntityHost
 
