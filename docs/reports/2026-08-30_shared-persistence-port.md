@@ -98,9 +98,9 @@ See git diff. GameplayKernel, useInteraction, blockGeometry, EntityHost, `shared
 
 ## Tests
 
-Targeted: `world-snapshot` 5, `idb-world-store` 3, `fs-world-store` 6, `lighting-height-256` Game paths 24/24 after pointing stubs at `worldStore`. Anarchy persist/restart, kernel, use, geometry, entity-host, death, input, fluids green. `tsc` clean.
+Targeted: `world-snapshot` 5, `idb-world-store` 3, `fs-world-store` 6, `lighting-height-256` 24/24, anarchy persist/restart 48/48, kernel/use/geometry/entity-host/death green. `tsc` clean.
 
-Full `npm run check` (pre-stub-fix run): **1153 passed / 11 failed** (authored ENOENT `bucket_empty.png`, 5 minecart 5s timeouts, 4 lighting `game.saves` stubs, + vitest RPC). Lighting stubs fixed in follow-up commit; remaining known baseline is authored ENOENT + minecart timeouts.
+Full `npm run check`: **1147 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts) + 1 vitest RPC `onTaskUpdate`. Same baseline class as PR #24/#25. Lighting Game stubs are green. Not hidden.
 
 Production `npm run build` + size/archive: **3.65 MiB / 221 files** (JS +~4 KiB from snapshot parse on the client save path).
 
@@ -120,4 +120,4 @@ Phase 6 only: RNG + lighting adapters. **Not implemented here.**
 
 ## Git
 
-Branch `cursor/shared-persistence-port-bbb1` from death-animation `7ae826b`. Implementation `8779aa8`, lighting-test follow-up `41317c3`. Draft PR **#26** stacked on **#25**, not `origin/main`.
+Branch `cursor/shared-persistence-port-bbb1` from death-animation `7ae826b`. Implementation `8779aa8`, lighting-test follow-up `41317c3`. Full check recorded after those commits. Draft PR **#26** stacked on **#25**, not `origin/main`.

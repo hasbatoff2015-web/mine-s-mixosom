@@ -8,8 +8,8 @@
 - Canonical gameplay record: `WorldSnapshot` (`SerializedWorldState`, `WORLD_SCHEMA_VERSION = 1`). `WorldStore`: load/save/exists (+ delete/list). SP `IdbWorldStore` (тот же IndexedDB `frontier-cubes-saves` / `worlds`). Server `FsWorldStore` → `server/data/worlds/<id>/{meta,world,players}.json`.
 - Mapper `snapshotToFsRecords` / `fsRecordsToSnapshot`. Import: dump → `parseWorldSnapshot` → `FsWorldStore`. Corrupt existing FS throws `PersistenceError` (no silent procedural reset). Concurrent FS saves queued. Snapshot только на save/export.
 - Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost, protocol, spawn, Anarchy world id/directory, IDB names, visual clocks.
-- Targeted: `world-snapshot` 5, `idb-world-store` 3, `fs-world-store` 6, lighting Game save-path 24/24, anarchy persist/restart green. `tsc` clean. Production **3.65 MiB / 221 files**.
-- Full `npm run check` before lighting stub fix: **1153 passed / 11 failed** (2 authored ENOENT + 5 minecart 5s timeouts + 4 lighting Game `saves` stubs). Lighting stubs now use `worldStore`; those 4 are green. Remaining baseline = authored ENOENT + minecart timeouts + vitest RPC. Not hidden.
+- Targeted: `world-snapshot` 5, `idb-world-store` 3, `fs-world-store` 6, lighting Game save-path 24/24, anarchy persist/restart 48/48, kernel/use/geometry/entity-host/death green. `tsc` clean. Production **3.65 MiB / 221 files**.
+- Full `npm run check`: **1147 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts) + 1 vitest RPC `onTaskUpdate`. Lighting Game stubs are green. Same baseline class as PR #24/#25. Not hidden.
 - Report: `docs/reports/2026-08-30_shared-persistence-port.md`. Draft PR **#26** stacked on **#25**. Owner local QA (SP save/load + Anarchy restart). **Не merge.**
 
 ## Последний проход: entity death animation smoothness
