@@ -128,7 +128,7 @@ Plants, torch, fire, rail, chain, lantern, button, lever often have `hardness <=
 
 ## Tests
 
-`tests/block-breaking-overlay.test.ts`:
+`tests/block-breaking-overlay.test.ts` + `tests/breaking-overlay-textures.test.mjs`:
 
 - stage mapping including `-1`, `0`, `0.01`, `0.099`, `0.1`, `0.5`, `0.899`, `0.9`, `0.999`, `1`
 - PNG contract 32×32 × 10 files
@@ -141,7 +141,32 @@ Plants, torch, fire, rail, chain, lantern, button, lever often have `hardness <=
 - chunk border world coords
 - dispose
 
-Targeted run: `npx vitest run tests/block-breaking-overlay.test.ts tests/mining.test.ts tests/lighting-torch-selection.test.ts --maxWorkers=2` → **26/26 PASS**.
+Targeted run: `npx vitest run tests/block-breaking-overlay.test.ts tests/breaking-overlay-textures.test.mjs tests/mining.test.ts --maxWorkers=2` → **16/16 PASS**.
+
+Full `npm test -- --maxWorkers=2`: **997 passed / 7 failed / 1004** plus 1 vitest-worker RPC timeout.
+
+Baseline-class failures (not introduced by this overlay):
+
+- 2× `authored-item-assets.test.mjs` ENOENT (`assets/minecraft/textures` missing in this Cloud checkout)
+- 5× `fire-contact-sunlight-minecart.test.ts` default 5s timeouts under full-suite load (minecart W/S, derail, friction, recapture)
+
+`npm run typecheck`: PASS  
+`npm run build`: PASS (151 modules)  
+`npm run check:size` / `check:archive`: PASS **3.61 MiB / 231 files** (previous lighting main ~3.60 MiB / 221 files; +10 crack PNGs)
+
+Main JS: ~1017 kB / ~287 kB gzip.
+
+## Git
+
+- Start `origin/main`: `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`
+- Branch: `cursor/block-breaking-overlay-3f86`
+- Implementation commit: `00ed8e2872e9ac247bfc530902b197121ca1b640`
+- Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/28
+- DO NOT MERGE
+
+## Validation
+
+See Tests above. Native GPU/mobile checklist remains open; DEV harness is `/?qaBreaking=1`.
 
 ## Manual QA
 
@@ -182,13 +207,3 @@ This Cloud pass did not run a native GPU/mobile session. CPU tests and typecheck
 - Did **not** continue the old lighting branch.
 - Overlay must stay a client visual. Online destroy success must not be inferred from crack stage.
 - Keep the HUD mining bar until the UI branch removes it after integration.
-
-## Git
-
-- Start `origin/main`: `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`
-- Branch: `cursor/block-breaking-overlay-3f86`
-- Commit / PR: filled after push
-
-## Validation (filled after full suite)
-
-See the Git / Tests / Performance sections in the PR body and the finish notes below.

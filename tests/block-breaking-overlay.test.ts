@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition } from '../src/blocks';
@@ -56,12 +55,6 @@ describe('block breaking overlay stage mapping', () => {
     expect(breakingTextureKey(0)).toBe('gui/destroy/destroy_stage_0');
     expect(breakingTextureKey(9)).toBe('gui/destroy/destroy_stage_9');
     expect(breakingTextureKey(12)).toBe('gui/destroy/destroy_stage_9');
-    for (let stage = 0; stage <= 9; stage += 1) {
-      const bytes = readFileSync(`public/textures/gui/destroy/destroy_stage_${stage}.png`);
-      expect(bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))).toBe(true);
-      expect(bytes.readUInt32BE(16)).toBe(32);
-      expect(bytes.readUInt32BE(20)).toBe(32);
-    }
   });
 });
 
