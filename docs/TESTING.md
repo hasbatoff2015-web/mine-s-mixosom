@@ -10,6 +10,8 @@ Contracts: stage mapping (`<=0`/`>=1` hidden, `0.01→0` … `0.9→9`), texture
 
 DEV harness: `/?qaBreaking=1` (cube/slab/stairs/fence/door, keys `0–9`, `[` `]`, `C` auto-cycle). Production builds do not import the harness.
 
+Full `npm test -- --maxWorkers=2`: **997 passed / 7 failed / 1004** plus 1 vitest-worker RPC timeout. Failures are baseline-class (authored-asset ENOENT; minecart 5s timeouts). Overlay tests passed. Build/size/archive PASS: **3.61 MiB / 231 files**.
+
 Manual desktop/mobile checklist lives in the report. HUD mining bar is intentionally still present.
 
 ## 2026-08-29 lateral skylight / lighting consistency

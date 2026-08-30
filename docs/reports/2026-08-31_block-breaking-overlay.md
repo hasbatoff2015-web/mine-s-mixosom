@@ -160,7 +160,7 @@ Main JS: ~1017 kB / ~287 kB gzip.
 
 - Start `origin/main`: `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`
 - Branch: `cursor/block-breaking-overlay-3f86`
-- Implementation commit: `00ed8e2872e9ac247bfc530902b197121ca1b640`
+- Implementation commits: `00ed8e2` (feature), `d434623` (PNG contract test + validation notes)
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/28
 - DO NOT MERGE
 
