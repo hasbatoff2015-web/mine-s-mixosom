@@ -1,6 +1,18 @@
 # Состояние проекта
 
-Срез: **2026-08-29**. Версия: `0.1.0`, playable alpha.
+## 2026-09-01 — Minecraft-compatible player skins и third-person camera
+
+- В production подключены **45 уникальных пользовательских 64×64 RGBA skins** из переданного `skins.zip` (один byte-identical duplicate отброшен): 20 Classic и 25 Slim по каноническим прозрачным arm-зонам. Default — `frontier_explorer` (Classic). Дополнительно есть authored DEV `player_uv_test` с разными цветами граней. Старый `entity/steve.png` не используется новым player pipeline.
+- Канонический контракт — `PlayerAppearance { skinId, model, layers }`. `MinecraftSkinRegistry` держит одну nearest/no-mipmap texture на `skinId`, ref-count освобождает старую texture; `PlayerSkinGeometryCache` делит immutable geometry между экземплярами.
+- `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
+- First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира.
+- F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
+- World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
+- DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.
+- Права на 45 пользовательских skins не выводятся из технической интеграции: перед публикацией владелец проекта должен подтвердить происхождение/лицензии, особенно для узнаваемых персонажей. Generated ImageGen concept сохранён только в ignored `.local/` и не ship/commit.
+- Подробности и validation: `docs/reports/2026-08-31_player-skins-third-person.md`.
+
+Срез: **2026-09-01**. Версия: `0.1.0`, playable alpha.
 
 ## Последний проход: lateral sky / lighting quality
 

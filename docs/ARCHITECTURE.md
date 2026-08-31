@@ -1,5 +1,19 @@
 # Архитектура
 
+## Player appearance / character visual / camera — 2026-09-01
+
+`PlayerController` остаётся единственным simulation-authority: position — feet-center, yaw/pitch/velocity/physics обновляются fixed 20 TPS. Presentation вынесен в `src/rendering/player/`: `PlayerVisual` получает interpolated feet и render-frame live look, `PlayerVisualAnimator` хранит только visual phase/body yaw/swing, `ThirdPersonCamera` вычисляет presentation camera. Ни один из этих классов не меняет controller, movement semantics, raycast origin или save schema.
+
+`PlayerAppearance` — data-only контракт `{ skinId, model: 'classic'|'slim', layers }`. `MinecraftSkinRegistry` знает built-in descriptors и кэширует `THREE.Texture` по `skinId` с ref-count; filter — nearest, mipmaps off, sRGB, clamp. Будущий импорт обязан пройти `validateMinecraftSkinDimensions(64,64)` / `registerValidated`; legacy 64×32 намеренно отклоняется. `PlayerSkinGeometryCache` кэширует base/outer geometry по presentation/model/part/layer. World model использует scale `1.8 / 32`; hat inflate 0.5 model pixel, jacket/sleeves/pants 0.25 model pixel. Classic arm 4×12×4; Slim 3×12×4 плюс pivot Y 21.5 вместо 22 model pixels. Left limbs используют modern independent UV islands, не mirrored right limbs.
+
+`Game` владеет одним registry/cache на приложение. `GameSession.playerVisual` владеет instance material/transforms и освобождается вместе с миром; `FirstPersonRenderer` держит отдельный skin handle, поэтому texture реально общая, а смена appearance безопасна до release предыдущего handle. `ItemVisualFactory` остаётся единственным источником held geometry/material/texture для first- и third-person. Player skin material использует entity-light uniform; held item наследует тот же root light. Hurt flash меняет per-player light multiply; invisibility выключает только skin meshes, сохраняя held item.
+
+Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меняет только presentation state. `THIRD_PERSON_CAMERA_DISTANCE = 4`. `availableThirdPersonDistance` делает 8 offset segment probes радиусом 0.1 через реальный `blockCollisionBoxes`, поэтому full cubes, stairs, slabs, fences, doors/chests/lantern/chain учитываются, non-solid decoration — нет. Retraction immediate, restore exponential; camera position и live look применяются каждый RAF. Front mode ставит camera перед view vector и разворачивает yaw `+π`, pitch меняет знак; input/player facing не инвертируются.
+
+Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
+
+Future online: remote interpolation должен подавать position/body yaw/head pitch в **тот же** `PlayerVisual`; `RemotePlayerView` box placeholder заменяется adapter-ом, а `ThreeEntityHost` остаётся owner scene/light. Protocol передаёт `{ skinId, model, layers? }` в welcome/join/appearance-changed, не raw PNG/base64 и не каждый `PlayerSnapshot`. Server/CDN allowlist и upload/storage — отдельная задача; этот branch server stack не меняет.
+
 ## Glowstone / lantern / chain — 2026-08-28
 
 Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.

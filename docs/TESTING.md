@@ -1,5 +1,22 @@
 # Тестирование
 
+## 2026-09-01 player skins / third-person camera
+
+Automated focused gate:
+
+```text
+npx vitest run tests/player-skins.test.ts tests/player-skin-assets.test.mjs tests/player-visual-animation.test.ts tests/third-person-camera.test.ts tests/classic-combat-integration.test.ts
+5 files, 33 tests passed
+```
+
+`player-skins` проверяет 64×64 validation, Classic/Slim dimensions, body/head, independent left/right/base/outer UV, nearest/no-mipmap texture, cache/ref-count, live appearance swap/dispose и feet/height bounds. `player-skin-assets` читает реальные IHDR всех 45 supplied PNG + QA skin. `player-visual-animation` покрывает head/body yaw, opposite gait, sneak, attack/eat/block/bow overlays. `third-person-camera` покрывает F5 order, 4-block distance, swept-corner wall/slab clipping, non-solid empty source и smooth restore. Classic combat 17/17 подтверждает, что новый optional visual hook не ломает прежние minimal `GameSession` test doubles.
+
+DEV URL: `/?qaPlayer=1`. Проверены Classic и Slim supplied skins, `player_uv_test` front red/back purple/side colors, outer on/off (`draw 13 → 7`), shared first-person arm, walk + pickaxe, bow use, head sliders и front/back/first. Cache после смены skin остаётся `1 texture / 2 refs`; geometry stabilizes at 14 per variant, 28 after both variants. Browser console: 0 warnings/errors.
+
+Full `npm test` attempt: 87 files, **77 passed**, 10 failed; 974/1001 tests passed before one feature-adjacent minimal-session regression was fixed and rerun green. Remaining failures are outside changed systems: pre-existing stale `GeneratedItemGeometry.ts` source fingerprint (actual unchanged vs `origin/main`), `minecraft-reference-extractor` parse failure, CPU-heavy worldgen/fire/minecart timeouts, and lighting/streaming wall-clock thresholds. Их assertions не ослаблялись. Focused feature + classic combat gate, typecheck and production build pass; final size/archive results are in the report.
+
+Manual/device follow-up: actual gameplay F5 near full blocks/slabs/stairs/fences, crosshair target before/after camera pull-in, front-mode W semantics, cave near-plane comfort, and landscape mobile GPU cost. Standalone harness proves model/pose resources, pure tests prove collision math; neither simulates real pointer lock/device thermals.
+
 ## 2026-08-29 lateral skylight / lighting consistency
 
 Report and full 25-step manual checklist: `reports/2026-08-29_lighting-quality-lateral-sky.md`.

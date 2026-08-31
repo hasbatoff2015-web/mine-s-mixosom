@@ -112,6 +112,12 @@ import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { pickupFluidSource, placeBucketFluid, restoreBucketInventory } from '../items/bucketInteraction';
 import { canAttachToFace, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';
 import { PlayerController } from '../player';
+import {
+  DEFAULT_PLAYER_APPEARANCE,
+  createPlayerAppearance,
+  type PlayerAppearance,
+} from '../player/appearance/PlayerAppearance';
+import { MinecraftSkinRegistry } from '../player/appearance/MinecraftSkin';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -124,6 +130,17 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
+import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
+import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import {
+  THIRD_PERSON_CAMERA_DISTANCE,
+  availableThirdPersonDistance,
+  nextCameraPerspective,
+  smoothThirdPersonDistance,
+  worldCameraCollisionSource,
+  type CameraCollisionSource,
+  type CameraPerspective,
+} from '../rendering/player/ThirdPersonCamera';
 import {
   categoryColor,
   chebyshev,
@@ -195,6 +212,8 @@ export interface GameSession {
   world: VoxelWorld;
   worldRenderer: WorldRenderer;
   player: PlayerController;
+  playerVisual: PlayerVisual;
+  cameraCollision: CameraCollisionSource;
   survival: SurvivalSystem;
   combat: CombatSystem;
   inventory: Inventory;
@@ -245,6 +264,9 @@ export class Game {
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
+  private readonly cameraPivot = new THREE.Vector3();
+  private readonly cameraTravelDirection = new THREE.Vector3();
+  private readonly frontCameraLook = { yaw: 0, pitch: 0 };
   private readonly daySkyColor = new THREE.Color(0x7fb9dc);
   private readonly duskSkyColor = new THREE.Color(0xd9785a);
   private readonly nightSkyColor = new THREE.Color(0x071426);
@@ -266,6 +288,12 @@ export class Game {
   private itemIcons?: ItemIconRenderer;
   private arrowVisuals?: ArrowVisualFactory;
   private firstPerson?: FirstPersonRenderer;
+  private readonly playerSkins = new MinecraftSkinRegistry();
+  private readonly playerSkinGeometries = new PlayerSkinGeometryCache();
+  private playerAppearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  private cameraPerspective: CameraPerspective = 'firstPerson';
+  private thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
+  private renderDeltaSeconds = 0;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
   private readonly miningSound = createMiningSoundState();
@@ -371,6 +399,7 @@ export class Game {
       openChat: (prefix) => this.openChat(prefix),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
+      cyclePerspective: () => this.cycleCameraPerspective(),
       onPointerLockAcquired: () => this.ui.hidePointerLockFallback(),
       onPointerLockReleased: (reason) => this.handlePointerUnlock(reason),
       onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
@@ -406,10 +435,35 @@ export class Game {
     this.itemIcons.bake();
     this.ui.setItemIconResolver((itemId) => this.itemIcons!.url(itemId));
     this.arrowVisuals = new ArrowVisualFactory();
-    this.firstPerson = new FirstPersonRenderer(this.itemVisuals);
+    this.firstPerson = new FirstPersonRenderer(this.itemVisuals, {
+      skinRegistry: this.playerSkins,
+      skinGeometries: this.playerSkinGeometries,
+      appearance: this.playerAppearance,
+      onSwing: () => this.session?.playerVisual?.swing(),
+    });
     this.resize();
     this.showMainMenu();
     await this.yandex.loadingReady();
+  }
+
+  get currentPlayerAppearance(): PlayerAppearance {
+    return this.playerAppearance;
+  }
+
+  get currentCameraPerspective(): CameraPerspective {
+    return this.cameraPerspective;
+  }
+
+  /** Runtime seam for the future character UI and server appearance messages. */
+  setPlayerAppearance(appearance: PlayerAppearance): void {
+    this.playerAppearance = createPlayerAppearance(appearance);
+    this.firstPerson?.setAppearance(this.playerAppearance);
+    this.session?.playerVisual?.setAppearance(this.playerAppearance);
+  }
+
+  setCameraPerspective(perspective: CameraPerspective): void {
+    this.cameraPerspective = perspective;
+    this.thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
   }
 
   dispose(): void {
@@ -418,6 +472,8 @@ export class Game {
     this.disposeAudioDebug();
     this.disposeSession();
     this.firstPerson?.dispose();
+    this.playerSkinGeometries.dispose();
+    this.playerSkins.dispose();
     this.itemVisuals?.dispose();
     this.itemIcons?.dispose();
     this.arrowVisuals?.dispose();
@@ -694,12 +750,21 @@ export class Game {
         if (cart.variant === 'tnt') session.minecarts.explodeNow(cart);
       },
     });
+    const playerVisual = new PlayerVisual(
+      this.playerSkins,
+      this.playerSkinGeometries,
+      itemVisuals,
+      this.playerAppearance,
+    );
+    this.scene.add(playerVisual.root);
 
     this.session = {
       summary,
       world,
       worldRenderer,
       player,
+      playerVisual,
+      cameraCollision: worldCameraCollisionSource(world),
       survival,
       combat,
       inventory,
@@ -722,6 +787,7 @@ export class Game {
     this.firstPerson?.setHeldItems(
       inventory.getSlot(this.session.selectedSlot)?.itemId,
     );
+    playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
   }
@@ -1549,6 +1615,7 @@ export class Game {
   private frame(now: number): void {
     const frameStart = performance.now();
     const rawElapsed = Math.max(0, (now - this.previousTime) / 1000);
+    this.renderDeltaSeconds = Math.min(0.1, rawElapsed);
     this.previousTime = now;
     this.frameTimings.add(rawElapsed * 1000);
     this.fpsFrames += 1;
@@ -1681,6 +1748,7 @@ export class Game {
     session.combat.setHeldItem(selected?.itemId);
     session.combat.setOffhand(session.inventory.offhand?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
+    session.playerVisual?.setHeldItem(selected?.itemId);
     simMark = this.addSimPart('combat', simMark);
 
     const overlayOpen = this.ui.isBlockingOverlay();
@@ -2992,9 +3060,7 @@ export class Game {
       const position = this.interpolatedPlayerPosition
         .copy(session.player.previousPosition)
         .lerp(session.player.position, clamp(alpha, 0, 1));
-      const eyeHeight = session.player.eyeHeight;
-      this.camera.position.set(position.x, position.y + eyeHeight, position.z);
-      applyImmediateRenderLook(this.camera, this.input, this.hurt.cameraRoll(now));
+      this.updatePlayerPresentation(session, position, now);
       session.falling.interpolate(clamp(alpha, 0, 1));
       session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
       session.mobs.interpolateVisuals(alpha);
@@ -3019,6 +3085,74 @@ export class Game {
     this.firstPerson?.render(this.renderer);
   }
 
+  private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
+    const thirdPerson = this.cameraPerspective !== 'firstPerson';
+    session.playerVisual.root.position.copy(position);
+    session.playerVisual.setVisible(
+      thirdPerson
+      && this.lifecycle.state === 'PLAYING'
+      && !this.ui.isInventoryOpen(),
+    );
+    session.playerVisual.update(this.renderDeltaSeconds, {
+      viewYaw: this.input.yaw,
+      viewPitch: this.input.pitch,
+      movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
+      onGround: session.player.onGround,
+      sneaking: session.player.sneaking,
+      sprinting: session.player.sprinting,
+      verticalVelocity: session.player.velocity.y,
+      mining: this.input.mining && session.target !== undefined,
+      bowCharge: session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0,
+      swordBlocking: session.combat.swordBlocking,
+      foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
+      invisible: session.survival.invisible,
+      hurtFlash: this.hurt.flashAlpha(now),
+    });
+    session.playerVisual.applyWorldLight(
+      session.world,
+      position.x,
+      position.y,
+      position.z,
+      this.daylightFactor(session.world.timeOfDay),
+    );
+
+    this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
+    const roll = this.hurt.cameraRoll(now);
+    if (!thirdPerson) {
+      this.camera.position.copy(this.cameraPivot);
+      applyImmediateRenderLook(this.camera, this.input, roll);
+      return;
+    }
+
+    const cosPitch = Math.cos(this.input.pitch);
+    this.cameraTravelDirection.set(
+      -Math.sin(this.input.yaw) * cosPitch,
+      Math.sin(this.input.pitch),
+      -Math.cos(this.input.yaw) * cosPitch,
+    );
+    if (this.cameraPerspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
+    const available = availableThirdPersonDistance(
+      this.cameraPivot,
+      this.cameraTravelDirection,
+      THIRD_PERSON_CAMERA_DISTANCE,
+      session.cameraCollision,
+    );
+    this.thirdPersonCameraDistance = smoothThirdPersonDistance(
+      this.thirdPersonCameraDistance,
+      available,
+      this.renderDeltaSeconds,
+    );
+    this.camera.position.copy(this.cameraPivot).addScaledVector(
+      this.cameraTravelDirection,
+      this.thirdPersonCameraDistance,
+    );
+    if (this.cameraPerspective === 'thirdPersonFront') {
+      this.frontCameraLook.yaw = this.input.yaw + Math.PI;
+      this.frontCameraLook.pitch = -this.input.pitch;
+      applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
+    } else applyImmediateRenderLook(this.camera, this.input, roll);
+  }
+
   private updateFirstPerson(deltaSeconds: number): void {
     const viewmodel = this.firstPerson;
     if (!viewmodel) return;
@@ -3026,7 +3160,8 @@ export class Game {
     const state = this.firstPersonFrameState;
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
-      && !this.ui.isInventoryOpen();
+      && !this.ui.isInventoryOpen()
+      && this.cameraPerspective === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
       state.onGround = session.player.onGround;
@@ -3120,6 +3255,7 @@ export class Game {
     if (!this.session) return;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
+    this.session.playerVisual?.dispose();
     this.session.arrows.dispose();
     this.session.minecarts.dispose();
     this.session.mobs.dispose();
@@ -3195,6 +3331,10 @@ export class Game {
     this.lightDebugMode = (this.lightDebugMode + 1) % 4;
     setWorldLightDebug(this.lightDebugMode);
     this.debugNextTick = 0;
+  }
+
+  private cycleCameraPerspective(): void {
+    this.setCameraPerspective(nextCameraPerspective(this.cameraPerspective));
   }
 
   private bindLifecycle(): void {

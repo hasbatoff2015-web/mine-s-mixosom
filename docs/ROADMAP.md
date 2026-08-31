@@ -1,5 +1,18 @@
 # Roadmap
 
+## 2026-09-01: player skins / character / third-person
+
+- [x] Modern Java 64×64 skin contract; 45 unique supplied skins + authored UV QA sheet; Classic/Slim metadata and all six outer-layer toggles.
+- [x] Canonical 1.8-block articulated `PlayerVisual`, independent modern left/right UV, 4 px Classic / 3 px Slim arms and correct Slim shoulder pivot.
+- [x] Shared ref-counted skin textures and cached player geometry; runtime appearance swap without world reload; first-person arm shares appearance/right sleeve.
+- [x] F5 first/back/front cycle in active gameplay only; 4-block camera, 8-probe collision through canonical block collision boxes, smooth restore, authoritative target unchanged.
+- [x] Render-frame locomotion/use/combat poses, third-person held items from `ItemVisualFactory`, entity light/hurt/invisibility.
+- [x] DEV `?qaPlayer=1`, automated skin/asset/animator/camera tests, live WebGL visual QA with clean console.
+- [ ] Before publication, confirm ownership/licensing of every user-supplied skin; recognizable third-party character art is not cleared by code integration.
+- [ ] After UI PR integration: thin character/skin selector + local IndexedDB custom PNG; reuse `Game.setPlayerAppearance`, no settings redesign in this branch.
+- [ ] After online stack integration: replace `RemotePlayerView` box with shared `PlayerVisual`; send appearance ids on join/change, never raw skin bytes per snapshot.
+- [ ] Hardware gameplay acceptance: camera collision against tight caves/stairs/fences at desktop FPS and landscape mobile performance. Pure collision tests and standalone QA harness do not replace this final device pass.
+
 ## 2026-08-29: lateral skylight / lighting quality
 
 - [x] Vertical baseline + bounded resumable lateral frontier, 14-step falloff, typed ring and deadline/hard work caps; 2 ms PLAYING budget and render distances retained.
