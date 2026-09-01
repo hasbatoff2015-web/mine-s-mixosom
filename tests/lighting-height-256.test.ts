@@ -262,7 +262,7 @@ describe('runtime height256 worlds and current save schema', () => {
     const saves = new SaveService();
     if (path.endsWith('load')) await saves.saveWorld(saved);
     const game = Object.create(Game.prototype) as any;
-    Object.assign(game, { saves, ui: { showLoading: vi.fn(), toast: vi.fn() },
+    Object.assign(game, { worldStore: saves, ui: { showLoading: vi.fn(), toast: vi.fn() },
       startSession: vi.fn(), saveSession: vi.fn(), estimateSpawn: () => [8.5, 70, 8.5], spawnDroppedStack: vi.fn() });
     const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('No schematic allowed'));
     try {

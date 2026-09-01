@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { migrateLegacyStack } from '../inventory/legacyItems';
 import { BlockId } from '../blocks';
 import { aabbFromBody, aabbOverlapsBlockType } from '../combat/fireSources';
@@ -9,11 +9,12 @@ import {
   type ItemStack,
 } from '../inventory';
 import { getItemDefinition } from '../items';
-import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import { moveVoxelBody } from './voxelPhysics';
+import type { EntityHost, EntityVisual } from './EntityHost';
+import { isEntityHost } from './EntityHost';
+import { resolveEntityHost } from './resolveEntityHost';
 
 const ITEM_WIDTH = 0.28;
 const ITEM_HEIGHT = 0.28;
@@ -37,16 +38,18 @@ export interface SerializedDroppedItem {
 }
 
 export interface DroppedItemSpawnOptions {
-  readonly velocity?: Readonly<THREE.Vector3>;
+  readonly velocity?: Vec3Like;
   readonly pickupDelaySeconds?: number;
   readonly ageSeconds?: number;
   readonly environmentHealth?: number;
   /** Used by restore; normal callers should let the manager assign an ID. */
   readonly id?: string;
+  /** Network snapshots must keep server IDs and must not merge into a different entity. */
+  readonly merge?: boolean;
 }
 
 export interface DroppedItemUpdateContext {
-  readonly collectorPosition?: Readonly<THREE.Vector3>;
+  readonly collectorPosition?: Vec3Like;
   /**
    * Return the number accepted by inventory, `true` for all, or false/void for none.
    * This overrides the manager-level callback for this update.
@@ -67,7 +70,8 @@ export interface DroppedItemManagerOptions {
   readonly pickupRadius?: number;
   readonly gravity?: number;
   /** Shared with the first-person renderer in the game runtime. */
-  readonly visualFactory?: ItemVisualFactory;
+  /** Client-only; ignored when an EntityHost is already provided. */
+  readonly visualFactory?: unknown;
   readonly onSpawn?: (entity: Readonly<DroppedItemEntity>) => void;
   readonly onPickup?: DroppedItemPickupHandler;
   readonly onRemove?: (
@@ -78,32 +82,32 @@ export interface DroppedItemManagerOptions {
 
 export class DroppedItemEntity {
   stack: ItemStack;
-  readonly position: THREE.Vector3;
-  readonly previousPosition = new THREE.Vector3();
-  readonly velocity: THREE.Vector3;
+  readonly position: Vec3;
+  readonly previousPosition = new Vec3();
+  readonly velocity: Vec3;
   ageSeconds: number;
   pickupDelaySeconds: number;
   environmentHealth: number;
   environmentDamageSeconds = 0;
   onGround = false;
-  readonly visual: THREE.Group;
+  readonly visual?: EntityVisual;
   readonly bobPhase: number;
 
   constructor(
     readonly id: string,
     stack: ItemStack,
-    position: Readonly<THREE.Vector3>,
-    velocity: Readonly<THREE.Vector3>,
+    position: Vec3Like,
+    velocity: Vec3Like,
     ageSeconds: number,
     pickupDelaySeconds: number,
     environmentHealth: number,
-    visual: THREE.Group,
+    visual: EntityVisual | undefined,
     bobPhase: number,
   ) {
     this.stack = stack;
-    this.position = new THREE.Vector3(position.x, position.y, position.z);
+    this.position = new Vec3(position.x, position.y, position.z);
     this.previousPosition.copy(this.position);
-    this.velocity = new THREE.Vector3(velocity.x, velocity.y, velocity.z);
+    this.velocity = new Vec3(velocity.x, velocity.y, velocity.z);
     this.ageSeconds = ageSeconds;
     this.pickupDelaySeconds = pickupDelaySeconds;
     this.environmentHealth = environmentHealth;
@@ -115,8 +119,8 @@ export class DroppedItemEntity {
 /** Lightweight, capped item-entity simulation suitable for the fixed 20 TPS game loop. */
 export class DroppedItemManager {
   private readonly itemsById = new Map<string, DroppedItemEntity>();
-  private readonly visuals: ItemVisualFactory;
-  private readonly ownsVisuals: boolean;
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private readonly maxItems: number;
   private readonly defaultPickupDelay: number;
   private readonly despawnSeconds: number;
@@ -128,12 +132,15 @@ export class DroppedItemManager {
   private disposed = false;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
     private readonly options: DroppedItemManagerOptions = {},
   ) {
-    this.visuals = options.visualFactory ?? new ItemVisualFactory();
-    this.ownsVisuals = options.visualFactory === undefined;
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost, {
+      itemVisuals: options.visualFactory,
+      ownsItemVisuals: options.visualFactory ? false : undefined,
+    });
     this.maxItems = Math.max(1, Math.floor(options.maxItems ?? 128));
     this.defaultPickupDelay = Math.max(0, options.pickupDelaySeconds ?? 0.6);
     this.despawnSeconds = Math.max(1, options.despawnSeconds ?? 300);
@@ -158,21 +165,22 @@ export class DroppedItemManager {
 
   spawn(
     stack: Readonly<ItemStack>,
-    position: Readonly<THREE.Vector3>,
+    position: Vec3Like,
     spawnOptions: DroppedItemSpawnOptions = {},
   ): DroppedItemEntity {
     this.assertActive();
     validateItemStack(stack as ItemStack);
     const clonedStack = cloneStack(stack as ItemStack) as ItemStack;
-    const merged = this.mergeSpawnIntoNearby(clonedStack, position);
+    const merged = spawnOptions.merge === false
+      ? undefined
+      : this.mergeSpawnIntoNearby(clonedStack, position);
     if (merged) return merged;
 
     if (this.itemsById.size >= this.maxItems) this.evictOldest();
     const id = this.allocateId(spawnOptions.id);
-    const visual = this.visuals.createDroppedItemVisual(clonedStack.itemId, clonedStack.count);
-    visual.userData.entityId = id;
-    this.scene.add(visual);
-    const velocity = spawnOptions.velocity ?? new THREE.Vector3();
+    const visual = this.host.createDroppedItem(clonedStack.itemId, clonedStack.count) as EntityVisual | undefined;
+    if (visual) this.host.attach(visual);
+    const velocity = spawnOptions.velocity ? new Vec3(spawnOptions.velocity.x, spawnOptions.velocity.y, spawnOptions.velocity.z) : new Vec3();
     const entity = new DroppedItemEntity(
       id,
       clonedStack,
@@ -194,12 +202,12 @@ export class DroppedItemManager {
   /** Spawns a Q-style tossed item with forward and upward momentum. */
   drop(
     stack: Readonly<ItemStack>,
-    origin: Readonly<THREE.Vector3>,
-    direction: Readonly<THREE.Vector3>,
+    origin: Vec3Like,
+    direction: Vec3Like,
     speed = 3.2,
     pickupDelaySeconds = 1.25,
   ): DroppedItemEntity {
-    const velocity = new THREE.Vector3(direction.x, direction.y, direction.z);
+    const velocity = new Vec3(direction.x, direction.y, direction.z);
     if (velocity.lengthSq() > 0) velocity.normalize().multiplyScalar(Math.max(0, speed));
     velocity.y += 1.6;
     return this.spawn(stack, origin, { velocity, pickupDelaySeconds });
@@ -227,15 +235,16 @@ export class DroppedItemManager {
         expired.push({ entity, reason: 'burned' });
         continue;
       }
-      applySampledEntityLight(
-        entity.visual,
-        this.world,
-        entity.position.x,
-        entity.position.y,
-        entity.position.z,
-        ITEM_HEIGHT,
-        worldDaylightUniform.value,
-      );
+      if (this.host.hasVisuals && entity.visual) {
+        this.host.applyLight(
+          entity.visual,
+          this.world,
+          entity.position.x,
+          entity.position.y,
+          entity.position.z,
+          ITEM_HEIGHT,
+        );
+      }
       if (entity.ageSeconds >= this.despawnSeconds || entity.position.y < -32) {
         expired.push({ entity, reason: 'despawned' });
       }
@@ -257,7 +266,7 @@ export class DroppedItemManager {
   }
 
   collectNearby(
-    collectorPosition: Readonly<THREE.Vector3>,
+    collectorPosition: Vec3Like,
     onPickup: DroppedItemPickupHandler | undefined = this.options.onPickup,
   ): number {
     if (!onPickup) return 0;
@@ -310,10 +319,10 @@ export class DroppedItemManager {
         if (!Number.isFinite(entry.ageSeconds) || entry.ageSeconds >= this.despawnSeconds) continue;
         this.spawn(
           stack,
-          new THREE.Vector3(...entry.position),
+          new Vec3(...entry.position),
           {
             id: entry.id,
-            velocity: new THREE.Vector3(...entry.velocity),
+            velocity: new Vec3(...entry.velocity),
             ageSeconds: entry.ageSeconds,
             pickupDelaySeconds: entry.pickupDelaySeconds,
             environmentHealth: entry.environmentHealth,
@@ -334,7 +343,7 @@ export class DroppedItemManager {
   dispose(): void {
     if (this.disposed) return;
     this.clear();
-    if (this.ownsVisuals) this.visuals.dispose();
+    if (this.ownsHost) this.host.dispose();
     this.disposed = true;
   }
 
@@ -405,6 +414,7 @@ export class DroppedItemManager {
   }
 
   private syncVisual(entity: DroppedItemEntity, alpha = 1): void {
+    if (!entity.visual) return;
     const visual = interpolateVec3(
       entity.previousPosition.x,
       entity.previousPosition.y,
@@ -417,17 +427,26 @@ export class DroppedItemManager {
     const bob = entity.onGround
       ? Math.sin(entity.ageSeconds * 2.5 + entity.bobPhase) * 0.035 + 0.045
       : 0;
-    entity.visual.position.set(
+    this.host.setPosition(
+      entity.visual,
       visual.x,
       visual.y + ITEM_HEIGHT * 0.5 + bob,
       visual.z,
     );
-    entity.visual.rotation.y = entity.ageSeconds * 1.35 + entity.bobPhase;
+    this.host.setRotation(entity.visual, 0, entity.ageSeconds * 1.35 + entity.bobPhase, 0);
+    this.host.applyLight(
+      entity.visual,
+      this.world,
+      visual.x,
+      visual.y,
+      visual.z,
+      ITEM_HEIGHT,
+    );
   }
 
   private mergeSpawnIntoNearby(
     incoming: ItemStack,
-    position: Readonly<THREE.Vector3>,
+    position: Vec3Like,
   ): DroppedItemEntity | undefined {
     const maximum = getItemDefinition(incoming.itemId).maxStack;
     for (const entity of this.itemsById.values()) {
@@ -469,10 +488,11 @@ export class DroppedItemManager {
   }
 
   private updateCountScale(entity: DroppedItemEntity): void {
-    this.visuals.updateDroppedItemVisual(entity.visual, entity.stack.itemId, entity.stack.count);
+    if (!entity.visual) return;
+    this.host.updateDroppedItem(entity.visual, entity.stack.itemId, entity.stack.count);
     const maximum = getItemDefinition(entity.stack.itemId).maxStack;
     const fullness = maximum <= 1 ? 0 : entity.stack.count / maximum;
-    entity.visual.scale.setScalar(0.9 + Math.min(0.22, fullness * 0.22));
+    this.host.setScalarScale(entity.visual, 0.9 + Math.min(0.22, fullness * 0.22));
   }
 
   private evictOldest(): void {
@@ -485,7 +505,7 @@ export class DroppedItemManager {
 
   private removeEntity(entity: DroppedItemEntity, reason: DroppedItemRemovalReason): void {
     if (!this.itemsById.delete(entity.id)) return;
-    entity.visual.removeFromParent();
+    if (entity.visual) this.host.detach(entity.visual);
     this.options.onRemove?.(entity, reason);
   }
 

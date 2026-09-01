@@ -117,6 +117,7 @@ export interface SerializedSurvivalState {
   readonly arrowFireTicks?: number;
   readonly dead: boolean;
   readonly spawnPoint: [number, number, number];
+  readonly effects?: ReadonlyArray<{ readonly id: StatusEffectId; readonly amplifier: number; readonly ticks: number }>;
 }
 
 const ARMOR_BYPASS_SOURCES: ReadonlySet<DamageSource> = new Set([
@@ -310,6 +311,14 @@ export class SurvivalSystem {
     return this.effects.get(id)?.ticks ?? 0;
   }
 
+  activeEffects(): ReadonlyArray<{ id: StatusEffectId; amplifier: number; ticks: number }> {
+    const list: Array<{ id: StatusEffectId; amplifier: number; ticks: number }> = [];
+    for (const [id, effect] of this.effects) {
+      if (effect.ticks > 0) list.push({ id, amplifier: effect.amplifier, ticks: effect.ticks });
+    }
+    return list;
+  }
+
   get isOnFire(): boolean {
     return this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0;
   }
@@ -400,6 +409,7 @@ export class SurvivalSystem {
       arrowFireTicks: this.arrowFireTicks,
       dead: this.dead,
       spawnPoint: [...this.spawnPoint],
+      effects: this.activeEffects(),
     };
   }
 
@@ -419,6 +429,17 @@ export class SurvivalSystem {
     if (state.fireTicks !== undefined) this.fireTicks = Math.max(0, Math.floor(state.fireTicks));
     if (state.arrowFireTicks !== undefined) this.arrowFireTicks = Math.max(0, Math.floor(state.arrowFireTicks));
     if (state.spawnPoint?.length === 3 && state.spawnPoint.every(Number.isFinite)) this.spawnPoint = [...state.spawnPoint];
+    if (state.effects) {
+      this.effects.clear();
+      for (const effect of state.effects) {
+        if (!effect || typeof effect.id !== 'string' || !Number.isFinite(effect.ticks)) continue;
+        if (effect.ticks <= 0) continue;
+        this.effects.set(effect.id, {
+          amplifier: Math.max(0, Math.floor(effect.amplifier)),
+          ticks: Math.max(0, Math.floor(effect.ticks)),
+        });
+      }
+    }
     this.dead = state.dead ?? this.health <= 0;
   }
 

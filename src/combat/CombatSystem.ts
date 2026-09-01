@@ -1,4 +1,5 @@
 import { TICK_RATE, clamp } from '../core/constants';
+import { systemRandomFn } from '../gameplay/random';
 import { tryGetItemDefinition, type ItemDefinition } from '../items';
 
 export interface AttackProfile {
@@ -62,7 +63,7 @@ export function applyKnockback<T extends Velocity>(
   options: KnockbackOptions = {},
 ): T {
   const resistance = clamp(options.resistance ?? 0, 0, 1);
-  if (resistance > 0 && (options.random ?? Math.random)() < resistance) return velocity;
+  if (resistance > 0 && (options.random ?? systemRandomFn)() < resistance) return velocity;
   const length = Math.hypot(directionAwayFromAttacker.x, directionAwayFromAttacker.z);
   // Coincident centres: deterministic fallback, avoiding NaN/random vector allocations.
   const nx = length > 1e-8 ? directionAwayFromAttacker.x / length : 1;

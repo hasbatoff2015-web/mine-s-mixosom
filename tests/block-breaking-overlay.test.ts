@@ -171,6 +171,22 @@ describe('WorldRenderer breaking overlay', () => {
     renderer.dispose();
   });
 
+  it('skips shape resolution when an unchanged render-frame sample repeats', () => {
+    const world = new VoxelWorld('breaking-render-reuse');
+    writeBlock(world, 1, 40, 1, BlockId.Stone);
+    let stateReads = 0;
+    const renderer = new WorldRenderer(world, atlasStub, (x, y, z) => {
+      stateReads += 1;
+      return world.getBlockState(x, y, z);
+    });
+    const hit = hitAt(1, 40, 1, BlockId.Stone);
+    renderer.setBreakingProgress(hit, 0.25);
+    expect(stateReads).toBe(1);
+    renderer.setBreakingProgress(hit, 0.25);
+    expect(stateReads).toBe(1);
+    renderer.dispose();
+  });
+
   it('does not dirty or remesh the chunk when mining progress changes', () => {
     const world = new VoxelWorld('breaking-noremsh');
     writeBlock(world, 7, 40, 7, BlockId.Stone);

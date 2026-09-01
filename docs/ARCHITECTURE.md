@@ -1,14 +1,16 @@
 # Архитектура
 
-## Block breaking overlay — 2026-08-31
+## Block breaking overlay — integrated 2026-09-02
 
-`BlockBreakingOverlay` is a visual consumer of `GameSession.miningProgress`. `WorldRenderer.setBreakingProgress(hit, progress)` is the only gameplay hook. Overlay geometry is independent of `ChunkMesher`; stage changes swap a cached nearest-filter texture. Selection outline stays `renderOrder=10`. Production crack masks live at `public/textures/gui/destroy/` and are original Frontier art, not committed Mojang `destroy_stage_*` sheets. Local-player only; not break authority for the future online branch.
+`BlockBreakingOverlay` is a local visual consumer of `GameSession.miningProgress`. `WorldRenderer.setBreakingProgress(hit, progress)` is the only gameplay hook. In Online Anarchy the client continues to send mining intent through `input.mining`; `ServerGameplay.advanceMining` / `breakBlock` remain the only block-destruction authority, and the client world changes only after authoritative `block_update` / `block_batch`. The overlay never predicts or mutates a block.
+
+Overlay geometry is independent of `ChunkMesher`. It resolves selection boxes and shape keys from the canonical Node-safe `world/blockGeometry.ts`; `rendering/specialBlockGeometry.ts` only supplies the oriented Three.js geometry wrapper. Stage changes swap a cached nearest-filter texture, while identical render-frame samples return without re-resolving block state or allocating geometry. Selection outline stays `renderOrder=10`. Production crack masks live at `public/textures/gui/destroy/` and are original Frontier art, not committed Mojang `destroy_stage_*` sheets. The current overlay is local-player only.
 
 ## Glowstone / lantern / chain — 2026-08-28
 
-Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Mesh, selection outline and collision share `specialBlockGeometry` boxes/planes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
+Glowstone is a registry cube (`BlockId.Glowstone = 146`, `emission: 15`, glass SFX). Lantern and chain are new `renderShape` values, not a second block system. Selection/collision AABBs live in `world/blockGeometry.ts`; mesh UVs and hanger/chain planes stay in `specialBlockGeometry` and re-export the same sim boxes. `ChunkMesher.addLantern` / `addChain` write cutout geometry. Held `special_model` uses the same atlas UV rects as the world mesh. Inventory/hotbar for lantern and chain use authored `item/lantern` and `item/chain` sprites; glowstone stays a 3D cube preview.
 
-Placement stays in `Game.useTargetOrItem` plus `world/placement.ts`. Vertical hit only. `attachment: floor | ceiling` is stored in existing `blockStates`. `canSupportHanger` accepts a sturdy cube/slab/stair face **or** another chain/lantern so a hanging lantern continues a chain. Support integrity is the existing neighbor queue; hanging chains are not supported by the chain below, so breaking the ceiling cascades.
+Placement lives in `src/gameplay/useInteraction.ts` (`placeFromHit` / `placeBlockAt`) plus `world/placement.ts` support tests. Singleplayer `Game.useTargetOrItem` and Anarchy `ServerGameplay.useHeld` / `placeBlock` call that one simulation. Vertical hit only. `attachment: floor | ceiling` is stored in existing `blockStates`. `canSupportHanger` accepts a sturdy cube/slab/stair face **or** another chain/lantern so a hanging lantern continues a chain. Support integrity is the existing neighbor queue; hanging chains are not supported by the chain below, so breaking the ceiling cascades.
 
 Light uses `BlockDefinition.emission` and the current add-emitter / region relight path. Torch stays 14. No extra per-frame scans and no lighting budget change.
 
@@ -42,7 +44,7 @@ Chicken leg UV is `[29,0]` on this pack's sheet; cuboid/pivots stay ModelChicken
 
 ## Interaction / support / input / mob polish — 2026-08-27
 
-`specialBlockGeometry.buttonSelectionBox/leverSelectionBoxes` — canonical oriented cuboids (dimensions + matrices) для ChunkMesher и outline. `controlLocalBoxes` кэширует их AABB envelopes по block/attachment/facing/powered; existing DDA использует эти boxes. У наклонной ручки lever небольшой неизбежный AABB envelope, не full voxel и не отдельный raycaster. `RedstoneSystem.publishSourceState` синхронизирует только изменившийся geometry state в World; source map/timers остаются authority для power. Никакого второго redstone simulation.
+`world/blockGeometry.controlLocalBoxes` — AABB envelopes кнопки/рычага (те же размеры, что у mesh cuboids; без Three.js). `specialBlockGeometry.buttonSelectionBox/leverSelectionBoxes` — oriented cuboids (matrices) для ChunkMesher и outline. Existing DDA читает sim envelopes. У наклонной ручки lever небольшой неизбежный AABB envelope, не full voxel и не отдельный raycaster. `RedstoneSystem.publishSourceState` синхронизирует только изменившийся geometry state в World; source map/timers остаются authority для power. Никакого второго redstone simulation.
 
 `placement.ts` содержит shape-keyed SUPPORT_RULES **и explicit vegetation IDs**, `supportCellForBlock`, `isBlockStillSupported`. Общие attachmentNormal и sturdy-face collision rectangles определяют поддержку decorations. Plants use the block below plus substrate sets (GrassBlock/Dirt vs Sand). `World.writeBlockRaw` и non-fluid `setBlockState` ставят dependent changed cell + шесть соседей в Map-dedupe. `processSupportIntegrity(256)` выполняется после fluid queue в world tick и после gameplay/explosions в Game; overflow/unloaded-support tickets остаются. Никакого chunk scan/generation. Material replacement удаляет старый block state. Detach применяет batch Air через прежний mesh/light path, `consumeDetachedBlocks` отдаёт события ровно один раз; Game уведомляет redstone и создаёт canonical dropped stack (включая Creative environmental drops). Plants with `drop:false` produce no item. World не зависит от renderer/drop manager. Door two-cell lifecycle не добавлялся в этот decoration contract.
 
@@ -79,7 +81,22 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 - независимая local playability при отсутствии platform SDK;
 - минимальное число production dependencies: Three.js для WebGL, Vite/TypeScript для toolchain.
 
-Это single-player client-only приложение. Server authority, networking и ECS framework отсутствуют намеренно.
+Это браузерная voxel alpha с **двумя режимами мира**:
+
+- **Singleplayer** — client-authoritative, `WorldSnapshot` via `IdbWorldStore` (IndexedDB `frontier-cubes-saves` / `worlds`).
+- **Online Anarchy** — отдельный Node process (`npm run dev:server`), WebSocket JSON protocol, server-authoritative world/player/blocks. Localhost now; VPS later is config, not a rewrite.
+
+Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
+
+Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. RMB use/placement is **`src/gameplay/useInteraction.ts`**: SP and the server share `performUseHeld` / `placeBlockAt`; hosts keep UI vs plugin/window effects. `ServerGameplay` uses `HeadlessEntityHost` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions) with **no Three.js**. Poses use `src/math/vec3.ts` (`Vec3` / `Vec3Like`), not `THREE.Vector3`. `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Use is `interact` only; the server runs the shared `performUseHeld` from authoritative look + raycast. `place_block` still exists for look-validated creative/explicit coords and uses the same `placeBlockAt`.
+
+Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `craft` / `interact` / `attack` / `pickup` / `vehicle_input` plus `input.mining` / `use` / `vehicleForward`; server `block_batch` / `block_update` (optional `state`) / `health` / `effects` / `entity_snapshot` / `entity_event` / `command_result` / `time`. Unknown server types still reject.
+
+Online chest/furnace clicks are not optimistic. The client sends `inventory_action`; the server mutates via `applyInventoryUiAction` and replies with the existing `inventory` message (`inventory` + `cursor` + `window.slots`). `applyAuthoritativeContainerSlots` writes those slots onto the local `getChest`/`getFurnace` object **even when the GUI is already open**; `applyAuthoritativeCursor` then re-paints. Opening the GUI is only for the first snapshot (`shouldOpenOnlineContainer`). Other players with the same chest/furnace window receive the same `inventory` packet (their own inventory + updated `window.slots`). No new protocol type. Persistence format unchanged.
+
+Online Anarchy still applies `block_update` / `block_batch` in the WebSocket handler (`applyNetworkBlockChanges`) regardless of pause. `processWorldJobs` (deferred light + remesh) also runs while online `PAUSED` / `BACKGROUND` so dirty chunks do not wait for Continue. Kernel / `tickOnline` stay PLAYING-only. Hidden-tab RAF throttle is the browser's; we do not force 60 FPS. Inventory overlays stay PLAYING. Entity interpolation remains in `render()`.
+
+Singleplayer IndexedDB path is unchanged. Online never writes Anarchy to IndexedDB.
 
 ## Карта подсистем
 
@@ -89,7 +106,8 @@ flowchart TD
   Game --> Life["LifecycleManager"]
   Game --> Input["InputManager"]
   Game --> UI["GameUI"]
-  Game --> World["VoxelWorld + TerrainGenerator"]
+  Game --> Kernel["GameplayKernel.tick"]
+  Kernel --> World["VoxelWorld + TerrainGenerator"]
   Game --> Render["WorldRenderer + ChunkMesher + TextureAtlas"]
   Game --> Audio["AudioManager + SFX catalog"]
   Game --> Items3D["ItemVisualFactory + FirstPersonRenderer"]
@@ -98,7 +116,12 @@ flowchart TD
   Game --> Combat["CombatSystem + PlayerArrowManager"]
   Game --> Entities["MobManager + DroppedItemManager + MinecartManager"]
   Game --> Redstone["RedstoneSystem"]
-  Game --> Save["SaveService / IndexedDB"]
+  Game --> Save["IdbWorldStore / IndexedDB"]
+  Game --> Net["AnarchyClient WebSocket"]
+  Net --> Server["Frontier Cubes Server (Node)"]
+  Server --> WorldInst["WorldInstance + ServerGameplay"]
+  WorldInst --> Kernel
+  Server --> Persist["FsWorldStore / server/data/worlds/anarchy"]
   Game --> Platform["YandexGamesService"]
   World --> Blocks["Block registry"]
   UI --> Inventory["Inventory + crafting"]
@@ -106,7 +129,7 @@ flowchart TD
   Entities --> World
   Redstone --> World
   Combat --> Entities
-  Save --> Serialized["SerializedWorldState v1"]
+  Save --> Serialized["WorldSnapshot schema v1"]
 ```
 
 Главный принцип: `Game` соединяет системы, но правила blocks/items/crafting, player physics, survival formulas и entity simulation остаются в отдельных модулях, которые можно тестировать без WebGL UI.
@@ -129,21 +152,216 @@ Render loop использует `requestAnimationFrame`. `advanceFixedStep()` �
 
 Simulation продвигается только в lifecycle state `PLAYING`. `LOADING_WORLD` готовит initial radius без player physics, mining и pointer lock. Container GUI (Survival/Creative inventory, chest, furnace, crafting table, Recipe Book) **не** является pause: мир остаётся в `PLAYING`, tick продолжается, а player gameplay input блокируется отдельно (`gameplayModal.ts`). Настоящая остановка simulation — Pause menu (`Esc` → `PAUSED`) и platform/background/ad/death. Furnace burn/cook всегда идёт через `VoxelWorld.tickFurnaces()` в общем world tick, без UI-таймера.
 
+### GameplayKernel
+
+`src/gameplay/GameplayKernel.ts` is the shared simulation **order**. It does not reimplement physics, fluids, mobs, or combat. Hosts (`Game` for singleplayer, `ServerGameplay` + `WorldInstance` for Anarchy) pass existing manager methods.
+
+**In the kernel:** `world.tick` (time, scheduled, fluids, support, furnaces — once), falling, player physics, player actions (SP targeting; server mining/use is inside the players hook), projectiles, vehicles, mobs, mob events, optional SP post-explosion support, drops, redstone, explosions.
+
+**Not in the kernel:** DOM, Three.js meshes, WebSocket, IndexedDB, filesystem, audio, HUD, interpolation, protocol. Online `Game.tickOnline` still skips the kernel (server is authoritative).
+
+**Daylight:** `src/gameplay/daylight.ts` `daylightFactor(timeOfDay)` is the only curve for sky, mob spawn/sunlight, and server mob updates.
+
+**Debug:** `?debugTick=1` appends the last kernel order to F3. Server `FC_DEBUG_TICK=1` appends the same order to the existing 200-tick log line (no per-tick spam).
+
 Текущий tick логически выполняет:
 
-1. world clock, scheduled block ticks, **budgeted fluid queue** и furnaces;
-2. combat state: held/off-hand IDs и sword use-state; click count обрабатывается на fixed tick, cooldown отсутствует;
-3. player input, hunger-aware sprint gate, AABB physics и survival/environment update;
-4. chunk ensure/prune и ограниченный dirty rebuild;
-5. block/mob targeting, mining, melee и use action;
-6. food/bow use и player projectiles;
-7. mob AI/physics/projectiles;
-8. mob damage, drops и explosion events;
-9. dropped-item physics/pickup;
-10. pressure-plate occupancy, bounded redstone propagation, primed TNT fuse, explosion queue (budgeted batch apply) и explosion events;
-11. autosave check и HUD refresh.
+```text
+world.tick
+↓ falling
+↓ players (physics + survival)
+↓ playerActions (SP use/mine overlay)
+↓ projectiles
+↓ vehicles
+↓ mobs
+↓ mobEvents (drops/damage/enqueue explosions; SP may drain queue)
+↓ preDropSupport (SP only)
+↓ drops
+↓ redstone
+↓ explosions (drain queue)
+```
+
+Host extras after a completed kernel tick: SP autosave/HUD; server riding snapshot flush, `block_batch`, `player_state`, `entity_snapshot`.
 
 Такой порядок даёт простой детерминированный каркас, но не заявляет bit-exact vanilla ordering.
+
+### Shared interaction (Phase 2)
+
+
+`src/gameplay/useInteraction.ts` is the shared **use and placement simulation**. It does not own UI, audio, plugins, or networking.
+
+```text
+              performUseHeld / placeBlockAt
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+         Game (SP)            ServerGameplay
+              │                     │
+     toasts / SFX / UI      events / window / dirty
+```
+
+**In the module:** empty-bucket pickup, use-target blocks (when closer than a cart), food/bow start, flint, TNT-cart, minecart-on-rail, nearby cart mount, filled bucket, placement (anchors, lantern/chain support, slab merge, facing/attachment).
+
+**Hosts:** SP `Game.useTargetOrItem` (online: send `interact` only). Server `useHeld` (no hit: raycast from look) and `placeBlock` (look-validated cell → `placeBlockAt`). `world/placement.ts` remains the support/anchor tests.
+
+**Not here:** combat/mining, GameplayKernel order, protocol. EntityHost is Phase 4 (below).
+
+### Shared block geometry (Phase 3)
+
+`src/world/blockGeometry.ts` is the simulation source for local AABBs, neighbor stair/rail/fence resolution, attachment normals, slab/stair/lantern/chain/door/ladder/torch/button/lever boxes. No Three.js, meshes, materials, or textures.
+
+```text
+                SIMULATION GEOMETRY
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+           SERVER              CLIENT
+             │                   │
+        collision/AI       mesh generation
+        raycast            visual geometry
+        placement
+```
+
+`src/rendering/specialBlockGeometry.ts` imports those definitions for torch matrices, selection outline, and lantern/chain mesh UVs, and re-exports the sim functions so ChunkMesher / ItemVisualFactory stay on one table. Collision, selection, placement, `useInteraction`, ladders, rails, `Game`, and `ServerGameplay` import `world/blockGeometry` directly.
+
+Rendering still wraps `facingVector` / `attachmentNormal` as `THREE.Vector3` for outline tests; simulation uses plain `{x,y,z}`.
+
+**Not here:** moving renderer folders, protocol, GameplayKernel order. EntityHost is Phase 4 (below).
+
+### Shared entity host (Phase 4)
+
+`src/entities/EntityHost.ts` is the rendering seam for entity managers. Simulation (spawn, physics, AI, damage, serialize) talks to the host instead of constructing Mesh / Geometry / Material.
+
+```text
+                ENTITY SIMULATION
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+          SERVER               CLIENT
+             │                   │
+        no rendering        EntityHost
+                            Three.js
+```
+
+- **Server:** `HeadlessEntityHost` — all `create*` return `undefined`. `ServerGameplay` does not construct `ItemVisualFactory` or a dummy entity scene. `RedstoneSystem` takes `{ host }` (`HeadlessEntityHost` on the server); primed TNT has no mesh. Fuse pulse lives on `ThreeEntityHost.pulsePrimedTnt`.
+- **Client:** one `ThreeEntityHost` on `Game.scene`, sharing first-person `ItemVisualFactory` / `ArrowVisualFactory` (`owns*Visuals: false`). Lazy voxel / minecart / item / arrow factories so wrapping a Scene for one manager does not eagerly build unused meshes.
+- **Managers:** accept `EntityHost`. Production Game and the server pass a host. Tests that still pass `new THREE.Scene()` go through `resolveEntityHost` plus Vitest `tests/setupClientEntityHost.ts` (`registerLegacyEntityRootWrapper`). `src/entities/index.ts` does **not** re-export `ThreeEntityHost` / `mobModels` so `server/gameplay.ts` cannot load renderer code through the barrel.
+- **Stay in sim:** `Vec3` pose/velocity, kernel order, Phase 2 useInteraction, Phase 3 blockGeometry, serialize/restore.
+- **Stay in ThreeEntityHost:** `ItemVisualFactory`, `ArrowVisualFactory`, `MinecartVisualFactory`, `VoxelVisualFactory` / `createMobModel`, fire overlay, sampled entity light, primed-TNT mesh.
+
+**Not here:** second MobManager, moving `src/rendering/` folders, EntityHost as a gameplay loop, protocol, persistence/RNG/plugins.
+
+Death pose is **not** a 20 TPS network animation. Server/sim `MobEntity.deathSeconds` still advances on the fixed tick for `finishDeath` / `shouldKeepRemoteDeath`. Client-only `deathVisualElapsed` advances from `Game.frame` via `MobManager.advanceDeathVisuals(rawElapsed)` (one pass over living mobs, same loop as shared fire animation). `ThreeEntityHost.syncMob` still uses the existing curve (`deathSeconds / 0.7` → `rotation.z = progress * π/2`, `scale = 1 - progress * 0.25`); the field is fed render elapsed when the visual clock is active. `applyAuthoritativeDeath` / `beginDeath` arm that clock once. Entity interpolator samples base x/y/z/yaw; death visual transform is applied after that pose.
+
+### Shared persistence port (Phase 5)
+
+Simulation talks to `WorldSnapshot` + `WorldStore`. Adapters own IndexedDB vs filesystem. GameplayKernel / useInteraction / blockGeometry / EntityHost / protocol are unchanged.
+
+```text
+             WorldSnapshot (schema v1)
+                       │
+             ┌─────────┴──────────┐
+             │                    │
+        IdbWorldStore        FsWorldStore
+             │                    │
+     frontier-cubes-saves   server/data/worlds/<id>/
+```
+
+- **Snapshot:** `src/save/types.ts` `WorldSnapshot` (alias `SerializedWorldState`). `WORLD_SCHEMA_VERSION = 1`, independent of protocol version and schematic `importVersion`.
+- **Player:** SP `player: SerializedPlayerState`. Server roster `players?: Record<id, SerializedPersistedPlayer>` (filesystem `players.json`).
+- **Entities:** existing manager `serialize()` blobs (drops, mobs, minecarts, falling, redstone). No meshes, interpolators, `deathVisualElapsed`, hurt flash.
+- **Store:** `load` / `save` / `exists` / optional `delete` / `list`.
+- **IDB:** database name and store key unchanged. `SaveService` remains the IDB engine; `IdbWorldStore` parses/validates.
+- **FS:** still `meta.json` + `world.json` + `players.json`. Mapper `snapshotToFsRecords` / `fsRecordsToSnapshot`. Writes are queued; files use temp+rename; `world.json`/`players.json` then `meta.json`.
+- **Empty vs corrupt:** missing `meta.json` → `null` (create). Existing corrupt/incomplete files throw `PersistenceError` — no silent procedural overwrite.
+- **Import:** `npm run server:import` parses a dump as `WorldSnapshot` then `FsWorldStore.save`. Not startup. Not `.schem`.
+
+### Shared RNG + lighting adapters (Phase 6)
+
+Simulation must not call `Math.random()` directly. Visuals may.
+
+```text
+RandomSource.next()  →  SYSTEM_RANDOM (Math.random under the adapter)
+                     →  seededRandomSource(seed)  (tests)
+```
+
+- **Interface:** `src/gameplay/random.ts` `RandomSource` / `RandomFn`. Helpers: `rollDropCount` / `rollBlockDropCount`, `dropScatterVelocity`, `nextIntInclusive`.
+- **Live hosts:** `Game.simRandom` and `ServerGameplay.random` are `systemRandomFn`. Injected into `MobManager`, `PlayerArrowManager`, explosion queue, block-drop counts, drop scatter. Default manager fallback is also `systemRandomFn`, not a second `Math.random` site.
+- **Not here:** reseeding live Anarchy/SP from the world seed (would change spawn/loot). Terrain stays on `mulberry32` / `hashCoords` in `Generator` / `noise.ts` — coordinate-hashed, not the tick stream.
+- **Visual/identity:** `potionParticles.ts`, `AudioManager` pitch/variant, `SaveService` world id / default seed still use `Math.random` / `crypto.randomUUID`.
+
+Lighting **mode** is a host concern. Flood implementation stays in `LightEngine`.
+
+```text
+deferred (Game)     → queue dirty regions → processDeferredLighting(budget)
+immediate (server)  → setBlock relights before return; processDeferredLighting = 0
+```
+
+- `LightingAdapter.lightingModeOf(world)` reads `VoxelWorld.deferredLighting`.
+- Client `Game.runLightingJobs` calls `processDeferredLighting` with existing `WORLD_LIGHT_BUDGET_MS = 2` (loading 8). Do not raise the playing budget.
+- Server never runs the client scheduler. `deferredLighting = false` as before.
+- Simulation queries (`combinedLight`, `getDirectSkyLight`, `sampleVoxelLightLevels`) are re-exported from `world/lightingState.ts`. Shader compose stays in `rendering/worldLighting.ts`.
+- Lateral sky (`LATERAL_SKY_RADIUS = 14`), typed ring queue, and flood caps are unchanged.
+
+Online entity **visual** light is a client host concern. `MobManager.update` still samples light every sim tick in Singleplayer. The Anarchy client does **not** run that tick, so `syncVisual` / interpolate must apply `EntityHost.applyLight` every visual refresh — not only when `hurtFlashSeconds > 0`. Spawn may sample an unloaded or unlit deferred chunk; later interpolate re-samples once LightEngine has filled the arrays. Hurt flash tints that already-correct sample; it is not the initializer. Drops, falling blocks, arrows, minecarts, and primed TNT follow the same visual-sync contract. Server `HeadlessEntityHost.applyLight` stays empty.
+
+### Tooling split (Phase 7)
+
+Formal compile/import boundaries. Gameplay systems were not rewritten.
+
+```text
+SHARED SIMULATION (Node-safe)
+  GameplayKernel, useInteraction, blockGeometry,
+  VoxelWorld, EntityHost (headless), WorldSnapshot,
+  RandomSource, LightingAdapter, Vec3
+        │
+        ├── CLIENT  (DOM, Three, Vite, IndexedDB, UI, input)
+        └── SERVER  (Node, fs, WebSocket, HeadlessEntityHost)
+```
+
+**Forbidden:** shared → Three / DOM / IndexedDB / `window` / WebSocket / `fs`. Server → `src/rendering/**`, `src/ui/GameUI`, `src/core/Game`, `three`. Client may import all of the above.
+
+**TypeScript configs**
+
+| Config | Role |
+| --- | --- |
+| `tsconfig.json` | Compatibility umbrella (`npm run typecheck` / `tsc --noEmit`). Still includes DOM. |
+| `tsconfig.sim.json` | Shared simulation. `lib: ES2022`, no DOM. `types: node` plus `types/sim-globals.d.ts` for `performance` / `structuredClone` / fetch / Web Streams. Excludes `ThreeEntityHost`, `mobModels`, `voxelVisuals`, `LegacyModel`. |
+| `tsconfig.client.json` | Browser client: `src/**` + protocol. DOM + Vite. |
+| `tsconfig.server.json` | `server/**` + protocol. Node types. No DOM lib. Follows imports into shared sim only. |
+
+**Commands:** `npm run typecheck:sim` / `typecheck:client` / `typecheck:server`. `npm run check:boundaries` is a grep/import scan (`scripts/check-import-boundaries.mjs`). `npm run smoke:sim` loads kernel/interaction/geometry/snapshot/RNG/host under a Node loader that **throws on `three`**. `npm run smoke:server` starts Anarchy, ticks, mutates, persists, stops.
+
+**Input:** `MoveInput` (`src/input/MoveInput.ts`) is the shared sample. `KeyboardEvent` / `MouseEvent` stay in `InputManager`. `LifecycleState` lives in `src/core/lifecycleTypes.ts` so the server can import `onlineSession` sequence helpers without `document` / `window`.
+
+**Intentional leftovers:** `src/ui/recipeBook.ts` and `src/ui/containerInteractions.ts` are Node-safe inventory logic that lives under `ui/` because `inventoryUiAction` already used them. They are in the sim config. They are not `GameUI`. `src/net/` and `shared/protocol.ts` are the protocol adapter, not simulation.
+
+### Plugin platform (Phase 8)
+
+Plugins are **server-only**. Shared simulation stays free of `PluginManager`.
+
+```text
+SHARED GAME CORE
+  GameplayKernel (tick order)
+  useInteraction (allowPlace / allowInteract / onPlaced)
+  VoxelWorld / combat / inventory
+        │
+        │  semantic results (not renderer events)
+        ▼
+ServerGameplay / WorldInstance   ← plugin event adapter
+        │
+        ▼
+EventBus  ──►  Plugins (ServerAPI)
+        └──►  Network (ordinary protocol; no plugin packets)
+```
+
+`src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
+
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+
+**Not here:** homes / TPA / economy / kits / moderation. Those are later features, not Phase 8.
+
+**Tests:** default Vitest environment remains Node (unchanged). Client visual tests import Three and use `setupClientEntityHost.ts`. Shared packs: `npm run test:sim`. Server: `npm run test:server`.
 
 ## Lifecycle
 
@@ -204,9 +422,13 @@ index = y × 16 × 16 + z × 16 + x
 
 `WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера. Generator заполняет только `0..max(surface, sea)`; `Chunk.occupancyTop` ограничивает sky fill, emitter scan, fluid activation и mesher, чтобы пустой столб Y=85..255 не стоил как полный мир. `WORLD_LIGHT_BUDGET_MS = 2` не поднимается из‑за высоты.
 
-Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production path `Играть онлайн → Анархия PvP` не вызывает importer:** грузит IndexedDB world `anarchy` как есть. Canonical spawn — `serverWorld.spawn`. `importVersion` не запускает reimport. Если save отсутствует — procedural world с тем же world id, без `.schem`.
+Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production `Играть онлайн → Анархия PvP` больше не читает IndexedDB и не вызывает importer.** Клиент коннектится к `ws://127.0.0.1:2567`. Сервер владеет world id `anarchy`, seed `anarchy-spawn-v1`, filesystem persist. Если server data пустой — procedural create + `estimateWorldSpawn`, без `.schem`. Исторический IndexedDB `anarchy` остаётся local-only и не является online authority. Явный перенос: `npm run server:import -- dump.json` (см. `docs/LOCAL_SERVER.md`). `openAnarchyWorld()` сохранён для тестов/legacy IndexedDB path и **не** вызывается из UI connect.
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
+
+Online local motion: the client does **not** run `PlayerController.tick` and does **not** hard-assign `player.position` from every `player_state`. Server simulates at 20 TPS from `input.seq`; the client chases the last accepted tick with exponential smoothing (`src/net/authoritativeMotion.ts`). Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
+
+`GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal.
 
 ### Generation
 
@@ -222,7 +444,7 @@ Chunk pass заполняет bedrock (`Y 0–2`), world-wide Stone cap (`Y=3`, 
 
 Новый spawn (`collectSpawnColumns`) ранжирует plains с низким mountain contribution в радиусе 192, без generation hitch на create. DEV `?worldgenDebug=1` показывает `surfaceY` / `mtn` / `hills` / `cave` / `cap` / `blk` на chunk HUD.
 
-Генератор не читает browser state или wall clock, поэтому базовый terrain воспроизводим по seed. Loot, часть explosions и некоторые runtime decisions используют `Math.random()` и не являются replay-deterministic.
+Генератор не читает browser state или wall clock, поэтому базовый terrain воспроизводим по seed. Tick simulation (loot, explosions, mob spawn/AI, arrow spread) идёт через `RandomSource`; live hosts use `SYSTEM_RANDOM`, so they are not replay-deterministic unless a test injects `seededRandomFn`. Visual particles/audio keep `Math.random()`.
 
 ### Modifications и block entities
 
@@ -287,7 +509,7 @@ DEV: `?perf=1` overlay (LIGHT jobs/nodes/cols/frame/maxSlice/dirtyL плюс GEN
 
 Selection outline — тот же `LineSegments` в `WorldRenderer`. `selectionBoxesForBlock()` строит oriented boxes из фактической special geometry (cube / torch / button / lever / plate / wire / door / ladder / cross / fire / stairs / slab / chest / fence / rail); геометрии кэшируются по shape key. `World.raycast` сохраняет voxel DDA. Default `geometry: 'selection'` пересекает `blockSelectionBoxes`. Projectiles pass `geometry: 'collision'` and use `blockCollisionBoxes`, so non-solid vegetation is skipped while player targeting is unchanged. Outline, mining и use читают selection `VoxelHit`.
 
-Block breaking overlay — `BlockBreakingOverlay`, владение у `WorldRenderer`. Это отдельный transparent mesh (`depthTest=true`, `depthWrite=false`, `polygonOffset`, `renderOrder=5`, ниже жёлтого outline `10`). Он читает уже готовый `miningProgress` и не является break authority: не вызывает `setBlock` и не dirty/remesh chunk. `setBreakingProgress(hit, progress)` прячет overlay при `progress <= 0`, `progress >= 1`, смене/пропаже target и Air. Stage = `min(9, floor(progress * 10))` для открытого интервала `(0, 1)`. Каждая face overlay использует UV 0..1 отдельной nearest-filter текстуры `public/textures/gui/destroy/destroy_stage_N.png` (оригинальные Frontier masks, не Mojang destroy sheets). Геометрия строится из тех же selection boxes, включая fence connections; cache key = `selectionShapeKey` + fence flags. Сейчас один local-player overlay; API намеренно простой для будущего `breakerId`. Instant-break (hardness ≤ 0, Creative) по-прежнему завершается в том же tick, поэтому staged cracks обычно не видны. HUD mining bar пока сохранён: его снимет отдельная UI branch.
+Block breaking overlay — `BlockBreakingOverlay`, владение у `WorldRenderer`. Это отдельный transparent mesh (`depthTest=true`, `depthWrite=false`, `polygonOffset`, `renderOrder=5`, ниже жёлтого outline `10`). Он читает уже готовый `miningProgress` и не является break authority: не вызывает `setBlock` и не dirty/remesh chunk. В Online Anarchy `Game.tickOnline` отправляет mining intent, серверные `ServerGameplay.advanceMining` / `breakBlock` принимают решение, а мир клиента меняется только из authoritative block messages. `setBreakingProgress(hit, progress)` прячет overlay при `progress <= 0`, `progress >= 1`, смене/пропаже target и Air. Stage = `min(9, floor(progress * 10))` для открытого интервала `(0, 1)`. Каждая face overlay использует UV 0..1 отдельной nearest-filter текстуры `public/textures/gui/destroy/destroy_stage_N.png` (оригинальные Frontier masks, не Mojang destroy sheets). Геометрия строится из canonical selection boxes в `world/blockGeometry.ts`, включая fence connections; Three.js wrapper остаётся в `specialBlockGeometry.ts`, cache key = `selectionShapeKey` + fence flags. Повторный render-frame sample той же цели/блока/progress возвращается до повторного shape resolve. Сейчас один local-player overlay; instant-break (hardness ≤ 0, Creative) по-прежнему завершается в том же tick, поэтому staged cracks обычно не видны. HUD mining bar пока сохранён: его снимет отдельная UI branch.
 
 Chest не идёт в chunk cube mesh. `ChunkMesher` собирает `meshed.chests`; `ChestRenderer` держит shared body/lid/latch geometry + entity material (`entity/chest/normal`) и lightweight per-visible-chest groups. Lid hinge сзади, `targetOpen` только у открытого сундука, `openProgress` интерполируется по render dt (FPS-independent lerp). Facing пишется в `blockStates` при placement (`chestFacingFromYaw`); legacy без facing → north. Хранилище 27 slots по `x,y,z` не менялось.
 
@@ -348,13 +570,13 @@ Sword use вычисляется на fixed tick из selected sword + held use 
 
 ### DroppedItemManager
 
-Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. Маленький feet-anchored AABB (`0.28×0.28`) переиспользует `fireSources.ts` overlap: Lava наносит 4, Fire 1 damage за fixed 20-TPS contact tick, health начинается с 5, уничтожение использует обычный manager removal (`burned`) до merge/pickup. Water damage = 0. Java-1.9-style Lava kick сохранён, modern generic Water buoyancy не применяется. `environmentHealth?` optional в serialized entry: старые saves default к 5 без schema-version bump. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Менеджер получает тот же `ItemVisualFactory`, что и first-person renderer: настоящие item textures/atlas cubes bob-ятся и медленно вращаются, а thresholds `1/2/17/33` показывают `1/2/3/4` bounded visual copies. World-dropped meshes получают `sampleEntityLight` на 20 TPS; visual position интерполируется на render frame.
+Dropped items имеют bounded capacity, pickup delay, despawn timer, simple voxel physics, merging, partial pickup и serialization. Маленький feet-anchored AABB (`0.28×0.28`) переиспользует `fireSources.ts` overlap: Lava наносит 4, Fire 1 damage за fixed 20-TPS contact tick, health начинается с 5, уничтожение использует обычный manager removal (`burned`) до merge/pickup. Water damage = 0. Java-1.9-style Lava kick сохранён, modern generic Water buoyancy не применяется. `environmentHealth?` optional в serialized entry: старые saves default к 5 без schema-version bump. `onPickup` возвращает реально принятую inventory count, поэтому полный inventory не удаляет предмет из мира. Visuals идут через `EntityHost` (`createDroppedItem` / bob / count copies). SP `Game` шарит тот же `ItemVisualFactory`, что и first-person renderer. Headless server не создаёт mesh. World-dropped meshes на клиенте получают `sampleEntityLight` на 20 TPS; visual position интерполируется на render frame.
 
 ### MobManager
 
-MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Automatic spawn: passive path unchanged; hostile **surface night** uses `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5`; dark cave hostiles are a separate candidate (low sky, solid floor, no liquid) with max one new cave hostile per chunk per event and a 12-block density guard. Skeleton projectiles используют те же `ArrowPhysics` и переданный Game-owned `ArrowVisualFactory`, поэтому их scale, orientation, drag, gravity, collision и cleanup не расходятся с player arrows.
+MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Automatic spawn: passive path unchanged; hostile **surface night** uses `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5`; dark cave hostiles are a separate candidate (low sky, solid floor, no liquid) with max one new cave hostile per chunk per event and a 12-block density guard. Skeleton projectiles используют те же `ArrowPhysics`. Visuals (mob models, skeleton arrows, hurt tint, fire overlay) принадлежат `EntityHost.syncMob` / `createArrow`, не менеджеру. SP шарит Game-owned `ArrowVisualFactory` через `ThreeEntityHost`.
 
-Освещение мобов идёт из voxel `skyLight`/`blockLight`: `sampleEntityLight` усредняет feet/torso/head на simulation tick, `createEntityMaterial` (`MeshBasicMaterial` + wrap ≥ 0.76) умножает на этот RGB. Visual root/yaw/walkPhase считаются в `interpolateVisuals(alpha)` через `entityInterpolation.ts` (lerp + shortest-yaw, snap при ≥ 6 блоков). Gameplay/AI/hitboxes остаются на simulation transform.
+Освещение мобов идёт из voxel `skyLight`/`blockLight`: `sampleEntityLight` усредняет feet/torso/head на simulation tick, `createEntityMaterial` (`MeshBasicMaterial` + wrap ≥ 0.76) умножает на этот RGB. Visual root/yaw/walkPhase считаются в `interpolateVisuals(alpha)` через `entityInterpolation.ts` (lerp + shortest-yaw, snap при ≥ 6 блоков). Online interpolator задаёт `networkRenderPose` (x/y/z/yaw); death `rotation.z` / scale считаются из client `deathVisualElapsed` (render dt), не из 20 TPS `deathSeconds`. Gameplay/AI/hitboxes остаются на simulation transform. Death visual fields не сериализуются.
 
 Вместо тяжёлого pathfinding используется direct steering, voxel collision/line of sight и optional `stepHeight` в `moveVoxelBody` (мобы карабкаются на один блок). Hostile melee сравнивает 3D distance между eye positions и требует voxel LOS. `playerTargetable: false` сохраняет player-centred spawning/despawn для Creative, но убирает игрока из hostile target selection. Events `playerDamage`, `explosion` и `drop` накапливаются и потребляются `Game`, что сохраняет границу между entity simulation и player inventory/health/world destruction.
 
@@ -362,7 +584,7 @@ Caps зависят от coarse pointer profile. Restore может принуд
 
 ### FallingBlockManager
 
-Когда gravity-блок теряет опору, `VoxelWorld` кладёт spawn в bounded queue. `Game` создаёт falling entity с block mesh, gravity `-32` и voxel AABB; при земле блок возвращается в grid. Save schema 1 опционально сериализует in-flight entities.
+Когда gravity-блок теряет опору, `VoxelWorld` кладёт spawn в bounded queue. Host создаёт falling entity; на сервере visual отсутствует. Gravity `-32` и voxel AABB; при земле блок возвращается в grid. Save schema 1 опционально сериализует in-flight entities.
 
 ### MinecartManager
 
@@ -388,7 +610,7 @@ Cow, pig, chicken, sheep, zombie, skeleton, creeper и spider имеют отд�
 
 Dust распространяет сигнал по шести voxel-соседям, уменьшая уровень на единицу. Torch постоянна, lever переключается use action, button хранит оставшееся pulse time, pressure plate получает occupancy из positions игрока, мобов и dropped items.
 
-Powered TNT удаляется из мира и становится отдельной Three.js entity с fuse `4 s`, gravity и voxel AABB. Mesh uses `block/tnt` (`PRIMED_TNT_TEXTURE_KEY`); fuse flash tints `material.color` white ↔ warm, never replacing the map with a solid red cube. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event. `Game` кладёт event в `ExplosionQueue`: resolve (скан без мутаций, scalar distance) → `applyBlockBatch` → один `relightRegion` на union bounds → `notifyBlocksChanged` с Set-dedupe → chain TNT через `primeTnt(..., { blockAlreadyRemoved: true })`. За tick обрабатывается ограниченный budget (jobs + voxels + ~2–3.5 ms). Одиночный TNT обычно укладывается в один tick; mass chain растягивается, не блокируя render. Explosion не вызывает immediate mesh rebuild.
+Powered TNT удаляется из мира и становится отдельной entity с fuse `4 s`, gravity и voxel AABB. На клиенте mesh uses `block/tnt` (`PRIMED_TNT_TEXTURE_KEY`) via `RedstoneSystem` `root` (SP scene); Anarchy server omits `root`. Fuse flash tints `material.color` white ↔ warm, never replacing the map with a solid red cube. Visual интерполируется между ticks. После fuse RedstoneSystem выдаёт typed explosion event. `Game` кладёт event в `ExplosionQueue`: resolve (скан без мутаций, scalar distance) → `applyBlockBatch` → один `relightRegion` на union bounds → `notifyBlocksChanged` с Set-dedupe → chain TNT через `primeTnt(..., { blockAlreadyRemoved: true })`. За tick обрабатывается ограниченный budget (jobs + voxels + ~2–3.5 ms). Одиночный TNT обычно укладывается в один tick; mass chain растягивается, не блокируя render. Explosion не вызывает immediate mesh rebuild.
 
 Serialization version 2 хранит active sources, lever/button attachment/facing, остаток timed button и primed TNT с fuse и velocity. Restore принимает version 1. Wire power намеренно не сохраняется. Optional `blockStates` и `fallingBlocks` лежат в том же schema 1 snapshot.
 
@@ -426,18 +648,27 @@ HUD обновляется с частотой `10 Hz` и меняет DOM то�
 flowchart LR
   Generator["Seeded base terrain"] --> World["VoxelWorld"]
   Delta["Chunk modifications"] --> World
-  World --> Snapshot["SerializedWorldState v1"]
+  World --> Snapshot["WorldSnapshot schema v1"]
   Player["Player + inventory"] --> Snapshot
   Containers["Chests + furnaces"] --> Snapshot
-  Entities["Drops + mobs"] --> Snapshot
+  Entities["Drops + mobs + carts"] --> Snapshot
   RedstoneSave["Sources + primed TNT"] --> Snapshot
-  Snapshot --> IDB["IndexedDB worlds store"]
+  Snapshot --> Store["WorldStore"]
+  Store --> IDB["IdbWorldStore"]
+  Store --> FS["FsWorldStore"]
   IDB --> Restore["Generate + apply deltas + restore session"]
+  FS --> ServerRestore["WorldInstance restore"]
 ```
 
-`SaveService` делает structured clones на границе storage и сортирует summaries по `updatedAt`. Autosaves сериализуются через promise chain, чтобы параллельные записи не обгоняли друг друга.
+`WorldSnapshot` is the canonical gameplay record (`SerializedWorldState` is the same type). `WORLD_SCHEMA_VERSION` is 1. Future versions fail parse instead of wiping the world. Visual clocks and Three.js objects are not stored.
 
-Если IndexedDB отсутствует, используется in-memory Map. Это graceful degradation, но не durable save.
+`IdbWorldStore` wraps `SaveService`: IndexedDB database `frontier-cubes-saves`, store `worlds`, key `summary.id`. Structured clone on the storage boundary; summaries sorted by `updatedAt`; autosaves still chained in `Game`. Missing IndexedDB falls back to an in-memory Map (not durable).
+
+`FsWorldStore` maps the snapshot onto `server/data/worlds/<worldId>/` (`meta.json`, `world.json`, `players.json`). Layout is not a single JSON file. Concurrent `save` calls are serialized. Corrupt existing files throw `PersistenceError`.
+
+**Online Anarchy** does not write IndexedDB. Server persist interval and shutdown save are unchanged. Snapshot creation runs only on save/export, not per tick.
+
+`npm run server:import -- dump.json` is IndexedDB dump → `WorldSnapshot` → `FsWorldStore`. It does not run at startup and does not read `.schem`.
 
 ## Yandex adapter
 
@@ -475,7 +706,7 @@ DEV profiler (`?perf=1`) — rolling FPS/p95/p99/spike attribution **with LAST S
 
 - Новый block: выделить новый stable `BlockId`, добавить registry definition, runtime texture whitelist и tests; при special shape добавить model/collision/state явно.
 - Новый item: definition + texture + recipe/drop path + stack/equipment tests.
-- Новая save field: обновить `SerializedWorldState`, validation, round-trip test и migration policy.
+- Новая save field: обновить `WorldSnapshot` / `SerializedWorldState`, `parseWorldSnapshot`, round-trip test и schema version policy.
 - Новая simulation system: fixed tick ownership у `Game`, bounded collections, explicit dispose и serializable state при необходимости.
 - Redstone extension: сохранять derived/sourced state boundary, bounded propagation и общий explosion event contract; advanced component не должен обходить эти ограничения.
 - Platform feature: держать за adapter boundary; local mode должен оставаться playable.

@@ -5,9 +5,11 @@ import type { VoxelHit, VoxelWorld } from '../world/World';
 import {
   fenceConnections,
   resolveStairShape,
-  selectionBoxesForBlock,
   selectionShapeKey,
   type BlockNeighborView,
+} from '../world/blockGeometry';
+import {
+  selectionBoxesForBlock,
   type OrientedSelectionBox,
 } from './specialBlockGeometry';
 import { TextureAtlas } from './TextureAtlas';
@@ -219,6 +221,11 @@ export class BlockBreakingOverlay {
   private readonly geometries = new Map<string, THREE.BufferGeometry>();
   private stage: number | null = null;
   private shapeKey = '';
+  private progress = Number.NaN;
+  private targetX = Number.NaN;
+  private targetY = Number.NaN;
+  private targetZ = Number.NaN;
+  private targetBlock = BlockId.Air;
   private disposed = false;
   private readonly onTexture = (stage: number, texture: THREE.Texture): void => {
     if (this.disposed || this.stage !== stage) return;
@@ -253,6 +260,21 @@ export class BlockBreakingOverlay {
       this.hide();
       return;
     }
+    if (
+      this.mesh.visible
+      && this.progress === progress
+      && this.targetX === hit.x
+      && this.targetY === hit.y
+      && this.targetZ === hit.z
+      && this.targetBlock === hit.block
+    ) {
+      return;
+    }
+    this.progress = progress;
+    this.targetX = hit.x;
+    this.targetY = hit.y;
+    this.targetZ = hit.z;
+    this.targetBlock = hit.block;
     const definition = getBlockDefinition(hit.block);
     if (definition.breakable === false || definition.hardness < 0) {
       this.hide();
@@ -320,6 +342,11 @@ export class BlockBreakingOverlay {
   private hide(): void {
     this.mesh.visible = false;
     this.stage = null;
+    this.progress = Number.NaN;
+    this.targetX = Number.NaN;
+    this.targetY = Number.NaN;
+    this.targetZ = Number.NaN;
+    this.targetBlock = BlockId.Air;
   }
 
   private tintFromWorldLight(x: number, y: number, z: number): void {

@@ -1,18 +1,81 @@
 # Тестирование
 
-## 2026-08-31 block breaking overlay
+## 2026-09-02 PR #28 block breaking overlay integration
 
-Report: `reports/2026-08-31_block-breaking-overlay.md`. Baseline `origin/main`=`a056e6f`. Branch `cursor/block-breaking-overlay-3f86`.
+Reports: `reports/2026-08-31_block-breaking-overlay.md` and `reports/2026-09-02_pr28-block-breaking-overlay-integration.md`. Integrated baseline `origin/main`=`a305dc5`. Branch `cursor/block-breaking-overlay-3f86`.
 
-Targeted: `tests/block-breaking-overlay.test.ts` plus `tests/breaking-overlay-textures.test.mjs` and retained `mining` / `lighting-torch-selection`.
+Targeted: `tests/block-breaking-overlay.test.ts`, `tests/breaking-overlay-textures.test.mjs`, retained mining/block-geometry/selection/Game/use/GameplayKernel packs, online simulation/network block updates, and server Anarchy gameplay.
 
 Contracts: stage mapping (`<=0`/`>=1` hidden, `0.01→0` … `0.9→9`), texture path `gui/destroy/destroy_stage_N`, UV 0..1 per face, shape keys for cube/slab/stairs/fence/door, target change resets visual stage, vanished block hides, same stage reuses material/map/geometry, no chunk dirty/remesh, world coordinates at x=15/16, dispose.
 
 DEV harness: `/?qaBreaking=1` (cube/slab/stairs/fence/door, keys `0–9`, `[` `]`, `C` auto-cycle). Production builds do not import the harness.
 
-Full `npm test -- --maxWorkers=2`: **997 passed / 7 failed / 1004** plus 1 vitest-worker RPC timeout. Failures are baseline-class (authored-asset ENOENT; minecart 5s timeouts). Overlay tests passed. Build/size/archive PASS: **3.61 MiB / 231 files**.
+Online authority contract: overlay only reads local progress; client completion sends a request and does not write the block. Server `advanceMining` / `breakBlock` remains authority; authoritative block packets update clients. No second mining timer or online world tick was added.
 
-Manual desktop/mobile checklist lives in the report. HUD mining bar is intentionally still present.
+Final test/build/full-suite results are recorded in the 2026-09-02 integration report. Manual desktop/mobile/two-client checklist remains an owner acceptance gate. HUD mining bar is intentionally still present.
+
+## 2026-09-01 inactive Anarchy client world sync
+
+Report: `reports/2026-09-01_inactive-client-world-sync.md`.
+
+`tests/inactive-client-world-sync.test.ts`: remesh policy PLAYING (inventory overlay) vs PAUSED/BACKGROUND vs MENU; `applyNetworkBlockChanges` while paused; batch last-write; parsed `block_batch` without resume replay; x=15/16; fluid state; deferred lighting queue; kernel still off online.
+
+Retain `gameplay-modal`, `network-block-state-respawn`, online session/respawn, `anarchy-server` / `anarchy-gameplay`.
+
+## 2026-09-01 Phase 7 tooling split
+
+Report: `reports/2026-09-01_shared-tooling-split.md`.
+
+Layer commands (do not replace `npm run check`):
+
+```bash
+npm run typecheck:sim      # tsconfig.sim.json — no DOM, no Three
+npm run typecheck:client    # tsconfig.client.json
+npm run typecheck:server    # tsconfig.server.json
+npm run check:boundaries    # static import scan
+npm run smoke:sim           # Node import of shared sim; fails if `three` loads
+npm run smoke:server        # Anarchy start/tick/mutate/persist, no renderer
+npm run test:sim            # kernel, interaction, geometry, RNG, snapshot, lighting adapter, tooling
+npm run test:server          # tests/server + fs-world-store
+npx tsc --noEmit            # umbrella (still meaningful)
+npm run build               # tsc --noEmit && vite build
+npm run dev                 # Vite client
+npm run dev:server           # Node Anarchy
+```
+
+Vitest default environment is still **Node**. Shared tests must not need jsdom. Client visual tests (`entity-initial-lighting`, `mob-hurt-flash`, …) import Three and register `tests/setupClientEntityHost.ts` so `new MobManager(new THREE.Scene(), …)` still wraps `ThreeEntityHost`. Server tests stay Node.
+
+`npm run check` now also runs `check:boundaries` before the existing test/build/size/archive chain.
+
+## 2026-08-30 initial entity lighting (online join)
+
+Report: `reports/2026-08-30_entity-initial-lighting.md`.
+
+`tests/entity-initial-lighting.test.ts`: join-time mob dark until chunk light + `interpolateVisuals` (no hurt); dynamic spawn already lit; hurt is not the initializer; day vs night compose; `entity_snapshot` restore path; dropped-item visual sync; two-mob isolation; minecart interpolate without `update()`; skeleton snapshot restore. Retain `mob-hurt-flash`, `entity-lighting`.
+
+## 2026-08-30 Phase 6 RNG + lighting adapters
+
+Report: `reports/2026-08-30_shared-rng-lighting-adapters.md`.
+
+Targeted: `tests/random-source.test.ts` (seed determinism, drop counts, scatter envelope, explosion injected RNG) and `tests/lighting-adapter.test.ts` (`WORLD_LIGHT_BUDGET_MS === 2`, immediate vs deferred, `processDeferredLighting` no-op on server worlds). Retain lighting-jobs / lighting-height-256 / lighting-scheduler, combat, explosion, gameplay-kernel, anarchy-gameplay, use-interaction, entity-host.
+
+## 2026-08-29 Phase 2 shared interaction
+
+Report: `reports/2026-08-29_shared-interaction.md`.
+
+Targeted: `tests/use-interaction.test.ts` (intent order, `placeFromHit`, online `interact`-only) plus retained `placement-support` (still `Game.useTargetOrItem`), `glowstone-lantern-chain`, `gameplay-kernel`, `tests/server/anarchy-gameplay.test.ts` / `anarchy-server.test.ts`, bucket + network block-state/input packs.
+
+## 2026-08-29 Anarchy server QA fixes
+
+Report: `reports/2026-08-29_local-server-qa-fixes.md`.
+
+Targeted: `tests/authoritative-motion.test.ts`, `tests/remote-player-view.test.ts`, `tests/server/anarchy-server.test.ts` (plus retained `tests/anarchy-world.test.ts`). Covers stale snapshots, no local hard-teleport, camera look isolation, remote delay lerp, input seq, break/place accept/reject, two-client broadcast, persist, reconnect.
+
+## 2026-08-29 local authoritative Anarchy server
+
+Report: `reports/2026-08-29_local-authoritative-server.md`. Docs: `docs/LOCAL_SERVER.md`.
+
+Targeted: `tests/server/anarchy-server.test.ts` (start/load/join/spawn/two clients/movement/break/place/reach reject/persist/plugins/API surface/singleplayer isolation) plus retained `tests/anarchy-world.test.ts` (IndexedDB identity still valid for the legacy helper / SP list filter).
 
 ## 2026-08-29 lateral skylight / lighting consistency
 
@@ -176,7 +239,8 @@ Targeted suite — 205/205 в 19 файлах; typecheck/build/size/archive PASS
 
 - `authored-item-assets.test.mjs`: точные bytes source→runtime, deterministic potion tint/alpha/cork, repeated import, forced fallback precedence, missing-required preflight без потери runtime files.
 - `arrow-visual-cleanup.test.ts`: finite geometry/UV/normals, tail-only fins, +Z orientation и embedded tip по шести направлениям, stable inGround quaternion, 240 shots → cap48, geometry1/materials2/texture1, removal без children.
-- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch.
+- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch. После Phase 2 это тот же `performUseHeld`.
+- `use-interaction.test.ts`: чистый `resolveUseIntent` (bucket / lever / door / cartCloser / food / place), `placeFromHit` torch+lantern support, online client шлёт только `interact`.
 - `shield-removal.test.ts`: player/offhand/armor/chest/furnace/drop migration, сохранность metadata/durability/bucket overflow, Game damage+armor+normal knockback без active blocking, отсутствие shield-specific runtime. Sword blocking добавлен последующим classic pass; `/give shield` обязан завершаться ошибкой.
 
 Browser QA **не пройден**: браузер ранее отклонил localhost по policy; сейчас browser/user tabs пусты. Обход через другой host/browser/CDP не использовался. PNG inspection и component tests не означают WebGL acceptance.

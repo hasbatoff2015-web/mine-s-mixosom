@@ -1,14 +1,207 @@
 # Roadmap
 
-## 2026-08-31: block breaking overlay
+## 2026-09-02: integrate PR #28 block breaking overlay with authoritative Anarchy main
 
 - [x] Visual-only 10-stage crack overlay consuming `session.miningProgress`; mining gameplay unchanged.
 - [x] Canonical `BlockBreakingOverlay` + `WorldRenderer.setBreakingProgress`; no chunk remesh on stage change.
-- [x] Shape-aware overlay from existing selection boxes (cube/slab/stairs/fence/door required; other selection shapes reuse the same path).
+- [x] Shape-aware overlay uses canonical `world/blockGeometry` selection contract (cube/slab/stairs/fence/door required; other selection shapes reuse the same path).
 - [x] Original production masks at `public/textures/gui/destroy/`; Mojang reference sheets not committed.
 - [x] DEV `/?qaBreaking=1` harness; HUD mining bar kept for the parallel UI branch.
+- [x] Merge current `origin/main` `a305dc5` into the existing PR #28 branch without rebase; preserve GameplayKernel, server-authoritative mining, block states/updates, interpolation and plugin platform.
 - [ ] Native desktop/mobile visual QA of the report checklist (dirt/stone/tools, cancel, chunk border, cave, selection outline).
-- [ ] Later integrate with the in-progress server-authoritative gameplay branch and the HUD branch that will remove the crosshair mining bar.
+
+## 2026-09-01: Phase 8 plugin platform
+
+- [x] Server-only PluginManager lifecycle, scoped ServerAPI, EventBus isolation, command unregister.
+- [x] Shared semantic event catalog + server adapter. Pre-events actually cancel; post-events observe.
+- [x] Discovery from `server/plugins/` (missing dir OK). `PLUGIN_API_VERSION` separate from protocol/schema.
+- [x] Example/test plugin (`/hello` + join). Canonical copy: `server/plugin-examples/hello.ts`. Docs: `docs/PLUGINS.md`.
+- [x] Stock `npm run dev:server` does not register `/hello`. Local QA: copy into `server/plugins/` or `FC_EXAMPLE_PLUGIN=1`.
+- [x] Tests: plugin-platform 18 + boundaries 4; tsc + typecheck + boundaries PASS. Production client dist has no PluginManager.
+- [ ] Owner local QA: no-plugin start (`/hello` unknown), then copy or `FC_EXAMPLE_PLUGIN=1`, `/hello`, join once, disable, broken plugin, Anarchy + two clients, Singleplayer has no plugins.
+- [ ] Do not merge main. Do not implement homes / TPA / economy / kits. Do not start another architecture phase.
+- [ ] Do not touch PR #22 / #28 / #31.
+
+## 2026-09-01: inactive Anarchy client world sync
+
+- [x] Drain lighting/remesh while online PAUSED/BACKGROUND; packets already applied VoxelWorld.
+- [x] Do not run a second client simulation or packet replay queue.
+- [x] Tests: `inactive-client-world-sync` + retained session/Anarchy/fluid packs.
+- [ ] Owner local QA: inventory, pause, tab, fluid, two clients.
+- [ ] Do not merge main.
+
+## 2026-09-01: Phase 7 tooling split
+
+- [x] Separate `tsconfig.sim.json` / `tsconfig.client.json` / `tsconfig.server.json`.
+- [x] Shared sim compiles without DOM and without Three. Server does not import rendering/Three.
+- [x] Neutral `Vec3` / `MoveInput` / `LifecycleState` adapters. No gameplay rewrite.
+- [x] Import guards (`npm run check:boundaries`) + Node smokes (`smoke:sim`, `smoke:server`).
+- [ ] Owner local QA: SP + Anarchy + two clients — **no intended gameplay change**.
+- [ ] Do not merge main. Do not touch PR #22 / #28 / #31. Do not close #30 / #32.
+
+## 2026-09-01: Online Anarchy initial entity lighting finalize
+
+- [x] Review PR #30: join-time mobs/drops/falling/arrows/TNT re-sample on visual sync without hurt.
+- [x] Minecart interpolate also re-samples (same online skip-`update` race as mobs).
+- [x] Tests: two-mob isolation, minecart interpolate, skeleton snapshot restore. Budget stays 2.
+- [ ] Owner local QA: A11 (day, night, hit already lit, later spawn, fly chunks, two clients, minecart if present).
+- [ ] Do not merge main. Do not close PR #30. Phase 7 is a **separate** stacked branch.
+
+## 2026-08-30: Online Anarchy initial entity lighting
+
+- [x] Visual sync always samples current world light (not only hurt flash).
+- [x] Join-time / restored mobs pick up light after chunk lighting without a hit.
+- [x] Dynamic spawns stay correct. Drops/falling/arrows/TNT interpolate use the same contract.
+- [x] No LightEngine rewrite. `WORLD_LIGHT_BUDGET_MS = 2`. Server remains headless.
+- [x] Tests: `entity-initial-lighting` (join vs dynamic vs hurt-not-required, day/night, snapshot path).
+- [ ] Owner local QA: A11 (day, night, hit already lit, later spawn, chunk move, two clients).
+- [ ] Do not merge main. Phase 7 tooling split is a **separate** branch after this fix.
+
+## 2026-08-30: Phase 6 RNG + lighting adapters
+
+- [x] `RandomSource` / `RandomFn` for simulation; live hosts use `SYSTEM_RANDOM` (no world-seeded live stream).
+- [x] Simulation call sites (drops, explosions, mobs, arrows, knockback resistance) go through the injected source. Visual/audio keep `Math.random`.
+- [x] `LightingAdapter`: deferred client vs immediate server. `processDeferredLighting` is a no-op on immediate worlds.
+- [x] LightEngine flood / lateral sky / `WORLD_LIGHT_BUDGET_MS = 2` unchanged.
+- [x] Tests: `random-source` 6, `lighting-adapter` 4; targeted 12 files 167/167. `tsc` clean. Production 3.65 MiB / 221 files.
+- [x] Full check 1169 passed / 8 failed (authored ENOENT + minecart 5s timeouts, same class as #27).
+- [ ] Owner local QA: SP + Anarchy lighting look the same; spawn/loot not obviously reseeded; no client scheduler on server.
+- [ ] Do not merge main. Do not start Phase 7. Draft PR **#29** stacked on **#27**.
+
+## 2026-08-30: Online Anarchy chest GUI sync
+
+- [x] Apply `inventory.window.slots` to the live chest/furnace object while the container GUI is already open.
+- [x] Flush the existing `inventory` message to every connected player viewing the same chest/furnace.
+- [x] No new protocol type. No GameplayKernel / persistence / Phase 6 changes.
+- [x] Tests: `online-container-sync`, `anarchy-chest-sync`, existing container/inventory/anarchy packs.
+- [ ] Owner local QA: put/take visible immediately; two clients; close/reopen still matches. Stacked under Phase 6. **Do not merge main.**
+
+## 2026-08-30: Phase 5 persistence port
+
+- [x] Canonical `WorldSnapshot` (`schemaVersion` 1) shared by Singleplayer and Server.
+- [x] `WorldStore` + `IdbWorldStore` (existing IndexedDB names) + `FsWorldStore` (existing `meta`/`world`/`players` files).
+- [x] Mapper layer; `server:import` goes dump → snapshot → store.
+- [x] Corrupt FS save throws; empty dir still creates. Anarchy id/path/spawn policy unchanged.
+- [x] Tests: `world-snapshot`, `idb-world-store`, `fs-world-store` + existing anarchy persist.
+- [ ] Owner local QA: SP existing world round-trip; Anarchy restart; two clients after restart.
+- [ ] Do not merge main. Do not start Phase 6 (RNG + lighting adapters). Draft PR stacked on **#25**.
+
+## 2026-08-30: entity death animation smoothness
+
+- [x] Client render-clock for mob death pose (`deathVisualElapsed` from `Game.frame` / `rawElapsed`). Simulation `deathSeconds` stays 20 TPS for lifetime/removal.
+- [x] Same pose as before: 0.7 s, 90° fall, 25% shrink. No new animation. No 60 FPS server ticks.
+- [x] Death event starts the visual clock once; repeated `dead` snapshots do not restart it.
+- [x] Interpolation supplies base x/y/z/yaw; death rotation.z / scale applied on top in `syncMob`.
+- [x] Regression tests in `tests/entity-death-animation.test.ts` (11, headless elapsed + mesh pose).
+- [x] Targeted packs + `tsc` + production build 3.64 MiB / 221 files. Full check 1133/7 baseline failures unchanged.
+- [x] Owner local QA: SP kill unchanged; Anarchy + two clients smooth death; other living mobs keep moving.
+- [x] Phase 5 persistence port is on `cursor/shared-persistence-port-bbb1` (stacked on #25). **Do not start Phase 6.**
+
+## 2026-08-30: Phase 4 EntityHost
+
+- [x] `EntityHost` / `HeadlessEntityHost` / `ThreeEntityHost` — entity simulation without constructing Mesh / Geometry / Material.
+- [x] Managers accept `Object3D | EntityHost`; SP shares one Three host; Anarchy server uses Headless (no `ItemVisualFactory`, no dummy scene, redstone without `root`).
+- [x] Draft PR **#24** stacked on PR #23 (not origin/main).
+- [ ] Owner local QA: SP mobs/drops/arrows/minecarts/TNT look the same; Anarchy server still simulates entities; death→respawn WASD and Anarchy→menu→Anarchy still work.
+- [ ] Do not merge main. Do not start Phase 5+ (persistence envelopes, RNG, plugins, renderer folder moves, protocol).
+
+## 2026-08-30: Phase 3 shared block geometry
+
+- [x] Simulation AABB / neighbor shapes / attachment normals in `src/world/blockGeometry.ts` (no Three.js).
+- [x] Rendering `specialBlockGeometry` keeps UV, torch matrices, outline, lantern/chain mesh; re-exports the same sim definitions (no second AABB table).
+- [x] Server and world collision/selection/placement/use/rails/ladders import `world/blockGeometry`, not `rendering/specialBlockGeometry`.
+- [x] Draft PR **#23** stacked on PR #21 (not origin/main).
+- [x] Owner local QA: SP + Anarchy collision, selection, place torch/stair/slab/lantern/chain/fence/rail/button. Death→respawn WASD and Anarchy→menu→Anarchy still work.
+- [x] Phase 4 EntityHost is on `cursor/shared-entity-host-bbb1` (stacked on #23). **Do not start Phase 5+.**
+
+## 2026-08-29: Phase 2 shared interaction
+
+- [x] One simulation `useHeld` / placement path for SP and Anarchy server (`src/gameplay/useInteraction.ts`).
+- [x] Host effects stay split: SP UI/SFX vs server events/window/inventoryDirty.
+- [x] Online client still sends `interact` only (no local place/use sim).
+- [x] No Phase 4+ (EntityHost, persistence, RNG, plugins, renderer moves). Protocol unchanged.
+- [x] Draft PR **#21** stacked on PR #20 (not origin/main).
+- [x] Owner local QA: SP place/use (torch/door/lantern/slab/bucket) and Anarchy interact/place match; death→respawn WASD and Anarchy→menu→Anarchy still work.
+- [x] Phase 3 geometry extraction is on `cursor/shared-block-geometry-bbb1` (stacked on #21). Phase 4 EntityHost is on `cursor/shared-entity-host-bbb1`.
+
+## 2026-08-29: online session transition WASD
+
+- [x] Resume/re-entry after Anarchy→SP→Anarchy accepts a new client input seq (server resets lastInputSeq).
+- [x] Stale AnarchyClient / old websocket callbacks ignored.
+- [x] PR #19 death→respawn contract kept. Draft PR **#20** stacked on #19 (not origin/main).
+- [ ] Owner local QA (fresh / menu / SP / Anarchy transitions, repeat). **Do not merge main.**
+- [x] Phase 2 interaction unify is on `cursor/shared-interaction-bbb1` (stacked on #20). Phase 3 geometry is on `cursor/shared-block-geometry-bbb1`. Phase 4 EntityHost is on `cursor/shared-entity-host-bbb1`.
+
+## 2026-08-29: online respawn WASD (stabilization)
+
+- [x] Canonical server death: every lethal path flushes `health` dead→alive then respawns (`respawnIfDead`).
+- [x] Client stays PLAYING after respawn: no BACKGROUND from pointer-lock/focus blur; lock acquire resumes first.
+- [x] Not a `/kill` special case; not client-authoritative movement; GameplayKernel / interpolation / fluids untouched.
+- [x] Targeted tests: death paths, consecutive deaths, two clients, chat/tab/pointer-lock lifecycle. Draft PR **#19** stacked on #18 (not origin/main).
+- [ ] Owner local QA (zombie/fall/fire/lava/TNT/`/kill`, chat, ESC, two clients, repeat deaths). **Stop for that QA. Do not merge main.**
+
+## 2026-08-29: GameplayKernel (Phase 1)
+
+- [x] Shared simulation order in `src/gameplay/GameplayKernel.ts` for SP `Game` and Anarchy server.
+- [x] Unify `daylightFactor`; no second daylight curve for sky/mobs/sunlight.
+- [x] Server player physics runs in the kernel `players` step (after world/falling).
+- [x] Draft PR #18 stacked on PR #17 (not origin/main).
+- [ ] Owner SP + two-client QA: movement, mobs, fluids, minecart, TNT, combat — behavior should match PR #17.
+- [ ] Do not merge main until that QA.
+- [x] Next: Phase 2 interaction unify (`useHeld` / `useTargetOrItem`) — see section above. Phase 3 geometry extracted. Phase 4 EntityHost is on `cursor/shared-entity-host-bbb1`.
+
+## 2026-08-29: online blockstates / live fluids / respawn input
+
+- [x] WASD after death/respawn: health dead→alive + restore PLAYING input lifecycle (not a per-key hack).
+- [x] Network `BlockRenderState` on live block packets; server `onCommittedBlockState`.
+- [x] Client `applyNetworkBlockChanges` so live fluids keep corner slopes (reuse `fluidCornerHeight`).
+- [x] Server interact/placement from look + raycast; button/door state broadcast.
+- [x] Targeted tests (respawn movement, directional states, live fluid remesh, persist) 35/35; production build/size PASS.
+- [x] Draft PR #17 stacked on PR #16 (not origin/main).
+- [ ] Owner two-client localhost QA (respawn WASD, directional place, button/door, live water/lava slope).
+- [ ] Do not merge main until that QA.
+
+## 2026-08-29: entity interpolation / input / visual sync
+
+- [x] Time-based remote entity interpolation (snapshot history + delay, not FPS lerp).
+- [x] WASD recovery after chat / blur / visibility / pointer lock / tab switch.
+- [x] Server-driven hurt / death / bow visual / arrow render mapping.
+- [x] Targeted interpolation + input + visual-event tests.
+- [ ] Owner two-client localhost QA (smooth mobs, WASD after tab/chat, hurt/death/bow/arrow).
+- [ ] Do not merge main until that QA.
+
+## 2026-08-29: full Anarchy server gameplay
+
+- [x] One integration pass: listed Anarchy systems request → server validate → mutate → sync. Reuse existing managers in `ServerGameplay`.
+- [x] Online client skips local simulation; snapshots + inventory/health/effects/time/block_batch.
+- [x] Shared inventory actions; melee PvP; death drops; potions/effects; TNT; fluids on server World.tick.
+- [x] Persist entities/inventory; explicit `npm run server:import` only (no auto IndexedDB, no `.schem`).
+- [x] Targeted tests 22/22 (`anarchy-server` + `anarchy-gameplay`). Docs + draft PR. **No main merge.**
+- [ ] Owner two-client localhost QA before any main merge.
+- [ ] Explicit IndexedDB → `npm run server:import` of the accepted spawn map (not in git).
+- [ ] Later: VPS deploy, accounts, anti-cheat beyond look/reach/mining checks.
+
+## 2026-08-29: Anarchy server QA fixes (no new features)
+
+- [x] Diagnose missing accepted spawn (IndexedDB vs procedural server world); do not fake `.schem` import.
+- [x] Fix local rubber-banding: server-authoritative 20 TPS + smooth client chase, stale snapshot drop, client-side look.
+- [x] Fix break/place: look-sync raycast, `block_result`, reach slack, broadcast + persist.
+- [x] Regression tests for motion, break/place, two-client, reconnect, persist.
+- [ ] Owner localhost QA (one client / two clients / restart / no-server toast) before any main merge.
+- [ ] Explicit IndexedDB → server dump import of the accepted spawn map (owner export, then `npm run server:import`).
+
+## 2026-08-29: local authoritative Anarchy server (foundation)
+
+- [x] Architecture audit of actual `origin/main`; no Colyseus remnants; IndexedDB Anarchy was client-authoritative.
+- [x] Separate Node server process, localhost WebSocket, configurable host/port, graceful shutdown.
+- [x] Server-side Anarchy world lifecycle + filesystem persist; no silent `.schem` import.
+- [x] Client connect from **Анархия PvP**; unavailable server → toast, stay in menu.
+- [x] Authoritative join/spawn, input movement, two-client visibility, break/place, chat, command registry, PluginManager.
+- [x] Singleplayer path kept; online vs SP ownership split documented.
+- [x] Targeted server tests 14/14; tsc/build/size PASS. Full suite baseline failures unchanged (authored assets ENOENT, minecart timeouts).
+- [ ] User localhost QA (two browsers, persistence, chat) before any main merge.
+- [ ] Explicit IndexedDB → server dump import of the accepted spawn map (not in git).
+- [ ] Later: VPS deploy; accounts. Gameplay systems from the foundation pass are on the server in the full-gameplay branch.
 
 ## 2026-08-29: lateral skylight / lighting quality
 
@@ -317,7 +510,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - advanced redstone, pistons, hoppers и automation;
 - дополнительные dimensions, bosses и late-game progression;
 - cloud world transfer и optional accounts;
-- multiplayer/server authority;
+- public dedicated servers / Survival PvP matchmaking (local Anarchy already exists);
 - modding/data-pack API.
 
 Каждое направление сначала получает отдельный scope, save migration plan, performance budget, asset provenance и tests. Наличие неиспользуемых textures в `assets/` не является основанием для автоматического включения feature.

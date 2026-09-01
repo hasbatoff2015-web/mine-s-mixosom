@@ -17,6 +17,7 @@ import {
   legacyRotationToThree,
 } from '../src/entities/LegacyModel';
 import { VoxelVisualFactory } from '../src/entities/voxelVisuals';
+import { asObject3D } from './asObject3D';
 import {
   createTexturedCuboidGeometry,
   cuboidUvRects,
@@ -146,7 +147,8 @@ describe('legacy textured mob models', () => {
       expect(model.legs.length, kind).toBeGreaterThan(0);
       for (const limb of [...model.legs, ...model.arms]) expect(limb).toBeInstanceOf(THREE.Group);
       const meshes: THREE.Mesh[] = [];
-      model.root.traverse((object) => {
+      const root = asObject3D(model.root)!;
+      root.traverse((object) => {
         if (object instanceof THREE.Mesh) meshes.push(object);
       });
       expect(meshes.length, kind).toBeGreaterThan(2);
@@ -154,8 +156,8 @@ describe('legacy textured mob models', () => {
         const material = mesh.material;
         return !Array.isArray(material) && 'map' in material && material.map instanceof THREE.Texture;
       }), kind).toBe(true);
-      model.root.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(model.root);
+      root.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(root);
       expect(bounds.isEmpty(), kind).toBe(false);
       expect(bounds.min.y, `${kind} model must not float far above its origin`).toBeLessThan(0.55);
       expect(bounds.getSize(new THREE.Vector3()).y, `${kind} model height`).toBeGreaterThan(0.4);

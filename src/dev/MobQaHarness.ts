@@ -50,7 +50,7 @@ export function startMobQaHarness(
       arm.rotation.y = index === 0 ? -0.12 : 0.12;
     });
   }
-  scene.add(model.root);
+  scene.add(model.root as THREE.Object3D);
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">${kind} · ${view}</div>`;
 
   const resize = (): void => {

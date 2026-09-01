@@ -1,5 +1,5 @@
 import { BlockId, getBlockDefinition } from '../blocks';
-import { selectionLocalBoxes, type BlockNeighborView } from '../rendering/specialBlockGeometry';
+import { selectionLocalBoxes, type BlockNeighborView } from './blockGeometry';
 import { offsetLocalBoxes, type CollisionBox } from './collision';
 
 /** World-space interaction AABBs. Empty = air/liquid (not selectable). */

@@ -80,7 +80,7 @@ describe('explosion batch pipeline', () => {
     world.setBlock(6, 40, 6, BlockId.Tnt);
     world.setBlock(7, 40, 6, BlockId.Tnt);
     world.setBlock(6, 40, 7, BlockId.Tnt);
-    const redstone = new RedstoneSystem(world, { root: scene, maxPrimedTnt: 64 });
+    const redstone = new RedstoneSystem(world, { maxPrimedTnt: 64 });
     const primedIds = new Set<string>();
     const queue = new ExplosionQueue();
     queue.enqueue({ x: 6.5, y: 40.5, z: 6.5, radius: 4, power: 4 });
