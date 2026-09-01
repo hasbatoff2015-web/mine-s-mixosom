@@ -31,6 +31,10 @@ This existed before Phase 6. LightEngine flood was not the bug.
 
 `HeadlessEntityHost.applyLight` remains a no-op. No Three.js on the server.
 
+### 2026-09-01 finalize
+
+PR #30 mob/drop/falling/arrow/TNT paths were already correct. `MinecartManager.interpolateVisuals` still only set pose, so join-time carts could stay dark until a later `update()` (which online never runs). Interpolate now calls `applyLight` at the displayed pose. Tests added: two-mob isolation, minecart interpolate, skeleton snapshot restore.
+
 ## LightEngine
 
 Unchanged. No flood, sky, block-light, or scheduler edits.
@@ -49,8 +53,11 @@ Unchanged. No flood, sky, block-light, or scheduler edits.
 4. Day vs night compose without hurt.
 5. `applyEntitySnapshots` + `applyInterpolatedEntityVisuals` path.
 6. Dropped-item visual sync without a sim tick.
+7. Two join-time mobs: both lit after interpolate; hurt A does not change B.
+8. Join-time minecart interpolate without `update()`.
+9. Skeleton `entity_snapshot` restore without hurt.
 
-Targeted with hurt-flash / entity-lighting / entity-host / death-animation / lighting-adapter: **39/39**. `tsc` clean.
+Targeted with hurt-flash / entity-lighting / entity-host / death-animation / lighting-adapter: see latest check. `tsc` clean.
 
 ## Visual QA (owner)
 
@@ -62,4 +69,5 @@ Phase 7 tooling split on a **separate** branch from this HEAD. **Do not merge ma
 
 ## Git
 
-Branch `cursor/entity-initial-light-fix-bbb1` from Phase 6 `2e21bf3`. Draft PR stacked on **#29**, not `origin/main`.
+- PR **#30** `cursor/entity-initial-light-fix-bbb1` from Phase 6 `2e21bf3`. Keep open.
+- Finalize branch `cursor/entity-initial-light-finalize-37a2` from `068b7df`. **Do not merge main. Do not start Phase 7.**

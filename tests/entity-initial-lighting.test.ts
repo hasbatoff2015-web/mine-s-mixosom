@@ -175,4 +175,82 @@ describe('initial entity lighting (online join vs hurt vs dynamic spawn)', () =>
     expect(luminance(entityLight(item.visual))).toBeGreaterThan(0.7);
     drops.dispose();
   });
+
+  it('isolates join-time light and hurt flash across two mobs', () => {
+    const world = new VoxelWorld('initial-mob-isolation');
+    unlitSurface(world);
+    const mobs = new MobManager(new THREE.Scene(), world, { automaticSpawning: false });
+    const pig = mobs.spawn('pig', new THREE.Vector3(6.5, 41, 6.5), { force: true, id: 'join-pig' })!;
+    const zombie = mobs.spawn('zombie', new THREE.Vector3(8.5, 41, 8.5), { force: true, id: 'join-zombie' })!;
+    expect(luminance(entityLight(pig.visual))).toBeLessThan(0.25);
+    expect(luminance(entityLight(zombie.visual))).toBeLessThan(0.25);
+
+    lightSurface(world);
+    mobs.interpolateVisuals(1);
+    const pigLit = luminance(entityLight(pig.visual));
+    const zombieLit = luminance(entityLight(zombie.visual));
+    expect(pig.hurtFlashSeconds).toBe(0);
+    expect(zombie.hurtFlashSeconds).toBe(0);
+    expect(pigLit).toBeGreaterThan(0.7);
+    expect(zombieLit).toBeGreaterThan(0.7);
+
+    mobs.applyAuthoritativeHurt(pig.id);
+    mobs.interpolateVisuals(1);
+    expect(pig.hurtFlashSeconds).toBeGreaterThan(0);
+    expect(zombie.hurtFlashSeconds).toBe(0);
+    expect(luminance(entityLight(zombie.visual))).toBeCloseTo(zombieLit, 5);
+    expect(luminance(entityLight(pig.visual))).not.toBeCloseTo(pigLit, 2);
+    mobs.dispose();
+  });
+
+  it('refreshes join-time minecart light on interpolate without a sim tick', () => {
+    const world = new VoxelWorld('initial-cart-unlit');
+    unlitSurface(world);
+    writeBlock(world, 6, 40, 6, BlockId.Rail);
+    const carts = new MinecartManager(new THREE.Scene(), world);
+    const cart = carts.spawn(6, 41, 6, 'join-cart')!;
+    expect(luminance(entityLight(cart.visual))).toBeLessThan(0.25);
+
+    lightSurface(world);
+    carts.interpolateVisuals(1);
+    expect(luminance(entityLight(cart.visual))).toBeGreaterThan(0.7);
+    carts.dispose();
+  });
+
+  it('lights a restored skeleton through entity_snapshot without hurt', () => {
+    const world = new VoxelWorld('snapshot-join-skeleton');
+    unlitSurface(world);
+    const scene = new THREE.Scene();
+    const mobs = new MobManager(scene, world, { automaticSpawning: false });
+    const session = {
+      drops: new DroppedItemManager(scene, world),
+      falling: new FallingBlockManager(scene, world),
+      mobs,
+      arrows: new PlayerArrowManager(scene, world, mobs),
+      minecarts: new MinecartManager(scene, world),
+      redstone: new RedstoneSystem(world),
+    };
+    const interpolator = new EntityInterpolationBuffer();
+    applyEntitySnapshots(session, [{
+      id: 'net-skeleton',
+      kind: 'mob',
+      x: 6.5, y: 41, z: 6.5,
+      vx: 0, vy: 0, vz: 0,
+      mobKind: 'skeleton',
+      health: 20,
+    }], { interpolator, tick: 1, now: 1_000 });
+    const mob = session.mobs.get('net-skeleton')!;
+    expect(luminance(entityLight(mob.visual))).toBeLessThan(0.25);
+
+    lightSurface(world);
+    applyInterpolatedEntityVisuals(session, interpolator, 1_080);
+    expect(mob.hurtFlashSeconds).toBe(0);
+    expect(luminance(entityLight(mob.visual))).toBeGreaterThan(0.7);
+    session.mobs.dispose();
+    session.drops.dispose();
+    session.falling.dispose();
+    session.arrows.dispose();
+    session.minecarts.dispose();
+    session.redstone.dispose();
+  });
 });

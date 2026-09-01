@@ -407,6 +407,8 @@ export class MinecartManager {
       );
       this.host.setPosition(cart.visual, visual.x, visual.y, visual.z);
       this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+      // Online skips `update()`; visual sync must re-sample after deferred lighting.
+      this.host.applyLight(cart.visual, this.world, visual.x, visual.y + 0.3, visual.z, 0.3);
     }
   }
 

@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-01: Online Anarchy initial entity lighting finalize
+
+- [x] Review PR #30: join-time mobs/drops/falling/arrows/TNT re-sample on visual sync without hurt.
+- [x] Minecart interpolate also re-samples (same online skip-`update` race as mobs).
+- [x] Tests: two-mob isolation, minecart interpolate, skeleton snapshot restore. Budget stays 2.
+- [ ] Owner local QA: A11 (day, night, hit already lit, later spawn, fly chunks, two clients, minecart if present).
+- [ ] Do not merge main. Do not close PR #30. Do not start Phase 7.
+
 ## 2026-08-30: Online Anarchy initial entity lighting
 
 - [x] Visual sync always samples current world light (not only hurt flash).
