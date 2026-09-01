@@ -88,6 +88,8 @@ Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `c
 
 Online chest/furnace clicks are not optimistic. The client sends `inventory_action`; the server mutates via `applyInventoryUiAction` and replies with the existing `inventory` message (`inventory` + `cursor` + `window.slots`). `applyAuthoritativeContainerSlots` writes those slots onto the local `getChest`/`getFurnace` object **even when the GUI is already open**; `applyAuthoritativeCursor` then re-paints. Opening the GUI is only for the first snapshot (`shouldOpenOnlineContainer`). Other players with the same chest/furnace window receive the same `inventory` packet (their own inventory + updated `window.slots`). No new protocol type. Persistence format unchanged.
 
+Online Anarchy still applies `block_update` / `block_batch` in the WebSocket handler (`applyNetworkBlockChanges`) regardless of pause. `processWorldJobs` (deferred light + remesh) also runs while online `PAUSED` / `BACKGROUND` so dirty chunks do not wait for Continue. Kernel / `tickOnline` stay PLAYING-only. Hidden-tab RAF throttle is the browser's; we do not force 60 FPS. Inventory overlays stay PLAYING. Entity interpolation remains in `render()`.
+
 Singleplayer IndexedDB path is unchanged. Online never writes Anarchy to IndexedDB.
 
 ## Карта подсистем

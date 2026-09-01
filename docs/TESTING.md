@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-01 inactive Anarchy client world sync
+
+Report: `reports/2026-09-01_inactive-client-world-sync.md`.
+
+`tests/inactive-client-world-sync.test.ts`: remesh policy PLAYING (inventory overlay) vs PAUSED/BACKGROUND vs MENU; `applyNetworkBlockChanges` while paused; batch last-write; parsed `block_batch` without resume replay; x=15/16; fluid state; deferred lighting queue; kernel still off online.
+
+Retain `gameplay-modal`, `network-block-state-respawn`, online session/respawn, `anarchy-server` / `anarchy-gameplay`.
+
 ## 2026-09-01 Phase 7 tooling split
 
 Report: `reports/2026-09-01_shared-tooling-split.md`.

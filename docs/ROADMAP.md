@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-01: inactive Anarchy client world sync
+
+- [x] Drain lighting/remesh while online PAUSED/BACKGROUND; packets already applied VoxelWorld.
+- [x] Do not run a second client simulation or packet replay queue.
+- [x] Tests: `inactive-client-world-sync` + retained session/Anarchy/fluid packs.
+- [ ] Owner local QA: inventory, pause, tab, fluid, two clients.
+- [ ] Do not merge main. Do not start Phase 8.
+
 ## 2026-09-01: Phase 7 tooling split
 
 - [x] Separate `tsconfig.sim.json` / `tsconfig.client.json` / `tsconfig.server.json`.

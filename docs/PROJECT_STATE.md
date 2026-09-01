@@ -2,6 +2,14 @@
 
 Срез: **2026-09-01**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: inactive Anarchy client world sync
+
+- Ветка `cursor/inactive-client-world-sync-37a2` от Phase 7 HEAD `a995ded` (PR **#33**). **Не merge в main.** Не Phase 8.
+- Root cause: `block_update` / `block_batch` сразу пишут VoxelWorld, но `processWorldJobs` (light + remesh) шёл только в `PLAYING`. Entity interpolation в `render()` поэтому жил, а блоки ждали Continue / refocus.
+- Fix: online `shouldProcessOnlineWorldVisuals` для PLAYING / PAUSED / BACKGROUND. Kernel / tickOnline по-прежнему только PLAYING. Нет очереди пакетов, нет второго fluid/LightEngine.
+- Targeted: `inactive-client-world-sync` 12 + session/Anarchy/fluid packs. Full vitest **1194/7** (authored ENOENT + minecart 5s + RPC). Production **3.65 MiB / 221 files**.
+- Report: `docs/reports/2026-09-01_inactive-client-world-sync.md`. Owner local QA (inventory / pause / tab / fluid / two clients). **Не merge.**
+
 ## Последний проход: Phase 7 tooling split
 
 - Ветка `cursor/shared-tooling-split-37a2` от architecture HEAD `15cc8d7` (`cursor/entity-initial-light-finalize-37a2`, PR **#32**). **Не merge в main.** Не Phase 8. PR **#30** / **#32** не закрывать. Не трогать PR **#22** / **#28** / **#31**.

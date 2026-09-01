@@ -184,7 +184,7 @@ import {
   shouldIgnoreStaleDeadSnapshot,
   shouldRestoreGameplayAfterRespawn,
 } from './onlineRespawn';
-import { shouldRunClientWorldSimulation } from './onlineSimulation';
+import { shouldProcessOnlineWorldVisuals, shouldRunClientWorldSimulation } from './onlineSimulation';
 import {
   lifecycleAfterWorldSessionEnter,
   shouldHandleOnlineClientEvent,
@@ -2065,7 +2065,12 @@ export class Game {
       this.lastSimParts = { ...this.simParts, ticks: stepped.ticks };
       if (stepped.ticks > 0) this.tickTimings.add(tickMs / stepped.ticks);
       this.processWorldJobs(frameStart, false);
-    } else this.accumulator = 0;
+    } else {
+      this.accumulator = 0;
+      if (this.session?.online && shouldProcessOnlineWorldVisuals(this.lifecycle.state)) {
+        this.processWorldJobs(frameStart, false);
+      }
+    }
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
       updateSharedFireAnimation(rawElapsed);
