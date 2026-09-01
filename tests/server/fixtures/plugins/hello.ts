@@ -1,1 +1,1 @@
-export { plugin } from '../../../../server/plugin-examples/hello.ts';
+export { plugin } from '../../../../server/plugin-examples/hello';

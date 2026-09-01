@@ -1,7 +1,7 @@
 import type { GameMode, PlayerSnapshot } from '../shared/protocol';
 import type { EventBus, ServerEventName, EventHandler } from './events';
 import type { CommandHandler, CommandRegistry } from './commands';
-import { discoverPluginModules } from './pluginLoader';
+import { bundledExampleDir, discoverPluginModules } from './pluginLoader';
 import { serverLog } from './log';
 
 /** Separate from protocol version, world schema, and schematic import version. */
@@ -211,17 +211,24 @@ export class PluginManager {
   }
 
   /**
-   * Register the bundled example (`/hello`) for local QA.
+   * Register `server/plugin-examples` for local QA (`FC_EXAMPLE_PLUGIN=1`).
    * Does not scan test fixtures. Safe if the same plugin is already in pluginDir.
    */
   async loadBundledExample(): Promise<void> {
-    const { plugin } = await import('./plugin-examples/hello.ts');
-    if (this.plugins.some((entry) => entry.name === plugin.name)) {
-      serverLog(`plugins: bundled example '${plugin.name}' already registered`);
-      return;
+    const { loaded, errors } = await discoverPluginModules(bundledExampleDir());
+    for (const failure of errors) {
+      serverLog(`plugins: skip bundled example ${failure.source}: ${failure.error}`, 'error');
     }
-    this.add(plugin, 'bundled:example');
-    serverLog('plugins: loaded bundled example (FC_EXAMPLE_PLUGIN=1)');
+    for (const entry of loaded) {
+      if (this.plugins.some((plugin) => plugin.name === entry.plugin.name)) {
+        serverLog(`plugins: bundled example '${entry.plugin.name}' already registered`);
+        continue;
+      }
+      this.add(entry.plugin, 'bundled:example');
+    }
+    if (loaded.length > 0) {
+      serverLog('plugins: loaded bundled example (FC_EXAMPLE_PLUGIN=1)');
+    }
   }
 
   async loadAll(): Promise<void> {

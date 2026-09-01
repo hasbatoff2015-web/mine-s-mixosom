@@ -1,6 +1,6 @@
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readdir, realpath, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { Plugin } from './PluginManager';
 import { serverLog } from './log';
 
@@ -48,6 +48,11 @@ function asPlugin(value: unknown, source: string): Plugin | undefined {
     return value as Plugin;
   }
   return undefined;
+}
+
+/** Canonical example modules. Not the live `server/plugins/` discovery path. */
+export function bundledExampleDir(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), 'plugin-examples');
 }
 
 /**

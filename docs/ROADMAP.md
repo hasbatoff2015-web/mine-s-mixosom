@@ -7,7 +7,7 @@
 - [x] Discovery from `server/plugins/` (missing dir OK). `PLUGIN_API_VERSION` separate from protocol/schema.
 - [x] Example/test plugin (`/hello` + join). Canonical copy: `server/plugin-examples/hello.ts`. Docs: `docs/PLUGINS.md`.
 - [x] Stock `npm run dev:server` does not register `/hello`. Local QA: copy into `server/plugins/` or `FC_EXAMPLE_PLUGIN=1`.
-- [x] Tests: plugin-platform + boundaries; full 1211/7 baseline class; production 3.65 MiB / 221 files.
+- [x] Tests: plugin-platform 18 + boundaries 4; tsc + typecheck + boundaries PASS. Production client dist has no PluginManager.
 - [ ] Owner local QA: no-plugin start (`/hello` unknown), then copy or `FC_EXAMPLE_PLUGIN=1`, `/hello`, join once, disable, broken plugin, Anarchy + two clients, Singleplayer has no plugins.
 - [ ] Do not merge main. Do not implement homes / TPA / economy / kits. Do not start another architecture phase.
 - [ ] Do not touch PR #22 / #28 / #31.

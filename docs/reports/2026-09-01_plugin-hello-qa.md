@@ -30,7 +30,9 @@ Stock `npm run dev:server` still does **not** register `/hello`. That is expecte
 
 ## Tests
 
-See the follow-up commit for targeted plugin-platform / boundaries results.
+- Targeted: `plugin-platform` 18 + `plugin-boundaries` 4 (**22/22**).
+- `tsc --noEmit` + `typecheck:sim` / `client` / `server` + `check:boundaries` PASS.
+- Production Vite build PASS. Client `dist` has no `PluginManager` / `PLUGIN_API_VERSION` / `FC_EXAMPLE_PLUGIN`.
 
 ## Known issues
 
