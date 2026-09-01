@@ -7,7 +7,7 @@
 - Ветка `cursor/entity-initial-light-finalize-37a2` от PR **#30** HEAD `068b7df`. **Не merge в main.** Не Phase 7. PR **#30** не закрывать.
 - Review #30: mob `syncVisual` / drops / falling / arrows `applyRenderPose` / primed TNT interpolate already re-sample light every client visual refresh. Hurt is not required.
 - Remaining same-class gap: `MinecartManager.interpolateVisuals` only moved the mesh. Online skips `update()`, so join-time carts stayed at the unlit spawn sample. Now interpolate applies `EntityHost.applyLight` at the displayed pose (headless no-op).
-- Tests: isolation of two join-time mobs (hurt A does not change B), minecart interpolate without a sim tick, skeleton `entity_snapshot` restore. LightEngine / budget **2** unchanged.
+- Tests: isolation of two join-time mobs (hurt A does not change B), minecart interpolate without a sim tick, skeleton `entity_snapshot` restore. LightEngine / budget **2** unchanged. Targeted **48/48** (10 initial-lighting). `tsc` + production build PASS.
 - Report: `docs/reports/2026-08-30_entity-initial-lighting.md`. Owner local QA (A11). **Не merge. Не начинать Phase 7.**
 
 ## Последний проход: Online Anarchy initial entity lighting

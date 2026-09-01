@@ -57,7 +57,7 @@ Unchanged. No flood, sky, block-light, or scheduler edits.
 8. Join-time minecart interpolate without `update()`.
 9. Skeleton `entity_snapshot` restore without hurt.
 
-Targeted with hurt-flash / entity-lighting / entity-host / death-animation / lighting-adapter: see latest check. `tsc` clean.
+Targeted with hurt-flash / entity-lighting / entity-host / death-animation / lighting-adapter: **48/48** in 7 files (includes 10 `entity-initial-lighting`). Interpolation / Anarchy / lighting packs **188/188**. `tsc` clean. Production Vite build PASS.
 
 ## Visual QA (owner)
 
