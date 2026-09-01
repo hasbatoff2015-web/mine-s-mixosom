@@ -232,6 +232,7 @@ export class WorldInstance {
 
   async loadPlugins(): Promise<void> {
     await this.plugins.discover(this.config.pluginDir);
+    if (this.config.loadExamplePlugin) await this.plugins.loadBundledExample();
     await this.plugins.loadAll();
   }
 

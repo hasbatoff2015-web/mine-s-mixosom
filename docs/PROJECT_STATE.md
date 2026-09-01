@@ -5,7 +5,8 @@
 ## Последний проход: Phase 8 plugin platform
 
 - Ветка `cursor/plugin-platform-37a2` от PR **#34** HEAD `81211b1` (`cursor/inactive-client-world-sync-37a2`). **Не merge в main.** Не сворачивать Anarchy stack в main. Не начинать homes/tpa/economy.
-- PluginManager был foundation (API + EventBus + `enableAll`), без discovery, без scoped cleanup, без kernel-adjacent semantic events. Phase 8 делает server-only platform: lifecycle, `PLUGIN_API_VERSION`, scoped ServerAPI, EventBus isolation, pre/post events, command unregister, fixture example plugin.
+- PluginManager был foundation (API + EventBus + `enableAll`), без discovery, без scoped cleanup, без kernel-adjacent semantic events. Phase 8 делает server-only platform: lifecycle, `PLUGIN_API_VERSION`, scoped ServerAPI, EventBus isolation, pre/post events, command unregister, disk discovery.
+- Live discovery: `server/plugins/` (`FC_PLUGIN_DIR`). Stock dir is empty — `/hello` is not a built-in. Canonical example: `server/plugin-examples/hello.ts` (copy into `server/plugins/` or `FC_EXAMPLE_PLUGIN=1`). Test fixtures stay under `tests/server/fixtures/plugins/` (includes broken/invalid — do not point `FC_PLUGIN_DIR` there for ordinary QA).
 - Shared `simulationEvents.ts` + server `pluginEventAdapter`. Shared core не импортирует PluginManager. Singleplayer / client bundle без plugin runtime.
 - Не трогать PR **#22** / **#28** / **#31**. Не закрывать **#30** / **#32** / **#33** / **#34**.
 - Report: `docs/reports/2026-09-01_plugin-platform.md`. Targeted **216/216**. Full vitest **1211/7** (authored ENOENT + minecart 5s + RPC). Production **3.65 MiB / 221 files**. Draft PR **#35**. Owner local QA. **Не merge.**

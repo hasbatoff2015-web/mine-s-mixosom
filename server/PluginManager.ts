@@ -202,6 +202,26 @@ export class PluginManager {
         this.fail(entry.plugin.name, errorMessage(error));
       }
     }
+    const names = loaded.map((entry) => entry.plugin.name);
+    serverLog(
+      names.length > 0
+        ? `plugins: discovered ${names.length} from ${dir}: ${names.join(', ')}`
+        : `plugins: discovered 0 from ${dir} (none)`,
+    );
+  }
+
+  /**
+   * Register the bundled example (`/hello`) for local QA.
+   * Does not scan test fixtures. Safe if the same plugin is already in pluginDir.
+   */
+  async loadBundledExample(): Promise<void> {
+    const { plugin } = await import('./plugin-examples/hello.ts');
+    if (this.plugins.some((entry) => entry.name === plugin.name)) {
+      serverLog(`plugins: bundled example '${plugin.name}' already registered`);
+      return;
+    }
+    this.add(plugin, 'bundled:example');
+    serverLog('plugins: loaded bundled example (FC_EXAMPLE_PLUGIN=1)');
   }
 
   async loadAll(): Promise<void> {

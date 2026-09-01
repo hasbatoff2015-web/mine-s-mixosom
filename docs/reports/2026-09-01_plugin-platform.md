@@ -62,7 +62,7 @@ Trusted server-side code. Not a sandbox.
 
 ## Discovery / Loading
 
-`server/plugins/` (`FC_PLUGIN_DIR`). Missing dir OK. Realpath confined to that directory. One bad file does not stop others.
+`server/plugins/` (`FC_PLUGIN_DIR`). Missing dir OK. Realpath confined to that directory. One bad file does not stop others. Stock `npm run dev:server` does not register `/hello`. Canonical example: `server/plugin-examples/hello.ts`. Opt-in: copy into `server/plugins/` or `FC_EXAMPLE_PLUGIN=1`. Do not set `FC_PLUGIN_DIR` to `tests/server/fixtures/plugins` for ordinary QA.
 
 ## Versioning
 
@@ -70,7 +70,7 @@ Trusted server-side code. Not a sandbox.
 
 ## Example Plugin
 
-`tests/server/fixtures/plugins/hello.ts` — `/hello` + join log. Not a production Anarchy feature.
+`server/plugin-examples/hello.ts` — `/hello` + join log. Not loaded by default. The test fixture re-exports that module; `broken.ts` / `invalid.ts` stay test-only.
 
 ## Tests
 

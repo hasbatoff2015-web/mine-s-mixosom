@@ -22,6 +22,8 @@ export interface ServerConfig {
   readonly persistIntervalMs: number;
   readonly pluginDir: string;
   readonly operators: readonly string[];
+  /** When true, register `server/plugin-examples/hello.ts` without copying it into pluginDir. */
+  readonly loadExamplePlugin: boolean;
 }
 
 function integerEnv(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number): number {
@@ -56,6 +58,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .split(',')
       .map((name) => name.trim())
       .filter(Boolean),
+    loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
   };
 }
 

@@ -1,9 +1,24 @@
 # server/plugins
 
-Trusted Anarchy plugins live here. Drop `.ts` / `.js` / `.mjs` modules that export a `Plugin`.
+This is the **live** plugin directory for `npm run dev:server`.
 
-Missing directory is fine — the server still starts.
+Drop trusted `.ts` / `.js` / `.mjs` modules that export `plugin` or `default`.
 
-See `docs/PLUGINS.md`. This is **not** a sandbox. Installing a plugin gives it server authority.
+- Missing directory is fine — the server still starts.
+- `_` prefixed files, README, and `.gitkeep` are skipped.
+- `/hello` is **not** a built-in command. Stock `server/plugins/` is empty on purpose.
 
-Do not put homes / tpa / economy here unless that feature is an explicit later task.
+## Local QA for `/hello`
+
+```bash
+cp server/plugin-examples/hello.ts server/plugins/hello.ts
+# restart npm run dev:server
+```
+
+Or without copying:
+
+```bash
+FC_EXAMPLE_PLUGIN=1 npm run dev:server
+```
+
+See `docs/PLUGINS.md`. Installing a plugin gives it server authority. This is not a sandbox.

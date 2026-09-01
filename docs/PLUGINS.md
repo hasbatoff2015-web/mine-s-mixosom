@@ -60,13 +60,30 @@ disable plugins (flush registrations/tasks) → save world → close connections
 
 ## Installation
 
-Put a trusted module in `server/plugins/`:
+`npm run dev:server` loads plugins from **`server/plugins/`** (`FC_PLUGIN_DIR` / `PLUGIN_DIR`). That is the live production discovery path.
 
 - top-level `*.ts` / `*.js` / `*.mjs`
 - skip `_` prefixed files, README, `.gitkeep`
 - export `plugin`, or `default` (object or factory function)
+- missing directory is fine — the server still starts
+- `/hello` is **not** a built-in. Stock `server/plugins/` is empty on purpose.
 
-Example (tests only; not a production Anarchy feature):
+The canonical example is `server/plugin-examples/hello.ts`. It is **not** auto-loaded. Broken/invalid modules stay under `tests/server/fixtures/plugins/` and must not be used as `FC_PLUGIN_DIR` for ordinary QA.
+
+Local QA (pick one):
+
+```bash
+cp server/plugin-examples/hello.ts server/plugins/hello.ts
+# restart npm run dev:server
+```
+
+or:
+
+```bash
+FC_EXAMPLE_PLUGIN=1 npm run dev:server
+```
+
+Do not commit a default `server/plugins/hello.ts`. Do not point `FC_PLUGIN_DIR` at `tests/server/fixtures/plugins` — that folder also contains broken/invalid fixtures.
 
 ```ts
 import type { Plugin } from '../PluginManager';
@@ -89,11 +106,10 @@ export const plugin: Plugin = {
 };
 ```
 
-The in-repo example lives under `tests/server/fixtures/plugins/` so production Anarchy does not ship `/hello`.
-
 Env:
 
-- `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the plugin directory
+- `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the live plugin directory
+- `FC_EXAMPLE_PLUGIN=1` — register the bundled example without copying it into `server/plugins/`
 - `FC_OPERATORS` — comma-separated player names treated as `operator`
 
 ## API version

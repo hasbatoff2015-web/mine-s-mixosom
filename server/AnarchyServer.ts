@@ -51,6 +51,17 @@ export class AnarchyServer {
     await this.world.initialize();
     await this.world.loadPlugins();
     await this.world.plugins.enableAll();
+    const enabled = this.world.plugins.recordsView().filter((record) => record.phase === 'enabled');
+    const failed = this.world.plugins.recordsView().filter((record) => record.phase === 'failed');
+    const names = enabled.map((record) => record.plugin.name);
+    serverLog(
+      names.length > 0
+        ? `plugins: ${names.length} enabled: ${names.join(', ')}`
+        : `plugins: 0 enabled from ${this.config.pluginDir}. /hello is not a built-in; copy server/plugin-examples/hello.ts to server/plugins/hello.ts or set FC_EXAMPLE_PLUGIN=1`,
+    );
+    if (failed.length > 0) {
+      serverLog(`plugins: ${failed.length} failed: ${failed.map((record) => record.plugin.name).join(', ')}`, 'warn');
+    }
     await new Promise<void>((resolve, reject) => {
       const http = createServer((req, res) => this.handleHttp(req, res));
       this.http = http;

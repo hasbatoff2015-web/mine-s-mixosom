@@ -351,7 +351,7 @@ EventBus  ──►  Plugins (ServerAPI)
 
 `src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
 
-Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
 
 **Not here:** homes / TPA / economy / kits / moderation. Those are later features, not Phase 8.
 

@@ -13,7 +13,10 @@ import { PLUGIN_API_VERSION, type Plugin } from '../../server/PluginManager';
 import { WorldInstance } from '../../server/WorldInstance';
 import { createItemStack } from '../../src/inventory';
 
+const REPO_ROOT = pathJoin(dirname(fileURLToPath(import.meta.url)), '../..');
 const FIXTURE_PLUGINS = pathJoin(dirname(fileURLToPath(import.meta.url)), 'fixtures/plugins');
+const REPO_PLUGINS = pathJoin(REPO_ROOT, 'server/plugins');
+const EXAMPLE_PLUGINS = pathJoin(REPO_ROOT, 'server/plugin-examples');
 
 async function tempDir(): Promise<string> {
   return mkdtemp(pathJoin(tmpdir(), 'fc-plugins-'));
@@ -36,6 +39,7 @@ function testConfig(dataDir: string, pluginDir = pathJoin(dataDir, 'no-plugins')
     chunkViewRadius: 1,
     persistIntervalMs: 60_000,
     pluginDir,
+    loadExamplePlugin: false,
   };
 }
 
@@ -84,6 +88,53 @@ describe('Phase 8 plugin platform', () => {
     if ('error' in result) throw new Error(result.error);
     return { ...result, sink };
   }
+
+  it('defaults production discovery to cwd/server/plugins and does not auto-load /hello', () => {
+    const config = loadServerConfig({ HOST: '127.0.0.1', PORT: '0' }, REPO_ROOT);
+    expect(config.pluginDir).toBe(`${REPO_ROOT}/server/plugins`);
+    expect(config.loadExamplePlugin).toBe(false);
+    expect(loadServerConfig({ FC_EXAMPLE_PLUGIN: '1' }, REPO_ROOT).loadExamplePlugin).toBe(true);
+  });
+
+  it('does not register /hello from the stock repo plugin directory', async () => {
+    const world = await bootWorld(REPO_PLUGINS);
+    await world.loadPlugins();
+    await world.plugins.enableAll();
+    expect(world.plugins.list()).toEqual([]);
+    expect(world.commands.find('hello')).toBeUndefined();
+    const joined = join(world, 'Ada');
+    world.handleChat(joined.player, '/hello');
+    expect(joined.sink.payloads.some((payload) => String((payload as { text?: string }).text ?? '').includes("Unknown command 'hello'"))).toBe(true);
+  });
+
+  it('registers /hello when discovering server/plugin-examples', async () => {
+    const world = await bootWorld(EXAMPLE_PLUGINS);
+    await world.loadPlugins();
+    await world.plugins.enableAll();
+    expect(world.plugins.phaseOf('example')).toBe('enabled');
+    expect(world.commands.find('hello')).toBeDefined();
+    const joined = join(world, 'Ada');
+    world.handleChat(joined.player, '/hello');
+    expect(joined.sink.payloads.some((payload) => (payload as { text?: string }).text === 'Hello, Ada')).toBe(true);
+  });
+
+  it('registers /hello via FC_EXAMPLE_PLUGIN without copying or scanning fixtures', async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance({
+      ...testConfig(dir, pathJoin(dir, 'empty-plugins')),
+      loadExamplePlugin: true,
+    });
+    worlds.push(world);
+    await world.initialize();
+    await world.loadPlugins();
+    await world.plugins.enableAll();
+    expect(world.plugins.phaseOf('example')).toBe('enabled');
+    expect(world.commands.find('hello')).toBeDefined();
+    const joined = join(world, 'Ada');
+    world.handleChat(joined.player, '/hello');
+    expect(joined.sink.payloads.some((payload) => (payload as { text?: string }).text === 'Hello, Ada')).toBe(true);
+  });
 
   it('starts without plugins and keeps 20 TPS tick order', async () => {
     const world = await bootWorld();

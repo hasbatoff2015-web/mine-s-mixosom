@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -17,6 +17,7 @@ describe('Phase 8 plugin boundaries', () => {
       'server/PluginManager.ts',
       'server/pluginLoader.ts',
       'server/pluginEventAdapter.ts',
+      'server/plugin-examples/hello.ts',
       'server/events.ts',
       'server/commands.ts',
       'src/gameplay/simulationEvents.ts',
@@ -29,6 +30,11 @@ describe('Phase 8 plugin boundaries', () => {
       expect(source, file).not.toMatch(/src\/rendering\//);
       expect(source, file).not.toMatch(/src\/core\/Game/);
     }
+  });
+
+  it('stock server/plugins does not ship plugin modules', () => {
+    const files = readdirSync(join(ROOT, 'server/plugins'));
+    expect(files.filter((name) => /\.(mjs|js|ts)$/i.test(name))).toEqual([]);
   });
 
   it('singleplayer Game never loads PluginManager', () => {

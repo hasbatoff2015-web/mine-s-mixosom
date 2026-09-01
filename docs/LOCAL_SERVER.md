@@ -47,6 +47,9 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 | `MAX_PLAYERS` | `300` | Join cap |
 | `SERVER_NAME` | `Frontier Cubes Anarchy` | Status name |
 | `PERSIST_INTERVAL_MS` | `30000` | Periodic save |
+| `FC_PLUGIN_DIR` / `PLUGIN_DIR` | `server/plugins` | Live plugin directory (`npm run dev:server`) |
+| `FC_EXAMPLE_PLUGIN` | unset | `1` / `true` loads bundled `/hello` without copying |
+| `FC_OPERATORS` | empty | Comma-separated operator names |
 
 HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
 
@@ -144,6 +147,15 @@ They receive a frozen, per-plugin `ServerAPI`:
 `PLUGIN_API_VERSION` is `1` (not the protocol or world schema).
 
 Trusted server code, not a sandbox. No hot reload. No marketplace.
+
+`/hello` is **not** a built-in. Default `server/plugins/` is empty. For local QA:
+
+```bash
+cp server/plugin-examples/hello.ts server/plugins/hello.ts
+# restart npm run dev:server
+```
+
+or `FC_EXAMPLE_PLUGIN=1 npm run dev:server`.
 
 Starter plugins such as homes/economy/kits/tpa are **not** implemented in this pass.
 
