@@ -50,6 +50,10 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 
 HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
 
+The server process must compile and boot **without Three.js, DOM, or the Vite client**. Authoritative typecheck: `npm run typecheck:server`. Headless acceptance: `npm run smoke:server`. Import scan: `npm run check:boundaries` (server must not import `src/rendering/**`, `src/core/Game`, `three`).
+
+Shared simulation used by this process is Node-safe (`npm run typecheck:sim`, `npm run smoke:sim`). Client stay on `npm run dev` / `npm run typecheck:client`.
+
 ## Start client
 
 ```bash

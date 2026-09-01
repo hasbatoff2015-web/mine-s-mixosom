@@ -1,18 +1,11 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId } from '../blocks';
-import { FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
+import { clamp, FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
 import { interpolateVec3 } from '../core/entityInterpolation';
-import {
-  isMinecartEntityVisual,
-  MINECART_HEIGHT,
-  MINECART_HIT_HEIGHT,
-  MINECART_LENGTH,
-  MINECART_WIDTH,
-} from '../rendering/minecartGeometry';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
-import type { EntityHost } from './EntityHost';
+import type { EntityHost, EntityVisual } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
 import {
@@ -25,6 +18,17 @@ import {
   sampleRail,
   type RailCell,
 } from './railPath';
+
+/** World size of the open-top cart, in blocks. Keep in sync with minecartGeometry. */
+export const MINECART_WIDTH = 0.98;
+export const MINECART_LENGTH = 0.98;
+export const MINECART_HEIGHT = 0.62;
+export const MINECART_HIT_HEIGHT = 1.15;
+export const MINECART_ENTITY_KIND = 'minecart-entity';
+
+export function isMinecartEntityVisual(object: { readonly userData?: { readonly kind?: string } }): boolean {
+  return object.userData?.kind === MINECART_ENTITY_KIND;
+}
 
 export const TNT_MINECART_FUSE_TICKS = 80;
 export const TNT_MINECART_EXPLOSION_POWER = 4;
@@ -115,10 +119,10 @@ export interface SerializedMinecart {
 
 export interface MinecartEntity {
   readonly id: string;
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
-  readonly visual?: THREE.Object3D;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
+  readonly visual?: EntityVisual;
   yaw: number;
   pitch: number;
   rider: boolean;
@@ -139,14 +143,14 @@ export interface MinecartUpdateInput {
 
 export interface MinecartExplosionEvent {
   readonly id: string;
-  readonly position: THREE.Vector3;
+  readonly position: Vec3;
   readonly power: number;
   readonly radius: number;
 }
 
 export interface MinecartPushSource {
-  readonly position: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
+  readonly position: Vec3;
+  readonly velocity: Vec3;
   readonly aabb: {
     readonly minX: number;
     readonly minY: number;
@@ -166,7 +170,7 @@ export class MinecartManager {
   private disposed = false;
 
   constructor(
-    sceneOrHost: THREE.Object3D | EntityHost,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
     _unusedVisuals?: unknown,
     private readonly maxCarts = 16,
@@ -186,13 +190,13 @@ export class MinecartManager {
   spawn(x: number, y: number, z: number, id?: string, variant: MinecartVariant = 'normal'): MinecartEntity | undefined {
     if (this.disposed || this.carts.size >= this.maxCarts) return undefined;
     const entityId = id ?? `cart-${this.idCounter += 1}`;
-    const visual = this.host.createMinecart(variant) as THREE.Object3D | undefined;
+    const visual = this.host.createMinecart(variant) as EntityVisual | undefined;
     if (visual) this.host.attach(visual);
     const entity: MinecartEntity = {
       id: entityId,
-      position: new THREE.Vector3(x + 0.5, y, z + 0.5),
-      previousPosition: new THREE.Vector3(x + 0.5, y, z + 0.5),
-      velocity: new THREE.Vector3(),
+      position: new Vec3(x + 0.5, y, z + 0.5),
+      previousPosition: new Vec3(x + 0.5, y, z + 0.5),
+      velocity: new Vec3(),
       visual,
       yaw: 0,
       pitch: 0,
@@ -220,7 +224,7 @@ export class MinecartManager {
     return undefined;
   }
 
-  nearest(position: THREE.Vector3, maxDistance = 1.4): MinecartEntity | undefined {
+  nearest(position: Vec3Like, maxDistance = 1.4): MinecartEntity | undefined {
     let best: MinecartEntity | undefined;
     let bestDistance = maxDistance;
     for (const cart of this.carts.values()) {
@@ -250,8 +254,8 @@ export class MinecartManager {
   }
 
   handleFlintUse(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     reach: number,
     ignoreId?: string,
   ): 'primed' | 'already' | 'none' {
@@ -285,7 +289,7 @@ export class MinecartManager {
   }
 
   /** Removes a cart without exploding. Ignored for the ridden cart and primed TNT carts. */
-  breakCart(cart: MinecartEntity, riddenId?: string): { position: THREE.Vector3; items: readonly string[] } | undefined {
+  breakCart(cart: MinecartEntity, riddenId?: string): { position: Vec3; items: readonly string[] } | undefined {
     if (cart.id === riddenId) return undefined;
     if (!this.carts.has(cart.id)) return undefined;
     if (cart.variant === 'tnt' && cart.fuseTicks > 0) return undefined;
@@ -296,10 +300,10 @@ export class MinecartManager {
     return { position, items };
   }
 
-  push(cart: MinecartEntity, direction: THREE.Vector3, strength = 0.18): void {
+  push(cart: MinecartEntity, direction: Vec3Like, strength = 0.18): void {
     const tangent = this.tangentOf(cart);
     const along = (direction.x * tangent.x + direction.z * tangent.z) * strength * 20;
-    cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    cart.alongSpeed = clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
   }
 
   tryPushFromPlayer(player: MinecartPushSource, ridingId?: string): void {
@@ -311,17 +315,17 @@ export class MinecartManager {
       if (Math.abs(along) <= 0.05) continue;
       cart.alongSpeed += along * PUSH_GAIN;
       const cap = MINECART_MAX_SPEED;
-      cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed, -cap, cap);
+      cart.alongSpeed = clamp(cart.alongSpeed, -cap, cap);
     }
   }
 
   raycast(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     maxDistance: number,
     ignoreId?: string,
   ): { cart: MinecartEntity; distance: number } | undefined {
-    const inv = 1 / Math.max(1e-8, direction.length());
+    const inv = 1 / Math.max(1e-8, Math.hypot(direction.x, direction.y, direction.z));
     const dx = direction.x * inv;
     const dy = direction.y * inv;
     const dz = direction.z * inv;
@@ -344,7 +348,7 @@ export class MinecartManager {
     return best;
   }
 
-  findDismountPosition(cart: MinecartEntity): THREE.Vector3 {
+  findDismountPosition(cart: MinecartEntity): Vec3 {
     const offsets: Array<readonly [number, number]> = [
       [1, 0], [-1, 0], [0, 1], [0, -1],
       [1, 1], [1, -1], [-1, 1], [-1, -1],
@@ -352,7 +356,7 @@ export class MinecartManager {
     const shape = { width: PLAYER_WIDTH, height: PLAYER_HEIGHT };
     for (const lift of [0, 1]) {
       for (const [dx, dz] of offsets) {
-        const candidate = new THREE.Vector3(
+        const candidate = new Vec3(
           cart.position.x + dx,
           cart.position.y + lift,
           cart.position.z + dz,
@@ -375,7 +379,7 @@ export class MinecartManager {
         return candidate;
       }
     }
-    return new THREE.Vector3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
+    return new Vec3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
   }
 
   update(deltaSeconds: number, input: MinecartUpdateInput = {}): void {
@@ -491,7 +495,7 @@ export class MinecartManager {
     if (sample.tangentY !== 0) {
       cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
     }
-    cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
     if (Math.abs(cart.alongSpeed) < 0.02 && Math.abs(forward) <= 0.05) cart.alongSpeed = 0;
 
     let remaining = cart.alongSpeed * dt;
@@ -593,7 +597,7 @@ export class MinecartManager {
     cart.progress = progressOnRail(cell.shape, cart.position.x - cell.x, cart.position.z - cell.z);
     const pose = sampleRail(cell, cart.progress);
     cart.position.set(pose.x, pose.y, pose.z);
-    cart.alongSpeed = THREE.MathUtils.clamp(
+    cart.alongSpeed = clamp(
       cart.velocity.x * pose.tangentX + cart.velocity.z * pose.tangentZ,
       -MINECART_MAX_SPEED,
       MINECART_MAX_SPEED,
@@ -655,8 +659,6 @@ export class MinecartManager {
     );
   }
 }
-
-export { isMinecartEntityVisual };
 
 function rayAabb(
   ox: number, oy: number, oz: number,

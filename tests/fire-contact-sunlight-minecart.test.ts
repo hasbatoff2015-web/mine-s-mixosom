@@ -45,6 +45,7 @@ import { SurvivalSystem, type DamageResult } from '../src/survival';
 import { allCraftingBookEntries } from '../src/ui/recipeBook';
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
+import { asObject3D } from './asObject3D';
 
 const grid = (...rows: readonly (readonly (string | null)[])[]): readonly (string | null)[] => rows.flat();
 
@@ -568,7 +569,7 @@ describe('TNT minecart', () => {
     inventory.setSlot(0, createItemStack('tnt', 4));
     expect(manager.insertTnt(cart)).toBe(true);
     expect(cart.variant).toBe('tnt');
-    expect(cart.visual!.getObjectByName('tnt-cargo')?.visible).toBe(true);
+    expect((cart.visual!.getObjectByName('tnt-cargo') as THREE.Object3D | undefined)?.visible).toBe(true);
     expect(manager.isRideable(cart)).toBe(false);
     expect(inventory.remove('tnt', 1)).toBe(1);
     expect(inventory.getSlot(0)?.count).toBe(3);
@@ -670,7 +671,7 @@ describe('minecart solid inner floor', () => {
     world.setBlockState(5, 41, 5, { railShape: 'north_south' });
     const manager = carts(world);
     const cart = manager.spawn(5, 41, 5)!;
-    const floor = minecartFloorMesh(cart.visual!);
+    const floor = minecartFloorMesh(asObject3D(cart.visual)!);
     expect(floor).toBeDefined();
     expect(floor!.name).toBe(MINECART_FLOOR_NAME);
     const geometry = floor!.geometry as THREE.BoxGeometry;

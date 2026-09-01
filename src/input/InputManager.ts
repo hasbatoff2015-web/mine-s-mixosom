@@ -11,6 +11,9 @@ import {
 } from './pointerLock';
 import { PointerMotionFilter } from './pointerMotion';
 import { shouldBlurStaleTextField, shouldCaptureGameplayKey } from './gameplayKeys';
+import type { MoveInput } from './MoveInput';
+
+export type { MoveInput } from './MoveInput';
 
 function isTypingElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -33,18 +36,6 @@ export interface InputCallbacks {
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
   isChatOpen?(): boolean;
-}
-
-export interface MoveInput {
-  forward: number;
-  right: number;
-  jump: boolean;
-  sprint: boolean;
-  sneak: boolean;
-  /** Shift while flying: descend. Optional so older tests stay valid. */
-  descend?: boolean;
-  /** Ctrl while flying: faster horizontal flight. */
-  flySprint?: boolean;
 }
 
 export class InputManager {

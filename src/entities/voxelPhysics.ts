@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
 import { blockCollisionBoxes, collisionCandidateCellRange } from '../world/collision';
@@ -35,7 +35,7 @@ interface BodyAABB {
   maxZ: number;
 }
 
-function bodyAabb(position: Readonly<THREE.Vector3>, shape: VoxelBodyShape): BodyAABB {
+function bodyAabb(position: Vec3Like, shape: VoxelBodyShape): BodyAABB {
   const halfWidth = shape.width * 0.5;
   return {
     minX: position.x - halfWidth,
@@ -61,7 +61,7 @@ function boxesOverlap(
 
 function collidingBoxes(
   world: VoxelWorld,
-  position: Readonly<THREE.Vector3>,
+  position: Vec3Like,
   shape: VoxelBodyShape,
 ): Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }> {
   const body = bodyAabb(position, shape);
@@ -84,7 +84,7 @@ function collidingBoxes(
 
 function resolveAxis(
   world: VoxelWorld,
-  position: THREE.Vector3,
+  position: Vec3,
   shape: VoxelBodyShape,
   axis: 'x' | 'y' | 'z',
   amount: number,
@@ -127,13 +127,12 @@ function resolveAxis(
   return true;
 }
 
-function supportedFromBelow(world: VoxelWorld, position: Readonly<THREE.Vector3>, shape: VoxelBodyShape): boolean {
-  const probe = position.clone();
-  probe.y -= 0.08;
+function supportedFromBelow(world: VoxelWorld, position: Vec3Like, shape: VoxelBodyShape): boolean {
+  const probe = new Vec3(position.x, position.y - 0.08, position.z);
   return collidingBoxes(world, probe, shape).length > 0;
 }
 
-function horizontalDistanceSquared(from: Readonly<THREE.Vector3>, to: Readonly<THREE.Vector3>): number {
+function horizontalDistanceSquared(from: Vec3Like, to: Vec3Like): number {
   const dx = to.x - from.x;
   const dz = to.z - from.z;
   return dx * dx + dz * dz;
@@ -145,8 +144,8 @@ function horizontalDistanceSquared(from: Readonly<THREE.Vector3>, to: Readonly<T
  */
 export function moveVoxelBody(
   world: VoxelWorld,
-  position: THREE.Vector3,
-  velocity: Readonly<THREE.Vector3>,
+  position: Vec3,
+  velocity: Vec3Like,
   deltaSeconds: number,
   shape: VoxelBodyShape,
   options: VoxelMoveOptions = {},
@@ -202,7 +201,7 @@ export function moveVoxelBody(
 
 export function isSpaceClear(
   world: VoxelWorld,
-  position: Readonly<THREE.Vector3>,
+  position: Vec3Like,
   shape: VoxelBodyShape,
 ): boolean {
   return collidingBoxes(world, position, shape).length === 0;
@@ -210,12 +209,12 @@ export function isSpaceClear(
 
 export function hasVoxelLineOfSight(
   world: VoxelWorld,
-  from: Readonly<THREE.Vector3>,
-  to: Readonly<THREE.Vector3>,
+  from: Vec3Like,
+  to: Vec3Like,
 ): boolean {
-  const direction = new THREE.Vector3().subVectors(to, from);
+  const direction = new Vec3().subVectors(to, from);
   const distance = direction.length();
   if (distance <= COLLISION_EPSILON) return true;
-  const hit = world.raycast(new THREE.Vector3(from.x, from.y, from.z), direction, distance);
+  const hit = world.raycast(new Vec3(from.x, from.y, from.z), direction, distance);
   return hit === undefined || hit.distance >= distance - 0.05;
 }

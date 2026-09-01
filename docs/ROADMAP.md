@@ -1,12 +1,21 @@
 # Roadmap
 
+## 2026-09-01: Phase 7 tooling split
+
+- [x] Separate `tsconfig.sim.json` / `tsconfig.client.json` / `tsconfig.server.json`.
+- [x] Shared sim compiles without DOM and without Three. Server does not import rendering/Three.
+- [x] Neutral `Vec3` / `MoveInput` / `LifecycleState` adapters. No gameplay rewrite.
+- [x] Import guards (`npm run check:boundaries`) + Node smokes (`smoke:sim`, `smoke:server`).
+- [ ] Owner local QA: SP + Anarchy + two clients — **no intended gameplay change**.
+- [ ] Do not merge main. Do not start Phase 8 (plugins). Do not touch PR #22 / #28 / #31. Do not close #30 / #32.
+
 ## 2026-09-01: Online Anarchy initial entity lighting finalize
 
 - [x] Review PR #30: join-time mobs/drops/falling/arrows/TNT re-sample on visual sync without hurt.
 - [x] Minecart interpolate also re-samples (same online skip-`update` race as mobs).
 - [x] Tests: two-mob isolation, minecart interpolate, skeleton snapshot restore. Budget stays 2.
 - [ ] Owner local QA: A11 (day, night, hit already lit, later spawn, fly chunks, two clients, minecart if present).
-- [ ] Do not merge main. Do not close PR #30. Do not start Phase 7.
+- [ ] Do not merge main. Do not close PR #30. Phase 7 is a **separate** stacked branch.
 
 ## 2026-08-30: Online Anarchy initial entity lighting
 
@@ -471,7 +480,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - advanced redstone, pistons, hoppers и automation;
 - дополнительные dimensions, bosses и late-game progression;
 - cloud world transfer и optional accounts;
-- multiplayer/server authority;
+- public dedicated servers / Survival PvP matchmaking (local Anarchy already exists);
 - modding/data-pack API.
 
 Каждое направление сначала получает отдельный scope, save migration plan, performance budget, asset provenance и tests. Наличие неиспользуемых textures в `assets/` не является основанием для автоматического включения feature.

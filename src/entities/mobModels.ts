@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import type { MobKind } from './mobDefinitions';
 import {
   buildLegacyModel,
@@ -8,16 +7,9 @@ import {
   type LegacyVector,
 } from './LegacyModel';
 import { VoxelVisualFactory } from './voxelVisuals';
+import type { MobModel } from './EntityHost';
 
-export interface MobModel {
-  readonly root: THREE.Group;
-  readonly parts: ReadonlyMap<string, THREE.Group>;
-  readonly head?: THREE.Object3D;
-  readonly legs: readonly THREE.Object3D[];
-  readonly legSwingSigns: readonly number[];
-  readonly arms: readonly THREE.Object3D[];
-  readonly wings: readonly THREE.Object3D[];
-}
+export type { MobModel } from './EntityHost';
 
 export interface MobModelDescriptor {
   readonly kind: MobKind;

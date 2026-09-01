@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import {
   BlockId,
   canHarvestBlock,
@@ -81,7 +82,6 @@ import {
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
   MobManager,
-  ThreeEntityHost,
   type MinecartEntity,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
@@ -89,6 +89,7 @@ import {
   type SerializedMinecart,
   type SerializedMob,
 } from '../entities';
+import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { InputManager } from '../input/InputManager';
 import {
   shouldOpenPauseOnUnlock,
@@ -270,8 +271,8 @@ const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
 
 function raycastRemotePlayers(
   remotes: Map<string, RemotePlayerView>,
-  origin: THREE.Vector3,
-  direction: THREE.Vector3,
+  origin: Vec3Like,
+  direction: Vec3Like,
   maxDistance: number,
 ): { id: string; distance: number } | undefined {
   const half = PLAYER_WIDTH * 0.5;
@@ -781,9 +782,9 @@ export class Game {
     this.openBlockInventory(kind, {
       x, y, z,
       block: kind === 'chest' ? BlockId.Chest : kind === 'furnace' ? BlockId.Furnace : BlockId.CraftingTable,
-      normal: new THREE.Vector3(0, 1, 0),
+      normal: new Vec3(0, 1, 0),
       distance: 0,
-      point: new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+      point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
     });
   }
 
@@ -1069,8 +1070,14 @@ export class Game {
         spawnPoint: [...survival.spawnPoint],
       });
     }
+    const entityHost = new ThreeEntityHost(this.scene, {
+      itemVisuals,
+      arrowVisuals,
+      ownsItemVisuals: false,
+      ownsArrowVisuals: false,
+    });
     const redstone = new RedstoneSystem(world, {
-      root: this.scene,
+      host: entityHost,
       onSourceChanged: (x, _y, z) => world.markBlockDirty(x, z),
     });
     const activePressurePlates = new Set<string>();
@@ -1100,12 +1107,6 @@ export class Game {
       },
     );
     this.scene.add(worldRenderer.group);
-    const entityHost = new ThreeEntityHost(this.scene, {
-      itemVisuals,
-      arrowVisuals,
-      ownsItemVisuals: false,
-      ownsArrowVisuals: false,
-    });
     const drops = new DroppedItemManager(entityHost, world, {
       onPickup: (stack) => {
         const remainder = inventory.add(stack as ItemStack);
@@ -2638,9 +2639,9 @@ export class Game {
             : {
               x, y, z,
               block: session.world.getBlock(x, y, z, false),
-              normal: new THREE.Vector3(0, 1, 0),
+              normal: new Vec3(0, 1, 0),
               distance: 0,
-              point: new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+              point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
             };
           game.openBlockInventory(kind, hit);
         },
@@ -2758,12 +2759,12 @@ export class Game {
   private updateRedstone(): void {
     const session = this.session!;
     const occupied = new Set<string>();
-    const living: Readonly<THREE.Vector3>[] = [
+    const living: readonly Vec3Like[] = [
       session.player.position,
       ...session.mobs.entities.map((mob) => mob.position),
     ];
-    const items: Readonly<THREE.Vector3>[] = session.drops.entities.map((drop) => drop.position);
-    const occupy = (positions: readonly Readonly<THREE.Vector3>[], livingOnly: boolean): void => {
+    const items: readonly Vec3Like[] = session.drops.entities.map((drop) => drop.position);
+    const occupy = (positions: readonly Vec3Like[], livingOnly: boolean): void => {
       void livingOnly;
       for (const position of positions) {
         const x = Math.floor(position.x);
@@ -2841,8 +2842,8 @@ export class Game {
           z: block.z,
           block: block.previous,
           distance: 0,
-          normal: new THREE.Vector3(),
-          point: new THREE.Vector3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
+          normal: new Vec3(),
+          point: new Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
         });
       },
       onChainedTnt: (tnt) => {
@@ -2909,7 +2910,7 @@ export class Game {
     this.refreshHud();
   }
 
-  private spawnDroppedStack(stack: ItemStack, position?: THREE.Vector3): void {
+  private spawnDroppedStack(stack: ItemStack, position?: Vec3Like): void {
     const session = this.session;
     if (!session || session.online) return;
     session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {

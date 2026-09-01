@@ -10,6 +10,8 @@ import {
 } from '../src/entities';
 import { ENTITY_MATERIAL_OWNED } from '../src/rendering/worldLighting';
 import { VoxelWorld } from '../src/world/World';
+import type { EntityVisual } from '../src/entities/EntityHost';
+import { asObject3D } from './asObject3D';
 
 function platform(world: VoxelWorld, y = 40): void {
   world.getChunk(0, 0);
@@ -23,10 +25,11 @@ function platform(world: VoxelWorld, y = 40): void {
   }
 }
 
-function ownedMeshes(root: THREE.Object3D | undefined): THREE.Mesh[] {
-  if (!root) return [];
+function ownedMeshes(root: EntityVisual | undefined): THREE.Mesh[] {
+  const object3d = asObject3D(root);
+  if (!object3d) return [];
   const meshes: THREE.Mesh[] = [];
-  root.traverse((object) => {
+  object3d.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     const material = object.material;
     if (Array.isArray(material) || !material.userData?.[ENTITY_MATERIAL_OWNED]) return;
@@ -36,7 +39,7 @@ function ownedMeshes(root: THREE.Object3D | undefined): THREE.Mesh[] {
   return meshes;
 }
 
-function firstOwnedMesh(root: THREE.Object3D | undefined): THREE.Mesh {
+function firstOwnedMesh(root: EntityVisual | undefined): THREE.Mesh {
   const mesh = ownedMeshes(root)[0];
   if (!mesh) throw new Error('expected an owned entity mesh');
   return mesh;

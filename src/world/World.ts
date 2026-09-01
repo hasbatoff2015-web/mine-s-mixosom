@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { migrateLegacyStack } from '../inventory/legacyItems';
 import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
 import { rayAabbDistance, blockCollisionBoxes } from './collision';
@@ -68,9 +68,9 @@ export interface VoxelHit {
   y: number;
   z: number;
   block: BlockId;
-  normal: THREE.Vector3;
+  normal: Vec3;
   distance: number;
-  point: THREE.Vector3;
+  point: Vec3;
 }
 
 export interface DetachedBlockEvent {
@@ -913,12 +913,12 @@ export class VoxelWorld {
   }
 
   raycast(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     maxDistance: number,
     options: VoxelRaycastOptions = {},
   ): VoxelHit | undefined {
-    const dir = direction.clone().normalize();
+    const dir = new Vec3(direction.x, direction.y, direction.z).normalize();
     let x = Math.floor(origin.x);
     let y = Math.floor(origin.y);
     let z = Math.floor(origin.z);
@@ -958,8 +958,8 @@ export class VoxelWorld {
   }
 
   private hitVoxelBoxes(
-    origin: THREE.Vector3,
-    dir: THREE.Vector3,
+    origin: Vec3Like,
+    dir: Vec3Like,
     x: number,
     y: number,
     z: number,
@@ -982,9 +982,9 @@ export class VoxelWorld {
     if (!best) return undefined;
     return {
       x, y, z, block,
-      normal: new THREE.Vector3(best.nx, best.ny, best.nz),
+      normal: new Vec3(best.nx, best.ny, best.nz),
       distance: best.distance,
-      point: origin.clone().addScaledVector(dir, best.distance),
+      point: new Vec3(origin.x, origin.y, origin.z).addScaledVector(dir, best.distance),
     };
   }
 

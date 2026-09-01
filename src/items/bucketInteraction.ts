@@ -1,4 +1,4 @@
-import type { Vector3 } from 'three';
+import type { Vec3Like } from '../math/vec3';
 import { BlockId, getBlockDefinition } from '../blocks';
 import { createItemStack, Inventory, type ItemStack } from '../inventory';
 import { FLUID_SOURCE_LEVEL, isFluidSource } from '../world/fluids';
@@ -53,8 +53,8 @@ function storeOrDrop(context: BucketContext, stack: ItemStack): void {
 /** The existing DDA stops at the first liquid, then source semantics decide pickup. */
 export function pickupFluidSource(
   context: BucketContext,
-  origin: Vector3,
-  direction: Vector3,
+  origin: Vec3Like,
+  direction: Vec3Like,
   reach: number,
 ): VoxelHit | undefined {
   const { world, inventory, selectedSlot, mode } = context;

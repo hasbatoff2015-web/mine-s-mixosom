@@ -7,10 +7,32 @@
 
 import type { VoxelWorld } from '../world/World';
 import type { MobKind } from './mobDefinitions';
-import type { MobModel } from './mobModels';
 
-/** Opaque client visual. Absent on the server host. */
-export type EntityVisual = object;
+/** Opaque client visual. Runtime is a Three.js Object3D; simulation only stores the handle. */
+export type EntityVisual = {
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+  userData: Record<string, unknown>;
+  visible?: boolean;
+  children: unknown[];
+  name?: string;
+  material?: unknown;
+  traverse(cb: (object: unknown) => void): void;
+  getObjectByName(name: string): unknown;
+  updateMatrixWorld?(force?: boolean): void;
+};
+
+/** Visual rig handle. Client fills this with Three.js groups; sim only stores it. */
+export interface MobModel {
+  readonly root: EntityVisual;
+  readonly parts: ReadonlyMap<string, EntityVisual>;
+  readonly head?: EntityVisual;
+  readonly legs: readonly EntityVisual[];
+  readonly legSwingSigns: readonly number[];
+  readonly arms: readonly EntityVisual[];
+  readonly wings: readonly EntityVisual[];
+}
 
 export interface MobVisualState {
   readonly kind: MobKind;
@@ -45,6 +67,8 @@ export interface EntityHost {
   createMob(kind: MobKind): { visual: EntityVisual; model: MobModel } | undefined;
   createArrow(flaming?: boolean): EntityVisual | undefined;
   createPrimedTnt?(id: string): EntityVisual | undefined;
+  /** Fuse pulse / flash for primed TNT. Headless no-op. */
+  pulsePrimedTnt?(visual: EntityVisual, elapsed: number, urgency: number): void;
   attach(visual: EntityVisual): void;
   detach(visual: EntityVisual): void;
   setPosition(visual: EntityVisual, x: number, y: number, z: number): void;
@@ -106,6 +130,8 @@ export class HeadlessEntityHost implements EntityHost {
   createPrimedTnt(_id: string): undefined {
     return undefined;
   }
+
+  pulsePrimedTnt(): void {}
 
   attach(): void {}
 

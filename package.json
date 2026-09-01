@@ -12,7 +12,15 @@
     "dev:anarchy": "node scripts/dev-anarchy.mjs",
     "server:import": "vite-node server/importWorld.ts",
     "typecheck": "tsc --noEmit",
+    "typecheck:sim": "tsc --noEmit -p tsconfig.sim.json",
+    "typecheck:client": "tsc --noEmit -p tsconfig.client.json",
+    "typecheck:server": "tsc --noEmit -p tsconfig.server.json",
     "test": "vitest run",
+    "test:sim": "vitest run tests/tooling-boundaries.test.ts tests/tooling-sim-smoke.test.ts tests/gameplay-kernel.test.ts tests/use-interaction.test.ts tests/block-geometry.test.ts tests/random-source.test.ts tests/world-snapshot.test.ts tests/lighting-adapter.test.ts",
+    "test:server": "vitest run tests/server tests/fs-world-store.test.ts",
+    "check:boundaries": "node scripts/check-import-boundaries.mjs",
+    "smoke:sim": "node --import ./scripts/block-three-register.mjs ./node_modules/vite-node/vite-node.mjs scripts/sim-node-smoke.ts",
+    "smoke:server": "vite-node scripts/server-headless-smoke.ts",
     "benchmark:performance": "vite-node scripts/benchmark-performance.ts",
     "benchmark:lighting": "vite-node scripts/benchmark-lighting.ts",
     "benchmark:perf-pass": "vite-node scripts/benchmark-perf-pass.ts",
@@ -22,7 +30,7 @@
     "build": "tsc --noEmit && vite build",
     "check:size": "node scripts/check-build.mjs",
     "check:archive": "node scripts/check-build.mjs --archive",
-    "check": "npm run typecheck && npm run test && npm run build && npm run check:size && npm run check:archive"
+    "check": "npm run typecheck && npm run check:boundaries && npm run test && npm run build && npm run check:size && npm run check:archive"
   },
   "dependencies": {
     "three": "^0.179.1",
@@ -31,6 +39,7 @@
   "devDependencies": {
     "@types/three": "^0.179.0",
     "@types/ws": "^8.18.1",
+    "@types/node": "^22.13.10",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
     "vite-node": "^3.2.4",

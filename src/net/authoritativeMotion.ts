@@ -1,19 +1,10 @@
 import type { PlayerSnapshot } from '../../shared/protocol';
+import type { MutableVec3, Vec3Like } from '../math/vec3';
+
+export type { MutableVec3, Vec3Like } from '../math/vec3';
 
 export const LOCAL_SNAP_DISTANCE = 6;
 export const LOCAL_APPROACH_PER_SECOND = 18;
-
-export interface Vec3Like {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-}
-
-export interface MutableVec3 {
-  x: number;
-  y: number;
-  z: number;
-}
 
 /** Later-or-equal snapshots are stale duplicates; only strictly newer ticks apply. */
 export function shouldAcceptSnapshot(lastTick: number, tick: number): boolean {

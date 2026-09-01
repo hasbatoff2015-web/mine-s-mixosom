@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import {
   BlockId,
   getBlockDefinition,
@@ -7,11 +7,10 @@ import {
   type BlockRenderState,
   type HorizontalFacing,
 } from '../blocks';
-import { blockKey } from '../core/constants';
-import { TextureAtlas } from '../rendering/TextureAtlas';
-import { bindEntityLightReceiver, createEntityMaterial, applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
+import { blockKey, lerp } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
 import { moveVoxelBody } from '../entities/voxelPhysics';
+import { HeadlessEntityHost, type EntityHost, type EntityVisual } from '../entities/EntityHost';
 import type {
   RedstoneExplosionEvent,
   RedstoneSourceKind,
@@ -41,8 +40,8 @@ interface MutableSourceState {
 }
 
 export interface RedstoneSystemOptions {
-  /** Optional scene/group that receives simple primed-TNT meshes. */
-  readonly root?: THREE.Object3D;
+  /** Optional entity host for primed-TNT visuals. Server omits this (headless). */
+  readonly host?: EntityHost;
   readonly maxSources?: number;
   readonly maxPrimedTnt?: number;
   readonly maxPropagationStepsPerUpdate?: number;
@@ -55,25 +54,25 @@ export interface RedstoneSystemOptions {
 }
 
 export class PrimedTnt {
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
   fuseSeconds: number;
   readonly totalFuseSeconds: number;
-  readonly visual?: THREE.Mesh;
+  readonly visual?: EntityVisual;
 
   constructor(
     readonly id: string,
-    position: Readonly<THREE.Vector3>,
+    position: Vec3Like,
     fuseSeconds: number,
-    visual?: THREE.Mesh,
-    velocity?: Readonly<THREE.Vector3>,
+    visual?: EntityVisual,
+    velocity?: Vec3Like,
   ) {
-    this.position = new THREE.Vector3(position.x, position.y, position.z);
+    this.position = new Vec3(position.x, position.y, position.z);
     this.previousPosition = this.position.clone();
     this.velocity = velocity
-      ? new THREE.Vector3(velocity.x, velocity.y, velocity.z)
-      : new THREE.Vector3(0, 4, 0);
+      ? new Vec3(velocity.x, velocity.y, velocity.z)
+      : new Vec3(0, 4, 0);
     this.fuseSeconds = fuseSeconds;
     this.totalFuseSeconds = fuseSeconds;
     this.visual = visual;
@@ -99,15 +98,14 @@ export class RedstoneSystem {
   private readonly defaultTntFuseSeconds: number;
   private dirtyHead = 0;
   private tntIdCounter = 0;
-  private tntGeometry?: THREE.BoxGeometry;
-  private tntMap?: THREE.Texture;
-  private readonly tntMaterials: THREE.MeshBasicMaterial[] = [];
   private disposed = false;
+  private readonly host: EntityHost;
 
   constructor(
     private readonly world: VoxelWorld,
     private readonly options: RedstoneSystemOptions = {},
   ) {
+    this.host = options.host ?? new HeadlessEntityHost();
     this.maxSources = Math.max(1, Math.floor(options.maxSources ?? 2_048));
     this.maxPrimedTnt = Math.max(1, Math.floor(options.maxPrimedTnt ?? 64));
     this.maxPropagationStepsPerUpdate = Math.max(
@@ -161,19 +159,21 @@ export class RedstoneSystem {
         existing.position.set(entry.x, entry.y, entry.z);
         existing.velocity.set(entry.vx, entry.vy, entry.vz);
         existing.fuseSeconds = Math.max(0.05, entry.fuse);
-        if (snapVisual) existing.visual?.position.copy(existing.position);
+        if (snapVisual && existing.visual) {
+          this.host.setPosition(existing.visual, existing.position.x, existing.position.y + 0.49, existing.position.z);
+        }
         continue;
       }
       this.createPrimedTnt(
         entry.id,
-        new THREE.Vector3(entry.x, entry.y, entry.z),
+        new Vec3(entry.x, entry.y, entry.z),
         Math.max(0.05, entry.fuse),
         [entry.vx, entry.vy, entry.vz],
       );
     }
     for (const [id, entity] of this.primedById) {
       if (seen.has(id)) continue;
-      entity.visual?.removeFromParent();
+      if (entity.visual) this.host.detach(entity.visual);
       this.primedById.delete(id);
     }
   }
@@ -372,7 +372,7 @@ export class RedstoneSystem {
     x: number,
     y: number,
     z: number,
-    entityPositions: readonly Readonly<THREE.Vector3>[],
+    entityPositions: readonly Vec3Like[],
   ): boolean {
     const occupied = entityPositions.some((position) =>
       position.x >= x - 0.05 && position.x <= x + 1.05
@@ -401,7 +401,7 @@ export class RedstoneSystem {
     }
     return this.createPrimedTnt(
       undefined,
-      new THREE.Vector3(x + 0.5, y, z + 0.5),
+      new Vec3(x + 0.5, y, z + 0.5),
       Math.max(0.05, fuseSeconds),
     );
   }
@@ -469,7 +469,7 @@ export class RedstoneSystem {
         || snapshot.fuseSeconds <= 0) continue;
       this.createPrimedTnt(
         snapshot.id,
-        new THREE.Vector3(...snapshot.position),
+        new Vec3(...snapshot.position),
         snapshot.fuseSeconds,
         snapshot.velocity,
       );
@@ -484,7 +484,9 @@ export class RedstoneSystem {
     this.dirtyQueue.length = 0;
     this.dirtySet.clear();
     this.dirtyHead = 0;
-    for (const entity of this.primedById.values()) entity.visual?.removeFromParent();
+    for (const entity of this.primedById.values()) {
+      if (entity.visual) this.host.detach(entity.visual);
+    }
     this.primedById.clear();
     this.explosionEvents.length = 0;
   }
@@ -492,12 +494,6 @@ export class RedstoneSystem {
   dispose(): void {
     if (this.disposed) return;
     this.clear();
-    this.tntGeometry?.dispose();
-    this.tntMap?.dispose();
-    for (const material of this.tntMaterials) material.dispose();
-    this.tntGeometry = undefined;
-    this.tntMap = undefined;
-    this.tntMaterials.length = 0;
     this.disposed = true;
   }
 
@@ -543,23 +539,15 @@ export class RedstoneSystem {
       if (entity.visual) {
         const elapsed = entity.totalFuseSeconds - entity.fuseSeconds;
         const urgency = 1 - entity.fuseSeconds / entity.totalFuseSeconds;
-        const pulse = Math.sin(elapsed * (10 + urgency * 26)) > 0 ? 1.06 + urgency * 0.08 : 1;
-        entity.visual.scale.setScalar(pulse);
-        entity.visual.rotation.y = elapsed * 0.75;
-        const material = entity.visual.material;
-        if (material instanceof THREE.MeshBasicMaterial) {
-          const flash = Math.sin(elapsed * (12 + urgency * 28)) > 0;
-          material.color.setHex(flash ? 0xffffff : 0xffe7b0);
-        }
-        entity.visual.position.set(entity.position.x, entity.position.y + 0.49, entity.position.z);
-        applySampledEntityLight(
+        this.host.pulsePrimedTnt?.(entity.visual, elapsed, urgency);
+        this.host.setPosition(entity.visual, entity.position.x, entity.position.y + 0.49, entity.position.z);
+        this.host.applyLight(
           entity.visual,
           this.world,
           entity.position.x,
           entity.position.y,
           entity.position.z,
           0.98,
-          worldDaylightUniform.value,
         );
       }
     }
@@ -569,19 +557,11 @@ export class RedstoneSystem {
     const t = Math.max(0, Math.min(1, alpha));
     for (const entity of this.primedById.values()) {
       if (!entity.visual) continue;
-      const x = THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t);
-      const y = THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t);
-      const z = THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t);
-      entity.visual.position.set(x, y + 0.49, z);
-      applySampledEntityLight(
-        entity.visual,
-        this.world,
-        x,
-        y,
-        z,
-        0.98,
-        worldDaylightUniform.value,
-      );
+      const x = lerp(entity.previousPosition.x, entity.position.x, t);
+      const y = lerp(entity.previousPosition.y, entity.position.y, t);
+      const z = lerp(entity.previousPosition.z, entity.position.z, t);
+      this.host.setPosition(entity.visual, x, y + 0.49, z);
+      this.host.applyLight(entity.visual, this.world, x, y, z, 0.98);
     }
   }
 
@@ -763,63 +743,32 @@ export class RedstoneSystem {
 
   private createPrimedTnt(
     requestedId: string | undefined,
-    position: Readonly<THREE.Vector3>,
+    position: Vec3Like,
     fuseSeconds: number,
     velocity?: readonly [number, number, number],
   ): PrimedTnt {
     const id = this.allocateTntId(requestedId);
-    const visual = this.createTntVisual(id, position);
+    const visual = this.host.createPrimedTnt?.(id);
+    if (visual) {
+      this.host.setPosition(visual, position.x, position.y + 0.49, position.z);
+      this.host.attach(visual);
+      this.host.applyLight(visual, this.world, position.x, position.y, position.z, 0.98);
+    }
     const entity = new PrimedTnt(
       id,
       position,
       fuseSeconds,
       visual,
-      velocity ? new THREE.Vector3(...velocity) : undefined,
+      velocity ? new Vec3(...velocity) : undefined,
     );
     this.primedById.set(id, entity);
     this.options.onTntPrimed?.(entity);
     return entity;
   }
 
-  private createTntVisual(
-    id: string,
-    position: Readonly<THREE.Vector3>,
-  ): THREE.Mesh | undefined {
-    if (!this.options.root) return undefined;
-    this.tntGeometry ??= new THREE.BoxGeometry(0.92, 0.92, 0.92);
-    this.tntMap ??= this.createTntTexture();
-    const material = createEntityMaterial({
-      map: this.tntMap,
-      color: 0xffffff,
-      transparent: false,
-      depthWrite: true,
-    });
-    this.tntMaterials.push(material);
-    const visual = new THREE.Mesh(this.tntGeometry, material);
-    visual.name = `primed-tnt:${id}`;
-    visual.position.set(position.x, position.y + 0.49, position.z);
-    bindEntityLightReceiver(visual);
-    this.options.root.add(visual);
-    return visual;
-  }
-
-  private createTntTexture(): THREE.Texture {
-    const map = typeof document === 'undefined'
-      ? new THREE.Texture()
-      : new THREE.TextureLoader().load(TextureAtlas.url(PRIMED_TNT_TEXTURE_KEY));
-    map.colorSpace = THREE.SRGBColorSpace;
-    map.magFilter = THREE.NearestFilter;
-    map.minFilter = THREE.NearestFilter;
-    map.generateMipmaps = false;
-    map.wrapS = THREE.ClampToEdgeWrapping;
-    map.wrapT = THREE.ClampToEdgeWrapping;
-    map.name = PRIMED_TNT_TEXTURE_KEY;
-    return map;
-  }
-
   private detonate(entity: PrimedTnt): void {
     if (!this.primedById.delete(entity.id)) return;
-    entity.visual?.removeFromParent();
+    if (entity.visual) this.host.detach(entity.visual);
     const event: RedstoneExplosionEvent = {
       id: entity.id,
       source: 'tnt',

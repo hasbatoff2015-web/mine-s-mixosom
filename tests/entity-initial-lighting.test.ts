@@ -15,6 +15,8 @@ import { EntityInterpolationBuffer } from '../src/net/entitySnapshotInterpolatio
 import { daylightFactor } from '../src/gameplay/daylight';
 import { setWorldDaylight } from '../src/rendering/worldLighting';
 import { RedstoneSystem } from '../src/redstone';
+import type { EntityVisual } from '../src/entities/EntityHost';
+import { asObject3D } from './asObject3D';
 import { recomputeChunkSky, seedChunkBlockLight } from '../src/world/LightEngine';
 import { VoxelWorld } from '../src/world/World';
 
@@ -43,8 +45,8 @@ function luminance(light: THREE.Vector3 | undefined): number {
   return (light.x + light.y + light.z) / 3;
 }
 
-function entityLight(visual: THREE.Object3D | undefined): THREE.Vector3 | undefined {
-  return visual?.userData.entityLight as THREE.Vector3 | undefined;
+function entityLight(visual: EntityVisual | undefined): THREE.Vector3 | undefined {
+  return asObject3D(visual)?.userData.entityLight as THREE.Vector3 | undefined;
 }
 
 describe('initial entity lighting (online join vs hurt vs dynamic spawn)', () => {

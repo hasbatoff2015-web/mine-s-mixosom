@@ -17,9 +17,9 @@ import {
 } from '../rendering/worldLighting';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import type { VoxelWorld } from '../world/World';
-import type { EntityHost, EntityVisual, MobVisualState } from './EntityHost';
+import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './EntityHost';
 import type { MobKind } from './mobDefinitions';
-import { createMobModel, type MobModel } from './mobModels';
+import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
 
 const PRIMED_TNT_TEXTURE_KEY = 'block/tnt';
@@ -129,6 +129,18 @@ export class ThreeEntityHost implements EntityHost {
     return visual;
   }
 
+  pulsePrimedTnt(visual: EntityVisual, elapsed: number, urgency: number): void {
+    const mesh = asObject3D(visual);
+    const pulse = Math.sin(elapsed * (10 + urgency * 26)) > 0 ? 1.06 + urgency * 0.08 : 1;
+    mesh.scale.setScalar(pulse);
+    mesh.rotation.y = elapsed * 0.75;
+    const material = (mesh as THREE.Mesh).material;
+    if (material instanceof THREE.MeshBasicMaterial) {
+      const flash = Math.sin(elapsed * (12 + urgency * 28)) > 0;
+      material.color.setHex(flash ? 0xffffff : 0xffe7b0);
+    }
+  }
+
   attach(visual: EntityVisual): void {
     this.scene.add(asObject3D(visual));
   }
@@ -213,12 +225,15 @@ export class ThreeEntityHost implements EntityHost {
   syncMob(state: MobVisualState): EntityVisual | undefined {
     const visual = asObject3D(state.visual);
     const model = state.model;
+    const legs = model.legs.map(asObject3D);
+    const arms = model.arms.map(asObject3D);
+    const wings = model.wings.map(asObject3D);
     const speed = state.locomotionSpeed;
     const walkPhase = state.walkPhase;
     const swing = Math.sin(walkPhase) * Math.min(0.65, speed * 0.22);
     visual.rotation.y = state.yaw;
     if (state.kind === 'spider') {
-      model.legs.forEach((leg, index) => {
+      legs.forEach((leg, index) => {
         const side = index % 2 === 0 ? -1 : 1;
         const pair = Math.floor(index / 2);
         const phase = Math.sin(walkPhase + pair * 0.85) * Math.min(1, speed);
@@ -228,7 +243,7 @@ export class ThreeEntityHost implements EntityHost {
           - Math.abs(Math.cos(walkPhase + pair * 0.7)) * 0.08 * side * Math.min(1, speed);
       });
     } else {
-      model.legs.forEach((leg, index) => {
+      legs.forEach((leg, index) => {
         leg.rotation.x = Number(leg.userData.baseRotationX ?? 0)
           + swing * (model.legSwingSigns[index] ?? (index % 2 === 0 ? 1 : -1));
         leg.rotation.y = Number(leg.userData.baseRotationY ?? 0);
@@ -237,7 +252,7 @@ export class ThreeEntityHost implements EntityHost {
     }
     if (state.kind === 'chicken') {
       const flap = Math.sin(state.visualAge * (speed > 0.1 ? 14 : 4)) * (speed > 0.1 ? 0.35 : 0.08);
-      model.wings.forEach((wing, index) => {
+      wings.forEach((wing, index) => {
         wing.rotation.x = Number(wing.userData.baseRotationX ?? 0);
         wing.rotation.y = Number(wing.userData.baseRotationY ?? 0);
         wing.rotation.z = Number(wing.userData.baseRotationZ ?? 0) + (index === 0 ? flap : -flap);
@@ -245,14 +260,14 @@ export class ThreeEntityHost implements EntityHost {
     }
     if (state.kind === 'zombie') {
       const poseArms = state.state === 'attack' ? 1.55 : 1.2;
-      model.arms.forEach((arm, index) => {
+      arms.forEach((arm, index) => {
         arm.rotation.x = Number(arm.userData.baseRotationX ?? 0)
           + poseArms + (index % 2 === 0 ? swing : -swing) * 0.25;
         arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
         arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
       });
     } else if (state.kind === 'skeleton') {
-      model.arms.forEach((arm, index) => {
+      arms.forEach((arm, index) => {
         arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) + (state.state === 'attack'
           ? -1.15
           : (index % 2 === 0 ? swing : -swing) * 0.5);

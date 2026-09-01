@@ -118,7 +118,7 @@ describe('lighting, physics and interaction polish', () => {
     clearColumn(world, 3, 3);
     writeBlock(world, 3, 40, 3, BlockId.Stone);
     writeBlock(world, 3, 48, 3, BlockId.Tnt);
-    const redstone = new RedstoneSystem(world, { root: scene });
+    const redstone = new RedstoneSystem(world);
     expect(redstone.primeTnt(3, 48, 3)).toBeDefined();
     const startY = redstone.primedTnt[0]!.position.y;
     for (let tick = 0; tick < 20; tick += 1) redstone.update(0.05);

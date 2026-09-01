@@ -1,13 +1,12 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId } from '../blocks';
 import { ItemId } from '../items';
 import type { PlayerAABB } from '../player';
 import type { MobManager } from '../entities';
 import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
-import type { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
-import type { EntityHost } from '../entities/EntityHost';
+import type { EntityHost, EntityVisual } from '../entities/EntityHost';
 import { isEntityHost } from '../entities/EntityHost';
 import { resolveEntityHost } from '../entities/resolveEntityHost';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from './ArrowPhysics';
@@ -19,10 +18,10 @@ import { rayAabbDistance } from '../world/collision';
 interface PlayerArrow {
   readonly id: string;
   readonly ownerId?: string;
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
-  readonly visual?: THREE.Object3D;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
+  readonly visual?: EntityVisual;
   age: number;
   critical: boolean;
   inGround: boolean;
@@ -42,7 +41,7 @@ export interface ArrowTickOptions {
     playerId: string,
     damage: number,
     flaming: boolean,
-    position: THREE.Vector3,
+    position: Vec3,
   ) => void;
 }
 
@@ -63,15 +62,15 @@ export class PlayerArrowManager {
   private idCounter = 0;
 
   constructor(
-    sceneOrHost: THREE.Object3D | EntityHost,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
     private readonly mobs: MobManager,
     options: {
-      readonly visualFactory?: ArrowVisualFactory;
+      readonly visualFactory?: unknown;
       readonly random?: () => number;
       readonly minecarts?: MinecartManager;
       readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
-      readonly onMobHit?: (accepted: boolean, position: THREE.Vector3) => void;
+      readonly onMobHit?: (accepted: boolean, position: Vec3) => void;
       readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
       readonly onSpawn?: (id: string) => void;
       readonly onRemove?: (id: string) => void;
@@ -93,7 +92,7 @@ export class PlayerArrowManager {
 
   private readonly minecarts?: MinecartManager;
   private readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
-  private readonly onMobHit?: (accepted: boolean, position: THREE.Vector3) => void;
+  private readonly onMobHit?: (accepted: boolean, position: Vec3) => void;
   private readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
   private readonly onSpawn?: (id: string) => void;
   private readonly onRemove?: (id: string) => void;
@@ -107,8 +106,8 @@ export class PlayerArrowManager {
   }
 
   spawn(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     speedBlocksPerTick: number,
     _damage: number,
     critical: boolean,
@@ -117,18 +116,19 @@ export class PlayerArrowManager {
     ownerId?: string,
   ): void {
     if (this.arrows.length >= 48) this.remove(0);
+    const originVec = new Vec3(origin.x, origin.y, origin.z);
     const velocity = inaccurateArrowDirection(direction, this.random).multiplyScalar(speedBlocksPerTick);
-    const visual = this.host.createArrow(flaming) as THREE.Object3D | undefined;
+    const visual = this.host.createArrow(flaming) as EntityVisual | undefined;
     if (visual) {
-      this.host.setPosition(visual, origin.x, origin.y, origin.z);
+      this.host.setPosition(visual, originVec.x, originVec.y, originVec.z);
       this.host.orientArrow(visual, velocity.x, velocity.y, velocity.z);
       this.host.attach(visual);
     }
     this.arrows.push({
       id: id ?? `arrow-${this.idCounter += 1}`,
       ownerId,
-      position: origin.clone(),
-      previousPosition: origin.clone(),
+      position: originVec.clone(),
+      previousPosition: originVec.clone(),
       velocity,
       visual,
       age: 0,
@@ -161,7 +161,7 @@ export class PlayerArrowManager {
       return;
     }
     const speed = Math.hypot(vx, vy, vz) || 1;
-    this.spawn(new THREE.Vector3(x, y, z), new THREE.Vector3(vx, vy, vz), speed, 0, false, flaming, id);
+    this.spawn(new Vec3(x, y, z), new Vec3(vx, vy, vz), speed, 0, false, flaming, id);
     const created = this.arrows[this.arrows.length - 1];
     if (created && created.id === id) {
       created.velocity.set(vx, vy, vz);
@@ -294,7 +294,7 @@ export class PlayerArrowManager {
 
   private raycastPlayers(
     arrow: PlayerArrow,
-    direction: THREE.Vector3,
+    direction: Vec3,
     maxDistance: number,
     players: readonly ArrowPlayerTarget[] | undefined,
   ): { id: string; distance: number } | undefined {
@@ -394,7 +394,7 @@ export class PlayerArrowManager {
   }
 }
 
-function arrowOverlapsPlayer(position: THREE.Vector3, player: PlayerAABB): boolean {
+function arrowOverlapsPlayer(position: Vec3, player: PlayerAABB): boolean {
   const half = ARROW_PICKUP_SIZE * 0.5 + ARROW_PICKUP_PADDING;
   return position.x - half < player.maxX && position.x + half > player.minX
     && position.y - half < player.maxY && position.y + half > player.minY

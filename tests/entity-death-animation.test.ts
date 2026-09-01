@@ -19,6 +19,7 @@ import {
 } from '../src/net/applyEntitySnapshots';
 import { EntityInterpolationBuffer } from '../src/net/entitySnapshotInterpolation';
 import { RedstoneSystem } from '../src/redstone';
+import { createThreeEntityHost } from '../src/entities/ThreeEntityHost';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { VoxelWorld } from '../src/world/World';
 
@@ -38,7 +39,9 @@ function sessionOf(world: VoxelWorld, host?: HeadlessEntityHost) {
     mobs,
     arrows: new PlayerArrowManager(sceneOrHost, world, mobs),
     minecarts: new MinecartManager(sceneOrHost, world, visuals),
-    redstone: new RedstoneSystem(world, host ? undefined : { root: sceneOrHost as THREE.Scene }),
+    redstone: new RedstoneSystem(world, {
+      host: host ?? createThreeEntityHost(sceneOrHost as THREE.Scene),
+    }),
   };
 }
 

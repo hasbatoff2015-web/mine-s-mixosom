@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from '../combat/ArrowPhysics';
 import { BlockId, getBlockDefinition } from '../blocks';
 import { applyArrowDragAndGravity, arrowDamageFromVelocity, inaccurateArrowDirection } from '../combat/ArrowPhysics';
@@ -12,7 +12,6 @@ import {
   isSunHighEnough,
 } from '../combat/fireSources';
 import { createItemStack, type ItemStack } from '../inventory';
-import type { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { combinedLight } from '../world/lightingState';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -24,15 +23,15 @@ import {
   type MobKind,
   type MobState,
 } from './mobDefinitions';
-import type { MobModel } from './mobModels';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
-import { CHUNK_SIZE, FIXED_DT, GRAVITY, floorDiv } from '../core/constants';
+import { CHUNK_SIZE, FIXED_DT, GRAVITY, clamp, floorDiv } from '../core/constants';
 import { daylightFactor } from '../gameplay/daylight';
 import { systemRandomFn } from '../gameplay/random';
-import type { EntityHost, MobVisualState } from './EntityHost';
+import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
+import { rayAabbDistance } from '../world/collision';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
 /** Client death pose duration. Simulation removal uses the same window. */
@@ -83,7 +82,7 @@ export function mobDeathVisualSeconds(
 
 const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
 const PASSIVE_KINDS: readonly MobKind[] = ['cow', 'pig', 'chicken', 'sheep'];
-const UP = new THREE.Vector3(0, 1, 0);
+const UP = new Vec3(0, 1, 0);
 const MAX_SEPARATION_PAIRS = 1_024;
 
 export type MobRemovalReason = 'death' | 'explosion' | 'despawn' | 'removed' | 'cleared' | 'capacity';
@@ -91,7 +90,7 @@ export type MobDamageSource = 'player' | 'projectile' | 'fire' | 'explosion' | '
 
 export interface MobSpawnOptions {
   readonly id?: string;
-  readonly velocity?: Readonly<THREE.Vector3>;
+  readonly velocity?: Vec3Like;
   readonly health?: number;
   readonly ageSeconds?: number;
   readonly state?: MobState;
@@ -101,7 +100,7 @@ export interface MobSpawnOptions {
 
 export interface MobDamageOptions {
   readonly source?: MobDamageSource;
-  readonly attackerPosition?: Readonly<THREE.Vector3>;
+  readonly attackerPosition?: Vec3Like;
   readonly attackerYaw?: number;
   readonly extraKnockbackLevel?: number;
   /** Existing projectile/explosion impulse only; never used for melee. Blocks/s. */
@@ -114,14 +113,14 @@ export interface MobPlayerDamageEvent {
   readonly source: 'melee' | 'arrow';
   readonly mobId: string;
   readonly mobKind: MobKind;
-  readonly position: THREE.Vector3;
+  readonly position: Vec3;
   /** Projectile impulse only. Melee uses the canonical full-hurt transform. */
-  readonly knockback?: THREE.Vector3;
+  readonly knockback?: Vec3;
 }
 
 export interface MobExplosionEvent {
   readonly sourceId: string;
-  readonly position: THREE.Vector3;
+  readonly position: Vec3;
   readonly radius: number;
   readonly power: number;
 }
@@ -129,20 +128,20 @@ export interface MobExplosionEvent {
 export interface MobDrop {
   readonly sourceId: string;
   readonly stack: ItemStack;
-  readonly position: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
+  readonly position: Vec3;
+  readonly velocity: Vec3;
 }
 
 export interface MobProjectileSpawnEvent {
   readonly projectileId: string;
   readonly ownerId: string;
-  readonly position: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
+  readonly position: Vec3;
+  readonly velocity: Vec3;
 }
 
 export interface MobPlayerFocus {
-  readonly position: Readonly<THREE.Vector3>;
-  readonly eyePosition?: Readonly<THREE.Vector3>;
+  readonly position: Readonly<Vec3>;
+  readonly eyePosition?: Readonly<Vec3>;
   readonly alive?: boolean;
   /** False keeps the player in spawn/despawn interest but disables hostile targeting. */
   readonly targetable?: boolean;
@@ -150,8 +149,8 @@ export interface MobPlayerFocus {
 
 export interface MobUpdateContext {
   /** Feet-anchored player position. Omitting it pauses player-aware AI and auto-spawning. */
-  readonly playerPosition?: Readonly<THREE.Vector3>;
-  readonly playerEyePosition?: Readonly<THREE.Vector3>;
+  readonly playerPosition?: Readonly<Vec3>;
+  readonly playerEyePosition?: Readonly<Vec3>;
   readonly playerAlive?: boolean;
   /** False keeps spawning/despawning centred on the player but disables hostile targeting. */
   readonly playerTargetable?: boolean;
@@ -163,7 +162,7 @@ export interface MobUpdateContext {
   readonly players?: readonly MobPlayerFocus[];
   /** 0..1; if omitted it is derived from `world.timeOfDay`. */
   readonly daylight?: number;
-  readonly lightLevelAt?: (position: Readonly<THREE.Vector3>) => number;
+  readonly lightLevelAt?: (position: Readonly<Vec3>) => number;
   readonly onPlayerDamage?: (event: MobPlayerDamageEvent) => void;
   readonly onExplosion?: (event: MobExplosionEvent) => void;
   readonly onProjectileSpawn?: (event: MobProjectileSpawnEvent) => void;
@@ -182,7 +181,7 @@ export interface MobManagerOptions {
   readonly surfaceHostileSpawnFactor?: number;
   readonly caveHostileDensityRadius?: number;
   readonly random?: () => number;
-  readonly arrowVisualFactory?: ArrowVisualFactory;
+  readonly arrowVisualFactory?: unknown;
   readonly onSpawn?: (mob: Readonly<MobEntity>) => void;
   readonly onRemove?: (mob: Readonly<MobEntity>, reason: MobRemovalReason) => void;
   readonly onDrop?: (drop: MobDrop) => void;
@@ -200,7 +199,7 @@ export interface MobManagerOptions {
 export interface MobRaycastHit {
   readonly mob: MobEntity;
   readonly distance: number;
-  readonly point: THREE.Vector3;
+  readonly point: Vec3;
 }
 
 export interface SerializedMob {
@@ -218,10 +217,10 @@ interface MobProjectile {
   readonly id: string;
   readonly ownerId: string;
   readonly ownerKind: MobKind;
-  readonly visual?: THREE.Object3D;
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
+  readonly visual?: EntityVisual;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
   ageSeconds: number;
   damage: number;
   inGround: boolean;
@@ -230,10 +229,10 @@ interface MobProjectile {
 
 export class MobEntity {
   readonly definition: MobDefinition;
-  readonly position: THREE.Vector3;
-  readonly previousPosition = new THREE.Vector3();
-  readonly velocity: THREE.Vector3;
-  readonly visual?: THREE.Object3D;
+  readonly position: Vec3;
+  readonly previousPosition = new Vec3();
+  readonly velocity: Vec3;
+  readonly visual?: EntityVisual;
   readonly model?: MobModel;
   health: number;
   state: MobState;
@@ -268,8 +267,8 @@ export class MobEntity {
   fireTicks = 0;
   contactBurning = false;
   sunlightBurning = false;
-  fireOverlay?: THREE.Object3D;
-  readonly wanderDirection = new THREE.Vector3();
+  fireOverlay?: EntityVisual;
+  readonly wanderDirection = new Vec3();
   resumeState: MobState = 'idle';
   deathDropsEmitted = false;
   /** Last snapshot `hurt` flag; rising edge starts a per-entity flash. */
@@ -280,18 +279,18 @@ export class MobEntity {
   constructor(
     readonly id: string,
     readonly kind: MobKind,
-    position: Readonly<THREE.Vector3>,
-    velocity: Readonly<THREE.Vector3>,
+    position: Vec3Like,
+    velocity: Vec3Like,
     health: number,
     state: MobState,
     ageSeconds: number,
     model?: MobModel,
-    visual?: THREE.Object3D,
+    visual?: EntityVisual,
   ) {
     this.definition = getMobDefinition(kind);
-    this.position = new THREE.Vector3(position.x, position.y, position.z);
+    this.position = new Vec3(position.x, position.y, position.z);
     this.previousPosition.copy(this.position);
-    this.velocity = new THREE.Vector3(velocity.x, velocity.y, velocity.z);
+    this.velocity = new Vec3(velocity.x, velocity.y, velocity.z);
     this.health = health;
     this.state = state;
     this.ageSeconds = ageSeconds;
@@ -307,7 +306,7 @@ export class MobEntity {
     return this.alive && (this.fireTicks > 0 || this.contactBurning || this.sunlightBurning);
   }
 
-  get eyePosition(): THREE.Vector3 {
+  get eyePosition(): Vec3 {
     return this.position.clone().addScaledVector(UP, this.definition.eyeHeight);
   }
 }
@@ -341,7 +340,7 @@ export class MobManager {
   private disposed = false;
 
   constructor(
-    sceneOrHost: THREE.Object3D | EntityHost,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
     private readonly options: MobManagerOptions = {},
   ) {
@@ -493,7 +492,7 @@ export class MobManager {
 
   spawn(
     kind: MobKind,
-    position: Readonly<THREE.Vector3>,
+    position: Vec3Like,
     spawnOptions: MobSpawnOptions = {},
   ): MobEntity | undefined {
     this.assertActive();
@@ -504,7 +503,7 @@ export class MobManager {
       this.evictFarthestOrOldest(position);
     }
     const created = this.host.createMob(kind);
-    const visual = created?.visual as THREE.Object3D | undefined;
+    const visual = created?.visual as EntityVisual | undefined;
     const model = created?.model;
     const id = this.allocateMobId(spawnOptions.id);
     if (visual) {
@@ -512,8 +511,8 @@ export class MobManager {
       visual.userData.mobKind = kind;
       this.host.attach(visual);
     }
-    const velocity = spawnOptions.velocity ?? new THREE.Vector3();
-    const health = THREE.MathUtils.clamp(
+    const velocity = spawnOptions.velocity ?? new Vec3();
+    const health = clamp(
       spawnOptions.health ?? definition.maxHealth,
       0,
       definition.maxHealth,
@@ -540,7 +539,7 @@ export class MobManager {
   update(deltaSeconds: number, context: MobUpdateContext = {}): void {
     if (this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
     const delta = Math.min(deltaSeconds, 0.25);
-    const daylight = THREE.MathUtils.clamp(context.daylight ?? daylightFactor(this.world.timeOfDay), 0, 1);
+    const daylight = clamp(context.daylight ?? daylightFactor(this.world.timeOfDay), 0, 1);
     const foci = this.resolvePlayerFoci(context);
     const spawnCandidates = foci.filter((focus) => focus.alive !== false);
 
@@ -753,42 +752,47 @@ export class MobManager {
   }
 
   raycast(
-    origin: Readonly<THREE.Vector3>,
-    direction: Readonly<THREE.Vector3>,
+    origin: Vec3Like,
+    direction: Vec3Like,
     maxDistance = 4.5,
   ): MobRaycastHit | undefined {
-    const normalized = new THREE.Vector3(direction.x, direction.y, direction.z);
+    const normalized = new Vec3(direction.x, direction.y, direction.z);
     if (normalized.lengthSq() <= 1e-8 || maxDistance <= 0) return undefined;
     normalized.normalize();
-    const rayOrigin = new THREE.Vector3(origin.x, origin.y, origin.z);
+    const rayOrigin = new Vec3(origin.x, origin.y, origin.z);
     const blockHit = this.world.raycast(rayOrigin, normalized, maxDistance);
     const limit = Math.min(maxDistance, blockHit?.distance ?? maxDistance);
-    const ray = new THREE.Ray(rayOrigin, normalized);
-    const point = new THREE.Vector3();
     let closest: MobRaycastHit | undefined;
     for (const mob of this.mobsById.values()) {
       if (!mob.alive) continue;
       const halfWidth = mob.definition.width * 0.5;
-      const box = new THREE.Box3(
-        new THREE.Vector3(mob.position.x - halfWidth, mob.position.y, mob.position.z - halfWidth),
-        new THREE.Vector3(
-          mob.position.x + halfWidth,
-          mob.position.y + mob.definition.height,
-          mob.position.z + halfWidth,
-        ),
-      );
-      const intersection = ray.intersectBox(box, point);
-      if (!intersection) continue;
-      const distance = rayOrigin.distanceTo(intersection);
+      const hit = rayAabbDistance(rayOrigin, normalized, {
+        minX: mob.position.x - halfWidth,
+        minY: mob.position.y,
+        minZ: mob.position.z - halfWidth,
+        maxX: mob.position.x + halfWidth,
+        maxY: mob.position.y + mob.definition.height,
+        maxZ: mob.position.z + halfWidth,
+      });
+      if (!hit || hit.distance < 0) continue;
+      const distance = hit.distance;
       if (distance > limit || (closest && distance >= closest.distance)) continue;
-      closest = { mob, distance, point: intersection.clone() };
+      closest = {
+        mob,
+        distance,
+        point: new Vec3(
+          rayOrigin.x + normalized.x * distance,
+          rayOrigin.y + normalized.y * distance,
+          rayOrigin.z + normalized.z * distance,
+        ),
+      };
     }
     return closest;
   }
 
   attackTarget(
-    origin: Readonly<THREE.Vector3>,
-    direction: Readonly<THREE.Vector3>,
+    origin: Vec3Like,
+    direction: Vec3Like,
     damage: number,
     reach = 3,
   ): MobRaycastHit | undefined {
@@ -826,23 +830,23 @@ export class MobManager {
       if (!(entry.kind in MOB_DEFINITIONS)) continue;
       if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) continue;
       if (!Number.isFinite(entry.health) || entry.health <= 0) continue;
-      const mob = this.spawn(entry.kind, new THREE.Vector3(...entry.position), {
+      const mob = this.spawn(entry.kind, new Vec3(...entry.position), {
         id: entry.id,
-        velocity: new THREE.Vector3(...entry.velocity),
+        velocity: new Vec3(...entry.velocity),
         health: entry.health,
         state: entry.state,
         ageSeconds: entry.ageSeconds,
         force: true,
       });
       if (!mob) continue;
-      mob.fuseSeconds = THREE.MathUtils.clamp(entry.fuseSeconds, 0, 1.5);
+      mob.fuseSeconds = clamp(entry.fuseSeconds, 0, 1.5);
       restored += 1;
     }
     return restored;
   }
 
-  getApproximateLight(position: Readonly<THREE.Vector3>, daylight = daylightFactor(this.world.timeOfDay)): number {
-    return THREE.MathUtils.clamp(
+  getApproximateLight(position: Readonly<Vec3>, daylight = daylightFactor(this.world.timeOfDay)): number {
+    return clamp(
       Math.round(combinedLight(
         this.world,
         Math.floor(position.x),
@@ -888,7 +892,7 @@ export class MobManager {
   private updateAi(
     mob: MobEntity,
     delta: number,
-    playerPosition: Readonly<THREE.Vector3> | undefined,
+    playerPosition: Readonly<Vec3> | undefined,
     context: MobUpdateContext,
     daylight: number,
   ): void {
@@ -901,7 +905,7 @@ export class MobManager {
       return;
     }
     const playerEye = this.playerEye(playerPosition, context);
-    const horizontal = new THREE.Vector3().subVectors(playerPosition, mob.position);
+    const horizontal = new Vec3().subVectors(playerPosition, mob.position);
     horizontal.y = 0;
     const distance = mob.eyePosition.distanceTo(playerEye);
     if (distance > mob.definition.detectionRange) {
@@ -971,7 +975,7 @@ export class MobManager {
   private updateCreeper(
     mob: MobEntity,
     delta: number,
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     distance: number,
     context: MobUpdateContext,
   ): void {
@@ -985,7 +989,7 @@ export class MobManager {
     } else {
       mob.fuseSeconds = Math.max(0, mob.fuseSeconds - delta * 1.8);
       this.changeState(mob, 'chase');
-      const direction = new THREE.Vector3().subVectors(playerPosition, mob.position);
+      const direction = new Vec3().subVectors(playerPosition, mob.position);
       direction.y = 0;
       this.steerToward(mob, direction, mob.definition.speed);
     }
@@ -993,13 +997,13 @@ export class MobManager {
 
   private updateSkeleton(
     mob: MobEntity,
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     context: MobUpdateContext,
     distance: number,
   ): void {
     const targetEye = this.playerEye(playerPosition, context);
     const lineOfSight = hasVoxelLineOfSight(this.world, mob.eyePosition, targetEye);
-    const horizontal = new THREE.Vector3().subVectors(playerPosition, mob.position);
+    const horizontal = new Vec3().subVectors(playerPosition, mob.position);
     horizontal.y = 0;
     if (lineOfSight && distance <= mob.definition.attackRange) {
       this.changeState(mob, 'attack');
@@ -1117,7 +1121,7 @@ export class MobManager {
   private updateDistanceDespawn(
     mob: MobEntity,
     delta: number,
-    playerPosition: Readonly<THREE.Vector3> | undefined,
+    playerPosition: Readonly<Vec3> | undefined,
   ): void {
     if (!playerPosition) return;
     const distanceSquared = mob.position.distanceToSquared(playerPosition);
@@ -1178,7 +1182,7 @@ export class MobManager {
       hurtFlashSeconds: mob.hurtFlashSeconds,
       fireOverlay: mob.fireOverlay,
     };
-    mob.fireOverlay = this.host.syncMob(state) as THREE.Object3D | undefined;
+    mob.fireOverlay = this.host.syncMob(state) as EntityVisual | undefined;
     // Online clients skip `update()`; visual sync is the only light refresh.
     // Sampling only on hurt left join-time mobs stuck at the unlit spawn sample.
     this.applyMobLight(mob, pose.x, pose.y, pose.z);
@@ -1212,7 +1216,7 @@ export class MobManager {
     );
   }
 
-  private steerToward(mob: MobEntity, direction: Readonly<THREE.Vector3>, speed: number, faceMovement = true): void {
+  private steerToward(mob: MobEntity, direction: Readonly<Vec3>, speed: number, faceMovement = true): void {
     const length = Math.hypot(direction.x, direction.z);
     if (length <= 1e-6) return;
     mob.locomotionSpeed = speed;
@@ -1222,7 +1226,7 @@ export class MobManager {
   }
 
   private tryAutomaticSpawn(
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     daylight: number,
     customLight: MobUpdateContext['lightLevelAt'],
   ): void {
@@ -1272,7 +1276,7 @@ export class MobManager {
   }
 
   private tryPassiveSpawn(
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     daylight: number,
     customLight: MobUpdateContext['lightLevelAt'],
   ): MobEntity | undefined {
@@ -1283,7 +1287,7 @@ export class MobManager {
       const sample = this.randomSpawnColumn(playerPosition);
       if (!sample) continue;
       const y = sample.surfaceY + 1;
-      const position = new THREE.Vector3(sample.x + 0.5, y, sample.z + 0.5);
+      const position = new Vec3(sample.x + 0.5, y, sample.z + 0.5);
       if (!this.spawnPositionIsValid(position, definition, 'passive')) continue;
       const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
       if (light < PASSIVE_SPAWN_LIGHT_MIN) continue;
@@ -1292,7 +1296,7 @@ export class MobManager {
     return undefined;
   }
 
-  private randomSpawnColumn(playerPosition: Readonly<THREE.Vector3>): {
+  private randomSpawnColumn(playerPosition: Readonly<Vec3>): {
     x: number;
     z: number;
     surfaceY: number;
@@ -1316,7 +1320,7 @@ export class MobManager {
 
   private tryCaveHostileSpawn(
     sample: { x: number; z: number; surfaceY: number; chunkKey: string },
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     daylight: number,
     customLight: MobUpdateContext['lightLevelAt'],
     caveChunksThisEvent: Set<string>,
@@ -1327,7 +1331,7 @@ export class MobManager {
     if (this.chunkHasLivingHostile(sample.chunkKey)) return false;
     const y = this.findCaveSpawnY(sample.x, sample.z, sample.surfaceY);
     if (y === undefined) return false;
-    const position = new THREE.Vector3(sample.x + 0.5, y, sample.z + 0.5);
+    const position = new Vec3(sample.x + 0.5, y, sample.z + 0.5);
     const distX = position.x - playerPosition.x;
     const distZ = position.z - playerPosition.z;
     if (distX * distX + distZ * distZ < this.minimumSpawnDistance * this.minimumSpawnDistance) {
@@ -1353,7 +1357,7 @@ export class MobManager {
     if (!this.hasPopulationRoom('hostile')) return false;
     const kind = HOSTILE_KINDS[Math.floor(this.random() * HOSTILE_KINDS.length)] ?? HOSTILE_KINDS[0]!;
     const definition = getMobDefinition(kind);
-    const position = new THREE.Vector3(sample.x + 0.5, sample.surfaceY + 1, sample.z + 0.5);
+    const position = new Vec3(sample.x + 0.5, sample.surfaceY + 1, sample.z + 0.5);
     if (!this.spawnPositionIsValid(position, definition, 'hostile')) return false;
     if (this.world.skyLightAt(sample.x, Math.floor(position.y), sample.z) < 8) return false;
     const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
@@ -1389,7 +1393,7 @@ export class MobManager {
     return true;
   }
 
-  private caveSpawnEnvironmentOk(position: Readonly<THREE.Vector3>): boolean {
+  private caveSpawnEnvironmentOk(position: Readonly<Vec3>): boolean {
     const x = Math.floor(position.x);
     const y = Math.floor(position.y);
     const z = Math.floor(position.z);
@@ -1397,7 +1401,7 @@ export class MobManager {
   }
 
   private spawnPositionIsValid(
-    position: Readonly<THREE.Vector3>,
+    position: Readonly<Vec3>,
     definition: MobDefinition,
     disposition: MobDisposition,
   ): boolean {
@@ -1454,7 +1458,7 @@ export class MobManager {
 
   private spawnArrow(
     owner: MobEntity,
-    target: Readonly<THREE.Vector3>,
+    target: Readonly<Vec3>,
     context: MobUpdateContext,
   ): void {
     if (this.projectiles.size >= this.maxProjectiles) {
@@ -1464,12 +1468,12 @@ export class MobManager {
     this.projectileIdCounter += 1;
     const id = `projectile-${this.projectileIdCounter}`;
     const position = owner.eyePosition;
-    const aim = new THREE.Vector3().subVectors(target, position);
+    const aim = new Vec3().subVectors(target, position);
     const distance = aim.length();
     if (distance <= 1e-6) return;
     aim.y += distance * 0.025;
     const velocity = inaccurateArrowDirection(aim, this.random, 0.028).multiplyScalar(1.6);
-    const visual = this.host.createArrow() as THREE.Object3D | undefined;
+    const visual = this.host.createArrow() as EntityVisual | undefined;
     if (visual) {
       this.host.setPosition(visual, position.x, position.y, position.z);
       this.host.orientArrow(visual, velocity.x, velocity.y, velocity.z);
@@ -1500,7 +1504,7 @@ export class MobManager {
 
   private updateProjectiles(
     delta: number,
-    playerPosition: Readonly<THREE.Vector3> | undefined,
+    playerPosition: Readonly<Vec3> | undefined,
     context: MobUpdateContext,
   ): void {
     for (const projectile of [...this.projectiles.values()]) {
@@ -1599,32 +1603,35 @@ export class MobManager {
   }
 
   private projectileHitsPlayer(
-    from: Readonly<THREE.Vector3>,
-    to: Readonly<THREE.Vector3>,
-    playerPosition: Readonly<THREE.Vector3>,
+    from: Vec3Like,
+    to: Vec3Like,
+    playerPosition: Vec3Like,
   ): boolean {
-    const movement = new THREE.Vector3().subVectors(to, from);
-    const distance = movement.length();
-    if (distance <= 1e-8) return false;
-    const ray = new THREE.Ray(new THREE.Vector3(from.x, from.y, from.z), movement.normalize());
-    const box = new THREE.Box3(
-      new THREE.Vector3(playerPosition.x - 0.32, playerPosition.y, playerPosition.z - 0.32),
-      new THREE.Vector3(playerPosition.x + 0.32, playerPosition.y + 1.8, playerPosition.z + 0.32),
-    );
-    const hit = ray.intersectBox(box, new THREE.Vector3());
-    return hit !== null && hit.distanceTo(from) <= distance;
+    const movement = new Vec3().subVectors(to, from);
+    const span = movement.length();
+    if (span <= 1e-8) return false;
+    const dir = movement.normalize();
+    const hit = rayAabbDistance(from, dir, {
+      minX: playerPosition.x - 0.32,
+      minY: playerPosition.y,
+      minZ: playerPosition.z - 0.32,
+      maxX: playerPosition.x + 0.32,
+      maxY: playerPosition.y + 1.8,
+      maxZ: playerPosition.z + 0.32,
+    });
+    return hit !== undefined && hit.distance >= 0 && hit.distance <= span;
   }
 
   private emitPlayerDamage(
     mob: MobEntity,
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     amount: number,
     source: MobPlayerDamageEvent['source'],
     context: MobUpdateContext,
   ): void {
     // Projectile impulse is deliberately unchanged by the melee migration.
     const knockback = source === 'arrow'
-      ? new THREE.Vector3().subVectors(playerPosition, mob.position).setY(0).normalize().multiplyScalar(2.4).setY(0.5)
+      ? new Vec3().subVectors(playerPosition, mob.position).setY(0).normalize().multiplyScalar(2.4).setY(0.5)
       : undefined;
     const event: MobPlayerDamageEvent = {
       amount,
@@ -1680,8 +1687,8 @@ export class MobManager {
       const drop: MobDrop = {
         sourceId: mob.id,
         stack: createItemStack(loot.itemId, count),
-        position: mob.position.clone().add(new THREE.Vector3(0, 0.3, 0)),
-        velocity: new THREE.Vector3(
+        position: mob.position.clone().add(new Vec3(0, 0.3, 0)),
+        velocity: new Vec3(
           (this.random() - 0.5) * 2,
           2 + this.random(),
           (this.random() - 0.5) * 2,
@@ -1719,7 +1726,7 @@ export class MobManager {
     return count < (disposition === 'passive' ? this.passiveCap : this.hostileCap);
   }
 
-  private evictFarthestOrOldest(reference: Readonly<THREE.Vector3>): void {
+  private evictFarthestOrOldest(reference: Vec3Like): void {
     let selected: MobEntity | undefined;
     let bestScore = -Infinity;
     for (const mob of this.mobsById.values()) {
@@ -1763,16 +1770,16 @@ export class MobManager {
   }
 
   private playerEye(
-    playerPosition: Readonly<THREE.Vector3>,
+    playerPosition: Readonly<Vec3>,
     context: MobUpdateContext,
-  ): THREE.Vector3 {
+  ): Vec3 {
     return context.playerEyePosition
-      ? new THREE.Vector3(
+      ? new Vec3(
         context.playerEyePosition.x,
         context.playerEyePosition.y,
         context.playerEyePosition.z,
       )
-      : new THREE.Vector3(playerPosition.x, playerPosition.y + 1.62, playerPosition.z);
+      : new Vec3(playerPosition.x, playerPosition.y + 1.62, playerPosition.z);
   }
 
   private allocateMobId(requested: string | undefined): string {

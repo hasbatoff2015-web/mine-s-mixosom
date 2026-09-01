@@ -4,8 +4,9 @@ import {
   shouldEnterBackgroundFromVisibility,
   shouldResumeFromBackground,
 } from './lifecycleFocus';
+import type { LifecycleState } from './lifecycleTypes';
 
-export type LifecycleState = 'LOADING' | 'LOADING_WORLD' | 'MENU' | 'PLAYING' | 'PAUSED' | 'AD' | 'BACKGROUND' | 'DEAD';
+export type { LifecycleState } from './lifecycleTypes';
 
 export interface LifecycleBlurContext {
   readonly pointerLocked: boolean;

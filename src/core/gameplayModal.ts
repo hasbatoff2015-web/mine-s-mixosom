@@ -1,5 +1,5 @@
-import type { MoveInput } from '../input/InputManager';
-import type { LifecycleState } from './Lifecycle';
+import type { MoveInput } from '../input/MoveInput';
+import type { LifecycleState } from './lifecycleTypes';
 
 /** Player-facing container overlays. Recipe Book is a panel inside these, not a pause. */
 export type GameplayModalKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace';

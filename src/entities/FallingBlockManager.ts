@@ -1,9 +1,9 @@
-import * as THREE from 'three';
+import { Vec3 } from '../math/vec3';
+import { lerp } from '../core/constants';
 import { BlockId, getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
-import type { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { moveVoxelBody } from './voxelPhysics';
-import type { EntityHost } from './EntityHost';
+import type { EntityHost, EntityVisual } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
 
@@ -20,10 +20,10 @@ export interface SerializedFallingBlock {
 export interface FallingBlockEntity {
   readonly id: string;
   readonly block: BlockId;
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
-  readonly visual?: THREE.Object3D;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
+  readonly visual?: EntityVisual;
   ageSeconds: number;
 }
 
@@ -35,9 +35,9 @@ export class FallingBlockManager {
   private disposed = false;
 
   constructor(
-    sceneOrHost: THREE.Object3D | EntityHost,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
-    visuals?: ItemVisualFactory,
+    visuals?: unknown,
     private readonly maxEntities = 64,
   ) {
     this.ownsHost = !isEntityHost(sceneOrHost);
@@ -60,8 +60,8 @@ export class FallingBlockManager {
     const definition = getBlockDefinition(block);
     if (!definition.gravity) return undefined;
     const entityId = id ?? `fall-${this.idCounter += 1}`;
-    const position = new THREE.Vector3(x + 0.5, y, z + 0.5);
-    const visual = this.host.createFallingBlock(definition.key) as THREE.Object3D | undefined;
+    const position = new Vec3(x + 0.5, y, z + 0.5);
+    const visual = this.host.createFallingBlock(definition.key) as EntityVisual | undefined;
     if (visual) {
       this.host.setPosition(visual, position.x, position.y + 0.5, position.z);
       this.host.attach(visual);
@@ -71,7 +71,7 @@ export class FallingBlockManager {
       block,
       position,
       previousPosition: position.clone(),
-      velocity: new THREE.Vector3(0, 0, 0),
+      velocity: new Vec3(0, 0, 0),
       visual,
       ageSeconds: 0,
     };
@@ -113,9 +113,9 @@ export class FallingBlockManager {
     const t = Math.max(0, Math.min(1, alpha));
     for (const entity of this.entities.values()) {
       if (!entity.visual) continue;
-      const x = THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t);
-      const y = THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t);
-      const z = THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t);
+      const x = lerp(entity.previousPosition.x, entity.position.x, t);
+      const y = lerp(entity.previousPosition.y, entity.position.y, t);
+      const z = lerp(entity.previousPosition.z, entity.position.z, t);
       this.host.setPosition(entity.visual, x, y + 0.5, z);
       this.host.applyLight(entity.visual, this.world, x, y, z, 1);
     }

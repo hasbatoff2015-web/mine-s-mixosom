@@ -2,6 +2,15 @@
 
 Срез: **2026-09-01**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Phase 7 tooling split
+
+- Ветка `cursor/shared-tooling-split-37a2` от architecture HEAD `15cc8d7` (`cursor/entity-initial-light-finalize-37a2`, PR **#32**). **Не merge в main.** Не Phase 8. PR **#30** / **#32** не закрывать. Не трогать PR **#22** / **#28** / **#31**.
+- Compile boundaries: `tsconfig.sim.json` (no DOM, no Three), `tsconfig.client.json`, `tsconfig.server.json`. Umbrella `tsconfig.json` + `npm run typecheck` remain.
+- Shared sim: `Vec3` instead of `THREE.Vector3`; `MoveInput` instead of DOM `InputManager`; `LifecycleState` in `lifecycleTypes.ts`. `src/entities/index.ts` no longer exports `ThreeEntityHost`. Server does not import `three` / rendering.
+- Guards: `npm run check:boundaries`, `npm run smoke:sim` (Node loader throws on `three`), `npm run smoke:server`. `npm run check` includes boundaries.
+- GameplayKernel order, useInteraction, blockGeometry, EntityHost, persistence, RNG, lighting budget **2**, chest sync, death visual clock, plugins-unwired — unchanged.
+- Report: `docs/reports/2026-09-01_shared-tooling-split.md`. Draft PR stacked on **#32**. Owner local QA (SP + Anarchy + two clients, **no gameplay change**). **Не merge. Не начинать Phase 8.**
+
 ## Последний проход: Online Anarchy initial entity lighting (finalize)
 
 - Ветка `cursor/entity-initial-light-finalize-37a2` от PR **#30** HEAD `068b7df`. **Не merge в main.** Не Phase 7. PR **#30** не закрывать.
@@ -505,4 +514,4 @@ Codex UI (menu family, online mock, read-only controls) and Cursor PR #6 (fluids
 
 ## За пределами текущей alpha
 
-Не реализованы multiplayer, server authority, accounts/cloud worlds, weather, farming, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. Drinkable potions, rails и minecart в этой alpha есть как practical approximation, без brewing/powered rails. Это осознанно не подменяется заглушками в P0.
+Не реализованы accounts/cloud worlds, public VPS deploy, Survival PvP matchmaking, weather, farming, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. **Local Anarchy** (`npm run dev:server`) уже есть: server-authoritative world on one PC. Drinkable potions, rails и minecart в этой alpha есть как practical approximation, без brewing/powered rails. Это осознанно не подменяется заглушками в P0.

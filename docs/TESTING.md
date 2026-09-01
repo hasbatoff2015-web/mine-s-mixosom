@@ -1,5 +1,30 @@
 # Тестирование
 
+## 2026-09-01 Phase 7 tooling split
+
+Report: `reports/2026-09-01_shared-tooling-split.md`.
+
+Layer commands (do not replace `npm run check`):
+
+```bash
+npm run typecheck:sim      # tsconfig.sim.json — no DOM, no Three
+npm run typecheck:client    # tsconfig.client.json
+npm run typecheck:server    # tsconfig.server.json
+npm run check:boundaries    # static import scan
+npm run smoke:sim           # Node import of shared sim; fails if `three` loads
+npm run smoke:server        # Anarchy start/tick/mutate/persist, no renderer
+npm run test:sim            # kernel, interaction, geometry, RNG, snapshot, lighting adapter, tooling
+npm run test:server          # tests/server + fs-world-store
+npx tsc --noEmit            # umbrella (still meaningful)
+npm run build               # tsc --noEmit && vite build
+npm run dev                 # Vite client
+npm run dev:server           # Node Anarchy
+```
+
+Vitest default environment is still **Node**. Shared tests must not need jsdom. Client visual tests (`entity-initial-lighting`, `mob-hurt-flash`, …) import Three and register `tests/setupClientEntityHost.ts` so `new MobManager(new THREE.Scene(), …)` still wraps `ThreeEntityHost`. Server tests stay Node.
+
+`npm run check` now also runs `check:boundaries` before the existing test/build/size/archive chain.
+
 ## 2026-08-30 initial entity lighting (online join)
 
 Report: `reports/2026-08-30_entity-initial-lighting.md`.

@@ -1,4 +1,4 @@
-import type { LifecycleState } from './Lifecycle';
+import type { LifecycleState } from './lifecycleTypes';
 import { playerGameplayAllowed, worldSimulationActive } from './gameplayModal';
 
 /**

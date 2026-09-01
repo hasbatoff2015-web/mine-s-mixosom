@@ -20,6 +20,7 @@ import { DroppedItemManager } from '../src/entities/DroppedItemManager';
 import { FallingBlockManager } from '../src/entities/FallingBlockManager';
 import { MinecartManager } from '../src/entities/MinecartManager';
 import { RedstoneSystem } from '../src/redstone';
+import { createThreeEntityHost } from '../src/entities/ThreeEntityHost';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 
 function platform(world: VoxelWorld, y = 40): void {
@@ -44,7 +45,7 @@ function sessionOf(world: VoxelWorld) {
     mobs,
     arrows: new PlayerArrowManager(scene, world, mobs),
     minecarts: new MinecartManager(scene, world, visuals),
-    redstone: new RedstoneSystem(world, { root: scene }),
+    redstone: new RedstoneSystem(world, { host: createThreeEntityHost(scene, { itemVisuals: visuals }) }),
   };
 }
 

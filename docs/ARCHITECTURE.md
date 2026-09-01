@@ -82,7 +82,7 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
-Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. RMB use/placement is **`src/gameplay/useInteraction.ts`**: SP and the server share `performUseHeld` / `placeBlockAt`; hosts keep UI vs plugin/window effects. `ServerGameplay` still owns a dummy `THREE.Group` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions). `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Use is `interact` only; the server runs the shared `performUseHeld` from authoritative look + raycast. `place_block` still exists for look-validated creative/explicit coords and uses the same `placeBlockAt`.
+Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. RMB use/placement is **`src/gameplay/useInteraction.ts`**: SP and the server share `performUseHeld` / `placeBlockAt`; hosts keep UI vs plugin/window effects. `ServerGameplay` uses `HeadlessEntityHost` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions) with **no Three.js**. Poses use `src/math/vec3.ts` (`Vec3` / `Vec3Like`), not `THREE.Vector3`. `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Use is `interact` only; the server runs the shared `performUseHeld` from authoritative look + raycast. `place_block` still exists for look-validated creative/explicit coords and uses the same `placeBlockAt`.
 
 Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `craft` / `interact` / `attack` / `pickup` / `vehicle_input` plus `input.mining` / `use` / `vehicleForward`; server `block_batch` / `block_update` (optional `state`) / `health` / `effects` / `entity_snapshot` / `entity_event` / `command_result` / `time`. Unknown server types still reject.
 
@@ -235,10 +235,10 @@ Rendering still wraps `facingVector` / `attachmentNormal` as `THREE.Vector3` for
                             Three.js
 ```
 
-- **Server:** `HeadlessEntityHost` — all `create*` return `undefined`. `ServerGameplay` does not construct `ItemVisualFactory` or a dummy `THREE.Group` entity scene. `RedstoneSystem` omits `root`, so primed TNT has no mesh.
+- **Server:** `HeadlessEntityHost` — all `create*` return `undefined`. `ServerGameplay` does not construct `ItemVisualFactory` or a dummy entity scene. `RedstoneSystem` takes `{ host }` (`HeadlessEntityHost` on the server); primed TNT has no mesh. Fuse pulse lives on `ThreeEntityHost.pulsePrimedTnt`.
 - **Client:** one `ThreeEntityHost` on `Game.scene`, sharing first-person `ItemVisualFactory` / `ArrowVisualFactory` (`owns*Visuals: false`). Lazy voxel / minecart / item / arrow factories so wrapping a Scene for one manager does not eagerly build unused meshes.
-- **Managers:** `DroppedItemManager`, `FallingBlockManager`, `MinecartManager`, `MobManager`, `PlayerArrowManager` accept `THREE.Object3D | EntityHost`. Existing tests that pass `new THREE.Scene()` go through `resolveEntityHost`.
-- **Stay in sim:** Vector3 pose/velocity, kernel order, Phase 2 useInteraction, Phase 3 blockGeometry, serialize/restore.
+- **Managers:** accept `EntityHost`. Production Game and the server pass a host. Tests that still pass `new THREE.Scene()` go through `resolveEntityHost` plus Vitest `tests/setupClientEntityHost.ts` (`registerLegacyEntityRootWrapper`). `src/entities/index.ts` does **not** re-export `ThreeEntityHost` / `mobModels` so `server/gameplay.ts` cannot load renderer code through the barrel.
+- **Stay in sim:** `Vec3` pose/velocity, kernel order, Phase 2 useInteraction, Phase 3 blockGeometry, serialize/restore.
 - **Stay in ThreeEntityHost:** `ItemVisualFactory`, `ArrowVisualFactory`, `MinecartVisualFactory`, `VoxelVisualFactory` / `createMobModel`, fire overlay, sampled entity light, primed-TNT mesh.
 
 **Not here:** second MobManager, moving `src/rendering/` folders, EntityHost as a gameplay loop, protocol, persistence/RNG/plugins.
@@ -296,6 +296,39 @@ immediate (server)  → setBlock relights before return; processDeferredLighting
 - Lateral sky (`LATERAL_SKY_RADIUS = 14`), typed ring queue, and flood caps are unchanged.
 
 Online entity **visual** light is a client host concern. `MobManager.update` still samples light every sim tick in Singleplayer. The Anarchy client does **not** run that tick, so `syncVisual` / interpolate must apply `EntityHost.applyLight` every visual refresh — not only when `hurtFlashSeconds > 0`. Spawn may sample an unloaded or unlit deferred chunk; later interpolate re-samples once LightEngine has filled the arrays. Hurt flash tints that already-correct sample; it is not the initializer. Drops, falling blocks, arrows, minecarts, and primed TNT follow the same visual-sync contract. Server `HeadlessEntityHost.applyLight` stays empty.
+
+### Tooling split (Phase 7)
+
+Formal compile/import boundaries. Gameplay systems were not rewritten.
+
+```text
+SHARED SIMULATION (Node-safe)
+  GameplayKernel, useInteraction, blockGeometry,
+  VoxelWorld, EntityHost (headless), WorldSnapshot,
+  RandomSource, LightingAdapter, Vec3
+        │
+        ├── CLIENT  (DOM, Three, Vite, IndexedDB, UI, input)
+        └── SERVER  (Node, fs, WebSocket, HeadlessEntityHost)
+```
+
+**Forbidden:** shared → Three / DOM / IndexedDB / `window` / WebSocket / `fs`. Server → `src/rendering/**`, `src/ui/GameUI`, `src/core/Game`, `three`. Client may import all of the above.
+
+**TypeScript configs**
+
+| Config | Role |
+| --- | --- |
+| `tsconfig.json` | Compatibility umbrella (`npm run typecheck` / `tsc --noEmit`). Still includes DOM. |
+| `tsconfig.sim.json` | Shared simulation. `lib: ES2022`, no DOM. `types: node` plus `types/sim-globals.d.ts` for `performance` / `structuredClone` / fetch / Web Streams. Excludes `ThreeEntityHost`, `mobModels`, `voxelVisuals`, `LegacyModel`. |
+| `tsconfig.client.json` | Browser client: `src/**` + protocol. DOM + Vite. |
+| `tsconfig.server.json` | `server/**` + protocol. Node types. No DOM lib. Follows imports into shared sim only. |
+
+**Commands:** `npm run typecheck:sim` / `typecheck:client` / `typecheck:server`. `npm run check:boundaries` is a grep/import scan (`scripts/check-import-boundaries.mjs`). `npm run smoke:sim` loads kernel/interaction/geometry/snapshot/RNG/host under a Node loader that **throws on `three`**. `npm run smoke:server` starts Anarchy, ticks, mutates, persists, stops.
+
+**Input:** `MoveInput` (`src/input/MoveInput.ts`) is the shared sample. `KeyboardEvent` / `MouseEvent` stay in `InputManager`. `LifecycleState` lives in `src/core/lifecycleTypes.ts` so the server can import `onlineSession` sequence helpers without `document` / `window`.
+
+**Intentional leftovers:** `src/ui/recipeBook.ts` and `src/ui/containerInteractions.ts` are Node-safe inventory logic that lives under `ui/` because `inventoryUiAction` already used them. They are in the sim config. They are not `GameUI`. `src/net/` and `shared/protocol.ts` are the protocol adapter, not simulation. PluginManager exists and is **not** wired to kernel events (Phase 8).
+
+**Tests:** default Vitest environment remains Node (unchanged). Client visual tests import Three and use `setupClientEntityHost.ts`. Shared packs: `npm run test:sim`. Server: `npm run test:server`.
 
 ## Lifecycle
 

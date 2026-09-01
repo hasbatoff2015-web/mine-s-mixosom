@@ -42,6 +42,7 @@ describe('entity host import boundary', () => {
 
   it('keeps Anarchy server gameplay off ItemVisualFactory and dummy entity scenes', () => {
     const text = source('server/gameplay.ts');
+    expect(text).not.toMatch(/from ['"]three['"]/);
     expect(text).not.toMatch(/ItemVisualFactory/);
     expect(text).not.toMatch(/new THREE\.Group\(\)/);
     expect(text).toMatch(/HeadlessEntityHost/);
@@ -131,7 +132,7 @@ describe('ThreeEntityHost scene wrapping', () => {
     expect(mob.visual).toBeInstanceOf(THREE.Object3D);
     expect(mob.model).toBeDefined();
     mobs.interpolateVisuals(1);
-    expect(mob.visual!.position.y).toBeCloseTo(mob.position.y, 5);
+    expect((mob.visual as THREE.Object3D).position.y).toBeCloseTo(mob.position.y, 5);
 
     drops.dispose();
     mobs.dispose();

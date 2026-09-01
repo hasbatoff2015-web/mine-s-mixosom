@@ -1,5 +1,5 @@
 import { BLOCKED_MOVE_INPUT, resolvePlayerMoveInput } from '../core/gameplayModal';
-import type { MoveInput } from './InputManager';
+import type { MoveInput } from './MoveInput';
 
 /**
  * Chat (and other text fields) may swallow WASD while focused.

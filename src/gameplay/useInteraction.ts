@@ -11,7 +11,8 @@
  * merge, rail-only minecarts). Server `useHeld` / `placeAt` previously diverged.
  */
 
-import type { Vector3 } from 'three';
+import type { Vec3Like } from '../math/vec3';
+import { Vec3 } from '../math/vec3';
 import {
   BlockId,
   buttonPlacementFromHit,
@@ -126,10 +127,10 @@ export interface UseSimulationContext {
   readonly reach: number;
   /** Precomputed crosshair hit (SP `session.target`). Server omits and raycasts. */
   readonly hit?: VoxelHit;
-  eyePosition(): Vector3;
-  viewDirection(): Vector3;
+  eyePosition(): Vec3Like;
+  viewDirection(): Vec3Like;
   yaw: number;
-  position: Vector3;
+  position: Vec3Like;
   intersectsBlock(x: number, y: number, z: number): boolean;
   intersectsCollisionBoxes(boxes: readonly CollisionBox[]): boolean;
   foodUseTicks: number;
@@ -219,8 +220,8 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
 }
 
 export function performUseHeld(ctx: UseSimulationContext): void {
-  const origin = ctx.eyePosition().clone();
-  const direction = ctx.viewDirection().clone();
+  const origin = new Vec3(ctx.eyePosition().x, ctx.eyePosition().y, ctx.eyePosition().z);
+  const direction = new Vec3(ctx.viewDirection().x, ctx.viewDirection().y, ctx.viewDirection().z);
   const hit = ctx.hit ?? ctx.world.raycast(origin, direction, ctx.reach);
   const cartRay = ctx.minecarts.raycast(origin, direction, ctx.reach, ctx.ridingCartId);
   const stack = ctx.inventory.getSlot(ctx.selectedSlot);
@@ -736,8 +737,8 @@ function placeDoor(
 
 function applyEmptyBucket(
   ctx: UseSimulationContext,
-  origin: Vector3,
-  direction: Vector3,
+  origin: Vec3Like,
+  direction: Vec3Like,
 ): void {
   const changed = pickupFluidSource(bucketContext(ctx), origin, direction, ctx.reach);
   if (!changed) return;
@@ -772,8 +773,8 @@ function bucketContext(ctx: UseSimulationContext) {
 
 function applyFlint(
   ctx: UseSimulationContext,
-  origin: Vector3,
-  direction: Vector3,
+  origin: Vec3Like,
+  direction: Vec3Like,
   hit: VoxelHit | undefined,
 ): void {
   const cart = ctx.minecarts.handleFlintUse(origin, direction, ctx.reach, ctx.ridingCartId);
@@ -813,8 +814,8 @@ function igniteCell(ctx: UseSimulationContext, x: number, y: number, z: number):
 function insertTntCart(
   ctx: UseSimulationContext,
   hit: VoxelHit | undefined,
-  origin: Vector3,
-  direction: Vector3,
+  origin: Vec3Like,
+  direction: Vec3Like,
 ): boolean {
   const cart = ctx.minecarts.raycast(origin, direction, ctx.reach, ctx.ridingCartId)?.cart
     ?? (hit ? ctx.minecarts.cartAt(hit.x, hit.y, hit.z) : ctx.minecarts.nearest(ctx.position, 1.6));

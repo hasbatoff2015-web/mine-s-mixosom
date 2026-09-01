@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../src/math/vec3';
 import {
   BlockId,
   getBlockDefinition,
@@ -134,8 +134,8 @@ export class ServerGameplay {
   maxTickMs = 0;
   private readonly blockDelta = new Map<string, { x: number; y: number; z: number; blockId: number }>();
   private activePressurePlates = new Set<string>();
-  private readonly tmpEye = new THREE.Vector3();
-  private readonly tmpDir = new THREE.Vector3();
+  private readonly tmpEye = new Vec3();
+  private readonly tmpDir = new Vec3();
   private readonly pendingEntityEvents: NetworkEntityEvent[] = [];
 
   constructor(
@@ -370,16 +370,16 @@ export class ServerGameplay {
     this.drops.drop(stack, origin, player.controller.viewDirection());
   }
 
-  spawnDroppedStack(stack: ItemStack, position: THREE.Vector3, playerId?: string): void {
+  spawnDroppedStack(stack: ItemStack, position: Vec3, playerId?: string): void {
     const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, playerId);
     this.events.emit('itemDrop', event);
     if (event.cancelled) return;
     this.drops.spawn(stack, position, {
-      velocity: new THREE.Vector3(...dropScatterVelocity(this.random)),
+      velocity: new Vec3(...dropScatterVelocity(this.random)),
     });
   }
 
-  snapshotsNear(origin: THREE.Vector3, passengers?: ReadonlyMap<string, string>): EntitySnapshot[] {
+  snapshotsNear(origin: Vec3, passengers?: ReadonlyMap<string, string>): EntitySnapshot[] {
     const inRange = (x: number, y: number, z: number): boolean => {
       const dx = x - origin.x;
       const dy = y - origin.y;
@@ -542,7 +542,7 @@ export class ServerGameplay {
       const count = rollBlockDropCount(definition.drop, this.random);
       const extra = isSlabBlock(block) && defaultSlabType(this.world.getBlockState(x, y, z)) === 'double' ? count : 0;
       if (count + extra > 0) {
-        this.spawnDroppedStack(createItemStack(definition.drop.item, count + extra), new THREE.Vector3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        this.spawnDroppedStack(createItemStack(definition.drop.item, count + extra), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
       }
     }
     if (player.gamemode === 'survival') {
@@ -698,7 +698,7 @@ export class ServerGameplay {
       const broken = this.minecarts.breakCart(attack.cart, player.ridingCartId);
       if (!broken) return;
       for (const itemId of dropsForBrokenMinecart(player.gamemode, broken.items)) {
-        this.spawnDroppedStack(createItemStack(itemId), broken.position.clone().add(new THREE.Vector3(0, 0.2, 0)), player.id);
+        this.spawnDroppedStack(createItemStack(itemId), broken.position.clone().add(new Vec3(0, 0.2, 0)), player.id);
       }
     }
   }
@@ -875,11 +875,11 @@ export class ServerGameplay {
     const key = blockKey(x, y, z);
     if (block === BlockId.Chest) {
       const chest = this.world.chests.get(key);
-      if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(x + 0.5, y + 0.6, z + 0.5), player.id);
+      if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
       this.world.chests.delete(key);
     } else if (block === BlockId.Furnace) {
       const furnace = this.world.furnaces.get(key);
-      if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(x + 0.5, y + 0.6, z + 0.5), player.id);
+      if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
       this.world.furnaces.delete(key);
     }
   }
@@ -892,14 +892,14 @@ export class ServerGameplay {
       if (!drop || event.reason === 'lava') continue;
       const count = rollBlockDropCount(drop, this.random);
       if (count > 0) {
-        this.spawnDroppedStack(createItemStack(drop.item, count), new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+        this.spawnDroppedStack(createItemStack(drop.item, count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
       }
     }
   }
 
   private updateRedstone(players: readonly GameplayPlayer[]): void {
     const occupied = new Set<string>();
-    const occupy = (positions: readonly Readonly<THREE.Vector3>[]): void => {
+    const occupy = (positions: readonly Readonly<Vec3>[]): void => {
       for (const position of positions) {
         const x = Math.floor(position.x);
         const z = Math.floor(position.z);
@@ -970,7 +970,7 @@ export class ServerGameplay {
       }
       this.respawnIfDead(player);
     }
-    const origin = new THREE.Vector3(originX, originY, originZ);
+    const origin = new Vec3(originX, originY, originZ);
     for (const mob of this.mobs.entities) {
       const exposure = clamp(1 - mob.position.distanceTo(origin) / (radius * 1.5), 0, 1);
       if (exposure > 0) {
@@ -981,7 +981,7 @@ export class ServerGameplay {
     }
   }
 
-  private nearestSurvivalPlayer(players: readonly GameplayPlayer[], position: THREE.Vector3): GameplayPlayer | undefined {
+  private nearestSurvivalPlayer(players: readonly GameplayPlayer[], position: Vec3): GameplayPlayer | undefined {
     let best: GameplayPlayer | undefined;
     let bestDistance = 4;
     for (const player of players) {
@@ -998,8 +998,8 @@ export class ServerGameplay {
   private raycastPlayers(
     attacker: GameplayPlayer,
     others: readonly GameplayPlayer[],
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3,
+    direction: Vec3,
     maxDistance: number,
   ): { player: GameplayPlayer; distance: number } | undefined {
     let closest: { player: GameplayPlayer; distance: number } | undefined;
@@ -1046,7 +1046,7 @@ export class ServerGameplay {
     victim: GameplayPlayer,
     amount: number,
     cause: 'melee' | 'projectile',
-    from: THREE.Vector3,
+    from: Vec3,
     extras: {
       readonly knockback?: number;
       readonly extraKnockbackLevel?: number;
