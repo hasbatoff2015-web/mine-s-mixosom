@@ -456,7 +456,7 @@ export class PluginManager {
       serverLog(`plugin ${plugin.name} onDisable threw: ${errorMessage(error)}`, 'error');
     }
     this.disposeBindings(plugin.name);
-    if (record.phase !== 'failed') record.phase = 'disabled';
+    record.phase = 'disabled';
   }
 
   private disposeBindings(name: string): void {

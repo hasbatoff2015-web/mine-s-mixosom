@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join as pathJoin } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
@@ -13,13 +13,13 @@ import { PLUGIN_API_VERSION, type Plugin } from '../../server/PluginManager';
 import { WorldInstance } from '../../server/WorldInstance';
 import { createItemStack } from '../../src/inventory';
 
-const FIXTURE_PLUGINS = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/plugins');
+const FIXTURE_PLUGINS = pathJoin(dirname(fileURLToPath(import.meta.url)), 'fixtures/plugins');
 
 async function tempDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'fc-plugins-'));
+  return mkdtemp(pathJoin(tmpdir(), 'fc-plugins-'));
 }
 
-function testConfig(dataDir: string, pluginDir = join(dataDir, 'no-plugins')) {
+function testConfig(dataDir: string, pluginDir = pathJoin(dataDir, 'no-plugins')) {
   return {
     ...loadServerConfig({
       HOST: '127.0.0.1',
@@ -381,7 +381,7 @@ describe('Phase 8 plugin platform', () => {
   it('AnarchyServer starts with a valid plugin and with one broken plugin', async () => {
     const empty = await tempDir();
     dirs.push(empty);
-    const first = new AnarchyServer(testConfig(empty, join(empty, 'missing-plugins')));
+    const first = new AnarchyServer(testConfig(empty, pathJoin(empty, 'missing-plugins')));
     servers.push(first);
     await first.start();
     expect(first.world.plugins.list()).toEqual([]);

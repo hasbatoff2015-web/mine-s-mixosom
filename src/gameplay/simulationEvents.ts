@@ -2,7 +2,7 @@
  * Shared semantic gameplay events.
  *
  * This catalog is server-agnostic. Shared simulation must not import
- * PluginManager, EventBus, WebSocket, or the renderer.
+ * the plugin runtime, EventBus, WebSocket, or the renderer.
  *
  * Server maps these names onto `server/events.ts` via `PluginEventAdapter`.
  * Singleplayer does not subscribe; `IGNORE_SIMULATION_EVENTS` is the no-op sink.

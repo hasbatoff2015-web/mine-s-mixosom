@@ -6,6 +6,7 @@
 - [x] Shared semantic event catalog + server adapter. Pre-events actually cancel; post-events observe.
 - [x] Discovery from `server/plugins/` (missing dir OK). `PLUGIN_API_VERSION` separate from protocol/schema.
 - [x] Example/test plugin (`/hello` + join). Docs: `docs/PLUGINS.md`.
+- [x] Tests: plugin-platform 14 + boundaries 3; targeted 216; full 1211/7 baseline class; production 3.65 MiB / 221 files.
 - [ ] Owner local QA: no-plugin start, example plugin, `/hello`, join once, disable, broken plugin, Anarchy + two clients, Singleplayer has no plugins.
 - [ ] Do not merge main. Do not implement homes / TPA / economy / kits. Do not start another architecture phase.
 - [ ] Do not touch PR #22 / #28 / #31.

@@ -8,7 +8,7 @@
 - PluginManager был foundation (API + EventBus + `enableAll`), без discovery, без scoped cleanup, без kernel-adjacent semantic events. Phase 8 делает server-only platform: lifecycle, `PLUGIN_API_VERSION`, scoped ServerAPI, EventBus isolation, pre/post events, command unregister, fixture example plugin.
 - Shared `simulationEvents.ts` + server `pluginEventAdapter`. Shared core не импортирует PluginManager. Singleplayer / client bundle без plugin runtime.
 - Не трогать PR **#22** / **#28** / **#31**. Не закрывать **#30** / **#32** / **#33** / **#34**.
-- Report: `docs/reports/2026-09-01_plugin-platform.md`. Owner local QA. **Не merge.**
+- Report: `docs/reports/2026-09-01_plugin-platform.md`. Targeted **216/216**. Full vitest **1211/7** (authored ENOENT + minecart 5s + RPC). Production **3.65 MiB / 221 files**. Draft PR **#35**. Owner local QA. **Не merge.**
 
 ## Последний проход: inactive Anarchy client world sync
 

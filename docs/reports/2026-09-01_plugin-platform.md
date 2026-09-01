@@ -74,7 +74,11 @@ Trusted server-side code. Not a sandbox.
 
 ## Tests
 
-`tests/server/plugin-platform.test.ts`, `tests/plugin-boundaries.test.ts`, plus existing Anarchy/server packs. Full check recorded after the run.
+- Targeted: `plugin-platform` 14, `plugin-boundaries` 3, sim/server/kernel/use/geometry/host/persist/RNG/lighting/entity-light/death/chest/inactive-sync/combat/fluids packs **216/216**.
+- Full vitest: **1211 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts) + 1 vitest RPC `onTaskUpdate`. Same baseline class as PR **#34** (1194/7); +17 plugin tests. Not hidden.
+- `tsc` + `typecheck:sim` / `client` / `server` + `check:boundaries` + `smoke:sim` / `smoke:server` PASS.
+- Production **3.65 MiB / 221 files**. Client `dist` has no `PluginManager` / `PLUGIN_API_VERSION`.
+- `npm run check` fails at `npm test` on the same 7 baseline failures (check does not continue to build; build was run separately and passed).
 
 ## Performance
 

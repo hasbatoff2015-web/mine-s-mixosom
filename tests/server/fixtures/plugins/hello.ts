@@ -3,13 +3,20 @@
  * Proves load / enable / command / join event / cleanup.
  * Not a gameplay feature (homes/economy/tpa live elsewhere, later).
  */
-import type { Plugin } from '../../../server/PluginManager';
-
-export const plugin: Plugin = {
+export const plugin = {
   name: 'example',
   version: '1.0.0',
   apiVersion: 1,
-  onEnable(api) {
+  onEnable(api: {
+    log(message: string): void;
+    registerCommand(handler: {
+      name: string;
+      usage: string;
+      description: string;
+      execute(args: readonly string[], sender: { name: string }): { ok: boolean; lines: string[] };
+    }): void;
+    registerEvent(name: 'playerJoin', handler: (event: { name: string }) => void): void;
+  }) {
     api.log('example enabled');
     api.registerCommand({
       name: 'hello',

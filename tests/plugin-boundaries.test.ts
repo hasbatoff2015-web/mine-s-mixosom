@@ -40,7 +40,7 @@ describe('Phase 8 plugin boundaries', () => {
 
   it('shared simulation event catalog does not import the server', () => {
     const source = read('src/gameplay/simulationEvents.ts');
-    expect(source).not.toMatch(/PluginManager/);
+    expect(source).not.toMatch(/from ['"].*PluginManager/);
     expect(source).not.toMatch(/from ['"].*server\//);
     expect(IGNORE_SIMULATION_EVENTS.emitPre('block-break', {})).toBe(true);
     expect(SIMULATION_EVENT_KINDS).toContain('block-break');

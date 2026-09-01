@@ -1,6 +1,4 @@
-import type { Plugin } from '../../../server/PluginManager';
-
-export const plugin: Plugin = {
+export const plugin = {
   name: 'broken-enable',
   apiVersion: 1,
   onEnable() {
