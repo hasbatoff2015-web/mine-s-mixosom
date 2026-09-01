@@ -1,4 +1,4 @@
-import { isKnownBlockId } from '../src/blocks';
+import { BlockId, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
@@ -24,7 +24,7 @@ import type {
 import type { ServerConfig } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { EventBus } from './events';
-import { PluginManager, type PlayerView, type WorldView } from './PluginManager';
+import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { formatGameplayKernelTrace } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
@@ -53,7 +53,7 @@ const IDLE_INPUT: ClientInputMessage = {
   selectedSlot: 0,
 };
 
-export class ServerPlayer implements PlayerView, GameplayPlayer {
+export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
@@ -183,9 +183,7 @@ export class WorldInstance {
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
     this.registerBuiltinCommands();
-    this.plugins.createApi(this.worldView, () => [...this.players.values()].filter((player) => player.connected), (text) => {
-      this.broadcastChat('system', 'server', text);
-    });
+    this.plugins.attachHost(this.createPluginHost());
   }
 
   get worldId(): string {
@@ -232,6 +230,11 @@ export class WorldInstance {
     );
   }
 
+  async loadPlugins(): Promise<void> {
+    await this.plugins.discover(this.config.pluginDir);
+    await this.plugins.loadAll();
+  }
+
   startLoops(): void {
     const tickMs = 1000 / this.config.tickRate;
     this.tickTimer = setInterval(() => this.tick(), tickMs);
@@ -243,7 +246,7 @@ export class WorldInstance {
   async stop(): Promise<void> {
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.persistTimer) clearInterval(this.persistTimer);
-    this.plugins.disableAll();
+    await this.plugins.disableAll();
     await this.save();
   }
 
@@ -456,7 +459,15 @@ export class WorldInstance {
         this.sendTo(player, { type: 'command_result', ok: false, name: text.slice(1).split(/\s+/)[0] ?? '', lines: ['Command cancelled.'] });
         return;
       }
-      const dispatched = this.commands.dispatch(text, player.commandSender());
+      const dispatched = this.commands.dispatch(text, {
+        ...player.commandSender(),
+        operator: this.isOperator(player),
+      });
+      this.events.emit('playerCommandExecuted', {
+        playerId: player.id,
+        command: text,
+        ok: dispatched.result?.ok ?? false,
+      });
       const kind = dispatched.result?.ok ? 'command' : 'error';
       const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
       this.sendTo(player, {
@@ -622,6 +633,10 @@ export class WorldInstance {
         this.events.emit('playerDamage', event);
         if (event.cancelled) return;
         player.survival.damage(amount, cause === 'fall' ? 'fall' : 'generic', { armor: player.inventory });
+        this.events.emit('playerDamaged', { playerId: player.id, amount, cause });
+        if (player.survival.dead) {
+          this.events.emit('entityDeath', { entityId: player.id, cause, playerId: player.id });
+        }
         this.flushHealthIfDeadThenRespawn(player);
       });
       player.combat.setHeldItem(player.inventory.getSlot(player.selectedSlot)?.itemId);
@@ -806,6 +821,7 @@ export class WorldInstance {
       get seed() { return instance.seed; },
       get worldId() { return instance.worldId; },
       spawn: (): [number, number, number] => instance.spawn,
+      getTimeOfDay: () => instance.world.timeOfDay,
       getBlock: (x: number, y: number, z: number) => instance.world.getBlock(x, y, z),
       setBlock: (x: number, y: number, z: number, blockId: number) => {
         if (!isKnownBlockId(blockId) || !isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) {
@@ -816,7 +832,118 @@ export class WorldInstance {
         instance.flushBlockChanges();
         return true;
       },
+      breakBlock: (x: number, y: number, z: number) => {
+        if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return false;
+        if (instance.world.getBlock(x, y, z) === BlockId.Air) return false;
+        return instance.worldView.setBlock(x, y, z, BlockId.Air);
+      },
+      getEntity: (id: string): PluginEntityView | undefined => {
+        if (instance.players.has(id)) return { id, kind: 'player' };
+        return instance.gameplay.lookupEntity(id);
+      },
     });
+  }
+
+  private isOperator(player: ServerPlayer): boolean {
+    const names = this.config.operators.map((name) => name.toLowerCase());
+    return names.includes(player.name.toLowerCase());
+  }
+
+  private createPluginPlayer(player: ServerPlayer): PlayerView {
+    const instance = this;
+    return Object.freeze({
+      id: player.id,
+      get name() { return player.name; },
+      get connected() { return player.connected; },
+      get gamemode() { return player.gamemode; },
+      health: () => player.survival.health,
+      position: () => ({
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+      }),
+      snapshot: () => player.snapshot(),
+      teleport: (x: number, y: number, z: number) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        player.controller.teleport([x, y, z]);
+        return true;
+      },
+      sendMessage: (text: string) => {
+        instance.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      give: (itemId: string, count: number) => {
+        if (!isKnownItemId(itemId) || !Number.isInteger(count) || count < 1) return { given: 0, leftover: count };
+        const leftover = player.inventory.addItem(itemId, count);
+        const given = count - leftover;
+        player.inventoryDirty = true;
+        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+        instance.flushPlayerInventory(player);
+        instance.flushBlockChanges();
+        return { given, leftover };
+      },
+      removeItem: (itemId: string, count: number) => {
+        const removed = player.inventory.remove(itemId, count);
+        if (removed > 0) {
+          player.inventoryDirty = true;
+          instance.flushPlayerInventory(player);
+        }
+        return removed;
+      },
+      clearInventory: () => {
+        let count = 0;
+        for (const stack of player.inventory.slots) if (stack) count += stack.count;
+        for (const stack of Object.values(player.inventory.armor)) if (stack) count += stack.count;
+        if (player.inventory.offhand) count += player.inventory.offhand.count;
+        player.inventory.clear();
+        player.cursor = null;
+        player.craftSlots = player.craftSlots.map(() => null);
+        player.inventoryDirty = true;
+        instance.flushPlayerInventory(player);
+        return count;
+      },
+      hasItem: (itemId: string, count = 1) => player.inventory.has(itemId, count),
+      kick: (reason?: string) => {
+        if (reason) {
+          instance.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: reason,
+            kind: 'error',
+          });
+        }
+        instance.disconnect(player.id);
+      },
+    });
+  }
+
+  private createPluginHost(): PluginHost {
+    const instance = this;
+    return {
+      status: () => ({
+        worldId: instance.worldId,
+        seed: instance.seed,
+        readyState: instance.readyState,
+        tickRate: instance.config.tickRate,
+        tickNumber: instance.tickNumber,
+        playerCount: instance.onlineCount(),
+        pluginApiVersion: PLUGIN_API_VERSION,
+      }),
+      world: () => instance.worldView,
+      players: () => instance.connectedPlayers().map((player) => instance.createPluginPlayer(player)),
+      player: (idOrName) => {
+        const lower = idOrName.toLowerCase();
+        const found = instance.connectedPlayers().find((entry) => entry.id === idOrName || entry.name.toLowerCase() === lower);
+        return found ? instance.createPluginPlayer(found) : undefined;
+      },
+      broadcast: (text) => instance.broadcastChat('system', 'server', text),
+    };
   }
 
   private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {

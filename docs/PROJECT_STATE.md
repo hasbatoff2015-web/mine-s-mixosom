@@ -2,6 +2,14 @@
 
 Срез: **2026-09-01**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Phase 8 plugin platform
+
+- Ветка `cursor/plugin-platform-37a2` от PR **#34** HEAD `81211b1` (`cursor/inactive-client-world-sync-37a2`). **Не merge в main.** Не сворачивать Anarchy stack в main. Не начинать homes/tpa/economy.
+- PluginManager был foundation (API + EventBus + `enableAll`), без discovery, без scoped cleanup, без kernel-adjacent semantic events. Phase 8 делает server-only platform: lifecycle, `PLUGIN_API_VERSION`, scoped ServerAPI, EventBus isolation, pre/post events, command unregister, fixture example plugin.
+- Shared `simulationEvents.ts` + server `pluginEventAdapter`. Shared core не импортирует PluginManager. Singleplayer / client bundle без plugin runtime.
+- Не трогать PR **#22** / **#28** / **#31**. Не закрывать **#30** / **#32** / **#33** / **#34**.
+- Report: `docs/reports/2026-09-01_plugin-platform.md`. Owner local QA. **Не merge.**
+
 ## Последний проход: inactive Anarchy client world sync
 
 - Ветка `cursor/inactive-client-world-sync-37a2` от Phase 7 HEAD `a995ded` (PR **#33**). **Не merge в main.** Не Phase 8.

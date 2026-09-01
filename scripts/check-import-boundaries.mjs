@@ -103,6 +103,12 @@ for (const file of walk(join(ROOT, 'src')).concat(walk(join(ROOT, 'shared'))).co
       if (spec === 'ws' || spec.includes('node:fs') || spec.includes('fs/promises')) {
         errors.push(`${rel} (shared sim) imports server/fs (${spec})`);
       }
+      if (spec.includes('/server/') || spec.startsWith('../../server/') || spec.startsWith('../server/')) {
+        errors.push(`${rel} (shared sim) imports server runtime (${spec})`);
+      }
+      if (spec.includes('PluginManager') || spec.includes('pluginLoader')) {
+        errors.push(`${rel} (shared sim) imports plugin runtime (${spec})`);
+      }
     }
     if (/\bindexedDB\b/.test(source) || /\blocalStorage\b/.test(source)) {
       errors.push(`${rel} (shared sim) references IndexedDB/localStorage`);

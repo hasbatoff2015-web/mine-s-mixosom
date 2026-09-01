@@ -16,7 +16,7 @@ Minecraft Java Edition 1.9 — **reference** для чисел и особенн
 
 Не входит и не добавлять самостоятельно: Lapis, farming, XP/enchanting/potions, Nether/End, villagers/trading, advanced redstone, weather.
 
-**Multiplayer:** local authoritative Anarchy (`npm run dev:server`, `Играть онлайн → Анархия PvP`) is in scope as already implemented. Do not add accounts, Colyseus, Survival PvP matchmaking, or a second protocol. Shared simulation must stay Node-safe (no Three/DOM/IndexedDB/fs). Do not start PluginManager→kernel wiring unless the task is Phase 8.
+**Multiplayer:** local authoritative Anarchy (`npm run dev:server`, `Играть онлайн → Анархия PvP`) is in scope as already implemented. Do not add accounts, Colyseus, Survival PvP matchmaking, or a second protocol. Shared simulation must stay Node-safe (no Three/DOM/IndexedDB/fs). PluginManager is the Anarchy plugin platform (Phase 8). Do not add homes/TPA/economy/kits unless that is the task.
 
 Не расширяй scope без явной задачи. Наличие текстуры в `assets/` не означает разрешение на feature.
 

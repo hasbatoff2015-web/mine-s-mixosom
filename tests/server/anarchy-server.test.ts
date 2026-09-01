@@ -360,14 +360,20 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     server.world.plugins.register(plugin);
     expect(loaded).toBeDefined();
     expect(Reflect.ownKeys(loaded!)).toEqual([
+      'apiVersion',
+      'getStatus',
       'getWorld',
       'getPlayers',
       'getPlayer',
       'broadcast',
       'registerCommand',
       'registerEvent',
+      'scheduleOnce',
+      'scheduleRepeating',
       'log',
     ]);
+    expect(loaded!.apiVersion).toBe(1);
+    await server.world.plugins.whenReady();
     expect((loaded as unknown as { world?: unknown }).world).toBeUndefined();
     expect((loaded as unknown as { runtime?: unknown }).runtime).toBeUndefined();
     const client = new TestClient();

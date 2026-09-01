@@ -16,7 +16,7 @@
     "typecheck:client": "tsc --noEmit -p tsconfig.client.json",
     "typecheck:server": "tsc --noEmit -p tsconfig.server.json",
     "test": "vitest run",
-    "test:sim": "vitest run tests/tooling-boundaries.test.ts tests/tooling-sim-smoke.test.ts tests/gameplay-kernel.test.ts tests/use-interaction.test.ts tests/block-geometry.test.ts tests/random-source.test.ts tests/world-snapshot.test.ts tests/lighting-adapter.test.ts",
+    "test:sim": "vitest run tests/tooling-boundaries.test.ts tests/tooling-sim-smoke.test.ts tests/plugin-boundaries.test.ts tests/gameplay-kernel.test.ts tests/use-interaction.test.ts tests/block-geometry.test.ts tests/random-source.test.ts tests/world-snapshot.test.ts tests/lighting-adapter.test.ts",
     "test:server": "vitest run tests/server tests/fs-world-store.test.ts",
     "check:boundaries": "node scripts/check-import-boundaries.mjs",
     "smoke:sim": "node --import ./scripts/block-three-register.mjs ./node_modules/vite-node/vite-node.mjs scripts/sim-node-smoke.ts",

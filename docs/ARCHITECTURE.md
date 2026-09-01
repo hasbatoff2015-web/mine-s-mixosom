@@ -328,7 +328,32 @@ SHARED SIMULATION (Node-safe)
 
 **Input:** `MoveInput` (`src/input/MoveInput.ts`) is the shared sample. `KeyboardEvent` / `MouseEvent` stay in `InputManager`. `LifecycleState` lives in `src/core/lifecycleTypes.ts` so the server can import `onlineSession` sequence helpers without `document` / `window`.
 
-**Intentional leftovers:** `src/ui/recipeBook.ts` and `src/ui/containerInteractions.ts` are Node-safe inventory logic that lives under `ui/` because `inventoryUiAction` already used them. They are in the sim config. They are not `GameUI`. `src/net/` and `shared/protocol.ts` are the protocol adapter, not simulation. PluginManager exists and is **not** wired to kernel events (Phase 8).
+**Intentional leftovers:** `src/ui/recipeBook.ts` and `src/ui/containerInteractions.ts` are Node-safe inventory logic that lives under `ui/` because `inventoryUiAction` already used them. They are in the sim config. They are not `GameUI`. `src/net/` and `shared/protocol.ts` are the protocol adapter, not simulation.
+
+### Plugin platform (Phase 8)
+
+Plugins are **server-only**. Shared simulation stays free of `PluginManager`.
+
+```text
+SHARED GAME CORE
+  GameplayKernel (tick order)
+  useInteraction (allowPlace / allowInteract / onPlaced)
+  VoxelWorld / combat / inventory
+        │
+        │  semantic results (not renderer events)
+        ▼
+ServerGameplay / WorldInstance   ← plugin event adapter
+        │
+        ▼
+EventBus  ──►  Plugins (ServerAPI)
+        └──►  Network (ordinary protocol; no plugin packets)
+```
+
+`src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
+
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+
+**Not here:** homes / TPA / economy / kits / moderation. Those are later features, not Phase 8.
 
 **Tests:** default Vitest environment remains Node (unchanged). Client visual tests import Three and use `setupClientEntityHost.ts`. Shared packs: `npm run test:sim`. Server: `npm run test:server`.
 

@@ -129,27 +129,27 @@ Server → client also includes `entity_event` (`hurt`, `death`, `projectile_spa
 
 IndexedDB may still hold a historical `anarchy` world from before this pass. That copy is **not** shared across machines and is **not** the online authority.
 
-## Plugin API overview
+## Plugin API
 
-Plugins run **only** on the server. They receive a frozen `ServerAPI`:
+Plugins run **only** on the Anarchy server. See `docs/PLUGINS.md`.
 
-- `onLoad` / `onEnable` / `onDisable`
-- `getWorld()` / `getPlayers()` / `getPlayer(id)`
-- `broadcast(text)`
-- `registerCommand(handler)`
-- `registerEvent(name, handler)`
+They receive a frozen, per-plugin `ServerAPI`:
 
-Events (cancellable where noted): `playerJoin`, `playerQuit`, `playerMove`, `blockBreak`, `blockPlace`, `playerDamage`, `entityDamage`.
+- lifecycle `onLoad` / `onEnable` / `onDisable`
+- `getWorld()` / `getPlayers()` / `getPlayer(id|name)` / `getStatus()`
+- `broadcast(text)` / `log`
+- `registerCommand` / `registerEvent` (handles cleaned up on disable)
+- `scheduleOnce` / `scheduleRepeating` (cancelled on disable)
 
-This is a Frontier Cubes plugin API inspired by Bukkit concepts. Bukkit/Spigot/Paper jars are not loaded.
+`PLUGIN_API_VERSION` is `1` (not the protocol or world schema).
+
+Trusted server code, not a sandbox. No hot reload. No marketplace.
 
 Starter plugins such as homes/economy/kits/tpa are **not** implemented in this pass.
 
 ## Commands (server registry)
 
-Implemented now: `/help`, `/gamemode` (authoritative), `/seed`, `/spawn`.
-
-Client `/give` `/time` `/tp` `/clear` `/kill` still work in **singleplayer only**. Online chat lines starting with `/` go to the server registry.
+Online chat lines starting with `/` go to the server registry: `/help`, `/gamemode`, `/seed`, `/spawn`, `/give`, `/time`, `/tp`, `/clear`, `/kill`. Plugin commands join the same registry. Singleplayer still has its own client command path when not connected.
 
 ## Protocol (JSON over WebSocket)
 

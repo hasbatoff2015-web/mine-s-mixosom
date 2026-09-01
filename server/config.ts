@@ -20,6 +20,8 @@ export interface ServerConfig {
   readonly maxPlayers: number;
   readonly serverName: string;
   readonly persistIntervalMs: number;
+  readonly pluginDir: string;
+  readonly operators: readonly string[];
 }
 
 function integerEnv(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number): number {
@@ -49,6 +51,11 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     maxPlayers: integerEnv(env, 'MAX_PLAYERS', integerEnv(env, 'FC_MAX_PLAYERS', DEFAULT_MAX_PLAYERS, 1, 1000), 1, 1000),
     serverName: env.SERVER_NAME || env.FC_SERVER_NAME || DEFAULT_SERVER_NAME,
     persistIntervalMs: integerEnv(env, 'PERSIST_INTERVAL_MS', 30_000, 1_000, 300_000),
+    pluginDir: env.PLUGIN_DIR || env.FC_PLUGIN_DIR || `${cwd}/server/plugins`,
+    operators: (env.FC_OPERATORS || env.OPERATORS || '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
   };
 }
 

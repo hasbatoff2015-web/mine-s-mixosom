@@ -173,6 +173,7 @@ export class ServerGameplay {
       minecarts: this.minecarts,
       random: this.random,
       onBlockHit: (x, y, z, flaming) => {
+        this.events.emit('projectileHit', { entityId: 'projectile', x, y, z });
         if (flaming && flamingArrowBlockHit(this.world.getBlock(x, y, z, false)) === 'prime_tnt') {
           this.redstone.primeTnt(x, y, z);
         }
@@ -212,6 +213,14 @@ export class ServerGameplay {
     this.pendingEntityEvents.push({ entityId, kind });
   }
 
+  lookupEntity(id: string): { id: string; kind: 'mob' | 'minecart' | 'item' | 'falling' } | undefined {
+    if (this.mobs.get(id)) return { id, kind: 'mob' };
+    if (this.minecarts.get(id)) return { id, kind: 'minecart' };
+    if (this.drops.get(id)) return { id, kind: 'item' };
+    if (this.falling.get(id)) return { id, kind: 'falling' };
+    return undefined;
+  }
+
   tick(
     players: readonly GameplayPlayer[],
     dt: number,
@@ -247,6 +256,13 @@ export class ServerGameplay {
           onPlayerHit: (playerId, damage, flaming, position) => {
             const victim = connected.find((player) => player.id === playerId);
             if (!victim) return;
+            this.events.emit('projectileHit', {
+              entityId: 'projectile',
+              x: position.x,
+              y: position.y,
+              z: position.z,
+              playerId,
+            });
             this.hurtPlayer(victim, damage, 'projectile', position, {
               knockback: flaming ? 4.2 : 2.4,
               ignite: flaming,
@@ -308,6 +324,10 @@ export class ServerGameplay {
           const result = victim.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
             armor: victim.inventory,
           });
+          this.events.emit('playerDamaged', { playerId: victim.id, amount: event.amount, cause: event.source });
+          if (victim.survival.dead) {
+            this.events.emit('entityDeath', { entityId: victim.id, cause: event.source, playerId: victim.id });
+          }
           if (result.fullHurt && event.source === 'melee') {
             victim.controller.receiveMeleeKnockback({
               x: victim.controller.position.x - event.position.x,
@@ -538,6 +558,7 @@ export class ServerGameplay {
     this.releaseContents(player, x, y, z, block);
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
+    this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
     if (player.gamemode === 'survival' && harvestable && definition.drop) {
       const count = rollBlockDropCount(definition.drop, this.random);
       const extra = isSlabBlock(block) && defaultSlabType(this.world.getBlockState(x, y, z)) === 'double' ? count : 0;
@@ -638,6 +659,9 @@ export class ServerGameplay {
         },
         onInventoryChanged: () => { player.inventoryDirty = true; },
         dropOverflow: (stack) => gameplay.dropFromPlayer(player, stack),
+        onPlaced: (x, y, z, blockId) => {
+          gameplay.events.emit('blockPlaced', { playerId: player.id, x, y, z, blockId });
+        },
       },
     };
   }
@@ -681,6 +705,9 @@ export class ServerGameplay {
         attackerYaw: result.attackerYaw,
         extraKnockbackLevel: result.extraKnockbackLevel,
       });
+      if (accepted) {
+        this.events.emit('entityDamaged', { entityId: mobHit.mob.id, amount: result.damage, cause: 'melee' });
+      }
       completeMeleeAttack(result, accepted, player.controller);
       if (accepted && player.gamemode === 'survival') {
         if (stack && result.profile.durabilityCost > 0) {
@@ -1063,6 +1090,10 @@ export class ServerGameplay {
       swordBlocking: victim.combat.swordBlocking,
     });
     if (!result.accepted) return false;
+    this.events.emit('playerDamaged', { playerId: victim.id, amount, cause });
+    if (victim.survival.dead) {
+      this.events.emit('entityDeath', { entityId: victim.id, cause, playerId: victim.id });
+    }
     if (extras.ignite) victim.survival.igniteFromArrow();
     if (result.fullHurt) {
       if (cause === 'melee') {

@@ -7,6 +7,7 @@ import { performUseHeld, resolveUseIntent } from '../src/gameplay/useInteraction
 import { blockCollisionBoxes } from '../src/world/collision';
 import { stairLocalBoxes, defaultSlabType } from '../src/world/blockGeometry';
 import { SYSTEM_RANDOM, systemRandomFn } from '../src/gameplay/random';
+import { IGNORE_SIMULATION_EVENTS } from '../src/gameplay/simulationEvents';
 import { WORLD_SCHEMA_VERSION, type WorldSnapshot } from '../src/save/types';
 import { HeadlessEntityHost } from '../src/entities/EntityHost';
 import { MobManager } from '../src/entities/MobManager';
@@ -23,6 +24,9 @@ if (typeof blockCollisionBoxes !== 'function' || typeof stairLocalBoxes !== 'fun
 if (typeof defaultSlabType !== 'function') throw new Error('blockGeometry defaults missing');
 if (typeof systemRandomFn !== 'function' || typeof SYSTEM_RANDOM.next !== 'function') {
   throw new Error('RandomSource missing');
+}
+if (IGNORE_SIMULATION_EVENTS.emitPre('block-break', {}) !== true) {
+  throw new Error('simulation event sink must no-op in shared sim');
 }
 if (WORLD_SCHEMA_VERSION !== 1) throw new Error('WorldSnapshot schema mismatch');
 const snapshotOk: WorldSnapshot | undefined = undefined;

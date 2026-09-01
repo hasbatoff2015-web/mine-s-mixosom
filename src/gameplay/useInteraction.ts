@@ -117,6 +117,8 @@ export interface UseHostEffects {
   onFlintAlreadyPrimed?(): void;
   onMounted?(): void;
   dropOverflow?(stack: ItemStack): void;
+  /** Server-only observation after a successful voxel write. Singleplayer omits this. */
+  onPlaced?(x: number, y: number, z: number, blockId: number): void;
 }
 
 export interface UseSimulationContext {
@@ -625,6 +627,7 @@ function commitBlock(
     }
     consumeHeld(ctx, 1);
   }
+  ctx.effects?.onPlaced?.(x, y, z, blockId);
   return true;
 }
 

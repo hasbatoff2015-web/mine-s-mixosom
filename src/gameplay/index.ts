@@ -20,6 +20,14 @@ export {
   type GameplayKernelStep,
 } from './GameplayKernel';
 export {
+  IGNORE_SIMULATION_EVENTS,
+  SIMULATION_EVENT_KINDS,
+  SIMULATION_POST_EVENTS,
+  SIMULATION_PRE_EVENTS,
+  type SimulationEventKind,
+  type SimulationEventSink,
+} from './simulationEvents';
+export {
   cartIsCloser,
   clearDoorBlocks,
   doorHalves,

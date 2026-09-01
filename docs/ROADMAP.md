@@ -1,12 +1,22 @@
 # Roadmap
 
+## 2026-09-01: Phase 8 plugin platform
+
+- [x] Server-only PluginManager lifecycle, scoped ServerAPI, EventBus isolation, command unregister.
+- [x] Shared semantic event catalog + server adapter. Pre-events actually cancel; post-events observe.
+- [x] Discovery from `server/plugins/` (missing dir OK). `PLUGIN_API_VERSION` separate from protocol/schema.
+- [x] Example/test plugin (`/hello` + join). Docs: `docs/PLUGINS.md`.
+- [ ] Owner local QA: no-plugin start, example plugin, `/hello`, join once, disable, broken plugin, Anarchy + two clients, Singleplayer has no plugins.
+- [ ] Do not merge main. Do not implement homes / TPA / economy / kits. Do not start another architecture phase.
+- [ ] Do not touch PR #22 / #28 / #31.
+
 ## 2026-09-01: inactive Anarchy client world sync
 
 - [x] Drain lighting/remesh while online PAUSED/BACKGROUND; packets already applied VoxelWorld.
 - [x] Do not run a second client simulation or packet replay queue.
 - [x] Tests: `inactive-client-world-sync` + retained session/Anarchy/fluid packs.
 - [ ] Owner local QA: inventory, pause, tab, fluid, two clients.
-- [ ] Do not merge main. Do not start Phase 8.
+- [ ] Do not merge main.
 
 ## 2026-09-01: Phase 7 tooling split
 
@@ -15,7 +25,7 @@
 - [x] Neutral `Vec3` / `MoveInput` / `LifecycleState` adapters. No gameplay rewrite.
 - [x] Import guards (`npm run check:boundaries`) + Node smokes (`smoke:sim`, `smoke:server`).
 - [ ] Owner local QA: SP + Anarchy + two clients — **no intended gameplay change**.
-- [ ] Do not merge main. Do not start Phase 8 (plugins). Do not touch PR #22 / #28 / #31. Do not close #30 / #32.
+- [ ] Do not merge main. Do not touch PR #22 / #28 / #31. Do not close #30 / #32.
 
 ## 2026-09-01: Online Anarchy initial entity lighting finalize
 

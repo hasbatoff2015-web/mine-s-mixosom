@@ -49,7 +49,8 @@ export class AnarchyServer {
 
   async start(): Promise<void> {
     await this.world.initialize();
-    this.world.plugins.enableAll();
+    await this.world.loadPlugins();
+    await this.world.plugins.enableAll();
     await new Promise<void>((resolve, reject) => {
       const http = createServer((req, res) => this.handleHttp(req, res));
       this.http = http;
