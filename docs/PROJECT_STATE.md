@@ -9,7 +9,8 @@
 - Shared sim: `Vec3` instead of `THREE.Vector3`; `MoveInput` instead of DOM `InputManager`; `LifecycleState` in `lifecycleTypes.ts`. `src/entities/index.ts` no longer exports `ThreeEntityHost`. Server does not import `three` / rendering.
 - Guards: `npm run check:boundaries`, `npm run smoke:sim` (Node loader throws on `three`), `npm run smoke:server`. `npm run check` includes boundaries.
 - GameplayKernel order, useInteraction, blockGeometry, EntityHost, persistence, RNG, lighting budget **2**, chest sync, death visual clock, plugins-unwired — unchanged.
-- Report: `docs/reports/2026-09-01_shared-tooling-split.md`. Draft PR stacked on **#32**. Owner local QA (SP + Anarchy + two clients, **no gameplay change**). **Не merge. Не начинать Phase 8.**
+- Targeted: `test:sim` 38/38; server/entity/death pack 81/81. Full vitest: same baseline class as #32 (authored ENOENT + minecart 5s timeouts + RPC). Production **3.65 MiB / 221 files**.
+- Report: `docs/reports/2026-09-01_shared-tooling-split.md`. Draft PR **#33** stacked on **#32**. Owner local QA (SP + Anarchy + two clients, **no gameplay change**). **Не merge. Не начинать Phase 8.**
 
 ## Последний проход: Online Anarchy initial entity lighting (finalize)
 

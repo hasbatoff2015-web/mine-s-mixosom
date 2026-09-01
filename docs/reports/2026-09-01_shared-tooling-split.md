@@ -132,17 +132,13 @@ Server: no `three`, rendering, GameUI, Game, InputManager, Lifecycle, IdbWorldSt
 
 ## Build
 
-Recorded during this pass (before full `npm run check`):
-
 - `tsc --noEmit` PASS
-- `typecheck:sim` PASS
-- `typecheck:client` PASS
-- `typecheck:server` PASS
+- `typecheck:sim` / `typecheck:client` / `typecheck:server` PASS
 - `check:boundaries` PASS
 - `smoke:sim` PASS (Node `--import` loader forbids `three`)
-- `smoke:server` PASS (start / tick / mutate / persist / stop)
-
-Production `npm run build` and full check numbers: see Tests section after the test run.
+- `smoke:server` PASS
+- `npm run build` PASS — **3.65 MiB / 221 files**
+- `npm run dev:server` (PORT=2568) printed `Anarchy server ready` (no Three/DOM)
 
 ## Architecture decisions
 
@@ -155,15 +151,18 @@ Production `npm run build` and full check numbers: see Tests section after the t
 
 ## Tests
 
-Targeted (this pass): `tooling-boundaries`, `tooling-sim-smoke`, `gameplay-kernel`, `use-interaction`, `block-geometry`, `random-source`, `world-snapshot`, `lighting-adapter`, `entity-host`, `entity-initial-lighting`, `tests/server`.
+Targeted: `test:sim` **38/38**. Server + entity-host + initial-lighting + death-animation **81/81**. entity-host/hurt-flash/redstone **21/21**. `embedded-arrow-support` **10/10** after `Vec3.equals`.
 
-Full `npm run check` baseline class from Phase 6 / PR #32:
+Full `npx vitest run`:
 
-- authored asset ENOENT (`bucket_empty.png`) when `assets/` is absent
-- minecart 5-second timeouts / flakiness
-- occasional Vitest RPC timeout
+```text
+Before (Phase 6 / PR #32): 1169 passed / 8 failed + 1 RPC
+After:                     1180 passed / 9 failed + 1 RPC (first run)
+                           then 2 extra failures were Vec3.equals — fixed
+Unchanged class:          2 authored ENOENT + 5 minecart 5s timeouts + 1 RPC
+```
 
-Do not hide these. Report after/before in the Git / Tests update after the full run.
+The first full run had 2 extra failures: `arrow.position.equals is not a function`. THREE.Vector3 had `equals`; Vec3 did not. Added exact `equals` (not a hidden timeout). Tooling tests explain the higher pass count vs Phase 6.
 
 ## Visual QA
 
@@ -223,4 +222,5 @@ npm run dev:server
 
 - Branch: `cursor/shared-tooling-split-37a2` (requested name `cursor/shared-tooling-split-bbb1`; cloud suffix `-37a2`)
 - Base SHA: `15cc8d707c8b81398e97286dff78d3f9091463ff` (`cursor/entity-initial-light-finalize-37a2`)
+- Draft PR: **#33**
 - Do not merge main. Do not start Phase 8.

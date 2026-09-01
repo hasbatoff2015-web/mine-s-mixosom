@@ -137,6 +137,10 @@ export class Vec3 implements MutableVec3 {
     this.z = values[2] ?? 0;
     return this;
   }
+
+  equals(v: Vec3Like): boolean {
+    return this.x === v.x && this.y === v.y && this.z === v.z;
+  }
 }
 
 export function isVec3Like(value: unknown): value is Vec3Like {
