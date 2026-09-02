@@ -58,6 +58,10 @@ export function isMotionDiagQueryEnabled(search = typeof location === 'undefined
   return queryFlag('motionDiag', search) || queryFlag('motiondiag', search);
 }
 
+export function isBowDiagQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
+  return queryFlag('bowDiag', search) || queryFlag('bowdiag', search);
+}
+
 function countSince(events: readonly MotionRateEvent[], now: number, kind?: string): number {
   const cutoff = now - RATE_WINDOW_MS;
   let count = 0;

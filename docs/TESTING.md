@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-02 Remove Online movement FIFO
+
+Report: `reports/2026-09-02_online-input-queue-revert.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/player-main-integration.test.ts tests/urgent-block-mesh.test.ts tests/server/anarchy-server.test.ts
+```
+
+Contracts: latest-input burst (one physics step); 64 packets do not take 3.2 s; stop on latest idle; jump latch; creative flight/descend latest-input; bow press via `interact` is immediate; bow release on the next tick after `use:false`; matching ack still no-touch; urgent remesh unchanged. DEV `FC_DEBUG_BOW=1` / `?bowDiag=1`.
+
 ## 2026-09-02 Online local-motion pipeline (SP vs Online)
 
 Report: `reports/2026-09-02_online-local-motion-pipeline.md`. PR #37.
@@ -8,7 +18,7 @@ Report: `reports/2026-09-02_online-local-motion-pipeline.md`. PR #37.
 npx vitest run tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/player-main-integration.test.ts tests/urgent-block-mesh.test.ts tests/server/anarchy-server.test.ts
 ```
 
-Contracts: SP and queued-online walk produce the same 60 fps render-step stats; 1:1 snapshots accept with `acceptMutated=false`; lastInput coalesce documents lerp collapse; server simulates queued seqs in order; small correction keeps `previousPosition`; urgent remesh unchanged. F3 `Motion` HUD; `?motionDiag=1` console trace.
+Contracts: SP and 1:1 online walk produce the same 60 fps render-step stats; 1:1 snapshots accept with `acceptMutated=false`; lastInput coalesce (10 Hz) documents lerp collapse; latest-input 20 Hz with phase offset does not backlog movement; small correction keeps `previousPosition`; urgent remesh unchanged. F3 `Motion` HUD; `?motionDiag=1` console trace. FIFO `inputQueue` was reverted — see the 2026-09-02 remove-FIFO section.
 
 ## 2026-09-02 Online Anarchy prediction-history jitter fix
 

@@ -44,7 +44,7 @@ export interface PlayerSnapshot {
   readonly armor?: number;
   readonly ridingEntityId?: string;
   readonly dead?: boolean;
-  /** Last input seq simulated for this pose. Local prediction acks against it. */
+  /** Last input seq used for this pose (latest movement state that tick). */
   readonly inputSeq?: number;
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
   readonly flying?: boolean;

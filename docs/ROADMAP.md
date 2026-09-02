@@ -1,10 +1,20 @@
 # Roadmap
 
+## 2026-09-02: Remove Online movement FIFO (PR #37)
+
+- [x] Diagnose 300–400 ms feel + 3–4 s bow delay as `inputQueue` (64 × 50 ms).
+- [x] Restore latest-input movement; latch jump and use-release; keep attack/break/place immediate.
+- [x] Snapshot `inputSeq` = last received seq used this tick; do not replay skipped movement seqs.
+- [x] DEV bow timing (`FC_DEBUG_BOW=1`, `?bowDiag=1`).
+- [x] Tests: burst/latest seq, 64-packet no backlog, stop, jump latch, bow fire next tick.
+- [ ] Owner localhost QA: immediate move/stop/look/flight; bow release within a tick; remesh still instant.
+- [ ] Do not merge main.
+
 ## 2026-09-02: Online local-motion pipeline vs singleplayer (PR #37)
 
 - [x] Trace SP vs Online input → fixed step → PlayerController.tick → previousPosition/position → alpha → camera.
 - [x] Prove accept-path is side-effect free; remaining 20 Hz was lastInput coalescing rewinding onto previousPosition.
-- [x] Server input queue (one simulated seq per 20 TPS tick); do not collapse lerp except true snap.
+- [x] Server latest-input (FIFO queue reverted — it caused 300–400 ms feel and 3–4 s bow delay); do not collapse lerp except true snap.
 - [x] DEV F3 local-player motion HUD + `?motionDiag=1` 2 s trace.
 - [x] Pipeline numeric comparison (SP / 1:1 / coalesce / queue) + prediction/server/remesh tests.
 - [ ] Owner localhost QA: walk/sprint/jump/strafe/flight vs singleplayer; F3 `corr/s=0`.

@@ -32,7 +32,7 @@ import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { placeholderPlayer } from '../src/save/snapshot';
-import { netDebug, serverLog } from './log';
+import { netDebug, serverLog, bowDebug } from './log';
 
 export interface ConnectedSink {
   send(payload: unknown): void;
@@ -57,14 +57,12 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
-  /**
-   * Highest received input seq. Snapshot.inputSeq is `simulatedInputSeq` —
-   * the seq actually ticked this physics step, which may lag received seqs
-   * sitting in `inputQueue`.
-   */
+  /** Highest received input seq. Snapshot.inputSeq is this value after the tick that used lastInput. */
   lastInputSeq = -1;
-  simulatedInputSeq = -1;
-  readonly inputQueue: ClientInputMessage[] = [];
+  /** Jump pulse seen since the last physics tick (latest-input coalescing). */
+  pendingJump = false;
+  /** use=false seen while charging, so a coalesced release is not lost. */
+  pendingUseRelease = false;
   viewCx = 0;
   viewCz = 0;
   viewRadius = 4;
@@ -130,7 +128,7 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
-      inputSeq: this.simulatedInputSeq,
+      inputSeq: this.lastInputSeq,
       flying: this.controller.isFlying,
     };
   }
@@ -397,9 +395,14 @@ export class WorldInstance {
       return false;
     }
     player.lastInputSeq = input.seq;
+    if (input.jump) player.pendingJump = true;
+    if (input.use !== true && (player.bowUseTicks > 0 || player.foodUseTicks > 0 || player.lastInput.use === true)) {
+      player.pendingUseRelease = true;
+      bowDebug(player.id, 'release_received', `seq=${input.seq} charge=${player.bowUseTicks}`);
+    } else if (input.use === true && player.lastInput.use !== true) {
+      bowDebug(player.id, 'press_hold_received', `seq=${input.seq}`);
+    }
     player.lastInput = input;
-    player.inputQueue.push(input);
-    if (player.inputQueue.length > 64) player.inputQueue.shift();
     player.selectedSlot = input.selectedSlot;
     player.controller.yaw = input.yaw;
     player.controller.pitch = input.pitch;
@@ -620,8 +623,8 @@ export class WorldInstance {
    */
   private resetConnectionInput(player: ServerPlayer): void {
     player.lastInputSeq = inputSeqAfterReconnect();
-    player.simulatedInputSeq = inputSeqAfterReconnect();
-    player.inputQueue.length = 0;
+    player.pendingJump = false;
+    player.pendingUseRelease = false;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -634,13 +637,13 @@ export class WorldInstance {
   private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
-      const queued = player.inputQueue.shift();
-      const input = queued ?? player.lastInput;
-      if (queued) player.simulatedInputSeq = queued.seq;
-      else if (player.lastInputSeq >= 0) player.simulatedInputSeq = player.lastInput.seq;
-      // One physics step per server tick. Queued packets are consumed in seq
-      // order so client history[N] matches the pose after simulating N.
-      // If the queue is empty the last accepted input is held (packet gap).
+      const input = player.lastInput;
+      const jump = input.jump || player.pendingJump;
+      const using = player.pendingUseRelease ? false : input.use === true;
+      player.pendingJump = false;
+      player.pendingUseRelease = false;
+      // One physics step per server tick using the latest movement *state*.
+      // Packets between ticks replace lastInput; skipped seqs are not simulated.
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
@@ -651,7 +654,7 @@ export class WorldInstance {
         movement: () => ({
           forward: riding ? 0 : input.forward,
           right: riding ? 0 : input.right,
-          jump: riding ? false : input.jump,
+          jump: riding ? false : jump,
           sneak: input.sneak,
           sprint: input.sprint,
           descend: input.descend,
@@ -671,7 +674,7 @@ export class WorldInstance {
       });
       player.combat.setHeldItem(player.inventory.getSlot(player.selectedSlot)?.itemId);
       player.combat.setOffhand(player.inventory.offhand?.itemId);
-      player.combat.updateUse(input.use === true, true, !player.survival.dead);
+      player.combat.updateUse(using, true, !player.survival.dead);
       if (player.gamemode === 'survival') {
         player.survival.tick(dt, {
           player: player.controller,
@@ -688,7 +691,7 @@ export class WorldInstance {
         player.miningProgress = 0;
         player.miningTarget = undefined;
       }
-      this.gameplay.advanceUseHold(player, input.use === true);
+      this.gameplay.advanceUseHold(player, using);
       const moved = player.controller.position.distanceTo(before);
       if (moved > 1e-4) {
         const event = this.events.createPlayerMove(

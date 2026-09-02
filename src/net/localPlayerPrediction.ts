@@ -400,9 +400,10 @@ function finish(
  * Compare the snapshot to the predicted pose AT the acked seq. If they agree,
  * leave the live player (including previousPosition) untouched.
  *
- * `inputSeq` is the seq the server actually simulated this tick. Queued packets
- * are consumed in order; held lastInput (empty queue) may repeat a seq, which
- * the client ignores as a duplicate ack.
+ * `inputSeq` is the latest input *state* the server used for this physics
+ * tick. Packets between ticks replace lastInput; skipped seqs were never
+ * simulated. Duplicate acks (same seq as lastAckedSeq) mean the server ticked
+ * again with the same held state — do not rewind.
  */
 export function reconcilePredictedPlayer(
   player: PlayerController,

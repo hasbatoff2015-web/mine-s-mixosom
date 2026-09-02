@@ -60,6 +60,7 @@ import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
 import type { EventBus } from './events';
+import { bowDebug } from './log';
 import type { WorldSnapshot } from '../src/save/types';
 
 export const ENTITY_INTEREST_RADIUS = 48;
@@ -607,7 +608,11 @@ export class ServerGameplay {
 
   useHeld(player: GameplayPlayer): void {
     if (player.survival.dead) return;
+    const beforeBow = player.bowUseTicks;
     performUseHeld(this.useContext(player));
+    if (player.bowUseTicks > 0 && beforeBow === 0) {
+      bowDebug(player.id, 'server_press', `charge=${player.bowUseTicks}`);
+    }
   }
 
   private useContext(player: GameplayPlayer): UseSimulationContext {
@@ -866,6 +871,7 @@ export class ServerGameplay {
 
   private releaseBow(player: GameplayPlayer): void {
     const charge = player.combat.bowCharge(player.bowUseTicks);
+    bowDebug(player.id, 'server_fire', `charge=${player.bowUseTicks} canFire=${charge.canFire}`);
     if (!charge.canFire) return;
     let flaming = false;
     if (player.gamemode === 'survival') {
@@ -876,6 +882,7 @@ export class ServerGameplay {
     const direction = player.controller.viewDirection();
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
     this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id);
+    bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
   }
 
   private lookHit(player: GameplayPlayer): VoxelHit | undefined {

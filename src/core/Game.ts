@@ -195,7 +195,7 @@ import {
   resetPredictionBuffer,
   type PredictionBuffer,
 } from '../net/localPlayerPrediction';
-import { motionProbe } from '../net/localMotionDiagnostics';
+import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
 import {
   applyEntitySnapshots,
   applyInterpolatedEntityVisuals,
@@ -447,6 +447,8 @@ export class Game {
   private readonly simParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0 };
   private lastSimParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0, ticks: 0 };
   private lastRenderAlpha = 0;
+  private lastOnlineUsing = false;
+  private readonly bowDiag = isBowDiagQueryEnabled();
   private readonly litToMeshWaits = new RollingTimingWindow(64);
   private readonly requestToVisibleWaits = new RollingTimingWindow(64);
   private readonly generatedToVisibleWaits = new RollingTimingWindow(64);
@@ -2288,6 +2290,13 @@ export class Game {
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
     const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
     const riding = Boolean(session.ridingCartId);
+    const using = gameplayAllowed && this.input.using;
+    if (this.bowDiag && using !== this.lastOnlineUsing) {
+      console.info(
+        `[bowDiag] client_${using ? 'press' : 'release'} t=${performance.now().toFixed(1)} seq=${online.inputSeq + 1}`,
+      );
+    }
+    this.lastOnlineUsing = using;
     online.inputSeq += 1;
     const predicted = predictedMoveFromInput(
       online.inputSeq,

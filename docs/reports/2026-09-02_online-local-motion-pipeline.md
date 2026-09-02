@@ -4,6 +4,8 @@ Date: 2026-09-02
 Branch: `cursor/online-prediction-remesh-86e1` (PR **#37**)  
 **Do not merge main.**
 
+**Superseded for server input:** the FIFO `inputQueue` described in §5 was reverted. Current semantics are latest-input — see `docs/reports/2026-09-02_online-input-queue-revert.md`.
+
 ## Goal
 
 PR #37 prediction-history accept path was logically correct, but localhost QA still showed the same 20 Hz visual stepping (walk / sprint / jump / strafe / creative flight / fly+SHIFT). Stop speculative reconciliation tweaks. Compare the singleplayer and online local-player pipelines, instrument the local player, and fix the measured root cause. Urgent remesh stays.

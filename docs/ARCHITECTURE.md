@@ -1,5 +1,19 @@
 # Архитектура
 
+## Online Anarchy input: latest movement state — 2026-09-02
+
+Continuous WASD/sprint/sneak/flight is **state**, not a FIFO of packets. `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that state once. `snapshot.inputSeq` is `lastInputSeq`. Skipped seqs are not simulated.
+
+One-shot / hold edges:
+
+- `attack` / `break_block` / `place_block` / `interact` — immediate messages
+- `input.use` / `input.mining` — latest hold; `pendingUseRelease` so a coalesced bow release is not lost
+- `pendingJump` so a jump pulse is not overwritten by a later packet in the same window
+
+Client prediction still ticks every local seq. Reconciliation compares `history[N]` to the snapshot for that latest seq; replay is only seq > N.
+
+DEV: `FC_DEBUG_BOW=1` (server), `?bowDiag=1` (client).
+
 ## Online Anarchy local motion pipeline — 2026-09-02
 
 SP and Online local presentation share one render model:
@@ -14,7 +28,7 @@ Game.frame
 
 Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq`, `predictLocalMove` = `PlayerController.tick` + `history[seq]`.
 
-Server: `applyInput` **queues** packets. Each 20 TPS tick dequeues **one** seq (or holds lastInput on a gap). `PlayerSnapshot.inputSeq` is `simulatedInputSeq`. Client compares snapshot to `history[N]`. Match → no pose write. Mismatch → restore + replay seq > N. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
+Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to `history[N]`. Match → no pose write. Mismatch → restore + replay seq > N. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
 
 DEV: F3 `motionProbe` (local player). `?motionDiag=1` dumps a 2 s SP/Online trace.
 
@@ -36,7 +50,7 @@ render
   look: applyImmediateRenderLook every frame
 ```
 
-`inputSeq` is the seq **actually simulated** this server tick (`simulatedInputSeq`). Packets enqueue in order; one seq is consumed per 20 TPS tick. A second snapshot with the same seq means the queue was empty and lastInput was held (packet gap) — the client ignores that duplicate ack.
+`inputSeq` is the **latest** movement seq used for this server tick (`lastInputSeq`). Packets between ticks replace `lastInput`; skipped seqs are never simulated. A second snapshot with the same seq means no newer packet arrived and lastInput was held — the client ignores that duplicate ack.
 
 Server still owns gameplay: `WorldInstance.tickConnectedPlayers` runs the real physics; health/world/combat stay authoritative. Large corrections (≥ 6 blocks) snap `previousPosition`. Smaller corrections leave `previousPosition` for render lerp. `stepTowardTarget` remains for tests / legacy helpers only.
 

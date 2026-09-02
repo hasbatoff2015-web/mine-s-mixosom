@@ -2,12 +2,20 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: убрать FIFO movement queue (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- FIFO `inputQueue` (1 пакет / tick, cap 64) давал 300–400 ms stale WASD и bow release 3.2 s (64×50 ms). Старые `use:false` в очереди сбрасывали charge → стрела иногда не вылетала.
+- Movement снова **latest state**: `lastInput` / `lastInputSeq`, один `PlayerController.tick` за 20 TPS, `snapshot.inputSeq = lastInputSeq`. Jump pulse и bow/food release latch. Attack/break/place по-прежнему отдельные immediate messages.
+- Prediction: сравнивать `history[N]` с latest seq; не replay'ить пропущенные movement seq. Urgent remesh / GRAVITY / 20 TPS не трогали.
+- Report: `docs/reports/2026-09-02_online-input-queue-revert.md`.
+
 ## Последний проход: Online local-motion pipeline (SP vs Online)
 
 - Ветка `cursor/online-prediction-remesh-86e1` (PR **#37**). **Не merge в main.**
 - Accept-path PR #37 был прав: matching ack **не** пишет pose. Ручной QA без улучшения — потому что localhost `lastInput` coalescing давал **correction каждый снимок**, а не accept.
 - Root cause визуального 20 Hz: сервер симулировал только последний пакет за tick; `history[N]` = два клиентских шага, snapshot = один. Restore на предыдущий tick совпадает с `previousPosition` → `lerp` вырождается. Камера уже была `interpolated-local` (те же строки, что SP).
-- Fix: очередь input на сервере (один seq за 20 TPS tick, `snapshot.inputSeq = simulatedInputSeq`); small correction больше не копирует `previousPosition = position`. GRAVITY/JUMP/WALK/SPRINT/FIXED_DT/offline physics/urgent remesh не трогали.
+- Попытка FIFO `inputQueue` (один seq / tick) дала 300–400 ms stale WASD и bow delay 3.2 s — **откатили**. Актуальная семантика: latest-input, см. проход выше. Small correction по-прежнему не копирует `previousPosition = position`. GRAVITY/JUMP/WALK/SPRINT/FIXED_DT/offline physics/urgent remesh не трогали.
 - DEV F3 `Motion …` + `?motionDiag=1` (2 s trace). Pipeline: SP и queued online mean render step ~0.070; coalesce 10 Hz = 20 corrections / 2 s.
 - Report: `docs/reports/2026-09-02_online-local-motion-pipeline.md`.
 

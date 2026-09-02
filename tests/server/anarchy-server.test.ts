@@ -12,6 +12,7 @@ import { SaveService } from '../../src/save/SaveService';
 import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
+import { createItemStack } from '../../src/inventory';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
 import { inputSeqAfterReconnect } from '../../src/core/onlineSession';
 
@@ -510,11 +511,11 @@ describe('WorldInstance foundation simulation', () => {
     expect(player.lastInput.forward).toBe(0);
     expect(player.lastInputSeq).toBe(2);
     world.tick();
-    expect(player.simulatedInputSeq).toBe(2);
+    expect(player.lastInputSeq).toBe(2);
     expect(player.snapshot().inputSeq).toBe(2);
   });
 
-  it('simulates queued inputs in seq order instead of coalescing lastInput', async () => {
+  it('uses the latest movement state when multiple inputs arrive between ticks', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -522,24 +523,151 @@ describe('WorldInstance foundation simulation', () => {
     const start = player.controller.position.clone();
     expect(world.applyInput(player, moveInput(1, { forward: 1 }))).toBe(true);
     expect(world.applyInput(player, moveInput(2, { forward: 1 }))).toBe(true);
-    expect(player.lastInputSeq).toBe(2);
-    expect(player.inputQueue).toHaveLength(2);
+    expect(world.applyInput(player, moveInput(3, { forward: 1 }))).toBe(true);
+    expect(player.lastInputSeq).toBe(3);
+    expect(player).not.toHaveProperty('inputQueue');
 
     world.tick();
-    expect(player.simulatedInputSeq).toBe(1);
-    expect(player.snapshot().inputSeq).toBe(1);
-    const afterFirst = player.controller.position.clone();
-    expect(Math.hypot(afterFirst.x - start.x, afterFirst.z - start.z)).toBeGreaterThan(0.05);
-    expect(player.inputQueue).toHaveLength(1);
+    expect(player.snapshot().inputSeq).toBe(3);
+    const afterBurst = player.controller.position.clone();
+    const firstStep = Math.hypot(afterBurst.x - start.x, afterBurst.z - start.z);
+    expect(firstStep).toBeGreaterThan(0.05);
+    expect(firstStep).toBeLessThan(0.35);
 
     world.tick();
-    expect(player.simulatedInputSeq).toBe(2);
-    expect(player.snapshot().inputSeq).toBe(2);
+    expect(player.snapshot().inputSeq).toBe(3);
     expect(Math.hypot(
-      player.controller.position.x - afterFirst.x,
-      player.controller.position.z - afterFirst.z,
+      player.controller.position.x - afterBurst.x,
+      player.controller.position.z - afterBurst.z,
     )).toBeGreaterThan(0.05);
-    expect(player.inputQueue).toHaveLength(0);
+  });
+
+  it('does not backlog 64 movement packets across seconds', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    for (let seq = 1; seq <= 64; seq += 1) {
+      expect(world.applyInput(player, moveInput(seq, { forward: 1 }))).toBe(true);
+    }
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(64);
+    const afterOne = Math.hypot(
+      player.controller.position.x - start.x,
+      player.controller.position.z - start.z,
+    );
+    expect(afterOne).toBeGreaterThan(0.05);
+    expect(afterOne).toBeLessThan(0.35);
+  });
+
+  it('stops on the latest idle packet instead of draining leftover walk inputs', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    for (let seq = 1; seq <= 8; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1 }));
+      world.tick();
+    }
+    for (let seq = 9; seq <= 20; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: seq === 20 ? 0 : 1 }));
+    }
+    world.tick();
+    expect(player.lastInput.forward).toBe(0);
+    expect(player.snapshot().inputSeq).toBe(20);
+    const before = player.controller.position.clone();
+    world.tick();
+    expect(Math.hypot(
+      player.controller.position.x - before.x,
+      player.controller.position.z - before.z,
+    )).toBeLessThan(0.08);
+  });
+
+  it('latches a jump pulse that arrives before later non-jump packets in the same window', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const startY = player.controller.position.y;
+    expect(world.applyInput(player, moveInput(1, { jump: true }))).toBe(true);
+    expect(world.applyInput(player, moveInput(2, { jump: false, forward: 1 }))).toBe(true);
+    world.tick();
+    expect(player.controller.position.y).toBeGreaterThan(startY + 0.2);
+  });
+
+  it('fires a charged bow on the next tick after use release, not after a movement backlog', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'creative');
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    player.inventory.setSlot(1, createItemStack('arrow', 16));
+    player.selectedSlot = 0;
+    player.bowUseTicks = 1;
+    for (let seq = 1; seq <= 8; seq += 1) {
+      world.applyInput(player, moveInput(seq, { use: true }));
+      world.tick();
+    }
+    expect(player.bowUseTicks).toBeGreaterThan(3);
+    const arrowsBefore = world.gameplay.arrows.count;
+    for (let seq = 9; seq <= 48; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, use: seq < 48 }));
+    }
+    world.tick();
+    expect(player.lastInput.use).toBe(false);
+    expect(player.bowUseTicks).toBe(0);
+    expect(world.gameplay.arrows.count).toBeGreaterThan(arrowsBefore);
+  });
+
+  it('starts bow charge on interact immediately, before the next movement tick', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'creative');
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    player.selectedSlot = 0;
+    player.controller.pitch = -Math.PI / 2;
+    for (let seq = 1; seq <= 12; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, use: false }));
+    }
+    expect(player.bowUseTicks).toBe(0);
+    world.interact(player);
+    expect(player.bowUseTicks).toBeGreaterThan(0);
+    const charged = player.bowUseTicks;
+    world.applyInput(player, moveInput(13, { forward: 1, use: true }));
+    expect(player.bowUseTicks).toBe(charged);
+    world.tick();
+    expect(player.bowUseTicks).toBe(charged + 1);
+    expect(player.snapshot().inputSeq).toBe(13);
+  });
+
+  it('applies latest creative flight and SHIFT descend once per tick', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'creative');
+    player.controller.isFlying = true;
+    player.controller.flyIgnoreGroundTicks = 8;
+    const startY = player.controller.position.y;
+    for (let seq = 1; seq <= 8; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, jump: true }));
+    }
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(8);
+    expect(player.controller.isFlying).toBe(true);
+    const afterUp = player.controller.position.clone();
+    expect(afterUp.y).toBeGreaterThan(startY + 0.05);
+
+    for (let seq = 9; seq <= 16; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, descend: true }));
+    }
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(16);
+    expect(player.controller.position.y).toBeLessThan(afterUp.y - 0.05);
   });
 
   it('accepts a valid break, mutates the world, and rejects air/reach/bounds', async () => {

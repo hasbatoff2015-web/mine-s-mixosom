@@ -9,7 +9,6 @@ import {
   predictedMoveFromInput,
   predictLocalMove,
   reconcilePredictedPlayer,
-  type PredictedMove,
   type PredictionBuffer,
 } from '../src/net/localPlayerPrediction';
 import { PlayerController } from '../src/player';
@@ -225,7 +224,7 @@ function runOnline(options: {
   seconds: number;
   frameDt: number;
   serverDt: number;
-  mode: 'lockstep' | 'coalesce' | 'queue';
+  mode: 'lockstep' | 'coalesce';
   serverPhase?: number;
 }): RunStats {
   const world = flatWorld() as unknown as VoxelWorld;
@@ -234,7 +233,6 @@ function runOnline(options: {
   const buffer: PredictionBuffer = createPredictionBuffer();
   let accumulator = 0;
   let seq = 0;
-  const pendingInputs: PredictedMove[] = [];
   let lastInput = predictedMoveFromInput(0, walk, { yaw: 0, pitch: 0 }, true);
   let serverAcc = options.serverPhase ?? 0;
   const counters: RunStats = {
@@ -253,18 +251,9 @@ function runOnline(options: {
     serverAcc += dt;
     while (serverAcc + 1e-12 >= options.serverDt) {
       serverAcc -= options.serverDt;
-      if (options.mode === 'queue') {
-        const next = pendingInputs.shift();
-        if (!next) continue;
-        lastInput = next;
-        applyPredictedTick(server, world, next);
-        counters.snapshots += 1;
-        reconcileCounted(client, world, buffer, snapshotOf(server, next.seq), counters);
-      } else {
-        applyPredictedTick(server, world, lastInput);
-        counters.snapshots += 1;
-        reconcileCounted(client, world, buffer, snapshotOf(server, lastInput.seq), counters);
-      }
+      applyPredictedTick(server, world, lastInput);
+      counters.snapshots += 1;
+      reconcileCounted(client, world, buffer, snapshotOf(server, lastInput.seq), counters);
     }
   };
 
@@ -274,7 +263,6 @@ function runOnline(options: {
     for (let i = 0; i < stepped.ticks; i += 1) {
       seq += 1;
       lastInput = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
-      if (options.mode === 'queue') pendingInputs.push(lastInput);
       predictLocalMove(client, world, buffer, lastInput);
       counters.ticks += 1;
       if (options.mode === 'lockstep') flushServer(FIXED_DT);
@@ -327,27 +315,26 @@ describe('local motion pipeline SP vs Online', () => {
     expect(summary.acceptMutations).toBe(0);
     // Coalescing rewinds the live pose onto the previous tick, which is
     // exactly previousPosition — render lerp collapses even if we do not
-    // copy previousPosition = position. Queueing inputs is the real fix.
+    // copy previousPosition = position. A FIFO of stale movement is not
+    // the fix; latest-input at 20 TPS is.
     expect(summary.corrections).toBeGreaterThan(0);
     expect(summary.collapsedLerp).toBeGreaterThan(0);
   });
 
-  it('queued server inputs stay in lockstep with client history (0 corrections)', () => {
-    const sp = statsOf(runSingleplayer(2, 1 / 60));
+  it('online latest-input 20Hz with phase offset does not accumulate a movement backlog', () => {
     const online = runOnline({
       seconds: 2,
       frameDt: 1 / 60,
       serverDt: 0.05,
-      mode: 'queue',
+      mode: 'coalesce',
       serverPhase: 0.03,
     });
     const summary = statsOf(online);
     expect(summary.ticks).toBe(40);
-    expect(summary.corrections).toBe(0);
-    expect(summary.snaps).toBe(0);
     expect(summary.acceptMutations).toBe(0);
-    expect(summary.collapsedLerp).toBe(0);
-    expect(Math.abs(summary.meanStep - sp.meanStep)).toBeLessThan(0.002);
+    expect(summary.snaps).toBe(0);
+    expect(summary.snapshots).toBeGreaterThan(30);
+    expect(summary.snapshots).toBeLessThanOrEqual(40);
   });
 
   it('multiple fixed ticks in one render frame keep previousPosition from the latest tick', () => {
