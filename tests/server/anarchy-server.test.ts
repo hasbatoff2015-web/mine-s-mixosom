@@ -509,6 +509,37 @@ describe('WorldInstance foundation simulation', () => {
     expect(world.applyInput(player, moveInput(2, { forward: 0 }))).toBe(true);
     expect(player.lastInput.forward).toBe(0);
     expect(player.lastInputSeq).toBe(2);
+    world.tick();
+    expect(player.simulatedInputSeq).toBe(2);
+    expect(player.snapshot().inputSeq).toBe(2);
+  });
+
+  it('simulates queued inputs in seq order instead of coalescing lastInput', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    expect(world.applyInput(player, moveInput(1, { forward: 1 }))).toBe(true);
+    expect(world.applyInput(player, moveInput(2, { forward: 1 }))).toBe(true);
+    expect(player.lastInputSeq).toBe(2);
+    expect(player.inputQueue).toHaveLength(2);
+
+    world.tick();
+    expect(player.simulatedInputSeq).toBe(1);
+    expect(player.snapshot().inputSeq).toBe(1);
+    const afterFirst = player.controller.position.clone();
+    expect(Math.hypot(afterFirst.x - start.x, afterFirst.z - start.z)).toBeGreaterThan(0.05);
+    expect(player.inputQueue).toHaveLength(1);
+
+    world.tick();
+    expect(player.simulatedInputSeq).toBe(2);
+    expect(player.snapshot().inputSeq).toBe(2);
+    expect(Math.hypot(
+      player.controller.position.x - afterFirst.x,
+      player.controller.position.z - afterFirst.z,
+    )).toBeGreaterThan(0.05);
+    expect(player.inputQueue).toHaveLength(0);
   });
 
   it('accepts a valid break, mutates the world, and rejects air/reach/bounds', async () => {

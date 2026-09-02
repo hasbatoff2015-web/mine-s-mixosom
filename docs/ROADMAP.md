@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-02: Online local-motion pipeline vs singleplayer (PR #37)
+
+- [x] Trace SP vs Online input → fixed step → PlayerController.tick → previousPosition/position → alpha → camera.
+- [x] Prove accept-path is side-effect free; remaining 20 Hz was lastInput coalescing rewinding onto previousPosition.
+- [x] Server input queue (one simulated seq per 20 TPS tick); do not collapse lerp except true snap.
+- [x] DEV F3 local-player motion HUD + `?motionDiag=1` 2 s trace.
+- [x] Pipeline numeric comparison (SP / 1:1 / coalesce / queue) + prediction/server/remesh tests.
+- [ ] Owner localhost QA: walk/sprint/jump/strafe/flight vs singleplayer; F3 `corr/s=0`.
+- [ ] Do not merge main.
+
 ## 2026-09-02: Online Anarchy prediction-history jitter fix (PR #37)
 
 - [x] Store predicted movement state after each local `input.seq`.

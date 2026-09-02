@@ -57,8 +57,14 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
-  /** Seq of lastInput. Each tick simulates lastInput once; skipped seqs are not replayed. */
+  /**
+   * Highest received input seq. Snapshot.inputSeq is `simulatedInputSeq` —
+   * the seq actually ticked this physics step, which may lag received seqs
+   * sitting in `inputQueue`.
+   */
   lastInputSeq = -1;
+  simulatedInputSeq = -1;
+  readonly inputQueue: ClientInputMessage[] = [];
   viewCx = 0;
   viewCz = 0;
   viewRadius = 4;
@@ -124,7 +130,7 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
-      inputSeq: this.lastInputSeq,
+      inputSeq: this.simulatedInputSeq,
       flying: this.controller.isFlying,
     };
   }
@@ -392,6 +398,8 @@ export class WorldInstance {
     }
     player.lastInputSeq = input.seq;
     player.lastInput = input;
+    player.inputQueue.push(input);
+    if (player.inputQueue.length > 64) player.inputQueue.shift();
     player.selectedSlot = input.selectedSlot;
     player.controller.yaw = input.yaw;
     player.controller.pitch = input.pitch;
@@ -612,6 +620,8 @@ export class WorldInstance {
    */
   private resetConnectionInput(player: ServerPlayer): void {
     player.lastInputSeq = inputSeqAfterReconnect();
+    player.simulatedInputSeq = inputSeqAfterReconnect();
+    player.inputQueue.length = 0;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -624,10 +634,13 @@ export class WorldInstance {
   private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
-      const input = player.lastInput;
-      // One physics step per server tick using the latest accepted input.
-      // Packets that arrived between ticks only replace lastInput; their seqs
-      // are not simulated individually. Snapshot.inputSeq is that lastInput.seq.
+      const queued = player.inputQueue.shift();
+      const input = queued ?? player.lastInput;
+      if (queued) player.simulatedInputSeq = queued.seq;
+      else if (player.lastInputSeq >= 0) player.simulatedInputSeq = player.lastInput.seq;
+      // One physics step per server tick. Queued packets are consumed in seq
+      // order so client history[N] matches the pose after simulating N.
+      // If the queue is empty the last accepted input is held (packet gap).
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);

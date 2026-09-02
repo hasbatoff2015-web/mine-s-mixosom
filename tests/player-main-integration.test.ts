@@ -41,6 +41,8 @@ describe('player visuals on the server-authoritative main integration', () => {
   it('runs local/remote player presentation and the accepted breaking overlay on the render path', () => {
     const render = section('private render(alpha:', 'private updatePlayerPresentation(');
     expect(render).toContain('this.updatePlayerPresentation(session, position, now)');
+    expect(render).toContain('this.interpolatedPlayerPosition');
+    expect(render).toContain('motionProbe.recordRender');
     expect(render).toContain('remote.interpolate(');
     expect(render).toContain('applyInterpolatedEntityVisuals(');
     expect(render).toContain('this.updateBreakingOverlay()');

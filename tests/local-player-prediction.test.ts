@@ -196,6 +196,7 @@ describe('local player prediction', () => {
     const result = reconcilePredictedPlayer(player, world, buffer, ack);
     expect(result.kind).toBe('accepted');
     expect(result.replayed).toBe(0);
+    expect(result.acceptMutated).toBe(false);
     expectPoseUnchanged(player, before);
   });
 
@@ -386,6 +387,39 @@ describe('local player prediction', () => {
     const before = poseOf(player);
     expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 2, buffer)).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
+  });
+
+  it('accepted reconciliation does not write live pose or previousPosition', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictLocalMove(player, world, buffer, move(1, { forward: 1 }));
+    const before = poseOf(player);
+    const result = reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer));
+    expect(result.kind).toBe('accepted');
+    expect(result.acceptMutated).toBe(false);
+    expect(result.rejectReason).toBe('none');
+    expectPoseUnchanged(player, before);
+  });
+
+  it('small lockstep correction keeps previousPosition for render lerp', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictLocalMove(player, world, buffer, move(1, { forward: 1 }));
+    const prev = {
+      x: player.previousPosition.x,
+      y: player.previousPosition.y,
+      z: player.previousPosition.z,
+    };
+    const ack = snapshotFromState(player, 1, buffer, { x: player.position.x + 0.2 });
+    const result = reconcilePredictedPlayer(player, world, buffer, ack);
+    expect(result.kind).toBe('corrected');
+    expect(result.replayed).toBe(0);
+    expect(player.position.x).toBeCloseTo(ack.x, 5);
+    expect(player.previousPosition.x).toBeCloseTo(prev.x, 5);
+    expect(player.previousPosition.y).toBeCloseTo(prev.y, 5);
+    expect(player.previousPosition.z).toBeCloseTo(prev.z, 5);
+    expect(Math.hypot(
+      player.position.x - player.previousPosition.x,
+      player.position.z - player.previousPosition.z,
+    )).toBeGreaterThan(0.05);
   });
 
   it('snaps a large correction instead of approaching it', () => {

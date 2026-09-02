@@ -195,6 +195,7 @@ import {
   resetPredictionBuffer,
   type PredictionBuffer,
 } from '../net/localPlayerPrediction';
+import { motionProbe } from '../net/localMotionDiagnostics';
 import {
   applyEntitySnapshots,
   applyInterpolatedEntityVisuals,
@@ -445,6 +446,7 @@ export class Game {
   private lastStreamChunkZ = Number.NaN;
   private readonly simParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0 };
   private lastSimParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0, ticks: 0 };
+  private lastRenderAlpha = 0;
   private readonly litToMeshWaits = new RollingTimingWindow(64);
   private readonly requestToVisibleWaits = new RollingTimingWindow(64);
   private readonly generatedToVisibleWaits = new RollingTimingWindow(64);
@@ -665,6 +667,7 @@ export class Game {
     this.input.pitch = welcome.you.pitch;
     resetPredictionBuffer(session.online.prediction);
     session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
+    motionProbe.reset();
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
@@ -873,6 +876,7 @@ export class Game {
     const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
     const seen = new Set<string>();
     if (local) {
+      motionProbe.notePlayerState();
       const look = clientLookAfterSnapshot(
         { yaw: this.input.yaw, pitch: this.input.pitch },
         { yaw: local.yaw, pitch: local.pitch },
@@ -2167,6 +2171,7 @@ export class Game {
     let tickMs = 0;
     if (this.lifecycle.state === 'LOADING_WORLD') {
       this.accumulator = 0;
+      this.lastSimParts = { ...this.lastSimParts, ticks: 0 };
       this.processWorldLoading(frameStart);
     } else if (worldSimulationActive(this.lifecycle.state)) {
       const stepped = advanceFixedStep(this.accumulator, rawElapsed, FIXED_DT, MAX_FRAME_DELTA, MAX_CATCH_UP_TICKS);
@@ -2186,6 +2191,7 @@ export class Game {
       this.processWorldJobs(frameStart, false);
     } else {
       this.accumulator = 0;
+      this.lastSimParts = { ...this.lastSimParts, ticks: 0 };
       if (this.session?.online && shouldProcessOnlineWorldVisuals(this.lifecycle.state)) {
         this.processWorldJobs(frameStart, false);
       }
@@ -2406,6 +2412,7 @@ export class Game {
         const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
           if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
         });
+        motionProbe.notePredictionTick();
         this.updateFootsteps(session, playerResult.horizontalDistance);
         if (session.summary.mode === 'survival') {
           const survivalResult = session.survival.tick(FIXED_DT, {
@@ -3359,6 +3366,16 @@ export class Game {
       const position = this.interpolatedPlayerPosition
         .copy(session.player.previousPosition)
         .lerp(session.player.position, clamp(alpha, 0, 1));
+      this.lastRenderAlpha = clamp(alpha, 0, 1);
+      motionProbe.recordRender({
+        online: Boolean(session.online),
+        fps: this.fps,
+        ticks: this.lastSimParts.ticks,
+        alpha: this.lastRenderAlpha,
+        position: session.player.position,
+        previous: session.player.previousPosition,
+        render: position,
+      });
       this.updatePlayerPresentation(session, position, now);
       session.online?.remotes.forEach((remote) => remote.interpolate(
         now,
@@ -3556,8 +3573,11 @@ export class Game {
       if (this.debugTickOrder && this.kernelTrace.length > 0) {
         this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
       }
-      if (import.meta.env.DEV && session.online) {
-        this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
+      if (import.meta.env.DEV) {
+        this.cachedDebugText += `\n${motionProbe.formatHud()}`;
+        if (session.online) {
+          this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
+        }
       }
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;

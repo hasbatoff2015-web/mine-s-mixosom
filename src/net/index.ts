@@ -22,6 +22,10 @@ export {
   reconcilePredictedPlayer,
   resetPredictionBuffer,
 } from './localPlayerPrediction';
+export {
+  isMotionDiagQueryEnabled,
+  motionProbe,
+} from './localMotionDiagnostics';
 export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
 export {
   EntityInterpolationBuffer,

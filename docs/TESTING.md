@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-02 Online local-motion pipeline (SP vs Online)
+
+Report: `reports/2026-09-02_online-local-motion-pipeline.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/player-main-integration.test.ts tests/urgent-block-mesh.test.ts tests/server/anarchy-server.test.ts
+```
+
+Contracts: SP and queued-online walk produce the same 60 fps render-step stats; 1:1 snapshots accept with `acceptMutated=false`; lastInput coalesce documents lerp collapse; server simulates queued seqs in order; small correction keeps `previousPosition`; urgent remesh unchanged. F3 `Motion` HUD; `?motionDiag=1` console trace.
+
 ## 2026-09-02 Online Anarchy prediction-history jitter fix
 
 Report: `reports/2026-09-02_online-prediction-jitter.md`. PR #37.

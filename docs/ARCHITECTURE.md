@@ -1,5 +1,23 @@
 # Архитектура
 
+## Online Anarchy local motion pipeline — 2026-09-02
+
+SP and Online local presentation share one render model:
+
+```text
+Game.frame
+  advanceFixedStep → 0..4 × Game.tick
+  render(alpha = accumulator / FIXED_DT)
+  interpolated = lerp(previousPosition, position, alpha)
+  cameraPivot = interpolated feet + eyeHeight
+```
+
+Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq`, `predictLocalMove` = `PlayerController.tick` + `history[seq]`.
+
+Server: `applyInput` **queues** packets. Each 20 TPS tick dequeues **one** seq (or holds lastInput on a gap). `PlayerSnapshot.inputSeq` is `simulatedInputSeq`. Client compares snapshot to `history[N]`. Match → no pose write. Mismatch → restore + replay seq > N. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
+
+DEV: F3 `motionProbe` (local player). `?motionDiag=1` dumps a 2 s SP/Online trace.
+
 ## Online Anarchy local prediction + urgent remesh — 2026-09-02
 
 Local Anarchy motion is **predicted** on the existing `PlayerController`, not chased.
@@ -18,9 +36,9 @@ render
   look: applyImmediateRenderLook every frame
 ```
 
-`inputSeq` is the seq of `lastInput` used for **that one** server physics tick. Packets that arrived between ticks only replace `lastInput`; skipped seqs are not simulated. A second snapshot with the same seq means the server ticked again with the same held input — the client ignores it for movement (already compared `history[N]`).
+`inputSeq` is the seq **actually simulated** this server tick (`simulatedInputSeq`). Packets enqueue in order; one seq is consumed per 20 TPS tick. A second snapshot with the same seq means the queue was empty and lastInput was held (packet gap) — the client ignores that duplicate ack.
 
-Server still owns gameplay: `WorldInstance.tickConnectedPlayers` runs the real physics; health/world/combat stay authoritative. Large corrections (≥ 6 blocks) snap `previousPosition`. `stepTowardTarget` remains for tests / legacy helpers only.
+Server still owns gameplay: `WorldInstance.tickConnectedPlayers` runs the real physics; health/world/combat stay authoritative. Large corrections (≥ 6 blocks) snap `previousPosition`. Smaller corrections leave `previousPosition` for render lerp. `stepTowardTarget` remains for tests / legacy helpers only.
 
 Reconnect: `resetPredictionBuffer` on welcome; server `inputSeqAfterReconnect()` still `-1` so a new client starting at seq 0 is accepted.
 

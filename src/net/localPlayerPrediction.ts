@@ -4,6 +4,12 @@ import type { PlayerController, PlayerInputSource, PlayerMovementState } from '.
 import type { VoxelWorld } from '../world/World';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import { LOCAL_SNAP_DISTANCE, distanceSquared } from './authoritativeMotion';
+import {
+  captureMotionPose,
+  motionPoseChanged,
+  motionProbe,
+  type AckRejectReason,
+} from './localMotionDiagnostics';
 
 /** Unacked predicted ticks. 3.2 s at 20 TPS. */
 export const PREDICTION_HISTORY = 64;
@@ -76,7 +82,11 @@ export interface ReconcileResult {
   snapped: boolean;
   replayed: number;
   error: PredictionError;
+  rejectReason: AckRejectReason;
+  acceptMutated: boolean;
 }
+
+export type { AckRejectReason } from './localMotionDiagnostics';
 
 export function createPredictionDebug(): PredictionDebug {
   return {
@@ -210,6 +220,7 @@ export function predictLocalMove(
   dt = FIXED_DT,
 ): PlayerMovementState {
   applyPredictedTick(player, world, move, dt);
+  motionProbe.notePredictionTick();
   const state = player.captureMovementState();
   recordPredictedState(buffer, move, state);
   return state;
@@ -275,15 +286,25 @@ export function isSmallPredictionError(error: { readonly xz: number; readonly y:
     && (error.speed ?? 0) <= PREDICTION_ACCEPT_SPEED;
 }
 
+export function ackRejectReason(
+  predicted: PlayerMovementState,
+  snapshot: PlayerSnapshot,
+  error: PredictionError,
+): AckRejectReason {
+  if (error.xz > PREDICTION_ACCEPT_XZ) return 'xz';
+  if (error.y > PREDICTION_ACCEPT_Y) return 'y';
+  if (error.speed > PREDICTION_ACCEPT_SPEED) return 'speed';
+  if (predicted.onGround !== snapshot.onGround) return 'onGround';
+  if (snapshot.flying !== undefined && predicted.isFlying !== snapshot.flying) return 'flying';
+  return 'none';
+}
+
 export function isAcceptableAckError(
   predicted: PlayerMovementState,
   snapshot: PlayerSnapshot,
   error: PredictionError,
 ): boolean {
-  if (!isSmallPredictionError(error)) return false;
-  if (predicted.onGround !== snapshot.onGround) return false;
-  if (snapshot.flying !== undefined && predicted.isFlying !== snapshot.flying) return false;
-  return true;
+  return ackRejectReason(predicted, snapshot, error) === 'none';
 }
 
 function movementStateFromSnapshot(
@@ -359,19 +380,29 @@ function finish(
   kind: ReconcileKind,
   error: PredictionError,
   replayed: number,
+  rejectReason: AckRejectReason = 'none',
+  acceptMutated = false,
 ): ReconcileResult {
   noteDebug(buffer, kind, error, performance.now());
-  return { kind, snapped: kind === 'snapped', replayed, error };
+  const result: ReconcileResult = {
+    kind,
+    snapped: kind === 'snapped',
+    replayed,
+    error,
+    rejectReason,
+    acceptMutated,
+  };
+  motionProbe.noteReconcile(result);
+  return result;
 }
 
 /**
  * Compare the snapshot to the predicted pose AT the acked seq. If they agree,
  * leave the live player (including previousPosition) untouched.
  *
- * `inputSeq` is the last input the server used for that one physics tick.
- * Intermediate seqs overwritten before the tick were not simulated. Duplicate
- * acks (same seq as lastAckedSeq) mean the server ticked again with the same
- * lastInput — do not rewind the already-acked pose.
+ * `inputSeq` is the seq the server actually simulated this tick. Queued packets
+ * are consumed in order; held lastInput (empty queue) may repeat a seq, which
+ * the client ignores as a duplicate ack.
  */
 export function reconcilePredictedPlayer(
   player: PlayerController,
@@ -382,30 +413,39 @@ export function reconcilePredictedPlayer(
 ): ReconcileResult {
   const ackSeq = snapshot.inputSeq;
   if (ackSeq === undefined || !Number.isFinite(ackSeq)) {
-    return finish(buffer, 'ignored', emptyError(), 0);
+    return finish(buffer, 'ignored', emptyError(), 0, 'no-seq');
   }
   if (ackSeq < buffer.lastAckedSeq) {
-    return finish(buffer, 'ignored', emptyError(), 0);
+    return finish(buffer, 'ignored', emptyError(), 0, 'stale-seq');
   }
   if (ackSeq === buffer.lastAckedSeq) {
-    return finish(buffer, 'ignored', emptyError(), 0);
+    return finish(buffer, 'ignored', emptyError(), 0, 'duplicate-seq');
   }
 
+  const before = captureMotionPose(player);
   const predictedAtAck = findPredictedEntry(buffer, ackSeq);
   if (predictedAtAck) {
     const error = predictedStateError(predictedAtAck.state, snapshot);
-    if (isAcceptableAckError(predictedAtAck.state, snapshot, error)) {
+    const reject = ackRejectReason(predictedAtAck.state, snapshot, error);
+    if (reject === 'none') {
       ackPredictedMoves(buffer, ackSeq);
-      return finish(buffer, 'accepted', error, 0);
+      const mutated = motionPoseChanged(player, before);
+      if (mutated) {
+        motionProbe.note('accept-mutated');
+        motionProbe.noteWrite('position');
+        motionProbe.noteWrite('previousPosition');
+        motionProbe.noteWrite('velocity');
+      }
+      return finish(buffer, 'accepted', error, 0, 'none', mutated);
     }
-    return applyCorrection(player, world, buffer, snapshot, predictedAtAck.state, error, dt);
+    return applyCorrection(player, world, buffer, snapshot, predictedAtAck.state, error, dt, reject);
   }
 
   const error = predictionError(
     { x: player.position.x, y: player.position.y, z: player.position.z },
     snapshot,
   );
-  return applyCorrection(player, world, buffer, snapshot, undefined, error, dt);
+  return applyCorrection(player, world, buffer, snapshot, undefined, error, dt, 'no-history');
 }
 
 function applyCorrection(
@@ -416,17 +456,25 @@ function applyCorrection(
   predictedAtAck: PlayerMovementState | undefined,
   error: PredictionError,
   dt: number,
+  rejectReason: AckRejectReason,
 ): ReconcileResult {
   const ackSeq = snapshot.inputSeq ?? buffer.lastAckedSeq;
   const snapped = shouldSnapPrediction(error.distSq);
   restoreAuthoritativePlayer(player, snapshot, predictedAtAck);
+  motionProbe.noteWrite('position');
+  motionProbe.noteWrite('velocity');
   ackPredictedMoves(buffer, ackSeq);
   for (const entry of buffer.entries) {
     applyPredictedTick(player, world, entry.input, dt);
+    motionProbe.notePredictionTick();
     entry.state = player.captureMovementState();
   }
-  if (snapped || buffer.entries.length === 0) {
+  // Only a true teleport may collapse the render lerp window. Empty pending
+  // used to copy previousPosition = position every lockstep correction, which
+  // made online movement step at player_state rate even for tiny errors.
+  if (snapped) {
     player.previousPosition.copy(player.position);
+    motionProbe.noteWrite('previousPosition');
   }
-  return finish(buffer, snapped ? 'snapped' : 'corrected', error, buffer.entries.length);
+  return finish(buffer, snapped ? 'snapped' : 'corrected', error, buffer.entries.length, rejectReason);
 }

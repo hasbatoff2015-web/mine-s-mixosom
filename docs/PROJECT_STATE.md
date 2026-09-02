@@ -2,6 +2,15 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online local-motion pipeline (SP vs Online)
+
+- Ветка `cursor/online-prediction-remesh-86e1` (PR **#37**). **Не merge в main.**
+- Accept-path PR #37 был прав: matching ack **не** пишет pose. Ручной QA без улучшения — потому что localhost `lastInput` coalescing давал **correction каждый снимок**, а не accept.
+- Root cause визуального 20 Hz: сервер симулировал только последний пакет за tick; `history[N]` = два клиентских шага, snapshot = один. Restore на предыдущий tick совпадает с `previousPosition` → `lerp` вырождается. Камера уже была `interpolated-local` (те же строки, что SP).
+- Fix: очередь input на сервере (один seq за 20 TPS tick, `snapshot.inputSeq = simulatedInputSeq`); small correction больше не копирует `previousPosition = position`. GRAVITY/JUMP/WALK/SPRINT/FIXED_DT/offline physics/urgent remesh не трогали.
+- DEV F3 `Motion …` + `?motionDiag=1` (2 s trace). Pipeline: SP и queued online mean render step ~0.070; coalesce 10 Hz = 20 corrections / 2 s.
+- Report: `docs/reports/2026-09-02_online-local-motion-pipeline.md`.
+
 ## Последний проход: Online Anarchy prediction-history jitter fix
 
 - Ветка `cursor/online-prediction-remesh-86e1` (PR **#37**). **Не merge в main.**
