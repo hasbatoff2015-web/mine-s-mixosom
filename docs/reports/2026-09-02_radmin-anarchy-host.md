@@ -43,7 +43,7 @@ The WebSocket server still defaults to **`127.0.0.1:2567`**. Canonical env **`FC
 - `npm run typecheck:sim` PASS
 - Targeted vitest: `server-host`, `vite-dev-host`, `anarchy-client-url`, `anarchy-server`, `anarchy-gameplay` — **5 files / 53 passed**
 - `npm run test:server` — **6 files / 78 passed**
-- `npm run smoke:server` PASS; printed `WebSocket listening on 127.0.0.1:<ephemeral>`
+- `npm run check:boundaries` PASS
 - `npm run build` PASS (192 modules). Production bundle still defaults `127.0.0.1` / `2567`.
 - Live: `FC_SERVER_HOST=0.0.0.0 PORT=2569` → `LISTEN 0.0.0.0:2569`, log `WebSocket listening on 0.0.0.0:2569`, `GET http://127.0.0.1:2569/status` 200.
 - Live Vite default → `::1:4179` / Local URL only. `FC_DEV_HOST=0.0.0.0` → `0.0.0.0:4179` and a Network URL.
