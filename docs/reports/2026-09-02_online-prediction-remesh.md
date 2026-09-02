@@ -160,7 +160,7 @@ No production hot-path change was made from this probe.
 
 Targeted prediction / remesh / session / tick-latency packs plus retained Anarchy/network suites.
 
-Acceptance commands in this pass: `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `smoke:sim`, `smoke:server`, `test:sim`, `test:server`, `build`.
+Acceptance: `typecheck` / `typecheck:sim` / `typecheck:client` / `typecheck:server` / `check:boundaries` / `smoke:sim` / `smoke:server` PASS. `test:sim` **42/42**. `test:server` **74/74** (includes tick-latency). `build` PASS (JS 1,096.15 kB / 310.71 kB gzip).
 
 ## Visual QA
 
