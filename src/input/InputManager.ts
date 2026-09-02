@@ -32,10 +32,25 @@ export interface InputCallbacks {
   openChat(prefix?: string): void;
   dropItem(): void;
   selectHotbar(index: number): void;
+  cyclePerspective?(): void;
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
   isChatOpen?(): boolean;
+}
+
+export function shouldCyclePerspectiveOnKey(input: {
+  readonly code: string;
+  readonly repeat: boolean;
+  readonly typing: boolean;
+  readonly canCapture: () => boolean;
+  readonly hasCallback: boolean;
+}): boolean {
+  return input.code === 'F5'
+    && !input.repeat
+    && !input.typing
+    && input.hasCallback
+    && input.canCapture();
 }
 
 export class InputManager {
@@ -205,6 +220,17 @@ export class InputManager {
   private bindDesktop(): void {
     window.addEventListener('keydown', (event) => {
       const typing = isTypingElement(event.target);
+      if (shouldCyclePerspectiveOnKey({
+        code: event.code,
+        repeat: event.repeat,
+        typing,
+        canCapture: () => this.callbacks.canCapture(),
+        hasCallback: this.callbacks.cyclePerspective !== undefined,
+      })) {
+        event.preventDefault();
+        this.callbacks.cyclePerspective!();
+        return;
+      }
       if (event.code === 'KeyE' && !event.repeat) {
         if (typing) return;
         event.preventDefault();

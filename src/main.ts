@@ -22,10 +22,16 @@ if (import.meta.env.DEV) {
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
+  const qaPlayer = search.get('qaPlayer') === '1';
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
-  if (qaArrow) {
+  if (qaPlayer) {
+    runningDevHarness = true;
+    void import('./dev/PlayerQaHarness').then(async ({ startPlayerQaHarness }) => {
+      disposeApplication = await startPlayerQaHarness(canvas, uiRoot);
+    });
+  } else if (qaArrow) {
     runningDevHarness = true;
     void import('./dev/ArrowQaHarness').then(({ startArrowQaHarness }) => {
       disposeApplication = startArrowQaHarness(canvas, uiRoot);

@@ -100,6 +100,12 @@ import { Inventory, createItemStack, damageItem, type ItemStack } from '../inven
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController } from '../player';
+import {
+  DEFAULT_PLAYER_APPEARANCE,
+  createPlayerAppearance,
+  type PlayerAppearance,
+} from '../player/appearance/PlayerAppearance';
+import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -112,6 +118,17 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
+import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
+import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import {
+  THIRD_PERSON_CAMERA_DISTANCE,
+  availableThirdPersonDistance,
+  nextCameraPerspective,
+  smoothThirdPersonDistance,
+  worldCameraCollisionSource,
+  type CameraCollisionSource,
+  type CameraPerspective,
+} from '../rendering/player/ThirdPersonCamera';
 import {
   categoryColor,
   chebyshev,
@@ -222,6 +239,8 @@ export interface GameSession {
   world: VoxelWorld;
   worldRenderer: WorldRenderer;
   player: PlayerController;
+  playerVisual: PlayerVisual;
+  cameraCollision: CameraCollisionSource;
   survival: SurvivalSystem;
   combat: CombatSystem;
   inventory: Inventory;
@@ -313,6 +332,9 @@ export class Game {
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
+  private readonly cameraPivot = new THREE.Vector3();
+  private readonly cameraTravelDirection = new THREE.Vector3();
+  private readonly frontCameraLook = { yaw: 0, pitch: 0 };
   private readonly daySkyColor = new THREE.Color(0x7fb9dc);
   private readonly duskSkyColor = new THREE.Color(0xd9785a);
   private readonly nightSkyColor = new THREE.Color(0x071426);
@@ -334,6 +356,12 @@ export class Game {
   private itemIcons?: ItemIconRenderer;
   private arrowVisuals?: ArrowVisualFactory;
   private firstPerson?: FirstPersonRenderer;
+  private readonly playerSkins = new MinecraftSkinRegistry();
+  private readonly playerSkinGeometries = new PlayerSkinGeometryCache();
+  private playerAppearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  private cameraPerspective: CameraPerspective = 'firstPerson';
+  private thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
+  private renderDeltaSeconds = 0;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
   private readonly simRandom = systemRandomFn;
@@ -445,6 +473,7 @@ export class Game {
       openChat: (prefix) => this.openChat(prefix),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
+      cyclePerspective: () => this.cycleCameraPerspective(),
       onPointerLockAcquired: () => {
         this.lifecycle.resumePlayingIfVisible();
         this.lifecycle.endOnlineRespawnRestore();
@@ -496,10 +525,35 @@ export class Game {
     this.itemIcons.bake();
     this.ui.setItemIconResolver((itemId) => this.itemIcons!.url(itemId));
     this.arrowVisuals = new ArrowVisualFactory();
-    this.firstPerson = new FirstPersonRenderer(this.itemVisuals);
+    this.firstPerson = new FirstPersonRenderer(this.itemVisuals, {
+      skinRegistry: this.playerSkins,
+      skinGeometries: this.playerSkinGeometries,
+      appearance: this.playerAppearance,
+      onSwing: () => this.session?.playerVisual?.swing(),
+    });
     this.resize();
     this.showMainMenu();
     await this.yandex.loadingReady();
+  }
+
+  get currentPlayerAppearance(): PlayerAppearance {
+    return this.playerAppearance;
+  }
+
+  get currentCameraPerspective(): CameraPerspective {
+    return this.cameraPerspective;
+  }
+
+  /** Runtime seam for the future character UI and server appearance messages. */
+  setPlayerAppearance(appearance: PlayerAppearance): void {
+    this.playerAppearance = createPlayerAppearance(appearance);
+    this.firstPerson?.setAppearance(this.playerAppearance);
+    this.session?.playerVisual?.setAppearance(this.playerAppearance);
+  }
+
+  setCameraPerspective(perspective: CameraPerspective): void {
+    this.cameraPerspective = perspective;
+    this.thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
   }
 
   dispose(): void {
@@ -508,6 +562,8 @@ export class Game {
     this.disposeAudioDebug();
     this.disposeSession();
     this.firstPerson?.dispose();
+    this.playerSkinGeometries.dispose();
+    this.playerSkins.dispose();
     this.itemVisuals?.dispose();
     this.itemIcons?.dispose();
     this.arrowVisuals?.dispose();
@@ -615,7 +671,15 @@ export class Game {
 
   private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
     if (!session.online || info.id === session.online.playerId || session.online.remotes.has(info.id)) return;
-    const view = new RemotePlayerView(info);
+    const view = new RemotePlayerView(info, {
+      visual: new PlayerVisual(
+        this.playerSkins,
+        this.playerSkinGeometries,
+        this.itemVisuals!,
+        DEFAULT_PLAYER_APPEARANCE,
+      ),
+      world: session.world,
+    });
     session.online.remotes.set(info.id, view);
     this.scene.add(view.group);
   }
@@ -853,7 +917,6 @@ export class Game {
         remote = online.remotes.get(snap.id);
       }
       remote?.applySnapshot(snap, performance.now(), message.tick);
-      if (remote) remote.group.visible = snap.invisible !== true;
     }
     for (const id of [...online.remotes.keys()]) {
       if (!seen.has(id)) this.removeRemotePlayer(session, id);
@@ -1161,12 +1224,21 @@ export class Game {
         if (cart.variant === 'tnt') session.minecarts.explodeNow(cart);
       },
     });
+    const playerVisual = new PlayerVisual(
+      this.playerSkins,
+      this.playerSkinGeometries,
+      itemVisuals,
+      this.playerAppearance,
+    );
+    this.scene.add(playerVisual.root);
 
     this.session = {
       summary,
       world,
       worldRenderer,
       player,
+      playerVisual,
+      cameraCollision: worldCameraCollisionSource(world),
       survival,
       combat,
       inventory,
@@ -1191,6 +1263,7 @@ export class Game {
     this.firstPerson?.setHeldItems(
       inventory.getSlot(this.session.selectedSlot)?.itemId,
     );
+    playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
   }
@@ -2032,6 +2105,7 @@ export class Game {
   private frame(now: number): void {
     const frameStart = performance.now();
     const rawElapsed = Math.max(0, (now - this.previousTime) / 1000);
+    this.renderDeltaSeconds = Math.min(0.1, rawElapsed);
     this.previousTime = now;
     this.frameTimings.add(rawElapsed * 1000);
     this.fpsFrames += 1;
@@ -2184,6 +2258,7 @@ export class Game {
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
+    session.playerVisual.setHeldItem(selected?.itemId);
     if (gameplayAllowed) this.updateTargetAndActions();
     else {
       this.input.consumeAttackPressed();
@@ -3229,17 +3304,17 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
-      if (session.online) {
-        const position = session.player.position;
-        this.camera.position.set(position.x, position.y + session.player.eyeHeight, position.z);
-      } else {
-        const position = this.interpolatedPlayerPosition
+      const position = session.online
+        ? this.interpolatedPlayerPosition.copy(session.player.position)
+        : this.interpolatedPlayerPosition
           .copy(session.player.previousPosition)
           .lerp(session.player.position, clamp(alpha, 0, 1));
-        this.camera.position.set(position.x, position.y + session.player.eyeHeight, position.z);
-      }
-      applyImmediateRenderLook(this.camera, this.input, this.hurt.cameraRoll(now));
-      session.online?.remotes.forEach((remote) => remote.interpolate(now));
+      this.updatePlayerPresentation(session, position, now);
+      session.online?.remotes.forEach((remote) => remote.interpolate(
+        now,
+        this.renderDeltaSeconds,
+        daylightFactor(session.world.timeOfDay),
+      ));
       if (session.online) {
         applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
       } else {
@@ -3269,6 +3344,74 @@ export class Game {
     this.firstPerson?.render(this.renderer);
   }
 
+  private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
+    const thirdPerson = this.cameraPerspective !== 'firstPerson';
+    session.playerVisual.root.position.copy(position);
+    session.playerVisual.setVisible(
+      thirdPerson
+      && this.lifecycle.state === 'PLAYING'
+      && !this.ui.isInventoryOpen(),
+    );
+    session.playerVisual.update(this.renderDeltaSeconds, {
+      viewYaw: this.input.yaw,
+      viewPitch: this.input.pitch,
+      movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
+      onGround: session.player.onGround,
+      sneaking: session.player.sneaking,
+      sprinting: session.player.sprinting,
+      verticalVelocity: session.player.velocity.y,
+      mining: this.input.mining && session.target !== undefined,
+      bowCharge: session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0,
+      swordBlocking: session.combat.swordBlocking,
+      foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
+      invisible: session.survival.invisible,
+      hurtFlash: this.hurt.flashAlpha(now),
+    });
+    session.playerVisual.applyWorldLight(
+      session.world,
+      position.x,
+      position.y,
+      position.z,
+      daylightFactor(session.world.timeOfDay),
+    );
+
+    this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
+    const roll = this.hurt.cameraRoll(now);
+    if (!thirdPerson) {
+      this.camera.position.copy(this.cameraPivot);
+      applyImmediateRenderLook(this.camera, this.input, roll);
+      return;
+    }
+
+    const cosPitch = Math.cos(this.input.pitch);
+    this.cameraTravelDirection.set(
+      -Math.sin(this.input.yaw) * cosPitch,
+      Math.sin(this.input.pitch),
+      -Math.cos(this.input.yaw) * cosPitch,
+    );
+    if (this.cameraPerspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
+    const available = availableThirdPersonDistance(
+      this.cameraPivot,
+      this.cameraTravelDirection,
+      THIRD_PERSON_CAMERA_DISTANCE,
+      session.cameraCollision,
+    );
+    this.thirdPersonCameraDistance = smoothThirdPersonDistance(
+      this.thirdPersonCameraDistance,
+      available,
+      this.renderDeltaSeconds,
+    );
+    this.camera.position.copy(this.cameraPivot).addScaledVector(
+      this.cameraTravelDirection,
+      this.thirdPersonCameraDistance,
+    );
+    if (this.cameraPerspective === 'thirdPersonFront') {
+      this.frontCameraLook.yaw = this.input.yaw + Math.PI;
+      this.frontCameraLook.pitch = -this.input.pitch;
+      applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
+    } else applyImmediateRenderLook(this.camera, this.input, roll);
+  }
+
   private updateFirstPerson(deltaSeconds: number): void {
     const viewmodel = this.firstPerson;
     if (!viewmodel) return;
@@ -3276,7 +3419,8 @@ export class Game {
     const state = this.firstPersonFrameState;
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
-      && !this.ui.isInventoryOpen();
+      && !this.ui.isInventoryOpen()
+      && this.cameraPerspective === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
       state.onGround = session.player.onGround;
@@ -3391,6 +3535,7 @@ export class Game {
     }
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
+    this.session.playerVisual?.dispose();
     this.session.arrows.dispose();
     this.session.minecarts.dispose();
     this.session.mobs.dispose();
@@ -3467,6 +3612,10 @@ export class Game {
     this.lightDebugMode = (this.lightDebugMode + 1) % 4;
     setWorldLightDebug(this.lightDebugMode);
     this.debugNextTick = 0;
+  }
+
+  private cycleCameraPerspective(): void {
+    this.setCameraPerspective(nextCameraPerspective(this.cameraPerspective));
   }
 
   private bindLifecycle(): void {

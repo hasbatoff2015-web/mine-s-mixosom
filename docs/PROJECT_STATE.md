@@ -2,6 +2,29 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: post-server integration PR #31 player skins / character / third-person
+
+- Существующая ветка Draft PR **#31** `cursor/player-skins-third-person` объединена обычным merge с server-authoritative `origin/main` `57724f6`; PR #28 breaking overlay и весь GameplayKernel/server/shared/tooling stack сохранены.
+- `Game.tickOnline` не запускает client world simulation. Perspective и `PlayerVisual` остаются presentation-only; gameplay targeting/reach по-прежнему строятся из `PlayerController.eyePosition()` / `viewDirection()`.
+- `RemotePlayerView` больше не создаёт временный `BoxGeometry`: bounded snapshot interpolation управляет feet/yaw/pitch/velocity/state, а canonical `PlayerVisual` отвечает за rig, render-frame locomotion, invisibility и shared entity lighting.
+- Protocol не расширялся: remote использует `DEFAULT_PLAYER_APPEARANCE`, empty-hand neutral fallback и не получает PNG/base64/texture payload. `selectedSlot` без authoritative item id не используется для угадывания held item.
+- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
+- `BlockBreakingOverlay` остаётся render-path consumer того же authoritative eye/look target во всех perspectives; mapping/cache/no-remesh contract не менялся.
+- Focused player gate **41/41**, expanded player/server/network/overlay gate **236/236**, shared sim **42/42**, server **73/73**; all typechecks, boundaries, Node smokes, build, size and archive pass. Full comparable run has no new failure class versus exact main; details below.
+- Подробности исходной реализации: `docs/reports/2026-08-31_player-skins-third-person.md`; post-server results добавлены в его секцию `POST-SERVER INTEGRATION`. Отдельный integration handoff: `docs/reports/2026-09-02_pr31-player-visual-server-integration.md`.
+
+## Minecraft-compatible player skins и third-person camera
+
+- В production подключены **45 уникальных пользовательских 64×64 RGBA skins** из переданного `skins.zip` (один byte-identical duplicate отброшен): 20 Classic и 25 Slim по каноническим прозрачным arm-зонам. Default — `frontier_explorer` (Classic). Дополнительно есть authored DEV `player_uv_test` с разными цветами граней. Старый `entity/steve.png` не используется новым player pipeline.
+- Канонический контракт — `PlayerAppearance { skinId, model, layers }`. `MinecraftSkinRegistry` держит одну nearest/no-mipmap texture на `skinId`, ref-count освобождает старую texture; `PlayerSkinGeometryCache` делит immutable geometry между экземплярами.
+- `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
+- First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира.
+- F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
+- World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
+- DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.
+- Права на 45 пользовательских skins не выводятся из технической интеграции: перед публикацией владелец проекта должен подтвердить происхождение/лицензии, особенно для узнаваемых персонажей. Generated ImageGen concept сохранён только в ignored `.local/` и не ship/commit.
+- Подробности и validation: `docs/reports/2026-08-31_player-skins-third-person.md`.
+
 ## Последний проход: интеграция PR #28 block breaking overlay
 
 - Ветка существующего Draft PR **#28** `cursor/block-breaking-overlay-3f86` объединена обычным merge с `origin/main` `a305dc5`; серверная архитектура Online Anarchy из main сохранена.

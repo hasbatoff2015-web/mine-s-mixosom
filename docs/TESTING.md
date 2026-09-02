@@ -1,5 +1,23 @@
 # Тестирование
 
+## 2026-09-02 PR #31 post-server integration
+
+Automated focused gate:
+
+```text
+npx vitest run tests/player-skins.test.ts tests/player-skin-assets.test.mjs tests/player-visual-animation.test.ts tests/third-person-camera.test.ts tests/player-main-integration.test.ts tests/remote-player-view.test.ts tests/classic-combat-integration.test.ts
+```
+
+Итог: **7 files / 41 tests passed**. Расширенный player + overlay + server/network gate: **28 files / 236 tests passed**. Отдельно: `test:sim` **42/42**, `test:server` **73/73**, `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `smoke:sim`, `smoke:server` — PASS.
+
+`player-skins` проверяет 64×64 validation, Classic/Slim dimensions, body/head, independent left/right/base/outer UV, nearest/no-mipmap texture, cache/ref-count, live appearance swap/dispose и feet/height bounds. `player-skin-assets` читает реальные IHDR всех 45 supplied PNG + QA skin. `player-visual-animation` покрывает head/body yaw, opposite gait, sneak, attack/eat/block/bow overlays. `third-person-camera` покрывает F5 order/active edge, 4-block distance, swept-corner wall/slab clipping, non-solid empty source и smooth restore. `player-main-integration` guards authoritative Online no-local-world-tick, player-eye targeting, render-path breaking overlay and lifecycle-neutral perspective switching. `remote-player-view` verifies bounded interpolation feeding canonical `PlayerVisual`, default appearance, animation/invisibility/light path, no placeholder box and no fabricated held item.
+
+DEV URL: `/?qaPlayer=1`. Проверены Classic и Slim supplied skins, outer on/off (`draw 13 → 8` with held sword), first-person arm, sprint/mining/bow and all remaining pose states, head sliders, front/back/first and shared sword/pickaxe/block/bow/food visuals. Cache после смены skin остаётся `1 texture / 2 refs`; geometry stabilizes at 14 per variant, 28 after both variants. `/?qaBreaking=1` на том же merged build визуально прошёл cube stage `0/9 → 4/9` и special-block samples.
+
+Full comparable `npm run test -- --maxWorkers=2`: integration **115/119 files, 1238/1253 tests**, exact clean `origin/main` `57724f6` baseline **109/114 files, 1214/1231 tests**. Integration failures are the same baseline classes: stale `GeneratedItemGeometry.ts` source fingerprint, `minecraft-reference-extractor` parse failure, CPU-heavy worldgen/fire/minecart timeouts and one Vitest worker RPC timeout. The clean worktree additionally lacked ignored `assets/minecraft` inputs, so two authored-asset tests failed only there. All 22 net additional tests pass; no player/remote/overlay/server regression class was added. `npm run check` therefore stops at the known full-suite failures, while standalone build/size/archive pass at **3.75 MiB / 277 files**.
+
+Manual/device follow-up: actual gameplay F5 near full blocks/slabs/stairs/fences, crosshair target before/after camera pull-in, front-mode W semantics, cave near-plane comfort, landscape mobile GPU cost, and two-client remote `PlayerVisual`. Standalone harness proves model/pose resources, pure tests prove collision math; neither simulates real pointer lock/device thermals.
+
 ## 2026-09-02 PR #28 block breaking overlay integration
 
 Reports: `reports/2026-08-31_block-breaking-overlay.md` and `reports/2026-09-02_pr28-block-breaking-overlay-integration.md`. Integrated baseline `origin/main`=`a305dc5`. Branch `cursor/block-breaking-overlay-3f86`.

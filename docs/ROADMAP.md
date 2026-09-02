@@ -1,5 +1,24 @@
 # Roadmap
 
+## 2026-09-02: integrate PR #31 player presentation with authoritative main
+
+- [x] Modern Java 64×64 skin contract; 45 unique supplied skins + authored UV QA sheet; Classic/Slim metadata and all six outer-layer toggles.
+- [x] Canonical 1.8-block articulated `PlayerVisual`, independent modern left/right UV, 4 px Classic / 3 px Slim arms and correct Slim shoulder pivot.
+- [x] Shared ref-counted skin textures and cached player geometry; runtime appearance swap without world reload; first-person arm shares appearance/right sleeve.
+- [x] F5 first/back/front cycle in active gameplay only; 4-block camera, 8-probe collision through canonical block collision boxes, smooth restore, authoritative target unchanged.
+- [x] Render-frame locomotion/use/combat poses, third-person held items from `ItemVisualFactory`, entity light/hurt/invisibility.
+- [x] DEV `?qaPlayer=1`, automated skin/asset/animator/camera tests, live WebGL visual QA with clean console.
+- [ ] Before publication, confirm ownership/licensing of every user-supplied skin; recognizable third-party character art is not cleared by code integration.
+- [ ] After UI PR integration: thin character/skin selector + local IndexedDB custom PNG; reuse `Game.setPlayerAppearance`, no settings redesign in this branch.
+- [x] Merge authoritative Online Anarchy / GameplayKernel / EntityHost / tooling main and merged PR #28 without restoring client world simulation.
+- [x] Replace the `RemotePlayerView` box with shared `PlayerVisual`; keep snapshot interpolation ownership and feed only available authoritative movement/state.
+- [x] Keep protocol unchanged for this integration: default remote appearance, neutral empty hand, no guessed item and no raw/per-tick skin payload.
+- [x] Preserve F5/input/pointer-lock/session recovery and authoritative eye/look targeting in all perspectives.
+- [x] Automated acceptance: focused 41/41, expanded player/server/network/overlay 236/236, sim 42/42, server 73/73, typechecks/boundaries/smokes/build/size/archive PASS; exact-main full-suite comparison adds no new failure class.
+- [x] DEV WebGL acceptance for Classic/Slim, outer layers, all poses, held categories, first/back/front and merged breaking-overlay harness.
+- [ ] Later appearance metadata: rare `{ skinId, model, layers? }` join/change event after selector/rights decisions; never texture bytes in snapshots.
+- [ ] Hardware gameplay acceptance: native pointer-lock F5/camera collision against tight caves/stairs/fences, landscape mobile performance and two visible browser clients. Pure collision/server tests and standalone QA harness do not replace this final device pass.
+
 ## 2026-09-02: integrate PR #28 block breaking overlay with authoritative Anarchy main
 
 - [x] Visual-only 10-stage crack overlay consuming `session.miningProgress`; mining gameplay unchanged.
