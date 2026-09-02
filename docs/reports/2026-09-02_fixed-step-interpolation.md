@@ -56,8 +56,11 @@ Singleplayer uses the same restore. Identical local input and identical `ticksTh
 
 ## Tests
 
-- `tests/fixed-step.test.ts`: 1-tick no-op, 2-tick naive hitch vs restored origin, ticks=0 leaves previousPosition.
-- `tests/local-motion-pipeline.test.ts`: SP/Online two-tick origin; PlayerController hitch does not emit a full physics-step render delta; following 0-tick frame is monotonic; hitchy 60 Hz walk SP=Online with `corrections=0`.
+- `tests/fixed-step.test.ts` **6/6**: 1-tick no-op, 2-tick naive hitch vs restored origin, ticks=0.
+- `tests/local-motion-pipeline.test.ts` **7/7**: SP/Online origin restore; PlayerController hitch + monotonic follow frame; hitchy 60 Hz walk SP=Online with `corrections=0` (two-tick render step < 0.12; 55 ms wall-clock walk may still cover `WALK_SPEED*0.055`).
+- prediction **24/24**, remesh **4/4**, player-main+anarchy **27/27**
+- `typecheck*` / `check:boundaries` PASS
+- `test:sim` **42/42**, `test:server` **83/83**, smokes PASS, `build` PASS
 
 ## Visual QA
 

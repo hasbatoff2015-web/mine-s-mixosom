@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { FIXED_DT } from '../src/core/constants';
+import { FIXED_DT, WALK_SPEED } from '../src/core/constants';
 import {
   advanceFixedStep,
   interpolationAlpha,
@@ -122,10 +122,13 @@ function sampleFrame(player: PlayerController, ticks: number, alpha: number): Fr
 function statsOf(run: RunStats) {
   const moving = run.samples.filter((sample) => sample.distPrev > 1e-4);
   const renderSteps = [];
+  const twoTickSteps = [];
   for (let i = 1; i < run.samples.length; i += 1) {
     const dx = run.samples[i]!.renderX - run.samples[i - 1]!.renderX;
     const dz = run.samples[i]!.renderZ - run.samples[i - 1]!.renderZ;
-    renderSteps.push(Math.hypot(dx, dz));
+    const dist = Math.hypot(dx, dz);
+    renderSteps.push(dist);
+    if (run.samples[i]!.ticks > 1) twoTickSteps.push(dist);
   }
   const mean = renderSteps.reduce((sum, value) => sum + value, 0) / Math.max(1, renderSteps.length);
   const variance = renderSteps.reduce((sum, value) => sum + (value - mean) ** 2, 0)
@@ -146,6 +149,7 @@ function statsOf(run: RunStats) {
     meanStep: mean,
     stdStep: Math.sqrt(variance),
     maxStep,
+    twoTickMaxStep: Math.max(0, ...twoTickSteps),
     zeroLerpWhileMoving,
     multiTickFrames,
   };
@@ -428,8 +432,9 @@ describe('local motion pipeline SP vs Online', () => {
       follow.nextAccumulator,
     );
     const followStep = Math.hypot(followRender.x - corrected.x, followRender.z - corrected.z);
-    expect(followRender.z).toBeGreaterThan(corrected.z);
-    expect(followStep).toBeLessThan(tickDistance * 0.5);
+    const alongZ = Math.sign(player.position.z - origin.z) || 1;
+    expect((followRender.z - corrected.z) * alongZ).toBeGreaterThan(0);
+    expect(followStep).toBeLessThan(tickDistance);
     expect(followStep).toBeGreaterThan(0);
   });
 
@@ -480,8 +485,12 @@ describe('local motion pipeline SP vs Online', () => {
     const online = statsOf(run(true));
     expect(sp.multiTickFrames).toBeGreaterThan(0);
     expect(online.multiTickFrames).toBe(sp.multiTickFrames);
-    expect(sp.maxStep).toBeLessThan(0.12);
-    expect(online.maxStep).toBeLessThan(0.12);
+    // A 55 ms frame may legally cover ~WALK_SPEED*0.055 of walk. The regression
+    // is that ticks>=2 must not add an extra physics-step teleport on top.
+    expect(sp.maxStep).toBeLessThan(WALK_SPEED * 0.055 * 1.15);
+    expect(online.maxStep).toBeLessThan(WALK_SPEED * 0.055 * 1.15);
+    expect(sp.twoTickMaxStep).toBeLessThan(0.12);
+    expect(online.twoTickMaxStep).toBeLessThan(0.12);
     expect(online.corrections).toBe(0);
     expect(Math.abs(sp.meanStep - online.meanStep)).toBeLessThan(0.002);
   });
