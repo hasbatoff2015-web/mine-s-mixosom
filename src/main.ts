@@ -21,9 +21,11 @@ if (import.meta.env.DEV) {
   const qaLighting = search.get('qaLighting');
   const qaUi = search.get('qaUi');
   const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list']);
+  const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
+  const qaPlayer = search.get('qaPlayer') === '1';
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
@@ -32,10 +34,20 @@ if (import.meta.env.DEV) {
     void import('./dev/UiQaHarness').then(({ startUiQaHarness }) => {
       disposeApplication = startUiQaHarness(canvas, uiRoot, qaUi as import('./dev/UiQaHarness').UiQaScene);
     });
+  } else if (qaPlayer) {
+    runningDevHarness = true;
+    void import('./dev/PlayerQaHarness').then(async ({ startPlayerQaHarness }) => {
+      disposeApplication = await startPlayerQaHarness(canvas, uiRoot);
+    });
   } else if (qaArrow) {
     runningDevHarness = true;
     void import('./dev/ArrowQaHarness').then(({ startArrowQaHarness }) => {
       disposeApplication = startArrowQaHarness(canvas, uiRoot);
+    });
+  } else if (qaBreaking) {
+    runningDevHarness = true;
+    void import('./dev/BreakingQaHarness').then(async ({ startBreakingQaHarness }) => {
+      disposeApplication = await startBreakingQaHarness(canvas, uiRoot);
     });
   } else if ((qaBiome && ['plains', 'forest', 'desert'].includes(qaBiome)) || (qaLighting && lightingScenes.includes(qaLighting))) {
     runningDevHarness = true;

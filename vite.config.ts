@@ -12,4 +12,8 @@ export default defineConfig({
     host: true,
     port: 4173,
   },
+  test: {
+    environment: 'node',
+    setupFiles: ['./tests/setupClientEntityHost.ts'],
+  },
 });

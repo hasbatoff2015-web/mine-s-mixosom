@@ -1,19 +1,13 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId } from '../blocks';
-import { FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
+import { clamp, FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
 import { interpolateVec3 } from '../core/entityInterpolation';
-import {
-  isMinecartEntityVisual,
-  MinecartVisualFactory,
-  MINECART_HEIGHT,
-  MINECART_HIT_HEIGHT,
-  MINECART_LENGTH,
-  MINECART_WIDTH,
-} from '../rendering/minecartGeometry';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
+import type { EntityHost, EntityVisual } from './EntityHost';
+import { isEntityHost } from './EntityHost';
+import { resolveEntityHost } from './resolveEntityHost';
 import {
   entryProgress,
   findRailCell,
@@ -24,6 +18,17 @@ import {
   sampleRail,
   type RailCell,
 } from './railPath';
+
+/** World size of the open-top cart, in blocks. Keep in sync with minecartGeometry. */
+export const MINECART_WIDTH = 0.98;
+export const MINECART_LENGTH = 0.98;
+export const MINECART_HEIGHT = 0.62;
+export const MINECART_HIT_HEIGHT = 1.15;
+export const MINECART_ENTITY_KIND = 'minecart-entity';
+
+export function isMinecartEntityVisual(object: { readonly userData?: { readonly kind?: string } }): boolean {
+  return object.userData?.kind === MINECART_ENTITY_KIND;
+}
 
 export const TNT_MINECART_FUSE_TICKS = 80;
 export const TNT_MINECART_EXPLOSION_POWER = 4;
@@ -114,10 +119,10 @@ export interface SerializedMinecart {
 
 export interface MinecartEntity {
   readonly id: string;
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
-  readonly visual: THREE.Object3D;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
+  readonly visual?: EntityVisual;
   yaw: number;
   pitch: number;
   rider: boolean;
@@ -138,14 +143,14 @@ export interface MinecartUpdateInput {
 
 export interface MinecartExplosionEvent {
   readonly id: string;
-  readonly position: THREE.Vector3;
+  readonly position: Vec3;
   readonly power: number;
   readonly radius: number;
 }
 
 export interface MinecartPushSource {
-  readonly position: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
+  readonly position: Vec3;
+  readonly velocity: Vec3;
   readonly aabb: {
     readonly minX: number;
     readonly minY: number;
@@ -158,17 +163,21 @@ export interface MinecartPushSource {
 
 export class MinecartManager {
   private readonly carts = new Map<string, MinecartEntity>();
-  private readonly visuals = new MinecartVisualFactory();
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private readonly pendingExplosions: MinecartExplosionEvent[] = [];
   private idCounter = 0;
   private disposed = false;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
     _unusedVisuals?: unknown,
     private readonly maxCarts = 16,
-  ) {}
+  ) {
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost);
+  }
 
   get entities(): readonly MinecartEntity[] {
     return [...this.carts.values()];
@@ -181,14 +190,13 @@ export class MinecartManager {
   spawn(x: number, y: number, z: number, id?: string, variant: MinecartVariant = 'normal'): MinecartEntity | undefined {
     if (this.disposed || this.carts.size >= this.maxCarts) return undefined;
     const entityId = id ?? `cart-${this.idCounter += 1}`;
-    const visual = this.visuals.create();
-    this.visuals.setVariant(visual, variant);
-    this.scene.add(visual);
+    const visual = this.host.createMinecart(variant) as EntityVisual | undefined;
+    if (visual) this.host.attach(visual);
     const entity: MinecartEntity = {
       id: entityId,
-      position: new THREE.Vector3(x + 0.5, y, z + 0.5),
-      previousPosition: new THREE.Vector3(x + 0.5, y, z + 0.5),
-      velocity: new THREE.Vector3(),
+      position: new Vec3(x + 0.5, y, z + 0.5),
+      previousPosition: new Vec3(x + 0.5, y, z + 0.5),
+      velocity: new Vec3(),
       visual,
       yaw: 0,
       pitch: 0,
@@ -216,7 +224,7 @@ export class MinecartManager {
     return undefined;
   }
 
-  nearest(position: THREE.Vector3, maxDistance = 1.4): MinecartEntity | undefined {
+  nearest(position: Vec3Like, maxDistance = 1.4): MinecartEntity | undefined {
     let best: MinecartEntity | undefined;
     let bestDistance = maxDistance;
     for (const cart of this.carts.values()) {
@@ -233,13 +241,21 @@ export class MinecartManager {
     return this.carts.get(id);
   }
 
+  removeById(id: string): boolean {
+    const cart = this.carts.get(id);
+    if (!cart) return false;
+    if (cart.visual) this.host.detach(cart.visual);
+    this.carts.delete(id);
+    return true;
+  }
+
   isOnRail(cart: MinecartEntity): boolean {
     return cart.rail !== undefined;
   }
 
   handleFlintUse(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     reach: number,
     ignoreId?: string,
   ): 'primed' | 'already' | 'none' {
@@ -255,7 +271,7 @@ export class MinecartManager {
   insertTnt(cart: MinecartEntity): boolean {
     if (cart.variant === 'tnt') return false;
     cart.variant = 'tnt';
-    this.visuals.setVariant(cart.visual, 'tnt');
+    if (cart.visual) this.host.setMinecartVariant(cart.visual, 'tnt');
     return true;
   }
 
@@ -273,21 +289,21 @@ export class MinecartManager {
   }
 
   /** Removes a cart without exploding. Ignored for the ridden cart and primed TNT carts. */
-  breakCart(cart: MinecartEntity, riddenId?: string): { position: THREE.Vector3; items: readonly string[] } | undefined {
+  breakCart(cart: MinecartEntity, riddenId?: string): { position: Vec3; items: readonly string[] } | undefined {
     if (cart.id === riddenId) return undefined;
     if (!this.carts.has(cart.id)) return undefined;
     if (cart.variant === 'tnt' && cart.fuseTicks > 0) return undefined;
     const items = cart.variant === 'tnt' ? ['minecart', 'tnt'] : ['minecart'];
     const position = cart.position.clone();
-    this.scene.remove(cart.visual);
+    if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(cart.id);
     return { position, items };
   }
 
-  push(cart: MinecartEntity, direction: THREE.Vector3, strength = 0.18): void {
+  push(cart: MinecartEntity, direction: Vec3Like, strength = 0.18): void {
     const tangent = this.tangentOf(cart);
     const along = (direction.x * tangent.x + direction.z * tangent.z) * strength * 20;
-    cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    cart.alongSpeed = clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
   }
 
   tryPushFromPlayer(player: MinecartPushSource, ridingId?: string): void {
@@ -299,17 +315,17 @@ export class MinecartManager {
       if (Math.abs(along) <= 0.05) continue;
       cart.alongSpeed += along * PUSH_GAIN;
       const cap = MINECART_MAX_SPEED;
-      cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed, -cap, cap);
+      cart.alongSpeed = clamp(cart.alongSpeed, -cap, cap);
     }
   }
 
   raycast(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     maxDistance: number,
     ignoreId?: string,
   ): { cart: MinecartEntity; distance: number } | undefined {
-    const inv = 1 / Math.max(1e-8, direction.length());
+    const inv = 1 / Math.max(1e-8, Math.hypot(direction.x, direction.y, direction.z));
     const dx = direction.x * inv;
     const dy = direction.y * inv;
     const dz = direction.z * inv;
@@ -332,7 +348,7 @@ export class MinecartManager {
     return best;
   }
 
-  findDismountPosition(cart: MinecartEntity): THREE.Vector3 {
+  findDismountPosition(cart: MinecartEntity): Vec3 {
     const offsets: Array<readonly [number, number]> = [
       [1, 0], [-1, 0], [0, 1], [0, -1],
       [1, 1], [1, -1], [-1, 1], [-1, -1],
@@ -340,7 +356,7 @@ export class MinecartManager {
     const shape = { width: PLAYER_WIDTH, height: PLAYER_HEIGHT };
     for (const lift of [0, 1]) {
       for (const [dx, dz] of offsets) {
-        const candidate = new THREE.Vector3(
+        const candidate = new Vec3(
           cart.position.x + dx,
           cart.position.y + lift,
           cart.position.z + dz,
@@ -363,7 +379,7 @@ export class MinecartManager {
         return candidate;
       }
     }
-    return new THREE.Vector3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
+    return new Vec3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
   }
 
   update(deltaSeconds: number, input: MinecartUpdateInput = {}): void {
@@ -373,7 +389,7 @@ export class MinecartManager {
       cart.previousPosition.copy(cart.position);
       if (cart.fuseTicks > 0) {
         cart.fuseTicks -= 1;
-        this.visuals.pulsePrimed(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
+        if (cart.visual) this.host.pulseMinecartTnt(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
         if (cart.fuseTicks <= 0) {
           this.detonate(cart);
           continue;
@@ -387,14 +403,16 @@ export class MinecartManager {
   interpolateVisuals(alpha: number): void {
     const t = Math.max(0, Math.min(1, alpha));
     for (const cart of this.carts.values()) {
+      if (!cart.visual) continue;
       const visual = interpolateVec3(
         cart.previousPosition.x, cart.previousPosition.y, cart.previousPosition.z,
         cart.position.x, cart.position.y, cart.position.z,
         t,
       );
-      cart.visual.position.set(visual.x, visual.y, visual.z);
-      cart.visual.rotation.y = cart.yaw;
-      cart.visual.rotation.x = cart.pitch;
+      this.host.setPosition(cart.visual, visual.x, visual.y, visual.z);
+      this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+      // Online skips `update()`; visual sync must re-sample after deferred lighting.
+      this.host.applyLight(cart.visual, this.world, visual.x, visual.y + 0.3, visual.z, 0.3);
     }
   }
 
@@ -438,13 +456,15 @@ export class MinecartManager {
   }
 
   clear(): void {
-    for (const cart of this.carts.values()) this.scene.remove(cart.visual);
+    for (const cart of this.carts.values()) {
+      if (cart.visual) this.host.detach(cart.visual);
+    }
     this.carts.clear();
   }
 
   dispose(): void {
     this.clear();
-    this.visuals.dispose();
+    if (this.ownsHost) this.host.dispose();
     this.disposed = true;
   }
 
@@ -475,7 +495,7 @@ export class MinecartManager {
     if (sample.tangentY !== 0) {
       cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
     }
-    cart.alongSpeed = THREE.MathUtils.clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
     if (Math.abs(cart.alongSpeed) < 0.02 && Math.abs(forward) <= 0.05) cart.alongSpeed = 0;
 
     let remaining = cart.alongSpeed * dt;
@@ -577,7 +597,7 @@ export class MinecartManager {
     cart.progress = progressOnRail(cell.shape, cart.position.x - cell.x, cart.position.z - cell.z);
     const pose = sampleRail(cell, cart.progress);
     cart.position.set(pose.x, pose.y, pose.z);
-    cart.alongSpeed = THREE.MathUtils.clamp(
+    cart.alongSpeed = clamp(
       cart.velocity.x * pose.tangentX + cart.velocity.z * pose.tangentZ,
       -MINECART_MAX_SPEED,
       MINECART_MAX_SPEED,
@@ -625,22 +645,20 @@ export class MinecartManager {
       power: TNT_MINECART_EXPLOSION_POWER,
       radius: TNT_MINECART_EXPLOSION_RADIUS,
     });
-    this.scene.remove(cart.visual);
+    if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(cart.id);
   }
 
   private syncVisual(cart: MinecartEntity): void {
-    cart.visual.position.set(cart.position.x, cart.position.y, cart.position.z);
-    cart.visual.rotation.set(cart.pitch, cart.yaw, 0);
-    this.visuals.setVariant(cart.visual, cart.variant);
-    applySampledEntityLight(
+    if (!cart.visual) return;
+    this.host.setPosition(cart.visual, cart.position.x, cart.position.y, cart.position.z);
+    this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+    this.host.setMinecartVariant(cart.visual, cart.variant);
+    this.host.applyLight(
       cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,
-      worldDaylightUniform.value,
     );
   }
 }
-
-export { isMinecartEntityVisual };
 
 function rayAabb(
   ox: number, oy: number, oz: number,

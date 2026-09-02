@@ -1,6 +1,6 @@
 import { BlockId } from '../blocks';
 import type { VoxelWorld } from '../world/World';
-import { getDirectSkyLight } from '../world/LightEngine';
+import { getDirectSkyLight } from '../world/lightingState';
 
 /** Tick-based fire HP interval: 1 damage per second at 20 TPS. */
 export const FIRE_DAMAGE_INTERVAL_TICKS = 20;
@@ -8,8 +8,8 @@ export const FIRE_DAMAGE_INTERVAL_SECONDS = 1;
 
 /**
  * Daylight factor at which the sun is high enough for hostile burning.
- * Continuous (not a one-shot dawn event). Matches the existing day/night curve
- * used by mob spawning (~full day until 11_000, night 0.2).
+ * Continuous (not a one-shot dawn event). Uses shared `daylightFactor`
+ * (`src/gameplay/daylight.ts`) — the same curve as sky and mob spawning.
  */
 export const SUNLIGHT_DAYLIGHT_MIN = 0.82;
 

@@ -1,6 +1,6 @@
 import { BlockId, type HorizontalFacing } from '../blocks';
 import type { CollisionBox } from '../world/collision';
-import { ladderPlaneLocal } from '../rendering/specialBlockGeometry';
+import { ladderPlaneLocal } from '../world/blockGeometry';
 
 /** Vanilla 0.2 block/tick. */
 export const LADDER_CLIMB_SPEED = 4.0;

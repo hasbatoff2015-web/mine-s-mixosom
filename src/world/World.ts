@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { migrateLegacyStack } from '../inventory/legacyItems';
 import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
 import { rayAabbDistance, blockCollisionBoxes } from './collision';
@@ -68,9 +68,9 @@ export interface VoxelHit {
   y: number;
   z: number;
   block: BlockId;
-  normal: THREE.Vector3;
+  normal: Vec3;
   distance: number;
-  point: THREE.Vector3;
+  point: Vec3;
 }
 
 export interface DetachedBlockEvent {
@@ -189,8 +189,33 @@ export class VoxelWorld {
   lightOriginCounts: LightOriginHudCounts = { stream: 0, fluid: 0, edit: 0, other: 0 };
   readonly pendingMesh = new Set<string>();
   private pendingLight?: PendingLightJob;
-  /** Runtime sessions defer every mutation/getter; synchronous utilities remain available to tests/QA. */
+  /**
+   * Host lighting mode (see `LightingAdapter`).
+   * Client `Game` sets true (budgeted `processDeferredLighting`).
+   * Server/tests leave false so `setBlock` relights before returning.
+   */
   deferredLighting = false;
+  /**
+   * Authoritative servers subscribe here to batch/dedupe resulting voxel writes
+   * (fluids, TNT, support, furnaces) without a second world representation.
+   */
+  onCommittedBlocks?: (changes: readonly {
+    x: number;
+    y: number;
+    z: number;
+    previous: BlockId;
+    block: BlockId;
+  }[]) => void;
+  /**
+   * State-only writes (fluid level, door open, button powered) never go through
+   * `applyBlockBatch`. Servers subscribe here so live packets include full state.
+   */
+  onCommittedBlockState?: (change: {
+    x: number;
+    y: number;
+    z: number;
+    block: BlockId;
+  }) => void;
   private pendingEmitters: Array<readonly [number, number, number]> = [];
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
@@ -334,6 +359,10 @@ export class VoxelWorld {
     for (const [dx, dz] of neighborFluidMeshOffsets(localX, localZ)) {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirty);
     }
+    this.onCommittedBlockState?.({
+      x, y, z,
+      block: this.getBlock(x, y, z, false),
+    });
     return true;
   }
 
@@ -455,6 +484,7 @@ export class VoxelWorld {
       unique.set(blockKey(mutation.x, mutation.y, mutation.z), mutation);
     }
     this.mutationMarks += unique.size;
+    const committed: Array<{ x: number; y: number; z: number; previous: BlockId; block: BlockId }> = [];
 
     const addedEmitters: Array<readonly [number, number, number]> = [];
     let regionSky = false;
@@ -479,6 +509,13 @@ export class VoxelWorld {
       );
       if (!wrote) continue;
       applied += 1;
+      committed.push({
+        x: mutation.x,
+        y: mutation.y,
+        z: mutation.z,
+        previous: wrote.previous,
+        block: mutation.block,
+      });
       const signatureAction = lightingInvalidation(wrote.previous, mutation.block);
       const action = signatureAction === 'none' && wrote.emissionChanged ? 'region' : signatureAction;
       if (action === 'addEmitter' && (getBlockDefinition(mutation.block).emission ?? 0) > 0) {
@@ -530,6 +567,8 @@ export class VoxelWorld {
     if (applied > 0 && options.deferChunkLighting) {
       this.invalidateImportedChunkLighting(dirtyChunks);
     }
+
+    if (committed.length > 0) this.onCommittedBlocks?.(committed);
 
     return {
       applied,
@@ -874,12 +913,12 @@ export class VoxelWorld {
   }
 
   raycast(
-    origin: THREE.Vector3,
-    direction: THREE.Vector3,
+    origin: Vec3Like,
+    direction: Vec3Like,
     maxDistance: number,
     options: VoxelRaycastOptions = {},
   ): VoxelHit | undefined {
-    const dir = direction.clone().normalize();
+    const dir = new Vec3(direction.x, direction.y, direction.z).normalize();
     let x = Math.floor(origin.x);
     let y = Math.floor(origin.y);
     let z = Math.floor(origin.z);
@@ -919,8 +958,8 @@ export class VoxelWorld {
   }
 
   private hitVoxelBoxes(
-    origin: THREE.Vector3,
-    dir: THREE.Vector3,
+    origin: Vec3Like,
+    dir: Vec3Like,
     x: number,
     y: number,
     z: number,
@@ -943,9 +982,9 @@ export class VoxelWorld {
     if (!best) return undefined;
     return {
       x, y, z, block,
-      normal: new THREE.Vector3(best.nx, best.ny, best.nz),
+      normal: new Vec3(best.nx, best.ny, best.nz),
       distance: best.distance,
-      point: origin.clone().addScaledVector(dir, best.distance),
+      point: new Vec3(origin.x, origin.y, origin.z).addScaledVector(dir, best.distance),
     };
   }
 

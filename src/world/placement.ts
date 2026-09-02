@@ -1,7 +1,6 @@
 import { BlockId, getBlockDefinition, type BlockRenderShape, type BlockRenderState } from '../blocks';
-import { attachmentNormal } from '../rendering/specialBlockGeometry';
+import { attachmentNormal, type BlockNeighborView } from './blockGeometry';
 import { blockCollisionBoxes } from './collision';
-import type { BlockNeighborView } from '../rendering/specialBlockGeometry';
 
 export interface PlacementFace { readonly x: number; readonly y: number; readonly z: number }
 

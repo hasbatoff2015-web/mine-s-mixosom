@@ -211,3 +211,49 @@ Interaction smoke:
 - Final pre-commit fetch on 2026-08-30: `origin/main` remained exactly `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`; main did not move, so no integration was required or performed.
 - Delivery commit: the branch head containing this report; immutable SHA is reported in the Draft PR/final handoff because a commit cannot embed its own SHA.
 - Pull request: Draft, target `main`; created only after the branch is committed and pushed. It must not be merged by this task.
+
+## POST-SERVER + PLAYER INTEGRATION — 2026-09-02
+
+### Baseline and conflict resolution
+
+- Existing PR #22 branch HEAD before integration: `cbbb97cd49d061b662c1a119c6c1af59b993063c`.
+- Ordinary `git merge --no-ff origin/main` integrated exact main `020d9d38d58f2d23231683a6aca736acf813bcb7`; no rebase, reset, clean, force push, branch replacement or second PR.
+- Text conflicts were resolved in `src/main.ts`, `docs/ARCHITECTURE.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md` and `docs/TESTING.md`. `GameUI.ts` auto-merged and was then audited semantically.
+- `main.ts` retains `qaUi`, `qaPlayer` and `qaBreaking` as sibling DEV-only dynamic harness routes. The four documentation conflicts retain both the UI design record and all newer server/overlay/player architecture.
+
+### Runtime contracts retained
+
+- Main's `GameUI.showOnlineServers(actions, live)`, live reachable/player count, localhost copy and connection callbacks remain intact.
+- `InventoryContext.submitAction`, `applyAuthoritativeCursor`, authoritative craft/cursor/container snapshots and online click/recipe routing remain intact. Creative still uses the canonical stage, dynamic patching and `onClose` callback.
+- Death/respawn, chat submit/cancel and main's `chatFocusToken` race prevention remain intact.
+- `Game.tickOnline`, GameplayKernel, lifecycle/save ownership and server-authoritative movement/world/inventory/combat remain unchanged by the UI pass.
+- PR #28 breaking overlay and PR #31 local/remote `PlayerVisual`, F5 modes and authoritative player-eye targeting remain on the current render/input paths.
+- No skin selector/custom upload, appearance protocol, touch perspective button, new gameplay, plugin behavior, economy or monetization was added.
+
+### UI retained and accessibility completion
+
+- Press Start 2P/Inter local WOFF2, OFL records and `uiTokens.css` remain production assets; no font CDN was introduced.
+- Responsive larger hearts/absorption/armor/hotbar and authored full/half/empty hunger SVGs remain presentation-only.
+- Loading retains brand/phase/progress/detail hierarchy, determinate percentage and stable ARIA-patched nodes.
+- World Select retains selection/double-click, mode/date/playtime/seed hierarchy, selected marker, primary Play and danger Delete.
+- Delete-dialog adds `aria-describedby`, an explicit two-button Tab/Shift+Tab loop and exact trigger restoration, in addition to retained autofocus, Escape, Cancel and backdrop dismissal. It still delegates deletion through `actions.delete`.
+
+### Validation
+
+- UI gate: **50/50**. Combined UI/player/overlay/server/network gate: **241/241**. Shared sim: **42/42**. Server: **73/73**.
+- All four typechecks, import boundaries and both Node smokes pass.
+- Full run: feature **118/122 files, 1251/1267 tests** vs exact main **114/119 files, 1236/1253 tests**. Added UI tests pass and no new failure class appears; baseline CPU timeouts, geometry fingerprint, parser and worker RPC remain.
+- Production build/size/archive pass: **3.88 MiB / 284 files**; CSS 47.80 KiB (10.84 gzip), JS 1,093.61 KiB (309.75 gzip).
+- Browser matrix repeated at all original 7 desktop/landscape sizes: **28/28**. Loading/HUD/Creative/World Select geometry, all HUD states, authored icon loads, Creative tabs/scroll/close, World Select selection/focus/Escape/Cancel and current Online offline-state pass. `qaPlayer` and `qaBreaking` still load without console diagnostics.
+
+### Remaining manual gates
+
+- Native desktop pointer-lock/Escape/inventory/respawn and real-world F5/breaking comfort remain owner acceptance; isolated fixtures and pure tests do not simulate native input.
+- Real landscape mobile safe-area/touch/GPU/thermal QA and a two-visible-client Online session remain manual.
+- Skin provenance remains unresolved before publication. This integration did not expand that scope.
+
+### Git
+
+- Branch remains `codex/ui-visual-system-pass`; delivery is one merge commit with subject `merge: integrate server and player main into UI PR`.
+- Final fetch/main-stability check and immutable merge SHA are recorded in the final handoff because the commit cannot embed its own SHA.
+- PR #22 remains Draft and must not be merged by this task.

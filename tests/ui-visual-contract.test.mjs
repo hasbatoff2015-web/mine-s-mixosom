@@ -74,7 +74,12 @@ describe('World Select interaction and hierarchy contracts', () => {
   it('uses an in-game delete dialog while preserving the existing delete callback', () => {
     expect(gameUi).not.toContain('window.confirm');
     expect(gameUi).toContain('role="dialog" aria-modal="true"');
+    expect(gameUi).toContain('aria-describedby="world-confirm-description"');
     expect(gameUi).toContain('Удалить мир?');
     expect(gameUi).toContain('actions.delete(selectedId!)');
+    expect(gameUi).toContain("event.key !== 'Tab'");
+    expect(gameUi).toContain('const direction = event.shiftKey ? -1 : 1');
+    expect(gameUi).toContain('(activeIndex + direction + buttons.length) % buttons.length');
+    expect(gameUi).toContain('if (trigger?.isConnected) trigger.focus()');
   });
 });

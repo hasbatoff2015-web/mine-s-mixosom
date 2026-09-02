@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId } from '../blocks';
 import { applyKnockback, applyMeleeDrag } from '../combat';
 import { blockCollisionBoxes, collisionCandidateCellRange, movementMultiplier, type CollisionBox } from '../world/collision';
@@ -21,7 +21,7 @@ import {
   WATER_SPEED,
   clamp,
 } from '../core/constants';
-import type { MoveInput } from '../input/InputManager';
+import type { MoveInput } from '../input/MoveInput';
 import type { VoxelWorld } from '../world/World';
 import {
   nextFlyWindowTicks,
@@ -60,7 +60,7 @@ export type PlayerDamageCause = 'fall';
 export type PlayerDamageHandler = (amount: number, cause: PlayerDamageCause) => void;
 
 export interface PlayerControllerOptions {
-  readonly position?: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>;
+  readonly position?: Vec3Like | readonly [number, number, number];
   readonly yaw?: number;
   readonly pitch?: number;
 }
@@ -93,11 +93,11 @@ interface MoveResult {
 
 function vectorFrom(
   value: PlayerControllerOptions['position'],
-  fallback = new THREE.Vector3(0.5, 64, 0.5),
-): THREE.Vector3 {
+  fallback = new Vec3(0.5, 64, 0.5),
+): Vec3 {
   if (value === undefined) return fallback.clone();
-  if ('x' in value) return new THREE.Vector3(value.x, value.y, value.z);
-  return new THREE.Vector3(value[0], value[1], value[2]);
+  if ('x' in value) return new Vec3(value.x, value.y, value.z);
+  return new Vec3(value[0], value[1], value[2]);
 }
 
 function finite(value: number, fallback: number): number {
@@ -114,9 +114,9 @@ function reduceTowardsZero(value: number, amount: number): number {
  * feet (not the eye or the centre of the hitbox), and velocities are blocks/s.
  */
 export class PlayerController {
-  readonly position: THREE.Vector3;
-  readonly previousPosition = new THREE.Vector3();
-  readonly velocity = new THREE.Vector3();
+  readonly position: Vec3;
+  readonly previousPosition = new Vec3();
+  readonly velocity = new Vec3();
   yaw = 0;
   pitch = 0;
   onGround = false;
@@ -140,7 +140,7 @@ export class PlayerController {
   private flyIgnoreGroundTicks = 0;
 
   constructor(options: PlayerControllerOptions | PlayerControllerOptions['position'] = {}) {
-    const normalized: PlayerControllerOptions = options instanceof THREE.Vector3 || Array.isArray(options)
+    const normalized: PlayerControllerOptions = Array.isArray(options)
       || ('x' in options && 'y' in options && 'z' in options && !('position' in options))
       ? { position: options as Exclude<PlayerControllerOptions['position'], undefined> }
       : options as PlayerControllerOptions;
@@ -166,11 +166,11 @@ export class PlayerController {
     return this.aabbAt(this.position, this.height);
   }
 
-  eyePosition(target = new THREE.Vector3()): THREE.Vector3 {
+  eyePosition(target = new Vec3()): Vec3 {
     return target.set(this.position.x, this.position.y + this.eyeHeight, this.position.z);
   }
 
-  viewDirection(target = new THREE.Vector3()): THREE.Vector3 {
+  viewDirection(target = new Vec3()): Vec3 {
     const horizontal = Math.cos(this.pitch);
     return target.set(
       -Math.sin(this.yaw) * horizontal,
@@ -208,7 +208,7 @@ export class PlayerController {
     return false;
   }
 
-  teleport(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
+  teleport(position: Vec3Like | readonly [number, number, number]): void {
     this.meleeKnockback = false;
     this.position.copy(vectorFrom(position));
     this.previousPosition.copy(this.position);
@@ -224,7 +224,7 @@ export class PlayerController {
     this.flyWindowTicks = 0;
   }
 
-  respawn(position: THREE.Vector3 | readonly [number, number, number] | Readonly<{ x: number; y: number; z: number }>): void {
+  respawn(position: Vec3Like | readonly [number, number, number]): void {
     this.teleport(position);
   }
 
@@ -574,15 +574,12 @@ export class PlayerController {
     return [dx, dz];
   }
 
-  private hasGroundSupport(world: VoxelWorld, position: THREE.Vector3, offsetX = 0, offsetZ = 0): boolean {
-    const probe = position.clone();
-    probe.x += offsetX;
-    probe.y -= GROUND_PROBE;
-    probe.z += offsetZ;
+  private hasGroundSupport(world: VoxelWorld, position: Vec3Like, offsetX = 0, offsetZ = 0): boolean {
+    const probe = new Vec3(position.x + offsetX, position.y - GROUND_PROBE, position.z + offsetZ);
     return this.collidesAt(world, probe, this.height);
   }
 
-  private collidesAt(world: VoxelWorld, position: THREE.Vector3, height: number): boolean {
+  private collidesAt(world: VoxelWorld, position: Vec3Like, height: number): boolean {
     const box = this.aabbAt(position, height);
     const cells = collisionCandidateCellRange(
       box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, COLLISION_EPSILON,
@@ -659,7 +656,7 @@ export class PlayerController {
       && a.maxZ > b.minZ + COLLISION_EPSILON && a.minZ < b.maxZ - COLLISION_EPSILON;
   }
 
-  private aabbAt(position: THREE.Vector3, height: number): PlayerAABB {
+  private aabbAt(position: Vec3Like, height: number): PlayerAABB {
     const halfWidth = PLAYER_WIDTH / 2;
     return {
       minX: position.x - halfWidth,

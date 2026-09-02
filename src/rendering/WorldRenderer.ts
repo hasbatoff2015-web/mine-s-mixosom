@@ -8,6 +8,7 @@ import { lightContextReady } from '../world/worldJobs';
 import { meshJobSortScore, meshWaitMs } from '../world/streamingScheduler';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import { ChestRenderer } from './ChestRenderer';
+import { BlockBreakingOverlay, type BreakingOverlaySnapshot } from './BlockBreakingOverlay';
 import {
   createSelectionGeometry,
   resolveStairShape,
@@ -27,6 +28,7 @@ interface ChunkVisual {
 export class WorldRenderer {
   readonly group = new THREE.Group();
   readonly selection: THREE.LineSegments;
+  readonly breaking: BlockBreakingOverlay;
   readonly chests = new ChestRenderer();
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
@@ -90,6 +92,8 @@ export class WorldRenderer {
     this.selection.visible = false;
     this.selection.renderOrder = 10;
     this.selection.matrixAutoUpdate = false;
+    this.breaking = new BlockBreakingOverlay(world, resolveState);
+    this.group.add(this.breaking.group);
     this.group.add(this.selection);
     this.group.add(this.chests.group);
   }
@@ -259,6 +263,18 @@ export class WorldRenderer {
     this.selection.visible = true;
   }
 
+  /**
+   * Local-player crack overlay. Visual only: never remeshes chunks and never
+   * writes blocks. Pass a missing hit or progress outside (0, 1) to hide.
+   */
+  setBreakingProgress(hit?: VoxelHit, progress = 0): void {
+    this.breaking.setProgress(hit, progress);
+  }
+
+  debugBreakingOverlay(): BreakingOverlaySnapshot {
+    return this.breaking.snapshot();
+  }
+
   setOpenChest(key?: string): void {
     this.chests.setOpenTarget(key);
   }
@@ -296,6 +312,8 @@ export class WorldRenderer {
     (this.selection.material as THREE.Material).dispose();
     for (const geometry of this.selectionGeometries.values()) geometry.dispose();
     this.selectionGeometries.clear();
+    this.group.remove(this.breaking.group);
+    this.breaking.dispose();
     this.opaqueMaterial.dispose();
     this.cutoutMaterial.dispose();
     this.vegetationMaterial.dispose();

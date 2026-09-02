@@ -41,6 +41,14 @@ export function applyPointerLockRequest(state: PointerLockCaptureState, request:
   return true;
 }
 
+/**
+ * Resume PLAYING (BACKGROUND after a respawn/focus race) before deciding
+ * whether the newly acquired lock is legal. Inventory/pause still release.
+ */
+export function shouldReleasePointerLockAfterAcquire(canCapture: boolean): boolean {
+  return !canCapture;
+}
+
 export function isCoarsePointerMedia(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 }

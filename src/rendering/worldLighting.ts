@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { sampleVoxelLightLevels } from '../world/LightEngine';
+import { sampleVoxelLightLevels } from '../world/lightingState';
 import type { VoxelWorld } from '../world/World';
 import type { TextureAtlas } from './TextureAtlas';
 

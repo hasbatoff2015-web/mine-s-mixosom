@@ -4,11 +4,16 @@ import {
   classifyPointerUnlock,
   isCoarsePointerMedia,
   shouldExitPointerLock,
+  shouldReleasePointerLockAfterAcquire,
   shouldTogglePauseOnEscapeKeydown,
   type PointerUnlockReason,
   PointerLockAttempt,
 } from './pointerLock';
 import { PointerMotionFilter } from './pointerMotion';
+import { shouldBlurStaleTextField, shouldCaptureGameplayKey } from './gameplayKeys';
+import type { MoveInput } from './MoveInput';
+
+export type { MoveInput } from './MoveInput';
 
 function isTypingElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -27,21 +32,25 @@ export interface InputCallbacks {
   openChat(prefix?: string): void;
   dropItem(): void;
   selectHotbar(index: number): void;
+  cyclePerspective?(): void;
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
+  isChatOpen?(): boolean;
 }
 
-export interface MoveInput {
-  forward: number;
-  right: number;
-  jump: boolean;
-  sprint: boolean;
-  sneak: boolean;
-  /** Shift while flying: descend. Optional so older tests stay valid. */
-  descend?: boolean;
-  /** Ctrl while flying: faster horizontal flight. */
-  flySprint?: boolean;
+export function shouldCyclePerspectiveOnKey(input: {
+  readonly code: string;
+  readonly repeat: boolean;
+  readonly typing: boolean;
+  readonly canCapture: () => boolean;
+  readonly hasCallback: boolean;
+}): boolean {
+  return input.code === 'F5'
+    && !input.repeat
+    && !input.typing
+    && input.hasCallback
+    && input.canCapture();
 }
 
 export class InputManager {
@@ -151,8 +160,23 @@ export class InputManager {
     this.touchJump = false;
   }
 
+  /** Drop held WASD/Space/Shift so a lost keyup cannot stick, and so chat cannot leave W=true. */
+  clearHeldKeys(): void {
+    this.keys.clear();
+    this.touchForward = 0;
+    this.touchRight = 0;
+    this.touchJump = false;
+    this.touchSprint = false;
+    this.touchSneak = false;
+    this.releaseActions();
+  }
+
   isPointerLocked(): boolean {
     return typeof document !== 'undefined' && document.pointerLockElement === this.canvas;
+  }
+
+  isLockRequestPending(): boolean {
+    return this.requestPending;
   }
 
   /**
@@ -196,6 +220,17 @@ export class InputManager {
   private bindDesktop(): void {
     window.addEventListener('keydown', (event) => {
       const typing = isTypingElement(event.target);
+      if (shouldCyclePerspectiveOnKey({
+        code: event.code,
+        repeat: event.repeat,
+        typing,
+        canCapture: () => this.callbacks.canCapture(),
+        hasCallback: this.callbacks.cyclePerspective !== undefined,
+      })) {
+        event.preventDefault();
+        this.callbacks.cyclePerspective!();
+        return;
+      }
       if (event.code === 'KeyE' && !event.repeat) {
         if (typing) return;
         event.preventDefault();
@@ -208,7 +243,15 @@ export class InputManager {
         this.callbacks.togglePause();
         return;
       }
-      if (typing) return;
+      if (typing) {
+        const chatOpen = this.callbacks.isChatOpen?.() === true;
+        if (!shouldCaptureGameplayKey({ typingInField: true, chatOpen })) return;
+        if (shouldBlurStaleTextField({ typingInField: true, chatOpen })) {
+          if (event.target instanceof HTMLElement) event.target.blur();
+        } else {
+          return;
+        }
+      }
       if ((event.code === 'KeyT' || event.key === '/') && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         this.callbacks.openChat(event.key === '/' ? '/' : '');
@@ -231,14 +274,12 @@ export class InputManager {
       this.resetPointerSession();
       this.lockAttempt?.finish();
       this.requestPending = false;
-      this.keys.clear();
-      this.releaseActions();
+      this.clearHeldKeys();
     });
     document.addEventListener('visibilitychange', () => {
       this.resetPointerSession();
       if (document.hidden) {
-        this.keys.clear();
-        this.releaseActions();
+        this.clearHeldKeys();
         this.lockAttempt?.finish();
         this.requestPending = false;
       }
@@ -398,11 +439,10 @@ export class InputManager {
       this.escapePressed = false;
       this.requestPending = false;
       this.programmaticReleasePending = false;
-      if (!this.callbacks.canCapture()) {
-        this.releasePointerLock();
-        return;
-      }
       this.callbacks.onPointerLockAcquired();
+      if (shouldReleasePointerLockAfterAcquire(this.callbacks.canCapture())) {
+        this.releasePointerLock();
+      }
       return;
     }
     const reason = classifyPointerUnlock({

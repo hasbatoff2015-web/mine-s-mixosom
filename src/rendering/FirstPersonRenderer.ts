@@ -1,8 +1,16 @@
 import * as THREE from 'three';
 import { bowPullingTexturePath, itemRenderProfile, tryGetItemDefinition, type ItemRenderCategory } from '../items';
+import {
+  DEFAULT_PLAYER_APPEARANCE,
+  createPlayerAppearance,
+  type PlayerAppearance,
+} from '../player/appearance/PlayerAppearance';
+import {
+  MinecraftSkinRegistry,
+  type SkinTextureHandle,
+} from './player/MinecraftSkin';
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
-import { TextureAtlas } from './TextureAtlas';
-import { createTexturedCuboidGeometry } from './TexturedCuboid';
+import { PlayerSkinGeometryCache } from './player/PlayerSkinGeometry';
 import {
   formatHeldItemQaQuery,
   heldItemQaValuesFromTransform,
@@ -57,13 +65,14 @@ export class FirstPersonRenderer {
   readonly root = new THREE.Group();
   private readonly armPivot = new THREE.Group();
   private readonly itemHolder = new THREE.Group();
-  private readonly armGeometry = createTexturedCuboidGeometry({
-    size: [4, 12, 4],
-    textureOffset: [40, 16],
-    logicalTextureSize: [64, 64],
-    physicalSize: [0.16, 0.48, 0.16],
-  });
-  private readonly armTexture: THREE.Texture;
+  private readonly armMesh: THREE.Mesh;
+  private readonly armOuterMesh: THREE.Mesh;
+  private readonly skins: MinecraftSkinRegistry;
+  private readonly skinGeometries: PlayerSkinGeometryCache;
+  private readonly ownsSkinRegistry: boolean;
+  private readonly ownsSkinGeometries: boolean;
+  private skinHandle: SkinTextureHandle;
+  private appearance: PlayerAppearance;
   private readonly armMaterial: THREE.MeshLambertMaterial;
   private mainModel?: THREE.Group;
   private mainItem?: string;
@@ -81,29 +90,53 @@ export class FirstPersonRenderer {
   private heldQaOverride?: HeldItemQaOverride;
   private loggedHeldQa = false;
   private readonly heldQaFromUrl: boolean;
+  private readonly onSwing?: () => void;
 
   /** QA-only: drop residual idle bob / equip dip so matrices are comparable. */
   private readonly freezeIdleMotion: boolean;
 
   constructor(
     private readonly visuals: ItemVisualFactory,
-    options: { readonly qaOverride?: HeldItemQaOverride; readonly freezeIdleMotion?: boolean } = {},
+    options: {
+      readonly qaOverride?: HeldItemQaOverride;
+      readonly freezeIdleMotion?: boolean;
+      readonly skinRegistry?: MinecraftSkinRegistry;
+      readonly skinGeometries?: PlayerSkinGeometryCache;
+      readonly appearance?: PlayerAppearance;
+      readonly onSwing?: () => void;
+    } = {},
   ) {
     const fromUrl = options.qaOverride === undefined ? readDevHeldItemQaOverride() : undefined;
     this.heldQaOverride = options.qaOverride ?? fromUrl;
     this.heldQaFromUrl = fromUrl !== undefined;
     this.freezeIdleMotion = options.freezeIdleMotion === true;
+    this.onSwing = options.onSwing;
     this.scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x4a382d, 1.75));
     const key = new THREE.DirectionalLight(0xffe4c2, 1.9);
     key.position.set(-2, 4, 3);
     this.scene.add(key, this.root);
     this.root.add(this.armPivot, this.itemHolder);
-    this.armTexture = this.createDefaultArmTexture();
-    this.armMaterial = new THREE.MeshLambertMaterial({ map: this.armTexture, flatShading: true });
-    const arm = new THREE.Mesh(this.armGeometry, this.armMaterial);
-    arm.name = 'first-person:right-arm';
-    arm.position.y = -0.22;
-    this.armPivot.add(arm);
+    this.ownsSkinRegistry = options.skinRegistry === undefined;
+    this.ownsSkinGeometries = options.skinGeometries === undefined;
+    this.skins = options.skinRegistry ?? new MinecraftSkinRegistry();
+    this.skinGeometries = options.skinGeometries ?? new PlayerSkinGeometryCache();
+    this.appearance = createPlayerAppearance(options.appearance ?? DEFAULT_PLAYER_APPEARANCE);
+    this.skinHandle = this.skins.acquire(this.appearance.skinId);
+    this.armMaterial = new THREE.MeshLambertMaterial({ map: this.skinHandle.texture, flatShading: true, transparent: true, alphaTest: 0.01 });
+    this.armMesh = new THREE.Mesh(
+      this.skinGeometries.get('rightArm', this.appearance.model, 'base', 'firstPerson'),
+      this.armMaterial,
+    );
+    this.armMesh.name = 'first-person:right-arm';
+    this.armMesh.position.y = -0.22;
+    this.armOuterMesh = new THREE.Mesh(
+      this.skinGeometries.get('rightArm', this.appearance.model, 'outer', 'firstPerson'),
+      this.armMaterial,
+    );
+    this.armOuterMesh.name = 'first-person:right-sleeve';
+    this.armOuterMesh.position.y = -0.22;
+    this.armOuterMesh.renderOrder = 1;
+    this.armPivot.add(this.armMesh, this.armOuterMesh);
     this.fireOverlay = SharedFireTexture.instance().createFirstPersonOverlay();
     this.fireOverlay.visible = false;
     this.scene.add(this.fireOverlay);
@@ -144,8 +177,24 @@ export class FirstPersonRenderer {
     }
   }
 
+  setAppearance(appearance: PlayerAppearance): void {
+    if (this.disposed) return;
+    const next = createPlayerAppearance(appearance);
+    const nextHandle = this.skins.acquire(next.skinId);
+    const previous = this.skinHandle;
+    this.skinHandle = nextHandle;
+    this.appearance = next;
+    this.armMaterial.map = nextHandle.texture;
+    this.armMaterial.needsUpdate = true;
+    this.armMesh.geometry = this.skinGeometries.get('rightArm', next.model, 'base', 'firstPerson');
+    this.armOuterMesh.geometry = this.skinGeometries.get('rightArm', next.model, 'outer', 'firstPerson');
+    this.armOuterMesh.visible = next.layers.rightSleeve;
+    previous.release();
+  }
+
   swing(): void {
     this.swingSeconds = 0;
+    this.onSwing?.();
   }
 
   update(deltaSeconds: number, state: Readonly<FirstPersonFrameState>): void {
@@ -333,9 +382,10 @@ export class FirstPersonRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.mainModel?.removeFromParent();
-    this.armGeometry.dispose();
     this.armMaterial.dispose();
-    this.armTexture.dispose();
+    this.skinHandle.release();
+    if (this.ownsSkinGeometries) this.skinGeometries.dispose();
+    if (this.ownsSkinRegistry) this.skins.dispose();
     this.fireOverlay.removeFromParent();
     this.fireOverlay.traverse((object) => {
       if (object instanceof THREE.Mesh) object.geometry.dispose();
@@ -347,6 +397,7 @@ export class FirstPersonRenderer {
 
   private syncArmVisibility(): void {
     this.armPivot.visible = this.mainItem === undefined && !this.invisible;
+    this.armOuterMesh.visible = this.appearance.layers.rightSleeve;
   }
 
   private applyEatPose(model: THREE.Object3D, progress: number): void {
@@ -367,14 +418,4 @@ export class FirstPersonRenderer {
     this.bowTexturePath = texturePath;
   }
 
-  private createDefaultArmTexture(): THREE.Texture {
-    const texture = typeof document === 'undefined'
-      ? new THREE.Texture()
-      : new THREE.TextureLoader().load(TextureAtlas.url('entity/steve'));
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
-    texture.generateMipmaps = false;
-    return texture;
-  }
 }
