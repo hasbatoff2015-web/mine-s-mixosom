@@ -74,8 +74,11 @@ Localhost delay should be ≤ one server tick (~50 ms).
 - creative flight + SHIFT descend latest-input
 - bow press via `interact` is immediate (not behind movement ticks)
 - bow charge then 40 mixed walk packets, last `use:false` → arrow on **next** tick
-- prediction 24 + pipeline 5 + urgent remesh 4
-- `test:sim` / `test:server` / typechecks / smokes / build
+- prediction **24/24**, pipeline **5/5**, urgent remesh **4/4**, player-main **4/4**, anarchy-server **21/21**
+- `typecheck` / `typecheck:sim` / `typecheck:client` / `typecheck:server` / `check:boundaries` PASS
+- `test:sim` **42/42**, `test:server` **81/81**, `smoke:sim` / `smoke:server` PASS, `build` PASS
+
+This environment did not run interactive localhost play (pointer-lock WASD / bow). Owner QA is still required.
 
 ## 8. Manual QA
 
