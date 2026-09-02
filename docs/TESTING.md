@@ -1,5 +1,29 @@
 # Тестирование
 
+## 2026-09-02 PR #22 post-server + player integration
+
+Reports: `reports/2026-08-30_ui-visual-system-hud-menu-polish.md` (`POST-SERVER + PLAYER INTEGRATION`) and `reports/2026-09-02_pr22-ui-server-player-integration.md`. Integrated exact main: `020d9d38d58f2d23231683a6aca736acf813bcb7`.
+
+- UI gate including `ui-main-integration`: **7 files / 50 tests passed**.
+- Combined UI + player + breaking overlay + server/network: **29 files / 241 tests passed**.
+- `test:sim`: **42/42**; `test:server`: **73/73**.
+- `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `smoke:sim`, `smoke:server`: PASS.
+- Full two-worker comparison: feature **118/122 files, 1251/1267 tests**; exact main **114/119 files, 1236/1253 tests**. No new failure class. Both retain CPU-heavy worldgen/fire/minecart timeouts, stale GeneratedItemGeometry fingerprint, reference-extractor parse failure and one worker RPC timeout. The exact-main detached worktree also lacked the ignored authored input pack; the feature checkout instead observed one additional timeout inside the same variable fire/minecart class.
+- `build`, `check:size`, `check:archive`: PASS at **3.88 MiB / 284 files**; CSS **47.80 KiB / 10.84 KiB gzip**, JS **1,093.61 KiB / 309.75 KiB gzip**. Established `/sdk.js` and >500 KiB warnings remain.
+
+In-app Chromium matrix for Loading, HUD full, Creative and World Select passed **28/28** at 1920×1080, 1366×768, 1280×720, 932×430, 896×414, 844×390 and 740×360. No document overflow or clipping; loading has no inner scroll; HUD has nine slots and separated bars; Creative stage/close remain inside viewport, close is 56 px desktop / 44 px compact and catalog scrolls 260/396; World Select fits. Press Start 2P/Inter loaded. HUD full/low/absorption and authored hunger images loaded. Creative ARIA tabs and close callback passed. World Select selection/double-click, modal autofocus, explicit Tab/Shift+Tab loop, Escape/Cancel and trigger restoration passed. The destructive fixture callback is guarded by tests and was not reinvoked during this post-integration browser pass. Actual main-menu Online rendered two rows, localhost/offline live status and current server guidance. `?qaPlayer=1` and `?qaBreaking=1` both loaded with zero console warnings/errors.
+
+## 2026-08-30 UI visual system / responsive HUD and menus
+
+Report: `reports/2026-08-30_ui-visual-system-hud-menu-polish.md`. Branch baseline: `origin/main` at `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`.
+
+Automated UI gate: `npx vitest run tests/ui-visual-system.test.ts tests/ui-visual-contract.test.mjs tests/container-ui.test.ts tests/heart-hud.test.ts tests/armor-hud.test.ts tests/menu-model.test.ts --maxWorkers=2` → **46/46 PASS**. Coverage includes local font/license assets, forbidden fallback-family removal, loading semantics and Russian strings, hunger full/half/empty mapping, HUD constants, Creative compact height/stage+close fit, canonical close callback/catalog scroll contracts, World Select selection/double-click/disabled state and in-game delete callback.
+
+`npm run typecheck`, `npm run build`, `npm run check:size`, `npm run check:archive`: PASS. Production output is **3.73 MiB / 228 files**; Inter WOFF2 subsets are 71.2/28.9 KiB and Press Start 2P Latin is 12.2 KiB. Vite still reports the established `/sdk.js` non-module and >500 KiB main-chunk warnings.
+
+Actual in-app Chromium QA used the isolated `?qaUi=` fixtures. Loading, HUD, Creative and World Select each passed at **1920×1080, 1366×768, 1280×720, 932×430, 896×414, 844×390 and 740×360**: 28/28 geometry cases, zero clipping/overlap/document overflow, no loading-card inner scroll, Creative close ≥44 px and scrollHeight > clientHeight, and no console errors/warnings. Interaction smoke: all three HUD health/absorption/hunger variants; Creative catalog scroll 322/396, both ARIA tabs, close → 9-slot HUD; World Select single selection/`aria-pressed`, double-click load toast, modal autofocus, Escape, Cancel, destructive callback and 4→3 row update. Computed primary Play background differs from neutral Back.
+
+Full `npm test -- --maxWorkers=2`: **982 passed / 14 failed / 996**, one unhandled Vitest worker RPC timeout. UI suites are green. Unrelated failures: 12 default 5-second timeouts (two worldgen plus sunlight/minecart cases), GeneratedItemGeometry source hash mismatch, intermittent mob-separation assertion, and a separate `minecraft-reference-extractor.test.mjs` parse failure. No unrelated expectation or timeout was changed.
 ## 2026-09-02 PR #31 post-server integration
 
 Automated focused gate:

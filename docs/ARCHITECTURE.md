@@ -1,5 +1,24 @@
 # Архитектура
 
+## UI on authoritative server/player main — 2026-09-02
+
+`GameUI` remains the only DOM/menu/HUD/container owner after the PR #22 merge. Main's `OnlineServerLiveStatus`, `InventoryContext.submitAction` and `applyAuthoritativeCursor` contracts are retained; authored UI markup and CSS wrap those contracts instead of replacing them. Online inventory clicks/recipes still become protocol actions, container snapshots still patch the open UI, and death/respawn/chat callbacks remain owned by `Game` and lifecycle.
+
+`Game` and the shared/server layers were not redesigned by this integration. `tickOnline` remains input/presentation only, server packets remain world/inventory authority, and the PR #28 overlay plus PR #31 player/camera code stay render consumers. UI QA, player QA and breaking QA are sibling DEV-only dynamic routes in `main.ts`; no harness enters the production graph.
+
+World deletion continues through `WorldListActions.delete`; the dialog never accesses IndexedDB directly. Its modal focus contract is now deterministic: Cancel receives initial focus, Tab/Shift+Tab are contained within both actions, Escape/Cancel/backdrop restore the previous screen handler and return focus to the Delete trigger.
+
+## UI visual system — 2026-08-30
+
+`src/uiTokens.css` is the single production typography/token entry point imported before `style.css`. It declares local Cyrillic/Latin WOFF2 faces for Press Start 2P and Inter plus display/UI/debug font roles, color, spacing and target-size tokens. Font binaries are static assets under `public/fonts`; their OFL records and upstream mapping are documented in `docs/FONT_ASSETS.md`. Runtime does not fetch fonts.
+
+`GameUI` remains the only DOM UI owner. Loading creates stable label/bar/percent/detail nodes; `updateWorldLoading` patches them and ARIA progress attributes instead of replacing the screen. HUD remains a fixed-tick state projection: `hungerHudIcons` is a pure 0..20 → ten-icon mapper parallel to the existing heart/armor helpers. CSS owns responsive size only; it does not introduce a render-loop or simulation dependency.
+
+Creative continues through `renderCreativeInventory`, `.mc-stage`, `patchCreativeDynamic`, `bindContainerChrome` and the caller's `InventoryContext.onClose`. `containerUiScaleWithClose` fits the logical panel and a minimum 44 px close target as one stage. The catalog is the only scrolling region; the reduced 166 logical-pixel Creative body is content-derived and the player hotbar follows it directly. No second inventory implementation or pointer-lock path exists.
+
+World Select keeps the existing `WorldListActions` contract. Rows own selection state and double-click calls `load`; footer buttons call the same `back`, `create`, `load` and `delete` callbacks. The delete confirmation is an in-screen `role=dialog`; it traps focus between its actions and restores the prior Escape handler plus trigger focus when dismissed. It does not touch save storage directly.
+
+`src/dev/UiQaHarness.ts` is an opt-in DEV adapter selected by `?qaUi=` in `main.ts`. It instantiates the real `GameUI` with deterministic inventory/world summaries and callbacks, while deliberately skipping `Game`, WebGL, simulation and persistence. This is a layout/interaction fixture, not a parallel UI or gameplay system, and is excluded from production by the `import.meta.env.DEV` branch plus dynamic import.
 ## Player appearance / character visual / camera — post-server integration 2026-09-02
 
 `PlayerController` остаётся единственным simulation-authority: position — feet-center, yaw/pitch/velocity/physics обновляются fixed 20 TPS. Presentation вынесен в `src/rendering/player/`: `PlayerVisual` получает interpolated feet и render-frame live look, `PlayerVisualAnimator` хранит только visual phase/body yaw/swing, `ThirdPersonCamera` вычисляет presentation camera. Ни один из этих классов не меняет controller, movement semantics, raycast origin или save schema.

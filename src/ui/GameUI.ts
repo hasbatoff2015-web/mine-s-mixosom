@@ -44,6 +44,7 @@ import type { PotionHudEntry } from './effectHud';
 import type { ClientInventoryActionMessage } from '../../shared/protocol';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
+import { hungerHudIcons, type HungerHudIcon } from './hungerHud';
 import {
   attachItemTooltip,
   itemHoverAttributeString,
@@ -262,16 +263,18 @@ export class GameUI {
 
   showLoading(label = 'Подготавливаем мир…', percent?: number, detail?: string): void {
     this.hideHud();
+    const progress = percent === undefined ? undefined : Math.max(0, Math.min(100, percent));
     const bar = percent === undefined
-      ? '<div class="loading-bar"></div>'
-      : `<div class="loading-bar determinate"><span style="width:${Math.max(0, Math.min(100, percent))}%"></span></div>`;
-    const extra = detail ? `<p class="loading-detail">${this.escape(detail)}</p>` : '';
+      ? '<div class="loading-bar" role="progressbar" aria-label="Прогресс загрузки" aria-valuetext="Выполняется"></div>'
+      : `<div class="loading-bar determinate" role="progressbar" aria-label="Прогресс загрузки" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span style="width:${progress}%"></span></div>`;
+    const extra = `<p class="loading-detail${detail ? '' : ' hidden'}" data-loading-detail>${detail ? this.escape(detail) : ''}</p>`;
     this.setScreen(`
       <div id="loading-screen" class="screen">
-        <div class="menu-card">
+        <div class="menu-card loading-card">
           <div class="brand"><div class="brand-mark"></div><h1>FRONTIER CUBES</h1><p>survival alpha</p></div>
-          <strong data-loading-label>${this.escape(label)}</strong>
+          <div class="loading-phase"><span class="loading-kicker">Загрузка мира</span><strong data-loading-label>${this.escape(label)}</strong></div>
           ${bar}
+          <div class="loading-progress-meta"><span data-loading-percent>${progress === undefined ? '' : `${Math.round(progress)}%`}</span></div>
           ${extra}
         </div>
       </div>`);
@@ -285,23 +288,28 @@ export class GameUI {
     }
     const heading = screen.querySelector('[data-loading-label]');
     if (heading) heading.textContent = label;
+    const progress = Math.max(0, Math.min(100, percent));
     let bar = screen.querySelector<HTMLElement>('.loading-bar');
     if (!bar || !bar.classList.contains('determinate')) {
       bar = document.createElement('div');
       bar.className = 'loading-bar determinate';
       bar.innerHTML = '<span></span>';
-      screen.querySelector('.menu-card')?.querySelector('.loading-bar')?.replaceWith(bar)
-        ?? screen.querySelector('.menu-card')?.append(bar);
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', 'Прогресс загрузки');
+      screen.querySelector('.loading-bar')?.replaceWith(bar);
     }
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    bar.setAttribute('aria-valuenow', String(progress));
+    bar.removeAttribute('aria-valuetext');
     const fill = bar.querySelector('span') ?? bar.appendChild(document.createElement('span'));
-    fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
-    let detailNode = screen.querySelector<HTMLElement>('.loading-detail');
-    if (!detailNode) {
-      detailNode = document.createElement('p');
-      detailNode.className = 'loading-detail';
-      screen.querySelector('.menu-card')?.append(detailNode);
-    }
+    fill.style.width = `${progress}%`;
+    const percentNode = screen.querySelector<HTMLElement>('[data-loading-percent]');
+    if (percentNode) percentNode.textContent = `${Math.round(progress)}%`;
+    const detailNode = screen.querySelector<HTMLElement>('[data-loading-detail]');
+    if (!detailNode) return;
     detailNode.textContent = detail;
+    detailNode.classList.toggle('hidden', detail.length === 0);
   }
 
   showWorldLoadError(message: string, onBack: () => void): void {
@@ -341,9 +349,13 @@ export class GameUI {
   showWorldList(worlds: readonly WorldSummary[], actions: WorldListActions): void {
     const rows = worlds.length
       ? worlds.map((world, index) => `
-        <button class="world-row${index === 0 ? ' selected' : ''}" data-world-id="${this.escape(world.id)}" aria-pressed="${index === 0}">
-          <span class="world-preview" aria-hidden="true"></span>
-          <span class="world-copy"><strong>${this.escape(world.name)}</strong><small>${world.mode === 'creative' ? 'Творческий режим' : 'Режим выживания'} · ${new Date(world.updatedAt).toLocaleDateString('ru-RU')}</small><small>Seed: ${this.escape(world.seed)} · Игра: ${formatPlayTime(world.playTimeSeconds)}</small></span>
+        <button class="world-row${index === 0 ? ' selected' : ''}" data-world-id="${this.escape(world.id)}" data-world-name="${this.escape(world.name)}" aria-pressed="${index === 0}">
+          <span class="world-preview" aria-hidden="true"><span class="world-selected-mark">✓</span></span>
+          <span class="world-copy">
+            <strong>${this.escape(world.name)}</strong>
+            <span class="world-secondary"><span class="world-mode-badge" data-mode="${world.mode}">${world.mode === 'creative' ? 'Творческий' : 'Выживание'}</span><time datetime="${new Date(world.updatedAt).toISOString()}">${new Date(world.updatedAt).toLocaleDateString('ru-RU')}</time></span>
+            <span class="world-tertiary"><span>Игра: ${formatPlayTime(world.playTimeSeconds)}</span><span>Seed: ${this.escape(world.seed)}</span></span>
+          </span>
         </button>`).join('')
       : '<div class="empty-state"><strong>Сохранённых миров пока нет</strong><span>Создайте первый мир и начните исследование.</span></div>';
     this.setScreen(`
@@ -351,10 +363,12 @@ export class GameUI {
         <header class="menu-heading"><div><span class="eyebrow">Локальные миры</span><h1>Одиночная игра</h1></div></header>
         <div class="world-list">${rows}</div>
         <footer class="menu-footer world-actions">
-          <button class="game-button" data-action="play-world" ${worlds.length ? '' : 'disabled'}>Играть</button>
-          <button class="game-button" data-action="create">Создать новый мир</button>
-          <button class="game-button danger" data-action="delete-world" ${worlds.length ? '' : 'disabled'}>Удалить</button>
-          <button class="game-button" data-action="back">Назад</button>
+          <button class="game-button danger world-delete-action" data-action="delete-world" ${worlds.length ? '' : 'disabled'}>Удалить</button>
+          <div class="world-actions-main">
+            <button class="game-button" data-action="back">Назад</button>
+            <button class="game-button" data-action="create">Создать новый мир</button>
+            <button class="game-button primary" data-action="play-world" ${worlds.length ? '' : 'disabled'}>Играть</button>
+          </div>
         </footer>
       </div></section>`, actions.back);
     this.bindAction('back', actions.back);
@@ -374,7 +388,47 @@ export class GameUI {
     }
     this.bindAction('play-world', () => { if (selectedId) actions.load(selectedId); });
     this.bindAction('delete-world', () => {
-      if (selectedId && window.confirm('Удалить этот мир без возможности восстановления?')) actions.delete(selectedId);
+      if (!selectedId) return;
+      const world = worlds.find((candidate) => candidate.id === selectedId);
+      if (!world) return;
+      const trigger = this.screen?.querySelector<HTMLButtonElement>('[data-action="delete-world"]');
+      const previousEscape = this.onScreenEscape;
+      const confirm = document.createElement('div');
+      confirm.className = 'world-confirm-backdrop';
+      confirm.innerHTML = `<section class="world-confirm" role="dialog" aria-modal="true" aria-labelledby="world-confirm-title" aria-describedby="world-confirm-description">
+        <span class="eyebrow">Локальный мир</span>
+        <h2 id="world-confirm-title">Удалить мир?</h2>
+        <p id="world-confirm-description">«${this.escape(world.name)}» будет удалён без возможности восстановления.</p>
+        <div class="world-confirm-actions"><button class="game-button" data-confirm="cancel">Отмена</button><button class="game-button danger" data-confirm="delete">Удалить</button></div>
+      </section>`;
+      const closeConfirm = (): void => {
+        confirm.remove();
+        this.onScreenEscape = previousEscape;
+        if (trigger?.isConnected) trigger.focus();
+      };
+      confirm.querySelector('[data-confirm="cancel"]')?.addEventListener('click', closeConfirm);
+      confirm.querySelector('[data-confirm="delete"]')?.addEventListener('click', () => {
+        closeConfirm();
+        actions.delete(selectedId!);
+      });
+      confirm.addEventListener('pointerdown', (event) => {
+        if (event.target === confirm) closeConfirm();
+      });
+      confirm.addEventListener('keydown', (event) => {
+        if (event.key !== 'Tab') return;
+        const buttons = [...confirm.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+        if (buttons.length === 0) return;
+        event.preventDefault();
+        const activeIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const direction = event.shiftKey ? -1 : 1;
+        const nextIndex = activeIndex < 0
+          ? 0
+          : (activeIndex + direction + buttons.length) % buttons.length;
+        buttons[nextIndex]?.focus();
+      });
+      this.screen?.append(confirm);
+      this.onScreenEscape = closeConfirm;
+      confirm.querySelector<HTMLButtonElement>('[data-confirm="cancel"]')?.focus();
     });
   }
 
@@ -565,7 +619,7 @@ export class GameUI {
       this.heartsHtml = heartsHtml;
       this.hearts.innerHTML = heartsHtml;
     }
-    const hungerHtml = this.pips('◆', Math.ceil(state.hunger / 2), 10);
+    const hungerHtml = hungerHudIcons(state.hunger).icons.map((icon) => this.hungerIconHtml(icon)).join('');
     if (hungerHtml !== this.hungerHtml) {
       this.hungerHtml = hungerHtml;
       this.hunger.innerHTML = hungerHtml;
@@ -811,9 +865,9 @@ export class GameUI {
     this.modal.innerHTML = `
       <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
-          <div class="mc-creative-tabs">
-            <button type="button" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
-            <button type="button" data-creative-tab="inventory" class="${this.creativeTab === 'inventory' ? 'active' : ''}">${CONTAINER_STRINGS.inventory}</button>
+          <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
+            <button type="button" role="tab" aria-selected="${this.creativeTab === 'catalog'}" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
+            <button type="button" role="tab" aria-selected="${this.creativeTab === 'inventory'}" data-creative-tab="inventory" class="${this.creativeTab === 'inventory' ? 'active' : ''}">${CONTAINER_STRINGS.inventory}</button>
           </div>
           <div data-creative-catalog-panel class="${catalogHidden ? 'hidden' : ''}" ${catalogHidden ? 'hidden' : ''}>
             <div class="mc-creative-catalog" data-creative-catalog>${catalog.map((item, index) => this.slotHtml(createItemStack(item.id, 1), `creative-${index}`)).join('')}</div>
@@ -836,7 +890,9 @@ export class GameUI {
     const panel = this.modal.querySelector<HTMLElement>('.mc-creative');
     if (panel) panel.dataset.creativeCurrent = this.creativeTab;
     for (const button of this.modal.querySelectorAll<HTMLElement>('[data-creative-tab]')) {
-      button.classList.toggle('active', button.dataset.creativeTab === this.creativeTab);
+      const active = button.dataset.creativeTab === this.creativeTab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
     }
   }
 
@@ -1334,12 +1390,12 @@ export class GameUI {
     return `<img class="heart-icon absorption" src="${TextureAtlas.url(`gui/heart_absorption_${icon}`)}" alt="" draggable="false" />`;
   }
 
-  private closeButtonHtml(): string {
-    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>`;
+  private hungerIconHtml(icon: HungerHudIcon): string {
+    return `<img class="hunger-icon" src="${import.meta.env.BASE_URL}textures/gui/hunger_${icon}.svg" alt="" draggable="false" />`;
   }
 
-  private pips(symbol: string, filled: number, total: number): string {
-    return Array.from({ length: total }, (_value, index) => `<span class="${index < filled ? '' : 'empty'}">${symbol}</span>`).join('');
+  private closeButtonHtml(): string {
+    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>`;
   }
 
   private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {

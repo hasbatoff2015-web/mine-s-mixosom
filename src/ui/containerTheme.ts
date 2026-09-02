@@ -7,7 +7,8 @@ export const MC_CRAFTING_HEIGHT = 166;
 export const MC_CHEST_HEIGHT = 168;
 export const MC_INVENTORY_HEIGHT = 166;
 export const MC_CREATIVE_WIDTH = 195;
-export const MC_CREATIVE_HEIGHT = 222;
+/** Compact tabs + six-row catalog + controlled hotbar gap; not a forced panel height. */
+export const MC_CREATIVE_HEIGHT = 166;
 export const MC_CREATIVE_SCROLL_GUTTER = 8;
 export const MC_RECIPE_BOOK_WIDTH = 147;
 export const MC_RECIPE_BOOK_GAP = 4;
@@ -21,6 +22,8 @@ export const MC_MIN_UI_SCALE = 0.5;
 export const MC_CLOSE_GUTTER = 20;
 /** Minimum touch target for the outside close control. */
 export const MC_CLOSE_HIT_MIN_PX = 44;
+export const MC_CLOSE_LOGICAL_SIZE = 14;
+export const MC_STAGE_GAP = 4;
 
 export function containerUiScaleWithClose(
   viewportWidth: number,
@@ -28,7 +31,15 @@ export function containerUiScaleWithClose(
   logicalWidth: number,
   logicalHeight: number,
 ): number {
-  return containerUiScale(viewportWidth, viewportHeight, logicalWidth + MC_CLOSE_GUTTER, logicalHeight);
+  let scale = containerUiScale(viewportWidth, viewportHeight, logicalWidth + MC_CLOSE_GUTTER, logicalHeight);
+  const availableW = Math.max(160, viewportWidth - 24);
+  while (scale > MC_MIN_UI_SCALE) {
+    const closeWidth = Math.max(MC_CLOSE_HIT_MIN_PX, MC_CLOSE_LOGICAL_SIZE * scale);
+    const occupiedWidth = logicalWidth * scale + MC_STAGE_GAP * scale + closeWidth;
+    if (occupiedWidth <= availableW) break;
+    scale = Math.max(MC_MIN_UI_SCALE, scale - 0.5);
+  }
+  return scale;
 }
 
 export function containerUiScale(

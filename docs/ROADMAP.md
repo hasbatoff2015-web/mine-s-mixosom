@@ -1,5 +1,28 @@
 # Roadmap
 
+## 2026-09-02: integrate UI PR #22 with server + breaking + player main
+
+- [x] Merge exact `origin/main` `020d9d3` into the existing `codex/ui-visual-system-pass` branch with an ordinary no-ff merge; no rebase/reset/force/new PR.
+- [x] Preserve `GameUI` live online status, authoritative cursor/action/container flow, death/respawn/chat and every current caller while retaining the UI visual system.
+- [x] Preserve `Game.tickOnline`, GameplayKernel, server authority, save/lifecycle ownership, PR #28 breaking overlay and PR #31 PlayerVisual/F5 without gameplay changes.
+- [x] Keep Press Start 2P/Inter/OFL assets, UI tokens, larger responsive HUD and authored hunger icons, loading hierarchy, compact Creative, World Select hierarchy and all `?qaUi=` fixtures.
+- [x] Complete delete-dialog accessibility with description, deterministic Tab/Shift+Tab loop, Escape and trigger-focus restoration.
+- [x] Automated acceptance: UI 50/50, combined regression 241/241, sim 42/42, server 73/73, all typechecks/boundaries/smokes/build/size/archive PASS; exact-main comparison adds no failure class.
+- [x] Browser acceptance: 28/28 responsive geometry cases plus HUD states, Creative interaction, World Select focus/cancel/Escape, online offline-state and retained player/breaking fixture routing.
+- [ ] Native device/pointer-lock/touch acceptance and two visible Online clients remain owner QA; no skin selector, custom upload, touch perspective button or new gameplay belongs to this integration.
+
+## 2026-08-30: UI visual system / HUD / loading / Creative / World Select
+
+- [x] Self-host Press Start 2P + Inter Cyrillic/Latin WOFF2, add canonical UI tokens and preserve a dedicated debug monospace role.
+- [x] Split loading brand/phase/progress/detail hierarchy; visible determinate percent and accessible progress semantics without remounting updates.
+- [x] Unify desktop HUD/status width, enlarge the 9-slot hotbar, retain armor/red/absorption hearts and replace hunger glyphs with authored full/half/empty icons.
+- [x] Remove Creative catalog dead space while retaining the existing stage, scroll host, dynamic patch path, context callback and pointer-lock lifecycle.
+- [x] Keep the Creative close control outside the panel with a measured 44–56 px responsive target and no panel overlap.
+- [x] Improve World Select hierarchy, mode badge, selected marker, primary Play and danger Delete; replace native confirm with an accessible in-game dialog using the same callbacks.
+- [x] Add isolated DEV `?qaUi=` fixtures and automated UI/font/layout contracts; typecheck, targeted 46/46, build/size/archive pass.
+- [x] Actual-browser 28-case desktop/mobile matrix plus Creative and World Select interaction smoke; zero browser console diagnostics.
+- [ ] Native-device review with actual touch safe-area insets, OS browser chrome and gameplay pointer lock; automated viewport emulation does not close that hardware gate.
+- [ ] Resolve unrelated full-suite CPU timeouts/fingerprint/parser/RPC baseline separately; do not relax them inside a UI task.
 ## 2026-09-02: integrate PR #31 player presentation with authoritative main
 
 - [x] Modern Java 64×64 skin contract; 45 unique supplied skins + authored UV QA sheet; Classic/Slim metadata and all six outer-layer toggles.

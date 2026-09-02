@@ -2,6 +2,30 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: интеграция UI PR #22 с server + breaking + player main
+
+- Существующая ветка Draft PR **#22** `codex/ui-visual-system-pass` объединена обычным `git merge --no-ff` с точным `origin/main` `020d9d38d58f2d23231683a6aca736acf813bcb7`. Сохранены server-authoritative Online Anarchy, GameplayKernel, lifecycle/save contracts, PR #28 breaking overlay и PR #31 PlayerVisual/F5.
+- `GameUI` остаётся единым DOM owner: live server status, authoritative cursor/craft slots, inventory action submission, online containers, death/respawn и chat focus-race fix из main сохранены вместе с Press Start 2P/Inter, UI tokens, responsive HUD, authored hunger icons, loading hierarchy, compact Creative и World Select redesign.
+- Delete-dialog теперь имеет `aria-describedby`, explicit two-button Tab/Shift+Tab focus loop, Escape/Cancel/backdrop close и возврат фокуса на исходный Delete. Storage по-прежнему меняется только через существующий `WorldListActions.delete` callback.
+- DEV router сохраняет все независимые fixtures: `?qaUi=...`, `?qaBreaking=1`, `?qaPlayer=1`; UI fixture не создаёт WebGL world и не пишет saves.
+- UI gate **50/50**, объединённый UI/player/overlay/server/network gate **241/241**, shared sim **42/42**, server **73/73**. Все typechecks, boundaries, Node smokes, build, size и archive проходят.
+- Full comparable run: feature **118/122 files, 1251/1267 tests**, exact main **114/119 files, 1236/1253 tests**. Нового failure class нет; остаются baseline CPU timeouts, stale geometry fingerprint, reference-extractor parse и worker RPC. Exact-main worktree дополнительно не имел ignored authored source-pack.
+- Actual browser: responsive matrix **28/28** на 1920×1080, 1366×768, 1280×720, 932×430, 896×414, 844×390, 740×360; font/HUD/Creative/World Select/online offline-state/focus loop и доступность `qaPlayer`/`qaBreaking` проверены без console diagnostics. Build: **3.88 MiB / 284 files**.
+- Handoff: `docs/reports/2026-09-02_pr22-ui-server-player-integration.md`; исходный UI report дополнен секцией `POST-SERVER + PLAYER INTEGRATION`.
+
+## Исходный UI visual system / HUD / loading / Creative / World Select — 2026-08-30
+
+- Ветка поставки: `codex/ui-visual-system-pass`, baseline `origin/main` = `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`. Задача UI-only: gameplay, fixed 20 TPS, world simulation, input/pointer-lock ownership и save schema не менялись.
+- Production typography теперь self-hosted: Press Start 2P для display/game identity, Inter для интерфейсного текста, системный monospace только для debug. Локальные Cyrillic/Latin WOFF2 и OFL-записи описаны в `docs/FONT_ASSETS.md`; CDN/runtime network dependency нет.
+- Loading имеет отдельные brand/phase/progress/detail уровни, determinate `role=progressbar`, `aria-valuenow` и видимый процент. `updateWorldLoading` продолжает патчить существующие DOM-узлы без полного remount.
+- HUD получил общую responsive width model для status bars и 9-slot hotbar: desktop 50 px slots (60 px на wide desktop), low-height landscape 35 px. Hearts, absorption и armor сохранены. Hunger больше не использует OS glyph: десять authored full/half/empty SVG drumsticks строятся pure helper'ом.
+- Creative расширяет существующий `GameUI`/`.mc-stage`: catalog остаётся scroll host, `onClose` остаётся canonical callback. `MC_CREATIVE_HEIGHT=166`; catalog ограничен шестью logical rows, hotbar больше не прижимается через `margin-top:auto`. Close — отдельный beveled stage sibling, фактический hit target 44–56 px; scale учитывает panel + gap + close.
+- World Select сохраняет single click selection, double click load и существующие callbacks. Добавлены mode badge, дата/время/seed hierarchy, явный selected marker, primary Play и danger Delete. Native `window.confirm` заменён локальным accessible dialog с фокусом, Cancel/Escape/backdrop и тем же `actions.delete`.
+- DEV-only `?qaUi=loading|hud-full|hud-low|hud-absorption|creative|world-list` монтирует только `GameUI`, не создаёт WebGL world и не читает/пишет IndexedDB saves. Production import tree-shaken через `import.meta.env.DEV`.
+- Validation: typecheck PASS; UI targeted **46/46**; build/size/archive PASS, **3.73 MiB / 228 files**. Actual in-app Chromium responsive matrix Loading/HUD/Creative/World Select: **28/28** at 1920×1080, 1366×768, 1280×720, 932×430, 896×414, 844×390, 740×360; no clipping, overlap, document overflow, loading-card scrollbar or console diagnostics. Creative scroll/tabs/close and World Select selection/double-click/dialog Cancel/Escape/delete passed.
+- Full `npm test -- --maxWorkers=2`: **982 passed / 14 failed / 996**, plus one Vitest worker RPC error. All new/retained UI suites pass. Failures are outside this diff: 12 default 5 s CPU timeouts (worldgen/sunlight/minecart), existing GeneratedItemGeometry source fingerprint mismatch, intermittent mob separation, and reference-extractor parse failure; thresholds and unrelated code were not changed.
+- Full details and handoff: `docs/reports/2026-08-30_ui-visual-system-hud-menu-polish.md`.
+
 ## Последний проход: post-server integration PR #31 player skins / character / third-person
 
 - Существующая ветка Draft PR **#31** `cursor/player-skins-third-person` объединена обычным merge с server-authoritative `origin/main` `57724f6`; PR #28 breaking overlay и весь GameplayKernel/server/shared/tooling stack сохранены.

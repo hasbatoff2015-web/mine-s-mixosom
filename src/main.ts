@@ -1,3 +1,4 @@
+import './uiTokens.css';
 import './style.css';
 import { Game } from './core/Game';
 import type { MobKind } from './entities/mobDefinitions';
@@ -18,6 +19,8 @@ if (import.meta.env.DEV) {
   const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
   const qaBiome = search.get('qaBiome');
   const qaLighting = search.get('qaLighting');
+  const qaUi = search.get('qaUi');
+  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list']);
   const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
@@ -26,7 +29,12 @@ if (import.meta.env.DEV) {
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
-  if (qaPlayer) {
+  if (qaUi && uiScenes.has(qaUi)) {
+    runningDevHarness = true;
+    void import('./dev/UiQaHarness').then(({ startUiQaHarness }) => {
+      disposeApplication = startUiQaHarness(canvas, uiRoot, qaUi as import('./dev/UiQaHarness').UiQaScene);
+    });
+  } else if (qaPlayer) {
     runningDevHarness = true;
     void import('./dev/PlayerQaHarness').then(async ({ startPlayerQaHarness }) => {
       disposeApplication = await startPlayerQaHarness(canvas, uiRoot);
