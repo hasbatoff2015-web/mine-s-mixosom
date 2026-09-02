@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-02: Fixed-step interpolation window (PR #37)
+
+- [x] Prove leftover/dt lerp against last-inner `previousPosition` hitch-steps ~one physics tick on a 2-tick frame (`corr/s=0`).
+- [x] Restore render origin to the pose before this frame's ticks in `Game.frame` (SP + Online).
+- [x] Regression: two-tick hitch timeline + hitchy 60 Hz walk SP/Online; no extra lerp/smoothing/tolerance.
+- [ ] Owner localhost QA: walk/sprint/jump/strafe/flight/fly+SHIFT; F3 `corr/s=0`; hitch should not teleport.
+- [ ] Do not merge main.
+
 ## 2026-09-02: Diagnose Online corrections + 20 TPS catch-up (PR #37)
 
 - [x] Instrument one `kind=corrected` dump (seq, history, snapshot, input, world hints, hypotheses).

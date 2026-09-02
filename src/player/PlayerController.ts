@@ -263,6 +263,9 @@ export class PlayerController {
     // A generous cap keeps a paused tab from tunnelling through the terrain. The
     // main loop normally calls this with exactly 0.05 s.
     const stepDt = Math.min(dt, 0.1);
+    // Per-tick copy is for fall distance and this-step displacement. After a
+    // multi-tick catch-up, Game.frame restores previousPosition to the pose
+    // from before the first tick so leftover/dt lerp does not skip a step.
     this.previousPosition.copy(this.position);
     this.yaw = finite(input.yaw, this.yaw);
     this.pitch = clamp(finite(input.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);

@@ -28,13 +28,18 @@ SP and Online local presentation share one render model:
 
 ```text
 Game.frame
-  advanceFixedStep → 0..4 × Game.tick
-  render(alpha = accumulator / FIXED_DT)
+  advanceFixedStep → leftover < FIXED_DT, ticks = 0..4
+  origin = player.position          // before this frame's ticks
+  0..4 × Game.tick                  // each tick still copies previousPosition for fall
+  if ticks >= 1: previousPosition = origin
+  render(alpha = leftover / FIXED_DT)
   interpolated = lerp(previousPosition, position, alpha)
   cameraPivot = interpolated feet + eyeHeight
 ```
 
-Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq`, `predictLocalMove` = `PlayerController.tick` + `history[seq]`.
+`lerp(previousPosition, position, leftover/dt)` is only correct when `previousPosition` is the pose **before this frame's ticks**. `PlayerController.tick` overwrites it at the start of every inner tick, so a 2-tick hitch would otherwise lerp the last inner step with leftover ≈ 0 and hitch-step ~one physics tick while `corr/s=0`. One-tick frames are a no-op (origin already equals that copy). ticks=0 leaves the window unchanged.
+
+Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq`, `predictLocalMove` = `PlayerController.tick` + `history[seq]`. Online hits 2-tick frames more often (remesh / WS hitch); the interpolation window is the same function as singleplayer.
 
 Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to `history[N]`. Match → no pose write. Mismatch → restore + replay seq > N. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
 
@@ -249,7 +254,7 @@ flowchart TD
 
 ## Fixed loop и порядок tick
 
-Render loop использует `requestAnimationFrame`. `advanceFixedStep()` ограничивает raw delta `MAX_FRAME_DELTA = 0.25 s` и не выполняет больше `MAX_CATCH_UP_TICKS = 4` simulation ticks за кадр: избыток времени отбрасывается, чтобы stall 300 ms не разгонял spiral of death. Пока accumulator ≥ `FIXED_DT = 0.05 s`, выполняется simulation tick. Камера, мобы, drops, arrows и TNT интерполируются между previous/current simulation snapshots.
+Render loop использует `requestAnimationFrame`. `advanceFixedStep()` ограничивает raw delta `MAX_FRAME_DELTA = 0.25 s` и не выполняет больше `MAX_CATCH_UP_TICKS = 4` simulation ticks за кадр: избыток времени отбрасывается, чтобы stall 300 ms не разгонял spiral of death. Пока accumulator ≥ `FIXED_DT = 0.05 s`, выполняется simulation tick. После N ticks за кадр `previousPosition` восстанавливается на pose **до** первого tick этого кадра; `alpha = leftover / FIXED_DT`. Камера, мобы, drops, arrows и TNT интерполируются между previous/current simulation snapshots.
 
 Simulation продвигается только в lifecycle state `PLAYING`. `LOADING_WORLD` готовит initial radius без player physics, mining и pointer lock. Container GUI (Survival/Creative inventory, chest, furnace, crafting table, Recipe Book) **не** является pause: мир остаётся в `PLAYING`, tick продолжается, а player gameplay input блокируется отдельно (`gameplayModal.ts`). Настоящая остановка simulation — Pause menu (`Esc` → `PAUSED`) и platform/background/ad/death. Furnace burn/cook всегда идёт через `VoxelWorld.tickFurnaces()` в общем world tick, без UI-таймера.
 

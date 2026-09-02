@@ -56,7 +56,7 @@ import {
   clamp,
   floorDiv,
 } from './constants';
-import { advanceFixedStep } from './fixedStep';
+import { advanceFixedStep, interpolationAlpha, restoreInterpolationOrigin } from './fixedStep';
 import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
 import {
   chunksInSquareRadius,
@@ -341,6 +341,8 @@ export class Game {
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
+  /** Pose before this frame's fixed ticks; render lerp origin after catch-up. */
+  private readonly localSimOrigin = new Vec3();
   private readonly cameraPivot = new THREE.Vector3();
   private readonly cameraTravelDirection = new THREE.Vector3();
   private readonly frontCameraLook = { yaw: 0, pitch: 0 };
@@ -2210,7 +2212,16 @@ export class Game {
       this.simParts.entities = 0;
       this.simParts.other = 0;
       const tickStart = performance.now();
+      const simulating = this.session;
+      if (stepped.ticks > 0 && simulating) this.localSimOrigin.copy(simulating.player.position);
       for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
+      if (stepped.ticks > 0 && this.session) {
+        restoreInterpolationOrigin(
+          this.session.player.previousPosition,
+          this.localSimOrigin,
+          stepped.ticks,
+        );
+      }
       if (this.session?.online) this.stepOnlineAuthority(this.session, rawElapsed);
       tickMs = performance.now() - tickStart;
       this.lastSimParts = { ...this.simParts, ticks: stepped.ticks };
@@ -2239,7 +2250,7 @@ export class Game {
       this.updateChunkGrid();
     }
     const renderStart = performance.now();
-    this.render(this.accumulator / FIXED_DT);
+    this.render(interpolationAlpha(this.accumulator, FIXED_DT));
     const renderMs = performance.now() - renderStart;
     const frameMs = performance.now() - frameStart;
     if (this.profiler.enabled) {
@@ -3397,6 +3408,7 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
+      // previousPosition is the pose before this frame's ticks (Game.frame restore).
       const position = this.interpolatedPlayerPosition
         .copy(session.player.previousPosition)
         .lerp(session.player.position, clamp(alpha, 0, 1));
