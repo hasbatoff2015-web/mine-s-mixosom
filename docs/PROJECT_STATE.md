@@ -8,6 +8,7 @@
 - Ручной QA: jitter на walk/sprint/jump/strafe/flight/fly+SHIFT при `corr/s=0`. Stationary чистый. Это не rubber-band и не FIFO.
 - Root cause: `PlayerController.tick` копирует `previousPosition` на **каждый** inner tick. `render = lerp(prev, pos, leftover/dt)` после 2 ticks в одном кадре показывает начало последнего tick ≈ целый physics step относительно прошлого кадра (alpha был ~1). Online чаще даёт 2-tick кадры (remesh/WS hitch); выражение то же, что в SP.
 - Fix: в `Game.frame` после цикла ticks вернуть `previousPosition` на pose **до** первого tick кадра. Один tick — no-op. Physics constants / networking / urgent remesh / smoothing не трогали.
+- Tests: fixed-step **6/6**, pipeline **7/7**, prediction **24/24**, remesh **4/4**; `typecheck*` PASS; `test:sim` **42/42**; `test:server` **83/83**; build PASS.
 - Report: `docs/reports/2026-09-02_fixed-step-interpolation.md`.
 
 ## Последний проход: диагностика correction 0.3–0.6 и 20 TPS catch-up (PR #37)
