@@ -1,4 +1,4 @@
-import type * as THREE from 'three';
+import type { Vec3 } from '../math/vec3';
 import type { BlockAttachment, HorizontalFacing } from '../blocks';
 
 export type RedstoneSourceKind = 'torch' | 'lever' | 'button' | 'pressure_plate';
@@ -31,7 +31,7 @@ export interface SerializedRedstoneState {
 export interface RedstoneExplosionEvent {
   readonly id: string;
   readonly source: 'tnt';
-  readonly position: THREE.Vector3;
+  readonly position: Vec3;
   readonly power: number;
   readonly radius: number;
 }

@@ -41,6 +41,7 @@ import {
 } from './containerInteractions';
 import { stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
+import type { ClientInventoryActionMessage } from '../../shared/protocol';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import {
@@ -78,6 +79,12 @@ export interface OnlineServersActions {
   connect(id: string): void;
 }
 
+export interface OnlineServerLiveStatus {
+  reachable: boolean;
+  online: number;
+  maxPlayers: number;
+}
+
 export interface PauseActions {
   resume(): void;
   settings(): void;
@@ -105,6 +112,7 @@ export interface InventoryContext {
   onClose(): void;
   onDrop(stack: ItemStack): void;
   onChanged(): void;
+  submitAction?: (message: ClientInventoryActionMessage) => void;
 }
 
 interface ContainerAdapter {
@@ -129,6 +137,7 @@ export class GameUI {
   private chatLogEl: HTMLElement;
   private chatForm: HTMLFormElement;
   private chatInput: HTMLInputElement;
+  private chatFocusToken = 0;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private itemTooltip?: ItemTooltipHandle;
@@ -369,20 +378,26 @@ export class GameUI {
     });
   }
 
-  showOnlineServers(actions: OnlineServersActions): void {
+  showOnlineServers(actions: OnlineServersActions, live?: OnlineServerLiveStatus): void {
     let selectedId = MENU_SERVER_ENTRIES[0]?.id ?? '';
-    const rows = MENU_SERVER_ENTRIES.map((server, index) => `
+    const rows = MENU_SERVER_ENTRIES.map((server, index) => {
+      const anarchy = server.id === 'anarchy-pvp';
+      const onlineLabel = anarchy && live
+        ? (live.reachable ? `${live.online} / ${live.maxPlayers}` : 'оффлайн')
+        : server.online;
+      return `
       <button class="server-row${index === 0 ? ' selected' : ''}" data-server-id="${server.id}" aria-pressed="${index === 0}">
         <span class="server-icon" aria-hidden="true">FC</span>
         <span class="server-copy"><strong>${server.name}</strong><small>${server.description}</small></span>
-        <span class="server-status"><span class="server-online">${server.online}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
-      </button>`).join('');
+        <span class="server-status"><span class="server-online">${onlineLabel}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
+      </button>`;
+    }).join('');
     const connectable = (id: string): boolean => MENU_SERVER_ENTRIES.find((server) => server.id === id)?.connectable === true;
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
-        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">Локальный мир</span></header>
+        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">localhost</span></header>
         <div class="server-list">${rows}</div>
-        <p class="menu-notice">Анархия открывает отдельный локальный мир сервера. Сетевой мультиплеер пока не реализован. «Выживание PvP» остаётся заглушкой.</p>
+        <p class="menu-notice">Анархия PvP подключается к локальному серверу (<code>npm run dev:server</code>). Если процесс не запущен, появится «Сервер недоступен». «Выживание PvP» пока недоступно.</p>
         <footer class="menu-footer"><button class="game-button primary" data-action="connect"${connectable(selectedId) ? '' : ' disabled'}>Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
       </div></section>`, actions.back);
     const connectButton = this.screen!.querySelector<HTMLButtonElement>('[data-action="connect"]')!;
@@ -629,6 +644,8 @@ export class GameUI {
   }
 
   openChat(prefix = ''): void {
+    this.chatFocusToken += 1;
+    const token = this.chatFocusToken;
     this.chatOpen = true;
     this.chatHistoryIndex = -1;
     this.chatDraft = '';
@@ -636,6 +653,7 @@ export class GameUI {
     this.chatInput.value = prefix;
     this.setControlsSuppressed(true);
     window.setTimeout(() => {
+      if (token !== this.chatFocusToken || !this.chatOpen) return;
       this.chatInput.focus();
       const caret = this.chatInput.value.length;
       this.chatInput.setSelectionRange(caret, caret);
@@ -643,8 +661,10 @@ export class GameUI {
   }
 
   closeChat(): void {
+    this.chatFocusToken += 1;
     if (!this.chatOpen) {
       this.chat.classList.remove('open');
+      this.chatInput.blur();
       return;
     }
     this.chatOpen = false;
@@ -701,6 +721,12 @@ export class GameUI {
     this.chatInput.value = history[step.index] ?? '';
     const caret = this.chatInput.value.length;
     this.chatInput.setSelectionRange(caret, caret);
+  }
+
+  applyAuthoritativeCursor(cursor: ItemStack | null, craftSlots?: Array<ItemStack | null>): void {
+    this.cursorStack = cursor;
+    if (craftSlots) this.craftSlots = craftSlots;
+    if (this.inventoryContext) this.renderInventory();
   }
 
   openInventory(context: InventoryContext): void {
@@ -1122,6 +1148,10 @@ export class GameUI {
   private handleRecipeClick(recipeId: string, right: boolean, shift: boolean): void {
     const context = this.inventoryContext;
     if (!context || context.kind === 'furnace' || context.kind === 'chest') return;
+    if (context.submitAction) {
+      context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId, shift });
+      return;
+    }
     const gridSize = context.kind === 'crafting-table' ? 3 : 2;
     const variants = allCraftingBookEntries().filter((entry) => {
       const current = allCraftingBookEntries().find((item) => item.id === recipeId);
@@ -1150,6 +1180,10 @@ export class GameUI {
   private handleInventorySlot(key: string, button: 'left' | 'right', shift: boolean): void {
     const context = this.inventoryContext;
     if (!context || key === 'cursor') return;
+    if (context.submitAction) {
+      context.submitAction({ type: 'inventory_action', action: 'click', key, button, shift });
+      return;
+    }
     if (key.startsWith('inventory-')) {
       const index = Number(key.slice('inventory-'.length));
       if (shift && context.kind === 'chest' && context.chest) this.quickMoveInventoryToContainer(index, context.chest);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { TextureAtlas } from '../../rendering/TextureAtlas';
-import type { PlayerModelVariant } from './PlayerAppearance';
+import { TextureAtlas } from '../TextureAtlas';
+import type { PlayerModelVariant } from '../../player/appearance/PlayerAppearance';
 
 export const MINECRAFT_SKIN_WIDTH = 64;
 export const MINECRAFT_SKIN_HEIGHT = 64;

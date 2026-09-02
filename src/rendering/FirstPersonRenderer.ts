@@ -8,7 +8,7 @@ import {
 import {
   MinecraftSkinRegistry,
   type SkinTextureHandle,
-} from '../player/appearance/MinecraftSkin';
+} from './player/MinecraftSkin';
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
 import { PlayerSkinGeometryCache } from './player/PlayerSkinGeometry';
 import {

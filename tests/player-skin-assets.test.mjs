@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_MINECRAFT_SKINS } from '../src/player/appearance/MinecraftSkin';
+import { BUILTIN_MINECRAFT_SKINS } from '../src/rendering/player/MinecraftSkin';
 
 function pngDimensions(path) {
   const bytes = readFileSync(path);

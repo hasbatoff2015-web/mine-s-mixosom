@@ -14,3 +14,8 @@ Thumbs.db
 # Local Minecraft Java reference audio (never commit / ship).
 .local/
 .local/minecraft-reference-audio/
+
+# Authoritative local server worlds (runtime persistence).
+server/data/worlds/**
+!server/data/worlds/.gitkeep
+

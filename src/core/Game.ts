@@ -1,25 +1,13 @@
 import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
 import {
   BlockId,
-  buttonPlacementFromHit,
   canHarvestBlock,
-  doorFacingFromYaw,
-  chestFacingFromYaw,
-  furnaceFacingFromYaw,
   getBlockDefinition,
-  isFenceBlock,
   isPressurePlateBlock,
-  isRailBlock,
   isSlabBlock,
-  isStairBlock,
-  ladderPlacementFromHit,
   miningProgressPerTick,
   miningToolFromItemId,
-  slabTypeFromHit,
-  stairPlacementFromHit,
-  torchPlacementFromHit,
-  lanternPlacementFromHit,
-  chainPlacementFromHit,
 } from '../blocks';
 import { CombatSystem, PlayerArrowManager, completeMeleeAttack, flamingArrowBlockHit, resolvePlayerAttackTarget } from '../combat';
 import {
@@ -53,10 +41,11 @@ import {
   FIXED_DT,
   MAX_CATCH_UP_TICKS,
   MAX_FRAME_DELTA,
+  PLAYER_HEIGHT,
   PLAYER_REACH,
+  PLAYER_WIDTH,
   TICK_RATE,
     WORLD_HEIGHT,
-    isValidWorldY,
     WORLD_JOB_BUDGET_MS,
   WORLD_LOADING_JOB_BUDGET_MS,
   WORLD_LIGHT_BUDGET_MS,
@@ -92,7 +81,6 @@ import {
   MinecartManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
-  resolveFlintAndSteelUse,
   MobManager,
   type MinecartEntity,
   type MobPlayerDamageEvent,
@@ -101,6 +89,7 @@ import {
   type SerializedMinecart,
   type SerializedMob,
 } from '../entities';
+import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { InputManager } from '../input/InputManager';
 import {
   shouldOpenPauseOnUnlock,
@@ -109,15 +98,14 @@ import {
 } from '../input/pointerLock';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
-import { pickupFluidSource, placeBucketFluid, restoreBucketInventory } from '../items/bucketInteraction';
-import { canAttachToFace, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';
+import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController } from '../player';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
   type PlayerAppearance,
 } from '../player/appearance/PlayerAppearance';
-import { MinecraftSkinRegistry } from '../player/appearance/MinecraftSkin';
+import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -168,13 +156,15 @@ import {
   maybeSlowSnapshot,
 } from '../debug/chunkStreamingRuntime';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
-import { SaveService } from '../save/SaveService';
-import type { GameMode, SerializedServerWorld, SerializedWorldState, WorldSummary } from '../save/types';
+import { IdbWorldStore } from '../save/IdbWorldStore';
+import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
-import { collectSpawnColumns, stoneCapY } from '../world/Generator';
+import { processDeferredLighting } from '../world/LightingAdapter';
+import { stoneCapY } from '../world/Generator';
+import { estimateWorldSpawn } from '../world/spawn';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
   ANARCHY_SERVER_ID,
@@ -184,6 +174,51 @@ import {
   isFiniteSpawn,
   resolveAnarchyStartup,
 } from '../world/import';
+import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import {
+  applyAuthoritativeContainerSlots,
+  parseNetworkItemStack,
+  parseNetworkItemStacks,
+  shouldOpenOnlineContainer,
+} from '../net/onlineContainerSync';
+import {
+  clientLookAfterSnapshot,
+  ingestAuthoritativePosition,
+  shouldAcceptSnapshot,
+  splitPlayerSnapshots,
+  stepTowardTarget,
+} from '../net/authoritativeMotion';
+import {
+  applyEntitySnapshots,
+  applyInterpolatedEntityVisuals,
+  applyNetworkEntityEvents,
+} from '../net/applyEntitySnapshots';
+import { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
+import { stepVisualBowUseTicks } from '../input/gameplayKeys';
+import {
+  planOnlineRespawnInputRestore,
+  recordAliveSnapshotTick,
+  shouldIgnoreStaleDeadSnapshot,
+  shouldRestoreGameplayAfterRespawn,
+} from './onlineRespawn';
+import { shouldProcessOnlineWorldVisuals, shouldRunClientWorldSimulation } from './onlineSimulation';
+import {
+  lifecycleAfterWorldSessionEnter,
+  shouldHandleOnlineClientEvent,
+} from './onlineSession';
+import {
+  clearDoorBlocks,
+  daylightFactor,
+  dropScatterVelocity,
+  formatGameplayKernelTrace,
+  performUseHeld,
+  rollDropCount,
+  systemRandomFn,
+  tickGameplayKernel,
+  type UseSimulationContext,
+} from '../gameplay';
+import { applyNetworkBlockChanges } from '../world/networkBlockUpdates';
+import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -192,18 +227,10 @@ import {
   pendingMeshInRadius,
   planMeshFrame,
 } from '../world/streamingScheduler';
-import { blockCollisionBoxes } from '../world/collision';
+import { blockCollisionBoxes, rayAabbDistance } from '../world/collision';
 import {
   defaultSlabType,
-  defaultStairFacing,
-  defaultStairHalf,
-  resolveRailShape,
-  isolatedRailShapeFromYaw,
-  slabLocalBoxes,
-  stairLocalBoxes,
-  lanternSelectionLocalBox,
-  chainSelectionLocalBox,
-} from '../rendering/specialBlockGeometry';
+} from '../world/blockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 
@@ -222,6 +249,7 @@ export interface GameSession {
   mobs: MobManager;
   arrows: PlayerArrowManager;
   minecarts: MinecartManager;
+  entityHost: ThreeEntityHost;
   ridingCartId?: string;
   redstone: RedstoneSystem;
   activePressurePlates: Set<string>;
@@ -234,6 +262,21 @@ export interface GameSession {
   playTicks: number;
   lastAutosaveTick: number;
   serverWorld?: SerializedServerWorld;
+  online?: OnlineAnarchySession;
+}
+
+export interface OnlineAnarchySession {
+  client: AnarchyClient;
+  playerId: string;
+  remotes: Map<string, RemotePlayerView>;
+  interpolator: EntityInterpolationBuffer;
+  inputSeq: number;
+  lastViewKey?: string;
+  lastStateTick: number;
+  lastAliveTick?: number;
+  motion: { target: { x: number; y: number; z: number } };
+  pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
+  rejectedBlockKey?: string;
 }
 
 interface RuntimeSettings {
@@ -244,6 +287,31 @@ interface RuntimeSettings {
 }
 
 const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
+
+function raycastRemotePlayers(
+  remotes: Map<string, RemotePlayerView>,
+  origin: Vec3Like,
+  direction: Vec3Like,
+  maxDistance: number,
+): { id: string; distance: number } | undefined {
+  const half = PLAYER_WIDTH * 0.5;
+  let closest: { id: string; distance: number } | undefined;
+  for (const [id, view] of remotes) {
+    const position = view.group.position;
+    const hit = rayAabbDistance(origin, direction, {
+      minX: position.x - half,
+      maxX: position.x + half,
+      minY: position.y,
+      maxY: position.y + PLAYER_HEIGHT,
+      minZ: position.z - half,
+      maxZ: position.z + half,
+    });
+    if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
+    if (closest && hit.distance >= closest.distance) continue;
+    closest = { id, distance: hit.distance };
+  }
+  return closest;
+}
 
 export class Game {
   private polishQaDispose?: () => void;
@@ -256,7 +324,7 @@ export class Game {
   private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.05, 650);
   private readonly lifecycle = new GameLifecycleManager();
   private readonly audio = new AudioManager();
-  private readonly saves = new SaveService();
+  private readonly worldStore = new IdbWorldStore();
   private readonly yandex = new YandexGamesService();
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
@@ -296,6 +364,7 @@ export class Game {
   private renderDeltaSeconds = 0;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
+  private readonly simRandom = systemRandomFn;
   private readonly miningSound = createMiningSoundState();
   private readonly footsteps = createFootstepState();
   private readonly explosionSounds = createExplosionLog();
@@ -321,6 +390,8 @@ export class Game {
   private debugVisible = false;
   private debugNextTick = 0;
   private cachedDebugText = '';
+  private readonly debugTickOrder: boolean;
+  private readonly kernelTrace: string[] = [];
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
@@ -377,6 +448,9 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.canvas = canvas;
+    this.canvas.tabIndex = 0;
+    this.debugTickOrder = typeof location !== 'undefined'
+      && new URLSearchParams(location.search).get('debugTick') === '1';
     this.ui = new GameUI(uiRoot);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -400,13 +474,29 @@ export class Game {
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
       cyclePerspective: () => this.cycleCameraPerspective(),
-      onPointerLockAcquired: () => this.ui.hidePointerLockFallback(),
+      onPointerLockAcquired: () => {
+        this.lifecycle.resumePlayingIfVisible();
+        this.lifecycle.endOnlineRespawnRestore();
+        this.ui.hidePointerLockFallback();
+      },
       onPointerLockReleased: (reason) => this.handlePointerUnlock(reason),
-      onPointerLockRequestFailed: () => this.showPointerLockFallbackIfNeeded(),
+      onPointerLockRequestFailed: () => {
+        this.lifecycle.endOnlineRespawnRestore();
+        this.showPointerLockFallbackIfNeeded();
+      },
+      isChatOpen: () => this.ui.isChatOpen(),
     });
+    this.lifecycle.setBlurContext(() => ({
+      pointerLocked: this.input.isPointerLocked(),
+      pointerLockRequestPending: this.input.isLockRequestPending(),
+    }));
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.ui.onChatSubmit = (line) => this.submitChat(line);
     this.ui.onChatCancel = () => this.closeChatAndResumeLook();
+    this.canvas.addEventListener('click', () => {
+      this.lifecycle.resumePlayingIfVisible();
+      this.canvas.focus({ preventScroll: true });
+    });
     this.bindLifecycle();
     this.bindWindowEvents();
   }
@@ -416,7 +506,7 @@ export class Game {
     this.resize();
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
     await Promise.all([
-      this.saves.initialize().catch((error) => console.warn('IndexedDB unavailable, saves remain in memory.', error)),
+      this.worldStore.initialize().catch((error) => console.warn('IndexedDB unavailable, saves remain in memory.', error)),
       this.yandex.initialize(
         () => this.pauseForPlatform(),
         () => this.resumeFromPlatform(),
@@ -479,7 +569,7 @@ export class Game {
     this.arrowVisuals?.dispose();
     this.atlas?.dispose();
     this.renderer.dispose();
-    this.saves.close();
+    this.worldStore.close();
     this.yandex.dispose();
     this.profiler.dispose();
   }
@@ -488,10 +578,7 @@ export class Game {
     this.lifecycle.setState('MENU');
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
-      online: () => this.ui.showOnlineServers({
-        back: () => this.showMainMenu(),
-        connect: (id) => void this.connectOnlineServer(id),
-      }),
+      online: () => void this.showOnlineServerList(),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
@@ -499,17 +586,397 @@ export class Game {
     });
   }
 
+  private async showOnlineServerList(): Promise<void> {
+    const live = await fetchAnarchyStatus();
+    this.ui.showOnlineServers({
+      back: () => this.showMainMenu(),
+      connect: (id) => void this.connectOnlineServer(id),
+    }, live);
+  }
+
   private async connectOnlineServer(id: string): Promise<void> {
-    if (id === ANARCHY_SERVER_ID) {
-      await this.openAnarchyWorld();
+    if (id !== ANARCHY_SERVER_ID) {
+      this.ui.toast('Этот сервер пока недоступен');
       return;
     }
-    this.ui.toast('Этот сервер пока недоступен');
+    this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
+    const client = new AnarchyClient();
+    try {
+      const welcome = await client.connect();
+      await this.startOnlineAnarchy(client, welcome);
+    } catch {
+      client.disconnect();
+      this.ui.toast('Сервер недоступен');
+      await this.showOnlineServerList();
+    }
+  }
+
+  private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {
+    const world = new VoxelWorld(welcome.seed);
+    world.deferredLighting = true;
+    world.restore({
+      timeOfDay: welcome.timeOfDay,
+      modifications: welcome.modifications,
+      chests: {},
+      furnaces: {},
+      blockStates: welcome.blockStates,
+    });
+    let inventory: Inventory;
+    try {
+      inventory = Inventory.deserialize(welcome.inventory);
+    } catch {
+      inventory = new Inventory();
+    }
+    const summary = {
+      ...createAnarchySummary(),
+      seed: welcome.seed,
+      mode: welcome.you.gamemode,
+    };
+    const remotes = new Map<string, RemotePlayerView>();
+    await this.startSession(summary, world, inventory, undefined, {
+      spawn: [welcome.you.x, welcome.you.y, welcome.you.z],
+      snapSpawn: false,
+      serverWorld: createCanonicalAnarchyServerWorld(welcome.spawn),
+      online: {
+        client,
+        playerId: welcome.playerId,
+        remotes,
+        interpolator: new EntityInterpolationBuffer(),
+        inputSeq: 0,
+        lastStateTick: -1,
+        motion: { target: { x: welcome.you.x, y: welcome.you.y, z: welcome.you.z } },
+      },
+    });
+    const session = this.session;
+    if (!session?.online) return;
+    session.player.teleport([welcome.you.x, welcome.you.y, welcome.you.z]);
+    session.player.yaw = welcome.you.yaw;
+    session.player.pitch = welcome.you.pitch;
+    this.input.yaw = welcome.you.yaw;
+    this.input.pitch = welcome.you.pitch;
+    for (const info of welcome.players) {
+      this.spawnRemotePlayer(session, info);
+    }
+    client.onMessage((message) => {
+      if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
+      this.handleOnlineMessage(message);
+    });
+    client.onDisconnect(() => {
+      if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
+      this.ui.toast('Сервер недоступен');
+      this.disposeSession();
+      this.showMainMenu();
+    });
+  }
+
+  private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
+    if (!session.online || info.id === session.online.playerId || session.online.remotes.has(info.id)) return;
+    const view = new RemotePlayerView(info, {
+      visual: new PlayerVisual(
+        this.playerSkins,
+        this.playerSkinGeometries,
+        this.itemVisuals!,
+        DEFAULT_PLAYER_APPEARANCE,
+      ),
+      world: session.world,
+    });
+    session.online.remotes.set(info.id, view);
+    this.scene.add(view.group);
+  }
+
+  private removeRemotePlayer(session: GameSession, playerId: string): void {
+    const view = session.online?.remotes.get(playerId);
+    if (!view) return;
+    this.scene.remove(view.group);
+    view.dispose();
+    session.online?.remotes.delete(playerId);
+  }
+
+  private handleOnlineMessage(message: ServerMessage): void {
+    const session = this.session;
+    if (!session?.online) return;
+    switch (message.type) {
+      case 'welcome':
+        return;
+      case 'player_joined':
+        this.spawnRemotePlayer(session, message.player);
+        return;
+      case 'player_left':
+        this.removeRemotePlayer(session, message.playerId);
+        return;
+      case 'player_state':
+        this.applyOnlinePlayerState(session, message);
+        return;
+      case 'block_update': {
+        const previous = session.world.getBlock(message.x, message.y, message.z, false);
+        applyNetworkBlockChanges(session.world, [{
+          x: message.x,
+          y: message.y,
+          z: message.z,
+          blockId: message.blockId,
+          ...(message.state ? { state: message.state } : {}),
+        }]);
+        this.clearOnlineBlockPending(session, message.x, message.y, message.z);
+        if (message.blockId === BlockId.Air) {
+          this.playBlockSound('break', previous, message.x, message.y, message.z);
+        } else {
+          this.playBlockSound('place', message.blockId as BlockId, message.x, message.y, message.z);
+        }
+        return;
+      }
+      case 'block_batch': {
+        applyNetworkBlockChanges(session.world, message.changes);
+        for (const change of message.changes) {
+          this.clearOnlineBlockPending(session, change.x, change.y, change.z);
+        }
+        return;
+      }
+      case 'entity_snapshot':
+        applyEntitySnapshots(session, message.entities, {
+          interpolator: session.online.interpolator,
+          tick: message.tick,
+          now: performance.now(),
+        });
+        return;
+      case 'entity_event':
+        applyNetworkEntityEvents(session, message.events);
+        return;
+      case 'health': {
+        const previous = {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        };
+        session.survival.restore({
+          health: message.health,
+          hunger: message.hunger,
+          saturation: message.saturation,
+          absorption: message.absorption,
+          airTicks: message.air,
+          dead: message.dead,
+        });
+        if (shouldRestoreGameplayAfterRespawn(previous, {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        })) {
+          this.restoreOnlinePlayingFromRespawn();
+          if (session.online) {
+            session.online.lastAliveTick = recordAliveSnapshotTick(
+              session.online.lastAliveTick,
+              session.online.lastStateTick,
+            );
+          }
+        }
+        if (message.health < previous.health - 0.01) {
+          this.hurt.trigger(performance.now(), { periodic: false });
+          this.playLocal('player.hurt');
+        }
+        this.refreshHud();
+        return;
+      }
+      case 'effects':
+        session.survival.restore({
+          effects: message.effects.map((effect) => ({
+            id: effect.id as 'invisibility' | 'regeneration' | 'absorption',
+            amplifier: effect.amplifier,
+            ticks: effect.remainingTicks,
+          })),
+        });
+        this.refreshHud();
+        return;
+      case 'time':
+        session.world.timeOfDay = message.timeOfDay;
+        return;
+      case 'command_result':
+        return;
+      case 'block_result':
+        this.handleOnlineBlockResult(session, message);
+        return;
+      case 'chunk_data':
+        session.world.getChunk(message.cx, message.cz, true);
+        return;
+      case 'chat':
+        if (message.kind === 'player') this.pushChat('player', `<${message.from}> ${message.text}`);
+        else this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+        return;
+      case 'inventory':
+        try {
+          session.inventory.restore(Inventory.deserialize(message.inventory).serialize());
+        } catch {
+          /* keep local copy until next valid snapshot */
+        }
+        if (message.gamemode !== session.summary.mode) {
+          session.summary.mode = message.gamemode;
+          session.player.creativeFlightAllowed = message.gamemode === 'creative';
+        }
+        if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
+        applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
+        this.ui.applyAuthoritativeCursor(
+          parseNetworkItemStack(message.cursor),
+          parseNetworkItemStacks(message.craftSlots),
+        );
+        if (
+          shouldOpenOnlineContainer(message.window?.kind, this.ui.isInventoryOpen())
+          && message.window?.kind
+          && message.window.kind !== 'inventory'
+        ) {
+          this.openOnlineContainer(session, message.window.kind, message.window);
+        }
+        this.refreshHud();
+        return;
+      case 'error':
+        this.ui.toast(message.message);
+        return;
+      case 'pong':
+      case 'status':
+        return;
+      default:
+        return;
+    }
+  }
+
+  private openOnlineContainer(
+    session: GameSession,
+    kind: 'crafting-table' | 'chest' | 'furnace',
+    window: { readonly x?: number; readonly y?: number; readonly z?: number; readonly slots?: unknown },
+  ): void {
+    const x = window.x ?? 0;
+    const y = window.y ?? 0;
+    const z = window.z ?? 0;
+    applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack);
+    this.openBlockInventory(kind, {
+      x, y, z,
+      block: kind === 'chest' ? BlockId.Chest : kind === 'furnace' ? BlockId.Furnace : BlockId.CraftingTable,
+      normal: new Vec3(0, 1, 0),
+      distance: 0,
+      point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
+    });
+  }
+
+  private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
+    const online = session.online;
+    if (!online) return;
+    if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) return;
+    online.lastStateTick = message.tick;
+    const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
+    const seen = new Set<string>();
+    if (local) {
+      const look = clientLookAfterSnapshot(
+        { yaw: this.input.yaw, pitch: this.input.pitch },
+        { yaw: local.yaw, pitch: local.pitch },
+      );
+      this.input.yaw = look.yaw;
+      this.input.pitch = look.pitch;
+      session.player.yaw = look.yaw;
+      session.player.pitch = look.pitch;
+      const ingested = ingestAuthoritativePosition(session.player.position, local);
+      online.motion.target = ingested.target;
+      if (ingested.snapped) {
+        session.player.position.set(ingested.position.x, ingested.position.y, ingested.position.z);
+        session.player.previousPosition.copy(session.player.position);
+      }
+      session.player.velocity.set(local.vx, local.vy, local.vz);
+      session.player.sneaking = local.sneaking;
+      session.player.sprinting = local.sprinting;
+      session.player.onGround = local.onGround;
+      const previousLife = { health: session.survival.health, dead: session.survival.dead };
+      const snapshotDead = local.dead ?? local.health <= 0;
+      if (!shouldIgnoreStaleDeadSnapshot({
+        snapshotTick: message.tick,
+        lastAliveTick: online.lastAliveTick,
+        dead: snapshotDead,
+      })) {
+        session.survival.restore({
+          health: local.health,
+          hunger: local.hunger,
+          dead: snapshotDead,
+        });
+        if (shouldRestoreGameplayAfterRespawn(previousLife, {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        })) {
+          this.restoreOnlinePlayingFromRespawn();
+        }
+        if (!snapshotDead && local.health > 0) {
+          online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
+        }
+      }
+      session.ridingCartId = local.ridingEntityId;
+      if (local.invisible) {
+        /* local first-person hide is driven by survival effects */
+      }
+      if (local.gamemode !== session.summary.mode) {
+        session.summary.mode = local.gamemode;
+        session.player.creativeFlightAllowed = local.gamemode === 'creative';
+      }
+    }
+    for (const snap of remotes) {
+      seen.add(snap.id);
+      let remote = online.remotes.get(snap.id);
+      if (!remote) {
+        this.spawnRemotePlayer(session, snap);
+        remote = online.remotes.get(snap.id);
+      }
+      remote?.applySnapshot(snap, performance.now(), message.tick);
+    }
+    for (const id of [...online.remotes.keys()]) {
+      if (!seen.has(id)) this.removeRemotePlayer(session, id);
+    }
+  }
+
+  private handleOnlineBlockResult(
+    session: GameSession,
+    message: Extract<ServerMessage, { type: 'block_result' }>,
+  ): void {
+    this.clearOnlineBlockPending(session, message.x, message.y, message.z);
+    if (message.ok) return;
+    const key = `${message.x},${message.y},${message.z}`;
+    if (session.online) session.online.rejectedBlockKey = key;
+    console.warn(
+      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`,
+    );
+  }
+
+  private clearOnlineBlockPending(session: GameSession, x: number, y: number, z: number): void {
+    const online = session.online;
+    if (!online?.pendingBlockAction) return;
+    const pending = online.pendingBlockAction;
+    if (pending.x !== x || pending.y !== y || pending.z !== z) return;
+    online.pendingBlockAction = undefined;
+  }
+
+  private stepOnlineAuthority(session: GameSession, dt: number): void {
+    const online = session.online;
+    if (!online) return;
+    session.player.yaw = this.input.yaw;
+    session.player.pitch = this.input.pitch;
+    const next = stepTowardTarget(session.player.position, online.motion.target, dt);
+    session.player.position.set(next.x, next.y, next.z);
+    session.player.previousPosition.copy(session.player.position);
+  }
+
+  private sendOnlineIdle(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    online.inputSeq += 1;
+    online.client.send({
+      type: 'input',
+      seq: online.inputSeq,
+      forward: 0,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: this.input.yaw,
+      pitch: this.input.pitch,
+      selectedSlot: session.selectedSlot,
+    });
   }
 
   private async openAnarchyWorld(): Promise<void> {
     this.ui.showLoading('Открываем Анархию…', 8, 'Локальный мир сервера');
-    const existing = await this.saves.loadWorld(ANARCHY_WORLD_ID);
+    const existing = await this.worldStore.loadWorld(ANARCHY_WORLD_ID);
     const startup = resolveAnarchyStartup(existing);
 
     if (startup.action === 'restore') {
@@ -550,7 +1017,7 @@ export class Game {
   }
 
   private async showWorldList(): Promise<void> {
-    const worlds = await this.saves.listWorlds();
+    const worlds = await this.worldStore.listWorlds();
     this.ui.showWorldList(worlds, {
       load: (id) => void this.loadWorld(id),
       create: () => this.ui.showCreateWorld({
@@ -558,7 +1025,7 @@ export class Game {
         back: () => void this.showWorldList(),
       }),
       delete: async (id) => {
-        await this.saves.deleteWorld(id);
+        await this.worldStore.deleteWorld(id);
         await this.showWorldList();
       },
       back: () => this.showMainMenu(),
@@ -566,7 +1033,7 @@ export class Game {
   }
 
   private async createWorld(name: string, seed: string, mode: GameMode): Promise<void> {
-    const summary = this.saves.createSummary(name, seed, mode);
+    const summary = this.worldStore.createSummary(name, seed, mode);
     const world = new VoxelWorld(summary.seed);
     world.deferredLighting = true;
     const inventory = new Inventory();
@@ -577,7 +1044,7 @@ export class Game {
 
   private async loadWorld(id: string): Promise<void> {
     this.ui.showLoading('Читаем сохранённый мир…');
-    const state = await this.saves.loadWorld(id);
+    const state = await this.worldStore.loadWorld(id);
     if (!state) {
       this.ui.toast('Сохранение не найдено');
       await this.showWorldList();
@@ -609,6 +1076,7 @@ export class Game {
       spawn?: [number, number, number];
       snapSpawn?: boolean;
       serverWorld?: SerializedServerWorld;
+      online?: OnlineAnarchySession;
     },
   ): Promise<void> {
     this.disposeSession();
@@ -665,8 +1133,14 @@ export class Game {
         spawnPoint: [...survival.spawnPoint],
       });
     }
+    const entityHost = new ThreeEntityHost(this.scene, {
+      itemVisuals,
+      arrowVisuals,
+      ownsItemVisuals: false,
+      ownsArrowVisuals: false,
+    });
     const redstone = new RedstoneSystem(world, {
-      root: this.scene,
+      host: entityHost,
       onSourceChanged: (x, _y, z) => world.markBlockDirty(x, z),
     });
     const activePressurePlates = new Set<string>();
@@ -696,8 +1170,7 @@ export class Game {
       },
     );
     this.scene.add(worldRenderer.group);
-    const drops = new DroppedItemManager(this.scene, world, {
-      visualFactory: itemVisuals,
+    const drops = new DroppedItemManager(entityHost, world, {
       onPickup: (stack) => {
         const remainder = inventory.add(stack as ItemStack);
         const accepted = stack.count - (remainder?.count ?? 0);
@@ -709,18 +1182,19 @@ export class Game {
       },
     });
     if (restored?.droppedItems) drops.restore(restored.droppedItems as SerializedDroppedItem[]);
-    const falling = new FallingBlockManager(this.scene, world, itemVisuals);
+    const falling = new FallingBlockManager(entityHost, world);
     if (restored?.fallingBlocks) {
       falling.restore(restored.fallingBlocks as SerializedFallingBlock[]);
     }
 
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
-    const mobs = new MobManager(this.scene, world, {
+    const mobs = new MobManager(entityHost, world, {
       maxMobs: isCoarsePointer() ? 24 : 40,
       passiveCap: isCoarsePointer() ? 10 : 16,
       hostileCap: isCoarsePointer() ? 14 : 24,
       maxProjectiles: isCoarsePointer() ? 20 : 40,
-      arrowVisualFactory: arrowVisuals,
+      automaticSpawning: !options?.online,
+      random: this.simRandom,
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
@@ -728,11 +1202,11 @@ export class Game {
       heldItemId: inventory.getSlot(selectedSlot)?.itemId,
       offhandItemId: inventory.offhand?.itemId,
     });
-    const minecarts = new MinecartManager(this.scene, world, itemVisuals);
+    const minecarts = new MinecartManager(entityHost, world);
     if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
-    const arrows = new PlayerArrowManager(this.scene, world, mobs, {
-      visualFactory: arrowVisuals,
+    const arrows = new PlayerArrowManager(entityHost, world, mobs, {
       minecarts,
+      random: this.simRandom,
       onBlockHit: (x, y, z, flaming) => {
         const session = this.session;
         this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5);
@@ -773,6 +1247,7 @@ export class Game {
       mobs,
       arrows,
       minecarts,
+      entityHost,
       redstone,
       activePressurePlates,
       selectedSlot,
@@ -782,6 +1257,7 @@ export class Game {
       playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
       lastAutosaveTick: 0,
       serverWorld: restored?.serverWorld ?? options?.serverWorld,
+      online: options?.online,
     };
     this.canvas.dataset.hotbar = String(this.session.selectedSlot);
     this.firstPerson?.setHeldItems(
@@ -793,10 +1269,7 @@ export class Game {
   }
 
   private estimateSpawn(world: VoxelWorld): [number, number, number] {
-    const best = collectSpawnColumns(world.generator)[0];
-    if (best) return [best.x + 0.5, best.height + 1.01, best.z + 0.5];
-    const fallback = world.generator.columnAt(0, 0);
-    return [0.5, Math.max(SEA_LEVEL + 2, fallback.height + 2), 0.5];
+    return estimateWorldSpawn(world);
   }
 
   private snapPlayerToTerrain(): void {
@@ -1114,7 +1587,7 @@ export class Game {
         if (!chunk.lightingReady) this.streamingTrace.mark('lightQueued', chunk.x, chunk.z, inspectNow);
       }
     }
-    const elapsed = session.world.processLighting(budgetMs, originX, originZ, counters);
+    const elapsed = processDeferredLighting(session.world, budgetMs, originX, originZ, counters);
     if (inspect && counters) {
       this.jobFrame.lightAttempted = counters.attempted;
       this.jobFrame.lightCompleted = counters.completed;
@@ -1385,7 +1858,9 @@ export class Game {
     session.mobs.interpolateVisuals(0.5);
     console.info('[perf] MOB_SMOOTHNESS', {
       sim: [mob.position.x, mob.position.z],
-      visual: [mob.visual.position.x, mob.visual.position.z],
+      visual: mob.visual
+        ? [mob.visual.position.x, mob.visual.position.z]
+        : [mob.position.x, mob.position.z],
     });
   }
 
@@ -1393,9 +1868,11 @@ export class Game {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.ui.closeChat();
+    this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
-    this.lifecycle.setState('PLAYING');
+    this.lifecycle.endOnlineRespawnRestore();
+    this.lifecycle.setState(lifecycleAfterWorldSessionEnter(this.lifecycle.state));
     this.previousTime = performance.now();
     this.accumulator = 0;
     if (import.meta.env.DEV && !this.polishQaDispose && this.session?.summary.seed === 'interaction-support-polish'
@@ -1424,7 +1901,12 @@ export class Game {
   private closeInventoryAndResumeLook(): void {
     this.closeOpenChestAudio();
     this.session?.worldRenderer.setOpenChest(undefined);
-    this.ui.closeInventory();
+    if (this.session?.online) {
+      this.session.online.client.send({ type: 'inventory_action', action: 'close' });
+      this.ui.closeInventory(false);
+    } else {
+      this.ui.closeInventory();
+    }
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -1438,7 +1920,8 @@ export class Game {
   private openPauseMenu(): void {
     this.ui.hidePointerLockFallback();
     if (openingPauseMenuPausesSimulation()) this.lifecycle.setState('PAUSED');
-    void this.saveSession();
+    if (this.session?.online) this.sendOnlineIdle(this.session);
+    else void this.saveSession();
     this.ui.showPause({
       resume: () => this.resumeFromPause(),
       settings: () => {
@@ -1486,7 +1969,11 @@ export class Game {
       onClose: () => this.closeInventoryAndResumeLook(),
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
+      submitAction: session.online
+        ? (message) => session.online?.client.send(message)
+        : undefined,
     });
+    session.online?.client.send({ type: 'inventory_action', action: 'open', kind: 'inventory' });
   }
 
   private openGameplayModal(): void {
@@ -1523,6 +2010,9 @@ export class Game {
       },
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
+      submitAction: session.online
+        ? (message) => session.online?.client.send(message)
+        : undefined,
     });
   }
 
@@ -1569,9 +2059,9 @@ export class Game {
 
   private async saveSession(): Promise<void> {
     const session = this.session;
-    if (!session) return;
+    if (!session || session.online) return;
     const state: SerializedWorldState = {
-      schemaVersion: 1,
+      schemaVersion: WORLD_SCHEMA_VERSION,
       summary: {
         ...session.summary,
         playTimeSeconds: session.playTicks / TICK_RATE,
@@ -1605,7 +2095,7 @@ export class Game {
       ...(session.serverWorld ? { serverWorld: session.serverWorld } : {}),
     };
     session.summary = state.summary;
-    this.lastSavePromise = this.lastSavePromise.then(() => this.saves.saveWorld(state)).catch((error) => {
+    this.lastSavePromise = this.lastSavePromise.then(() => this.worldStore.saveWorld(state)).catch((error) => {
       console.error('Autosave failed.', error);
       this.ui.toast('Не удалось сохранить мир');
     });
@@ -1644,14 +2134,21 @@ export class Game {
       this.simParts.other = 0;
       const tickStart = performance.now();
       for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
+      if (this.session?.online) this.stepOnlineAuthority(this.session, rawElapsed);
       tickMs = performance.now() - tickStart;
       this.lastSimParts = { ...this.simParts, ticks: stepped.ticks };
       if (stepped.ticks > 0) this.tickTimings.add(tickMs / stepped.ticks);
       this.processWorldJobs(frameStart, false);
-    } else this.accumulator = 0;
+    } else {
+      this.accumulator = 0;
+      if (this.session?.online && shouldProcessOnlineWorldVisuals(this.lifecycle.state)) {
+        this.processWorldJobs(frameStart, false);
+      }
+    }
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
       updateSharedFireAnimation(rawElapsed);
+      this.session.mobs.advanceDeathVisuals(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
       const inspectClock = performance.now();
       if (
@@ -1730,102 +2227,57 @@ export class Game {
     return performance.now();
   }
 
-  private tick(): void {
-    const session = this.session;
-    if (!session) return;
-    const profile = this.profiler.enabled;
-    let simMark = profile ? performance.now() : 0;
+  private tickOnline(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    session.player.yaw = this.input.yaw;
+    session.player.pitch = this.input.pitch;
     session.playTicks += 1;
-    session.world.tick();
-    this.processDetachedBlocks();
-    for (const spawn of session.world.consumeFallingBlocks()) {
-      session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
-    }
-    session.falling.update(FIXED_DT);
-    simMark = this.addSimPart('world', simMark);
-
-    const selected = this.selectedStack();
-    session.combat.setHeldItem(selected?.itemId);
-    session.combat.setOffhand(session.inventory.offhand?.itemId);
-    this.firstPerson?.setHeldItems(selected?.itemId);
-    session.playerVisual?.setHeldItem(selected?.itemId);
-    simMark = this.addSimPart('combat', simMark);
-
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
-    session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
-    const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
-    const drawingBow = session.bowUseTicks > 0;
-    const riding = Boolean(session.ridingCartId);
-    const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
-    session.player.creativeFlightAllowed = session.summary.mode === 'creative';
-    const playerInput = {
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
-      locomotion: !riding,
-      movement: () => ({
-        ...movementBefore,
-        forward: riding ? 0 : movementBefore.forward * movementMultiplier,
-        right: riding ? 0 : movementBefore.right * movementMultiplier,
-        jump: riding ? false : movementBefore.jump,
-        sprint: !riding && !drawingBow && movementBefore.sprint
-          && movementMultiplier === 1
-          && (session.summary.mode === 'creative' || session.survival.hunger > 6),
-        descend: movementBefore.descend === true,
-        flySprint: movementMultiplier === 1 && movementBefore.flySprint === true,
-      }),
-    };
-    const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
-      if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
-    });
-    this.updateFootsteps(session, playerResult.horizontalDistance);
-    if (session.summary.mode === 'survival') {
-      const survivalResult = session.survival.tick(FIXED_DT, {
-        player: session.player,
-        world: session.world,
-        armor: session.inventory,
-        inFire: session.player.inFire,
-        horizontalDistance: playerResult.horizontalDistance,
-        sprinting: session.player.sprinting,
-        swimming: session.player.inWater,
-        jumped: playerResult.jumped,
-        onDeath: (source) => this.handleDeath(source),
+    const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+      const riding = Boolean(session.ridingCartId);
+      online.inputSeq += 1;
+      online.client.send({
+        type: 'input',
+        seq: online.inputSeq,
+        forward: movement.forward,
+        right: movement.right,
+        jump: movement.jump,
+        sneak: movement.sneak,
+        sprint: movement.sprint,
+        descend: movement.descend === true,
+        flySprint: movement.flySprint === true,
+        yaw: this.input.yaw,
+        pitch: this.input.pitch,
+        selectedSlot: session.selectedSlot,
+        mining: gameplayAllowed && this.input.mining,
+        use: gameplayAllowed && this.input.using,
+        vehicleForward: riding ? movement.forward : 0,
       });
-      if (survivalResult.dead) {
-        this.handleDeath();
-        return;
-      }
-    }
-    simMark = this.addSimPart('player', simMark);
-
-    if (gameplayAllowed) {
-      this.updateTargetAndActions();
-      this.updateFoodUse();
-    } else {
+    const selected = this.selectedStack();
+    session.combat.setHeldItem(selected?.itemId);
+    this.firstPerson?.setHeldItems(selected?.itemId);
+    session.playerVisual.setHeldItem(selected?.itemId);
+    if (gameplayAllowed) this.updateTargetAndActions();
+    else {
       this.input.consumeAttackPressed();
       this.input.consumeUsePressed();
       session.miningProgress = 0;
       session.miningTarget = undefined;
-      resetMiningSound(this.miningSound);
     }
-    simMark = this.addSimPart('other', simMark);
-    const entityStart = performance.now();
-    session.arrows.tick(FIXED_DT);
-    const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
-      mode: session.summary.mode,
-      addItem: (itemId, count) => session.inventory.addItem(itemId, count),
-    });
-    if (collectedArrows > 0) this.playLocal('item.pickup');
-    session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
-    const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
-    const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
-    session.minecarts.update(FIXED_DT, {
-      riderId: session.ridingCartId,
-      forward: riding && steerOnRail ? movementBefore.forward : 0,
-      strafe: riding && steerOnRail ? movementBefore.right : 0,
-      riderYaw: session.player.yaw,
-    });
-    this.updateMinecartRiding(session);
+    const cx = floorDiv(Math.floor(session.player.position.x), 16);
+    const cz = floorDiv(Math.floor(session.player.position.z), 16);
+    const viewKey = `${cx},${cz},${this.settings.renderDistance}`;
+    if (online.lastViewKey !== viewKey) {
+      online.lastViewKey = viewKey;
+      online.client.send({
+        type: 'view',
+        cx,
+        cz,
+        radius: Math.max(1, Math.min(8, this.settings.renderDistance)),
+      });
+    }
     if (session.playTicks % 80 === 0) {
       const removed = session.world.pruneChunks(
         Math.floor(session.player.position.x),
@@ -1834,41 +2286,187 @@ export class Game {
       );
       session.worldRenderer.removeChunks(removed);
     }
-    for (const boom of session.minecarts.consumeExplosions()) {
-      this.explosionQueue.enqueue({
-        x: boom.position.x,
-        y: boom.position.y,
-        z: boom.position.z,
-        radius: boom.radius,
-        power: boom.power,
-      });
-      if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
-    }
-    simMark = this.addSimPart('entities', simMark);
-    session.mobs.update(FIXED_DT, {
-      playerPosition: session.player.position,
-      playerEyePosition: session.player.eyePosition(),
-      playerAlive: !session.survival.dead,
-      playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
-      daylight: this.daylightFactor(session.world.timeOfDay),
-    });
-    this.processMobEvents();
-    simMark = this.addSimPart('mobs', simMark);
-    this.processExplosionQueue();
-    if (session.summary.mode === 'survival' && session.survival.dead) {
-      this.handleDeath();
+    session.mobs.tickRemoteVisuals(FIXED_DT);
+    const holdingBow = gameplayAllowed
+      && this.input.using
+      && this.selectedStack()?.itemId === ItemId.Bow;
+    session.bowUseTicks = stepVisualBowUseTicks(session.bowUseTicks, holdingBow);
+    if (session.playTicks % 2 === 0) this.refreshHud();
+  }
+
+  private tick(): void {
+    const session = this.session;
+    if (!session) return;
+    if (!shouldRunClientWorldSimulation(Boolean(session.online))) {
+      this.tickOnline(session);
       return;
     }
-    session.world.processSupportIntegrity();
-    this.processDetachedBlocks();
-    session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
-    this.lastEntityUpdateMs += performance.now() - entityStart;
-    simMark = this.addSimPart('entities', simMark);
-    this.updateRedstone();
-    if (session.summary.mode === 'survival' && session.survival.dead) {
-      this.handleDeath();
-      return;
-    }
+    const profile = this.profiler.enabled;
+    let simMark = profile ? performance.now() : 0;
+    session.playTicks += 1;
+    if (this.debugTickOrder) this.kernelTrace.length = 0;
+
+    const overlayOpen = this.ui.isBlockingOverlay();
+    const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
+    const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    const riding = Boolean(session.ridingCartId);
+    let entityStart = 0;
+
+    const aborted = tickGameplayKernel({
+      tickWorld: () => {
+        session.world.tick();
+        this.processDetachedBlocks();
+      },
+      tickFalling: () => {
+        for (const spawn of session.world.consumeFallingBlocks()) {
+          session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
+        }
+        session.falling.update(FIXED_DT);
+        simMark = this.addSimPart('world', simMark);
+      },
+      tickPlayers: () => {
+        const selected = this.selectedStack();
+        session.combat.setHeldItem(selected?.itemId);
+        session.combat.setOffhand(session.inventory.offhand?.itemId);
+        this.firstPerson?.setHeldItems(selected?.itemId);
+        simMark = this.addSimPart('combat', simMark);
+
+        session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
+        const drawingBow = session.bowUseTicks > 0;
+        const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
+        session.player.creativeFlightAllowed = session.summary.mode === 'creative';
+        const playerInput = {
+          yaw: this.input.yaw,
+          pitch: this.input.pitch,
+          locomotion: !riding,
+          movement: () => ({
+            ...movementBefore,
+            forward: riding ? 0 : movementBefore.forward * movementMultiplier,
+            right: riding ? 0 : movementBefore.right * movementMultiplier,
+            jump: riding ? false : movementBefore.jump,
+            sprint: !riding && !drawingBow && movementBefore.sprint
+              && movementMultiplier === 1
+              && (session.summary.mode === 'creative' || session.survival.hunger > 6),
+            descend: movementBefore.descend === true,
+            flySprint: movementMultiplier === 1 && movementBefore.flySprint === true,
+          }),
+        };
+        const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
+          if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
+        });
+        this.updateFootsteps(session, playerResult.horizontalDistance);
+        if (session.summary.mode === 'survival') {
+          const survivalResult = session.survival.tick(FIXED_DT, {
+            player: session.player,
+            world: session.world,
+            armor: session.inventory,
+            inFire: session.player.inFire,
+            horizontalDistance: playerResult.horizontalDistance,
+            sprinting: session.player.sprinting,
+            swimming: session.player.inWater,
+            jumped: playerResult.jumped,
+            onDeath: (source) => this.handleDeath(source),
+          });
+          if (survivalResult.dead) {
+            this.handleDeath();
+            return 'abort';
+          }
+        }
+        simMark = this.addSimPart('player', simMark);
+      },
+      tickPlayerActions: () => {
+        if (gameplayAllowed) {
+          this.updateTargetAndActions();
+          this.updateFoodUse();
+        } else {
+          this.input.consumeAttackPressed();
+          this.input.consumeUsePressed();
+          session.miningProgress = 0;
+          session.miningTarget = undefined;
+          resetMiningSound(this.miningSound);
+        }
+        simMark = this.addSimPart('other', simMark);
+      },
+      tickProjectiles: () => {
+        entityStart = performance.now();
+        session.arrows.tick(FIXED_DT);
+        const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
+          mode: session.summary.mode,
+          addItem: (itemId, count) => session.inventory.addItem(itemId, count),
+        });
+        if (collectedArrows > 0) this.playLocal('item.pickup');
+      },
+      tickVehicles: () => {
+        session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
+        const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
+        const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
+        session.minecarts.update(FIXED_DT, {
+          riderId: session.ridingCartId,
+          forward: riding && steerOnRail ? movementBefore.forward : 0,
+          strafe: riding && steerOnRail ? movementBefore.right : 0,
+          riderYaw: session.player.yaw,
+        });
+        this.updateMinecartRiding(session);
+        if (session.playTicks % 80 === 0) {
+          const removed = session.world.pruneChunks(
+            Math.floor(session.player.position.x),
+            Math.floor(session.player.position.z),
+            this.settings.renderDistance,
+          );
+          session.worldRenderer.removeChunks(removed);
+        }
+        for (const boom of session.minecarts.consumeExplosions()) {
+          this.explosionQueue.enqueue({
+            x: boom.position.x,
+            y: boom.position.y,
+            z: boom.position.z,
+            radius: boom.radius,
+            power: boom.power,
+          });
+          if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
+        }
+        simMark = this.addSimPart('entities', simMark);
+      },
+      tickMobs: () => {
+        session.mobs.update(FIXED_DT, {
+          playerPosition: session.player.position,
+          playerEyePosition: session.player.eyePosition(),
+          playerAlive: !session.survival.dead,
+          playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
+          daylight: daylightFactor(session.world.timeOfDay),
+        });
+      },
+      handleMobEvents: () => {
+        this.processMobEvents();
+        simMark = this.addSimPart('mobs', simMark);
+        this.processExplosionQueue();
+        if (session.summary.mode === 'survival' && session.survival.dead) {
+          this.handleDeath();
+          return 'abort';
+        }
+      },
+      tickPreDropSupport: () => {
+        session.world.processSupportIntegrity();
+        this.processDetachedBlocks();
+      },
+      tickDrops: () => {
+        session.drops.update(FIXED_DT, { collectorPosition: session.player.position });
+        this.lastEntityUpdateMs += performance.now() - entityStart;
+        simMark = this.addSimPart('entities', simMark);
+      },
+      tickRedstone: () => {
+        this.updateRedstone();
+      },
+      processExplosions: () => {
+        this.processExplosionQueue();
+        if (session.summary.mode === 'survival' && session.survival.dead) {
+          this.handleDeath();
+          return 'abort';
+        }
+      },
+    }, this.debugTickOrder ? this.kernelTrace : undefined);
+
+    if (aborted) return;
 
     if (session.playTicks - session.lastAutosaveTick >= AUTOSAVE_INTERVAL_SECONDS * TICK_RATE) {
       session.lastAutosaveTick = session.playTicks;
@@ -1886,48 +2484,75 @@ export class Game {
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
     const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
+    const remoteHit = session.online
+      ? raycastRemotePlayers(session.online.remotes, origin, direction, Math.min(3, PLAYER_REACH))
+      : undefined;
+    const remoteCloser = Boolean(
+      remoteHit
+      && (!mobTarget || remoteHit.distance <= mobTarget.distance)
+      && (!cartHit || remoteHit.distance <= cartHit.distance)
+      && (!session.target || remoteHit.distance < session.target.distance)
+    );
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
-    if (attack?.kind === 'mob' && mobTarget) {
+    if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
+      session.online.rejectedBlockKey = undefined;
+    }
+    if (remoteCloser && session.online) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       for (let click = 0; click < attackPresses; click += 1) {
-        const stack = this.selectedStack();
-        const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
-          critical: {
-            fallDistance: session.player.fallDistance,
-            onGround: session.player.onGround,
-            sprinting: session.player.sprinting,
-            inWater: session.player.inWater,
-            onLadder: session.player.onLadder,
-            riding: Boolean(session.ridingCartId),
-          },
-          attackerSprinting: session.player.sprinting,
-          attackerYaw: session.player.yaw,
-        });
-        const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
-          source: 'player',
-          attackerPosition: session.player.position,
-          attackerYaw: result.attackerYaw,
-          extraKnockbackLevel: result.extraKnockbackLevel,
-        });
-        completeMeleeAttack(result, accepted, session.player);
-        if (accepted && session.summary.mode === 'survival') {
-          if (stack && result.profile.durabilityCost > 0) {
-            session.inventory.setSlot(session.selectedSlot, damageItem(stack, result.profile.durabilityCost));
-          }
-          session.survival.recordAttack();
+        session.online.client.send({ type: 'attack' });
+      }
+    } else if (attack?.kind === 'mob' && mobTarget) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      if (session.online) {
+        for (let click = 0; click < attackPresses; click += 1) {
+          session.online.client.send({ type: 'attack' });
         }
-        if (accepted) this.playWorld('combat.hit', mobTarget.mob.position.x, mobTarget.mob.position.y + 0.9, mobTarget.mob.position.z);
+      } else {
+        for (let click = 0; click < attackPresses; click += 1) {
+          const stack = this.selectedStack();
+          const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
+            critical: {
+              fallDistance: session.player.fallDistance,
+              onGround: session.player.onGround,
+              sprinting: session.player.sprinting,
+              inWater: session.player.inWater,
+              onLadder: session.player.onLadder,
+              riding: Boolean(session.ridingCartId),
+            },
+            attackerSprinting: session.player.sprinting,
+            attackerYaw: session.player.yaw,
+          });
+          const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
+            source: 'player',
+            attackerPosition: session.player.position,
+            attackerYaw: result.attackerYaw,
+            extraKnockbackLevel: result.extraKnockbackLevel,
+          });
+          completeMeleeAttack(result, accepted, session.player);
+          if (accepted && session.summary.mode === 'survival') {
+            if (stack && result.profile.durabilityCost > 0) {
+              session.inventory.setSlot(session.selectedSlot, damageItem(stack, result.profile.durabilityCost));
+            }
+            session.survival.recordAttack();
+          }
+          if (accepted) this.playWorld('combat.hit', mobTarget.mob.position.x, mobTarget.mob.position.y + 0.9, mobTarget.mob.position.z);
+        }
       }
     } else if (attack?.kind === 'minecart') {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
-      if (attackPressed) this.breakMinecart(attack.cart);
+      if (attackPressed) {
+        if (session.online) session.online.client.send({ type: 'attack' });
+        else this.breakMinecart(attack.cart);
+      }
     } else if (!this.input.mining || !session.target) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
@@ -1950,7 +2575,14 @@ export class Game {
     }
     for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
     session.combat.setHeldItem(this.selectedStack()?.itemId);
-    if (this.input.consumeUsePressed()) this.useTargetOrItem();
+    if (this.input.consumeUsePressed()) {
+      if (session.online) {
+        // Server useHeld owns interact + placement from authoritative look/raycast.
+        session.online.client.send({ type: 'interact' });
+      } else {
+        this.useTargetOrItem();
+      }
+    }
   }
 
   private miningDelta(definition: ReturnType<typeof getBlockDefinition>, tool: ItemStack | null): number {
@@ -1961,6 +2593,17 @@ export class Game {
     const session = this.session!;
     const hit = session.target;
     if (!hit) return;
+    if (session.online) {
+      const pending = session.online.pendingBlockAction;
+      if (session.online.rejectedBlockKey === `${hit.x},${hit.y},${hit.z}`) return;
+      if (pending && pending.kind === 'break' && pending.x === hit.x && pending.y === hit.y && pending.z === hit.z) {
+        return;
+      }
+      session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
+      session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
+      this.firstPerson?.swing();
+      return;
+    }
     const definition = getBlockDefinition(hit.block);
     const toolStack = this.selectedStack();
     const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
@@ -1981,7 +2624,7 @@ export class Game {
     if (session.summary.mode === 'survival') {
       const drop = definition.drop;
       if (drop && harvestable) {
-        const count = drop.count ?? (drop.min !== undefined ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
+        const count = rollDropCount(drop, this.simRandom);
         const slabExtra = isSlabBlock(hit.block)
           && defaultSlabType(session.world.getBlockState(hit.x, hit.y, hit.z)) === 'double' ? count : 0;
         this.spawnDroppedStack(
@@ -2027,400 +2670,87 @@ export class Game {
 
   private useTargetOrItem(): void {
     const session = this.session!;
-    // Empty buckets need the first liquid hit, not the solid target behind it.
-    if (this.selectedStack()?.itemId === ItemId.Bucket) {
-      this.useBucket();
+    if (session.online) {
+      session.online.client.send({ type: 'interact' });
       return;
     }
-    const hit = session.target;
-    const cartRay = this.raycastPlayerMinecart(session);
-    const cartCloser = Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
-    if (hit && !cartCloser) {
-      if (hit.block === BlockId.CraftingTable) return this.openBlockInventory('crafting-table', hit);
-      if (hit.block === BlockId.Chest) return this.openBlockInventory('chest', hit);
-      if (hit.block === BlockId.Furnace) return this.openBlockInventory('furnace', hit);
-      if (hit.block === BlockId.Lever) {
-        const active = session.redstone.toggleLever(hit.x, hit.y, hit.z);
-        if (active !== undefined) {
-          this.playWorld('redstone.click', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, { pitch: active ? 1.08 : 0.92 });
-          this.ui.toast(active ? 'Рычаг включён' : 'Рычаг выключен');
-          this.firstPerson?.swing();
-        }
-        return;
-      }
-      if (hit.block === BlockId.StoneButton) {
-        if (session.redstone.pressButton(hit.x, hit.y, hit.z)) {
-          this.playWorld('redstone.click', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, { pitch: 1.06 });
-          this.firstPerson?.swing();
-        }
-        return;
-      }
-      if (hit.block === BlockId.OakDoor) {
-        const { lowerY } = this.doorHalves(hit.x, hit.y, hit.z);
-        const opening = session.world.getBlockState(hit.x, lowerY, hit.z)?.open !== true;
-        this.toggleDoor(hit.x, hit.y, hit.z);
-        this.playWorld(opening ? 'door.open' : 'door.close', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
-        this.firstPerson?.swing();
-        return;
-      }
-      if (hit.block === BlockId.WhiteBed) {
-        session.survival.setSpawnPoint([hit.x + 0.5, hit.y + 1.01, hit.z + 0.5]);
-        if (session.world.timeOfDay > 12_500 && session.world.timeOfDay < 23_500) {
-          session.world.timeOfDay = 1_000;
-          this.ui.toast('Ночь пропущена. Точка возрождения установлена.');
-        } else this.ui.toast('Точка возрождения установлена');
-        void this.saveSession();
-        return;
-      }
-    }
-    const stack = this.selectedStack();
-    const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
-    if (item?.kind === 'food') {
-      session.foodUseTicks = 1;
-      return;
-    }
-    if (stack?.itemId === ItemId.Bow) {
-      session.bowUseTicks = 1;
-      return;
-    }
-    if (cartCloser) {
-      if (stack?.itemId === ItemId.FlintAndSteel) {
-        this.useFlintAndSteel(undefined);
-        return;
-      }
-      if (stack?.itemId === 'tnt' && this.tryInsertTntMinecart(undefined)) return;
-      const targetedCart = cartRay?.cart;
-      if (targetedCart && session.minecarts.isRideable(targetedCart)) {
-        this.mountMinecart(targetedCart.id);
-      }
-      return;
-    }
-    if (stack?.itemId === ItemId.FlintAndSteel) {
-      this.useFlintAndSteel(hit);
-      return;
-    }
-    if (stack?.itemId === 'tnt' && this.tryInsertTntMinecart(hit)) return;
-    if (stack?.itemId === ItemId.Minecart) {
-      this.placeMinecart(hit);
-      return;
-    }
-    const targetedCart = this.raycastPlayerMinecart(session)?.cart
-      ?? (hit
-        ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-        : session.minecarts.nearest(session.player.position, 1.5));
-    if (targetedCart && session.minecarts.isRideable(targetedCart)) {
-      this.mountMinecart(targetedCart.id);
-      return;
-    }
-    if (stack?.itemId === ItemId.WaterBucket || stack?.itemId === ItemId.LavaBucket) {
-      this.useBucket(hit);
-      return;
-    }
-    if (!hit || !stack || item?.placesBlockId === undefined) return;
-    if (this.tryMergeSlab(hit, item.placesBlockId)) return;
-    const hitDefinition = getBlockDefinition(hit.block);
-    const replaceHit = hitDefinition.replaceable === true;
-    if (!replaceHit && !canUseAsPlacementAnchor(hit.block)) return;
-    const x = replaceHit ? hit.x : hit.x + hit.normal.x;
-    const y = replaceHit ? hit.y : hit.y + hit.normal.y;
-    const z = replaceHit ? hit.z : hit.z + hit.normal.z;
-    if (!isValidWorldY(y)) {
-      this.ui.toast('Нельзя ставить блок за пределами мира');
-      return;
-    }
-    if (this.tryMergeSlabAt(x, y, z, item.placesBlockId)) return;
-    const existing = getBlockDefinition(session.world.getBlock(x, y, z));
-    if (!existing.replaceable && session.world.getBlock(x, y, z) !== BlockId.Air) return;
-    const placed = getBlockDefinition(item.placesBlockId);
-    // Replacement is in the clicked cell, attached to the floor below it.
-    // Thin raycast targets never lend their neighbor face to another block.
-    const attachmentNormal = replaceHit ? new THREE.Vector3(0, 1, 0) : hit.normal;
-    if (item.placesBlockId === BlockId.Lantern) {
-      const orientation = lanternPlacementFromHit(
-        attachmentNormal.x, attachmentNormal.y, attachmentNormal.z,
-      );
-      if (!orientation) {
-        this.ui.toast('Светильник можно поставить только сверху или снизу блока');
-        return;
-      }
-      const hanging = orientation.attachment === 'ceiling';
-      const supported = hanging
-        ? canSupportHanger(session.world, x, y + 1, z, 'down')
-        : canSupportHanger(session.world, x, y - 1, z, 'up');
-      if (!supported) {
-        this.ui.toast('Светильнику нужна опора');
-        return;
-      }
-      const boxes = [lanternSelectionLocalBox(orientation)].map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { attachment: orientation.attachment });
-      return;
-    }
-    if (item.placesBlockId === BlockId.Chain) {
-      if (!chainPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z)) {
-        this.ui.toast('Цепь ставится только вертикально');
-        return;
-      }
-      const hanging = attachmentNormal.y < -0.5;
-      const supported = hanging
-        ? canSupportHanger(session.world, x, y + 1, z, 'down')
-        : canSupportHanger(session.world, x, y - 1, z, 'up');
-      if (!supported) {
-        this.ui.toast('Цепи нужна точка крепления');
-        return;
-      }
-      const boxes = [chainSelectionLocalBox()].map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { attachment: hanging ? 'ceiling' : 'floor' });
-      return;
-    }
-    if (['torch', 'button', 'lever', 'ladder'].includes(placed.renderShape)
-      && !canAttachToFace(session.world,
-        x - attachmentNormal.x, y - attachmentNormal.y, z - attachmentNormal.z, attachmentNormal)) return;
-    if (['wire', 'rail', 'pressure_plate', 'door'].includes(placed.renderShape)
-      && !canAttachToFace(session.world, x, y - 1, z, { x: 0, y: 1, z: 0 })) return;
-    if (item.placesBlockId === BlockId.OakDoor) {
-      this.placeDoor(x, y, z);
-      return;
-    }
-    if (item.placesBlockId === BlockId.Torch || item.placesBlockId === BlockId.RedstoneTorch) {
-      const view = session.player.viewDirection();
-      const orientation = torchPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
-      if (!orientation) {
-        this.ui.toast('Факел нельзя поставить на потолок');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, orientation);
-      return;
-    }
-    if (item.placesBlockId === BlockId.StoneButton) {
-      const view = session.player.viewDirection();
-      const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.redstone.setButtonOrientation(x, y, z, orientation.attachment, orientation.facing);
-      return;
-    }
-    if (item.placesBlockId === BlockId.Ladder) {
-      const orientation = ladderPlacementFromHit(hit.normal.x, hit.normal.y, hit.normal.z);
-      if (!orientation) {
-        this.ui.toast('Лестницу можно поставить только на боковую сторону блока');
-        return;
-      }
-      if (replaceHit) {
-        this.ui.toast('Лестнице нужна сплошная боковая опора');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, { facing: orientation.facing });
-      return;
-    }
-    if (isPressurePlateBlock(item.placesBlockId)) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      return;
-    }
-    if (isSlabBlock(item.placesBlockId)) {
-      const localY = hit.point ? hit.point.y - hit.y : 0.25;
-      const slabType = slabTypeFromHit(hit.normal.x, hit.normal.y, hit.normal.z, localY);
-      const boxes = slabLocalBoxes(slabType).map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { slabType });
-      return;
-    }
-    if (isStairBlock(item.placesBlockId)) {
-      const view = session.player.viewDirection();
-      const localY = hit.point ? hit.point.y - hit.y : 0.25;
-      const placement = stairPlacementFromHit(
-        hit.normal.x, hit.normal.y, hit.normal.z, localY, view.x, view.z,
-      );
-      const boxes = stairLocalBoxes(placement.facing, placement.stairHalf, 'straight').map((box) => ({
-        minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-        maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-      }));
-      if (session.player.intersectsCollisionBoxes(boxes)) {
-        this.ui.toast('Нельзя поставить блок внутри игрока');
-        return;
-      }
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, { facing: placement.facing, stairHalf: placement.stairHalf });
-      return;
-    }
-    if (item.placesBlockId === BlockId.Chest) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, { facing: chestFacingFromYaw(session.player.yaw) });
-      return;
-    }
-    if (item.placesBlockId === BlockId.Furnace) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, placed.solid)) return;
-      session.world.setBlockState(x, y, z, { facing: furnaceFacingFromYaw(session.player.yaw) });
-      return;
-    }
-    if (isRailBlock(item.placesBlockId)) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, false)) return;
-      session.world.setBlockState(x, y, z, {
-        railShape: isolatedRailShapeFromYaw(session.player.yaw),
-      });
-      this.refreshRailsAround(x, y, z);
-      return;
-    }
-    if (isFenceBlock(item.placesBlockId)) {
-      if (!this.finishPlacingBlock(x, y, z, item.placesBlockId, true)) return;
-      return;
-    }
-    if (placed.solid && session.player.intersectsBlock(x, y, z)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return;
-    }
-    if (session.world.setBlock(x, y, z, item.placesBlockId)) {
-      session.redstone.notifyBlockChanged(x, y, z);
-      if (item.placesBlockId === BlockId.Lever) {
-        const view = session.player.viewDirection();
-        const orientation = buttonPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z, view.x, view.z);
-        session.redstone.setLeverOrientation(x, y, z, orientation.attachment, orientation.facing);
-      }
-      this.playBlockSound('place', item.placesBlockId, x, y, z);
-      this.firstPerson?.swing();
-      if (session.summary.mode === 'survival') {
-        this.consumeSelected(1);
-      }
-    }
+    performUseHeld(this.singleplayerUseContext());
   }
 
-  private tryMergeSlab(hit: VoxelHit, placing: BlockId): boolean {
-    if (!isSlabBlock(placing) || hit.block !== placing) return false;
-    const existing = defaultSlabType(this.session!.world.getBlockState(hit.x, hit.y, hit.z));
-    if (existing === 'double') return false;
-    const ny = hit.normal.y;
-    const merge = (existing === 'bottom' && ny > 0.5) || (existing === 'top' && ny < -0.5);
-    if (!merge) return false;
-    return this.mergeSlab(hit.x, hit.y, hit.z);
-  }
-
-  private tryMergeSlabAt(x: number, y: number, z: number, placing: BlockId): boolean {
+  private singleplayerUseContext(): UseSimulationContext {
     const session = this.session!;
-    const dest = session.world.getBlock(x, y, z, false);
-    if (!isSlabBlock(placing) || dest !== placing) return false;
-    if (defaultSlabType(session.world.getBlockState(x, y, z)) === 'double') return false;
-    return this.mergeSlab(x, y, z);
-  }
-
-  private mergeSlab(x: number, y: number, z: number): boolean {
-    const session = this.session!;
-    const boxes = slabLocalBoxes('double').map((box) => ({
-      minX: x + box.minX, minY: y + box.minY, minZ: z + box.minZ,
-      maxX: x + box.maxX, maxY: y + box.maxY, maxZ: z + box.maxZ,
-    }));
-    if (session.player.intersectsCollisionBoxes(boxes)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return true;
-    }
-    session.world.setBlockState(x, y, z, { slabType: 'double' });
-    session.redstone.notifyBlockChanged(x, y, z);
-    this.playBlockSound('place', session.world.getBlock(x, y, z, false), x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-    return true;
-  }
-
-  private finishPlacingBlock(x: number, y: number, z: number, block: BlockId, solid: boolean): boolean {
-    const session = this.session!;
-    if (solid && session.player.intersectsBlock(x, y, z)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return false;
-    }
-    if (!session.world.setBlock(x, y, z, block)) return false;
-    session.redstone.notifyBlockChanged(x, y, z);
-    this.playBlockSound('place', block, x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-    return true;
-  }
-
-  private doorHalves(x: number, y: number, z: number): { lowerY: number; upperY: number } {
-    const session = this.session!;
-    const state = session.world.getBlockState(x, y, z);
-    const half = state?.half
-      ?? (session.world.getBlock(x, y - 1, z, false) === BlockId.OakDoor ? 'upper' : 'lower');
-    const lowerY = half === 'upper' ? y - 1 : y;
-    return { lowerY, upperY: lowerY + 1 };
-  }
-
-  private placeDoor(x: number, y: number, z: number): void {
-    const session = this.session!;
-    if (y + 1 >= WORLD_HEIGHT) {
-      this.ui.toast('Нет места для двери');
-      return;
-    }
-    const upperBlock = session.world.getBlock(x, y + 1, z);
-    const upperDefinition = getBlockDefinition(upperBlock);
-    if (upperBlock !== BlockId.Air && !upperDefinition.replaceable) {
-      this.ui.toast('Нет места для двери');
-      return;
-    }
-    if (session.player.intersectsBlock(x, y, z) || session.player.intersectsBlock(x, y + 1, z)) {
-      this.ui.toast('Нельзя поставить блок внутри игрока');
-      return;
-    }
-    if (!session.world.setBlock(x, y, z, BlockId.OakDoor)) return;
-    if (!session.world.setBlock(x, y + 1, z, BlockId.OakDoor)) {
-      session.world.setBlock(x, y, z, BlockId.Air);
-      return;
-    }
-    const facing = doorFacingFromYaw(session.player.yaw);
-    session.world.setBlockState(x, y, z, { facing, hinge: 'left', open: false, half: 'lower' });
-    session.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
-    session.redstone.notifyBlockChanged(x, y, z);
-    session.redstone.notifyBlockChanged(x, y + 1, z);
-    this.playBlockSound('place', BlockId.OakDoor, x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-  }
-
-  private toggleDoor(x: number, y: number, z: number): void {
-    const session = this.session!;
-    const { lowerY, upperY } = this.doorHalves(x, y, z);
-    const current = session.world.getBlockState(x, lowerY, z) ?? session.world.getBlockState(x, y, z);
-    const next = {
-      facing: current?.facing ?? 'north',
-      hinge: current?.hinge ?? 'left' as const,
-      open: current?.open !== true,
+    const game = this;
+    return {
+      world: session.world,
+      inventory: session.inventory,
+      get selectedSlot() { return session.selectedSlot; },
+      set selectedSlot(value) { session.selectedSlot = value; },
+      gamemode: session.summary.mode,
+      reach: PLAYER_REACH,
+      hit: session.target,
+      eyePosition: () => session.player.eyePosition(),
+      viewDirection: () => session.player.viewDirection(),
+      get yaw() { return session.player.yaw; },
+      get position() { return session.player.position; },
+      intersectsBlock: (x, y, z) => session.player.intersectsBlock(x, y, z),
+      intersectsCollisionBoxes: (boxes) => session.player.intersectsCollisionBoxes(boxes),
+      get foodUseTicks() { return session.foodUseTicks; },
+      set foodUseTicks(value) { session.foodUseTicks = value; },
+      get bowUseTicks() { return session.bowUseTicks; },
+      set bowUseTicks(value) { session.bowUseTicks = value; },
+      get ridingCartId() { return session.ridingCartId; },
+      set ridingCartId(value) { session.ridingCartId = value; },
+      minecarts: session.minecarts,
+      redstone: session.redstone,
+      setSpawnPoint: (position) => session.survival?.setSpawnPoint(position),
+      enterVehicle: (cartId) => {
+        game.mountMinecart(cartId);
+        return session.ridingCartId === cartId;
+      },
+      effects: {
+        toast: (message) => game.ui.toast(message),
+        swing: () => game.firstPerson?.swing(),
+        playWorld: (event, x, y, z, options) => game.playWorld(event as SoundEventId, x, y, z, options),
+        playBlock: (_action, block, x, y, z) => game.playBlockSound('place', block, x, y, z),
+        openContainer: (kind, x, y, z) => {
+          const hit = session.target
+            && session.target.x === x && session.target.y === y && session.target.z === z
+            ? session.target
+            : {
+              x, y, z,
+              block: session.world.getBlock(x, y, z, false),
+              normal: new Vec3(0, 1, 0),
+              distance: 0,
+              point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
+            };
+          game.openBlockInventory(kind, hit);
+        },
+        onBedUsed: (skippedNight) => {
+          game.ui.toast(skippedNight
+            ? 'Ночь пропущена. Точка возрождения установлена.'
+            : 'Точка возрождения установлена');
+          void game.saveSession();
+        },
+        onFlintIgnite: () => {
+          game.playWorld(
+            'fire.ignite',
+            session.player.position.x,
+            session.player.position.y + 1,
+            session.player.position.z,
+          );
+          game.firstPerson?.swing();
+        },
+        onFlintAlreadyPrimed: () => { game.firstPerson?.swing(); },
+        dropOverflow: (stack) => game.spawnDroppedStack(stack),
+      },
     };
-    session.world.setBlockState(x, lowerY, z, { ...next, half: 'lower' });
-    if (session.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
-      session.world.setBlockState(x, upperY, z, { ...next, half: 'upper' });
-    }
   }
 
   private removeDoor(x: number, y: number, z: number): void {
     const session = this.session!;
-    const { lowerY, upperY } = this.doorHalves(x, y, z);
-    session.world.setBlock(x, lowerY, z, BlockId.Air);
+    const { lowerY, upperY } = clearDoorBlocks(session.world, x, y, z);
     session.redstone.notifyBlockChanged(x, lowerY, z);
-    if (session.world.getBlock(x, upperY, z, false) === BlockId.OakDoor) {
-      session.world.setBlock(x, upperY, z, BlockId.Air);
-      session.redstone.notifyBlockChanged(x, upperY, z);
-    }
+    session.redstone.notifyBlockChanged(x, upperY, z);
   }
 
   private updateFoodUse(): void {
@@ -2500,8 +2830,7 @@ export class Game {
       // Environmental drops also exist in Creative; lava destroys without loot.
       const drop = getBlockDefinition(event.block).drop;
       if (!drop || event.reason === 'lava') continue;
-      const count = drop.count ?? (drop.min !== undefined
-        ? drop.min + Math.floor(Math.random() * ((drop.max ?? drop.min) - drop.min + 1)) : 1);
+      const count = rollDropCount(drop, this.simRandom);
       if (count > 0) this.spawnDroppedStack(createItemStack(drop.item, count),
         new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
     }
@@ -2510,12 +2839,12 @@ export class Game {
   private updateRedstone(): void {
     const session = this.session!;
     const occupied = new Set<string>();
-    const living: Readonly<THREE.Vector3>[] = [
+    const living: readonly Vec3Like[] = [
       session.player.position,
       ...session.mobs.entities.map((mob) => mob.position),
     ];
-    const items: Readonly<THREE.Vector3>[] = session.drops.entities.map((drop) => drop.position);
-    const occupy = (positions: readonly Readonly<THREE.Vector3>[], livingOnly: boolean): void => {
+    const items: readonly Vec3Like[] = session.drops.entities.map((drop) => drop.position);
+    const occupy = (positions: readonly Vec3Like[], livingOnly: boolean): void => {
       void livingOnly;
       for (const position of positions) {
         const x = Math.floor(position.x);
@@ -2551,7 +2880,6 @@ export class Game {
         power: event.power,
       });
     }
-    this.processExplosionQueue();
   }
 
   private damagePlayerFromMob(event: MobPlayerDamageEvent): void {
@@ -2579,6 +2907,7 @@ export class Game {
       maxJobs: mobile ? 6 : 12,
       maxVoxels: mobile ? 256 : 512,
       remainingPrimedCapacity: session.redstone.primedCapacityRemaining,
+      random: this.simRandom,
       onResolved: (job) => {
         this.applyExplosionDamage(job.x, job.y, job.z, job.radius, job.power);
         if (shouldPlayExplosion(this.explosionSounds, job, session.playTicks)) {
@@ -2593,8 +2922,8 @@ export class Game {
           z: block.z,
           block: block.previous,
           distance: 0,
-          normal: new THREE.Vector3(),
-          point: new THREE.Vector3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
+          normal: new Vec3(),
+          point: new Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
         });
       },
       onChainedTnt: (tnt) => {
@@ -2646,17 +2975,26 @@ export class Game {
     if (!session || this.lifecycle.state !== 'PLAYING') return;
     const stack = this.selectedStack();
     if (!stack) return;
+    if (session.online) {
+      session.online.client.send({
+        type: 'inventory_action',
+        action: 'drop_selected',
+        slot: session.selectedSlot,
+        count: 1,
+      });
+      return;
+    }
     const dropped = { ...stack, count: 1 };
     session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
     session.drops.drop(dropped, session.player.eyePosition(), session.player.viewDirection());
     this.refreshHud();
   }
 
-  private spawnDroppedStack(stack: ItemStack, position?: THREE.Vector3): void {
+  private spawnDroppedStack(stack: ItemStack, position?: Vec3Like): void {
     const session = this.session;
-    if (!session) return;
+    if (!session || session.online) return;
     session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
-      velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2.2, (Math.random() - 0.5) * 1.4),
+      velocity: new THREE.Vector3(...dropScatterVelocity(this.simRandom)),
     });
   }
 
@@ -2676,111 +3014,6 @@ export class Game {
     }
     this.lastConsumedArrow = undefined;
     return false;
-  }
-
-  private useFlintAndSteel(hit: VoxelHit | undefined): void {
-    const session = this.session!;
-    const cart = session.minecarts.handleFlintUse(
-      session.player.eyePosition(),
-      session.player.viewDirection(),
-      PLAYER_REACH,
-      session.ridingCartId,
-    );
-    const action = resolveFlintAndSteelUse(cart, hit);
-    if (action.type === 'prime-cart') {
-      this.wearFlint();
-      return;
-    }
-    if (action.type === 'already-primed') {
-      this.firstPerson?.swing();
-      return;
-    }
-    if (action.type === 'prime-tnt-block') {
-      session.redstone.primeTnt(action.x, action.y, action.z);
-      this.wearFlint();
-      return;
-    }
-    if (action.type === 'ignite-cell' && this.tryIgniteAt(action.x, action.y, action.z, session)) {
-      this.wearFlint();
-    }
-  }
-
-  private wearFlint(): void {
-    const session = this.session!;
-    const stack = this.selectedStack();
-    if (!stack) return;
-    this.playWorld(
-      'fire.ignite',
-      session.player.position.x,
-      session.player.position.y + 1,
-      session.player.position.z,
-    );
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') {
-      session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
-    }
-  }
-
-  private tryIgniteAt(x: number, y: number, z: number, session: GameSession): boolean {
-    const block = session.world.getBlock(x, y, z, false);
-    if (block === BlockId.Tnt) {
-      session.redstone.primeTnt(x, y, z);
-      return true;
-    }
-    const definition = getBlockDefinition(block);
-    if (block !== BlockId.Air && definition.replaceable !== true) return false;
-    if (!session.world.setBlock(x, y, z, BlockId.Fire)) return false;
-    return true;
-  }
-
-  private useBucket(hit?: VoxelHit): void {
-    const session = this.session!;
-    const context = {
-      world: session.world,
-      inventory: session.inventory,
-      selectedSlot: session.selectedSlot,
-      mode: session.summary.mode,
-      onDrop: (stack: ItemStack) => this.spawnDroppedStack(stack),
-    };
-    const changed = this.selectedStack()?.itemId === ItemId.Bucket
-      ? pickupFluidSource(context, session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH)
-      : placeBucketFluid(context, hit);
-    if (!changed) return;
-    session.redstone.notifyBlockChanged(changed.x, changed.y, changed.z);
-    if (changed.block === BlockId.Water) {
-      this.playWorld('water.splash', changed.x + 0.5, changed.y + 0.5, changed.z + 0.5);
-    }
-    this.firstPerson?.swing();
-  }
-
-  private placeMinecart(hit: VoxelHit | undefined): void {
-    const session = this.session!;
-    if (!hit) return;
-    const x = hit.block === BlockId.Rail ? hit.x : hit.x + hit.normal.x;
-    const y = hit.block === BlockId.Rail ? hit.y : hit.y + hit.normal.y;
-    const z = hit.block === BlockId.Rail ? hit.z : hit.z + hit.normal.z;
-    if (session.world.getBlock(x, y, z, false) !== BlockId.Rail) {
-      this.ui.toast('Вагонетку можно поставить только на рельсы');
-      return;
-    }
-    if (!session.minecarts.spawn(x, y, z)) return;
-    this.playBlockSound('place', BlockId.Rail, x, y, z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-  }
-
-  private tryInsertTntMinecart(hit: VoxelHit | undefined): boolean {
-    const session = this.session!;
-    const cart = this.raycastPlayerMinecart(session)?.cart
-      ?? (hit
-        ? session.minecarts.cartAt(hit.x, hit.y, hit.z)
-        : session.minecarts.nearest(session.player.position, 1.6));
-    if (!cart || !session.minecarts.insertTnt(cart)) return false;
-    this.playBlockSound('place', BlockId.Tnt, cart.position.x, cart.position.y, cart.position.z);
-    this.firstPerson?.swing();
-    if (session.summary.mode === 'survival') this.consumeSelected(1);
-    if (session.ridingCartId === cart.id) session.ridingCartId = undefined;
-    return true;
   }
 
   private mountMinecart(id: string): void {
@@ -2821,34 +3054,6 @@ export class Game {
     session.player.fallDistance = 0;
   }
 
-  private raycastPlayerMinecart(session: GameSession) {
-    return session.minecarts.raycast(
-      session.player.eyePosition(),
-      session.player.viewDirection(),
-      PLAYER_REACH,
-      session.ridingCartId,
-    );
-  }
-
-  private refreshRailsAround(x: number, y: number, z: number): void {
-    const session = this.session!;
-    const cells = [
-      [x, y, z], [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1],
-      [x + 1, y + 1, z], [x - 1, y + 1, z], [x, y + 1, z + 1], [x, y + 1, z - 1],
-    ];
-    for (const [cx, cy, cz] of cells) {
-      if (session.world.getBlock(cx!, cy!, cz!, false) !== BlockId.Rail) continue;
-      session.world.setBlockState(cx!, cy!, cz!, { railShape: resolveRailShape(session.world, cx!, cy!, cz!) });
-    }
-  }
-
-  private consumeSelected(count: number): void {
-    const session = this.session!;
-    const stack = this.selectedStack();
-    if (!stack) return;
-    session.inventory.setSlot(session.selectedSlot, stack.count <= count ? null : { ...stack, count: stack.count - count });
-  }
-
   private selectedStack(): ItemStack | null {
     return this.session?.inventory.getSlot(this.session.selectedSlot) ?? null;
   }
@@ -2876,6 +3081,9 @@ export class Game {
 
   private closeChatAndResumeLook(): void {
     this.ui.closeChat();
+    this.input.clearHeldKeys();
+    this.lifecycle.resumePlayingIfVisible();
+    this.canvas.focus({ preventScroll: true });
     if (this.lifecycle.state === 'PLAYING') this.input.tryRequestPointerLock();
   }
 
@@ -2889,6 +3097,11 @@ export class Game {
     }
     this.chat.rememberInput(trimmed);
     this.ui.setChatInputHistory(this.chat.history);
+    if (session.online) {
+      session.online.client.send({ type: 'chat', text: trimmed });
+      this.closeChatAndResumeLook();
+      return;
+    }
     const dispatched = dispatchChatLine(trimmed, this.commandContext());
     if (dispatched.parsed.kind === 'say') {
       this.pushChat('player', `<${PLAYER_CHAT_NAME}> ${dispatched.parsed.text}`);
@@ -3027,9 +3240,43 @@ export class Game {
     this.hurt.trigger(performance.now(), { periodic: isPeriodicDamageSource(result.source) });
   }
 
+  /** Close overlays and restore PLAYING input after an online respawn. */
+  private restoreOnlinePlayingFromRespawn(): void {
+    const session = this.session;
+    if (!session?.online) return;
+    this.lifecycle.beginOnlineRespawnRestore();
+    this.deathShown = false;
+    session.ridingCartId = undefined;
+    session.miningProgress = 0;
+    session.miningTarget = undefined;
+    session.worldRenderer.setOpenChest(undefined);
+    const chatOpen = this.ui.isChatOpen();
+    const inventoryOpen = this.ui.isInventoryOpen();
+    this.ui.closeInventory(false);
+    this.ui.closeChat();
+    this.ui.hidePointerLockFallback();
+    this.ui.enterGame();
+    const plan = planOnlineRespawnInputRestore({
+      state: this.lifecycle.state,
+      pointerLocked: this.input.isPointerLocked(),
+      chatOpen,
+      inventoryOpen,
+    });
+    if (plan.clearHeldKeys) this.input.clearHeldKeys();
+    this.lifecycle.setState(plan.lifecycle);
+    this.lifecycle.resumePlayingIfVisible();
+    if (plan.focusCanvas) this.canvas.focus({ preventScroll: true });
+    let requestedLock = false;
+    if (plan.requestPointerLock && this.lifecycle.state === 'PLAYING') {
+      requestedLock = this.input.tryRequestPointerLock();
+    }
+    if (!requestedLock) this.lifecycle.endOnlineRespawnRestore();
+  }
+
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
+    if (session.online) return;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
@@ -3057,16 +3304,27 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
-      const position = this.interpolatedPlayerPosition
-        .copy(session.player.previousPosition)
-        .lerp(session.player.position, clamp(alpha, 0, 1));
+      const position = session.online
+        ? this.interpolatedPlayerPosition.copy(session.player.position)
+        : this.interpolatedPlayerPosition
+          .copy(session.player.previousPosition)
+          .lerp(session.player.position, clamp(alpha, 0, 1));
       this.updatePlayerPresentation(session, position, now);
-      session.falling.interpolate(clamp(alpha, 0, 1));
-      session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
-      session.mobs.interpolateVisuals(alpha);
-      session.drops.interpolateVisuals(alpha);
-      session.arrows.interpolateVisuals(alpha);
-      session.minecarts.interpolateVisuals(alpha);
+      session.online?.remotes.forEach((remote) => remote.interpolate(
+        now,
+        this.renderDeltaSeconds,
+        daylightFactor(session.world.timeOfDay),
+      ));
+      if (session.online) {
+        applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
+      } else {
+        session.falling.interpolate(clamp(alpha, 0, 1));
+        session.redstone.interpolatePrimedTnt(clamp(alpha, 0, 1));
+        session.mobs.interpolateVisuals(alpha);
+        session.drops.interpolateVisuals(alpha);
+        session.arrows.interpolateVisuals(alpha);
+        session.minecarts.interpolateVisuals(alpha);
+      }
       const sprintFov = session.player.sprinting ? 7 : 0;
       const bowZoom = session.bowUseTicks > 0
         ? session.combat.bowCharge(session.bowUseTicks).power * 8
@@ -3077,6 +3335,7 @@ export class Game {
         this.camera.updateProjectionMatrix();
       }
       this.updateEnvironment(session.world.timeOfDay);
+      this.updateBreakingOverlay();
     }
     this.ui.setHurtFlash(this.hurt.flashAlpha(now));
     this.ui.fadeChatLines(now, chatLineOpacity);
@@ -3113,7 +3372,7 @@ export class Game {
       position.x,
       position.y,
       position.z,
-      this.daylightFactor(session.world.timeOfDay),
+      daylightFactor(session.world.timeOfDay),
     );
 
     this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
@@ -3199,7 +3458,7 @@ export class Game {
   private updateEnvironment(time: number): void {
     const phase = (time / 24_000) * Math.PI * 2;
     const sunHeight = Math.sin(phase);
-    const daylight = this.daylightFactor(time);
+    const daylight = daylightFactor(time);
     const sky = sunHeight > -0.18
       ? this.currentSkyColor.copy(this.duskSkyColor).lerp(this.daySkyColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
       : this.currentSkyColor.copy(this.nightSkyColor).lerp(this.duskSkyColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
@@ -3217,9 +3476,19 @@ export class Game {
     this.moon.visible = sunHeight < 0.25;
   }
 
-  private daylightFactor(time: number): number {
-    const phase = (time / 24_000) * Math.PI * 2;
-    return clamp((Math.sin(phase) + 0.22) / 0.75, 0.08, 1);
+  private updateBreakingOverlay(): void {
+    const session = this.session;
+    if (!session) return;
+    const target = session.target;
+    const mining = this.lifecycle.state === 'PLAYING'
+      && session.miningTarget !== undefined
+      && target !== undefined
+      && session.miningProgress > 0
+      && session.miningProgress < 1;
+    session.worldRenderer.setBreakingProgress(
+      mining ? target : undefined,
+      mining ? session.miningProgress : 0,
+    );
   }
 
   private refreshHud(): void {
@@ -3234,6 +3503,9 @@ export class Game {
       const itemCache = this.itemVisuals?.cacheStats;
       const sfx = this.audio.debugSnapshot();
       this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      if (this.debugTickOrder && this.kernelTrace.length > 0) {
+        this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
+      }
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
@@ -3253,6 +3525,14 @@ export class Game {
     this.polishQaDispose?.();
     this.polishQaDispose = undefined;
     if (!this.session) return;
+    if (this.session.online) {
+      for (const view of this.session.online.remotes.values()) {
+        this.scene.remove(view.group);
+        view.dispose();
+      }
+      this.session.online.remotes.clear();
+      this.session.online.client.disconnect();
+    }
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();
@@ -3262,6 +3542,7 @@ export class Game {
     this.session.redstone.dispose();
     this.session.drops.dispose();
     this.session.falling.dispose();
+    this.session.entityHost.dispose();
     disposeWorldLighting(this.session.world);
     this.explosionQueue.clear();
     resetMiningSound(this.miningSound);

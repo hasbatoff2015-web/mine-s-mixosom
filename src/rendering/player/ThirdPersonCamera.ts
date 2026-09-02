@@ -4,7 +4,7 @@ import {
   collisionCandidateCellRange,
   type CollisionBox,
 } from '../../world/collision';
-import type { BlockNeighborView } from '../specialBlockGeometry';
+import type { BlockNeighborView } from '../../world/blockGeometry';
 
 export type CameraPerspective = 'firstPerson' | 'thirdPersonBack' | 'thirdPersonFront';
 

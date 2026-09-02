@@ -323,7 +323,7 @@ describe('movement and presentation', () => {
     }
     const resources = (): unknown[] => {
       const result: unknown[] = [];
-      for (const target of targets) target.visual.traverse((object) => {
+      for (const target of targets) target.visual!.traverse((object) => {
         result.push(object);
         if (object instanceof THREE.Mesh) result.push(object.geometry, ...[object.material].flat());
       });

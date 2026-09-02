@@ -5,6 +5,7 @@ import { PRIMED_TNT_TEXTURE_KEY, RedstoneSystem } from '../src/redstone';
 import { ChunkMesher, leverHandleAngle } from '../src/rendering/ChunkMesher';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { VoxelWorld } from '../src/world/World';
+import { createThreeEntityHost } from '../src/entities/ThreeEntityHost';
 
 function place(world: VoxelWorld, x: number, y: number, z: number, block: BlockId): void {
   expect(world.setBlock(x, y, z, block)).toBe(true);
@@ -80,7 +81,7 @@ describe('RedstoneSystem', () => {
     const y = 76;
     place(world, 5, y, 5, BlockId.Lever);
     place(world, 6, y, 5, BlockId.Tnt);
-    const redstone = new RedstoneSystem(world, { root: scene });
+    const redstone = new RedstoneSystem(world, { host: createThreeEntityHost(scene) });
     redstone.notifyBlockChanged(5, y, 5);
 
     redstone.toggleLever(5, y, 5);
@@ -88,7 +89,7 @@ describe('RedstoneSystem', () => {
     expect(redstone.primedTntCount).toBe(1);
     expect(scene.children).toHaveLength(1);
     const primed = redstone.primedTnt[0]!;
-    const material = primed.visual?.material;
+    const material = (primed.visual as THREE.Mesh | undefined)?.material;
     expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
     const meshMaterial = material as THREE.MeshBasicMaterial;
     expect(meshMaterial.map).toBeTruthy();

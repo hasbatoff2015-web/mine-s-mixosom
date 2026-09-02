@@ -1,6 +1,19 @@
 # Состояние проекта
 
-## 2026-09-01 — Minecraft-compatible player skins и third-person camera
+Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: post-server integration PR #31 player skins / character / third-person
+
+- Существующая ветка Draft PR **#31** `cursor/player-skins-third-person` объединена обычным merge с server-authoritative `origin/main` `57724f6`; PR #28 breaking overlay и весь GameplayKernel/server/shared/tooling stack сохранены.
+- `Game.tickOnline` не запускает client world simulation. Perspective и `PlayerVisual` остаются presentation-only; gameplay targeting/reach по-прежнему строятся из `PlayerController.eyePosition()` / `viewDirection()`.
+- `RemotePlayerView` больше не создаёт временный `BoxGeometry`: bounded snapshot interpolation управляет feet/yaw/pitch/velocity/state, а canonical `PlayerVisual` отвечает за rig, render-frame locomotion, invisibility и shared entity lighting.
+- Protocol не расширялся: remote использует `DEFAULT_PLAYER_APPEARANCE`, empty-hand neutral fallback и не получает PNG/base64/texture payload. `selectedSlot` без authoritative item id не используется для угадывания held item.
+- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
+- `BlockBreakingOverlay` остаётся render-path consumer того же authoritative eye/look target во всех perspectives; mapping/cache/no-remesh contract не менялся.
+- Focused player gate **41/41**, expanded player/server/network/overlay gate **236/236**, shared sim **42/42**, server **73/73**; all typechecks, boundaries, Node smokes, build, size and archive pass. Full comparable run has no new failure class versus exact main; details below.
+- Подробности исходной реализации: `docs/reports/2026-08-31_player-skins-third-person.md`; post-server results добавлены в его секцию `POST-SERVER INTEGRATION`. Отдельный integration handoff: `docs/reports/2026-09-02_pr31-player-visual-server-integration.md`.
+
+## Minecraft-compatible player skins и third-person camera
 
 - В production подключены **45 уникальных пользовательских 64×64 RGBA skins** из переданного `skins.zip` (один byte-identical duplicate отброшен): 20 Classic и 25 Slim по каноническим прозрачным arm-зонам. Default — `frontier_explorer` (Classic). Дополнительно есть authored DEV `player_uv_test` с разными цветами граней. Старый `entity/steve.png` не используется новым player pipeline.
 - Канонический контракт — `PlayerAppearance { skinId, model, layers }`. `MinecraftSkinRegistry` держит одну nearest/no-mipmap texture на `skinId`, ref-count освобождает старую texture; `PlayerSkinGeometryCache` делит immutable geometry между экземплярами.
@@ -12,7 +25,209 @@
 - Права на 45 пользовательских skins не выводятся из технической интеграции: перед публикацией владелец проекта должен подтвердить происхождение/лицензии, особенно для узнаваемых персонажей. Generated ImageGen concept сохранён только в ignored `.local/` и не ship/commit.
 - Подробности и validation: `docs/reports/2026-08-31_player-skins-third-person.md`.
 
-Срез: **2026-09-01**. Версия: `0.1.0`, playable alpha.
+## Последний проход: интеграция PR #28 block breaking overlay
+
+- Ветка существующего Draft PR **#28** `cursor/block-breaking-overlay-3f86` объединена обычным merge с `origin/main` `a305dc5`; серверная архитектура Online Anarchy из main сохранена.
+- `BlockBreakingOverlay` остаётся presentation-only consumer существующего `session.miningProgress`. Singleplayer mining simulation не менялась; Online client только показывает local visual feedback и отправляет input/request, а фактическое разрушение выполняет server `ServerGameplay` и подтверждает authoritative `block_update` / `block_batch`.
+- Canonical renderer path: `miningProgress → WorldRenderer.setBreakingProgress(...) → BlockBreakingOverlay`. Mapping: `progress <= 0` и `progress >= 1` скрыты; промежуточный stage = `min(9, floor(progress * 10))`.
+- Геометрия использует canonical simulation contract `src/world/blockGeometry.ts` и rendering wrapper `selectionBoxesForBlock`: cube, slab, stairs, fence connections, door и остальные selection shapes. Stage меняет cached texture/material/geometry; chunk dirty/remesh не вызывается.
+- Production textures: original Frontier 32×32 masks at `public/textures/gui/destroy/destroy_stage_0.png` … `_9.png`. Local Mojang `assets/minecraft/textures/blocks/destroy_stage_*.png` were documented in the asset audit but are **not** in this workspace and were **not** committed.
+- DEV harness: `/?qaBreaking=1`. Исходный визуальный отчёт: `docs/reports/2026-08-31_block-breaking-overlay.md`; integration report: `docs/reports/2026-09-02_pr28-block-breaking-overlay-integration.md`.
+
+## Последний проход: Phase 8 plugin platform
+
+- Ветка `cursor/plugin-platform-37a2` от PR **#34** HEAD `81211b1` (`cursor/inactive-client-world-sync-37a2`). **Не merge в main.** Не сворачивать Anarchy stack в main. Не начинать homes/tpa/economy.
+- PluginManager был foundation (API + EventBus + `enableAll`), без discovery, без scoped cleanup, без kernel-adjacent semantic events. Phase 8 делает server-only platform: lifecycle, `PLUGIN_API_VERSION`, scoped ServerAPI, EventBus isolation, pre/post events, command unregister, disk discovery.
+- Live discovery: `server/plugins/` (`FC_PLUGIN_DIR`). Stock dir is empty — `/hello` is not a built-in. Canonical example: `server/plugin-examples/hello.ts` (copy into `server/plugins/` or `FC_EXAMPLE_PLUGIN=1`). Test fixtures stay under `tests/server/fixtures/plugins/` (includes broken/invalid — do not point `FC_PLUGIN_DIR` there for ordinary QA).
+- Shared `simulationEvents.ts` + server `pluginEventAdapter`. Shared core не импортирует PluginManager. Singleplayer / client bundle без plugin runtime.
+- Не трогать PR **#22** / **#28** / **#31**. Не закрывать **#30** / **#32** / **#33** / **#34**.
+- Report: `docs/reports/2026-09-01_plugin-platform.md`. Targeted **216/216**. Full vitest **1211/7** (authored ENOENT + minecart 5s + RPC). Production **3.65 MiB / 221 files**. Draft PR **#35**. Owner local QA. **Не merge.**
+
+## Последний проход: inactive Anarchy client world sync
+
+- Ветка `cursor/inactive-client-world-sync-37a2` от Phase 7 HEAD `a995ded` (PR **#33**). **Не merge в main.** Не Phase 8.
+- Root cause: `block_update` / `block_batch` сразу пишут VoxelWorld, но `processWorldJobs` (light + remesh) шёл только в `PLAYING`. Entity interpolation в `render()` поэтому жил, а блоки ждали Continue / refocus.
+- Fix: online `shouldProcessOnlineWorldVisuals` для PLAYING / PAUSED / BACKGROUND. Kernel / tickOnline по-прежнему только PLAYING. Нет очереди пакетов, нет второго fluid/LightEngine.
+- Targeted: `inactive-client-world-sync` 12 + session/Anarchy/fluid packs. Full vitest **1194/7** (authored ENOENT + minecart 5s + RPC). Production **3.65 MiB / 221 files**.
+- Report: `docs/reports/2026-09-01_inactive-client-world-sync.md`. Owner local QA (inventory / pause / tab / fluid / two clients). **Не merge.**
+
+## Последний проход: Phase 7 tooling split
+
+- Ветка `cursor/shared-tooling-split-37a2` от architecture HEAD `15cc8d7` (`cursor/entity-initial-light-finalize-37a2`, PR **#32**). **Не merge в main.** Не Phase 8. PR **#30** / **#32** не закрывать. Не трогать PR **#22** / **#28** / **#31**.
+- Compile boundaries: `tsconfig.sim.json` (no DOM, no Three), `tsconfig.client.json`, `tsconfig.server.json`. Umbrella `tsconfig.json` + `npm run typecheck` remain.
+- Shared sim: `Vec3` instead of `THREE.Vector3`; `MoveInput` instead of DOM `InputManager`; `LifecycleState` in `lifecycleTypes.ts`. `src/entities/index.ts` no longer exports `ThreeEntityHost`. Server does not import `three` / rendering.
+- Guards: `npm run check:boundaries`, `npm run smoke:sim` (Node loader throws on `three`), `npm run smoke:server`. `npm run check` includes boundaries.
+- GameplayKernel order, useInteraction, blockGeometry, EntityHost, persistence, RNG, lighting budget **2**, chest sync, death visual clock, plugins-unwired — unchanged.
+- Targeted: `test:sim` 38/38; server/entity/death pack 81/81. Full vitest: same baseline class as #32 (authored ENOENT + minecart 5s timeouts + RPC). Production **3.65 MiB / 221 files**.
+- Report: `docs/reports/2026-09-01_shared-tooling-split.md`. Draft PR **#33** stacked on **#32**. Owner local QA (SP + Anarchy + two clients, **no gameplay change**). **Не merge. Не начинать Phase 8.**
+
+## Последний проход: Online Anarchy initial entity lighting (finalize)
+
+- Ветка `cursor/entity-initial-light-finalize-37a2` от PR **#30** HEAD `068b7df`. **Не merge в main.** Не Phase 7. PR **#30** не закрывать.
+- Review #30: mob `syncVisual` / drops / falling / arrows `applyRenderPose` / primed TNT interpolate already re-sample light every client visual refresh. Hurt is not required.
+- Remaining same-class gap: `MinecartManager.interpolateVisuals` only moved the mesh. Online skips `update()`, so join-time carts stayed at the unlit spawn sample. Now interpolate applies `EntityHost.applyLight` at the displayed pose (headless no-op).
+- Tests: isolation of two join-time mobs (hurt A does not change B), minecart interpolate without a sim tick, skeleton `entity_snapshot` restore. LightEngine / budget **2** unchanged. Targeted **48/48** (10 initial-lighting). `tsc` + production build PASS.
+- Report: `docs/reports/2026-08-30_entity-initial-lighting.md`. Owner local QA (A11). **Не merge. Не начинать Phase 7.**
+
+## Последний проход: Online Anarchy initial entity lighting
+
+- Ветка `cursor/entity-initial-light-fix-bbb1` от Phase 6 HEAD `2e21bf3` (`cursor/shared-rng-lighting-adapters-bbb1`, PR **#29**). **Не merge в main.** Не Phase 7.
+- Root cause: online client не вызывает `MobManager.update()` (нет второй симуляции). `spawn()` семплирует `entityLight` один раз, часто до `chunk_data` / deferred `processLighting`. `syncVisual` / `tickRemoteVisuals` обновляли свет **только при hurt flash**. Hit → `applyAuthoritativeHurt` → повторный sample уже по lit chunk. Dynamic spawn после streaming попадал в готовый свет.
+- Fix: visual sync всегда вызывает `applyMobLight` (pose coords). Тот же contract для drops / falling / arrows / primed TNT interpolate. Headless server без Three. LightEngine / budget **2** / daylight formula не трогали.
+- Targeted: `entity-initial-lighting` 7 + hurt-flash, entity-lighting, entity-host, death-animation, lighting-adapter. `tsc` clean.
+- Report: `docs/reports/2026-08-30_entity-initial-lighting.md`. Draft PR stacked on **#29**. Owner local QA (A11). **Не merge.** Phase 7 tooling split — отдельная ветка после этого фикса.
+
+## Последний проход: Phase 6 RNG + lighting adapters
+
+- Ветка `cursor/shared-rng-lighting-adapters-bbb1` от chest-sync HEAD `a8c9579` (`cursor/chest-online-sync-fix-bbb1`, PR **#27**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 7.**
+- Simulation RNG больше не вызывает `Math.random` напрямую. `RandomSource` / `systemRandomFn` / `seededRandomFn` в `src/gameplay/random.ts`. Live SP `Game` и Anarchy `ServerGameplay` инжектят `SYSTEM_RANDOM` (тот же `Math.random` под адаптером), чтобы spawn/loot sequences не сдвинулись. Тесты могут подставить seeded source.
+- Visual RNG остаётся client-only `Math.random`: potion particles, audio pitch/variant. Save world id / default seed — identity, не tick simulation. Terrain по-прежнему `mulberry32` / `hashCoords` в `Generator` (не смешивать с tick RNG).
+- Lighting: `LightingAdapter` классифицирует `deferred` (client) vs `immediate` (server). `processDeferredLighting` no-op на immediate world, чтобы сервер не гонял client scheduler. Flood остаётся в `LightEngine`. `WORLD_LIGHT_BUDGET_MS = 2` не поднимали. Lateral sky radius 14 не трогали.
+- Simulation light queries (`combinedLight`, `getDirectSkyLight`, `sampleVoxelLightLevels`) реэкспорт из `world/lightingState.ts`. Shader compose остаётся в `rendering/worldLighting.ts`.
+- Не тронуты: GameplayKernel order, useInteraction, blockGeometry, EntityHost, persistence, protocol, chest GUI sync (#27), death visual clock, fluids, combat numbers, worldgen algorithms, spawn, Anarchy id/path.
+- Targeted: 12 files **167/167** (`random-source` 6, `lighting-adapter` 4, lighting-jobs/height-256/scheduler, kernel, combat, explosion, hostile-spawn, anarchy-gameplay, use, entity-host). `tsc` clean. Production **3.65 MiB / 221 files**.
+- Full `npm run check`: **1169 passed / 8 failed** (2 authored ENOENT `bucket_empty.png` + 6 minecart 5s timeouts) + 1 vitest RPC `onTaskUpdate`. Same class as PR **#27** (1160/7); +10 new tests, one extra minecart flake under full-suite load. Not hidden.
+- Report: `docs/reports/2026-08-30_shared-rng-lighting-adapters.md`. Draft PR **#29** stacked on **#27**. Owner local QA. **Не merge. Не начинать Phase 7.**
+
+## Последний проход: Online Anarchy chest GUI sync
+
+- Ветка `cursor/chest-online-sync-fix-bbb1` от Phase 5 HEAD `cc74c11` (`cursor/shared-persistence-port-bbb1`, PR **#26**). **Не merge в main.** Не Phase 6. Persistence / GameplayKernel / protocol types не менялись.
+- Root cause: server already sent `inventory.window.slots` after each click, but the client applied those slots only when opening the GUI (`!isInventoryOpen()`). An already-open chest kept the stale `getChest().slots` array; player inventory/cursor did refresh. Close→reopen looked correct.
+- Fix: `applyAuthoritativeContainerSlots` always; `shouldOpenOnlineContainer` only for the first open. Server `flushSharedContainerViewers` sends the same `inventory` packet to other players with that chest/furnace open.
+- Targeted: `online-container-sync` 5, `anarchy-chest-sync` 8, container-ui, inventory, anarchy-server, kernel, use. `tsc` clean. Production **3.65 MiB / 221 files**.
+- Full `npm run check`: **1160 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts) + 1 vitest RPC. Same baseline as PR #26. Not hidden.
+- Report: `docs/reports/2026-08-30_chest-online-sync.md`. Draft PR **#27** stacked on **#26**. Owner local QA. **Не merge. Не начинать Phase 6.**
+
+## Последний проход: Phase 5 persistence port
+
+- Ветка `cursor/shared-persistence-port-bbb1` от death-animation HEAD `7ae826b` (`cursor/entity-death-animation-smoothness-bbb1`, PR **#25**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 6 (RNG/lighting adapters).**
+- Canonical gameplay record: `WorldSnapshot` (`SerializedWorldState`, `WORLD_SCHEMA_VERSION = 1`). `WorldStore`: load/save/exists (+ delete/list). SP `IdbWorldStore` (тот же IndexedDB `frontier-cubes-saves` / `worlds`). Server `FsWorldStore` → `server/data/worlds/<id>/{meta,world,players}.json`.
+- Mapper `snapshotToFsRecords` / `fsRecordsToSnapshot`. Import: dump → `parseWorldSnapshot` → `FsWorldStore`. Corrupt existing FS throws `PersistenceError` (no silent procedural reset). Concurrent FS saves queued. Snapshot только на save/export.
+- Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost, protocol, spawn, Anarchy world id/directory, IDB names, visual clocks.
+- Targeted: `world-snapshot` 5, `idb-world-store` 3, `fs-world-store` 6, lighting Game save-path 24/24, anarchy persist/restart 48/48, kernel/use/geometry/entity-host/death green. `tsc` clean. Production **3.65 MiB / 221 files**.
+- Full `npm run check`: **1147 passed / 7 failed** (2 authored ENOENT `bucket_empty.png` + 5 minecart 5s timeouts) + 1 vitest RPC `onTaskUpdate`. Lighting Game stubs are green. Same baseline class as PR #24/#25. Not hidden.
+- Report: `docs/reports/2026-08-30_shared-persistence-port.md`. Draft PR **#26** stacked on **#25**. Owner local QA (SP save/load + Anarchy restart). **Не merge.**
+
+## Последний проход: entity death animation smoothness
+
+- Ветка `cursor/entity-death-animation-smoothness-bbb1` от Phase 4 HEAD `fee6604` (`cursor/shared-entity-host-bbb1`, PR **#24**). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy. **Не начинать Phase 5+.**
+- Root cause после EntityHost: death pose (`rotation.z` / scale) брала `mob.deathSeconds`, который тикает только на **20 TPS**. Online `applyInterpolatedEntityVisuals(..., interpolateVisuals(1))` не сглаживает этот clock (в отличие от chicken `visualAge`). Получалось ~14 поз за 0.7 s.
+- Fix: client-only `deathVisualElapsed` / `deathVisualActive` на `MobEntity`. `Game.frame` вызывает `advanceDeathVisuals(rawElapsed)` в том же loop, что fire animation. `syncMob` получает `mobDeathVisualSeconds(...)`. Формула позы **не** менялась: 0.7 s, `π/2`, scale `1 - progress * 0.25`.
+- Server по-прежнему authoritative для died / `deathSeconds` lifetime / removal. Snapshots не шлют animation frames. `applyAuthoritativeDeath` стартует clock один раз. Interpolator задаёт base x/y/z/yaw; death z-rotation/scale поверх.
+- Не тронуты: GameplayKernel, useInteraction, blockGeometry, EntityHost interface, hurt-flash sharing, server 20 TPS, protocol, interpolation buffer (кроме использования как base pose).
+- Targeted: `entity-death-animation` **11/11**. Also entity-host, interpolation, visual-events, hurt-flash, creeper death, kernel, arrows, anarchy-gameplay packs green. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Full `npm run check`: **1133 passed / 7 failed** (authored ENOENT `bucket_empty.png` + minecart 5s timeouts, same pre-existing class as PR #24) + 1 vitest RPC timeout. Not hidden; not from this pass.
+- Report: `docs/reports/2026-08-30_entity-death-animation-smoothness.md`. Draft PR **#25** stacked on **#24**. Owner local QA **принят.** Phase 5 persistence — этот проход.
+
+## Последний проход: Phase 4 EntityHost
+
+- Ветка `cursor/shared-entity-host-bbb1` от PR #23 HEAD `ff5bef0` (`cursor/shared-block-geometry-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- `EntityHost` — rendering seam. Simulation managers spawn/tick/serialize без `new Mesh` / Geometry / Material. `HeadlessEntityHost` на Anarchy server. Client: один `ThreeEntityHost` на `Game.scene` (shared `ItemVisualFactory` / `ArrowVisualFactory`).
+- `DroppedItemManager` / `FallingBlockManager` / `MinecartManager` / `MobManager` / `PlayerArrowManager` принимают `Object3D | EntityHost`. Tests wrapping `THREE.Scene` остаются через `resolveEntityHost`.
+- `ServerGameplay` больше не создаёт `THREE.Group` entity scene и не конструирует `ItemVisualFactory`. `RedstoneSystem` на сервере без `root` (primed TNT без mesh).
+- Не тронуты: GameplayKernel order, Phase 2 useInteraction, Phase 3 blockGeometry, interpolation, fluids, respawn/session WASD (#19/#20), protocol, persistence/RNG/plugins, renderer folder moves.
+- Targeted: `entity-host` 5/5 + entity/anarchy/kernel/use/geometry/interpolation/respawn pack greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Report: `docs/reports/2026-08-30_shared-entity-host.md`. Draft PR **#24** stacked on #23. **Не merge.** Owner local QA. **Не начинать Phase 5+.**
+
+## Последний проход: Phase 3 shared block geometry
+
+- Ветка `cursor/shared-block-geometry-bbb1` от PR #21 HEAD `7e67419` (`cursor/shared-interaction-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Simulation geometry: `src/world/blockGeometry.ts` (AABB, neighbor stair/rail/fence, attachment normals, selection/collision boxes). **Без** Three.js / meshes / textures.
+- Rendering `src/rendering/specialBlockGeometry.ts` — UV, torch matrices, outline, lantern/chain mesh. Re-export тех же sim-функций; второй таблицы AABB нет.
+- Collision / selection / placement / `useInteraction` / ladder / rails / `Game` / `ServerGameplay` больше не импортируют `specialBlockGeometry`. Server collision/placement считает формы без rendering.
+- Не тронуты: GameplayKernel, Phase 2 useInteraction, interpolation, fluids, respawn/session WASD (#19/#20), protocol. EntityHost — Phase 4 (этот проход).
+- Targeted: `block-geometry` 5 + placement/glowstone/selection/polish/ladder/stairs/use/kernel/anarchy pack **308/308**. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Report: `docs/reports/2026-08-30_shared-block-geometry.md`. Draft PR **#23** stacked on #21. **Не merge.** Owner local QA **принят.** Phase 4 EntityHost — этот проход.
+
+## Последний проход: Phase 2 shared interaction
+
+- Ветка `cursor/shared-interaction-bbb1` от PR #20 HEAD `05e77a8` (`cursor/online-session-transition-input-fix-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Одна simulation-level use/placement: `src/gameplay/useInteraction.ts` (`performUseHeld` / `placeFromHit` / `placeBlockAt`). Hosts: SP `Game.useTargetOrItem`, server `ServerGameplay.useHeld` + `placeBlock`.
+- UI/audio/toasts/swing/save — SP effects. Plugin events / `player.window` / `inventoryDirty` — server effects. Online client по-прежнему только `interact`; local use не симулируется.
+- Канонический порядок и placement rules — бывший SP path (anchors, lantern/chain support, slab merge, rail-only minecart, cartCloser перед block-use). Серверный `placeAt`/`applyPlacementState` не дублирует правила.
+- Не тронуты: GameplayKernel, interpolation, fluids/block-state protocol, respawn/session input (#19/#20), Phase 4+ (EntityHost, persistence, RNG, plugins architecture).
+- Targeted: `use-interaction` 10 + placement/glowstone/kernel/anarchy/network/bucket pack **115 + 120** focused greens. `tsc` clean. Production build/size/archive PASS **3.64 MiB / 221 files**.
+- Report: `docs/reports/2026-08-29_shared-interaction.md`. Implementation `3622e20`. Draft PR **#21** stacked on #20. **Не merge.** Owner local QA (SP place/use + Anarchy interact same rules) **принят.** Phase 3 geometry — этот проход.
+
+## Последний проход: online session transition WASD
+
+- Ветка `cursor/online-session-transition-input-fix-bbb1` от PR #19 HEAD `0723c6e`. **Не merge в main.**
+- Owner QA PR #19: death→respawn WASD ок. Regression: Anarchy → Singleplayer → Anarchy — WASD мёртв **с входа**, look и chat живы. Не после смерти.
+- Root cause: `sessionStorage` token resume'ит того же server player с `lastInputSeq` от прошлого сокета. Новый `AnarchyClient` всегда шлёт `inputSeq` с 0. `applyInput` отбрасывает seq < last как stale. Look/chat не используют seq. `tickOnline` при этом шёл.
+- Fix: disconnect и resume join сбрасывают `lastInputSeq` / lastInput. Сообщения только от текущего client (generation + identity). enterPlaying всегда PLAYING. PR #19 death path не тронут.
+- Report: `docs/reports/2026-08-29_online-session-transition-input.md`. HEAD `e38af85`. Draft PR **#20** stacked on #19. **Не merge.** Owner local QA.
+
+## Последний проход: online respawn WASD (stabilization)
+
+- Ветка `cursor/online-respawn-input-fix-bbb1` от Phase 1 HEAD `c75497b` (`cursor/shared-game-core-kernel-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Owner QA после Phase 1: SP ок, Anarchy коннектится, WASD до смерти ок, после death→respawn WASD иногда мёртв (mouse look и chat живы). `/kill` не workaround.
+- Root cause: (1) mob/TNT/PvP звали `respawnIfDead` без `health` dead→alive, клиент мог не сделать restore; (2) restore делал `canvas.focus` + pointer-lock request → `window.blur` при `hasFocus()===false` → **BACKGROUND** → `tickOnline` не шлёт input. Look рендерится каждый кадр, chat — DOM.
+- Fix: один canonical `respawnIfDead` с flush dead/alive; blur не ставит BACKGROUND при pointer lock / pending lock / respawn guard; acquire сначала resume PLAYING; не фокусить canvas если уже locked; keys clear только если chat/inventory владели клавиатурой.
+- Не тронуты: GameplayKernel, interpolation, fluids, block states, rendering, bow/arrow, SP tick.
+- Report: `docs/reports/2026-08-29_online-respawn-input-fix.md`. HEAD `c97565d`. Draft PR **#19** stacked on Phase 1 / #18. **Не merge.** Owner local QA, затем остановиться.
+
+## Последний проход: GameplayKernel (Phase 1 shared sim order)
+
+- Ветка `cursor/shared-game-core-kernel-bbb1` от PR #17 HEAD `bdab232`. **Не merge в main.** `origin/main` (`a056e6f`) без Anarchy.
+- Один sequencer `src/gameplay/GameplayKernel.ts`: world → falling → players → playerActions → projectiles → vehicles → mobs → mobEvents → preDropSupport → drops → redstone → explosions.
+- Hosts: SP `Game.tick` (online still `tickOnline` only); server `WorldInstance` → `ServerGameplay.tick` → kernel. Механики не переписаны.
+- Server player physics теперь внутри kernel **после** `world.tick`/falling (как SP). Mining/use hold остаются в `tickConnectedPlayers`.
+- `daylightFactor` один (`src/gameplay/daylight.ts`) для sky, mobs, sunlight. DEV `?debugTick=1` / `FC_DEBUG_TICK=1`.
+- Targeted: `gameplay-kernel` 6/6; anarchy-gameplay 19/19; physics/combat/fluids/worldgen pack 122/122. `tsc` clean. Full check **1063 passed / 7 failed** (authored ENOENT + minecart 5s timeouts, same pre-existing class as PR #17) + 1 vitest RPC.
+- Report: `docs/reports/2026-08-29_shared-game-core-kernel.md`. Draft PR **#18**. **Не merge.** Owner local QA (behavior should match PR #17).
+
+## Последний проход: online blockstates / live fluids / respawn input
+
+- Ветка `cursor/online-blockstates-fluid-render-respawn-bbb1` от PR #16 HEAD `76b8f87` (`cursor/entity-interpolation-input-visual-sync-bbb1`). **Не merge в main.** `origin/main` (`a056e6f`) по-прежнему без Anarchy gameplay.
+- Local QA после PR #16: WASD пропадал после death/respawn; directional blocks всегда в default facing; button/door не нажимались визуально; live Water/Lava — квадраты, а загруженные из chunk state жидкости с наклоном.
+- Respawn: online пропускал SP death UI; `health` после instant respawn мог не отличаться от pre-death 20 HP. Сервер шлёт dead→alive; клиент `restoreOnlinePlayingFromRespawn` возвращает PLAYING, focus, pointer lock, закрывает chat/inventory.
+- Block state: live `block_update`/`block_batch` несут optional `state`. `onCommittedBlockState` включает fluid level / door / button. Клиент `applyNetworkBlockChanges` — id затем state; `writeBlockRaw` больше не оставляет жидкости без level.
+- Interact: RMB online только `interact`; server `useHeld` + raycast/look. Placement orientation уже был в `applyPlacementState`.
+- Fluids: не новый renderer. Live updates теперь с `fluidLevel`/`fluidFalling`; neighbor `neighborFluidMeshOffsets` dirty; batch затем один remesh. Client online не тикает fluids.
+- Targeted: `network-block-state-respawn` + `network-input-recovery` + `anarchy-gameplay` **35/35**. `tsc` clean. Production build/size PASS 3.63 MiB / 221 files. Full `npm run check` **1056 passed / 7 failed** (authored ENOENT `bucket_empty.png` + minecart 5s timeouts, same pre-existing class as PR #16) + 1 vitest RPC timeout.
+- Report: `docs/reports/2026-08-29_online-blockstates-fluid-render-respawn.md`. Draft PR **#17**. **Не merge.** Owner local QA.
+
+## Последний проход: entity interpolation / input recovery / visual sync
+
+- Ветка `cursor/entity-interpolation-input-visual-sync-bbb1` от gameplay `fe1509f` (`cursor/full-anarchy-server-gameplay-bbb1`). **Не merge в main.** Не работать поверх чужого `main`.
+- Two-client QA PR #15: authority ок, но remote mobs/entities дёргались, WASD мог «умереть» после chat/tab, hurt/death/bow/arrow visuals не доезжали.
+- Root cause jitter: `applyEntitySnapshots` писал `previousPosition = position` + `position = snapshot` в момент пакета; `interpolateVisuals(alpha)` использовал **client tick alpha**, не время между server ticks. Remote players уже были на delayed history (`RemotePlayerView` ~80 ms).
+- Fix: `EntityInterpolationBuffer` — tick-ordered snapshot history, render sample at `now - 80ms`, shortest-yaw, teleport snap (`ENTITY_SNAP_DISTANCE`), spawn immediate, remove drops history. Local player chase / remote players / other entities остаются тремя режимами.
+- Input: `window.blur` больше не ставит BACKGROUND, если `document.hasFocus()` (pointer-lock/chat spurious blur). Tab hide (`visibilitychange`) по-прежнему BACKGROUND. Chat close / canvas click / pointer lock / focus вызывают `resumePlayingIfVisible` + `clearHeldKeys` + canvas focus. Stale chat INPUT больше не глотает WASD.
+- Visual events: server `entity_event` (`hurt` / `death` / `projectile_spawn` / `projectile_hit`) + snapshot state. Per-entity hurt flash и death pose; client не emit'ит loot. Bow draw — visual-only `bowUseTicks` из hold RMB. Arrows packed first in interest snapshots (cap 96) + interpolator.
+- Targeted: interpolation 10, input 9, visual events 7; focused pack with Anarchy/hurt-flash 84/84. `tsc` clean. Build/size PASS 3.63 MiB / 221 files. Full suite 1039 passed / 8 failed (authored ENOENT + minecart timeouts, pre-existing class) + vitest RPC.
+- Report: `docs/reports/2026-08-29_entity-interpolation-input-visual-sync.md`. Draft PR #16. **Не merge.** Owner two-client QA.
+
+## Последний проход: full Anarchy server gameplay
+
+- Ветка `cursor/full-anarchy-server-gameplay-bbb1` от foundation `15ca54f` / `origin/main` `a056e6f`. **Не merge в main.** Отдельный draft PR (не #14).
+- Один integration pass: listed Anarchy gameplay на server authority. Не новые фичи, не второй game loop. `ServerGameplay` (`server/gameplay.ts`) крутит существующие World / MobManager / CombatSystem / SurvivalSystem / RedstoneSystem / ExplosionQueue / DroppedItemManager / MinecartManager / PlayerArrowManager / recipes.
+- SERVER owns: world/blocks/chunks, entities, player pose/health/inventory/equipment, drops, crafting, melee PvP + mobs, fluids (existing queue + `block_batch`), fire/TNT, minecarts, potions/effects, gamemode, commands, filesystem persist.
+- CLIENT online: input/requests, render, UI, interpolation. `tickOnline` не тикает world/mobs/fluids/combat/drops. Inventory clicks/`attack`/`interact`/`break_block`/`place_block` — запросы. Singleplayer IndexedDB + local `tick()` без изменений.
+- Spawn: accepted IndexedDB карта **не** импортируется на старте. Сервер — `server/data/worlds/anarchy/` (procedural + `estimateWorldSpawn` если пусто). Явный шаг: `npm run server:import -- dump.json`. Нет runtime `.schem`.
+- Targeted: `anarchy-server.test.ts` 12/12, `anarchy-gameplay.test.ts` 10/10. `tsc --noEmit` clean. Full suite 1014 passed / 7 failed (authored ENOENT + minecart timeouts, pre-existing) + 1 vitest RPC. Build/size PASS 3.62 MiB / 221 files.
+- Report: `docs/reports/2026-08-29_full-anarchy-server-gameplay.md`. **Не merge.** Owner two-client QA.
+
+## Последний проход: Anarchy server QA fixes (movement / break / place)
+
+- Ветка та же: `cursor/local-authoritative-server-bbb1`. **Не merge в main.** Draft PR #14.
+- Local QA foundation **не принят**: rubber-banding, break не работал, spawn карты IndexedDB на сервере нет.
+- Spawn: сервер **не** подхватывает браузерный IndexedDB и **не** импортирует `.schem`. Текущий server world — filesystem `server/data/worlds/anarchy/` (первый старт = procedural + `estimateWorldSpawn`). Accepted spawn живёт только в IndexedDB пользователя. Перенос — отдельный explicit `npm run server:import`, не в этом pass.
+- Movement: убран hard overwrite локального transform каждым snapshot. Server 20 TPS authority; client — input + smooth chase + ignore stale `player_state.tick`. Камера не берёт yaw/pitch с сервера. Remote interpolation с delay, не на local id.
+- Break/place: raycast смотрит тем же look, что камера; `block_result` с причиной; reach slack `PLAYER_NET_REACH`; persist по-прежнему только server.
+- Targeted tests **26/26**. Full suite 1004 passed / 7 failed (authored ENOENT + minecart timeouts, pre-existing) + 1 vitest RPC. Build/size PASS 3.61 MiB / 221 files.
+
+## Последний проход: local authoritative Anarchy server (foundation)
+
+- Base: актуального `origin/main` `a056e6f` (lighting PR #13). Ветка `cursor/local-authoritative-server-bbb1`. **Не merge в main** до ручного QA.
+- Отдельный Node process: `npm run dev:server` (`ws://127.0.0.1:2567`, Vite остаётся на 4173). Транспорт native WebSocket/`ws`, не Colyseus (в репозитории его не было).
+- Online `Анархия PvP` → localhost server. Нет silent IndexedDB fallback. Singleplayer без сервера. `Выживание PvP` mock.
+- Server owns Anarchy world/chunks/players/tick/spawn/filesystem persist (`server/data/worlds/anarchy/`). Client: input, render, interpolation.
+- Foundation sync: join/spawn, two clients, movement, break/place, chat, `/gamemode` registry, PluginManager/events.
+- **Accepted IndexedDB spawn map не в git.** Первый server world — procedural + `estimateWorldSpawn`. Явный import: `npm run server:import`. Нет runtime `.schem`.
+- Fluids/mobs/combat/TNT/minecarts/full inventory **портированы на server** в pass `cursor/full-anarchy-server-gameplay-bbb1` (не в этом foundation commit).
+- Targeted tests 14/14; lighting/world height 30/30. Full suite 992 passed / 7 failed (authored ENOENT + minecart timeouts, pre-existing) + 1 vitest RPC. Build/size PASS 3.61 MiB / 221 files.
+- Docs: `docs/LOCAL_SERVER.md`. Report: `docs/reports/2026-08-29_local-authoritative-server.md`. Draft PR #14. **Не merge.**
 
 ## Последний проход: lateral sky / lighting quality
 
@@ -121,10 +336,10 @@
 
 | Область | Статус | Фактический результат |
 | --- | --- | --- |
-| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = локальный persistent world, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
+| Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = localhost authoritative server with full gameplay kernel, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×256` (`Y 0..255`), plains/forest/desert, periodic mountains (+10…+20) with generated surface still `≤84`, deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются; empty sky above occupancy is not full-column work |
-| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
+| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, **staged block-breaking crack overlay**, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs, close × outside panel |
@@ -134,7 +349,7 @@
 | Combat | Реализовано; browser acceptance pending | Classic 1.8 click-driven melee, shared hurt resistance, fixed armor, sprint persistence after hit, sword blocking, Frontier vertical KB height; staged bow draw/shared arrows сохранены, shield отсутствует |
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
-| Saves | Готово для alpha | IndexedDB schema 1, autosave, player/world/container/drop/mob/redstone/block-state/falling-block restore |
+| Saves | Готово для alpha | IndexedDB schema 1 для **singleplayer**; online Anarchy persist — filesystem `server/data/worlds/anarchy/` |
 | Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
@@ -163,7 +378,7 @@
 - Лестница — тонкая cutout-плоскость на боковой опоре (`NORTH/SOUTH/EAST/WEST`). Climbing: контакт с thin climb volume (не целая cell), intent = movement INTO support (`dot(wishXZ, towardSupport)`), скорость `LADDER_CLIMB_SPEED = 4.0`, без input — `LADDER_MAX_DESCENT_SPEED = 3.0`, sneak (C) удерживает. Stairs не являются ladder. `CombatSystem.onLadder` читает тот же `player.onLadder`.
 - Stairs — геометрические две (или больше для corner) AABB, не full cube: facing N/S/E/W, `stairHalf` bottom/top, neighbor-derived `straight/inner_*/outer_*` без сохранения shape. Collision и selection совпадают с boxes. Игрок поднимается generic step-up `0.6`, без ladder/climb mode.
 - Slabs — `slabType` bottom/top/double. Single = высота 0.5; double = полный блок. Одинаковые slab merge, разные материалы нет. Raycast проходит пустую половину.
-- Targeting: `World.raycast` DDA входит в voxel, затем тестирует `selectionLocalBoxes` / `blockSelectionBoxes`. Если луч проходит через пустую часть occupied cell (rail, plate, ladder, torch, lantern, chain, …), hit не засчитывается и DDA идёт дальше. Outline, LMB и RMB делят один VoxelHit. Default для ordinary cubes — full block. Collision и selection разделены (rail не solid, но выбирается).
+- Targeting: `World.raycast` DDA входит в voxel, затем тестирует `selectionLocalBoxes` / `blockSelectionBoxes`. Если луч проходит через пустую часть occupied cell (rail, plate, ladder, torch, lantern, chain, …), hit не засчитывается и DDA идёт дальше. Outline, LMB и RMB делят один VoxelHit. Mining progress рисуется отдельным crack overlay на selection-shape, без remesh. Default для ordinary cubes — full block. Collision и selection разделены (rail не solid, но выбирается).
 - `stone_stairs` остаётся legacy ID (`hiddenFromGameplay`), не крафтится и не показывается в Creative. Получаемые stairs: oak/birch/spruce planks, cobblestone, brick, stone brick. Slab counterparts те же плюс `stone_slab`.
 - `stone_pressure_plate` делит `pressure_plate` render/redstone path с oak plate. Wooden trigger = all entities/items; stone = living (player/mobs). Placement только на верхнюю опору.
 
@@ -288,7 +503,7 @@
 ### Готово
 
 - DOM/CSS screens: loading, стилизованное main menu, selectable world list, create world, online server mock, settings, read-only controls, pause, death. Меню использует `public/ui/frontier-menu-background.png`; online entries и таблица фактических клавиш вынесены в `menuModel.ts`.
-- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, active potion effect chips (bottom-right), toasts и F3 debug. Attack meter удалён.
+- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress bar (kept alongside the new world crack overlay), active potion effect chips (bottom-right), toasts и F3 debug. Attack meter удалён.
 - Рука и выбранный предмет рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены. Shield отсутствует, блок мечом использует pose существующего предмета.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`; отсюда открывается отдельная read-only справка по управлению. Значения sliders показываются live.
 - Desktop pointer lock: inventory/chest close = programmatic relock; наблюдённый Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Unknown/focus-lost unlock и отказ запроса используют click fallback без auto-retry. Если браузер не доставляет Escape keydown, причина честно unknown, не доказанный Esc. Подробности raw fallback/diagnostics — в свежем polish report.
@@ -349,4 +564,4 @@ Codex UI (menu family, online mock, read-only controls) and Cursor PR #6 (fluids
 
 ## За пределами текущей alpha
 
-Не реализованы multiplayer, server authority, accounts/cloud worlds, weather, farming, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. Drinkable potions, rails и minecart в этой alpha есть как practical approximation, без brewing/powered rails. Это осознанно не подменяется заглушками в P0.
+Не реализованы accounts/cloud worlds, public VPS deploy, Survival PvP matchmaking, weather, farming, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. **Local Anarchy** (`npm run dev:server`) уже есть: server-authoritative world on one PC. Drinkable potions, rails и minecart в этой alpha есть как practical approximation, без brewing/powered rails. Это осознанно не подменяется заглушками в P0.

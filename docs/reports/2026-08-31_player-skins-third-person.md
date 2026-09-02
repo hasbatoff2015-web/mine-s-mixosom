@@ -117,3 +117,40 @@ In-app browser at `http://localhost:4174/?qaPlayer=1`:
 - Base: `origin/main` at `a056e6f5d4b7f2e206b697f0a774ece921cbbefa`.
 - Planned commit subject: `feat: add player skins and third-person camera`.
 - Delivery: push branch and open Draft PR to `main`; do not merge.
+
+## POST-SERVER INTEGRATION — 2026-09-02
+
+### Integrated baseline and conflicts
+
+- Existing PR branch HEAD before integration: `b5875ab21a0c399cd08ce366f561d316eeb0f6a4`.
+- Merged with ordinary `git merge --no-ff origin/main` at exact server-authoritative SHA `57724f6ed6d16fdec77664e74bae4061eeb84031`; no rebase/reset/clean/force push and no new branch/PR.
+- Conflicts resolved semantically in five files: `src/core/Game.ts`, `docs/ARCHITECTURE.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`, `docs/TESTING.md`. `InputManager.ts`, `main.ts` and `FirstPersonRenderer.ts` auto-merged, then were audited.
+
+### Runtime result
+
+- `Game.tickOnline` retains main's input-only client ownership and never restores local `world.tick`, falling-block or gameplay simulation. Local `PlayerVisual` is presentation-only and follows authoritative player state; held item follows the local authoritative inventory selection.
+- `RemotePlayerView` retains its bounded 8-sample / 80 ms interpolation ownership and now drives canonical `PlayerVisual` instead of `BoxGeometry`. Available snapshot position/yaw/pitch/velocity/sneak/sprint/onGround/invisibility feed render-frame animation and shared world lighting.
+- Protocol is intentionally unchanged. It has neither appearance metadata nor authoritative held item id, so remotes use `DEFAULT_PLAYER_APPEARANCE` and neutral empty hand. `selectedSlot` is not guessed into an item; raw PNG/base64 and per-tick texture data are forbidden. A later selector may add a rare `{ skinId, model, layers? }` join/change metadata event.
+- Three-dependent skin registry moved from `src/player/appearance/` to `src/rendering/player/`; the remaining appearance contract stays Node-safe and passes the shared-simulation boundary guard.
+- F5 stays `first → back → front → first`, edge-triggered only while capture is allowed. Non-F5 keys short-circuit without querying capture state. Perspective changes do not clear held keys, alter input sequence, disconnect or teleport.
+- Camera collision still uses canonical `world/blockGeometry` collision boxes. Gameplay reach/raycast stays at player eye/view, never the presentation camera.
+- PR #28 overlay remains active in the same render path and reads the same authoritative target in every perspective. No overlay stage mapping, texture cache, chunk remesh or online authority behavior changed.
+
+### Tests and build
+
+- Focused player gate: **7 files / 41 tests passed**. Expanded player + server/network + overlay gate: **28 files / 236 tests passed**.
+- `npm run test:sim -- --maxWorkers=2`: **42/42 passed**. `npm run test:server -- --maxWorkers=2`: **73/73 passed**.
+- `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `smoke:sim`, `smoke:server`: PASS.
+- Comparable full run with two workers: integration **115/119 files, 1238/1253 tests**; exact clean main **109/114 files, 1214/1231 tests**. The integration adds 22 passing tests and no new failure class. Both reproduce the stale generated-geometry hash, reference-extractor parse error, CPU-heavy worldgen/fire/minecart timeouts and one worker RPC timeout; clean main also lacks the ignored authored source pack and therefore has two environment-only asset failures.
+- `npm run check` reaches Vitest and stops on those known full-suite failures. Separate `npm run build`, `check:size` and `check:archive` pass: **3.75 MiB / 277 files**, JS **1,090.45 kB / 308.94 kB gzip**. Production skins remain **45 files / 71,029 bytes**.
+
+### Visual QA and performance
+
+- In-app DEV QA on the merged build covered Classic and Slim skins, outer on/off, all ten pose states, sword/pickaxe/block/bow/food, head yaw/pitch and first/back/front controls. First-person empty arm/sleeve and held pickaxe rendered; third-person sprint+sword and bow pose rendered. The merged `/?qaBreaking=1` harness advanced cube overlay from stage 0 to 4 and displayed slab/stairs/fence/door samples.
+- One active variant stabilizes at 14 cached skin geometries; Classic+Slim at 28. One appearance texture is shared by world and first-person references. Representative third-person player costs 7 base draws or 13 with outer layers, plus roughly one held-item draw. Therefore 1 player is ~13–14 player draws, 10 are ~130–140 and 25 are ~325–350 before normal scene draws. There is no per-frame texture/geometry/material creation; 25 visible players is the stress/soak threshold where draw-call pressure needs native GPU measurement.
+
+### Remaining limitations
+
+- Native pointer-lock gameplay camera collision/comfort in tight caves, full blocks, slabs, stairs and fences is still an owner acceptance gate.
+- A real two-visible-client browser pass for remote skin/interpolation and a landscape-mobile GPU/thermal pass remain manual. Automated WebSocket tests already cover two-client join/snapshots/movement/respawn and the canonical remote visual adapter.
+- Publication rights/provenance for the 45 supplied skins remain unresolved. No selector/custom upload, armor rendering or appearance protocol was added.

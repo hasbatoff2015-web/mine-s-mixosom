@@ -8,7 +8,7 @@ import {
 import {
   BUILTIN_MINECRAFT_SKINS,
   MinecraftSkinRegistry,
-} from '../player/appearance/MinecraftSkin';
+} from '../rendering/player/MinecraftSkin';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';

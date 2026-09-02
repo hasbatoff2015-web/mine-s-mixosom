@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { shouldCyclePerspectiveOnKey } from '../src/input/InputManager';
 import {
   THIRD_PERSON_CAMERA_DISTANCE,
   availableThirdPersonDistance,
@@ -17,6 +18,22 @@ describe('third-person camera', () => {
     expect(nextCameraPerspective('firstPerson')).toBe('thirdPersonBack');
     expect(nextCameraPerspective('thirdPersonBack')).toBe('thirdPersonFront');
     expect(nextCameraPerspective('thirdPersonFront')).toBe('firstPerson');
+  });
+
+  it('captures one F5 edge only in active gameplay and leaves browser/menu F5 alone', () => {
+    const active = { code: 'F5', repeat: false, typing: false, canCapture: () => true, hasCallback: true };
+    expect(shouldCyclePerspectiveOnKey(active)).toBe(true);
+    expect(shouldCyclePerspectiveOnKey({ ...active, repeat: true })).toBe(false);
+    expect(shouldCyclePerspectiveOnKey({ ...active, typing: true })).toBe(false);
+    expect(shouldCyclePerspectiveOnKey({ ...active, canCapture: () => false })).toBe(false);
+    expect(shouldCyclePerspectiveOnKey({ ...active, hasCallback: false })).toBe(false);
+    let captureReads = 0;
+    expect(shouldCyclePerspectiveOnKey({
+      ...active,
+      code: 'KeyW',
+      canCapture: () => { captureReads += 1; return true; },
+    })).toBe(false);
+    expect(captureReads).toBe(0);
   });
 
   it('uses the Minecraft-like four block default when unobstructed', () => {

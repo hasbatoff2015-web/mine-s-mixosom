@@ -4,24 +4,25 @@ import {
   isFenceBlock,
   isSlabBlock,
   isStairBlock,
-  occupiedDoorFacing,
   type BlockRenderState,
-  type HorizontalFacing,
 } from '../blocks';
 import {
+  CACTUS_BOX,
+  CHEST_BOX,
+  chainSelectionLocalBox,
   defaultSlabType,
   defaultStairFacing,
   defaultStairHalf,
+  doorLocalBox,
   fenceConnections,
   fenceLocalBoxes,
   lanternSelectionLocalBox,
-  chainSelectionLocalBox,
   resolveStairShape,
   slabLocalBoxes,
   stairLocalBoxes,
   type BlockNeighborView,
   type LocalBox,
-} from '../rendering/specialBlockGeometry';
+} from './blockGeometry';
 
 export interface CollisionBox {
   readonly minX: number;
@@ -67,8 +68,6 @@ export function collisionCandidateCellRange(
   };
 }
 
-const DOOR_THICKNESS = 3 / 16;
-
 export function blockCollisionBoxes(
   world: BlockNeighborView,
   x: number,
@@ -96,19 +95,13 @@ export function blockCollisionBoxes(
     return offsetLocalBoxes(x, y, z, fenceLocalBoxes(fenceConnections(world, x, y, z), 1.5));
   }
   if (block === BlockId.Cactus) {
-    return [{
-      minX: x + 1 / 16, minY: y, minZ: z + 1 / 16,
-      maxX: x + 15 / 16, maxY: y + 1, maxZ: z + 15 / 16,
-    }];
+    return offsetLocalBoxes(x, y, z, [CACTUS_BOX]);
   }
   if (block === BlockId.OakDoor) {
     return [doorCollisionBox(x, y, z, state)];
   }
   if (block === BlockId.Chest) {
-    return [{
-      minX: x + 1 / 16, minY: y, minZ: z + 1 / 16,
-      maxX: x + 15 / 16, maxY: y + 14 / 16, maxZ: z + 15 / 16,
-    }];
+    return offsetLocalBoxes(x, y, z, [CHEST_BOX]);
   }
   if (block === BlockId.Lantern) {
     return offsetLocalBoxes(x, y, z, [lanternSelectionLocalBox(state)]);
@@ -145,11 +138,7 @@ export function doorCollisionBox(
   z: number,
   state: BlockRenderState | undefined,
 ): CollisionBox {
-  const facing = state?.facing ?? 'north';
-  const open = state?.open === true;
-  const hinge = state?.hinge ?? 'left';
-  const occupied = occupiedDoorFacing(facing, open, hinge);
-  return slabOnFace(x, y, z, occupied);
+  return offsetLocalBoxes(x, y, z, [doorLocalBox(state)])[0]!;
 }
 
 export function offsetLocalBoxes(x: number, y: number, z: number, locals: readonly LocalBox[]): CollisionBox[] {
@@ -161,19 +150,6 @@ export function offsetLocalBoxes(x: number, y: number, z: number, locals: readon
     maxY: y + box.maxY,
     maxZ: z + box.maxZ,
   }));
-}
-
-function slabOnFace(x: number, y: number, z: number, facing: HorizontalFacing): CollisionBox {
-  switch (facing) {
-    case 'north':
-      return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + DOOR_THICKNESS };
-    case 'south':
-      return { minX: x, minY: y, minZ: z + 1 - DOOR_THICKNESS, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
-    case 'west':
-      return { minX: x, minY: y, minZ: z, maxX: x + DOOR_THICKNESS, maxY: y + 1, maxZ: z + 1 };
-    case 'east':
-      return { minX: x + 1 - DOOR_THICKNESS, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
-  }
 }
 
 export function movementMultiplier(

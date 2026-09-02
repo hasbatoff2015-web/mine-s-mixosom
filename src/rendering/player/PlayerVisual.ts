@@ -9,7 +9,7 @@ import {
 import {
   MinecraftSkinRegistry,
   type SkinTextureHandle,
-} from '../../player/appearance/MinecraftSkin';
+} from './MinecraftSkin';
 import { ItemVisualFactory } from '../ItemVisualFactory';
 import {
   applySampledEntityLight,

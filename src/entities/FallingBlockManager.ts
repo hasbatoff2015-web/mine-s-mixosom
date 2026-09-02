@@ -1,9 +1,11 @@
-import * as THREE from 'three';
+import { Vec3 } from '../math/vec3';
+import { lerp } from '../core/constants';
 import { BlockId, getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
-import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
-import { applySampledEntityLight, worldDaylightUniform } from '../rendering/worldLighting';
 import { moveVoxelBody } from './voxelPhysics';
+import type { EntityHost, EntityVisual } from './EntityHost';
+import { isEntityHost } from './EntityHost';
+import { resolveEntityHost } from './resolveEntityHost';
 
 const BODY = Object.freeze({ width: 0.98, height: 0.98 });
 const GRAVITY = -32;
@@ -18,27 +20,39 @@ export interface SerializedFallingBlock {
 export interface FallingBlockEntity {
   readonly id: string;
   readonly block: BlockId;
-  readonly position: THREE.Vector3;
-  readonly previousPosition: THREE.Vector3;
-  readonly velocity: THREE.Vector3;
-  readonly visual: THREE.Object3D;
+  readonly position: Vec3;
+  readonly previousPosition: Vec3;
+  readonly velocity: Vec3;
+  readonly visual?: EntityVisual;
   ageSeconds: number;
 }
 
 export class FallingBlockManager {
   private readonly entities = new Map<string, FallingBlockEntity>();
+  private readonly host: EntityHost;
+  private readonly ownsHost: boolean;
   private idCounter = 0;
   private disposed = false;
 
   constructor(
-    private readonly scene: THREE.Object3D,
+    sceneOrHost: EntityHost | object,
     private readonly world: VoxelWorld,
-    private readonly visuals: ItemVisualFactory,
+    visuals?: unknown,
     private readonly maxEntities = 64,
-  ) {}
+  ) {
+    this.ownsHost = !isEntityHost(sceneOrHost);
+    this.host = resolveEntityHost(sceneOrHost, {
+      itemVisuals: visuals,
+      ownsItemVisuals: visuals ? false : undefined,
+    });
+  }
 
   get count(): number {
     return this.entities.size;
+  }
+
+  get list(): readonly FallingBlockEntity[] {
+    return [...this.entities.values()];
   }
 
   spawn(block: BlockId, x: number, y: number, z: number, id?: string): FallingBlockEntity | undefined {
@@ -46,18 +60,18 @@ export class FallingBlockManager {
     const definition = getBlockDefinition(block);
     if (!definition.gravity) return undefined;
     const entityId = id ?? `fall-${this.idCounter += 1}`;
-    const position = new THREE.Vector3(x + 0.5, y, z + 0.5);
-    const visual = this.visuals.createItemModel(definition.key);
-    visual.scale.setScalar(0.98);
-    visual.position.copy(position);
-    visual.position.y += 0.5;
-    this.scene.add(visual);
+    const position = new Vec3(x + 0.5, y, z + 0.5);
+    const visual = this.host.createFallingBlock(definition.key) as EntityVisual | undefined;
+    if (visual) {
+      this.host.setPosition(visual, position.x, position.y + 0.5, position.z);
+      this.host.attach(visual);
+    }
     const entity: FallingBlockEntity = {
       id: entityId,
       block,
       position,
       previousPosition: position.clone(),
-      velocity: new THREE.Vector3(0, 0, 0),
+      velocity: new Vec3(0, 0, 0),
       visual,
       ageSeconds: 0,
     };
@@ -82,15 +96,14 @@ export class FallingBlockManager {
         continue;
       }
       if (entity.position.y < -8 || entity.ageSeconds > 12) this.land(entity);
-      else {
-        applySampledEntityLight(
+      else if (entity.visual) {
+        this.host.applyLight(
           entity.visual,
           this.world,
           entity.position.x,
           entity.position.y,
           entity.position.z,
           1,
-          worldDaylightUniform.value,
         );
       }
     }
@@ -99,12 +112,25 @@ export class FallingBlockManager {
   interpolate(alpha: number): void {
     const t = Math.max(0, Math.min(1, alpha));
     for (const entity of this.entities.values()) {
-      entity.visual.position.set(
-        THREE.MathUtils.lerp(entity.previousPosition.x, entity.position.x, t),
-        THREE.MathUtils.lerp(entity.previousPosition.y, entity.position.y, t) + 0.5,
-        THREE.MathUtils.lerp(entity.previousPosition.z, entity.position.z, t),
-      );
+      if (!entity.visual) continue;
+      const x = lerp(entity.previousPosition.x, entity.position.x, t);
+      const y = lerp(entity.previousPosition.y, entity.position.y, t);
+      const z = lerp(entity.previousPosition.z, entity.position.z, t);
+      this.host.setPosition(entity.visual, x, y + 0.5, z);
+      this.host.applyLight(entity.visual, this.world, x, y, z, 1);
     }
+  }
+
+  get(id: string): FallingBlockEntity | undefined {
+    return this.entities.get(id);
+  }
+
+  remove(id: string): boolean {
+    const entity = this.entities.get(id);
+    if (!entity) return false;
+    if (entity.visual) this.host.detach(entity.visual);
+    this.entities.delete(id);
+    return true;
   }
 
   serialize(): SerializedFallingBlock[] {
@@ -134,19 +160,22 @@ export class FallingBlockManager {
   }
 
   clear(): void {
-    for (const entity of this.entities.values()) entity.visual.removeFromParent();
+    for (const entity of this.entities.values()) {
+      if (entity.visual) this.host.detach(entity.visual);
+    }
     this.entities.clear();
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.clear();
+    if (this.ownsHost) this.host.dispose();
     this.disposed = true;
   }
 
   private land(entity: FallingBlockEntity): void {
     this.entities.delete(entity.id);
-    entity.visual.removeFromParent();
+    if (entity.visual) this.host.detach(entity.visual);
     const x = Math.floor(entity.position.x);
     const y = Math.max(0, Math.round(entity.position.y));
     const z = Math.floor(entity.position.z);

@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { Vec3, type Vec3Like } from '../math/vec3';
+import { systemRandomFn, type RandomFn } from '../gameplay/random';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { blockSelectionBoxes } from '../world/selection';
 
@@ -6,11 +7,11 @@ import { blockSelectionBoxes } from '../world/selection';
 export interface EmbeddedArrowState {
   readonly x: number; readonly y: number; readonly z: number;
   readonly block: VoxelHit['block'];
-  readonly impactPoint: THREE.Vector3;
-  readonly impactVelocity: THREE.Vector3;
+  readonly impactPoint: Vec3;
+  readonly impactVelocity: Vec3;
 }
 
-export function embedArrow(hit: VoxelHit, velocity: THREE.Vector3): EmbeddedArrowState {
+export function embedArrow(hit: VoxelHit, velocity: Vec3): EmbeddedArrowState {
   return { x: hit.x, y: hit.y, z: hit.z, block: hit.block,
     impactPoint: hit.point.clone().addScaledVector(hit.normal, -0.001),
     impactVelocity: velocity.clone() };
@@ -26,7 +27,7 @@ export function arrowSupportIntact(world: VoxelWorld, support: EmbeddedArrowStat
 }
 
 /** 1.8 residual motion: each pre-impact component times random [0, 0.2). */
-export function releaseEmbeddedArrow(velocity: THREE.Vector3, support: EmbeddedArrowState, random: () => number): void {
+export function releaseEmbeddedArrow(velocity: Vec3, support: EmbeddedArrowState, random: () => number): void {
   velocity.set(support.impactVelocity.x * random() * 0.2,
     support.impactVelocity.y * random() * 0.2, support.impactVelocity.z * random() * 0.2);
 }
@@ -35,23 +36,23 @@ export const ARROW_AIR_DRAG_PER_TICK = 0.99;
 export const ARROW_WATER_DRAG_PER_TICK = 0.6;
 export const ARROW_GRAVITY_PER_TICK = 0.05;
 
-export function applyArrowDragAndGravity(velocity: THREE.Vector3, inWater = false): THREE.Vector3 {
+export function applyArrowDragAndGravity(velocity: Vec3, inWater = false): Vec3 {
   velocity.multiplyScalar(inWater ? ARROW_WATER_DRAG_PER_TICK : ARROW_AIR_DRAG_PER_TICK);
   velocity.y -= ARROW_GRAVITY_PER_TICK;
   return velocity;
 }
 
-export function arrowDamageFromVelocity(velocity: Readonly<THREE.Vector3>, critical = false): number {
+export function arrowDamageFromVelocity(velocity: Vec3Like, critical = false): number {
   const speedDamage = Math.max(1, Math.ceil(Math.hypot(velocity.x, velocity.y, velocity.z) * 2));
   return critical ? speedDamage + Math.max(1, Math.floor(speedDamage * 0.25)) : speedDamage;
 }
 
 export function inaccurateArrowDirection(
-  direction: Readonly<THREE.Vector3>,
-  random: () => number = Math.random,
+  direction: Vec3Like,
+  random: RandomFn = systemRandomFn,
   spread = 0.0075,
-): THREE.Vector3 {
-  const result = new THREE.Vector3(direction.x, direction.y, direction.z).normalize();
+): Vec3 {
+  const result = new Vec3(direction.x, direction.y, direction.z).normalize();
   result.x += gaussian(random) * spread;
   result.y += gaussian(random) * spread;
   result.z += gaussian(random) * spread;

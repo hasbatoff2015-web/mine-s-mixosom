@@ -9,7 +9,7 @@ import {
   BUILTIN_MINECRAFT_SKINS,
   MinecraftSkinRegistry,
   validateMinecraftSkinDimensions,
-} from '../src/player/appearance/MinecraftSkin';
+} from '../src/rendering/player/MinecraftSkin';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import {
   PLAYER_MODEL_PIXEL,

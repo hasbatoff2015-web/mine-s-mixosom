@@ -1,21 +1,99 @@
 # Тестирование
 
-## 2026-09-01 player skins / third-person camera
+## 2026-09-02 PR #31 post-server integration
 
 Automated focused gate:
 
 ```text
-npx vitest run tests/player-skins.test.ts tests/player-skin-assets.test.mjs tests/player-visual-animation.test.ts tests/third-person-camera.test.ts tests/classic-combat-integration.test.ts
-5 files, 33 tests passed
+npx vitest run tests/player-skins.test.ts tests/player-skin-assets.test.mjs tests/player-visual-animation.test.ts tests/third-person-camera.test.ts tests/player-main-integration.test.ts tests/remote-player-view.test.ts tests/classic-combat-integration.test.ts
 ```
 
-`player-skins` проверяет 64×64 validation, Classic/Slim dimensions, body/head, independent left/right/base/outer UV, nearest/no-mipmap texture, cache/ref-count, live appearance swap/dispose и feet/height bounds. `player-skin-assets` читает реальные IHDR всех 45 supplied PNG + QA skin. `player-visual-animation` покрывает head/body yaw, opposite gait, sneak, attack/eat/block/bow overlays. `third-person-camera` покрывает F5 order, 4-block distance, swept-corner wall/slab clipping, non-solid empty source и smooth restore. Classic combat 17/17 подтверждает, что новый optional visual hook не ломает прежние minimal `GameSession` test doubles.
+Итог: **7 files / 41 tests passed**. Расширенный player + overlay + server/network gate: **28 files / 236 tests passed**. Отдельно: `test:sim` **42/42**, `test:server` **73/73**, `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `smoke:sim`, `smoke:server` — PASS.
 
-DEV URL: `/?qaPlayer=1`. Проверены Classic и Slim supplied skins, `player_uv_test` front red/back purple/side colors, outer on/off (`draw 13 → 7`), shared first-person arm, walk + pickaxe, bow use, head sliders и front/back/first. Cache после смены skin остаётся `1 texture / 2 refs`; geometry stabilizes at 14 per variant, 28 after both variants. Browser console: 0 warnings/errors.
+`player-skins` проверяет 64×64 validation, Classic/Slim dimensions, body/head, independent left/right/base/outer UV, nearest/no-mipmap texture, cache/ref-count, live appearance swap/dispose и feet/height bounds. `player-skin-assets` читает реальные IHDR всех 45 supplied PNG + QA skin. `player-visual-animation` покрывает head/body yaw, opposite gait, sneak, attack/eat/block/bow overlays. `third-person-camera` покрывает F5 order/active edge, 4-block distance, swept-corner wall/slab clipping, non-solid empty source и smooth restore. `player-main-integration` guards authoritative Online no-local-world-tick, player-eye targeting, render-path breaking overlay and lifecycle-neutral perspective switching. `remote-player-view` verifies bounded interpolation feeding canonical `PlayerVisual`, default appearance, animation/invisibility/light path, no placeholder box and no fabricated held item.
 
-Full `npm test` attempt: 87 files, **77 passed**, 10 failed; 974/1001 tests passed before one feature-adjacent minimal-session regression was fixed and rerun green. Remaining failures are outside changed systems: pre-existing stale `GeneratedItemGeometry.ts` source fingerprint (actual unchanged vs `origin/main`), `minecraft-reference-extractor` parse failure, CPU-heavy worldgen/fire/minecart timeouts, and lighting/streaming wall-clock thresholds. Их assertions не ослаблялись. Focused feature + classic combat gate, typecheck and production build pass; final size/archive results are in the report.
+DEV URL: `/?qaPlayer=1`. Проверены Classic и Slim supplied skins, outer on/off (`draw 13 → 8` with held sword), first-person arm, sprint/mining/bow and all remaining pose states, head sliders, front/back/first and shared sword/pickaxe/block/bow/food visuals. Cache после смены skin остаётся `1 texture / 2 refs`; geometry stabilizes at 14 per variant, 28 after both variants. `/?qaBreaking=1` на том же merged build визуально прошёл cube stage `0/9 → 4/9` и special-block samples.
 
-Manual/device follow-up: actual gameplay F5 near full blocks/slabs/stairs/fences, crosshair target before/after camera pull-in, front-mode W semantics, cave near-plane comfort, and landscape mobile GPU cost. Standalone harness proves model/pose resources, pure tests prove collision math; neither simulates real pointer lock/device thermals.
+Full comparable `npm run test -- --maxWorkers=2`: integration **115/119 files, 1238/1253 tests**, exact clean `origin/main` `57724f6` baseline **109/114 files, 1214/1231 tests**. Integration failures are the same baseline classes: stale `GeneratedItemGeometry.ts` source fingerprint, `minecraft-reference-extractor` parse failure, CPU-heavy worldgen/fire/minecart timeouts and one Vitest worker RPC timeout. The clean worktree additionally lacked ignored `assets/minecraft` inputs, so two authored-asset tests failed only there. All 22 net additional tests pass; no player/remote/overlay/server regression class was added. `npm run check` therefore stops at the known full-suite failures, while standalone build/size/archive pass at **3.75 MiB / 277 files**.
+
+Manual/device follow-up: actual gameplay F5 near full blocks/slabs/stairs/fences, crosshair target before/after camera pull-in, front-mode W semantics, cave near-plane comfort, landscape mobile GPU cost, and two-client remote `PlayerVisual`. Standalone harness proves model/pose resources, pure tests prove collision math; neither simulates real pointer lock/device thermals.
+
+## 2026-09-02 PR #28 block breaking overlay integration
+
+Reports: `reports/2026-08-31_block-breaking-overlay.md` and `reports/2026-09-02_pr28-block-breaking-overlay-integration.md`. Integrated baseline `origin/main`=`a305dc5`. Branch `cursor/block-breaking-overlay-3f86`.
+
+Targeted: `tests/block-breaking-overlay.test.ts`, `tests/breaking-overlay-textures.test.mjs`, retained mining/block-geometry/selection/Game/use/GameplayKernel packs, online simulation/network block updates, and server Anarchy gameplay.
+
+Contracts: stage mapping (`<=0`/`>=1` hidden, `0.01→0` … `0.9→9`), texture path `gui/destroy/destroy_stage_N`, UV 0..1 per face, shape keys for cube/slab/stairs/fence/door, target change resets visual stage, vanished block hides, same stage reuses material/map/geometry, no chunk dirty/remesh, world coordinates at x=15/16, dispose.
+
+DEV harness: `/?qaBreaking=1` (cube/slab/stairs/fence/door, keys `0–9`, `[` `]`, `C` auto-cycle). Production builds do not import the harness.
+
+Online authority contract: overlay only reads local progress; client completion sends a request and does not write the block. Server `advanceMining` / `breakBlock` remains authority; authoritative block packets update clients. No second mining timer or online world tick was added.
+
+Final test/build/full-suite results are recorded in the 2026-09-02 integration report. Manual desktop/mobile/two-client checklist remains an owner acceptance gate. HUD mining bar is intentionally still present.
+
+## 2026-09-01 inactive Anarchy client world sync
+
+Report: `reports/2026-09-01_inactive-client-world-sync.md`.
+
+`tests/inactive-client-world-sync.test.ts`: remesh policy PLAYING (inventory overlay) vs PAUSED/BACKGROUND vs MENU; `applyNetworkBlockChanges` while paused; batch last-write; parsed `block_batch` without resume replay; x=15/16; fluid state; deferred lighting queue; kernel still off online.
+
+Retain `gameplay-modal`, `network-block-state-respawn`, online session/respawn, `anarchy-server` / `anarchy-gameplay`.
+
+## 2026-09-01 Phase 7 tooling split
+
+Report: `reports/2026-09-01_shared-tooling-split.md`.
+
+Layer commands (do not replace `npm run check`):
+
+```bash
+npm run typecheck:sim      # tsconfig.sim.json — no DOM, no Three
+npm run typecheck:client    # tsconfig.client.json
+npm run typecheck:server    # tsconfig.server.json
+npm run check:boundaries    # static import scan
+npm run smoke:sim           # Node import of shared sim; fails if `three` loads
+npm run smoke:server        # Anarchy start/tick/mutate/persist, no renderer
+npm run test:sim            # kernel, interaction, geometry, RNG, snapshot, lighting adapter, tooling
+npm run test:server          # tests/server + fs-world-store
+npx tsc --noEmit            # umbrella (still meaningful)
+npm run build               # tsc --noEmit && vite build
+npm run dev                 # Vite client
+npm run dev:server           # Node Anarchy
+```
+
+Vitest default environment is still **Node**. Shared tests must not need jsdom. Client visual tests (`entity-initial-lighting`, `mob-hurt-flash`, …) import Three and register `tests/setupClientEntityHost.ts` so `new MobManager(new THREE.Scene(), …)` still wraps `ThreeEntityHost`. Server tests stay Node.
+
+`npm run check` now also runs `check:boundaries` before the existing test/build/size/archive chain.
+
+## 2026-08-30 initial entity lighting (online join)
+
+Report: `reports/2026-08-30_entity-initial-lighting.md`.
+
+`tests/entity-initial-lighting.test.ts`: join-time mob dark until chunk light + `interpolateVisuals` (no hurt); dynamic spawn already lit; hurt is not the initializer; day vs night compose; `entity_snapshot` restore path; dropped-item visual sync; two-mob isolation; minecart interpolate without `update()`; skeleton snapshot restore. Retain `mob-hurt-flash`, `entity-lighting`.
+
+## 2026-08-30 Phase 6 RNG + lighting adapters
+
+Report: `reports/2026-08-30_shared-rng-lighting-adapters.md`.
+
+Targeted: `tests/random-source.test.ts` (seed determinism, drop counts, scatter envelope, explosion injected RNG) and `tests/lighting-adapter.test.ts` (`WORLD_LIGHT_BUDGET_MS === 2`, immediate vs deferred, `processDeferredLighting` no-op on server worlds). Retain lighting-jobs / lighting-height-256 / lighting-scheduler, combat, explosion, gameplay-kernel, anarchy-gameplay, use-interaction, entity-host.
+
+## 2026-08-29 Phase 2 shared interaction
+
+Report: `reports/2026-08-29_shared-interaction.md`.
+
+Targeted: `tests/use-interaction.test.ts` (intent order, `placeFromHit`, online `interact`-only) plus retained `placement-support` (still `Game.useTargetOrItem`), `glowstone-lantern-chain`, `gameplay-kernel`, `tests/server/anarchy-gameplay.test.ts` / `anarchy-server.test.ts`, bucket + network block-state/input packs.
+
+## 2026-08-29 Anarchy server QA fixes
+
+Report: `reports/2026-08-29_local-server-qa-fixes.md`.
+
+Targeted: `tests/authoritative-motion.test.ts`, `tests/remote-player-view.test.ts`, `tests/server/anarchy-server.test.ts` (plus retained `tests/anarchy-world.test.ts`). Covers stale snapshots, no local hard-teleport, camera look isolation, remote delay lerp, input seq, break/place accept/reject, two-client broadcast, persist, reconnect.
+
+## 2026-08-29 local authoritative Anarchy server
+
+Report: `reports/2026-08-29_local-authoritative-server.md`. Docs: `docs/LOCAL_SERVER.md`.
+
+Targeted: `tests/server/anarchy-server.test.ts` (start/load/join/spawn/two clients/movement/break/place/reach reject/persist/plugins/API surface/singleplayer isolation) plus retained `tests/anarchy-world.test.ts` (IndexedDB identity still valid for the legacy helper / SP list filter).
 
 ## 2026-08-29 lateral skylight / lighting consistency
 
@@ -179,7 +257,8 @@ Targeted suite — 205/205 в 19 файлах; typecheck/build/size/archive PASS
 
 - `authored-item-assets.test.mjs`: точные bytes source→runtime, deterministic potion tint/alpha/cork, repeated import, forced fallback precedence, missing-required preflight без потери runtime files.
 - `arrow-visual-cleanup.test.ts`: finite geometry/UV/normals, tail-only fins, +Z orientation и embedded tip по шести направлениям, stable inGround quaternion, 240 shots → cap48, geometry1/materials2/texture1, removal без children.
-- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch.
+- `placement-support.test.ts`: реальные Game.useTargetOrItem calls без DOM constructor — torch anchor rejection, все faces для torch/redstone torch/button/lever/ladder, stone/slab/stair/door/chest/furnace/rail/plate/wire controls, slab merge, replaceable vegetation, bow/food/potion use dispatch. После Phase 2 это тот же `performUseHeld`.
+- `use-interaction.test.ts`: чистый `resolveUseIntent` (bucket / lever / door / cartCloser / food / place), `placeFromHit` torch+lantern support, online client шлёт только `interact`.
 - `shield-removal.test.ts`: player/offhand/armor/chest/furnace/drop migration, сохранность metadata/durability/bucket overflow, Game damage+armor+normal knockback без active blocking, отсутствие shield-specific runtime. Sword blocking добавлен последующим classic pass; `/give shield` обязан завершаться ошибкой.
 
 Browser QA **не пройден**: браузер ранее отклонил localhost по policy; сейчас browser/user tabs пусты. Обход через другой host/browser/CDP не использовался. PNG inspection и component tests не означают WebGL acceptance.
