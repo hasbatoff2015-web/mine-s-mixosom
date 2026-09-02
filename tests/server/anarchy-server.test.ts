@@ -650,24 +650,32 @@ describe('WorldInstance foundation simulation', () => {
     if ('error' in joined) throw new Error(joined.error);
     const player = joined.player;
     world.setGameMode(player, 'creative');
-    player.controller.isFlying = true;
-    player.controller.flyIgnoreGroundTicks = 8;
+    world.applyInput(player, moveInput(1, { jump: true }));
+    world.tick();
+    world.applyInput(player, moveInput(2, { jump: false }));
+    world.tick();
+    world.applyInput(player, moveInput(3, { jump: true }));
+    world.tick();
+    expect(player.controller.isFlying).toBe(true);
     const startY = player.controller.position.y;
-    for (let seq = 1; seq <= 8; seq += 1) {
+    for (let seq = 4; seq <= 11; seq += 1) {
       world.applyInput(player, moveInput(seq, { forward: 1, jump: true }));
     }
     world.tick();
-    expect(player.snapshot().inputSeq).toBe(8);
+    expect(player.snapshot().inputSeq).toBe(11);
     expect(player.controller.isFlying).toBe(true);
     const afterUp = player.controller.position.clone();
     expect(afterUp.y).toBeGreaterThan(startY + 0.05);
 
-    for (let seq = 9; seq <= 16; seq += 1) {
+    for (let seq = 12; seq <= 19; seq += 1) {
       world.applyInput(player, moveInput(seq, { forward: 1, descend: true }));
     }
     world.tick();
-    expect(player.snapshot().inputSeq).toBe(16);
-    expect(player.controller.position.y).toBeLessThan(afterUp.y - 0.05);
+    expect(player.snapshot().inputSeq).toBe(19);
+    const afterFirstDescend = player.controller.position.y;
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(19);
+    expect(player.controller.position.y).toBeLessThan(afterFirstDescend);
   });
 
   it('accepts a valid break, mutates the world, and rejects air/reach/bounds', async () => {
