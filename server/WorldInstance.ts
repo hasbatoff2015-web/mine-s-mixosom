@@ -57,6 +57,7 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
+  /** Seq of lastInput. Each tick simulates lastInput once; skipped seqs are not replayed. */
   lastInputSeq = -1;
   viewCx = 0;
   viewCz = 0;
@@ -124,6 +125,7 @@ export class ServerPlayer implements GameplayPlayer {
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
       inputSeq: this.lastInputSeq,
+      flying: this.controller.isFlying,
     };
   }
 
@@ -623,6 +625,9 @@ export class WorldInstance {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
       const input = player.lastInput;
+      // One physics step per server tick using the latest accepted input.
+      // Packets that arrived between ticks only replace lastInput; their seqs
+      // are not simulated individually. Snapshot.inputSeq is that lastInput.seq.
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);

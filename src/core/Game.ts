@@ -187,10 +187,10 @@ import {
   splitPlayerSnapshots,
 } from '../net/authoritativeMotion';
 import {
-  applyPredictedTick,
   createPredictionBuffer,
+  formatPredictionDebug,
   predictedMoveFromInput,
-  pushPredictedMove,
+  predictLocalMove,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
   type PredictionBuffer,
@@ -978,8 +978,7 @@ export class Game {
       pitch: this.input.pitch,
       selectedSlot: session.selectedSlot,
     });
-    pushPredictedMove(online.prediction, predicted);
-    applyPredictedTick(session.player, session.world, predicted);
+    predictLocalMove(session.player, session.world, online.prediction, predicted);
   }
 
   private async openAnarchyWorld(): Promise<void> {
@@ -2307,8 +2306,7 @@ export class Game {
       use: gameplayAllowed && this.input.using,
       vehicleForward: riding ? movement.forward : 0,
     });
-    pushPredictedMove(online.prediction, predicted);
-    applyPredictedTick(session.player, session.world, predicted);
+    predictLocalMove(session.player, session.world, online.prediction, predicted);
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
@@ -3557,6 +3555,9 @@ export class Game {
       this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
       if (this.debugTickOrder && this.kernelTrace.length > 0) {
         this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
+      }
+      if (import.meta.env.DEV && session.online) {
+        this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
       }
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;

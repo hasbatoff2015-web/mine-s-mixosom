@@ -14,7 +14,7 @@ describe('player visuals on the server-authoritative main integration', () => {
   it('keeps Online Anarchy headless simulation authoritative while updating presentation inventory', () => {
     const online = section('private tickOnline(', 'private tick():');
     expect(online).toContain("type: 'input'");
-    expect(online).toContain('applyPredictedTick');
+    expect(online).toContain('predictLocalMove');
     expect(online).toContain('session.playerVisual.setHeldItem(selected?.itemId)');
     expect(online).not.toContain('stepTowardTarget');
     expect(online).not.toContain('ingestAuthoritativePosition');

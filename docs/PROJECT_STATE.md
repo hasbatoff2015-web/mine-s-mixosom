@@ -2,6 +2,14 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online Anarchy prediction-history jitter fix
+
+- Ветка `cursor/online-prediction-remesh-86e1` (PR **#37**). **Не merge в main.**
+- Root cause jitter: каждый `player_state` делал restore+replay, даже когда prediction уже совпадала. Сравнивался live pose с результатом replay, а не snapshot seq N с predicted state **после** seq N. `previousPosition`/`position` дёргались на 20 Hz. Server `inputSeq` = lastInput этого tick (пропущенные seq не симулируются).
+- Исправление: history 64 `{seq, input, stateAfter}`. Ack сравнивает snapshot с predicted state at N. В пределах допуска — **не трогать** position/velocity/previousPosition и не replay. Иначе rewind к N и replay только seq > N. Duplicate `inputSeq === lastAckedSeq` игнорируется (server reused lastInput).
+- Urgent remesh из того же PR сохранён. GRAVITY/JUMP/WALK/SPRINT, 20 TPS, offline physics не менялись.
+- Report: `docs/reports/2026-09-02_online-prediction-jitter.md`.
+
 ## Последний проход: Online Anarchy prediction + urgent remesh
 
 - Ветка `cursor/online-prediction-remesh-86e1` от актуального `origin/main` `4d803e5`. **Не merge в main.**

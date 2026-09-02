@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-02: Online Anarchy prediction-history jitter fix (PR #37)
+
+- [x] Store predicted movement state after each local `input.seq`.
+- [x] Compare `player_state` to the predicted pose at that seq; skip rewind when within tolerance.
+- [x] Duplicate/coalesced server `inputSeq` semantics (lastInput once per tick).
+- [x] Focused tests: accept/no-touch, delayed snapshot, correction+replay, coalescing, walk/sprint/jump/fly/descend, snap, reconnect.
+- [x] DEV F3 prediction debug line (`Pred accept|corrected|…`).
+- [ ] Owner two-client localhost QA vs singleplayer feel.
+- [ ] Do not merge main.
+
 ## 2026-09-02: Online Anarchy local prediction + urgent block remesh
 
 - [x] Investigate client/server movement: `tickOnline` sent input, waited for `player_state`, then chased X/Y/Z with `stepTowardTarget`.

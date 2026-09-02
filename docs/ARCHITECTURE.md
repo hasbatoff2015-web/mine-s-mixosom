@@ -7,16 +7,20 @@ Local Anarchy motion is **predicted** on the existing `PlayerController`, not ch
 ```text
 tickOnline (20 TPS)
   send input.seq
-  pushPredictedMove + applyPredictedTick   ← same PlayerController.tick, no onDamage
-player_state
-  shouldAcceptSnapshot(tick)
-  reconcilePredictedPlayer                 ← ack inputSeq, restore pose, replay unacked
+  predictLocalMove  → PlayerController.tick + history[seq] = state AFTER tick
+player_state (inputSeq = N)
+  if N already acked or missing → ignore movement
+  compare snapshot to history[N].state     ← never vs live pose
+  if within tolerance → ack ≤ N, do not touch the player
+  else restore snapshot pose + replay only seq > N (and rewrite those history states)
 render
-  lerp previousPosition → position (same as SP)
+  lerp previousPosition → position (same as SP; snapshots do not drive this)
   look: applyImmediateRenderLook every frame
 ```
 
-Server still owns gameplay: `WorldInstance.tickConnectedPlayers` runs the real physics; `PlayerSnapshot.inputSeq` is `lastInputSeq` applied this tick. The client must not write health, world voxels, or combat from prediction. Large corrections (≥ 6 blocks) snap `previousPosition`. Small residuals do **not** exponentially approach the snapshot (`stepTowardTarget` remains for tests / legacy helpers only).
+`inputSeq` is the seq of `lastInput` used for **that one** server physics tick. Packets that arrived between ticks only replace `lastInput`; skipped seqs are not simulated. A second snapshot with the same seq means the server ticked again with the same held input — the client ignores it for movement (already compared `history[N]`).
+
+Server still owns gameplay: `WorldInstance.tickConnectedPlayers` runs the real physics; health/world/combat stay authoritative. Large corrections (≥ 6 blocks) snap `previousPosition`. `stepTowardTarget` remains for tests / legacy helpers only.
 
 Reconnect: `resetPredictionBuffer` on welcome; server `inputSeqAfterReconnect()` still `-1` so a new client starting at seq 0 is accepted.
 
@@ -483,7 +487,7 @@ Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT 
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
-Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `input.seq`; snapshots carry `inputSeq` so the client can rewind to that pose and replay unacked inputs (`src/net/localPlayerPrediction.ts`). Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
+Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `lastInput`; snapshots carry `inputSeq` so the client can compare the predicted pose **at that seq** (`src/net/localPlayerPrediction.ts`). Matching acks leave the live player untouched. Mismatches restore that pose and replay only later seqs. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
 
 `GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal.
 

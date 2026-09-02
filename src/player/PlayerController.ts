@@ -72,6 +72,26 @@ export interface SerializedPlayerController {
   readonly pitch: number;
 }
 
+/** Movement-only pose for online prediction history. No health/inventory. */
+export interface PlayerMovementState {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly vx: number;
+  readonly vy: number;
+  readonly vz: number;
+  readonly onGround: boolean;
+  readonly sneaking: boolean;
+  readonly sprinting: boolean;
+  readonly jumpHeld: boolean;
+  readonly isFlying: boolean;
+  readonly flyWindowTicks: number;
+  readonly flyIgnoreGroundTicks: number;
+  readonly onLadder: boolean;
+  readonly fallDistance: number;
+  readonly meleeKnockback: boolean;
+}
+
 export interface PlayerTickResult {
   readonly movedDistance: number;
   readonly horizontalDistance: number;
@@ -426,6 +446,46 @@ export class PlayerController {
     this.fallDistance = 0;
   }
 
+  captureMovementState(): PlayerMovementState {
+    return {
+      x: this.position.x,
+      y: this.position.y,
+      z: this.position.z,
+      vx: this.velocity.x,
+      vy: this.velocity.y,
+      vz: this.velocity.z,
+      onGround: this.onGround,
+      sneaking: this.sneaking,
+      sprinting: this.sprinting,
+      jumpHeld: this.jumpHeld,
+      isFlying: this.isFlying,
+      flyWindowTicks: this.flyWindowTicks,
+      flyIgnoreGroundTicks: this.flyIgnoreGroundTicks,
+      onLadder: this.onLadder,
+      fallDistance: this.fallDistance,
+      meleeKnockback: this.meleeKnockback,
+    };
+  }
+
+  /**
+   * Copy movement-only simulation. Does not touch yaw/pitch, health, or
+   * `previousPosition` — the caller owns render interpolation.
+   */
+  applyMovementState(state: PlayerMovementState): void {
+    this.position.set(state.x, state.y, state.z);
+    this.velocity.set(state.vx, state.vy, state.vz);
+    this.onGround = state.onGround;
+    this.sneaking = state.sneaking;
+    this.sprinting = state.sprinting;
+    this.jumpHeld = state.jumpHeld;
+    this.isFlying = state.isFlying;
+    this.flyWindowTicks = state.flyWindowTicks;
+    this.flyIgnoreGroundTicks = state.flyIgnoreGroundTicks;
+    this.onLadder = state.onLadder;
+    this.fallDistance = state.fallDistance;
+    this.meleeKnockback = state.meleeKnockback;
+  }
+
   /**
    * Online reconciliation: copy the server pose without wiping flight or
    * save/load internals. `jumpHeld` comes from the acked input so replay does
@@ -442,14 +502,31 @@ export class PlayerController {
     readonly sneaking: boolean;
     readonly sprinting: boolean;
     readonly jumpHeld: boolean;
+    readonly isFlying?: boolean;
+    readonly flyWindowTicks?: number;
+    readonly flyIgnoreGroundTicks?: number;
+    readonly onLadder?: boolean;
+    readonly fallDistance?: number;
+    readonly meleeKnockback?: boolean;
   }): void {
-    this.position.set(state.x, state.y, state.z);
-    this.velocity.set(state.vx, state.vy, state.vz);
-    this.onGround = state.onGround;
-    this.sneaking = state.sneaking;
-    this.sprinting = state.sprinting;
-    this.jumpHeld = state.jumpHeld;
-    this.meleeKnockback = false;
+    this.applyMovementState({
+      x: state.x,
+      y: state.y,
+      z: state.z,
+      vx: state.vx,
+      vy: state.vy,
+      vz: state.vz,
+      onGround: state.onGround,
+      sneaking: state.sneaking,
+      sprinting: state.sprinting,
+      jumpHeld: state.jumpHeld,
+      isFlying: state.isFlying ?? this.isFlying,
+      flyWindowTicks: state.flyWindowTicks ?? this.flyWindowTicks,
+      flyIgnoreGroundTicks: state.flyIgnoreGroundTicks ?? this.flyIgnoreGroundTicks,
+      onLadder: state.onLadder ?? this.onLadder,
+      fallDistance: state.fallDistance ?? this.fallDistance,
+      meleeKnockback: state.meleeKnockback ?? false,
+    });
   }
 
   static deserialize(state: SerializedPlayerController): PlayerController {

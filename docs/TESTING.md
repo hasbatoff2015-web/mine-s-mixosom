@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-02 Online Anarchy prediction-history jitter fix
+
+Report: `reports/2026-09-02_online-prediction-jitter.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/player-main-integration.test.ts
+```
+
+Contracts: matching ack does not touch live pose/previousPosition; delayed snapshot does not jitter; duplicate inputSeq ignored; mismatch rewinds only seq > N; coalesced lastInput; walk/sprint/jump/fly/descend/strafe/snap/reconnect.
+
 ## 2026-09-02 Online Anarchy prediction + urgent remesh
 
 Report: `reports/2026-09-02_online-prediction-remesh.md`. Branch: `cursor/online-prediction-remesh-86e1` from `origin/main` `4d803e5`.

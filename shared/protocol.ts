@@ -46,6 +46,8 @@ export interface PlayerSnapshot {
   readonly dead?: boolean;
   /** Last input seq applied to this pose. Local prediction acks against it. */
   readonly inputSeq?: number;
+  /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
+  readonly flying?: boolean;
 }
 
 export interface RemotePlayerInfo {
