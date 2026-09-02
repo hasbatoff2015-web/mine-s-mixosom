@@ -48,11 +48,13 @@ Server: `FC_DEBUG_SNAP=1` logs gen/sent/tps. Status line includes `tps` / `snapG
 
 ## Tests
 
-- lockstep 1/2/5/10/20 identical
+- lockstep **identical** at 1/2/5/10/20
 - 2 vs 1 coalesce ≈ walk step; 2 vs 2 = 0
 - catch-up math; `tickCatchUp(2)` = two physics, one snapshot
 - `/predsim` command_result
-- existing prediction/pipeline/bow/FIFO tests
+- prediction **24/24**, pipeline **5/5**, urgent remesh **4/4**, player-main **4/4**, anarchy-server **23/23**, move-sim **6/6**, corr-diag **1/1**
+- `typecheck` / `typecheck:sim` / `typecheck:client` / `typecheck:server` / `check:boundaries` PASS
+- `test:sim` **42/42**, `test:server` **83/83**, smokes PASS, `build` PASS
 
 ## Manual QA
 
