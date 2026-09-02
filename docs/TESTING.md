@@ -1,5 +1,19 @@
 # Тестирование
 
+## 2026-09-02 PR #28 block breaking overlay integration
+
+Reports: `reports/2026-08-31_block-breaking-overlay.md` and `reports/2026-09-02_pr28-block-breaking-overlay-integration.md`. Integrated baseline `origin/main`=`a305dc5`. Branch `cursor/block-breaking-overlay-3f86`.
+
+Targeted: `tests/block-breaking-overlay.test.ts`, `tests/breaking-overlay-textures.test.mjs`, retained mining/block-geometry/selection/Game/use/GameplayKernel packs, online simulation/network block updates, and server Anarchy gameplay.
+
+Contracts: stage mapping (`<=0`/`>=1` hidden, `0.01→0` … `0.9→9`), texture path `gui/destroy/destroy_stage_N`, UV 0..1 per face, shape keys for cube/slab/stairs/fence/door, target change resets visual stage, vanished block hides, same stage reuses material/map/geometry, no chunk dirty/remesh, world coordinates at x=15/16, dispose.
+
+DEV harness: `/?qaBreaking=1` (cube/slab/stairs/fence/door, keys `0–9`, `[` `]`, `C` auto-cycle). Production builds do not import the harness.
+
+Online authority contract: overlay only reads local progress; client completion sends a request and does not write the block. Server `advanceMining` / `breakBlock` remains authority; authoritative block packets update clients. No second mining timer or online world tick was added.
+
+Final test/build/full-suite results are recorded in the 2026-09-02 integration report. Manual desktop/mobile/two-client checklist remains an owner acceptance gate. HUD mining bar is intentionally still present.
+
 ## 2026-09-01 inactive Anarchy client world sync
 
 Report: `reports/2026-09-01_inactive-client-world-sync.md`.

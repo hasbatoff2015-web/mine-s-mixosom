@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-02: integrate PR #28 block breaking overlay with authoritative Anarchy main
+
+- [x] Visual-only 10-stage crack overlay consuming `session.miningProgress`; mining gameplay unchanged.
+- [x] Canonical `BlockBreakingOverlay` + `WorldRenderer.setBreakingProgress`; no chunk remesh on stage change.
+- [x] Shape-aware overlay uses canonical `world/blockGeometry` selection contract (cube/slab/stairs/fence/door required; other selection shapes reuse the same path).
+- [x] Original production masks at `public/textures/gui/destroy/`; Mojang reference sheets not committed.
+- [x] DEV `/?qaBreaking=1` harness; HUD mining bar kept for the parallel UI branch.
+- [x] Merge current `origin/main` `a305dc5` into the existing PR #28 branch without rebase; preserve GameplayKernel, server-authoritative mining, block states/updates, interpolation and plugin platform.
+- [ ] Native desktop/mobile visual QA of the report checklist (dirt/stone/tools, cancel, chunk border, cave, selection outline).
+
 ## 2026-09-01: Phase 8 plugin platform
 
 - [x] Server-only PluginManager lifecycle, scoped ServerAPI, EventBus isolation, command unregister.

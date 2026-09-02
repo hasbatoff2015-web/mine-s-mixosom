@@ -199,7 +199,7 @@ assets/
 | Chest | `minecraft/textures/entity/chest/normal.png` | 128×128 legacy entity UV; требуется собственный chest mesh/UV |
 | Wooden Door | `door_wood_upper.png`, `door_wood_lower.png`; inventory sprite `minecraft/textures/items/door_wood.png` | Alpha-test, два block states |
 | White Bed | `minecraft/textures/entity/bed/white.png` | 128×128 entity UV; нет простой block tile |
-| Break progress | `minecraft/textures/blocks/destroy_stage_0.png` … `destroy_stage_9.png` | 10 оверлеев 32×32 |
+| Break progress | `minecraft/textures/blocks/destroy_stage_0.png` … `destroy_stage_9.png` | 10 оверлеев 32×32; **локальный pack reference only**. Runtime ships original Frontier masks at `public/textures/gui/destroy/destroy_stage_0.png` … `_9.png` (same 10-stage contract). Mojang sheets must not be committed. |
 
 ### Все 16 цветов wool
 

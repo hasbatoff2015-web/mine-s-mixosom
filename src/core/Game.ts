@@ -3260,6 +3260,7 @@ export class Game {
         this.camera.updateProjectionMatrix();
       }
       this.updateEnvironment(session.world.timeOfDay);
+      this.updateBreakingOverlay();
     }
     this.ui.setHurtFlash(this.hurt.flashAlpha(now));
     this.ui.fadeChatLines(now, chatLineOpacity);
@@ -3329,6 +3330,21 @@ export class Game {
     this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
+  }
+
+  private updateBreakingOverlay(): void {
+    const session = this.session;
+    if (!session) return;
+    const target = session.target;
+    const mining = this.lifecycle.state === 'PLAYING'
+      && session.miningTarget !== undefined
+      && target !== undefined
+      && session.miningProgress > 0
+      && session.miningProgress < 1;
+    session.worldRenderer.setBreakingProgress(
+      mining ? target : undefined,
+      mining ? session.miningProgress : 0,
+    );
   }
 
   private refreshHud(): void {

@@ -1,6 +1,15 @@
 # Состояние проекта
 
-Срез: **2026-09-01**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: интеграция PR #28 block breaking overlay
+
+- Ветка существующего Draft PR **#28** `cursor/block-breaking-overlay-3f86` объединена обычным merge с `origin/main` `a305dc5`; серверная архитектура Online Anarchy из main сохранена.
+- `BlockBreakingOverlay` остаётся presentation-only consumer существующего `session.miningProgress`. Singleplayer mining simulation не менялась; Online client только показывает local visual feedback и отправляет input/request, а фактическое разрушение выполняет server `ServerGameplay` и подтверждает authoritative `block_update` / `block_batch`.
+- Canonical renderer path: `miningProgress → WorldRenderer.setBreakingProgress(...) → BlockBreakingOverlay`. Mapping: `progress <= 0` и `progress >= 1` скрыты; промежуточный stage = `min(9, floor(progress * 10))`.
+- Геометрия использует canonical simulation contract `src/world/blockGeometry.ts` и rendering wrapper `selectionBoxesForBlock`: cube, slab, stairs, fence connections, door и остальные selection shapes. Stage меняет cached texture/material/geometry; chunk dirty/remesh не вызывается.
+- Production textures: original Frontier 32×32 masks at `public/textures/gui/destroy/destroy_stage_0.png` … `_9.png`. Local Mojang `assets/minecraft/textures/blocks/destroy_stage_*.png` were documented in the asset audit but are **not** in this workspace and were **not** committed.
+- DEV harness: `/?qaBreaking=1`. Исходный визуальный отчёт: `docs/reports/2026-08-31_block-breaking-overlay.md`; integration report: `docs/reports/2026-09-02_pr28-block-breaking-overlay-integration.md`.
 
 ## Последний проход: Phase 8 plugin platform
 
@@ -307,7 +316,7 @@
 | Boot/menu/world list | Готово | Стилизованное главное меню с оригинальным voxel-фоном; отдельные экраны одиночной игры, online (Anarchy = localhost authoritative server with full gameplay kernel, Survival PvP mock), настроек и read-only управления; создание/выбор/загрузка/удаление одиночных миров сохранены; вход в мир идёт через `LOADING_WORLD` с реальным progress |
 | Main loop | Готово | Fixed `20 TPS` (`advanceFixedStep`, `MAX_CATCH_UP_TICKS = 4`), RAF render, player/mob/drop/arrow interpolation, adaptive world-job budget |
 | Procedural world | Готово | Seeded chunks `16×16×256` (`Y 0..255`), plains/forest/desert, periodic mountains (+10…+20) with generated surface still `≤84`, deeper underground (~+15 to bedrock), connected caves, sea, five ores, thinned trees/cactus и biome-specific cross-plants; generate/light/mesh разделены и бюджетируются; empty sky above occupancy is not full-column work |
-| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, shared item/arrow visuals и отдельный first-person pass |
+| Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, **staged block-breaking crack overlay**, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs, close × outside panel |
@@ -346,7 +355,7 @@
 - Лестница — тонкая cutout-плоскость на боковой опоре (`NORTH/SOUTH/EAST/WEST`). Climbing: контакт с thin climb volume (не целая cell), intent = movement INTO support (`dot(wishXZ, towardSupport)`), скорость `LADDER_CLIMB_SPEED = 4.0`, без input — `LADDER_MAX_DESCENT_SPEED = 3.0`, sneak (C) удерживает. Stairs не являются ladder. `CombatSystem.onLadder` читает тот же `player.onLadder`.
 - Stairs — геометрические две (или больше для corner) AABB, не full cube: facing N/S/E/W, `stairHalf` bottom/top, neighbor-derived `straight/inner_*/outer_*` без сохранения shape. Collision и selection совпадают с boxes. Игрок поднимается generic step-up `0.6`, без ladder/climb mode.
 - Slabs — `slabType` bottom/top/double. Single = высота 0.5; double = полный блок. Одинаковые slab merge, разные материалы нет. Raycast проходит пустую половину.
-- Targeting: `World.raycast` DDA входит в voxel, затем тестирует `selectionLocalBoxes` / `blockSelectionBoxes`. Если луч проходит через пустую часть occupied cell (rail, plate, ladder, torch, lantern, chain, …), hit не засчитывается и DDA идёт дальше. Outline, LMB и RMB делят один VoxelHit. Default для ordinary cubes — full block. Collision и selection разделены (rail не solid, но выбирается).
+- Targeting: `World.raycast` DDA входит в voxel, затем тестирует `selectionLocalBoxes` / `blockSelectionBoxes`. Если луч проходит через пустую часть occupied cell (rail, plate, ladder, torch, lantern, chain, …), hit не засчитывается и DDA идёт дальше. Outline, LMB и RMB делят один VoxelHit. Mining progress рисуется отдельным crack overlay на selection-shape, без remesh. Default для ordinary cubes — full block. Collision и selection разделены (rail не solid, но выбирается).
 - `stone_stairs` остаётся legacy ID (`hiddenFromGameplay`), не крафтится и не показывается в Creative. Получаемые stairs: oak/birch/spruce planks, cobblestone, brick, stone brick. Slab counterparts те же плюс `stone_slab`.
 - `stone_pressure_plate` делит `pressure_plate` render/redstone path с oak plate. Wooden trigger = all entities/items; stone = living (player/mobs). Placement только на верхнюю опору.
 
@@ -471,7 +480,7 @@
 ### Готово
 
 - DOM/CSS screens: loading, стилизованное main menu, selectable world list, create world, online server mock, settings, read-only controls, pause, death. Меню использует `public/ui/frontier-menu-background.png`; online entries и таблица фактических клавиш вынесены в `menuModel.ts`.
-- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress, active potion effect chips (bottom-right), toasts и F3 debug. Attack meter удалён.
+- HUD: crosshair, hotbar, selected item, health (10 pixel hearts aligned with armor), hunger, **armor bar** (над hearts, hidden at 0), mining progress bar (kept alongside the new world crack overlay), active potion effect chips (bottom-right), toasts и F3 debug. Attack meter удалён.
 - Рука и выбранный предмет рендерятся геометрией в отдельной first-person Three.js scene после мира; прежние DOM image overlays удалены. Shield отсутствует, блок мечом использует pose существующего предмета.
 - Settings: volume, mouse sensitivity, render distance `2–6`, FOV `60–100`; отсюда открывается отдельная read-only справка по управлению. Значения sliders показываются live.
 - Desktop pointer lock: inventory/chest close = programmatic relock; наблюдённый Esc из PLAYING открывает pause через `pointerlockchange` без второго `exitPointerLock`; Continue делает один `tryRequestPointerLock()`. Unknown/focus-lost unlock и отказ запроса используют click fallback без auto-retry. Если браузер не доставляет Escape keydown, причина честно unknown, не доказанный Esc. Подробности raw fallback/diagnostics — в свежем polish report.

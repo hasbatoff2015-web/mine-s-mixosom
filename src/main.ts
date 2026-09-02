@@ -18,6 +18,7 @@ if (import.meta.env.DEV) {
   const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
   const qaBiome = search.get('qaBiome');
   const qaLighting = search.get('qaLighting');
+  const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
@@ -28,6 +29,11 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     void import('./dev/ArrowQaHarness').then(({ startArrowQaHarness }) => {
       disposeApplication = startArrowQaHarness(canvas, uiRoot);
+    });
+  } else if (qaBreaking) {
+    runningDevHarness = true;
+    void import('./dev/BreakingQaHarness').then(async ({ startBreakingQaHarness }) => {
+      disposeApplication = await startBreakingQaHarness(canvas, uiRoot);
     });
   } else if ((qaBiome && ['plains', 'forest', 'desert'].includes(qaBiome)) || (qaLighting && lightingScenes.includes(qaLighting))) {
     runningDevHarness = true;
