@@ -12,6 +12,14 @@ export {
   splitPlayerSnapshots,
   stepTowardTarget,
 } from './authoritativeMotion';
+export {
+  ackPredictedMoves,
+  applyPredictedTick,
+  createPredictionBuffer,
+  predictedMoveFromInput,
+  reconcilePredictedPlayer,
+  resetPredictionBuffer,
+} from './localPlayerPrediction';
 export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
 export {
   EntityInterpolationBuffer,

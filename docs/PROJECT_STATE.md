@@ -2,6 +2,15 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online Anarchy prediction + urgent remesh
+
+- Ветка `cursor/online-prediction-remesh-86e1` от актуального `origin/main` `4d803e5`. **Не merge в main.**
+- Root cause движения: клиент **не** крутил `PlayerController` online. `player_state` становился XYZ-target, `stepTowardTarget` (`LOCAL_APPROACH_PER_SECOND = 18`) экспоненциально догонял **включая Y**. Серверная jump arc визуально превращалась в chase stale target → floaty / levitation / краткий «залип» в воздухе. GRAVITY/JUMP_VELOCITY не менялись. Offline physics не трогали.
+- Исправление: тот же `PlayerController` на клиенте предсказывает каждый 20 TPS input; buffer unacked seq; snapshot несёт `inputSeq`; rewind + replay. Нет per-frame XYZ chase. Snap только при коррекции ≥ 6 блоков. Server остаётся gameplay authority (health/world/combat).
+- Root cause блоков: `applyNetworkBlockChanges` сразу пишет VoxelWorld (collision), а `WorldRenderer.rebuildDirty` ждал `!hasPendingLighting`. Видимая геометрия отставала на кадр+. Urgent remesh: `preferKeys` + `allowPendingLighting`, budget 2 ms / 3 chunks. `WORLD_JOB_BUDGET_MS` / `WORLD_LIGHT_BUDGET_MS` не поднимались. Remesh не в WebSocket handler.
+- Server tick hitch: DEV `FC_DEBUG_TICK_MS=1`. Измерение 40 walk/sprint/jump ticks: mean gameplay ~0.32 ms, max wall ~4.1 ms, **нет spike > 50 ms**. Обычный air hitch — клиентский chase, не server tick. Performance guess-fix не делали.
+- Report: `docs/reports/2026-09-02_online-prediction-remesh.md`.
+
 ## Последний проход: интеграция UI PR #22 с server + breaking + player main
 
 - Существующая ветка Draft PR **#22** `codex/ui-visual-system-pass` объединена обычным `git merge --no-ff` с точным `origin/main` `020d9d38d58f2d23231683a6aca736acf813bcb7`. Сохранены server-authoritative Online Anarchy, GameplayKernel, lifecycle/save contracts, PR #28 breaking overlay и PR #31 PlayerVisual/F5.

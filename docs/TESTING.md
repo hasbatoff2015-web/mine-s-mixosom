@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-02 Online Anarchy prediction + urgent remesh
+
+Report: `reports/2026-09-02_online-prediction-remesh.md`. Branch: `cursor/online-prediction-remesh-86e1` from `origin/main` `4d803e5`.
+
+Targeted:
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/urgent-block-mesh.test.ts tests/player-main-integration.test.ts tests/authoritative-motion.test.ts tests/online-session-transition.test.ts tests/inactive-client-world-sync.test.ts tests/network-block-state-respawn.test.ts tests/server/tick-latency.test.ts
+```
+
+Contracts: prediction without snapshots; rewind+replay unacked seq; jump arc / landing; stale snapshot does not drop Y; ack does not re-jump; snap ≥ 6; reconnect seq reset; `tickOnline` uses `applyPredictedTick` not `stepTowardTarget`; urgent remesh with `allowPendingLighting` and no `WORLD_JOB_BUDGET_MS` bump; ordinary walk/jump server ticks < 50 ms.
+
 ## 2026-09-02 PR #22 post-server + player integration
 
 Reports: `reports/2026-08-30_ui-visual-system-hud-menu-polish.md` (`POST-SERVER + PLAYER INTEGRATION`) and `reports/2026-09-02_pr22-ui-server-player-integration.md`. Integrated exact main: `020d9d38d58f2d23231683a6aca736acf813bcb7`.

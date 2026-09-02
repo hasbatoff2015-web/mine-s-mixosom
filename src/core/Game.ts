@@ -183,11 +183,18 @@ import {
 } from '../net/onlineContainerSync';
 import {
   clientLookAfterSnapshot,
-  ingestAuthoritativePosition,
   shouldAcceptSnapshot,
   splitPlayerSnapshots,
-  stepTowardTarget,
 } from '../net/authoritativeMotion';
+import {
+  applyPredictedTick,
+  createPredictionBuffer,
+  predictedMoveFromInput,
+  pushPredictedMove,
+  reconcilePredictedPlayer,
+  resetPredictionBuffer,
+  type PredictionBuffer,
+} from '../net/localPlayerPrediction';
 import {
   applyEntitySnapshots,
   applyInterpolatedEntityVisuals,
@@ -217,7 +224,7 @@ import {
   tickGameplayKernel,
   type UseSimulationContext,
 } from '../gameplay';
-import { applyNetworkBlockChanges } from '../world/networkBlockUpdates';
+import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -271,10 +278,11 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  prediction: PredictionBuffer;
+  urgentMeshKeys: Set<string>;
   lastViewKey?: string;
   lastStateTick: number;
   lastAliveTick?: number;
-  motion: { target: { x: number; y: number; z: number } };
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
 }
@@ -643,8 +651,9 @@ export class Game {
         remotes,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        prediction: createPredictionBuffer(),
+        urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
-        motion: { target: { x: welcome.you.x, y: welcome.you.y, z: welcome.you.z } },
       },
     });
     const session = this.session;
@@ -654,6 +663,8 @@ export class Game {
     session.player.pitch = welcome.you.pitch;
     this.input.yaw = welcome.you.yaw;
     this.input.pitch = welcome.you.pitch;
+    resetPredictionBuffer(session.online.prediction);
+    session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
@@ -709,13 +720,14 @@ export class Game {
         return;
       case 'block_update': {
         const previous = session.world.getBlock(message.x, message.y, message.z, false);
-        applyNetworkBlockChanges(session.world, [{
+        const applied = applyNetworkBlockChanges(session.world, [{
           x: message.x,
           y: message.y,
           z: message.z,
           blockId: message.blockId,
           ...(message.state ? { state: message.state } : {}),
         }]);
+        this.queueUrgentMutationMesh(session, applied.meshKeys);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
           this.playBlockSound('break', previous, message.x, message.y, message.z);
@@ -725,7 +737,8 @@ export class Game {
         return;
       }
       case 'block_batch': {
-        applyNetworkBlockChanges(session.world, message.changes);
+        const applied = applyNetworkBlockChanges(session.world, message.changes);
+        this.queueUrgentMutationMesh(session, applied.meshKeys);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
         }
@@ -866,18 +879,9 @@ export class Game {
       );
       this.input.yaw = look.yaw;
       this.input.pitch = look.pitch;
+      reconcilePredictedPlayer(session.player, session.world, online.prediction, local);
       session.player.yaw = look.yaw;
       session.player.pitch = look.pitch;
-      const ingested = ingestAuthoritativePosition(session.player.position, local);
-      online.motion.target = ingested.target;
-      if (ingested.snapped) {
-        session.player.position.set(ingested.position.x, ingested.position.y, ingested.position.z);
-        session.player.previousPosition.copy(session.player.position);
-      }
-      session.player.velocity.set(local.vx, local.vy, local.vz);
-      session.player.sneaking = local.sneaking;
-      session.player.sprinting = local.sprinting;
-      session.player.onGround = local.onGround;
       const previousLife = { health: session.survival.health, dead: session.survival.dead };
       const snapshotDead = local.dead ?? local.health <= 0;
       if (!shouldIgnoreStaleDeadSnapshot({
@@ -944,20 +948,22 @@ export class Game {
     online.pendingBlockAction = undefined;
   }
 
-  private stepOnlineAuthority(session: GameSession, dt: number): void {
-    const online = session.online;
-    if (!online) return;
+  private stepOnlineAuthority(session: GameSession, _dt: number): void {
+    if (!session.online) return;
     session.player.yaw = this.input.yaw;
     session.player.pitch = this.input.pitch;
-    const next = stepTowardTarget(session.player.position, online.motion.target, dt);
-    session.player.position.set(next.x, next.y, next.z);
-    session.player.previousPosition.copy(session.player.position);
   }
 
   private sendOnlineIdle(session: GameSession): void {
     const online = session.online;
     if (!online) return;
     online.inputSeq += 1;
+    const predicted = predictedMoveFromInput(
+      online.inputSeq,
+      { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
+      { yaw: this.input.yaw, pitch: this.input.pitch },
+      !session.ridingCartId,
+    );
     online.client.send({
       type: 'input',
       seq: online.inputSeq,
@@ -972,6 +978,8 @@ export class Game {
       pitch: this.input.pitch,
       selectedSlot: session.selectedSlot,
     });
+    pushPredictedMove(online.prediction, predicted);
+    applyPredictedTick(session.player, session.world, predicted);
   }
 
   private async openAnarchyWorld(): Promise<void> {
@@ -1431,11 +1439,15 @@ export class Game {
       this.jobFrame.lightingOnlyDueToBudget = true;
       discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
       this.lastLightMs += this.runLightingJobs(session, WORLD_LIGHT_BUDGET_MS, originX, originZ, inspect, inspectNow);
+      const urgentStart = performance.now();
+      this.lastChunkMeshJobs = this.drainUrgentMutationMesh(session, originX, originZ);
+      this.lastMeshMs += performance.now() - urgentStart;
       return;
     }
     const jobStart = performance.now();
     let generated = 0;
     let meshed = 0;
+    let urgentMeshed = 0;
 
     const missing = missingChunkCoords(
       session.world,
@@ -1477,6 +1489,11 @@ export class Game {
 
     const lightBudget = loading ? WORLD_LOADING_LIGHT_BUDGET_MS : WORLD_LIGHT_BUDGET_MS;
     this.lastLightMs += this.runLightingJobs(session, lightBudget, originX, originZ, inspect, inspectNow);
+    if (!loading) {
+      const urgentStart = performance.now();
+      urgentMeshed = this.drainUrgentMutationMesh(session, originX, originZ);
+      this.lastMeshMs += performance.now() - urgentStart;
+    }
 
     const playerCx = floorDiv(originX, 16);
     const playerCz = floorDiv(originZ, 16);
@@ -1517,7 +1534,7 @@ export class Game {
     if (plan.skipMesh || plan.meshLimit <= 0) {
       if (!loading && generated > 0) this.genWithoutMeshStreak += 1;
       else this.genWithoutMeshStreak = 0;
-      this.lastChunkMeshJobs = 0;
+      this.lastChunkMeshJobs = urgentMeshed;
       return;
     }
 
@@ -1562,13 +1579,42 @@ export class Game {
       },
     );
     this.lastMeshMs += performance.now() - meshStart;
-    this.lastChunkMeshJobs = meshed;
+    this.lastChunkMeshJobs = meshed + urgentMeshed;
     this.genWithoutMeshStreak = meshed > 0 || generated === 0 ? 0 : this.genWithoutMeshStreak + 1;
     if (meshCounters) {
       this.jobFrame.meshAttempted = meshCounters.attempted;
       this.jobFrame.meshCompleted = meshCounters.completed;
       this.jobFrame.meshSkippedBlocked = meshCounters.skippedBlocked;
     }
+  }
+
+  private queueUrgentMutationMesh(session: GameSession, keys: readonly string[]): void {
+    if (!session.online || keys.length === 0) return;
+    for (const key of keys) session.online.urgentMeshKeys.add(key);
+  }
+
+  private drainUrgentMutationMesh(session: GameSession, originX: number, originZ: number): number {
+    const keys = session.online?.urgentMeshKeys;
+    if (!keys || keys.size === 0) return 0;
+    const rebuilt = session.worldRenderer.rebuildDirty(
+      URGENT_MUTATION_MESH_LIMIT,
+      URGENT_MUTATION_MESH_BUDGET_MS,
+      originX,
+      originZ,
+      {
+        requireNeighborLight: false,
+        allowPendingLighting: true,
+        preferKeys: keys,
+      },
+    );
+    for (const key of [...keys]) {
+      const comma = key.indexOf(',');
+      const cx = Number(key.slice(0, comma));
+      const cz = Number(key.slice(comma + 1));
+      const chunk = session.world.getChunk(cx, cz, false);
+      if (!chunk || (!chunk.dirty && !chunk.lightMeshStale)) keys.delete(key);
+    }
+    return rebuilt;
   }
 
   private runLightingJobs(
@@ -2236,25 +2282,33 @@ export class Game {
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
     const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
-      const riding = Boolean(session.ridingCartId);
-      online.inputSeq += 1;
-      online.client.send({
-        type: 'input',
-        seq: online.inputSeq,
-        forward: movement.forward,
-        right: movement.right,
-        jump: movement.jump,
-        sneak: movement.sneak,
-        sprint: movement.sprint,
-        descend: movement.descend === true,
-        flySprint: movement.flySprint === true,
-        yaw: this.input.yaw,
-        pitch: this.input.pitch,
-        selectedSlot: session.selectedSlot,
-        mining: gameplayAllowed && this.input.mining,
-        use: gameplayAllowed && this.input.using,
-        vehicleForward: riding ? movement.forward : 0,
-      });
+    const riding = Boolean(session.ridingCartId);
+    online.inputSeq += 1;
+    const predicted = predictedMoveFromInput(
+      online.inputSeq,
+      movement,
+      { yaw: this.input.yaw, pitch: this.input.pitch },
+      !riding,
+    );
+    online.client.send({
+      type: 'input',
+      seq: online.inputSeq,
+      forward: predicted.forward,
+      right: predicted.right,
+      jump: predicted.jump,
+      sneak: predicted.sneak,
+      sprint: predicted.sprint,
+      descend: predicted.descend,
+      flySprint: predicted.flySprint,
+      yaw: predicted.yaw,
+      pitch: predicted.pitch,
+      selectedSlot: session.selectedSlot,
+      mining: gameplayAllowed && this.input.mining,
+      use: gameplayAllowed && this.input.using,
+      vehicleForward: riding ? movement.forward : 0,
+    });
+    pushPredictedMove(online.prediction, predicted);
+    applyPredictedTick(session.player, session.world, predicted);
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
@@ -3304,11 +3358,9 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
-      const position = session.online
-        ? this.interpolatedPlayerPosition.copy(session.player.position)
-        : this.interpolatedPlayerPosition
-          .copy(session.player.previousPosition)
-          .lerp(session.player.position, clamp(alpha, 0, 1));
+      const position = this.interpolatedPlayerPosition
+        .copy(session.player.previousPosition)
+        .lerp(session.player.position, clamp(alpha, 0, 1));
       this.updatePlayerPresentation(session, position, now);
       session.online?.remotes.forEach((remote) => remote.interpolate(
         now,

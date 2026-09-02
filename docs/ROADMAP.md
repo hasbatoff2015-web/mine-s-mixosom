@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-02: Online Anarchy local prediction + urgent block remesh
+
+- [x] Investigate client/server movement: `tickOnline` sent input, waited for `player_state`, then chased X/Y/Z with `stepTowardTarget`.
+- [x] Client-side prediction + seq ack + rewind/replay on the existing `PlayerController`; no second physics system; GRAVITY/JUMP unchanged; SP physics unchanged.
+- [x] Urgent live-mutation remesh (dirty chunk + border neighbors) without raising `WORLD_JOB_BUDGET_MS`.
+- [x] DEV-only `FC_DEBUG_TICK_MS` plus measured walk/jump ticks; no production profiler; no guess-fix (ordinary ticks ≪ 50 ms).
+- [x] Targeted tests for prediction, jump/landing, snap, reconnect, urgent remesh, server tick latency.
+- [ ] Owner manual QA: walk/sprint/jump series, place/break (including underfoot and chunk border), door/slab/rail/torch, hitch feel.
+- [ ] Do not merge main.
+
 ## 2026-09-02: integrate UI PR #22 with server + breaking + player main
 
 - [x] Merge exact `origin/main` `020d9d3` into the existing `codex/ui-visual-system-pass` branch with an ordinary no-ff merge; no rebase/reset/force/new PR.

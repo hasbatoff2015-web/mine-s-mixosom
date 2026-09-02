@@ -123,6 +123,7 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
+      inputSeq: this.lastInputSeq,
     };
   }
 
@@ -171,6 +172,8 @@ export class WorldInstance {
   private readonly dt: number;
   private worldView: WorldView;
   private readonly debugTickOrder = process.env.FC_DEBUG_TICK === '1';
+  /** DEV-only slow-tick wall log. Not a production profiler. */
+  private readonly debugTickMs = process.env.FC_DEBUG_TICK_MS === '1';
   private readonly kernelTrace: string[] = [];
 
   constructor(readonly config: ServerConfig) {
@@ -555,6 +558,14 @@ export class WorldInstance {
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.flushBlockChanges();
+    const wallMs = performance.now() - started;
+    if (this.debugTickMs && wallMs >= 16) {
+      serverLog(
+        `tick-ms n=${this.tickNumber} wall=${wallMs.toFixed(2)} gameplay=${this.lastTickMs.toFixed(2)} `
+        + `blocks=${metrics.blockChanges} entities=${metrics.entities} online=${this.onlineCount()}`,
+        'warn',
+      );
+    }
 
     const passengers = new Map<string, string>();
     for (const player of this.players.values()) {

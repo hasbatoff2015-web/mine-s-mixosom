@@ -426,6 +426,32 @@ export class PlayerController {
     this.fallDistance = 0;
   }
 
+  /**
+   * Online reconciliation: copy the server pose without wiping flight or
+   * save/load internals. `jumpHeld` comes from the acked input so replay does
+   * not re-trigger a jump that already started.
+   */
+  applyAuthoritativeSimulation(state: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly vx: number;
+    readonly vy: number;
+    readonly vz: number;
+    readonly onGround: boolean;
+    readonly sneaking: boolean;
+    readonly sprinting: boolean;
+    readonly jumpHeld: boolean;
+  }): void {
+    this.position.set(state.x, state.y, state.z);
+    this.velocity.set(state.vx, state.vy, state.vz);
+    this.onGround = state.onGround;
+    this.sneaking = state.sneaking;
+    this.sprinting = state.sprinting;
+    this.jumpHeld = state.jumpHeld;
+    this.meleeKnockback = false;
+  }
+
   static deserialize(state: SerializedPlayerController): PlayerController {
     const player = new PlayerController({ position: state.position, yaw: state.yaw, pitch: state.pitch });
     player.restore(state);

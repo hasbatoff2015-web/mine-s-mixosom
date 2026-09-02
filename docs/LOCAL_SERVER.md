@@ -49,7 +49,8 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 | `PERSIST_INTERVAL_MS` | `30000` | Periodic save |
 | `FC_PLUGIN_DIR` / `PLUGIN_DIR` | `server/plugins` | Live plugin directory (`npm run dev:server`) |
 | `FC_EXAMPLE_PLUGIN` | unset | `1` / `true` loads bundled `/hello` without copying |
-| `FC_OPERATORS` | empty | Comma-separated operator names |
+| `FC_DEBUG_TICK` | unset | `1` appends kernel order to the 200-tick log |
+| `FC_DEBUG_TICK_MS` | unset | `1` warns when a tick's wall time ≥ 16 ms (DEV hitch log, not a profiler) |
 
 HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
 
@@ -116,11 +117,11 @@ SERVER owns: world blocks/chunks **including `BlockRenderState`** (facing, door/
 
 The 20 TPS simulation **order** is `src/gameplay/GameplayKernel.ts`, the same sequencer singleplayer `Game` uses. `VoxelWorld.tick` (fluids/time/furnaces) runs once per kernel tick. `FC_DEBUG_TICK=1` appends that order to the existing 200-tick server log.
 
-CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
+CLIENT owns: rendering, input collection, UI, **local movement prediction** (same `PlayerController`, unacked seq replay), remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light including an urgent live-mutation remesh slice, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
 
 CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 
-Local player: input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
+Local player: input is sent and **applied locally immediately** at 20 TPS. Server still runs the real `PlayerController`. `player_state` carries `tick` + `inputSeq`; the client drops stale ticks, acks seq, restores the authoritative pose and replays unacked inputs. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if the reconciled correction ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
 
 Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
 
