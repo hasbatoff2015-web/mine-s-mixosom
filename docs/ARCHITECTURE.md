@@ -1,5 +1,13 @@
 # Архитектура
 
+## Online Anarchy correction diagnosis — 2026-09-02
+
+`prd/s=20` vs `state/s=18` was Node `setInterval(50)` drift (no catch-up), not PlayerController divergence. Lockstep same class / same world / same dt is identical. A 2-vs-1 latest-input walk is ~0.22 blocks — the observed 0.3–0.6 rewind.
+
+Server loop uses `gameplayTicksDue` (same bounds as client `advanceFixedStep`). Multiple owed ticks: `tickCatchUp` then **one** `player_state`. Latest-input unchanged (no FIFO).
+
+DEV: `?corrDiag=1` dumps one correction; F3 `snap recv/drop/gap`; `FC_DEBUG_SNAP=1`; `/predsim`.
+
 ## Online Anarchy input: latest movement state — 2026-09-02
 
 Continuous WASD/sprint/sneak/flight is **state**, not a FIFO of packets. `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that state once. `snapshot.inputSeq` is `lastInputSeq`. Skipped seqs are not simulated.

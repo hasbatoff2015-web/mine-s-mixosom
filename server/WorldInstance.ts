@@ -7,6 +7,12 @@ import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId } from '../src/items';
 import { PlayerController } from '../src/player';
+import {
+  compareLatestInputCoalesce,
+  compareLockstepControllers,
+  formatLatestInputCoalesce,
+  formatMoveSimCompare,
+} from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
@@ -23,6 +29,7 @@ import type {
 } from '../shared/protocol';
 import type { ServerConfig } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
+import { gameplayTicksDue } from './tickScheduler';
 import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
@@ -174,12 +181,27 @@ export class WorldInstance {
   private createdAt = Date.now();
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
-  private tickTimer: ReturnType<typeof setInterval> | undefined;
+  private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly dt: number;
+  private tickAccumulator = 0;
+  private lastTickWall = 0;
+  private snapshotsGenerated = 0;
+  private snapshotsSent = 0;
+  private tpsWindowStart = 0;
+  private tpsWindowTicks = 0;
+  lastMeasuredTps = 0;
+  lastMeasuredSnapGen = 0;
+  lastMeasuredSnapSent = 0;
+  private lastTickMetrics: { blockChanges: number; entities: number; maxTickMs: number } = {
+    blockChanges: 0,
+    entities: 0,
+    maxTickMs: 0,
+  };
   private worldView: WorldView;
   private readonly debugTickOrder = process.env.FC_DEBUG_TICK === '1';
   /** DEV-only slow-tick wall log. Not a production profiler. */
   private readonly debugTickMs = process.env.FC_DEBUG_TICK_MS === '1';
+  private readonly debugSnap = process.env.FC_DEBUG_SNAP === '1';
   private readonly kernelTrace: string[] = [];
 
   constructor(readonly config: ServerConfig) {
@@ -247,14 +269,27 @@ export class WorldInstance {
 
   startLoops(): void {
     const tickMs = 1000 / this.config.tickRate;
-    this.tickTimer = setInterval(() => this.tick(), tickMs);
+    this.lastTickWall = performance.now();
+    this.tpsWindowStart = this.lastTickWall;
+    const loop = (): void => {
+      const now = performance.now();
+      const due = gameplayTicksDue(this.tickAccumulator, (now - this.lastTickWall) / 1000, this.dt);
+      this.lastTickWall = now;
+      this.tickAccumulator = due.nextAccumulator;
+      if (due.ticks === 1) this.tick();
+      else if (due.ticks > 1) this.tickCatchUp(due.ticks);
+      this.noteTpsWindow(due.ticks, now);
+      const wait = Math.max(0, tickMs - (performance.now() - now));
+      this.tickTimer = setTimeout(loop, wait);
+    };
+    this.tickTimer = setTimeout(loop, tickMs);
     this.persistTimer = setInterval(() => {
       if (this.dirty) void this.save();
     }, this.config.persistIntervalMs);
   }
 
   async stop(): Promise<void> {
-    if (this.tickTimer) clearInterval(this.tickTimer);
+    if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.persistTimer) clearInterval(this.persistTimer);
     await this.plugins.disableAll();
     await this.save();
@@ -556,6 +591,41 @@ export class WorldInstance {
   }
 
   tick(): void {
+    this.simulateGameplayTick();
+    this.flushTickNetwork();
+  }
+
+  /**
+   * Run N physics ticks but broadcast **one** player_state at the end.
+   * Catch-up must not send intermediate poses that would correct history[N]
+   * against a 1-step snapshot while the client already predicted N steps.
+   */
+  tickCatchUp(count: number): void {
+    const n = Math.max(0, Math.floor(count));
+    for (let i = 0; i < n; i += 1) this.simulateGameplayTick();
+    if (n > 0) this.flushTickNetwork();
+  }
+
+  private noteTpsWindow(ticks: number, now: number): void {
+    this.tpsWindowTicks += ticks;
+    const elapsed = now - this.tpsWindowStart;
+    if (elapsed < 1000) return;
+    this.lastMeasuredTps = this.tpsWindowTicks * 1000 / elapsed;
+    this.lastMeasuredSnapGen = this.snapshotsGenerated * 1000 / elapsed;
+    this.lastMeasuredSnapSent = this.snapshotsSent * 1000 / elapsed;
+    if (this.debugSnap) {
+      serverLog(
+        `snap/s gen=${this.lastMeasuredSnapGen.toFixed(1)} sent=${this.lastMeasuredSnapSent.toFixed(1)} `
+        + `tps=${this.lastMeasuredTps.toFixed(1)}`,
+      );
+    }
+    this.tpsWindowStart = now;
+    this.tpsWindowTicks = 0;
+    this.snapshotsGenerated = 0;
+    this.snapshotsSent = 0;
+  }
+
+  private simulateGameplayTick(): void {
     const started = performance.now();
     this.tickNumber += 1;
     const dt = this.dt;
@@ -579,7 +649,11 @@ export class WorldInstance {
         'warn',
       );
     }
+    this.lastTickMetrics = metrics;
+    if (this.connectedPlayers().length > 0) this.snapshotsGenerated += 1;
+  }
 
+  private flushTickNetwork(): void {
     const passengers = new Map<string, string>();
     for (const player of this.players.values()) {
       if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
@@ -587,6 +661,7 @@ export class WorldInstance {
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     if (snapshots.length > 0) {
       this.broadcast({ type: 'player_state', tick: this.tickNumber, players: snapshots });
+      this.snapshotsSent += 1;
     }
     for (const player of this.connectedPlayers()) {
       this.sendTo(player, {
@@ -608,9 +683,12 @@ export class WorldInstance {
       const kernel = this.debugTickOrder && this.kernelTrace.length > 0
         ? ` kernel ${formatGameplayKernelTrace(this.kernelTrace)}`
         : '';
+      const metrics = this.lastTickMetrics;
       serverLog(
         `tick ${this.tickNumber} ${this.lastTickMs.toFixed(2)}ms max ${this.maxTickMs.toFixed(2)}ms `
-        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}${kernel}`,
+        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}`
+        + ` tps=${this.lastMeasuredTps.toFixed(1)} snapGen=${this.lastMeasuredSnapGen.toFixed(1)} `
+        + `snapSent=${this.lastMeasuredSnapSent.toFixed(1)}${kernel}`,
       );
     }
     this.sweepDisconnected();
@@ -1187,6 +1265,28 @@ export class WorldInstance {
         player.inventoryDirty = true;
         this.flushPlayerInventory(player);
         return ok(count > 0 ? `Cleared ${count} item(s) from inventory` : 'Inventory is already empty');
+      },
+    });
+    this.commands.register({
+      name: 'predsim',
+      usage: '/predsim [ticks]',
+      description: 'DEV: lockstep client vs server PlayerController, then latest-input coalesce',
+      execute: (args) => {
+        const raw = args[0] === undefined || args[0] === '' ? 20 : Number(args[0]);
+        const ticks = Number.isInteger(raw) && raw >= 1 && raw <= 40 ? raw : 20;
+        const lockstep = compareLockstepControllers(ticks, { forward: 1 });
+        const sprint = compareLockstepControllers(ticks, { forward: 1, sprint: true });
+        const jump = compareLockstepControllers(8, { jump: true });
+        const coalesce = compareLatestInputCoalesce(2, 1, { forward: 1 });
+        const catchUp = compareLatestInputCoalesce(2, 2, { forward: 1 });
+        return ok([
+          ...formatMoveSimCompare(lockstep),
+          `sprint identical=${sprint.identical ? 'yes' : 'NO'} first=${sprint.firstDivergedTick ?? 'none'}`,
+          `jump identical=${jump.identical ? 'yes' : 'NO'} first=${jump.firstDivergedTick ?? 'none'}`,
+          ...formatLatestInputCoalesce(coalesce),
+          `catch-up 2=2 ${formatLatestInputCoalesce(catchUp)[0]!.replace('coalesce ', '')}`,
+          `server tps=${this.lastMeasuredTps.toFixed(1)} snapGen/s=${this.lastMeasuredSnapGen.toFixed(1)} snapSent/s=${this.lastMeasuredSnapSent.toFixed(1)}`,
+        ]);
       },
     });
     this.commands.register({

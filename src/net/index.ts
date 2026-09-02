@@ -23,9 +23,11 @@ export {
   resetPredictionBuffer,
 } from './localPlayerPrediction';
 export {
+  isBowDiagQueryEnabled,
   isMotionDiagQueryEnabled,
   motionProbe,
 } from './localMotionDiagnostics';
+export { isCorrDiagQueryEnabled } from './correctionDiagnostics';
 export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
 export {
   EntityInterpolationBuffer,

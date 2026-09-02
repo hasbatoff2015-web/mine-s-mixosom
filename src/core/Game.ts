@@ -732,6 +732,7 @@ export class Game {
           blockId: message.blockId,
           ...(message.state ? { state: message.state } : {}),
         }]);
+        motionProbe.noteBlockMutation();
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
@@ -743,6 +744,7 @@ export class Game {
       }
       case 'block_batch': {
         const applied = applyNetworkBlockChanges(session.world, message.changes);
+        motionProbe.noteBlockMutation();
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
@@ -873,7 +875,13 @@ export class Game {
   private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
     const online = session.online;
     if (!online) return;
-    if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) return;
+    motionProbe.noteSnapshotInbound();
+    motionProbe.inboundTick = message.tick;
+    motionProbe.lastStateTick = online.lastStateTick;
+    if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) {
+      motionProbe.noteSnapshotDrop('stale');
+      return;
+    }
     online.lastStateTick = message.tick;
     const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
     const seen = new Set<string>();
@@ -885,6 +893,20 @@ export class Game {
       );
       this.input.yaw = look.yaw;
       this.input.pitch = look.pitch;
+      const px = Math.floor(session.player.position.x);
+      const py = Math.floor(session.player.position.y);
+      const pz = Math.floor(session.player.position.z);
+      const yaw = session.player.yaw;
+      motionProbe.sampleWorldHint = () => ({
+        feetBlock: getBlockDefinition(session.world.getBlock(px, py, pz, false)).name,
+        belowBlock: getBlockDefinition(session.world.getBlock(px, py - 1, pz, false)).name,
+        aheadBlock: getBlockDefinition(session.world.getBlock(
+          px - Math.round(Math.sin(yaw)),
+          py,
+          pz - Math.round(Math.cos(yaw)),
+          false,
+        )).name,
+      });
       reconcilePredictedPlayer(session.player, session.world, online.prediction, local);
       session.player.yaw = look.yaw;
       session.player.pitch = look.pitch;
@@ -918,6 +940,8 @@ export class Game {
         session.summary.mode = local.gamemode;
         session.player.creativeFlightAllowed = local.gamemode === 'creative';
       }
+    } else {
+      motionProbe.noteSnapshotDrop('no-local');
     }
     for (const snap of remotes) {
       seen.add(snap.id);
@@ -1596,6 +1620,7 @@ export class Game {
   private queueUrgentMutationMesh(session: GameSession, keys: readonly string[]): void {
     if (!session.online || keys.length === 0) return;
     for (const key of keys) session.online.urgentMeshKeys.add(key);
+    motionProbe.noteChunkUpdate();
   }
 
   private drainUrgentMutationMesh(session: GameSession, originX: number, originZ: number): number {

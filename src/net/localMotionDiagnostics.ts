@@ -96,6 +96,15 @@ export class LocalMotionProbe {
   lastKind: ReconcileKind = 'ignored';
   lastReject: AckRejectReason = 'none';
   lastAcceptMutated = false;
+  lastBlockMutationAt = Number.NaN;
+  lastChunkUpdateAt = Number.NaN;
+  lastStateTick = -1;
+  inboundTick: number | undefined;
+  sampleWorldHint: (() => {
+    feetBlock: string;
+    belowBlock: string;
+    aheadBlock: string;
+  }) | undefined;
   position = { x: 0, y: 0, z: 0 };
   previous = { x: 0, y: 0, z: 0 };
   render = { x: 0, y: 0, z: 0 };
@@ -117,6 +126,10 @@ export class LocalMotionProbe {
     this.lastReject = 'none';
     this.lastAcceptMutated = false;
     this.lastTraceDumpAt = 0;
+    this.lastBlockMutationAt = Number.NaN;
+    this.lastChunkUpdateAt = Number.NaN;
+    this.lastStateTick = -1;
+    this.inboundTick = undefined;
   }
 
   note(kind: string, now = performance.now()): void {
@@ -138,6 +151,28 @@ export class LocalMotionProbe {
   notePlayerState(now = performance.now()): void {
     this.lastPlayerStateAt = now;
     this.note('player_state', now);
+  }
+
+  noteSnapshotInbound(now = performance.now()): void {
+    this.note('snap:recv', now);
+  }
+
+  noteSnapshotDrop(reason: 'stale' | 'no-local', now = performance.now()): void {
+    this.note(`snap:drop-${reason}`, now);
+  }
+
+  noteSeqGap(gap: number, now = performance.now()): void {
+    if (gap > 1) this.note('seq-gap', now);
+  }
+
+  noteBlockMutation(now = performance.now()): void {
+    this.lastBlockMutationAt = now;
+    this.note('world:block', now);
+  }
+
+  noteChunkUpdate(now = performance.now()): void {
+    this.lastChunkUpdateAt = now;
+    this.note('world:chunk', now);
   }
 
   noteReconcile(result: {
@@ -219,6 +254,7 @@ export class LocalMotionProbe {
       `Motion ${mode} fps=${this.fps} ticks=${this.ticksThisFrame} alpha=${this.alpha.toFixed(3)} dt=${FIXED_DT}`,
       `pred/s=${this.rate('predict', now)} state/s=${this.rate('player_state', now)} rec/s=${this.rate('reconcile:accepted', now) + this.rate('reconcile:corrected', now) + this.rate('reconcile:snapped', now) + this.rate('reconcile:ignored', now)}`,
       `ok/s=${this.rate('reconcile:accepted', now)} corr/s=${this.rate('reconcile:corrected', now)} snap/s=${this.rate('reconcile:snapped', now)} dup/s=${this.rate('reject:duplicate-seq', now)}`,
+      `snap recv/s=${this.rate('snap:recv', now)} dropStale/s=${this.rate('snap:drop-stale', now)} dropNoLocal/s=${this.rate('snap:drop-no-local', now)} gap/s=${this.rate('seq-gap', now)}`,
       `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut}`,
       `pos ${this.position.x.toFixed(3)} ${this.position.y.toFixed(3)} ${this.position.z.toFixed(3)} prev ${this.previous.x.toFixed(3)} ${this.previous.y.toFixed(3)} ${this.previous.z.toFixed(3)}`,
       `render ${this.render.x.toFixed(3)} ${this.render.y.toFixed(3)} ${this.render.z.toFixed(3)} |pos-prev|=${step.toFixed(4)} cam=interpolated-local`,

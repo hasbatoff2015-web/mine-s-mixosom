@@ -542,6 +542,42 @@ describe('WorldInstance foundation simulation', () => {
     )).toBeGreaterThan(0.05);
   });
 
+  it('catch-up simulates two physics ticks but broadcasts one player_state', async () => {
+    const world = await bootWorld();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name: 'Sim' });
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    world.applyInput(player, moveInput(1, { forward: 1 }));
+    const beforeStates = sink.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+    world.tickCatchUp(2);
+    const after = Math.hypot(
+      player.controller.position.x - start.x,
+      player.controller.position.z - start.z,
+    );
+    expect(after).toBeGreaterThan(0.12);
+    expect(after).toBeLessThan(0.55);
+    const states = sink.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state');
+    expect(states.length - beforeStates).toBe(1);
+    const last = states[states.length - 1] as { tick: number; players: Array<{ inputSeq: number }> };
+    expect(last.players[0]?.inputSeq).toBe(1);
+  });
+
+  it('predsim reports identical lockstep controllers and a coalesce gap', async () => {
+    const world = await bootWorld();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name: 'Sim' });
+    if ('error' in joined) throw new Error(joined.error);
+    world.handleChat(joined.player, '/predsim 5');
+    const result = [...sink.payloads].reverse().find((payload) => (
+      payload as { type?: string }).type === 'command_result'
+    ) as { ok: boolean; lines: string[] } | undefined;
+    expect(result?.ok).toBe(true);
+    expect(result?.lines.some((line) => line.includes('identical=yes'))).toBe(true);
+    expect(result?.lines.some((line) => line.includes('coalesce clientTicks=2'))).toBe(true);
+  });
+
   it('does not backlog 64 movement packets across seconds', async () => {
     const world = await bootWorld();
     const joined = join(world);

@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-02: Diagnose Online corrections + 20 TPS catch-up (PR #37)
+
+- [x] Instrument one `kind=corrected` dump (seq, history, snapshot, input, world hints, hypotheses).
+- [x] Measure snap gen/sent/recv/drop; F3 `state/s=18` vs `prd/s=20` was server interval drift.
+- [x] Lockstep client vs server PlayerController: identical; 2-vs-1 latest-input is ~one walk step.
+- [x] Server catch-up with a single trailing `player_state` (no FIFO, no lerp, no tolerance change).
+- [ ] Owner localhost QA: clean walk `corr/s≈0` `state/s≈20`; sprint/strafe/jump/flight; bow/stop/remesh still immediate.
+- [ ] Do not merge main.
+
 ## 2026-09-02: Remove Online movement FIFO (PR #37)
 
 - [x] Diagnose 300–400 ms feel + 3–4 s bow delay as `inputQueue` (64 × 50 ms).

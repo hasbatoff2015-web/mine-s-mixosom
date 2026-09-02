@@ -10,6 +10,11 @@ import {
   motionProbe,
   type AckRejectReason,
 } from './localMotionDiagnostics';
+import {
+  buildCorrectionDiag,
+  isCorrDiagQueryEnabled,
+  logCorrectionDiag,
+} from './correctionDiagnostics';
 
 /** Unacked predicted ticks. 3.2 s at 20 TPS. */
 export const PREDICTION_HISTORY = 64;
@@ -425,6 +430,8 @@ export function reconcilePredictedPlayer(
 
   const before = captureMotionPose(player);
   const predictedAtAck = findPredictedEntry(buffer, ackSeq);
+  const seqGap = ackSeq - buffer.lastAckedSeq;
+  motionProbe.noteSeqGap(seqGap);
   if (predictedAtAck) {
     const error = predictedStateError(predictedAtAck.state, snapshot);
     const reject = ackRejectReason(predictedAtAck.state, snapshot, error);
@@ -439,7 +446,7 @@ export function reconcilePredictedPlayer(
       }
       return finish(buffer, 'accepted', error, 0, 'none', mutated);
     }
-    return applyCorrection(player, world, buffer, snapshot, predictedAtAck.state, error, dt, reject);
+    return applyCorrection(player, world, buffer, snapshot, predictedAtAck, error, dt, reject);
   }
 
   const error = predictionError(
@@ -454,14 +461,47 @@ function applyCorrection(
   world: VoxelWorld,
   buffer: PredictionBuffer,
   snapshot: PlayerSnapshot,
-  predictedAtAck: PlayerMovementState | undefined,
+  predictedAtAck: PredictionHistoryEntry | undefined,
   error: PredictionError,
   dt: number,
   rejectReason: AckRejectReason,
 ): ReconcileResult {
+  if (isCorrDiagQueryEnabled()) {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const sample = motionProbe.sampleWorldHint?.();
+    const diag = buildCorrectionDiag({
+      snapshot,
+      buffer,
+      predicted: predictedAtAck?.state,
+      predictedInput: predictedAtAck?.input,
+      player,
+      error,
+      reject: rejectReason,
+      serverTick: motionProbe.inboundTick,
+      lastStateTick: motionProbe.lastStateTick,
+      world: {
+        feetBlock: sample?.feetBlock ?? '—',
+        belowBlock: sample?.belowBlock ?? '—',
+        aheadBlock: sample?.aheadBlock ?? '—',
+        msSinceBlockMutation: Number.isFinite(motionProbe.lastBlockMutationAt)
+          ? now - motionProbe.lastBlockMutationAt : -1,
+        msSinceChunkUpdate: Number.isFinite(motionProbe.lastChunkUpdateAt)
+          ? now - motionProbe.lastChunkUpdateAt : -1,
+        ticksThisFrame: motionProbe.ticksThisFrame,
+        onGroundBefore: player.onGround,
+        onGroundAfterPredicted: predictedAtAck?.state.onGround ?? player.onGround,
+        jump: predictedAtAck?.input.jump === true,
+        flyingToggle: predictedAtAck
+          ? predictedAtAck.state.isFlying !== (snapshot.flying ?? predictedAtAck.state.isFlying)
+          : false,
+        descend: predictedAtAck?.input.descend === true,
+      },
+    });
+    logCorrectionDiag(diag);
+  }
   const ackSeq = snapshot.inputSeq ?? buffer.lastAckedSeq;
   const snapped = shouldSnapPrediction(error.distSq);
-  restoreAuthoritativePlayer(player, snapshot, predictedAtAck);
+  restoreAuthoritativePlayer(player, snapshot, predictedAtAck?.state);
   motionProbe.noteWrite('position');
   motionProbe.noteWrite('velocity');
   ackPredictedMoves(buffer, ackSeq);

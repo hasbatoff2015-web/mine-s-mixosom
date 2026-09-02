@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-02 Correction diagnosis + 20 TPS catch-up
+
+Report: `reports/2026-09-02_online-correction-diagnosis.md`. PR #37.
+
+```text
+npx vitest run tests/move-sim-compare.test.ts tests/correction-diagnostics.test.ts tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/server/anarchy-server.test.ts tests/server/tick-latency.test.ts
+```
+
+Contracts: lockstep identical at 1/2/5/10/20; 2 client vs 1 server latest-input ≈ one walk step; 2=2 aligned; `tickCatchUp(2)` one snapshot; `/predsim`; FIFO/bow/prediction tests unchanged. DEV `?corrDiag=1`, `FC_DEBUG_SNAP=1`, `/predsim`.
+
 ## 2026-09-02 Remove Online movement FIFO
 
 Report: `reports/2026-09-02_online-input-queue-revert.md`. PR #37.

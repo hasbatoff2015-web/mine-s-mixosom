@@ -2,6 +2,14 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: диагностика correction 0.3–0.6 и 20 TPS catch-up (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- F3: `prd/s=20` `state/s=18` `corr/s=1` avg 0.34 max 0.64. Lockstep PlayerController **не** расходится (1…20 ticks). Это не H.
+- Причина: `setInterval(50)` ≈ 18 Hz без catch-up; клиент предсказывает 20 шагов, сервер один latest-input tick → rewind на 1–3 walk step. `tickCatchUp` симулирует owed ticks и шлёт **один** snapshot. FIFO не возвращали.
+- DEV: `?corrDiag=1`, F3 snap recv/drop/gap, `FC_DEBUG_SNAP=1`, `/predsim`.
+- Report: `docs/reports/2026-09-02_online-correction-diagnosis.md`.
+
 ## Последний проход: убрать FIFO movement queue (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
