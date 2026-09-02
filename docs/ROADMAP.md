@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-02: Radmin / LAN bind for local Anarchy QA
+
+- [x] Canonical `FC_SERVER_HOST` (aliases `FC_HOST` / `HOST`); default `127.0.0.1`.
+- [x] `FC_SERVER_HOST=0.0.0.0 npm run dev:server` listens on all interfaces; loopback `127.0.0.1:2567` still works.
+- [x] Startup log `WebSocket listening on <host>:<port>`.
+- [x] Vite default is localhost-only; opt-in `FC_DEV_HOST=0.0.0.0` (not production, not everyday local play).
+- [x] Vite DEV page hostname used for Anarchy WS; production/Yandex stays `127.0.0.1`.
+- [ ] Owner two-PC Radmin QA on Windows PowerShell (firewall, Radmin IP, friend join).
+- [ ] Do not treat this as a public VPS/Yandex deploy.
+
 ## 2026-09-02: integrate PR #31 player presentation with authoritative main
 
 - [x] Modern Java 64×64 skin contract; 45 unique supplied skins + authored UV QA sheet; Classic/Slim metadata and all six outer-layer toggles.

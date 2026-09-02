@@ -207,6 +207,36 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(status.online).toBe(0);
   });
 
+  it('binds 0.0.0.0, logs the listen address, and still accepts 127.0.0.1', async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(' '));
+      originalLog.apply(console, args);
+    };
+    try {
+      const server = new AnarchyServer({
+        ...testConfig(dir),
+        host: '0.0.0.0',
+      });
+      servers.push(server);
+      await server.start();
+      expect(server.host).toBe('0.0.0.0');
+      expect(logs).toContain(`WebSocket listening on 0.0.0.0:${server.port}`);
+      expect(server.wsUrl()).toBe(`ws://127.0.0.1:${server.port}`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/status`);
+      expect(response.ok).toBe(true);
+      const client = new TestClient();
+      const welcome = await client.connect(`ws://127.0.0.1:${server.port}`, { name: 'Lan' });
+      expect(welcome.type).toBe('welcome');
+      client.close();
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   it('assigns authoritative spawn on join and resumes without duplicates', async () => {
     const server = await boot();
     const client = new TestClient();

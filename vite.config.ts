@@ -1,4 +1,7 @@
 import { defineConfig } from 'vite';
+import { resolveViteDevServer } from './vite.devHost';
+
+const viteDev = resolveViteDevServer();
 
 export default defineConfig({
   base: './',
@@ -9,8 +12,9 @@ export default defineConfig({
     target: 'es2020',
   },
   server: {
-    host: true,
+    host: viteDev.host,
     port: 4173,
+    ...(viteDev.allowedHosts ? { allowedHosts: viteDev.allowedHosts } : {}),
   },
   test: {
     environment: 'node',

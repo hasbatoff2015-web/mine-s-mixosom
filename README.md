@@ -34,7 +34,7 @@ npm install
 npm run dev
 ```
 
-Vite по умолчанию поднимает игру на `http://localhost:4173`. Для первого входа выберите «Играть» → «Создать новый мир».
+Vite по умолчанию поднимает игру на `http://localhost:4173` (только loopback). Для первого входа выберите «Играть» → «Создать новый мир». Локальный Anarchy: `npm run dev:server` (`ws://127.0.0.1:2567`). LAN/Radmin QA: см. [docs/LOCAL_SERVER.md](docs/LOCAL_SERVER.md).
 
 Выбранные runtime-текстуры уже лежат в `public/textures`. Чтобы заново получить их из локального исходного набора `assets/`, выполните:
 

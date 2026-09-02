@@ -28,6 +28,7 @@ Console should include:
 
 ```
 [server] started
+WebSocket listening on 127.0.0.1:2567
 Frontier Cubes Server listening on ws://127.0.0.1:2567
 [server] world loaded: anarchy
 Anarchy server ready
@@ -37,7 +38,7 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HOST` / `FC_HOST` | `127.0.0.1` | Bind address |
+| `FC_SERVER_HOST` (`FC_HOST` / `HOST`) | `127.0.0.1` | Bind address. Use `0.0.0.0` for Radmin/LAN QA |
 | `PORT` / `FC_PORT` | `2567` | Bind port |
 | `WORLD` / `FC_WORLD` | `anarchy` | World id |
 | `WORLD_PATH` / `FC_WORLD_PATH` | `server/data/worlds` | Relative directory for worlds |
@@ -63,7 +64,24 @@ Shared simulation used by this process is Node-safe (`npm run typecheck:sim`, `n
 npm run dev
 ```
 
-Optional one-command both:
+Default Vite bind is **localhost only** (not `0.0.0.0`). Open `http://127.0.0.1:4173` or `http://localhost:4173`.
+
+LAN / Radmin VPN QA — opt in, do not leave this as the everyday default:
+
+```bash
+FC_DEV_HOST=0.0.0.0 npm run dev
+```
+
+Windows PowerShell:
+
+```powershell
+$env:FC_DEV_HOST="0.0.0.0"
+npm run dev
+```
+
+`FC_VITE_HOST` is an alias. CLI `npx vite --host 0.0.0.0` also works. When Vite listens on `0.0.0.0`, `allowedHosts` is opened so a second PC can use the Radmin IP as the Host header.
+
+Optional one-command both (still loopback Vite unless `FC_DEV_HOST` is set):
 
 ```bash
 npm run dev:anarchy
@@ -77,7 +95,7 @@ npm run dev:anarchy
 
 **Выживание PvP** remains unavailable.
 
-Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarchyPort=`.
+Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarchyPort=`. Vite DEV opened at a LAN/VPN address uses that page hostname for the WebSocket by default. Production/Yandex builds stay on `ws://127.0.0.1:2567`.
 
 ## Two-client test
 
@@ -88,6 +106,47 @@ Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarch
 5. Inventory/craft/attack are server-authoritative: one client cannot loot or damage as a local decision.
 
 Same-machine two tabs share `sessionStorage` **per tab**, so they get distinct players.
+
+## Radmin VPN (second PC, local QA only)
+
+Radmin is not a production/Yandex path. Use it only so another machine on the same VPN can join the host's Anarchy process.
+
+1. Both PCs in the same Radmin network. On the **host**, note the Radmin IPv4 (`ipconfig` / Radmin UI). It is often `26.x.x.x`.
+2. Allow inbound **2567** (WebSocket) and **4173** (Vite) on the Radmin adapter if Windows Firewall prompts.
+3. Host — Anarchy server on all interfaces (PowerShell):
+
+```powershell
+$env:FC_SERVER_HOST="0.0.0.0"
+npm run dev:server
+```
+
+Git bash / Linux:
+
+```bash
+FC_SERVER_HOST=0.0.0.0 npm run dev:server
+```
+
+Console must include `WebSocket listening on 0.0.0.0:2567`. `http://127.0.0.1:2567/status` on the host still works.
+
+4. Host — Vite on all interfaces (second terminal, PowerShell):
+
+```powershell
+$env:FC_DEV_HOST="0.0.0.0"
+npm run dev
+```
+
+Git bash / Linux:
+
+```bash
+FC_DEV_HOST=0.0.0.0 npm run dev
+```
+
+5. Host browser: `http://127.0.0.1:4173/` → **Играть онлайн → Анархия PvP**. Client WebSocket: `ws://127.0.0.1:2567`.
+6. Friend browser: `http://<RADMIN_IP>:4173/`. Vite DEV uses the page host, so the client WebSocket is `ws://<RADMIN_IP>:2567`. Explicit override if needed: `http://<RADMIN_IP>:4173/?anarchyHost=<RADMIN_IP>`.
+
+Do not set `FC_SERVER_HOST` to the Radmin IP alone if the host still wants `127.0.0.1:2567` — that bind would skip loopback. `0.0.0.0` keeps both.
+
+cmd.exe: `set FC_SERVER_HOST=0.0.0.0` then `npm run dev:server` (no `VAR=value cmd` syntax).
 
 ## Server data location
 
@@ -203,7 +262,7 @@ Use `--force` only if a server world already exists and you intend to overwrite 
 
 ## Future VPS migration
 
-Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/reverse proxy). Do not rewrite world simulation. There is no Docker requirement in this pass.
+Take the same Node process. Change `FC_SERVER_HOST`/`HOST`/`PORT`/`WORLD_PATH` (and later TLS/reverse proxy). Do not rewrite world simulation. There is no Docker requirement in this pass.
 
 ## Gameplay on the server
 

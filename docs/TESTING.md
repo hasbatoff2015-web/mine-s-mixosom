@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-02 Radmin / LAN Anarchy bind
+
+Report: `reports/2026-09-02_radmin-anarchy-host.md`.
+
+Targeted: `tests/server/server-host.test.ts`, `tests/vite-dev-host.test.ts`, `tests/anarchy-client-url.test.ts`, bind case in `tests/server/anarchy-server.test.ts`. Retain `npm run test:server`.
+
+Commands: `FC_SERVER_HOST=0.0.0.0 npm run dev:server`, `FC_DEV_HOST=0.0.0.0 npm run dev`. PowerShell uses `$env:FC_SERVER_HOST="0.0.0.0"`. Default Vite is localhost-only.
+
 ## 2026-09-02 PR #31 post-server integration
 
 Automated focused gate:

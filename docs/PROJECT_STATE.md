@@ -2,6 +2,16 @@
 
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Radmin / LAN bind for local Anarchy QA
+
+- Ветка `cursor/radmin-anarchy-host-86e1` от `origin/main` `020d9d3`. **Не merge в main без owner QA.** Не VPS, не production/Yandex, не accounts.
+- WebSocket bind был `http.listen(port, host)` с `HOST` / `FC_HOST` / default `127.0.0.1`. Каноническая переменная теперь **`FC_SERVER_HOST`**. Default по-прежнему loopback. LAN/Radmin: `FC_SERVER_HOST=0.0.0.0 npm run dev:server`.
+- Старт пишет `WebSocket listening on <host>:<port>`. Wildcard `0.0.0.0` всё ещё принимает `ws://127.0.0.1:2567` на той же машине.
+- Vite `npm run dev` больше не слушает `0.0.0.0` по умолчанию (`localhost` only). Opt-in: **`FC_DEV_HOST=0.0.0.0`** (alias `FC_VITE_HOST`). При wildcard Vite ставит `allowedHosts: true`, иначе второй ПК получит 403 на Radmin IP.
+- Vite DEV, открытый с LAN/VPN hostname, берёт его как Anarchy host. Production/Yandex остаётся `ws://127.0.0.1:2567`. Singleplayer без сервера.
+- Windows PowerShell: `$env:FC_SERVER_HOST="0.0.0.0"` — синтаксис `VAR=value cmd` в PowerShell не работает. Node `listen(port, '0.0.0.0')` на Windows принимается.
+- Подробности: `docs/LOCAL_SERVER.md` (секция Radmin VPN). Report: `docs/reports/2026-09-02_radmin-anarchy-host.md`.
+
 ## Последний проход: post-server integration PR #31 player skins / character / third-person
 
 - Существующая ветка Draft PR **#31** `cursor/player-skins-third-person` объединена обычным merge с server-authoritative `origin/main` `57724f6`; PR #28 breaking overlay и весь GameplayKernel/server/shared/tooling stack сохранены.

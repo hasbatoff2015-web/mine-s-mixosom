@@ -34,12 +34,39 @@ function integerEnv(env: NodeJS.ProcessEnv, key: string, fallback: number, min: 
   return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
+function firstNonEmptyEnv(env: NodeJS.ProcessEnv, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const raw = env[key];
+    if (typeof raw !== 'string') continue;
+    const value = raw.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+export function isWildcardBindHost(host: string): boolean {
+  return host === '0.0.0.0' || host === '::' || host === '[::]';
+}
+
+/** Host used by local clients when the process binds a wildcard interface. */
+export function connectableServerHost(bindHost: string): string {
+  return isWildcardBindHost(bindHost) ? DEFAULT_SERVER_HOST : bindHost;
+}
+
+/**
+ * Bind host. Canonical: `FC_SERVER_HOST`. Aliases `FC_HOST` / `HOST` remain.
+ * Default `127.0.0.1` keeps the process loopback-only. LAN/VPN QA uses `0.0.0.0`.
+ */
+export function resolveServerHost(env: NodeJS.ProcessEnv = process.env): string {
+  return firstNonEmptyEnv(env, ['FC_SERVER_HOST', 'FC_HOST', 'HOST']) ?? DEFAULT_SERVER_HOST;
+}
+
 /**
  * Host/port/paths come from env. Never bake a machine-specific path or public IP
  * into gameplay code — VPS migration is a config change.
  */
 export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): ServerConfig {
-  const host = env.HOST || env.FC_HOST || DEFAULT_SERVER_HOST;
+  const host = resolveServerHost(env);
   const worldId = (env.WORLD || env.FC_WORLD || DEFAULT_WORLD_ID).trim() || DEFAULT_WORLD_ID;
   const dataDir = env.WORLD_PATH || env.FC_WORLD_PATH || `${cwd}/server/data/worlds`;
   return {

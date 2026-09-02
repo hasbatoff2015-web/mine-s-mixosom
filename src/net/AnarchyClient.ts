@@ -1,9 +1,7 @@
 import {
-  DEFAULT_SERVER_HOST,
-  DEFAULT_SERVER_PORT,
-  defaultStatusUrl,
-  defaultWsUrl,
-} from '../../shared/config';
+  resolveAnarchyStatusUrl,
+  resolveAnarchyWsUrl,
+} from './anarchyUrls';
 import {
   decodeJson,
   encodeMessage,
@@ -17,22 +15,20 @@ import {
 const SESSION_KEY = 'fc.anarchy.sessionToken';
 
 export function anarchyClientUrl(): string {
-  const params = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
-  const override = params?.get('anarchyUrl')
-    ?? (typeof import.meta !== 'undefined' ? import.meta.env?.VITE_ANARCHY_URL as string | undefined : undefined);
-  if (override) return override;
-  const host = params?.get('anarchyHost') ?? DEFAULT_SERVER_HOST;
-  const port = Number(params?.get('anarchyPort') ?? DEFAULT_SERVER_PORT);
-  return defaultWsUrl(host, Number.isFinite(port) ? port : DEFAULT_SERVER_PORT);
+  const params = typeof location === 'undefined' ? '' : location.search;
+  const hostname = typeof location === 'undefined' ? undefined : location.hostname;
+  const envUrl = typeof import.meta !== 'undefined'
+    ? import.meta.env?.VITE_ANARCHY_URL as string | undefined
+    : undefined;
+  const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV === true;
+  return resolveAnarchyWsUrl({ search: params, pageHostname: hostname, envUrl, isDev });
 }
 
 export function anarchyStatusUrl(): string {
-  const params = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
-  const override = params?.get('anarchyStatus');
-  if (override) return override;
-  const host = params?.get('anarchyHost') ?? DEFAULT_SERVER_HOST;
-  const port = Number(params?.get('anarchyPort') ?? DEFAULT_SERVER_PORT);
-  return defaultStatusUrl(host, Number.isFinite(port) ? port : DEFAULT_SERVER_PORT);
+  const params = typeof location === 'undefined' ? '' : location.search;
+  const hostname = typeof location === 'undefined' ? undefined : location.hostname;
+  const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV === true;
+  return resolveAnarchyStatusUrl({ search: params, pageHostname: hostname, isDev });
 }
 
 export type AnarchyMessageHandler = (message: ServerMessage) => void;

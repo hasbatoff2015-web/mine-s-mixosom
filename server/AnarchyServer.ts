@@ -11,7 +11,7 @@ import {
   type ClientMessage,
   type ServerMessage,
 } from '../shared/protocol';
-import type { ServerConfig } from './config';
+import { connectableServerHost, type ServerConfig } from './config';
 import { serverLog } from './log';
 import { WorldInstance, type ConnectedSink } from './WorldInstance';
 
@@ -44,7 +44,7 @@ export class AnarchyServer {
   }
 
   wsUrl(): string {
-    return `ws://${this.host}:${this.port}`;
+    return `ws://${connectableServerHost(this.host)}:${this.port}`;
   }
 
   async start(): Promise<void> {
@@ -80,6 +80,7 @@ export class AnarchyServer {
     });
     this.world.startLoops();
     serverLog('started');
+    console.log(`WebSocket listening on ${this.host}:${this.port}`);
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
     serverLog(`world loaded: ${this.config.worldId}`);
     console.log('Anarchy server ready');
