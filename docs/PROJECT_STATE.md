@@ -10,7 +10,7 @@
 - Vite `npm run dev` больше не слушает `0.0.0.0` по умолчанию (`localhost` only). Opt-in: **`FC_DEV_HOST=0.0.0.0`** (alias `FC_VITE_HOST`). При wildcard Vite ставит `allowedHosts: true`, иначе второй ПК получит 403 на Radmin IP.
 - Vite DEV, открытый с LAN/VPN hostname, берёт его как Anarchy host. Production/Yandex остаётся `ws://127.0.0.1:2567`. Singleplayer без сервера.
 - Windows PowerShell: `$env:FC_SERVER_HOST="0.0.0.0"` — синтаксис `VAR=value cmd` в PowerShell не работает. Node `listen(port, '0.0.0.0')` на Windows принимается.
-- Подробности: `docs/LOCAL_SERVER.md` (секция Radmin VPN). Report: `docs/reports/2026-09-02_radmin-anarchy-host.md`.
+- Targeted: server-host + vite-dev-host + anarchy-client-url + anarchy-server bind case. `test:server` **78/78**. typecheck / typecheck:server / typecheck:client / typecheck:sim PASS. `smoke:server` prints `WebSocket listening on 127.0.0.1:<port>`. Build PASS. Live `FC_SERVER_HOST=0.0.0.0` listens on `0.0.0.0` and still serves `127.0.0.1/status`.
 
 ## Последний проход: post-server integration PR #31 player skins / character / third-person
 
