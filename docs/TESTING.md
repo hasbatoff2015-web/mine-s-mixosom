@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Hidden-tab Page Visibility
+
+Report: `reports/2026-09-03_hidden-tab-visibility.md`. PR #37.
+
+```text
+npx vitest run tests/hidden-tab-motion.test.ts tests/local-player-prediction.test.ts tests/fixed-step.test.ts tests/server-tick-clock.test.ts
+```
+
+Contracts: BACKGROUND skips client ticks; a 2 s frame delta is clamped to 4 catch-up ticks; legacy hide leaves pred/send at 0 while the server walks and duplicate-seq ignores the frozen pose (correction ~walk×hiddenSeconds); resume policy sends one idle, resets the clock, force-resyncs, and 5× walk plus flight+SHIFT stay at corr=0. Physics/tolerance/TPS unchanged. Manual QA: **one game tab**, hide 1–2 s, return.
+
 ## 2026-09-03 Session isolation + event-loop load
 
 Report: `reports/2026-09-03_session-isolation-event-loop.md`. PR #37.

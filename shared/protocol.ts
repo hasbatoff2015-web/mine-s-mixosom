@@ -66,6 +66,8 @@ export interface PlayerSessionDiag {
   readonly resumeCount: number;
   readonly activeSockets: number;
   readonly lastInputConn: string;
+  readonly inputGapMs?: number;
+  readonly inputPackets?: number;
 }
 
 export interface RemotePlayerInfo {
@@ -322,6 +324,10 @@ export interface ServerTickClock {
   readonly blockChanges?: number;
   readonly chunkSends?: number;
   readonly chunkGens?: number;
+  /** Wall time since this world's busiest player last received an input packet. */
+  readonly inputGapMs?: number;
+  /** Input packets applied since the previous snapshot flush (burst detector). */
+  readonly inputPackets?: number;
 }
 
 export interface ServerPlayerStateMessage {

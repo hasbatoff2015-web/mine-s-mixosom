@@ -74,6 +74,8 @@ export class ServerPlayer implements GameplayPlayer {
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
   lastServerSimAt: number | undefined;
+  lastInputGapMs = 0;
+  inputPacketsThisLoop = 0;
   /** Jump pulse seen since the last physics tick (latest-input coalescing). */
   pendingJump = false;
   /** use=false seen while charging, so a coalesced release is not lost. */
@@ -157,6 +159,10 @@ export class ServerPlayer implements GameplayPlayer {
         resumeCount: this.resumeCount,
         activeSockets: this.activeSocketCount,
         lastInputConn: this.lastInputConnectionId || this.connectionId,
+        inputGapMs: this.lastServerRecvAt !== undefined
+          ? Math.round(performance.now() - this.lastServerRecvAt)
+          : undefined,
+        inputPackets: this.inputPacketsThisLoop,
       },
       ...(this.lastServerRecvAt !== undefined || this.lastClientSentAt !== undefined ? {
         netTiming: {
@@ -413,6 +419,27 @@ export class WorldInstance {
     return [...this.players.values()].filter((player) => player.connected);
   }
 
+  private maxInputGapMs(now = performance.now()): number {
+    let maxGap = 0;
+    for (const player of this.connectedPlayers()) {
+      if (player.lastServerRecvAt === undefined) continue;
+      maxGap = Math.max(maxGap, now - player.lastServerRecvAt, player.lastInputGapMs);
+    }
+    return Math.round(maxGap);
+  }
+
+  private maxInputPacketsThisLoop(): number {
+    let maxPackets = 0;
+    for (const player of this.connectedPlayers()) {
+      maxPackets = Math.max(maxPackets, player.inputPacketsThisLoop);
+    }
+    return maxPackets;
+  }
+
+  private resetInputPacketCounters(): void {
+    for (const player of this.players.values()) player.inputPacketsThisLoop = 0;
+  }
+
   join(options: {
     sink: ConnectedSink;
     name?: string;
@@ -536,7 +563,12 @@ export class WorldInstance {
     player.lastInputSeq = input.seq;
     player.lastInputConnectionId = source?.connectionId ?? player.connectionId;
     player.lastClientSentAt = input.clientSentAt;
-    player.lastServerRecvAt = performance.now();
+    const recvAt = performance.now();
+    if (player.lastServerRecvAt !== undefined) {
+      player.lastInputGapMs = recvAt - player.lastServerRecvAt;
+    }
+    player.lastServerRecvAt = recvAt;
+    player.inputPacketsThisLoop += 1;
     if (input.jump) player.pendingJump = true;
     if (input.use !== true && (player.bowUseTicks > 0 || player.foodUseTicks > 0 || player.lastInput.use === true)) {
       player.pendingUseRelease = true;
@@ -820,11 +852,14 @@ export class WorldInstance {
           blockChanges: this.lastTickMetrics.blockChanges,
           chunkSends: this.lastChunkSends,
           chunkGens: this.lastChunkGens,
+          inputGapMs: this.maxInputGapMs(),
+          inputPackets: this.maxInputPacketsThisLoop(),
         },
         players: snapshots,
       });
       this.snapshotsSent += 1;
     }
+    this.resetInputPacketCounters();
     for (const player of this.connectedPlayers()) {
       this.sendTo(player, {
         type: 'entity_snapshot',

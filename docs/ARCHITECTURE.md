@@ -1,5 +1,15 @@
 # Архитектура
 
+## Hidden-tab Page Visibility — 2026-09-03
+
+Single game tab. `GameLifecycleManager` sets `BACKGROUND` on hide; `worldSimulationActive` is false, so `Game.frame` zeroes the accumulator and skips `tickOnline`. The client sends no movement and predicts no ticks. The server keeps `lastInput` at 20 TPS. Incoming `player_state` still lands on the same WebSocket; the client stores **one** latest pending snapshot. Those packets reuse `inputSeq`, so reconcile **ignores** them as `duplicate-seq`. Local pose freezes while the server walks ~`WALK_SPEED × hiddenSeconds`.
+
+A frozen `requestAnimationFrame` on resume can still feed up to 0.25 s (`MAX_FRAME_DELTA`) → 4 catch-up ticks from the stale pose. That is not a 2 s replay, but it is enough to start a correction storm against a pose metres away.
+
+Policy (lifecycle only): hide sends the same idle packet as the pause menu; resume resets `previousTime`/`accumulator`, snaps the local player to the latest snapshot, and clears prediction history. Look is preserved. This is not a FIFO, not a larger accept window, and not a TPS change.
+
+DEV: F3 `visibility=visible/hidden focus=1/0 hiddenDurationMs resumeTicks resumeSnapshots`; `tickClock.inputGapMs` / `inputPackets` as `inGap` / `inBurst`. Logs `[vis]`, `[vis-resume]`, `[vis-resync]`.
+
 ## Session resume isolation + event-loop load — 2026-09-03
 
 `sessionStorage` key `fc.anarchy.sessionToken` is per-tab, but **duplicating a tab copies it**. `WorldInstance.join` resumes the same `ServerPlayer`, replaces `sink`, and used to leave the old WebSocket in `AnarchyServer.sockets`. Both sockets could `applyInput()`. Closing the old tab called `disconnect()` on the live player.
@@ -254,7 +264,7 @@ Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `c
 
 Online chest/furnace clicks are not optimistic. The client sends `inventory_action`; the server mutates via `applyInventoryUiAction` and replies with the existing `inventory` message (`inventory` + `cursor` + `window.slots`). `applyAuthoritativeContainerSlots` writes those slots onto the local `getChest`/`getFurnace` object **even when the GUI is already open**; `applyAuthoritativeCursor` then re-paints. Opening the GUI is only for the first snapshot (`shouldOpenOnlineContainer`). Other players with the same chest/furnace window receive the same `inventory` packet (their own inventory + updated `window.slots`). No new protocol type. Persistence format unchanged.
 
-Online Anarchy still applies `block_update` / `block_batch` in the WebSocket handler (`applyNetworkBlockChanges`) regardless of pause. `processWorldJobs` (deferred light + remesh) also runs while online `PAUSED` / `BACKGROUND` so dirty chunks do not wait for Continue. Kernel / `tickOnline` stay PLAYING-only. Hidden-tab RAF throttle is the browser's; we do not force 60 FPS. Inventory overlays stay PLAYING. Entity interpolation remains in `render()`.
+Online Anarchy still applies `block_update` / `block_batch` in the WebSocket handler (`applyNetworkBlockChanges`) regardless of pause. `processWorldJobs` (deferred light + remesh) also runs while online `PAUSED` / `BACKGROUND` so dirty chunks do not wait for Continue. Kernel / `tickOnline` stay PLAYING-only. Hidden-tab RAF throttle is the browser's; we do not force 60 FPS. On hide the client sends one idle so the server does not keep walking; on resume it discards wall-clock catch-up and resyncs to the latest snapshot. Inventory overlays stay PLAYING. Entity interpolation remains in `render()`.
 
 Singleplayer IndexedDB path is unchanged. Online never writes Anarchy to IndexedDB.
 
@@ -588,7 +598,7 @@ Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT 
 
 Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `lastInput`; snapshots carry `inputSeq` so the client can compare the predicted **pose** at that seq (`src/net/localPlayerPrediction.ts`). Matching xz/y acks leave the live player untouched (velocity/onGround/flying disagreements are logged, not rewound). Pose mismatches restore that pose and replay only later seqs. Snapshots are applied at the start of the next client tick, not in the WebSocket callback. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
 
-`GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal.
+`GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal. Online hide also sends one idle input and, on return to PLAYING, resyncs local movement to the latest authoritative snapshot so a frozen tab cannot phase-shift prediction.
 
 ### Generation
 

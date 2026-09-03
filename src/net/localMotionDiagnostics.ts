@@ -156,6 +156,8 @@ export class LocalMotionProbe {
   serverBlockChanges = 0;
   serverChunkSends = 0;
   serverChunkGens = 0;
+  serverInputGapMs = 0;
+  serverInputPackets = 0;
   session?: PlayerSessionDiag;
   readonly traceEnabled: boolean;
   private readonly events: MotionRateEvent[] = [];
@@ -214,6 +216,8 @@ export class LocalMotionProbe {
     this.serverBlockChanges = 0;
     this.serverChunkSends = 0;
     this.serverChunkGens = 0;
+    this.serverInputGapMs = 0;
+    this.serverInputPackets = 0;
     this.session = undefined;
     localNetTrace.reset();
   }
@@ -279,6 +283,8 @@ export class LocalMotionProbe {
       this.serverBlockChanges = clock.blockChanges ?? 0;
       this.serverChunkSends = clock.chunkSends ?? 0;
       this.serverChunkGens = clock.chunkGens ?? 0;
+      this.serverInputGapMs = clock.inputGapMs ?? 0;
+      this.serverInputPackets = clock.inputPackets ?? 0;
     }
     const session = message.players?.find((player) => player.session)?.session;
     if (session) this.session = session;
@@ -493,6 +499,7 @@ export class LocalMotionProbe {
       `srv phys/s=${this.serverPhysicsTps.toFixed(1)} snapGen/s=${this.serverSnapGen.toFixed(1)} snapSent/s=${this.serverSnapSent.toFixed(1)} dropped=${this.serverDroppedTicks} lastPhysΔ=${this.lastPhysicsTicks}`,
       `loop late=${this.serverLatenessMs.toFixed(1)}ms cb=${this.serverCallbackMs.toFixed(1)}ms tickWall=${this.serverTickWallMs.toFixed(1)}ms eld mean/p95/p99/max=${this.serverEldMean.toFixed(1)}/${this.serverEldP95.toFixed(1)}/${this.serverEldP99.toFixed(1)}/${this.serverEldMax.toFixed(1)}`,
       `load ent=${this.serverEntities} blocks=${this.serverBlockChanges} chunkSend=${this.serverChunkSends} chunkGen=${this.serverChunkGens}`,
+      `inGap=${this.serverInputGapMs.toFixed(0)}ms inBurst=${this.serverInputPackets}`,
       `sess socks=${this.session?.activeSockets ?? '—'} src=${this.session?.lastInputConn?.slice(0, 8) ?? '—'} snap=${this.session?.connectionId.slice(0, 8) ?? '—'} join=${this.session?.joinCount ?? '—'} resume=${this.session?.resumeCount ?? '—'} fp=${this.session?.tokenFp ?? '—'}`,
       `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut} netPos/s=${localNetTrace.sourceRate('write:position', now)} netVel/s=${localNetTrace.sourceRate('write:velocity', now)} netPrev/s=${localNetTrace.sourceRate('write:previousPosition', now)}`,
       `${localNetTrace.mutationSourceHud(now)} vol/s=${localNetTrace.sourceRate('world:volume', now)}`,

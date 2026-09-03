@@ -75,6 +75,7 @@ import {
   worldSimulationActive,
 } from './gameplayModal';
 import { GameLifecycleManager } from './Lifecycle';
+import type { LifecycleState } from './lifecycleTypes';
 import { RollingTimingWindow } from './PerformanceStats';
 import {
   DroppedItemManager,
@@ -158,6 +159,7 @@ import {
 } from '../debug/chunkStreamingRuntime';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { LongTaskMonitor } from '../debug/longTaskMonitor';
+import { PageVisibilityProbe } from '../debug/pageVisibilityProbe';
 import { isQuietWorldQueryEnabled, quietWorldRenderDistance } from '../debug/quietWorld';
 import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
@@ -199,6 +201,11 @@ import {
   type PredictionBuffer,
   type ReconcileResult,
 } from '../net/localPlayerPrediction';
+import {
+  evaluateHiddenTabResume,
+  hiddenTabPacketSample,
+  resyncLocalPlayerAfterHiddenTab,
+} from '../net/hiddenTabMotion';
 import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
 import {
   blockOverlapsPlayerVolume,
@@ -320,6 +327,8 @@ export interface OnlineAnarchySession {
     message: ServerPlayerStateMessage;
     local: ServerPlayerStateMessage['players'][number];
   };
+  /** Next local snapshot apply is a hidden-tab resume snap, not a correction. */
+  forceHiddenTabResync?: boolean;
   /** True when both send and local state are isolated (`predNoNet`). */
   ignoreNetworkMotion?: boolean;
 }
@@ -486,6 +495,8 @@ export class Game {
   private lastSimParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0, ticks: 0 };
   private lastRenderAlpha = 0;
   private lastOnlineUsing = false;
+  private previousLifecycle: LifecycleState = 'LOADING';
+  private readonly visibilityProbe = new PageVisibilityProbe();
   private readonly bowDiag = isBowDiagQueryEnabled();
   private readonly litToMeshWaits = new RollingTimingWindow(64);
   private readonly requestToVisibleWaits = new RollingTimingWindow(64);
@@ -735,6 +746,7 @@ export class Game {
     resetPredictionBuffer(session.online.prediction);
     session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
     motionProbe.reset();
+    this.visibilityProbe.resetSession();
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
@@ -974,7 +986,12 @@ export class Game {
     const seen = new Set<string>();
     if (local) {
       motionProbe.notePlayerState(local.inputSeq);
-      this.noteLocalSnapshotTiming(local, performance.now());
+      const recvAt = performance.now();
+      this.noteLocalSnapshotTiming(local, recvAt);
+      this.visibilityProbe.noteSnapshot(local, recvAt, {
+        physicsTicks: message.physicsTicks,
+        history: this.predictedHistoryPose(online, local.inputSeq),
+      });
       const flags = online.isolation ?? resolvePredIsolation();
       if (flags.observe) {
         motionProbe.note('skip:observe');
@@ -998,6 +1015,61 @@ export class Game {
     }
     for (const id of [...online.remotes.keys()]) {
       if (!seen.has(id)) this.removeRemotePlayer(session, id);
+    }
+  }
+
+  private predictedHistoryPose(
+    online: OnlineAnarchySession,
+    seq: number | undefined,
+  ): { x: number; y: number; z: number } | null {
+    if (seq === undefined || !Number.isFinite(seq)) return null;
+    const entry = online.prediction.entries.find((item) => item.seq === seq);
+    if (!entry) return null;
+    return { x: entry.state.x, y: entry.state.y, z: entry.state.z };
+  }
+
+  private visibilityContext(): {
+    predSeq: number;
+    ackSeq: number;
+    pending: number;
+    accumulator: number;
+    alpha: number;
+  } {
+    const online = this.session?.online;
+    return {
+      predSeq: online?.inputSeq ?? 0,
+      ackSeq: online?.prediction.lastAckedSeq ?? -1,
+      pending: online?.prediction.entries.length ?? 0,
+      accumulator: this.accumulator,
+      alpha: this.lastRenderAlpha,
+    };
+  }
+
+  private handleVisibilityLifecycle(previous: LifecycleState, next: LifecycleState): void {
+    const now = performance.now();
+    const decision = evaluateHiddenTabResume({
+      previousLifecycle: previous,
+      nextLifecycle: next,
+      online: Boolean(this.session?.online),
+    });
+    if (next === 'BACKGROUND' && previous !== 'BACKGROUND') {
+      this.visibilityProbe.notifyHidden(now, this.visibilityContext());
+      if (decision.sendIdleOnHide && this.session?.online) this.sendOnlineIdle(this.session);
+      this.debugNextTick = 0;
+      if (this.session) this.refreshHud();
+    }
+    if (previous === 'BACKGROUND' && next !== 'BACKGROUND') {
+      if (decision.resetClockOnResume) {
+        this.previousTime = now;
+        this.accumulator = 0;
+      }
+      this.visibilityProbe.notifyVisible(now, this.visibilityContext());
+      if (decision.forceAuthoritativeResync && this.session?.online && !this.session.online.ignoreNetworkState) {
+        this.session.online.forceHiddenTabResync = true;
+        this.flushPendingLocalSnapshot(this.session);
+      }
+      this.debugNextTick = 0;
+      if (this.session) this.refreshHud();
     }
   }
 
@@ -1093,8 +1165,52 @@ export class Game {
       )).name,
     });
 
+    const forceResync = online.forceHiddenTabResync === true;
+    online.forceHiddenTabResync = false;
     let result: ReconcileResult;
-    if (flags.skipReconcile) {
+    if (forceResync) {
+      motionProbe.note('visibility-resync');
+      const synced = resyncLocalPlayerAfterHiddenTab({
+        player,
+        buffer: online.prediction,
+        snapshot: local,
+        inputSeq: online.inputSeq,
+      });
+      online.inputSeq = synced.nextInputSeq;
+      player.previousPosition.copy(player.position);
+      if (!flags.skipRender) {
+        this.localRender.snapTo({
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+          vx: player.velocity.x,
+          vy: player.velocity.y,
+          vz: player.velocity.z,
+        });
+      }
+      this.visibilityProbe.noteResumeSample(hiddenTabPacketSample({
+        receivedAt: performance.now(),
+        snapshot: local,
+        history: null,
+        physicsTicks: message.physicsTicks,
+        correction: 'forced-resync',
+      }));
+      if (isDevRuntime() && typeof console !== 'undefined') {
+        console.info(
+          `[vis-resync] seq=${local.inputSeq ?? -1} phys=${message.physicsTicks ?? 1} `
+          + `xyz=${local.x.toFixed(3)},${local.y.toFixed(3)},${local.z.toFixed(3)}`,
+        );
+      }
+      result = {
+        kind: 'ignored',
+        snapped: true,
+        replayed: 0,
+        error: { xz: 0, y: 0, speed: 0, distSq: 0 },
+        rejectReason: 'none',
+        acceptMutated: false,
+        softReject: 'none',
+      };
+    } else if (flags.skipReconcile) {
       motionProbe.note('skip:reconcile');
       const inspect = inspectPredictedPlayer(online.prediction, local, player, {
         world: session.world,
@@ -1240,8 +1356,19 @@ export class Game {
 
     const after = captureMotionFull(player);
     const allChanged = diffMotionFull(before, after);
-    if ((result.kind === 'accepted' || result.kind === 'ignored') && allChanged.length > 0) {
+    if (!forceResync && (result.kind === 'accepted' || result.kind === 'ignored') && allChanged.length > 0) {
       motionProbe.note('accept-mutated');
+    }
+    if (
+      forceResync === false
+      && (result.kind === 'corrected' || result.kind === 'snapped')
+    ) {
+      this.visibilityProbe.noteCorrection({
+        at: performance.now(),
+        dx: local.x - before.x,
+        dz: local.z - before.z,
+        reason: result.rejectReason,
+      });
     }
     logNamedMutation({
       source: 'player_state:camera',
@@ -1417,8 +1544,10 @@ export class Game {
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
       motionProbe.noteSend(online.inputSeq);
+      this.visibilityProbe.noteInputSent();
     }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
+    this.visibilityProbe.noteTick();
     this.localRender.pushAfterTick({
       x: session.player.position.x,
       y: session.player.position.y,
@@ -2617,6 +2746,8 @@ export class Game {
     const rawElapsed = Math.max(0, (now - this.previousTime) / 1000);
     this.renderDeltaSeconds = Math.min(0.1, rawElapsed);
     this.previousTime = now;
+    this.visibilityProbe.noteFrame(rawElapsed, now);
+    this.visibilityProbe.closeResumeWindow(now);
     this.frameTimings.add(rawElapsed * 1000);
     this.fpsFrames += 1;
     this.fpsTimer += Math.min(MAX_FRAME_DELTA, rawElapsed);
@@ -2770,6 +2901,7 @@ export class Game {
   private tickOnline(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    this.visibilityProbe.noteTick();
     this.flushPendingLocalSnapshot(session);
     session.player.yaw = this.input.yaw;
     session.player.pitch = this.input.pitch;
@@ -2813,6 +2945,7 @@ export class Game {
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
       motionProbe.noteSend(online.inputSeq);
+      this.visibilityProbe.noteInputSent();
     }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
     const selected = this.selectedStack();
@@ -4092,6 +4225,7 @@ export class Game {
       }
       if (import.meta.env.DEV) {
         this.cachedDebugText += `\n${motionProbe.formatHud()}`;
+        this.cachedDebugText += `\n${this.visibilityProbe.formatHud()}`;
         if (isQuietWorldQueryEnabled()) this.cachedDebugText += '\nquietWorld=ON rd=1';
         this.cachedDebugText += `\n${this.longTasks.hudLine()}`;
         if (session.online) {
@@ -4211,7 +4345,9 @@ export class Game {
   }
 
   private bindLifecycle(): void {
+    this.previousLifecycle = this.lifecycle.state;
     this.lifecycle.changed.subscribe((state) => {
+      const previous = this.previousLifecycle;
       if (state === 'PLAYING') {
         this.audio.resume();
         this.yandex.gameplayStart();
@@ -4220,6 +4356,8 @@ export class Game {
         this.audio.pause();
         this.yandex.gameplayStop();
       }
+      this.handleVisibilityLifecycle(previous, state);
+      this.previousLifecycle = state;
       if (state === 'BACKGROUND') void this.saveSession();
     });
   }
@@ -4276,7 +4414,16 @@ export class Game {
     window.addEventListener('pagehide', () => void this.saveSession());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveSession();
+      if (isDevRuntime() && typeof console !== 'undefined') {
+        console.debug(
+          `[vis-raw] visibilitychange state=${document.visibilityState} hidden=${document.hidden} t=${performance.now().toFixed(1)}`,
+        );
+      }
     });
+    if (isDevRuntime()) {
+      window.addEventListener('focus', () => this.visibilityProbe.notifyFocus(true));
+      window.addEventListener('blur', () => this.visibilityProbe.notifyFocus(false));
+    }
     window.addEventListener('keydown', (event) => {
       if (event.code === 'F3' && !event.repeat) {
         event.preventDefault();

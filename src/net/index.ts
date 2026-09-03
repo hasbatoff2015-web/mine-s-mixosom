@@ -24,6 +24,12 @@ export {
   resetPredictionBuffer,
 } from './localPlayerPrediction';
 export {
+  evaluateHiddenTabResume,
+  hiddenServerTravelMeters,
+  resyncLocalPlayerAfterHiddenTab,
+  shouldPausePrediction,
+} from './hiddenTabMotion';
+export {
   isBowDiagQueryEnabled,
   isMotionDiagQueryEnabled,
   isPredNoNetQueryEnabled,

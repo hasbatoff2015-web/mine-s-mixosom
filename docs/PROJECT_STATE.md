@@ -2,6 +2,16 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: hidden-tab Page Visibility (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: одна вкладка игры, переключение на ChatGPT на 1–2 с → jitter сильно хуже / иногда снова гладко. Не duplicate sessionToken.
+- **Пока вкладка BACKGROUND:** `tickOnline` не бежит (pred=0, send=0). Сервер продолжает `lastInput` на 20 TPS. `player_state` приходит, но latest-slot + `duplicate-seq` ignore. Локальная поза заморожена, сервер уходит на ~`WALK_SPEED×hiddenSeconds`. Resume: RAF freeze → до 4 catch-up ticks со stale pose → correction storm. Сервер **не** копит FIFO команд — sticky lastInput.
+- **Политика:** hide → один idle (сервер останавливается); show → `previousTime`/`accumulator` reset, force resync к последнему snapshot, history сброшена, look сохранён. Не меняли physics / tolerance / interpolation / TPS.
+- DEV: F3 `visibility/focus/hiddenDurationMs/resumeTicks/resumeSnapshots`, `inGap/inBurst`; логи `[vis]`, `[vis-resume]`, `[vis-resync]`.
+- Tests: hidden-tab **9/9**; prediction **29/29**; tick-clock **6/6**; typecheck client/server/sim PASS.
+- Report: `docs/reports/2026-09-03_hidden-tab-visibility.md`.
+
 ## Последний проход: session isolation + event-loop / reconnect load (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

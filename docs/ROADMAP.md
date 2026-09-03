@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-03: hidden-tab Page Visibility (PR #37)
+
+- [x] Prove single-tab hide/show desync: BACKGROUND skips tickOnline, server keeps lastInput, duplicate-seq ignore, 4-tick catch-up.
+- [x] DEV visibility probe + F3 `visibility/focus/hiddenDurationMs/resumeTicks/resumeSnapshots` + server `inGap/inBurst`.
+- [x] Hide → one idle; resume → clock reset + authoritative resync (no physics/tolerance/TPS change).
+- [x] Tests: 2 s freeze, 5× walk, flight+SHIFT; legacy corr storm vs policy corr=0.
+- [ ] Owner: one game tab, switch away 1–2 s, return; walk then flight+SHIFT. Expect immediate stable movement, not a corr storm.
+- [ ] Do not merge main.
+
 ## 2026-09-03: session isolation + event-loop / reconnect load (PR #37)
 
 - [x] One logical player = one movement socket; resume invalidates the old connection.
