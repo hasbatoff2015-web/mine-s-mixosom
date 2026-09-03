@@ -2,15 +2,24 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online Creative Flight permission (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Live dump: server hover `y=71.666 vy=0 fly=true`, idle input every tick. Client checkpoint/history `fly=false` + gravity (`vy≈-1.57` then `-3.10`) → repeated Y correction / vertical jitter.
+- Root cause: **не timeline.** `PlayerController.tick()` clears `isFlying` when `creativeFlightAllowed` is false. Singleplayer sets the flag every tick from `summary.mode`. Online `tickOnline` never did. Welcome set `summary.mode=creative` but left the new controller at default `false`. `player_state` only wrote the flag when gamemode **changed**, so it stayed false forever. Scratch `predictedStateFromCheckpoint` copies movement state only — permission is outside `PlayerMovementState`.
+- Fix: sync `creativeFlightAllowed` from gamemode on startSession / tickOnline / sendOnlineIdle / snapshot **before** reconcile / inventory / respawn / setGameMode (same as SP). Scratch always receives that permission. `[corrDiag]` `FLIGHT:` prints local/scratch allowed vs checkpoint/predicted/snapshot flying.
+- Не трогали physics constants, Y tolerance, smoothing, applied-input timeline.
+- Tests: `tests/online-creative-flight-prediction.test.ts` — unsynced live falls vs server hover; scratch without permission drops fly; SP vs Online hover 200 ticks `corr=0`; flight forward / SHIFT / reconnect / alt-tab; survival walk/jump.
+- Report: `docs/reports/2026-09-03_online-creative-flight-permission.md`.
+
 ## Последний проход: extra=3 vs tickGap=1 (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
 - Owner: `extra=seqGap` при `tickGap=1 physicsTicks=1`. **Не seqGap heuristic.** `extraTicks = simTicks = serverTick - lastAckedServerTick`. Comparable = lastAcked + **N ticks of latest input**.
 - `tickGap` считается от last **received** `player_state` (`lastStateTick` на ingest). `lastAckedServerTick` только на reconcile commit. Latest-only pending slot теряет промежуточные snapshot'ы → simTicks=3, tickGap=1. seqGap совпадает случайно (клиент тоже натикал ~3 seq).
 - Старый dump врал: `extra=max(0, physicsTicks-seqGap)` печатался рядом с значением simTicks.
-- Stationary flight y-jitter: тот же extra>1 replay leftover `vy` / mixed applied seqs. Не gravity patch.
+- Stationary flight y-jitter **не** leftover `vy` от extra>1: live applied-input timeline показал server hover `vy=0 fly=true` while client prediction had `fly=false` + gravity. See Creative Flight permission pass.
 - DEV: snapshot `appliedTicks` (последние 8 server physics ticks), `[corrDiag]` APPLIED INPUT TIMELINE + `extraAssignSite` + `pendingSlotOverwrites` + checkpoint y/vy.
-- Следующий production fix (не этот commit): replay applied `{tick,seq}` span, не `latestInput × simTicks`.
 - Report: `docs/reports/2026-09-03_checkpoint-extra-source.md`.
 
 ## Последний проход: prediction checkpoint (PR #37)

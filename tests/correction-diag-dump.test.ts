@@ -109,7 +109,7 @@ describe('corrDiag dump sections', () => {
       },
     } satisfies CorrectionDiag;
     const text = formatCorrectionDiag(diag);
-    for (const section of ['SEQ:', 'TIMING:', 'PHYSICS:', 'INPUT:', 'APPLIED INPUT TIMELINE', 'CLIENT POSE:', 'SERVER POSE:', 'DIFF', 'STATE:', 'WORLD:']) {
+    for (const section of ['SEQ:', 'TIMING:', 'PHYSICS:', 'INPUT:', 'APPLIED INPUT TIMELINE', 'CLIENT POSE:', 'SERVER POSE:', 'DIFF', 'FLIGHT:', 'STATE:', 'WORLD:']) {
       expect(text, section).toContain(section);
     }
     expect(text).toContain('snapshot.inputSeq=12');

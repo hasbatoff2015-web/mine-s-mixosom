@@ -147,7 +147,7 @@ Game.frame
 
 `PlayerController.previousPosition` is **not** the render origin (fall distance only). Interpolating `(S1, S3)` after two ticks in one rAF can move the camera **backward** relative to a high-alpha `S1→S2` frame. The last adjacent pair after two ticks is `(S2, S3)`.
 
-Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq` (unless DEV `predNoSend` / `predNoNet`), `predictLocalMove` = `PlayerController.tick` + `history[seq]`. The render buffer is the same object as singleplayer.
+Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: sync `creativeFlightAllowed` from gamemode, send `input.seq` (unless DEV `predNoSend` / `predNoNet`), `predictLocalMove` = `PlayerController.tick` + `history[seq]`. The render buffer is the same object as singleplayer.
 
 Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to last-accepted pose + `simTicks` of that latest input (`serverTick` is the checkpoint). Match → no pose write. Mismatch → restore + replay remaining pred ticks. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
 
@@ -159,11 +159,13 @@ Local Anarchy motion is **predicted** on the existing `PlayerController`, not ch
 
 ```text
 tickOnline (20 TPS)
+  syncCreativeFlightAllowed(player, summary.mode)
   send input.seq
   predictLocalMove  → PlayerController.tick + history[predTick, seq] = state AFTER tick
 player_state (tick = X, physicsTicks = N, inputSeq = latest state)
+  syncCreativeFlightAllowed from snapshot.gamemode BEFORE inspect
   if serverTick already acked or missing seq → ignore movement
-  comparable = lastAckedState + simTicks of that latest input
+  comparable = lastAckedState + simTicks of that latest input (scratch copies creativeFlightAllowed)
   if within tolerance → commit checkpoint, do not touch the live player
   else restore snapshot pose + replay remaining pred ticks
 render
@@ -745,7 +747,7 @@ Render camera не ждёт следующего fixed tick: `applyImmediateRend
 
 Позиция игрока привязана к центру ступней. Collision resolver строит AABB, двигает его по Y/X/Z против **каждого** solid box клетки (`blockCollisionBoxes`), затем пробует generic step-up `0.6` (в том числе пока игрок на ladder, чтобы выйти на верхний край). Stairs/slabs используют реальную форму, поэтому ходьба по ступеням — обычный WASD + step-up, без `onLadder`. Ladder: `findLadderContact` по thin volume, vertical velocity `LADDER_CLIMB_SPEED` / `-LADDER_MAX_DESCENT_SPEED` / 0 при sneak. Cactus — inset box; door — occupied-face slab.
 
-Controller отвечает только за movement/physics state и сообщает fall damage callback. Health ownership остаётся в `SurvivalSystem`. Creative flight живёт в том же controller: `creativeFlightAllowed` с Game tick, double-Space window 7 ticks, `isFlying` runtime-only. Пока летит — нет gravity и нет ladder vertical rewrite; Space/Shift задают vertical wish, Ctrl — `CREATIVE_SPRINT_FLY_SPEED`. Посадка (`landed`) сбрасывает полёт. Survival никогда не получает fly.
+Controller отвечает только за movement/physics state и сообщает fall damage callback. Health ownership остаётся в `SurvivalSystem`. Creative flight живёт в том же controller: `creativeFlightAllowed` с Game tick **и** Online `tickOnline` (из `summary.mode` / snapshot `gamemode` **до** `PlayerController.tick` / reconcile). Double-Space window 7 ticks, `isFlying` runtime-only. Пока летит — нет gravity и нет ladder vertical rewrite; Space/Shift задают vertical wish, Ctrl — `CREATIVE_SPRINT_FLY_SPEED`. Посадка (`landed`) сбрасывает полёт. Survival никогда не получает fly. Prediction scratch (`predictedStateFromCheckpoint`) копирует `creativeFlightAllowed` — это не часть `PlayerMovementState`.
 
 `PlayerTickResult.jumped` true только в tick реального takeoff (`jump && grounded && !liquid && !isFlying`). Поэтому удерживаемая кнопка не повторяет jump exhaustion каждый airborne tick. `inFire` — AABB overlap с `BlockId.Fire`, не только блок под ногами. Пока игрок в minecart, `locomotion: false`: walk/fall выключены, позиция снапается к seat после `MinecartManager.update`, чтобы streaming следовал за тележкой.
 

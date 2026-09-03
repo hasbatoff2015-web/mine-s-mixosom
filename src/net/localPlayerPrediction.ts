@@ -2,6 +2,7 @@ import { getBlockDefinition } from '../blocks';
 import { CHUNK_SIZE, FIXED_DT, PLAYER_WIDTH, chunkKey, floorDiv } from '../core/constants';
 import type { MoveInput } from '../input/MoveInput';
 import { PlayerController, type PlayerInputSource, type PlayerMovementState } from '../player/PlayerController';
+import { creativeFlightAllowedForPrediction } from '../player/creativeFlight';
 import type { VoxelWorld } from '../world/World';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import { LOCAL_SNAP_DISTANCE, distanceSquared } from './authoritativeMotion';
@@ -121,6 +122,17 @@ export interface SnapshotInspect {
   readonly serverTick?: number;
   readonly firstDiff?: string;
   readonly rawFirstDiff?: string;
+  readonly flight?: PredictionFlightTrace;
+}
+
+/** Values at the inspect/correction tick. Proves fly permission vs isFlying. */
+export interface PredictionFlightTrace {
+  readonly localAllowed: boolean;
+  readonly scratchAllowed: boolean;
+  readonly checkpointFlying: boolean | undefined;
+  readonly predictedFlying: boolean | undefined;
+  readonly snapshotFlying: boolean | undefined;
+  readonly snapshotGamemode: string | undefined;
 }
 
 export type SnapshotComparePath = 'checkpoint' | 'history[N]' | 'history[N]+extra' | 'live' | 'none';
@@ -243,6 +255,35 @@ export function simulationTicksFromServerTick(
   return Math.max(0, Math.floor(serverTick) - lastAckedServerTick);
 }
 
+/**
+ * Movement state does not include Creative Flight permission. Scratch
+ * controllers default to `creativeFlightAllowed=false`, which clears
+ * `isFlying` on the first tick and applies gravity.
+ */
+export function copyPredictionControllerConfig(
+  from: PlayerController,
+  to: PlayerController,
+): void {
+  to.creativeFlightAllowed = from.creativeFlightAllowed;
+}
+
+function createPredictionScratch(
+  origin: PlayerMovementState,
+  input: { readonly yaw: number; readonly pitch: number },
+  creativeFlightAllowed: boolean,
+): PlayerController {
+  const scratch = new PlayerController({
+    position: [origin.x, origin.y, origin.z],
+    yaw: input.yaw,
+    pitch: input.pitch,
+  });
+  scratch.applyMovementState(origin);
+  scratch.yaw = input.yaw;
+  scratch.pitch = input.pitch;
+  scratch.creativeFlightAllowed = creativeFlightAllowed;
+  return scratch;
+}
+
 export function predictedStateFromCheckpoint(
   world: VoxelWorld,
   origin: PlayerMovementState,
@@ -252,17 +293,7 @@ export function predictedStateFromCheckpoint(
 ): PlayerMovementState {
   if (ticks <= 0) return cloneMovementState(origin);
   const dt = options?.dt ?? FIXED_DT;
-  const scratch = new PlayerController({
-    position: [origin.x, origin.y, origin.z],
-    yaw: input.yaw,
-    pitch: input.pitch,
-  });
-  scratch.applyMovementState(origin);
-  scratch.yaw = input.yaw;
-  scratch.pitch = input.pitch;
-  if (options?.creativeFlightAllowed !== undefined) {
-    scratch.creativeFlightAllowed = options.creativeFlightAllowed;
-  }
+  const scratch = createPredictionScratch(origin, input, options?.creativeFlightAllowed === true);
   for (let i = 0; i < ticks; i += 1) applyPredictedTick(scratch, world, input, dt);
   return scratch.captureMovementState();
 }
@@ -507,17 +538,7 @@ export function predictedStateAfterExtraTicks(
 ): PlayerMovementState {
   if (extraTicks <= 0) return entry.state;
   const dt = options?.dt ?? FIXED_DT;
-  const scratch = new PlayerController({
-    position: [entry.state.x, entry.state.y, entry.state.z],
-    yaw: entry.input.yaw,
-    pitch: entry.input.pitch,
-  });
-  scratch.applyMovementState(entry.state);
-  scratch.yaw = entry.input.yaw;
-  scratch.pitch = entry.input.pitch;
-  if (options?.creativeFlightAllowed !== undefined) {
-    scratch.creativeFlightAllowed = options.creativeFlightAllowed;
-  }
+  const scratch = createPredictionScratch(entry.state, entry.input, options?.creativeFlightAllowed === true);
   for (let i = 0; i < extraTicks; i += 1) applyPredictedTick(scratch, world, entry.input, dt);
   return scratch.captureMovementState();
 }
@@ -687,10 +708,19 @@ export function inspectPredictedPlayer(
   const input = predictedAtAck?.input ?? buffer.lastAckedInput;
   const origin = buffer.lastAckedState;
   const canCheckpoint = Boolean(origin && input && options?.world && simTicks > 0);
+  const scratchAllowed = creativeFlightAllowedForPrediction(player, snapshot.gamemode);
+  const flight = (comparableFlying: boolean | undefined): PredictionFlightTrace => ({
+    localAllowed: player?.creativeFlightAllowed === true,
+    scratchAllowed,
+    checkpointFlying: origin?.isFlying,
+    predictedFlying: comparableFlying ?? predictedAtAck?.state.isFlying,
+    snapshotFlying: snapshot.flying,
+    snapshotGamemode: snapshot.gamemode,
+  });
 
   if (canCheckpoint && origin && input && options?.world) {
     const comparable = predictedStateFromCheckpoint(options.world, origin, input, simTicks, {
-      creativeFlightAllowed: player?.creativeFlightAllowed,
+      creativeFlightAllowed: scratchAllowed,
       dt: options.dt,
     });
     const error = predictedStateError(comparable, snapshot);
@@ -705,6 +735,7 @@ export function inspectPredictedPlayer(
       ackSeq, historySeq: predictedAtAck?.seq, predicted: predictedAtAck?.state,
       comparable, physicsTicks, extraTicks: simTicks, comparePath: 'checkpoint' as const,
       seqGap, simTicks, serverTick, firstDiff, rawFirstDiff,
+      flight: flight(comparable.isFlying),
     };
     if (reject === 'none') return { kind: 'accepted', ...result };
     return { kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected', ...result };
@@ -714,7 +745,7 @@ export function inspectPredictedPlayer(
     const extra = comparableExtraTicks(physicsTicks, seqGap);
     const comparable = extra > 0 && options?.world
       ? predictedStateAfterExtraTicks(options.world, predictedAtAck, extra, {
-        creativeFlightAllowed: player?.creativeFlightAllowed,
+        creativeFlightAllowed: scratchAllowed,
         dt: options.dt,
       })
       : predictedAtAck.state;
@@ -729,6 +760,7 @@ export function inspectPredictedPlayer(
       ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
       comparable, physicsTicks, extraTicks: extra, comparePath: path, seqGap, simTicks,
       serverTick, firstDiff, rawFirstDiff,
+      flight: flight(comparable.isFlying),
     };
     if (reject === 'none') return { kind: 'accepted', ...result };
     return { kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected', ...result };
@@ -896,6 +928,7 @@ function applyCorrection(
       applyAt: now,
     },
     firstDiff: inspect?.firstDiff,
+    flight: inspect?.flight,
     world: {
       feetBlock: collision.feetBlock ?? sample?.feetBlock ?? '—',
       belowBlock: collision.belowBlock ?? sample?.belowBlock ?? '—',

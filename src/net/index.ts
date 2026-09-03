@@ -21,6 +21,7 @@ export {
   predictLocalMove,
   predictedMoveFromInput,
   predictedStateFromCheckpoint,
+  copyPredictionControllerConfig,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
   seedPredictionCheckpoint,

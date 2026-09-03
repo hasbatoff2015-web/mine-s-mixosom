@@ -103,7 +103,7 @@ import {
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
-import { PlayerController } from '../player';
+import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
@@ -928,8 +928,10 @@ export class Game {
         if (message.gamemode !== session.summary.mode) {
           session.summary.mode = message.gamemode;
           this.recordLocalNetWrite('inventory-gamemode', () => {
-            session.player.creativeFlightAllowed = message.gamemode === 'creative';
+            this.syncLocalCreativeFlight(session, message.gamemode);
           });
+        } else {
+          this.syncLocalCreativeFlight(session, message.gamemode);
         }
         if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
         applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
@@ -1194,6 +1196,24 @@ export class Game {
       };
     };
 
+    if (flags.skipGamemode) {
+      motionProbe.note('skip:gamemode');
+      this.syncLocalCreativeFlight(session);
+    } else {
+      if (local.gamemode !== session.summary.mode) {
+        logNamedMutation({
+          source: 'player_state:gamemode',
+          field: 'gamemode',
+          oldValue: session.summary.mode,
+          newValue: local.gamemode,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        session.summary.mode = local.gamemode;
+      }
+      this.syncLocalCreativeFlight(session, local.gamemode);
+    }
+
     const forceResync = online.forceHiddenTabResync === true;
     online.forceHiddenTabResync = false;
     let result: ReconcileResult;
@@ -1367,22 +1387,6 @@ export class Game {
     if (local.invisible) {
       /* local first-person hide is driven by survival effects */
     }
-    if (flags.skipGamemode) {
-      motionProbe.note('skip:gamemode');
-    } else if (local.gamemode !== session.summary.mode) {
-      logNamedMutation({
-        source: 'player_state:gamemode',
-        field: 'gamemode',
-        oldValue: session.summary.mode,
-        newValue: local.gamemode,
-        inputSeq: local.inputSeq,
-        predictedSeq: online.inputSeq,
-      });
-      session.summary.mode = local.gamemode;
-      this.recordLocalNetWrite('player_state-gamemode', () => {
-        session.player.creativeFlightAllowed = local.gamemode === 'creative';
-      });
-    }
     if (flags.skipLook) motionProbe.note('skip:look');
     if (flags.skipRender) motionProbe.note('skip:render');
 
@@ -1551,6 +1555,7 @@ export class Game {
     const online = session.online;
     if (!online) return;
     this.flushPendingLocalSnapshot(session);
+    this.syncLocalCreativeFlight(session);
     online.inputSeq += 1;
     const predicted = predictedMoveFromInput(
       online.inputSeq,
@@ -1707,6 +1712,7 @@ export class Game {
     const player = new PlayerController();
     const spawn = restored?.player.position ?? options?.spawn ?? this.estimateSpawn(world);
     player.teleport(spawn);
+    syncCreativeFlightAllowed(player, summary.mode);
     if (restored) {
       player.restore({
         position: restored.player.position,
@@ -2949,6 +2955,7 @@ export class Game {
       );
     }
     this.lastOnlineUsing = using;
+    this.syncLocalCreativeFlight(session);
     online.inputSeq += 1;
     const predicted = predictedMoveFromInput(
       online.inputSeq,
@@ -3060,7 +3067,7 @@ export class Game {
         session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
         const drawingBow = session.bowUseTicks > 0;
         const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
-        session.player.creativeFlightAllowed = session.summary.mode === 'creative';
+        this.syncLocalCreativeFlight(session);
         const playerInput = {
           yaw: this.input.yaw,
           pitch: this.input.pitch,
@@ -3880,10 +3887,17 @@ export class Game {
     };
   }
 
+  private syncLocalCreativeFlight(
+    session: GameSession,
+    gamemode: GameMode = session.summary.mode,
+  ): void {
+    syncCreativeFlightAllowed(session.player, gamemode);
+  }
+
   private setGameMode(mode: GameMode): void {
     const session = this.session!;
     session.summary.mode = mode;
-    session.player.creativeFlightAllowed = mode === 'creative';
+    this.syncLocalCreativeFlight(session, mode);
     if (mode !== 'creative') session.player.isFlying = false;
     this.refreshHud();
   }
@@ -3974,6 +3988,7 @@ export class Game {
     if (!session?.online) return;
     this.lifecycle.beginOnlineRespawnRestore();
     this.deathShown = false;
+    this.syncLocalCreativeFlight(session);
     session.ridingCartId = undefined;
     session.miningProgress = 0;
     session.miningTarget = undefined;

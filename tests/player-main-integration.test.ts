@@ -15,6 +15,8 @@ describe('player visuals on the server-authoritative main integration', () => {
     const online = section('private tickOnline(', 'private tick():');
     expect(online).toContain("type: 'input'");
     expect(online).toContain('predictLocalMove');
+    expect(online).toContain('this.syncLocalCreativeFlight(session)');
+    expect(online.indexOf('this.syncLocalCreativeFlight(session)')).toBeLessThan(online.indexOf('predictLocalMove'));
     expect(online).toContain('flushPendingLocalSnapshot');
     expect(online).toContain('session.playerVisual.setHeldItem(selected?.itemId)');
     expect(online).not.toContain('stepTowardTarget');
@@ -23,6 +25,7 @@ describe('player visuals on the server-authoritative main integration', () => {
     expect(online).not.toContain('session.falling.update(');
     const applyState = section('private applyLocalPlayerSnapshot(', 'private noteLocalSnapshotTiming(');
     expect(applyState).toContain('reconcilePredictedPlayer');
+    expect(applyState.indexOf('this.syncLocalCreativeFlight')).toBeLessThan(applyState.indexOf('reconcilePredictedPlayer'));
     expect(applyState).not.toContain('stepTowardTarget');
     expect(applyState).not.toContain('ingestAuthoritativePosition');
     const recvState = section('private applyOnlinePlayerState(', 'private observeLocalPlayerSnapshot(');

@@ -1,12 +1,20 @@
 # Roadmap
 
+## 2026-09-03: Online Creative Flight permission (PR #37)
+
+- [x] Prove live stationary-flight dump: server hover `fly=true vy=0`, client prediction `fly=false` + gravity.
+- [x] Trace `creativeFlightAllowed` on live Online controller vs scratch vs snapshot gamemode. SP sets it every tick; Online did not.
+- [x] Sync permission on welcome/startSession, tickOnline, snapshot-before-reconcile, inventory, respawn, reconnect. Copy it onto prediction scratch.
+- [x] Stationary hover 10s / flight forward / SHIFT / reconnect / alt-tab / walk-jump tests. No Y-tolerance / smoothing / timeline redesign.
+- [ ] Owner: Normal Online stationary Creative Flight — no rapid Y oscillation, `corr/s=0`, same as Singleplayer.
+- [ ] Do not merge main.
+
 ## 2026-09-03: checkpoint extra source (PR #37)
 
 - [x] Trace live `extra=3` with `tickGap=1 physicsTicks=1`: `extraTicks = simTicks = serverTick - lastAckedServerTick`, not seqGap.
 - [x] Prove latest-only pending slot + lastStateTick-on-receive makes lastAckedServerTick stale.
 - [x] Dump real extra assignment site, pending overwrites, applied per-tick input, checkpoint/comparable/server y/vy.
-- [x] Stationary flight y error from extra>1 leftover vy — same timeline, not a physics constant.
-- [ ] Next production fix: replay applied `{tick,seq}` span (not latestInput × simTicks). No seqGap/tolerance/lerp patch.
+- [x] Stationary flight Y jitter was Creative Flight permission (not leftover vy / extra ticks).
 - [ ] Do not merge main.
 
 ## 2026-09-03: prediction checkpoint (PR #37)

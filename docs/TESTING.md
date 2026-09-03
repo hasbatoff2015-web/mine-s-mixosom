@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Online Creative Flight permission
+
+Report: `reports/2026-09-03_online-creative-flight-permission.md`. PR #37.
+
+```text
+npx vitest run tests/online-creative-flight-prediction.test.ts tests/creative-flight.test.ts tests/local-player-prediction.test.ts tests/correction-diag-dump.test.ts tests/player-main-integration.test.ts tests/server/client-server-lockstep.test.ts tests/hidden-tab-motion.test.ts
+```
+
+Contracts: unsynced Online `predictLocalMove` with `creativeFlightAllowed=false` falls while server hover stays `vy=0 fly=true`; scratch without permission clears `isFlying`; scratch/copy from live or snapshot `gamemode=creative` keeps hover; SP vs Online hover 200 ticks `corr=0`; flight forward / SHIFT / reconnect / alt-tab accept; survival walk/jump do not fly. `tickOnline` sets permission **before** `predictLocalMove`. `applyLocalPlayerSnapshot` sets it **before** reconcile. No physics/tolerance/timeline change. Manual: Creative Online, fly, release keys 10 s — no Y oscillation, `corr/s=0`.
+
 ## 2026-09-03 Checkpoint extra source
 
 Report: `reports/2026-09-03_checkpoint-extra-source.md`. PR #37.

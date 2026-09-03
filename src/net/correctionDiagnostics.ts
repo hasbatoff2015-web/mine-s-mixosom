@@ -1,5 +1,6 @@
 import { CHUNK_SIZE, FIXED_DT, WALK_SPEED, floorDiv } from '../core/constants';
 import type { PlayerController, PlayerMovementState } from '../player/PlayerController';
+import type { PredictionFlightTrace } from './localPlayerPrediction';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import type { AckRejectReason } from './localMotionDiagnostics';
 
@@ -148,6 +149,7 @@ export interface CorrectionDiag {
     readonly sprinting: boolean;
     readonly isFlying: boolean;
     readonly jumpHeld: boolean;
+    readonly creativeFlightAllowed?: boolean;
   };
   readonly pending: number;
   readonly latestClientSeq: number;
@@ -159,6 +161,7 @@ export interface CorrectionDiag {
   readonly firstDiff?: string;
   readonly rawFirstDiff?: string;
   readonly timing?: CorrectionTiming;
+  readonly flight?: PredictionFlightTrace;
 }
 
 const WALK_STEP = WALK_SPEED * FIXED_DT;
@@ -267,6 +270,7 @@ export function buildCorrectionDiag(input: {
   readonly pendingOverwrites?: number;
   readonly timing?: CorrectionTiming;
   readonly world: CorrectionWorldHint;
+  readonly flight?: PredictionFlightTrace;
 }): CorrectionDiag {
   const lastAckedSeq = input.buffer.lastAckedSeq;
   const inputSeq = input.snapshot.inputSeq ?? Number.NaN;
@@ -326,6 +330,7 @@ export function buildCorrectionDiag(input: {
       sprinting: live.sprinting,
       isFlying: live.isFlying,
       jumpHeld: live.jumpHeld,
+      creativeFlightAllowed: input.player.creativeFlightAllowed,
     },
     pending: input.buffer.entries.length,
     latestClientSeq,
@@ -335,6 +340,7 @@ export function buildCorrectionDiag(input: {
     firstDiff: input.firstDiff,
     rawFirstDiff: input.rawFirstDiff,
     timing: input.timing,
+    flight: input.flight,
   };
   return {
     ...base,
@@ -423,6 +429,13 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
     `  dvx=${fmt3(dvx)} dvy=${fmt3(dvy)} dvz=${fmt3(dvz)}`,
     `  firstDiff=${diag.firstDiff ?? '—'} rawHistoryFirstDiff=${diag.rawFirstDiff ?? '—'} `
     + `rawXz=${fmt3(Number.isFinite(rawDx) ? Math.hypot(rawDx, rawDz) : Number.NaN)}`,
+    `FLIGHT:`,
+    `  localAllowed=${diag.flight?.localAllowed ?? diag.liveBefore.creativeFlightAllowed ?? '—'} `
+    + `scratchAllowed=${diag.flight?.scratchAllowed ?? '—'} `
+    + `snapshotGamemode=${diag.flight?.snapshotGamemode ?? '—'}`,
+    `  checkpointFlying=${diag.flight?.checkpointFlying ?? diag.lastAckedPose?.isFlying ?? '—'} `
+    + `predictedFlying=${diag.flight?.predictedFlying ?? comparable?.isFlying ?? '—'} `
+    + `snapshotFlying=${diag.flight?.snapshotFlying ?? diag.snapshot.flying ?? '—'}`,
     `STATE:`,
     `  hist ground/fly/sneak/sprint/jumpHeld=${history?.onGround}/${history?.isFlying}/${history?.sneaking}/${history?.sprinting}/${history?.jumpHeld}`,
     `  snap ground/fly/sneak/sprint=${diag.snapshot.onGround}/${diag.snapshot.flying}/${diag.snapshot.sneaking}/${diag.snapshot.sprinting}`,
