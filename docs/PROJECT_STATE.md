@@ -2,6 +2,15 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: incoming local `player_state` side effects (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner QA: Normal Online jitter; `?predNoState=1` полностью гладкий (`send=on state=OFF`). Значит, prediction / PlayerController / fixed-step render / outbound input OK. Баг — **приём local `player_state`**.
+- Root cause: `ackRejectReason` rewind'ил на `speed` / `onGround` / `flying` даже при совпавшем xz/y. Fly+SHIFT `vy ≈ 7.5` vs `PREDICTION_ACCEPT_SPEED = 0.2` → каждый snapshot `restoreAuthoritativePlayer` писал `velocity.y` + replay без `LocalPlayerRenderState.pushAfterTick`. `predNoState` этот путь пропускает.
+- Fix (минимальный): pose-only accept (`xz`/`y`); speed/onGround/flying = `softReject` (лог, без restore). Snapshot queue до начала `tickOnline`. Survival `restore` только если health/hunger/dead изменились.
+- DEV: `?predStateObserve=1`; category skips; per-field mutation log; `[firstBadEvent]` + `soft=`. `predNoState` сохранён.
+- Tests: flags **8/8**, matrix **8/8**, prediction **28/28**, player-main **4/4**, pipeline **8/8**, render-state **8/8**, remesh **4/4**; `test:sim` **42/42**; `test:server` **83/83**; typecheck/build PASS. Full vitest **1346 passed / 8 failed** (pre-existing authored ENOENT + minecart 5s timeouts).
+
 ## Последний проход: network-path isolation (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

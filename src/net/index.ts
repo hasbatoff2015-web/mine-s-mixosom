@@ -17,6 +17,7 @@ export {
   applyPredictedTick,
   createPredictionBuffer,
   formatPredictionDebug,
+  inspectPredictedPlayer,
   predictLocalMove,
   predictedMoveFromInput,
   reconcilePredictedPlayer,

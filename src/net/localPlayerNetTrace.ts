@@ -37,6 +37,10 @@ export interface MotionFullState {
   readonly pitch: number;
   readonly creativeFlightAllowed: boolean;
   readonly flyWindowTicks: number;
+  readonly flyIgnoreGroundTicks: number;
+  readonly onLadder: boolean;
+  readonly fallDistance: number;
+  readonly meleeKnockback: boolean;
 }
 
 export type MotionField = keyof MotionFullState;
@@ -55,6 +59,10 @@ export interface PlayerMotionLike {
     readonly sprinting: boolean;
     readonly jumpHeld: boolean;
     readonly flyWindowTicks: number;
+    readonly flyIgnoreGroundTicks: number;
+    readonly onLadder: boolean;
+    readonly fallDistance: number;
+    readonly meleeKnockback: boolean;
   };
 }
 
@@ -125,6 +133,7 @@ export interface FirstBadEvent {
   readonly lastSentSeq: number;
   readonly lastReconcileKind: ReconcileKind;
   readonly lastReject: AckRejectReason;
+  readonly lastSoftReject: AckRejectReason;
   readonly reconcileSincePrevFrame: boolean;
   readonly worldUpdateSincePrevFrame: boolean;
   readonly lastTiming?: InputNetTiming;
@@ -134,6 +143,7 @@ const MOTION_FIELDS: readonly MotionField[] = [
   'x', 'y', 'z', 'px', 'py', 'pz', 'vx', 'vy', 'vz',
   'onGround', 'isFlying', 'sneaking', 'sprinting', 'jumpHeld',
   'yaw', 'pitch', 'creativeFlightAllowed', 'flyWindowTicks',
+  'flyIgnoreGroundTicks', 'onLadder', 'fallDistance', 'meleeKnockback',
 ];
 
 export function captureMotionFull(player: PlayerMotionLike): MotionFullState {
@@ -157,6 +167,10 @@ export function captureMotionFull(player: PlayerMotionLike): MotionFullState {
     pitch: player.pitch,
     creativeFlightAllowed: player.creativeFlightAllowed,
     flyWindowTicks: state.flyWindowTicks,
+    flyIgnoreGroundTicks: state.flyIgnoreGroundTicks,
+    onLadder: state.onLadder,
+    fallDistance: state.fallDistance,
+    meleeKnockback: state.meleeKnockback,
   };
 }
 
@@ -217,6 +231,7 @@ export class LocalPlayerNetTrace {
   lastPlayerStateSeq = -1;
   lastReconcileKind: ReconcileKind = 'ignored';
   lastReject: AckRejectReason = 'none';
+  lastSoftReject: AckRejectReason = 'none';
   lastTiming: InputNetTiming | undefined;
   firstBadEvent: FirstBadEvent | undefined;
   private lastReconcileAt = Number.NaN;
@@ -235,6 +250,7 @@ export class LocalPlayerNetTrace {
     this.lastPlayerStateSeq = -1;
     this.lastReconcileKind = 'ignored';
     this.lastReject = 'none';
+    this.lastSoftReject = 'none';
     this.lastTiming = undefined;
     this.firstBadEvent = undefined;
     this.lastReconcileAt = Number.NaN;
@@ -267,9 +283,15 @@ export class LocalPlayerNetTrace {
     this.lastTiming = timing;
   }
 
-  noteReconcile(kind: ReconcileKind, reject: AckRejectReason, now = performance.now()): void {
+  noteReconcile(
+    kind: ReconcileKind,
+    reject: AckRejectReason,
+    now = performance.now(),
+    softReject: AckRejectReason = 'none',
+  ): void {
     this.lastReconcileKind = kind;
     this.lastReject = reject;
+    this.lastSoftReject = softReject;
     this.lastReconcileAt = now;
     this.reconcileSinceRender = true;
   }
@@ -358,6 +380,7 @@ export class LocalPlayerNetTrace {
       lastSentSeq: this.lastSentSeq,
       lastReconcileKind: this.lastReconcileKind,
       lastReject: this.lastReject,
+      lastSoftReject: this.lastSoftReject,
       reconcileSincePrevFrame: this.reconcileSinceRender,
       worldUpdateSincePrevFrame: this.worldSinceRender.length > 0,
       lastTiming: this.lastTiming,
@@ -404,11 +427,70 @@ export function formatFirstBadEvent(event: FirstBadEvent): string {
       + ` → ${event.renderAfter.x.toFixed(3)},${event.renderAfter.y.toFixed(3)},${event.renderAfter.z.toFixed(3)}`,
     `cam ${event.cameraBefore.x.toFixed(3)},${event.cameraBefore.y.toFixed(3)},${event.cameraBefore.z.toFixed(3)}`
       + ` → ${event.cameraAfter.x.toFixed(3)},${event.cameraAfter.y.toFixed(3)},${event.cameraAfter.z.toFixed(3)}`,
-    `stateSeq=${event.lastPlayerStateSeq} sentSeq=${event.lastSentSeq} reconcile=${event.lastReconcileKind}/${event.lastReject} ran=${event.reconcileSincePrevFrame ? 'yes' : 'no'}`,
+    `stateSeq=${event.lastPlayerStateSeq} sentSeq=${event.lastSentSeq} reconcile=${event.lastReconcileKind}/${event.lastReject} soft=${event.lastSoftReject} ran=${event.reconcileSincePrevFrame ? 'yes' : 'no'}`,
     `world=${event.worldUpdateSincePrevFrame ? 'yes' : 'no'} ${world}`,
     `mutations ${mut}`,
     timing,
   ].join('\n');
+}
+
+export function formatMotionFieldMutation(input: {
+  readonly source: string;
+  readonly field: string;
+  readonly oldValue: unknown;
+  readonly newValue: unknown;
+  readonly inputSeq?: number;
+  readonly predictedSeq?: number;
+  readonly at?: number;
+}): string {
+  return [
+    `[${input.source}]`,
+    String(input.field),
+    String(input.oldValue),
+    String(input.newValue),
+    `snapshot inputSeq=${input.inputSeq ?? -1}`,
+    `local predicted seq=${input.predictedSeq ?? -1}`,
+    `timestamp=${(input.at ?? (typeof performance !== 'undefined' ? performance.now() : Date.now())).toFixed(3)}`,
+  ].join('\n');
+}
+
+/** DEV-only: print every field that changed during a local player_state apply. */
+export function logMotionFieldMutations(input: {
+  readonly source: string;
+  readonly before: MotionFullState;
+  readonly after: MotionFullState;
+  readonly inputSeq?: number;
+  readonly predictedSeq?: number;
+  readonly at?: number;
+}): MotionField[] {
+  const changed = diffMotionFull(input.before, input.after);
+  if (!isDevRuntime() || typeof console === 'undefined' || changed.length === 0) return changed;
+  for (const field of changed) {
+    console.info(formatMotionFieldMutation({
+      source: input.source,
+      field,
+      oldValue: input.before[field],
+      newValue: input.after[field],
+      inputSeq: input.inputSeq,
+      predictedSeq: input.predictedSeq,
+      at: input.at,
+    }));
+  }
+  return changed;
+}
+
+export function logNamedMutation(input: {
+  readonly source: string;
+  readonly field: string;
+  readonly oldValue: unknown;
+  readonly newValue: unknown;
+  readonly inputSeq?: number;
+  readonly predictedSeq?: number;
+  readonly at?: number;
+}): void {
+  if (!isDevRuntime() || typeof console === 'undefined') return;
+  if (Object.is(input.oldValue, input.newValue)) return;
+  console.info(formatMotionFieldMutation(input));
 }
 
 export function traceLocalPlayerMutation(

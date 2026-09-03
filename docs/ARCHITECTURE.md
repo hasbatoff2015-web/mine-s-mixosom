@@ -1,5 +1,15 @@
 # Архитектура
 
+## Online incoming `player_state` side effects — 2026-09-03
+
+Owner A/B: Normal Online jitters; `?predNoState=1` (send+predict, skip applying local `player_state`) is completely smooth. Local prediction, PlayerController, fixed-step render, and outbound input are OK. The remaining bug was **incoming local `player_state`**.
+
+Matching pose at `history[seq]` now **accepts on xz/y only**. Velocity, onGround, and flying disagreements are `softReject` (logged, no restore/replay). That is the fly+SHIFT case: `CREATIVE_VERTICAL_SPEED = 7.5` vs `PREDICTION_ACCEPT_SPEED = 0.2` (~3%) used to rewind every snapshot and rewrite `velocity.y`.
+
+Local snapshots are queued on receive and applied at the start of the next 20 TPS tick (`tickOnline` / idle send), not inside the WebSocket callback. Survival restore runs only when health/hunger/dead actually change (`hurtResistance.reset()` is no longer called 20 times a second).
+
+DEV: `?predStateObserve=1` parse+inspect with zero mutation; category skips `predSkipReconcile|Survival|Riding|Gamemode|Respawn|Look|Render`. Keep `predNoState` / `[firstBadEvent]`.
+
 ## Online network-path isolation — 2026-09-03
 
 Manual A/B: Normal Online still jitters; `?predNoNet=1` (same prediction/render, no movement send, no local `player_state`) is smooth. Remaining jitter is in the **network path**.
@@ -7,14 +17,18 @@ Manual A/B: Normal Online still jitters; `?predNoNet=1` (same prediction/render,
 DEV-only query flags (ignored in production):
 
 ```text
-?predNoNet=1     = predNoSend + predNoState
-?predNoState=1   send + predict; do not apply/reconcile local player_state; remotes stay on
-?predNoSend=1    do not send movement input; still receive/apply snapshots
+?predNoNet=1            = predNoSend + predNoState
+?predNoState=1          send + predict; do not apply/reconcile local player_state; remotes stay on
+?predNoSend=1           do not send movement input; still receive/apply snapshots
+?predStateObserve=1     receive + parse + inspect; mutate nothing
+?predSkipReconcile=1    skip rewind/ack only
+?predSkipSurvival=1     skip health/hunger restore
+?predSkipRiding=1 ?predSkipGamemode=1 ?predSkipRespawn=1 ?predSkipLook=1 ?predSkipRender=1
 ```
 
-F3: `Motion online/normal|noState|noSend|noNet send=on|OFF state=on|OFF`.
+F3: `Motion online/normal|noState|noSend|noNet|observe send=on|OFF state=on|OFF` plus `soft speed/onGround/flying`.
 
-Local `player_state` apply: reconcile first. **Accepted or ignored acks write no PlayerController fields** (look stays client-only; riding/gamemode only when the value changes). Health/hunger still restore. Every other network callback that can mutate the local player is traced (welcome, health respawn, inventory gamemode, block/chunk under the AABB). First frame with `rΔ < 0` or `|rΔ| > 0.12` dumps `[firstBadEvent]`.
+Local `player_state` apply is deferred to the next tick. **Accepted or ignored acks write no PlayerController fields**. Pose mismatch (`xz`/`y`) still restores+replays. Health/hunger restore only on actual change. Every other network callback that can mutate the local player is traced. First frame with `rΔ < 0` or `|rΔ| > 0.12` dumps `[firstBadEvent]`.
 
 DEV input packets may carry `clientSentAt`; snapshots echo `netTiming` (client send / server recv / sim / server send).
 
@@ -552,7 +566,7 @@ Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT 
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
-Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `lastInput`; snapshots carry `inputSeq` so the client can compare the predicted pose **at that seq** (`src/net/localPlayerPrediction.ts`). Matching acks leave the live player untouched. Mismatches restore that pose and replay only later seqs. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
+Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `lastInput`; snapshots carry `inputSeq` so the client can compare the predicted **pose** at that seq (`src/net/localPlayerPrediction.ts`). Matching xz/y acks leave the live player untouched (velocity/onGround/flying disagreements are logged, not rewound). Pose mismatches restore that pose and replay only later seqs. Snapshots are applied at the start of the next client tick, not in the WebSocket callback. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
 
 `GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal.
 

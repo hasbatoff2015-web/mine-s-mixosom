@@ -9,6 +9,7 @@ import {
   captureMotionFull,
   diffMotionFull,
   formatFirstBadEvent,
+  formatMotionFieldMutation,
   localNetTrace,
 } from '../src/net/localPlayerNetTrace';
 import {
@@ -220,6 +221,58 @@ describe('pred isolation 4-mode matrix', () => {
   });
 });
 
+describe('incoming player_state velocity/flag mismatch', () => {
+  it('normal Online matching-pose snapshots with wrong vy do not rewind or jitter render', () => {
+    const world = flatWorld() as unknown as VoxelWorld;
+    const client = grounded(world);
+    const server = grounded(world);
+    const buffer: PredictionBuffer = createPredictionBuffer();
+    buffer.lastAckedSeq = 0;
+    const render = new LocalPlayerRenderState();
+    render.reset({
+      x: client.position.x, y: client.position.y, z: client.position.z,
+      vx: client.velocity.x, vy: client.velocity.y, vz: client.velocity.z,
+    });
+    let accumulator = 0;
+    let seq = 0;
+    let lastInput = predictedMoveFromInput(0, walk, { yaw: 0, pitch: 0 }, true);
+    let corrections = 0;
+    let acceptMutations = 0;
+    let accepts = 0;
+    const samples: number[] = [];
+    for (let time = 0; time < 2; time += 1 / 60) {
+      const stepped = advanceFixedStep(accumulator, 1 / 60);
+      accumulator = stepped.nextAccumulator;
+      for (let i = 0; i < stepped.ticks; i += 1) {
+        seq += 1;
+        lastInput = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
+        predictLocalMove(client, world, buffer, lastInput);
+        applyPredictedTick(server, world, lastInput);
+        const snap = { ...snapshotOf(server, lastInput.seq), vy: server.velocity.y + 7.5 };
+        const before = captureMotionFull(client);
+        const result = reconcilePredictedPlayer(client, world, buffer, snap);
+        if (result.kind === 'accepted') {
+          accepts += 1;
+          if (diffMotionFull(before, captureMotionFull(client)).length > 0) acceptMutations += 1;
+        } else if (result.kind === 'corrected' || result.kind === 'snapped') corrections += 1;
+        render.pushAfterTick({
+          x: client.position.x, y: client.position.y, z: client.position.z,
+          vx: client.velocity.x, vy: client.velocity.y, vz: client.velocity.z,
+        });
+      }
+      samples.push(render.sample(accumulator).z);
+    }
+    expect(accepts).toBeGreaterThan(0);
+    expect(corrections).toBe(0);
+    expect(acceptMutations).toBe(0);
+    const deltas: number[] = [];
+    for (let i = 1; i < samples.length; i += 1) {
+      deltas.push(Math.abs(samples[i]! - samples[i - 1]!));
+    }
+    expect(Math.max(0, ...deltas)).toBeLessThan(WALK_SPEED * (1 / 60) * 2.5);
+  });
+});
+
 describe('accepted snapshot invisibility', () => {
   it('matching ack leaves every local motion field untouched', () => {
     const world = flatWorld() as unknown as VoxelWorld;
@@ -288,5 +341,27 @@ describe('first bad event capture', () => {
     expect(localNetTrace.firstBadEvent!.renderDelta).toBeGreaterThan(0.12);
     expect(localNetTrace.firstBadEvent!.mutations.some((entry) => entry.source.includes('player_state'))).toBe(true);
     expect(formatFirstBadEvent(localNetTrace.firstBadEvent!)).toContain('frame=');
+    expect(formatFirstBadEvent(localNetTrace.firstBadEvent!)).toContain('soft=');
+  });
+});
+
+describe('player_state field mutation log', () => {
+  it('prints source, field, old, new, seq, and timestamp', () => {
+    const text = formatMotionFieldMutation({
+      source: 'player_state:accepted',
+      field: 'vy',
+      oldValue: -7.5,
+      newValue: 0,
+      inputSeq: 12,
+      predictedSeq: 18,
+      at: 1234.5,
+    });
+    expect(text).toContain('[player_state:accepted]');
+    expect(text).toContain('vy');
+    expect(text).toContain('-7.5');
+    expect(text).toContain('0');
+    expect(text).toContain('snapshot inputSeq=12');
+    expect(text).toContain('local predicted seq=18');
+    expect(text).toContain('timestamp=1234.500');
   });
 });

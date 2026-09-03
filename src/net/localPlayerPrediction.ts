@@ -91,6 +91,17 @@ export interface ReconcileResult {
   error: PredictionError;
   rejectReason: AckRejectReason;
   acceptMutated: boolean;
+  softReject: AckRejectReason;
+}
+
+export interface SnapshotInspect {
+  readonly kind: ReconcileKind;
+  readonly rejectReason: AckRejectReason;
+  readonly softReject: AckRejectReason;
+  readonly error: PredictionError;
+  readonly ackSeq: number | undefined;
+  readonly historySeq: number | undefined;
+  readonly predicted?: PlayerMovementState;
 }
 
 export type { AckRejectReason } from './localMotionDiagnostics';
@@ -300,6 +311,19 @@ export function ackRejectReason(
 ): AckRejectReason {
   if (error.xz > PREDICTION_ACCEPT_XZ) return 'xz';
   if (error.y > PREDICTION_ACCEPT_Y) return 'y';
+  return 'none';
+}
+
+/**
+ * Velocity/flag disagreement with a matching pose. These used to rewind+replay
+ * every snapshot (fly+SHIFT `vy` ≈ 7.5, so 0.2 speed is ~3%). Pose-only accept
+ * keeps the predicted player invisible; a later xz/y miss still corrects.
+ */
+export function softAckRejectReason(
+  predicted: PlayerMovementState,
+  snapshot: PlayerSnapshot,
+  error: PredictionError,
+): AckRejectReason {
   if (error.speed > PREDICTION_ACCEPT_SPEED) return 'speed';
   if (predicted.onGround !== snapshot.onGround) return 'onGround';
   if (snapshot.flying !== undefined && predicted.isFlying !== snapshot.flying) return 'flying';
@@ -389,6 +413,7 @@ function finish(
   replayed: number,
   rejectReason: AckRejectReason = 'none',
   acceptMutated = false,
+  softReject: AckRejectReason = 'none',
 ): ReconcileResult {
   noteDebug(buffer, kind, error, performance.now());
   const result: ReconcileResult = {
@@ -398,20 +423,71 @@ function finish(
     error,
     rejectReason,
     acceptMutated,
+    softReject,
   };
   motionProbe.noteReconcile(result);
   return result;
 }
 
 /**
- * Compare the snapshot to the predicted pose AT the acked seq. If they agree,
- * leave the live player (including previousPosition) untouched.
- *
- * `inputSeq` is the latest input *state* the server used for this physics
- * tick. Packets between ticks replace lastInput; skipped seqs were never
- * simulated. Duplicate acks (same seq as lastAckedSeq) mean the server ticked
- * again with the same held state — do not rewind.
+ * Compare the snapshot to the predicted pose AT the acked seq. Does not mutate
+ * the player, history, or lastAckedSeq.
  */
+export function inspectPredictedPlayer(
+  buffer: PredictionBuffer,
+  snapshot: PlayerSnapshot,
+  player?: PlayerController,
+): SnapshotInspect {
+  const ackSeq = snapshot.inputSeq;
+  if (ackSeq === undefined || !Number.isFinite(ackSeq)) {
+    return {
+      kind: 'ignored', rejectReason: 'no-seq', softReject: 'none',
+      error: emptyError(), ackSeq, historySeq: undefined,
+    };
+  }
+  if (ackSeq < buffer.lastAckedSeq) {
+    return {
+      kind: 'ignored', rejectReason: 'stale-seq', softReject: 'none',
+      error: emptyError(), ackSeq, historySeq: undefined,
+    };
+  }
+  if (ackSeq === buffer.lastAckedSeq) {
+    return {
+      kind: 'ignored', rejectReason: 'duplicate-seq', softReject: 'none',
+      error: emptyError(), ackSeq, historySeq: ackSeq,
+    };
+  }
+  motionProbe.noteSeqGap(ackSeq - buffer.lastAckedSeq);
+  const predictedAtAck = findPredictedEntry(buffer, ackSeq);
+  if (predictedAtAck) {
+    const error = predictedStateError(predictedAtAck.state, snapshot);
+    const reject = ackRejectReason(predictedAtAck.state, snapshot, error);
+    const soft = softAckRejectReason(predictedAtAck.state, snapshot, error);
+    if (reject === 'none') {
+      return {
+        kind: 'accepted', rejectReason: 'none', softReject: soft, error,
+        ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
+      };
+    }
+    return {
+      kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected',
+      rejectReason: reject, softReject: soft, error,
+      ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
+    };
+  }
+  const error = player
+    ? predictionError({ x: player.position.x, y: player.position.y, z: player.position.z }, snapshot)
+    : emptyError();
+  return {
+    kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected',
+    rejectReason: 'no-history',
+    softReject: 'none',
+    error,
+    ackSeq,
+    historySeq: undefined,
+  };
+}
+
 export function reconcilePredictedPlayer(
   player: PlayerController,
   world: VoxelWorld,
@@ -419,28 +495,15 @@ export function reconcilePredictedPlayer(
   snapshot: PlayerSnapshot,
   dt = FIXED_DT,
 ): ReconcileResult {
-  const ackSeq = snapshot.inputSeq;
-  if (ackSeq === undefined || !Number.isFinite(ackSeq)) {
-    return finish(buffer, 'ignored', emptyError(), 0, 'no-seq');
-  }
-  if (ackSeq < buffer.lastAckedSeq) {
-    return finish(buffer, 'ignored', emptyError(), 0, 'stale-seq');
-  }
-  if (ackSeq === buffer.lastAckedSeq) {
-    return finish(buffer, 'ignored', emptyError(), 0, 'duplicate-seq');
-  }
-
   const before = captureMotionFull(player);
-  const predictedAtAck = findPredictedEntry(buffer, ackSeq);
-  const seqGap = ackSeq - buffer.lastAckedSeq;
-  motionProbe.noteSeqGap(seqGap);
-  if (predictedAtAck) {
-    const error = predictedStateError(predictedAtAck.state, snapshot);
-    const reject = ackRejectReason(predictedAtAck.state, snapshot, error);
-    if (reject === 'none') {
-      ackPredictedMoves(buffer, ackSeq);
-      const changed = diffMotionFull(before, captureMotionFull(player));
-      const mutated = changed.length > 0;
+  const inspect = inspectPredictedPlayer(buffer, snapshot, player);
+  if (inspect.kind === 'accepted' || inspect.kind === 'ignored') {
+    if (inspect.kind === 'accepted' && inspect.ackSeq !== undefined) {
+      ackPredictedMoves(buffer, inspect.ackSeq);
+    }
+    const changed = diffMotionFull(before, captureMotionFull(player));
+    const mutated = changed.length > 0;
+    if (inspect.kind === 'accepted') {
       if (mutated) {
         motionProbe.note('accept-mutated');
         motionProbe.noteWrite('position');
@@ -449,16 +512,20 @@ export function reconcilePredictedPlayer(
       } else {
         motionProbe.note('accept-invisible');
       }
-      return finish(buffer, 'accepted', error, 0, 'none', mutated);
     }
-    return applyCorrection(player, world, buffer, snapshot, predictedAtAck, error, dt, reject);
+    return finish(buffer, inspect.kind, inspect.error, 0, inspect.rejectReason, mutated, inspect.softReject);
   }
 
-  const error = predictionError(
-    { x: player.position.x, y: player.position.y, z: player.position.z },
+  return applyCorrection(
+    player,
+    world,
+    buffer,
     snapshot,
+    inspect.historySeq !== undefined ? findPredictedEntry(buffer, inspect.historySeq) : undefined,
+    inspect.error,
+    dt,
+    inspect.rejectReason,
   );
-  return applyCorrection(player, world, buffer, snapshot, undefined, error, dt, 'no-history');
 }
 
 function applyCorrection(

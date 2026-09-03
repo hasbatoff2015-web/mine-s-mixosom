@@ -113,6 +113,7 @@ export class LocalMotionProbe {
   lastPlayerStateAt = Number.NaN;
   lastKind: ReconcileKind = 'ignored';
   lastReject: AckRejectReason = 'none';
+  lastSoftReject: AckRejectReason = 'none';
   lastAcceptMutated = false;
   lastBlockMutationAt = Number.NaN;
   lastChunkUpdateAt = Number.NaN;
@@ -163,6 +164,7 @@ export class LocalMotionProbe {
     this.lastPlayerStateAt = Number.NaN;
     this.lastKind = 'ignored';
     this.lastReject = 'none';
+    this.lastSoftReject = 'none';
     this.lastAcceptMutated = false;
     this.lastTraceDumpAt = 0;
     this.lastBlockMutationAt = Number.NaN;
@@ -239,16 +241,21 @@ export class LocalMotionProbe {
     readonly kind: ReconcileKind;
     readonly rejectReason: AckRejectReason;
     readonly acceptMutated: boolean;
+    readonly softReject?: AckRejectReason;
   }, now = performance.now()): void {
     this.lastReconcileAt = now;
     this.lastKind = result.kind;
     this.lastReject = result.rejectReason;
+    this.lastSoftReject = result.softReject ?? 'none';
     if (result.kind === 'accepted') this.lastAcceptMutated = result.acceptMutated;
     this.note(`reconcile:${result.kind}`, now);
-    localNetTrace.noteReconcile(result.kind, result.rejectReason, now);
+    localNetTrace.noteReconcile(result.kind, result.rejectReason, now, result.softReject ?? 'none');
     if (result.kind === 'accepted' && result.acceptMutated) this.note('accept-mutated', now);
     if (result.rejectReason !== 'none' && result.kind !== 'accepted') {
       this.note(`reject:${result.rejectReason}`, now);
+    }
+    if (result.softReject && result.softReject !== 'none' && result.kind === 'accepted') {
+      this.note(`soft:${result.softReject}`, now);
     }
   }
 
@@ -415,6 +422,7 @@ export class LocalMotionProbe {
       `Motion ${mode}${flags} fps=${this.fps} ticks=${this.ticksThisFrame} alpha=${this.alpha.toFixed(3)} acc=${this.leftover.toFixed(4)} sim#${this.simTick} ${this.fromTick}→${this.toTick}`,
       `pred/s=${this.rate('predict', now)} state/s=${this.rate('player_state', now)} rec/s=${this.rate('reconcile:accepted', now) + this.rate('reconcile:corrected', now) + this.rate('reconcile:snapped', now) + this.rate('reconcile:ignored', now)}`,
       `ok/s=${this.rate('reconcile:accepted', now)} corr/s=${this.rate('reconcile:corrected', now)} snap/s=${this.rate('reconcile:snapped', now)} dup/s=${this.rate('reject:duplicate-seq', now)}`,
+      `soft speed/s=${this.rate('soft:speed', now)} onGround/s=${this.rate('soft:onGround', now)} flying/s=${this.rate('soft:flying', now)} lastSoft=${this.lastSoftReject}`,
       `net send/s=${this.rate('send:input', now)} recv/s=${this.rate('recv:player_state', now) + this.rate('recv:entity_snapshot', now) + this.rate('recv:block_update', now) + this.rate('recv:block_batch', now) + this.rate('recv:chunk_data', now) + this.rate('recv:health', now) + this.rate('recv:inventory', now)} statePkt/s=${this.rate('recv:player_state', now)}`,
       `snap recv/s=${this.rate('snap:recv', now)} dropStale/s=${this.rate('snap:drop-stale', now)} dropNoLocal/s=${this.rate('snap:drop-no-local', now)} gap/s=${this.rate('seq-gap', now)}`,
       `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut} netPos/s=${localNetTrace.sourceRate('write:position', now)} netVel/s=${localNetTrace.sourceRate('write:velocity', now)} netPrev/s=${localNetTrace.sourceRate('write:previousPosition', now)}`,
@@ -422,7 +430,7 @@ export class LocalMotionProbe {
       `pos ${this.position.x.toFixed(3)} ${this.position.y.toFixed(3)} ${this.position.z.toFixed(3)} prev ${this.previous.x.toFixed(3)} ${this.previous.y.toFixed(3)} ${this.previous.z.toFixed(3)}`,
       `render ${this.render.x.toFixed(3)} ${this.render.y.toFixed(3)} ${this.render.z.toFixed(3)} rΔ=${this.lastRenderDelta.toFixed(4)} min=${minD.toFixed(4)} max=${maxD.toFixed(4)} neg/s=${this.rate('render:neg', now)} big/s=${this.rate('render:large', now)} |pos-prev|=${step.toFixed(4)}`,
       `cam ${this.camera.x.toFixed(3)} ${this.camera.y.toFixed(3)} ${this.camera.z.toFixed(3)} Δ=${this.lastCameraDelta.toFixed(4)} max=${camMax.toFixed(4)} src=${this.cameraSource}`,
-      `since rec=${sinceReconcile.toFixed(0)}ms state=${sinceState.toFixed(0)}ms last=${this.lastKind}/${this.lastReject} acceptMut=${this.lastAcceptMutated ? 'YES' : 'no'}`,
+      `since rec=${sinceReconcile.toFixed(0)}ms state=${sinceState.toFixed(0)}ms last=${this.lastKind}/${this.lastReject} soft=${this.lastSoftReject} acceptMut=${this.lastAcceptMutated ? 'YES' : 'no'}`,
     ].join('\n');
   }
 

@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-03: Incoming local `player_state` side effects (PR #37)
+
+- [x] Owner A/B: `predNoState` smooth vs normal jitter → isolate incoming `player_state`.
+- [x] Pose-only accept (xz/y); speed/onGround/flying are softReject, not restore+replay.
+- [x] Queue local snapshot apply to the next 20 TPS tick; skip unchanged survival restore.
+- [x] DEV `?predStateObserve=1` + category skips; keep `predNoState` and `[firstBadEvent]`.
+- [x] Regression: matching-pose snapshots with wrong `vy` do not rewind or jitter render.
+- [ ] Owner localhost: Normal Online walk/sprint/jump/strafe/flight/fly+SHIFT should match `predNoState`.
+- [ ] Do not merge main.
+
 ## 2026-09-03: Online network-path isolation (PR #37)
 
 - [x] Split `predNoNet` into independent DEV `predNoState` / `predNoSend`; F3 labels.

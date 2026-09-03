@@ -189,11 +189,13 @@ import {
 import {
   createPredictionBuffer,
   formatPredictionDebug,
+  inspectPredictedPlayer,
   predictedMoveFromInput,
   predictLocalMove,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
   type PredictionBuffer,
+  type ReconcileResult,
 } from '../net/localPlayerPrediction';
 import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
 import {
@@ -202,11 +204,14 @@ import {
   chunkOverlapsPlayerColumn,
   diffMotionFull,
   localNetTrace,
+  logMotionFieldMutations,
+  logNamedMutation,
   traceLocalPlayerMutation,
 } from '../net/localPlayerNetTrace';
 import {
   isDevRuntime,
   resolvePredIsolation,
+  type PredIsolationFlags,
   type PredIsolationMode,
 } from '../net/predIsolation';
 import {
@@ -304,6 +309,15 @@ export interface OnlineAnarchySession {
   /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
   ignoreNetworkState?: boolean;
   isolationMode?: PredIsolationMode;
+  isolation?: PredIsolationFlags;
+  /**
+   * Latest local `player_state` waiting for the next 20 TPS tick. Applying
+   * inside the WebSocket callback mutates pose between render samples.
+   */
+  pendingLocalSnapshot?: {
+    message: ServerPlayerStateMessage;
+    local: ServerPlayerStateMessage['players'][number];
+  };
   /** True when both send and local state are isolated (`predNoNet`). */
   ignoreNetworkMotion?: boolean;
 }
@@ -686,6 +700,7 @@ export class Game {
             ignoreNetworkState: isolation.noState,
             isolationMode: isolation.mode,
             ignoreNetworkMotion: isolation.noSend && isolation.noState,
+            isolation,
           };
         })(),
       },
@@ -940,10 +955,14 @@ export class Game {
     if (local) {
       motionProbe.notePlayerState(local.inputSeq);
       this.noteLocalSnapshotTiming(local, performance.now());
-      if (online.ignoreNetworkState) {
+      const flags = online.isolation ?? resolvePredIsolation();
+      if (flags.observe) {
+        motionProbe.note('skip:observe');
+        this.observeLocalPlayerSnapshot(session, message, local);
+      } else if (online.ignoreNetworkState) {
         motionProbe.note('skip:local-state');
       } else {
-        this.applyLocalPlayerSnapshot(session, message, local);
+        online.pendingLocalSnapshot = { message, local };
       }
     } else {
       motionProbe.noteSnapshotDrop('no-local');
@@ -963,9 +982,55 @@ export class Game {
   }
 
   /**
-   * Local `player_state` apply. An accepted/ignored ack must not write movement
-   * or render state. Health/hunger remain server authority; riding/gamemode
-   * apply only when the value actually changes.
+   * `?predStateObserve=1`: parse and inspect the local snapshot, mutate nothing.
+   */
+  private observeLocalPlayerSnapshot(
+    session: GameSession,
+    message: ServerPlayerStateMessage,
+    local: ServerPlayerStateMessage['players'][number],
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    const before = captureMotionFull(session.player);
+    const inspect = inspectPredictedPlayer(online.prediction, local, session.player);
+    const after = captureMotionFull(session.player);
+    const changed = diffMotionFull(before, after);
+    if (isDevRuntime() && typeof console !== 'undefined') {
+      console.info('[predStateObserve]', {
+        tick: message.tick,
+        inputSeq: local.inputSeq,
+        predictedSeq: online.inputSeq,
+        kind: inspect.kind,
+        reject: inspect.rejectReason,
+        soft: inspect.softReject,
+        error: inspect.error,
+        historySeq: inspect.historySeq,
+        mutated: changed,
+      });
+      if (changed.length > 0) {
+        logMotionFieldMutations({
+          source: 'player_state:observe',
+          before,
+          after,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+      }
+    }
+  }
+
+  private flushPendingLocalSnapshot(session: GameSession): void {
+    const online = session.online;
+    const pending = online?.pendingLocalSnapshot;
+    if (!online || !pending) return;
+    online.pendingLocalSnapshot = undefined;
+    this.applyLocalPlayerSnapshot(session, pending.message, pending.local);
+  }
+
+  /**
+   * Local `player_state` apply. A matching localhost snapshot (history[seq]
+   * equals the authoritative pose) must not write movement, look, render, or
+   * camera. Health/hunger restore only when the value actually changes.
    */
   private applyLocalPlayerSnapshot(
     session: GameSession,
@@ -974,8 +1039,22 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    const flags = online.isolation ?? resolvePredIsolation();
     const player = session.player;
     const before = captureMotionFull(player);
+    const camBefore = { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z };
+    const renderBefore = {
+      prev: { x: this.localRender.previous.x, y: this.localRender.previous.y, z: this.localRender.previous.z },
+      curr: { x: this.localRender.current.x, y: this.localRender.current.y, z: this.localRender.current.z },
+    };
+    const sessionBefore = {
+      ridingCartId: session.ridingCartId,
+      gamemode: session.summary.mode,
+      creativeFlightAllowed: player.creativeFlightAllowed,
+      health: session.survival.health,
+      hunger: session.survival.hunger,
+      dead: session.survival.dead,
+    };
     const px = Math.floor(player.position.x);
     const py = Math.floor(player.position.y);
     const pz = Math.floor(player.position.z);
@@ -990,9 +1069,32 @@ export class Game {
         false,
       )).name,
     });
-    const result = reconcilePredictedPlayer(player, session.world, online.prediction, local);
+
+    let result: ReconcileResult;
+    if (flags.skipReconcile) {
+      motionProbe.note('skip:reconcile');
+      const inspect = inspectPredictedPlayer(online.prediction, local, player);
+      result = {
+        kind: 'ignored',
+        snapped: false,
+        replayed: 0,
+        error: inspect.error,
+        rejectReason: inspect.rejectReason,
+        acceptMutated: false,
+        softReject: inspect.softReject,
+      };
+    } else {
+      result = reconcilePredictedPlayer(player, session.world, online.prediction, local);
+    }
     const afterReconcile = captureMotionFull(player);
     const reconcileChanged = diffMotionFull(before, afterReconcile);
+    logMotionFieldMutations({
+      source: `player_state:${result.kind}`,
+      before,
+      after: afterReconcile,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
     if (reconcileChanged.length > 0) {
       localNetTrace.noteMutation({
         at: performance.now(),
@@ -1015,30 +1117,73 @@ export class Game {
 
     const previousLife = { health: session.survival.health, dead: session.survival.dead };
     const snapshotDead = local.dead ?? local.health <= 0;
-    if (!shouldIgnoreStaleDeadSnapshot({
+    if (flags.skipSurvival) {
+      motionProbe.note('skip:survival');
+    } else if (!shouldIgnoreStaleDeadSnapshot({
       snapshotTick: message.tick,
       lastAliveTick: online.lastAliveTick,
       dead: snapshotDead,
     })) {
-      session.survival.restore({
-        health: local.health,
-        hunger: local.hunger,
-        dead: snapshotDead,
-      });
-      if (shouldRestoreGameplayAfterRespawn(previousLife, {
-        health: session.survival.health,
-        dead: session.survival.dead,
-      })) {
-        this.recordLocalNetWrite('player_state-respawn', () => {
-          this.restoreOnlinePlayingFromRespawn();
+      const healthChanged = session.survival.health !== local.health;
+      const hungerChanged = session.survival.hunger !== local.hunger;
+      const deadChanged = session.survival.dead !== snapshotDead;
+      if (healthChanged || hungerChanged || deadChanged) {
+        logNamedMutation({
+          source: 'player_state:survival',
+          field: 'health',
+          oldValue: session.survival.health,
+          newValue: local.health,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
         });
+        logNamedMutation({
+          source: 'player_state:survival',
+          field: 'hunger',
+          oldValue: session.survival.hunger,
+          newValue: local.hunger,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        logNamedMutation({
+          source: 'player_state:survival',
+          field: 'dead',
+          oldValue: session.survival.dead,
+          newValue: snapshotDead,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        session.survival.restore({
+          health: local.health,
+          hunger: local.hunger,
+          dead: snapshotDead,
+        });
+        if (!flags.skipRespawn && shouldRestoreGameplayAfterRespawn(previousLife, {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        })) {
+          this.recordLocalNetWrite('player_state-respawn', () => {
+            this.restoreOnlinePlayingFromRespawn();
+          });
+        } else if (flags.skipRespawn) {
+          motionProbe.note('skip:respawn');
+        }
       }
       if (!snapshotDead && local.health > 0) {
         online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
       }
     }
 
-    if (local.ridingEntityId !== session.ridingCartId) {
+    if (flags.skipRiding) {
+      motionProbe.note('skip:riding');
+    } else if (local.ridingEntityId !== session.ridingCartId) {
+      logNamedMutation({
+        source: 'player_state:riding',
+        field: 'ridingCartId',
+        oldValue: session.ridingCartId,
+        newValue: local.ridingEntityId,
+        inputSeq: local.inputSeq,
+        predictedSeq: online.inputSeq,
+      });
       this.recordLocalNetWrite('player_state-riding', () => {
         session.ridingCartId = local.ridingEntityId;
       });
@@ -1046,18 +1191,94 @@ export class Game {
     if (local.invisible) {
       /* local first-person hide is driven by survival effects */
     }
-    if (local.gamemode !== session.summary.mode) {
+    if (flags.skipGamemode) {
+      motionProbe.note('skip:gamemode');
+    } else if (local.gamemode !== session.summary.mode) {
+      logNamedMutation({
+        source: 'player_state:gamemode',
+        field: 'gamemode',
+        oldValue: session.summary.mode,
+        newValue: local.gamemode,
+        inputSeq: local.inputSeq,
+        predictedSeq: online.inputSeq,
+      });
       session.summary.mode = local.gamemode;
       this.recordLocalNetWrite('player_state-gamemode', () => {
         session.player.creativeFlightAllowed = local.gamemode === 'creative';
       });
     }
+    if (flags.skipLook) motionProbe.note('skip:look');
+    if (flags.skipRender) motionProbe.note('skip:render');
 
     const after = captureMotionFull(player);
     const allChanged = diffMotionFull(before, after);
     if ((result.kind === 'accepted' || result.kind === 'ignored') && allChanged.length > 0) {
       motionProbe.note('accept-mutated');
     }
+    logNamedMutation({
+      source: 'player_state:camera',
+      field: 'camera',
+      oldValue: `${camBefore.x},${camBefore.y},${camBefore.z}`,
+      newValue: `${this.camera.position.x},${this.camera.position.y},${this.camera.position.z}`,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:render',
+      field: 'renderCurr',
+      oldValue: `${renderBefore.curr.x},${renderBefore.curr.y},${renderBefore.curr.z}`,
+      newValue: `${this.localRender.current.x},${this.localRender.current.y},${this.localRender.current.z}`,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'ridingCartId',
+      oldValue: sessionBefore.ridingCartId,
+      newValue: session.ridingCartId,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'gamemode',
+      oldValue: sessionBefore.gamemode,
+      newValue: session.summary.mode,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'creativeFlightAllowed',
+      oldValue: sessionBefore.creativeFlightAllowed,
+      newValue: player.creativeFlightAllowed,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'health',
+      oldValue: sessionBefore.health,
+      newValue: session.survival.health,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'hunger',
+      oldValue: sessionBefore.hunger,
+      newValue: session.survival.hunger,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'dead',
+      oldValue: sessionBefore.dead,
+      newValue: session.survival.dead,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
   }
 
   private noteLocalSnapshotTiming(
@@ -1142,6 +1363,7 @@ export class Game {
   private sendOnlineIdle(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    this.flushPendingLocalSnapshot(session);
     online.inputSeq += 1;
     const predicted = predictedMoveFromInput(
       online.inputSeq,
@@ -2503,6 +2725,7 @@ export class Game {
   private tickOnline(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    this.flushPendingLocalSnapshot(session);
     session.player.yaw = this.input.yaw;
     session.player.pitch = this.input.pitch;
     session.playTicks += 1;

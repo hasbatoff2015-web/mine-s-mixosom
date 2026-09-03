@@ -10,6 +10,7 @@ import type { MoveInput } from '../src/input/MoveInput';
 import {
   applyPredictedTick,
   createPredictionBuffer,
+  inspectPredictedPlayer,
   isSmallPredictionError,
   predictedMoveFromInput,
   predictLocalMove,
@@ -18,6 +19,7 @@ import {
   shouldSnapPrediction,
   type PredictionBuffer,
 } from '../src/net/localPlayerPrediction';
+import { captureMotionFull, diffMotionFull } from '../src/net/localPlayerNetTrace';
 import { PlayerController } from '../src/player';
 import type { PlayerSnapshot } from '../shared/protocol';
 import type { VoxelWorld } from '../src/world/World';
@@ -449,5 +451,70 @@ describe('local player prediction', () => {
     expect(shouldAcceptInputSequence(inputSeqAfterReconnect(), clientSeq)).toBe(true);
     predictLocalMove(player, world, buffer, move(clientSeq, { forward: 1 }));
     expect(buffer.entries[0]?.seq).toBe(1);
+  });
+
+  it('accepts a matching pose even when snapshot velocity disagrees (fly+SHIFT vy)', () => {
+    const { world, player, buffer } = groundedPlayer();
+    player.creativeFlightAllowed = true;
+    predictLocalMove(player, world, buffer, move(1, { jump: true }));
+    predictLocalMove(player, world, buffer, move(2));
+    predictLocalMove(player, world, buffer, move(3, { jump: true }));
+    predictSeries(player, world, buffer, 4, 6, { jump: true });
+    predictSeries(player, world, buffer, 7, 12, { forward: 1, sneak: true, descend: true });
+    expect(player.isFlying).toBe(true);
+    const before = poseOf(player);
+    const full = captureMotionFull(player);
+    const ack = snapshotFromState(player, 8, buffer, { vy: buffer.entries.find((e) => e.seq === 8)!.state.vy + 7.5 });
+    const inspect = inspectPredictedPlayer(buffer, ack, player);
+    expect(inspect.kind).toBe('accepted');
+    expect(inspect.softReject).toBe('speed');
+    expect(inspect.rejectReason).toBe('none');
+    expect(diffMotionFull(full, captureMotionFull(player))).toEqual([]);
+    const result = reconcilePredictedPlayer(player, world, buffer, ack);
+    expect(result.kind).toBe('accepted');
+    expect(result.softReject).toBe('speed');
+    expect(result.acceptMutated).toBe(false);
+    expectPoseUnchanged(player, before);
+    expect(player.velocity.y).toBe(before.vy);
+    expect(player.isFlying).toBe(true);
+  });
+
+  it('accepts a matching pose even when snapshot flying/onGround flags disagree', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictSeries(player, world, buffer, 1, 4, { forward: 1 });
+    const before = poseOf(player);
+    const ack = snapshotFromState(player, 2, buffer, { flying: true, onGround: false });
+    const inspect = inspectPredictedPlayer(buffer, ack, player);
+    expect(inspect.kind).toBe('accepted');
+    expect(inspect.softReject).toBe('onGround');
+    const result = reconcilePredictedPlayer(player, world, buffer, ack);
+    expect(result.kind).toBe('accepted');
+    expect(result.acceptMutated).toBe(false);
+    expectPoseUnchanged(player, before);
+    expect(player.onGround).toBe(before.onGround);
+    expect(player.isFlying).toBe(before.flying);
+  });
+
+  it('still rewinds when xz disagrees beyond PREDICTION_ACCEPT_XZ', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictSeries(player, world, buffer, 1, 3, { forward: 1 });
+    const live = poseOf(player);
+    const ack = snapshotFromState(player, 1, buffer, { x: buffer.entries[0]!.state.x + 0.2 });
+    const result = reconcilePredictedPlayer(player, world, buffer, ack);
+    expect(result.kind).toBe('corrected');
+    expect(result.rejectReason).toBe('xz');
+    expect(player.position.x).not.toBeCloseTo(live.x, 3);
+  });
+
+  it('inspectPredictedPlayer does not mutate the player or history', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictSeries(player, world, buffer, 1, 4, { forward: 1 });
+    const before = captureMotionFull(player);
+    const seqs = buffer.entries.map((entry) => entry.seq);
+    const lastAcked = buffer.lastAckedSeq;
+    inspectPredictedPlayer(buffer, snapshotFromState(player, 2, buffer, { vy: 99 }), player);
+    expect(diffMotionFull(before, captureMotionFull(player))).toEqual([]);
+    expect(buffer.lastAckedSeq).toBe(lastAcked);
+    expect(buffer.entries.map((entry) => entry.seq)).toEqual(seqs);
   });
 });

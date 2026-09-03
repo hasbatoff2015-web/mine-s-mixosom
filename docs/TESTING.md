@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Incoming local `player_state` side effects
+
+Report: `reports/2026-09-03_player-state-incoming-side-effects.md`. PR #37.
+
+```text
+npx vitest run tests/pred-isolation-flags.test.ts tests/pred-isolation-matrix.test.ts tests/local-player-prediction.test.ts tests/player-main-integration.test.ts
+```
+
+Contracts: matching xz/y ack does not write velocity/flying/onGround even if those disagree; `inspectPredictedPlayer` is a dry-run; `predStateObserve` implies noState; category skips parse in DEV; fly+SHIFT-style `vy` mismatch must not correct; xz mismatch still corrects; firstBadEvent includes `soft=`. Physics/remesh unchanged.
+
 ## 2026-09-03 Online network-path isolation
 
 Report: `reports/2026-09-03_online-network-path-isolation.md`. PR #37.
