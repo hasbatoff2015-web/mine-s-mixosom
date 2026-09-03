@@ -292,9 +292,22 @@ export interface ServerPlayerLeftMessage {
   readonly playerId: string;
 }
 
+export interface ServerTickClock {
+  readonly physicsTps: number;
+  readonly snapGen: number;
+  readonly snapSent: number;
+  readonly droppedTicks: number;
+  readonly elapsedMs: number;
+  readonly accumulatorMs: number;
+  readonly physicsTicksThisLoop: number;
+}
+
 export interface ServerPlayerStateMessage {
   readonly type: 'player_state';
   readonly tick: number;
+  /** Physics ticks simulated since the previous snapshot flush (1 unless catch-up). */
+  readonly physicsTicks?: number;
+  readonly tickClock?: ServerTickClock;
   readonly players: readonly PlayerSnapshot[];
 }
 

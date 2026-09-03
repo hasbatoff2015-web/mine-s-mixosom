@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Server tick clock and catch-up snapshots
+
+Report: `reports/2026-09-03_server-tick-clock-corrections.md`. PR #37.
+
+```text
+npx vitest run tests/server-tick-clock.test.ts tests/local-player-prediction.test.ts tests/move-sim-compare.test.ts tests/server/anarchy-server.test.ts
+```
+
+Contracts: drift `setTimeout(tickMs-work)` is ~17 snapshots/s with ~20 physics ticks; absolute slots stay ~20/20; `tickCatchUp(2)` still one snapshot with `physicsTicks=2`; 2-tick catch-up pose corrects if compared as 1 tick and accepts with `physicsTicks=2`. No lerp/tolerance change.
+
 ## 2026-09-03 Incoming local `player_state` side effects
 
 Report: `reports/2026-09-03_player-state-incoming-side-effects.md`. PR #37.

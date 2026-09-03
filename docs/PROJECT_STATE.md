@@ -2,6 +2,16 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: 20 TPS server clock + catch-up comparable snapshots (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner F3: pred/s=20, state/s=17, corr/s=3, netPos/s=3, soft=0. Остаток — **реальные xz/y corrections**, не speed/flying.
+- Root cause: `setTimeout(tickMs - work)` копит Node slack → outer loop ~17 Hz. Catch-up крутит 20 physics ticks, но **один** snapshot после 2 ticks с `inputSeq=N`. Клиент сравнивал `history[N]` (1 tick) с позой на 2 ticks → rewind ~walk step, corr/s≈3.
+- Fix: абсолютный 20 Hz слот (`scheduleNextTickSlot`); snapshot несёт `physicsTicks`; reconcile сравнивает `history[N]` плюс `max(0, physicsTicks - seqGap)` extra ticks того же latest input. Не lerp, не больше tolerance.
+- DEV: F3 `srv phys/s snapGen/s snapSent/s`; `[corrDiag]` на каждую коррекцию (`firstDiff`, `physicsTicks`).
+- Tests: tick-clock + prediction + move-sim + isolation **69/69**; `test:sim` **42/42**; `test:server` **89/89**; typecheck/build PASS.
+- Report: `docs/reports/2026-09-03_server-tick-clock-corrections.md`.
+
 ## Последний проход: incoming local `player_state` side effects (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

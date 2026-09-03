@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-03: 20 TPS server clock + catch-up comparable snapshots (PR #37)
+
+- [x] Prove corr/s≈3 is 17 Hz snapshots vs 20 Hz prediction (catch-up 2-tick pose vs history[N]).
+- [x] Absolute `setTimeout` slot so localhost outer loop stays ~20 Hz.
+- [x] `player_state.physicsTicks` + coalesced compare; do not hide pose error with lerp/tolerance.
+- [x] DEV tickClock on F3; log every correction.
+- [ ] Owner localhost: walk/sprint/jump/strafe/flight/fly+SHIFT corr/s=0 vs `predNoState`.
+- [ ] Do not merge main.
+
 ## 2026-09-03: Incoming local `player_state` side effects (PR #37)
 
 - [x] Owner A/B: `predNoState` smooth vs normal jitter → isolate incoming `player_state`.

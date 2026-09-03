@@ -29,7 +29,7 @@ import type {
 } from '../shared/protocol';
 import type { ServerConfig } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
-import { gameplayTicksDue } from './tickScheduler';
+import { gameplayTicksDue, scheduleNextTickSlot } from './tickScheduler';
 import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
@@ -196,6 +196,7 @@ export class WorldInstance {
   private readonly dt: number;
   private tickAccumulator = 0;
   private lastTickWall = 0;
+  private nextTickSlotAt = 0;
   private snapshotsGenerated = 0;
   private snapshotsSent = 0;
   private tpsWindowStart = 0;
@@ -203,6 +204,10 @@ export class WorldInstance {
   lastMeasuredTps = 0;
   lastMeasuredSnapGen = 0;
   lastMeasuredSnapSent = 0;
+  lastPhysicsTicksThisLoop = 0;
+  lastLoopElapsedMs = 0;
+  lastLoopAccumulatorMs = 0;
+  droppedTicksTotal = 0;
   private lastTickMetrics: { blockChanges: number; entities: number; maxTickMs: number } = {
     blockChanges: 0,
     entities: 0,
@@ -280,18 +285,25 @@ export class WorldInstance {
 
   startLoops(): void {
     const tickMs = 1000 / this.config.tickRate;
-    this.lastTickWall = performance.now();
-    this.tpsWindowStart = this.lastTickWall;
+    const now = performance.now();
+    this.lastTickWall = now;
+    this.nextTickSlotAt = now;
+    this.tpsWindowStart = now;
     const loop = (): void => {
-      const now = performance.now();
-      const due = gameplayTicksDue(this.tickAccumulator, (now - this.lastTickWall) / 1000, this.dt);
-      this.lastTickWall = now;
+      const started = performance.now();
+      const due = gameplayTicksDue(this.tickAccumulator, (started - this.lastTickWall) / 1000, this.dt);
+      this.lastTickWall = started;
       this.tickAccumulator = due.nextAccumulator;
+      this.lastLoopElapsedMs = due.elapsed * 1000;
+      this.lastLoopAccumulatorMs = due.nextAccumulator * 1000;
+      this.lastPhysicsTicksThisLoop = due.ticks;
+      this.droppedTicksTotal += due.droppedTicks;
       if (due.ticks === 1) this.tick();
       else if (due.ticks > 1) this.tickCatchUp(due.ticks);
-      this.noteTpsWindow(due.ticks, now);
-      const wait = Math.max(0, tickMs - (performance.now() - now));
-      this.tickTimer = setTimeout(loop, wait);
+      this.noteTpsWindow(due.ticks, started);
+      const planned = scheduleNextTickSlot(this.nextTickSlotAt, performance.now(), tickMs);
+      this.nextTickSlotAt = planned.nextSlotAt;
+      this.tickTimer = setTimeout(loop, planned.waitMs);
     };
     this.tickTimer = setTimeout(loop, tickMs);
     this.persistTimer = setInterval(() => {
@@ -604,17 +616,20 @@ export class WorldInstance {
   }
 
   tick(): void {
+    this.lastPhysicsTicksThisLoop = 1;
     this.simulateGameplayTick();
     this.flushTickNetwork();
   }
 
   /**
    * Run N physics ticks but broadcast **one** player_state at the end.
-   * Catch-up must not send intermediate poses that would correct history[N]
-   * against a 1-step snapshot while the client already predicted N steps.
+   * Catch-up must not send intermediate poses. The snapshot carries
+   * `physicsTicks = N` so the client compares history[seq] after N-1 extra
+   * ticks of that same latest input — not the 1-tick history entry.
    */
   tickCatchUp(count: number): void {
     const n = Math.max(0, Math.floor(count));
+    this.lastPhysicsTicksThisLoop = n;
     for (let i = 0; i < n; i += 1) this.simulateGameplayTick();
     if (n > 0) this.flushTickNetwork();
   }
@@ -629,7 +644,9 @@ export class WorldInstance {
     if (this.debugSnap) {
       serverLog(
         `snap/s gen=${this.lastMeasuredSnapGen.toFixed(1)} sent=${this.lastMeasuredSnapSent.toFixed(1)} `
-        + `tps=${this.lastMeasuredTps.toFixed(1)}`,
+        + `tps=${this.lastMeasuredTps.toFixed(1)} dropped=${this.droppedTicksTotal} `
+        + `loop phys=${this.lastPhysicsTicksThisLoop} elapsedMs=${this.lastLoopElapsedMs.toFixed(1)} `
+        + `accMs=${this.lastLoopAccumulatorMs.toFixed(1)}`,
       );
     }
     this.tpsWindowStart = now;
@@ -677,7 +694,21 @@ export class WorldInstance {
     }
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     if (snapshots.length > 0) {
-      this.broadcast({ type: 'player_state', tick: this.tickNumber, players: snapshots });
+      this.broadcast({
+        type: 'player_state',
+        tick: this.tickNumber,
+        physicsTicks: Math.max(1, this.lastPhysicsTicksThisLoop),
+        tickClock: {
+          physicsTps: this.lastMeasuredTps,
+          snapGen: this.lastMeasuredSnapGen,
+          snapSent: this.lastMeasuredSnapSent,
+          droppedTicks: this.droppedTicksTotal,
+          elapsedMs: this.lastLoopElapsedMs,
+          accumulatorMs: this.lastLoopAccumulatorMs,
+          physicsTicksThisLoop: this.lastPhysicsTicksThisLoop,
+        },
+        players: snapshots,
+      });
       this.snapshotsSent += 1;
     }
     for (const player of this.connectedPlayers()) {

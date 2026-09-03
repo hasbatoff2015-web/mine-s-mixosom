@@ -139,6 +139,11 @@ export class LocalMotionProbe {
   ignoreNetworkState = false;
   lastRenderDelta = 0;
   lastCameraDelta = 0;
+  lastPhysicsTicks = 1;
+  serverPhysicsTps = 0;
+  serverSnapGen = 0;
+  serverSnapSent = 0;
+  serverDroppedTicks = 0;
   readonly traceEnabled: boolean;
   private readonly events: MotionRateEvent[] = [];
   private readonly frames: MotionFrameSample[] = [];
@@ -180,6 +185,11 @@ export class LocalMotionProbe {
     this.ignoreNetworkMotion = false;
     this.ignoreNetworkSend = false;
     this.ignoreNetworkState = false;
+    this.lastPhysicsTicks = 1;
+    this.serverPhysicsTps = 0;
+    this.serverSnapGen = 0;
+    this.serverSnapSent = 0;
+    this.serverDroppedTicks = 0;
     localNetTrace.reset();
   }
 
@@ -217,6 +227,29 @@ export class LocalMotionProbe {
 
   noteSnapshotInbound(now = performance.now()): void {
     this.note('snap:recv', now);
+  }
+
+  noteTickClock(message: {
+    readonly physicsTicks?: number;
+    readonly tickClock?: {
+      readonly physicsTps: number;
+      readonly snapGen: number;
+      readonly snapSent: number;
+      readonly droppedTicks: number;
+      readonly elapsedMs: number;
+      readonly accumulatorMs: number;
+      readonly physicsTicksThisLoop: number;
+    };
+  }, now = performance.now()): void {
+    const ticks = Math.max(1, Math.floor(message.physicsTicks ?? message.tickClock?.physicsTicksThisLoop ?? 1));
+    this.lastPhysicsTicks = ticks;
+    if (ticks > 1) this.note('phys:catch-up', now);
+    const clock = message.tickClock;
+    if (!clock) return;
+    this.serverPhysicsTps = clock.physicsTps;
+    this.serverSnapGen = clock.snapGen;
+    this.serverSnapSent = clock.snapSent;
+    this.serverDroppedTicks = clock.droppedTicks;
   }
 
   noteSnapshotDrop(reason: 'stale' | 'no-local', now = performance.now()): void {
@@ -424,7 +457,8 @@ export class LocalMotionProbe {
       `ok/s=${this.rate('reconcile:accepted', now)} corr/s=${this.rate('reconcile:corrected', now)} snap/s=${this.rate('reconcile:snapped', now)} dup/s=${this.rate('reject:duplicate-seq', now)}`,
       `soft speed/s=${this.rate('soft:speed', now)} onGround/s=${this.rate('soft:onGround', now)} flying/s=${this.rate('soft:flying', now)} lastSoft=${this.lastSoftReject}`,
       `net send/s=${this.rate('send:input', now)} recv/s=${this.rate('recv:player_state', now) + this.rate('recv:entity_snapshot', now) + this.rate('recv:block_update', now) + this.rate('recv:block_batch', now) + this.rate('recv:chunk_data', now) + this.rate('recv:health', now) + this.rate('recv:inventory', now)} statePkt/s=${this.rate('recv:player_state', now)}`,
-      `snap recv/s=${this.rate('snap:recv', now)} dropStale/s=${this.rate('snap:drop-stale', now)} dropNoLocal/s=${this.rate('snap:drop-no-local', now)} gap/s=${this.rate('seq-gap', now)}`,
+      `snap recv/s=${this.rate('snap:recv', now)} dropStale/s=${this.rate('snap:drop-stale', now)} dropNoLocal/s=${this.rate('snap:drop-no-local', now)} gap/s=${this.rate('seq-gap', now)} catchUp/s=${this.rate('phys:catch-up', now)}`,
+      `srv phys/s=${this.serverPhysicsTps.toFixed(1)} snapGen/s=${this.serverSnapGen.toFixed(1)} snapSent/s=${this.serverSnapSent.toFixed(1)} dropped=${this.serverDroppedTicks} lastPhysΔ=${this.lastPhysicsTicks}`,
       `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut} netPos/s=${localNetTrace.sourceRate('write:position', now)} netVel/s=${localNetTrace.sourceRate('write:velocity', now)} netPrev/s=${localNetTrace.sourceRate('write:previousPosition', now)}`,
       `${localNetTrace.mutationSourceHud(now)} vol/s=${localNetTrace.sourceRate('world:volume', now)}`,
       `pos ${this.position.x.toFixed(3)} ${this.position.y.toFixed(3)} ${this.position.z.toFixed(3)} prev ${this.previous.x.toFixed(3)} ${this.previous.y.toFixed(3)} ${this.previous.z.toFixed(3)}`,

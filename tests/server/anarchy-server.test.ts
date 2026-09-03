@@ -560,8 +560,13 @@ describe('WorldInstance foundation simulation', () => {
     expect(after).toBeLessThan(0.55);
     const states = sink.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state');
     expect(states.length - beforeStates).toBe(1);
-    const last = states[states.length - 1] as { tick: number; players: Array<{ inputSeq: number }> };
+    const last = states[states.length - 1] as {
+      tick: number;
+      physicsTicks?: number;
+      players: Array<{ inputSeq: number }>;
+    };
     expect(last.players[0]?.inputSeq).toBe(1);
+    expect(last.physicsTicks).toBe(2);
   });
 
   it('predsim reports identical lockstep controllers and a coalesce gap', async () => {

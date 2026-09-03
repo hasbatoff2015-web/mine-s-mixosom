@@ -1,5 +1,15 @@
 # Архитектура
 
+## Server 20 TPS clock vs catch-up snapshots — 2026-09-03
+
+Owner F3: `pred/s=20` `state/s=17` `corr/s=3` `netPos/s=3` `soft *=0`. Remaining jitter is **positional correction**, not speed/flying flags.
+
+`setTimeout(tickMs - work)` accumulated Node slack (~4–10 ms), so the **outer** loop ran ~17 Hz. `gameplayTicksDue` still produced ~20 physics ticks via catch-up, then **one** `player_state` with `inputSeq = lastInputSeq`. Client `history[N]` is the pose after **one** predicted tick of N. A 2-tick catch-up pose is ~one walk step ahead → `corr/s≈3`.
+
+Fix: schedule the next outer loop on an **absolute 50 ms slot** (`scheduleNextTickSlot`) so lateness shortens the next wait. Snapshots carry `physicsTicks` (not a fake seq). Reconcile compares `history[N]` plus `max(0, physicsTicks - seqGap)` extra ticks of that same latest input. Real xz/y mismatches still correct. No lerp, no larger tolerance.
+
+F3: `srv phys/s snapGen/s snapSent/s lastPhysΔ`. Every correction logs `[corrDiag]` with `firstDiff`.
+
 ## Online incoming `player_state` side effects — 2026-09-03
 
 Owner A/B: Normal Online jitters; `?predNoState=1` (send+predict, skip applying local `player_state`) is completely smooth. Local prediction, PlayerController, fixed-step render, and outbound input are OK. The remaining bug was **incoming local `player_state`**.

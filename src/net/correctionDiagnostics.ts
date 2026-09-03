@@ -88,6 +88,8 @@ export interface CorrectionDiag {
   readonly latestClientSeq: number;
   readonly world: CorrectionWorldHint;
   readonly hypotheses: readonly string[];
+  readonly physicsTicks?: number;
+  readonly firstDiff?: string;
 }
 
 const WALK_STEP = WALK_SPEED * FIXED_DT;
@@ -100,7 +102,12 @@ function classify(diag: Omit<CorrectionDiag, 'hypotheses'>): string[] {
   const out: string[] = [];
   if (diag.seqGap > 1) out.push('B skipped/intermediate inputs (seq gap)');
   if (diag.tickGap > 1) out.push('A missed player_state / timing (tick gap)');
-  if (diag.seqGap <= 1 && diag.tickGap <= 1) out.push('check 1:1 tick still mismatched');
+  if (diag.seqGap <= 1 && diag.tickGap <= 1 && (diag.physicsTicks ?? 1) <= 1) {
+    out.push('check 1:1 tick still mismatched');
+  }
+  if ((diag.physicsTicks ?? 1) > 1) {
+    out.push('A catch-up snapshot (physicsTicks>1) vs 1-tick history[N]');
+  }
   if (Math.abs(diag.error.xz - WALK_STEP) < 0.08 || Math.abs(diag.error.xz - WALK_STEP * 2) < 0.08) {
     out.push('B extra predicted walk step vs latest-input server tick');
   }
@@ -129,6 +136,8 @@ export function buildCorrectionDiag(input: {
   readonly reject: AckRejectReason;
   readonly serverTick?: number;
   readonly lastStateTick: number;
+  readonly physicsTicks?: number;
+  readonly firstDiff?: string;
   readonly world: CorrectionWorldHint;
 }): CorrectionDiag {
   const lastAckedSeq = input.buffer.lastAckedSeq;
@@ -173,6 +182,8 @@ export function buildCorrectionDiag(input: {
     pending: input.buffer.entries.length,
     latestClientSeq,
     world: input.world,
+    physicsTicks: input.physicsTicks,
+    firstDiff: input.firstDiff,
   };
   return { ...base, hypotheses: classify(base) };
 }
@@ -188,7 +199,8 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
   const dvz = predicted ? diag.snapshot.vz - predicted.vz : Number.NaN;
   const lines = [
     `[corrDiag] seq=${diag.inputSeq} lastAck=${diag.lastAckedSeq} gap=${diag.seqGap} `
-    + `tick=${diag.serverTick ?? '—'} tickGap=${diag.tickGap} reject=${diag.reject} `
+    + `tick=${diag.serverTick ?? '—'} tickGap=${diag.tickGap} physicsTicks=${diag.physicsTicks ?? 1} `
+    + `firstDiff=${diag.firstDiff ?? '—'} reject=${diag.reject} `
     + `xz=${diag.error.xz.toFixed(4)} y=${diag.error.y.toFixed(4)} speed=${diag.error.speed.toFixed(4)} `
     + `walkStep=${WALK_STEP.toFixed(4)}`,
     `  hist ${predicted
@@ -208,7 +220,8 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
       diag.liveBefore.y - diag.liveBefore.py,
       diag.liveBefore.z - diag.liveBefore.pz,
     ).toFixed(4)}`,
-    `  pending=${diag.pending} latestClientSeq=${diag.latestClientSeq} latestServerSeq=${diag.inputSeq}`,
+    `  pending=${diag.pending} latestClientSeq=${diag.latestClientSeq} latestServerSeq=${diag.inputSeq} `
+    + `firstDiff=${diag.firstDiff ?? '—'} physicsTicks=${diag.physicsTicks ?? 1}`,
     `  input ${input
       ? `f=${input.forward} r=${input.right} jump=${input.jump} sneak=${input.sneak} sprint=${input.sprint} `
         + `desc=${input.descend} flySprint=${input.flySprint} yaw=${input.yaw.toFixed(3)} pitch=${input.pitch.toFixed(3)}`

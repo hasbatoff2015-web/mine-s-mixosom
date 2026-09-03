@@ -9,10 +9,12 @@ import {
 import type { MoveInput } from '../src/input/MoveInput';
 import {
   applyPredictedTick,
+  ackPredictedMoves,
   createPredictionBuffer,
   inspectPredictedPlayer,
   isSmallPredictionError,
   predictedMoveFromInput,
+  predictedStateAfterExtraTicks,
   predictLocalMove,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
@@ -516,5 +518,34 @@ describe('local player prediction', () => {
     expect(diffMotionFull(before, captureMotionFull(player))).toEqual([]);
     expect(buffer.lastAckedSeq).toBe(lastAcked);
     expect(buffer.entries.map((entry) => entry.seq)).toEqual(seqs);
+  });
+
+  it('treats a 2-tick catch-up snapshot as comparable to history[N] plus one extra tick of N', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictSeries(player, world, buffer, 1, 6, { forward: 1 });
+    ackPredictedMoves(buffer, 2);
+    const entry = buffer.entries.find((item) => item.seq === 3)!;
+    const coalesced = predictedStateAfterExtraTicks(world, entry, 1);
+    const before = poseOf(player);
+    const twoTickSnap = snapshotFromState(player, 3, buffer, {
+      x: coalesced.x,
+      y: coalesced.y,
+      z: coalesced.z,
+      vx: coalesced.vx,
+      vy: coalesced.vy,
+      vz: coalesced.vz,
+      onGround: coalesced.onGround,
+      flying: coalesced.isFlying,
+    });
+    const asOneTick = inspectPredictedPlayer(buffer, twoTickSnap, player, { world, physicsTicks: 1 });
+    expect(asOneTick.kind).toBe('corrected');
+    expect(asOneTick.rejectReason).toBe('xz');
+    expect(['x', 'z']).toContain(asOneTick.firstDiff);
+    const asCatchUp = inspectPredictedPlayer(buffer, twoTickSnap, player, { world, physicsTicks: 2 });
+    expect(asCatchUp.kind).toBe('accepted');
+    const result = reconcilePredictedPlayer(player, world, buffer, twoTickSnap, FIXED_DT, { physicsTicks: 2 });
+    expect(result.kind).toBe('accepted');
+    expect(result.acceptMutated).toBe(false);
+    expectPoseUnchanged(player, before);
   });
 });

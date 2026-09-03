@@ -945,6 +945,7 @@ export class Game {
     motionProbe.noteSnapshotInbound();
     motionProbe.inboundTick = message.tick;
     motionProbe.lastStateTick = online.lastStateTick;
+    motionProbe.noteTickClock(message);
     if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) {
       motionProbe.noteSnapshotDrop('stale');
       return;
@@ -992,7 +993,10 @@ export class Game {
     const online = session.online;
     if (!online) return;
     const before = captureMotionFull(session.player);
-    const inspect = inspectPredictedPlayer(online.prediction, local, session.player);
+    const inspect = inspectPredictedPlayer(online.prediction, local, session.player, {
+      world: session.world,
+      physicsTicks: message.physicsTicks ?? 1,
+    });
     const after = captureMotionFull(session.player);
     const changed = diffMotionFull(before, after);
     if (isDevRuntime() && typeof console !== 'undefined') {
@@ -1073,7 +1077,10 @@ export class Game {
     let result: ReconcileResult;
     if (flags.skipReconcile) {
       motionProbe.note('skip:reconcile');
-      const inspect = inspectPredictedPlayer(online.prediction, local, player);
+      const inspect = inspectPredictedPlayer(online.prediction, local, player, {
+        world: session.world,
+        physicsTicks: message.physicsTicks ?? 1,
+      });
       result = {
         kind: 'ignored',
         snapped: false,
@@ -1084,7 +1091,9 @@ export class Game {
         softReject: inspect.softReject,
       };
     } else {
-      result = reconcilePredictedPlayer(player, session.world, online.prediction, local);
+      result = reconcilePredictedPlayer(player, session.world, online.prediction, local, undefined, {
+        physicsTicks: message.physicsTicks ?? 1,
+      });
     }
     const afterReconcile = captureMotionFull(player);
     const reconcileChanged = diffMotionFull(before, afterReconcile);
