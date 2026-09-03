@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Prediction checkpoint
+
+Report: `reports/2026-09-03_prediction-checkpoint.md`. PR #37.
+
+```text
+npx vitest run tests/prediction-timeline.test.ts tests/local-player-prediction.test.ts tests/correction-diag-dump.test.ts tests/server/client-server-lockstep.test.ts tests/server-tick-clock.test.ts tests/hidden-tab-motion.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts
+```
+
+Contracts: owner dump `seqGap=2 physicsTicks=1` → history would correct (~walkStep), checkpoint accepts; 1:1 and phase batches checkpoint corr=0; flight+SHIFT 2-vs-1 checkpoint corr=0; Anarchy lockstep 1:1 accepts on `checkpoint`; coalesce 2-vs-1 accepts; catch-up uses `simTicks` from `physicsTicks` or `serverTick` delta. No lerp / tolerance / FIFO / seqGap special cases. Manual QA: one tab, Normal Online ≈ `predNoState`, `corr/s=0` for walk/sprint/strafe/jump/flight/flight+SHIFT/stationary flight.
+
 ## 2026-09-03 One-correction diagnostic
 
 Report: `reports/2026-09-03_one-correction-diag.md`. PR #37.

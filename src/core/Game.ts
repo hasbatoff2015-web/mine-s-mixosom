@@ -200,6 +200,7 @@ import {
   predictLocalMove,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
+  seedPredictionCheckpoint,
   type PredictionBuffer,
   type ReconcileResult,
 } from '../net/localPlayerPrediction';
@@ -747,6 +748,7 @@ export class Game {
     this.input.pitch = welcome.you.pitch;
     this.syncLocalRenderFromPlayer();
     resetPredictionBuffer(session.online.prediction);
+    seedPredictionCheckpoint(session.online.prediction, session.player.captureMovementState(), -1);
     session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
     motionProbe.reset();
     resetFirstCorrectionDump();
@@ -1091,6 +1093,7 @@ export class Game {
     const inspect = inspectPredictedPlayer(online.prediction, local, session.player, {
       world: session.world,
       physicsTicks: message.physicsTicks ?? 1,
+      serverTick: message.tick,
     });
     const after = captureMotionFull(session.player);
     const changed = diffMotionFull(before, after);
@@ -1127,9 +1130,10 @@ export class Game {
   }
 
   /**
-   * Local `player_state` apply. A matching localhost snapshot (history[seq]
-   * equals the authoritative pose) must not write movement, look, render, or
-   * camera. Health/hunger restore only when the value actually changes.
+   * Local `player_state` apply. A matching localhost snapshot (checkpoint +
+   * simTicks of the latest input state equals the authoritative pose) must not
+   * write movement, look, render, or camera. Health/hunger restore only when
+   * the value actually changes.
    */
   private applyLocalPlayerSnapshot(
     session: GameSession,
@@ -1196,6 +1200,7 @@ export class Game {
         buffer: online.prediction,
         snapshot: local,
         inputSeq: online.inputSeq,
+        serverTick: message.tick,
       });
       online.inputSeq = synced.nextInputSeq;
       player.previousPosition.copy(player.position);
@@ -1236,6 +1241,7 @@ export class Game {
       const inspect = inspectPredictedPlayer(online.prediction, local, player, {
         world: session.world,
         physicsTicks: message.physicsTicks ?? 1,
+        serverTick: message.tick,
       });
       result = {
         kind: 'ignored',
@@ -1249,6 +1255,7 @@ export class Game {
     } else {
       result = reconcilePredictedPlayer(player, session.world, online.prediction, local, undefined, {
         physicsTicks: message.physicsTicks ?? 1,
+        serverTick: message.tick,
       });
     }
     const afterReconcile = captureMotionFull(player);

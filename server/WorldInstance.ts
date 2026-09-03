@@ -749,8 +749,9 @@ export class WorldInstance {
   /**
    * Run N physics ticks but broadcast **one** player_state at the end.
    * Catch-up must not send intermediate poses. The snapshot carries
-   * `physicsTicks = N` so the client compares history[seq] after N-1 extra
-   * ticks of that same latest input — not the 1-tick history entry.
+   * `tick` (authoritative simulation checkpoint) and `physicsTicks = N`
+   * (latest-input ticks in this outer update). `inputSeq` is the latest
+   * movement STATE used, not the checkpoint.
    */
   tickCatchUp(count: number): void {
     const n = Math.max(0, Math.floor(count));

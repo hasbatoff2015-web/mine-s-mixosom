@@ -1,5 +1,31 @@
 # Архитектура
 
+## Prediction checkpoint (Model B) — 2026-09-03
+
+Owner dump `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x` proved `inputSeq` is not a physics tick. The client predicted seq 544 and 545; the server simulated **one** latest-input tick of 545. `history[545]` is one walk step ahead of the authoritative pose.
+
+Three clocks:
+
+| Name | Meaning |
+|---|---|
+| `inputSeq` | Packet/order id. Latest movement **state** (`lastInputSeq`). Intermediate seqs are not simulated. |
+| `clientPredTick` | Local prediction physics step (every client 20 TPS tick). |
+| `serverTick` / `tickNumber` | Authoritative simulation checkpoint on `player_state`. |
+
+`player_state` fields are separate: `tick = serverTick`, `physicsTicks = N` for this outer update, `inputSeq = latest state actually used`.
+
+Reconcile (Model B): comparable pose = **last accepted movement state** + `simTicks` of the snapshot's latest input. `simTicks = serverTick - lastAckedServerTick` when the tick is known, else packet `physicsTicks`. Accept is a live-pose no-op; mismatch restores the snapshot and replays remaining pred ticks. Duplicate detection uses `serverTick` when known, else `inputSeq` (preserves `predNoSend` / hidden-tab tests that omit tick).
+
+Evaluated models:
+
+- **A** — drive client ticks only when the server ticks. Rejected: the client cannot see the server slot; local look/move would wait.
+- **B** — predict every local tick; snapshot carries enough tick/time to identify the equivalent simulation point. **Chosen.** Smallest change that matches latest-input server semantics without FIFO.
+- **C** — FIFO one server tick per client seq. Rejected by design (reverts Anarchy movement).
+
+Do not compare `history[inputSeq]` and do not invent seqGap heuristics (`gap > physicsTicks`, subtract one tick, larger tolerance, smoothing).
+
+Timeline harness: `src/net/predictionTimeline.ts`. Owner gap=2 → history would correct (~walkStep), checkpoint dist=0.
+
 ## One-correction diagnostic — 2026-09-03
 
 Owner 20/20 localhost still positional-corrects (`corr/s` 5–11). This pass does **not** change prediction, tolerances, interpolation, TPS, or PlayerController.
@@ -92,7 +118,7 @@ One-shot / hold edges:
 - `input.use` / `input.mining` — latest hold; `pendingUseRelease` so a coalesced bow release is not lost
 - `pendingJump` so a jump pulse is not overwritten by a later packet in the same window
 
-Client prediction still ticks every local seq. Reconciliation compares `history[N]` to the snapshot for that latest seq; replay is only seq > N.
+Client prediction still ticks every local seq. Reconciliation compares the snapshot to **last accepted pose + simTicks of the latest input state**, not to `history[N]`. Replay is remaining pred ticks after consuming `simTicks` oldest entries.
 
 DEV: `FC_DEBUG_BOW=1` (server), `?bowDiag=1` (client).
 
@@ -115,7 +141,7 @@ Game.frame
 
 Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq` (unless DEV `predNoSend` / `predNoNet`), `predictLocalMove` = `PlayerController.tick` + `history[seq]`. The render buffer is the same object as singleplayer.
 
-Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to `history[N]`. Match → no pose write. Mismatch → restore + replay seq > N. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
+Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to last-accepted pose + `simTicks` of that latest input (`serverTick` is the checkpoint). Match → no pose write. Mismatch → restore + replay remaining pred ticks. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
 
 DEV: F3 `motionProbe` (local player). `?motionDiag=1` dumps a 2 s SP/Online trace.
 
@@ -126,14 +152,14 @@ Local Anarchy motion is **predicted** on the existing `PlayerController`, not ch
 ```text
 tickOnline (20 TPS)
   send input.seq
-  predictLocalMove  → PlayerController.tick + history[seq] = state AFTER tick
-player_state (inputSeq = N)
-  if N already acked or missing → ignore movement
-  compare snapshot to history[N].state     ← never vs live pose
-  if within tolerance → ack ≤ N, do not touch the player
-  else restore snapshot pose + replay only seq > N (and rewrite those history states)
+  predictLocalMove  → PlayerController.tick + history[predTick, seq] = state AFTER tick
+player_state (tick = X, physicsTicks = N, inputSeq = latest state)
+  if serverTick already acked or missing seq → ignore movement
+  comparable = lastAckedState + simTicks of that latest input
+  if within tolerance → commit checkpoint, do not touch the live player
+  else restore snapshot pose + replay remaining pred ticks
 render
-  lerp previousPosition → position (same as SP; snapshots do not drive this)
+  lerp LocalPlayerRenderState previous → current (same as SP; snapshots do not drive this)
   look: applyImmediateRenderLook every frame
 ```
 

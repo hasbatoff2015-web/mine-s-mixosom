@@ -20,6 +20,7 @@ import type { PlayerSnapshot } from '../../shared/protocol';
 import {
   resetPredictionBuffer,
   restoreAuthoritativePlayer,
+  seedPredictionCheckpoint,
   type PredictionBuffer,
   type ReconcileResult,
 } from './localPlayerPrediction';
@@ -168,11 +169,17 @@ export function resyncLocalPlayerAfterHiddenTab(args: {
   buffer: PredictionBuffer;
   snapshot: PlayerSnapshot;
   inputSeq: number;
+  serverTick?: number;
 }): { lastAckedSeq: number; nextInputSeq: number } {
   restoreAuthoritativePlayer(args.player, args.snapshot, undefined);
   resetPredictionBuffer(args.buffer);
   const ackSeq = Number.isFinite(args.snapshot.inputSeq) ? args.snapshot.inputSeq! : -1;
   args.buffer.lastAckedSeq = ackSeq;
+  seedPredictionCheckpoint(
+    args.buffer,
+    args.player.captureMovementState(),
+    args.serverTick ?? -1,
+  );
   return {
     lastAckedSeq: ackSeq,
     nextInputSeq: Math.max(args.inputSeq, ackSeq),

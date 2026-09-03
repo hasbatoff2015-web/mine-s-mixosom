@@ -14,11 +14,12 @@ import {
   sampleCollisionHint,
 } from '../../src/net/correctionDiagnostics';
 import {
-  ackPredictedMoves,
   createPredictionBuffer,
   inspectPredictedPlayer,
   predictLocalMove,
   predictedMoveFromInput,
+  reconcilePredictedPlayer,
+  seedPredictionCheckpoint,
   type PredictionBuffer,
 } from '../../src/net/localPlayerPrediction';
 import { PlayerController } from '../../src/player/PlayerController';
@@ -141,6 +142,7 @@ function runLockstep(
   const clientWorld = mode.copyWorld ? copyCollisionWorld(world.world) : world.world;
   const client = cloneController(server);
   const buffer: PredictionBuffer = createPredictionBuffer();
+  seedPredictionCheckpoint(buffer, client.captureMovementState(), world.tickNumber);
   const poses: LockstepTickPose[] = [];
   const sampleAt = new Set([1, 2, 3, 10, 20].filter((tick) => tick <= mode.ticks));
   let seq = Math.max(0, player.lastInputSeq) + 1;
@@ -168,9 +170,13 @@ function runLockstep(
     const inspect = inspectPredictedPlayer(buffer, snapshot, client, {
       world: clientWorld,
       physicsTicks: Math.max(1, world.lastPhysicsTicksThisLoop),
+      serverTick: world.tickNumber,
     });
-    if (inspect.kind === 'accepted' && inspect.ackSeq !== undefined) {
-      ackPredictedMoves(buffer, inspect.ackSeq);
+    if (inspect.kind === 'accepted') {
+      reconcilePredictedPlayer(client, clientWorld, buffer, snapshot, undefined, {
+        physicsTicks: Math.max(1, world.lastPhysicsTicksThisLoop),
+        serverTick: world.tickNumber,
+      });
     }
     const wantDump = inspect.kind === 'corrected' || inspect.kind === 'snapped' || sampleAt.has(tick);
     let dump: string | undefined;
@@ -299,8 +305,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     const last = poses[poses.length - 1]!;
     expect(last.inspectKind).toBe('accepted');
     expect(last.physicsTicks).toBe(1);
-    expect(last.extraTicks).toBe(0);
-    expect(last.comparePath).toBe('history[N]');
+    expect(last.comparePath).toBe('checkpoint');
     expect(Math.hypot(last.client.x - last.server.x, last.client.y - last.server.y, last.client.z - last.server.z))
       .toBeLessThan(1e-6);
   });
@@ -350,13 +355,14 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     expect(dumps.length === 0 || dumps[0]!.includes('[corrDiag]')).toBe(true);
   });
 
-  it('dumps a real [corrDiag] when two client seqs are compared to one server tick', async () => {
+  it('accepts two client seqs vs one latest-input server tick (owner dump pattern)', async () => {
     resetFirstCorrectionDump();
     const world = await boot();
     const player = join(world);
     for (let settle = 0; settle < 8; settle += 1) world.tick();
     const client = cloneController(player.controller);
     const buffer = createPredictionBuffer();
+    seedPredictionCheckpoint(buffer, client.captureMovementState(), world.tickNumber);
     expect(world.applyInput(player, moveInput(1, { forward: 1 }))).toBe(true);
     predictLocalMove(client, world.world, buffer, predictedMoveFromInput(
       1,
@@ -365,9 +371,17 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
       true,
     ));
     world.tick();
-    const first = inspectPredictedPlayer(buffer, player.snapshot(), client, { world: world.world, physicsTicks: 1 });
+    const first = inspectPredictedPlayer(buffer, player.snapshot(), client, {
+      world: world.world,
+      physicsTicks: 1,
+      serverTick: world.tickNumber,
+    });
     expect(first.kind).toBe('accepted');
-    if (first.ackSeq !== undefined) ackPredictedMoves(buffer, first.ackSeq);
+    expect(first.comparePath).toBe('checkpoint');
+    reconcilePredictedPlayer(client, world.world, buffer, player.snapshot(), undefined, {
+      physicsTicks: 1,
+      serverTick: world.tickNumber,
+    });
 
     predictLocalMove(client, world.world, buffer, predictedMoveFromInput(
       2,
@@ -388,61 +402,27 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     const inspect = inspectPredictedPlayer(buffer, snapshot, client, {
       world: world.world,
       physicsTicks: 1,
+      serverTick: world.tickNumber,
     });
-    expect(inspect.kind).toBe('corrected');
+    expect(inspect.kind).toBe('accepted');
     expect(inspect.physicsTicks).toBe(1);
     expect(inspect.seqGap).toBe(2);
-    expect(inspect.extraTicks).toBe(0);
-    expect(inspect.comparePath).toBe('history[N]');
-    const dump = formatCorrectionDiag(buildCorrectionDiag({
-      snapshot,
-      buffer,
-      predicted: inspect.predicted,
-      predictedInput: buffer.entries.find((entry) => entry.seq === snapshot.inputSeq)?.input,
-      player: client,
-      error: inspect.error,
-      reject: inspect.rejectReason,
-      serverTick: world.tickNumber,
-      lastStateTick: world.tickNumber - 1,
-      physicsTicks: inspect.physicsTicks,
-      physicsTicksThisLoop: world.lastPhysicsTicksThisLoop,
-      firstDiff: inspect.firstDiff,
-      rawFirstDiff: inspect.rawFirstDiff,
-      extraTicks: inspect.extraTicks,
-      comparePath: inspect.comparePath,
-      seqGap: inspect.seqGap,
-      history: inspect.predicted,
-      comparable: inspect.comparable,
-      world: {
-        ...sampleCollisionHint(
-          (x, y, z) => ({ name: getBlockDefinition(world.world.getBlock(x, y, z, false)).name }),
-          inspect.predicted ?? client.captureMovementState(),
-          { chunkLoaded: true, mutationMarks: world.world.mutationMarks },
-        ),
-        msSinceBlockMutation: -1,
-        msSinceChunkUpdate: -1,
-        ticksThisFrame: 1,
-        onGroundBefore: client.onGround,
-        onGroundAfterPredicted: inspect.predicted?.onGround ?? true,
-        jump: false,
-        flyingToggle: false,
-        descend: false,
-        visibility: 'visible',
-      },
-    }));
-    console.info('\n[corrDiag:coalesce-example] client 2 seqs vs server 1 latest-input tick\n' + dump);
-    expect(dump).toContain('[corrDiag]');
-    expect(dump).toContain('compare exactly history[N]');
-    expect(dump).toMatch(/firstDiff=[xz]/);
-    expect(inspect.error.xz).toBeGreaterThan(0.12);
+    expect(inspect.simTicks).toBe(1);
+    expect(inspect.comparePath).toBe('checkpoint');
+    expect(inspect.predicted).toBeDefined();
+    expect(Math.hypot(
+      inspect.predicted!.x - snapshot.x,
+      inspect.predicted!.z - snapshot.z,
+    )).toBeGreaterThan(0.12);
   });
 
-  it('physicsTicks=2 catch-up on Anarchy is comparable only after extra ticks', async () => {
+  it('physicsTicks=2 catch-up on Anarchy is comparable via checkpoint simTicks', async () => {
     const world = await boot();
     const player = join(world);
     for (let settle = 0; settle < 8; settle += 1) world.tick();
     const client = cloneController(player.controller);
     const buffer = createPredictionBuffer();
+    seedPredictionCheckpoint(buffer, client.captureMovementState(), world.tickNumber);
     const idle = predictedMoveFromInput(
       1,
       { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
@@ -456,9 +436,13 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     const idleInspect = inspectPredictedPlayer(buffer, idleSnap, client, {
       world: world.world,
       physicsTicks: 1,
+      serverTick: world.tickNumber,
     });
     expect(idleInspect.kind).toBe('accepted');
-    if (idleInspect.ackSeq !== undefined) ackPredictedMoves(buffer, idleInspect.ackSeq);
+    reconcilePredictedPlayer(client, world.world, buffer, idleSnap, undefined, {
+      physicsTicks: 1,
+      serverTick: world.tickNumber,
+    });
 
     const predicted = predictedMoveFromInput(
       2,
@@ -473,12 +457,19 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     expect(world.lastPhysicsTicksThisLoop).toBe(2);
     const asOne = inspectPredictedPlayer(buffer, snapshot, client, { world: world.world, physicsTicks: 1 });
     const asTwo = inspectPredictedPlayer(buffer, snapshot, client, { world: world.world, physicsTicks: 2 });
+    const asTick = inspectPredictedPlayer(buffer, snapshot, client, {
+      world: world.world,
+      physicsTicks: 1,
+      serverTick: world.tickNumber,
+    });
     expect(asOne.seqGap).toBe(1);
-    expect(asOne.comparePath).toBe('history[N]');
-    expect(asOne.extraTicks).toBe(0);
-    expect(asTwo.comparePath).toBe('history[N]+extra');
-    expect(asTwo.extraTicks).toBe(1);
+    expect(asOne.comparePath).toBe('checkpoint');
+    expect(asOne.simTicks).toBe(1);
+    expect(asTwo.comparePath).toBe('checkpoint');
+    expect(asTwo.simTicks).toBe(2);
+    expect(asTick.simTicks).toBe(2);
     expect(asOne.kind).toBe('corrected');
     expect(asTwo.kind).toBe('accepted');
+    expect(asTick.kind).toBe('accepted');
   });
 });

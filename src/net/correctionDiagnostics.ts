@@ -3,7 +3,7 @@ import type { PlayerController, PlayerMovementState } from '../player/PlayerCont
 import type { PlayerSnapshot } from '../../shared/protocol';
 import type { AckRejectReason } from './localMotionDiagnostics';
 
-type SnapshotComparePath = 'history[N]' | 'history[N]+extra' | 'live' | 'none';
+type SnapshotComparePath = 'checkpoint' | 'history[N]' | 'history[N]+extra' | 'live' | 'none';
 
 interface PredictedMoveLike {
   readonly seq: number;
@@ -101,6 +101,7 @@ export interface CorrectionDiag {
   readonly comparable?: PlayerMovementState;
   readonly extraTicks: number;
   readonly comparePath: SnapshotComparePath | 'none';
+  readonly simTicks?: number;
   readonly pendingSeqs: readonly number[];
   readonly snapshot: {
     readonly x: number; readonly y: number; readonly z: number;
@@ -230,6 +231,7 @@ export function buildCorrectionDiag(input: {
   readonly rawFirstDiff?: string;
   readonly extraTicks?: number;
   readonly comparePath?: SnapshotComparePath | 'none';
+  readonly simTicks?: number;
   readonly seqGap?: number;
   readonly history?: PlayerMovementState;
   readonly comparable?: PlayerMovementState;
@@ -261,6 +263,7 @@ export function buildCorrectionDiag(input: {
     comparable: input.comparable ?? input.predicted,
     extraTicks,
     comparePath: input.comparePath ?? (extraTicks > 0 ? 'history[N]+extra' as const : 'history[N]' as const),
+    simTicks: input.simTicks ?? extraTicks,
     pendingSeqs: input.buffer.entries.map((entry) => entry.seq),
     snapshot: {
       x: input.snapshot.x, y: input.snapshot.y, z: input.snapshot.z,
@@ -331,10 +334,13 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
     `  snapshot.physicsTicks=${diag.physicsTicks ?? 1} tickClock.physicsTicksThisLoop=${diag.physicsTicksThisLoop ?? '—'} `
     + `serverTickNumber=${diag.serverTick ?? '—'} lastStateTick=${diag.lastStateTick}`,
     `  extra=max(0, physicsTicks - seqGap)=max(0, ${diag.physicsTicks ?? 1} - ${diag.seqGap})=${diag.extraTicks}`,
+    `  simTicks=${diag.simTicks ?? diag.extraTicks} (authoritative latest-input ticks from last accepted pose)`,
     `  comparePath=${diag.comparePath}  `
-    + (diag.extraTicks === 0
-      ? 'compare exactly history[N]'
-      : `compare history[N] plus ${diag.extraTicks} extra tick(s) of the SAME latest input`),
+    + (diag.comparePath === 'checkpoint'
+      ? `checkpoint: lastAcked pose + ${diag.simTicks ?? diag.extraTicks} latest-input tick(s); inputSeq is state, not the checkpoint`
+      : diag.extraTicks === 0
+        ? 'compare exactly history[N]'
+        : `compare history[N] plus ${diag.extraTicks} extra tick(s) of the SAME latest input`),
     `INPUT:`,
     `  ${input
       ? `forward=${input.forward} right=${input.right} jump=${input.jump} sneak=${input.sneak} `
@@ -343,7 +349,7 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
       : 'MISSING (no history for this inputSeq)'}`,
     `CLIENT POSE:`,
     poseLine('history[N]', history),
-    diag.extraTicks > 0 ? poseLine('comparable', comparable) : '  comparable = history[N] (extra=0)',
+    poseLine('comparable', comparable),
     poseLine('live     ', diag.liveBefore, diag.liveBefore.isFlying),
     `  livePrev ${fmt3(diag.liveBefore.px)} ${fmt3(diag.liveBefore.py)} ${fmt3(diag.liveBefore.pz)}`,
     `SERVER POSE:`,

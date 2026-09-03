@@ -2,6 +2,17 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: prediction checkpoint (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner dump: `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x reject=xz`. Клиент предсказал seq 544 и 545; сервер сделал **один** physics tick latest-input 545. `history[545]` ≈ на один walk step впереди.
+- **`inputSeq` не checkpoint.** Snapshot: `serverTick` / `tickNumber`, `physicsTicks=N`, `inputSeq` = latest movement **state**. Client history keyed by `clientPredTick`. Compare = last accepted pose + `simTicks` of that latest input. Не FIFO. Не seqGap heuristic / lerp / tolerance.
+- Model B: клиент предсказывает каждый локальный 20 TPS tick; snapshot несёт authoritative tick. Model A отклонён (клиент не знает server slot). Model C (FIFO) запрещён.
+- Timeline harness (`src/net/predictionTimeline.ts`): owner gap=2 воспроизводится; history would correct, checkpoint dist=0. То же для phase batches и fly+SHIFT 2-vs-1. Stationary flight checkpoint dist=0 (тот же timeline, не отдельный physics bug).
+- Game: welcome/resync seed checkpoint; `reconcilePredictedPlayer(..., { physicsTicks, serverTick: message.tick })`.
+- Tests: timeline + prediction + lockstep coalesce now **accept**; pipeline 10 Hz coalesce **corr=0**.
+- Report: `docs/reports/2026-09-03_prediction-checkpoint.md`.
+
 ## Последний проход: one-correction diagnostic (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

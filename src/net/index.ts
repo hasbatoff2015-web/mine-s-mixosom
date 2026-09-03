@@ -20,8 +20,11 @@ export {
   inspectPredictedPlayer,
   predictLocalMove,
   predictedMoveFromInput,
+  predictedStateFromCheckpoint,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
+  seedPredictionCheckpoint,
+  simulationTicksFromServerTick,
   comparableExtraTicks,
   snapshotComparePath,
 } from './localPlayerPrediction';

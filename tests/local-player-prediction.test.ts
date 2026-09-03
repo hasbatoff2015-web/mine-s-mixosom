@@ -173,12 +173,12 @@ describe('local player prediction', () => {
     const { world, player, buffer } = groundedPlayer();
     predictSeries(player, world, buffer, 1, 4, { forward: 1 });
     const before = poseOf(player);
-    const result = reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 2, buffer));
+    const result = reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer, { inputSeq: 4 }));
     expect(result.kind).toBe('accepted');
     expect(result.replayed).toBe(0);
     expectPoseUnchanged(player, before);
-    expect(buffer.lastAckedSeq).toBe(2);
-    expect(buffer.entries.map((entry) => entry.seq)).toEqual([3, 4]);
+    expect(buffer.lastAckedSeq).toBe(4);
+    expect(buffer.entries.map((entry) => entry.seq)).toEqual([2, 3, 4]);
   });
 
   it('ignores tiny floating-point error at the acked seq without touching the live pose', () => {
@@ -240,11 +240,12 @@ describe('local player prediction', () => {
     server.tick(world, { yaw: 0, pitch: 0, movement: () => idle }, FIXED_DT);
     predictSeries(player, world, buffer, 1, 3, { forward: 1 });
     applyPredictedTick(server, world, move(3, { forward: 1 }));
+    const live = poseOf(player);
     const result = reconcilePredictedPlayer(player, world, buffer, snapshotFrom(server, { inputSeq: 3 }));
-    expect(result.kind).toBe('corrected');
+    expect(result.kind).toBe('accepted');
     expect(result.replayed).toBe(0);
-    expect(player.position.x).toBeCloseTo(server.position.x, 5);
-    expect(player.position.z).toBeCloseTo(server.position.z, 5);
+    expectPoseUnchanged(player, live);
+    expect(buffer.lastAckedSeq).toBe(3);
   });
 
   it('keeps walking prediction stable across an ack', () => {
@@ -252,7 +253,7 @@ describe('local player prediction', () => {
     predictSeries(player, world, buffer, 1, 8, { forward: 1 });
     const before = poseOf(player);
     expect(Math.hypot(before.x - 0.5, before.z - 0.5)).toBeGreaterThan(0.5);
-    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 4, buffer)).kind).toBe('accepted');
+    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer, { inputSeq: 8 })).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
 
@@ -261,7 +262,7 @@ describe('local player prediction', () => {
     predictSeries(player, world, buffer, 1, 8, { forward: 1, sprint: true });
     const before = poseOf(player);
     expect(player.sprinting).toBe(true);
-    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 3, buffer)).kind).toBe('accepted');
+    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer, { inputSeq: 8 })).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
 
@@ -338,7 +339,7 @@ describe('local player prediction', () => {
       }
     }
     const before = poseOf(player);
-    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 2, buffer)).kind).toBe('accepted');
+    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer)).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
 
@@ -350,7 +351,7 @@ describe('local player prediction', () => {
     const before = poseOf(player);
     expect(before.y).toBeLessThan(8);
     expect(player.onGround).toBe(false);
-    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 2, buffer)).kind).toBe('accepted');
+    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer)).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
 
@@ -364,7 +365,7 @@ describe('local player prediction', () => {
     predictSeries(player, world, buffer, 4, 8, { jump: true });
     const before = poseOf(player);
     expect(before.y).toBeGreaterThan(1.2);
-    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 5, buffer)).kind).toBe('accepted');
+    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer)).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
 
@@ -379,7 +380,7 @@ describe('local player prediction', () => {
     const before = poseOf(player);
     expect(player.isFlying).toBe(true);
     expect(before.y).toBeGreaterThan(1);
-    const result = reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 8, buffer));
+    const result = reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer));
     expect(result.kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
@@ -389,7 +390,7 @@ describe('local player prediction', () => {
     predictSeries(player, world, buffer, 1, 3, { forward: 1 }, 0);
     predictSeries(player, world, buffer, 4, 6, { forward: 1 }, Math.PI / 2);
     const before = poseOf(player);
-    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 2, buffer)).kind).toBe('accepted');
+    expect(reconcilePredictedPlayer(player, world, buffer, snapshotFromState(player, 1, buffer)).kind).toBe('accepted');
     expectPoseUnchanged(player, before);
   });
 
@@ -466,6 +467,8 @@ describe('local player prediction', () => {
     expect(player.isFlying).toBe(true);
     const before = poseOf(player);
     const full = captureMotionFull(player);
+    const prior = buffer.entries.find((entry) => entry.seq === 7)!.state;
+    buffer.lastAckedState = prior;
     const ack = snapshotFromState(player, 8, buffer, { vy: buffer.entries.find((e) => e.seq === 8)!.state.vy + 7.5 });
     const inspect = inspectPredictedPlayer(buffer, ack, player);
     expect(inspect.kind).toBe('accepted');
@@ -485,8 +488,8 @@ describe('local player prediction', () => {
     const { world, player, buffer } = groundedPlayer();
     predictSeries(player, world, buffer, 1, 4, { forward: 1 });
     const before = poseOf(player);
-    const ack = snapshotFromState(player, 2, buffer, { flying: true, onGround: false });
-    const inspect = inspectPredictedPlayer(buffer, ack, player);
+    const ack = snapshotFromState(player, 1, buffer, { flying: true, onGround: false, inputSeq: 4 });
+    const inspect = inspectPredictedPlayer(buffer, ack, player, { world });
     expect(inspect.kind).toBe('accepted');
     expect(inspect.softReject).toBe('onGround');
     const result = reconcilePredictedPlayer(player, world, buffer, ack);
@@ -523,7 +526,9 @@ describe('local player prediction', () => {
   it('treats a 2-tick catch-up snapshot as comparable to history[N] plus one extra tick of N', () => {
     const { world, player, buffer } = groundedPlayer();
     predictSeries(player, world, buffer, 1, 6, { forward: 1 });
+    const pose2 = buffer.entries.find((item) => item.seq === 2)!.state;
     ackPredictedMoves(buffer, 2);
+    buffer.lastAckedState = pose2;
     const entry = buffer.entries.find((item) => item.seq === 3)!;
     const coalesced = predictedStateAfterExtraTicks(world, entry, 1);
     const before = poseOf(player);
@@ -536,6 +541,7 @@ describe('local player prediction', () => {
       vz: coalesced.vz,
       onGround: coalesced.onGround,
       flying: coalesced.isFlying,
+      inputSeq: 3,
     });
     const asOneTick = inspectPredictedPlayer(buffer, twoTickSnap, player, { world, physicsTicks: 1 });
     expect(asOneTick.kind).toBe('corrected');
@@ -543,13 +549,40 @@ describe('local player prediction', () => {
     expect(['x', 'z']).toContain(asOneTick.firstDiff);
     const asCatchUp = inspectPredictedPlayer(buffer, twoTickSnap, player, { world, physicsTicks: 2 });
     expect(asCatchUp.kind).toBe('accepted');
-    expect(asCatchUp.extraTicks).toBe(1);
-    expect(asCatchUp.comparePath).toBe('history[N]+extra');
-    expect(asOneTick.extraTicks).toBe(0);
-    expect(asOneTick.comparePath).toBe('history[N]');
+    expect(asCatchUp.comparePath).toBe('checkpoint');
+    expect(asCatchUp.simTicks).toBe(2);
     const result = reconcilePredictedPlayer(player, world, buffer, twoTickSnap, FIXED_DT, { physicsTicks: 2 });
     expect(result.kind).toBe('accepted');
     expect(result.acceptMutated).toBe(false);
     expectPoseUnchanged(player, before);
+  });
+
+  it('accepts seqGap=2 physicsTicks=1 when the checkpoint is one latest-input tick (owner dump 545)', () => {
+    const { world, player, buffer } = groundedPlayer();
+    const server = new PlayerController({ position: [0.5, 1, 0.5] });
+    server.tick(world, { yaw: 0, pitch: 0, movement: () => idle }, FIXED_DT);
+    for (let seq = 1; seq <= 3; seq += 1) {
+      predictLocalMove(player, world, buffer, move(seq, { forward: 1 }));
+      applyPredictedTick(server, world, move(seq, { forward: 1 }));
+      expect(reconcilePredictedPlayer(player, world, buffer, snapshotFrom(server, { inputSeq: seq })).kind).toBe('accepted');
+    }
+
+    predictLocalMove(player, world, buffer, move(4, { forward: 1 }));
+    predictLocalMove(player, world, buffer, move(5, { forward: 1 }));
+    applyPredictedTick(server, world, move(5, { forward: 1 }));
+    const live = poseOf(player);
+    const snapshot = snapshotFrom(server, { inputSeq: 5 });
+    const inspect = inspectPredictedPlayer(buffer, snapshot, player, { world, physicsTicks: 1 });
+    expect(inspect.seqGap).toBe(2);
+    expect(inspect.physicsTicks).toBe(1);
+    expect(inspect.simTicks).toBe(1);
+    expect(inspect.comparePath).toBe('checkpoint');
+    expect(inspect.kind).toBe('accepted');
+    expect(inspect.predicted).toBeDefined();
+    expect(Math.hypot(inspect.predicted!.x - snapshot.x, inspect.predicted!.z - snapshot.z))
+      .toBeGreaterThan(0.12);
+    const result = reconcilePredictedPlayer(player, world, buffer, snapshot, FIXED_DT, { physicsTicks: 1 });
+    expect(result.kind).toBe('accepted');
+    expectPoseUnchanged(player, live);
   });
 });

@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-03: prediction checkpoint (PR #37)
+
+- [x] Timeline simulator: client seqs vs latest-input server ticks; reproduce `seq=545 gap=2 physicsTicks=1`.
+- [x] Model B: compare last-accepted pose + `simTicks` of snapshot latest input. `inputSeq` is state, not the checkpoint. `serverTick` is the checkpoint.
+- [x] Do not patch seqGap / tolerance / lerp / FIFO.
+- [x] Lockstep 1:1 still accepts; coalesce 2-vs-1 now accepts on checkpoint (history[N] still one walk step ahead).
+- [ ] Owner: one tab localhost walk/sprint/strafe/jump/flight/flight+SHIFT/stationary flight → `corr/s=0`, visually ≈ `predNoState`.
+- [ ] Do not merge main.
+
 ## 2026-09-03: one-correction diagnostic (PR #37)
 
 - [x] Full `[corrDiag:first]` dump: seq, timing, physicsTicks, input, history vs snapshot, world, firstDiff.

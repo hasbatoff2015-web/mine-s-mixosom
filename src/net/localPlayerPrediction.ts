@@ -53,6 +53,8 @@ export interface PredictedMove {
 
 export interface PredictionHistoryEntry {
   readonly seq: number;
+  /** Client physics tick that produced this pose. Not inputSeq. */
+  readonly predTick: number;
   readonly input: PredictedMove;
   state: PlayerMovementState;
 }
@@ -74,7 +76,14 @@ export interface PredictionDebug {
 
 export interface PredictionBuffer {
   entries: PredictionHistoryEntry[];
+  /** Latest movement-state packet the server has used. Not a physics tick id. */
   lastAckedSeq: number;
+  /** Authoritative server `tickNumber` of the last accepted snapshot. */
+  lastAckedServerTick: number;
+  lastAckedPredTick: number;
+  nextPredTick: number;
+  lastAckedState: PlayerMovementState | null;
+  lastAckedInput: PredictedMove | null;
   debug: PredictionDebug;
 }
 
@@ -108,16 +117,18 @@ export interface SnapshotInspect {
   readonly extraTicks: number;
   readonly comparePath: SnapshotComparePath;
   readonly seqGap: number;
+  readonly simTicks: number;
+  readonly serverTick?: number;
   readonly firstDiff?: string;
   readonly rawFirstDiff?: string;
 }
 
-export type SnapshotComparePath = 'history[N]' | 'history[N]+extra' | 'live' | 'none';
+export type SnapshotComparePath = 'checkpoint' | 'history[N]' | 'history[N]+extra' | 'live' | 'none';
 
 /**
- * Extra latest-input ticks to apply onto history[N] so a catch-up snapshot is
- * comparable. Identical to the live inspect formula: max(0, physicsTicks - seqGap)
- * with physicsTicks floored to at least 1.
+ * Extra latest-input ticks onto history[N] for the **fallback** compare path
+ * when no checkpoint origin exists. Live reconcile uses checkpoint + simTicks
+ * and does not consult this formula.
  *
  * physicsTicks=1, seqGap=1 → 0 (compare history[N] exactly)
  * physicsTicks=2, seqGap=1 → 1 (history[N] plus one more tick of the same input)
@@ -135,6 +146,7 @@ export function snapshotComparePath(extraTicks: number, hasHistory: boolean): Sn
 
 export interface ReconcileOptions {
   readonly physicsTicks?: number;
+  readonly serverTick?: number;
 }
 
 export type { AckRejectReason } from './localMotionDiagnostics';
@@ -157,13 +169,93 @@ export function createPredictionDebug(): PredictionDebug {
 }
 
 export function createPredictionBuffer(): PredictionBuffer {
-  return { entries: [], lastAckedSeq: -1, debug: createPredictionDebug() };
+  return {
+    entries: [],
+    lastAckedSeq: -1,
+    lastAckedServerTick: -1,
+    lastAckedPredTick: 0,
+    nextPredTick: 0,
+    lastAckedState: null,
+    lastAckedInput: null,
+    debug: createPredictionDebug(),
+  };
 }
 
 export function resetPredictionBuffer(buffer: PredictionBuffer): void {
   buffer.entries.length = 0;
   buffer.lastAckedSeq = -1;
+  buffer.lastAckedServerTick = -1;
+  buffer.lastAckedPredTick = 0;
+  buffer.nextPredTick = 0;
+  buffer.lastAckedState = null;
+  buffer.lastAckedInput = null;
   buffer.debug = createPredictionDebug();
+}
+
+export function cloneMovementState(state: PlayerMovementState): PlayerMovementState {
+  return { ...state };
+}
+
+export function seedPredictionCheckpoint(
+  buffer: PredictionBuffer,
+  state: PlayerMovementState,
+  serverTick = -1,
+  input?: PredictedMove,
+): void {
+  buffer.lastAckedState = cloneMovementState(state);
+  buffer.lastAckedServerTick = serverTick;
+  buffer.lastAckedPredTick = buffer.nextPredTick;
+  if (input) buffer.lastAckedInput = input;
+}
+
+/**
+ * How many latest-input physics ticks the snapshot advanced since the last
+ * accepted server tick. `inputSeq` is not used.
+ *
+ * Unknown/unseeded server tick → trust `physicsTicks` on the packet.
+ * Known tick → the delta is the checkpoint size (covers queued snapshots).
+ */
+export function simulationTicksFromServerTick(
+  lastAckedServerTick: number,
+  serverTick: number | undefined,
+  physicsTicks: number,
+): number {
+  const packetTicks = Math.max(1, Math.floor(physicsTicks));
+  if (serverTick === undefined || !Number.isFinite(serverTick) || lastAckedServerTick < 0) {
+    return packetTicks;
+  }
+  return Math.max(0, Math.floor(serverTick) - lastAckedServerTick);
+}
+
+export function predictedStateFromCheckpoint(
+  world: VoxelWorld,
+  origin: PlayerMovementState,
+  input: PredictedMove,
+  ticks: number,
+  options?: { readonly creativeFlightAllowed?: boolean; readonly dt?: number },
+): PlayerMovementState {
+  if (ticks <= 0) return cloneMovementState(origin);
+  const dt = options?.dt ?? FIXED_DT;
+  const scratch = new PlayerController({
+    position: [origin.x, origin.y, origin.z],
+    yaw: input.yaw,
+    pitch: input.pitch,
+  });
+  scratch.applyMovementState(origin);
+  scratch.yaw = input.yaw;
+  scratch.pitch = input.pitch;
+  if (options?.creativeFlightAllowed !== undefined) {
+    scratch.creativeFlightAllowed = options.creativeFlightAllowed;
+  }
+  for (let i = 0; i < ticks; i += 1) applyPredictedTick(scratch, world, input, dt);
+  return scratch.captureMovementState();
+}
+
+export function consumeOldestPredTicks(buffer: PredictionBuffer, count: number): void {
+  const n = Math.max(0, Math.min(Math.floor(count), buffer.entries.length));
+  if (n === 0) return;
+  buffer.lastAckedPredTick = buffer.entries[n - 1]!.predTick;
+  buffer.entries.splice(0, n);
 }
 
 export function predictedMoveFromInput(
@@ -218,8 +310,10 @@ function trimHistory(buffer: PredictionBuffer): void {
 }
 
 export function pushPredictedMove(buffer: PredictionBuffer, move: PredictedMove): void {
+  buffer.nextPredTick += 1;
   buffer.entries.push({
     seq: move.seq,
+    predTick: buffer.nextPredTick,
     input: move,
     state: {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
@@ -237,11 +331,12 @@ export function recordPredictedState(
   state: PlayerMovementState,
 ): void {
   const existing = findPredictedEntry(buffer, move.seq);
-  if (existing) {
+    if (existing) {
     existing.state = state;
     return;
   }
-  buffer.entries.push({ seq: move.seq, input: move, state });
+  buffer.nextPredTick += 1;
+  buffer.entries.push({ seq: move.seq, predTick: buffer.nextPredTick, input: move, state });
   trimHistory(buffer);
 }
 
@@ -270,6 +365,9 @@ export function predictLocalMove(
   move: PredictedMove,
   dt = FIXED_DT,
 ): PlayerMovementState {
+  if (!buffer.lastAckedState) {
+    seedPredictionCheckpoint(buffer, player.captureMovementState(), buffer.lastAckedServerTick);
+  }
   applyPredictedTick(player, world, move, dt);
   motionProbe.notePredictionTick();
   const state = player.captureMovementState();
@@ -508,44 +606,96 @@ function finish(
 }
 
 /**
- * Compare the snapshot to the predicted pose AT the acked seq. Does not mutate
- * the player, history, or lastAckedSeq. When the server flushed K physics ticks
- * with the same latest input, compare against history[N] plus K-1 extra ticks.
+ * Compare the snapshot to last-accepted pose + `simTicks` of the snapshot's
+ * latest input STATE. `inputSeq` identifies that state; it is not the
+ * simulation checkpoint. Client may have predicted extra seqs that the server
+ * never simulated.
  */
 export function inspectPredictedPlayer(
   buffer: PredictionBuffer,
   snapshot: PlayerSnapshot,
   player?: PlayerController,
-  options?: { readonly world?: VoxelWorld; readonly physicsTicks?: number; readonly dt?: number },
+  options?: {
+    readonly world?: VoxelWorld;
+    readonly physicsTicks?: number;
+    readonly serverTick?: number;
+    readonly dt?: number;
+  },
 ): SnapshotInspect {
   const physicsTicks = Math.max(1, Math.floor(options?.physicsTicks ?? 1));
+  const serverTick = options?.serverTick;
   const ackSeq = snapshot.inputSeq;
+  const seqGap = ackSeq !== undefined && Number.isFinite(ackSeq) ? ackSeq - buffer.lastAckedSeq : 0;
+  const simTicks = simulationTicksFromServerTick(buffer.lastAckedServerTick, serverTick, physicsTicks);
+  const base = {
+    physicsTicks, extraTicks: simTicks, seqGap, simTicks, serverTick,
+  };
+
   if (ackSeq === undefined || !Number.isFinite(ackSeq)) {
     return {
       kind: 'ignored', rejectReason: 'no-seq', softReject: 'none',
-      error: emptyError(), ackSeq, historySeq: undefined, physicsTicks,
-      extraTicks: 0, comparePath: 'none', seqGap: 0,
+      error: emptyError(), ackSeq, historySeq: undefined, comparePath: 'none', ...base, extraTicks: 0, simTicks: 0,
     };
   }
-  if (ackSeq < buffer.lastAckedSeq) {
-    return {
-      kind: 'ignored', rejectReason: 'stale-seq', softReject: 'none',
-      error: emptyError(), ackSeq, historySeq: undefined, physicsTicks,
-      extraTicks: 0, comparePath: 'none', seqGap: ackSeq - buffer.lastAckedSeq,
-    };
+
+  if (serverTick !== undefined && Number.isFinite(serverTick) && buffer.lastAckedServerTick >= 0) {
+    if (serverTick < buffer.lastAckedServerTick) {
+      return {
+        kind: 'ignored', rejectReason: 'stale-seq', softReject: 'none',
+        error: emptyError(), ackSeq, historySeq: undefined, comparePath: 'none', ...base, extraTicks: 0, simTicks: 0,
+      };
+    }
+    if (serverTick === buffer.lastAckedServerTick || simTicks === 0) {
+      return {
+        kind: 'ignored', rejectReason: 'duplicate-seq', softReject: 'none',
+        error: emptyError(), ackSeq, historySeq: ackSeq, comparePath: 'none', ...base, extraTicks: 0, simTicks: 0, seqGap: 0,
+      };
+    }
+  } else {
+    if (ackSeq < buffer.lastAckedSeq) {
+      return {
+        kind: 'ignored', rejectReason: 'stale-seq', softReject: 'none',
+        error: emptyError(), ackSeq, historySeq: undefined, comparePath: 'none', ...base, extraTicks: 0, simTicks: 0,
+      };
+    }
+    if (ackSeq === buffer.lastAckedSeq) {
+      return {
+        kind: 'ignored', rejectReason: 'duplicate-seq', softReject: 'none',
+        error: emptyError(), ackSeq, historySeq: ackSeq, comparePath: 'none', ...base, extraTicks: 0, simTicks: 0, seqGap: 0,
+      };
+    }
   }
-  if (ackSeq === buffer.lastAckedSeq) {
-    return {
-      kind: 'ignored', rejectReason: 'duplicate-seq', softReject: 'none',
-      error: emptyError(), ackSeq, historySeq: ackSeq, physicsTicks,
-      extraTicks: 0, comparePath: 'none', seqGap: 0,
-    };
-  }
-  motionProbe.noteSeqGap(ackSeq - buffer.lastAckedSeq);
+
+  motionProbe.noteSeqGap(seqGap);
   const predictedAtAck = findPredictedEntry(buffer, ackSeq);
-  const seqGap = ackSeq - buffer.lastAckedSeq;
-  const extra = comparableExtraTicks(physicsTicks, seqGap);
+  const input = predictedAtAck?.input ?? buffer.lastAckedInput;
+  const origin = buffer.lastAckedState;
+  const canCheckpoint = Boolean(origin && input && options?.world && simTicks > 0);
+
+  if (canCheckpoint && origin && input && options?.world) {
+    const comparable = predictedStateFromCheckpoint(options.world, origin, input, simTicks, {
+      creativeFlightAllowed: player?.creativeFlightAllowed,
+      dt: options.dt,
+    });
+    const error = predictedStateError(comparable, snapshot);
+    const reject = ackRejectReason(comparable, snapshot, error);
+    const soft = softAckRejectReason(comparable, snapshot, error);
+    const firstDiff = firstDivergedMovementField(comparable, snapshot);
+    const rawFirstDiff = predictedAtAck
+      ? firstDivergedMovementField(predictedAtAck.state, snapshot)
+      : firstDiff;
+    const result = {
+      rejectReason: reject, softReject: soft, error,
+      ackSeq, historySeq: predictedAtAck?.seq, predicted: predictedAtAck?.state,
+      comparable, physicsTicks, extraTicks: simTicks, comparePath: 'checkpoint' as const,
+      seqGap, simTicks, serverTick, firstDiff, rawFirstDiff,
+    };
+    if (reject === 'none') return { kind: 'accepted', ...result };
+    return { kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected', ...result };
+  }
+
   if (predictedAtAck) {
+    const extra = comparableExtraTicks(physicsTicks, seqGap);
     const comparable = extra > 0 && options?.world
       ? predictedStateAfterExtraTicks(options.world, predictedAtAck, extra, {
         creativeFlightAllowed: player?.creativeFlightAllowed,
@@ -558,22 +708,16 @@ export function inspectPredictedPlayer(
     const firstDiff = firstDivergedMovementField(comparable, snapshot);
     const rawFirstDiff = firstDivergedMovementField(predictedAtAck.state, snapshot);
     const path = snapshotComparePath(extra, true);
-    if (reject === 'none') {
-      return {
-        kind: 'accepted', rejectReason: 'none', softReject: soft, error,
-        ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
-        comparable, physicsTicks, extraTicks: extra, comparePath: path, seqGap,
-        firstDiff, rawFirstDiff,
-      };
-    }
-    return {
-      kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected',
+    const result = {
       rejectReason: reject, softReject: soft, error,
       ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
-      comparable, physicsTicks, extraTicks: extra, comparePath: path, seqGap,
-      firstDiff, rawFirstDiff,
+      comparable, physicsTicks, extraTicks: extra, comparePath: path, seqGap, simTicks,
+      serverTick, firstDiff, rawFirstDiff,
     };
+    if (reject === 'none') return { kind: 'accepted', ...result };
+    return { kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected', ...result };
   }
+
   const error = player
     ? predictionError({ x: player.position.x, y: player.position.y, z: player.position.z }, snapshot)
     : emptyError();
@@ -585,9 +729,11 @@ export function inspectPredictedPlayer(
     ackSeq,
     historySeq: undefined,
     physicsTicks,
-    extraTicks: extra,
+    extraTicks: simTicks,
     comparePath: 'live',
     seqGap,
+    simTicks,
+    serverTick,
   };
 }
 
@@ -603,11 +749,12 @@ export function reconcilePredictedPlayer(
   const inspect = inspectPredictedPlayer(buffer, snapshot, player, {
     world,
     physicsTicks: options?.physicsTicks,
+    serverTick: options?.serverTick,
     dt,
   });
   if (inspect.kind === 'accepted' || inspect.kind === 'ignored') {
     if (inspect.kind === 'accepted' && inspect.ackSeq !== undefined) {
-      ackPredictedMoves(buffer, inspect.ackSeq);
+      commitPredictionCheckpoint(buffer, snapshot, inspect, player, options);
     }
     const changed = diffMotionFull(before, captureMotionFull(player));
     const mutated = changed.length > 0;
@@ -634,7 +781,42 @@ export function reconcilePredictedPlayer(
     dt,
     inspect.rejectReason,
     inspect,
+    options,
   );
+}
+
+function commitPredictionCheckpoint(
+  buffer: PredictionBuffer,
+  snapshot: PlayerSnapshot,
+  inspect: SnapshotInspect,
+  player: PlayerController,
+  options?: ReconcileOptions,
+): void {
+  const input = inspect.ackSeq !== undefined
+    ? findPredictedEntry(buffer, inspect.ackSeq)?.input ?? buffer.lastAckedInput
+    : buffer.lastAckedInput;
+  buffer.lastAckedSeq = inspect.ackSeq ?? buffer.lastAckedSeq;
+  if (options?.serverTick !== undefined && Number.isFinite(options.serverTick)) {
+    buffer.lastAckedServerTick = options.serverTick;
+  } else if (inspect.serverTick !== undefined && Number.isFinite(inspect.serverTick)) {
+    buffer.lastAckedServerTick = inspect.serverTick;
+  } else if (buffer.lastAckedServerTick < 0) {
+    buffer.lastAckedServerTick = 0;
+  } else {
+    buffer.lastAckedServerTick += Math.max(1, inspect.simTicks);
+  }
+  if (input) buffer.lastAckedInput = input;
+  if (inspect.kind === 'accepted' && inspect.comparable) {
+    buffer.lastAckedState = {
+      ...cloneMovementState(inspect.comparable),
+      x: snapshot.x,
+      y: snapshot.y,
+      z: snapshot.z,
+    };
+  } else {
+    buffer.lastAckedState = movementStateFromSnapshot(snapshot, inspect.comparable, player);
+  }
+  consumeOldestPredTicks(buffer, inspect.simTicks);
 }
 
 function applyCorrection(
@@ -647,6 +829,7 @@ function applyCorrection(
   dt: number,
   rejectReason: AckRejectReason,
   inspect?: SnapshotInspect,
+  options?: ReconcileOptions,
 ): ReconcileResult {
   const sample = motionProbe.sampleWorldHint?.();
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -675,10 +858,11 @@ function applyCorrection(
     player,
     error,
     reject: rejectReason,
-    serverTick: motionProbe.inboundTick,
+    serverTick: inspect?.serverTick ?? motionProbe.inboundTick,
     lastStateTick: motionProbe.lastStateTick,
     physicsTicks: inspect?.physicsTicks,
     extraTicks: inspect?.extraTicks,
+    simTicks: inspect?.simTicks,
     comparePath: inspect?.comparePath,
     seqGap: inspect?.seqGap,
     history: inspect?.predicted ?? predictedAtAck?.state,
@@ -718,12 +902,12 @@ function applyCorrection(
     },
   });
   logCorrectionDiag(diag);
-  const ackSeq = snapshot.inputSeq ?? buffer.lastAckedSeq;
   const snapped = shouldSnapPrediction(error.distSq);
   restoreAuthoritativePlayer(player, snapshot, predictedAtAck?.state);
   motionProbe.noteWrite('position');
   motionProbe.noteWrite('velocity');
-  ackPredictedMoves(buffer, ackSeq);
+  if (inspect) commitPredictionCheckpoint(buffer, snapshot, inspect, player, options);
+  else ackPredictedMoves(buffer, snapshot.inputSeq ?? buffer.lastAckedSeq);
   for (const entry of buffer.entries) {
     applyPredictedTick(player, world, entry.input, dt);
     motionProbe.notePredictionTick();

@@ -298,7 +298,7 @@ describe('accepted snapshot invisibility', () => {
       vz: buffer.entries.find((entry) => entry.seq === 2)!.state.vz,
       onGround: buffer.entries.find((entry) => entry.seq === 2)!.state.onGround,
       flying: buffer.entries.find((entry) => entry.seq === 2)!.state.isFlying,
-    });
+    }, undefined, { physicsTicks: 2 });
     expect(result.kind).toBe('accepted');
     expect(result.acceptMutated).toBe(false);
     expect(diffMotionFull(before, captureMotionFull(player))).toEqual([]);

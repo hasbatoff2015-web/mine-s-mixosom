@@ -325,7 +325,7 @@ describe('local motion pipeline SP vs Online', () => {
     expect(Math.abs(summary.meanStep - sp.meanStep)).toBeLessThan(0.002);
   });
 
-  it('legacy lastInput coalescing used to collapse lerp; small corrections now keep previousPosition', () => {
+  it('checkpoint latest-input coalescing does not rewind or collapse render lerp', () => {
     const online = runOnline({
       seconds: 2,
       frameDt: 1 / 60,
@@ -335,12 +335,8 @@ describe('local motion pipeline SP vs Online', () => {
     const summary = statsOf(online);
     expect(summary.ticks).toBe(40);
     expect(summary.acceptMutations).toBe(0);
-    // Coalescing rewinds the live pose onto the previous tick, which is
-    // exactly previousPosition — render lerp collapses even if we do not
-    // copy previousPosition = position. A FIFO of stale movement is not
-    // the fix; latest-input at 20 TPS is.
-    expect(summary.corrections).toBeGreaterThan(0);
-    expect(summary.collapsedLerp).toBeGreaterThan(0);
+    expect(summary.corrections).toBe(0);
+    expect(summary.collapsedLerp).toBe(0);
   });
 
   it('online latest-input 20Hz with phase offset does not accumulate a movement backlog', () => {
