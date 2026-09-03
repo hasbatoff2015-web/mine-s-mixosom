@@ -157,6 +157,8 @@ import {
   maybeSlowSnapshot,
 } from '../debug/chunkStreamingRuntime';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
+import { LongTaskMonitor } from '../debug/longTaskMonitor';
+import { isQuietWorldQueryEnabled, quietWorldRenderDistance } from '../debug/quietWorld';
 import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
@@ -442,6 +444,7 @@ export class Game {
   private readonly chat = new ChatLog();
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
+  private readonly longTasks = new LongTaskMonitor();
   private readonly perfScenario = readPerfScenario();
   private worldLoad?: {
     centerX: number;
@@ -546,6 +549,7 @@ export class Game {
     });
     this.bindLifecycle();
     this.bindWindowEvents();
+    if (isDevRuntime()) this.longTasks.start();
   }
 
   async initialize(): Promise<void> {
@@ -619,6 +623,7 @@ export class Game {
     this.worldStore.close();
     this.yandex.dispose();
     this.profiler.dispose();
+    this.longTasks.dispose();
   }
 
   private showMainMenu(): void {
@@ -659,6 +664,7 @@ export class Game {
   }
 
   private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {
+    const restoreStart = performance.now();
     const world = new VoxelWorld(welcome.seed);
     world.deferredLighting = true;
     world.restore({
@@ -668,6 +674,17 @@ export class Game {
       furnaces: {},
       blockStates: welcome.blockStates,
     });
+    const restoreMs = performance.now() - restoreStart;
+    const modChunks = Object.keys(welcome.modifications ?? {}).length;
+    const blockStateCount = Object.keys(welcome.blockStates ?? {}).length;
+    if (isDevRuntime() && typeof console !== 'undefined') {
+      console.info(
+        `[reconnectLoad] restore=${restoreMs.toFixed(1)}ms modChunks=${modChunks} `
+        + `blockStates=${blockStateCount} player=${welcome.playerId.slice(0, 8)} `
+        + `fp=${welcome.you.session?.tokenFp ?? '—'} socks=${welcome.you.session?.activeSockets ?? '—'} `
+        + `resume=${welcome.you.session?.resumeCount ?? '—'}`,
+      );
+    }
     let inventory: Inventory;
     try {
       inventory = Inventory.deserialize(welcome.inventory);
@@ -911,7 +928,8 @@ export class Game {
         this.refreshHud();
         return;
       case 'error':
-        this.ui.toast(message.message);
+        if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
+        else this.ui.toast(message.message);
         return;
       case 'pong':
       case 'status':
@@ -952,6 +970,7 @@ export class Game {
     }
     online.lastStateTick = message.tick;
     const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
+    if (local?.session) motionProbe.session = local.session;
     const seen = new Set<string>();
     if (local) {
       motionProbe.notePlayerState(local.inputSeq);
@@ -1752,7 +1771,7 @@ export class Game {
   private beginWorldLoading(snapSpawn = false): void {
     const session = this.session;
     if (!session) return;
-    const meshRadius = initialReadyChunkRadius(this.settings.renderDistance);
+    const meshRadius = quietWorldRenderDistance(initialReadyChunkRadius(this.settings.renderDistance));
     const generateRadius = lightingHaloRadius(meshRadius);
     this.worldLoad = {
       centerX: Math.floor(session.player.position.x),
@@ -1860,9 +1879,10 @@ export class Game {
     if (!session) return;
     const originX = loading ? this.worldLoad?.centerX ?? session.player.position.x : session.player.position.x;
     const originZ = loading ? this.worldLoad?.centerZ ?? session.player.position.z : session.player.position.z;
+    const viewDistance = quietWorldRenderDistance(this.settings.renderDistance);
     const meshRadius = loading
-      ? this.worldLoad?.radius ?? this.settings.renderDistance
-      : this.settings.renderDistance;
+      ? this.worldLoad?.radius ?? viewDistance
+      : viewDistance;
     const generateRadius = loading
       ? this.worldLoad?.generateRadius ?? lightingHaloRadius(meshRadius)
       : lightingHaloRadius(meshRadius);
@@ -2668,6 +2688,22 @@ export class Game {
     this.render(interpolationAlpha(this.accumulator, FIXED_DT));
     const renderMs = performance.now() - renderStart;
     const frameMs = performance.now() - frameStart;
+    if (isDevRuntime()) {
+      this.longTasks.noteFrameSpike({
+        frameMs,
+        tickMs,
+        generateMs: this.lastGenerateMs,
+        lightMs: this.lastLightMs,
+        meshMs: this.lastMeshMs,
+        renderMs,
+        otherMs: Math.max(0, frameMs - tickMs - renderMs),
+        lifecycle: this.lifecycle.state,
+        loading: this.lifecycle.state === 'LOADING_WORLD',
+        genJobs: this.lastChunkGenerationJobs,
+        meshJobs: this.lastChunkMeshJobs,
+        at: frameStart,
+      });
+    }
     if (this.profiler.enabled) {
       const cost: FrameCostBreakdown = {
         frameMs,
@@ -2792,14 +2828,15 @@ export class Game {
     }
     const cx = floorDiv(Math.floor(session.player.position.x), 16);
     const cz = floorDiv(Math.floor(session.player.position.z), 16);
-    const viewKey = `${cx},${cz},${this.settings.renderDistance}`;
+    const viewDistance = quietWorldRenderDistance(this.settings.renderDistance);
+    const viewKey = `${cx},${cz},${viewDistance}`;
     if (online.lastViewKey !== viewKey) {
       online.lastViewKey = viewKey;
       online.client.send({
         type: 'view',
         cx,
         cz,
-        radius: Math.max(1, Math.min(8, this.settings.renderDistance)),
+        radius: Math.max(1, Math.min(8, viewDistance)),
       });
     }
     if (session.playTicks % 80 === 0) {
@@ -4055,6 +4092,8 @@ export class Game {
       }
       if (import.meta.env.DEV) {
         this.cachedDebugText += `\n${motionProbe.formatHud()}`;
+        if (isQuietWorldQueryEnabled()) this.cachedDebugText += '\nquietWorld=ON rd=1';
+        this.cachedDebugText += `\n${this.longTasks.hudLine()}`;
         if (session.online) {
           this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
         }

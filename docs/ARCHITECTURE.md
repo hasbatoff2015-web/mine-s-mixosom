@@ -1,5 +1,15 @@
 # Архитектура
 
+## Session resume isolation + event-loop load — 2026-09-03
+
+`sessionStorage` key `fc.anarchy.sessionToken` is per-tab, but **duplicating a tab copies it**. `WorldInstance.join` resumes the same `ServerPlayer`, replaces `sink`, and used to leave the old WebSocket in `AnarchyServer.sockets`. Both sockets could `applyInput()`. Closing the old tab called `disconnect()` on the live player.
+
+Invariant: one player, one `connectionId`, one movement source. Resume mints a new id, sends `error code=session_taken` to the old socket, and ignores input whose `connectionId` does not match. Stale `close` does not disconnect the new connection.
+
+Flight `snapSent≈15` is an **outer-loop stall**, not prediction. `syncChunksFor` used `serializeModifications()` (entire world) for every newly streamed column; flying crosses columns fast. Now one chunk's delta is serialized, and at most 2 **new** generates run per sync (already-generated columns still stream). Drain continues each outer loop.
+
+Reconnect ~1697 ms: `welcome` JSON parse + `world.restore` + `LOADING_WORLD` gen/mesh. DEV logs `[reconnectLoad]`, `[frameSpike]`, `[longtask]`. Server tickClock adds lateness/callback/ELD. `?quietWorld=1` caps streaming to 1 chunk.
+
 ## Server 20 TPS clock vs catch-up snapshots — 2026-09-03
 
 Owner F3: `pred/s=20` `state/s=17` `corr/s=3` `netPos/s=3` `soft *=0`. Remaining jitter is **positional correction**, not speed/flying flags.

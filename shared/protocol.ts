@@ -55,6 +55,17 @@ export interface PlayerSnapshot {
     readonly serverSimAt?: number;
     readonly serverSentAt?: number;
   };
+  /** DEV session/socket isolation. Never includes the raw session token. */
+  readonly session?: PlayerSessionDiag;
+}
+
+export interface PlayerSessionDiag {
+  readonly tokenFp: string;
+  readonly connectionId: string;
+  readonly joinCount: number;
+  readonly resumeCount: number;
+  readonly activeSockets: number;
+  readonly lastInputConn: string;
 }
 
 export interface RemotePlayerInfo {
@@ -300,6 +311,17 @@ export interface ServerTickClock {
   readonly elapsedMs: number;
   readonly accumulatorMs: number;
   readonly physicsTicksThisLoop: number;
+  readonly latenessMs?: number;
+  readonly callbackMs?: number;
+  readonly eldMean?: number;
+  readonly eldP95?: number;
+  readonly eldP99?: number;
+  readonly eldMax?: number;
+  readonly tickWallMs?: number;
+  readonly entities?: number;
+  readonly blockChanges?: number;
+  readonly chunkSends?: number;
+  readonly chunkGens?: number;
 }
 
 export interface ServerPlayerStateMessage {

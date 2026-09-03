@@ -1172,6 +1172,15 @@ export class VoxelWorld {
     return result;
   }
 
+  /** One chunk's modification delta. Do not call `serializeModifications()` per streamed chunk. */
+  serializeChunkModifications(cx: number, cz: number): Record<string, number> {
+    const delta = this.modifications.get(chunkKey(cx, cz));
+    if (!delta || delta.size === 0) return {};
+    const result: Record<string, number> = {};
+    for (const [index, block] of delta) result[String(index)] = block;
+    return result;
+  }
+
   serializeBlockStates(): Record<string, BlockRenderState> {
     return Object.fromEntries(this.blockStates);
   }

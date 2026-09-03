@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-03: session isolation + event-loop / reconnect load (PR #37)
+
+- [x] One logical player = one movement socket; resume invalidates the old connection.
+- [x] DEV session fingerprint / connectionId / activeSockets on F3 (never log the token).
+- [x] Per-chunk modification serialize; budget new chunk generates on the tick loop.
+- [x] Client longtask/frameSpike + server lateness/ELD/callback diagnostics.
+- [x] DEV `?quietWorld=1` for a 1-chunk load isolation run.
+- [ ] Owner: **one tab only** — walk/sprint/jump/strafe/flight/fly+SHIFT; record F3 loop/sess lines.
+- [ ] Do not merge main.
+
 ## 2026-09-03: 20 TPS server clock + catch-up comparable snapshots (PR #37)
 
 - [x] Prove corr/s≈3 is 17 Hz snapshots vs 20 Hz prediction (catch-up 2-tick pose vs history[N]).

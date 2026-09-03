@@ -227,6 +227,61 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     resumed.close();
   });
 
+  it('live resume kicks the old socket and ignores its movement', async () => {
+    const server = await boot();
+    const first = new TestClient();
+    const welcome = await first.connect(server.wsUrl(), { name: 'Alpha' });
+    const second = new TestClient();
+    const resumed = await second.connect(server.wsUrl(), { name: 'Alpha', sessionToken: welcome.sessionToken });
+    expect(resumed.playerId).toBe(welcome.playerId);
+    expect(server.world.onlineCount()).toBe(1);
+    expect(server.activeSocketCount(welcome.playerId)).toBe(1);
+    await first.waitForMatch('error', (message) => message.code === 'session_taken');
+
+    const origin = server.world.players.get(welcome.playerId)!.controller.position.clone();
+    first.send({
+      type: 'input',
+      seq: 1,
+      forward: 1,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: 0,
+      pitch: 0,
+      selectedSlot: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const afterStale = server.world.players.get(welcome.playerId)!.controller.position.clone();
+    expect(afterStale.distanceTo(origin)).toBeLessThan(0.01);
+
+    second.send({
+      type: 'input',
+      seq: 1,
+      forward: 1,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: 0,
+      pitch: 0,
+      selectedSlot: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const afterLive = server.world.players.get(welcome.playerId)!.controller.position.clone();
+    expect(afterLive.distanceTo(origin)).toBeGreaterThan(0.05);
+
+    first.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.world.onlineCount()).toBe(1);
+    expect(server.activeSocketCount(welcome.playerId)).toBe(1);
+    second.close();
+  });
+
   it('lets two clients see each other, movement, break and place', async () => {
     const server = await boot();
     const a = new TestClient();
@@ -854,6 +909,38 @@ describe('WorldInstance foundation simulation', () => {
       expect(again.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
       seqOwner = again.player;
     }
+  });
+
+  it('resuming a live player rejects the old connectionId and snapshots only the new sink', async () => {
+    const world = await bootWorld();
+    const sinkA = new MemorySink();
+    const first = world.join({ sink: sinkA, name: 'Solo' });
+    if ('error' in first) throw new Error(first.error);
+    const connA = first.player.connectionId;
+    expect(world.applyInput(first.player, moveInput(1, { forward: 1 }), { connectionId: connA })).toBe(true);
+    world.tick();
+    const sinkABefore = sinkA.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+
+    const sinkB = new MemorySink();
+    const second = world.join({ sink: sinkB, name: 'Solo', sessionToken: first.player.sessionToken });
+    if ('error' in second) throw new Error(second.error);
+    expect(second.resumed).toBe(true);
+    expect(second.player.id).toBe(first.player.id);
+    expect(second.player.connectionId).not.toBe(connA);
+    expect(second.previousConnectionId).toBe(connA);
+    expect(world.applyInput(second.player, moveInput(1, { forward: 0 }), { connectionId: connA })).toBe(false);
+    expect(world.applyInput(second.player, moveInput(1, { forward: 1 }), { connectionId: second.player.connectionId })).toBe(true);
+    const origin = second.player.controller.position.clone();
+    world.tick();
+    expect(second.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
+    const afterA = sinkA.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+    const afterB = sinkB.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+    expect(afterA).toBe(sinkABefore);
+    expect(afterB).toBeGreaterThan(0);
+    world.disconnect(second.player.id, true, connA);
+    expect(second.player.connected).toBe(true);
+    world.disconnect(second.player.id, true, second.player.connectionId);
+    expect(second.player.connected).toBe(false);
   });
 });
 

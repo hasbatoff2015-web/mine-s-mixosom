@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Session isolation + event-loop load
+
+Report: `reports/2026-09-03_session-isolation-event-loop.md`. PR #37.
+
+```text
+npx vitest run tests/server/anarchy-server.test.ts tests/server/tick-load-flight.test.ts tests/session-fingerprint.test.ts tests/quiet-world.test.ts tests/longtask-monitor.test.ts tests/server-tick-clock.test.ts
+```
+
+Contracts: live resume kicks the old socket; stale `connectionId` cannot `applyInput` or `disconnect` the live player; snapshots go only to the new sink; `serializeChunkModifications` does not dump the whole world; `setView` into new columns stays under a 50 ms tick budget on the test map; `?quietWorld=1` caps rd=1. Physics/prediction/tolerance unchanged. Manual QA: **one browser tab**.
+
 ## 2026-09-03 Server tick clock and catch-up snapshots
 
 Report: `reports/2026-09-03_server-tick-clock-corrections.md`. PR #37.

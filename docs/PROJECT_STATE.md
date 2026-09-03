@@ -2,6 +2,15 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: session isolation + event-loop / reconnect load (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: вторая вкладка с тем же sessionToken; после reconnect frame spike ~1697 ms; через минуту corr/s=0 но jitter; flight: snapSent~15, corr/s~11, catchUp/s=4, dropped=8.
+- **Session:** `join()` заменял `sink`, но старый WebSocket оставался в `sockets` и мог звать `applyInput`. Close старого сокета делал `disconnect` живого игрока. Теперь: новый `connectionId` на resume, старый сокет `session_taken` + close, input только с live connectionId, close stale не дисконнектит. F3 `sess socks/src/snap/resume/fp` (fingerprint, не token). QA: **ровно одна вкладка**.
+- **Load:** `syncChunksFor` больше не вызывает `serializeModifications()` на весь мир на каждый новый chunk. Бюджет 2 новых generate/sync, drain каждый outer loop. Welcome encode timed. Client: `[reconnectLoad]`, `[frameSpike]`, `[longtask]`, `?quietWorld=1`.
+- tickClock: lateness/callback/ELD p95/p99/max, tickWall, entities, chunkSend/gen.
+- Tests: tick-clock **6/6**; prediction **29/29**; isolation flags **8/8**; `test:sim` **42/42**; `test:server` **94/94**; typecheck/build PASS.
+
 ## Последний проход: 20 TPS server clock + catch-up comparable snapshots (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

@@ -123,6 +123,10 @@ CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/expl
 
 Local player: input is sent and **applied locally immediately** at 20 TPS. Server still runs the real `PlayerController`. `player_state` carries `tick` + `inputSeq` + `physicsTicks` (how many 20 TPS steps this flush simulated). The client compares that snapshot to the predicted pose after that seq, plus extra latest-input ticks when the server caught up. If xz/y match that comparable pose, the live player is not touched. Only a real pose mismatch restores the acked pose and replays seqs **after** N. The server outer loop uses an absolute 50 ms slot so localhost stays ~20 snapshots/s. Apply happens at the next 20 TPS tick, not in the WebSocket callback. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if the correction ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
 
+**One tab.** The session token lives in `sessionStorage` (`fc.anarchy.sessionToken`). Duplicating a tab copies it and resumes the same player. Resume now kicks the old socket (`session_taken`). Movement diagnostics are invalid if a second tab with the same token is still connected. F3 `sess socks=` must be `1`.
+
+DEV: `?quietWorld=1` caps streaming to 1 chunk. Console `[reconnectLoad]` / `[frameSpike]` / `[longtask]`. F3 `loop late/cb/eld` and `load chunkSend/chunkGen`.
+
 Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
 
 Mobs / drops / arrows / minecarts / TNT / falling blocks: the same ~80 ms snapshot buffer (`EntityInterpolationBuffer`). Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.

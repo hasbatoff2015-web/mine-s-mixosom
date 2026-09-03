@@ -92,9 +92,11 @@ export class AnarchyClient {
       });
       socket.addEventListener('message', (event) => {
         if (this.generation !== generation || this.socket !== socket) return;
+        const parseStart = performance.now();
+        const rawText = String(event.data);
         let payload: ServerMessage;
         try {
-          const parsed = parseServerMessage(decodeJson(String(event.data)));
+          const parsed = parseServerMessage(decodeJson(rawText));
           if ('error' in parsed) {
             console.warn('[anarchy] invalid server message:', parsed.error);
             return;
@@ -104,12 +106,19 @@ export class AnarchyClient {
           console.warn('[anarchy] invalid server JSON');
           return;
         }
+        const parseMs = performance.now() - parseStart;
         if (payload.type === 'welcome') {
           window.clearTimeout(timeout);
           this.lastWelcome = payload;
           this.state = 'connected';
           sessionStorage.setItem(SESSION_KEY, payload.sessionToken);
           this.startPing();
+          if (typeof console !== 'undefined') {
+            console.info(
+              `[reconnectLoad] welcome parse=${parseMs.toFixed(1)}ms bytes=${rawText.length} `
+              + `modChunks=${Object.keys(payload.modifications ?? {}).length}`,
+            );
+          }
           resolve(payload);
         } else if (payload.type === 'error' && this.state === 'connecting') {
           fail(payload.message || 'Сервер недоступен');

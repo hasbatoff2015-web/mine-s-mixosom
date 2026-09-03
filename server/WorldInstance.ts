@@ -40,6 +40,11 @@ import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { placeholderPlayer } from '../src/save/snapshot';
 import { netDebug, serverLog, bowDebug } from './log';
+import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+
+/** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
+const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
 
 export interface ConnectedSink {
   send(payload: unknown): void;
@@ -78,6 +83,11 @@ export class ServerPlayer implements GameplayPlayer {
   viewRadius = 4;
   knownChunks = new Set<string>();
   sink: ConnectedSink | null = null;
+  connectionId = crypto.randomUUID();
+  joinCount = 1;
+  resumeCount = 0;
+  activeSocketCount = 1;
+  lastInputConnectionId = '';
   readonly survival: SurvivalSystem;
   readonly combat = new CombatSystem();
   cursor: ItemStack | null = null;
@@ -140,6 +150,14 @@ export class ServerPlayer implements GameplayPlayer {
       dead: this.survival.dead,
       inputSeq: this.lastInputSeq,
       flying: this.controller.isFlying,
+      session: {
+        tokenFp: sessionTokenFingerprint(this.sessionToken),
+        connectionId: this.connectionId,
+        joinCount: this.joinCount,
+        resumeCount: this.resumeCount,
+        activeSockets: this.activeSocketCount,
+        lastInputConn: this.lastInputConnectionId || this.connectionId,
+      },
       ...(this.lastServerRecvAt !== undefined || this.lastClientSentAt !== undefined ? {
         netTiming: {
           ...(this.lastClientSentAt !== undefined ? { clientSentAt: this.lastClientSentAt } : {}),
@@ -207,7 +225,16 @@ export class WorldInstance {
   lastPhysicsTicksThisLoop = 0;
   lastLoopElapsedMs = 0;
   lastLoopAccumulatorMs = 0;
+  lastLoopLatenessMs = 0;
+  lastCallbackMs = 0;
+  lastChunkSends = 0;
+  lastChunkGens = 0;
+  lastEldMean = 0;
+  lastEldP95 = 0;
+  lastEldP99 = 0;
+  lastEldMax = 0;
   droppedTicksTotal = 0;
+  private eventLoopDelay?: IntervalHistogram;
   private lastTickMetrics: { blockChanges: number; entities: number; maxTickMs: number } = {
     blockChanges: 0,
     entities: 0,
@@ -287,10 +314,16 @@ export class WorldInstance {
     const tickMs = 1000 / this.config.tickRate;
     const now = performance.now();
     this.lastTickWall = now;
-    this.nextTickSlotAt = now;
+    this.nextTickSlotAt = now + tickMs;
     this.tpsWindowStart = now;
+    this.eventLoopDelay?.disable();
+    this.eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
+    this.eventLoopDelay.enable();
     const loop = (): void => {
       const started = performance.now();
+      this.lastLoopLatenessMs = started - this.nextTickSlotAt;
+      this.lastChunkSends = 0;
+      this.lastChunkGens = 0;
       const due = gameplayTicksDue(this.tickAccumulator, (started - this.lastTickWall) / 1000, this.dt);
       this.lastTickWall = started;
       this.tickAccumulator = due.nextAccumulator;
@@ -300,7 +333,18 @@ export class WorldInstance {
       this.droppedTicksTotal += due.droppedTicks;
       if (due.ticks === 1) this.tick();
       else if (due.ticks > 1) this.tickCatchUp(due.ticks);
+      else {
+        for (const player of this.connectedPlayers()) this.syncChunksFor(player);
+      }
       this.noteTpsWindow(due.ticks, started);
+      this.lastCallbackMs = performance.now() - started;
+      if (this.debugSnap && (this.lastCallbackMs >= 16 || this.lastLoopLatenessMs >= 16)) {
+        serverLog(
+          `loop late=${this.lastLoopLatenessMs.toFixed(1)}ms cb=${this.lastCallbackMs.toFixed(1)}ms `
+          + `phys=${this.lastPhysicsTicksThisLoop} chunks send=${this.lastChunkSends} gen=${this.lastChunkGens} `
+          + `eldMean=${this.lastEldMean.toFixed(1)} eldP99=${this.lastEldP99.toFixed(1)}`,
+        );
+      }
       const planned = scheduleNextTickSlot(this.nextTickSlotAt, performance.now(), tickMs);
       this.nextTickSlotAt = planned.nextSlotAt;
       this.tickTimer = setTimeout(loop, planned.waitMs);
@@ -314,6 +358,8 @@ export class WorldInstance {
   async stop(): Promise<void> {
     if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.persistTimer) clearInterval(this.persistTimer);
+    this.eventLoopDelay?.disable();
+    this.eventLoopDelay = undefined;
     await this.plugins.disableAll();
     await this.save();
   }
@@ -371,7 +417,7 @@ export class WorldInstance {
     sink: ConnectedSink;
     name?: string;
     sessionToken?: string;
-  }): { player: ServerPlayer; resumed: boolean } | { error: string } {
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string } {
     if (this.readyState !== 'READY') return { error: 'world not ready' };
     if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
 
@@ -379,19 +425,34 @@ export class WorldInstance {
       const existingId = this.tokens.get(options.sessionToken);
       const existing = existingId ? this.players.get(existingId) : undefined;
       if (existing) {
+        const previousConnectionId = existing.connectionId;
         existing.connected = true;
         existing.disconnectedAt = 0;
         existing.sink = options.sink;
+        existing.connectionId = crypto.randomUUID();
+        existing.joinCount += 1;
+        existing.resumeCount += 1;
+        existing.lastInputConnectionId = existing.connectionId;
         if (options.name) existing.name = options.name;
         this.resetConnectionInput(existing);
-        serverLog(`player joined: ${existing.name} (${existing.id}, resume)`);
+        const fp = sessionTokenFingerprint(existing.sessionToken);
+        serverLog(
+          `player joined: ${existing.name} (${existing.id}, resume) `
+          + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
+          + `resumeCount=${existing.resumeCount}`,
+        );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
-        return { player: existing, resumed: true };
+        return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
       if (stored) {
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name);
-        serverLog(`player joined: ${restored.name} (${restored.id}, resume)`);
+        restored.joinCount += 1;
+        restored.resumeCount += 1;
+        serverLog(
+          `player joined: ${restored.name} (${restored.id}, resume) `
+          + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
+        );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
         return { player: restored, resumed: true };
       }
@@ -413,6 +474,7 @@ export class WorldInstance {
     );
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
+    player.lastInputConnectionId = player.connectionId;
     this.players.set(id, player);
     this.tokens.set(sessionToken, id);
     const spawnChunkX = floorDiv(Math.floor(player.controller.position.x), 16);
@@ -420,19 +482,27 @@ export class WorldInstance {
     player.viewCx = spawnChunkX;
     player.viewCz = spawnChunkZ;
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player);
-    serverLog(`player joined: ${player.name} (${player.id})`);
+    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+    serverLog(
+      `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
+      + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
+    );
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
     this.dirty = true;
     return { player, resumed: false };
   }
 
-  disconnect(playerId: string, persist = true): void {
+  disconnect(playerId: string, persist = true, connectionId?: string): void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return;
+    if (connectionId && player.connectionId !== connectionId) {
+      netDebug('disconnect ignored', `stale conn ${connectionId.slice(0, 8)} live=${player.connectionId.slice(0, 8)}`);
+      return;
+    }
     player.connected = false;
     player.disconnectedAt = Date.now();
     player.sink = null;
+    player.activeSocketCount = 0;
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
@@ -443,7 +513,18 @@ export class WorldInstance {
     }
   }
 
-  applyInput(player: ServerPlayer, input: ClientInputMessage): boolean {
+  applyInput(
+    player: ServerPlayer,
+    input: ClientInputMessage,
+    source?: { readonly connectionId: string },
+  ): boolean {
+    if (source && source.connectionId !== player.connectionId) {
+      netDebug(
+        'player input',
+        `stale socket ${source.connectionId.slice(0, 8)} live=${player.connectionId.slice(0, 8)} seq=${input.seq}`,
+      );
+      return false;
+    }
     if (input.seq < player.lastInputSeq) {
       netDebug('player input', `stale seq ${input.seq} < ${player.lastInputSeq} for ${player.id}`);
       return false;
@@ -453,6 +534,7 @@ export class WorldInstance {
       return false;
     }
     player.lastInputSeq = input.seq;
+    player.lastInputConnectionId = source?.connectionId ?? player.connectionId;
     player.lastClientSentAt = input.clientSentAt;
     player.lastServerRecvAt = performance.now();
     if (input.jump) player.pendingJump = true;
@@ -583,6 +665,16 @@ export class WorldInstance {
     this.syncChunksFor(player);
   }
 
+  setActiveSocketCount(playerId: string, count: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    player.activeSocketCount = Math.max(0, Math.floor(count));
+  }
+
+  isActiveConnection(player: ServerPlayer, connectionId: string): boolean {
+    return player.connected && player.connectionId === connectionId;
+  }
+
   setGameMode(player: ServerPlayer, mode: GameMode): void {
     player.gamemode = mode;
     player.controller.creativeFlightAllowed = mode === 'creative';
@@ -641,12 +733,22 @@ export class WorldInstance {
     this.lastMeasuredTps = this.tpsWindowTicks * 1000 / elapsed;
     this.lastMeasuredSnapGen = this.snapshotsGenerated * 1000 / elapsed;
     this.lastMeasuredSnapSent = this.snapshotsSent * 1000 / elapsed;
+    const histogram = this.eventLoopDelay;
+    if (histogram) {
+      this.lastEldMean = histogram.mean / 1e6;
+      this.lastEldP95 = histogram.percentile(95) / 1e6;
+      this.lastEldP99 = histogram.percentile(99) / 1e6;
+      this.lastEldMax = histogram.max / 1e6;
+      histogram.reset();
+    }
     if (this.debugSnap) {
       serverLog(
         `snap/s gen=${this.lastMeasuredSnapGen.toFixed(1)} sent=${this.lastMeasuredSnapSent.toFixed(1)} `
         + `tps=${this.lastMeasuredTps.toFixed(1)} dropped=${this.droppedTicksTotal} `
-        + `loop phys=${this.lastPhysicsTicksThisLoop} elapsedMs=${this.lastLoopElapsedMs.toFixed(1)} `
-        + `accMs=${this.lastLoopAccumulatorMs.toFixed(1)}`,
+        + `loop phys=${this.lastPhysicsTicksThisLoop} late=${this.lastLoopLatenessMs.toFixed(1)} `
+        + `cb=${this.lastCallbackMs.toFixed(1)} eldMean=${this.lastEldMean.toFixed(1)} `
+        + `eldP99=${this.lastEldP99.toFixed(1)} eldMax=${this.lastEldMax.toFixed(1)} `
+        + `chunks send=${this.lastChunkSends} gen=${this.lastChunkGens}`,
       );
     }
     this.tpsWindowStart = now;
@@ -692,6 +794,7 @@ export class WorldInstance {
     for (const player of this.players.values()) {
       if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
     }
+    for (const player of this.connectedPlayers()) this.syncChunksFor(player);
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     if (snapshots.length > 0) {
       this.broadcast({
@@ -706,6 +809,17 @@ export class WorldInstance {
           elapsedMs: this.lastLoopElapsedMs,
           accumulatorMs: this.lastLoopAccumulatorMs,
           physicsTicksThisLoop: this.lastPhysicsTicksThisLoop,
+          latenessMs: this.lastLoopLatenessMs,
+          callbackMs: this.lastCallbackMs,
+          eldMean: this.lastEldMean,
+          eldP95: this.lastEldP95,
+          eldP99: this.lastEldP99,
+          eldMax: this.lastEldMax,
+          tickWallMs: this.lastTickMs,
+          entities: this.lastTickMetrics.entities,
+          blockChanges: this.lastTickMetrics.blockChanges,
+          chunkSends: this.lastChunkSends,
+          chunkGens: this.lastChunkGens,
         },
         players: snapshots,
       });
@@ -948,18 +1062,33 @@ export class WorldInstance {
     if (announce) serverLog(`chunk loaded ${key}`);
   }
 
-  private syncChunksFor(player: ServerPlayer): void {
+  private syncChunksFor(
+    player: ServerPlayer,
+    options?: { readonly maxNewGenerates?: number },
+  ): void {
     const radius = player.viewRadius;
+    const maxNew = options?.maxNewGenerates ?? MAX_NEW_CHUNK_GENERATES_PER_SYNC;
     const wanted = new Set<string>();
+    let generated = 0;
     for (let z = player.viewCz - radius; z <= player.viewCz + radius; z += 1) {
       for (let x = player.viewCx - radius; x <= player.viewCx + radius; x += 1) {
         const key = chunkKey(x, z);
         wanted.add(key);
-        this.ensureChunk(x, z);
+        const alreadyGenerated = this.generatedChunks.has(key);
+        if (!alreadyGenerated) {
+          if (generated >= maxNew) continue;
+          this.ensureChunk(x, z);
+          generated += 1;
+          this.lastChunkGens += 1;
+        } else if (!player.knownChunks.has(key)) {
+          this.ensureChunk(x, z, false);
+        }
+        if (!this.generatedChunks.has(key)) continue;
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
-          const mods = this.world.serializeModifications()[key] ?? {};
+          const mods = this.world.serializeChunkModifications(x, z);
           this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods });
+          this.lastChunkSends += 1;
         }
       }
     }
@@ -1144,7 +1273,7 @@ export class WorldInstance {
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
     player.viewCz = floorDiv(Math.floor(player.controller.position.z), 16);
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player);
+    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
     return player;
   }
 
