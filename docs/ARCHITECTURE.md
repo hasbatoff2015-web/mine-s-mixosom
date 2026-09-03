@@ -1,5 +1,28 @@
 # Архитектура
 
+## Remote player interpolation (server-tick timeline) — 2026-09-03
+
+Remote players are a **presentation** pipeline. They do not use local prediction, `LocalPlayerRenderState`, or packet-arrival timestamps as simulation time. Other network entities still use `EntityInterpolationBuffer` (arrival-time delay ~80 ms). Do not mix the three modes.
+
+Clock (in `src/net/remotePlayerInterpolation.ts`):
+
+```text
+clockTick  = latestServerTick + (now - latestReceivedAt) / REMOTE_TICK_MS
+renderTick = max(previousRenderTick, clockTick - delayTicks)
+```
+
+- `REMOTE_TICK_MS = 50` (20 TPS). `REMOTE_INTERP_DELAY_MS = 100` → `delayTicks = 2`.
+- Each sample is keyed by `player_state.tick` (`serverTick`). `receivedAt` is telemetry and the elapsed term of the **latest** sample only. Older packets cannot move already-buffered sample times.
+- Find the two surrounding snapshots and lerp: linear xyz/pitch/velocity, shortest-path yaw (`lerpAngle`). Booleans (`onGround`, `sprinting`, `sneaking`, `invisible`) use midpoint `t < 0.5 ? previous : next`.
+- One sample: **hold** the spawn/first pose. Do not invent a long extrapolation.
+- No future sample: coast on latest velocity for at most `REMOTE_EXTRAPOLATION_MS = 100`, then **hold the capped pose** (do not snap back to the last snapshot, do not coast forever).
+- Reject duplicate (`tick === last`) and stale (`tick < last`) snapshots. Bounded ring of 8. Render clock never rewinds.
+- Rejoin (`player_joined` of an existing id) calls `RemotePlayerView.reset()` and drops the old timeline. `player_left` disposes the buffer.
+
+Locomotion: `PlayerVisualAnimator` gets interpolated `movementSpeed` (xz hypot), `onGround`, `verticalVelocity`, `sprinting`, `sneaking`. Not packet rate, not correction events. Attack/mining/bow/eating remain hardcoded false/0 until a later PR.
+
+DEV: F3 nearest-remote line (`snap/s`, `serverTick`, `buf`, `arr/jitter`, `under/s`, `extrap`). `?remoteDiag=1` also logs one sample timeline per second.
+
 ## Checkpoint extra vs tickGap — 2026-09-03
 
 Live `extra=3` with `tickGap=1 physicsTicks=1` is **not** a seqGap heuristic. `inspectPredictedPlayer` sets `extraTicks = simTicks = serverTick - lastAckedServerTick`. That count is what `predictedStateFromCheckpoint` actually runs.
@@ -214,7 +237,7 @@ Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меня�
 
 Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
 
-Online remote players теперь используют тот же `PlayerVisual`, что local third-person: `RemotePlayerView` сохраняет ownership bounded snapshot interpolation и подаёт interpolated feet/yaw/pitch/velocity plus authoritative sneak/sprint/onGround/invisibility в render-frame animator. Temporary `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Текущий protocol не содержит authoritative held item id или appearance metadata, поэтому remote visual использует `DEFAULT_PLAYER_APPEARANCE` и neutral empty hand — ничего не угадывается. Будущий appearance sync остаётся редким metadata event `{ skinId, model, layers? }`, никогда PNG/base64 или per-tick texture payload.
+Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Текущий protocol не содержит authoritative held item id или appearance metadata, поэтому remote visual использует `DEFAULT_PLAYER_APPEARANCE` и neutral empty hand — ничего не угадывается. Будущий appearance sync остаётся редким metadata event `{ skinId, model, layers? }`, никогда PNG/base64 или per-tick texture payload. Remote attack/mining/bow/eating sync is a later PR.
 
 ## Block breaking overlay — integrated 2026-09-02
 
@@ -642,7 +665,7 @@ Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT 
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
-Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `lastInput`; snapshots carry `inputSeq` so the client can compare the predicted **pose** at that seq (`src/net/localPlayerPrediction.ts`). Matching xz/y acks leave the live player untouched (velocity/onGround/flying disagreements are logged, not rewound). Pose mismatches restore that pose and replay only later seqs. Snapshots are applied at the start of the next client tick, not in the WebSocket callback. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
+Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from `lastInput`; snapshots carry `inputSeq` so the client can compare the predicted **pose** at that seq (`src/net/localPlayerPrediction.ts`). Matching xz/y acks leave the live player untouched (velocity/onGround/flying disagreements are logged, not rewound). Pose mismatches restore that pose and replay only later seqs. Snapshots are applied at the start of the next client tick, not in the WebSocket callback. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView` / `RemoteInterpolationBuffer`) samples a server-tick timeline 100 ms behind the estimated latest tick and is never applied to the local id. Other network entities keep the arrival-time delay model (`EntityInterpolationBuffer`, ~80 ms) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` and the client prediction buffer so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
 
 `GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal. Online hide also sends one idle input and, on return to PLAYING, resyncs local movement to the latest authoritative snapshot so a frozen tab cannot phase-shift prediction.
 

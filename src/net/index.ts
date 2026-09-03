@@ -49,7 +49,15 @@ export {
 export { isDevRuntime } from './predIsolation';
 export { localNetTrace, formatFirstBadEvent } from './localPlayerNetTrace';
 export { isCorrDiagQueryEnabled, formatCorrectionDiag, sampleCollisionHint } from './correctionDiagnostics';
-export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
+export { RemotePlayerView } from './RemotePlayerView';
+export {
+  REMOTE_INTERP_DELAY_MS,
+  REMOTE_EXTRAPOLATION_MS,
+  REMOTE_TICK_MS,
+  RemoteInterpolationBuffer,
+  remoteSampleFromSnapshot,
+} from './remotePlayerInterpolation';
+export { isRemoteDiagQueryEnabled, formatRemoteInterpHud } from './remoteInterpDiagnostics';
 export {
   EntityInterpolationBuffer,
   sampleEntityPose,

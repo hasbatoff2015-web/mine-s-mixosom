@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-03 Remote player interpolation
+
+Report: `reports/2026-09-03_remote-player-interpolation.md`.
+
+```text
+npx vitest run tests/remote-player-interpolation.test.ts tests/remote-player-view.test.ts tests/remote-interp-diagnostics.test.ts tests/entity-snapshot-interpolation.test.ts
+```
+
+Contracts: perfect 20 Hz samples render two ticks behind latest; irregular arrival (50/90/35/75/45 ms) keeps monotonic server-tick motion and the same pose as even spacing at the same `renderTick`; batched snapshots do not snap to the newest pose; missing tick 102 lerps 101→103; duplicates/stale never rewind; 50 ms / 100 ms velocity extrapolation then hold the capped pose; one snapshot holds; yaw wraps shortest-path; booleans are not lerped; `?remoteDiag=1` formats HUD; PlayerVisual locomotion comes from interpolated velocity. Entity interpolation still uses arrival-time 80 ms and is uncoupled from remotes. Local prediction / PlayerController / server TPS unchanged.
+
+Manual (two clients): `http://localhost:4173/?remoteDiag=1` on observer. See checklist in the report.
+
 ## 2026-09-03 Online Creative Flight permission
 
 Report: `reports/2026-09-03_online-creative-flight-permission.md`. PR #37.

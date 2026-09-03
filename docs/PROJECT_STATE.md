@@ -2,6 +2,18 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Remote player interpolation v1
+
+- Ветка `cursor/remote-player-interpolation-86e1`, от HEAD PR #37 (`fd02b67`). **Не merge в main.** Local prediction / PlayerController / server TPS **не трогали**.
+- Remote samples keyed by `player_state.tick`, not `performance.now()`. Arrival time is telemetry + elapsed term of the latest sample only.
+- Clock: `clockTick = latestServerTick + (now - latestReceivedAt) / 50ms`; `renderTick = max(prev, clockTick - 2)`. Delay **100 ms** (2 ticks). Buffer max 8.
+- Lerp xyz/pitch/velocity; shortest-path yaw; midpoint booleans. One snapshot → hold. Underflow → velocity coast ≤ 100 ms, then hold the **capped** pose (no snap back, no infinite coast).
+- Rejoin `player_joined` resets the timeline. `player_left` disposes. Animator uses interpolated xz speed + vy/onGround/sprint/sneak. Actions still false/0 (next PR).
+- DEV: F3 nearest-remote HUD; `?remoteDiag=1` logs one timeline/s.
+- Tests: `tests/remote-player-interpolation.test.ts` A–K + jitter/yaw/reset/telemetry; view + diagnostics; entity tests uncoupled from remotes.
+- Report: `docs/reports/2026-09-03_remote-player-interpolation.md`.
+- Owner: two-client QA still required (A moves, B observes).
+
 ## Последний проход: Online Creative Flight permission (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

@@ -1,5 +1,18 @@
 # Roadmap
 
+## 2026-09-03: Remote player interpolation v1
+
+- [x] Server-tick snapshot buffer per remote (`player_state.tick`), not packet arrival time.
+- [x] Local render clock: `latestServerTick + elapsedSinceLatest - 2 ticks` (100 ms delay).
+- [x] Linear xyz/pitch/velocity, shortest-path yaw, midpoint booleans. Bounded 100 ms velocity extrapolation, then hold the capped pose.
+- [x] Hold the first snapshot until a timeline exists. Rejoin resets the buffer. Despawn disposes it.
+- [x] Drive `PlayerVisualAnimator` from interpolated velocity + grounded/sprint/sneak. Actions stay false/0.
+- [x] DEV F3 nearest-remote HUD + `?remoteDiag=1` 1 Hz timeline log.
+- [x] Deterministic tests A–K + irregular arrival + yaw wrap + telemetry.
+- [ ] Owner two-client QA: A walks/sprints/jumps/strafes/flies, B observes. F3/`?remoteDiag=1` buffer healthy, underflow ~0 on localhost.
+- [ ] Remote attack/mining/bow/eating sync — **next PR**, not this one.
+- [ ] Do not merge main. Do not touch local prediction / PlayerController / server TPS.
+
 ## 2026-09-03: Online Creative Flight permission (PR #37)
 
 - [x] Prove live stationary-flight dump: server hover `fly=true vy=0`, client prediction `fly=false` + gravity.
