@@ -46,6 +46,11 @@ export interface PlayerSnapshot {
   readonly dead?: boolean;
   /** Last input seq used for this pose (latest movement state that tick). */
   readonly inputSeq?: number;
+  /**
+   * DEV: last few server physics ticks with the input seq actually applied.
+   * Latest `inputSeq` alone cannot reconstruct a multi-tick interval.
+   */
+  readonly appliedTicks?: readonly AppliedInputTick[];
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
   readonly flying?: boolean;
   /** DEV localhost RTT trace for the input seq this pose used. */
@@ -57,6 +62,21 @@ export interface PlayerSnapshot {
   };
   /** DEV session/socket isolation. Never includes the raw session token. */
   readonly session?: PlayerSessionDiag;
+}
+
+export interface AppliedInputTick {
+  readonly tick: number;
+  readonly seq: number;
+  readonly forward: number;
+  readonly right: number;
+  readonly jump: boolean;
+  readonly sneak: boolean;
+  readonly descend: boolean;
+  readonly flySprint: boolean;
+  readonly y: number;
+  readonly vy: number;
+  readonly flying: boolean;
+  readonly onGround: boolean;
 }
 
 export interface PlayerSessionDiag {

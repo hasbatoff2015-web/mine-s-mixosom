@@ -2,6 +2,17 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: extra=3 vs tickGap=1 (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: `extra=seqGap` при `tickGap=1 physicsTicks=1`. **Не seqGap heuristic.** `extraTicks = simTicks = serverTick - lastAckedServerTick`. Comparable = lastAcked + **N ticks of latest input**.
+- `tickGap` считается от last **received** `player_state` (`lastStateTick` на ingest). `lastAckedServerTick` только на reconcile commit. Latest-only pending slot теряет промежуточные snapshot'ы → simTicks=3, tickGap=1. seqGap совпадает случайно (клиент тоже натикал ~3 seq).
+- Старый dump врал: `extra=max(0, physicsTicks-seqGap)` печатался рядом с значением simTicks.
+- Stationary flight y-jitter: тот же extra>1 replay leftover `vy` / mixed applied seqs. Не gravity patch.
+- DEV: snapshot `appliedTicks` (последние 8 server physics ticks), `[corrDiag]` APPLIED INPUT TIMELINE + `extraAssignSite` + `pendingSlotOverwrites` + checkpoint y/vy.
+- Следующий production fix (не этот commit): replay applied `{tick,seq}` span, не `latestInput × simTicks`.
+- Report: `docs/reports/2026-09-03_checkpoint-extra-source.md`.
+
 ## Последний проход: prediction checkpoint (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

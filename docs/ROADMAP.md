@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-03: checkpoint extra source (PR #37)
+
+- [x] Trace live `extra=3` with `tickGap=1 physicsTicks=1`: `extraTicks = simTicks = serverTick - lastAckedServerTick`, not seqGap.
+- [x] Prove latest-only pending slot + lastStateTick-on-receive makes lastAckedServerTick stale.
+- [x] Dump real extra assignment site, pending overwrites, applied per-tick input, checkpoint/comparable/server y/vy.
+- [x] Stationary flight y error from extra>1 leftover vy — same timeline, not a physics constant.
+- [ ] Next production fix: replay applied `{tick,seq}` span (not latestInput × simTicks). No seqGap/tolerance/lerp patch.
+- [ ] Do not merge main.
+
 ## 2026-09-03: prediction checkpoint (PR #37)
 
 - [x] Timeline simulator: client seqs vs latest-input server ticks; reproduce `seq=545 gap=2 physicsTicks=1`.

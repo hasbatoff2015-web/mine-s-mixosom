@@ -109,12 +109,13 @@ describe('corrDiag dump sections', () => {
       },
     } satisfies CorrectionDiag;
     const text = formatCorrectionDiag(diag);
-    for (const section of ['SEQ:', 'TIMING:', 'PHYSICS:', 'INPUT:', 'CLIENT POSE:', 'SERVER POSE:', 'DIFF', 'STATE:', 'WORLD:']) {
+    for (const section of ['SEQ:', 'TIMING:', 'PHYSICS:', 'INPUT:', 'APPLIED INPUT TIMELINE', 'CLIENT POSE:', 'SERVER POSE:', 'DIFF', 'STATE:', 'WORLD:']) {
       expect(text, section).toContain(section);
     }
     expect(text).toContain('snapshot.inputSeq=12');
     expect(text).toContain('pendingSeqs=[12,13]');
     expect(text).toContain('compare exactly history[N]');
+    expect(text).toContain('extra is NOT max(0, physicsTicks-seqGap)');
     expect(text).toContain('firstDiff=z');
     expect(text).toContain('worldRevision=mutationMarks=');
     expect(text).toContain(`walkStep=${(WALK_SPEED * FIXED_DT).toFixed(4)}`);

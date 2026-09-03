@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Checkpoint extra source
+
+Report: `reports/2026-09-03_checkpoint-extra-source.md`. PR #37.
+
+```text
+npx vitest run tests/checkpoint-extra-source.test.ts tests/correction-diag-dump.test.ts tests/local-player-prediction.test.ts tests/server/client-server-lockstep.test.ts
+```
+
+Contracts: `simulationTicksFromServerTick(13771, 13774, 1)===3`; old extra formula `max(0,1-3)===0`; pending overwrite 2 + lastStateTick-on-receive → tickGap=1 extra=3 extra===simTicks; mixed seqs 3-tick replay corrects xz; hover leftover vy extra=3 vs 1 server tick corrects y. Dump prints APPLIED INPUT TIMELINE and `extra is NOT max(0, physicsTicks-seqGap)`. No physics/tolerance change. Manual: `?corrDiag=1`, paste extra=3 dump + hover `firstDiff=y`.
+
 ## 2026-09-03 Prediction checkpoint
 
 Report: `reports/2026-09-03_prediction-checkpoint.md`. PR #37.

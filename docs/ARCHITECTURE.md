@@ -1,5 +1,13 @@
 # Архитектура
 
+## Checkpoint extra vs tickGap — 2026-09-03
+
+Live `extra=3` with `tickGap=1 physicsTicks=1` is **not** a seqGap heuristic. `inspectPredictedPlayer` sets `extraTicks = simTicks = serverTick - lastAckedServerTick`. That count is what `predictedStateFromCheckpoint` actually runs.
+
+`tickGap` uses `lastStateTick` from **receive**. `lastAckedServerTick` updates only on reconcile commit. `pendingLocalSnapshot` keeps the latest packet only, so skipped snapshots still advance `lastStateTick` and leave the checkpoint N ticks behind.
+
+`lastAccepted + latestInput × simTicks` is valid only when every skipped server tick used that same input. Server samples `lastInput` per physics tick. DEV `PlayerSnapshot.appliedTicks` is the per-tick applied seq/y/vy trace (last 8). The next production compare should replay that span, not one latest seq × N.
+
 ## Prediction checkpoint (Model B) — 2026-09-03
 
 Owner dump `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x` proved `inputSeq` is not a physics tick. The client predicted seq 544 and 545; the server simulated **one** latest-input tick of 545. `history[545]` is one walk step ahead of the authoritative pose.

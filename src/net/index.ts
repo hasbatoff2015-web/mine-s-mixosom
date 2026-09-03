@@ -26,6 +26,8 @@ export {
   seedPredictionCheckpoint,
   simulationTicksFromServerTick,
   comparableExtraTicks,
+  extraAssignSite,
+  overwriteLatestSlot,
   snapshotComparePath,
 } from './localPlayerPrediction';
 export {

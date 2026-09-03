@@ -20,7 +20,15 @@ interface PredictedMoveLike {
 
 interface PredictionBufferLike {
   readonly lastAckedSeq: number;
-  readonly entries: ReadonlyArray<{ readonly seq: number; readonly input: PredictedMoveLike }>;
+  readonly lastAckedServerTick?: number;
+  readonly lastAckedState?: PlayerMovementState | null;
+  readonly lastAckedPredTick?: number;
+  readonly entries: ReadonlyArray<{
+    readonly seq: number;
+    readonly predTick?: number;
+    readonly input: PredictedMoveLike;
+    readonly state?: PlayerMovementState;
+  }>;
 }
 
 interface PredictionErrorLike {
@@ -102,6 +110,26 @@ export interface CorrectionDiag {
   readonly extraTicks: number;
   readonly comparePath: SnapshotComparePath | 'none';
   readonly simTicks?: number;
+  readonly lastAckedServerTick?: number;
+  readonly extraAssignSite?: string;
+  readonly extraOldFormula?: number;
+  readonly pendingOverwrites?: number;
+  readonly appliedTicks?: ReadonlyArray<{
+    readonly tick: number;
+    readonly seq: number;
+    readonly forward: number;
+    readonly right: number;
+    readonly jump: boolean;
+    readonly sneak: boolean;
+    readonly descend: boolean;
+    readonly flySprint: boolean;
+    readonly y: number;
+    readonly vy: number;
+    readonly flying: boolean;
+    readonly onGround: boolean;
+  }>;
+  readonly clientPredTicks?: ReadonlyArray<{ readonly predTick: number; readonly seq: number }>;
+  readonly lastAckedPose?: PlayerMovementState;
   readonly pendingSeqs: readonly number[];
   readonly snapshot: {
     readonly x: number; readonly y: number; readonly z: number;
@@ -235,6 +263,8 @@ export function buildCorrectionDiag(input: {
   readonly seqGap?: number;
   readonly history?: PlayerMovementState;
   readonly comparable?: PlayerMovementState;
+  readonly extraAssignSite?: string;
+  readonly pendingOverwrites?: number;
   readonly timing?: CorrectionTiming;
   readonly world: CorrectionWorldHint;
 }): CorrectionDiag {
@@ -246,7 +276,9 @@ export function buildCorrectionDiag(input: {
     ? input.buffer.entries[input.buffer.entries.length - 1]!.seq
     : lastAckedSeq;
   const physicsTicks = Math.max(1, Math.floor(input.physicsTicks ?? 1));
-  const extraTicks = input.extraTicks ?? Math.max(0, physicsTicks - seqGap);
+  const extraOldFormula = Math.max(0, physicsTicks - seqGap);
+  const extraTicks = input.extraTicks ?? extraOldFormula;
+  const lastAckedServerTick = input.buffer.lastAckedServerTick;
   const live = input.player.captureMovementState();
   const base = {
     inputSeq,
@@ -264,6 +296,16 @@ export function buildCorrectionDiag(input: {
     extraTicks,
     comparePath: input.comparePath ?? (extraTicks > 0 ? 'history[N]+extra' as const : 'history[N]' as const),
     simTicks: input.simTicks ?? extraTicks,
+    lastAckedServerTick,
+    extraAssignSite: input.extraAssignSite,
+    extraOldFormula,
+    pendingOverwrites: input.pendingOverwrites,
+    appliedTicks: input.snapshot.appliedTicks,
+    clientPredTicks: input.buffer.entries.map((entry) => ({
+      predTick: entry.predTick ?? entry.seq,
+      seq: entry.seq,
+    })),
+    lastAckedPose: input.buffer.lastAckedState ?? undefined,
     pendingSeqs: input.buffer.entries.map((entry) => entry.seq),
     snapshot: {
       x: input.snapshot.x, y: input.snapshot.y, z: input.snapshot.z,
@@ -333,8 +375,14 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
     `PHYSICS:`,
     `  snapshot.physicsTicks=${diag.physicsTicks ?? 1} tickClock.physicsTicksThisLoop=${diag.physicsTicksThisLoop ?? '—'} `
     + `serverTickNumber=${diag.serverTick ?? '—'} lastStateTick=${diag.lastStateTick}`,
-    `  extra=max(0, physicsTicks - seqGap)=max(0, ${diag.physicsTicks ?? 1} - ${diag.seqGap})=${diag.extraTicks}`,
-    `  simTicks=${diag.simTicks ?? diag.extraTicks} (authoritative latest-input ticks from last accepted pose)`,
+    `  lastAckedServerTick=${diag.lastAckedServerTick ?? '—'} `
+    + `simTicks=${diag.simTicks ?? diag.extraTicks} extraTicks=${diag.extraTicks} seqGap=${diag.seqGap}`,
+    `  extraAssignSite=${diag.extraAssignSite ?? '—'}`,
+    `  extra is NOT max(0, physicsTicks-seqGap); that old formula=`
+    + `max(0, ${diag.physicsTicks ?? 1}-${diag.seqGap})=${diag.extraOldFormula ?? '—'} `
+    + `(live extra=${diag.extraTicks} ${diag.extraTicks === diag.extraOldFormula ? 'EQUALS' : 'DIFFERS FROM'} old formula)`,
+    `  tickGap=serverTick-lastStateTick uses last *received* player_state, not last reconciled checkpoint`,
+    `  pendingSlotOverwrites=${diag.pendingOverwrites ?? '—'} (latest-only queue between tickOnline flushes)`,
     `  comparePath=${diag.comparePath}  `
     + (diag.comparePath === 'checkpoint'
       ? `checkpoint: lastAcked pose + ${diag.simTicks ?? diag.extraTicks} latest-input tick(s); inputSeq is state, not the checkpoint`
@@ -347,11 +395,27 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
         + `sprint=${input.sprint} descend=${input.descend} flySprint=${input.flySprint} `
         + `yaw=${input.yaw.toFixed(4)} pitch=${input.pitch.toFixed(4)} seq=${input.seq}`
       : 'MISSING (no history for this inputSeq)'}`,
+    `APPLIED INPUT TIMELINE (server physics ticks, not latest inputSeq only):`,
+    ...(diag.appliedTicks && diag.appliedTicks.length > 0
+      ? diag.appliedTicks.map((tick) => (
+        `  tick=${tick.tick} seq=${tick.seq} f=${tick.forward} r=${tick.right} `
+        + `jump=${tick.jump} sneak=${tick.sneak} descend=${tick.descend} flySprint=${tick.flySprint} `
+        + `y=${fmt3(tick.y)} vy=${fmt3(tick.vy)} fly=${tick.flying} ground=${tick.onGround}`
+      ))
+      : ['  MISSING (older server or no appliedTicks on snapshot)']),
+    `CLIENT PRED TIMELINE (unacked):`,
+    diag.clientPredTicks && diag.clientPredTicks.length > 0
+      ? `  ${diag.clientPredTicks.map((tick) => `pred=${tick.predTick}:seq=${tick.seq}`).join(' ')}`
+      : '  (none)',
     `CLIENT POSE:`,
+    poseLine('checkpoint', diag.lastAckedPose),
     poseLine('history[N]', history),
     poseLine('comparable', comparable),
     poseLine('live     ', diag.liveBefore, diag.liveBefore.isFlying),
     `  livePrev ${fmt3(diag.liveBefore.px)} ${fmt3(diag.liveBefore.py)} ${fmt3(diag.liveBefore.pz)}`,
+    `  checkpoint y/vy=${fmt3(diag.lastAckedPose?.y ?? Number.NaN)}/${fmt3(diag.lastAckedPose?.vy ?? Number.NaN)} `
+    + `comparable y/vy=${fmt3(comparable?.y ?? Number.NaN)}/${fmt3(comparable?.vy ?? Number.NaN)} `
+    + `server y/vy=${fmt3(diag.snapshot.y)}/${fmt3(diag.snapshot.vy)}`,
     `SERVER POSE:`,
     poseLine('snapshot ', diag.snapshot, diag.snapshot.flying),
     `DIFF (comparable vs snapshot):`,

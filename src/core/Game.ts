@@ -201,6 +201,7 @@ import {
   reconcilePredictedPlayer,
   resetPredictionBuffer,
   seedPredictionCheckpoint,
+  overwriteLatestSlot,
   type PredictionBuffer,
   type ReconcileResult,
 } from '../net/localPlayerPrediction';
@@ -1005,7 +1006,9 @@ export class Game {
       } else if (online.ignoreNetworkState) {
         motionProbe.note('skip:local-state');
       } else {
-        online.pendingLocalSnapshot = { message, local };
+        const queued = overwriteLatestSlot(online.pendingLocalSnapshot, { message, local });
+        if (queued.overwritten) motionProbe.notePendingOverwrite();
+        online.pendingLocalSnapshot = queued.value;
       }
     } else {
       motionProbe.noteSnapshotDrop('no-local');
@@ -1127,6 +1130,7 @@ export class Game {
     if (!online || !pending) return;
     online.pendingLocalSnapshot = undefined;
     this.applyLocalPlayerSnapshot(session, pending.message, pending.local);
+    motionProbe.pendingSnapshotOverwrites = 0;
   }
 
   /**

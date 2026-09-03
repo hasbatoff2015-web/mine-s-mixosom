@@ -149,6 +149,18 @@ export interface ReconcileOptions {
   readonly serverTick?: number;
 }
 
+export const CHECKPOINT_EXTRA_ASSIGN_SITE =
+  'inspectPredictedPlayer: extraTicks = simTicks = simulationTicksFromServerTick(lastAckedServerTick, serverTick, physicsTicks)';
+
+export function extraAssignSite(comparePath: SnapshotComparePath): string {
+  if (comparePath === 'checkpoint') return CHECKPOINT_EXTRA_ASSIGN_SITE;
+  if (comparePath === 'history[N]+extra' || comparePath === 'history[N]') {
+    return 'inspectPredictedPlayer fallback: extraTicks = comparableExtraTicks(physicsTicks, seqGap)';
+  }
+  if (comparePath === 'live') return 'inspectPredictedPlayer no-history: extraTicks = simTicks';
+  return 'inspectPredictedPlayer ignored: extraTicks = 0';
+}
+
 export type { AckRejectReason } from './localMotionDiagnostics';
 
 export function createPredictionDebug(): PredictionDebug {
@@ -206,6 +218,10 @@ export function seedPredictionCheckpoint(
   buffer.lastAckedServerTick = serverTick;
   buffer.lastAckedPredTick = buffer.nextPredTick;
   if (input) buffer.lastAckedInput = input;
+}
+
+export function overwriteLatestSlot<T>(current: T | undefined, next: T): { value: T; overwritten: boolean } {
+  return { value: next, overwritten: current !== undefined };
 }
 
 /**
@@ -863,6 +879,8 @@ function applyCorrection(
     physicsTicks: inspect?.physicsTicks,
     extraTicks: inspect?.extraTicks,
     simTicks: inspect?.simTicks,
+    extraAssignSite: extraAssignSite(inspect?.comparePath ?? 'none'),
+    pendingOverwrites: motionProbe.pendingSnapshotOverwrites,
     comparePath: inspect?.comparePath,
     seqGap: inspect?.seqGap,
     history: inspect?.predicted ?? predictedAtAck?.state,

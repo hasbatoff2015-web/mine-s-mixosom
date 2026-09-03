@@ -120,6 +120,7 @@ export class LocalMotionProbe {
   lastChunkUpdateAt = Number.NaN;
   lastStateTick = -1;
   inboundTick: number | undefined;
+  pendingSnapshotOverwrites = 0;
   sampleWorldHint: (() => {
     feetBlock: string;
     belowBlock: string;
@@ -196,6 +197,7 @@ export class LocalMotionProbe {
     this.lastChunkUpdateAt = Number.NaN;
     this.lastStateTick = -1;
     this.inboundTick = undefined;
+    this.pendingSnapshotOverwrites = 0;
     this.renderDeltas.length = 0;
     this.cameraDeltas.length = 0;
     this.hasLastRender = false;
@@ -261,6 +263,11 @@ export class LocalMotionProbe {
 
   noteSnapshotInbound(now = performance.now()): void {
     this.note('snap:recv', now);
+  }
+
+  notePendingOverwrite(now = performance.now()): void {
+    this.pendingSnapshotOverwrites += 1;
+    this.note('snap:overwrite', now);
   }
 
   noteTickClock(message: {

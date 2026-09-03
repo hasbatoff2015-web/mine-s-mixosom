@@ -19,6 +19,7 @@ import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
+  AppliedInputTick,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -77,6 +78,8 @@ export class ServerPlayer implements GameplayPlayer {
   lastServerSimAt: number | undefined;
   lastInputGapMs = 0;
   inputPacketsThisLoop = 0;
+  /** Last server physics ticks with the input seq that was actually applied. */
+  readonly appliedInputTrace: AppliedInputTick[] = [];
   /** Jump pulse seen since the last physics tick (latest-input coalescing). */
   pendingJump = false;
   /** use=false seen while charging, so a coalesced release is not lost. */
@@ -153,6 +156,7 @@ export class ServerPlayer implements GameplayPlayer {
       dead: this.survival.dead,
       inputSeq: this.lastInputSeq,
       flying: this.controller.isFlying,
+      appliedTicks: this.appliedInputTrace.slice(),
       session: {
         tokenFp: sessionTokenFingerprint(this.sessionToken),
         connectionId: this.connectionId,
@@ -174,6 +178,33 @@ export class ServerPlayer implements GameplayPlayer {
         },
       } : {}),
     };
+  }
+
+  recordAppliedInput(tick: number, applied: {
+    readonly seq: number;
+    readonly forward: number;
+    readonly right: number;
+    readonly jump: boolean;
+    readonly sneak: boolean;
+    readonly descend: boolean;
+    readonly flySprint: boolean;
+  }): void {
+    this.appliedInputTrace.push({
+      tick,
+      seq: applied.seq,
+      forward: applied.forward,
+      right: applied.right,
+      jump: applied.jump,
+      sneak: applied.sneak,
+      descend: applied.descend,
+      flySprint: applied.flySprint,
+      y: this.controller.position.y,
+      vy: this.controller.velocity.y,
+      flying: this.controller.isFlying,
+      onGround: this.controller.onGround,
+    });
+    const extra = this.appliedInputTrace.length - 8;
+    if (extra > 0) this.appliedInputTrace.splice(0, extra);
   }
 
   remoteInfo(): RemotePlayerInfo {
@@ -969,6 +1000,15 @@ export class WorldInstance {
         player.miningTarget = undefined;
       }
       this.gameplay.advanceUseHold(player, using);
+      player.recordAppliedInput(this.tickNumber, {
+        seq: player.lastInputSeq,
+        forward: riding ? 0 : input.forward,
+        right: riding ? 0 : input.right,
+        jump: riding ? false : jump,
+        sneak: input.sneak,
+        descend: input.descend === true,
+        flySprint: input.flySprint === true,
+      });
       const moved = player.controller.position.distanceTo(before);
       if (moved > 1e-4) {
         const event = this.events.createPlayerMove(
