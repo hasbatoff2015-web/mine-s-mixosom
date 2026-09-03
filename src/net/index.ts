@@ -26,8 +26,13 @@ export {
   isBowDiagQueryEnabled,
   isMotionDiagQueryEnabled,
   isPredNoNetQueryEnabled,
+  isPredNoSendQueryEnabled,
+  isPredNoStateQueryEnabled,
+  resolvePredIsolation,
   motionProbe,
 } from './localMotionDiagnostics';
+export { isDevRuntime } from './predIsolation';
+export { localNetTrace, formatFirstBadEvent } from './localPlayerNetTrace';
 export { isCorrDiagQueryEnabled } from './correctionDiagnostics';
 export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
 export {

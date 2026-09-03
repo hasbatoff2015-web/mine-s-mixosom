@@ -5,11 +5,13 @@ import type { VoxelWorld } from '../world/World';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import { LOCAL_SNAP_DISTANCE, distanceSquared } from './authoritativeMotion';
 import {
-  captureMotionPose,
-  motionPoseChanged,
   motionProbe,
   type AckRejectReason,
 } from './localMotionDiagnostics';
+import {
+  captureMotionFull,
+  diffMotionFull,
+} from './localPlayerNetTrace';
 import {
   buildCorrectionDiag,
   isCorrDiagQueryEnabled,
@@ -428,7 +430,7 @@ export function reconcilePredictedPlayer(
     return finish(buffer, 'ignored', emptyError(), 0, 'duplicate-seq');
   }
 
-  const before = captureMotionPose(player);
+  const before = captureMotionFull(player);
   const predictedAtAck = findPredictedEntry(buffer, ackSeq);
   const seqGap = ackSeq - buffer.lastAckedSeq;
   motionProbe.noteSeqGap(seqGap);
@@ -437,12 +439,15 @@ export function reconcilePredictedPlayer(
     const reject = ackRejectReason(predictedAtAck.state, snapshot, error);
     if (reject === 'none') {
       ackPredictedMoves(buffer, ackSeq);
-      const mutated = motionPoseChanged(player, before);
+      const changed = diffMotionFull(before, captureMotionFull(player));
+      const mutated = changed.length > 0;
       if (mutated) {
         motionProbe.note('accept-mutated');
         motionProbe.noteWrite('position');
         motionProbe.noteWrite('previousPosition');
         motionProbe.noteWrite('velocity');
+      } else {
+        motionProbe.note('accept-invisible');
       }
       return finish(buffer, 'accepted', error, 0, 'none', mutated);
     }

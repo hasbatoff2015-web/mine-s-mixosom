@@ -66,6 +66,9 @@ export class ServerPlayer implements GameplayPlayer {
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
   /** Highest received input seq. Snapshot.inputSeq is this value after the tick that used lastInput. */
   lastInputSeq = -1;
+  lastClientSentAt: number | undefined;
+  lastServerRecvAt: number | undefined;
+  lastServerSimAt: number | undefined;
   /** Jump pulse seen since the last physics tick (latest-input coalescing). */
   pendingJump = false;
   /** use=false seen while charging, so a coalesced release is not lost. */
@@ -137,6 +140,14 @@ export class ServerPlayer implements GameplayPlayer {
       dead: this.survival.dead,
       inputSeq: this.lastInputSeq,
       flying: this.controller.isFlying,
+      ...(this.lastServerRecvAt !== undefined || this.lastClientSentAt !== undefined ? {
+        netTiming: {
+          ...(this.lastClientSentAt !== undefined ? { clientSentAt: this.lastClientSentAt } : {}),
+          ...(this.lastServerRecvAt !== undefined ? { serverRecvAt: this.lastServerRecvAt } : {}),
+          ...(this.lastServerSimAt !== undefined ? { serverSimAt: this.lastServerSimAt } : {}),
+          serverSentAt: performance.now(),
+        },
+      } : {}),
     };
   }
 
@@ -430,6 +441,8 @@ export class WorldInstance {
       return false;
     }
     player.lastInputSeq = input.seq;
+    player.lastClientSentAt = input.clientSentAt;
+    player.lastServerRecvAt = performance.now();
     if (input.jump) player.pendingJump = true;
     if (input.use !== true && (player.bowUseTicks > 0 || player.foodUseTicks > 0 || player.lastInput.use === true)) {
       player.pendingUseRelease = true;
@@ -629,6 +642,10 @@ export class WorldInstance {
     const started = performance.now();
     this.tickNumber += 1;
     const dt = this.dt;
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      player.lastServerSimAt = started;
+    }
     if (this.debugTickOrder) this.kernelTrace.length = 0;
     const metrics = this.gameplay.tick([...this.players.values()], dt, {
       tickPlayers: () => this.tickConnectedPlayers(dt),

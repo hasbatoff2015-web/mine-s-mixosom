@@ -2,6 +2,16 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: network-path isolation (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Ручной A/B: Normal Online jitter; `?predNoNet=1` идеально гладкий. Значит, остаток в **online network path**, не в PlayerController и не в generic render interpolation.
+- DEV isolation: `?predNoState=1` (send+predict, skip local `player_state`), `?predNoSend=1` (no movement send, still receive/apply), `predNoNet` = оба. F3: `online/normal|noState|noSend|noNet`.
+- Accepted/ignored local snapshot больше не пишет look/riding/gamemode unless the value changed; reconcile accept is a full-field no-op.
+- DEV trace: every local-player network mutation (source/old/new), send/recv rates, collision-volume block/chunk events, first visible render jump dump, optional `clientSentAt` → snapshot `netTiming`.
+- Physics constants / render lerp / correction tolerance / urgent remesh не менялись.
+- Tests: flags **6/6**, matrix **6/6**, prediction **24/24**, pipeline **8/8**, render-state **8/8**, remesh **4/4**; `test:sim` **42/42**; `test:server` **83/83**; build PASS.
+
 ## Последний проход: LocalPlayerRenderState (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

@@ -1,6 +1,24 @@
-import { FIXED_DT } from '../core/constants';
+import {
+  formatPredIsolationMode,
+  type PredIsolationMode,
+} from './predIsolation';
+import { localNetTrace } from './localPlayerNetTrace';
 
 export type ReconcileKind = 'ignored' | 'accepted' | 'corrected' | 'snapped';
+export {
+  isPredNoNetQueryEnabled,
+  isPredNoSendQueryEnabled,
+  isPredNoStateQueryEnabled,
+  resolvePredIsolation,
+} from './predIsolation';
+export {
+  captureMotionFull,
+  diffMotionFull,
+  localNetTrace,
+  traceLocalPlayerMutation,
+  blockOverlapsPlayerVolume,
+  chunkOverlapsPlayerColumn,
+} from './localPlayerNetTrace';
 
 const RATE_WINDOW_MS = 1000;
 const TRACE_SECONDS = 2;
@@ -62,10 +80,6 @@ export function isBowDiagQueryEnabled(search = typeof location === 'undefined' ?
   return queryFlag('bowDiag', search) || queryFlag('bowdiag', search);
 }
 
-export function isPredNoNetQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
-  return queryFlag('predNoNet', search) || queryFlag('prednonet', search);
-}
-
 function countSince(events: readonly MotionRateEvent[], now: number, kind?: string): number {
   const cutoff = now - RATE_WINDOW_MS;
   let count = 0;
@@ -118,7 +132,10 @@ export class LocalMotionProbe {
   fromTick = 0;
   toTick = 0;
   cameraSource = 'interpolated-local';
+  isolationMode: PredIsolationMode = 'normal';
   ignoreNetworkMotion = false;
+  ignoreNetworkSend = false;
+  ignoreNetworkState = false;
   lastRenderDelta = 0;
   lastCameraDelta = 0;
   readonly traceEnabled: boolean;
@@ -129,7 +146,10 @@ export class LocalMotionProbe {
   private lastRender = { x: 0, y: 0, z: 0 };
   private hasLastRender = false;
   private lastCamera = { x: 0, y: 0, z: 0 };
+  private previousCamera = { x: 0, y: 0, z: 0 };
   private hasLastCamera = false;
+  private lastSimPosition = { x: 0, y: 0, z: 0 };
+  private hasLastSimPosition = false;
   private lastTraceDumpAt = 0;
 
   constructor(traceEnabled = isMotionDiagQueryEnabled()) {
@@ -153,11 +173,27 @@ export class LocalMotionProbe {
     this.cameraDeltas.length = 0;
     this.hasLastRender = false;
     this.hasLastCamera = false;
+    this.hasLastSimPosition = false;
+    this.isolationMode = 'normal';
+    this.ignoreNetworkMotion = false;
+    this.ignoreNetworkSend = false;
+    this.ignoreNetworkState = false;
+    localNetTrace.reset();
   }
 
   note(kind: string, now = performance.now()): void {
     this.events.push({ at: now, kind });
     prune(this.events, now);
+  }
+
+  noteSend(seq: number, now = performance.now()): void {
+    this.note('send:input', now);
+    localNetTrace.noteSend(seq, now);
+  }
+
+  noteRecv(type: string, now = performance.now()): void {
+    this.note(`recv:${type}`, now);
+    localNetTrace.noteRecv(type, now);
   }
 
   noteWrite(kind: MotionWriteKind, now = performance.now()): void {
@@ -171,9 +207,10 @@ export class LocalMotionProbe {
     this.noteWrite('velocity', now);
   }
 
-  notePlayerState(now = performance.now()): void {
+  notePlayerState(seq?: number, now = performance.now()): void {
     this.lastPlayerStateAt = now;
     this.note('player_state', now);
+    if (seq !== undefined) localNetTrace.lastPlayerStateSeq = seq;
   }
 
   noteSnapshotInbound(now = performance.now()): void {
@@ -208,6 +245,7 @@ export class LocalMotionProbe {
     this.lastReject = result.rejectReason;
     if (result.kind === 'accepted') this.lastAcceptMutated = result.acceptMutated;
     this.note(`reconcile:${result.kind}`, now);
+    localNetTrace.noteReconcile(result.kind, result.rejectReason, now);
     if (result.kind === 'accepted' && result.acceptMutated) this.note('accept-mutated', now);
     if (result.rejectReason !== 'none' && result.kind !== 'accepted') {
       this.note(`reject:${result.rejectReason}`, now);
@@ -227,6 +265,7 @@ export class LocalMotionProbe {
     this.cameraSource = source;
     const next = { x: camera.x, y: camera.y, z: camera.z };
     if (this.hasLastCamera) {
+      this.previousCamera = this.lastCamera;
       const delta = dist(next, this.lastCamera);
       this.lastCameraDelta = delta;
       this.cameraDeltas.push({ at: now, delta });
@@ -256,6 +295,9 @@ export class LocalMotionProbe {
     readonly renderCurr?: MotionPose;
     readonly camera?: MotionPose;
     readonly ignoreNetworkMotion?: boolean;
+    readonly isolationMode?: PredIsolationMode;
+    readonly ignoreNetworkSend?: boolean;
+    readonly ignoreNetworkState?: boolean;
   }): void {
     const now = input.now ?? performance.now();
     this.online = input.online;
@@ -267,6 +309,20 @@ export class LocalMotionProbe {
     this.fromTick = input.fromTick ?? 0;
     this.toTick = input.toTick ?? 0;
     this.ignoreNetworkMotion = Boolean(input.ignoreNetworkMotion);
+    this.ignoreNetworkSend = Boolean(input.ignoreNetworkSend ?? input.ignoreNetworkMotion);
+    this.ignoreNetworkState = Boolean(input.ignoreNetworkState ?? input.ignoreNetworkMotion);
+    this.isolationMode = input.isolationMode
+      ?? (this.ignoreNetworkSend && this.ignoreNetworkState
+        ? 'noNet'
+        : this.ignoreNetworkState
+          ? 'noState'
+          : this.ignoreNetworkSend
+            ? 'noSend'
+            : 'normal');
+    localNetTrace.beginFrame();
+    const positionBefore = this.hasLastSimPosition
+      ? { ...this.lastSimPosition }
+      : { x: input.position.x, y: input.position.y, z: input.position.z };
     this.position = { x: input.position.x, y: input.position.y, z: input.position.z };
     this.previous = { x: input.previous.x, y: input.previous.y, z: input.previous.z };
     this.render = { x: input.render.x, y: input.render.y, z: input.render.z };
@@ -290,9 +346,25 @@ export class LocalMotionProbe {
       while (this.renderDeltas.length > 0 && this.renderDeltas[0]!.at < cutoff) this.renderDeltas.shift();
       if (signed < -1e-4) this.note('render:neg', now);
       if (Math.abs(signed) > 0.12) this.note('render:large', now);
+      const moving = dist(this.position, this.previous) > 1e-3
+        || Math.hypot(this.render.x - this.lastRender.x, this.render.z - this.lastRender.z) > 1e-3;
+      localNetTrace.maybeCaptureFirstBad({
+        now,
+        renderDelta: signed,
+        cameraDelta: this.lastCameraDelta,
+        positionBefore,
+        positionAfter: { x: input.position.x, y: input.position.y, z: input.position.z },
+        renderBefore: { ...this.lastRender },
+        renderAfter: { ...this.render },
+        cameraBefore: this.hasLastCamera ? { ...this.previousCamera } : { ...this.camera },
+        cameraAfter: { ...this.camera },
+        moving: this.online && moving,
+      });
     }
     this.lastRender = this.render;
     this.hasLastRender = true;
+    this.lastSimPosition = { x: input.position.x, y: input.position.y, z: input.position.z };
+    this.hasLastSimPosition = true;
     if (!this.traceEnabled) return;
     this.frames.push({
       at: now,
@@ -327,19 +399,26 @@ export class LocalMotionProbe {
     const sinceReconcile = Number.isFinite(this.lastReconcileAt) ? now - this.lastReconcileAt : -1;
     const sinceState = Number.isFinite(this.lastPlayerStateAt) ? now - this.lastPlayerStateAt : -1;
     const step = dist(this.position, this.previous);
-    const mode = this.online ? (this.ignoreNetworkMotion ? 'online-nonet' : 'online') : 'singleplayer';
+    const mode = this.online
+      ? formatPredIsolationMode(this.isolationMode)
+      : 'singleplayer';
     const acceptMut = this.rate('accept-mutated', now);
     const deltas = this.renderDeltas.map((entry) => entry.delta);
     const minD = deltas.length ? Math.min(...deltas) : 0;
     const maxD = deltas.length ? Math.max(...deltas) : 0;
     const camDeltas = this.cameraDeltas.map((entry) => entry.delta);
     const camMax = camDeltas.length ? Math.max(...camDeltas) : 0;
+    const flags = this.online
+      ? ` send=${this.ignoreNetworkSend ? 'OFF' : 'on'} state=${this.ignoreNetworkState ? 'OFF' : 'on'}`
+      : '';
     return [
-      `Motion ${mode} fps=${this.fps} ticks=${this.ticksThisFrame} alpha=${this.alpha.toFixed(3)} acc=${this.leftover.toFixed(4)} sim#${this.simTick} ${this.fromTick}→${this.toTick}`,
+      `Motion ${mode}${flags} fps=${this.fps} ticks=${this.ticksThisFrame} alpha=${this.alpha.toFixed(3)} acc=${this.leftover.toFixed(4)} sim#${this.simTick} ${this.fromTick}→${this.toTick}`,
       `pred/s=${this.rate('predict', now)} state/s=${this.rate('player_state', now)} rec/s=${this.rate('reconcile:accepted', now) + this.rate('reconcile:corrected', now) + this.rate('reconcile:snapped', now) + this.rate('reconcile:ignored', now)}`,
       `ok/s=${this.rate('reconcile:accepted', now)} corr/s=${this.rate('reconcile:corrected', now)} snap/s=${this.rate('reconcile:snapped', now)} dup/s=${this.rate('reject:duplicate-seq', now)}`,
+      `net send/s=${this.rate('send:input', now)} recv/s=${this.rate('recv:player_state', now) + this.rate('recv:entity_snapshot', now) + this.rate('recv:block_update', now) + this.rate('recv:block_batch', now) + this.rate('recv:chunk_data', now) + this.rate('recv:health', now) + this.rate('recv:inventory', now)} statePkt/s=${this.rate('recv:player_state', now)}`,
       `snap recv/s=${this.rate('snap:recv', now)} dropStale/s=${this.rate('snap:drop-stale', now)} dropNoLocal/s=${this.rate('snap:drop-no-local', now)} gap/s=${this.rate('seq-gap', now)}`,
-      `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut}`,
+      `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut} netPos/s=${localNetTrace.sourceRate('write:position', now)} netVel/s=${localNetTrace.sourceRate('write:velocity', now)} netPrev/s=${localNetTrace.sourceRate('write:previousPosition', now)}`,
+      `${localNetTrace.mutationSourceHud(now)} vol/s=${localNetTrace.sourceRate('world:volume', now)}`,
       `pos ${this.position.x.toFixed(3)} ${this.position.y.toFixed(3)} ${this.position.z.toFixed(3)} prev ${this.previous.x.toFixed(3)} ${this.previous.y.toFixed(3)} ${this.previous.z.toFixed(3)}`,
       `render ${this.render.x.toFixed(3)} ${this.render.y.toFixed(3)} ${this.render.z.toFixed(3)} rΔ=${this.lastRenderDelta.toFixed(4)} min=${minD.toFixed(4)} max=${maxD.toFixed(4)} neg/s=${this.rate('render:neg', now)} big/s=${this.rate('render:large', now)} |pos-prev|=${step.toFixed(4)}`,
       `cam ${this.camera.x.toFixed(3)} ${this.camera.y.toFixed(3)} ${this.camera.z.toFixed(3)} Δ=${this.lastCameraDelta.toFixed(4)} max=${camMax.toFixed(4)} src=${this.cameraSource}`,

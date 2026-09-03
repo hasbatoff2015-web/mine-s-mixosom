@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-03: Online network-path isolation (PR #37)
+
+- [x] Split `predNoNet` into independent DEV `predNoState` / `predNoSend`; F3 labels.
+- [x] Trace every local-player network mutation; first visible jitter dump.
+- [x] Accepted local `player_state` is a motion/render no-op (no look/riding/gamemode writes unless changed).
+- [x] Optional input `clientSentAt` and snapshot `netTiming` for localhost seq RTT.
+- [ ] Owner localhost 4-mode matrix: normal / noState / noSend / noNet; walk/sprint/jump/strafe/flight/fly+SHIFT.
+- [ ] Do not merge main.
+
 ## 2026-09-03: LocalPlayerRenderState (PR #37)
 
 - [x] Revert frame-origin `previousPosition` restore (can move backward toward S1).

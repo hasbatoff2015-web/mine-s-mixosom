@@ -48,6 +48,13 @@ export interface PlayerSnapshot {
   readonly inputSeq?: number;
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
   readonly flying?: boolean;
+  /** DEV localhost RTT trace for the input seq this pose used. */
+  readonly netTiming?: {
+    readonly clientSentAt?: number;
+    readonly serverRecvAt?: number;
+    readonly serverSimAt?: number;
+    readonly serverSentAt?: number;
+  };
 }
 
 export interface RemotePlayerInfo {
@@ -164,6 +171,8 @@ export interface ClientInputMessage {
   readonly mining?: boolean;
   readonly use?: boolean;
   readonly vehicleForward?: number;
+  /** DEV: client performance.now() when this packet was sent. */
+  readonly clientSentAt?: number;
 }
 
 export interface ClientBreakBlockMessage {
@@ -636,6 +645,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(raw.mining === true ? { mining: true } : {}),
         ...(raw.use === true ? { use: true } : {}),
         ...(vehicleForward !== undefined ? { vehicleForward } : {}),
+        ...(typeof raw.clientSentAt === 'number' && Number.isFinite(raw.clientSentAt)
+          ? { clientSentAt: raw.clientSentAt }
+          : {}),
       };
     }
     case 'break_block':

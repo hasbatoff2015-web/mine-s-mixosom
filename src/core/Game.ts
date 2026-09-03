@@ -183,7 +183,6 @@ import {
   shouldOpenOnlineContainer,
 } from '../net/onlineContainerSync';
 import {
-  clientLookAfterSnapshot,
   shouldAcceptSnapshot,
   splitPlayerSnapshots,
 } from '../net/authoritativeMotion';
@@ -196,7 +195,20 @@ import {
   resetPredictionBuffer,
   type PredictionBuffer,
 } from '../net/localPlayerPrediction';
-import { motionProbe, isBowDiagQueryEnabled, isPredNoNetQueryEnabled } from '../net/localMotionDiagnostics';
+import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
+import {
+  blockOverlapsPlayerVolume,
+  captureMotionFull,
+  chunkOverlapsPlayerColumn,
+  diffMotionFull,
+  localNetTrace,
+  traceLocalPlayerMutation,
+} from '../net/localPlayerNetTrace';
+import {
+  isDevRuntime,
+  resolvePredIsolation,
+  type PredIsolationMode,
+} from '../net/predIsolation';
 import {
   applyEntitySnapshots,
   applyInterpolatedEntityVisuals,
@@ -287,7 +299,12 @@ export interface OnlineAnarchySession {
   lastAliveTick?: number;
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
-  /** DEV `?predNoNet=1`: predict locally, ignore snapshots and skip movement send. */
+  /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
+  ignoreNetworkSend?: boolean;
+  /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
+  ignoreNetworkState?: boolean;
+  isolationMode?: PredIsolationMode;
+  /** True when both send and local state are isolated (`predNoNet`). */
   ignoreNetworkMotion?: boolean;
 }
 
@@ -662,14 +679,24 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
-        ignoreNetworkMotion: isPredNoNetQueryEnabled(),
+        ...(() => {
+          const isolation = resolvePredIsolation();
+          return {
+            ignoreNetworkSend: isolation.noSend,
+            ignoreNetworkState: isolation.noState,
+            isolationMode: isolation.mode,
+            ignoreNetworkMotion: isolation.noSend && isolation.noState,
+          };
+        })(),
       },
     });
     const session = this.session;
     if (!session?.online) return;
-    session.player.teleport([welcome.you.x, welcome.you.y, welcome.you.z]);
-    session.player.yaw = welcome.you.yaw;
-    session.player.pitch = welcome.you.pitch;
+    this.recordLocalNetWrite('welcome', () => {
+      session.player.teleport([welcome.you.x, welcome.you.y, welcome.you.z]);
+      session.player.yaw = welcome.you.yaw;
+      session.player.pitch = welcome.you.pitch;
+    });
     this.input.yaw = welcome.you.yaw;
     this.input.pitch = welcome.you.pitch;
     this.syncLocalRenderFromPlayer();
@@ -717,6 +744,7 @@ export class Game {
   private handleOnlineMessage(message: ServerMessage): void {
     const session = this.session;
     if (!session?.online) return;
+    motionProbe.noteRecv(message.type);
     switch (message.type) {
       case 'welcome':
         return;
@@ -738,7 +766,7 @@ export class Game {
           blockId: message.blockId,
           ...(message.state ? { state: message.state } : {}),
         }]);
-        motionProbe.noteBlockMutation();
+        this.noteWorldNearPlayer('block_update', message.x, message.y, message.z);
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
@@ -750,7 +778,9 @@ export class Game {
       }
       case 'block_batch': {
         const applied = applyNetworkBlockChanges(session.world, message.changes);
-        motionProbe.noteBlockMutation();
+        for (const change of message.changes) {
+          this.noteWorldNearPlayer('block_batch', change.x, change.y, change.z);
+        }
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
@@ -784,7 +814,9 @@ export class Game {
           health: session.survival.health,
           dead: session.survival.dead,
         })) {
-          this.restoreOnlinePlayingFromRespawn();
+          this.recordLocalNetWrite('health-respawn', () => {
+            this.restoreOnlinePlayingFromRespawn();
+          });
           if (session.online) {
             session.online.lastAliveTick = recordAliveSnapshotTick(
               session.online.lastAliveTick,
@@ -819,6 +851,18 @@ export class Game {
         return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
+        motionProbe.noteChunkUpdate();
+        if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
+          localNetTrace.noteWorld({
+            at: performance.now(),
+            source: 'chunk_data',
+            x: message.cx * 16,
+            y: Math.floor(session.player.position.y),
+            z: message.cz * 16,
+            inVolume: true,
+          });
+          motionProbe.note('world:volume');
+        }
         return;
       case 'chat':
         if (message.kind === 'player') this.pushChat('player', `<${message.from}> ${message.text}`);
@@ -832,7 +876,9 @@ export class Game {
         }
         if (message.gamemode !== session.summary.mode) {
           session.summary.mode = message.gamemode;
-          session.player.creativeFlightAllowed = message.gamemode === 'creative';
+          this.recordLocalNetWrite('inventory-gamemode', () => {
+            session.player.creativeFlightAllowed = message.gamemode === 'creative';
+          });
         }
         if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
         applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
@@ -884,10 +930,6 @@ export class Game {
     motionProbe.noteSnapshotInbound();
     motionProbe.inboundTick = message.tick;
     motionProbe.lastStateTick = online.lastStateTick;
-    if (online.ignoreNetworkMotion) {
-      motionProbe.noteSnapshotDrop('no-local');
-      return;
-    }
     if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) {
       motionProbe.noteSnapshotDrop('stale');
       return;
@@ -896,59 +938,12 @@ export class Game {
     const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
     const seen = new Set<string>();
     if (local) {
-      motionProbe.notePlayerState();
-      const look = clientLookAfterSnapshot(
-        { yaw: this.input.yaw, pitch: this.input.pitch },
-        { yaw: local.yaw, pitch: local.pitch },
-      );
-      this.input.yaw = look.yaw;
-      this.input.pitch = look.pitch;
-      const px = Math.floor(session.player.position.x);
-      const py = Math.floor(session.player.position.y);
-      const pz = Math.floor(session.player.position.z);
-      const yaw = session.player.yaw;
-      motionProbe.sampleWorldHint = () => ({
-        feetBlock: getBlockDefinition(session.world.getBlock(px, py, pz, false)).name,
-        belowBlock: getBlockDefinition(session.world.getBlock(px, py - 1, pz, false)).name,
-        aheadBlock: getBlockDefinition(session.world.getBlock(
-          px - Math.round(Math.sin(yaw)),
-          py,
-          pz - Math.round(Math.cos(yaw)),
-          false,
-        )).name,
-      });
-      reconcilePredictedPlayer(session.player, session.world, online.prediction, local);
-      session.player.yaw = look.yaw;
-      session.player.pitch = look.pitch;
-      const previousLife = { health: session.survival.health, dead: session.survival.dead };
-      const snapshotDead = local.dead ?? local.health <= 0;
-      if (!shouldIgnoreStaleDeadSnapshot({
-        snapshotTick: message.tick,
-        lastAliveTick: online.lastAliveTick,
-        dead: snapshotDead,
-      })) {
-        session.survival.restore({
-          health: local.health,
-          hunger: local.hunger,
-          dead: snapshotDead,
-        });
-        if (shouldRestoreGameplayAfterRespawn(previousLife, {
-          health: session.survival.health,
-          dead: session.survival.dead,
-        })) {
-          this.restoreOnlinePlayingFromRespawn();
-        }
-        if (!snapshotDead && local.health > 0) {
-          online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
-        }
-      }
-      session.ridingCartId = local.ridingEntityId;
-      if (local.invisible) {
-        /* local first-person hide is driven by survival effects */
-      }
-      if (local.gamemode !== session.summary.mode) {
-        session.summary.mode = local.gamemode;
-        session.player.creativeFlightAllowed = local.gamemode === 'creative';
+      motionProbe.notePlayerState(local.inputSeq);
+      this.noteLocalSnapshotTiming(local, performance.now());
+      if (online.ignoreNetworkState) {
+        motionProbe.note('skip:local-state');
+      } else {
+        this.applyLocalPlayerSnapshot(session, message, local);
       }
     } else {
       motionProbe.noteSnapshotDrop('no-local');
@@ -965,6 +960,156 @@ export class Game {
     for (const id of [...online.remotes.keys()]) {
       if (!seen.has(id)) this.removeRemotePlayer(session, id);
     }
+  }
+
+  /**
+   * Local `player_state` apply. An accepted/ignored ack must not write movement
+   * or render state. Health/hunger remain server authority; riding/gamemode
+   * apply only when the value actually changes.
+   */
+  private applyLocalPlayerSnapshot(
+    session: GameSession,
+    message: ServerPlayerStateMessage,
+    local: ServerPlayerStateMessage['players'][number],
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    const player = session.player;
+    const before = captureMotionFull(player);
+    const px = Math.floor(player.position.x);
+    const py = Math.floor(player.position.y);
+    const pz = Math.floor(player.position.z);
+    const yaw = player.yaw;
+    motionProbe.sampleWorldHint = () => ({
+      feetBlock: getBlockDefinition(session.world.getBlock(px, py, pz, false)).name,
+      belowBlock: getBlockDefinition(session.world.getBlock(px, py - 1, pz, false)).name,
+      aheadBlock: getBlockDefinition(session.world.getBlock(
+        px - Math.round(Math.sin(yaw)),
+        py,
+        pz - Math.round(Math.cos(yaw)),
+        false,
+      )).name,
+    });
+    const result = reconcilePredictedPlayer(player, session.world, online.prediction, local);
+    const afterReconcile = captureMotionFull(player);
+    const reconcileChanged = diffMotionFull(before, afterReconcile);
+    if (reconcileChanged.length > 0) {
+      localNetTrace.noteMutation({
+        at: performance.now(),
+        source: `player_state:${result.kind}`,
+        frameIndex: localNetTrace.frameIndex,
+        changed: reconcileChanged,
+        before,
+        after: afterReconcile,
+      });
+    }
+    if (isDevRuntime() && (result.kind === 'accepted' || result.kind === 'ignored')) {
+      if (reconcileChanged.length > 0) {
+        motionProbe.note('accept-side-effect');
+        console.info(
+          `[acceptInvisible] kind=${result.kind} seq=${local.inputSeq ?? -1} changed=${reconcileChanged.join(',')}`,
+          { before, after: afterReconcile, snapshot: { x: local.x, y: local.y, z: local.z, vx: local.vx, vy: local.vy, vz: local.vz } },
+        );
+      }
+    }
+
+    const previousLife = { health: session.survival.health, dead: session.survival.dead };
+    const snapshotDead = local.dead ?? local.health <= 0;
+    if (!shouldIgnoreStaleDeadSnapshot({
+      snapshotTick: message.tick,
+      lastAliveTick: online.lastAliveTick,
+      dead: snapshotDead,
+    })) {
+      session.survival.restore({
+        health: local.health,
+        hunger: local.hunger,
+        dead: snapshotDead,
+      });
+      if (shouldRestoreGameplayAfterRespawn(previousLife, {
+        health: session.survival.health,
+        dead: session.survival.dead,
+      })) {
+        this.recordLocalNetWrite('player_state-respawn', () => {
+          this.restoreOnlinePlayingFromRespawn();
+        });
+      }
+      if (!snapshotDead && local.health > 0) {
+        online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
+      }
+    }
+
+    if (local.ridingEntityId !== session.ridingCartId) {
+      this.recordLocalNetWrite('player_state-riding', () => {
+        session.ridingCartId = local.ridingEntityId;
+      });
+    }
+    if (local.invisible) {
+      /* local first-person hide is driven by survival effects */
+    }
+    if (local.gamemode !== session.summary.mode) {
+      session.summary.mode = local.gamemode;
+      this.recordLocalNetWrite('player_state-gamemode', () => {
+        session.player.creativeFlightAllowed = local.gamemode === 'creative';
+      });
+    }
+
+    const after = captureMotionFull(player);
+    const allChanged = diffMotionFull(before, after);
+    if ((result.kind === 'accepted' || result.kind === 'ignored') && allChanged.length > 0) {
+      motionProbe.note('accept-mutated');
+    }
+  }
+
+  private noteLocalSnapshotTiming(
+    local: ServerPlayerStateMessage['players'][number],
+    clientRecvAt: number,
+  ): void {
+    const timing = local.netTiming;
+    if (!timing && local.inputSeq === undefined) return;
+    localNetTrace.noteTiming({
+      seq: local.inputSeq ?? -1,
+      clientSentAt: timing?.clientSentAt,
+      serverRecvAt: timing?.serverRecvAt,
+      serverSimAt: timing?.serverSimAt,
+      serverSentAt: timing?.serverSentAt,
+      clientRecvAt,
+    });
+  }
+
+  private recordLocalNetWrite(source: string, apply: () => void): void {
+    const player = this.session?.player;
+    if (!player) {
+      apply();
+      return;
+    }
+    const mutation = traceLocalPlayerMutation(source, player, apply, localNetTrace.frameIndex);
+    if (!mutation) return;
+    localNetTrace.noteMutation(mutation);
+    if (mutation.changed.includes('x') || mutation.changed.includes('y') || mutation.changed.includes('z')) {
+      motionProbe.noteWrite('position');
+    }
+    if (mutation.changed.includes('px') || mutation.changed.includes('py') || mutation.changed.includes('pz')) {
+      motionProbe.noteWrite('previousPosition');
+    }
+    if (mutation.changed.includes('vx') || mutation.changed.includes('vy') || mutation.changed.includes('vz')) {
+      motionProbe.noteWrite('velocity');
+    }
+  }
+
+  private noteWorldNearPlayer(source: string, x: number, y: number, z: number): void {
+    const player = this.session?.player;
+    motionProbe.noteBlockMutation();
+    if (!player) return;
+    const inVolume = blockOverlapsPlayerVolume(player, x, y, z);
+    localNetTrace.noteWorld({
+      at: performance.now(),
+      source,
+      x,
+      y,
+      z,
+      inVolume,
+    });
+    if (inVolume) motionProbe.note('world:volume');
   }
 
   private handleOnlineBlockResult(
@@ -1004,7 +1149,8 @@ export class Game {
       { yaw: this.input.yaw, pitch: this.input.pitch },
       !session.ridingCartId,
     );
-    if (!online.ignoreNetworkMotion) {
+    if (!online.ignoreNetworkSend) {
+      const clientSentAt = isDevRuntime() ? performance.now() : undefined;
       online.client.send({
         type: 'input',
         seq: online.inputSeq,
@@ -1018,7 +1164,9 @@ export class Game {
         yaw: this.input.yaw,
         pitch: this.input.pitch,
         selectedSlot: session.selectedSlot,
+        ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      motionProbe.noteSend(online.inputSeq);
     }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
     this.localRender.pushAfterTick({
@@ -2376,7 +2524,8 @@ export class Game {
       { yaw: this.input.yaw, pitch: this.input.pitch },
       !riding,
     );
-    if (!online.ignoreNetworkMotion) {
+    if (!online.ignoreNetworkSend) {
+      const clientSentAt = isDevRuntime() ? performance.now() : undefined;
       online.client.send({
         type: 'input',
         seq: online.inputSeq,
@@ -2393,7 +2542,9 @@ export class Game {
         mining: gameplayAllowed && this.input.mining,
         use: gameplayAllowed && this.input.using,
         vehicleForward: riding ? movement.forward : 0,
+        ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      motionProbe.noteSend(online.inputSeq);
     }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
     const selected = this.selectedStack();
@@ -3468,6 +3619,9 @@ export class Game {
         renderCurr: this.localRender.current,
         camera: this.camera.position,
         ignoreNetworkMotion: Boolean(session.online?.ignoreNetworkMotion),
+        isolationMode: session.online?.isolationMode,
+        ignoreNetworkSend: Boolean(session.online?.ignoreNetworkSend),
+        ignoreNetworkState: Boolean(session.online?.ignoreNetworkState),
       });
       session.online?.remotes.forEach((remote) => remote.interpolate(
         now,

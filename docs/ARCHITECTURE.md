@@ -1,5 +1,25 @@
 # Архитектура
 
+## Online network-path isolation — 2026-09-03
+
+Manual A/B: Normal Online still jitters; `?predNoNet=1` (same prediction/render, no movement send, no local `player_state`) is smooth. Remaining jitter is in the **network path**.
+
+DEV-only query flags (ignored in production):
+
+```text
+?predNoNet=1     = predNoSend + predNoState
+?predNoState=1   send + predict; do not apply/reconcile local player_state; remotes stay on
+?predNoSend=1    do not send movement input; still receive/apply snapshots
+```
+
+F3: `Motion online/normal|noState|noSend|noNet send=on|OFF state=on|OFF`.
+
+Local `player_state` apply: reconcile first. **Accepted or ignored acks write no PlayerController fields** (look stays client-only; riding/gamemode only when the value changes). Health/hunger still restore. Every other network callback that can mutate the local player is traced (welcome, health respawn, inventory gamemode, block/chunk under the AABB). First frame with `rΔ < 0` or `|rΔ| > 0.12` dumps `[firstBadEvent]`.
+
+DEV input packets may carry `clientSentAt`; snapshots echo `netTiming` (client send / server recv / sim / server send).
+
+Urgent remesh, gravity, speeds, 20 TPS, and render interpolation are unchanged.
+
 ## Online Anarchy correction diagnosis — 2026-09-02
 
 `prd/s=20` vs `state/s=18` was Node `setInterval(50)` drift (no catch-up), not PlayerController divergence. Lockstep same class / same world / same dt is identical. A 2-vs-1 latest-input walk is ~0.22 blocks — the observed 0.3–0.6 rewind.
@@ -39,7 +59,7 @@ Game.frame
 
 `PlayerController.previousPosition` is **not** the render origin (fall distance only). Interpolating `(S1, S3)` after two ticks in one rAF can move the camera **backward** relative to a high-alpha `S1→S2` frame. The last adjacent pair after two ticks is `(S2, S3)`.
 
-Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq` (unless `?predNoNet=1`), `predictLocalMove` = `PlayerController.tick` + `history[seq]`. The render buffer is the same object as singleplayer.
+Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: send `input.seq` (unless DEV `predNoSend` / `predNoNet`), `predictLocalMove` = `PlayerController.tick` + `history[seq]`. The render buffer is the same object as singleplayer.
 
 Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to `history[N]`. Match → no pose write. Mismatch → restore + replay seq > N. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
 

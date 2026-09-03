@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 Online network-path isolation
+
+Report: `reports/2026-09-03_online-network-path-isolation.md`. PR #37.
+
+```text
+npx vitest run tests/pred-isolation-flags.test.ts tests/pred-isolation-matrix.test.ts tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/local-player-render-state.test.ts tests/urgent-block-mesh.test.ts
+```
+
+Contracts: DEV flags (`predNoNet` = send+state; independent `predNoState` / `predNoSend`; production ignores them); 4-mode walk matrix (lockstep accept never mutates; noState matches noNet; noSend duplicate idle snapshots do not rewind); accepted ack is a full-field no-op; firstBadEvent captures the first large online render jump. Physics/remesh unchanged.
+
 ## 2026-09-03 LocalPlayerRenderState
 
 Report: `reports/2026-09-03_local-player-render-state.md`. PR #37.
