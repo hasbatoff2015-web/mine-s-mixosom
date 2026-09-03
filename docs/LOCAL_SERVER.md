@@ -117,7 +117,7 @@ SERVER owns: world blocks/chunks **including `BlockRenderState`** (facing, door/
 
 The 20 TPS simulation **order** is `src/gameplay/GameplayKernel.ts`, the same sequencer singleplayer `Game` uses. `VoxelWorld.tick` (fluids/time/furnaces) runs once per kernel tick. `FC_DEBUG_TICK=1` appends that order to the existing 200-tick server log.
 
-CLIENT owns: rendering, input collection, UI, **local movement prediction** (same `PlayerController`, unacked seq replay), remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light including an urgent live-mutation remesh slice, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
+CLIENT owns: rendering, input collection, UI, **local movement prediction** (same `PlayerController`, unacked seq replay), **remote player interpolation on a server-tick timeline** (`RemoteInterpolationBuffer`, 100 ms delay, bounded 100 ms extrapolation), **time-based interpolation for other server entities** (still arrival-time `EntityInterpolationBuffer`), local chunk mesh/light including an urgent live-mutation remesh slice, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
 
 CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 
@@ -131,9 +131,9 @@ Hiding the game tab (switch to ChatGPT, etc.) is a **different** bug from a dupl
 
 DEV: `?quietWorld=1` caps streaming to 1 chunk. Console `[reconnectLoad]` / `[frameSpike]` / `[longtask]` / `[vis]` / `[vis-resync]`. F3 `loop late/cb/eld` and `load chunkSend/chunkGen`.
 
-Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
+Remote players: `RemoteInterpolationBuffer` on `player_state.tick` (100 ms delay, bounded 100 ms extrapolation then hold). Packet arrival time is not the simulation clock. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs. DEV: F3 nearest-remote HUD; `?remoteDiag=1` logs the sample timeline at 1 Hz.
 
-Mobs / drops / arrows / minecarts / TNT / falling blocks: the same ~80 ms snapshot buffer (`EntityInterpolationBuffer`). Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
+Mobs / drops / arrows / minecarts / TNT / falling blocks: arrival-time ~80 ms snapshot buffer (`EntityInterpolationBuffer`), separate from remotes. Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
 
 Server → client also includes `entity_event` (`hurt`, `death`, `projectile_spawn`, `projectile_hit`) keyed by `entityId`. Interest snapshots put arrows/TNT before mobs/items so the cap of 96 cannot starve projectiles.
 

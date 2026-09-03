@@ -234,6 +234,7 @@ import {
   applyNetworkEntityEvents,
 } from '../net/applyEntitySnapshots';
 import { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
+import { formatRemoteInterpHud, isRemoteDiagQueryEnabled } from '../net/remoteInterpDiagnostics';
 import { stepVisualBowUseTicks } from '../input/gameplayKeys';
 import {
   planOnlineRespawnInputRestore,
@@ -770,7 +771,12 @@ export class Game {
   }
 
   private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
-    if (!session.online || info.id === session.online.playerId || session.online.remotes.has(info.id)) return;
+    if (!session.online || info.id === session.online.playerId) return;
+    const existing = session.online.remotes.get(info.id);
+    if (existing) {
+      existing.reset(info);
+      return;
+    }
     const view = new RemotePlayerView(info, {
       visual: new PlayerVisual(
         this.playerSkins,
@@ -4277,6 +4283,8 @@ export class Game {
         this.cachedDebugText += `\n${this.longTasks.hudLine()}`;
         if (session.online) {
           this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
+          const remoteHud = this.formatRemoteInterpDebug(session);
+          if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;
         }
       }
     }
@@ -4292,6 +4300,25 @@ export class Game {
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
     });
+  }
+
+  private formatRemoteInterpDebug(session: GameSession): string | undefined {
+    const remotes = session.online?.remotes;
+    if (!remotes || remotes.size === 0) {
+      return isRemoteDiagQueryEnabled() ? 'Remote (none)' : undefined;
+    }
+    const origin = session.player.position;
+    let nearest: { id: string; view: RemotePlayerView; distSq: number } | undefined;
+    for (const [id, view] of remotes) {
+      const dx = view.group.position.x - origin.x;
+      const dy = view.group.position.y - origin.y;
+      const dz = view.group.position.z - origin.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (!nearest || distSq < nearest.distSq) nearest = { id, view, distSq };
+    }
+    if (!nearest) return undefined;
+    const extra = remotes.size > 1 ? ` +${remotes.size - 1}` : '';
+    return formatRemoteInterpHud(`${nearest.id.slice(0, 8)}${extra}`, nearest.view.diagnostics(performance.now()));
   }
 
   private disposeSession(): void {
