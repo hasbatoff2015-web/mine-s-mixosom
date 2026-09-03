@@ -227,3 +227,137 @@ export function formatLatestInputCoalesce(result: LatestInputCoalesceResult): st
     + `walkStep=${result.walkStep.toFixed(4)}`,
   ];
 }
+
+export interface MoveSimModeOptions {
+  readonly flying?: boolean;
+  readonly startY?: number;
+  readonly ticks?: readonly number[];
+}
+
+export interface PoseTickDump {
+  readonly tick: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly vx: number;
+  readonly vy: number;
+  readonly vz: number;
+  readonly onGround: boolean;
+  readonly flying: boolean;
+}
+
+function flyingController(world: VoxelWorld, y: number): PlayerController {
+  const player = new PlayerController({ position: [0.5, y, 0.5] });
+  player.creativeFlightAllowed = true;
+  player.isFlying = true;
+  player.tick(world, sourceFrom({}), FIXED_DT);
+  player.creativeFlightAllowed = true;
+  player.isFlying = true;
+  player.velocity.set(0, 0, 0);
+  return player;
+}
+
+function controllerForMode(world: VoxelWorld, options: MoveSimModeOptions): PlayerController {
+  if (options.flying) return flyingController(world, options.startY ?? 8);
+  return groundedController(world, options.startY ?? 1);
+}
+
+export function dumpControllerTicks(
+  ticks: readonly number[],
+  input: MoveSimInput,
+  options: MoveSimModeOptions = {},
+  dt = FIXED_DT,
+): PoseTickDump[] {
+  const world = new FlatProbeWorld() as unknown as VoxelWorld;
+  const player = controllerForMode(world, options);
+  const source = sourceFrom(input);
+  const wanted = new Set(ticks);
+  const maxTick = Math.max(0, ...ticks);
+  const dumps: PoseTickDump[] = [];
+  dumps.push({
+    tick: 0,
+    x: player.position.x, y: player.position.y, z: player.position.z,
+    vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+    onGround: player.onGround, flying: player.isFlying,
+  });
+  for (let tick = 1; tick <= maxTick; tick += 1) {
+    player.tick(world, source, dt);
+    if (options.flying) {
+      player.creativeFlightAllowed = true;
+    }
+    if (wanted.has(tick)) {
+      dumps.push({
+        tick,
+        x: player.position.x, y: player.position.y, z: player.position.z,
+        vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+        onGround: player.onGround, flying: player.isFlying,
+      });
+    }
+  }
+  return dumps;
+}
+
+export function compareLockstepModes(
+  ticks = 20,
+  dt = FIXED_DT,
+): Record<string, MoveSimCompareResult> {
+  const walk = compareLockstepControllers(ticks, { forward: 1 }, dt);
+  const strafe = compareLockstepControllers(ticks, { right: 1 }, dt);
+  const jump = compareLockstepControllers(12, { jump: true }, dt);
+  const idle = compareLockstepControllers(ticks, {}, dt);
+  const world = new FlatProbeWorld() as unknown as VoxelWorld;
+  const flyA = flyingController(world, 8);
+  const flyB = flyingController(world, 8);
+  const flyIdle = lockstepPair(flyA, flyB, ticks, {}, dt);
+  const flyC = flyingController(world, 8);
+  const flyD = flyingController(world, 8);
+  const flyDescend = lockstepPair(flyC, flyD, ticks, { descend: true }, dt);
+  return {
+    stationary: idle,
+    walk,
+    strafe,
+    jump,
+    'flight-hover': flyIdle,
+    'flight-descend': flyDescend,
+  };
+}
+
+function lockstepPair(
+  a: PlayerController,
+  b: PlayerController,
+  ticks: number,
+  input: MoveSimInput,
+  dt: number,
+): MoveSimCompareResult {
+  const world = new FlatProbeWorld() as unknown as VoxelWorld;
+  const source = sourceFrom(input);
+  const diffs: MoveSimTickDiff[] = [];
+  let firstDivergedTick: number | null = null;
+  for (let tick = 1; tick <= ticks; tick += 1) {
+    a.tick(world, source, dt);
+    b.tick(world, source, dt);
+    a.creativeFlightAllowed = true;
+    b.creativeFlightAllowed = true;
+    const error = stateError(a, b);
+    if (diverged(error)) {
+      diffs.push({ tick, ...error });
+      if (firstDivergedTick === null) firstDivergedTick = tick;
+    }
+  }
+  return {
+    identical: firstDivergedTick === null,
+    firstDivergedTick,
+    ticks,
+    diffs,
+    a: a.captureMovementState(),
+    b: b.captureMovementState(),
+  };
+}
+
+export function formatPoseDump(label: string, dumps: readonly PoseTickDump[]): string[] {
+  return dumps.map((pose) => (
+    `${label} t=${pose.tick} xyz=${pose.x.toFixed(6)} ${pose.y.toFixed(6)} ${pose.z.toFixed(6)} `
+    + `v=${pose.vx.toFixed(6)} ${pose.vy.toFixed(6)} ${pose.vz.toFixed(6)} `
+    + `ground=${pose.onGround} fly=${pose.flying}`
+  ));
+}

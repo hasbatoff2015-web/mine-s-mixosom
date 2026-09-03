@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 One-correction diagnostic
+
+Report: `reports/2026-09-03_one-correction-diag.md`. PR #37.
+
+```text
+npx vitest run tests/correction-diag-dump.test.ts tests/server/client-server-lockstep.test.ts tests/local-player-prediction.test.ts tests/move-sim-compare.test.ts tests/server-tick-clock.test.ts tests/hidden-tab-motion.test.ts
+```
+
+Contracts: extra-tick formula (`physicsTicks=1` → history[N]; `=2`/`seqGap=1` → +1 extra); dump contains SEQ/TIMING/PHYSICS/INPUT/POSE/DIFF/STATE/WORLD; PlayerController lockstep identical 1…20 including flight hover; WorldInstance 1:1 walk matches; 2-seq client vs 1 server tick dumps `firstDiff=z` ≈ walkStep; `tickCatchUp(2)` accepts only with `physicsTicks=2`. No physics/tolerance change. Manual QA: `?corrDiag=1`, one tab, paste `[corrDiag:first]`.
+
 ## 2026-09-03 Hidden-tab Page Visibility
 
 Report: `reports/2026-09-03_hidden-tab-visibility.md`. PR #37.

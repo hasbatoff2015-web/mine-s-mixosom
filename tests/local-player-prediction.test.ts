@@ -543,6 +543,10 @@ describe('local player prediction', () => {
     expect(['x', 'z']).toContain(asOneTick.firstDiff);
     const asCatchUp = inspectPredictedPlayer(buffer, twoTickSnap, player, { world, physicsTicks: 2 });
     expect(asCatchUp.kind).toBe('accepted');
+    expect(asCatchUp.extraTicks).toBe(1);
+    expect(asCatchUp.comparePath).toBe('history[N]+extra');
+    expect(asOneTick.extraTicks).toBe(0);
+    expect(asOneTick.comparePath).toBe('history[N]');
     const result = reconcilePredictedPlayer(player, world, buffer, twoTickSnap, FIXED_DT, { physicsTicks: 2 });
     expect(result.kind).toBe('accepted');
     expect(result.acceptMutated).toBe(false);

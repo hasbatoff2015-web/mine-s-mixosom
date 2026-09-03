@@ -2,6 +2,17 @@
 
 Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: one-correction diagnostic (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: 20/20 localhost, `sess socks=1`, всё ещё `corr/s` 5–11, `netPos/s`=`corr/s`, soft/snap/dup=0. Это **реальные positional corrections**, не TPS и не duplicate socket.
+- **Диагностика, не фикс.** `[corrDiag:first]` полный dump (SEQ/TIMING/PHYSICS/INPUT/POSE/DIFF/STATE/WORLD). `physicsTicks=1` → compare `history[N]`; `=2` → `history[N]` + extra того же latest input. `lastInputSeq` ≠ physics tick.
+- PlayerController lockstep 1…20 identical (walk/strafe/jump/idle/flight hover/fly+SHIFT). WorldInstance 1:1 vs `predictLocalMove` на Anarchy **совпадает** (тот же мир и frozen copy). Category C на этом harness снята.
+- Coalesce-пример: seqGap=2 physicsTicks=1 → `firstDiff=z` distance≈0.208≈walkStep. Это B, не 20/20 1:1.
+- Live 20/20 причина **ещё не доказана**. Нужен owner paste `[corrDiag:first]` с `?corrDiag=1`.
+- Tests: correction-diag **10/10**; lockstep **6/6**; prediction **29/29**; typecheck PASS.
+- Report: `docs/reports/2026-09-03_one-correction-diag.md`.
+
 ## Последний проход: hidden-tab Page Visibility (PR #37)
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**

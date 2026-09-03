@@ -52,7 +52,9 @@ import {
   WORLD_LOADING_LIGHT_BUDGET_MS,
   TARGET_FRAME_MS,
   SEA_LEVEL,
+  CHUNK_SIZE,
   blockKey,
+  chunkKey,
   clamp,
   floorDiv,
 } from './constants';
@@ -207,6 +209,7 @@ import {
   resyncLocalPlayerAfterHiddenTab,
 } from '../net/hiddenTabMotion';
 import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
+import { sampleAabbBlocks, resetFirstCorrectionDump } from '../net/correctionDiagnostics';
 import {
   blockOverlapsPlayerVolume,
   captureMotionFull,
@@ -746,6 +749,7 @@ export class Game {
     resetPredictionBuffer(session.online.prediction);
     session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
     motionProbe.reset();
+    resetFirstCorrectionDump();
     this.visibilityProbe.resetSession();
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
@@ -1154,16 +1158,33 @@ export class Game {
     const py = Math.floor(player.position.y);
     const pz = Math.floor(player.position.z);
     const yaw = player.yaw;
-    motionProbe.sampleWorldHint = () => ({
-      feetBlock: getBlockDefinition(session.world.getBlock(px, py, pz, false)).name,
-      belowBlock: getBlockDefinition(session.world.getBlock(px, py - 1, pz, false)).name,
-      aheadBlock: getBlockDefinition(session.world.getBlock(
-        px - Math.round(Math.sin(yaw)),
-        py,
-        pz - Math.round(Math.cos(yaw)),
-        false,
-      )).name,
-    });
+    motionProbe.sampleWorldHint = () => {
+      const cx = floorDiv(Math.floor(player.position.x), CHUNK_SIZE);
+      const cz = floorDiv(Math.floor(player.position.z), CHUNK_SIZE);
+      const loadedKey = chunkKey(cx, cz);
+      return {
+        feetBlock: getBlockDefinition(session.world.getBlock(px, py, pz, false)).name,
+        belowBlock: getBlockDefinition(session.world.getBlock(px, py - 1, pz, false)).name,
+        aheadBlock: getBlockDefinition(session.world.getBlock(
+          px - Math.round(Math.sin(yaw)),
+          py,
+          pz - Math.round(Math.cos(yaw)),
+          false,
+        )).name,
+        aabbBlocks: sampleAabbBlocks(
+          (x, y, z) => ({ name: getBlockDefinition(session.world.getBlock(x, y, z, false)).name }),
+          player.position.x,
+          player.position.y,
+          player.position.z,
+          PLAYER_WIDTH,
+          player.height,
+        ),
+        chunkKey: loadedKey,
+        chunkLoaded: session.world.chunks.has(loadedKey),
+        mutationMarks: session.world.mutationMarks,
+        visibility: typeof document !== 'undefined' ? document.visibilityState : '—',
+      };
+    };
 
     const forceResync = online.forceHiddenTabResync === true;
     online.forceHiddenTabResync = false;

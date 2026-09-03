@@ -9,9 +9,10 @@ import { isKnownItemId } from '../src/items';
 import { PlayerController } from '../src/player';
 import {
   compareLatestInputCoalesce,
-  compareLockstepControllers,
+  compareLockstepModes,
+  dumpControllerTicks,
   formatLatestInputCoalesce,
-  formatMoveSimCompare,
+  formatPoseDump,
 } from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
@@ -1482,19 +1483,27 @@ export class WorldInstance {
     this.commands.register({
       name: 'predsim',
       usage: '/predsim [ticks]',
-      description: 'DEV: lockstep client vs server PlayerController, then latest-input coalesce',
+      description: 'DEV: lockstep pose dump (walk/flight/stationary) and latest-input coalesce',
       execute: (args) => {
         const raw = args[0] === undefined || args[0] === '' ? 20 : Number(args[0]);
         const ticks = Number.isInteger(raw) && raw >= 1 && raw <= 40 ? raw : 20;
-        const lockstep = compareLockstepControllers(ticks, { forward: 1 });
-        const sprint = compareLockstepControllers(ticks, { forward: 1, sprint: true });
-        const jump = compareLockstepControllers(8, { jump: true });
+        const sampleAt = [1, 2, 3, 10, Math.min(20, ticks)].filter((tick, index, all) => all.indexOf(tick) === index && tick <= ticks);
+        const modes = compareLockstepModes(ticks);
+        const walkDump = dumpControllerTicks(sampleAt, { forward: 1 });
+        const idleDump = dumpControllerTicks(sampleAt, {});
+        const flyDump = dumpControllerTicks(sampleAt, {}, { flying: true, startY: 8 });
+        const flyDownDump = dumpControllerTicks(sampleAt, { descend: true }, { flying: true, startY: 8 });
         const coalesce = compareLatestInputCoalesce(2, 1, { forward: 1 });
         const catchUp = compareLatestInputCoalesce(2, 2, { forward: 1 });
+        const modeLines = Object.entries(modes).map(([name, result]) => (
+          `${name} identical=${result.identical ? 'yes' : 'NO'} first=${result.firstDivergedTick ?? 'none'}`
+        ));
         return ok([
-          ...formatMoveSimCompare(lockstep),
-          `sprint identical=${sprint.identical ? 'yes' : 'NO'} first=${sprint.firstDivergedTick ?? 'none'}`,
-          `jump identical=${jump.identical ? 'yes' : 'NO'} first=${jump.firstDivergedTick ?? 'none'}`,
+          ...modeLines,
+          ...formatPoseDump('walk', walkDump),
+          ...formatPoseDump('idle', idleDump),
+          ...formatPoseDump('flyHover', flyDump),
+          ...formatPoseDump('flySHIFT', flyDownDump),
           ...formatLatestInputCoalesce(coalesce),
           `catch-up 2=2 ${formatLatestInputCoalesce(catchUp)[0]!.replace('coalesce ', '')}`,
           `server tps=${this.lastMeasuredTps.toFixed(1)} snapGen/s=${this.lastMeasuredSnapGen.toFixed(1)} snapSent/s=${this.lastMeasuredSnapSent.toFixed(1)}`,

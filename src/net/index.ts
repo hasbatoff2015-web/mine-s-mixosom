@@ -22,6 +22,8 @@ export {
   predictedMoveFromInput,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
+  comparableExtraTicks,
+  snapshotComparePath,
 } from './localPlayerPrediction';
 export {
   evaluateHiddenTabResume,
@@ -40,7 +42,7 @@ export {
 } from './localMotionDiagnostics';
 export { isDevRuntime } from './predIsolation';
 export { localNetTrace, formatFirstBadEvent } from './localPlayerNetTrace';
-export { isCorrDiagQueryEnabled } from './correctionDiagnostics';
+export { isCorrDiagQueryEnabled, formatCorrectionDiag, sampleCollisionHint } from './correctionDiagnostics';
 export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
 export {
   EntityInterpolationBuffer,

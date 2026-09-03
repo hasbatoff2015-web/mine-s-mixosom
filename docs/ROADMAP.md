@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-03: one-correction diagnostic (PR #37)
+
+- [x] Full `[corrDiag:first]` dump: seq, timing, physicsTicks, input, history vs snapshot, world, firstDiff.
+- [x] Prove `physicsTicks` compare path (`history[N]` vs `history[N]+extra`). Do not treat `inputSeq` as a physics tick.
+- [x] Lockstep pose dumps 1/2/3/10/20: stationary, walk, strafe, jump, flight, flight+SHIFT. WorldInstance 1:1 vs `predictLocalMove` matches on Anarchy.
+- [ ] Owner: `http://localhost:4173/?corrDiag=1`, one tab, W 5s, paste the first dump. No fix until that exists.
+- [ ] Do not merge main.
+
 ## 2026-09-03: hidden-tab Page Visibility (PR #37)
 
 - [x] Prove single-tab hide/show desync: BACKGROUND skips tickOnline, server keeps lastInput, duplicate-seq ignore, 4-tick catch-up.

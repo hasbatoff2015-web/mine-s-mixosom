@@ -1,4 +1,5 @@
-import { FIXED_DT } from '../core/constants';
+import { getBlockDefinition } from '../blocks';
+import { CHUNK_SIZE, FIXED_DT, PLAYER_WIDTH, chunkKey, floorDiv } from '../core/constants';
 import type { MoveInput } from '../input/MoveInput';
 import { PlayerController, type PlayerInputSource, type PlayerMovementState } from '../player/PlayerController';
 import type { VoxelWorld } from '../world/World';
@@ -15,6 +16,7 @@ import {
 import {
   buildCorrectionDiag,
   logCorrectionDiag,
+  sampleCollisionHint,
 } from './correctionDiagnostics';
 
 /** Unacked predicted ticks. 3.2 s at 20 TPS. */
@@ -103,7 +105,32 @@ export interface SnapshotInspect {
   readonly predicted?: PlayerMovementState;
   readonly comparable?: PlayerMovementState;
   readonly physicsTicks: number;
+  readonly extraTicks: number;
+  readonly comparePath: SnapshotComparePath;
+  readonly seqGap: number;
   readonly firstDiff?: string;
+  readonly rawFirstDiff?: string;
+}
+
+export type SnapshotComparePath = 'history[N]' | 'history[N]+extra' | 'live' | 'none';
+
+/**
+ * Extra latest-input ticks to apply onto history[N] so a catch-up snapshot is
+ * comparable. Identical to the live inspect formula: max(0, physicsTicks - seqGap)
+ * with physicsTicks floored to at least 1.
+ *
+ * physicsTicks=1, seqGap=1 → 0 (compare history[N] exactly)
+ * physicsTicks=2, seqGap=1 → 1 (history[N] plus one more tick of the same input)
+ * physicsTicks=1, seqGap=2 → 0 (do NOT invent ticks; two client seqs vs one server tick)
+ */
+export function comparableExtraTicks(physicsTicks: number, seqGap: number): number {
+  const ticks = Math.max(1, Math.floor(physicsTicks));
+  return Math.max(0, ticks - seqGap);
+}
+
+export function snapshotComparePath(extraTicks: number, hasHistory: boolean): SnapshotComparePath {
+  if (!hasHistory) return 'live';
+  return extraTicks > 0 ? 'history[N]+extra' : 'history[N]';
 }
 
 export interface ReconcileOptions {
@@ -497,25 +524,28 @@ export function inspectPredictedPlayer(
     return {
       kind: 'ignored', rejectReason: 'no-seq', softReject: 'none',
       error: emptyError(), ackSeq, historySeq: undefined, physicsTicks,
+      extraTicks: 0, comparePath: 'none', seqGap: 0,
     };
   }
   if (ackSeq < buffer.lastAckedSeq) {
     return {
       kind: 'ignored', rejectReason: 'stale-seq', softReject: 'none',
       error: emptyError(), ackSeq, historySeq: undefined, physicsTicks,
+      extraTicks: 0, comparePath: 'none', seqGap: ackSeq - buffer.lastAckedSeq,
     };
   }
   if (ackSeq === buffer.lastAckedSeq) {
     return {
       kind: 'ignored', rejectReason: 'duplicate-seq', softReject: 'none',
       error: emptyError(), ackSeq, historySeq: ackSeq, physicsTicks,
+      extraTicks: 0, comparePath: 'none', seqGap: 0,
     };
   }
   motionProbe.noteSeqGap(ackSeq - buffer.lastAckedSeq);
   const predictedAtAck = findPredictedEntry(buffer, ackSeq);
+  const seqGap = ackSeq - buffer.lastAckedSeq;
+  const extra = comparableExtraTicks(physicsTicks, seqGap);
   if (predictedAtAck) {
-    const seqGap = ackSeq - buffer.lastAckedSeq;
-    const extra = Math.max(0, physicsTicks - seqGap);
     const comparable = extra > 0 && options?.world
       ? predictedStateAfterExtraTicks(options.world, predictedAtAck, extra, {
         creativeFlightAllowed: player?.creativeFlightAllowed,
@@ -526,18 +556,22 @@ export function inspectPredictedPlayer(
     const reject = ackRejectReason(comparable, snapshot, error);
     const soft = softAckRejectReason(comparable, snapshot, error);
     const firstDiff = firstDivergedMovementField(comparable, snapshot);
+    const rawFirstDiff = firstDivergedMovementField(predictedAtAck.state, snapshot);
+    const path = snapshotComparePath(extra, true);
     if (reject === 'none') {
       return {
         kind: 'accepted', rejectReason: 'none', softReject: soft, error,
         ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
-        comparable, physicsTicks, firstDiff,
+        comparable, physicsTicks, extraTicks: extra, comparePath: path, seqGap,
+        firstDiff, rawFirstDiff,
       };
     }
     return {
       kind: shouldSnapPrediction(error.distSq) ? 'snapped' : 'corrected',
       rejectReason: reject, softReject: soft, error,
       ackSeq, historySeq: predictedAtAck.seq, predicted: predictedAtAck.state,
-      comparable, physicsTicks, firstDiff,
+      comparable, physicsTicks, extraTicks: extra, comparePath: path, seqGap,
+      firstDiff, rawFirstDiff,
     };
   }
   const error = player
@@ -551,6 +585,9 @@ export function inspectPredictedPlayer(
     ackSeq,
     historySeq: undefined,
     physicsTicks,
+    extraTicks: extra,
+    comparePath: 'live',
+    seqGap,
   };
 }
 
@@ -613,10 +650,27 @@ function applyCorrection(
 ): ReconcileResult {
   const sample = motionProbe.sampleWorldHint?.();
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const histPose = inspect?.predicted ?? predictedAtAck?.state;
+  const collisionPose = histPose ?? {
+    x: player.position.x, y: player.position.y, z: player.position.z,
+  };
+  const cx = floorDiv(Math.floor(collisionPose.x), CHUNK_SIZE);
+  const cz = floorDiv(Math.floor(collisionPose.z), CHUNK_SIZE);
+  const collision = sampleCollisionHint(
+    (x, y, z) => ({ name: getBlockDefinition(world.getBlock(x, y, z, false)).name }),
+    collisionPose,
+    {
+      yaw: predictedAtAck?.input.yaw,
+      width: PLAYER_WIDTH,
+      height: player.height,
+      chunkLoaded: world.chunks?.has(chunkKey(cx, cz)),
+      mutationMarks: 'mutationMarks' in world ? world.mutationMarks : undefined,
+    },
+  );
   const diag = buildCorrectionDiag({
     snapshot,
     buffer,
-    predicted: inspect?.comparable ?? predictedAtAck?.state,
+    predicted: inspect?.predicted ?? predictedAtAck?.state,
     predictedInput: predictedAtAck?.input,
     player,
     error,
@@ -624,11 +678,26 @@ function applyCorrection(
     serverTick: motionProbe.inboundTick,
     lastStateTick: motionProbe.lastStateTick,
     physicsTicks: inspect?.physicsTicks,
+    extraTicks: inspect?.extraTicks,
+    comparePath: inspect?.comparePath,
+    seqGap: inspect?.seqGap,
+    history: inspect?.predicted ?? predictedAtAck?.state,
+    comparable: inspect?.comparable ?? predictedAtAck?.state,
+    rawFirstDiff: inspect?.rawFirstDiff,
+    physicsTicksThisLoop: motionProbe.lastPhysicsTicks,
+    timing: {
+      clientSentAt: snapshot.netTiming?.clientSentAt,
+      serverRecvAt: snapshot.netTiming?.serverRecvAt,
+      serverSimAt: snapshot.netTiming?.serverSimAt,
+      serverSendAt: snapshot.netTiming?.serverSentAt,
+      clientRecvAt: Number.isFinite(motionProbe.lastPlayerStateAt) ? motionProbe.lastPlayerStateAt : undefined,
+      applyAt: now,
+    },
     firstDiff: inspect?.firstDiff,
     world: {
-      feetBlock: sample?.feetBlock ?? '—',
-      belowBlock: sample?.belowBlock ?? '—',
-      aheadBlock: sample?.aheadBlock ?? '—',
+      feetBlock: collision.feetBlock ?? sample?.feetBlock ?? '—',
+      belowBlock: collision.belowBlock ?? sample?.belowBlock ?? '—',
+      aheadBlock: collision.aheadBlock ?? sample?.aheadBlock ?? '—',
       msSinceBlockMutation: Number.isFinite(motionProbe.lastBlockMutationAt)
         ? now - motionProbe.lastBlockMutationAt : -1,
       msSinceChunkUpdate: Number.isFinite(motionProbe.lastChunkUpdateAt)
@@ -641,6 +710,11 @@ function applyCorrection(
         ? predictedAtAck.state.isFlying !== (snapshot.flying ?? predictedAtAck.state.isFlying)
         : false,
       descend: predictedAtAck?.input.descend === true,
+      aabbBlocks: collision.aabbBlocks ?? sample?.aabbBlocks,
+      chunkKey: collision.chunkKey ?? sample?.chunkKey,
+      chunkLoaded: collision.chunkLoaded ?? sample?.chunkLoaded,
+      mutationMarks: collision.mutationMarks ?? sample?.mutationMarks,
+      visibility: sample?.visibility,
     },
   });
   logCorrectionDiag(diag);

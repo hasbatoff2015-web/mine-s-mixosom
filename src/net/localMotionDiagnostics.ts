@@ -124,6 +124,11 @@ export class LocalMotionProbe {
     feetBlock: string;
     belowBlock: string;
     aheadBlock: string;
+    aabbBlocks?: string;
+    chunkKey?: string;
+    chunkLoaded?: boolean;
+    mutationMarks?: number;
+    visibility?: string;
   }) | undefined;
   position = { x: 0, y: 0, z: 0 };
   previous = { x: 0, y: 0, z: 0 };

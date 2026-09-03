@@ -125,6 +125,8 @@ Local player: input is sent and **applied locally immediately** at 20 TPS. Serve
 
 **One tab.** The session token lives in `sessionStorage` (`fc.anarchy.sessionToken`). Duplicating a tab copies it and resumes the same player. Resume now kicks the old socket (`session_taken`). Movement diagnostics are invalid if a second tab with the same token is still connected. F3 `sess socks=` must be `1`.
 
+Positional correction dump: `http://localhost:4173/?corrDiag=1`. The first rewind logs `[corrDiag:first]` (SEQ, timing, `physicsTicks`, history vs snapshot, world). Later corrections are full with the flag, one line without it. In-game `/predsim` prints lockstep xyz at 1/2/3/10/20 ticks. This is diagnostic; it does not change movement.
+
 Hiding the game tab (switch to ChatGPT, etc.) is a **different** bug from a duplicate tab: same socket, same player. `BACKGROUND` stops `tickOnline`; the server used to keep walking on `lastInput`. The client now sends one idle on hide and resyncs to the latest snapshot on return. F3 `visibility=` / `hiddenDurationMs` / `inGap`.
 
 DEV: `?quietWorld=1` caps streaming to 1 chunk. Console `[reconnectLoad]` / `[frameSpike]` / `[longtask]` / `[vis]` / `[vis-resync]`. F3 `loop late/cb/eld` and `load chunkSend/chunkGen`.

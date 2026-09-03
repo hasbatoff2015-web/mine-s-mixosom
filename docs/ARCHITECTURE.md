@@ -1,5 +1,15 @@
 # Архитектура
 
+## One-correction diagnostic — 2026-09-03
+
+Owner 20/20 localhost still positional-corrects (`corr/s` 5–11). This pass does **not** change prediction, tolerances, interpolation, TPS, or PlayerController.
+
+`inspectPredictedPlayer` compares snapshot `inputSeq=N` to `history[N]`, then applies `extra = max(0, physicsTicks - seqGap)` ticks of that **same** latest input. `physicsTicks=1` → exactly `history[N]`. `lastInputSeq` is the latest movement **state**, not a unique physics tick. `tickNumber` is the server checkpoint.
+
+`[corrDiag]` prints SEQ / TIMING / PHYSICS / INPUT / CLIENT POSE (`history[N]`, comparable, live) / SERVER POSE / DIFF / STATE / WORLD (`getBlock(false)`, AABB, `chunkLoaded`, `mutationMarks`, visibility) / CATEGORY A–G.
+
+WorldInstance 1:1 (`applyInput` + `tick` vs `predictLocalMove`) matches on Anarchy for walk and the other modes. Deterministic PlayerController + wrapper is not the remaining 20/20 bug. Latest-input coalesce (client 2 seqs, server 1 tick) still produces a walk-step `firstDiff=z` dump — that path is proven, not assumed to be the live 20/20 case.
+
 ## Hidden-tab Page Visibility — 2026-09-03
 
 Single game tab. `GameLifecycleManager` sets `BACKGROUND` on hide; `worldSimulationActive` is false, so `Game.frame` zeroes the accumulator and skips `tickOnline`. The client sends no movement and predicts no ticks. The server keeps `lastInput` at 20 TPS. Incoming `player_state` still lands on the same WebSocket; the client stores **one** latest pending snapshot. Those packets reuse `inputSeq`, so reconcile **ignores** them as `duplicate-seq`. Local pose freezes while the server walks ~`WALK_SPEED × hiddenSeconds`.

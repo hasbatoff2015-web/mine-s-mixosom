@@ -1,7 +1,9 @@
-import { FIXED_DT, WALK_SPEED } from '../core/constants';
+import { CHUNK_SIZE, FIXED_DT, WALK_SPEED, floorDiv } from '../core/constants';
 import type { PlayerController, PlayerMovementState } from '../player/PlayerController';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import type { AckRejectReason } from './localMotionDiagnostics';
+
+type SnapshotComparePath = 'history[N]' | 'history[N]+extra' | 'live' | 'none';
 
 interface PredictedMoveLike {
   readonly seq: number;
@@ -25,6 +27,7 @@ interface PredictionErrorLike {
   readonly xz: number;
   readonly y: number;
   readonly speed: number;
+  readonly distSq?: number;
 }
 
 function queryFlag(name: string, search = typeof location === 'undefined' ? '' : location.search): boolean {
@@ -53,6 +56,34 @@ export interface CorrectionWorldHint {
   readonly jump: boolean;
   readonly flyingToggle: boolean;
   readonly descend: boolean;
+  readonly aabbBlocks?: string;
+  readonly chunkKey?: string;
+  readonly chunkLoaded?: boolean;
+  readonly mutationMarks?: number;
+  readonly visibility?: string;
+}
+
+export interface CorrectionTiming {
+  readonly clientSentAt?: number;
+  readonly serverRecvAt?: number;
+  readonly serverSimAt?: number;
+  readonly serverSendAt?: number;
+  readonly clientRecvAt?: number;
+  readonly applyAt?: number;
+}
+
+export interface CorrectionPose {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly vx: number;
+  readonly vy: number;
+  readonly vz: number;
+  readonly onGround?: boolean;
+  readonly sneaking?: boolean;
+  readonly sprinting?: boolean;
+  readonly flying?: boolean;
+  readonly jumpHeld?: boolean;
 }
 
 export interface CorrectionDiag {
@@ -66,6 +97,11 @@ export interface CorrectionDiag {
   readonly error: PredictionErrorLike;
   readonly input: PredictedMoveLike | undefined;
   readonly predicted: PlayerMovementState | undefined;
+  readonly history?: PlayerMovementState;
+  readonly comparable?: PlayerMovementState;
+  readonly extraTicks: number;
+  readonly comparePath: SnapshotComparePath | 'none';
+  readonly pendingSeqs: readonly number[];
   readonly snapshot: {
     readonly x: number; readonly y: number; readonly z: number;
     readonly vx: number; readonly vy: number; readonly vz: number;
@@ -88,19 +124,39 @@ export interface CorrectionDiag {
   readonly latestClientSeq: number;
   readonly world: CorrectionWorldHint;
   readonly hypotheses: readonly string[];
+  readonly ownerCategory: string;
   readonly physicsTicks?: number;
+  readonly physicsTicksThisLoop?: number;
   readonly firstDiff?: string;
+  readonly rawFirstDiff?: string;
+  readonly timing?: CorrectionTiming;
 }
 
 const WALK_STEP = WALK_SPEED * FIXED_DT;
 
 function fmt3(value: number): string {
-  return value.toFixed(3);
+  return Number.isFinite(value) ? value.toFixed(3) : 'NaN';
 }
 
-function classify(diag: Omit<CorrectionDiag, 'hypotheses'>): string[] {
+function fmtMs(value: number | undefined): string {
+  return value !== undefined && Number.isFinite(value) ? value.toFixed(1) : '—';
+}
+
+function poseLine(label: string, pose: CorrectionPose | PlayerMovementState | undefined, flying?: boolean): string {
+  if (!pose) return `  ${label} MISSING`;
+  const fly = 'isFlying' in pose ? pose.isFlying : flying;
+  const jump = 'jumpHeld' in pose ? pose.jumpHeld : undefined;
+  return (
+    `  ${label} ${fmt3(pose.x)} ${fmt3(pose.y)} ${fmt3(pose.z)} `
+    + `v=${fmt3(pose.vx)} ${fmt3(pose.vy)} ${fmt3(pose.vz)} `
+    + `ground=${pose.onGround} sneak=${pose.sneaking} sprint=${pose.sprinting} `
+    + `fly=${fly}${jump === undefined ? '' : ` jumpHeld=${jump}`}`
+  );
+}
+
+function classify(diag: Omit<CorrectionDiag, 'hypotheses' | 'ownerCategory'>): string[] {
   const out: string[] = [];
-  if (diag.seqGap > 1) out.push('B skipped/intermediate inputs (seq gap)');
+  if (diag.seqGap > 1 && diag.lastAckedSeq >= 0) out.push('B skipped/intermediate inputs (seq gap)');
   if (diag.tickGap > 1) out.push('A missed player_state / timing (tick gap)');
   if (diag.seqGap <= 1 && diag.tickGap <= 1 && (diag.physicsTicks ?? 1) <= 1) {
     out.push('check 1:1 tick still mismatched');
@@ -126,6 +182,38 @@ function classify(diag: Omit<CorrectionDiag, 'hypotheses'>): string[] {
   return out;
 }
 
+/**
+ * Owner categories from the 20/20 positional-correction pass.
+ * A = physicsTicks / compare-point, B = input, C = sim parity, D = velocity-only,
+ * E = world/collision, F = visibility, G = stationary vertical.
+ */
+export function classifyOwnerCategory(diag: Omit<CorrectionDiag, 'hypotheses' | 'ownerCategory'>): string {
+  const hist = diag.history ?? diag.predicted;
+  const xyzMatch = hist
+    ? Math.hypot(diag.snapshot.x - hist.x, diag.snapshot.y - hist.y, diag.snapshot.z - hist.z) <= 0.03
+    : false;
+  if (xyzMatch && diag.error.speed > 0.2) return 'D xyz match, velocity differs (should be soft, not pose corr)';
+  if (diag.world.visibility === 'hidden' || (diag.world.visibility !== undefined && diag.world.visibility !== 'visible')) {
+    return 'F hidden/visible transition';
+  }
+  if (diag.world.chunkLoaded === false) return 'E client collision chunk not loaded (getBlock false → Air)';
+  if (diag.world.msSinceBlockMutation >= 0 && diag.world.msSinceBlockMutation < 250) return 'E recent block mutation';
+  if ((diag.physicsTicks ?? 1) > 1 && diag.extraTicks !== (diag.physicsTicks ?? 1) - Math.max(1, diag.seqGap)) {
+    return 'A physicsTicks extra-tick formula vs seqGap';
+  }
+  if ((diag.physicsTicks ?? 1) > 1) return 'A physicsTicks>1 catch-up snapshot';
+  if (diag.lastAckedSeq >= 0 && diag.seqGap > (diag.physicsTicks ?? 1)) {
+    return 'B inputSeq is not a physics tick: seqGap>physicsTicks (client predicted more seqs than server simulated)';
+  }
+  if (diag.input && hist && Math.abs(diag.error.xz - WALK_STEP) < 0.08) {
+    return 'A/B one walk-step: history[N] is one physics step from snapshot';
+  }
+  const stationary = !diag.input || (diag.input.forward === 0 && diag.input.right === 0 && !diag.input.jump);
+  if (stationary && diag.firstDiff === 'y') return 'G stationary vertical (y/vy/onGround/flying/gravity/collision)';
+  if (diag.input && hist) return 'C same-seq pose diverge (lockstep PlayerController or world collision)';
+  return 'unknown — read the dump';
+}
+
 export function buildCorrectionDiag(input: {
   readonly snapshot: PlayerSnapshot;
   readonly buffer: PredictionBufferLike;
@@ -137,16 +225,26 @@ export function buildCorrectionDiag(input: {
   readonly serverTick?: number;
   readonly lastStateTick: number;
   readonly physicsTicks?: number;
+  readonly physicsTicksThisLoop?: number;
   readonly firstDiff?: string;
+  readonly rawFirstDiff?: string;
+  readonly extraTicks?: number;
+  readonly comparePath?: SnapshotComparePath | 'none';
+  readonly seqGap?: number;
+  readonly history?: PlayerMovementState;
+  readonly comparable?: PlayerMovementState;
+  readonly timing?: CorrectionTiming;
   readonly world: CorrectionWorldHint;
 }): CorrectionDiag {
   const lastAckedSeq = input.buffer.lastAckedSeq;
   const inputSeq = input.snapshot.inputSeq ?? Number.NaN;
-  const seqGap = Number.isFinite(inputSeq) ? inputSeq - lastAckedSeq : 0;
+  const seqGap = input.seqGap ?? (Number.isFinite(inputSeq) ? inputSeq - lastAckedSeq : 0);
   const tickGap = input.serverTick !== undefined ? input.serverTick - input.lastStateTick : 0;
   const latestClientSeq = input.buffer.entries.length > 0
     ? input.buffer.entries[input.buffer.entries.length - 1]!.seq
     : lastAckedSeq;
+  const physicsTicks = Math.max(1, Math.floor(input.physicsTicks ?? 1));
+  const extraTicks = input.extraTicks ?? Math.max(0, physicsTicks - seqGap);
   const live = input.player.captureMovementState();
   const base = {
     inputSeq,
@@ -159,6 +257,11 @@ export function buildCorrectionDiag(input: {
     error: input.error,
     input: input.predictedInput,
     predicted: input.predicted,
+    history: input.history ?? input.predicted,
+    comparable: input.comparable ?? input.predicted,
+    extraTicks,
+    comparePath: input.comparePath ?? (extraTicks > 0 ? 'history[N]+extra' as const : 'history[N]' as const),
+    pendingSeqs: input.buffer.entries.map((entry) => entry.seq),
     snapshot: {
       x: input.snapshot.x, y: input.snapshot.y, z: input.snapshot.z,
       vx: input.snapshot.vx, vy: input.snapshot.vy, vz: input.snapshot.vz,
@@ -182,59 +285,179 @@ export function buildCorrectionDiag(input: {
     pending: input.buffer.entries.length,
     latestClientSeq,
     world: input.world,
-    physicsTicks: input.physicsTicks,
+    physicsTicks,
+    physicsTicksThisLoop: input.physicsTicksThisLoop ?? physicsTicks,
     firstDiff: input.firstDiff,
+    rawFirstDiff: input.rawFirstDiff,
+    timing: input.timing,
   };
-  return { ...base, hypotheses: classify(base) };
+  return {
+    ...base,
+    hypotheses: classify(base),
+    ownerCategory: classifyOwnerCategory(base),
+  };
 }
 
 export function formatCorrectionDiag(diag: CorrectionDiag): string {
-  const predicted = diag.predicted;
+  const history = diag.history ?? diag.predicted;
+  const comparable = diag.comparable ?? diag.predicted;
   const input = diag.input;
-  const dx = predicted ? diag.snapshot.x - predicted.x : Number.NaN;
-  const dy = predicted ? diag.snapshot.y - predicted.y : Number.NaN;
-  const dz = predicted ? diag.snapshot.z - predicted.z : Number.NaN;
-  const dvx = predicted ? diag.snapshot.vx - predicted.vx : Number.NaN;
-  const dvy = predicted ? diag.snapshot.vy - predicted.vy : Number.NaN;
-  const dvz = predicted ? diag.snapshot.vz - predicted.vz : Number.NaN;
+  const dx = comparable ? diag.snapshot.x - comparable.x : Number.NaN;
+  const dy = comparable ? diag.snapshot.y - comparable.y : Number.NaN;
+  const dz = comparable ? diag.snapshot.z - comparable.z : Number.NaN;
+  const dvx = comparable ? diag.snapshot.vx - comparable.vx : Number.NaN;
+  const dvy = comparable ? diag.snapshot.vy - comparable.vy : Number.NaN;
+  const dvz = comparable ? diag.snapshot.vz - comparable.vz : Number.NaN;
+  const dist = Number.isFinite(dx) ? Math.hypot(dx, dy, dz) : Number.NaN;
+  const rawDx = history ? diag.snapshot.x - history.x : Number.NaN;
+  const rawDz = history ? diag.snapshot.z - history.z : Number.NaN;
+  const timing = diag.timing;
   const lines = [
     `[corrDiag] seq=${diag.inputSeq} lastAck=${diag.lastAckedSeq} gap=${diag.seqGap} `
     + `tick=${diag.serverTick ?? '—'} tickGap=${diag.tickGap} physicsTicks=${diag.physicsTicks ?? 1} `
-    + `firstDiff=${diag.firstDiff ?? '—'} reject=${diag.reject} `
+    + `extra=${diag.extraTicks} path=${diag.comparePath} `
+    + `firstDiff=${diag.firstDiff ?? '—'} rawDiff=${diag.rawFirstDiff ?? '—'} reject=${diag.reject} `
     + `xz=${diag.error.xz.toFixed(4)} y=${diag.error.y.toFixed(4)} speed=${diag.error.speed.toFixed(4)} `
     + `walkStep=${WALK_STEP.toFixed(4)}`,
-    `  hist ${predicted
-      ? `${fmt3(predicted.x)} ${fmt3(predicted.y)} ${fmt3(predicted.z)} v=${fmt3(predicted.vx)} ${fmt3(predicted.vy)} ${fmt3(predicted.vz)} `
-        + `ground=${predicted.onGround} sneak=${predicted.sneaking} sprint=${predicted.sprinting} `
-        + `fly=${predicted.isFlying} jumpHeld=${predicted.jumpHeld}`
-      : 'MISSING'}`,
-    `  snap ${fmt3(diag.snapshot.x)} ${fmt3(diag.snapshot.y)} ${fmt3(diag.snapshot.z)} `
-    + `v=${fmt3(diag.snapshot.vx)} ${fmt3(diag.snapshot.vy)} ${fmt3(diag.snapshot.vz)} `
-    + `ground=${diag.snapshot.onGround} sneak=${diag.snapshot.sneaking} sprint=${diag.snapshot.sprinting} `
-    + `fly=${diag.snapshot.flying}`,
-    `  dpos ${fmt3(dx)} ${fmt3(dy)} ${fmt3(dz)} dv ${fmt3(dvx)} ${fmt3(dvy)} ${fmt3(dvz)}`,
-    `  live ${fmt3(diag.liveBefore.x)} ${fmt3(diag.liveBefore.y)} ${fmt3(diag.liveBefore.z)} `
-    + `prev ${fmt3(diag.liveBefore.px)} ${fmt3(diag.liveBefore.py)} ${fmt3(diag.liveBefore.pz)} `
-    + `|pos-prev|=${Math.hypot(
-      diag.liveBefore.x - diag.liveBefore.px,
-      diag.liveBefore.y - diag.liveBefore.py,
-      diag.liveBefore.z - diag.liveBefore.pz,
-    ).toFixed(4)}`,
-    `  pending=${diag.pending} latestClientSeq=${diag.latestClientSeq} latestServerSeq=${diag.inputSeq} `
-    + `firstDiff=${diag.firstDiff ?? '—'} physicsTicks=${diag.physicsTicks ?? 1}`,
-    `  input ${input
-      ? `f=${input.forward} r=${input.right} jump=${input.jump} sneak=${input.sneak} sprint=${input.sprint} `
-        + `desc=${input.descend} flySprint=${input.flySprint} yaw=${input.yaw.toFixed(3)} pitch=${input.pitch.toFixed(3)}`
-      : 'MISSING'}`,
-    `  world feet=${diag.world.feetBlock} below=${diag.world.belowBlock} ahead=${diag.world.aheadBlock} `
-    + `blockMs=${diag.world.msSinceBlockMutation} chunkMs=${diag.world.msSinceChunkUpdate} `
-    + `ticksThisFrame=${diag.world.ticksThisFrame} jump=${diag.world.jump} descend=${diag.world.descend}`,
+    `SEQ:`,
+    `  snapshot.inputSeq=${diag.inputSeq} currentClientSeq=${diag.latestClientSeq} lastAckedSeq=${diag.lastAckedSeq}`,
+    `  pendingSeqs=[${diag.pendingSeqs.join(',')}] pending=${diag.pending}`,
+    `  lastInputSeq semantics: latest movement state, NOT a unique physics tick id`,
+    `TIMING:`,
+    `  clientSent=${fmtMs(timing?.clientSentAt)} serverRecv=${fmtMs(timing?.serverRecvAt)} `
+    + `serverSim=${fmtMs(timing?.serverSimAt)} serverSend=${fmtMs(timing?.serverSendAt)} `
+    + `clientRecv=${fmtMs(timing?.clientRecvAt)} apply=${fmtMs(timing?.applyAt)}`,
+    `PHYSICS:`,
+    `  snapshot.physicsTicks=${diag.physicsTicks ?? 1} tickClock.physicsTicksThisLoop=${diag.physicsTicksThisLoop ?? '—'} `
+    + `serverTickNumber=${diag.serverTick ?? '—'} lastStateTick=${diag.lastStateTick}`,
+    `  extra=max(0, physicsTicks - seqGap)=max(0, ${diag.physicsTicks ?? 1} - ${diag.seqGap})=${diag.extraTicks}`,
+    `  comparePath=${diag.comparePath}  `
+    + (diag.extraTicks === 0
+      ? 'compare exactly history[N]'
+      : `compare history[N] plus ${diag.extraTicks} extra tick(s) of the SAME latest input`),
+    `INPUT:`,
+    `  ${input
+      ? `forward=${input.forward} right=${input.right} jump=${input.jump} sneak=${input.sneak} `
+        + `sprint=${input.sprint} descend=${input.descend} flySprint=${input.flySprint} `
+        + `yaw=${input.yaw.toFixed(4)} pitch=${input.pitch.toFixed(4)} seq=${input.seq}`
+      : 'MISSING (no history for this inputSeq)'}`,
+    `CLIENT POSE:`,
+    poseLine('history[N]', history),
+    diag.extraTicks > 0 ? poseLine('comparable', comparable) : '  comparable = history[N] (extra=0)',
+    poseLine('live     ', diag.liveBefore, diag.liveBefore.isFlying),
+    `  livePrev ${fmt3(diag.liveBefore.px)} ${fmt3(diag.liveBefore.py)} ${fmt3(diag.liveBefore.pz)}`,
+    `SERVER POSE:`,
+    poseLine('snapshot ', diag.snapshot, diag.snapshot.flying),
+    `DIFF (comparable vs snapshot):`,
+    `  dx=${fmt3(dx)} dy=${fmt3(dy)} dz=${fmt3(dz)} distance=${fmt3(dist)}`,
+    `  dvx=${fmt3(dvx)} dvy=${fmt3(dvy)} dvz=${fmt3(dvz)}`,
+    `  firstDiff=${diag.firstDiff ?? '—'} rawHistoryFirstDiff=${diag.rawFirstDiff ?? '—'} `
+    + `rawXz=${fmt3(Number.isFinite(rawDx) ? Math.hypot(rawDx, rawDz) : Number.NaN)}`,
+    `STATE:`,
+    `  hist ground/fly/sneak/sprint/jumpHeld=${history?.onGround}/${history?.isFlying}/${history?.sneaking}/${history?.sprinting}/${history?.jumpHeld}`,
+    `  snap ground/fly/sneak/sprint=${diag.snapshot.onGround}/${diag.snapshot.flying}/${diag.snapshot.sneaking}/${diag.snapshot.sprinting}`,
+    `  live ground/fly/sneak/sprint/jumpHeld=${diag.liveBefore.onGround}/${diag.liveBefore.isFlying}/${diag.liveBefore.sneaking}/${diag.liveBefore.sprinting}/${diag.liveBefore.jumpHeld}`,
+    `WORLD:`,
+    `  feet=${diag.world.feetBlock} below=${diag.world.belowBlock} ahead=${diag.world.aheadBlock}`,
+    `  aabb=${diag.world.aabbBlocks ?? '—'} chunk=${diag.world.chunkKey ?? '—'} loaded=${diag.world.chunkLoaded ?? '—'}`,
+    `  worldRevision=mutationMarks=${diag.world.mutationMarks ?? '—'} (client VoxelWorld; server revision is not on the snapshot)`,
+    `  blockMs=${diag.world.msSinceBlockMutation} chunkMs=${diag.world.msSinceChunkUpdate}`,
+    `  visibility=${diag.world.visibility ?? '—'} ticksThisFrame=${diag.world.ticksThisFrame}`,
+    `CATEGORY: ${diag.ownerCategory}`,
     `  why ${diag.hypotheses.join('; ')}`,
   ];
-  return lines.join('\n');
+  return lines.filter((line) => line !== undefined).join('\n');
+}
+
+let firstCorrectionLogged = false;
+
+export function resetFirstCorrectionDump(): void {
+  firstCorrectionLogged = false;
 }
 
 export function logCorrectionDiag(diag: CorrectionDiag): void {
   if (typeof console === 'undefined') return;
-  console.info(formatCorrectionDiag(diag));
+  const body = formatCorrectionDiag(diag);
+  if (!firstCorrectionLogged) {
+    firstCorrectionLogged = true;
+    console.info(
+      `[corrDiag:first] KEEP THIS DUMP — first positional correction this session\n${body}`,
+    );
+    return;
+  }
+  if (isCorrDiagQueryEnabled()) console.info(body);
+  else console.info(body.split('\n')[0]);
+}
+
+export function sampleAabbBlocks(
+  getBlock: (x: number, y: number, z: number, generate?: boolean) => { readonly name: string },
+  x: number,
+  y: number,
+  z: number,
+  width = 0.6,
+  height = 1.8,
+): string {
+  const half = width * 0.5;
+  const cells: string[] = [];
+  const minX = Math.floor(x - half);
+  const maxX = Math.floor(x + half - 1e-7);
+  const minY = Math.floor(y) - 1;
+  const maxY = Math.floor(y + height - 1e-7);
+  const minZ = Math.floor(z - half);
+  const maxZ = Math.floor(z + half - 1e-7);
+  for (let by = minY; by <= maxY; by += 1) {
+    for (let bz = minZ; bz <= maxZ; bz += 1) {
+      for (let bx = minX; bx <= maxX; bx += 1) {
+        const name = getBlock(bx, by, bz, false).name;
+        if (name === 'air') continue;
+        cells.push(`${bx},${by},${bz}:${name}`);
+      }
+    }
+  }
+  return cells.length === 0 ? 'air' : cells.join('|');
+}
+
+export function chunkKeyOf(x: number, z: number): string {
+  const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
+  const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
+  return `${cx},${cz}`;
+}
+
+/** Collision neighborhood at a pose. Uses generate=false semantics (missing chunk = air). */
+export function sampleCollisionHint(
+  getBlock: (x: number, y: number, z: number, generate?: boolean) => { readonly name: string },
+  pose: { readonly x: number; readonly y: number; readonly z: number },
+  options: {
+    readonly yaw?: number;
+    readonly width?: number;
+    readonly height?: number;
+    readonly chunkLoaded?: boolean;
+    readonly mutationMarks?: number;
+  } = {},
+): Pick<CorrectionWorldHint, 'feetBlock' | 'belowBlock' | 'aheadBlock' | 'aabbBlocks' | 'chunkKey' | 'chunkLoaded' | 'mutationMarks'> {
+  const px = Math.floor(pose.x);
+  const py = Math.floor(pose.y);
+  const pz = Math.floor(pose.z);
+  const yaw = options.yaw ?? 0;
+  return {
+    feetBlock: getBlock(px, py, pz, false).name,
+    belowBlock: getBlock(px, py - 1, pz, false).name,
+    aheadBlock: getBlock(
+      px - Math.round(Math.sin(yaw)),
+      py,
+      pz - Math.round(Math.cos(yaw)),
+      false,
+    ).name,
+    aabbBlocks: sampleAabbBlocks(
+      getBlock,
+      pose.x,
+      pose.y,
+      pose.z,
+      options.width ?? 0.6,
+      options.height ?? 1.8,
+    ),
+    chunkKey: chunkKeyOf(pose.x, pose.z),
+    chunkLoaded: options.chunkLoaded,
+    mutationMarks: options.mutationMarks,
+  };
 }
