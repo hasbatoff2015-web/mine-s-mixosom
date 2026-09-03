@@ -25,6 +25,7 @@ export {
 export {
   isBowDiagQueryEnabled,
   isMotionDiagQueryEnabled,
+  isPredNoNetQueryEnabled,
   motionProbe,
 } from './localMotionDiagnostics';
 export { isCorrDiagQueryEnabled } from './correctionDiagnostics';

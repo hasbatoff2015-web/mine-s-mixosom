@@ -56,7 +56,8 @@ import {
   clamp,
   floorDiv,
 } from './constants';
-import { advanceFixedStep, interpolationAlpha, restoreInterpolationOrigin } from './fixedStep';
+import { advanceFixedStep, interpolationAlpha } from './fixedStep';
+import { LocalPlayerRenderState } from './localPlayerRenderState';
 import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
 import {
   chunksInSquareRadius,
@@ -195,7 +196,7 @@ import {
   resetPredictionBuffer,
   type PredictionBuffer,
 } from '../net/localPlayerPrediction';
-import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
+import { motionProbe, isBowDiagQueryEnabled, isPredNoNetQueryEnabled } from '../net/localMotionDiagnostics';
 import {
   applyEntitySnapshots,
   applyInterpolatedEntityVisuals,
@@ -286,6 +287,8 @@ export interface OnlineAnarchySession {
   lastAliveTick?: number;
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
+  /** DEV `?predNoNet=1`: predict locally, ignore snapshots and skip movement send. */
+  ignoreNetworkMotion?: boolean;
 }
 
 interface RuntimeSettings {
@@ -341,8 +344,7 @@ export class Game {
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
-  /** Pose before this frame's fixed ticks; render lerp origin after catch-up. */
-  private readonly localSimOrigin = new Vec3();
+  private readonly localRender = new LocalPlayerRenderState();
   private readonly cameraPivot = new THREE.Vector3();
   private readonly cameraTravelDirection = new THREE.Vector3();
   private readonly frontCameraLook = { yaw: 0, pitch: 0 };
@@ -660,6 +662,7 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
+        ignoreNetworkMotion: isPredNoNetQueryEnabled(),
       },
     });
     const session = this.session;
@@ -669,6 +672,7 @@ export class Game {
     session.player.pitch = welcome.you.pitch;
     this.input.yaw = welcome.you.yaw;
     this.input.pitch = welcome.you.pitch;
+    this.syncLocalRenderFromPlayer();
     resetPredictionBuffer(session.online.prediction);
     session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
     motionProbe.reset();
@@ -880,6 +884,10 @@ export class Game {
     motionProbe.noteSnapshotInbound();
     motionProbe.inboundTick = message.tick;
     motionProbe.lastStateTick = online.lastStateTick;
+    if (online.ignoreNetworkMotion) {
+      motionProbe.noteSnapshotDrop('no-local');
+      return;
+    }
     if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) {
       motionProbe.noteSnapshotDrop('stale');
       return;
@@ -996,21 +1004,31 @@ export class Game {
       { yaw: this.input.yaw, pitch: this.input.pitch },
       !session.ridingCartId,
     );
-    online.client.send({
-      type: 'input',
-      seq: online.inputSeq,
-      forward: 0,
-      right: 0,
-      jump: false,
-      sneak: false,
-      sprint: false,
-      descend: false,
-      flySprint: false,
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
-      selectedSlot: session.selectedSlot,
-    });
+    if (!online.ignoreNetworkMotion) {
+      online.client.send({
+        type: 'input',
+        seq: online.inputSeq,
+        forward: 0,
+        right: 0,
+        jump: false,
+        sneak: false,
+        sprint: false,
+        descend: false,
+        flySprint: false,
+        yaw: this.input.yaw,
+        pitch: this.input.pitch,
+        selectedSlot: session.selectedSlot,
+      });
+    }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
+    this.localRender.pushAfterTick({
+      x: session.player.position.x,
+      y: session.player.position.y,
+      z: session.player.position.z,
+      vx: session.player.velocity.x,
+      vy: session.player.velocity.y,
+      vz: session.player.velocity.z,
+    });
   }
 
   private async openAnarchyWorld(): Promise<void> {
@@ -1304,7 +1322,21 @@ export class Game {
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
+    this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
+  }
+
+  private syncLocalRenderFromPlayer(): void {
+    const player = this.session?.player;
+    if (!player) return;
+    this.localRender.reset({
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+      vx: player.velocity.x,
+      vy: player.velocity.y,
+      vz: player.velocity.z,
+    });
   }
 
   private estimateSpawn(world: VoxelWorld): [number, number, number] {
@@ -1324,6 +1356,7 @@ export class Game {
       if (floor !== BlockId.GrassBlock) return false;
       if (session.world.isSolid(x, surface + 1, z) || session.world.isSolid(x, surface + 2, z)) return false;
       session.player.teleport([x + 0.5, surface + 1.01, z + 0.5]);
+      this.syncLocalRenderFromPlayer();
       return true;
     };
     if (tryColumn(originX, originZ)) return;
@@ -2212,15 +2245,18 @@ export class Game {
       this.simParts.entities = 0;
       this.simParts.other = 0;
       const tickStart = performance.now();
-      const simulating = this.session;
-      if (stepped.ticks > 0 && simulating) this.localSimOrigin.copy(simulating.player.position);
-      for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
-      if (stepped.ticks > 0 && this.session) {
-        restoreInterpolationOrigin(
-          this.session.player.previousPosition,
-          this.localSimOrigin,
-          stepped.ticks,
-        );
+      for (let tick = 0; tick < stepped.ticks; tick += 1) {
+        this.tick();
+        if (this.session) {
+          this.localRender.pushAfterTick({
+            x: this.session.player.position.x,
+            y: this.session.player.position.y,
+            z: this.session.player.position.z,
+            vx: this.session.player.velocity.x,
+            vy: this.session.player.velocity.y,
+            vz: this.session.player.velocity.z,
+          });
+        }
       }
       if (this.session?.online) this.stepOnlineAuthority(this.session, rawElapsed);
       tickMs = performance.now() - tickStart;
@@ -2340,23 +2376,25 @@ export class Game {
       { yaw: this.input.yaw, pitch: this.input.pitch },
       !riding,
     );
-    online.client.send({
-      type: 'input',
-      seq: online.inputSeq,
-      forward: predicted.forward,
-      right: predicted.right,
-      jump: predicted.jump,
-      sneak: predicted.sneak,
-      sprint: predicted.sprint,
-      descend: predicted.descend,
-      flySprint: predicted.flySprint,
-      yaw: predicted.yaw,
-      pitch: predicted.pitch,
-      selectedSlot: session.selectedSlot,
-      mining: gameplayAllowed && this.input.mining,
-      use: gameplayAllowed && this.input.using,
-      vehicleForward: riding ? movement.forward : 0,
-    });
+    if (!online.ignoreNetworkMotion) {
+      online.client.send({
+        type: 'input',
+        seq: online.inputSeq,
+        forward: predicted.forward,
+        right: predicted.right,
+        jump: predicted.jump,
+        sneak: predicted.sneak,
+        sprint: predicted.sprint,
+        descend: predicted.descend,
+        flySprint: predicted.flySprint,
+        yaw: predicted.yaw,
+        pitch: predicted.pitch,
+        selectedSlot: session.selectedSlot,
+        mining: gameplayAllowed && this.input.mining,
+        use: gameplayAllowed && this.input.using,
+        vehicleForward: riding ? movement.forward : 0,
+      });
+    }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
@@ -3283,6 +3321,7 @@ export class Game {
     session.ridingCartId = undefined;
     const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
     session.player.teleport(destination);
+    this.syncLocalRenderFromPlayer();
   }
 
   private listenerPose() {
@@ -3397,6 +3436,7 @@ export class Game {
     this.ui.showDeath(
       () => {
         session.survival.respawn(session.player, session.survival.spawnPoint);
+        this.syncLocalRenderFromPlayer();
         this.deathShown = false;
         this.enterPlaying();
       },
@@ -3408,21 +3448,27 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
-      // previousPosition is the pose before this frame's ticks (Game.frame restore).
-      const position = this.interpolatedPlayerPosition
-        .copy(session.player.previousPosition)
-        .lerp(session.player.position, clamp(alpha, 0, 1));
-      this.lastRenderAlpha = clamp(alpha, 0, 1);
+      const sampled = this.localRender.sample(this.accumulator, FIXED_DT);
+      const position = this.interpolatedPlayerPosition.set(sampled.x, sampled.y, sampled.z);
+      this.lastRenderAlpha = sampled.alpha;
+      this.updatePlayerPresentation(session, position, now);
       motionProbe.recordRender({
         online: Boolean(session.online),
         fps: this.fps,
         ticks: this.lastSimParts.ticks,
-        alpha: this.lastRenderAlpha,
+        alpha: sampled.alpha,
+        leftover: this.accumulator,
+        simTick: sampled.simTick,
+        fromTick: sampled.fromTick,
+        toTick: sampled.toTick,
         position: session.player.position,
         previous: session.player.previousPosition,
         render: position,
+        renderPrev: this.localRender.previous,
+        renderCurr: this.localRender.current,
+        camera: this.camera.position,
+        ignoreNetworkMotion: Boolean(session.online?.ignoreNetworkMotion),
       });
-      this.updatePlayerPresentation(session, position, now);
       session.online?.remotes.forEach((remote) => remote.interpolate(
         now,
         this.renderDeltaSeconds,
@@ -3493,6 +3539,7 @@ export class Game {
     if (!thirdPerson) {
       this.camera.position.copy(this.cameraPivot);
       applyImmediateRenderLook(this.camera, this.input, roll);
+      motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
       return;
     }
 
@@ -3523,6 +3570,7 @@ export class Game {
       this.frontCameraLook.pitch = -this.input.pitch;
       applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
     } else applyImmediateRenderLook(this.camera, this.input, roll);
+    motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
   }
 
   private updateFirstPerson(deltaSeconds: number): void {

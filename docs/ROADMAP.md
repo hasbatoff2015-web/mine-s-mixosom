@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-03: LocalPlayerRenderState (PR #37)
+
+- [x] Revert frame-origin `previousPosition` restore (can move backward toward S1).
+- [x] Separate render poses from physics `previousPosition`; interpolate adjacent sim states.
+- [x] Prove 0/1/2/3-tick timelines; synthetic 60–165 FPS monotonic; SP vs no-net vs lockstep.
+- [x] F3 signed render/camera deltas; `?predNoNet=1`.
+- [ ] Owner localhost: Online vs SP vs `?predNoNet=1`; F3 `neg/s=0` on flat ground.
+- [ ] Do not merge main.
+
 ## 2026-09-02: Fixed-step interpolation window (PR #37)
 
 - [x] Prove leftover/dt lerp against last-inner `previousPosition` hitch-steps ~one physics tick on a 2-tick frame (`corr/s=0`).

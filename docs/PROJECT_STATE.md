@@ -1,6 +1,15 @@
 # Состояние проекта
 
-Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: LocalPlayerRenderState (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Restore `previousPosition` на pose до всего кадра **не** помог QA (~155 FPS, `corr/s≈0`) и математически тянет камеру назад к `S1` (`lerp(S1,S3,leftover/dt)`).
+- Render больше не читает `PlayerController.previousPosition`. `LocalPlayerRenderState` хранит завершённые sim-pose и интерполирует **соседнюю** пару `S_{n-1}→S_n` при `alpha = leftover/dt`. Physics previousPosition только для fall distance.
+- DEV: F3 `rΔ min/max/neg/s/big/s` + camera; `?predNoNet=1` (predict без send/snapshot). Синтетика 60/120/144/165 FPS без WebSocket.
+- Tests: render-state **8/8**, pipeline **8/8**, prediction **24/24**; `test:sim` **42/42**; `test:server` **83/83**; build PASS.
+- Report: `docs/reports/2026-09-03_local-player-render-state.md`.
 
 ## Последний проход: fixed-step interpolation window (PR #37)
 

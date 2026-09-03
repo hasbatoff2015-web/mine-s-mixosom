@@ -62,6 +62,10 @@ export function isBowDiagQueryEnabled(search = typeof location === 'undefined' ?
   return queryFlag('bowDiag', search) || queryFlag('bowdiag', search);
 }
 
+export function isPredNoNetQueryEnabled(search = typeof location === 'undefined' ? '' : location.search): boolean {
+  return queryFlag('predNoNet', search) || queryFlag('prednonet', search);
+}
+
 function countSince(events: readonly MotionRateEvent[], now: number, kind?: string): number {
   const cutoff = now - RATE_WINDOW_MS;
   let count = 0;
@@ -108,9 +112,24 @@ export class LocalMotionProbe {
   position = { x: 0, y: 0, z: 0 };
   previous = { x: 0, y: 0, z: 0 };
   render = { x: 0, y: 0, z: 0 };
+  camera = { x: 0, y: 0, z: 0 };
+  leftover = 0;
+  simTick = 0;
+  fromTick = 0;
+  toTick = 0;
+  cameraSource = 'interpolated-local';
+  ignoreNetworkMotion = false;
+  lastRenderDelta = 0;
+  lastCameraDelta = 0;
   readonly traceEnabled: boolean;
   private readonly events: MotionRateEvent[] = [];
   private readonly frames: MotionFrameSample[] = [];
+  private readonly renderDeltas: Array<{ at: number; delta: number }> = [];
+  private readonly cameraDeltas: Array<{ at: number; delta: number }> = [];
+  private lastRender = { x: 0, y: 0, z: 0 };
+  private hasLastRender = false;
+  private lastCamera = { x: 0, y: 0, z: 0 };
+  private hasLastCamera = false;
   private lastTraceDumpAt = 0;
 
   constructor(traceEnabled = isMotionDiagQueryEnabled()) {
@@ -130,6 +149,10 @@ export class LocalMotionProbe {
     this.lastChunkUpdateAt = Number.NaN;
     this.lastStateTick = -1;
     this.inboundTick = undefined;
+    this.renderDeltas.length = 0;
+    this.cameraDeltas.length = 0;
+    this.hasLastRender = false;
+    this.hasLastCamera = false;
   }
 
   note(kind: string, now = performance.now()): void {
@@ -195,25 +218,81 @@ export class LocalMotionProbe {
     this.noteWrite(kind, now);
   }
 
+  noteCamera(
+    camera: MotionPose,
+    pivot: MotionPose,
+    source: string,
+    now = performance.now(),
+  ): void {
+    this.cameraSource = source;
+    const next = { x: camera.x, y: camera.y, z: camera.z };
+    if (this.hasLastCamera) {
+      const delta = dist(next, this.lastCamera);
+      this.lastCameraDelta = delta;
+      this.cameraDeltas.push({ at: now, delta });
+      const cutoff = now - RATE_WINDOW_MS;
+      while (this.cameraDeltas.length > 0 && this.cameraDeltas[0]!.at < cutoff) this.cameraDeltas.shift();
+    }
+    this.lastCamera = next;
+    this.hasLastCamera = true;
+    this.camera = next;
+    void pivot;
+  }
+
   recordRender(input: {
     readonly now?: number;
     readonly online: boolean;
     readonly fps: number;
     readonly ticks: number;
     readonly alpha: number;
+    readonly leftover?: number;
+    readonly simTick?: number;
+    readonly fromTick?: number;
+    readonly toTick?: number;
     readonly position: MotionPose;
     readonly previous: MotionPose;
     readonly render: MotionPose;
+    readonly renderPrev?: MotionPose;
+    readonly renderCurr?: MotionPose;
+    readonly camera?: MotionPose;
+    readonly ignoreNetworkMotion?: boolean;
   }): void {
     const now = input.now ?? performance.now();
     this.online = input.online;
     this.fps = input.fps;
     this.ticksThisFrame = input.ticks;
     this.alpha = input.alpha;
+    this.leftover = input.leftover ?? 0;
+    this.simTick = input.simTick ?? 0;
+    this.fromTick = input.fromTick ?? 0;
+    this.toTick = input.toTick ?? 0;
+    this.ignoreNetworkMotion = Boolean(input.ignoreNetworkMotion);
     this.position = { x: input.position.x, y: input.position.y, z: input.position.z };
     this.previous = { x: input.previous.x, y: input.previous.y, z: input.previous.z };
     this.render = { x: input.render.x, y: input.render.y, z: input.render.z };
+    if (input.camera) this.camera = { x: input.camera.x, y: input.camera.y, z: input.camera.z };
     prune(this.events, now);
+    if (this.hasLastRender) {
+      const along = input.renderCurr && input.renderPrev
+        ? {
+          x: input.renderCurr.x - input.renderPrev.x,
+          y: 0,
+          z: input.renderCurr.z - input.renderPrev.z,
+        }
+        : { x: this.render.x - this.lastRender.x, y: 0, z: this.render.z - this.lastRender.z };
+      const len = Math.hypot(along.x, along.z);
+      const dx = this.render.x - this.lastRender.x;
+      const dz = this.render.z - this.lastRender.z;
+      const signed = len > 1e-6 ? (dx * along.x + dz * along.z) / len : Math.hypot(dx, dz);
+      this.lastRenderDelta = signed;
+      this.renderDeltas.push({ at: now, delta: signed });
+      const cutoff = now - RATE_WINDOW_MS;
+      while (this.renderDeltas.length > 0 && this.renderDeltas[0]!.at < cutoff) this.renderDeltas.shift();
+      if (signed < -1e-4) this.note('render:neg', now);
+      if (Math.abs(signed) > 0.12) this.note('render:large', now);
+    }
+    this.lastRender = this.render;
+    this.hasLastRender = true;
     if (!this.traceEnabled) return;
     this.frames.push({
       at: now,
@@ -248,16 +327,22 @@ export class LocalMotionProbe {
     const sinceReconcile = Number.isFinite(this.lastReconcileAt) ? now - this.lastReconcileAt : -1;
     const sinceState = Number.isFinite(this.lastPlayerStateAt) ? now - this.lastPlayerStateAt : -1;
     const step = dist(this.position, this.previous);
-    const mode = this.online ? 'online' : 'singleplayer';
+    const mode = this.online ? (this.ignoreNetworkMotion ? 'online-nonet' : 'online') : 'singleplayer';
     const acceptMut = this.rate('accept-mutated', now);
+    const deltas = this.renderDeltas.map((entry) => entry.delta);
+    const minD = deltas.length ? Math.min(...deltas) : 0;
+    const maxD = deltas.length ? Math.max(...deltas) : 0;
+    const camDeltas = this.cameraDeltas.map((entry) => entry.delta);
+    const camMax = camDeltas.length ? Math.max(...camDeltas) : 0;
     return [
-      `Motion ${mode} fps=${this.fps} ticks=${this.ticksThisFrame} alpha=${this.alpha.toFixed(3)} dt=${FIXED_DT}`,
+      `Motion ${mode} fps=${this.fps} ticks=${this.ticksThisFrame} alpha=${this.alpha.toFixed(3)} acc=${this.leftover.toFixed(4)} sim#${this.simTick} ${this.fromTick}→${this.toTick}`,
       `pred/s=${this.rate('predict', now)} state/s=${this.rate('player_state', now)} rec/s=${this.rate('reconcile:accepted', now) + this.rate('reconcile:corrected', now) + this.rate('reconcile:snapped', now) + this.rate('reconcile:ignored', now)}`,
       `ok/s=${this.rate('reconcile:accepted', now)} corr/s=${this.rate('reconcile:corrected', now)} snap/s=${this.rate('reconcile:snapped', now)} dup/s=${this.rate('reject:duplicate-seq', now)}`,
       `snap recv/s=${this.rate('snap:recv', now)} dropStale/s=${this.rate('snap:drop-stale', now)} dropNoLocal/s=${this.rate('snap:drop-no-local', now)} gap/s=${this.rate('seq-gap', now)}`,
       `writes pos/s=${this.rate('write:position', now)} prev/s=${this.rate('write:previousPosition', now)} vel/s=${this.rate('write:velocity', now)} acceptMut/s=${acceptMut}`,
       `pos ${this.position.x.toFixed(3)} ${this.position.y.toFixed(3)} ${this.position.z.toFixed(3)} prev ${this.previous.x.toFixed(3)} ${this.previous.y.toFixed(3)} ${this.previous.z.toFixed(3)}`,
-      `render ${this.render.x.toFixed(3)} ${this.render.y.toFixed(3)} ${this.render.z.toFixed(3)} |pos-prev|=${step.toFixed(4)} cam=interpolated-local`,
+      `render ${this.render.x.toFixed(3)} ${this.render.y.toFixed(3)} ${this.render.z.toFixed(3)} rΔ=${this.lastRenderDelta.toFixed(4)} min=${minD.toFixed(4)} max=${maxD.toFixed(4)} neg/s=${this.rate('render:neg', now)} big/s=${this.rate('render:large', now)} |pos-prev|=${step.toFixed(4)}`,
+      `cam ${this.camera.x.toFixed(3)} ${this.camera.y.toFixed(3)} ${this.camera.z.toFixed(3)} Δ=${this.lastCameraDelta.toFixed(4)} max=${camMax.toFixed(4)} src=${this.cameraSource}`,
       `since rec=${sinceReconcile.toFixed(0)}ms state=${sinceState.toFixed(0)}ms last=${this.lastKind}/${this.lastReject} acceptMut=${this.lastAcceptMutated ? 'YES' : 'no'}`,
     ].join('\n');
   }

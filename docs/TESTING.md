@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-03 LocalPlayerRenderState
+
+Report: `reports/2026-09-03_local-player-render-state.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-render-state.test.ts tests/fixed-step.test.ts tests/local-motion-pipeline.test.ts tests/local-player-prediction.test.ts tests/urgent-block-mesh.test.ts
+```
+
+Contracts: 0/1/2/3-tick adjacent-pair timelines (2 ticks do not lerp back to S1); synthetic 20 TPS at 60/120/144/165 FPS has zero negative render deltas; SP, no-net prediction, and lockstep Online match at 155 FPS; physics `previousPosition` is not the render origin. DEV F3 `rΔ` / camera; `?predNoNet=1`.
+
 ## 2026-09-02 Fixed-step interpolation window
 
 Report: `reports/2026-09-02_fixed-step-interpolation.md`. PR #37.
@@ -488,7 +498,8 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/lighting-torch-selection.test.ts` | 11 | Bottom-face torch lighting, cave darkness floor, warm block-light tint, wall torch attachment/size, shape-aware selection, cave-opening sky interpolation |
 | `tests/entity-lighting.test.ts` | 4 | Daylight mob brightness, unlit cave darkness, warm torch tint, feet/torso/head averaging |
 | `tests/entity-interpolation.test.ts` | 3 | Render lerp at α=0.5, shortest-yaw wrap, snap on large correction |
-| `tests/fixed-step.test.ts` | 6 | ~20 ticks / 60 Hz second, 300 ms stall capped at `MAX_CATCH_UP_TICKS`, leftover accumulator, 1-tick no-op window, 2-tick hitch vs restored origin, ticks=0 leaves previousPosition |
+| `tests/fixed-step.test.ts` | 3 | ~20 ticks / 60 Hz second, 300 ms stall capped at `MAX_CATCH_UP_TICKS`, leftover accumulator |
+| `tests/local-player-render-state.test.ts` | 8 | 0/1/2/3-tick adjacent-pair timelines; synthetic 60/120/144/165 FPS monotonic |
 | `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
 | `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
 | `tests/lighting-jobs.test.ts` | 6 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm, lava emitter light stable after settle without remesh churn |

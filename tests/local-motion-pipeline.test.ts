@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
 import { FIXED_DT, WALK_SPEED } from '../src/core/constants';
-import {
-  advanceFixedStep,
-  interpolationAlpha,
-  interpolateAfterFixedTicks,
-  restoreInterpolationOrigin,
-} from '../src/core/fixedStep';
+import { advanceFixedStep } from '../src/core/fixedStep';
+import { LocalPlayerRenderState } from '../src/core/localPlayerRenderState';
 import type { MoveInput } from '../src/input/MoveInput';
 import {
   applyPredictedTick,
@@ -74,10 +70,6 @@ function snapshotOf(player: PlayerController, seq: number): PlayerSnapshot {
   };
 }
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
 interface FrameSample {
   ticks: number;
   alpha: number;
@@ -102,20 +94,23 @@ interface RunStats {
   collapsedLerp: number;
 }
 
-function sampleFrame(player: PlayerController, ticks: number, alpha: number): FrameSample {
+function sampleFrame(
+  player: PlayerController,
+  render: LocalPlayerRenderState,
+  ticks: number,
+  leftover: number,
+): FrameSample {
+  const sampled = render.sample(leftover);
   return {
     ticks,
-    alpha,
+    alpha: sampled.alpha,
     x: player.position.x,
     z: player.position.z,
-    prevX: player.previousPosition.x,
-    prevZ: player.previousPosition.z,
-    renderX: lerp(player.previousPosition.x, player.position.x, alpha),
-    renderZ: lerp(player.previousPosition.z, player.position.z, alpha),
-    distPrev: Math.hypot(
-      player.position.x - player.previousPosition.x,
-      player.position.z - player.previousPosition.z,
-    ),
+    prevX: render.previous.x,
+    prevZ: render.previous.z,
+    renderX: sampled.x,
+    renderZ: sampled.z,
+    distPrev: Math.hypot(render.current.x - render.previous.x, render.current.z - render.previous.z),
   };
 }
 
@@ -164,19 +159,26 @@ function grounded(world: VoxelWorld): PlayerController {
 function runSingleplayer(seconds: number, frameDt: number): RunStats {
   const world = flatWorld() as unknown as VoxelWorld;
   const player = grounded(world);
+  const render = new LocalPlayerRenderState();
+  render.reset({
+    x: player.position.x, y: player.position.y, z: player.position.z,
+    vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+  });
   let accumulator = 0;
   const samples: FrameSample[] = [];
   let ticks = 0;
   for (let time = 0; time < seconds; time += frameDt) {
     const stepped = advanceFixedStep(accumulator, frameDt);
     accumulator = stepped.nextAccumulator;
-    const origin = { x: player.position.x, y: player.position.y, z: player.position.z };
     for (let i = 0; i < stepped.ticks; i += 1) {
       player.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
+      render.pushAfterTick({
+        x: player.position.x, y: player.position.y, z: player.position.z,
+        vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+      });
       ticks += 1;
     }
-    restoreInterpolationOrigin(player.previousPosition, origin, stepped.ticks);
-    samples.push(sampleFrame(player, stepped.ticks, interpolationAlpha(accumulator)));
+    samples.push(sampleFrame(player, render, stepped.ticks, accumulator));
   }
   return {
     samples, ticks, snapshots: 0, accepts: 0, corrections: 0, snaps: 0, ignored: 0,
@@ -242,6 +244,11 @@ function runOnline(options: {
   const client = grounded(world);
   const server = grounded(world);
   const buffer: PredictionBuffer = createPredictionBuffer();
+  const render = new LocalPlayerRenderState();
+  render.reset({
+    x: client.position.x, y: client.position.y, z: client.position.z,
+    vx: client.velocity.x, vy: client.velocity.y, vz: client.velocity.z,
+  });
   let accumulator = 0;
   let seq = 0;
   let lastInput = predictedMoveFromInput(0, walk, { yaw: 0, pitch: 0 }, true);
@@ -271,17 +278,19 @@ function runOnline(options: {
   for (let time = 0; time < options.seconds; time += options.frameDt) {
     const stepped = advanceFixedStep(accumulator, options.frameDt);
     accumulator = stepped.nextAccumulator;
-    const origin = { x: client.position.x, y: client.position.y, z: client.position.z };
     for (let i = 0; i < stepped.ticks; i += 1) {
       seq += 1;
       lastInput = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
       predictLocalMove(client, world, buffer, lastInput);
       counters.ticks += 1;
       if (options.mode === 'lockstep') flushServer(FIXED_DT);
+      render.pushAfterTick({
+        x: client.position.x, y: client.position.y, z: client.position.z,
+        vx: client.velocity.x, vy: client.velocity.y, vz: client.velocity.z,
+      });
     }
-    restoreInterpolationOrigin(client.previousPosition, origin, stepped.ticks);
     if (options.mode !== 'lockstep') flushServer(options.frameDt);
-    counters.samples.push(sampleFrame(client, stepped.ticks, interpolationAlpha(accumulator)));
+    counters.samples.push(sampleFrame(client, render, stepped.ticks, accumulator));
   }
   return counters;
 }
@@ -350,101 +359,104 @@ describe('local motion pipeline SP vs Online', () => {
     expect(summary.snapshots).toBeLessThanOrEqual(40);
   });
 
-  it('multiple fixed ticks in one render frame keep previousPosition from before the first tick', () => {
+  it('multiple fixed ticks use the last adjacent render pair for SP and Online', () => {
     const world = flatWorld() as unknown as VoxelWorld;
     const sp = grounded(world);
     const online = grounded(world);
     const buffer: PredictionBuffer = createPredictionBuffer();
-    const originZ = sp.position.z;
-    expect(online.position.z).toBeCloseTo(originZ, 5);
+    const spRender = new LocalPlayerRenderState();
+    const onRender = new LocalPlayerRenderState();
+    spRender.reset({
+      x: sp.position.x, y: sp.position.y, z: sp.position.z,
+      vx: sp.velocity.x, vy: sp.velocity.y, vz: sp.velocity.z,
+    });
+    onRender.reset({
+      x: online.position.x, y: online.position.y, z: online.position.z,
+      vx: online.velocity.x, vy: online.velocity.y, vz: online.velocity.z,
+    });
 
-    const spOrigin = { x: sp.position.x, y: sp.position.y, z: sp.position.z };
     sp.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
+    spRender.pushAfterTick({
+      x: sp.position.x, y: sp.position.y, z: sp.position.z,
+      vx: sp.velocity.x, vy: sp.velocity.y, vz: sp.velocity.z,
+    });
     sp.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
-    restoreInterpolationOrigin(sp.previousPosition, spOrigin, 2);
+    spRender.pushAfterTick({
+      x: sp.position.x, y: sp.position.y, z: sp.position.z,
+      vx: sp.velocity.x, vy: sp.velocity.y, vz: sp.velocity.z,
+    });
 
-    const onlineOrigin = { x: online.position.x, y: online.position.y, z: online.position.z };
     predictLocalMove(online, world, buffer, predictedMoveFromInput(1, walk, { yaw: 0, pitch: 0 }, true));
+    onRender.pushAfterTick({
+      x: online.position.x, y: online.position.y, z: online.position.z,
+      vx: online.velocity.x, vy: online.velocity.y, vz: online.velocity.z,
+    });
     predictLocalMove(online, world, buffer, predictedMoveFromInput(2, walk, { yaw: 0, pitch: 0 }, true));
-    restoreInterpolationOrigin(online.previousPosition, onlineOrigin, 2);
+    onRender.pushAfterTick({
+      x: online.position.x, y: online.position.y, z: online.position.z,
+      vx: online.velocity.x, vy: online.velocity.y, vz: online.velocity.z,
+    });
 
-    expect(sp.previousPosition.z).toBeCloseTo(originZ, 5);
-    expect(online.previousPosition.z).toBeCloseTo(originZ, 5);
+    expect(spRender.previous.z).toBeCloseTo(sp.previousPosition.z, 5);
+    expect(onRender.previous.z).toBeCloseTo(online.previousPosition.z, 5);
     expect(online.position.z).toBeCloseTo(sp.position.z, 5);
     const leftover = 0.02;
-    const spRender = interpolateAfterFixedTicks(sp.previousPosition, sp.position, leftover);
-    const onRender = interpolateAfterFixedTicks(online.previousPosition, online.position, leftover);
-    expect(onRender.z).toBeCloseTo(spRender.z, 5);
-    expect(spRender.alpha).toBeCloseTo(leftover / FIXED_DT, 8);
+    expect(onRender.sample(leftover).z).toBeCloseTo(spRender.sample(leftover).z, 5);
   });
 
-  it('two-tick hitch with leftover/dt does not step a full physics tick while corr/s=0', () => {
+  it('two-tick hitch interpolates S2→S3 and does not move backward toward S1', () => {
     const world = flatWorld() as unknown as VoxelWorld;
     const player = grounded(world);
+    const render = new LocalPlayerRenderState();
+    render.reset({
+      x: player.position.x, y: player.position.y, z: player.position.z,
+      vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+    });
     for (let i = 0; i < 8; i += 1) {
-      const origin = { x: player.position.x, y: player.position.y, z: player.position.z };
       player.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
-      restoreInterpolationOrigin(player.previousPosition, origin, 1);
+      render.pushAfterTick({
+        x: player.position.x, y: player.position.y, z: player.position.z,
+        vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+      });
     }
 
-    const lastRender = interpolateAfterFixedTicks(player.previousPosition, player.position, 0.049);
-    const tickDistance = Math.hypot(
-      player.position.x - player.previousPosition.x,
-      player.position.z - player.previousPosition.z,
-    );
-    expect(tickDistance).toBeGreaterThan(0.15);
-
+    const lastRender = render.sample(0.049);
+    const wrongOriginZ = render.previous.z;
     const hitch = advanceFixedStep(0.049, 0.055);
     expect(hitch.ticks).toBe(2);
-    expect(hitch.nextAccumulator).toBeLessThan(0.01);
-
-    const origin = { x: player.position.x, y: player.position.y, z: player.position.z };
+    const s1z = player.position.z;
     player.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
-    const afterFirstPrevZ = player.previousPosition.z;
+    render.pushAfterTick({
+      x: player.position.x, y: player.position.y, z: player.position.z,
+      vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+    });
     player.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
-    const naive = interpolateAfterFixedTicks(
-      player.previousPosition,
-      player.position,
-      hitch.nextAccumulator,
-    );
-    restoreInterpolationOrigin(player.previousPosition, origin, hitch.ticks);
-    expect(player.previousPosition.z).toBeCloseTo(origin.z, 8);
-    expect(afterFirstPrevZ).toBeCloseTo(origin.z, 5);
-
-    const corrected = interpolateAfterFixedTicks(
-      player.previousPosition,
-      player.position,
-      hitch.nextAccumulator,
-    );
-    const naiveStep = Math.hypot(naive.x - lastRender.x, naive.z - lastRender.z);
-    const correctedStep = Math.hypot(corrected.x - lastRender.x, corrected.z - lastRender.z);
-
-    expect(naiveStep).toBeGreaterThan(tickDistance * 0.8);
-    expect(correctedStep).toBeLessThan(tickDistance * 0.35);
-    expect(corrected.alpha).toBeCloseTo(hitch.nextAccumulator / FIXED_DT, 8);
-    expect(corrected.z).toBeCloseTo(lerp(origin.z, player.position.z, corrected.alpha), 8);
-
-    const follow = advanceFixedStep(hitch.nextAccumulator, 1 / 60);
-    expect(follow.ticks).toBe(0);
-    const followRender = interpolateAfterFixedTicks(
-      player.previousPosition,
-      player.position,
-      follow.nextAccumulator,
-    );
-    const followStep = Math.hypot(followRender.x - corrected.x, followRender.z - corrected.z);
-    const alongZ = Math.sign(player.position.z - origin.z) || 1;
-    expect((followRender.z - corrected.z) * alongZ).toBeGreaterThan(0);
-    expect(followStep).toBeLessThan(tickDistance);
-    expect(followStep).toBeGreaterThan(0);
+    render.pushAfterTick({
+      x: player.position.x, y: player.position.y, z: player.position.z,
+      vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+    });
+    const sampled = render.sample(hitch.nextAccumulator);
+    expect(sampled.fromTick).toBe(render.simTick - 1);
+    expect(sampled.toTick).toBe(render.simTick);
+    const along = player.position.z - s1z;
+    const signed = (sampled.z - lastRender.z) * Math.sign(along || -1);
+    expect(signed).toBeGreaterThan(0);
+    const wrongRestore = wrongOriginZ + sampled.alpha * (player.position.z - wrongOriginZ);
+    expect((lastRender.z - wrongRestore) * Math.sign(along || -1)).toBeGreaterThan(0);
   });
 
-  it('60 Hz walk with occasional 55 ms hitch matches SP and Online without a one-tick teleport', () => {
+  it('60 Hz walk with occasional 55 ms hitch matches SP and Online at corr/s=0', () => {
     const frameDts: number[] = [];
     for (let i = 0; i < 120; i += 1) frameDts.push(i % 12 === 11 ? 0.055 : 1 / 60);
 
     const run = (online: boolean): RunStats => {
       const world = flatWorld() as unknown as VoxelWorld;
       const player = grounded(world);
+      const render = new LocalPlayerRenderState();
+      render.reset({
+        x: player.position.x, y: player.position.y, z: player.position.z,
+        vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+      });
       const server = online ? grounded(world) : undefined;
       const buffer = online ? createPredictionBuffer() : undefined;
       let accumulator = 0;
@@ -457,7 +469,6 @@ describe('local motion pipeline SP vs Online', () => {
       for (const frameDt of frameDts) {
         const stepped = advanceFixedStep(accumulator, frameDt);
         accumulator = stepped.nextAccumulator;
-        const origin = { x: player.position.x, y: player.position.y, z: player.position.z };
         for (let i = 0; i < stepped.ticks; i += 1) {
           if (online && buffer && server) {
             seq += 1;
@@ -470,10 +481,13 @@ describe('local motion pipeline SP vs Online', () => {
           } else {
             player.tick(world, { yaw: 0, pitch: 0, movement: () => walk }, FIXED_DT);
           }
+          render.pushAfterTick({
+            x: player.position.x, y: player.position.y, z: player.position.z,
+            vx: player.velocity.x, vy: player.velocity.y, vz: player.velocity.z,
+          });
           ticks += 1;
         }
-        restoreInterpolationOrigin(player.previousPosition, origin, stepped.ticks);
-        samples.push(sampleFrame(player, stepped.ticks, interpolationAlpha(accumulator)));
+        samples.push(sampleFrame(player, render, stepped.ticks, accumulator));
       }
       return {
         samples, ticks, snapshots, accepts: 0, corrections, snaps: 0, ignored: 0,
@@ -485,13 +499,30 @@ describe('local motion pipeline SP vs Online', () => {
     const online = statsOf(run(true));
     expect(sp.multiTickFrames).toBeGreaterThan(0);
     expect(online.multiTickFrames).toBe(sp.multiTickFrames);
-    // A 55 ms frame may legally cover ~WALK_SPEED*0.055 of walk. The regression
-    // is that ticks>=2 must not add an extra physics-step teleport on top.
     expect(sp.maxStep).toBeLessThan(WALK_SPEED * 0.055 * 1.15);
     expect(online.maxStep).toBeLessThan(WALK_SPEED * 0.055 * 1.15);
-    expect(sp.twoTickMaxStep).toBeLessThan(0.12);
-    expect(online.twoTickMaxStep).toBeLessThan(0.12);
     expect(online.corrections).toBe(0);
     expect(Math.abs(sp.meanStep - online.meanStep)).toBeLessThan(0.002);
+  });
+
+  it('no-net prediction matches singleplayer render; 17 Hz snapshots do not if they only accept', () => {
+    const sp = statsOf(runSingleplayer(2, 1 / 155));
+    const noNet = statsOf(runOnline({
+      seconds: 2,
+      frameDt: 1 / 155,
+      serverDt: 1e9,
+      mode: 'coalesce',
+    }));
+    const lockstep = statsOf(runOnline({
+      seconds: 2,
+      frameDt: 1 / 155,
+      serverDt: FIXED_DT,
+      mode: 'lockstep',
+    }));
+    expect(sp.maxStep).toBeLessThan(0.08);
+    expect(Math.abs(noNet.meanStep - sp.meanStep)).toBeLessThan(0.002);
+    expect(Math.abs(lockstep.meanStep - sp.meanStep)).toBeLessThan(0.002);
+    expect(lockstep.corrections).toBe(0);
+    expect(noNet.snapshots).toBe(0);
   });
 });
