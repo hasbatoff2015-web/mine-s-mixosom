@@ -190,6 +190,21 @@ import {
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
 import {
+  captureBlockBreakAbort,
+  captureBlockBreakFinish,
+  captureBlockBreakStart,
+  captureBlockUse,
+  captureBowRelease,
+} from '../net/actionIntent';
+import {
+  actionMessageFromBreakAbort,
+  actionMessageFromBreakFinish,
+  actionMessageFromBreakStart,
+  bowReleaseMessage,
+  interactMessageFromUse,
+} from '../net/onlineActionMessages';
+import { angularError } from '../../shared/playerActions';
+import {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,
   parseNetworkItemStacks,
@@ -319,6 +334,7 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  actionSeq: number;
   prediction: PredictionBuffer;
   urgentMeshKeys: Set<string>;
   lastViewKey?: string;
@@ -326,6 +342,22 @@ export interface OnlineAnarchySession {
   lastAliveTick?: number;
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
+  lastBlockDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    target?: string;
+    face?: string;
+    result?: string;
+  };
+  lastBowDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    clientYaw: number;
+    clientPitch: number;
+    serverYaw?: number;
+    serverPitch?: number;
+  };
+  miningLocked?: boolean;
   /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
   ignoreNetworkSend?: boolean;
   /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
@@ -734,6 +766,7 @@ export class Game {
         remotes,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        actionSeq: 0,
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
@@ -915,6 +948,9 @@ export class Game {
         return;
       case 'block_result':
         this.handleOnlineBlockResult(session, message);
+        return;
+      case 'action_result':
+        this.handleOnlineActionResult(session, message);
         return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
@@ -1540,6 +1576,36 @@ export class Game {
     if (inVolume) motionProbe.note('world:volume');
   }
 
+  private handleOnlineActionResult(
+    session: GameSession,
+    message: Extract<ServerMessage, { type: 'action_result' }>,
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    if (message.kind === 'bow_release') {
+      if (online.lastBowDiag && online.lastBowDiag.actionSeq === message.actionSeq) {
+        online.lastBowDiag = {
+          ...online.lastBowDiag,
+          serverYaw: message.yaw,
+          serverPitch: message.pitch,
+        };
+      }
+      return;
+    }
+    if (online.lastBlockDiag && online.lastBlockDiag.actionSeq === message.actionSeq) {
+      online.lastBlockDiag = {
+        ...online.lastBlockDiag,
+        result: message.ok ? 'accepted' : `rejected:${message.reason ?? 'unknown'}`,
+        ...(message.targetX !== undefined
+          ? { target: `${message.targetX},${message.targetY},${message.targetZ}` }
+          : {}),
+      };
+    }
+    if (!message.ok && message.targetX !== undefined) {
+      online.rejectedBlockKey = `${message.targetX},${message.targetY},${message.targetZ}`;
+    }
+  }
+
   private handleOnlineBlockResult(
     session: GameSession,
     message: Extract<ServerMessage, { type: 'block_result' }>,
@@ -1559,6 +1625,104 @@ export class Game {
     const pending = online.pendingBlockAction;
     if (pending.x !== x || pending.y !== y || pending.z !== z) return;
     online.pendingBlockAction = undefined;
+  }
+
+  private onlineActionSource(session: GameSession): { actionSeq: number; inputSeq: number; selectedSlot: number } {
+    const online = session.online!;
+    return {
+      actionSeq: online.actionSeq,
+      inputSeq: online.inputSeq,
+      selectedSlot: session.selectedSlot,
+    };
+  }
+
+  private commitOnlineActionSeq(session: GameSession, source: { actionSeq: number }): void {
+    if (session.online) session.online.actionSeq = source.actionSeq;
+  }
+
+  private pollOnlineActionEdges(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
+    if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
+    if (this.input.consumeMiningReleased() && session.miningTarget) {
+      const source = this.onlineActionSource(session);
+      const action = captureBlockBreakAbort(source);
+      this.commitOnlineActionSeq(session, source);
+      online.client.send(actionMessageFromBreakAbort(action));
+      online.miningLocked = false;
+    }
+  }
+
+  private sendOnlineUse(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    const source = this.onlineActionSource(session);
+    if (this.selectedStack()?.itemId === ItemId.Bow) {
+      source.actionSeq += 1;
+      this.commitOnlineActionSeq(session, source);
+      online.client.send({
+        type: 'interact',
+        actionSeq: source.actionSeq,
+        commandSeq: source.inputSeq,
+        selectedSlot: source.selectedSlot,
+      });
+      return;
+    }
+    if (session.target) {
+      const action = captureBlockUse(source, session.target);
+      this.commitOnlineActionSeq(session, source);
+      online.lastBlockDiag = {
+        actionSeq: action.actionSeq,
+        commandSeq: action.commandSeq,
+        target: `${action.targetX},${action.targetY},${action.targetZ}`,
+        face: `${action.faceX},${action.faceY},${action.faceZ}`,
+      };
+      online.client.send(interactMessageFromUse(action));
+      return;
+    }
+    source.actionSeq += 1;
+    this.commitOnlineActionSeq(session, source);
+    online.client.send({
+      type: 'interact',
+      actionSeq: source.actionSeq,
+      commandSeq: source.inputSeq,
+      selectedSlot: source.selectedSlot,
+    });
+  }
+
+  private sendOnlineBowRelease(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    const holdingBow = this.selectedStack()?.itemId === ItemId.Bow;
+    if (!holdingBow && session.bowUseTicks <= 0) return;
+    const source = this.onlineActionSource(session);
+    const action = captureBowRelease(source, { yaw: this.input.yaw, pitch: this.input.pitch });
+    this.commitOnlineActionSeq(session, source);
+    online.lastBowDiag = {
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      clientYaw: action.yaw,
+      clientPitch: action.pitch,
+    };
+    online.client.send(bowReleaseMessage(action));
+  }
+
+  private sendOnlineBreakStart(session: GameSession): void {
+    const online = session.online;
+    const hit = session.target;
+    if (!online || !hit || online.miningLocked) return;
+    const source = this.onlineActionSource(session);
+    const action = captureBlockBreakStart(source, hit);
+    this.commitOnlineActionSeq(session, source);
+    online.miningLocked = true;
+    online.lastBlockDiag = {
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      target: `${action.targetX},${action.targetY},${action.targetZ}`,
+      face: `${action.faceX},${action.faceY},${action.faceZ}`,
+    };
+    online.client.send(actionMessageFromBreakStart(action));
   }
 
   private stepOnlineAuthority(session: GameSession, _dt: number): void {
@@ -1584,6 +1748,7 @@ export class Game {
       online.client.send({
         type: 'input',
         seq: online.inputSeq,
+        clientTick: session.playTicks,
         forward: 0,
         right: 0,
         jump: false,
@@ -2986,6 +3151,7 @@ export class Game {
       online.client.send({
         type: 'input',
         seq: online.inputSeq,
+        clientTick: session.playTicks,
         forward: predicted.forward,
         right: predicted.right,
         jump: predicted.jump,
@@ -3327,6 +3493,13 @@ export class Game {
         else this.breakMinecart(attack.cart);
       }
     } else if (!this.input.mining || !session.target) {
+      if (session.online?.miningLocked) {
+        const source = this.onlineActionSource(session);
+        const action = captureBlockBreakAbort(source);
+        this.commitOnlineActionSeq(session, source);
+        session.online.client.send(actionMessageFromBreakAbort(action));
+        session.online.miningLocked = false;
+      }
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
@@ -3334,6 +3507,10 @@ export class Game {
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
         session.miningProgress = 0;
+        if (session.online) {
+          session.online.miningLocked = false;
+          this.sendOnlineBreakStart(session);
+        }
       }
       const definition = getBlockDefinition(session.target.block);
       if (definition.breakable !== false && definition.hardness >= 0) {
@@ -3348,13 +3525,10 @@ export class Game {
     }
     for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
     session.combat.setHeldItem(this.selectedStack()?.itemId);
-    if (this.input.consumeUsePressed()) {
-      if (session.online) {
-        // Server useHeld owns interact + placement from authoritative look/raycast.
-        session.online.client.send({ type: 'interact' });
-      } else {
-        this.useTargetOrItem();
-      }
+    if (session.online) {
+      /* Use / bow release are captured on the render frame, not the 20 TPS tick. */
+    } else if (this.input.consumeUsePressed()) {
+      this.useTargetOrItem();
     }
   }
 
@@ -3362,9 +3536,30 @@ export class Game {
     return miningProgressPerTick(definition, miningToolFromItemId(tool?.itemId));
   }
 
+  private onlineMiningHit(session: GameSession): VoxelHit | undefined {
+    const key = session.miningTarget;
+    if (!key) return session.target;
+    const parts = key.split(',').map(Number);
+    const x = parts[0];
+    const y = parts[1];
+    const z = parts[2];
+    if (x === undefined || y === undefined || z === undefined || ![x, y, z].every(Number.isFinite)) {
+      return session.target;
+    }
+    const current = session.target;
+    if (current && current.x === x && current.y === y && current.z === z) return current;
+    const block = session.world.getBlock(x, y, z);
+    return {
+      x, y, z, block,
+      normal: new Vec3(0, 1, 0),
+      point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
+      distance: 0,
+    };
+  }
+
   private breakTarget(): void {
     const session = this.session!;
-    const hit = session.target;
+    const hit = session.online ? this.onlineMiningHit(session) : session.target;
     if (!hit) return;
     if (session.online) {
       const pending = session.online.pendingBlockAction;
@@ -3373,7 +3568,11 @@ export class Game {
         return;
       }
       session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
-      session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
+      const source = this.onlineActionSource(session);
+      const action = captureBlockBreakFinish(source, hit);
+      this.commitOnlineActionSeq(session, source);
+      session.online.client.send(actionMessageFromBreakFinish(action));
+      session.online.miningLocked = false;
       this.firstPerson?.swing();
       return;
     }
@@ -3444,7 +3643,7 @@ export class Game {
   private useTargetOrItem(): void {
     const session = this.session!;
     if (session.online) {
-      session.online.client.send({ type: 'interact' });
+      this.sendOnlineUse(session);
       return;
     }
     performUseHeld(this.singleplayerUseContext());
@@ -3462,8 +3661,15 @@ export class Game {
       reach: PLAYER_REACH,
       hit: session.target,
       eyePosition: () => session.player.eyePosition(),
-      viewDirection: () => viewDirectionFromLook(game.input.yaw, game.input.pitch),
-      get yaw() { return game.input.yaw; },
+      viewDirection: () => {
+        const yaw = game.input?.yaw;
+        const pitch = game.input?.pitch;
+        if (typeof yaw === 'number' && typeof pitch === 'number') {
+          return viewDirectionFromLook(yaw, pitch);
+        }
+        return session.player.viewDirection();
+      },
+      get yaw() { return game.input?.yaw ?? session.player.yaw; },
       get position() { return session.player.position; },
       intersectsBlock: (x, y, z) => session.player.intersectsBlock(x, y, z),
       intersectsCollisionBoxes: (boxes) => session.player.intersectsCollisionBoxes(boxes),
@@ -4093,6 +4299,7 @@ export class Game {
       this.updatePlayerPresentation(session, position, now);
       if (playerGameplayAllowed(this.lifecycle.state, this.ui.isBlockingOverlay())) {
         this.refreshLocalCrosshair(session);
+        if (session.online) this.pollOnlineActionEdges(session);
       }
       motionProbe.recordRender({
         online: Boolean(session.online),
@@ -4320,6 +4527,18 @@ export class Game {
         this.cachedDebugText += `\n${this.formatLocalAimDebug(session)}`;
         if (session.online) {
           this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
+          this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
+          if (session.online.lastBlockDiag) {
+            const block = session.online.lastBlockDiag;
+            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}`;
+          }
+          if (session.online.lastBowDiag) {
+            const bow = session.online.lastBowDiag;
+            const ang = bow.serverYaw !== undefined && bow.serverPitch !== undefined
+              ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
+              : undefined;
+            this.cachedDebugText += `\nBow a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+          }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;
         }

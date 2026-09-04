@@ -6,7 +6,7 @@ export const DEFAULT_CHUNK_VIEW_RADIUS = 4;
 export const DEFAULT_MAX_PLAYERS = 300;
 export const DEFAULT_SERVER_NAME = 'Frontier Cubes Anarchy';
 export const DEFAULT_WORLD_ID = 'anarchy';
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Max JSON text payload accepted from a client. */
 export const MAX_CLIENT_MESSAGE_BYTES = 16_384;

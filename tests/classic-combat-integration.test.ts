@@ -104,6 +104,7 @@ describe('Game click → target damage integration', () => {
   it('does not damage durability or add exhaustion on an air click', () => {
     const { game, session, controls, swing } = gameFixture();
     session.player.yaw = Math.PI;
+    controls.yaw = Math.PI;
     const before = session.inventory.getSlot(0);
     controls.attackPressed = true;
     game.updateTargetAndActions();

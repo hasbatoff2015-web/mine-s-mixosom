@@ -20,6 +20,7 @@ import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   AppliedInputTick,
+  AppliedMovementStep,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -29,6 +30,10 @@ import type {
   WorldBlockStates,
   WorldModifications,
 } from '../shared/protocol';
+import type { BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
+import type { PlayerCommand } from '../shared/playerCommand';
+import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
+import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { gameplayTicksDue, scheduleNextTickSlot } from './tickScheduler';
@@ -41,7 +46,7 @@ import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { placeholderPlayer } from '../src/save/snapshot';
-import { netDebug, serverLog, bowDebug } from './log';
+import { netDebug, serverLog } from './log';
 import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 
@@ -71,8 +76,13 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
-  /** Highest received input seq. Snapshot.inputSeq is this value after the tick that used lastInput. */
+  /** Highest received command seq (packet filter). Snapshot uses appliedCommandSeq. */
   lastInputSeq = -1;
+  appliedCommandSeq = -1;
+  readonly commandQueue = new PlayerCommandQueue();
+  lastActionSeq = -1;
+  lastBowReleaseSeq = -1;
+  readonly appliedStepsThisLoop: AppliedMovementStep[] = [];
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
   lastServerSimAt: number | undefined;
@@ -80,10 +90,6 @@ export class ServerPlayer implements GameplayPlayer {
   inputPacketsThisLoop = 0;
   /** Last server physics ticks with the input seq that was actually applied. */
   readonly appliedInputTrace: AppliedInputTick[] = [];
-  /** Jump pulse seen since the last physics tick (latest-input coalescing). */
-  pendingJump = false;
-  /** use=false seen while charging, so a coalesced release is not lost. */
-  pendingUseRelease = false;
   viewCx = 0;
   viewCz = 0;
   viewRadius = 4;
@@ -154,9 +160,11 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
-      inputSeq: this.lastInputSeq,
+      inputSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
+      ackCommandSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
       flying: this.controller.isFlying,
       appliedTicks: this.appliedInputTrace.slice(),
+      appliedSteps: this.appliedStepsThisLoop.slice(),
       session: {
         tokenFp: sessionTokenFingerprint(this.sessionToken),
         connectionId: this.connectionId,
@@ -227,6 +235,47 @@ export class ServerPlayer implements GameplayPlayer {
       gamemode: this.gamemode,
     };
   }
+}
+
+function commandFromInput(input: ClientInputMessage): PlayerCommand {
+  return {
+    commandSeq: input.seq,
+    clientTick: input.clientTick ?? input.seq,
+    forward: input.forward,
+    right: input.right,
+    jump: input.jump,
+    sneak: input.sneak,
+    sprint: input.sprint,
+    descend: input.descend,
+    flySprint: input.flySprint,
+    yaw: input.yaw,
+    pitch: input.pitch,
+    selectedSlot: input.selectedSlot,
+    ...(input.mining === true ? { mining: true } : {}),
+    ...(input.use === true ? { use: true } : {}),
+    ...(input.vehicleForward !== undefined ? { vehicleForward: input.vehicleForward } : {}),
+  };
+}
+
+function inputFromCommand(command: PlayerCommand): ClientInputMessage {
+  return {
+    type: 'input',
+    seq: command.commandSeq,
+    clientTick: command.clientTick,
+    forward: command.forward,
+    right: command.right,
+    jump: command.jump,
+    sneak: command.sneak,
+    sprint: command.sprint,
+    descend: command.descend,
+    flySprint: command.flySprint,
+    yaw: command.yaw,
+    pitch: command.pitch,
+    selectedSlot: command.selectedSlot,
+    ...(command.mining === true ? { mining: true } : {}),
+    ...(command.use === true ? { use: true } : {}),
+    ...(command.vehicleForward !== undefined ? { vehicleForward: command.vehicleForward } : {}),
+  };
 }
 
 export class WorldInstance {
@@ -601,24 +650,29 @@ export class WorldInstance {
     }
     player.lastServerRecvAt = recvAt;
     player.inputPacketsThisLoop += 1;
-    if (input.jump) player.pendingJump = true;
-    if (input.use !== true && (player.bowUseTicks > 0 || player.foodUseTicks > 0 || player.lastInput.use === true)) {
-      player.pendingUseRelease = true;
-      bowDebug(player.id, 'release_received', `seq=${input.seq} charge=${player.bowUseTicks}`);
-    } else if (input.use === true && player.lastInput.use !== true) {
-      bowDebug(player.id, 'press_hold_received', `seq=${input.seq}`);
+    const enqueued = player.commandQueue.enqueue(commandFromInput(input));
+    if (enqueued === 'stale') {
+      netDebug('player input', `stale seq ${input.seq} < queued for ${player.id}`);
+      return false;
+    }
+    if (enqueued === 'duplicate') {
+      netDebug('player input', `duplicate seq ${input.seq} for ${player.id}`);
+      return false;
     }
     player.lastInput = input;
-    player.selectedSlot = input.selectedSlot;
-    player.controller.yaw = input.yaw;
-    player.controller.pitch = input.pitch;
-    player.controller.creativeFlightAllowed = player.gamemode === 'creative';
-    player.vehicleForward = input.vehicleForward
-      ?? (player.ridingCartId ? input.forward : 0);
     return true;
   }
 
-  tryBreak(player: ServerPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
+  tryBreak(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    intent?: BlockTargetIntent,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (intent && (intent.targetX !== x || intent.targetY !== y || intent.targetZ !== z)) {
+      return { ok: false, reason: 'invalid' };
+    }
     const result = this.gameplay.breakBlock(player, x, y, z);
     if (result.ok) {
       this.dirty = true;
@@ -629,14 +683,45 @@ export class WorldInstance {
     return result;
   }
 
-  tryPlace(player: ServerPlayer, x: number, y: number, z: number, requestedBlock?: number): { ok: true } | { ok: false; reason: string } {
-    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock);
+  tryPlace(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    requestedBlock?: number,
+    intent?: BlockTargetIntent,
+  ): { ok: true } | { ok: false; reason: string } {
+    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock, intent);
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
       this.flushPlayerInventory(player);
       netDebug('place accepted', `${player.name} ${x},${y},${z} -> ${requestedBlock ?? 'held'}`);
     }
+    return result;
+  }
+
+  beginMining(
+    player: ServerPlayer,
+    intent: BlockTargetIntent,
+    actionSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
+    return this.gameplay.beginMining(player, intent);
+  }
+
+  abortMining(player: ServerPlayer): void {
+    player.miningProgress = 0;
+    player.miningTarget = undefined;
+  }
+
+  releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
+    if (action.actionSeq <= player.lastBowReleaseSeq) return { ok: false, reason: 'duplicate' };
+    player.lastBowReleaseSeq = action.actionSeq;
+    const result = this.gameplay.releaseBowWithAim(player, action.yaw, action.pitch);
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
     return result;
   }
 
@@ -654,11 +739,17 @@ export class WorldInstance {
     this.flushPlayerInventory(player);
   }
 
-  interact(player: ServerPlayer): void {
-    this.gameplay.useHeld(player);
+  interact(
+    player: ServerPlayer,
+    intent?: BlockTargetIntent,
+    actionSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
+    const result = this.gameplay.useHeld(player, intent);
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    return result;
   }
 
   pickup(player: ServerPlayer): void {
@@ -773,22 +864,25 @@ export class WorldInstance {
 
   tick(): void {
     this.lastPhysicsTicksThisLoop = 1;
+    this.clearAppliedSteps();
     this.simulateGameplayTick();
     this.flushTickNetwork();
   }
 
   /**
    * Run N physics ticks but broadcast **one** player_state at the end.
-   * Catch-up must not send intermediate poses. The snapshot carries
-   * `tick` (authoritative simulation checkpoint) and `physicsTicks = N`
-   * (latest-input ticks in this outer update). `inputSeq` is the latest
-   * movement STATE used, not the checkpoint.
+   * Catch-up includes AppliedMovementStep[] so each tick remains named.
    */
   tickCatchUp(count: number): void {
     const n = Math.max(0, Math.floor(count));
     this.lastPhysicsTicksThisLoop = n;
+    this.clearAppliedSteps();
     for (let i = 0; i < n; i += 1) this.simulateGameplayTick();
     if (n > 0) this.flushTickNetwork();
+  }
+
+  private clearAppliedSteps(): void {
+    for (const player of this.players.values()) player.appliedStepsThisLoop.length = 0;
   }
 
   private noteTpsWindow(ticks: number, now: number): void {
@@ -924,15 +1018,34 @@ export class WorldInstance {
     this.sweepDisconnected();
   }
 
+  acceptClientActionSeq(player: ServerPlayer, actionSeq: number | undefined): boolean {
+    return this.acceptActionSeq(player, actionSeq);
+  }
+
   /**
    * A new browser client always starts input seq at 0. Keep lastInputSeq
    * only for the live socket; otherwise re-entry after Anarchy→SP→Anarchy
    * rejects every WASD packet as stale while look/chat still work.
    */
+  private acceptActionSeq(player: ServerPlayer, actionSeq: number | undefined): boolean {
+    if (actionSeq === undefined) return true;
+    if (actionSeq < player.lastActionSeq) return false;
+    if (actionSeq === player.lastActionSeq) return false;
+    player.lastActionSeq = actionSeq;
+    return true;
+  }
+
   private resetConnectionInput(player: ServerPlayer): void {
     player.lastInputSeq = inputSeqAfterReconnect();
-    player.pendingJump = false;
-    player.pendingUseRelease = false;
+    player.appliedCommandSeq = -1;
+    player.lastActionSeq = -1;
+    player.lastBowReleaseSeq = -1;
+    player.commandQueue.clear({
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+      selectedSlot: player.selectedSlot,
+    });
+    player.appliedStepsThisLoop.length = 0;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -945,13 +1058,19 @@ export class WorldInstance {
   private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
+      const command = player.commandQueue.takeForTick();
+      if (command) {
+        player.lastInput = inputFromCommand(command);
+        player.appliedCommandSeq = command.commandSeq;
+        player.selectedSlot = command.selectedSlot;
+        player.controller.yaw = command.yaw;
+        player.controller.pitch = command.pitch;
+        player.vehicleForward = command.vehicleForward
+          ?? (player.ridingCartId ? command.forward : 0);
+      }
       const input = player.lastInput;
-      const jump = input.jump || player.pendingJump;
-      const using = player.pendingUseRelease ? false : input.use === true;
-      player.pendingJump = false;
-      player.pendingUseRelease = false;
-      // One physics step per server tick using the latest movement *state*.
-      // Packets between ticks replace lastInput; skipped seqs are not simulated.
+      const jump = input.jump;
+      const using = input.use === true;
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
@@ -1001,7 +1120,7 @@ export class WorldInstance {
       }
       this.gameplay.advanceUseHold(player, using);
       player.recordAppliedInput(this.tickNumber, {
-        seq: player.lastInputSeq,
+        seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
         forward: riding ? 0 : input.forward,
         right: riding ? 0 : input.right,
         jump: riding ? false : jump,
@@ -1009,6 +1128,25 @@ export class WorldInstance {
         descend: input.descend === true,
         flySprint: input.flySprint === true,
       });
+      const position = player.controller.position;
+      const velocity = player.controller.velocity;
+      player.appliedStepsThisLoop.push({
+        serverTick: this.tickNumber,
+        commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        vx: velocity.x,
+        vy: velocity.y,
+        vz: velocity.z,
+        onGround: player.controller.onGround,
+        flying: player.controller.isFlying,
+        sneaking: player.controller.sneaking,
+        sprinting: player.controller.sprinting,
+      });
+      if (player.appliedStepsThisLoop.length > APPLIED_STEPS_MAX) {
+        player.appliedStepsThisLoop.splice(0, player.appliedStepsThisLoop.length - APPLIED_STEPS_MAX);
+      }
       const moved = player.controller.position.distanceTo(before);
       if (moved > 1e-4) {
         const event = this.events.createPlayerMove(

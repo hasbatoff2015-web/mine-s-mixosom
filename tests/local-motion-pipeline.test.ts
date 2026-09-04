@@ -67,6 +67,7 @@ function snapshotOf(player: PlayerController, seq: number): PlayerSnapshot {
     selectedSlot: 0,
     flying: player.isFlying,
     inputSeq: seq,
+    ackCommandSeq: seq,
   };
 }
 
@@ -251,7 +252,8 @@ function runOnline(options: {
   });
   let accumulator = 0;
   let seq = 0;
-  let lastInput = predictedMoveFromInput(0, walk, { yaw: 0, pitch: 0 }, true);
+  const pending: ReturnType<typeof predictedMoveFromInput>[] = [];
+  let lastApplied = predictedMoveFromInput(0, walk, { yaw: 0, pitch: 0 }, true);
   let serverAcc = options.serverPhase ?? 0;
   const counters: RunStats = {
     samples: [],
@@ -269,9 +271,12 @@ function runOnline(options: {
     serverAcc += dt;
     while (serverAcc + 1e-12 >= options.serverDt) {
       serverAcc -= options.serverDt;
-      applyPredictedTick(server, world, lastInput);
+      const applied = pending.shift() ?? (lastApplied.seq > 0 ? lastApplied : undefined);
+      if (!applied) continue;
+      lastApplied = applied;
+      applyPredictedTick(server, world, applied);
       counters.snapshots += 1;
-      reconcileCounted(client, world, buffer, snapshotOf(server, lastInput.seq), counters);
+      reconcileCounted(client, world, buffer, snapshotOf(server, applied.seq), counters);
     }
   };
 
@@ -280,8 +285,9 @@ function runOnline(options: {
     accumulator = stepped.nextAccumulator;
     for (let i = 0; i < stepped.ticks; i += 1) {
       seq += 1;
-      lastInput = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
-      predictLocalMove(client, world, buffer, lastInput);
+      const command = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
+      predictLocalMove(client, world, buffer, command);
+      pending.push(command);
       counters.ticks += 1;
       if (options.mode === 'lockstep') flushServer(FIXED_DT);
       render.pushAfterTick({
@@ -325,7 +331,7 @@ describe('local motion pipeline SP vs Online', () => {
     expect(Math.abs(summary.meanStep - sp.meanStep)).toBeLessThan(0.002);
   });
 
-  it('checkpoint latest-input coalescing does not rewind or collapse render lerp', () => {
+  it('FIFO coalescing ACKs the applied command without mutating live pose', () => {
     const online = runOnline({
       seconds: 2,
       frameDt: 1 / 60,
@@ -339,7 +345,7 @@ describe('local motion pipeline SP vs Online', () => {
     expect(summary.collapsedLerp).toBe(0);
   });
 
-  it('online latest-input 20Hz with phase offset does not accumulate a movement backlog', () => {
+  it('FIFO 20Hz with phase offset does not accumulate a movement backlog', () => {
     const online = runOnline({
       seconds: 2,
       frameDt: 1 / 60,

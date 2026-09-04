@@ -222,12 +222,25 @@ describe('pred isolation 4-mode matrix', () => {
 });
 
 describe('incoming player_state velocity/flag mismatch', () => {
-  it('normal Online matching-pose snapshots with wrong vy do not rewind or jitter render', () => {
+  it('matching pose with a fabricated vy is a classified speed correction, not a silent accept', () => {
     const world = flatWorld() as unknown as VoxelWorld;
     const client = grounded(world);
     const server = grounded(world);
     const buffer: PredictionBuffer = createPredictionBuffer();
     buffer.lastAckedSeq = 0;
+    predictLocalMove(client, world, buffer, predictedMoveFromInput(1, walk, { yaw: 0, pitch: 0 }, true));
+    applyPredictedTick(server, world, predictedMoveFromInput(1, walk, { yaw: 0, pitch: 0 }, true));
+    const snap = { ...snapshotOf(server, 1), vy: server.velocity.y + 7.5 };
+    const result = reconcilePredictedPlayer(client, world, buffer, snap);
+    expect(result.kind).toBe('corrected');
+    expect(result.rejectReason).toBe('speed');
+  });
+
+  it('matching pose and velocity accepts without mutating live motion', () => {
+    const world = flatWorld() as unknown as VoxelWorld;
+    const client = grounded(world);
+    const server = grounded(world);
+    const buffer: PredictionBuffer = createPredictionBuffer();
     const render = new LocalPlayerRenderState();
     render.reset({
       x: client.position.x, y: client.position.y, z: client.position.z,
@@ -235,7 +248,6 @@ describe('incoming player_state velocity/flag mismatch', () => {
     });
     let accumulator = 0;
     let seq = 0;
-    let lastInput = predictedMoveFromInput(0, walk, { yaw: 0, pitch: 0 }, true);
     let corrections = 0;
     let acceptMutations = 0;
     let accepts = 0;
@@ -245,10 +257,10 @@ describe('incoming player_state velocity/flag mismatch', () => {
       accumulator = stepped.nextAccumulator;
       for (let i = 0; i < stepped.ticks; i += 1) {
         seq += 1;
-        lastInput = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
+        const lastInput = predictedMoveFromInput(seq, walk, { yaw: 0, pitch: 0 }, true);
         predictLocalMove(client, world, buffer, lastInput);
         applyPredictedTick(server, world, lastInput);
-        const snap = { ...snapshotOf(server, lastInput.seq), vy: server.velocity.y + 7.5 };
+        const snap = snapshotOf(server, lastInput.seq);
         const before = captureMotionFull(client);
         const result = reconcilePredictedPlayer(client, world, buffer, snap);
         if (result.kind === 'accepted') {

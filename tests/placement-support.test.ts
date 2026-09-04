@@ -28,7 +28,7 @@ function fixture(block = BlockId.Stone, normal = faces[2]!) {
   const session = { world, inventory, selectedSlot: 0, summary: { mode: 'survival' }, player, redstone,
     target: { x: 5, y: 40, z: 5, block, normal, distance: 2, point: new THREE.Vector3(5.5, 40.5, 5.5) },
     minecarts: { raycast: () => undefined, cartAt: () => undefined, nearest: () => undefined }, foodUseTicks: 0, bowUseTicks: 0 };
-  Object.assign(game, { session, ui: { toast: vi.fn() }, audio: { playTone: vi.fn(), play: vi.fn(), playAt: vi.fn(), playBlock: vi.fn() }, firstPerson: { swing: vi.fn() } });
+  Object.assign(game, { session, input: { yaw: 0, pitch: 0 }, ui: { toast: vi.fn() }, audio: { playTone: vi.fn(), play: vi.fn(), playAt: vi.fn(), playBlock: vi.fn() }, firstPerson: { swing: vi.fn() } });
   const place = (itemId: string) => { inventory.setSlot(0, createItemStack(itemId)); game.useTargetOrItem(); };
   return { world, chunk, game, session, inventory, place };
 }

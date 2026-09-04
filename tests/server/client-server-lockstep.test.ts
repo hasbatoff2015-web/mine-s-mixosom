@@ -305,7 +305,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     const last = poses[poses.length - 1]!;
     expect(last.inspectKind).toBe('accepted');
     expect(last.physicsTicks).toBe(1);
-    expect(last.comparePath).toBe('checkpoint');
+    expect(last.comparePath).toBe('history[N]');
     expect(Math.hypot(last.client.x - last.server.x, last.client.y - last.server.y, last.client.z - last.server.z))
       .toBeLessThan(1e-6);
   });
@@ -377,7 +377,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
       serverTick: world.tickNumber,
     });
     expect(first.kind).toBe('accepted');
-    expect(first.comparePath).toBe('checkpoint');
+    expect(first.comparePath).toBe('history[N]');
     reconcilePredictedPlayer(client, world.world, buffer, player.snapshot(), undefined, {
       physicsTicks: 1,
       serverTick: world.tickNumber,
@@ -406,14 +406,13 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     });
     expect(inspect.kind).toBe('accepted');
     expect(inspect.physicsTicks).toBe(1);
-    expect(inspect.seqGap).toBe(2);
-    expect(inspect.simTicks).toBe(1);
-    expect(inspect.comparePath).toBe('checkpoint');
+    expect(inspect.seqGap).toBe(1);
+    expect(inspect.comparePath).toBe('history[N]');
     expect(inspect.predicted).toBeDefined();
     expect(Math.hypot(
       inspect.predicted!.x - snapshot.x,
       inspect.predicted!.z - snapshot.z,
-    )).toBeGreaterThan(0.12);
+    )).toBeLessThan(1e-4);
   });
 
   it('physicsTicks=2 catch-up on Anarchy is comparable via checkpoint simTicks', async () => {
@@ -463,13 +462,10 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
       serverTick: world.tickNumber,
     });
     expect(asOne.seqGap).toBe(1);
-    expect(asOne.comparePath).toBe('checkpoint');
-    expect(asOne.simTicks).toBe(1);
-    expect(asTwo.comparePath).toBe('checkpoint');
-    expect(asTwo.simTicks).toBe(2);
-    expect(asTick.simTicks).toBe(2);
+    expect(asOne.comparePath).toBe('history[N]');
+    expect(asTwo.comparePath).toBe('history[N]');
     expect(asOne.kind).toBe('corrected');
-    expect(asTwo.kind).toBe('accepted');
-    expect(asTick.kind).toBe('accepted');
+    expect(asTwo.kind).toBe('corrected');
+    expect(asTick.kind).toBe('corrected');
   });
 });

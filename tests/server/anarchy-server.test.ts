@@ -147,6 +147,15 @@ class MemorySink {
 }
 
 describe('protocol validation', () => {
+  it('rejects a v1 join against protocol 2', () => {
+    expect(parseClientMessage({ type: 'join', protocol: 1, name: 'old' })).toEqual({
+      error: 'unsupported protocol 1',
+    });
+    expect(parseClientMessage({ type: 'join', protocol: PROTOCOL_VERSION, name: 'ok' })).toMatchObject({
+      type: 'join',
+      protocol: PROTOCOL_VERSION,
+    });
+  });
   it('rejects unknown message types and non-integer block coords', () => {
     expect(parseClientMessage({ type: 'explode_world' })).toEqual({ error: 'unknown message type explode_world' });
     expect(parseClientMessage({ type: 'break_block', x: 1.5, y: 2, z: 3 })).toEqual({
@@ -570,7 +579,7 @@ describe('WorldInstance foundation simulation', () => {
     expect(player.snapshot().inputSeq).toBe(2);
   });
 
-  it('uses the latest movement state when multiple inputs arrive between ticks', async () => {
+  it('applies one queued command per tick; extra packets wait in FIFO', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -580,15 +589,17 @@ describe('WorldInstance foundation simulation', () => {
     expect(world.applyInput(player, moveInput(2, { forward: 1 }))).toBe(true);
     expect(world.applyInput(player, moveInput(3, { forward: 1 }))).toBe(true);
     expect(player.lastInputSeq).toBe(3);
-    expect(player).not.toHaveProperty('inputQueue');
 
     world.tick();
-    expect(player.snapshot().inputSeq).toBe(3);
+    expect(player.snapshot().inputSeq).toBe(1);
+    expect(player.snapshot().ackCommandSeq).toBe(1);
     const afterBurst = player.controller.position.clone();
     const firstStep = Math.hypot(afterBurst.x - start.x, afterBurst.z - start.z);
     expect(firstStep).toBeGreaterThan(0.05);
     expect(firstStep).toBeLessThan(0.35);
 
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(2);
     world.tick();
     expect(player.snapshot().inputSeq).toBe(3);
     expect(Math.hypot(
@@ -622,6 +633,10 @@ describe('WorldInstance foundation simulation', () => {
     };
     expect(last.players[0]?.inputSeq).toBe(1);
     expect(last.physicsTicks).toBe(2);
+    const lastPlayer = last.players[0] as { appliedSteps?: Array<{ serverTick: number; commandSeq: number }> };
+    expect(lastPlayer.appliedSteps?.length).toBe(2);
+    expect(lastPlayer.appliedSteps?.[0]?.commandSeq).toBe(1);
+    expect(lastPlayer.appliedSteps?.[1]?.commandSeq).toBe(1);
   });
 
   it('predsim reports identical lockstep controllers and a coalesce gap', async () => {
@@ -638,7 +653,7 @@ describe('WorldInstance foundation simulation', () => {
     expect(result?.lines.some((line) => line.includes('coalesce clientTicks=2'))).toBe(true);
   });
 
-  it('does not backlog 64 movement packets across seconds', async () => {
+  it('bounds a 64-packet burst and applies one command per tick', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -648,7 +663,10 @@ describe('WorldInstance foundation simulation', () => {
       expect(world.applyInput(player, moveInput(seq, { forward: 1 }))).toBe(true);
     }
     world.tick();
-    expect(player.snapshot().inputSeq).toBe(64);
+    const applied = player.snapshot().inputSeq ?? -1;
+    expect(applied).toBeGreaterThanOrEqual(1);
+    expect(applied).toBeLessThanOrEqual(64);
+    expect(player.commandQueue.length).toBeLessThanOrEqual(32);
     const afterOne = Math.hypot(
       player.controller.position.x - start.x,
       player.controller.position.z - start.z,
@@ -657,7 +675,7 @@ describe('WorldInstance foundation simulation', () => {
     expect(afterOne).toBeLessThan(0.35);
   });
 
-  it('stops on the latest idle packet instead of draining leftover walk inputs', async () => {
+  it('drains leftover walk commands before a later idle command', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -670,6 +688,8 @@ describe('WorldInstance foundation simulation', () => {
       world.applyInput(player, moveInput(seq, { forward: seq === 20 ? 0 : 1 }));
     }
     world.tick();
+    expect(player.snapshot().inputSeq).toBe(9);
+    for (let i = 0; i < 11; i += 1) world.tick();
     expect(player.lastInput.forward).toBe(0);
     expect(player.snapshot().inputSeq).toBe(20);
     const before = player.controller.position.clone();
@@ -692,7 +712,7 @@ describe('WorldInstance foundation simulation', () => {
     expect(player.controller.position.y).toBeGreaterThan(startY + 0.2);
   });
 
-  it('fires a charged bow on the next tick after use release, not after a movement backlog', async () => {
+  it('fires a charged bow from captured release aim, not use:false falling edge', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -712,9 +732,13 @@ describe('WorldInstance foundation simulation', () => {
       world.applyInput(player, moveInput(seq, { forward: 1, use: seq < 48 }));
     }
     world.tick();
-    expect(player.lastInput.use).toBe(false);
+    expect(world.gameplay.arrows.count).toBe(arrowsBefore);
+    const fired = world.releaseBow(player, { actionSeq: 1, commandSeq: 48, yaw: 0.4, pitch: -0.2 });
+    expect(fired.ok).toBe(true);
     expect(player.bowUseTicks).toBe(0);
     expect(world.gameplay.arrows.count).toBeGreaterThan(arrowsBefore);
+    const later = world.releaseBow(player, { actionSeq: 1, commandSeq: 49, yaw: 1.2, pitch: 0.5 });
+    expect(later.ok).toBe(false);
   });
 
   it('starts bow charge on interact immediately, before the next movement tick', async () => {
@@ -728,6 +752,7 @@ describe('WorldInstance foundation simulation', () => {
     player.controller.pitch = -Math.PI / 2;
     for (let seq = 1; seq <= 12; seq += 1) {
       world.applyInput(player, moveInput(seq, { forward: 1, use: false }));
+      world.tick();
     }
     expect(player.bowUseTicks).toBe(0);
     world.interact(player);
@@ -756,8 +781,8 @@ describe('WorldInstance foundation simulation', () => {
     const startY = player.controller.position.y;
     for (let seq = 4; seq <= 11; seq += 1) {
       world.applyInput(player, moveInput(seq, { forward: 1, jump: true }));
+      world.tick();
     }
-    world.tick();
     expect(player.snapshot().inputSeq).toBe(11);
     expect(player.controller.isFlying).toBe(true);
     const afterUp = player.controller.position.clone();
@@ -765,8 +790,8 @@ describe('WorldInstance foundation simulation', () => {
 
     for (let seq = 12; seq <= 19; seq += 1) {
       world.applyInput(player, moveInput(seq, { forward: 1, descend: true }));
+      world.tick();
     }
-    world.tick();
     expect(player.snapshot().inputSeq).toBe(19);
     const afterFirstDescend = player.controller.position.y;
     world.tick();

@@ -263,6 +263,132 @@ export function runLatestInputTimeline(options: TimelineOptions): TimelineResult
 }
 
 /** Owner dump: lastAck=543, seq=545, gap=2, physicsTicks=1. */
+/**
+ * Client predicts one physics tick per command. Server applies one queued
+ * command per physics tick (FIFO). ACK is the applied commandSeq, not latest packet.
+ */
+export function runFifoTimeline(options: TimelineOptions): TimelineResult {
+  const world = new FlatTimelineWorld() as unknown as VoxelWorld;
+  const flying = options.flying === true;
+  const startY = options.startY ?? (flying ? 8 : 1);
+  const client = controller(flying, startY);
+  const server = controller(flying, startY);
+  const settle = toMove({});
+  client.tick(world, {
+    yaw: 0, pitch: 0, locomotion: true,
+    movement: () => settle,
+  }, FIXED_DT);
+  server.tick(world, {
+    yaw: 0, pitch: 0, locomotion: true,
+    movement: () => settle,
+  }, FIXED_DT);
+  if (flying) {
+    client.creativeFlightAllowed = true;
+    server.creativeFlightAllowed = true;
+    client.isFlying = true;
+    server.isFlying = true;
+    client.velocity.set(0, 0, 0);
+    server.velocity.set(0, 0, 0);
+  }
+
+  const buffer: PredictionBuffer = createPredictionBuffer();
+  seedPredictionCheckpoint(buffer, client.captureMovementState(), 0);
+  const warmup = options.warmup ?? 0;
+  const move = toMove(options.input ?? { forward: 1 });
+  let seq = 0;
+  let lastMove: PredictedMove | undefined;
+  let lastAckedSeq = buffer.lastAckedSeq;
+
+  for (let i = 0; i < warmup; i += 1) {
+    seq += 1;
+    lastMove = predictedMoveFromInput(seq, move, { yaw: options.input?.yaw ?? 0, pitch: options.input?.pitch ?? 0 }, true);
+    predictLocalMove(client, world, buffer, lastMove);
+    applyPredictedTick(server, world, lastMove);
+    seedPredictionCheckpoint(buffer, server.captureMovementState(), i + 1);
+    buffer.lastAckedSeq = seq;
+    buffer.entries = buffer.entries.filter((entry) => entry.seq > seq);
+    lastAckedSeq = seq;
+  }
+
+  const allSeqs = options.deliveries.flat();
+  const predicted = new Map<number, PredictedMove>();
+  for (const nextSeq of allSeqs) {
+    if (predicted.has(nextSeq)) continue;
+    const packet = predictedMoveFromInput(
+      nextSeq,
+      move,
+      { yaw: options.input?.yaw ?? 0, pitch: options.input?.pitch ?? 0 },
+      true,
+    );
+    predicted.set(nextSeq, packet);
+    predictLocalMove(client, world, buffer, packet);
+    lastMove = packet;
+  }
+
+  const queue: PredictedMove[] = [];
+  let lastApplied: PredictedMove | undefined;
+  const samples: TimelineSample[] = [];
+  const acceptXz = options.acceptXz ?? 1e-4;
+  const acceptY = options.acceptY ?? 1e-4;
+  let checkpoint = server.captureMovementState();
+  let checkpointTick = warmup;
+  let serverTick = warmup;
+
+  for (const batch of options.deliveries) {
+    for (const queuedSeq of batch) {
+      const packet = predicted.get(queuedSeq);
+      if (packet) queue.push(packet);
+    }
+    const applied = queue.shift() ?? lastApplied;
+    if (!applied) continue;
+    lastApplied = applied;
+    applyPredictedTick(server, world, applied);
+    serverTick += 1;
+    const physicsTicks = 1;
+    const seqGap = applied.seq - lastAckedSeq;
+    const historyEntry = buffer.entries.find((entry) => entry.seq === applied.seq);
+    const simTicks = simulationTicksFromServerTick(checkpointTick, serverTick, physicsTicks);
+    const comparable = historyEntry?.state ?? predictedStateFromCheckpoint(world, checkpoint, applied, 1, {
+      creativeFlightAllowed: flying,
+    });
+    const serverState = server.captureMovementState();
+    const clientState = client.captureMovementState();
+    const historyDist = historyEntry ? poseError(historyEntry.state, serverState) : Number.NaN;
+    const checkpointDist = poseError(comparable, serverState);
+    const sample: TimelineSample = {
+      clientPredTick: buffer.nextPredTick,
+      inputSeqLocal: lastMove?.seq ?? applied.seq,
+      serverTick,
+      inputSeqServer: applied.seq,
+      physicsTicks,
+      seqGap,
+      client: clientState,
+      server: serverState,
+      historyAtInputSeq: historyEntry?.state,
+      checkpoint: comparable,
+      historyDist,
+      checkpointDist,
+      historyWouldCorrect: !Number.isFinite(historyDist)
+        || Math.hypot(historyEntry!.state.x - serverState.x, historyEntry!.state.z - serverState.z) > acceptXz
+        || Math.abs((historyEntry?.state.y ?? 0) - serverState.y) > acceptY,
+      checkpointWouldCorrect: Math.hypot(comparable.x - serverState.x, comparable.z - serverState.z) > acceptXz
+        || Math.abs(comparable.y - serverState.y) > acceptY,
+    };
+    samples.push(sample);
+    checkpoint = serverState;
+    checkpointTick = serverTick;
+    lastAckedSeq = applied.seq;
+  }
+
+  return {
+    samples,
+    historyCorrections: samples.filter((sample) => sample.historyWouldCorrect).length,
+    checkpointCorrections: samples.filter((sample) => sample.checkpointWouldCorrect).length,
+    firstHistoryCorrection: samples.find((sample) => sample.historyWouldCorrect),
+    firstCheckpointCorrection: samples.find((sample) => sample.checkpointWouldCorrect),
+  };
+}
+
 export function ownerWalkGap2Timeline(): TimelineResult {
   const warmup = 3;
   return runLatestInputTimeline({

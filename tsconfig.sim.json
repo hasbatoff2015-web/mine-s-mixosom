@@ -43,7 +43,7 @@
     "src/input/MoveInput.ts",
     "src/ui/recipeBook.ts",
     "src/ui/containerInteractions.ts",
-    "shared/protocol.ts"
+    "shared/**/*.ts"
   ],
   "exclude": [
     "src/entities/ThreeEntityHost.ts",

@@ -249,4 +249,44 @@ describe('remote player server-tick interpolation', () => {
     const stale = buffer.diagnostics(lastAt + 10);
     expect(stale.staleSnapshotsPerSecond).toBeGreaterThanOrEqual(1);
   });
+
+  it('teleport / respawn reset snaps instead of interpolating the gap', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    fillPerfect(buffer, 100, 105);
+    buffer.reset();
+    buffer.push(snap(400, { x: 80, vx: 0, receivedAt: 400 * REMOTE_TICK_MS }));
+    const pose = buffer.sample(400 * REMOTE_TICK_MS)!;
+    expect(pose.mode).toBe('hold');
+    expect(pose.x).toBe(80);
+  });
+
+  it('±5ms / ±20ms / ±30ms arrival jitter still samples the same serverTick pose', () => {
+    for (const jitter of [5, 20, 30]) {
+      const even = new RemoteInterpolationBuffer();
+      const noisy = new RemoteInterpolationBuffer();
+      for (let i = 0; i < 8; i += 1) {
+        const tick = 100 + i;
+        even.push(snap(tick, { receivedAt: i * REMOTE_TICK_MS }));
+        const offset = i % 2 === 0 ? jitter : -jitter;
+        noisy.push(snap(tick, { receivedAt: i * REMOTE_TICK_MS + offset }));
+      }
+      const evenNow = 7 * REMOTE_TICK_MS;
+      const noisyNow = 7 * REMOTE_TICK_MS + (7 % 2 === 0 ? jitter : -jitter);
+      expect(noisy.sample(noisyNow)!.renderTick, `jitter ${jitter}`).toBeCloseTo(even.sample(evenNow)!.renderTick, 5);
+      expect(noisy.sample(noisyNow)!.x, `jitter ${jitter}`).toBeCloseTo(even.sample(evenNow)!.x, 5);
+    }
+  });
+
+  it('jump / fall samples keep ballistic y from authoritative states', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    buffer.push(snap(100, { x: 0, vx: 0, vy: 8, onGround: false, receivedAt: 0 }));
+    buffer.push(snap(101, { x: 0, vx: 0, vy: 6, onGround: false, receivedAt: REMOTE_TICK_MS }));
+    buffer.push(snap(102, { x: 0, vx: 0, vy: 4, onGround: false, receivedAt: 2 * REMOTE_TICK_MS }));
+    buffer.push(snap(103, { x: 0, vx: 0, vy: 2, onGround: false, receivedAt: 3 * REMOTE_TICK_MS }));
+    const pose = buffer.sample(3 * REMOTE_TICK_MS)!;
+    expect(pose.mode).toBe('interpolate');
+    expect(pose.vy).toBeGreaterThan(2);
+    expect(pose.vy).toBeLessThan(8);
+    expect(pose.onGround).toBe(false);
+  });
 });

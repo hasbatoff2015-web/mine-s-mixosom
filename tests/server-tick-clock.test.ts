@@ -94,16 +94,18 @@ describe('server tick clock', () => {
 });
 
 describe('17 Hz snapshots vs 20 Hz prediction', () => {
-  it('false 1-tick compare against catch-up poses produces a walk-step correction', () => {
-    const stats = runCatchUpWalk({ physicsTicksMode: 'ignore' });
-    expect(stats.corrections).toBe(stats.events);
-    expect(stats.corrections).toBeGreaterThanOrEqual(3);
+  it('catch-up of two physics ticks of one command mismatches history[N]', () => {
+    const ignore = runCatchUpWalk({ physicsTicksMode: 'ignore' });
+    const honest = runCatchUpWalk({ physicsTicksMode: 'honest' });
+    expect(ignore.corrections).toBe(ignore.events);
+    expect(honest.corrections).toBe(honest.events);
+    expect(ignore.corrections).toBeGreaterThanOrEqual(3);
   });
 
-  it('comparing catch-up snapshots with physicsTicks removes the positional corrections', () => {
+  it('FIFO history[N] does not invent extraTicks to hide catch-up', () => {
     const stats = runCatchUpWalk({ physicsTicksMode: 'honest' });
-    expect(stats.corrections).toBe(0);
-    expect(stats.accepts).toBe(stats.events);
+    expect(stats.accepts).toBe(0);
+    expect(stats.corrections).toBe(stats.events);
   });
 });
 

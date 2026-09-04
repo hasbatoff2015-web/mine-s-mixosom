@@ -12,6 +12,7 @@ import {
   type ServerMessage,
   type ServerWelcomeMessage,
 } from '../shared/protocol';
+import { blockIntentFromFields } from '../shared/playerActions';
 import type { ServerConfig } from './config';
 import { serverLog } from './log';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
@@ -286,7 +287,8 @@ export class AnarchyServer {
         this.world.applyInput(player, message, { connectionId });
         return;
       case 'break_block': {
-        const result = this.world.tryBreak(player, message.x, message.y, message.z);
+        const intent = blockIntentFromFields(message);
+        const result = this.world.tryBreak(player, message.x, message.y, message.z, intent);
         this.world.sendTo(player, {
           type: 'block_result',
           ok: result.ok,
@@ -296,13 +298,24 @@ export class AnarchyServer {
           z: message.z,
           ...(result.ok ? {} : { reason: result.reason }),
         });
+        this.world.sendTo(player, {
+          type: 'action_result',
+          actionSeq: message.actionSeq ?? -1,
+          kind: 'break',
+          ok: result.ok,
+          ...(result.ok ? {} : { reason: result.reason }),
+          targetX: message.x,
+          targetY: message.y,
+          targetZ: message.z,
+        });
         if (!result.ok) {
           serverLog(`break rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
         }
         return;
       }
       case 'place_block': {
-        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId);
+        const intent = blockIntentFromFields(message);
+        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId, intent);
         this.world.sendTo(player, {
           type: 'block_result',
           ok: result.ok,
@@ -311,6 +324,16 @@ export class AnarchyServer {
           y: message.y,
           z: message.z,
           ...(result.ok ? {} : { reason: result.reason }),
+        });
+        this.world.sendTo(player, {
+          type: 'action_result',
+          actionSeq: message.actionSeq ?? -1,
+          kind: 'place',
+          ok: result.ok,
+          ...(result.ok ? {} : { reason: result.reason }),
+          targetX: message.x,
+          targetY: message.y,
+          targetZ: message.z,
         });
         if (!result.ok) {
           serverLog(`place rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
@@ -337,10 +360,47 @@ export class AnarchyServer {
           shift: message.shift === true,
         });
         return;
-      case 'interact':
-        this.world.interact(player);
+      case 'interact': {
+        const intent = blockIntentFromFields(message);
+        const result = this.world.interact(player, intent, message.actionSeq);
+        this.world.sendTo(player, {
+          type: 'action_result',
+          actionSeq: message.actionSeq ?? -1,
+          kind: 'block_use',
+          ok: result.ok,
+          ...(result.ok ? {} : { reason: result.reason }),
+          ...(intent ? { targetX: intent.targetX, targetY: intent.targetY, targetZ: intent.targetZ, faceX: intent.faceX, faceY: intent.faceY, faceZ: intent.faceZ } : {}),
+        });
         return;
+      }
+      case 'bow_release': {
+        const result = this.world.releaseBow(player, message);
+        this.world.sendTo(player, {
+          type: 'action_result',
+          actionSeq: message.actionSeq,
+          kind: 'bow_release',
+          ok: result.ok,
+          ...(result.ok ? {} : { reason: result.reason }),
+          yaw: message.yaw,
+          pitch: message.pitch,
+        });
+        return;
+      }
+      case 'action': {
+        this.handleSequencedAction(player, message);
+        return;
+      }
       case 'attack':
+        if (message.actionSeq !== undefined && !this.world.acceptClientActionSeq(player, message.actionSeq)) {
+          this.world.sendTo(player, {
+            type: 'action_result',
+            actionSeq: message.actionSeq,
+            kind: 'attack',
+            ok: false,
+            reason: 'duplicate',
+          });
+          return;
+        }
         this.world.attack(player);
         return;
       case 'pickup':
@@ -349,6 +409,81 @@ export class AnarchyServer {
       case 'vehicle_input':
         this.world.vehicleInput(player, message);
         return;
+    }
+  }
+
+  private handleSequencedAction(
+    player: ServerPlayer,
+    message: Extract<ClientMessage, { type: 'action' }>,
+  ): void {
+    const intent = blockIntentFromFields(message);
+    let result: { ok: true } | { ok: false; reason: string };
+    if (message.kind === 'block_use') {
+      result = this.world.interact(player, intent, message.actionSeq);
+    } else if (message.kind === 'block_break_start') {
+      if (!intent) {
+        result = { ok: false, reason: 'invalid' };
+      } else {
+        result = this.world.beginMining(player, intent, message.actionSeq);
+      }
+    } else if (message.kind === 'block_break_abort') {
+      if (!this.world.acceptClientActionSeq(player, message.actionSeq)) {
+        result = { ok: false, reason: 'duplicate' };
+      } else {
+        this.world.abortMining(player);
+        result = { ok: true };
+      }
+    } else if (message.kind === 'block_break_finish') {
+      const x = message.targetX ?? message.x;
+      const y = message.targetY ?? message.y;
+      const z = message.targetZ ?? message.z;
+      if (x === undefined || y === undefined || z === undefined) {
+        result = { ok: false, reason: 'invalid' };
+      } else if (!this.world.acceptClientActionSeq(player, message.actionSeq)) {
+        result = { ok: false, reason: 'duplicate' };
+      } else {
+        result = this.world.tryBreak(player, x, y, z, intent);
+      }
+    } else if (message.kind === 'bow_release') {
+      if (message.yaw === undefined || message.pitch === undefined) {
+        result = { ok: false, reason: 'look' };
+      } else {
+        result = this.world.releaseBow(player, {
+          actionSeq: message.actionSeq,
+          commandSeq: message.commandSeq,
+          yaw: message.yaw,
+          pitch: message.pitch,
+        });
+      }
+    } else {
+      if (message.actionSeq !== undefined && !this.world.acceptClientActionSeq(player, message.actionSeq)) {
+        result = { ok: false, reason: 'duplicate' };
+      } else {
+        this.world.attack(player);
+        result = { ok: true };
+      }
+    }
+    this.world.sendTo(player, {
+      type: 'action_result',
+      actionSeq: message.actionSeq,
+      kind: message.kind,
+      ok: result.ok,
+      ...(result.ok ? {} : { reason: result.reason }),
+      ...(intent
+        ? {
+          targetX: intent.targetX,
+          targetY: intent.targetY,
+          targetZ: intent.targetZ,
+          faceX: intent.faceX,
+          faceY: intent.faceY,
+          faceZ: intent.faceZ,
+        }
+        : {}),
+      ...(message.yaw !== undefined ? { yaw: message.yaw } : {}),
+      ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
+    });
+    if (!result.ok) {
+      serverLog(`action ${message.kind} rejected: ${result.reason} by ${player.name}`, 'warn');
     }
   }
 

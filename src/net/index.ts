@@ -27,6 +27,8 @@ export {
   seedPredictionCheckpoint,
   simulationTicksFromServerTick,
   comparableExtraTicks,
+  consumeAckedCommands,
+  consumeOldestPredTicks,
   extraAssignSite,
   overwriteLatestSlot,
   snapshotComparePath,

@@ -42,6 +42,7 @@ export interface RemoteInterpSample {
   readonly onGround: boolean;
   readonly sprinting: boolean;
   readonly sneaking: boolean;
+  readonly flying: boolean;
   readonly invisible: boolean;
   /** Client receive time. Telemetry / latest-clock elapsed only. */
   readonly receivedAt: number;
@@ -59,6 +60,7 @@ export interface RemoteSampledPose {
   readonly onGround: boolean;
   readonly sprinting: boolean;
   readonly sneaking: boolean;
+  readonly flying: boolean;
   readonly invisible: boolean;
   readonly renderTick: number;
   readonly mode: RemoteInterpMode;
@@ -77,6 +79,11 @@ export interface RemoteInterpDiagnostics {
   readonly sampleCount: number;
   readonly interArrivalMs: number;
   readonly jitterMs: number;
+  readonly jitterP50Ms: number;
+  readonly jitterP95Ms: number;
+  readonly lateSnapshotsPerSecond: number;
+  readonly maxVisualStep: number;
+  readonly velocityContinuity: number;
   readonly renderDelayMs: number;
   readonly underflowsPerSecond: number;
   readonly extrapolationMs: number;
@@ -87,9 +94,11 @@ export interface RemoteInterpDiagnostics {
   readonly latestReceivedAt: number;
 }
 
+type DiagEventKind = 'accept' | 'stale' | 'duplicate' | 'underflow' | 'extrap' | 'late';
+
 interface DiagEvent {
   readonly at: number;
-  readonly kind: 'accept' | 'stale' | 'duplicate' | 'underflow' | 'extrap';
+  readonly kind: DiagEventKind;
 }
 
 function cloneSample(sample: RemoteInterpSample): RemoteInterpSample {
@@ -100,12 +109,13 @@ function discreteFrom(
   previous: RemoteInterpSample,
   next: RemoteInterpSample,
   t: number,
-): Pick<RemoteInterpSample, 'onGround' | 'sprinting' | 'sneaking' | 'invisible'> {
+): Pick<RemoteInterpSample, 'onGround' | 'sprinting' | 'sneaking' | 'flying' | 'invisible'> {
   const pick = t < 0.5 ? previous : next;
   return {
     onGround: pick.onGround,
     sprinting: pick.sprinting,
     sneaking: pick.sneaking,
+    flying: pick.flying,
     invisible: pick.invisible,
   };
 }
@@ -131,6 +141,7 @@ function poseFromSample(sample: RemoteInterpSample, extras: {
     onGround: sample.onGround,
     sprinting: sample.sprinting,
     sneaking: sample.sneaking,
+    flying: sample.flying,
     invisible: sample.invisible,
     ...extras,
   };
@@ -139,7 +150,7 @@ function poseFromSample(sample: RemoteInterpSample, extras: {
 function extrapolateSample(
   sample: RemoteInterpSample,
   extraSeconds: number,
-): Pick<RemoteInterpSample, 'x' | 'y' | 'z' | 'yaw' | 'pitch' | 'vx' | 'vy' | 'vz' | 'onGround' | 'sprinting' | 'sneaking' | 'invisible'> {
+): Pick<RemoteInterpSample, 'x' | 'y' | 'z' | 'yaw' | 'pitch' | 'vx' | 'vy' | 'vz' | 'onGround' | 'sprinting' | 'sneaking' | 'flying' | 'invisible'> {
   return {
     x: sample.x + sample.vx * extraSeconds,
     y: sample.y + sample.vy * extraSeconds,
@@ -152,6 +163,7 @@ function extrapolateSample(
     onGround: sample.onGround,
     sprinting: sample.sprinting,
     sneaking: sample.sneaking,
+    flying: sample.flying,
     invisible: sample.invisible,
   };
 }
@@ -195,6 +207,9 @@ export class RemoteInterpolationBuffer {
   private lastRenderTick = Number.NEGATIVE_INFINITY;
   private lastMode: RemoteInterpMode = 'hold';
   private lastInterArrivalMs = REMOTE_TICK_MS;
+  private readonly arrivalDeltas: number[] = [];
+  private maxVisualStep = 0;
+  private lastVelocityContinuity = 1;
   private lastPose: RemoteSampledPose | undefined;
   private events: DiagEvent[] = [];
   private cappedPose: RemoteSampledPose | undefined;
@@ -218,6 +233,9 @@ export class RemoteInterpolationBuffer {
     this.lastRenderTick = Number.NEGATIVE_INFINITY;
     this.lastMode = 'hold';
     this.lastInterArrivalMs = REMOTE_TICK_MS;
+    this.arrivalDeltas.length = 0;
+    this.maxVisualStep = 0;
+    this.lastVelocityContinuity = 1;
     this.lastPose = undefined;
     this.events = [];
     this.cappedPose = undefined;
@@ -235,6 +253,9 @@ export class RemoteInterpolationBuffer {
     }
     if (this.lastAcceptedTick >= 0) {
       this.lastInterArrivalMs = sample.receivedAt - this.latestReceivedAt;
+      this.arrivalDeltas.push(this.lastInterArrivalMs - REMOTE_TICK_MS);
+      if (this.arrivalDeltas.length > 32) this.arrivalDeltas.shift();
+      if (this.lastInterArrivalMs > REMOTE_TICK_MS * 1.5) this.note(sample.receivedAt, 'late');
     }
     this.lastAcceptedTick = sample.serverTick;
     this.latestReceivedAt = sample.receivedAt;
@@ -364,6 +385,11 @@ export class RemoteInterpolationBuffer {
       sampleCount: this.samples.length,
       interArrivalMs: this.lastInterArrivalMs,
       jitterMs: Math.abs(this.lastInterArrivalMs - REMOTE_TICK_MS),
+      jitterP50Ms: percentileAbs(this.arrivalDeltas, 0.5),
+      jitterP95Ms: percentileAbs(this.arrivalDeltas, 0.95),
+      lateSnapshotsPerSecond: countWindow(this.events, 'late', now),
+      maxVisualStep: this.maxVisualStep,
+      velocityContinuity: this.lastVelocityContinuity,
       renderDelayMs: REMOTE_INTERP_DELAY_MS,
       underflowsPerSecond: countWindow(this.events, 'underflow', now),
       extrapolationMs: pose?.extrapolationMs ?? 0,
@@ -376,6 +402,14 @@ export class RemoteInterpolationBuffer {
   }
 
   private storePose(pose: RemoteSampledPose): RemoteSampledPose {
+    if (this.lastPose) {
+      const step = Math.hypot(pose.x - this.lastPose.x, pose.y - this.lastPose.y, pose.z - this.lastPose.z);
+      this.maxVisualStep = Math.max(this.maxVisualStep * 0.98, step);
+      const prevSpeed = Math.hypot(this.lastPose.vx, this.lastPose.vy, this.lastPose.vz);
+      const nextSpeed = Math.hypot(pose.vx, pose.vy, pose.vz);
+      const denom = Math.max(0.05, prevSpeed, nextSpeed);
+      this.lastVelocityContinuity = 1 - Math.min(1, Math.abs(nextSpeed - prevSpeed) / denom);
+    }
     this.lastPose = pose;
     return pose;
   }
@@ -441,6 +475,7 @@ export function remoteSampleFromSnapshot(
     readonly onGround?: boolean;
     readonly sprinting?: boolean;
     readonly sneaking?: boolean;
+    readonly flying?: boolean;
     readonly invisible?: boolean;
   },
   serverTick: number,
@@ -459,7 +494,15 @@ export function remoteSampleFromSnapshot(
     onGround: snapshot.onGround ?? true,
     sprinting: snapshot.sprinting ?? false,
     sneaking: snapshot.sneaking ?? false,
+    flying: snapshot.flying ?? false,
     invisible: snapshot.invisible ?? false,
     receivedAt,
   };
+}
+
+function percentileAbs(values: readonly number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = values.map((value) => Math.abs(value)).sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
+  return sorted[index] ?? 0;
 }

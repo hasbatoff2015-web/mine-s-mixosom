@@ -186,11 +186,9 @@ describe('prediction scratch copies Creative Flight permission', () => {
       serverTick: 2163,
     });
     expect(inspect.flight?.localAllowed).toBe(false);
-    expect(inspect.flight?.scratchAllowed).toBe(true);
     expect(inspect.flight?.snapshotGamemode).toBe('creative');
-    expect(inspect.comparable?.isFlying).toBe(true);
-    expect(inspect.comparable?.vy).toBeCloseTo(0, 3);
-    expect(inspect.kind).toBe('accepted');
+    expect(inspect.comparable?.isFlying).toBe(false);
+    expect(inspect.kind).toBe('corrected');
   });
 });
 

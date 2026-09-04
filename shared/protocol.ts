@@ -1,4 +1,9 @@
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, PROTOCOL_VERSION } from './config';
+import type { AppliedMovementStep } from './playerCommand';
+import type { ActionRejectReason, PlayerActionKind } from './playerActions';
+
+export type { AppliedMovementStep } from './playerCommand';
+export type { ActionRejectReason, PlayerActionKind } from './playerActions';
 
 export type GameMode = 'survival' | 'creative';
 
@@ -44,8 +49,15 @@ export interface PlayerSnapshot {
   readonly armor?: number;
   readonly ridingEntityId?: string;
   readonly dead?: boolean;
-  /** Last input seq used for this pose (latest movement state that tick). */
+  /** Command applied on the last physics tick of this snapshot. */
   readonly inputSeq?: number;
+  /** Same as inputSeq; named so ACK mapping is not mistaken for a tick id. */
+  readonly ackCommandSeq?: number;
+  /**
+   * Authoritative pose after each physics tick in this flush (bounded).
+   * Catch-up of N ticks includes N steps so the client can map history.
+   */
+  readonly appliedSteps?: readonly AppliedMovementStep[];
   /**
    * DEV: last few server physics ticks with the input seq actually applied.
    * Latest `inputSeq` alone cannot reconstruct a multi-tick interval.
@@ -191,6 +203,7 @@ export interface ClientJoinMessage {
 export interface ClientInputMessage {
   readonly type: 'input';
   readonly seq: number;
+  readonly clientTick?: number;
   readonly forward: number;
   readonly right: number;
   readonly jump: boolean;
@@ -208,14 +221,26 @@ export interface ClientInputMessage {
   readonly clientSentAt?: number;
 }
 
-export interface ClientBreakBlockMessage {
+export interface ClientBlockIntentFields {
+  readonly actionSeq?: number;
+  readonly commandSeq?: number;
+  readonly selectedSlot?: number;
+  readonly faceX?: number;
+  readonly faceY?: number;
+  readonly faceZ?: number;
+  readonly hitX?: number;
+  readonly hitY?: number;
+  readonly hitZ?: number;
+}
+
+export interface ClientBreakBlockMessage extends ClientBlockIntentFields {
   readonly type: 'break_block';
   readonly x: number;
   readonly y: number;
   readonly z: number;
 }
 
-export interface ClientPlaceBlockMessage {
+export interface ClientPlaceBlockMessage extends ClientBlockIntentFields {
   readonly type: 'place_block';
   readonly x: number;
   readonly y: number;
@@ -260,12 +285,50 @@ export interface ClientCraftMessage {
   readonly shift?: boolean;
 }
 
-export interface ClientInteractMessage {
+export interface ClientInteractMessage extends ClientBlockIntentFields {
   readonly type: 'interact';
+  readonly targetX?: number;
+  readonly targetY?: number;
+  readonly targetZ?: number;
 }
 
 export interface ClientAttackMessage {
   readonly type: 'attack';
+  readonly actionSeq?: number;
+  readonly commandSeq?: number;
+  readonly yaw?: number;
+  readonly pitch?: number;
+}
+
+export interface ClientBowReleaseMessage {
+  readonly type: 'bow_release';
+  readonly actionSeq: number;
+  readonly commandSeq: number;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly selectedSlot?: number;
+}
+
+export interface ClientActionMessage {
+  readonly type: 'action';
+  readonly actionSeq: number;
+  readonly commandSeq: number;
+  readonly kind: PlayerActionKind;
+  readonly selectedSlot?: number;
+  readonly targetX?: number;
+  readonly targetY?: number;
+  readonly targetZ?: number;
+  readonly faceX?: number;
+  readonly faceY?: number;
+  readonly faceZ?: number;
+  readonly hitX?: number;
+  readonly hitY?: number;
+  readonly hitZ?: number;
+  readonly yaw?: number;
+  readonly pitch?: number;
+  readonly x?: number;
+  readonly y?: number;
+  readonly z?: number;
 }
 
 export interface ClientPickupMessage {
@@ -292,6 +355,8 @@ export type ClientMessage =
   | ClientCraftMessage
   | ClientInteractMessage
   | ClientAttackMessage
+  | ClientBowReleaseMessage
+  | ClientActionMessage
   | ClientPickupMessage
   | ClientVehicleInputMessage;
 
@@ -381,6 +446,22 @@ export interface ServerBlockResultMessage {
   readonly y: number;
   readonly z: number;
   readonly reason?: string;
+}
+
+export interface ServerActionResultMessage {
+  readonly type: 'action_result';
+  readonly actionSeq: number;
+  readonly kind: PlayerActionKind | 'break' | 'place';
+  readonly ok: boolean;
+  readonly reason?: string;
+  readonly targetX?: number;
+  readonly targetY?: number;
+  readonly targetZ?: number;
+  readonly faceX?: number;
+  readonly faceY?: number;
+  readonly faceZ?: number;
+  readonly yaw?: number;
+  readonly pitch?: number;
 }
 
 export interface ServerChunkMessage {
@@ -487,6 +568,7 @@ export type ServerMessage =
   | ServerBlockUpdateMessage
   | ServerBlockBatchMessage
   | ServerBlockResultMessage
+  | ServerActionResultMessage
   | ServerChunkMessage
   | ServerUnloadChunkMessage
   | ServerChatMessage
@@ -513,6 +595,8 @@ export const CLIENT_MESSAGE_TYPES = [
   'craft',
   'interact',
   'attack',
+  'bow_release',
+  'action',
   'pickup',
   'vehicle_input',
 ] as const satisfies readonly ClientMessage['type'][];
@@ -525,6 +609,7 @@ export const SERVER_MESSAGE_TYPES = [
   'block_update',
   'block_batch',
   'block_result',
+  'action_result',
   'chunk_data',
   'unload_chunk',
   'chat',
@@ -651,6 +736,48 @@ function parseBlockChange(entry: unknown): BlockChange | undefined {
   };
 }
 
+function optionalSeq(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!finite(value) || !Number.isInteger(value) || value < 0 || value > 2_147_483_647) return undefined;
+  return value;
+}
+
+function parseIntentFields(raw: Record<string, unknown>): ClientBlockIntentFields | { error: string } {
+  const actionSeq = optionalSeq(raw.actionSeq);
+  if (raw.actionSeq !== undefined && actionSeq === undefined) return { error: 'actionSeq invalid' };
+  const commandSeq = optionalSeq(raw.commandSeq);
+  if (raw.commandSeq !== undefined && commandSeq === undefined) return { error: 'commandSeq invalid' };
+  const selectedSlot = optionalInteger(raw.selectedSlot);
+  if (raw.selectedSlot !== undefined && selectedSlot === undefined) return { error: 'selectedSlot invalid' };
+  const faceX = raw.faceX === undefined ? undefined : finite(raw.faceX) ? raw.faceX : undefined;
+  const faceY = raw.faceY === undefined ? undefined : finite(raw.faceY) ? raw.faceY : undefined;
+  const faceZ = raw.faceZ === undefined ? undefined : finite(raw.faceZ) ? raw.faceZ : undefined;
+  if ((raw.faceX !== undefined && faceX === undefined)
+    || (raw.faceY !== undefined && faceY === undefined)
+    || (raw.faceZ !== undefined && faceZ === undefined)) {
+    return { error: 'face invalid' };
+  }
+  const hitX = raw.hitX === undefined ? undefined : finite(raw.hitX) ? raw.hitX : undefined;
+  const hitY = raw.hitY === undefined ? undefined : finite(raw.hitY) ? raw.hitY : undefined;
+  const hitZ = raw.hitZ === undefined ? undefined : finite(raw.hitZ) ? raw.hitZ : undefined;
+  if ((raw.hitX !== undefined && hitX === undefined)
+    || (raw.hitY !== undefined && hitY === undefined)
+    || (raw.hitZ !== undefined && hitZ === undefined)) {
+    return { error: 'hit invalid' };
+  }
+  return {
+    ...(actionSeq !== undefined ? { actionSeq } : {}),
+    ...(commandSeq !== undefined ? { commandSeq } : {}),
+    ...(selectedSlot !== undefined ? { selectedSlot: clampNumber(selectedSlot, 0, 8) } : {}),
+    ...(faceX !== undefined ? { faceX } : {}),
+    ...(faceY !== undefined ? { faceY } : {}),
+    ...(faceZ !== undefined ? { faceZ } : {}),
+    ...(hitX !== undefined ? { hitX } : {}),
+    ...(hitY !== undefined ? { hitY } : {}),
+    ...(hitZ !== undefined ? { hitZ } : {}),
+  };
+}
+
 export function parseClientMessage(raw: unknown): ClientMessage | { readonly error: string } {
   if (!isRecord(raw) || typeof raw.type !== 'string') {
     return { error: 'message must be an object with a type' };
@@ -690,9 +817,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.vehicleForward !== undefined && vehicleForward === undefined) {
         return { error: 'input.vehicleForward invalid' };
       }
+      const clientTick = optionalSeq(raw.clientTick);
+      if (raw.clientTick !== undefined && clientTick === undefined) return { error: 'input.clientTick invalid' };
       return {
         type: 'input',
         seq: raw.seq,
+        ...(clientTick !== undefined ? { clientTick } : {}),
         forward: clampNumber(raw.forward, -1, 1),
         right: clampNumber(raw.right, -1, 1),
         jump: raw.jump,
@@ -719,8 +849,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z)) {
         return { error: 'block coordinates invalid' };
       }
+      const intent = parseIntentFields(raw);
+      if ('error' in intent) return intent;
       if (raw.type === 'break_block') {
-        return { type: 'break_block', x: raw.x, y: raw.y, z: raw.z };
+        return { type: 'break_block', x: raw.x, y: raw.y, z: raw.z, ...intent };
       }
       const blockId = raw.blockId === undefined ? undefined : raw.blockId;
       if (blockId !== undefined && (!Number.isInteger(blockId) || !finite(blockId))) {
@@ -732,6 +864,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         y: raw.y,
         z: raw.z,
         ...(blockId === undefined ? {} : { blockId }),
+        ...intent,
       };
     }
     case 'chat': {
@@ -804,10 +937,87 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'craft.shift invalid' };
       return { type: 'craft', ...(raw.shift === true ? { shift: true } : {}) };
     }
-    case 'interact':
-      return { type: 'interact' };
-    case 'attack':
-      return { type: 'attack' };
+    case 'interact': {
+      const intent = parseIntentFields(raw);
+      if ('error' in intent) return intent;
+      const targetX = optionalInteger(raw.targetX);
+      const targetY = optionalInteger(raw.targetY);
+      const targetZ = optionalInteger(raw.targetZ);
+      if ((raw.targetX !== undefined && targetX === undefined)
+        || (raw.targetY !== undefined && targetY === undefined)
+        || (raw.targetZ !== undefined && targetZ === undefined)) {
+        return { error: 'interact target invalid' };
+      }
+      return {
+        type: 'interact',
+        ...intent,
+        ...(targetX !== undefined ? { targetX } : {}),
+        ...(targetY !== undefined ? { targetY } : {}),
+        ...(targetZ !== undefined ? { targetZ } : {}),
+      };
+    }
+    case 'attack': {
+      const actionSeq = optionalSeq(raw.actionSeq);
+      if (raw.actionSeq !== undefined && actionSeq === undefined) return { error: 'attack.actionSeq invalid' };
+      const commandSeq = optionalSeq(raw.commandSeq);
+      if (raw.commandSeq !== undefined && commandSeq === undefined) return { error: 'attack.commandSeq invalid' };
+      if (raw.yaw !== undefined && !finite(raw.yaw)) return { error: 'attack.yaw invalid' };
+      if (raw.pitch !== undefined && !finite(raw.pitch)) return { error: 'attack.pitch invalid' };
+      return {
+        type: 'attack',
+        ...(actionSeq !== undefined ? { actionSeq } : {}),
+        ...(commandSeq !== undefined ? { commandSeq } : {}),
+        ...(finite(raw.yaw) ? { yaw: raw.yaw } : {}),
+        ...(finite(raw.pitch) ? { pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2) } : {}),
+      };
+    }
+    case 'bow_release': {
+      const actionSeq = optionalSeq(raw.actionSeq);
+      const commandSeq = optionalSeq(raw.commandSeq);
+      if (actionSeq === undefined) return { error: 'bow_release.actionSeq invalid' };
+      if (commandSeq === undefined) return { error: 'bow_release.commandSeq invalid' };
+      if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'bow_release look invalid' };
+      const selectedSlot = optionalInteger(raw.selectedSlot);
+      if (raw.selectedSlot !== undefined && selectedSlot === undefined) {
+        return { error: 'bow_release.selectedSlot invalid' };
+      }
+      return {
+        type: 'bow_release',
+        actionSeq,
+        commandSeq,
+        yaw: raw.yaw,
+        pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2),
+        ...(selectedSlot !== undefined ? { selectedSlot: clampNumber(selectedSlot, 0, 8) } : {}),
+      };
+    }
+    case 'action': {
+      const actionSeq = optionalSeq(raw.actionSeq);
+      const commandSeq = optionalSeq(raw.commandSeq);
+      if (actionSeq === undefined) return { error: 'action.actionSeq invalid' };
+      if (commandSeq === undefined) return { error: 'action.commandSeq invalid' };
+      const kind = raw.kind;
+      if (kind !== 'block_use' && kind !== 'block_break_start' && kind !== 'block_break_abort'
+        && kind !== 'block_break_finish' && kind !== 'bow_release' && kind !== 'attack') {
+        return { error: 'action.kind invalid' };
+      }
+      const intent = parseIntentFields(raw);
+      if ('error' in intent) return intent;
+      const targetX = optionalInteger(raw.targetX ?? raw.x);
+      const targetY = optionalInteger(raw.targetY ?? raw.y);
+      const targetZ = optionalInteger(raw.targetZ ?? raw.z);
+      return {
+        type: 'action',
+        actionSeq,
+        commandSeq,
+        kind,
+        ...intent,
+        ...(targetX !== undefined ? { targetX } : {}),
+        ...(targetY !== undefined ? { targetY } : {}),
+        ...(targetZ !== undefined ? { targetZ } : {}),
+        ...(finite(raw.yaw) ? { yaw: raw.yaw } : {}),
+        ...(finite(raw.pitch) ? { pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2) } : {}),
+      };
+    }
     case 'pickup': {
       const entityId = optionalString(raw.entityId, 64);
       return { type: 'pickup', ...(entityId ? { entityId } : {}) };
@@ -887,6 +1097,13 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         z: raw.z,
         ...(reason ? { reason } : {}),
       };
+    }
+    case 'action_result': {
+      if (!bool(raw.ok) || !finite(raw.actionSeq) || !Number.isInteger(raw.actionSeq) || typeof raw.kind !== 'string') {
+        return { error: 'action_result invalid' };
+      }
+      const reason = typeof raw.reason === 'string' ? raw.reason.slice(0, 64) : undefined;
+      return raw as unknown as ServerActionResultMessage;
     }
     case 'entity_snapshot': {
       if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.entities)) {

@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
+  PROTOCOL_VERSION,
   defaultStatusUrl,
   defaultWsUrl,
 } from '../../shared/config';
@@ -85,7 +86,7 @@ export class AnarchyClient {
         const sessionToken = sessionStorage.getItem(SESSION_KEY) ?? undefined;
         this.send({
           type: 'join',
-          protocol: 1,
+          protocol: PROTOCOL_VERSION,
           ...(name ? { name } : {}),
           ...(sessionToken ? { sessionToken } : {}),
         });
