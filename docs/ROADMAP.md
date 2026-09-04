@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-04: Farming V1 + Networking V2 union
+
+- [x] Integrate PR #42 (`e5c77f3`) onto Farming `main` (`aa0ee07`) without dropping IDs 150–157 or `tickFarming`.
+- [x] Keep V2 FIFO / `ackCommandSeq` / prediction / serverTick interpolation / protocol 3.
+- [x] Keep Farming protocol `hydrated`/`age` and server/SP `FarmingSystem`.
+- [x] Replace latest-input chase/snap characterization tests with the V2+Farming contract.
+- [ ] Owner two-client walk/sprint/jump/remote/farming QA on a new world.
+
 ## 2026-09-04: Farming V1
 
 - [x] Add stable appended block IDs 150–157 and farming item IDs without renumbering existing content.
@@ -9,7 +17,202 @@
 - [x] Cover water boundaries, planting/tilling matrix, inactive chunks, RNG/bounds, persistence, server concurrency/coalescing, rendering batches, recipes/food, and 1024/4096-position performance.
 - [x] Add DEV `?qaFarming=1` and complete automated visual smoke for farmland, stages, stems/fruits, hoes, Bone Meal, and item sprites.
 - [ ] Owner manual gameplay acceptance: native pointer lock, save/reload UX, furnace/crafting screens, F5/overlay, and two visible Online clients including reconnect/server restart.
-- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.
+- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.## 2026-09-04: Online networking v2 integration
+
+- [x] Integration branch `cursor/online-networking-v2-integrated-3ff8` off BASE `cursor/online-networking-v2-3ff8` (no main merge).
+- [x] Strict block intent: `targetBlockId`, historical `commandSeq` pose, A or reject.
+- [x] Bow draw survives stale FIFO `use:false`; captured aim; 20× draw→release tests.
+- [x] FIFO overflow compact continuous-state only; `queueCompacted` range; no silent drop.
+- [x] Live-state invariant: checkpoint + pending == PlayerController after ACK/correction/compact/resync.
+- [x] Adaptive remote interp on serverTick: 12 samples, delay grows only after underflow, bounded recovery, teleport snap.
+- [x] Reconnect clears mining/bow hold; hidden-tab resync still snaps with empty pending.
+- [ ] Owner two-client live QA on a real desktop (cloud VM ~4 FPS; remote delay hit 180 ms / underflow). Keep PR draft.
+- [x] Farming V1 is on `main`; this union keeps it.
+- [ ] Owner two-client live QA on Farming+V2 (new world).
+
+## 2026-09-04: Online networking v2
+
+- [x] Phase 0 baseline call graph / temporal axes (`docs/reports/2026-09-04_online-networking-v2-baseline.md`).
+- [x] Explicit block action intent (validate A or reject, never B).
+- [x] Explicit bow release aim (immutable after send).
+- [x] FIFO movement command timeline + `ackCommandSeq` / `appliedSteps`.
+- [x] Reconciliation: accepted ACK does not mutate live motion; mismatch replays.
+- [x] Remote server-tick interpolation telemetry (PR #38 clock kept).
+- [x] Session/reconnect: queue + actionSeq reset on `resetConnectionInput`; hide still sends idle.
+- [x] Remove latest-input jump OR / use-edge bow fire / Model B extraTicks compare.
+- [x] Protocol bump to 2. Tests + typecheck.
+- [ ] Owner two-client live QA (local / block / bow / remote matrix). Keep PR draft until confirmed.
+- [ ] Do not merge main.
+
+## 2026-09-04: Local interaction aim (live look)
+
+- [x] Trace camera RAF look vs 20 TPS `PlayerController.viewDirection` raycast/bow.
+- [x] One `localInteractionAim` source: player eye + `InputManager` yaw/pitch.
+- [x] Refresh selection outline every render; break/place/bow use the same aim.
+- [x] Do not change fixed-tick physics, server authority, or remote interpolation.
+- [x] Tests: live look vs stale tick look; selection===action; bow matches camera; unchanged look matches controller.
+- [ ] Owner: look between two logs — outline matches crosshair; bow flies along first-person aim.
+- [ ] Do not merge main.
+
+## 2026-09-03: Remote player interpolation v1
+
+- [x] Server-tick snapshot buffer per remote (`player_state.tick`), not packet arrival time.
+- [x] Local render clock: `latestServerTick + elapsedSinceLatest - 2 ticks` (100 ms delay).
+- [x] Linear xyz/pitch/velocity, shortest-path yaw, midpoint booleans. Bounded 100 ms velocity extrapolation, then hold the capped pose.
+- [x] Hold the first snapshot until a timeline exists. Rejoin resets the buffer. Despawn disposes it.
+- [x] Drive `PlayerVisualAnimator` from interpolated velocity + grounded/sprint/sneak. Actions stay false/0.
+- [x] DEV F3 nearest-remote HUD + `?remoteDiag=1` 1 Hz timeline log.
+- [x] Deterministic tests A–K + irregular arrival + yaw wrap + telemetry.
+- [ ] Owner two-client QA: A walks/sprints/jumps/strafes/flies, B observes. F3/`?remoteDiag=1` buffer healthy, underflow ~0 on localhost.
+- [ ] Remote attack/mining/bow/eating sync — **next PR**, not this one.
+- [ ] Do not merge main. Do not touch local prediction / PlayerController / server TPS.
+
+## 2026-09-03: Online Creative Flight permission (PR #37)
+
+- [x] Prove live stationary-flight dump: server hover `fly=true vy=0`, client prediction `fly=false` + gravity.
+- [x] Trace `creativeFlightAllowed` on live Online controller vs scratch vs snapshot gamemode. SP sets it every tick; Online did not.
+- [x] Sync permission on welcome/startSession, tickOnline, snapshot-before-reconcile, inventory, respawn, reconnect. Copy it onto prediction scratch.
+- [x] Stationary hover 10s / flight forward / SHIFT / reconnect / alt-tab / walk-jump tests. No Y-tolerance / smoothing / timeline redesign.
+- [ ] Owner: Normal Online stationary Creative Flight — no rapid Y oscillation, `corr/s=0`, same as Singleplayer.
+- [ ] Do not merge main.
+
+## 2026-09-03: checkpoint extra source (PR #37)
+
+- [x] Trace live `extra=3` with `tickGap=1 physicsTicks=1`: `extraTicks = simTicks = serverTick - lastAckedServerTick`, not seqGap.
+- [x] Prove latest-only pending slot + lastStateTick-on-receive makes lastAckedServerTick stale.
+- [x] Dump real extra assignment site, pending overwrites, applied per-tick input, checkpoint/comparable/server y/vy.
+- [x] Stationary flight Y jitter was Creative Flight permission (not leftover vy / extra ticks).
+- [ ] Do not merge main.
+
+## 2026-09-03: prediction checkpoint (PR #37)
+
+- [x] Timeline simulator: client seqs vs latest-input server ticks; reproduce `seq=545 gap=2 physicsTicks=1`.
+- [x] Model B: compare last-accepted pose + `simTicks` of snapshot latest input. `inputSeq` is state, not the checkpoint. `serverTick` is the checkpoint.
+- [x] Do not patch seqGap / tolerance / lerp / FIFO.
+- [x] Lockstep 1:1 still accepts; coalesce 2-vs-1 now accepts on checkpoint (history[N] still one walk step ahead).
+- [ ] Owner: one tab localhost walk/sprint/strafe/jump/flight/flight+SHIFT/stationary flight → `corr/s=0`, visually ≈ `predNoState`.
+- [ ] Do not merge main.
+
+## 2026-09-03: one-correction diagnostic (PR #37)
+
+- [x] Full `[corrDiag:first]` dump: seq, timing, physicsTicks, input, history vs snapshot, world, firstDiff.
+- [x] Prove `physicsTicks` compare path (`history[N]` vs `history[N]+extra`). Do not treat `inputSeq` as a physics tick.
+- [x] Lockstep pose dumps 1/2/3/10/20: stationary, walk, strafe, jump, flight, flight+SHIFT. WorldInstance 1:1 vs `predictLocalMove` matches on Anarchy.
+- [ ] Owner: `http://localhost:4173/?corrDiag=1`, one tab, W 5s, paste the first dump. No fix until that exists.
+- [ ] Do not merge main.
+
+## 2026-09-03: hidden-tab Page Visibility (PR #37)
+
+- [x] Prove single-tab hide/show desync: BACKGROUND skips tickOnline, server keeps lastInput, duplicate-seq ignore, 4-tick catch-up.
+- [x] DEV visibility probe + F3 `visibility/focus/hiddenDurationMs/resumeTicks/resumeSnapshots` + server `inGap/inBurst`.
+- [x] Hide → one idle; resume → clock reset + authoritative resync (no physics/tolerance/TPS change).
+- [x] Tests: 2 s freeze, 5× walk, flight+SHIFT; legacy corr storm vs policy corr=0.
+- [ ] Owner: one game tab, switch away 1–2 s, return; walk then flight+SHIFT. Expect immediate stable movement, not a corr storm.
+- [ ] Do not merge main.
+
+## 2026-09-03: session isolation + event-loop / reconnect load (PR #37)
+
+- [x] One logical player = one movement socket; resume invalidates the old connection.
+- [x] DEV session fingerprint / connectionId / activeSockets on F3 (never log the token).
+- [x] Per-chunk modification serialize; budget new chunk generates on the tick loop.
+- [x] Client longtask/frameSpike + server lateness/ELD/callback diagnostics.
+- [x] DEV `?quietWorld=1` for a 1-chunk load isolation run.
+- [ ] Owner: **one tab only** — walk/sprint/jump/strafe/flight/fly+SHIFT; record F3 loop/sess lines.
+- [ ] Do not merge main.
+
+## 2026-09-03: 20 TPS server clock + catch-up comparable snapshots (PR #37)
+
+- [x] Prove corr/s≈3 is 17 Hz snapshots vs 20 Hz prediction (catch-up 2-tick pose vs history[N]).
+- [x] Absolute `setTimeout` slot so localhost outer loop stays ~20 Hz.
+- [x] `player_state.physicsTicks` + coalesced compare; do not hide pose error with lerp/tolerance.
+- [x] DEV tickClock on F3; log every correction.
+- [ ] Owner localhost: walk/sprint/jump/strafe/flight/fly+SHIFT corr/s=0 vs `predNoState`.
+- [ ] Do not merge main.
+
+## 2026-09-03: Incoming local `player_state` side effects (PR #37)
+
+- [x] Owner A/B: `predNoState` smooth vs normal jitter → isolate incoming `player_state`.
+- [x] Pose-only accept (xz/y); speed/onGround/flying are softReject, not restore+replay.
+- [x] Queue local snapshot apply to the next 20 TPS tick; skip unchanged survival restore.
+- [x] DEV `?predStateObserve=1` + category skips; keep `predNoState` and `[firstBadEvent]`.
+- [x] Regression: matching-pose snapshots with wrong `vy` do not rewind or jitter render.
+- [ ] Owner localhost: Normal Online walk/sprint/jump/strafe/flight/fly+SHIFT should match `predNoState`.
+- [ ] Do not merge main.
+
+## 2026-09-03: Online network-path isolation (PR #37)
+
+- [x] Split `predNoNet` into independent DEV `predNoState` / `predNoSend`; F3 labels.
+- [x] Trace every local-player network mutation; first visible jitter dump.
+- [x] Accepted local `player_state` is a motion/render no-op (no look/riding/gamemode writes unless changed).
+- [x] Optional input `clientSentAt` and snapshot `netTiming` for localhost seq RTT.
+- [ ] Owner localhost 4-mode matrix: normal / noState / noSend / noNet; walk/sprint/jump/strafe/flight/fly+SHIFT.
+- [ ] Do not merge main.
+
+## 2026-09-03: LocalPlayerRenderState (PR #37)
+
+- [x] Revert frame-origin `previousPosition` restore (can move backward toward S1).
+- [x] Separate render poses from physics `previousPosition`; interpolate adjacent sim states.
+- [x] Prove 0/1/2/3-tick timelines; synthetic 60–165 FPS monotonic; SP vs no-net vs lockstep.
+- [x] F3 signed render/camera deltas; `?predNoNet=1`.
+- [ ] Owner localhost: Online vs SP vs `?predNoNet=1`; F3 `neg/s=0` on flat ground.
+- [ ] Do not merge main.
+
+## 2026-09-02: Fixed-step interpolation window (PR #37)
+
+- [x] Prove leftover/dt lerp against last-inner `previousPosition` hitch-steps ~one physics tick on a 2-tick frame (`corr/s=0`).
+- [x] Restore render origin to the pose before this frame's ticks in `Game.frame` (SP + Online).
+- [x] Regression: two-tick hitch timeline + hitchy 60 Hz walk SP/Online; no extra lerp/smoothing/tolerance.
+- [ ] Owner localhost QA: walk/sprint/jump/strafe/flight/fly+SHIFT; F3 `corr/s=0`; hitch should not teleport.
+- [ ] Do not merge main.
+
+## 2026-09-02: Diagnose Online corrections + 20 TPS catch-up (PR #37)
+
+- [x] Instrument one `kind=corrected` dump (seq, history, snapshot, input, world hints, hypotheses).
+- [x] Measure snap gen/sent/recv/drop; F3 `state/s=18` vs `prd/s=20` was server interval drift.
+- [x] Lockstep client vs server PlayerController: identical; 2-vs-1 latest-input is ~one walk step.
+- [x] Server catch-up with a single trailing `player_state` (no FIFO, no lerp, no tolerance change).
+- [ ] Owner localhost QA: clean walk `corr/s≈0` `state/s≈20`; sprint/strafe/jump/flight; bow/stop/remesh still immediate.
+- [ ] Do not merge main.
+
+## 2026-09-02: Remove Online movement FIFO (PR #37)
+
+- [x] Diagnose 300–400 ms feel + 3–4 s bow delay as `inputQueue` (64 × 50 ms).
+- [x] Restore latest-input movement; latch jump and use-release; keep attack/break/place immediate.
+- [x] Snapshot `inputSeq` = last received seq used this tick; do not replay skipped movement seqs.
+- [x] DEV bow timing (`FC_DEBUG_BOW=1`, `?bowDiag=1`).
+- [x] Tests: burst/latest seq, 64-packet no backlog, stop, jump latch, bow fire next tick.
+- [ ] Owner localhost QA: immediate move/stop/look/flight; bow release within a tick; remesh still instant.
+- [ ] Do not merge main.
+
+## 2026-09-02: Online local-motion pipeline vs singleplayer (PR #37)
+
+- [x] Trace SP vs Online input → fixed step → PlayerController.tick → previousPosition/position → alpha → camera.
+- [x] Prove accept-path is side-effect free; remaining 20 Hz was lastInput coalescing rewinding onto previousPosition.
+- [x] Server latest-input (FIFO queue reverted — it caused 300–400 ms feel and 3–4 s bow delay); do not collapse lerp except true snap.
+- [x] DEV F3 local-player motion HUD + `?motionDiag=1` 2 s trace.
+- [x] Pipeline numeric comparison (SP / 1:1 / coalesce / queue) + prediction/server/remesh tests.
+- [ ] Owner localhost QA: walk/sprint/jump/strafe/flight vs singleplayer; F3 `corr/s=0`.
+- [ ] Do not merge main.
+
+## 2026-09-02: Online Anarchy prediction-history jitter fix (PR #37)
+
+- [x] Store predicted movement state after each local `input.seq`.
+- [x] Compare `player_state` to the predicted pose at that seq; skip rewind when within tolerance.
+- [x] Duplicate/coalesced server `inputSeq` semantics (lastInput once per tick).
+- [x] Focused tests: accept/no-touch, delayed snapshot, correction+replay, coalescing, walk/sprint/jump/fly/descend, snap, reconnect.
+- [x] DEV F3 prediction debug line (`Pred accept|corrected|…`).
+- [ ] Owner two-client localhost QA vs singleplayer feel.
+- [ ] Do not merge main.
+
+## 2026-09-02: Online Anarchy local prediction + urgent block remesh
+
+- [x] Investigate client/server movement: `tickOnline` sent input, waited for `player_state`, then chased X/Y/Z with `stepTowardTarget`.
+- [x] Client-side prediction + seq ack + rewind/replay on the existing `PlayerController`; no second physics system; GRAVITY/JUMP unchanged; SP physics unchanged.
+- [x] Urgent live-mutation remesh (dirty chunk + border neighbors) without raising `WORLD_JOB_BUDGET_MS`.
+- [x] DEV-only `FC_DEBUG_TICK_MS` plus measured walk/jump ticks; no production profiler; no guess-fix (ordinary ticks ≪ 50 ms).
+- [x] Targeted tests for prediction, jump/landing, snap, reconnect, urgent remesh, server tick latency.
+- [ ] Owner manual QA: walk/sprint/jump series, place/break (including underfoot and chunk border), door/slab/rail/torch, hitch feel.
+- [ ] Do not merge main.
 
 ## 2026-09-02: integrate UI PR #22 with server + breaking + player main
 

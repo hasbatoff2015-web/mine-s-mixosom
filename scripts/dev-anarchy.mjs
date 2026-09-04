@@ -6,7 +6,7 @@ const children = [
   spawn('npx', ['vite', '--host', '0.0.0.0'], { stdio: 'inherit', env, shell: true }),
 ];
 
-const stop = (): void => {
+const stop = () => {
   for (const child of children) child.kill('SIGTERM');
 };
 

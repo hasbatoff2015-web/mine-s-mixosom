@@ -20,6 +20,6 @@
   "include": [
     "types/sim-globals.d.ts",
     "server/**/*.ts",
-    "shared/protocol.ts"
+    "shared/**/*.ts"
   ]
 }

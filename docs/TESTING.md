@@ -1,5 +1,12 @@
 # Тестирование
 
+## 2026-09-04 Farming V1 + Networking V2 union
+
+Report: `reports/2026-09-04_farming-networking-v2-union.md`.
+
+- Protocol 3 + FIFO + prediction + serverTick remote samples + Farming IDs 150–157 + `hydrated`/`age`.
+- Directed: `tests/farming-networking-v2-integration.test.ts` plus existing V2/Farming suites.
+
 ## 2026-09-04 Farming V1
 
 Report: `reports/2026-09-04_farming-core.md`. Baseline/integration main: `4d803e5de22e551e3f71941c0abb03c91e78cf4c`.
@@ -11,7 +18,213 @@ Report: `reports/2026-09-04_farming-core.md`. Baseline/integration main: `4d803e
 - `npm run benchmark:farming`: 1024 indexed/visited in **6.066 ms**, 4096 in **13.908 ms**; no state/fruit writes in the dry benchmark fixture and no per-position timer.
 - `build`, `check:size`, `check:archive` — PASS at **3.91 MiB / 326 files**. The source/public/dist audit verified 43 required assets (129 exact-case PNG copies), all 32×32 with identical SHA-256.
 - Exact-main full suite (`4d803e5`, same command/environment): **113/122 files and 1253/1267 tests passed; 14 tests plus one parse-suite failed; 2 RPC errors**. Farming: **121/127 files and 1291/1303 tests passed; 12 tests plus one parse-suite failed; 2 RPC errors**. All 36 added tests passed and Farming introduced no failure class; its failures are a strict subset of the established main reference-parser and CPU-sensitive lighting/worldgen/fire/minecart/streaming classes.
-- Actual in-app WebGL `?qaFarming=1`: dry/wet farmland, water channels, Wheat ages 0–7, Carrot/Potato stage mapping, attached Melon/Pumpkin stems, both fruits, five hoes, Bone Meal, seeds/foods rendered without missing textures. Manual native SP/two-client interaction remains owner QA.
+- Actual in-app WebGL `?qaFarming=1`: dry/wet farmland, water channels, Wheat ages 0–7, Carrot/Potato stage mapping, attached Melon/Pumpkin stems, both fruits, five hoes, Bone Meal, seeds/foods rendered without missing textures. Manual native SP/two-client interaction remains owner QA.## 2026-09-04 Online networking v2
+
+Report: `reports/2026-09-04_online-networking-v2.md`.
+
+```text
+npx vitest run \
+  tests/player-command-queue.test.ts \
+  tests/block-action-intent.test.ts \
+  tests/bow-release-intent.test.ts \
+  tests/online-networking-v2-contract.test.ts \
+  tests/local-player-prediction.test.ts \
+  tests/prediction-timeline.test.ts \
+  tests/checkpoint-extra-source.test.ts \
+  tests/local-motion-pipeline.test.ts \
+  tests/server/client-server-lockstep.test.ts \
+  tests/server/anarchy-server.test.ts \
+  tests/remote-player-interpolation.test.ts \
+  tests/hidden-tab-motion.test.ts
+```
+
+Contracts: FIFO applies one queued command per physics tick; sticky last when empty; `history[ackCommandSeq]` accept does not mutate live pose; catch-up of extra sticky ticks is a classified correction; client target A vs server ray B never becomes B; bow release aim is captured and later yaw is ignored; remote samples stay on `serverTick`; protocol 1 join is rejected.
+
+Manual two-client: see the report checklist. Client and server must both be protocol 2.
+
+## 2026-09-04 Local interaction aim
+
+Report: `reports/2026-09-04_local-aim-desync.md`.
+
+```text
+npx vitest run tests/local-aim.test.ts tests/player-main-integration.test.ts tests/camera-look.test.ts tests/use-interaction.test.ts
+```
+
+Contracts: when `PlayerController` look is still the last tick and `InputManager` look has moved, the live-aim raycast hits the camera block (not the stale tick block); selection and action share origin/direction; bow direction matches `viewDirectionFromLook(live yaw/pitch)` and differs from stale `player.viewDirection()`; unchanged look matches the controller. Game targeting does not use `session.player.viewDirection()` or `camera.getWorldDirection`. Physics/TPS/remote interpolation unchanged. Manual: look between two logs — outline matches crosshair.
+
+## 2026-09-03 Remote player interpolation
+
+Report: `reports/2026-09-03_remote-player-interpolation.md`.
+
+```text
+npx vitest run tests/remote-player-interpolation.test.ts tests/remote-player-view.test.ts tests/remote-interp-diagnostics.test.ts tests/entity-snapshot-interpolation.test.ts
+```
+
+Contracts: perfect 20 Hz samples render two ticks behind latest; irregular arrival (50/90/35/75/45 ms) keeps monotonic server-tick motion and the same pose as even spacing at the same `renderTick`; batched snapshots do not snap to the newest pose; missing tick 102 lerps 101→103; duplicates/stale never rewind; 50 ms / 100 ms velocity extrapolation then hold the capped pose; one snapshot holds; yaw wraps shortest-path; booleans are not lerped; `?remoteDiag=1` formats HUD; PlayerVisual locomotion comes from interpolated velocity. Entity interpolation still uses arrival-time 80 ms and is uncoupled from remotes. Local prediction / PlayerController / server TPS unchanged.
+
+Manual (two clients): `http://localhost:4173/?remoteDiag=1` on observer. See checklist in the report.
+
+## 2026-09-03 Online Creative Flight permission
+
+Report: `reports/2026-09-03_online-creative-flight-permission.md`. PR #37.
+
+```text
+npx vitest run tests/online-creative-flight-prediction.test.ts tests/creative-flight.test.ts tests/local-player-prediction.test.ts tests/correction-diag-dump.test.ts tests/player-main-integration.test.ts tests/server/client-server-lockstep.test.ts tests/hidden-tab-motion.test.ts
+```
+
+Contracts: unsynced Online `predictLocalMove` with `creativeFlightAllowed=false` falls while server hover stays `vy=0 fly=true`; scratch without permission clears `isFlying`; scratch/copy from live or snapshot `gamemode=creative` keeps hover; SP vs Online hover 200 ticks `corr=0`; flight forward / SHIFT / reconnect / alt-tab accept; survival walk/jump do not fly. `tickOnline` sets permission **before** `predictLocalMove`. `applyLocalPlayerSnapshot` sets it **before** reconcile. No physics/tolerance/timeline change. Manual: Creative Online, fly, release keys 10 s — no Y oscillation, `corr/s=0`.
+
+## 2026-09-03 Checkpoint extra source
+
+Report: `reports/2026-09-03_checkpoint-extra-source.md`. PR #37.
+
+```text
+npx vitest run tests/checkpoint-extra-source.test.ts tests/correction-diag-dump.test.ts tests/local-player-prediction.test.ts tests/server/client-server-lockstep.test.ts
+```
+
+Contracts: `simulationTicksFromServerTick(13771, 13774, 1)===3`; old extra formula `max(0,1-3)===0`; pending overwrite 2 + lastStateTick-on-receive → tickGap=1 extra=3 extra===simTicks; mixed seqs 3-tick replay corrects xz; hover leftover vy extra=3 vs 1 server tick corrects y. Dump prints APPLIED INPUT TIMELINE and `extra is NOT max(0, physicsTicks-seqGap)`. No physics/tolerance change. Manual: `?corrDiag=1`, paste extra=3 dump + hover `firstDiff=y`.
+
+## 2026-09-03 Prediction checkpoint
+
+Report: `reports/2026-09-03_prediction-checkpoint.md`. PR #37.
+
+```text
+npx vitest run tests/prediction-timeline.test.ts tests/local-player-prediction.test.ts tests/correction-diag-dump.test.ts tests/server/client-server-lockstep.test.ts tests/server-tick-clock.test.ts tests/hidden-tab-motion.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts
+```
+
+Contracts: owner dump `seqGap=2 physicsTicks=1` → history would correct (~walkStep), checkpoint accepts; 1:1 and phase batches checkpoint corr=0; flight+SHIFT 2-vs-1 checkpoint corr=0; Anarchy lockstep 1:1 accepts on `checkpoint`; coalesce 2-vs-1 accepts; catch-up uses `simTicks` from `physicsTicks` or `serverTick` delta. No lerp / tolerance / FIFO / seqGap special cases. Manual QA: one tab, Normal Online ≈ `predNoState`, `corr/s=0` for walk/sprint/strafe/jump/flight/flight+SHIFT/stationary flight.
+
+## 2026-09-03 One-correction diagnostic
+
+Report: `reports/2026-09-03_one-correction-diag.md`. PR #37.
+
+```text
+npx vitest run tests/correction-diag-dump.test.ts tests/server/client-server-lockstep.test.ts tests/local-player-prediction.test.ts tests/move-sim-compare.test.ts tests/server-tick-clock.test.ts tests/hidden-tab-motion.test.ts
+```
+
+Contracts: extra-tick formula (`physicsTicks=1` → history[N]; `=2`/`seqGap=1` → +1 extra); dump contains SEQ/TIMING/PHYSICS/INPUT/POSE/DIFF/STATE/WORLD; PlayerController lockstep identical 1…20 including flight hover; WorldInstance 1:1 walk matches; 2-seq client vs 1 server tick dumps `firstDiff=z` ≈ walkStep; `tickCatchUp(2)` accepts only with `physicsTicks=2`. No physics/tolerance change. Manual QA: `?corrDiag=1`, one tab, paste `[corrDiag:first]`.
+
+## 2026-09-03 Hidden-tab Page Visibility
+
+Report: `reports/2026-09-03_hidden-tab-visibility.md`. PR #37.
+
+```text
+npx vitest run tests/hidden-tab-motion.test.ts tests/local-player-prediction.test.ts tests/fixed-step.test.ts tests/server-tick-clock.test.ts
+```
+
+Contracts: BACKGROUND skips client ticks; a 2 s frame delta is clamped to 4 catch-up ticks; legacy hide leaves pred/send at 0 while the server walks and duplicate-seq ignores the frozen pose (correction ~walk×hiddenSeconds); resume policy sends one idle, resets the clock, force-resyncs, and 5× walk plus flight+SHIFT stay at corr=0. Physics/tolerance/TPS unchanged. Manual QA: **one game tab**, hide 1–2 s, return.
+
+## 2026-09-03 Session isolation + event-loop load
+
+Report: `reports/2026-09-03_session-isolation-event-loop.md`. PR #37.
+
+```text
+npx vitest run tests/server/anarchy-server.test.ts tests/server/tick-load-flight.test.ts tests/session-fingerprint.test.ts tests/quiet-world.test.ts tests/longtask-monitor.test.ts tests/server-tick-clock.test.ts
+```
+
+Contracts: live resume kicks the old socket; stale `connectionId` cannot `applyInput` or `disconnect` the live player; snapshots go only to the new sink; `serializeChunkModifications` does not dump the whole world; `setView` into new columns stays under a 50 ms tick budget on the test map; `?quietWorld=1` caps rd=1. Physics/prediction/tolerance unchanged. Manual QA: **one browser tab**.
+
+## 2026-09-03 Server tick clock and catch-up snapshots
+
+Report: `reports/2026-09-03_server-tick-clock-corrections.md`. PR #37.
+
+```text
+npx vitest run tests/server-tick-clock.test.ts tests/local-player-prediction.test.ts tests/move-sim-compare.test.ts tests/server/anarchy-server.test.ts
+```
+
+Contracts: drift `setTimeout(tickMs-work)` is ~17 snapshots/s with ~20 physics ticks; absolute slots stay ~20/20; `tickCatchUp(2)` still one snapshot with `physicsTicks=2`; 2-tick catch-up pose corrects if compared as 1 tick and accepts with `physicsTicks=2`. No lerp/tolerance change.
+
+## 2026-09-03 Incoming local `player_state` side effects
+
+Report: `reports/2026-09-03_player-state-incoming-side-effects.md`. PR #37.
+
+```text
+npx vitest run tests/pred-isolation-flags.test.ts tests/pred-isolation-matrix.test.ts tests/local-player-prediction.test.ts tests/player-main-integration.test.ts
+```
+
+Contracts: matching xz/y ack does not write velocity/flying/onGround even if those disagree; `inspectPredictedPlayer` is a dry-run; `predStateObserve` implies noState; category skips parse in DEV; fly+SHIFT-style `vy` mismatch must not correct; xz mismatch still corrects; firstBadEvent includes `soft=`. Physics/remesh unchanged.
+
+## 2026-09-03 Online network-path isolation
+
+Report: `reports/2026-09-03_online-network-path-isolation.md`. PR #37.
+
+```text
+npx vitest run tests/pred-isolation-flags.test.ts tests/pred-isolation-matrix.test.ts tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/local-player-render-state.test.ts tests/urgent-block-mesh.test.ts
+```
+
+Contracts: DEV flags (`predNoNet` = send+state; independent `predNoState` / `predNoSend`; production ignores them); 4-mode walk matrix (lockstep accept never mutates; noState matches noNet; noSend duplicate idle snapshots do not rewind); accepted ack is a full-field no-op; firstBadEvent captures the first large online render jump. Physics/remesh unchanged.
+
+## 2026-09-03 LocalPlayerRenderState
+
+Report: `reports/2026-09-03_local-player-render-state.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-render-state.test.ts tests/fixed-step.test.ts tests/local-motion-pipeline.test.ts tests/local-player-prediction.test.ts tests/urgent-block-mesh.test.ts
+```
+
+Contracts: 0/1/2/3-tick adjacent-pair timelines (2 ticks do not lerp back to S1); synthetic 20 TPS at 60/120/144/165 FPS has zero negative render deltas; SP, no-net prediction, and lockstep Online match at 155 FPS; physics `previousPosition` is not the render origin. DEV F3 `rΔ` / camera; `?predNoNet=1`.
+
+## 2026-09-02 Fixed-step interpolation window
+
+Report: `reports/2026-09-02_fixed-step-interpolation.md`. PR #37.
+
+```text
+npx vitest run tests/fixed-step.test.ts tests/local-motion-pipeline.test.ts tests/local-player-prediction.test.ts tests/urgent-block-mesh.test.ts
+```
+
+Contracts: leftover/dt against last-inner `previousPosition` hitch-steps one walk tick on a 2-tick frame; restoring origin keeps the render step small and the following 0-tick frame monotonic; SP and Online match on hitchy 60 Hz walk with `corr/s=0`; 1-tick restore is a no-op; ticks=0 does not rewrite previousPosition. Networking/prediction tests unchanged.
+
+## 2026-09-02 Correction diagnosis + 20 TPS catch-up
+
+Report: `reports/2026-09-02_online-correction-diagnosis.md`. PR #37.
+
+```text
+npx vitest run tests/move-sim-compare.test.ts tests/correction-diagnostics.test.ts tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/server/anarchy-server.test.ts tests/server/tick-latency.test.ts
+```
+
+Contracts: lockstep identical at 1/2/5/10/20; 2 client vs 1 server latest-input ≈ one walk step; 2=2 aligned; `tickCatchUp(2)` one snapshot; `/predsim`; FIFO/bow/prediction tests unchanged. DEV `?corrDiag=1`, `FC_DEBUG_SNAP=1`, `/predsim`.
+
+## 2026-09-02 Remove Online movement FIFO
+
+Report: `reports/2026-09-02_online-input-queue-revert.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/player-main-integration.test.ts tests/urgent-block-mesh.test.ts tests/server/anarchy-server.test.ts
+```
+
+Contracts: latest-input burst (one physics step); 64 packets do not take 3.2 s; stop on latest idle; jump latch; creative flight/descend latest-input; bow press via `interact` is immediate; bow release on the next tick after `use:false`; matching ack still no-touch; urgent remesh unchanged. DEV `FC_DEBUG_BOW=1` / `?bowDiag=1`.
+
+## 2026-09-02 Online local-motion pipeline (SP vs Online)
+
+Report: `reports/2026-09-02_online-local-motion-pipeline.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/local-motion-pipeline.test.ts tests/player-main-integration.test.ts tests/urgent-block-mesh.test.ts tests/server/anarchy-server.test.ts
+```
+
+Contracts: SP and 1:1 online walk produce the same 60 fps render-step stats; 1:1 snapshots accept with `acceptMutated=false`; lastInput coalesce (10 Hz) documents lerp collapse; latest-input 20 Hz with phase offset does not backlog movement; small correction keeps `previousPosition`; urgent remesh unchanged. F3 `Motion` HUD; `?motionDiag=1` console trace. FIFO `inputQueue` was reverted — see the 2026-09-02 remove-FIFO section.
+
+## 2026-09-02 Online Anarchy prediction-history jitter fix
+
+Report: `reports/2026-09-02_online-prediction-jitter.md`. PR #37.
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/player-main-integration.test.ts
+```
+
+Contracts: matching ack does not touch live pose/previousPosition; delayed snapshot does not jitter; duplicate inputSeq ignored; mismatch rewinds only seq > N; coalesced lastInput; walk/sprint/jump/fly/descend/strafe/snap/reconnect.
+
+## 2026-09-02 Online Anarchy prediction + urgent remesh
+
+Report: `reports/2026-09-02_online-prediction-remesh.md`. Branch: `cursor/online-prediction-remesh-86e1` from `origin/main` `4d803e5`.
+
+Targeted:
+
+```text
+npx vitest run tests/local-player-prediction.test.ts tests/urgent-block-mesh.test.ts tests/player-main-integration.test.ts tests/authoritative-motion.test.ts tests/online-session-transition.test.ts tests/inactive-client-world-sync.test.ts tests/network-block-state-respawn.test.ts tests/server/tick-latency.test.ts
+```
+
+Contracts: prediction without snapshots; rewind+replay unacked seq; jump arc / landing; stale snapshot does not drop Y; ack does not re-jump; snap ≥ 6; reconnect seq reset; `tickOnline` uses `applyPredictedTick` not `stepTowardTarget`; urgent remesh with `allowPendingLighting` and no `WORLD_JOB_BUDGET_MS` bump; ordinary walk/jump server ticks < 50 ms.
 
 ## 2026-09-02 PR #22 post-server + player integration
 
@@ -440,6 +653,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/entity-lighting.test.ts` | 4 | Daylight mob brightness, unlit cave darkness, warm torch tint, feet/torso/head averaging |
 | `tests/entity-interpolation.test.ts` | 3 | Render lerp at α=0.5, shortest-yaw wrap, snap on large correction |
 | `tests/fixed-step.test.ts` | 3 | ~20 ticks / 60 Hz second, 300 ms stall capped at `MAX_CATCH_UP_TICKS`, leftover accumulator |
+| `tests/local-player-render-state.test.ts` | 8 | 0/1/2/3-tick adjacent-pair timelines; synthetic 60/120/144/165 FPS monotonic |
 | `tests/world-loading.test.ts` | 4 | No gameplay/pointer lock in `LOADING_WORLD`, ready radius, monotonic progress, generate/light/mesh required |
 | `tests/dirty-queue.test.ts` | 4 | 20 edits → 1 pending mesh, boundary neighbor only, interior no extra chunks, follow-up after rebuild |
 | `tests/lighting-jobs.test.ts` | 6 | Skip lighting on grass→air, torch flood, furnace emission, deferred light dedupe, no full-chunk sky storm, lava emitter light stable after settle without remesh churn |

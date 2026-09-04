@@ -28,6 +28,11 @@ export {
   type SimulationEventSink,
 } from './simulationEvents';
 export {
+  ACTION_REACH,
+  resolveClientTargetVersusServerRay,
+  validateBlockTargetIntent,
+} from './actionValidation';
+export {
   cartIsCloser,
   clearDoorBlocks,
   doorHalves,

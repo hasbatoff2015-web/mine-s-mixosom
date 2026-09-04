@@ -1,13 +1,37 @@
 import { BlockId, type BlockRenderState } from '../blocks';
+import { CHUNK_SIZE, chunkKey, floorDiv, positiveMod } from '../core/constants';
+import { neighborFluidMeshOffsets } from './worldJobs';
 import type { VoxelWorld } from './World';
 
-/** One networked voxel write: block id plus optional render/fluid state. */
+export const URGENT_MUTATION_MESH_LIMIT = 3;
+export const URGENT_MUTATION_MESH_BUDGET_MS = 2;
 export interface NetworkBlockChange {
   readonly x: number;
   readonly y: number;
   readonly z: number;
   readonly blockId: number;
   readonly state?: BlockRenderState;
+}
+
+/**
+ * Chunks whose mesh must update for a live voxel write, including border
+ * neighbors that share faces/corners.
+ */
+export function collectMutationMeshKeys(
+  changes: readonly { readonly x: number; readonly z: number }[],
+): string[] {
+  const keys = new Set<string>();
+  for (const change of changes) {
+    const cx = floorDiv(change.x, CHUNK_SIZE);
+    const cz = floorDiv(change.z, CHUNK_SIZE);
+    keys.add(chunkKey(cx, cz));
+    const localX = positiveMod(change.x, CHUNK_SIZE);
+    const localZ = positiveMod(change.z, CHUNK_SIZE);
+    for (const [dx, dz] of neighborFluidMeshOffsets(localX, localZ)) {
+      keys.add(chunkKey(cx + dx, cz + dz));
+    }
+  }
+  return [...keys];
 }
 
 /**
@@ -25,7 +49,7 @@ export interface NetworkBlockChange {
 export function applyNetworkBlockChanges(
   world: VoxelWorld,
   changes: readonly NetworkBlockChange[],
-): { applied: number; chunksDirtied: number } {
+): { applied: number; chunksDirtied: number; meshKeys: string[] } {
   const unique = new Map<string, NetworkBlockChange>();
   for (const change of changes) {
     unique.set(`${change.x},${change.y},${change.z}`, change);
@@ -50,5 +74,6 @@ export function applyNetworkBlockChanges(
   return {
     applied: stats.applied + stateWrites,
     chunksDirtied: world.dirtyChunkCount,
+    meshKeys: collectMutationMeshKeys([...unique.values()]),
   };
 }

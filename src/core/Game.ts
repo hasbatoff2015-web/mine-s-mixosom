@@ -52,11 +52,14 @@ import {
   WORLD_LOADING_LIGHT_BUDGET_MS,
   TARGET_FRAME_MS,
   SEA_LEVEL,
+  CHUNK_SIZE,
   blockKey,
+  chunkKey,
   clamp,
   floorDiv,
 } from './constants';
-import { advanceFixedStep } from './fixedStep';
+import { advanceFixedStep, interpolationAlpha } from './fixedStep';
+import { LocalPlayerRenderState } from './localPlayerRenderState';
 import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
 import {
   chunksInSquareRadius,
@@ -74,6 +77,7 @@ import {
   worldSimulationActive,
 } from './gameplayModal';
 import { GameLifecycleManager } from './Lifecycle';
+import type { LifecycleState } from './lifecycleTypes';
 import { RollingTimingWindow } from './PerformanceStats';
 import {
   DroppedItemManager,
@@ -100,7 +104,14 @@ import { Inventory, createItemStack, damageItem, type ItemStack } from '../inven
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
-import { PlayerController } from '../player';
+import { PlayerController, syncCreativeFlightAllowed } from '../player';
+import {
+  bowSpawnFromAim,
+  formatLocalAimHud,
+  localInteractionAim,
+  viewDirectionFromLook,
+  type LocalAim,
+} from '../player/localAim';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
@@ -157,6 +168,9 @@ import {
   maybeSlowSnapshot,
 } from '../debug/chunkStreamingRuntime';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
+import { LongTaskMonitor } from '../debug/longTaskMonitor';
+import { PageVisibilityProbe } from '../debug/pageVisibilityProbe';
+import { isQuietWorldQueryEnabled, quietWorldRenderDistance } from '../debug/quietWorld';
 import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
@@ -177,24 +191,73 @@ import {
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
 import {
+  captureBlockBreakAbort,
+  captureBlockBreakFinish,
+  captureBlockBreakStart,
+  captureBlockUse,
+  captureBowRelease,
+} from '../net/actionIntent';
+import {
+  actionMessageFromBreakAbort,
+  actionMessageFromBreakFinish,
+  actionMessageFromBreakStart,
+  bowReleaseMessage,
+  interactMessageFromUse,
+} from '../net/onlineActionMessages';
+import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
+import {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
 } from '../net/onlineContainerSync';
 import {
-  clientLookAfterSnapshot,
-  ingestAuthoritativePosition,
   shouldAcceptSnapshot,
   splitPlayerSnapshots,
-  stepTowardTarget,
 } from '../net/authoritativeMotion';
+import {
+  createPredictionBuffer,
+  formatPredictionDebug,
+  inspectPredictedPlayer,
+  predictedMoveFromInput,
+  predictLocalMove,
+  reconcilePredictedPlayer,
+  resetPredictionBuffer,
+  seedPredictionCheckpoint,
+  overwriteLatestSlot,
+  type PredictionBuffer,
+  type ReconcileResult,
+} from '../net/localPlayerPrediction';
+import {
+  evaluateHiddenTabResume,
+  hiddenTabPacketSample,
+  resyncLocalPlayerAfterHiddenTab,
+} from '../net/hiddenTabMotion';
+import { motionProbe, isBowDiagQueryEnabled } from '../net/localMotionDiagnostics';
+import { sampleAabbBlocks, resetFirstCorrectionDump } from '../net/correctionDiagnostics';
+import {
+  blockOverlapsPlayerVolume,
+  captureMotionFull,
+  chunkOverlapsPlayerColumn,
+  diffMotionFull,
+  localNetTrace,
+  logMotionFieldMutations,
+  logNamedMutation,
+  traceLocalPlayerMutation,
+} from '../net/localPlayerNetTrace';
+import {
+  isDevRuntime,
+  resolvePredIsolation,
+  type PredIsolationFlags,
+  type PredIsolationMode,
+} from '../net/predIsolation';
 import {
   applyEntitySnapshots,
   applyInterpolatedEntityVisuals,
   applyNetworkEntityEvents,
 } from '../net/applyEntitySnapshots';
 import { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
+import { formatRemoteInterpHud, isRemoteDiagQueryEnabled } from '../net/remoteInterpDiagnostics';
 import { stepVisualBowUseTicks } from '../input/gameplayKeys';
 import {
   planOnlineRespawnInputRestore,
@@ -218,7 +281,7 @@ import {
   tickGameplayKernel,
   type UseSimulationContext,
 } from '../gameplay';
-import { applyNetworkBlockChanges } from '../world/networkBlockUpdates';
+import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -273,12 +336,57 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  actionSeq: number;
+  prediction: PredictionBuffer;
+  urgentMeshKeys: Set<string>;
   lastViewKey?: string;
   lastStateTick: number;
   lastAliveTick?: number;
-  motion: { target: { x: number; y: number; z: number } };
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
+      lastBlockDiag?: {
+        actionSeq: number;
+        commandSeq: number;
+        target?: string;
+        face?: string;
+        blockId?: number;
+        result?: string;
+      };
+  lastBowDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    clientYaw: number;
+    clientPitch: number;
+    serverYaw?: number;
+    serverPitch?: number;
+    pressCaptured?: boolean;
+    drawStarted?: boolean;
+    releaseCaptured?: boolean;
+    sent?: boolean;
+    result?: string;
+    spawned?: boolean;
+  };
+  miningLocked?: boolean;
+  /** Captured break_start target; finish/abort must not retarget. */
+  miningIntent?: BlockTargetIntent;
+  /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
+  ignoreNetworkSend?: boolean;
+  /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
+  ignoreNetworkState?: boolean;
+  isolationMode?: PredIsolationMode;
+  isolation?: PredIsolationFlags;
+  /**
+   * Latest local `player_state` waiting for the next 20 TPS tick. Applying
+   * inside the WebSocket callback mutates pose between render samples.
+   */
+  pendingLocalSnapshot?: {
+    message: ServerPlayerStateMessage;
+    local: ServerPlayerStateMessage['players'][number];
+  };
+  /** Next local snapshot apply is a hidden-tab resume snap, not a correction. */
+  forceHiddenTabResync?: boolean;
+  /** True when both send and local state are isolated (`predNoNet`). */
+  ignoreNetworkMotion?: boolean;
 }
 
 interface RuntimeSettings {
@@ -334,9 +442,13 @@ export class Game {
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
+  private readonly localRender = new LocalPlayerRenderState();
   private readonly cameraPivot = new THREE.Vector3();
   private readonly cameraTravelDirection = new THREE.Vector3();
   private readonly frontCameraLook = { yaw: 0, pitch: 0 };
+  private readonly localAimOrigin = new Vec3();
+  private readonly localAimDirection = new Vec3();
+  private lastLocalAim: LocalAim | undefined;
   private readonly daySkyColor = new THREE.Color(0x7fb9dc);
   private readonly duskSkyColor = new THREE.Color(0xd9785a);
   private readonly nightSkyColor = new THREE.Color(0x071426);
@@ -400,6 +512,7 @@ export class Game {
   private readonly chat = new ChatLog();
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
+  private readonly longTasks = new LongTaskMonitor();
   private readonly perfScenario = readPerfScenario();
   private worldLoad?: {
     centerX: number;
@@ -439,6 +552,11 @@ export class Game {
   private lastStreamChunkZ = Number.NaN;
   private readonly simParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0 };
   private lastSimParts = { player: 0, mobs: 0, world: 0, combat: 0, entities: 0, other: 0, ticks: 0 };
+  private lastRenderAlpha = 0;
+  private lastOnlineUsing = false;
+  private previousLifecycle: LifecycleState = 'LOADING';
+  private readonly visibilityProbe = new PageVisibilityProbe();
+  private readonly bowDiag = isBowDiagQueryEnabled();
   private readonly litToMeshWaits = new RollingTimingWindow(64);
   private readonly requestToVisibleWaits = new RollingTimingWindow(64);
   private readonly generatedToVisibleWaits = new RollingTimingWindow(64);
@@ -501,6 +619,7 @@ export class Game {
     });
     this.bindLifecycle();
     this.bindWindowEvents();
+    if (isDevRuntime()) this.longTasks.start();
   }
 
   async initialize(): Promise<void> {
@@ -574,6 +693,7 @@ export class Game {
     this.worldStore.close();
     this.yandex.dispose();
     this.profiler.dispose();
+    this.longTasks.dispose();
   }
 
   private showMainMenu(): void {
@@ -614,6 +734,7 @@ export class Game {
   }
 
   private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {
+    const restoreStart = performance.now();
     const world = new VoxelWorld(welcome.seed);
     world.deferredLighting = true;
     world.restore({
@@ -623,6 +744,17 @@ export class Game {
       furnaces: {},
       blockStates: welcome.blockStates,
     });
+    const restoreMs = performance.now() - restoreStart;
+    const modChunks = Object.keys(welcome.modifications ?? {}).length;
+    const blockStateCount = Object.keys(welcome.blockStates ?? {}).length;
+    if (isDevRuntime() && typeof console !== 'undefined') {
+      console.info(
+        `[reconnectLoad] restore=${restoreMs.toFixed(1)}ms modChunks=${modChunks} `
+        + `blockStates=${blockStateCount} player=${welcome.playerId.slice(0, 8)} `
+        + `fp=${welcome.you.session?.tokenFp ?? '—'} socks=${welcome.you.session?.activeSockets ?? '—'} `
+        + `resume=${welcome.you.session?.resumeCount ?? '—'}`,
+      );
+    }
     let inventory: Inventory;
     try {
       inventory = Inventory.deserialize(welcome.inventory);
@@ -645,17 +777,38 @@ export class Game {
         remotes,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        actionSeq: 0,
+        prediction: createPredictionBuffer(),
+        urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
-        motion: { target: { x: welcome.you.x, y: welcome.you.y, z: welcome.you.z } },
+        ...(() => {
+          const isolation = resolvePredIsolation();
+          return {
+            ignoreNetworkSend: isolation.noSend,
+            ignoreNetworkState: isolation.noState,
+            isolationMode: isolation.mode,
+            ignoreNetworkMotion: isolation.noSend && isolation.noState,
+            isolation,
+          };
+        })(),
       },
     });
     const session = this.session;
     if (!session?.online) return;
-    session.player.teleport([welcome.you.x, welcome.you.y, welcome.you.z]);
-    session.player.yaw = welcome.you.yaw;
-    session.player.pitch = welcome.you.pitch;
+    this.recordLocalNetWrite('welcome', () => {
+      session.player.teleport([welcome.you.x, welcome.you.y, welcome.you.z]);
+      session.player.yaw = welcome.you.yaw;
+      session.player.pitch = welcome.you.pitch;
+    });
     this.input.yaw = welcome.you.yaw;
     this.input.pitch = welcome.you.pitch;
+    this.syncLocalRenderFromPlayer();
+    resetPredictionBuffer(session.online.prediction);
+    seedPredictionCheckpoint(session.online.prediction, session.player.captureMovementState(), -1);
+    session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
+    motionProbe.reset();
+    resetFirstCorrectionDump();
+    this.visibilityProbe.resetSession();
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
@@ -672,7 +825,12 @@ export class Game {
   }
 
   private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
-    if (!session.online || info.id === session.online.playerId || session.online.remotes.has(info.id)) return;
+    if (!session.online || info.id === session.online.playerId) return;
+    const existing = session.online.remotes.get(info.id);
+    if (existing) {
+      existing.reset(info);
+      return;
+    }
     const view = new RemotePlayerView(info, {
       visual: new PlayerVisual(
         this.playerSkins,
@@ -697,6 +855,7 @@ export class Game {
   private handleOnlineMessage(message: ServerMessage): void {
     const session = this.session;
     if (!session?.online) return;
+    motionProbe.noteRecv(message.type);
     switch (message.type) {
       case 'welcome':
         return;
@@ -711,13 +870,15 @@ export class Game {
         return;
       case 'block_update': {
         const previous = session.world.getBlock(message.x, message.y, message.z, false);
-        applyNetworkBlockChanges(session.world, [{
+        const applied = applyNetworkBlockChanges(session.world, [{
           x: message.x,
           y: message.y,
           z: message.z,
           blockId: message.blockId,
           ...(message.state ? { state: message.state } : {}),
         }]);
+        this.noteWorldNearPlayer('block_update', message.x, message.y, message.z);
+        this.queueUrgentMutationMesh(session, applied.meshKeys);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
           this.playBlockSound('break', previous, message.x, message.y, message.z);
@@ -727,7 +888,11 @@ export class Game {
         return;
       }
       case 'block_batch': {
-        applyNetworkBlockChanges(session.world, message.changes);
+        const applied = applyNetworkBlockChanges(session.world, message.changes);
+        for (const change of message.changes) {
+          this.noteWorldNearPlayer('block_batch', change.x, change.y, change.z);
+        }
+        this.queueUrgentMutationMesh(session, applied.meshKeys);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
         }
@@ -760,7 +925,9 @@ export class Game {
           health: session.survival.health,
           dead: session.survival.dead,
         })) {
-          this.restoreOnlinePlayingFromRespawn();
+          this.recordLocalNetWrite('health-respawn', () => {
+            this.restoreOnlinePlayingFromRespawn();
+          });
           if (session.online) {
             session.online.lastAliveTick = recordAliveSnapshotTick(
               session.online.lastAliveTick,
@@ -793,8 +960,23 @@ export class Game {
       case 'block_result':
         this.handleOnlineBlockResult(session, message);
         return;
+      case 'action_result':
+        this.handleOnlineActionResult(session, message);
+        return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
+        motionProbe.noteChunkUpdate();
+        if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
+          localNetTrace.noteWorld({
+            at: performance.now(),
+            source: 'chunk_data',
+            x: message.cx * 16,
+            y: Math.floor(session.player.position.y),
+            z: message.cz * 16,
+            inVolume: true,
+          });
+          motionProbe.note('world:volume');
+        }
         return;
       case 'chat':
         if (message.kind === 'player') this.pushChat('player', `<${message.from}> ${message.text}`);
@@ -808,7 +990,11 @@ export class Game {
         }
         if (message.gamemode !== session.summary.mode) {
           session.summary.mode = message.gamemode;
-          session.player.creativeFlightAllowed = message.gamemode === 'creative';
+          this.recordLocalNetWrite('inventory-gamemode', () => {
+            this.syncLocalCreativeFlight(session, message.gamemode);
+          });
+        } else {
+          this.syncLocalCreativeFlight(session, message.gamemode);
         }
         if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
         applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
@@ -826,7 +1012,8 @@ export class Game {
         this.refreshHud();
         return;
       case 'error':
-        this.ui.toast(message.message);
+        if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
+        else this.ui.toast(message.message);
         return;
       case 'pong':
       case 'status':
@@ -857,59 +1044,39 @@ export class Game {
   private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
     const online = session.online;
     if (!online) return;
-    if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) return;
+    motionProbe.noteSnapshotInbound();
+    motionProbe.inboundTick = message.tick;
+    motionProbe.lastStateTick = online.lastStateTick;
+    motionProbe.noteTickClock(message);
+    if (!shouldAcceptSnapshot(online.lastStateTick, message.tick)) {
+      motionProbe.noteSnapshotDrop('stale');
+      return;
+    }
     online.lastStateTick = message.tick;
     const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
+    if (local?.session) motionProbe.session = local.session;
     const seen = new Set<string>();
     if (local) {
-      const look = clientLookAfterSnapshot(
-        { yaw: this.input.yaw, pitch: this.input.pitch },
-        { yaw: local.yaw, pitch: local.pitch },
-      );
-      this.input.yaw = look.yaw;
-      this.input.pitch = look.pitch;
-      session.player.yaw = look.yaw;
-      session.player.pitch = look.pitch;
-      const ingested = ingestAuthoritativePosition(session.player.position, local);
-      online.motion.target = ingested.target;
-      if (ingested.snapped) {
-        session.player.position.set(ingested.position.x, ingested.position.y, ingested.position.z);
-        session.player.previousPosition.copy(session.player.position);
+      motionProbe.notePlayerState(local.inputSeq);
+      const recvAt = performance.now();
+      this.noteLocalSnapshotTiming(local, recvAt);
+      this.visibilityProbe.noteSnapshot(local, recvAt, {
+        physicsTicks: message.physicsTicks,
+        history: this.predictedHistoryPose(online, local.inputSeq),
+      });
+      const flags = online.isolation ?? resolvePredIsolation();
+      if (flags.observe) {
+        motionProbe.note('skip:observe');
+        this.observeLocalPlayerSnapshot(session, message, local);
+      } else if (online.ignoreNetworkState) {
+        motionProbe.note('skip:local-state');
+      } else {
+        const queued = overwriteLatestSlot(online.pendingLocalSnapshot, { message, local });
+        if (queued.overwritten) motionProbe.notePendingOverwrite();
+        online.pendingLocalSnapshot = queued.value;
       }
-      session.player.velocity.set(local.vx, local.vy, local.vz);
-      session.player.sneaking = local.sneaking;
-      session.player.sprinting = local.sprinting;
-      session.player.onGround = local.onGround;
-      const previousLife = { health: session.survival.health, dead: session.survival.dead };
-      const snapshotDead = local.dead ?? local.health <= 0;
-      if (!shouldIgnoreStaleDeadSnapshot({
-        snapshotTick: message.tick,
-        lastAliveTick: online.lastAliveTick,
-        dead: snapshotDead,
-      })) {
-        session.survival.restore({
-          health: local.health,
-          hunger: local.hunger,
-          dead: snapshotDead,
-        });
-        if (shouldRestoreGameplayAfterRespawn(previousLife, {
-          health: session.survival.health,
-          dead: session.survival.dead,
-        })) {
-          this.restoreOnlinePlayingFromRespawn();
-        }
-        if (!snapshotDead && local.health > 0) {
-          online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
-        }
-      }
-      session.ridingCartId = local.ridingEntityId;
-      if (local.invisible) {
-        /* local first-person hide is driven by survival effects */
-      }
-      if (local.gamemode !== session.summary.mode) {
-        session.summary.mode = local.gamemode;
-        session.player.creativeFlightAllowed = local.gamemode === 'creative';
-      }
+    } else {
+      motionProbe.noteSnapshotDrop('no-local');
     }
     for (const snap of remotes) {
       seen.add(snap.id);
@@ -922,6 +1089,533 @@ export class Game {
     }
     for (const id of [...online.remotes.keys()]) {
       if (!seen.has(id)) this.removeRemotePlayer(session, id);
+    }
+  }
+
+  private predictedHistoryPose(
+    online: OnlineAnarchySession,
+    seq: number | undefined,
+  ): { x: number; y: number; z: number } | null {
+    if (seq === undefined || !Number.isFinite(seq)) return null;
+    const entry = online.prediction.entries.find((item) => item.seq === seq);
+    if (!entry) return null;
+    return { x: entry.state.x, y: entry.state.y, z: entry.state.z };
+  }
+
+  private visibilityContext(): {
+    predSeq: number;
+    ackSeq: number;
+    pending: number;
+    accumulator: number;
+    alpha: number;
+  } {
+    const online = this.session?.online;
+    return {
+      predSeq: online?.inputSeq ?? 0,
+      ackSeq: online?.prediction.lastAckedSeq ?? -1,
+      pending: online?.prediction.entries.length ?? 0,
+      accumulator: this.accumulator,
+      alpha: this.lastRenderAlpha,
+    };
+  }
+
+  private handleVisibilityLifecycle(previous: LifecycleState, next: LifecycleState): void {
+    const now = performance.now();
+    const decision = evaluateHiddenTabResume({
+      previousLifecycle: previous,
+      nextLifecycle: next,
+      online: Boolean(this.session?.online),
+    });
+    if (next === 'BACKGROUND' && previous !== 'BACKGROUND') {
+      this.visibilityProbe.notifyHidden(now, this.visibilityContext());
+      if (decision.sendIdleOnHide && this.session?.online) this.sendOnlineIdle(this.session);
+      this.debugNextTick = 0;
+      if (this.session) this.refreshHud();
+    }
+    if (previous === 'BACKGROUND' && next !== 'BACKGROUND') {
+      if (decision.resetClockOnResume) {
+        this.previousTime = now;
+        this.accumulator = 0;
+      }
+      this.visibilityProbe.notifyVisible(now, this.visibilityContext());
+      if (decision.forceAuthoritativeResync && this.session?.online && !this.session.online.ignoreNetworkState) {
+        this.session.online.forceHiddenTabResync = true;
+        this.flushPendingLocalSnapshot(this.session);
+      }
+      this.debugNextTick = 0;
+      if (this.session) this.refreshHud();
+    }
+  }
+
+  /**
+   * `?predStateObserve=1`: parse and inspect the local snapshot, mutate nothing.
+   */
+  private observeLocalPlayerSnapshot(
+    session: GameSession,
+    message: ServerPlayerStateMessage,
+    local: ServerPlayerStateMessage['players'][number],
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    const before = captureMotionFull(session.player);
+    const inspect = inspectPredictedPlayer(online.prediction, local, session.player, {
+      world: session.world,
+      physicsTicks: message.physicsTicks ?? 1,
+      serverTick: message.tick,
+    });
+    const after = captureMotionFull(session.player);
+    const changed = diffMotionFull(before, after);
+    if (isDevRuntime() && typeof console !== 'undefined') {
+      console.info('[predStateObserve]', {
+        tick: message.tick,
+        inputSeq: local.inputSeq,
+        predictedSeq: online.inputSeq,
+        kind: inspect.kind,
+        reject: inspect.rejectReason,
+        soft: inspect.softReject,
+        error: inspect.error,
+        historySeq: inspect.historySeq,
+        mutated: changed,
+      });
+      if (changed.length > 0) {
+        logMotionFieldMutations({
+          source: 'player_state:observe',
+          before,
+          after,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+      }
+    }
+  }
+
+  private flushPendingLocalSnapshot(session: GameSession): void {
+    const online = session.online;
+    const pending = online?.pendingLocalSnapshot;
+    if (!online || !pending) return;
+    online.pendingLocalSnapshot = undefined;
+    this.applyLocalPlayerSnapshot(session, pending.message, pending.local);
+    motionProbe.pendingSnapshotOverwrites = 0;
+  }
+
+  /**
+   * Local `player_state` apply. A matching localhost snapshot (checkpoint +
+   * simTicks of the latest input state equals the authoritative pose) must not
+   * write movement, look, render, or camera. Health/hunger restore only when
+   * the value actually changes.
+   */
+  private applyLocalPlayerSnapshot(
+    session: GameSession,
+    message: ServerPlayerStateMessage,
+    local: ServerPlayerStateMessage['players'][number],
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    const flags = online.isolation ?? resolvePredIsolation();
+    const player = session.player;
+    const before = captureMotionFull(player);
+    const camBefore = { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z };
+    const renderBefore = {
+      prev: { x: this.localRender.previous.x, y: this.localRender.previous.y, z: this.localRender.previous.z },
+      curr: { x: this.localRender.current.x, y: this.localRender.current.y, z: this.localRender.current.z },
+    };
+    const sessionBefore = {
+      ridingCartId: session.ridingCartId,
+      gamemode: session.summary.mode,
+      creativeFlightAllowed: player.creativeFlightAllowed,
+      health: session.survival.health,
+      hunger: session.survival.hunger,
+      dead: session.survival.dead,
+    };
+    const px = Math.floor(player.position.x);
+    const py = Math.floor(player.position.y);
+    const pz = Math.floor(player.position.z);
+    const yaw = player.yaw;
+    motionProbe.sampleWorldHint = () => {
+      const cx = floorDiv(Math.floor(player.position.x), CHUNK_SIZE);
+      const cz = floorDiv(Math.floor(player.position.z), CHUNK_SIZE);
+      const loadedKey = chunkKey(cx, cz);
+      return {
+        feetBlock: getBlockDefinition(session.world.getBlock(px, py, pz, false)).name,
+        belowBlock: getBlockDefinition(session.world.getBlock(px, py - 1, pz, false)).name,
+        aheadBlock: getBlockDefinition(session.world.getBlock(
+          px - Math.round(Math.sin(yaw)),
+          py,
+          pz - Math.round(Math.cos(yaw)),
+          false,
+        )).name,
+        aabbBlocks: sampleAabbBlocks(
+          (x, y, z) => ({ name: getBlockDefinition(session.world.getBlock(x, y, z, false)).name }),
+          player.position.x,
+          player.position.y,
+          player.position.z,
+          PLAYER_WIDTH,
+          player.height,
+        ),
+        chunkKey: loadedKey,
+        chunkLoaded: session.world.chunks.has(loadedKey),
+        mutationMarks: session.world.mutationMarks,
+        visibility: typeof document !== 'undefined' ? document.visibilityState : '—',
+      };
+    };
+
+    if (flags.skipGamemode) {
+      motionProbe.note('skip:gamemode');
+      this.syncLocalCreativeFlight(session);
+    } else {
+      if (local.gamemode !== session.summary.mode) {
+        logNamedMutation({
+          source: 'player_state:gamemode',
+          field: 'gamemode',
+          oldValue: session.summary.mode,
+          newValue: local.gamemode,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        session.summary.mode = local.gamemode;
+      }
+      this.syncLocalCreativeFlight(session, local.gamemode);
+    }
+
+    const forceResync = online.forceHiddenTabResync === true;
+    online.forceHiddenTabResync = false;
+    let result: ReconcileResult;
+    if (forceResync) {
+      motionProbe.note('visibility-resync');
+      const synced = resyncLocalPlayerAfterHiddenTab({
+        player,
+        buffer: online.prediction,
+        snapshot: local,
+        inputSeq: online.inputSeq,
+        serverTick: message.tick,
+      });
+      online.inputSeq = synced.nextInputSeq;
+      player.previousPosition.copy(player.position);
+      if (!flags.skipRender) {
+        this.localRender.snapTo({
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+          vx: player.velocity.x,
+          vy: player.velocity.y,
+          vz: player.velocity.z,
+        });
+      }
+      this.visibilityProbe.noteResumeSample(hiddenTabPacketSample({
+        receivedAt: performance.now(),
+        snapshot: local,
+        history: null,
+        physicsTicks: message.physicsTicks,
+        correction: 'forced-resync',
+      }));
+      if (isDevRuntime() && typeof console !== 'undefined') {
+        console.info(
+          `[vis-resync] seq=${local.inputSeq ?? -1} phys=${message.physicsTicks ?? 1} `
+          + `xyz=${local.x.toFixed(3)},${local.y.toFixed(3)},${local.z.toFixed(3)}`,
+        );
+      }
+      result = {
+        kind: 'ignored',
+        snapped: true,
+        replayed: 0,
+        error: { xz: 0, y: 0, speed: 0, distSq: 0 },
+        rejectReason: 'none',
+        acceptMutated: false,
+        softReject: 'none',
+      };
+    } else if (flags.skipReconcile) {
+      motionProbe.note('skip:reconcile');
+      const inspect = inspectPredictedPlayer(online.prediction, local, player, {
+        world: session.world,
+        physicsTicks: message.physicsTicks ?? 1,
+        serverTick: message.tick,
+      });
+      result = {
+        kind: 'ignored',
+        snapped: false,
+        replayed: 0,
+        error: inspect.error,
+        rejectReason: inspect.rejectReason,
+        acceptMutated: false,
+        softReject: inspect.softReject,
+      };
+    } else {
+      result = reconcilePredictedPlayer(player, session.world, online.prediction, local, undefined, {
+        physicsTicks: message.physicsTicks ?? 1,
+        serverTick: message.tick,
+      });
+    }
+    const afterReconcile = captureMotionFull(player);
+    const reconcileChanged = diffMotionFull(before, afterReconcile);
+    logMotionFieldMutations({
+      source: `player_state:${result.kind}`,
+      before,
+      after: afterReconcile,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    if (reconcileChanged.length > 0) {
+      localNetTrace.noteMutation({
+        at: performance.now(),
+        source: `player_state:${result.kind}`,
+        frameIndex: localNetTrace.frameIndex,
+        changed: reconcileChanged,
+        before,
+        after: afterReconcile,
+      });
+    }
+    if (isDevRuntime() && (result.kind === 'accepted' || result.kind === 'ignored')) {
+      if (reconcileChanged.length > 0) {
+        motionProbe.note('accept-side-effect');
+        console.info(
+          `[acceptInvisible] kind=${result.kind} seq=${local.inputSeq ?? -1} changed=${reconcileChanged.join(',')}`,
+          { before, after: afterReconcile, snapshot: { x: local.x, y: local.y, z: local.z, vx: local.vx, vy: local.vy, vz: local.vz } },
+        );
+      }
+    }
+
+    const previousLife = { health: session.survival.health, dead: session.survival.dead };
+    const snapshotDead = local.dead ?? local.health <= 0;
+    if (flags.skipSurvival) {
+      motionProbe.note('skip:survival');
+    } else if (!shouldIgnoreStaleDeadSnapshot({
+      snapshotTick: message.tick,
+      lastAliveTick: online.lastAliveTick,
+      dead: snapshotDead,
+    })) {
+      const healthChanged = session.survival.health !== local.health;
+      const hungerChanged = session.survival.hunger !== local.hunger;
+      const deadChanged = session.survival.dead !== snapshotDead;
+      if (healthChanged || hungerChanged || deadChanged) {
+        logNamedMutation({
+          source: 'player_state:survival',
+          field: 'health',
+          oldValue: session.survival.health,
+          newValue: local.health,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        logNamedMutation({
+          source: 'player_state:survival',
+          field: 'hunger',
+          oldValue: session.survival.hunger,
+          newValue: local.hunger,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        logNamedMutation({
+          source: 'player_state:survival',
+          field: 'dead',
+          oldValue: session.survival.dead,
+          newValue: snapshotDead,
+          inputSeq: local.inputSeq,
+          predictedSeq: online.inputSeq,
+        });
+        session.survival.restore({
+          health: local.health,
+          hunger: local.hunger,
+          dead: snapshotDead,
+        });
+        if (!flags.skipRespawn && shouldRestoreGameplayAfterRespawn(previousLife, {
+          health: session.survival.health,
+          dead: session.survival.dead,
+        })) {
+          this.recordLocalNetWrite('player_state-respawn', () => {
+            this.restoreOnlinePlayingFromRespawn();
+          });
+        } else if (flags.skipRespawn) {
+          motionProbe.note('skip:respawn');
+        }
+      }
+      if (!snapshotDead && local.health > 0) {
+        online.lastAliveTick = recordAliveSnapshotTick(online.lastAliveTick, message.tick);
+      }
+    }
+
+    if (flags.skipRiding) {
+      motionProbe.note('skip:riding');
+    } else if (local.ridingEntityId !== session.ridingCartId) {
+      logNamedMutation({
+        source: 'player_state:riding',
+        field: 'ridingCartId',
+        oldValue: session.ridingCartId,
+        newValue: local.ridingEntityId,
+        inputSeq: local.inputSeq,
+        predictedSeq: online.inputSeq,
+      });
+      this.recordLocalNetWrite('player_state-riding', () => {
+        session.ridingCartId = local.ridingEntityId;
+      });
+    }
+    if (local.invisible) {
+      /* local first-person hide is driven by survival effects */
+    }
+    if (flags.skipLook) motionProbe.note('skip:look');
+    if (flags.skipRender) motionProbe.note('skip:render');
+
+    const after = captureMotionFull(player);
+    const allChanged = diffMotionFull(before, after);
+    if (!forceResync && (result.kind === 'accepted' || result.kind === 'ignored') && allChanged.length > 0) {
+      motionProbe.note('accept-mutated');
+    }
+    if (
+      forceResync === false
+      && (result.kind === 'corrected' || result.kind === 'snapped')
+    ) {
+      this.visibilityProbe.noteCorrection({
+        at: performance.now(),
+        dx: local.x - before.x,
+        dz: local.z - before.z,
+        reason: result.rejectReason,
+      });
+    }
+    logNamedMutation({
+      source: 'player_state:camera',
+      field: 'camera',
+      oldValue: `${camBefore.x},${camBefore.y},${camBefore.z}`,
+      newValue: `${this.camera.position.x},${this.camera.position.y},${this.camera.position.z}`,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:render',
+      field: 'renderCurr',
+      oldValue: `${renderBefore.curr.x},${renderBefore.curr.y},${renderBefore.curr.z}`,
+      newValue: `${this.localRender.current.x},${this.localRender.current.y},${this.localRender.current.z}`,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'ridingCartId',
+      oldValue: sessionBefore.ridingCartId,
+      newValue: session.ridingCartId,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'gamemode',
+      oldValue: sessionBefore.gamemode,
+      newValue: session.summary.mode,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'creativeFlightAllowed',
+      oldValue: sessionBefore.creativeFlightAllowed,
+      newValue: player.creativeFlightAllowed,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'health',
+      oldValue: sessionBefore.health,
+      newValue: session.survival.health,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'hunger',
+      oldValue: sessionBefore.hunger,
+      newValue: session.survival.hunger,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+    logNamedMutation({
+      source: 'player_state:session',
+      field: 'dead',
+      oldValue: sessionBefore.dead,
+      newValue: session.survival.dead,
+      inputSeq: local.inputSeq,
+      predictedSeq: online.inputSeq,
+    });
+  }
+
+  private noteLocalSnapshotTiming(
+    local: ServerPlayerStateMessage['players'][number],
+    clientRecvAt: number,
+  ): void {
+    const timing = local.netTiming;
+    if (!timing && local.inputSeq === undefined) return;
+    localNetTrace.noteTiming({
+      seq: local.inputSeq ?? -1,
+      clientSentAt: timing?.clientSentAt,
+      serverRecvAt: timing?.serverRecvAt,
+      serverSimAt: timing?.serverSimAt,
+      serverSentAt: timing?.serverSentAt,
+      clientRecvAt,
+    });
+  }
+
+  private recordLocalNetWrite(source: string, apply: () => void): void {
+    const player = this.session?.player;
+    if (!player) {
+      apply();
+      return;
+    }
+    const mutation = traceLocalPlayerMutation(source, player, apply, localNetTrace.frameIndex);
+    if (!mutation) return;
+    localNetTrace.noteMutation(mutation);
+    if (mutation.changed.includes('x') || mutation.changed.includes('y') || mutation.changed.includes('z')) {
+      motionProbe.noteWrite('position');
+    }
+    if (mutation.changed.includes('px') || mutation.changed.includes('py') || mutation.changed.includes('pz')) {
+      motionProbe.noteWrite('previousPosition');
+    }
+    if (mutation.changed.includes('vx') || mutation.changed.includes('vy') || mutation.changed.includes('vz')) {
+      motionProbe.noteWrite('velocity');
+    }
+  }
+
+  private noteWorldNearPlayer(source: string, x: number, y: number, z: number): void {
+    const player = this.session?.player;
+    motionProbe.noteBlockMutation();
+    if (!player) return;
+    const inVolume = blockOverlapsPlayerVolume(player, x, y, z);
+    localNetTrace.noteWorld({
+      at: performance.now(),
+      source,
+      x,
+      y,
+      z,
+      inVolume,
+    });
+    if (inVolume) motionProbe.note('world:volume');
+  }
+
+  private handleOnlineActionResult(
+    session: GameSession,
+    message: Extract<ServerMessage, { type: 'action_result' }>,
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    if (message.kind === 'bow_release') {
+      if (online.lastBowDiag && online.lastBowDiag.actionSeq === message.actionSeq) {
+        online.lastBowDiag = {
+          ...online.lastBowDiag,
+          serverYaw: message.yaw,
+          serverPitch: message.pitch,
+          result: message.ok ? 'accepted' : `rejected:${message.reason ?? 'unknown'}`,
+          spawned: message.ok,
+        };
+      }
+      return;
+    }
+    if (online.lastBlockDiag && online.lastBlockDiag.actionSeq === message.actionSeq) {
+      online.lastBlockDiag = {
+        ...online.lastBlockDiag,
+        result: message.ok ? 'accepted' : `rejected:${message.reason ?? 'unknown'}`,
+        ...(message.targetX !== undefined
+          ? { target: `${message.targetX},${message.targetY},${message.targetZ}` }
+          : {}),
+      };
+    }
+    if (!message.ok && message.targetX !== undefined) {
+      online.rejectedBlockKey = `${message.targetX},${message.targetY},${message.targetZ}`;
     }
   }
 
@@ -946,33 +1640,187 @@ export class Game {
     online.pendingBlockAction = undefined;
   }
 
-  private stepOnlineAuthority(session: GameSession, dt: number): void {
+  private onlineActionSource(session: GameSession): { actionSeq: number; inputSeq: number; selectedSlot: number } {
+    const online = session.online!;
+    return {
+      actionSeq: online.actionSeq,
+      inputSeq: online.inputSeq,
+      selectedSlot: session.selectedSlot,
+    };
+  }
+
+  private commitOnlineActionSeq(session: GameSession, source: { actionSeq: number }): void {
+    if (session.online) session.online.actionSeq = source.actionSeq;
+  }
+
+  private pollOnlineActionEdges(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
+    if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
+    if (this.input.consumeMiningReleased() && session.miningTarget) {
+      const source = this.onlineActionSource(session);
+      const action = captureBlockBreakAbort(source);
+      this.commitOnlineActionSeq(session, source);
+      online.client.send(actionMessageFromBreakAbort(action));
+      online.miningLocked = false;
+      online.miningIntent = undefined;
+    }
+  }
+
+  private sendOnlineUse(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    const source = this.onlineActionSource(session);
+    if (this.selectedStack()?.itemId === ItemId.Bow) {
+      source.actionSeq += 1;
+      this.commitOnlineActionSeq(session, source);
+      online.lastBowDiag = {
+        actionSeq: source.actionSeq,
+        commandSeq: source.inputSeq,
+        clientYaw: this.input.yaw,
+        clientPitch: this.input.pitch,
+        pressCaptured: true,
+        drawStarted: true,
+        sent: true,
+        result: 'draw-sent',
+      };
+      online.client.send({
+        type: 'interact',
+        actionSeq: source.actionSeq,
+        commandSeq: source.inputSeq,
+        selectedSlot: source.selectedSlot,
+      });
+      return;
+    }
+    if (session.target) {
+      const action = captureBlockUse(source, session.target);
+      this.commitOnlineActionSeq(session, source);
+      online.lastBlockDiag = {
+        actionSeq: action.actionSeq,
+        commandSeq: action.commandSeq,
+        target: `${action.targetX},${action.targetY},${action.targetZ}`,
+        face: `${action.faceX},${action.faceY},${action.faceZ}`,
+        blockId: action.targetBlockId,
+      };
+      online.client.send(interactMessageFromUse(action));
+      return;
+    }
+    source.actionSeq += 1;
+    this.commitOnlineActionSeq(session, source);
+    online.client.send({
+      type: 'interact',
+      actionSeq: source.actionSeq,
+      commandSeq: source.inputSeq,
+      selectedSlot: source.selectedSlot,
+    });
+  }
+
+  private sendOnlineBowRelease(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    const holdingBow = this.selectedStack()?.itemId === ItemId.Bow;
+    if (!holdingBow && session.bowUseTicks <= 0) {
+      if (online.lastBowDiag) {
+        online.lastBowDiag = { ...online.lastBowDiag, result: 'skipped-no-draw' };
+      }
+      return;
+    }
+    const source = this.onlineActionSource(session);
+    const action = captureBowRelease(source, { yaw: this.input.yaw, pitch: this.input.pitch });
+    this.commitOnlineActionSeq(session, source);
+    online.lastBowDiag = {
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      clientYaw: action.yaw,
+      clientPitch: action.pitch,
+      pressCaptured: online.lastBowDiag?.pressCaptured === true,
+      drawStarted: online.lastBowDiag?.drawStarted === true,
+      releaseCaptured: true,
+      sent: true,
+      result: 'release-sent',
+    };
+    online.client.send(bowReleaseMessage(action));
+  }
+
+  private sendOnlineBreakStart(session: GameSession): void {
+    const online = session.online;
+    const hit = session.target;
+    if (!online || !hit || online.miningLocked) return;
+    const source = this.onlineActionSource(session);
+    const action = captureBlockBreakStart(source, hit);
+    this.commitOnlineActionSeq(session, source);
+    online.miningLocked = true;
+    online.miningIntent = {
+      targetX: action.targetX,
+      targetY: action.targetY,
+      targetZ: action.targetZ,
+      targetBlockId: action.targetBlockId,
+      faceX: action.faceX,
+      faceY: action.faceY,
+      faceZ: action.faceZ,
+      hitX: action.hitX,
+      hitY: action.hitY,
+      hitZ: action.hitZ,
+    };
+    online.lastBlockDiag = {
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      target: `${action.targetX},${action.targetY},${action.targetZ}`,
+      face: `${action.faceX},${action.faceY},${action.faceZ}`,
+      blockId: action.targetBlockId,
+    };
+    online.client.send(actionMessageFromBreakStart(action));
+  }
+
+  private stepOnlineAuthority(session: GameSession, _dt: number): void {
+    if (!session.online) return;
     session.player.yaw = this.input.yaw;
     session.player.pitch = this.input.pitch;
-    const next = stepTowardTarget(session.player.position, online.motion.target, dt);
-    session.player.position.set(next.x, next.y, next.z);
-    session.player.previousPosition.copy(session.player.position);
   }
 
   private sendOnlineIdle(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    this.flushPendingLocalSnapshot(session);
+    this.syncLocalCreativeFlight(session);
     online.inputSeq += 1;
-    online.client.send({
-      type: 'input',
-      seq: online.inputSeq,
-      forward: 0,
-      right: 0,
-      jump: false,
-      sneak: false,
-      sprint: false,
-      descend: false,
-      flySprint: false,
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
-      selectedSlot: session.selectedSlot,
+    const predicted = predictedMoveFromInput(
+      online.inputSeq,
+      { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
+      { yaw: this.input.yaw, pitch: this.input.pitch },
+      !session.ridingCartId,
+    );
+    if (!online.ignoreNetworkSend) {
+      const clientSentAt = isDevRuntime() ? performance.now() : undefined;
+      online.client.send({
+        type: 'input',
+        seq: online.inputSeq,
+        clientTick: session.playTicks,
+        forward: 0,
+        right: 0,
+        jump: false,
+        sneak: false,
+        sprint: false,
+        descend: false,
+        flySprint: false,
+        yaw: this.input.yaw,
+        pitch: this.input.pitch,
+        selectedSlot: session.selectedSlot,
+        ...(clientSentAt !== undefined ? { clientSentAt } : {}),
+      });
+      motionProbe.noteSend(online.inputSeq);
+      this.visibilityProbe.noteInputSent();
+    }
+    predictLocalMove(session.player, session.world, online.prediction, predicted);
+    this.visibilityProbe.noteTick();
+    this.localRender.pushAfterTick({
+      x: session.player.position.x,
+      y: session.player.position.y,
+      z: session.player.position.z,
+      vx: session.player.velocity.x,
+      vy: session.player.velocity.y,
+      vz: session.player.velocity.z,
     });
   }
 
@@ -1093,6 +1941,7 @@ export class Game {
     const player = new PlayerController();
     const spawn = restored?.player.position ?? options?.spawn ?? this.estimateSpawn(world);
     player.teleport(spawn);
+    syncCreativeFlightAllowed(player, summary.mode);
     if (restored) {
       player.restore({
         position: restored.player.position,
@@ -1269,7 +2118,21 @@ export class Game {
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
+    this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
+  }
+
+  private syncLocalRenderFromPlayer(): void {
+    const player = this.session?.player;
+    if (!player) return;
+    this.localRender.reset({
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+      vx: player.velocity.x,
+      vy: player.velocity.y,
+      vz: player.velocity.z,
+    });
   }
 
   private estimateSpawn(world: VoxelWorld): [number, number, number] {
@@ -1289,6 +2152,7 @@ export class Game {
       if (floor !== BlockId.GrassBlock) return false;
       if (session.world.isSolid(x, surface + 1, z) || session.world.isSolid(x, surface + 2, z)) return false;
       session.player.teleport([x + 0.5, surface + 1.01, z + 0.5]);
+      this.syncLocalRenderFromPlayer();
       return true;
     };
     if (tryColumn(originX, originZ)) return;
@@ -1305,7 +2169,7 @@ export class Game {
   private beginWorldLoading(snapSpawn = false): void {
     const session = this.session;
     if (!session) return;
-    const meshRadius = initialReadyChunkRadius(this.settings.renderDistance);
+    const meshRadius = quietWorldRenderDistance(initialReadyChunkRadius(this.settings.renderDistance));
     const generateRadius = lightingHaloRadius(meshRadius);
     this.worldLoad = {
       centerX: Math.floor(session.player.position.x),
@@ -1413,9 +2277,10 @@ export class Game {
     if (!session) return;
     const originX = loading ? this.worldLoad?.centerX ?? session.player.position.x : session.player.position.x;
     const originZ = loading ? this.worldLoad?.centerZ ?? session.player.position.z : session.player.position.z;
+    const viewDistance = quietWorldRenderDistance(this.settings.renderDistance);
     const meshRadius = loading
-      ? this.worldLoad?.radius ?? this.settings.renderDistance
-      : this.settings.renderDistance;
+      ? this.worldLoad?.radius ?? viewDistance
+      : viewDistance;
     const generateRadius = loading
       ? this.worldLoad?.generateRadius ?? lightingHaloRadius(meshRadius)
       : lightingHaloRadius(meshRadius);
@@ -1435,11 +2300,15 @@ export class Game {
       this.jobFrame.lightingOnlyDueToBudget = true;
       discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
       this.lastLightMs += this.runLightingJobs(session, WORLD_LIGHT_BUDGET_MS, originX, originZ, inspect, inspectNow);
+      const urgentStart = performance.now();
+      this.lastChunkMeshJobs = this.drainUrgentMutationMesh(session, originX, originZ);
+      this.lastMeshMs += performance.now() - urgentStart;
       return;
     }
     const jobStart = performance.now();
     let generated = 0;
     let meshed = 0;
+    let urgentMeshed = 0;
 
     const missing = missingChunkCoords(
       session.world,
@@ -1481,6 +2350,11 @@ export class Game {
 
     const lightBudget = loading ? WORLD_LOADING_LIGHT_BUDGET_MS : WORLD_LIGHT_BUDGET_MS;
     this.lastLightMs += this.runLightingJobs(session, lightBudget, originX, originZ, inspect, inspectNow);
+    if (!loading) {
+      const urgentStart = performance.now();
+      urgentMeshed = this.drainUrgentMutationMesh(session, originX, originZ);
+      this.lastMeshMs += performance.now() - urgentStart;
+    }
 
     const playerCx = floorDiv(originX, 16);
     const playerCz = floorDiv(originZ, 16);
@@ -1521,7 +2395,7 @@ export class Game {
     if (plan.skipMesh || plan.meshLimit <= 0) {
       if (!loading && generated > 0) this.genWithoutMeshStreak += 1;
       else this.genWithoutMeshStreak = 0;
-      this.lastChunkMeshJobs = 0;
+      this.lastChunkMeshJobs = urgentMeshed;
       return;
     }
 
@@ -1566,13 +2440,43 @@ export class Game {
       },
     );
     this.lastMeshMs += performance.now() - meshStart;
-    this.lastChunkMeshJobs = meshed;
+    this.lastChunkMeshJobs = meshed + urgentMeshed;
     this.genWithoutMeshStreak = meshed > 0 || generated === 0 ? 0 : this.genWithoutMeshStreak + 1;
     if (meshCounters) {
       this.jobFrame.meshAttempted = meshCounters.attempted;
       this.jobFrame.meshCompleted = meshCounters.completed;
       this.jobFrame.meshSkippedBlocked = meshCounters.skippedBlocked;
     }
+  }
+
+  private queueUrgentMutationMesh(session: GameSession, keys: readonly string[]): void {
+    if (!session.online || keys.length === 0) return;
+    for (const key of keys) session.online.urgentMeshKeys.add(key);
+    motionProbe.noteChunkUpdate();
+  }
+
+  private drainUrgentMutationMesh(session: GameSession, originX: number, originZ: number): number {
+    const keys = session.online?.urgentMeshKeys;
+    if (!keys || keys.size === 0) return 0;
+    const rebuilt = session.worldRenderer.rebuildDirty(
+      URGENT_MUTATION_MESH_LIMIT,
+      URGENT_MUTATION_MESH_BUDGET_MS,
+      originX,
+      originZ,
+      {
+        requireNeighborLight: false,
+        allowPendingLighting: true,
+        preferKeys: keys,
+      },
+    );
+    for (const key of [...keys]) {
+      const comma = key.indexOf(',');
+      const cx = Number(key.slice(0, comma));
+      const cz = Number(key.slice(comma + 1));
+      const chunk = session.world.getChunk(cx, cz, false);
+      if (!chunk || (!chunk.dirty && !chunk.lightMeshStale)) keys.delete(key);
+    }
+    return rebuilt;
   }
 
   private runLightingJobs(
@@ -1888,12 +2792,14 @@ export class Game {
         this.polishQaDispose = mountGameplayPolishQa(session, this.input, {
           use: () => {
             this.ui.hidePointerLockFallback();
-            session.target = session.world.raycast(session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH);
+            const aim = this.sampleLocalAim(session);
+            session.target = session.world.raycast(aim.origin, aim.direction, PLAYER_REACH);
             this.useTargetOrItem();
           },
           break: () => {
             this.ui.hidePointerLockFallback();
-            session.target = session.world.raycast(session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH);
+            const aim = this.sampleLocalAim(session);
+            session.target = session.world.raycast(aim.origin, aim.direction, PLAYER_REACH);
             this.breakTarget();
           },
         });
@@ -2111,6 +3017,8 @@ export class Game {
     const rawElapsed = Math.max(0, (now - this.previousTime) / 1000);
     this.renderDeltaSeconds = Math.min(0.1, rawElapsed);
     this.previousTime = now;
+    this.visibilityProbe.noteFrame(rawElapsed, now);
+    this.visibilityProbe.closeResumeWindow(now);
     this.frameTimings.add(rawElapsed * 1000);
     this.fpsFrames += 1;
     this.fpsTimer += Math.min(MAX_FRAME_DELTA, rawElapsed);
@@ -2126,6 +3034,7 @@ export class Game {
     let tickMs = 0;
     if (this.lifecycle.state === 'LOADING_WORLD') {
       this.accumulator = 0;
+      this.lastSimParts = { ...this.lastSimParts, ticks: 0 };
       this.processWorldLoading(frameStart);
     } else if (worldSimulationActive(this.lifecycle.state)) {
       const stepped = advanceFixedStep(this.accumulator, rawElapsed, FIXED_DT, MAX_FRAME_DELTA, MAX_CATCH_UP_TICKS);
@@ -2137,7 +3046,19 @@ export class Game {
       this.simParts.entities = 0;
       this.simParts.other = 0;
       const tickStart = performance.now();
-      for (let tick = 0; tick < stepped.ticks; tick += 1) this.tick();
+      for (let tick = 0; tick < stepped.ticks; tick += 1) {
+        this.tick();
+        if (this.session) {
+          this.localRender.pushAfterTick({
+            x: this.session.player.position.x,
+            y: this.session.player.position.y,
+            z: this.session.player.position.z,
+            vx: this.session.player.velocity.x,
+            vy: this.session.player.velocity.y,
+            vz: this.session.player.velocity.z,
+          });
+        }
+      }
       if (this.session?.online) this.stepOnlineAuthority(this.session, rawElapsed);
       tickMs = performance.now() - tickStart;
       this.lastSimParts = { ...this.simParts, ticks: stepped.ticks };
@@ -2145,6 +3066,7 @@ export class Game {
       this.processWorldJobs(frameStart, false);
     } else {
       this.accumulator = 0;
+      this.lastSimParts = { ...this.lastSimParts, ticks: 0 };
       if (this.session?.online && shouldProcessOnlineWorldVisuals(this.lifecycle.state)) {
         this.processWorldJobs(frameStart, false);
       }
@@ -2165,9 +3087,25 @@ export class Game {
       this.updateChunkGrid();
     }
     const renderStart = performance.now();
-    this.render(this.accumulator / FIXED_DT);
+    this.render(interpolationAlpha(this.accumulator, FIXED_DT));
     const renderMs = performance.now() - renderStart;
     const frameMs = performance.now() - frameStart;
+    if (isDevRuntime()) {
+      this.longTasks.noteFrameSpike({
+        frameMs,
+        tickMs,
+        generateMs: this.lastGenerateMs,
+        lightMs: this.lastLightMs,
+        meshMs: this.lastMeshMs,
+        renderMs,
+        otherMs: Math.max(0, frameMs - tickMs - renderMs),
+        lifecycle: this.lifecycle.state,
+        loading: this.lifecycle.state === 'LOADING_WORLD',
+        genJobs: this.lastChunkGenerationJobs,
+        meshJobs: this.lastChunkMeshJobs,
+        at: frameStart,
+      });
+    }
     if (this.profiler.enabled) {
       const cost: FrameCostBreakdown = {
         frameMs,
@@ -2234,31 +3172,55 @@ export class Game {
   private tickOnline(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    this.visibilityProbe.noteTick();
+    this.flushPendingLocalSnapshot(session);
     session.player.yaw = this.input.yaw;
     session.player.pitch = this.input.pitch;
     session.playTicks += 1;
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
     const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
-      const riding = Boolean(session.ridingCartId);
-      online.inputSeq += 1;
+    const riding = Boolean(session.ridingCartId);
+    const using = gameplayAllowed && this.input.using;
+    if (this.bowDiag && using !== this.lastOnlineUsing) {
+      console.info(
+        `[bowDiag] client_${using ? 'press' : 'release'} t=${performance.now().toFixed(1)} seq=${online.inputSeq + 1}`,
+      );
+    }
+    this.lastOnlineUsing = using;
+    this.syncLocalCreativeFlight(session);
+    online.inputSeq += 1;
+    const predicted = predictedMoveFromInput(
+      online.inputSeq,
+      movement,
+      { yaw: this.input.yaw, pitch: this.input.pitch },
+      !riding,
+    );
+    if (!online.ignoreNetworkSend) {
+      const clientSentAt = isDevRuntime() ? performance.now() : undefined;
       online.client.send({
         type: 'input',
         seq: online.inputSeq,
-        forward: movement.forward,
-        right: movement.right,
-        jump: movement.jump,
-        sneak: movement.sneak,
-        sprint: movement.sprint,
-        descend: movement.descend === true,
-        flySprint: movement.flySprint === true,
-        yaw: this.input.yaw,
-        pitch: this.input.pitch,
+        clientTick: session.playTicks,
+        forward: predicted.forward,
+        right: predicted.right,
+        jump: predicted.jump,
+        sneak: predicted.sneak,
+        sprint: predicted.sprint,
+        descend: predicted.descend,
+        flySprint: predicted.flySprint,
+        yaw: predicted.yaw,
+        pitch: predicted.pitch,
         selectedSlot: session.selectedSlot,
         mining: gameplayAllowed && this.input.mining,
         use: gameplayAllowed && this.input.using,
         vehicleForward: riding ? movement.forward : 0,
+        ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      motionProbe.noteSend(online.inputSeq);
+      this.visibilityProbe.noteInputSent();
+    }
+    predictLocalMove(session.player, session.world, online.prediction, predicted);
     const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
@@ -2272,14 +3234,15 @@ export class Game {
     }
     const cx = floorDiv(Math.floor(session.player.position.x), 16);
     const cz = floorDiv(Math.floor(session.player.position.z), 16);
-    const viewKey = `${cx},${cz},${this.settings.renderDistance}`;
+    const viewDistance = quietWorldRenderDistance(this.settings.renderDistance);
+    const viewKey = `${cx},${cz},${viewDistance}`;
     if (online.lastViewKey !== viewKey) {
       online.lastViewKey = viewKey;
       online.client.send({
         type: 'view',
         cx,
         cz,
-        radius: Math.max(1, Math.min(8, this.settings.renderDistance)),
+        radius: Math.max(1, Math.min(8, viewDistance)),
       });
     }
     if (session.playTicks % 80 === 0) {
@@ -2341,7 +3304,7 @@ export class Game {
         session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
         const drawingBow = session.bowUseTicks > 0;
         const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
-        session.player.creativeFlightAllowed = session.summary.mode === 'creative';
+        this.syncLocalCreativeFlight(session);
         const playerInput = {
           yaw: this.input.yaw,
           pitch: this.input.pitch,
@@ -2361,6 +3324,7 @@ export class Game {
         const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
           if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
         });
+        motionProbe.notePredictionTick();
         this.updateFootsteps(session, playerResult.horizontalDistance);
         if (session.summary.mode === 'survival') {
           const survivalResult = session.survival.tick(FIXED_DT, {
@@ -2484,10 +3448,25 @@ export class Game {
     this.addSimPart('other', simMark);
   }
 
-  private updateTargetAndActions(): void {
-    const session = this.session!;
-    const origin = session.player.eyePosition();
-    const direction = session.player.viewDirection();
+  private sampleLocalAim(session: GameSession): LocalAim {
+    const aim = localInteractionAim(
+      session.player,
+      this.input,
+      this.localAimOrigin,
+      this.localAimDirection,
+    );
+    this.lastLocalAim = aim;
+    return aim;
+  }
+
+  /** Outline / session.target from live input look. Does not consume clicks or advance mining. */
+  private refreshLocalCrosshair(session: GameSession, aim = this.sampleLocalAim(session)): {
+    remoteCloser: boolean;
+    attack: ReturnType<typeof resolvePlayerAttackTarget>;
+    mobTarget: ReturnType<GameSession['mobs']['raycast']>;
+  } {
+    const origin = aim.origin;
+    const direction = aim.direction;
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
     const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
@@ -2502,6 +3481,12 @@ export class Game {
     );
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
+    return { remoteCloser, attack, mobTarget };
+  }
+
+  private updateTargetAndActions(): void {
+    const session = this.session!;
+    const { remoteCloser, attack, mobTarget } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
@@ -2561,6 +3546,13 @@ export class Game {
         else this.breakMinecart(attack.cart);
       }
     } else if (!this.input.mining || !session.target) {
+      if (session.online?.miningLocked) {
+        const source = this.onlineActionSource(session);
+        const action = captureBlockBreakAbort(source);
+        this.commitOnlineActionSeq(session, source);
+        session.online.client.send(actionMessageFromBreakAbort(action));
+        session.online.miningLocked = false;
+      }
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
@@ -2568,6 +3560,10 @@ export class Game {
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
         session.miningProgress = 0;
+        if (session.online) {
+          session.online.miningLocked = false;
+          this.sendOnlineBreakStart(session);
+        }
       }
       const definition = getBlockDefinition(session.target.block);
       if (definition.breakable !== false && definition.hardness >= 0) {
@@ -2582,13 +3578,10 @@ export class Game {
     }
     for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
     session.combat.setHeldItem(this.selectedStack()?.itemId);
-    if (this.input.consumeUsePressed()) {
-      if (session.online) {
-        // Server useHeld owns interact + placement from authoritative look/raycast.
-        session.online.client.send({ type: 'interact' });
-      } else {
-        this.useTargetOrItem();
-      }
+    if (session.online) {
+      /* Use / bow release are captured on the render frame, not the 20 TPS tick. */
+    } else if (this.input.consumeUsePressed()) {
+      this.useTargetOrItem();
     }
   }
 
@@ -2596,9 +3589,30 @@ export class Game {
     return miningProgressPerTick(definition, miningToolFromItemId(tool?.itemId));
   }
 
+  private onlineMiningHit(session: GameSession): VoxelHit | undefined {
+    const key = session.miningTarget;
+    if (!key) return session.target;
+    const parts = key.split(',').map(Number);
+    const x = parts[0];
+    const y = parts[1];
+    const z = parts[2];
+    if (x === undefined || y === undefined || z === undefined || ![x, y, z].every(Number.isFinite)) {
+      return session.target;
+    }
+    const current = session.target;
+    if (current && current.x === x && current.y === y && current.z === z) return current;
+    const block = session.world.getBlock(x, y, z);
+    return {
+      x, y, z, block,
+      normal: new Vec3(0, 1, 0),
+      point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
+      distance: 0,
+    };
+  }
+
   private breakTarget(): void {
     const session = this.session!;
-    const hit = session.target;
+    const hit = session.online ? this.onlineMiningHit(session) : session.target;
     if (!hit) return;
     if (session.online) {
       const pending = session.online.pendingBlockAction;
@@ -2607,7 +3621,22 @@ export class Game {
         return;
       }
       session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
-      session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
+      const source = this.onlineActionSource(session);
+      const captured = session.online.miningIntent;
+      const action = captured
+        ? { ...captureBlockBreakFinish(source, hit), ...captured }
+        : captureBlockBreakFinish(source, hit);
+      this.commitOnlineActionSeq(session, source);
+      session.online.lastBlockDiag = {
+        actionSeq: action.actionSeq,
+        commandSeq: action.commandSeq,
+        target: `${action.targetX},${action.targetY},${action.targetZ}`,
+        face: `${action.faceX},${action.faceY},${action.faceZ}`,
+        blockId: action.targetBlockId,
+      };
+      session.online.client.send(actionMessageFromBreakFinish(action));
+      session.online.miningLocked = false;
+      session.online.miningIntent = undefined;
       this.firstPerson?.swing();
       return;
     }
@@ -2686,7 +3715,7 @@ export class Game {
   private useTargetOrItem(): void {
     const session = this.session!;
     if (session.online) {
-      session.online.client.send({ type: 'interact' });
+      this.sendOnlineUse(session);
       return;
     }
     performUseHeld(this.singleplayerUseContext());
@@ -2704,8 +3733,15 @@ export class Game {
       reach: PLAYER_REACH,
       hit: session.target,
       eyePosition: () => session.player.eyePosition(),
-      viewDirection: () => session.player.viewDirection(),
-      get yaw() { return session.player.yaw; },
+      viewDirection: () => {
+        const yaw = game.input?.yaw;
+        const pitch = game.input?.pitch;
+        if (typeof yaw === 'number' && typeof pitch === 'number') {
+          return viewDirectionFromLook(yaw, pitch);
+        }
+        return session.player.viewDirection();
+      },
+      get yaw() { return game.input?.yaw ?? session.player.yaw; },
       get position() { return session.player.position; },
       intersectsBlock: (x, y, z) => session.player.intersectsBlock(x, y, z),
       intersectsCollisionBoxes: (boxes) => session.player.intersectsCollisionBoxes(boxes),
@@ -2810,10 +3846,10 @@ export class Game {
     if (session.summary.mode !== 'survival') {
       this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow : ItemId.Arrow;
     }
-    const direction = session.player.viewDirection();
-    const origin = session.player.eyePosition().addScaledVector(direction, 0.35);
+    const aim = this.sampleLocalAim(session);
+    const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
-    session.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
+    session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
@@ -3011,7 +4047,7 @@ export class Game {
     }
     const dropped = { ...stack, count: 1 };
     session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-    session.drops.drop(dropped, session.player.eyePosition(), session.player.viewDirection());
+    session.drops.drop(dropped, session.player.eyePosition(), viewDirectionFromLook(this.input.yaw, this.input.pitch));
     this.refreshHud();
   }
 
@@ -3178,10 +4214,17 @@ export class Game {
     };
   }
 
+  private syncLocalCreativeFlight(
+    session: GameSession,
+    gamemode: GameMode = session.summary.mode,
+  ): void {
+    syncCreativeFlightAllowed(session.player, gamemode);
+  }
+
   private setGameMode(mode: GameMode): void {
     const session = this.session!;
     session.summary.mode = mode;
-    session.player.creativeFlightAllowed = mode === 'creative';
+    this.syncLocalCreativeFlight(session, mode);
     if (mode !== 'creative') session.player.isFlying = false;
     this.refreshHud();
   }
@@ -3204,6 +4247,7 @@ export class Game {
     session.ridingCartId = undefined;
     const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
     session.player.teleport(destination);
+    this.syncLocalRenderFromPlayer();
   }
 
   private listenerPose() {
@@ -3271,6 +4315,7 @@ export class Game {
     if (!session?.online) return;
     this.lifecycle.beginOnlineRespawnRestore();
     this.deathShown = false;
+    this.syncLocalCreativeFlight(session);
     session.ridingCartId = undefined;
     session.miningProgress = 0;
     session.miningTarget = undefined;
@@ -3318,6 +4363,7 @@ export class Game {
     this.ui.showDeath(
       () => {
         session.survival.respawn(session.player, session.survival.spawnPoint);
+        this.syncLocalRenderFromPlayer();
         this.deathShown = false;
         this.enterPlaying();
       },
@@ -3329,12 +4375,34 @@ export class Game {
     const now = performance.now();
     const session = this.session;
     if (session) {
-      const position = session.online
-        ? this.interpolatedPlayerPosition.copy(session.player.position)
-        : this.interpolatedPlayerPosition
-          .copy(session.player.previousPosition)
-          .lerp(session.player.position, clamp(alpha, 0, 1));
+      const sampled = this.localRender.sample(this.accumulator, FIXED_DT);
+      const position = this.interpolatedPlayerPosition.set(sampled.x, sampled.y, sampled.z);
+      this.lastRenderAlpha = sampled.alpha;
       this.updatePlayerPresentation(session, position, now);
+      if (playerGameplayAllowed(this.lifecycle.state, this.ui.isBlockingOverlay())) {
+        this.refreshLocalCrosshair(session);
+        if (session.online) this.pollOnlineActionEdges(session);
+      }
+      motionProbe.recordRender({
+        online: Boolean(session.online),
+        fps: this.fps,
+        ticks: this.lastSimParts.ticks,
+        alpha: sampled.alpha,
+        leftover: this.accumulator,
+        simTick: sampled.simTick,
+        fromTick: sampled.fromTick,
+        toTick: sampled.toTick,
+        position: session.player.position,
+        previous: session.player.previousPosition,
+        render: position,
+        renderPrev: this.localRender.previous,
+        renderCurr: this.localRender.current,
+        camera: this.camera.position,
+        ignoreNetworkMotion: Boolean(session.online?.ignoreNetworkMotion),
+        isolationMode: session.online?.isolationMode,
+        ignoreNetworkSend: Boolean(session.online?.ignoreNetworkSend),
+        ignoreNetworkState: Boolean(session.online?.ignoreNetworkState),
+      });
       session.online?.remotes.forEach((remote) => remote.interpolate(
         now,
         this.renderDeltaSeconds,
@@ -3405,6 +4473,7 @@ export class Game {
     if (!thirdPerson) {
       this.camera.position.copy(this.cameraPivot);
       applyImmediateRenderLook(this.camera, this.input, roll);
+      motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
       return;
     }
 
@@ -3435,6 +4504,7 @@ export class Game {
       this.frontCameraLook.pitch = -this.input.pitch;
       applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
     } else applyImmediateRenderLook(this.camera, this.input, roll);
+    motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
   }
 
   private updateFirstPerson(deltaSeconds: number): void {
@@ -3531,6 +4601,30 @@ export class Game {
       if (this.debugTickOrder && this.kernelTrace.length > 0) {
         this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
       }
+      if (import.meta.env.DEV) {
+        this.cachedDebugText += `\n${motionProbe.formatHud()}`;
+        this.cachedDebugText += `\n${this.visibilityProbe.formatHud()}`;
+        if (isQuietWorldQueryEnabled()) this.cachedDebugText += '\nquietWorld=ON rd=1';
+        this.cachedDebugText += `\n${this.longTasks.hudLine()}`;
+        this.cachedDebugText += `\n${this.formatLocalAimDebug(session)}`;
+        if (session.online) {
+          this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
+          this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
+          if (session.online.lastBlockDiag) {
+            const block = session.online.lastBlockDiag;
+            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}`;
+          }
+          if (session.online.lastBowDiag) {
+            const bow = session.online.lastBowDiag;
+            const ang = bow.serverYaw !== undefined && bow.serverPitch !== undefined
+              ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
+              : undefined;
+            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+          }
+          const remoteHud = this.formatRemoteInterpDebug(session);
+          if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;
+        }
+      }
     }
     const debug = this.debugVisible ? this.cachedDebugText : undefined;
     this.ui.updateHud({
@@ -3544,6 +4638,49 @@ export class Game {
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
     });
+  }
+
+  private formatLocalAimDebug(session: GameSession): string {
+    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    const camera = this.cameraPerspective === 'thirdPersonFront' ? this.frontCameraLook : this.input;
+    const hit = session.target;
+    return formatLocalAimHud({
+      cameraYaw: camera.yaw,
+      cameraPitch: camera.pitch,
+      playerYaw: session.player.yaw,
+      playerPitch: session.player.pitch,
+      aimYaw: aim.yaw,
+      aimPitch: aim.pitch,
+      ...(hit
+        ? {
+          targetX: hit.x,
+          targetY: hit.y,
+          targetZ: hit.z,
+          normalX: hit.normal.x,
+          normalY: hit.normal.y,
+          normalZ: hit.normal.z,
+        }
+        : {}),
+    });
+  }
+
+  private formatRemoteInterpDebug(session: GameSession): string | undefined {
+    const remotes = session.online?.remotes;
+    if (!remotes || remotes.size === 0) {
+      return isRemoteDiagQueryEnabled() ? 'Remote (none)' : undefined;
+    }
+    const origin = session.player.position;
+    let nearest: { id: string; view: RemotePlayerView; distSq: number } | undefined;
+    for (const [id, view] of remotes) {
+      const dx = view.group.position.x - origin.x;
+      const dy = view.group.position.y - origin.y;
+      const dz = view.group.position.z - origin.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (!nearest || distSq < nearest.distSq) nearest = { id, view, distSq };
+    }
+    if (!nearest) return undefined;
+    const extra = remotes.size > 1 ? ` +${remotes.size - 1}` : '';
+    return formatRemoteInterpHud(`${nearest.id.slice(0, 8)}${extra}`, nearest.view.diagnostics(performance.now()));
   }
 
   private disposeSession(): void {
@@ -3645,7 +4782,9 @@ export class Game {
   }
 
   private bindLifecycle(): void {
+    this.previousLifecycle = this.lifecycle.state;
     this.lifecycle.changed.subscribe((state) => {
+      const previous = this.previousLifecycle;
       if (state === 'PLAYING') {
         this.audio.resume();
         this.yandex.gameplayStart();
@@ -3654,6 +4793,8 @@ export class Game {
         this.audio.pause();
         this.yandex.gameplayStop();
       }
+      this.handleVisibilityLifecycle(previous, state);
+      this.previousLifecycle = state;
       if (state === 'BACKGROUND') void this.saveSession();
     });
   }
@@ -3710,7 +4851,16 @@ export class Game {
     window.addEventListener('pagehide', () => void this.saveSession());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveSession();
+      if (isDevRuntime() && typeof console !== 'undefined') {
+        console.debug(
+          `[vis-raw] visibilitychange state=${document.visibilityState} hidden=${document.hidden} t=${performance.now().toFixed(1)}`,
+        );
+      }
     });
+    if (isDevRuntime()) {
+      window.addEventListener('focus', () => this.visibilityProbe.notifyFocus(true));
+      window.addEventListener('blur', () => this.visibilityProbe.notifyFocus(false));
+    }
     window.addEventListener('keydown', (event) => {
       if (event.code === 'F3' && !event.repeat) {
         event.preventDefault();

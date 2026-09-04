@@ -12,7 +12,59 @@ export {
   splitPlayerSnapshots,
   stepTowardTarget,
 } from './authoritativeMotion';
-export { RemotePlayerView, sampleRemotePose } from './RemotePlayerView';
+export {
+  ackPredictedMoves,
+  applyPredictedTick,
+  createPredictionBuffer,
+  formatPredictionDebug,
+  inspectPredictedPlayer,
+  predictLocalMove,
+  predictedMoveFromInput,
+  predictedStateFromCheckpoint,
+  copyPredictionControllerConfig,
+  reconcilePredictedPlayer,
+  resetPredictionBuffer,
+  seedPredictionCheckpoint,
+  simulationTicksFromServerTick,
+  comparableExtraTicks,
+  consumeAckedCommands,
+  discardCompactedPrediction,
+  consumeOldestPredTicks,
+  extraAssignSite,
+  overwriteLatestSlot,
+  snapshotComparePath,
+} from './localPlayerPrediction';
+export {
+  evaluateHiddenTabResume,
+  hiddenServerTravelMeters,
+  resyncLocalPlayerAfterHiddenTab,
+  shouldPausePrediction,
+} from './hiddenTabMotion';
+export {
+  isBowDiagQueryEnabled,
+  isMotionDiagQueryEnabled,
+  isPredNoNetQueryEnabled,
+  isPredNoSendQueryEnabled,
+  isPredNoStateQueryEnabled,
+  resolvePredIsolation,
+  motionProbe,
+} from './localMotionDiagnostics';
+export { isDevRuntime } from './predIsolation';
+export { localNetTrace, formatFirstBadEvent } from './localPlayerNetTrace';
+export { isCorrDiagQueryEnabled, formatCorrectionDiag, sampleCollisionHint } from './correctionDiagnostics';
+export { RemotePlayerView } from './RemotePlayerView';
+export {
+  REMOTE_INTERP_DELAY_MS,
+  REMOTE_INTERP_DELAY_MIN_MS,
+  REMOTE_INTERP_DELAY_MAX_MS,
+  REMOTE_EXTRAPOLATION_MS,
+  REMOTE_RECOVERY_MS,
+  REMOTE_BUFFER_MAX_SAMPLES,
+  REMOTE_TICK_MS,
+  RemoteInterpolationBuffer,
+  remoteSampleFromSnapshot,
+} from './remotePlayerInterpolation';
+export { isRemoteDiagQueryEnabled, formatRemoteInterpHud } from './remoteInterpDiagnostics';
 export {
   EntityInterpolationBuffer,
   sampleEntityPose,

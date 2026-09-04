@@ -7,11 +7,20 @@ import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId } from '../src/items';
 import { PlayerController } from '../src/player';
+import {
+  compareLatestInputCoalesce,
+  compareLockstepModes,
+  dumpControllerTicks,
+  formatLatestInputCoalesce,
+  formatPoseDump,
+} from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
+  AppliedInputTick,
+  AppliedMovementStep,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -21,8 +30,15 @@ import type {
   WorldBlockStates,
   WorldModifications,
 } from '../shared/protocol';
+import type { BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
+import type { ActionPoseSample } from '../shared/actionPoseHistory';
+import { recordActionPose } from '../shared/actionPoseHistory';
+import type { PlayerCommand } from '../shared/playerCommand';
+import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
+import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig } from './config';
 import { CommandRegistry, fail, ok, type CommandSender } from './commands';
+import { gameplayTicksDue, scheduleNextTickSlot } from './tickScheduler';
 import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
@@ -33,6 +49,11 @@ import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { placeholderPlayer } from '../src/save/snapshot';
 import { netDebug, serverLog } from './log';
+import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+
+/** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
+const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
 
 export interface ConnectedSink {
   send(payload: unknown): void;
@@ -51,18 +72,39 @@ const IDLE_INPUT: ClientInputMessage = {
   yaw: 0,
   pitch: 0,
   selectedSlot: 0,
+  use: false,
+  mining: false,
 };
 
 export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
+  /** Highest received command seq (packet filter). Snapshot uses appliedCommandSeq. */
   lastInputSeq = -1;
+  appliedCommandSeq = -1;
+  readonly commandQueue = new PlayerCommandQueue();
+  lastActionSeq = -1;
+  lastBowReleaseSeq = -1;
+  readonly appliedStepsThisLoop: AppliedMovementStep[] = [];
+  readonly actionPoseHistory: ActionPoseSample[] = [];
+  lastClientSentAt: number | undefined;
+  lastServerRecvAt: number | undefined;
+  lastServerSimAt: number | undefined;
+  lastInputGapMs = 0;
+  inputPacketsThisLoop = 0;
+  /** Last server physics ticks with the input seq that was actually applied. */
+  readonly appliedInputTrace: AppliedInputTick[] = [];
   viewCx = 0;
   viewCz = 0;
   viewRadius = 4;
   knownChunks = new Set<string>();
   sink: ConnectedSink | null = null;
+  connectionId = crypto.randomUUID();
+  joinCount = 1;
+  resumeCount = 0;
+  activeSocketCount = 1;
+  lastInputConnectionId = '';
   readonly survival: SurvivalSystem;
   readonly combat = new CombatSystem();
   cursor: ItemStack | null = null;
@@ -123,7 +165,60 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
+      inputSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
+      ackCommandSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
+      flying: this.controller.isFlying,
+      appliedTicks: this.appliedInputTrace.slice(),
+      appliedSteps: this.appliedStepsThisLoop.slice(),
+      ...(this.commandQueue.lastCompacted ? { queueCompacted: this.commandQueue.lastCompacted } : {}),
+      session: {
+        tokenFp: sessionTokenFingerprint(this.sessionToken),
+        connectionId: this.connectionId,
+        joinCount: this.joinCount,
+        resumeCount: this.resumeCount,
+        activeSockets: this.activeSocketCount,
+        lastInputConn: this.lastInputConnectionId || this.connectionId,
+        inputGapMs: this.lastServerRecvAt !== undefined
+          ? Math.round(performance.now() - this.lastServerRecvAt)
+          : undefined,
+        inputPackets: this.inputPacketsThisLoop,
+      },
+      ...(this.lastServerRecvAt !== undefined || this.lastClientSentAt !== undefined ? {
+        netTiming: {
+          ...(this.lastClientSentAt !== undefined ? { clientSentAt: this.lastClientSentAt } : {}),
+          ...(this.lastServerRecvAt !== undefined ? { serverRecvAt: this.lastServerRecvAt } : {}),
+          ...(this.lastServerSimAt !== undefined ? { serverSimAt: this.lastServerSimAt } : {}),
+          serverSentAt: performance.now(),
+        },
+      } : {}),
     };
+  }
+
+  recordAppliedInput(tick: number, applied: {
+    readonly seq: number;
+    readonly forward: number;
+    readonly right: number;
+    readonly jump: boolean;
+    readonly sneak: boolean;
+    readonly descend: boolean;
+    readonly flySprint: boolean;
+  }): void {
+    this.appliedInputTrace.push({
+      tick,
+      seq: applied.seq,
+      forward: applied.forward,
+      right: applied.right,
+      jump: applied.jump,
+      sneak: applied.sneak,
+      descend: applied.descend,
+      flySprint: applied.flySprint,
+      y: this.controller.position.y,
+      vy: this.controller.velocity.y,
+      flying: this.controller.isFlying,
+      onGround: this.controller.onGround,
+    });
+    const extra = this.appliedInputTrace.length - 8;
+    if (extra > 0) this.appliedInputTrace.splice(0, extra);
   }
 
   remoteInfo(): RemotePlayerInfo {
@@ -148,6 +243,47 @@ export class ServerPlayer implements GameplayPlayer {
   }
 }
 
+function commandFromInput(input: ClientInputMessage): PlayerCommand {
+  return {
+    commandSeq: input.seq,
+    clientTick: input.clientTick ?? input.seq,
+    forward: input.forward,
+    right: input.right,
+    jump: input.jump,
+    sneak: input.sneak,
+    sprint: input.sprint,
+    descend: input.descend,
+    flySprint: input.flySprint,
+    yaw: input.yaw,
+    pitch: input.pitch,
+    selectedSlot: input.selectedSlot,
+    ...(input.mining === true ? { mining: true } : {}),
+    ...(input.use === true ? { use: true } : {}),
+    ...(input.vehicleForward !== undefined ? { vehicleForward: input.vehicleForward } : {}),
+  };
+}
+
+function inputFromCommand(command: PlayerCommand): ClientInputMessage {
+  return {
+    type: 'input',
+    seq: command.commandSeq,
+    clientTick: command.clientTick,
+    forward: command.forward,
+    right: command.right,
+    jump: command.jump,
+    sneak: command.sneak,
+    sprint: command.sprint,
+    descend: command.descend,
+    flySprint: command.flySprint,
+    yaw: command.yaw,
+    pitch: command.pitch,
+    selectedSlot: command.selectedSlot,
+    ...(command.mining === true ? { mining: true } : {}),
+    ...(command.use === true ? { use: true } : {}),
+    ...(command.vehicleForward !== undefined ? { vehicleForward: command.vehicleForward } : {}),
+  };
+}
+
 export class WorldInstance {
   readyState: WorldReadyState = 'UNINITIALIZED';
   readonly world: VoxelWorld;
@@ -167,10 +303,41 @@ export class WorldInstance {
   private createdAt = Date.now();
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
-  private tickTimer: ReturnType<typeof setInterval> | undefined;
+  private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly dt: number;
+  private tickAccumulator = 0;
+  private lastTickWall = 0;
+  private nextTickSlotAt = 0;
+  private snapshotsGenerated = 0;
+  private snapshotsSent = 0;
+  private tpsWindowStart = 0;
+  private tpsWindowTicks = 0;
+  lastMeasuredTps = 0;
+  lastMeasuredSnapGen = 0;
+  lastMeasuredSnapSent = 0;
+  lastPhysicsTicksThisLoop = 0;
+  lastLoopElapsedMs = 0;
+  lastLoopAccumulatorMs = 0;
+  lastLoopLatenessMs = 0;
+  lastCallbackMs = 0;
+  lastChunkSends = 0;
+  lastChunkGens = 0;
+  lastEldMean = 0;
+  lastEldP95 = 0;
+  lastEldP99 = 0;
+  lastEldMax = 0;
+  droppedTicksTotal = 0;
+  private eventLoopDelay?: IntervalHistogram;
+  private lastTickMetrics: { blockChanges: number; entities: number; maxTickMs: number } = {
+    blockChanges: 0,
+    entities: 0,
+    maxTickMs: 0,
+  };
   private worldView: WorldView;
   private readonly debugTickOrder = process.env.FC_DEBUG_TICK === '1';
+  /** DEV-only slow-tick wall log. Not a production profiler. */
+  private readonly debugTickMs = process.env.FC_DEBUG_TICK_MS === '1';
+  private readonly debugSnap = process.env.FC_DEBUG_SNAP === '1';
   private readonly kernelTrace: string[] = [];
 
   constructor(readonly config: ServerConfig) {
@@ -238,15 +405,54 @@ export class WorldInstance {
 
   startLoops(): void {
     const tickMs = 1000 / this.config.tickRate;
-    this.tickTimer = setInterval(() => this.tick(), tickMs);
+    const now = performance.now();
+    this.lastTickWall = now;
+    this.nextTickSlotAt = now + tickMs;
+    this.tpsWindowStart = now;
+    this.eventLoopDelay?.disable();
+    this.eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
+    this.eventLoopDelay.enable();
+    const loop = (): void => {
+      const started = performance.now();
+      this.lastLoopLatenessMs = started - this.nextTickSlotAt;
+      this.lastChunkSends = 0;
+      this.lastChunkGens = 0;
+      const due = gameplayTicksDue(this.tickAccumulator, (started - this.lastTickWall) / 1000, this.dt);
+      this.lastTickWall = started;
+      this.tickAccumulator = due.nextAccumulator;
+      this.lastLoopElapsedMs = due.elapsed * 1000;
+      this.lastLoopAccumulatorMs = due.nextAccumulator * 1000;
+      this.lastPhysicsTicksThisLoop = due.ticks;
+      this.droppedTicksTotal += due.droppedTicks;
+      if (due.ticks === 1) this.tick();
+      else if (due.ticks > 1) this.tickCatchUp(due.ticks);
+      else {
+        for (const player of this.connectedPlayers()) this.syncChunksFor(player);
+      }
+      this.noteTpsWindow(due.ticks, started);
+      this.lastCallbackMs = performance.now() - started;
+      if (this.debugSnap && (this.lastCallbackMs >= 16 || this.lastLoopLatenessMs >= 16)) {
+        serverLog(
+          `loop late=${this.lastLoopLatenessMs.toFixed(1)}ms cb=${this.lastCallbackMs.toFixed(1)}ms `
+          + `phys=${this.lastPhysicsTicksThisLoop} chunks send=${this.lastChunkSends} gen=${this.lastChunkGens} `
+          + `eldMean=${this.lastEldMean.toFixed(1)} eldP99=${this.lastEldP99.toFixed(1)}`,
+        );
+      }
+      const planned = scheduleNextTickSlot(this.nextTickSlotAt, performance.now(), tickMs);
+      this.nextTickSlotAt = planned.nextSlotAt;
+      this.tickTimer = setTimeout(loop, planned.waitMs);
+    };
+    this.tickTimer = setTimeout(loop, tickMs);
     this.persistTimer = setInterval(() => {
       if (this.dirty) void this.save();
     }, this.config.persistIntervalMs);
   }
 
   async stop(): Promise<void> {
-    if (this.tickTimer) clearInterval(this.tickTimer);
+    if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.persistTimer) clearInterval(this.persistTimer);
+    this.eventLoopDelay?.disable();
+    this.eventLoopDelay = undefined;
     await this.plugins.disableAll();
     await this.save();
   }
@@ -300,11 +506,32 @@ export class WorldInstance {
     return [...this.players.values()].filter((player) => player.connected);
   }
 
+  private maxInputGapMs(now = performance.now()): number {
+    let maxGap = 0;
+    for (const player of this.connectedPlayers()) {
+      if (player.lastServerRecvAt === undefined) continue;
+      maxGap = Math.max(maxGap, now - player.lastServerRecvAt, player.lastInputGapMs);
+    }
+    return Math.round(maxGap);
+  }
+
+  private maxInputPacketsThisLoop(): number {
+    let maxPackets = 0;
+    for (const player of this.connectedPlayers()) {
+      maxPackets = Math.max(maxPackets, player.inputPacketsThisLoop);
+    }
+    return maxPackets;
+  }
+
+  private resetInputPacketCounters(): void {
+    for (const player of this.players.values()) player.inputPacketsThisLoop = 0;
+  }
+
   join(options: {
     sink: ConnectedSink;
     name?: string;
     sessionToken?: string;
-  }): { player: ServerPlayer; resumed: boolean } | { error: string } {
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string } {
     if (this.readyState !== 'READY') return { error: 'world not ready' };
     if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
 
@@ -312,19 +539,34 @@ export class WorldInstance {
       const existingId = this.tokens.get(options.sessionToken);
       const existing = existingId ? this.players.get(existingId) : undefined;
       if (existing) {
+        const previousConnectionId = existing.connectionId;
         existing.connected = true;
         existing.disconnectedAt = 0;
         existing.sink = options.sink;
+        existing.connectionId = crypto.randomUUID();
+        existing.joinCount += 1;
+        existing.resumeCount += 1;
+        existing.lastInputConnectionId = existing.connectionId;
         if (options.name) existing.name = options.name;
         this.resetConnectionInput(existing);
-        serverLog(`player joined: ${existing.name} (${existing.id}, resume)`);
+        const fp = sessionTokenFingerprint(existing.sessionToken);
+        serverLog(
+          `player joined: ${existing.name} (${existing.id}, resume) `
+          + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
+          + `resumeCount=${existing.resumeCount}`,
+        );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
-        return { player: existing, resumed: true };
+        return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
       if (stored) {
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name);
-        serverLog(`player joined: ${restored.name} (${restored.id}, resume)`);
+        restored.joinCount += 1;
+        restored.resumeCount += 1;
+        serverLog(
+          `player joined: ${restored.name} (${restored.id}, resume) `
+          + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
+        );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
         return { player: restored, resumed: true };
       }
@@ -346,6 +588,7 @@ export class WorldInstance {
     );
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
+    player.lastInputConnectionId = player.connectionId;
     this.players.set(id, player);
     this.tokens.set(sessionToken, id);
     const spawnChunkX = floorDiv(Math.floor(player.controller.position.x), 16);
@@ -353,19 +596,27 @@ export class WorldInstance {
     player.viewCx = spawnChunkX;
     player.viewCz = spawnChunkZ;
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player);
-    serverLog(`player joined: ${player.name} (${player.id})`);
+    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+    serverLog(
+      `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
+      + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
+    );
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
     this.dirty = true;
     return { player, resumed: false };
   }
 
-  disconnect(playerId: string, persist = true): void {
+  disconnect(playerId: string, persist = true, connectionId?: string): void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return;
+    if (connectionId && player.connectionId !== connectionId) {
+      netDebug('disconnect ignored', `stale conn ${connectionId.slice(0, 8)} live=${player.connectionId.slice(0, 8)}`);
+      return;
+    }
     player.connected = false;
     player.disconnectedAt = Date.now();
     player.sink = null;
+    player.activeSocketCount = 0;
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
@@ -376,7 +627,18 @@ export class WorldInstance {
     }
   }
 
-  applyInput(player: ServerPlayer, input: ClientInputMessage): boolean {
+  applyInput(
+    player: ServerPlayer,
+    input: ClientInputMessage,
+    source?: { readonly connectionId: string },
+  ): boolean {
+    if (source && source.connectionId !== player.connectionId) {
+      netDebug(
+        'player input',
+        `stale socket ${source.connectionId.slice(0, 8)} live=${player.connectionId.slice(0, 8)} seq=${input.seq}`,
+      );
+      return false;
+    }
     if (input.seq < player.lastInputSeq) {
       netDebug('player input', `stale seq ${input.seq} < ${player.lastInputSeq} for ${player.id}`);
       return false;
@@ -386,17 +648,46 @@ export class WorldInstance {
       return false;
     }
     player.lastInputSeq = input.seq;
+    player.lastInputConnectionId = source?.connectionId ?? player.connectionId;
+    player.lastClientSentAt = input.clientSentAt;
+    const recvAt = performance.now();
+    if (player.lastServerRecvAt !== undefined) {
+      player.lastInputGapMs = recvAt - player.lastServerRecvAt;
+    }
+    player.lastServerRecvAt = recvAt;
+    player.inputPacketsThisLoop += 1;
+    const enqueued = player.commandQueue.enqueue(commandFromInput(input));
+    if (enqueued === 'stale') {
+      netDebug('player input', `stale seq ${input.seq} < queued for ${player.id}`);
+      return false;
+    }
+    if (enqueued === 'duplicate') {
+      netDebug('player input', `duplicate seq ${input.seq} for ${player.id}`);
+      return false;
+    }
     player.lastInput = input;
-    player.selectedSlot = input.selectedSlot;
-    player.controller.yaw = input.yaw;
-    player.controller.pitch = input.pitch;
-    player.controller.creativeFlightAllowed = player.gamemode === 'creative';
-    player.vehicleForward = input.vehicleForward
-      ?? (player.ridingCartId ? input.forward : 0);
     return true;
   }
 
-  tryBreak(player: ServerPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
+  tryBreak(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    intent?: BlockTargetIntent,
+    commandSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (intent && (intent.targetX !== x || intent.targetY !== y || intent.targetZ !== z)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (player.miningTarget
+      && (player.miningTarget.x !== x || player.miningTarget.y !== y || player.miningTarget.z !== z)) {
+      return { ok: false, reason: 'mining' };
+    }
+    if (intent) {
+      const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq);
+      if (!validated.ok) return validated;
+    }
     const result = this.gameplay.breakBlock(player, x, y, z);
     if (result.ok) {
       this.dirty = true;
@@ -407,14 +698,47 @@ export class WorldInstance {
     return result;
   }
 
-  tryPlace(player: ServerPlayer, x: number, y: number, z: number, requestedBlock?: number): { ok: true } | { ok: false; reason: string } {
-    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock);
+  tryPlace(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    requestedBlock?: number,
+    intent?: BlockTargetIntent,
+    commandSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock, intent, commandSeq);
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
       this.flushPlayerInventory(player);
       netDebug('place accepted', `${player.name} ${x},${y},${z} -> ${requestedBlock ?? 'held'}`);
     }
+    return result;
+  }
+
+  beginMining(
+    player: ServerPlayer,
+    intent: BlockTargetIntent,
+    actionSeq?: number,
+    commandSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
+    return this.gameplay.beginMining(player, intent, commandSeq);
+  }
+
+  abortMining(player: ServerPlayer): void {
+    player.miningProgress = 0;
+    player.miningTarget = undefined;
+  }
+
+  releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
+    if (action.actionSeq <= player.lastBowReleaseSeq) return { ok: false, reason: 'duplicate' };
+    player.lastBowReleaseSeq = action.actionSeq;
+    const result = this.gameplay.releaseBowWithAim(player, action.yaw, action.pitch);
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
     return result;
   }
 
@@ -432,11 +756,18 @@ export class WorldInstance {
     this.flushPlayerInventory(player);
   }
 
-  interact(player: ServerPlayer): void {
-    this.gameplay.useHeld(player);
+  interact(
+    player: ServerPlayer,
+    intent?: BlockTargetIntent,
+    actionSeq?: number,
+    commandSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
+    const result = this.gameplay.useHeld(player, intent, commandSeq);
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    return result;
   }
 
   pickup(player: ServerPlayer): void {
@@ -507,6 +838,16 @@ export class WorldInstance {
     this.syncChunksFor(player);
   }
 
+  setActiveSocketCount(playerId: string, count: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    player.activeSocketCount = Math.max(0, Math.floor(count));
+  }
+
+  isActiveConnection(player: ServerPlayer, connectionId: string): boolean {
+    return player.connected && player.connectionId === connectionId;
+  }
+
   setGameMode(player: ServerPlayer, mode: GameMode): void {
     player.gamemode = mode;
     player.controller.creativeFlightAllowed = mode === 'creative';
@@ -540,9 +881,67 @@ export class WorldInstance {
   }
 
   tick(): void {
+    this.lastPhysicsTicksThisLoop = 1;
+    this.clearAppliedSteps();
+    this.simulateGameplayTick();
+    this.flushTickNetwork();
+  }
+
+  /**
+   * Run N physics ticks but broadcast **one** player_state at the end.
+   * Catch-up includes AppliedMovementStep[] so each tick remains named.
+   */
+  tickCatchUp(count: number): void {
+    const n = Math.max(0, Math.floor(count));
+    this.lastPhysicsTicksThisLoop = n;
+    this.clearAppliedSteps();
+    for (let i = 0; i < n; i += 1) this.simulateGameplayTick();
+    if (n > 0) this.flushTickNetwork();
+  }
+
+  private clearAppliedSteps(): void {
+    for (const player of this.players.values()) player.appliedStepsThisLoop.length = 0;
+  }
+
+  private noteTpsWindow(ticks: number, now: number): void {
+    this.tpsWindowTicks += ticks;
+    const elapsed = now - this.tpsWindowStart;
+    if (elapsed < 1000) return;
+    this.lastMeasuredTps = this.tpsWindowTicks * 1000 / elapsed;
+    this.lastMeasuredSnapGen = this.snapshotsGenerated * 1000 / elapsed;
+    this.lastMeasuredSnapSent = this.snapshotsSent * 1000 / elapsed;
+    const histogram = this.eventLoopDelay;
+    if (histogram) {
+      this.lastEldMean = histogram.mean / 1e6;
+      this.lastEldP95 = histogram.percentile(95) / 1e6;
+      this.lastEldP99 = histogram.percentile(99) / 1e6;
+      this.lastEldMax = histogram.max / 1e6;
+      histogram.reset();
+    }
+    if (this.debugSnap) {
+      serverLog(
+        `snap/s gen=${this.lastMeasuredSnapGen.toFixed(1)} sent=${this.lastMeasuredSnapSent.toFixed(1)} `
+        + `tps=${this.lastMeasuredTps.toFixed(1)} dropped=${this.droppedTicksTotal} `
+        + `loop phys=${this.lastPhysicsTicksThisLoop} late=${this.lastLoopLatenessMs.toFixed(1)} `
+        + `cb=${this.lastCallbackMs.toFixed(1)} eldMean=${this.lastEldMean.toFixed(1)} `
+        + `eldP99=${this.lastEldP99.toFixed(1)} eldMax=${this.lastEldMax.toFixed(1)} `
+        + `chunks send=${this.lastChunkSends} gen=${this.lastChunkGens}`,
+      );
+    }
+    this.tpsWindowStart = now;
+    this.tpsWindowTicks = 0;
+    this.snapshotsGenerated = 0;
+    this.snapshotsSent = 0;
+  }
+
+  private simulateGameplayTick(): void {
     const started = performance.now();
     this.tickNumber += 1;
     const dt = this.dt;
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      player.lastServerSimAt = started;
+    }
     if (this.debugTickOrder) this.kernelTrace.length = 0;
     const metrics = this.gameplay.tick([...this.players.values()], dt, {
       tickPlayers: () => this.tickConnectedPlayers(dt),
@@ -555,15 +954,58 @@ export class WorldInstance {
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.flushBlockChanges();
+    const wallMs = performance.now() - started;
+    if (this.debugTickMs && wallMs >= 16) {
+      serverLog(
+        `tick-ms n=${this.tickNumber} wall=${wallMs.toFixed(2)} gameplay=${this.lastTickMs.toFixed(2)} `
+        + `blocks=${metrics.blockChanges} entities=${metrics.entities} online=${this.onlineCount()}`,
+        'warn',
+      );
+    }
+    this.lastTickMetrics = metrics;
+    if (this.connectedPlayers().length > 0) this.snapshotsGenerated += 1;
+  }
 
+  private flushTickNetwork(): void {
     const passengers = new Map<string, string>();
     for (const player of this.players.values()) {
       if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
     }
+    for (const player of this.connectedPlayers()) this.syncChunksFor(player);
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
+    for (const player of this.connectedPlayers()) player.commandQueue.lastCompacted = undefined;
     if (snapshots.length > 0) {
-      this.broadcast({ type: 'player_state', tick: this.tickNumber, players: snapshots });
+      this.broadcast({
+        type: 'player_state',
+        tick: this.tickNumber,
+        physicsTicks: Math.max(1, this.lastPhysicsTicksThisLoop),
+        tickClock: {
+          physicsTps: this.lastMeasuredTps,
+          snapGen: this.lastMeasuredSnapGen,
+          snapSent: this.lastMeasuredSnapSent,
+          droppedTicks: this.droppedTicksTotal,
+          elapsedMs: this.lastLoopElapsedMs,
+          accumulatorMs: this.lastLoopAccumulatorMs,
+          physicsTicksThisLoop: this.lastPhysicsTicksThisLoop,
+          latenessMs: this.lastLoopLatenessMs,
+          callbackMs: this.lastCallbackMs,
+          eldMean: this.lastEldMean,
+          eldP95: this.lastEldP95,
+          eldP99: this.lastEldP99,
+          eldMax: this.lastEldMax,
+          tickWallMs: this.lastTickMs,
+          entities: this.lastTickMetrics.entities,
+          blockChanges: this.lastTickMetrics.blockChanges,
+          chunkSends: this.lastChunkSends,
+          chunkGens: this.lastChunkGens,
+          inputGapMs: this.maxInputGapMs(),
+          inputPackets: this.maxInputPacketsThisLoop(),
+        },
+        players: snapshots,
+      });
+      this.snapshotsSent += 1;
     }
+    this.resetInputPacketCounters();
     for (const player of this.connectedPlayers()) {
       this.sendTo(player, {
         type: 'entity_snapshot',
@@ -584,12 +1026,19 @@ export class WorldInstance {
       const kernel = this.debugTickOrder && this.kernelTrace.length > 0
         ? ` kernel ${formatGameplayKernelTrace(this.kernelTrace)}`
         : '';
+      const metrics = this.lastTickMetrics;
       serverLog(
         `tick ${this.tickNumber} ${this.lastTickMs.toFixed(2)}ms max ${this.maxTickMs.toFixed(2)}ms `
-        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}${kernel}`,
+        + `players ${this.onlineCount()} entities ${metrics.entities} blocks ${metrics.blockChanges}`
+        + ` tps=${this.lastMeasuredTps.toFixed(1)} snapGen=${this.lastMeasuredSnapGen.toFixed(1)} `
+        + `snapSent=${this.lastMeasuredSnapSent.toFixed(1)}${kernel}`,
       );
     }
     this.sweepDisconnected();
+  }
+
+  acceptClientActionSeq(player: ServerPlayer, actionSeq: number | undefined): boolean {
+    return this.acceptActionSeq(player, actionSeq);
   }
 
   /**
@@ -597,8 +1046,33 @@ export class WorldInstance {
    * only for the live socket; otherwise re-entry after Anarchy→SP→Anarchy
    * rejects every WASD packet as stale while look/chat still work.
    */
+  private acceptActionSeq(player: ServerPlayer, actionSeq: number | undefined): boolean {
+    if (actionSeq === undefined) return true;
+    if (actionSeq < player.lastActionSeq) return false;
+    if (actionSeq === player.lastActionSeq) return false;
+    player.lastActionSeq = actionSeq;
+    return true;
+  }
+
   private resetConnectionInput(player: ServerPlayer): void {
     player.lastInputSeq = inputSeqAfterReconnect();
+    player.appliedCommandSeq = -1;
+    player.lastActionSeq = -1;
+    player.lastBowReleaseSeq = -1;
+    player.commandQueue.clear({
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+      selectedSlot: player.selectedSlot,
+    });
+    player.appliedStepsThisLoop.length = 0;
+    player.actionPoseHistory.length = 0;
+    player.miningTarget = undefined;
+    player.miningProgress = 0;
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.lastUse = false;
+    player.lastSprint = false;
+    player.vehicleForward = 0;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -611,7 +1085,19 @@ export class WorldInstance {
   private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
+      const command = player.commandQueue.takeForTick();
+      if (command) {
+        player.lastInput = inputFromCommand(command);
+        player.appliedCommandSeq = command.commandSeq;
+        player.selectedSlot = command.selectedSlot;
+        player.controller.yaw = command.yaw;
+        player.controller.pitch = command.pitch;
+        player.vehicleForward = command.vehicleForward
+          ?? (player.ridingCartId ? command.forward : 0);
+      }
       const input = player.lastInput;
+      const jump = input.jump;
+      const using = input.use === true;
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
@@ -622,7 +1108,7 @@ export class WorldInstance {
         movement: () => ({
           forward: riding ? 0 : input.forward,
           right: riding ? 0 : input.right,
-          jump: riding ? false : input.jump,
+          jump: riding ? false : jump,
           sneak: input.sneak,
           sprint: input.sprint,
           descend: input.descend,
@@ -642,7 +1128,7 @@ export class WorldInstance {
       });
       player.combat.setHeldItem(player.inventory.getSlot(player.selectedSlot)?.itemId);
       player.combat.setOffhand(player.inventory.offhand?.itemId);
-      player.combat.updateUse(input.use === true, true, !player.survival.dead);
+      player.combat.updateUse(using, true, !player.survival.dead);
       if (player.gamemode === 'survival') {
         player.survival.tick(dt, {
           player: player.controller,
@@ -659,7 +1145,35 @@ export class WorldInstance {
         player.miningProgress = 0;
         player.miningTarget = undefined;
       }
-      this.gameplay.advanceUseHold(player, input.use === true);
+      this.gameplay.advanceUseHold(player, using);
+      player.recordAppliedInput(this.tickNumber, {
+        seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
+        forward: riding ? 0 : input.forward,
+        right: riding ? 0 : input.right,
+        jump: riding ? false : jump,
+        sneak: input.sneak,
+        descend: input.descend === true,
+        flySprint: input.flySprint === true,
+      });
+      const position = player.controller.position;
+      const velocity = player.controller.velocity;
+      player.appliedStepsThisLoop.push({
+        serverTick: this.tickNumber,
+        commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        vx: velocity.x,
+        vy: velocity.y,
+        vz: velocity.z,
+        onGround: player.controller.onGround,
+        flying: player.controller.isFlying,
+        sneaking: player.controller.sneaking,
+        sprinting: player.controller.sprinting,
+      });
+      if (player.appliedStepsThisLoop.length > APPLIED_STEPS_MAX) {
+        player.appliedStepsThisLoop.splice(0, player.appliedStepsThisLoop.length - APPLIED_STEPS_MAX);
+      }
       const moved = player.controller.position.distanceTo(before);
       if (moved > 1e-4) {
         const event = this.events.createPlayerMove(
@@ -673,6 +1187,14 @@ export class WorldInstance {
           player.controller.teleport(before);
         }
       }
+      const eye = player.controller.eyePosition();
+      recordActionPose(player.actionPoseHistory, {
+        commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+        eyeX: eye.x,
+        eyeY: eye.y,
+        eyeZ: eye.z,
+        selectedSlot: player.selectedSlot,
+      });
     }
   }
 
@@ -790,18 +1312,33 @@ export class WorldInstance {
     if (announce) serverLog(`chunk loaded ${key}`);
   }
 
-  private syncChunksFor(player: ServerPlayer): void {
+  private syncChunksFor(
+    player: ServerPlayer,
+    options?: { readonly maxNewGenerates?: number },
+  ): void {
     const radius = player.viewRadius;
+    const maxNew = options?.maxNewGenerates ?? MAX_NEW_CHUNK_GENERATES_PER_SYNC;
     const wanted = new Set<string>();
+    let generated = 0;
     for (let z = player.viewCz - radius; z <= player.viewCz + radius; z += 1) {
       for (let x = player.viewCx - radius; x <= player.viewCx + radius; x += 1) {
         const key = chunkKey(x, z);
         wanted.add(key);
-        this.ensureChunk(x, z);
+        const alreadyGenerated = this.generatedChunks.has(key);
+        if (!alreadyGenerated) {
+          if (generated >= maxNew) continue;
+          this.ensureChunk(x, z);
+          generated += 1;
+          this.lastChunkGens += 1;
+        } else if (!player.knownChunks.has(key)) {
+          this.ensureChunk(x, z, false);
+        }
+        if (!this.generatedChunks.has(key)) continue;
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
-          const mods = this.world.serializeModifications()[key] ?? {};
+          const mods = this.world.serializeChunkModifications(x, z);
           this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods });
+          this.lastChunkSends += 1;
         }
       }
     }
@@ -986,7 +1523,7 @@ export class WorldInstance {
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
     player.viewCz = floorDiv(Math.floor(player.controller.position.z), 16);
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player);
+    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
     return player;
   }
 
@@ -1155,6 +1692,36 @@ export class WorldInstance {
         player.inventoryDirty = true;
         this.flushPlayerInventory(player);
         return ok(count > 0 ? `Cleared ${count} item(s) from inventory` : 'Inventory is already empty');
+      },
+    });
+    this.commands.register({
+      name: 'predsim',
+      usage: '/predsim [ticks]',
+      description: 'DEV: lockstep pose dump (walk/flight/stationary) and latest-input coalesce',
+      execute: (args) => {
+        const raw = args[0] === undefined || args[0] === '' ? 20 : Number(args[0]);
+        const ticks = Number.isInteger(raw) && raw >= 1 && raw <= 40 ? raw : 20;
+        const sampleAt = [1, 2, 3, 10, Math.min(20, ticks)].filter((tick, index, all) => all.indexOf(tick) === index && tick <= ticks);
+        const modes = compareLockstepModes(ticks);
+        const walkDump = dumpControllerTicks(sampleAt, { forward: 1 });
+        const idleDump = dumpControllerTicks(sampleAt, {});
+        const flyDump = dumpControllerTicks(sampleAt, {}, { flying: true, startY: 8 });
+        const flyDownDump = dumpControllerTicks(sampleAt, { descend: true }, { flying: true, startY: 8 });
+        const coalesce = compareLatestInputCoalesce(2, 1, { forward: 1 });
+        const catchUp = compareLatestInputCoalesce(2, 2, { forward: 1 });
+        const modeLines = Object.entries(modes).map(([name, result]) => (
+          `${name} identical=${result.identical ? 'yes' : 'NO'} first=${result.firstDivergedTick ?? 'none'}`
+        ));
+        return ok([
+          ...modeLines,
+          ...formatPoseDump('walk', walkDump),
+          ...formatPoseDump('idle', idleDump),
+          ...formatPoseDump('flyHover', flyDump),
+          ...formatPoseDump('flySHIFT', flyDownDump),
+          ...formatLatestInputCoalesce(coalesce),
+          `catch-up 2=2 ${formatLatestInputCoalesce(catchUp)[0]!.replace('coalesce ', '')}`,
+          `server tps=${this.lastMeasuredTps.toFixed(1)} snapGen/s=${this.lastMeasuredSnapGen.toFixed(1)} snapSent/s=${this.lastMeasuredSnapSent.toFixed(1)}`,
+        ]);
       },
     });
     this.commands.register({

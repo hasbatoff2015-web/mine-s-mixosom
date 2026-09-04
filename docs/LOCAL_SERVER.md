@@ -49,7 +49,8 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 | `PERSIST_INTERVAL_MS` | `30000` | Periodic save |
 | `FC_PLUGIN_DIR` / `PLUGIN_DIR` | `server/plugins` | Live plugin directory (`npm run dev:server`) |
 | `FC_EXAMPLE_PLUGIN` | unset | `1` / `true` loads bundled `/hello` without copying |
-| `FC_OPERATORS` | empty | Comma-separated operator names |
+| `FC_DEBUG_TICK` | unset | `1` appends kernel order to the 200-tick log |
+| `FC_DEBUG_TICK_MS` | unset | `1` warns when a tick's wall time ≥ 16 ms (DEV hitch log, not a profiler) |
 
 HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
 
@@ -78,6 +79,8 @@ npm run dev:anarchy
 **Выживание PvP** remains unavailable.
 
 Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarchyPort=`.
+
+`PROTOCOL_VERSION` is **3**. Older clients (v1/v2) fail join (`unsupported protocol`). Rebuild both processes after pulling this branch. World files in `server/data/worlds/anarchy/` are unchanged. Targeted Online actions require `targetBlockId`.
 
 ## Two-client test
 
@@ -116,15 +119,23 @@ SERVER owns: world blocks/chunks **including `BlockRenderState`** (facing, door/
 
 The 20 TPS simulation **order** is `src/gameplay/GameplayKernel.ts`, the same sequencer singleplayer `Game` uses. `VoxelWorld.tick` (fluids/time/furnaces) runs once per kernel tick. `FC_DEBUG_TICK=1` appends that order to the existing 200-tick server log.
 
-CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
+CLIENT owns: rendering, input collection, UI, **local movement prediction** (same `PlayerController`, unacked seq replay), **remote player interpolation on a server-tick timeline** (`RemoteInterpolationBuffer`, 100 ms delay, bounded 100 ms extrapolation), **time-based interpolation for other server entities** (still arrival-time `EntityInterpolationBuffer`), local chunk mesh/light including an urgent live-mutation remesh slice, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
 
 CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 
-Local player: input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
+Local player: input is sent and **applied locally immediately** at 20 TPS. Server still runs the real `PlayerController`. `player_state` carries `tick` (authoritative simulation checkpoint), `physicsTicks` (latest-input ticks in this flush), and `inputSeq` (latest movement **state**, not a tick id). The client compares the snapshot to last accepted pose + `simTicks` of that latest input. If xz/y match, the live player is not touched. Only a real pose mismatch restores the snapshot and replays remaining predicted ticks. Do not treat `history[inputSeq]` as the checkpoint: the client may predict two seqs while the server simulates one latest-input tick. The server outer loop uses an absolute 50 ms slot so localhost stays ~20 snapshots/s. Apply happens at the next 20 TPS tick, not in the WebSocket callback. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if the correction ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
 
-Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
+**One tab.** The session token lives in `sessionStorage` (`fc.anarchy.sessionToken`). Duplicating a tab copies it and resumes the same player. Resume now kicks the old socket (`session_taken`). Movement diagnostics are invalid if a second tab with the same token is still connected. F3 `sess socks=` must be `1`.
 
-Mobs / drops / arrows / minecarts / TNT / falling blocks: the same ~80 ms snapshot buffer (`EntityInterpolationBuffer`). Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
+Positional correction dump: `http://localhost:4173/?corrDiag=1`. The first rewind logs `[corrDiag:first]`. PHYSICS now prints `lastAckedServerTick`, `simTicks`, `extraAssignSite`, `pendingSlotOverwrites`, and APPLIED INPUT TIMELINE (per server physics tick). `extra` is `simTicks`, not `seqGap`. In-game `/predsim` prints lockstep xyz at 1/2/3/10/20 ticks.
+
+Hiding the game tab (switch to ChatGPT, etc.) is a **different** bug from a duplicate tab: same socket, same player. `BACKGROUND` stops `tickOnline`; the server used to keep walking on `lastInput`. The client now sends one idle on hide and resyncs to the latest snapshot on return. F3 `visibility=` / `hiddenDurationMs` / `inGap`.
+
+DEV: `?quietWorld=1` caps streaming to 1 chunk. Console `[reconnectLoad]` / `[frameSpike]` / `[longtask]` / `[vis]` / `[vis-resync]`. F3 `loop late/cb/eld` and `load chunkSend/chunkGen`.
+
+Remote players: `RemoteInterpolationBuffer` on `player_state.tick` (100 ms delay, bounded 100 ms extrapolation then hold). Packet arrival time is not the simulation clock. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs. DEV: F3 nearest-remote HUD; `?remoteDiag=1` logs the sample timeline at 1 Hz.
+
+Mobs / drops / arrows / minecarts / TNT / falling blocks: arrival-time ~80 ms snapshot buffer (`EntityInterpolationBuffer`), separate from remotes. Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
 
 Server → client also includes `entity_event` (`hurt`, `death`, `projectile_spawn`, `projectile_hit`) keyed by `entityId`. Interest snapshots put arrows/TNT before mobs/items so the cap of 96 cannot starve projectiles.
 

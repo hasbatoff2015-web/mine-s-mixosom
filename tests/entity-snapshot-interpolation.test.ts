@@ -4,7 +4,6 @@ import {
   EntityInterpolationBuffer,
   sampleEntityPose,
 } from '../src/net/entitySnapshotInterpolation';
-import { sampleRemotePose } from '../src/net/RemotePlayerView';
 import { packEntitySnapshots } from '../server/gameplay';
 import type { EntitySnapshot } from '../shared/protocol';
 
@@ -82,23 +81,15 @@ describe('remote entity snapshot interpolation', () => {
     expect(buffer.sample('mob-1', 1_105)).toBeUndefined();
   });
 
-  it('smoothly interpolates mob travel the same way remote players do', () => {
+  it('smoothly interpolates mob travel on the delayed entity timeline', () => {
     const entity = [pose(0, 1, 1_000), pose(2, 2, 1_050)];
-    const players = [
-      { x: 0, y: 70, z: 0, yaw: 0, at: 1_000 },
-      { x: 2, y: 70, z: 0, yaw: 0, at: 1_050 },
-    ];
     const mob = sampleEntityPose(entity, 1_105)!;
-    const player = sampleRemotePose(players, 1_105)!;
-    expect(mob.x).toBeCloseTo(player.x, 5);
+    expect(mob.x).toBeCloseTo(1, 5);
   });
 
-  it('keeps remote-player sampling unchanged for the local-vs-remote split', () => {
-    const samples = [
-      { x: 0, y: 70, z: 0, yaw: 0, at: 50 },
-      { x: 4, y: 70, z: 0, yaw: 0, at: 100 },
-    ];
-    expect(sampleRemotePose(samples, 100)!.x).toBeCloseTo(0, 5);
+  it('does not jump to the newest entity sample the instant it arrives', () => {
+    const samples = [pose(0, 1, 50), pose(4, 2, 100)];
+    expect(sampleEntityPose(samples, 100)!.x).toBeCloseTo(0, 5);
   });
 
   it('packs arrows before mobs so projectiles are not starved by the snapshot cap', () => {

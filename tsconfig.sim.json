@@ -31,6 +31,7 @@
     "src/survival/**/*.ts",
     "src/crafting/**/*.ts",
     "src/chat/**/*.ts",
+    "src/farming/**/*.ts",
     "src/entities/**/*.ts",
     "src/save/WorldStore.ts",
     "src/save/snapshot.ts",
@@ -43,7 +44,7 @@
     "src/input/MoveInput.ts",
     "src/ui/recipeBook.ts",
     "src/ui/containerInteractions.ts",
-    "shared/protocol.ts"
+    "shared/**/*.ts"
   ],
   "exclude": [
     "src/entities/ThreeEntityHost.ts",
