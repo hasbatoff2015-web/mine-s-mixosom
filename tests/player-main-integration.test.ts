@@ -36,13 +36,17 @@ describe('player visuals on the server-authoritative main integration', () => {
     expect(jobs).not.toContain('WORLD_JOB_BUDGET_MS +');
   });
 
-  it('keeps reach and block targeting on the canonical player eye/look rather than the presentation camera', () => {
-    const targeting = section('private updateTargetAndActions(', 'private updateFoodUse(');
-    expect(targeting).toContain('session.player.eyePosition()');
-    expect(targeting).toContain('session.player.viewDirection()');
+  it('keeps reach and block targeting on the canonical player eye plus live input look rather than the presentation camera', () => {
+    const targeting = section('private sampleLocalAim(', 'private miningDelta(');
+    expect(targeting).toContain('localInteractionAim(');
     expect(targeting).toContain('session.world.raycast(origin, direction, PLAYER_REACH)');
+    expect(targeting).toContain('this.refreshLocalCrosshair(session)');
+    expect(targeting).not.toContain('session.player.viewDirection()');
     expect(targeting).not.toContain('this.camera.position');
     expect(targeting).not.toContain('this.camera.getWorldDirection');
+    const render = section('private render(alpha:', 'private updatePlayerPresentation(');
+    expect(render).toContain('this.refreshLocalCrosshair(session)');
+    expect(render).not.toContain('this.camera.getWorldDirection');
   });
 
   it('runs local/remote player presentation and the accepted breaking overlay on the render path', () => {
