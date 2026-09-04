@@ -1,5 +1,5 @@
 /**
- * Deep CPU breakdown of ChunkMesher after PR #47.
+ * Deep CPU breakdown of ChunkMesher after typed-array emit.
  * Isolation modes + greedy estimate + worker clone cost. No GPU.
  */
 import { BlockId, getBlockDefinition } from '../src/blocks';
@@ -56,6 +56,23 @@ const ISOLATION: Array<{ label: string; options: ChunkMeshBuildOptions }> = [
   { label: 'fullAoLightCache', options: { vertexLight: 'full', neighborhoodLightCache: true, collectDetail: true } },
 ];
 
+interface IsolationModeRow {
+  totalMs: number;
+  scanMs: number;
+  geometryMs: number;
+  cacheFillMs: number;
+  faces: number;
+  cells: number;
+  air: number;
+  cubes: number;
+  specials: number;
+  liquids: number;
+  lightCellReads: number;
+  positionFloats: number;
+  indexCount: number;
+  vertices: number;
+}
+
 function runIsolation(world: VoxelWorld, cx: number, cz: number) {
   const mesher = new ChunkMesher(atlasStub);
   const chunk = world.getChunk(cx, cz)!;
@@ -66,7 +83,7 @@ function runIsolation(world: VoxelWorld, cx: number, cz: number) {
     const meshed = mesher.build(chunk, world, mode.options);
     const totalMs = performance.now() - started;
     const profile = mesher.lastProfile;
-    rows[mode.label] = {
+    const data: IsolationModeRow = {
       totalMs: Number(totalMs.toFixed(3)),
       scanMs: Number(profile.scanMs.toFixed(3)),
       geometryMs: Number(profile.geometryMs.toFixed(3)),
@@ -79,7 +96,10 @@ function runIsolation(world: VoxelWorld, cx: number, cz: number) {
       liquids: profile.liquids,
       lightCellReads: profile.lightCellReads,
       positionFloats: profile.positionFloats,
+      indexCount: profile.indexCount,
+      vertices: profile.positionFloats / 3,
     };
+    rows[mode.label] = data;
     dispose(meshed);
   }
   return rows;
@@ -88,6 +108,73 @@ function runIsolation(world: VoxelWorld, cx: number, cz: number) {
 function occludes(id: number): boolean {
   if (id === BlockId.Air) return false;
   return getBlockDefinition(id as BlockId).occludesFaces === true;
+}
+
+type Axis = 'x' | 'y' | 'z';
+
+function greedyMergePlane(
+  neighbor: (x: number, y: number, z: number) => number,
+  blocks: Uint8Array | Uint16Array,
+  height: number,
+  nx: number,
+  ny: number,
+  nz: number,
+  uAxis: Axis,
+  vAxis: Axis,
+): { naive: number; greedy: number } {
+  const uSize = uAxis === 'y' ? height : CHUNK_SIZE;
+  const vSize = vAxis === 'y' ? height : CHUNK_SIZE;
+  const wSize = nx !== 0 ? CHUNK_SIZE : ny !== 0 ? height : CHUNK_SIZE;
+  const used = new Uint8Array(Math.max(uSize * vSize, 1));
+  const coord = (w: number, u: number, v: number) => {
+    const x = nx !== 0 ? w : uAxis === 'x' ? u : v;
+    const y = ny !== 0 ? w : uAxis === 'y' ? u : vAxis === 'y' ? v : 0;
+    const z = nz !== 0 ? w : uAxis === 'z' ? u : v;
+    return { x, y, z };
+  };
+  const blockAt = (x: number, y: number, z: number) => {
+    if (y < 0 || y >= height || x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return 0;
+    return blocks[y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x]!;
+  };
+  let naive = 0;
+  let greedy = 0;
+  for (let w = 0; w < wSize; w += 1) {
+    used.fill(0);
+    for (let v = 0; v < vSize; v += 1) {
+      for (let u = 0; u < uSize; u += 1) {
+        const { x, y, z } = coord(w, u, v);
+        const id = blockAt(x, y, z);
+        if (id === BlockId.Air) continue;
+        const def = getBlockDefinition(id as BlockId);
+        if (def.renderShape !== 'cube' && def.renderShape !== 'slab') continue;
+        if (occludes(neighbor(x + nx, y + ny, z + nz))) continue;
+        naive += 1;
+        if (used[u + v * uSize]) continue;
+        let width = 1;
+        while (u + width < uSize && !used[u + width + v * uSize]) {
+          const n = coord(w, u + width, v);
+          if (blockAt(n.x, n.y, n.z) !== id) break;
+          if (occludes(neighbor(n.x + nx, n.y + ny, n.z + nz))) break;
+          width += 1;
+        }
+        let depth = 1;
+        outer: while (v + depth < vSize) {
+          for (let du = 0; du < width; du += 1) {
+            if (used[u + du + (v + depth) * uSize]) break outer;
+            const n = coord(w, u + du, v + depth);
+            if (blockAt(n.x, n.y, n.z) !== id) break outer;
+            if (occludes(neighbor(n.x + nx, n.y + ny, n.z + nz))) break outer;
+          }
+          depth += 1;
+        }
+        for (let dv = 0; dv < depth; dv += 1) {
+          for (let du = 0; du < width; du += 1) used[u + du + (v + dv) * uSize] = 1;
+        }
+        greedy += 1;
+      }
+    }
+  }
+  return { naive, greedy };
 }
 
 function estimateGreedy(world: VoxelWorld, cx: number, cz: number) {
@@ -108,50 +195,32 @@ function estimateGreedy(world: VoxelWorld, cx: number, cz: number) {
     const lz = ((wz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     return n.blocks[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx]!;
   };
-  const faceVisible = (nx: number, ny: number, nz: number): boolean => !occludes(neighbor(nx, ny, nz));
-  let naive = 0;
-  let greedy = 0;
-  const used = new Uint8Array(CHUNK_SIZE * height * CHUNK_SIZE);
-  const markIndex = (x: number, y: number, z: number) => y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
-  // +Y faces only as a representative merge (largest spawn roofs/floors).
-  for (let y = 0; y < height; y += 1) {
-    used.fill(0);
-    for (let z = 0; z < CHUNK_SIZE; z += 1) {
-      for (let x = 0; x < CHUNK_SIZE; x += 1) {
-        const id = blocks[markIndex(x, y, z)]!;
-        if (id === BlockId.Air) continue;
-        const def = getBlockDefinition(id as BlockId);
-        if (def.renderShape !== 'cube' && !(def.renderShape === 'slab')) continue;
-        if (!faceVisible(x, y + 1, z)) continue;
-        naive += 1;
-        if (used[x + z * CHUNK_SIZE]) continue;
-        let width = 1;
-        while (x + width < CHUNK_SIZE && !used[x + width + z * CHUNK_SIZE]
-          && blocks[markIndex(x + width, y, z)] === id
-          && faceVisible(x + width, y + 1, z)) {
-          width += 1;
-        }
-        let depth = 1;
-        outer: while (z + depth < CHUNK_SIZE) {
-          for (let dx = 0; dx < width; dx += 1) {
-            if (used[x + dx + (z + depth) * CHUNK_SIZE]) break outer;
-            if (blocks[markIndex(x + dx, y, z + depth)] !== id) break outer;
-            if (!faceVisible(x + dx, y + 1, z + depth)) break outer;
-          }
-          depth += 1;
-        }
-        for (let dz = 0; dz < depth; dz += 1) {
-          for (let dx = 0; dx < width; dx += 1) used[x + dx + (z + dz) * CHUNK_SIZE] = 1;
-        }
-        greedy += 1;
-      }
-    }
+  const plusY = greedyMergePlane(neighbor, blocks, height, 0, 1, 0, 'x', 'z');
+  const dirs: Array<{ nx: number; ny: number; nz: number; u: Axis; v: Axis }> = [
+    { nx: 1, ny: 0, nz: 0, u: 'y', v: 'z' },
+    { nx: -1, ny: 0, nz: 0, u: 'y', v: 'z' },
+    { nx: 0, ny: 1, nz: 0, u: 'x', v: 'z' },
+    { nx: 0, ny: -1, nz: 0, u: 'x', v: 'z' },
+    { nx: 0, ny: 0, nz: 1, u: 'x', v: 'y' },
+    { nx: 0, ny: 0, nz: -1, u: 'x', v: 'y' },
+  ];
+  let naive6 = 0;
+  let greedy6 = 0;
+  for (const dir of dirs) {
+    const part = greedyMergePlane(neighbor, blocks, height, dir.nx, dir.ny, dir.nz, dir.u, dir.v);
+    naive6 += part.naive;
+    greedy6 += part.greedy;
   }
   return {
-    plusYNaiveFaces: naive,
-    plusYGreedyQuads: greedy,
-    plusYMergeRatio: naive > 0 ? Number((naive / Math.max(1, greedy)).toFixed(2)) : 0,
-    note: 'Upper bound: +Y opaque/slab faces merged by block id only, ignoring AO/light splits and other 5 dirs.',
+    plusYNaiveFaces: plusY.naive,
+    plusYGreedyQuads: plusY.greedy,
+    plusYMergeRatio: plusY.naive > 0 ? Number((plusY.naive / Math.max(1, plusY.greedy)).toFixed(2)) : 0,
+    allDirNaiveFaces: naive6,
+    allDirGreedyQuads: greedy6,
+    allDirMergeRatio: naive6 > 0 ? Number((naive6 / Math.max(1, greedy6)).toFixed(2)) : 0,
+    expectedVertexUpperBound: greedy6 * 4,
+    expectedIndexUpperBound: greedy6 * 6,
+    note: 'Upper bound: cube/slab faces merged by block id only, ignoring AO/light/texture/biome splits. Not wired to production.',
   };
 }
 
@@ -196,7 +265,7 @@ function cloneNeighborhoodCost(world: VoxelWorld, cx: number, cz: number) {
     payloadBytes: bytes,
     structuredCloneMs: Number(structuredCloneMs.toFixed(3)),
     typedArraySliceMs: Number(typedSliceMs.toFixed(3)),
-    note: 'Clone cost only. A worker also needs blockStates, fluids, farming stem resolve, and atlas UVs.',
+    note: 'Clone cost only. A worker also needs blockStates, fluids, farming stem resolve, and atlas UVs. It does not make mesh() faster; it only moves CPU off the render thread.',
   };
 }
 
@@ -230,24 +299,32 @@ const isolation = [];
 for (const coord of coords) isolation.push(runIsolation(spawnWorld, coord.cx, coord.cz));
 const heapAfter = process.memoryUsage();
 
-const byMode: Record<string, { total: number[]; scan: number[]; geo: number[]; cacheFill: number[]; reads: number[] }> = {};
+const byMode: Record<string, {
+  total: number[];
+  scan: number[];
+  geo: number[];
+  cacheFill: number[];
+  reads: number[];
+  faces: number[];
+  vertices: number[];
+  indices: number[];
+}> = {};
 for (const mode of ISOLATION) {
-  byMode[mode.label] = { total: [], scan: [], geo: [], cacheFill: [], reads: [] };
+  byMode[mode.label] = {
+    total: [], scan: [], geo: [], cacheFill: [], reads: [], faces: [], vertices: [], indices: [],
+  };
 }
 for (const row of isolation) {
   for (const mode of ISOLATION) {
-    const data = row[mode.label] as {
-      totalMs: number;
-      scanMs: number;
-      geometryMs: number;
-      cacheFillMs: number;
-      lightCellReads: number;
-    };
+    const data = row[mode.label] as IsolationModeRow;
     byMode[mode.label]!.total.push(data.totalMs);
     byMode[mode.label]!.scan.push(data.scanMs);
     byMode[mode.label]!.geo.push(data.geometryMs);
     byMode[mode.label]!.cacheFill.push(data.cacheFillMs);
     byMode[mode.label]!.reads.push(data.lightCellReads);
+    byMode[mode.label]!.faces.push(data.faces);
+    byMode[mode.label]!.vertices.push(data.vertices);
+    byMode[mode.label]!.indices.push(data.indexCount);
   }
 }
 
@@ -257,50 +334,100 @@ for (const mode of ISOLATION) {
   modeSummary[mode.label] = {
     totalMs: summarize(stats.total),
     scanMs: summarize(stats.scan),
-    geometryMs: summarize(stats.geo),
+    geometryConversionMs: summarize(stats.geo),
     cacheFillMs: summarize(stats.cacheFill),
     lightCellReads: summarize(stats.reads),
+    faces: summarize(stats.faces),
+    vertices: summarize(stats.vertices),
+    indices: summarize(stats.indices),
   };
 }
 
+const phase = {
+  voxelWalk: [] as number[],
+  faceVisibility: [] as number[],
+  emit: [] as number[],
+  cheapLight: [] as number[],
+  aoUncached: [] as number[],
+  aoCached: [] as number[],
+  geometryConversion: [] as number[],
+  totalCached: [] as number[],
+};
+for (const row of isolation) {
+  const vis = row.visibilityOnly as IsolationModeRow;
+  const flat = row.emitFlatLight as IsolationModeRow;
+  const cheap = row.emitCheapLight as IsolationModeRow;
+  const full = row.fullAo as IsolationModeRow;
+  const cached = row.fullAoLightCache as IsolationModeRow;
+  phase.voxelWalk.push(vis.scanMs);
+  phase.faceVisibility.push(vis.scanMs);
+  phase.emit.push(flat.scanMs - vis.scanMs);
+  phase.cheapLight.push(cheap.scanMs - flat.scanMs);
+  phase.aoUncached.push(full.scanMs - cheap.scanMs);
+  phase.aoCached.push(cached.scanMs - cheap.scanMs);
+  phase.geometryConversion.push(cached.geometryMs);
+  phase.totalCached.push(cached.totalMs);
+}
+
 const sample = isolation.find((row) => {
-  const full = row.fullAo as { faces: number };
+  const full = row.fullAo as IsolationModeRow;
   return full.faces > 5000;
 }) ?? isolation[40] ?? isolation[0]!;
 
 const greedy = estimateGreedy(spawnWorld, sample.cx as number, sample.cz as number);
 const cloneCost = cloneNeighborhoodCost(spawnWorld, sample.cx as number, sample.cz as number);
 
-const full = sample.fullAo as { totalMs: number; scanMs: number; lightCellReads: number; faces: number };
-const vis = sample.visibilityOnly as { totalMs: number; scanMs: number };
-const flat = sample.emitFlatLight as { totalMs: number; scanMs: number };
-const cheap = sample.emitCheapLight as { totalMs: number; scanMs: number };
-const cached = sample.fullAoLightCache as { totalMs: number; scanMs: number; cacheFillMs: number; lightCellReads: number };
+const full = sample.fullAo as IsolationModeRow;
+const vis = sample.visibilityOnly as IsolationModeRow;
+const flat = sample.emitFlatLight as IsolationModeRow;
+const cheap = sample.emitCheapLight as IsolationModeRow;
+const cached = sample.fullAoLightCache as IsolationModeRow;
+const totalFaces = byMode.fullAoLightCache!.faces.reduce((a, b) => a + b, 0);
+const totalVertices = byMode.fullAoLightCache!.vertices.reduce((a, b) => a + b, 0);
+const totalIndices = byMode.fullAoLightCache!.indices.reduce((a, b) => a + b, 0);
 
 console.log(JSON.stringify({
-  note: 'CPU-only mesher isolation. GPU/FPS not measured. PR #47 generate XOR mesh is unchanged.',
+  note: 'CPU-only mesher isolation. GPU/FPS not measured. PR #47 generate XOR mesh is unchanged. Greedy/worker are estimates only.',
   spawnPresent: true,
   grid: '9x9 RD=4 around spawn',
   chunks: coords.length,
   heapDeltaMb: Number(((heapAfter.heapUsed - heapBefore.heapUsed) / (1024 * 1024)).toFixed(2)),
   heapAfterMb: Number((heapAfter.heapUsed / (1024 * 1024)).toFixed(2)),
+  totals: {
+    faces: totalFaces,
+    vertices: totalVertices,
+    indices: totalIndices,
+  },
+  phaseBreakdownMs: {
+    voxelWalkAndFaceVisibility: summarize(phase.voxelWalk),
+    emit: summarize(phase.emit),
+    cheapLight: summarize(phase.cheapLight),
+    aoUncachedExtra: summarize(phase.aoUncached),
+    aoCachedExtra: summarize(phase.aoCached),
+    geometryConversion: summarize(phase.geometryConversion),
+    totalFullAoCached: summarize(phase.totalCached),
+  },
   modeSummary,
   sampleChunk: {
     cx: sample.cx,
     cz: sample.cz,
     occupancyTop: sample.occupancyTop,
     faces: full.faces,
+    vertices: cached.vertices,
+    indices: cached.indexCount,
     visibilityScanMs: vis.scanMs,
     emitFlatScanMs: flat.scanMs,
     emitCheapScanMs: cheap.scanMs,
     fullAoScanMs: full.scanMs,
     cachedScanMs: cached.scanMs,
     cacheFillMs: cached.cacheFillMs,
+    geometryConversionMs: cached.geometryMs,
     derived: {
       voxelWalkAndVisibilityMs: vis.scanMs,
       emitAndArrayPushMs: Number((flat.scanMs - vis.scanMs).toFixed(3)),
       cheapLightMs: Number((cheap.scanMs - flat.scanMs).toFixed(3)),
       fullAoExtraMs: Number((full.scanMs - cheap.scanMs).toFixed(3)),
+      cachedAoExtraMs: Number((cached.scanMs - cheap.scanMs).toFixed(3)),
       cacheVsFullAoMs: Number((full.scanMs - cached.scanMs).toFixed(3)),
     },
     lightCellReadsFull: full.lightCellReads,
@@ -308,4 +435,8 @@ console.log(JSON.stringify({
   },
   greedyEstimate: greedy,
   workerClone: cloneCost,
+  gpu: {
+    measured: false,
+    reason: 'No DevTools Performance / renderer.info capture in this Cloud VM pass.',
+  },
 }, null, 2));
