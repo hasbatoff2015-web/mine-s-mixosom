@@ -75,4 +75,29 @@ describe('IdbWorldStore', () => {
     expect(loaded).not.toBeNull();
     expect(JSON.stringify(loaded!.player.inventory)).toContain('diamond');
   });
+
+  it('round-trips farmland hydration and crop age through IndexedDB', async () => {
+    const store = new IdbWorldStore();
+    const snapshot = sampleSnapshot({
+      summary: { ...sampleSnapshot().summary, id: 'farming-idb', name: 'Farming' },
+      modifications: {
+        '0,0': {
+          '645': BlockId.Farmland,
+          '901': BlockId.WheatCrop,
+        },
+      },
+      blockStates: {
+        '5,40,5': { hydrated: true },
+        '5,41,5': { age: 6 },
+      },
+    });
+
+    await store.save(snapshot);
+    const loaded = await store.load('farming-idb');
+
+    expect(loaded?.modifications['0,0']?.['645']).toBe(BlockId.Farmland);
+    expect(loaded?.modifications['0,0']?.['901']).toBe(BlockId.WheatCrop);
+    expect(loaded?.blockStates?.['5,40,5']).toEqual({ hydrated: true });
+    expect(loaded?.blockStates?.['5,41,5']).toEqual({ age: 6 });
+  });
 });

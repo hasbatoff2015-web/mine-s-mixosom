@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Farming V1 — 2026-09-04
+
+- Feature branch: `codex/farming-core`, based on `origin/main` `4d803e5de22e551e3f71941c0abb03c91e78cf4c`. Existing block IDs are unchanged; Farming uses appended IDs 150–157.
+- Shared Node-safe `FarmingSystem` runs after `VoxelWorld.tick` in the 20 TPS `GameplayKernel`. Hydration checks every 100 ticks; growth every 1200 ticks. Sparse per-chunk farming positions are tracked from committed block changes and restored chunk modifications; there are no per-crop timers, wall-clock catch-up, or full-world scan. An empty server active-center list pauses all farming until a player reconnects.
+- Binary hydration uses existing Water occupancy at farmland Y/Y+1 and Chebyshev radius 4. Dry farmland remains farmland and preserves crop age; only growth pauses. Crops/stems use canonical `blockStates` (`hydrated`, `age`) for IndexedDB, filesystem snapshots, reconnect, and normal block update/batch networking.
+- Wheat/Carrot/Potato/Melon/Pumpkin, five hoes, Bone/Bone Meal, foods, harvest tables, recipes, rare Survival bootstrap drops, vegetation batching, 15/16 farmland geometry, and deterministic attached stems are implemented through existing registries/managers.
+- Anarchy stays server-authoritative for tilling, consumption/durability, growth RNG, Bone Meal, fruit, harvest, drops, crafting, furnace, and food. Online clients only request and render canonical state.
+- Automated gates: directed farming/regression 267/267, core Farming 35/35, `test:sim` 42/42, `test:server` 78/78, all typechecks, import boundaries, Node/server smokes, build/size/archive PASS. Exact-main full-suite comparison added 36 passing tests and no failure class. Benchmarks: 1024 positions 6.066 ms; 4096 positions 13.908 ms on this machine. DEV WebGL `?qaFarming=1` visually checked dry/wet plots, all stages, stems/fruits, hoes, Bone Meal, and farming items.
+- Detailed handoff: `docs/reports/2026-09-04_farming-core.md`.
+
 Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
 
 ## Последний проход: интеграция UI PR #22 с server + breaking + player main
@@ -588,4 +598,4 @@ Codex UI (menu family, online mock, read-only controls) and Cursor PR #6 (fluids
 
 ## За пределами текущей alpha
 
-Не реализованы accounts/cloud worlds, public VPS deploy, Survival PvP matchmaking, weather, farming, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. **Local Anarchy** (`npm run dev:server`) уже есть: server-authoritative world on one PC. Drinkable potions, rails и minecart в этой alpha есть как practical approximation, без brewing/powered rails. Это осознанно не подменяется заглушками в P0.
+Не реализованы accounts/cloud worlds, public VPS deploy, Survival PvP matchmaking, weather, advanced farming/breeding, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. **Local Anarchy** (`npm run dev:server`) уже есть: server-authoritative world on one PC. Drinkable potions, rails, minecart и Farming V1 в этой alpha есть как practical approximation, без brewing/powered rails/Farming V2. Это осознанно не подменяется заглушками в P0.

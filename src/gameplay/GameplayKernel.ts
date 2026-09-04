@@ -13,6 +13,7 @@
 
 export const GAMEPLAY_KERNEL_STEPS = [
   'world',
+  'farming',
   'falling',
   'players',
   'playerActions',
@@ -34,6 +35,8 @@ export type GameplayKernelContinue = void | 'abort';
 export interface GameplayKernelHost {
   /** `VoxelWorld.tick` — once. Fluids/time/furnaces live here, not in later steps. */
   tickWorld(): void;
+  /** Sparse loaded-chunk farming pulses after the world's tick counter advances. */
+  tickFarming(): void;
   /** Spawn falling blocks from the world queue, then `falling.update`. */
   tickFalling(): void;
   /** Player physics + survival. Server also keeps mining/use hold next to physics. */
@@ -72,6 +75,9 @@ export function tickGameplayKernel(host: GameplayKernelHost, trace?: string[]): 
 
   record('world');
   host.tickWorld();
+
+  record('farming');
+  host.tickFarming();
 
   record('falling');
   host.tickFalling();

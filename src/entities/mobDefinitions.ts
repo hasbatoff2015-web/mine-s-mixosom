@@ -71,7 +71,11 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
     kind: 'zombie', disposition: 'hostile', maxHealth: 20, width: 0.6, height: 1.8,
     eyeHeight: 1.62, speed: 2.3, detectionRange: 16, attackRange: 1.45,
     attackDamage: 3, attackCooldownSeconds: 1,
-    loot: Object.freeze([{ itemId: ItemId.IronIngot, min: 1, max: 1, chance: 0.025 }]),
+    loot: Object.freeze([
+      { itemId: ItemId.IronIngot, min: 1, max: 1, chance: 0.025 },
+      { itemId: ItemId.Carrot, min: 1, max: 1, chance: 0.0125 },
+      { itemId: ItemId.Potato, min: 1, max: 1, chance: 0.0125 },
+    ]),
   }),
   skeleton: Object.freeze({
     kind: 'skeleton', disposition: 'hostile', maxHealth: 20, width: 0.6, height: 1.8,
@@ -79,6 +83,7 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
     attackDamage: 4, attackCooldownSeconds: 1.6,
     loot: Object.freeze([
       { itemId: ItemId.Arrow, min: 0, max: 2 },
+      { itemId: ItemId.Bone, min: 0, max: 2 },
       { itemId: ItemId.Bow, min: 1, max: 1, chance: 0.04 },
     ]),
   }),

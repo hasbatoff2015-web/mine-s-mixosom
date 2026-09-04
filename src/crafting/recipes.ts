@@ -148,6 +148,11 @@ const toolMaterials = [
   { prefix: 'diamond', ingredient: exact(ItemId.Diamond) },
 ] as const;
 
+const hoeMaterials = [
+  ...toolMaterials,
+  { prefix: 'golden', ingredient: exact(ItemId.GoldIngot) },
+] as const;
+
 for (const material of toolMaterials) {
   const M = material.ingredient;
   recipes.push(
@@ -169,6 +174,41 @@ for (const material of toolMaterials) {
     },
   );
 }
+
+for (const material of hoeMaterials) {
+  recipes.push({
+    id: `${material.prefix}_hoe`, type: 'shaped', pattern: ['MM', ' S', ' S'], mirrored: true,
+    key: { M: material.ingredient, S: exact(ItemId.Stick) },
+    output: { item: `${material.prefix}_hoe`, count: 1 }, gridSize: 3,
+  });
+}
+
+recipes.push(
+  {
+    id: 'bread', type: 'shaped', pattern: ['WWW'], key: { W: exact(ItemId.Wheat) },
+    output: { item: ItemId.Bread, count: 1 }, gridSize: 3,
+  },
+  {
+    id: 'bone_meal', type: 'shapeless', ingredients: [exact(ItemId.Bone)],
+    output: { item: ItemId.BoneMeal, count: 3 }, gridSize: 2,
+  },
+  {
+    id: 'melon_seeds', type: 'shapeless', ingredients: [exact(ItemId.MelonSlice)],
+    output: { item: ItemId.MelonSeeds, count: 1 }, gridSize: 2,
+  },
+  {
+    id: 'pumpkin_seeds', type: 'shapeless', ingredients: [exact('pumpkin')],
+    output: { item: ItemId.PumpkinSeeds, count: 4 }, gridSize: 2,
+  },
+  {
+    id: 'melon_block', type: 'shaped', pattern: ['MMM', 'MMM', 'MMM'],
+    key: { M: exact(ItemId.MelonSlice) }, output: { item: 'melon', count: 1 }, gridSize: 3,
+  },
+  {
+    id: 'pumpkin_pie', type: 'shapeless', ingredients: [exact(ItemId.Bread), exact('pumpkin')],
+    output: { item: ItemId.PumpkinPie, count: 1 }, gridSize: 2,
+  },
+);
 
 const armorMaterials = [
   { prefix: 'leather', ingredient: exact(ItemId.Leather) },
@@ -257,6 +297,7 @@ const smeltingRecipes: SmeltingRecipe[] = [
   { id: 'cooked_beef', input: exact(ItemId.Beef), output: { item: ItemId.CookedBeef, count: 1 }, cookingTimeTicks: 200 },
   { id: 'cooked_porkchop', input: exact(ItemId.Porkchop), output: { item: ItemId.CookedPorkchop, count: 1 }, cookingTimeTicks: 200 },
   { id: 'cooked_chicken', input: exact(ItemId.Chicken), output: { item: ItemId.CookedChicken, count: 1 }, cookingTimeTicks: 200 },
+  { id: 'baked_potato', input: exact(ItemId.Potato), output: { item: ItemId.BakedPotato, count: 1 }, cookingTimeTicks: 200 },
 ];
 
 export const SMELTING_RECIPES: readonly SmeltingRecipe[] = Object.freeze(

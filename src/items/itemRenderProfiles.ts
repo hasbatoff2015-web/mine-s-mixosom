@@ -127,6 +127,7 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
       || shape === 'cross'
       || shape === 'fire'
       || shape === 'wire'
+      || shape === 'farmland'
     ) {
       return 'generated';
     }
@@ -157,6 +158,7 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'cross':
     case 'fire':
     case 'wire':
+    case 'farmland':
       return 'generated';
     case 'button':
     case 'pressure_plate':

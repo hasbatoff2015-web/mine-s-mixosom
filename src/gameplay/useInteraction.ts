@@ -40,6 +40,8 @@ import {
 } from '../entities';
 import { damageItem, type Inventory, type ItemStack } from '../inventory';
 import { ItemId, tryGetItemDefinition } from '../items';
+import { MAX_CROP_AGE, cropAge, isCropBlock, plantingDefinition } from '../farming';
+import { systemRandomFn, type RandomFn } from './random';
 import { pickupFluidSource, placeBucketFluid } from '../items/bucketInteraction';
 import type { RedstoneSystem } from '../redstone';
 import {
@@ -65,6 +67,7 @@ export type UseIntentKind =
   | 'press-button'
   | 'toggle-door'
   | 'use-bed'
+  | 'farming'
   | 'start-food'
   | 'start-bow'
   | 'flint'
@@ -103,6 +106,7 @@ export interface UseIntentInput {
   readonly hit?: { readonly block: number; readonly distance: number };
   readonly cartRay?: { readonly rideable: boolean; readonly distance: number };
   readonly nearbyRideableCart?: boolean;
+  readonly itemTool?: string;
 }
 
 export interface UseHostEffects {
@@ -151,6 +155,7 @@ export interface UseSimulationContext {
     | 'primeTnt'
     | 'notifyBlockChanged'
   >;
+  readonly random?: RandomFn;
   setSpawnPoint?(position: readonly [number, number, number]): void;
   allowInteract?(x: number, y: number, z: number, block: number): boolean;
   allowPlace?(x: number, y: number, z: number, block: number): boolean;
@@ -204,6 +209,8 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
       default: break;
     }
   }
+  if (input.hit && (input.itemTool === 'hoe' || input.itemId === ItemId.BoneMeal
+    || plantingDefinition(input.itemId))) return 'farming';
   if (input.itemKind === 'food') return 'start-food';
   if (input.itemId === ItemId.Bow) return 'start-bow';
   if (cartCloser) {
@@ -286,6 +293,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
       ctx.effects?.onBedUsed?.(skippedNight);
       return;
     }
+    if (tryFarmingUse(ctx, hit, stack?.itemId, item)) return;
   }
 
   if (item?.kind === 'food') {
@@ -332,6 +340,68 @@ export function performUseHeld(ctx: UseSimulationContext): void {
   if (!hit || !stack || item?.placesBlockId === undefined) return;
   const placed = placeFromHit(ctx, hit, item.placesBlockId);
   if (!placed.ok) toastPlaceFail(ctx, placed.reason);
+}
+
+function tryFarmingUse(
+  ctx: UseSimulationContext,
+  hit: VoxelHit,
+  itemId: string | undefined,
+  item: ReturnType<typeof tryGetItemDefinition>,
+): boolean {
+  if (item?.kind === 'tool' && item.tool === 'hoe'
+    && (hit.block === BlockId.Dirt || hit.block === BlockId.GrassBlock)) {
+    const above = ctx.world.getBlock(hit.x, hit.y + 1, hit.z, false);
+    if (above !== BlockId.Air && getBlockDefinition(above).replaceable !== true) return false;
+    if (ctx.allowPlace && !ctx.allowPlace(hit.x, hit.y, hit.z, BlockId.Farmland)) return true;
+    if (!ctx.world.setBlock(hit.x, hit.y, hit.z, BlockId.Farmland)) return true;
+    ctx.world.setBlockState(hit.x, hit.y, hit.z, {
+      hydrated: farmingWaterNearby(ctx.world, hit.x, hit.y, hit.z),
+    });
+    ctx.redstone.notifyBlockChanged(hit.x, hit.y, hit.z);
+    ctx.effects?.playBlock?.('place', BlockId.Farmland, hit.x, hit.y, hit.z);
+    ctx.effects?.swing?.();
+    if (ctx.gamemode === 'survival') wearHeld(ctx);
+    ctx.effects?.onPlaced?.(hit.x, hit.y, hit.z, BlockId.Farmland);
+    return true;
+  }
+
+  const planting = plantingDefinition(itemId);
+  if (planting && hit.block === BlockId.Farmland) {
+    const x = hit.x, y = hit.y + 1, z = hit.z;
+    const target = ctx.world.getBlock(x, y, z, false);
+    if (target !== BlockId.Air && getBlockDefinition(target).replaceable !== true) return false;
+    if (ctx.allowPlace && !ctx.allowPlace(x, y, z, planting.block)) return true;
+    if (!ctx.world.setBlock(x, y, z, planting.block)) return true;
+    ctx.world.setBlockState(x, y, z, { age: 0 });
+    ctx.redstone.notifyBlockChanged(x, y, z);
+    ctx.effects?.playBlock?.('place', planting.block, x, y, z);
+    ctx.effects?.swing?.();
+    if (ctx.gamemode === 'survival') consumeHeld(ctx, 1);
+    ctx.effects?.onPlaced?.(x, y, z, planting.block);
+    return true;
+  }
+
+  if (itemId === ItemId.BoneMeal && isCropBlock(hit.block)) {
+    const farmland = ctx.world.getBlock(hit.x, hit.y - 1, hit.z, false) === BlockId.Farmland
+      && ctx.world.getBlockState(hit.x, hit.y - 1, hit.z)?.hydrated === true;
+    const age = cropAge(ctx.world.getBlockState(hit.x, hit.y, hit.z));
+    if (!farmland || age >= MAX_CROP_AGE) return false;
+    const random = ctx.random ?? systemRandomFn;
+    const added = 2 + Math.floor(random() * 4);
+    ctx.world.setBlockState(hit.x, hit.y, hit.z, { age: Math.min(MAX_CROP_AGE, age + added) });
+    ctx.effects?.swing?.();
+    if (ctx.gamemode === 'survival') consumeHeld(ctx, 1);
+    return true;
+  }
+  return false;
+}
+
+function farmingWaterNearby(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  for (let dz = -4; dz <= 4; dz += 1) for (let dx = -4; dx <= 4; dx += 1) {
+    if (world.getBlock(x + dx, y, z + dz, false) === BlockId.Water
+      || world.getBlock(x + dx, y + 1, z + dz, false) === BlockId.Water) return true;
+  }
+  return false;
 }
 
 export function placeFromHit(

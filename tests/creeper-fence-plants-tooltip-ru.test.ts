@@ -100,8 +100,13 @@ function setBlock(world: VoxelWorld, x: number, y: number, z: number, block: Blo
 function drainDetached(world: VoxelWorld): DroppedItemManager {
   const drops = new DroppedItemManager(new THREE.Scene(), world);
   const redstone = new RedstoneSystem(world);
-  const game = Object.create(Game.prototype) as { session: unknown; processDetachedBlocks(): void };
+  const game = Object.create(Game.prototype) as {
+    session: unknown;
+    simRandom: () => number;
+    processDetachedBlocks(): void;
+  };
   game.session = { world, drops, redstone };
+  game.simRandom = () => 0.5;
   cleanup.push(() => { drops.dispose(); redstone.dispose(); });
   (game as unknown as { processDetachedBlocks(): void }).processDetachedBlocks();
   return drops;

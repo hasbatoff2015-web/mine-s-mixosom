@@ -111,6 +111,7 @@ describe('live network block state vs initial chunk load', () => {
       facing: 'west',
       attachment: 'wall',
     });
+    expect(parseNetworkBlockState({ hydrated: true, age: 99 })).toEqual({ hydrated: true, age: 7 });
     const batch = parseServerMessage({
       type: 'block_batch',
       changes: [

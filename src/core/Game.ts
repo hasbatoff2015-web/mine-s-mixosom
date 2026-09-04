@@ -97,6 +97,7 @@ import {
   type PointerUnlockReason,
 } from '../input/pointerLock';
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
+import { FarmingSystem, farmingDropsForBlock } from '../farming';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController } from '../player';
@@ -252,6 +253,7 @@ export interface GameSession {
   entityHost: ThreeEntityHost;
   ridingCartId?: string;
   redstone: RedstoneSystem;
+  farming: FarmingSystem;
   activePressurePlates: Set<string>;
   selectedSlot: number;
   target?: VoxelHit;
@@ -1143,6 +1145,7 @@ export class Game {
       host: entityHost,
       onSourceChanged: (x, _y, z) => world.markBlockDirty(x, z),
     });
+    const farming = new FarmingSystem(world, { random: this.simRandom });
     const activePressurePlates = new Set<string>();
     if (restored?.redstone) {
       try {
@@ -1249,6 +1252,7 @@ export class Game {
       minecarts,
       entityHost,
       redstone,
+      farming,
       activePressurePlates,
       selectedSlot,
       miningProgress: 0,
@@ -2317,6 +2321,9 @@ export class Game {
         session.world.tick();
         this.processDetachedBlocks();
       },
+      tickFarming: () => {
+        session.farming.tick([{ x: session.player.position.x, z: session.player.position.z }]);
+      },
       tickFalling: () => {
         for (const spawn of session.world.consumeFallingBlocks()) {
           session.falling.spawn(spawn.block, spawn.x, spawn.y, spawn.z);
@@ -2605,6 +2612,7 @@ export class Game {
       return;
     }
     const definition = getBlockDefinition(hit.block);
+    const blockState = session.world.getBlockState(hit.x, hit.y, hit.z);
     const toolStack = this.selectedStack();
     const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
     const harvestable = canHarvestBlock(definition, miningToolFromItemId(toolStack?.itemId));
@@ -2622,15 +2630,22 @@ export class Game {
     this.firstPerson?.swing();
 
     if (session.summary.mode === 'survival') {
-      const drop = definition.drop;
-      if (drop && harvestable) {
-        const count = rollDropCount(drop, this.simRandom);
-        const slabExtra = isSlabBlock(hit.block)
-          && defaultSlabType(session.world.getBlockState(hit.x, hit.y, hit.z)) === 'double' ? count : 0;
-        this.spawnDroppedStack(
-          createItemStack(drop.item, count + slabExtra),
+      const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
+      if (farmingDrops !== undefined && harvestable) {
+        for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
+          createItemStack(drop.item, drop.count),
           new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
         );
+      } else {
+        const drop = definition.drop;
+        if (drop && harvestable) {
+          const count = rollDropCount(drop, this.simRandom);
+          const slabExtra = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double' ? count : 0;
+          this.spawnDroppedStack(
+            createItemStack(drop.item, count + slabExtra),
+            new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+          );
+        }
       }
       if (toolStack && (item?.kind === 'tool' || item?.kind === 'weapon')) {
         session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
@@ -2702,6 +2717,7 @@ export class Game {
       set ridingCartId(value) { session.ridingCartId = value; },
       minecarts: session.minecarts,
       redstone: session.redstone,
+      random: this.simRandom,
       setSpawnPoint: (position) => session.survival?.setSpawnPoint(position),
       enterVehicle: (cartId) => {
         game.mountMinecart(cartId);
@@ -2828,8 +2844,17 @@ export class Game {
     if (events.length) session.redstone.notifyBlocksChanged(events);
     for (const event of events) {
       // Environmental drops also exist in Creative; lava destroys without loot.
+      if (event.reason === 'lava') continue;
+      const farmingDrops = farmingDropsForBlock(event.block, event.state, this.simRandom);
+      if (farmingDrops !== undefined) {
+        for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
+          createItemStack(drop.item, drop.count),
+          new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5),
+        );
+        continue;
+      }
       const drop = getBlockDefinition(event.block).drop;
-      if (!drop || event.reason === 'lava') continue;
+      if (!drop) continue;
       const count = rollDropCount(drop, this.simRandom);
       if (count > 0) this.spawnDroppedStack(createItemStack(drop.item, count),
         new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
@@ -3540,6 +3565,7 @@ export class Game {
     this.session.minecarts.dispose();
     this.session.mobs.dispose();
     this.session.redstone.dispose();
+    this.session.farming.dispose();
     this.session.drops.dispose();
     this.session.falling.dispose();
     this.session.entityHost.dispose();

@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-04: Farming V1
+
+- [x] Add stable appended block IDs 150–157 and farming item IDs without renumbering existing content.
+- [x] Add dry/wet 15/16 Farmland, five crops/stems/fruits, exact pulse probabilities, Bone Meal, harvest tables, five hoes, foods, recipes, Russian names, and Survival acquisition.
+- [x] Reuse canonical world block state, snapshots, interaction, drops, crafting/furnace/food, ItemVisualFactory, vegetation batching, and Online block delta paths.
+- [x] Keep Anarchy server-authoritative and shared simulation Node-safe; no optimistic online mutation, per-crop timers, offline catch-up, light dependency, trampling, or moisture levels.
+- [x] Cover water boundaries, planting/tilling matrix, inactive chunks, RNG/bounds, persistence, server concurrency/coalescing, rendering batches, recipes/food, and 1024/4096-position performance.
+- [x] Add DEV `?qaFarming=1` and complete automated visual smoke for farmland, stages, stems/fruits, hoes, Bone Meal, and item sprites.
+- [ ] Owner manual gameplay acceptance: native pointer lock, save/reload UX, furnace/crafting screens, F5/overlay, and two visible Online clients including reconnect/server restart.
+- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.
+
 ## 2026-09-02: integrate UI PR #22 with server + breaking + player main
 
 - [x] Merge exact `origin/main` `020d9d3` into the existing `codex/ui-visual-system-pass` branch with an ordinary no-ff merge; no rebase/reset/force/new PR.

@@ -145,7 +145,7 @@ describe('FsWorldStore', () => {
     })).rejects.toMatchObject({ code: 'exists' });
   });
 
-  it('WorldInstance restart keeps blocks and inventory via the store', async () => {
+  it('WorldInstance restart keeps blocks, farming state and inventory via the store', async () => {
     const dataDir = await tempDir();
     const first = new WorldInstance(testConfig(dataDir));
     await first.initialize();
@@ -158,12 +158,20 @@ describe('FsWorldStore', () => {
     const y = Math.floor(first.spawn[1]) + 3;
     const z = Math.floor(first.spawn[2]);
     first.world.setBlock(x, y, z, BlockId.GoldOre);
+    first.world.setBlock(x + 1, y, z, BlockId.Farmland);
+    first.world.setBlockState(x + 1, y, z, { hydrated: true });
+    first.world.setBlock(x + 1, y + 1, z, BlockId.PotatoCrop);
+    first.world.setBlockState(x + 1, y + 1, z, { age: 6 });
     await first.save();
     await first.stop();
 
     const second = new WorldInstance(testConfig(dataDir));
     await second.initialize();
     expect(second.world.getBlock(x, y, z)).toBe(BlockId.GoldOre);
+    expect(second.world.getBlock(x + 1, y, z)).toBe(BlockId.Farmland);
+    expect(second.world.getBlockState(x + 1, y, z)).toEqual({ hydrated: true });
+    expect(second.world.getBlock(x + 1, y + 1, z)).toBe(BlockId.PotatoCrop);
+    expect(second.world.getBlockState(x + 1, y + 1, z)).toEqual({ age: 6 });
     const resumed = second.join({
       sink: { send() {} },
       name: 'Keeper',

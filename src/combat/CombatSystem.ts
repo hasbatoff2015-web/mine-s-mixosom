@@ -6,7 +6,7 @@ export interface AttackProfile {
   readonly itemId?: string;
   /** Total HP, including the player's base 1 HP. Registry is the single table. */
   readonly baseDamage: number;
-  readonly weapon: 'fist' | 'sword' | 'pickaxe' | 'shovel' | 'axe' | 'other';
+  readonly weapon: 'fist' | 'sword' | 'pickaxe' | 'shovel' | 'axe' | 'hoe' | 'other';
   readonly durabilityCost: number;
 }
 

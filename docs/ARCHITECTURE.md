@@ -1,5 +1,15 @@
 # Архитектура
 
+## Farming V1 — shared sparse simulation
+
+`src/farming/` is the single farming simulation module. `FarmingSystem` subscribes to `VoxelWorld.observeCommittedBlocks`, keeps a sparse map of Farmland/crop/stem positions by chunk, and lazily builds water indices only for nearby loaded chunks. Chunk unload discards runtime indices; restored modifications rebuild them on load. Canonical world modifications and `blockStates` remain the only persistence source—there is no farming save file or per-crop timestamp.
+
+The fixed kernel order is `world → farming → falling → players → …`. Hydration runs every 100 ticks and growth every 1200 ticks. A hydration phase precedes growth when both pulses coincide, so crops observe current water state independent of restored insertion order. Only loaded chunks within the SP mesh radius or the server's connected-player active centers are visited; an explicit empty server center list visits nothing. No unloaded/offline/disconnected catch-up occurs.
+
+Farmland stores `hydrated?: boolean`; crops/stems store `age?: number` clamped to 0…7. These fields extend existing `BlockRenderState`, `WorldSnapshot`, and normal `block_update`/`block_batch` state. The Anarchy `ServerGameplay` owns the same shared `FarmingSystem` and shared `performUseHeld` path as SP, but supplies server RNG, active player centers, plugin permission callbacks, authoritative inventory mutation, canonical dropped entities, and coalesced block deltas.
+
+Farmland extends canonical `blockGeometry`/collision/selection at 15/16 height. `ChunkMesher` writes dry/wet farmland into the opaque batch and every crop/stem quad into the existing per-chunk vegetation `BufferGeometry`; it creates no mesh/material per plant. Carrot/Potato map ages `0–1/2–3/4–6/7` to their four textures. Attached mature stems resolve their N/E/S/W direction from adjacent matching fruit at render time, avoiding redundant network state.
+
 ## UI on authoritative server/player main — 2026-09-02
 
 `GameUI` remains the only DOM/menu/HUD/container owner after the PR #22 merge. Main's `OnlineServerLiveStatus`, `InventoryContext.submitAction` and `applyAuthoritativeCursor` contracts are retained; authored UI markup and CSS wrap those contracts instead of replacing them. Online inventory clicks/recipes still become protocol actions, container snapshots still patch the open UI, and death/respawn/chat callbacks remain owned by `Game` and lifecycle.

@@ -57,7 +57,8 @@ function gameFixture(itemId = 'diamond_sword') {
   const game = Object.create(Game.prototype) as any;
   const session = { world, mobs, inventory, player, combat, survival, selectedSlot: 0,
     summary: { mode: 'survival' }, miningProgress: 0,
-    minecarts: { raycast: () => undefined }, worldRenderer: { setTarget: vi.fn() } };
+    minecarts: { raycast: () => undefined }, farming: { tick: () => undefined },
+    worldRenderer: { setTarget: vi.fn() } };
   Object.assign(game, { session, input: controls, audio: { playTone: vi.fn(), play: vi.fn(), playAt: vi.fn(), playBlock: vi.fn() }, firstPerson: { swing, setHeldItems: vi.fn() } });
   return { game, session, controls, swing, mob };
 }

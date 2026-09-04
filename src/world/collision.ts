@@ -9,6 +9,7 @@ import {
 import {
   CACTUS_BOX,
   CHEST_BOX,
+  FARMLAND_BOX,
   chainSelectionLocalBox,
   defaultSlabType,
   defaultStairFacing,
@@ -108,6 +109,9 @@ export function blockCollisionBoxes(
   }
   if (block === BlockId.Chain) {
     return offsetLocalBoxes(x, y, z, [chainSelectionLocalBox()]);
+  }
+  if (block === BlockId.Farmland) {
+    return offsetLocalBoxes(x, y, z, [FARMLAND_BOX]);
   }
   return [{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 }];
 }

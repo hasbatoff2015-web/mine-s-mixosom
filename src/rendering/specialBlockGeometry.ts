@@ -409,6 +409,10 @@ export function selectionBoxesForBlock(
       return selectionBoxesFromLocal(x, y, z, [lanternSelectionLocalBox(state)]);
     case 'chain':
       return selectionBoxesFromLocal(x, y, z, [chainSelectionLocalBox()]);
+    case 'farmland':
+      return selectionBoxesFromLocal(x, y, z, [{
+        minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 15 / 16, maxZ: 1,
+      }]);
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }

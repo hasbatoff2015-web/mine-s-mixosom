@@ -92,6 +92,7 @@ export function blockItemIconTexture(
   renderShape?: BlockRenderShape,
 ): string {
   if (renderShape === 'lantern' || renderShape === 'chain') return `item/${fallbackKey}`;
+  if (renderShape === 'farmland') return textures.top ?? `block/${fallbackKey}`;
   return textures.front
     ?? textures.all
     ?? textures.side

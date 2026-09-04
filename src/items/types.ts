@@ -3,8 +3,8 @@ import type { BlockId } from '../blocks';
 export type ItemId = string;
 
 export type ItemKind = 'block' | 'resource' | 'food' | 'tool' | 'weapon' | 'armor';
-export type ItemToolType = 'pickaxe' | 'axe' | 'shovel';
-export type ItemTier = 'wood' | 'stone' | 'iron' | 'diamond';
+export type ItemToolType = 'pickaxe' | 'axe' | 'shovel' | 'hoe';
+export type ItemTier = 'wood' | 'stone' | 'iron' | 'gold' | 'diamond';
 export type ArmorSlot = 'head' | 'chest' | 'legs' | 'feet';
 
 export interface BaseItemDefinition {
@@ -123,6 +123,17 @@ export const ItemId = Object.freeze({
 
   Apple: 'apple',
   Bread: 'bread',
+  WheatSeeds: 'wheat_seeds',
+  Wheat: 'wheat',
+  Carrot: 'carrot',
+  Potato: 'potato',
+  BakedPotato: 'baked_potato',
+  MelonSeeds: 'melon_seeds',
+  MelonSlice: 'melon_slice',
+  PumpkinSeeds: 'pumpkin_seeds',
+  PumpkinPie: 'pumpkin_pie',
+  Bone: 'bone',
+  BoneMeal: 'bone_meal',
   Beef: 'beef',
   CookedBeef: 'cooked_beef',
   Porkchop: 'porkchop',
@@ -142,6 +153,11 @@ export const ItemId = Object.freeze({
   DiamondPickaxe: 'diamond_pickaxe',
   DiamondAxe: 'diamond_axe',
   DiamondShovel: 'diamond_shovel',
+  WoodenHoe: 'wooden_hoe',
+  StoneHoe: 'stone_hoe',
+  IronHoe: 'iron_hoe',
+  GoldenHoe: 'golden_hoe',
+  DiamondHoe: 'diamond_hoe',
 
   WoodenSword: 'wooden_sword',
   StoneSword: 'stone_sword',

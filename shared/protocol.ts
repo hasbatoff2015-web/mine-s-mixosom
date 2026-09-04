@@ -127,6 +127,8 @@ export interface NetworkBlockState {
   readonly fluidLevel?: number;
   readonly fluidFalling?: boolean;
   readonly railShape?: NetworkRailShape;
+  readonly hydrated?: boolean;
+  readonly age?: number;
 }
 
 export interface BlockChange {
@@ -533,6 +535,8 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
     fluidLevel?: number;
     fluidFalling?: boolean;
     railShape?: NetworkRailShape;
+    hydrated?: boolean;
+    age?: number;
   } = {};
   if (typeof raw.powered === 'boolean') state.powered = raw.powered;
   if (Number.isInteger(raw.power) && finite(raw.power)) {
@@ -558,6 +562,8 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
   if (typeof raw.railShape === 'string' && NETWORK_RAIL_SHAPES.has(raw.railShape)) {
     state.railShape = raw.railShape as NetworkRailShape;
   }
+  if (typeof raw.hydrated === 'boolean') state.hydrated = raw.hydrated;
+  if (Number.isInteger(raw.age) && finite(raw.age)) state.age = clampNumber(Math.floor(raw.age), 0, 7);
   return Object.keys(state).length > 0 ? state : undefined;
 }
 
