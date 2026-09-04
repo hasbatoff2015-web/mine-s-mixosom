@@ -273,6 +273,13 @@ export interface ChunkMeshProfile {
   readonly geometryMs: number;
 }
 
+/** Skip 4-corner AO for chunks this far from the player (Chebyshev). Nearby rings keep full AO. */
+export const CHEAP_VERTEX_LIGHT_CHEBYSHEV = 3;
+
+export interface ChunkMeshBuildOptions {
+  readonly cheapVertexLight?: boolean;
+}
+
 export type BlockRenderStateResolver = (x: number, y: number, z: number) => BlockRenderState | undefined;
 
 export class ChunkMesher {
@@ -300,13 +307,15 @@ export class ChunkMesher {
   private readonly surfaceLight: SurfaceLight = { sky: 0, block: 0, ao: 1 };
   private readonly readLightCell = (x: number, y: number, z: number): number => this.packedLightCell(x, y, z);
   lastProfile: ChunkMeshProfile = { scanMs: 0, geometryMs: 0 };
+  private cheapVertexLight = false;
 
   constructor(
     private readonly atlas: TextureAtlas,
     private readonly resolveState: BlockRenderStateResolver = () => undefined,
   ) {}
 
-  build(chunk: Chunk, world: VoxelWorld): MeshedChunk {
+  build(chunk: Chunk, world: VoxelWorld, options: ChunkMeshBuildOptions = {}): MeshedChunk {
+    this.cheapVertexLight = options.cheapVertexLight === true;
     const buildStart = performance.now();
     resetBuffers(this.layers.opaque);
     resetBuffers(this.layers.cutout);
@@ -465,18 +474,37 @@ export class ChunkMesher {
     const tint = this.tintFor(definition, textureKey, biome);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
+    let sky = 0;
+    let block = 0;
+    if (this.cheapVertexLight) {
+      const sampleX = x + face.normal[0];
+      const sampleY = y + face.normal[1];
+      const sampleZ = z + face.normal[2];
+      sky = this.packedLight('sky', sampleX, sampleY, sampleZ) / 15;
+      block = this.packedLight('block', sampleX, sampleY, sampleZ) / 15;
+    }
     for (let index = 0; index < 4; index += 1) {
       const corner = face.corners[index]!;
       buffers.positions.push(x + corner[0], y + corner[1], z + corner[2]);
       buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
-      const cornerLight = this.fastCornerLight(x, y, z, face.normal, corner);
-      this.pushLighting(buffers, {
-        tint,
-        sky: cornerLight.sky / 15,
-        block: cornerLight.block / 15,
-        emission,
-        shade: face.shade * cornerLight.ao,
-      });
+      if (this.cheapVertexLight) {
+        this.pushLighting(buffers, {
+          tint,
+          sky,
+          block,
+          emission,
+          shade: face.shade,
+        });
+      } else {
+        const cornerLight = this.fastCornerLight(x, y, z, face.normal, corner);
+        this.pushLighting(buffers, {
+          tint,
+          sky: cornerLight.sky / 15,
+          block: cornerLight.block / 15,
+          emission,
+          shade: face.shade * cornerLight.ao,
+        });
+      }
     }
     buffers.uvs.push(
       tile.u0, tile.v0,
@@ -1269,7 +1297,7 @@ export class ChunkMesher {
       block,
       emission,
       shade,
-      origin: [x, y, z],
+      origin: this.cheapVertexLight ? undefined : [x, y, z],
     };
   }
 

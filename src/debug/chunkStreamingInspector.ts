@@ -196,6 +196,7 @@ export interface JobFrameCounters {
   meshSkippedBlocked: number;
   meshSkippedDueToGenSeparation: boolean;
   lightingOnlyDueToBudget: boolean;
+  genDeferredForMesh: boolean;
   meshReady: number;
   meshUrgent: number;
   meshOldestReadyAgeMs: number;
@@ -230,6 +231,7 @@ export function emptyJobFrameCounters(): JobFrameCounters {
     meshSkippedBlocked: 0,
     meshSkippedDueToGenSeparation: false,
     lightingOnlyDueToBudget: false,
+    genDeferredForMesh: false,
     meshReady: 0,
     meshUrgent: 0,
     meshOldestReadyAgeMs: 0,

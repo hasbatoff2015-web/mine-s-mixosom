@@ -4,7 +4,7 @@
  * Does not change light quality, sky model, or ms budgets.
  */
 
-import { CHUNK_SIZE, TARGET_FRAME_MS, chunkKey, floorDiv } from '../core/constants';
+import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from './Chunk';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, lightingFloodOwner } from './LightEngine';
 import type { VoxelWorld } from './World';
@@ -76,16 +76,6 @@ export function meshJobSortScore(
   return ring * 1_000_000 + aged * 100_000 + ahead * 10_000 + distSq;
 }
 
-export function canAffordUrgentMesh(
-  frameElapsedMs: number,
-  chebyshev: number,
-  waitMs: number,
-  targetFrameMs = TARGET_FRAME_MS,
-): boolean {
-  if (chebyshev <= 1 || waitMs >= URGENT_MESH_WAIT_MS) return true;
-  return frameElapsedMs < targetFrameMs - 6;
-}
-
 export function planMeshFrame(options: {
   readonly loading: boolean;
   readonly generatedThisFrame: boolean;
@@ -128,22 +118,6 @@ export function planMeshFrame(options: {
       oldestReadyAgeMs,
     };
   }
-  const nearest = options.readyJobs[0];
-  const afford = nearest
-    ? canAffordUrgentMesh(options.frameElapsedMs, nearest.chebyshev, nearest.waitMs)
-    : false;
-  const forceFairness = options.consecutiveGenWithoutMesh >= MAX_GEN_FRAMES_WITHOUT_MESH;
-  const runUrgent = urgent > 0 && afford;
-  if (runUrgent || forceFairness) {
-    return {
-      skipMesh: false,
-      meshLimit: 1,
-      starvationAvoided: true,
-      ready,
-      urgent,
-      oldestReadyAgeMs,
-    };
-  }
   return {
     skipMesh: true,
     meshLimit: 0,
@@ -152,6 +126,26 @@ export function planMeshFrame(options: {
     urgent,
     oldestReadyAgeMs,
   };
+}
+
+/** Skip a PLAYING generate this frame so a nearby ready mesh can land after a gen-only streak. */
+export function shouldDeferGenerateForMesh(
+  loading: boolean,
+  consecutiveGenWithoutMesh: number,
+  readyJobs: readonly ReadyMeshJob[],
+): boolean {
+  if (loading) return false;
+  if (consecutiveGenWithoutMesh < MAX_GEN_FRAMES_WITHOUT_MESH) return false;
+  return readyJobs.length > 0;
+}
+
+function pendingMeshChunks(world: VoxelWorld): Chunk[] {
+  const chunks: Chunk[] = [];
+  for (const key of world.pendingMesh) {
+    const chunk = world.chunks.get(key);
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
 }
 
 export function collectReadyMeshJobs(
@@ -166,7 +160,10 @@ export function collectReadyMeshJobs(
   const originCx = floorDiv(originX, CHUNK_SIZE);
   const originCz = floorDiv(originZ, CHUNK_SIZE);
   const jobs: ReadyMeshJob[] = [];
-  for (const chunk of world.chunks.values()) {
+  const candidates = world.pendingMesh.size > 0
+    ? pendingMeshChunks(world)
+    : world.chunks.values();
+  for (const chunk of candidates) {
     if (!chunk.dirty && !chunk.lightMeshStale) continue;
     const chebyshev = chebyshevChunkDistance(chunk.x, chunk.z, originCx, originCz);
     if (chebyshev > meshRadius) continue;

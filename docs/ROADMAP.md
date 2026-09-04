@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-04: spawn performance audit
+
+- [x] CPU-measure procedural vs baked spawn meshing and a budgeted walk (RD=4).
+- [x] Rank bottlenecks; do not rewrite worldgen / greedy mesh / Networking V2 blindly.
+- [x] Unstack PLAYING generate+mesh; defer generate when a mesh job is ready; `meshLimit = 1`.
+- [x] Cheap vertex light for Chebyshev ≥ 3; pixel-ratio caps; `pendingMesh` candidate scan.
+- [x] Repeat the same CPU harness. GPU/FPS owner QA still required.
+- [ ] Owner: walk spawn with F3 / `?perf=1`; confirm no lingering holes and acceptable distant AO.
+- [ ] Optional next: greedy or worker meshing after GPU confirm of remaining 15–30 ms nearby mesh.
+
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
 
 - [x] Extend `npm run server:import` to bake `frontier_spawn2.schem` via existing `importAnarchySpawn` into `FsWorldStore` (`ANARCHY_SPAWN_Y_SHIFT = -28`).

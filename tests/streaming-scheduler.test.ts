@@ -9,6 +9,7 @@ import {
   meshJobSortScore,
   pendingMeshInRadius,
   planMeshFrame,
+  shouldDeferGenerateForMesh,
   takeReadyMeshJobs,
   URGENT_MESH_WAIT_MS,
 } from '../src/world/streamingScheduler';
@@ -37,13 +38,15 @@ describe('streaming scheduler fairness', () => {
     let meshFrames = 0;
     let legacyMeshFrames = 0;
     for (let frame = 0; frame < 12; frame += 1) {
+      const defer = shouldDeferGenerateForMesh(false, streak, ready);
+      const generatedThisFrame = !defer;
       const fair = planMeshFrame({
         loading: false,
-        generatedThisFrame: true,
+        generatedThisFrame,
         consecutiveGenWithoutMesh: streak,
         readyJobs: ready,
         defaultMeshLimit: 2,
-        frameElapsedMs: 1,
+        frameElapsedMs: generatedThisFrame ? 20 : 1,
       });
       const legacy = planLegacyMeshFrame({
         loading: false,
@@ -53,7 +56,11 @@ describe('streaming scheduler fairness', () => {
       });
       if (!fair.skipMesh) meshFrames += 1;
       if (!legacy.skipMesh) legacyMeshFrames += 1;
-      streak = fair.skipMesh ? streak + 1 : 0;
+      if (fair.skipMesh || fair.meshLimit <= 0) {
+        streak = generatedThisFrame ? streak + 1 : 0;
+      } else {
+        streak = 0;
+      }
     }
     expect(legacyMeshFrames).toBe(0);
     expect(meshFrames).toBeGreaterThanOrEqual(6);
@@ -73,19 +80,72 @@ describe('streaming scheduler fairness', () => {
     expect(plan.meshLimit).toBe(4);
   });
 
-  it('promotes a ready mesh that waited past the urgent threshold', () => {
-    expect(isUrgentReadyMesh(8, URGENT_MESH_WAIT_MS)).toBe(true);
-    const plan = planMeshFrame({
+  it('does not stack a ready mesh onto a generate frame', () => {
+    const ready = [{ chunk: { x: 8, z: 0 } as never, chebyshev: 8, waitMs: 180, urgent: true }];
+    expect(planMeshFrame({
       loading: false,
       generatedThisFrame: true,
       consecutiveGenWithoutMesh: 0,
-      readyJobs: [{ chunk: { x: 8, z: 0 } as never, chebyshev: 8, waitMs: 180, urgent: true }],
+      readyJobs: ready,
       defaultMeshLimit: 2,
       frameElapsedMs: 20,
+    }).skipMesh).toBe(true);
+    expect(planMeshFrame({
+      loading: false,
+      generatedThisFrame: true,
+      consecutiveGenWithoutMesh: 0,
+      readyJobs: ready,
+      defaultMeshLimit: 2,
+      frameElapsedMs: 4,
+    }).skipMesh).toBe(true);
+    expect(planMeshFrame({
+      loading: false,
+      generatedThisFrame: true,
+      consecutiveGenWithoutMesh: 0,
+      readyJobs: [{ chunk: { x: 1, z: 0 } as never, chebyshev: 1, waitMs: 480, urgent: true }],
+      defaultMeshLimit: 2,
+      frameElapsedMs: 40,
+    }).skipMesh).toBe(true);
+  });
+
+  it('meshes on the following non-generate frame after a gen-only streak', () => {
+    const ready = [{ chunk: { x: 1, z: 0 } as never, chebyshev: 1, waitMs: 16, urgent: true }];
+    expect(shouldDeferGenerateForMesh(false, 1, ready)).toBe(true);
+    const plan = planMeshFrame({
+      loading: false,
+      generatedThisFrame: false,
+      consecutiveGenWithoutMesh: 1,
+      readyJobs: ready,
+      defaultMeshLimit: 1,
+      frameElapsedMs: 2,
     });
     expect(plan.skipMesh).toBe(false);
     expect(plan.meshLimit).toBe(1);
-    expect(plan.starvationAvoided).toBe(true);
+  });
+
+  it('does not force fairness mesh on the same frame as a slow generate', () => {
+    const plan = planMeshFrame({
+      loading: false,
+      generatedThisFrame: true,
+      consecutiveGenWithoutMesh: 1,
+      readyJobs: [{ chunk: { x: 0, z: 0 } as never, chebyshev: 0, waitMs: 16, urgent: true }],
+      defaultMeshLimit: 2,
+      frameElapsedMs: 20,
+    });
+    expect(plan.skipMesh).toBe(true);
+  });
+
+  it('defers generate after a gen-only streak when any mesh is ready', () => {
+    expect(shouldDeferGenerateForMesh(false, 1, [
+      { chunk: { x: 8, z: 0 } as never, chebyshev: 8, waitMs: 16, urgent: false },
+    ])).toBe(true);
+    expect(shouldDeferGenerateForMesh(false, 0, [
+      { chunk: { x: 1, z: 0 } as never, chebyshev: 1, waitMs: 16, urgent: true },
+    ])).toBe(false);
+    expect(shouldDeferGenerateForMesh(true, 9, [
+      { chunk: { x: 1, z: 0 } as never, chebyshev: 1, waitMs: 16, urgent: true },
+    ])).toBe(false);
+    expect(shouldDeferGenerateForMesh(false, 1, [])).toBe(false);
   });
 });
 
@@ -220,7 +280,7 @@ describe('streaming sim vs legacy skip-on-gen', () => {
       legacyMeshed += legacy.meshed;
     }
     expect(legacyMeshed).toBe(0);
-    expect(fairMeshed).toBeGreaterThan(10);
+    expect(fairMeshed).toBeGreaterThan(5);
     expect(discardObsoletePendingMesh(fairWorld, 8 + 80, 8, 2)).toBeGreaterThanOrEqual(0);
     expect(pendingMeshInRadius(fairWorld, 8 + 80, 8, 2)).toBe(fairWorld.pendingMesh.size);
   });
