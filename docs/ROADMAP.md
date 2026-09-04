@@ -1,5 +1,17 @@
 # Roadmap
 
+## 2026-09-04: Online networking v2 integration
+
+- [x] Integration branch `cursor/online-networking-v2-integrated-3ff8` off BASE `cursor/online-networking-v2-3ff8` (no main merge).
+- [x] Strict block intent: `targetBlockId`, historical `commandSeq` pose, A or reject.
+- [x] Bow draw survives stale FIFO `use:false`; captured aim; 20× draw→release tests.
+- [x] FIFO overflow compact continuous-state only; `queueCompacted` range; no silent drop.
+- [x] Live-state invariant: checkpoint + pending == PlayerController after ACK/correction/compact/resync.
+- [x] Adaptive remote interp on serverTick: 12 samples, delay grows only after underflow, bounded recovery, teleport snap.
+- [x] Reconnect clears mining/bow hold; hidden-tab resync still snaps with empty pending.
+- [ ] Owner two-client live QA (local / block / bow / remote matrix). Keep PR draft until confirmed.
+- [ ] Do not merge main.
+
 ## 2026-09-04: Online networking v2
 
 - [x] Phase 0 baseline call graph / temporal axes (`docs/reports/2026-09-04_online-networking-v2-baseline.md`).

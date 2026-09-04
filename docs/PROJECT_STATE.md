@@ -2,7 +2,18 @@
 
 Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
 
-## Последний проход: Online networking v2
+## Последний проход: Online networking v2 integration
+
+- Ветка `cursor/online-networking-v2-integrated-3ff8` от BASE `cursor/online-networking-v2-3ff8` (`1f5aafe`). Donor `codex/online-command-pipeline-v2` (`aa2ae9e`) — не mechanical merge. **Не merge main.** Существующие #37/#38/#39/#40 не rewrite.
+- Контракт: CLIENT OWNS INTENT / SERVER OWNS RESULT. `LIVE = checkpoint[ackCommandSeq] + truly pending`. `PROTOCOL_VERSION = 3`.
+- Movement: BASE FIFO + `ackCommandSeq`. Accepted ACK не мутирует live pose. Overflow compact только continuous-state; `queueCompacted` на протоколе.
+- Block: BASE explicit intent + donor `targetBlockId` / hit-in-voxel / exact face / LOS+face. Eye из `actionPoseHistory[commandSeq]` или REJECT. Never silent B.
+- Bow: BASE `localAim.ts`. Draw не сбрасывается stale FIFO `use:false`. Captured-aim Online spread=0. Reconnect zeros `bowUseTicks`.
+- Remote: один `RemoteInterpolationBuffer`. serverTick clock, 12 samples, delay 100 ms пока нет underflow, затем clamp(100+jitterP95, 80..180). Recovery ≤100 ms. Teleport/respawn snap. Flying сохранён.
+- Report: `docs/reports/2026-09-04_online-networking-v2-integration.md`.
+- Owner: two-client live QA still required (draft PR until confirmed).
+
+## Предыдущий проход: Online networking v2 (BASE PR #40)
 
 - Ветка `cursor/online-networking-v2-3ff8`, от HEAD PR #39 (`c5fba74`). **Не merge в main.** Не rewrite #37/#38/#39.
 - Контракт: CLIENT OWNS INTENT / SERVER OWNS RESULT. `PROTOCOL_VERSION = 3`.

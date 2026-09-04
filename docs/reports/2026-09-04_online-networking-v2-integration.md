@@ -1,9 +1,9 @@
 # Online Networking V2 Integration
 
 **Date:** 2026-09-04  
-**Status:** in progress (Phase 3 complete)  
+**Status:** implementation complete; **draft until two-client live QA**  
 **Integration branch:** `cursor/online-networking-v2-integrated-3ff8`  
-**PR:** TBD (draft until two-client QA)
+**PR:** https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/42 (draft)
 
 ## 1. Real SHAs used
 
@@ -29,9 +29,13 @@ DONOR lineage: one commit `aa2ae9e` on `ade7113`. It does **not** contain FIFO, 
 | `d1effb6` | Phase 0 baseline / architecture comparison |
 | `7a558f1` | Phase 1 strict block intent |
 | `5de1a27` | Phase 2 bow lifecycle |
-| Phase 3 | FIFO overflow compact continuous-state only; `queueCompacted` range |
+| `73490ad` | Phase 3 FIFO overflow compact continuous-state only; `queueCompacted` |
+| `775f445` | Phase 4 live-state invariant tests |
+| `b679882` | Phase 5 adaptive remote interpolation (no freeze-step on LAN) |
+| `8b5d42c` | Phase 6 reconnect clears mining/bow hold |
+| (this commit) | Phase 7–9 diagnostics HUD + architecture docs |
 
-Later phases land as separate commits (bow, backlog, invariants, remote, session, diagnostics, regression).
+SHAs: `git log --oneline cursor/online-networking-v2-integrated-3ff8`.
 
 ## 4. Subsystem comparison
 
@@ -75,12 +79,12 @@ Root cause of missing shots (BASE, confirmed in code): RAF `interact` can start 
 | | BASE (PR #38) | DONOR | Winner |
 |---|---|---|---|
 | Timeline | `serverTick` | `serverTick` | both |
-| Buffer | max 8, delay 100 ms | max 12, delay = clamp(100+jitterP95, 80..180) | **DONOR model**, constants subject to side-by-side vs BASE smoothness |
+| Buffer | max 8, delay 100 ms | max 12, delay = clamp(100+jitterP95, 80..180) | **hybrid**: 12 samples; delay stays 100 ms until underflow, then donor clamp |
 | Extrap | ≤100 ms then freeze | ≤100 ms then hold | both |
-| Recovery | none (hard) | blend ≤100 ms | **DONOR**, watch freeze-step / laggy rotation |
-| Jitter | arrival-based | actual arrival Δ − expected tick Δ | **DONOR** |
+| Recovery | none (hard) | blend ≤100 ms | **DONOR**, with clock re-anchor so recovery can actually rejoin |
+| Jitter | arrival − 50 ms | actual arrival Δ − expected tick Δ | **DONOR** |
 
-Must not regress last BASE two-client test (smooth walk, no freeze-step). If adaptive delay causes freeze/glide/laggy yaw, adjust constants.
+Donor immediate delay bumps during healthy interpolate are **rejected**: they freeze `renderTick` via the monotonic clock and add visual lag. BASE two-client smoothness is preserved on perfect 20 Hz (`delay=100`, visual step < 0.12). Teleport ≥6 blocks and dead→alive snap; `flying` stays on samples (donor `dead` is added only for respawn snap).
 
 ### Local aim
 
@@ -88,7 +92,7 @@ BASE `localAim.ts` / `localInteractionAim` **wins**. Donor does not have PR #39.
 
 ### Session / reconnect
 
-BASE already: one live `connectionId`, `resetConnectionInput`, hidden-tab idle. Keep. Harden in Phase 6 if tests show correction storms.
+BASE already: one live `connectionId`, `resetConnectionInput`, hidden-tab idle. Keep. Phase 6 also zeros bow/mining/food hold on reconnect (required after Phase 2 draw persistence).
 
 ## 5. What came from BASE
 
@@ -97,17 +101,19 @@ BASE already: one live `connectionId`, `resetConnectionInput`, hidden-tab idle. 
 - Explicit sequenced actions (actionSeq ≠ commandSeq)
 - localAim / localInteractionAim
 - Mining locked to break_start target
-- PROTOCOL_VERSION 2 join gate (will bump if semantics change)
+- PROTOCOL_VERSION 3 join gate
 - Persistence / one logical player / WebSocket
+- Hidden-tab idle + snap; stale socket isolation
 
-## 6. What came from DONOR (planned)
+## 6. What came from DONOR
 
 - `targetBlockId` + stale reject
 - Hit-in-voxel, strict face, LOS+face
-- Adaptive remote buffer (Phase 5), after side-by-side
+- 12-sample remote buffer, jitter = arrival Δ − expected tick Δ
+- Bounded recovery blend after underflow
 - Online captured-aim arrow `spread=0`
 - Action validation tests (A vs B, stale ID, wrong face, invalid hit)
-- DEV appliedSteps as scheduler trace only
+- DEV appliedSteps as scheduler trace only (already on BASE)
 
 ## 7. What was rejected from DONOR
 
@@ -117,6 +123,7 @@ BASE already: one live `connectionId`, `resetConnectionInput`, hidden-tab idle. 
 - Treating `lastInputSeq` as applied command
 - Magic retry / auto-resend of bow_release
 - Huge remote delay / infinite extrapolation
+- Immediate delay = 100+jitterP95 on every jittery packet (freezes renderTick)
 
 ## 8. Final movement contract (locked)
 
@@ -142,9 +149,7 @@ FIFO one command / server tick is correct. Burst creates backlog.
 
 If a range is skipped: protocol must say so (`queueCompacted` / `droppedCommandRange`). Client discards skipped, replays remaining.
 
-Current BASE silent `queue.shift()` on overflow is **not** acceptable and will be replaced.
-
-**Phase 3 implemented:** overflow runs `compactContinuousCommands` (WASD/look only). Jump/use/mining/slot/flight/vehicle edges stay. Dropped seqs are reported on `player_state.queueCompacted`. Client `discardCompactedPrediction` rebuilds live pose from the last checkpoint plus remaining pending. Last-resort drop of an uncompactable oldest command still reports the range. ACK identity unchanged.
+**Phase 3 implemented:** overflow runs `compactContinuousCommands` (WASD/look only). Jump/use/mining/slot/flight/vehicle edges stay. Dropped seqs are reported on `player_state.queueCompacted`. Client `discardCompactedPrediction` rebuilds live pose from the last checkpoint plus remaining pending. Last-resort drop of an uncompactable oldest command still reports the range. ACK identity unchanged. BASE silent `queue.shift()` is gone.
 
 ## 10. Reconciliation invariant
 
@@ -181,34 +186,68 @@ Once draw is started by explicit interact, **do not cancel** from stale movement
 
 No magic retry. Diagnostics must name the failed stage.
 
-## 13–16. Remote / reconnect / diagnostics
+## 13. Remote interpolation (Phase 5)
 
-See comparison above. F3 must answer movement/block/bow/remote questions without unbounded logs.
+One production implementation: `src/net/remotePlayerInterpolation.ts`. Entity buffers remain for mobs, not players.
 
-## 17. Tests
+- Timeline: `serverTick`, never packet arrival.
+- Buffer max 12. xyz linear, pitch linear, yaw shortest path, booleans from timeline midpoint.
+- Delay: 100 ms baseline. Target = clamp(100 + jitterP95, 80, 180). Current delay grows only after underflow; shrinks when healthy. Perfect 20 Hz stays at 100 ms.
+- Underflow: ≤100 ms velocity extrap, then hold. No infinite glide.
+- Recovery: after a new sample following extrap/capped, re-anchor renderTick and blend ≤100 ms (smoothstep). Teleport/respawn skip recovery.
+- F3: delay, bufMs, jitter p50/p95, under/s, extrap, recovering, maxVisualStep.
 
-Baseline (this phase) records current BASE test results on the integration branch before any code change.
+## 14. Reconnect / session (Phase 6)
 
-Required new tests (later phases): live-state invariant after ACK; burst 50/100/200/300 ms; A vs B / stale ID / wrong face; bow 20× draw-release; remote jitter/underflow/recovery.
+BASE already: one live `connectionId`, stale socket isolation, session resume, hidden-tab idle + snap.
 
-## 18. Live QA
+Added: `resetConnectionInput` zeros `bowUseTicks`, mining, food hold, `lastUse`, `lastActionSeq`, idle `use:false`. Required because Phase 2 no longer cancels draw on movement `use:false`. After reconnect, client pending is empty and live equals the welcome checkpoint.
 
-Not yet. PR stays draft until two-client QA:
+Hidden-tab: still one idle on hide, snap on resume, no catch-up storm. Invariant holds after resync.
 
-- Local A: no false corrections, no 1–2 block teleports
+## 15. Diagnostics
+
+F3 answers:
+
+- Movement: pred seq, ack seq, serverTick, pending, replayed, corr/s (BASE, unchanged).
+- Block: target xyz/id/face, actionSeq, commandSeq, accept/reject (Phase 1 `id=`).
+- Bow: press/draw/rel/sent/result/spawn + release vs server aim (Phase 2).
+- Remote: tick, render, mode, buf, bufMs, delay, snap/s, jitter, under/s, extrap, rec, step (Phase 5).
+
+No unbounded logs. `?remoteDiag=1` remains 1 Hz.
+
+## 16. Tests
+
+- `tests/block-action-intent.test.ts`, `tests/block-intent-motion.test.ts`, `tests/action-pose-history.test.ts`
+- `tests/server/player-actions.test.ts` (20× bow, captured aim, FIFO use:false)
+- `tests/fifo-backlog.test.ts`, `tests/player-command-queue.test.ts`
+- `tests/prediction-invariant.test.ts` (accepted / correction / burst / compact / hidden-tab / reconnect)
+- `tests/remote-player-interpolation.test.ts` (BASE A–K + adaptive delay / recovery / teleport / walk steps)
+- `tests/server/anarchy-server.test.ts` (resume, stale socket, bow/mining clear)
+
+Altering tests only to go green is forbidden. The old silent-drop queue test was replaced because it documented forbidden behavior.
+
+## 17. Live QA
+
+Not yet run in this cloud session. PR stays **draft** until two real clients:
+
+- Local A: no false corrections, no 1–2 block teleports, corr/s usually 0
 - Remote B: smooth, no freeze-step, no infinite glide
 - Blocks: A or reject, never B
 - Bow: release aim A survives camera B; ≥20 consecutive draw→release
 
-## 19. Baseline failures
+## 18. Baseline failures
 
-Recorded in Phase 0 test run (next section of this file after `npm test` / targeted suites).
+Phase 0 recorded BASE tests on `1f5aafe`. Pre-existing full-suite noise (authored ENOENT `bucket_empty.png`, minecart `getChunk` timeouts) is unchanged and not treated as integration regressions.
 
-## 20. Remaining issues
+## 19. Remaining issues
 
-- Bow missing-shots (code-confirmed, fix in Phase 2)
-- Silent FIFO overflow drop (Phase 3)
-- No live-state invariant test yet (Phase 4)
-- Remote still max-8 / fixed 100 ms until Phase 5
-- Attack/pickup still lack full captured-aim payloads (deferred unless blocking)
-- Two-client live QA not yet run
+- Two-client live QA not yet run (blocks ready-for-review).
+- Attack/pickup still lack full captured-aim payloads (deferred; not silent B).
+- Remote attack/mining/bow presentation flags still false/0 (animator, not simulation).
+- Persistence `server/data/worlds/anarchy/` was not migrated or wiped.
+- Singleplayer does not require Online action messages.
+
+## 20. Git
+
+Do not merge main. Do not force-push. Existing BASE/DONOR branches were not rewritten.

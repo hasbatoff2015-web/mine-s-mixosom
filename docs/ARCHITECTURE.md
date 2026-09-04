@@ -43,7 +43,7 @@ Modules: `shared/playerCommand.ts`, `shared/playerActions.ts`, `server/playerCom
 
 Look-based raycast remains **only** when an action has no intent (SP tests, untargeted bow charge / eat). Network targeted actions always carry intent.
 
-Remote interpolation (PR #38) is unchanged in clock: `serverTick` samples, 100 ms delay, 100 ms extrap then freeze. Telemetry adds jitter p50/p95, late/s, maxVisualStep, velocityContinuity.
+Remote interpolation stays on the PR #38 `serverTick` clock (never packet arrival). Production buffer is 12 samples. Delay starts at 100 ms (BASE LAN smoothness) and grows toward `clamp(100 + jitterP95, 80, 180)` only after underflow — jitter alone must not freeze `renderTick`. After capped/extrap, a new sample re-anchors the clock and blends ≤100 ms. Teleport (≥6 blocks) and respawn (dead→alive) hard-snap. Flying stays on samples. F3 reports delay, bufferDepthMs, underflow, recovery, maxVisualStep.
 
 Historical Model B / latest-input sections below describe the **previous** Online pipeline. Do not re-implement them.
 
