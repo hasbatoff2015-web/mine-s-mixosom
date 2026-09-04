@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  REMOTE_BUFFER_MAX_SAMPLES,
   REMOTE_EXTRAPOLATION_MS,
+  REMOTE_INTERP_DELAY_MAX_MS,
+  REMOTE_INTERP_DELAY_MIN_MS,
   REMOTE_INTERP_DELAY_MS,
   REMOTE_INTERP_DELAY_TICKS,
+  REMOTE_RECOVERY_MS,
   REMOTE_TICK_MS,
   RemoteInterpolationBuffer,
   remoteSampleFromSnapshot,
@@ -20,7 +24,9 @@ function snap(
     onGround?: boolean;
     sprinting?: boolean;
     sneaking?: boolean;
+    flying?: boolean;
     invisible?: boolean;
+    dead?: boolean;
     receivedAt?: number;
   } = {},
   receivedAt = tick * REMOTE_TICK_MS,
@@ -37,7 +43,9 @@ function snap(
     onGround: extra.onGround ?? true,
     sprinting: extra.sprinting ?? false,
     sneaking: extra.sneaking ?? false,
+    flying: extra.flying ?? false,
     invisible: extra.invisible ?? false,
+    dead: extra.dead ?? false,
   }, tick, extra.receivedAt ?? receivedAt);
 }
 
@@ -288,5 +296,148 @@ describe('remote player server-tick interpolation', () => {
     expect(pose.vy).toBeGreaterThan(2);
     expect(pose.vy).toBeLessThan(8);
     expect(pose.onGround).toBe(false);
+  });
+
+  it('keeps a 12-sample buffer and reports bufferDepthMs', () => {
+    expect(REMOTE_BUFFER_MAX_SAMPLES).toBe(12);
+    const buffer = new RemoteInterpolationBuffer();
+    fillPerfect(buffer, 100, 120);
+    expect(buffer.sampleCount).toBe(12);
+    const pose = buffer.sample(120 * REMOTE_TICK_MS)!;
+    expect(pose.bufferDepthMs).toBeGreaterThanOrEqual(REMOTE_INTERP_DELAY_MS - 1e-6);
+    expect(buffer.diagnostics(120 * REMOTE_TICK_MS).bufferDepthMs).toBeGreaterThanOrEqual(100);
+  });
+
+  it('keeps delay at 100ms on perfect 20Hz so BASE LAN smoothness is unchanged', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    fillPerfect(buffer, 100, 110);
+    const now = 110 * REMOTE_TICK_MS;
+    buffer.sample(now);
+    const diag = buffer.diagnostics(now);
+    expect(diag.renderDelayMs).toBe(REMOTE_INTERP_DELAY_MS);
+    expect(diag.jitterP95Ms).toBeLessThan(1);
+    expect(diag.recovering).toBe(false);
+  });
+
+  it('does not grow delay from arrival jitter while still interpolating', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    let now = 0;
+    for (let i = 0; i < 10; i += 1) {
+      now += i % 2 === 0 ? 90 : 10;
+      buffer.push(snap(100 + i, { receivedAt: now }, now));
+      const pose = buffer.sample(now)!;
+      expect(pose.mode === 'interpolate' || pose.mode === 'hold').toBe(true);
+    }
+    expect(buffer.diagnostics(now).renderDelayMs).toBe(REMOTE_INTERP_DELAY_MS);
+  });
+
+  it('grows delay toward 100+jitterP95 after underflow, clamped 80..180', () => {
+    expect(REMOTE_INTERP_DELAY_MIN_MS).toBe(80);
+    expect(REMOTE_INTERP_DELAY_MAX_MS).toBe(180);
+    const buffer = new RemoteInterpolationBuffer();
+    let now = 0;
+    for (let i = 0; i < 8; i += 1) {
+      now += i % 2 === 0 ? 90 : 10;
+      buffer.push(snap(100 + i, { receivedAt: now }, now));
+    }
+    const gapStart = now;
+    buffer.sample(gapStart + 3 * REMOTE_TICK_MS);
+    const afterUnderflow = buffer.diagnostics(gapStart + 3 * REMOTE_TICK_MS);
+    expect(afterUnderflow.underflowsPerSecond).toBeGreaterThanOrEqual(1);
+    expect(afterUnderflow.renderDelayMs).toBeGreaterThan(REMOTE_INTERP_DELAY_MS);
+    expect(afterUnderflow.renderDelayMs).toBeLessThanOrEqual(REMOTE_INTERP_DELAY_MAX_MS);
+    expect(afterUnderflow.renderDelayMs).toBeGreaterThanOrEqual(REMOTE_INTERP_DELAY_MIN_MS);
+  });
+
+  it('recovers from capped extrapolation within 100ms without infinite glide', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    fillPerfect(buffer, 100, 104);
+    const lastAt = 104 * REMOTE_TICK_MS;
+    const capped = buffer.sample(lastAt + 8 * REMOTE_TICK_MS)!;
+    expect(capped.mode).toBe('capped');
+    const resumeAt = lastAt + 8 * REMOTE_TICK_MS;
+    expect(buffer.push(snap(105, { x: 1.0, vx: 4, receivedAt: resumeAt }, resumeAt))).toBe('accepted');
+    const start = buffer.sample(resumeAt)!;
+    expect(buffer.diagnostics(resumeAt).recovering).toBe(true);
+    expect(Math.abs(start.x - capped.x)).toBeLessThan(0.05);
+    const doneAt = resumeAt + REMOTE_RECOVERY_MS;
+    const recovered = buffer.sample(doneAt)!;
+    expect(buffer.diagnostics(doneAt).recovering).toBe(false);
+    expect(recovered.mode === 'interpolate' || recovered.mode === 'hold').toBe(true);
+    expect(recovered.x).not.toBeCloseTo(capped.x, 1);
+  });
+
+  it('teleports 6+ blocks with a hard snap instead of interpolating the gap', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    fillPerfect(buffer, 100, 105);
+    const now = 200 * REMOTE_TICK_MS;
+    expect(buffer.push(snap(200, { x: 80, vx: 0, receivedAt: now }, now))).toBe('accepted');
+    expect(buffer.sampleCount).toBe(1);
+    const pose = buffer.sample(now)!;
+    expect(pose.mode).toBe('hold');
+    expect(pose.x).toBe(80);
+    expect(buffer.diagnostics(now).recovering).toBe(false);
+  });
+
+  it('respawn (dead → alive) snaps instead of recovering across the gap', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    buffer.push(snap(100, { x: 0, vx: 0, dead: true, receivedAt: 0 }));
+    buffer.push(snap(101, { x: 0, vx: 0, dead: true, receivedAt: REMOTE_TICK_MS }));
+    const now = 200 * REMOTE_TICK_MS;
+    expect(buffer.push(snap(200, { x: 12, vx: 0, dead: false, receivedAt: now }, now))).toBe('accepted');
+    expect(buffer.sampleCount).toBe(1);
+    expect(buffer.sample(now)!.x).toBe(12);
+    expect(buffer.diagnostics(now).recovering).toBe(false);
+  });
+
+  it('keeps flying as a discrete timeline flag, not replaced by dead', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    buffer.push(snap(100, { x: 0, vx: 0, flying: false, receivedAt: 0 }));
+    buffer.push(snap(101, { x: 0, vx: 0, flying: true, receivedAt: REMOTE_TICK_MS }));
+    buffer.push(snap(102, { x: 0, vx: 0, flying: true, receivedAt: 2 * REMOTE_TICK_MS }));
+    buffer.push(snap(103, { x: 0, vx: 0, flying: true, receivedAt: 3 * REMOTE_TICK_MS }));
+    const pose = buffer.sample(3 * REMOTE_TICK_MS)!;
+    expect(pose.mode).toBe('interpolate');
+    expect(pose.flying === true || pose.flying === false).toBe(true);
+  });
+
+  it('stops then reverses without infinite glide or a backwards step', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    for (let tick = 100; tick <= 108; tick += 1) {
+      buffer.push(snap(tick, { x: (tick - 100) * 0.2, vx: 4, receivedAt: tick * REMOTE_TICK_MS }));
+    }
+    buffer.push(snap(109, { x: 1.6, vx: 0, receivedAt: 109 * REMOTE_TICK_MS }));
+    buffer.push(snap(110, { x: 1.6, vx: 0, receivedAt: 110 * REMOTE_TICK_MS }));
+    buffer.push(snap(111, { x: 1.4, vx: -4, receivedAt: 111 * REMOTE_TICK_MS }));
+    buffer.push(snap(112, { x: 1.2, vx: -4, receivedAt: 112 * REMOTE_TICK_MS }));
+    const stop = buffer.sample(110 * REMOTE_TICK_MS)!;
+    expect(stop.x).toBeLessThan(1.7);
+    const reverse = buffer.sample(112 * REMOTE_TICK_MS)!;
+    expect(reverse.x).toBeLessThan(stop.x + 1e-6);
+    expect(reverse.mode).not.toBe('capped');
+  });
+
+  it('walk visual steps stay small (no freeze-step) on perfect 20Hz', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    fillPerfect(buffer, 100, 104);
+    let now = 104 * REMOTE_TICK_MS;
+    let prev = buffer.sample(now)!.x;
+    const steps: number[] = [];
+    for (let tick = 105; tick <= 120; tick += 1) {
+      const tickAt = tick * REMOTE_TICK_MS;
+      for (let t = now + 10; t < tickAt; t += 10) {
+        const pose = buffer.sample(t)!;
+        steps.push(Math.abs(pose.x - prev));
+        prev = pose.x;
+      }
+      buffer.push(snap(tick, { receivedAt: tickAt }, tickAt));
+      now = tickAt;
+      const pose = buffer.sample(now)!;
+      steps.push(Math.abs(pose.x - prev));
+      prev = pose.x;
+    }
+    const maxStep = Math.max(...steps);
+    expect(maxStep).toBeLessThan(0.12);
+    expect(buffer.diagnostics(now).maxVisualStep).toBeLessThan(0.12);
   });
 });

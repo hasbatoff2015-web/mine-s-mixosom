@@ -21,11 +21,13 @@ export function formatRemoteInterpHud(
 ): string {
   return (
     `Remote ${label} tick=${diag.serverTick} render=${diag.renderTick.toFixed(2)} ${diag.mode} `
-    + `buf=${diag.bufferDepth}/${diag.bufferTargetDepth} n=${diag.sampleCount} `
-    + `delay=${diag.renderDelayMs}ms snap/s=${diag.snapshotsPerSecond} `
+    + `buf=${diag.bufferDepth}/${diag.bufferTargetDepth.toFixed(1)} n=${diag.sampleCount} `
+    + `bufMs=${(diag.bufferDepthMs ?? 0).toFixed(0)} delay=${diag.renderDelayMs.toFixed(0)}ms `
+    + `snap/s=${diag.snapshotsPerSecond} `
     + `arr=${diag.interArrivalMs.toFixed(0)}ms jitter=${diag.jitterMs.toFixed(0)}/${(diag.jitterP50Ms ?? 0).toFixed(0)}/${(diag.jitterP95Ms ?? 0).toFixed(0)}ms `
     + `under/s=${diag.underflowsPerSecond} extrap=${diag.extrapolationMs.toFixed(0)}ms `
-    + `extrap/s=${diag.extrapolationEventsPerSecond} late/s=${diag.lateSnapshotsPerSecond} stale/s=${diag.staleSnapshotsPerSecond}`
+    + `extrap/s=${diag.extrapolationEventsPerSecond} late/s=${diag.lateSnapshotsPerSecond} stale/s=${diag.staleSnapshotsPerSecond} `
+    + `rec=${diag.recovering ? '1' : '0'}/${(diag.recoveryMs ?? 0).toFixed(0)}ms step=${diag.maxVisualStep.toFixed(2)}`
   );
 }
 

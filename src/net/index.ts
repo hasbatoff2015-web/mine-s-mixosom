@@ -55,7 +55,11 @@ export { isCorrDiagQueryEnabled, formatCorrectionDiag, sampleCollisionHint } fro
 export { RemotePlayerView } from './RemotePlayerView';
 export {
   REMOTE_INTERP_DELAY_MS,
+  REMOTE_INTERP_DELAY_MIN_MS,
+  REMOTE_INTERP_DELAY_MAX_MS,
   REMOTE_EXTRAPOLATION_MS,
+  REMOTE_RECOVERY_MS,
+  REMOTE_BUFFER_MAX_SAMPLES,
   REMOTE_TICK_MS,
   RemoteInterpolationBuffer,
   remoteSampleFromSnapshot,
