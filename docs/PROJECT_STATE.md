@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: mesher scan audit after PR #47
+
+- Ветка `cursor/mesher-scan-audit-3ff8` от PR #47 (`2682e65`). `origin/main` ещё без #47 (PR OPEN).
+- Isolation на spawn 9×9: visibility ~6 ms, emit/`number[]` ~8 ms, full AO extra ~8 ms (~83k light reads/chunk). GPU/FPS не измерялись.
+- Безопасный фикс: neighborhood packed-light cache для full AO + `BLOCK_OCCLUDES_FACES` LUT. Greedy/worker/pixel-ratio не трогали. Generate XOR mesh сохранён.
+- Isolation fullAo 24.2 → cache 20.0 ms avg. Spawn walk mesh avg 19.5 → 16.3, max 28.7 → 24.6. Faces без изменения. Остаток: emit arrays + nearby AO.
+- Report: `docs/reports/2026-09-04_mesher-scan-audit.md`.
+
 ## Последний проход: spawn FPS audit + unstack generate/mesh
 
 - Ветка `cursor/perf-audit-spawn-3ff8` от `origin/main` `03685a9` (Farming + V2 + spawn bake).

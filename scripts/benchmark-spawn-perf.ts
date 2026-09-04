@@ -23,7 +23,7 @@ function percentile(values: readonly number[], ratio: number): number {
 
 function summarize(values: readonly number[]) {
   if (values.length === 0) {
-    return { n: 0, avg: 0, p50: 0, p95: 0, max: 0, sum: 0 };
+    return { n: 0, avg: 0, p50: 0, p95: 0, p99: 0, max: 0, sum: 0 };
   }
   const sum = values.reduce((a, b) => a + b, 0);
   return {
@@ -31,6 +31,7 @@ function summarize(values: readonly number[]) {
     avg: Number((sum / values.length).toFixed(3)),
     p50: Number(percentile(values, 0.5).toFixed(3)),
     p95: Number(percentile(values, 0.95).toFixed(3)),
+    p99: Number(percentile(values, 0.99).toFixed(3)),
     max: Number(Math.max(...values).toFixed(3)),
     sum: Number(sum.toFixed(3)),
   };

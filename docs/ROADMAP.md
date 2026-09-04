@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-04: mesher scan audit (after PR #47)
+
+- [x] Isolation breakdown of nearby mesh (visibility / emit / cheap light / full AO / light cache).
+- [x] Keep generate XOR mesh; do not add greedy or worker this pass.
+- [x] Neighborhood light cache for full AO + occlusion LUT.
+- [x] `npm run benchmark:mesh-scan` with p50/p95/p99/max.
+- [ ] GPU/FPS / `renderer.info` on a real device.
+- [ ] Next CPU candidate: typed vertex bags (`number[]` emit is ~7–11 ms).
+
 ## 2026-09-04: spawn performance audit
 
 - [x] CPU-measure procedural vs baked spawn meshing and a budgeted walk (RD=4).
