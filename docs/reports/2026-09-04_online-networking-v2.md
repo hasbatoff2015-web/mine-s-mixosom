@@ -185,4 +185,4 @@ Incompatible with protocol 1 clients/servers. No world-file migration. `server/d
 
 ## 20. Final SHA
 
-Branch HEAD after the docs commit. Run `git rev-parse HEAD` on `cursor/online-networking-v2-3ff8`.
+Implementation: `c2bce99`. Docs commit on the same branch is HEAD after this file lands. Run `git rev-parse HEAD` on `cursor/online-networking-v2-3ff8`.
