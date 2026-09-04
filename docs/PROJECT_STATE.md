@@ -10,8 +10,8 @@
 - Block: BASE explicit intent + donor `targetBlockId` / hit-in-voxel / exact face / LOS+face. Eye из `actionPoseHistory[commandSeq]` или REJECT. Never silent B.
 - Bow: BASE `localAim.ts`. Draw не сбрасывается stale FIFO `use:false`. Captured-aim Online spread=0. Reconnect zeros `bowUseTicks`.
 - Remote: один `RemoteInterpolationBuffer`. serverTick clock, 12 samples, delay 100 ms пока нет underflow, затем clamp(100+jitterP95, 80..180). Recovery ≤100 ms. Teleport/respawn snap. Flying сохранён.
-- Report: `docs/reports/2026-09-04_online-networking-v2-integration.md`.
-- Owner: two-client live QA still required (draft PR until confirmed).
+- Report: `docs/reports/2026-09-04_online-networking-v2-integration.md`. Final audit: `docs/reports/2026-09-04_final-online-and-gameplay-integration.md`.
+- Owner: cloud two-client attempt ran at ~4 FPS — **not accepted**. Farming **not found** in any GitHub branch/PR. **Do not merge main.**
 
 ## Предыдущий проход: Online networking v2 (BASE PR #40)
 

@@ -9,8 +9,9 @@
 - [x] Live-state invariant: checkpoint + pending == PlayerController after ACK/correction/compact/resync.
 - [x] Adaptive remote interp on serverTick: 12 samples, delay grows only after underflow, bounded recovery, teleport snap.
 - [x] Reconnect clears mining/bow hold; hidden-tab resync still snaps with empty pending.
-- [ ] Owner two-client live QA (local / block / bow / remote matrix). Keep PR draft until confirmed.
-- [ ] Do not merge main.
+- [ ] Owner two-client live QA on a real desktop (cloud VM ~4 FPS; remote delay hit 180 ms / underflow). Keep PR draft.
+- [ ] Farming collaborator work is **not in this git remote**; do not merge claiming it is included.
+- [ ] Do not merge main until live bow 20/20 + remote smoothness pass.
 
 ## 2026-09-04: Online networking v2
 
