@@ -11,6 +11,7 @@ import { PlayerController, type PlayerInputSource } from '../src/player';
 import {
   nextFlyWindowTicks,
   shouldAcceptFlyToggle,
+  syncCreativeFlightAllowed,
 } from '../src/player/creativeFlight';
 import { resolvePlayerMoveInput } from '../src/core/gameplayModal';
 import type { VoxelWorld } from '../src/world/World';
@@ -173,6 +174,14 @@ describe('creative flight', () => {
     player.creativeFlightAllowed = false;
     player.tick(world as unknown as VoxelWorld, input(), 0.05);
     expect(player.isFlying).toBe(false);
+  });
+
+  it('syncs permission from gamemode the same way Singleplayer and Online must', () => {
+    const player = new PlayerController({ position: [0.5, 4, 0.5] });
+    syncCreativeFlightAllowed(player, 'creative');
+    expect(player.creativeFlightAllowed).toBe(true);
+    syncCreativeFlightAllowed(player, 'survival');
+    expect(player.creativeFlightAllowed).toBe(false);
   });
 
   it('does not accept fly/movement input while a container GUI is open', () => {

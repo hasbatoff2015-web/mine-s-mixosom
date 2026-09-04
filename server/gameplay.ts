@@ -60,6 +60,8 @@ import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
 import type { EventBus } from './events';
+import { bowDebug } from './log';
+import { directionFromCapturedLook } from './playerActionValidation';
 import type { WorldSnapshot } from '../src/save/types';
 
 export const ENTITY_INTEREST_RADIUS = 48;
@@ -102,7 +104,7 @@ export interface GameplayPlayer {
   craftSlots: Array<ItemStack | null>;
   window: InventoryWindow;
   ridingCartId?: string;
-  miningTarget?: { x: number; y: number; z: number };
+  miningTarget?: { x: number; y: number; z: number; block?: number };
   miningProgress: number;
   bowUseTicks: number;
   foodUseTicks: number;
@@ -605,12 +607,16 @@ export class ServerGameplay {
     return placeBlockAt(this.useContext(player), x, y, z, requestedBlock, hit);
   }
 
-  useHeld(player: GameplayPlayer): void {
+  useHeld(player: GameplayPlayer, hit?: VoxelHit, hitResolved = false): void {
     if (player.survival.dead) return;
-    performUseHeld(this.useContext(player));
+    const beforeBow = player.bowUseTicks;
+    performUseHeld(this.useContext(player, hit, hitResolved));
+    if (player.bowUseTicks > 0 && beforeBow === 0) {
+      bowDebug(player.id, 'server_press', `charge=${player.bowUseTicks}`);
+    }
   }
 
-  private useContext(player: GameplayPlayer): UseSimulationContext {
+  private useContext(player: GameplayPlayer, hit?: VoxelHit, hitResolved = false): UseSimulationContext {
     const gameplay = this;
     return {
       world: this.world,
@@ -619,6 +625,8 @@ export class ServerGameplay {
       set selectedSlot(value) { player.selectedSlot = value; },
       gamemode: player.gamemode,
       reach: PLAYER_REACH,
+      hit,
+      hitResolved,
       eyePosition: () => player.controller.eyePosition(gameplay.tmpEye).clone(),
       viewDirection: () => player.controller.viewDirection(gameplay.tmpDir).clone(),
       get yaw() { return player.controller.yaw; },
@@ -731,22 +739,25 @@ export class ServerGameplay {
   }
 
   advanceMining(player: GameplayPlayer): void {
-    const hit = this.lookHit(player);
-    if (!hit) {
+    const target = player.miningTarget;
+    if (!target) return;
+    if (!this.inReach(player, target.x, target.y, target.z)) {
       player.miningProgress = 0;
       player.miningTarget = undefined;
       return;
     }
-    if (!player.miningTarget || player.miningTarget.x !== hit.x || player.miningTarget.y !== hit.y || player.miningTarget.z !== hit.z) {
-      player.miningTarget = { x: hit.x, y: hit.y, z: hit.z };
+    const block = this.world.getBlock(target.x, target.y, target.z);
+    if (block === BlockId.Air || (target.block !== undefined && block !== target.block)) {
       player.miningProgress = 0;
+      player.miningTarget = undefined;
+      return;
     }
-    const definition = getBlockDefinition(hit.block);
+    const definition = getBlockDefinition(block);
     if (definition.breakable === false || definition.hardness < 0) return;
     player.miningProgress += player.gamemode === 'creative'
       ? 1
       : miningProgressPerTick(definition, miningToolFromItemId(player.inventory.getSlot(player.selectedSlot)?.itemId));
-    if (player.miningProgress >= 1) this.breakBlock(player, hit.x, hit.y, hit.z);
+    if (player.miningProgress >= 1) this.breakBlock(player, target.x, target.y, target.z);
   }
 
   advanceUseHold(player: GameplayPlayer, using: boolean): void {
@@ -754,10 +765,7 @@ export class ServerGameplay {
     const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
     if (player.bowUseTicks > 0) {
       if (using && stack?.itemId === ItemId.Bow) player.bowUseTicks += 1;
-      else {
-        if (stack?.itemId === ItemId.Bow) this.releaseBow(player);
-        player.bowUseTicks = 0;
-      }
+      else if (stack?.itemId !== ItemId.Bow) player.bowUseTicks = 0;
     }
     if (player.foodUseTicks <= 0) return;
     if (!using || item?.kind !== 'food' || !player.survival.canConsumeFood(item.id)) {
@@ -864,18 +872,31 @@ export class ServerGameplay {
     this.flushPlayerLife?.(player);
   }
 
-  private releaseBow(player: GameplayPlayer): void {
+  releaseBow(
+    player: GameplayPlayer,
+    aim: { readonly yaw: number; readonly pitch: number },
+  ): { ok: true; direction: Vec3 } | { ok: false; reason: string } {
+    if (player.survival.dead) return { ok: false, reason: 'dead' };
+    if (player.inventory.getSlot(player.selectedSlot)?.itemId !== ItemId.Bow) {
+      player.bowUseTicks = 0;
+      return { ok: false, reason: 'held-item' };
+    }
+    if (player.bowUseTicks <= 0) return { ok: false, reason: 'not-drawing' };
     const charge = player.combat.bowCharge(player.bowUseTicks);
-    if (!charge.canFire) return;
+    bowDebug(player.id, 'server_fire', `charge=${player.bowUseTicks} canFire=${charge.canFire}`);
+    player.bowUseTicks = 0;
+    if (!charge.canFire) return { ok: false, reason: 'charge' };
     let flaming = false;
     if (player.gamemode === 'survival') {
       if (player.inventory.remove(ItemId.FireArrow, 1) === 1) flaming = true;
-      else if (player.inventory.remove(ItemId.Arrow, 1) !== 1) return;
+      else if (player.inventory.remove(ItemId.Arrow, 1) !== 1) return { ok: false, reason: 'ammo' };
       player.inventoryDirty = true;
     } else flaming = player.inventory.has(ItemId.FireArrow, 1);
-    const direction = player.controller.viewDirection();
+    const direction = directionFromCapturedLook(aim.yaw, aim.pitch);
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
-    this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id);
+    this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0);
+    bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
+    return { ok: true, direction };
   }
 
   private lookHit(player: GameplayPlayer): VoxelHit | undefined {

@@ -49,7 +49,8 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 | `PERSIST_INTERVAL_MS` | `30000` | Periodic save |
 | `FC_PLUGIN_DIR` / `PLUGIN_DIR` | `server/plugins` | Live plugin directory (`npm run dev:server`) |
 | `FC_EXAMPLE_PLUGIN` | unset | `1` / `true` loads bundled `/hello` without copying |
-| `FC_OPERATORS` | empty | Comma-separated operator names |
+| `FC_DEBUG_TICK` | unset | `1` appends kernel order to the 200-tick log |
+| `FC_DEBUG_TICK_MS` | unset | `1` warns when a tick's wall time ≥ 16 ms (DEV hitch log, not a profiler) |
 
 HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
 
@@ -116,15 +117,25 @@ SERVER owns: world blocks/chunks **including `BlockRenderState`** (facing, door/
 
 The 20 TPS simulation **order** is `src/gameplay/GameplayKernel.ts`, the same sequencer singleplayer `Game` uses. `VoxelWorld.tick` (fluids/time/furnaces) runs once per kernel tick. `FC_DEBUG_TICK=1` appends that order to the existing 200-tick server log.
 
-CLIENT owns: rendering, input collection, UI, **smooth local chase toward the last accepted server pose**, remote player interpolation, **time-based interpolation for other server entities**, local chunk mesh/light, visual mining overlay, visual-only bow charge while RMB is held. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
+CLIENT owns: rendering, input collection, UI, **local movement prediction** (same `PlayerController`, exact authoritative applied-tick ACK replay), **remote player interpolation on a server-tick timeline** (`RemoteInterpolationBuffer`, adaptive 80–180 ms delay, bounded 100 ms extrapolation/recovery), **time-based interpolation for other server entities** (still arrival-time `EntityInterpolationBuffer`), local chunk mesh/light including an urgent live-mutation remesh slice, visual mining overlay, and capture of block hit/bow release intent. Live `block_update`/`block_batch` apply id+state via `applyNetworkBlockChanges`; online client does not tick fluids.
 
 CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/explosion/effect expiry/pickup, persist Anarchy to IndexedDB, give itself items, change gamemode locally.
 
-Local player: input → server 20 TPS `PlayerController` → `player_state` with `tick` → client ignores stale ticks → exponential correction toward the pose. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if error ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
+Local player: input is sent and **applied locally immediately** at 20 TPS. Server still runs the real `PlayerController`. Movement `seq` identifies the latest command state, not a server tick. Every authoritative tick records the full command it sampled; `player_state.appliedTicks` provides that bounded server-tick timeline and `inputSeq` ACKs the latest sampled command. Exact scratch replay selects the historical comparison point. A match never writes live motion; a mismatch restores the authoritative pose and replays only newer commands. One command may drive multiple ticks and coalesced commands may never be sampled. Camera look stays live on `InputManager`. Hard snap remains ≥6 blocks.
 
-Remote players: snapshot history → interpolation with ~80 ms delay. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs.
+Block use/break messages carry a separate monotonic `actionSeq`, movement `commandSeq`, selected slot, and the exact captured target/face/hit/block id. Server validation is exact-target and reject-only: bounds, alive, slot/context, unchanged block, reach, LOS and face. Bow release separately captures yaw/pitch; charge/ammo/dedupe/projectile creation remain server authoritative.
 
-Mobs / drops / arrows / minecarts / TNT / falling blocks: the same ~80 ms snapshot buffer (`EntityInterpolationBuffer`). Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
+**One tab.** The session token lives in `sessionStorage` (`fc.anarchy.sessionToken`). Duplicating a tab copies it and resumes the same player. Resume now kicks the old socket (`session_taken`). Movement diagnostics are invalid if a second tab with the same token is still connected. F3 `sess socks=` must be `1`.
+
+Positional correction dump: `http://localhost:4173/?corrDiag=1`. The first rewind logs `[corrDiag:first]`. PHYSICS now prints `lastAckedServerTick`, `simTicks`, `extraAssignSite`, `pendingSlotOverwrites`, and APPLIED INPUT TIMELINE (per server physics tick). `extra` is `simTicks`, not `seqGap`. In-game `/predsim` prints lockstep xyz at 1/2/3/10/20 ticks.
+
+Hiding the game tab (switch to ChatGPT, etc.) is a **different** bug from a duplicate tab: same socket, same player. `BACKGROUND` stops `tickOnline`; the server used to keep walking on `lastInput`. The client now sends one idle on hide and resyncs to the latest snapshot on return. F3 `visibility=` / `hiddenDurationMs` / `inGap`.
+
+DEV: `?quietWorld=1` caps streaming to 1 chunk. Console `[reconnectLoad]` / `[frameSpike]` / `[longtask]` / `[vis]` / `[vis-resync]`. F3 `loop late/cb/eld` and `load chunkSend/chunkGen`.
+
+Remote players: `RemoteInterpolationBuffer` on `player_state.tick` (adaptive 80–180 ms delay from arrival jitter p95, bounded 100 ms extrapolation/recovery, then hold). Packet arrival time is not the simulation clock. Teleports and respawns reset the buffer. Crosshair attack against a remote sends `{ type: 'attack' }`; the server raycasts AABBs. DEV: F3 nearest-remote HUD; `?remoteDiag=1` logs p50/p95 arrival, delay, depth, underflow/extrapolation/stale at 1 Hz.
+
+Mobs / drops / arrows / minecarts / TNT / falling blocks: arrival-time ~80 ms snapshot buffer (`EntityInterpolationBuffer`), separate from remotes. Spawn is immediate; large corrections snap; yaw uses shortest-angle lerp. Do not assign `mesh.position = serverPosition` on every tick.
 
 Server → client also includes `entity_event` (`hurt`, `death`, `projectile_spawn`, `projectile_hit`) keyed by `entityId`. Interest snapshots put arrows/TNT before mobs/items so the cap of 96 cannot starve projectiles.
 
@@ -165,13 +176,15 @@ Online chat lines starting with `/` go to the server registry: `/help`, `/gamemo
 
 ## Protocol (JSON over WebSocket)
 
-Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`, `ping`
+Protocol version: **2**.
 
-Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`, `entity_snapshot`, `entity_event`, `health`, `effects`, `time`, `command_result`
+Client → server: `join`, `input`, `block_use`, `use_item`, `break_start`, `break_abort`, `break_finish`, `bow_release`, `attack`, `pickup`, `inventory_action`, `craft`, `vehicle_input`, `respawn`, `chat`, `view`, `ping`
+
+Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_batch`, `action_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`, `entity_snapshot`, `entity_event`, `health`, `effects`, `time`, `command_result`
 
 `inventory` is also the chest/furnace GUI sync: `window.slots` is applied to the live container even while that GUI is already open. Other players viewing the same chest receive the same message (their inventory + shared slots). No extra protocol type.
 
-`block_result` is sent to the requester on every break/place (ok or reason: `reach` / `bounds` / `empty` / `occupied` / `inventory` / …). `player_state.tick` is monotonic; clients drop stale snapshots.
+`action_result` reports acceptance/rejection to the requester with action kind, `actionSeq`, `commandSeq`, optional reason and target. Authoritative voxel changes remain `block_update`/`block_batch`. `player_state.tick` is monotonic; clients drop stale snapshots.
 
 Shared types: `shared/protocol.ts`. Incoming messages are type-checked; client coordinates/inventory/gamemode are not trusted.
 

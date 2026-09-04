@@ -266,7 +266,7 @@ describe('Anarchy server gameplay authority', () => {
     player.inventory.addItem('golden_apple', 1);
     player.selectedSlot = 0;
     player.controller.pitch = Math.PI / 2;
-    world.interact(player);
+    world.gameplay.useHeld(player);
     for (let tick = 0; tick < 40; tick += 1) world.gameplay.advanceUseHold(player, true);
     expect(player.inventory.has('golden_apple', 1)).toBe(false);
     expect(player.survival.effectTicks('absorption')).toBeGreaterThan(0);
@@ -291,7 +291,7 @@ describe('Anarchy server gameplay authority', () => {
     player.inventory.clear();
     player.inventory.addItem('flint_and_steel', 1);
     player.selectedSlot = 0;
-    world.interact(player);
+    world.gameplay.useHeld(player);
     expect(world.gameplay.redstone.primedTntCount).toBeGreaterThan(0);
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
     for (let tick = 0; tick < 100; tick += 1) world.tick();
@@ -558,7 +558,7 @@ describe('Anarchy server gameplay authority', () => {
     look = lookAt(player.controller.position, x + 2.5, y + 0.5, z - 0.06);
     player.controller.yaw = look.yaw;
     player.controller.pitch = look.pitch;
-    world.interact(player);
+    world.gameplay.useHeld(player);
     expect(world.world.getBlockState(x + 2, y, z - 1)?.powered).toBe(true);
 
     world.world.setBlock(x + 4, y - 1, z, BlockId.Stone);
@@ -576,7 +576,7 @@ describe('Anarchy server gameplay authority', () => {
     player.controller.yaw = look.yaw;
     player.controller.pitch = look.pitch;
     player.inventory.clear();
-    world.interact(player);
+    world.gameplay.useHeld(player);
     expect(world.world.getBlockState(x + 4, y, z)?.open).toBe(true);
     expect(world.world.getBlockState(x + 4, y + 1, z)?.open).toBe(true);
   });

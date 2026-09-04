@@ -6,7 +6,11 @@ export type { MutableVec3, Vec3Like } from '../math/vec3';
 export const LOCAL_SNAP_DISTANCE = 6;
 export const LOCAL_APPROACH_PER_SECOND = 18;
 
-/** Later-or-equal snapshots are stale duplicates; only strictly newer ticks apply. */
+/**
+ * Snapshot ingest helpers. Remote interpolation still uses tick gating and
+ * look-lock. Local Anarchy motion no longer chases with `stepTowardTarget`;
+ * see `localPlayerPrediction.ts`.
+ */
 export function shouldAcceptSnapshot(lastTick: number, tick: number): boolean {
   return Number.isInteger(tick) && tick > lastTick;
 }

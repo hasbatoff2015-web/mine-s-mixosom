@@ -317,7 +317,7 @@ describe('Phase 8 plugin platform', () => {
     expect(player.inventory.has('dirt', 1)).toBe(false);
 
     world.world.setBlock(x, y, z, BlockId.Chest);
-    world.interact(player);
+    world.gameplay.useHeld(player);
     expect(player.window.kind).toBe('inventory');
   });
 

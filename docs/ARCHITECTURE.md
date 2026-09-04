@@ -1,5 +1,248 @@
 # Архитектура
 
+## Online command pipeline v2 — 2026-09-04
+
+This section supersedes the 2026-09-02/03 movement, interaction, and fixed-delay remote notes below. Those sections remain as investigation history.
+
+### Movement and reconciliation
+
+```text
+InputManager sample
+→ ClientInputMessage command (`seq`)
+→ local PlayerController prediction at fixed 20 TPS
+→ server stores latest command state
+→ each server physics tick samples it and records AppliedInputTick(serverTick, seq, full input)
+→ player_state ACK (`tick`, `inputSeq`, bounded `appliedTicks`)
+→ scratch PlayerController replays the exact rows after last accepted serverTick
+→ compare with authoritative snapshot
+→ accept without touching live motion, or restore snapshot + replay client commands newer than inputSeq
+→ LocalPlayerRenderState renders adjacent local simulation poses
+```
+
+`ClientInputMessage.seq` is the monotonic **movement command/state id** (`commandSeq` in action context). It does not claim that the server has simulated one tick for every seq. `player_state.tick` is the authoritative simulation checkpoint. `inputSeq` acknowledges the latest movement command sampled at that checkpoint; `appliedTicks` tells which complete movement state was actually sampled for each server tick since the client checkpoint.
+
+The server intentionally remains latest-state, not FIFO: one command can drive several physics ticks; several incoming commands can be coalesced and skipped before one tick. Exact replay therefore groups by authoritative server ticks, never by `seqGap`, packet count, or inferred `latest input × N`. The transmitted trace is bounded to 16 ticks and is owner-only; remote player snapshots omit it. If the required interval is no longer present, reconciliation performs a deterministic authoritative correction; it does not fabricate history. A matching ACK updates bookkeeping and discards commands through `inputSeq` without writing live position, velocity, view, render state, or camera.
+
+### Explicit player actions
+
+Discrete actions use a separate per-session monotonic `actionSeq`, plus the movement `commandSeq` and captured `selectedSlot` that formed their context. Client messages are `block_use`, `use_item`, `break_start`, `break_abort`, `break_finish`, and `bow_release`. The former network `interact`, `break_block`, `place_block`, and `block_result` messages are not protocol-v2 messages.
+
+For a block hit the client sends integer target xyz, target block id, axis face normal, and world-space hit xyz captured by the local raycast. The server checks connection/player state, action replay/order, command not from the future, selected slot equality, world bounds, finite hit, target unchanged/non-Air, reach from authoritative eye, line of sight, and exact first hit/face. Validation either authorizes that exact target or rejects it; the server never raycasts a replacement target at delayed yaw/position. Break progress remains server-owned and bound to the accepted target through start/abort/finish. World mutation still reaches clients only through authoritative block updates.
+
+`bow_release` captures yaw/pitch at the client release edge. The server validates held bow, active draw and minimum charge, owns arrow availability/consumption (Creative preserves ammo), deduplicates by `actionSeq`, derives direction from the captured look, and spawns the authoritative arrow with no added server aim reconstruction. Later movement/look messages cannot rotate that projectile.
+
+### Remote player presentation
+
+Each remote has a 12-snapshot server-tick buffer. The render clock stays on the authoritative 50 ms timeline. Delay is adaptive but bounded: `clamp(100 ms + arrival-jitter p95, 80 ms, 180 ms)`. Sampling interpolates surrounding authoritative ticks; underflow velocity-extrapolates for at most 100 ms and then holds the capped pose. The first new snapshot after extrapolation/cap uses at most 100 ms recovery blending. A ≥6-block discontinuity and dead→alive transition reset and snap the timeline. Arrival p50/p95, selected delay, buffer depth in milliseconds, underflow, extrapolation, and stale counts are diagnostic only and never change gameplay simulation.
+
+## Remote player interpolation (server-tick timeline) — 2026-09-03
+
+Remote players are a **presentation** pipeline. They do not use local prediction, `LocalPlayerRenderState`, or packet-arrival timestamps as simulation time. Other network entities still use `EntityInterpolationBuffer` (arrival-time delay ~80 ms). Do not mix the three modes.
+
+Clock (in `src/net/remotePlayerInterpolation.ts`):
+
+```text
+clockTick  = latestServerTick + (now - latestReceivedAt) / REMOTE_TICK_MS
+renderTick = max(previousRenderTick, clockTick - delayTicks)
+```
+
+- `REMOTE_TICK_MS = 50` (20 TPS). `REMOTE_INTERP_DELAY_MS = 100` → `delayTicks = 2`.
+- Each sample is keyed by `player_state.tick` (`serverTick`). `receivedAt` is telemetry and the elapsed term of the **latest** sample only. Older packets cannot move already-buffered sample times.
+- Find the two surrounding snapshots and lerp: linear xyz/pitch/velocity, shortest-path yaw (`lerpAngle`). Booleans (`onGround`, `sprinting`, `sneaking`, `invisible`) use midpoint `t < 0.5 ? previous : next`.
+- One sample: **hold** the spawn/first pose. Do not invent a long extrapolation.
+- No future sample: coast on latest velocity for at most `REMOTE_EXTRAPOLATION_MS = 100`, then **hold the capped pose** (do not snap back to the last snapshot, do not coast forever).
+- Reject duplicate (`tick === last`) and stale (`tick < last`) snapshots. Bounded ring of 8. Render clock never rewinds.
+- Rejoin (`player_joined` of an existing id) calls `RemotePlayerView.reset()` and drops the old timeline. `player_left` disposes the buffer.
+
+Locomotion: `PlayerVisualAnimator` gets interpolated `movementSpeed` (xz hypot), `onGround`, `verticalVelocity`, `sprinting`, `sneaking`. Not packet rate, not correction events. Attack/mining/bow/eating remain hardcoded false/0 until a later PR.
+
+DEV: F3 nearest-remote line (`snap/s`, `serverTick`, `buf`, `arr/jitter`, `under/s`, `extrap`). `?remoteDiag=1` also logs one sample timeline per second.
+
+## Checkpoint extra vs tickGap — 2026-09-03
+
+Live `extra=3` with `tickGap=1 physicsTicks=1` is **not** a seqGap heuristic. `inspectPredictedPlayer` sets `extraTicks = simTicks = serverTick - lastAckedServerTick`. That count is what `predictedStateFromCheckpoint` actually runs.
+
+`tickGap` uses `lastStateTick` from **receive**. `lastAckedServerTick` updates only on reconcile commit. `pendingLocalSnapshot` keeps the latest packet only, so skipped snapshots still advance `lastStateTick` and leave the checkpoint N ticks behind.
+
+`lastAccepted + latestInput × simTicks` is valid only when every skipped server tick used that same input. Server samples `lastInput` per physics tick. DEV `PlayerSnapshot.appliedTicks` is the per-tick applied seq/y/vy trace (last 8). The next production compare should replay that span, not one latest seq × N.
+
+## Prediction checkpoint (Model B) — 2026-09-03
+
+Owner dump `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x` proved `inputSeq` is not a physics tick. The client predicted seq 544 and 545; the server simulated **one** latest-input tick of 545. `history[545]` is one walk step ahead of the authoritative pose.
+
+Three clocks:
+
+| Name | Meaning |
+|---|---|
+| `inputSeq` | Packet/order id. Latest movement **state** (`lastInputSeq`). Intermediate seqs are not simulated. |
+| `clientPredTick` | Local prediction physics step (every client 20 TPS tick). |
+| `serverTick` / `tickNumber` | Authoritative simulation checkpoint on `player_state`. |
+
+`player_state` fields are separate: `tick = serverTick`, `physicsTicks = N` for this outer update, `inputSeq = latest state actually used`.
+
+Reconcile (Model B): comparable pose = **last accepted movement state** + `simTicks` of the snapshot's latest input. `simTicks = serverTick - lastAckedServerTick` when the tick is known, else packet `physicsTicks`. Accept is a live-pose no-op; mismatch restores the snapshot and replays remaining pred ticks. Duplicate detection uses `serverTick` when known, else `inputSeq` (preserves `predNoSend` / hidden-tab tests that omit tick).
+
+Evaluated models:
+
+- **A** — drive client ticks only when the server ticks. Rejected: the client cannot see the server slot; local look/move would wait.
+- **B** — predict every local tick; snapshot carries enough tick/time to identify the equivalent simulation point. **Chosen.** Smallest change that matches latest-input server semantics without FIFO.
+- **C** — FIFO one server tick per client seq. Rejected by design (reverts Anarchy movement).
+
+Do not compare `history[inputSeq]` and do not invent seqGap heuristics (`gap > physicsTicks`, subtract one tick, larger tolerance, smoothing).
+
+Timeline harness: `src/net/predictionTimeline.ts`. Owner gap=2 → history would correct (~walkStep), checkpoint dist=0.
+
+## One-correction diagnostic — 2026-09-03
+
+Owner 20/20 localhost still positional-corrects (`corr/s` 5–11). This pass does **not** change prediction, tolerances, interpolation, TPS, or PlayerController.
+
+`inspectPredictedPlayer` compares snapshot `inputSeq=N` to `history[N]`, then applies `extra = max(0, physicsTicks - seqGap)` ticks of that **same** latest input. `physicsTicks=1` → exactly `history[N]`. `lastInputSeq` is the latest movement **state**, not a unique physics tick. `tickNumber` is the server checkpoint.
+
+`[corrDiag]` prints SEQ / TIMING / PHYSICS / INPUT / CLIENT POSE (`history[N]`, comparable, live) / SERVER POSE / DIFF / STATE / WORLD (`getBlock(false)`, AABB, `chunkLoaded`, `mutationMarks`, visibility) / CATEGORY A–G.
+
+WorldInstance 1:1 (`applyInput` + `tick` vs `predictLocalMove`) matches on Anarchy for walk and the other modes. Deterministic PlayerController + wrapper is not the remaining 20/20 bug. Latest-input coalesce (client 2 seqs, server 1 tick) still produces a walk-step `firstDiff=z` dump — that path is proven, not assumed to be the live 20/20 case.
+
+## Hidden-tab Page Visibility — 2026-09-03
+
+Single game tab. `GameLifecycleManager` sets `BACKGROUND` on hide; `worldSimulationActive` is false, so `Game.frame` zeroes the accumulator and skips `tickOnline`. The client sends no movement and predicts no ticks. The server keeps `lastInput` at 20 TPS. Incoming `player_state` still lands on the same WebSocket; the client stores **one** latest pending snapshot. Those packets reuse `inputSeq`, so reconcile **ignores** them as `duplicate-seq`. Local pose freezes while the server walks ~`WALK_SPEED × hiddenSeconds`.
+
+A frozen `requestAnimationFrame` on resume can still feed up to 0.25 s (`MAX_FRAME_DELTA`) → 4 catch-up ticks from the stale pose. That is not a 2 s replay, but it is enough to start a correction storm against a pose metres away.
+
+Policy (lifecycle only): hide sends the same idle packet as the pause menu; resume resets `previousTime`/`accumulator`, snaps the local player to the latest snapshot, and clears prediction history. Look is preserved. This is not a FIFO, not a larger accept window, and not a TPS change.
+
+DEV: F3 `visibility=visible/hidden focus=1/0 hiddenDurationMs resumeTicks resumeSnapshots`; `tickClock.inputGapMs` / `inputPackets` as `inGap` / `inBurst`. Logs `[vis]`, `[vis-resume]`, `[vis-resync]`.
+
+## Session resume isolation + event-loop load — 2026-09-03
+
+`sessionStorage` key `fc.anarchy.sessionToken` is per-tab, but **duplicating a tab copies it**. `WorldInstance.join` resumes the same `ServerPlayer`, replaces `sink`, and used to leave the old WebSocket in `AnarchyServer.sockets`. Both sockets could `applyInput()`. Closing the old tab called `disconnect()` on the live player.
+
+Invariant: one player, one `connectionId`, one movement source. Resume mints a new id, sends `error code=session_taken` to the old socket, and ignores input whose `connectionId` does not match. Stale `close` does not disconnect the new connection.
+
+Flight `snapSent≈15` is an **outer-loop stall**, not prediction. `syncChunksFor` used `serializeModifications()` (entire world) for every newly streamed column; flying crosses columns fast. Now one chunk's delta is serialized, and at most 2 **new** generates run per sync (already-generated columns still stream). Drain continues each outer loop.
+
+Reconnect ~1697 ms: `welcome` JSON parse + `world.restore` + `LOADING_WORLD` gen/mesh. DEV logs `[reconnectLoad]`, `[frameSpike]`, `[longtask]`. Server tickClock adds lateness/callback/ELD. `?quietWorld=1` caps streaming to 1 chunk.
+
+## Server 20 TPS clock vs catch-up snapshots — 2026-09-03
+
+Owner F3: `pred/s=20` `state/s=17` `corr/s=3` `netPos/s=3` `soft *=0`. Remaining jitter is **positional correction**, not speed/flying flags.
+
+`setTimeout(tickMs - work)` accumulated Node slack (~4–10 ms), so the **outer** loop ran ~17 Hz. `gameplayTicksDue` still produced ~20 physics ticks via catch-up, then **one** `player_state` with `inputSeq = lastInputSeq`. Client `history[N]` is the pose after **one** predicted tick of N. A 2-tick catch-up pose is ~one walk step ahead → `corr/s≈3`.
+
+Fix: schedule the next outer loop on an **absolute 50 ms slot** (`scheduleNextTickSlot`) so lateness shortens the next wait. Snapshots carry `physicsTicks` (not a fake seq). Reconcile compares `history[N]` plus `max(0, physicsTicks - seqGap)` extra ticks of that same latest input. Real xz/y mismatches still correct. No lerp, no larger tolerance.
+
+F3: `srv phys/s snapGen/s snapSent/s lastPhysΔ`. Every correction logs `[corrDiag]` with `firstDiff`.
+
+## Online incoming `player_state` side effects — 2026-09-03
+
+Owner A/B: Normal Online jitters; `?predNoState=1` (send+predict, skip applying local `player_state`) is completely smooth. Local prediction, PlayerController, fixed-step render, and outbound input are OK. The remaining bug was **incoming local `player_state`**.
+
+Matching pose at `history[seq]` now **accepts on xz/y only**. Velocity, onGround, and flying disagreements are `softReject` (logged, no restore/replay). That is the fly+SHIFT case: `CREATIVE_VERTICAL_SPEED = 7.5` vs `PREDICTION_ACCEPT_SPEED = 0.2` (~3%) used to rewind every snapshot and rewrite `velocity.y`.
+
+Local snapshots are queued on receive and applied at the start of the next 20 TPS tick (`tickOnline` / idle send), not inside the WebSocket callback. Survival restore runs only when health/hunger/dead actually change (`hurtResistance.reset()` is no longer called 20 times a second).
+
+DEV: `?predStateObserve=1` parse+inspect with zero mutation; category skips `predSkipReconcile|Survival|Riding|Gamemode|Respawn|Look|Render`. Keep `predNoState` / `[firstBadEvent]`.
+
+## Online network-path isolation — 2026-09-03
+
+Manual A/B: Normal Online still jitters; `?predNoNet=1` (same prediction/render, no movement send, no local `player_state`) is smooth. Remaining jitter is in the **network path**.
+
+DEV-only query flags (ignored in production):
+
+```text
+?predNoNet=1            = predNoSend + predNoState
+?predNoState=1          send + predict; do not apply/reconcile local player_state; remotes stay on
+?predNoSend=1           do not send movement input; still receive/apply snapshots
+?predStateObserve=1     receive + parse + inspect; mutate nothing
+?predSkipReconcile=1    skip rewind/ack only
+?predSkipSurvival=1     skip health/hunger restore
+?predSkipRiding=1 ?predSkipGamemode=1 ?predSkipRespawn=1 ?predSkipLook=1 ?predSkipRender=1
+```
+
+F3: `Motion online/normal|noState|noSend|noNet|observe send=on|OFF state=on|OFF` plus `soft speed/onGround/flying`.
+
+Local `player_state` apply is deferred to the next tick. **Accepted or ignored acks write no PlayerController fields**. Pose mismatch (`xz`/`y`) still restores+replays. Health/hunger restore only on actual change. Every other network callback that can mutate the local player is traced. First frame with `rΔ < 0` or `|rΔ| > 0.12` dumps `[firstBadEvent]`.
+
+DEV input packets may carry `clientSentAt`; snapshots echo `netTiming` (client send / server recv / sim / server send).
+
+Urgent remesh, gravity, speeds, 20 TPS, and render interpolation are unchanged.
+
+## Online Anarchy correction diagnosis — 2026-09-02
+
+`prd/s=20` vs `state/s=18` was Node `setInterval(50)` drift (no catch-up), not PlayerController divergence. Lockstep same class / same world / same dt is identical. A 2-vs-1 latest-input walk is ~0.22 blocks — the observed 0.3–0.6 rewind.
+
+Server loop uses `gameplayTicksDue` (same bounds as client `advanceFixedStep`). Multiple owed ticks: `tickCatchUp` then **one** `player_state`. Latest-input unchanged (no FIFO).
+
+DEV: `?corrDiag=1` dumps one correction; F3 `snap recv/drop/gap`; `FC_DEBUG_SNAP=1`; `/predsim`.
+
+## Online Anarchy input: latest movement state — 2026-09-02
+
+> Historical v1 contract, superseded by Online command pipeline v2 above.
+
+Continuous WASD/sprint/sneak/flight is **state**, not a FIFO of packets. `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that state once. `snapshot.inputSeq` is `lastInputSeq`. Skipped seqs are not simulated.
+
+One-shot / hold edges:
+
+- `attack` / `break_block` / `place_block` / `interact` — immediate messages
+- `input.use` / `input.mining` — latest hold; `pendingUseRelease` so a coalesced bow release is not lost
+- `pendingJump` so a jump pulse is not overwritten by a later packet in the same window
+
+Client prediction still ticks every local seq. Reconciliation compares the snapshot to **last accepted pose + simTicks of the latest input state**, not to `history[N]`. Replay is remaining pred ticks after consuming `simTicks` oldest entries.
+
+DEV: `FC_DEBUG_BOW=1` (server), `?bowDiag=1` (client).
+
+## Online Anarchy local motion pipeline — 2026-09-02
+
+SP and Online local presentation share one render model:
+
+```text
+Game.frame
+  advanceFixedStep → leftover < FIXED_DT, ticks = 0..4
+  0..4 × Game.tick
+    after each tick: LocalPlayerRenderState.pushAfterTick(live pose)
+  render
+    sample last adjacent pair (S_{n-1}, S_n)
+    alpha = leftover / FIXED_DT
+    cameraPivot = sampled feet + eyeHeight
+```
+
+`PlayerController.previousPosition` is **not** the render origin (fall distance only). Interpolating `(S1, S3)` after two ticks in one rAF can move the camera **backward** relative to a high-alpha `S1→S2` frame. The last adjacent pair after two ticks is `(S2, S3)`.
+
+Online `tick()` is `tickOnline` only (no client world sim). Each fixed step: sync `creativeFlightAllowed` from gamemode, send `input.seq` (unless DEV `predNoSend` / `predNoNet`), `predictLocalMove` = `PlayerController.tick` + `history[seq]`. The render buffer is the same object as singleplayer.
+
+Server: `applyInput` replaces `lastInput`. Each 20 TPS tick simulates that latest state once. `PlayerSnapshot.inputSeq` is `lastInputSeq`. Client compares snapshot to last-accepted pose + `simTicks` of that latest input (`serverTick` is the checkpoint). Match → no pose write. Mismatch → restore + replay remaining pred ticks. Snap ≥ 6 copies `previousPosition = position`. Smaller corrections leave `previousPosition` for lerp.
+
+DEV: F3 `motionProbe` (local player). `?motionDiag=1` dumps a 2 s SP/Online trace.
+
+## Online Anarchy local prediction + urgent remesh — 2026-09-02
+
+Local Anarchy motion is **predicted** on the existing `PlayerController`, not chased.
+
+```text
+tickOnline (20 TPS)
+  syncCreativeFlightAllowed(player, summary.mode)
+  send input.seq
+  predictLocalMove  → PlayerController.tick + history[predTick, seq] = state AFTER tick
+player_state (tick = X, physicsTicks = N, inputSeq = latest state)
+  syncCreativeFlightAllowed from snapshot.gamemode BEFORE inspect
+  if serverTick already acked or missing seq → ignore movement
+  comparable = lastAckedState + simTicks of that latest input (scratch copies creativeFlightAllowed)
+  if within tolerance → commit checkpoint, do not touch the live player
+  else restore snapshot pose + replay remaining pred ticks
+render
+  lerp LocalPlayerRenderState previous → current (same as SP; snapshots do not drive this)
+  look: applyImmediateRenderLook every frame
+```
+
+`inputSeq` is the **latest** movement seq used for this server tick (`lastInputSeq`). Packets between ticks replace `lastInput`; skipped seqs are never simulated. A second snapshot with the same seq means no newer packet arrived and lastInput was held — the client ignores that duplicate ack.
+
+Server still owns gameplay: `WorldInstance.tickConnectedPlayers` runs the real physics; health/world/combat stay authoritative. Large corrections (≥ 6 blocks) snap `previousPosition`. Smaller corrections leave `previousPosition` for render lerp. `stepTowardTarget` remains for tests / legacy helpers only.
+
+Reconnect: `resetPredictionBuffer` on welcome; server `inputSeqAfterReconnect()` still `-1` so a new client starting at seq 0 is accepted.
+
+Live `block_update` / `block_batch` still apply in the WebSocket handler via `applyNetworkBlockChanges` (collision/state immediately). Visible mesh is **not** rebuilt there. `Game.queueUrgentMutationMesh` records chunk keys (edited chunk + `neighborFluidMeshOffsets`). `processWorldJobs` drains a dedicated slice (`URGENT_MUTATION_MESH_LIMIT = 3`, `URGENT_MUTATION_MESH_BUDGET_MS = 2`) with `allowPendingLighting` / `requireNeighborLight: false`. Ordinary streaming budgets stay `WORLD_JOB_BUDGET_MS = 4` and `WORLD_LIGHT_BUDGET_MS = 2`. Lighting still runs; a slightly stale-light mesh can appear now and remesh again when `lightMeshStale`.
+
+DEV server hitch log: `FC_DEBUG_TICK_MS=1` warns when wall time ≥ 16 ms (`tick-ms n=… wall=… gameplay=…`). Not a production profiler.
+
 ## UI on authoritative server/player main — 2026-09-02
 
 `GameUI` remains the only DOM/menu/HUD/container owner after the PR #22 merge. Main's `OnlineServerLiveStatus`, `InventoryContext.submitAction` and `applyAuthoritativeCursor` contracts are retained; authored UI markup and CSS wrap those contracts instead of replacing them. Online inventory clicks/recipes still become protocol actions, container snapshots still patch the open UI, and death/respawn/chat callbacks remain owned by `Game` and lifecycle.
@@ -31,7 +274,7 @@ Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меня�
 
 Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
 
-Online remote players теперь используют тот же `PlayerVisual`, что local third-person: `RemotePlayerView` сохраняет ownership bounded snapshot interpolation и подаёт interpolated feet/yaw/pitch/velocity plus authoritative sneak/sprint/onGround/invisibility в render-frame animator. Temporary `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Текущий protocol не содержит authoritative held item id или appearance metadata, поэтому remote visual использует `DEFAULT_PLAYER_APPEARANCE` и neutral empty hand — ничего не угадывается. Будущий appearance sync остаётся редким metadata event `{ skinId, model, layers? }`, никогда PNG/base64 или per-tick texture payload.
+Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Текущий protocol не содержит authoritative held item id или appearance metadata, поэтому remote visual использует `DEFAULT_PLAYER_APPEARANCE` и neutral empty hand — ничего не угадывается. Будущий appearance sync остаётся редким metadata event `{ skinId, model, layers? }`, никогда PNG/base64 или per-tick texture payload. Remote attack/mining/bow/eating sync is a later PR.
 
 ## Block breaking overlay — integrated 2026-09-02
 
@@ -121,13 +364,13 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
-Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. RMB use/placement is **`src/gameplay/useInteraction.ts`**: SP and the server share `performUseHeld` / `placeBlockAt`; hosts keep UI vs plugin/window effects. `ServerGameplay` uses `HeadlessEntityHost` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions) with **no Three.js**. Poses use `src/math/vec3.ts` (`Vec3` / `Vec3Like`), not `THREE.Vector3`. `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Use is `interact` only; the server runs the shared `performUseHeld` from authoritative look + raycast. `place_block` still exists for look-validated creative/explicit coords and uses the same `placeBlockAt`.
+Online Anarchy simulation host is `server/gameplay.ts` (`ServerGameplay`) plus `WorldInstance`. Both singleplayer `Game` and the server tick **`src/gameplay/GameplayKernel.ts`** for the shared system order. RMB use/placement is **`src/gameplay/useInteraction.ts`**: SP and the server share `performUseHeld` / `placeBlockAt`; hosts keep UI vs plugin/window effects. `ServerGameplay` uses `HeadlessEntityHost` and the **same** managers as singleplayer (drops, falling, mobs, minecarts, arrows, redstone, explosions) with **no Three.js**. Poses use `src/math/vec3.ts` (`Vec3` / `Vec3Like`), not `THREE.Vector3`. `VoxelWorld.deferredLighting = false` on the server; the client stays deferred. `world.onCommittedBlocks` plus `onCommittedBlockState` batch voxel **id and `BlockRenderState`** into `block_update` / `block_batch` (facing, door open, button powered, `fluidLevel` / `fluidFalling`). Initial `welcome.blockStates` already had full state; live packets used to send only `blockId`, so flowing water remeshed as source cubes. Client `applyNetworkBlockChanges` writes id then state and reuses `fluidCornerHeight` (no second fluid renderer, no client fluid tick online). Entity interest snapshots (radius 48, cap 96, **arrows/TNT first**) reuse existing visual managers via `src/net/applyEntitySnapshots.ts`. Client render uses `EntityInterpolationBuffer` (`src/net/entitySnapshotInterpolation.ts`): server tick → snapshot history → sample at `now - 80ms` between two poses. That path is **not** `interpolateVisuals(clientAlpha)` and is **not** local-player chase. `entity_event` carries hurt/death/projectile spawn-hit for the same `entityId`. Inventory clicks share `src/inventory/inventoryUiAction.ts` with the UI. Online `Game.tick()` returns after `tickOnline` and does not run local world/mob/fluid/combat/drop simulation. Online death skips the SP death screen. Every server death path (`/kill`, fall, fire, lava, TNT, mob, PvP) goes through `ServerGameplay.respawnIfDead`, which flushes `health` dead then alive. The client restores PLAYING input (`src/core/onlineRespawn.ts`) without `canvas.focus` / pointer-lock request when already locked, so a respawn blur cannot leave `tickOnline` stuck in BACKGROUND. Protocol-v2 use/break/bow messages carry captured intent; the server validates that exact context before calling the shared simulation.
 
-Protocol (`shared/protocol.ts`, still version 1): client `inventory_action` / `craft` / `interact` / `attack` / `pickup` / `vehicle_input` plus `input.mining` / `use` / `vehicleForward`; server `block_batch` / `block_update` (optional `state`) / `health` / `effects` / `entity_snapshot` / `entity_event` / `command_result` / `time`. Unknown server types still reject.
+Protocol (`shared/protocol.ts`, version 2): movement `input`; explicit `block_use` / `use_item` / `break_start` / `break_abort` / `break_finish` / `bow_release`; retained `inventory_action` / `craft` / `attack` / `pickup` / `vehicle_input`; server `action_result`, `player_state.appliedTicks`, `block_batch` / `block_update` (optional `state`), health/effects/entities/commands/time. Unknown and legacy message types reject.
 
 Online chest/furnace clicks are not optimistic. The client sends `inventory_action`; the server mutates via `applyInventoryUiAction` and replies with the existing `inventory` message (`inventory` + `cursor` + `window.slots`). `applyAuthoritativeContainerSlots` writes those slots onto the local `getChest`/`getFurnace` object **even when the GUI is already open**; `applyAuthoritativeCursor` then re-paints. Opening the GUI is only for the first snapshot (`shouldOpenOnlineContainer`). Other players with the same chest/furnace window receive the same `inventory` packet (their own inventory + updated `window.slots`). No new protocol type. Persistence format unchanged.
 
-Online Anarchy still applies `block_update` / `block_batch` in the WebSocket handler (`applyNetworkBlockChanges`) regardless of pause. `processWorldJobs` (deferred light + remesh) also runs while online `PAUSED` / `BACKGROUND` so dirty chunks do not wait for Continue. Kernel / `tickOnline` stay PLAYING-only. Hidden-tab RAF throttle is the browser's; we do not force 60 FPS. Inventory overlays stay PLAYING. Entity interpolation remains in `render()`.
+Online Anarchy still applies `block_update` / `block_batch` in the WebSocket handler (`applyNetworkBlockChanges`) regardless of pause. `processWorldJobs` (deferred light + remesh) also runs while online `PAUSED` / `BACKGROUND` so dirty chunks do not wait for Continue. Kernel / `tickOnline` stay PLAYING-only. Hidden-tab RAF throttle is the browser's; we do not force 60 FPS. On hide the client sends one idle so the server does not keep walking; on resume it discards wall-clock catch-up and resyncs to the latest snapshot. Inventory overlays stay PLAYING. Entity interpolation remains in `render()`.
 
 Singleplayer IndexedDB path is unchanged. Online never writes Anarchy to IndexedDB.
 
@@ -181,7 +424,7 @@ flowchart TD
 
 ## Fixed loop и порядок tick
 
-Render loop использует `requestAnimationFrame`. `advanceFixedStep()` ограничивает raw delta `MAX_FRAME_DELTA = 0.25 s` и не выполняет больше `MAX_CATCH_UP_TICKS = 4` simulation ticks за кадр: избыток времени отбрасывается, чтобы stall 300 ms не разгонял spiral of death. Пока accumulator ≥ `FIXED_DT = 0.05 s`, выполняется simulation tick. Камера, мобы, drops, arrows и TNT интерполируются между previous/current simulation snapshots.
+Render loop использует `requestAnimationFrame`. `advanceFixedStep()` ограничивает raw delta `MAX_FRAME_DELTA = 0.25 s` и не выполняет больше `MAX_CATCH_UP_TICKS = 4` simulation ticks за кадр: избыток времени отбрасывается, чтобы stall 300 ms не разгонял spiral of death. Пока accumulator ≥ `FIXED_DT = 0.05 s`, выполняется simulation tick. Локальный игрок интерполируется через `LocalPlayerRenderState` (соседняя пара завершённых pose, `alpha = leftover / FIXED_DT`). Камера, мобы, drops, arrows и TNT интерполируются между previous/current simulation snapshots.
 
 Simulation продвигается только в lifecycle state `PLAYING`. `LOADING_WORLD` готовит initial radius без player physics, mining и pointer lock. Container GUI (Survival/Creative inventory, chest, furnace, crafting table, Recipe Book) **не** является pause: мир остаётся в `PLAYING`, tick продолжается, а player gameplay input блокируется отдельно (`gameplayModal.ts`). Настоящая остановка simulation — Pause menu (`Esc` → `PAUSED`) и platform/background/ad/death. Furnace burn/cook всегда идёт через `VoxelWorld.tickFurnaces()` в общем world tick, без UI-таймера.
 
@@ -459,9 +702,9 @@ Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT 
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
-Online local motion: the client does **not** run `PlayerController.tick` and does **not** hard-assign `player.position` from every `player_state`. Server simulates at 20 TPS from `input.seq`; the client chases the last accepted tick with exponential smoothing (`src/net/authoritativeMotion.ts`). Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView`) is delayed and never applied to the local id. Other network entities use the same delay model (`EntityInterpolationBuffer`) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server `lastInputSeq` so a new client starting at seq 0 is not treated as stale. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
+Online local motion: the Anarchy client **does** run `PlayerController.tick` for the local player as prediction (same 20 TPS, no kernel / world / falling / damage). It does **not** hard-assign `player.position` from every `player_state` and does **not** exponentially chase X/Y/Z. Server simulates at 20 TPS from latest `lastInput` and records the exact command row used for each server tick. The client replays `player_state.appliedTicks` from its last accepted server checkpoint, compares that historical pose, accepts without a live write, or restores and replays only commands newer than the ACK (`src/net/localPlayerPrediction.ts`). Snapshots are applied at the start of the next client tick, not in the WebSocket callback. Mouse look is applied from `InputManager` every frame (`applyImmediateRenderLook`) and copied onto the local `PlayerController` only so raycasts match the camera. Remote interpolation (`RemotePlayerView` / `RemoteInterpolationBuffer`) samples the server-tick timeline at an adaptive 80–180 ms delay and is never applied to the local id. Other network entities keep the arrival-time delay model (`EntityInterpolationBuffer`, ~80 ms) onto existing meshes; `MobEntity.networkRenderPose` is visual-only so hitboxes keep the latest snapshot. A resumed Anarchy session (same `sessionToken` after quit / Singleplayer / re-join) resets server movement/action sequences and the client prediction/action buffers. `AnarchyClient` generation + current-client identity drop leftover websocket callbacks.
 
-`GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal.
+`GameLifecycleManager` enters `BACKGROUND` on real tab hide. `window.blur` does **not** pause while the tab is visible and the pointer is locked, a lock request is pending, or an online respawn restore guard is active — even if `document.hasFocus()` is briefly false. That was the post-death WASD stall: look still rendered, `tickOnline` did not run. Pointer-lock acquire resumes PLAYING before deciding whether the lock is legal. Online hide also sends one idle input and, on return to PLAYING, resyncs local movement to the latest authoritative snapshot so a frozen tab cannot phase-shift prediction.
 
 ### Generation
 
@@ -564,7 +807,7 @@ Render camera не ждёт следующего fixed tick: `applyImmediateRend
 
 Позиция игрока привязана к центру ступней. Collision resolver строит AABB, двигает его по Y/X/Z против **каждого** solid box клетки (`blockCollisionBoxes`), затем пробует generic step-up `0.6` (в том числе пока игрок на ladder, чтобы выйти на верхний край). Stairs/slabs используют реальную форму, поэтому ходьба по ступеням — обычный WASD + step-up, без `onLadder`. Ladder: `findLadderContact` по thin volume, vertical velocity `LADDER_CLIMB_SPEED` / `-LADDER_MAX_DESCENT_SPEED` / 0 при sneak. Cactus — inset box; door — occupied-face slab.
 
-Controller отвечает только за movement/physics state и сообщает fall damage callback. Health ownership остаётся в `SurvivalSystem`. Creative flight живёт в том же controller: `creativeFlightAllowed` с Game tick, double-Space window 7 ticks, `isFlying` runtime-only. Пока летит — нет gravity и нет ladder vertical rewrite; Space/Shift задают vertical wish, Ctrl — `CREATIVE_SPRINT_FLY_SPEED`. Посадка (`landed`) сбрасывает полёт. Survival никогда не получает fly.
+Controller отвечает только за movement/physics state и сообщает fall damage callback. Health ownership остаётся в `SurvivalSystem`. Creative flight живёт в том же controller: `creativeFlightAllowed` с Game tick **и** Online `tickOnline` (из `summary.mode` / snapshot `gamemode` **до** `PlayerController.tick` / reconcile). Double-Space window 7 ticks, `isFlying` runtime-only. Пока летит — нет gravity и нет ladder vertical rewrite; Space/Shift задают vertical wish, Ctrl — `CREATIVE_SPRINT_FLY_SPEED`. Посадка (`landed`) сбрасывает полёт. Survival никогда не получает fly. Prediction scratch (`predictedStateFromCheckpoint`) копирует `creativeFlightAllowed` — это не часть `PlayerMovementState`.
 
 `PlayerTickResult.jumped` true только в tick реального takeoff (`jump && grounded && !liquid && !isFlying`). Поэтому удерживаемая кнопка не повторяет jump exhaustion каждый airborne tick. `inFire` — AABB overlap с `BlockId.Fire`, не только блок под ногами. Пока игрок в minecart, `locomotion: false`: walk/fall выключены, позиция снапается к seat после `MinecartManager.update`, чтобы streaming следовал за тележкой.
 

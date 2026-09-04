@@ -10,10 +10,17 @@ import {
   parseClientMessage,
   type ClientMessage,
   type ServerMessage,
+  type ServerWelcomeMessage,
 } from '../shared/protocol';
 import type { ServerConfig } from './config';
-import { serverLog } from './log';
-import { WorldInstance, type ConnectedSink } from './WorldInstance';
+import { netDebug, serverLog } from './log';
+import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
+
+interface SocketBinding {
+  playerId: string;
+  connectionId: string;
+  superseded: boolean;
+}
 
 class WsSink implements ConnectedSink {
   constructor(private readonly socket: WebSocket) {}
@@ -29,7 +36,7 @@ export class AnarchyServer {
   private http?: HttpServer;
   private wss?: WebSocketServer;
   private listeningPort = 0;
-  private readonly sockets = new Map<WebSocket, string>();
+  private readonly sockets = new Map<WebSocket, SocketBinding>();
 
   constructor(readonly config: ServerConfig) {
     this.world = new WorldInstance(config);
@@ -86,8 +93,12 @@ export class AnarchyServer {
   }
 
   async stop(): Promise<void> {
-    for (const [socket, playerId] of this.sockets) {
-      this.world.disconnect(playerId);
+    const seen = new Set<string>();
+    for (const [socket, binding] of this.sockets) {
+      if (!seen.has(binding.playerId)) {
+        seen.add(binding.playerId);
+        this.world.disconnect(binding.playerId, true, binding.connectionId);
+      }
       socket.close();
     }
     this.sockets.clear();
@@ -133,9 +144,9 @@ export class AnarchyServer {
     let joined = false;
     socket.on('message', (data) => {
       try {
-        this.onMessage(socket, data.toString(), joined, (playerId) => {
+        this.onMessage(socket, data.toString(), joined, (playerId, connectionId) => {
           joined = true;
-          this.sockets.set(socket, playerId);
+          this.sockets.set(socket, { playerId, connectionId, superseded: false });
         });
       } catch (error) {
         serverLog(`invalid client message: ${error instanceof Error ? error.message : String(error)}`, 'warn');
@@ -143,9 +154,12 @@ export class AnarchyServer {
       }
     });
     socket.on('close', () => {
-      const playerId = this.sockets.get(socket);
+      const binding = this.sockets.get(socket);
       this.sockets.delete(socket);
-      if (playerId) this.world.disconnect(playerId);
+      if (binding && !binding.superseded) {
+        this.world.disconnect(binding.playerId, true, binding.connectionId);
+      }
+      if (binding) this.refreshActiveSocketCount(binding.playerId);
       serverLog('client disconnected');
     });
     socket.on('error', () => {
@@ -157,7 +171,7 @@ export class AnarchyServer {
     socket: WebSocket,
     text: string,
     joined: boolean,
-    onJoin: (playerId: string) => void,
+    onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     if (text.length > MAX_CLIENT_MESSAGE_BYTES) {
       this.send(socket, { type: 'error', code: 'too_large', message: 'Message too large' });
@@ -183,23 +197,23 @@ export class AnarchyServer {
       this.handleJoin(socket, message, onJoin);
       return;
     }
-    const playerId = this.sockets.get(socket);
-    if (!playerId) {
-      this.send(socket, { type: 'error', code: 'not_joined', message: 'Not joined' });
+    const binding = this.sockets.get(socket);
+    if (!binding || binding.superseded) {
+      this.send(socket, { type: 'error', code: 'stale_session', message: 'Session moved to another tab' });
       return;
     }
-    const player = this.world.players.get(playerId);
-    if (!player || !player.connected) {
-      this.send(socket, { type: 'error', code: 'not_joined', message: 'Not joined' });
+    const player = this.world.players.get(binding.playerId);
+    if (!player || !player.connected || player.connectionId !== binding.connectionId) {
+      this.send(socket, { type: 'error', code: 'stale_session', message: 'Session moved to another tab' });
       return;
     }
-    this.handlePlayMessage(playerId, message);
+    this.handlePlayMessage(player, binding.connectionId, message);
   }
 
   private handleJoin(
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'join' }>,
-    onJoin: (playerId: string) => void,
+    onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     const sink = new WsSink(socket);
     const result = this.world.join({
@@ -212,14 +226,18 @@ export class AnarchyServer {
       socket.close();
       return;
     }
-    const { player, resumed } = result;
-    onJoin(player.id);
+    const { player, resumed, previousConnectionId } = result;
+    onJoin(player.id, player.connectionId);
+    this.supersedeOtherSockets(player.id, socket);
+    this.refreshActiveSocketCount(player.id);
     const others = this.world.connectedPlayers()
       .filter((other) => other.id !== player.id)
       .map((other) => other.remoteInfo());
-    this.send(socket, {
+    const welcomeStarted = performance.now();
+    const welcome: ServerWelcomeMessage = {
       type: 'welcome',
       protocol: PROTOCOL_VERSION,
+      serverTick: this.world.tickNumber,
       playerId: player.id,
       sessionToken: player.sessionToken,
       name: player.name,
@@ -235,7 +253,18 @@ export class AnarchyServer {
       online: this.world.onlineCount(),
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
-    });
+    };
+    const encoded = encodeMessage(welcome);
+    const welcomeMs = performance.now() - welcomeStarted;
+    if (welcomeMs >= 20) {
+      serverLog(
+        `welcome encode ${welcomeMs.toFixed(1)}ms bytes=${encoded.length} `
+        + `modChunks=${Object.keys(welcome.modifications).length} `
+        + `resumed=${resumed} prev=${previousConnectionId?.slice(0, 8) ?? '—'}`,
+        'warn',
+      );
+    }
+    if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
     if (!resumed) {
       this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
     }
@@ -246,44 +275,63 @@ export class AnarchyServer {
     });
   }
 
-  private handlePlayMessage(playerId: string, message: ClientMessage): void {
-    const player = this.world.players.get(playerId);
-    if (!player) return;
+  private handlePlayMessage(
+    player: ServerPlayer,
+    connectionId: string,
+    message: ClientMessage,
+  ): void {
     switch (message.type) {
       case 'join':
         return;
       case 'input':
-        this.world.applyInput(player, message);
+        this.world.applyInput(player, message, { connectionId });
         return;
-      case 'break_block': {
-        const result = this.world.tryBreak(player, message.x, message.y, message.z);
+      case 'block_use':
+      case 'use_item':
+      case 'break_start':
+      case 'break_abort':
+      case 'break_finish':
+      case 'bow_release': {
+        const result = message.type === 'block_use'
+          ? this.world.blockUse(player, message)
+          : message.type === 'use_item'
+            ? this.world.useItem(player, message)
+            : message.type === 'break_start'
+              ? this.world.breakStart(player, message)
+              : message.type === 'break_abort'
+                ? this.world.breakAbort(player, message)
+                : message.type === 'break_finish'
+                  ? this.world.breakFinish(player, message)
+                  : this.world.bowRelease(player, message);
         this.world.sendTo(player, {
-          type: 'block_result',
+          type: 'action_result',
+          action: message.type,
+          actionSeq: message.actionSeq,
+          commandSeq: message.commandSeq,
           ok: result.ok,
-          action: 'break',
-          x: message.x,
-          y: message.y,
-          z: message.z,
           ...(result.ok ? {} : { reason: result.reason }),
+          ...('targetX' in message ? {
+            targetX: message.targetX,
+            targetY: message.targetY,
+            targetZ: message.targetZ,
+          } : {}),
         });
+        const target = 'targetX' in message
+          ? ` target=${message.targetX},${message.targetY},${message.targetZ} face=${message.faceX},${message.faceY},${message.faceZ}`
+          : '';
+        const aim = message.type === 'bow_release'
+          ? ` release=${message.yaw.toFixed(4)},${message.pitch.toFixed(4)} used=${message.yaw.toFixed(4)},${message.pitch.toFixed(4)} angular=0`
+          : '';
+        netDebug(
+          'action',
+          `type=${message.type} action=${message.actionSeq} command=${message.commandSeq}${target}${aim} `
+          + `${result.ok ? 'accepted' : `rejected=${result.reason}`}`,
+        );
         if (!result.ok) {
-          serverLog(`break rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
-        }
-        return;
-      }
-      case 'place_block': {
-        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId);
-        this.world.sendTo(player, {
-          type: 'block_result',
-          ok: result.ok,
-          action: 'place',
-          x: message.x,
-          y: message.y,
-          z: message.z,
-          ...(result.ok ? {} : { reason: result.reason }),
-        });
-        if (!result.ok) {
-          serverLog(`place rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
+          serverLog(
+            `${message.type} rejected: ${result.reason} action=${message.actionSeq} command=${message.commandSeq} by ${player.name}`,
+            'warn',
+          );
         }
         return;
       }
@@ -307,9 +355,6 @@ export class AnarchyServer {
           shift: message.shift === true,
         });
         return;
-      case 'interact':
-        this.world.interact(player);
-        return;
       case 'attack':
         this.world.attack(player);
         return;
@@ -320,6 +365,35 @@ export class AnarchyServer {
         this.world.vehicleInput(player, message);
         return;
     }
+  }
+
+  private supersedeOtherSockets(playerId: string, keep: WebSocket): void {
+    for (const [socket, binding] of this.sockets) {
+      if (binding.playerId !== playerId || socket === keep) continue;
+      binding.superseded = true;
+      this.send(socket, {
+        type: 'error',
+        code: 'session_taken',
+        message: 'Сессия открыта в другой вкладке',
+      });
+      socket.close();
+    }
+  }
+
+  private refreshActiveSocketCount(playerId: string): void {
+    let count = 0;
+    for (const binding of this.sockets.values()) {
+      if (binding.playerId === playerId && !binding.superseded) count += 1;
+    }
+    this.world.setActiveSocketCount(playerId, count);
+  }
+
+  activeSocketCount(playerId: string): number {
+    let count = 0;
+    for (const binding of this.sockets.values()) {
+      if (binding.playerId === playerId && !binding.superseded) count += 1;
+    }
+    return count;
   }
 
   private send(socket: WebSocket, payload: ServerMessage): void {

@@ -4,7 +4,7 @@
  *
  * Hosts supply world/inventory/player geometry plus effect hooks. UI, audio,
  * plugin events, and network dirty flags stay in the host. Online clients must
- * not call this — they send `interact` only.
+ * not call this — they send explicit `block_use` / `use_item` actions.
  *
  * Decision order matches the historical singleplayer `useTargetOrItem` path,
  * which is the more complete rule set (anchors, lantern/chain support, slab
@@ -129,6 +129,11 @@ export interface UseSimulationContext {
   readonly reach: number;
   /** Precomputed crosshair hit (SP `session.target`). Server omits and raycasts. */
   readonly hit?: VoxelHit;
+  /**
+   * True when `hit` is the complete captured intent, including an intentional
+   * no-hit. Prevents the server from substituting a delayed raycast target.
+   */
+  readonly hitResolved?: boolean;
   eyePosition(): Vec3Like;
   viewDirection(): Vec3Like;
   yaw: number;
@@ -224,7 +229,7 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
 export function performUseHeld(ctx: UseSimulationContext): void {
   const origin = new Vec3(ctx.eyePosition().x, ctx.eyePosition().y, ctx.eyePosition().z);
   const direction = new Vec3(ctx.viewDirection().x, ctx.viewDirection().y, ctx.viewDirection().z);
-  const hit = ctx.hit ?? ctx.world.raycast(origin, direction, ctx.reach);
+  const hit = ctx.hitResolved ? ctx.hit : (ctx.hit ?? ctx.world.raycast(origin, direction, ctx.reach));
   const cartRay = ctx.minecarts.raycast(origin, direction, ctx.reach, ctx.ridingCartId);
   const stack = ctx.inventory.getSlot(ctx.selectedSlot);
   const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
@@ -351,7 +356,7 @@ export function placeFromHit(
 
 /**
  * Place into an already-chosen cell. Used by RMB (`placeFromHit`) and by the
- * existing `place_block` look-validated path. Orientation still comes from `hit`.
+ * server-side placement helpers. Orientation still comes from the captured `hit`.
  */
 export function placeBlockAt(
   ctx: UseSimulationContext,

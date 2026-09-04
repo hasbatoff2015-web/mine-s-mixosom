@@ -32,3 +32,13 @@ export function advanceFixedStep(
   if (next < 1e-12) next = 0;
   return { elapsed, ticks, nextAccumulator: next, droppedSeconds };
 }
+
+/**
+ * Leftover accumulator as the 0..1 blend through the last completed tick.
+ * `advanceFixedStep` always returns leftover < dt, so this is leftover / dt.
+ */
+export function interpolationAlpha(leftover: number, dt = FIXED_DT): number {
+  if (!(dt > 0) || leftover <= 0) return 0;
+  if (leftover >= dt) return 1;
+  return leftover / dt;
+}
