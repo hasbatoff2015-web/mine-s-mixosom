@@ -919,6 +919,37 @@ describe('WorldInstance foundation simulation', () => {
     expect(resumed.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
   });
 
+  it('reconnect clears mining and bow hold so a stale draw cannot fire', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    player.bowUseTicks = 12;
+    player.miningTarget = { x: 3, y: 4, z: 5 };
+    player.miningProgress = 0.8;
+    player.foodUseTicks = 5;
+    player.lastUse = true;
+    player.lastActionSeq = 9;
+    expect(world.applyInput(player, moveInput(1, { forward: 1, use: true }))).toBe(true);
+    world.disconnect(player.id);
+    expect(player.bowUseTicks).toBe(0);
+    expect(player.miningTarget).toBeUndefined();
+    expect(player.miningProgress).toBe(0);
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.lastUse).toBe(false);
+    expect(player.lastActionSeq).toBe(-1);
+    expect(player.commandQueue.length).toBe(0);
+
+    player.bowUseTicks = 12;
+    player.miningTarget = { x: 1, y: 2, z: 3 };
+    const resumed = world.join({ sink: new MemorySink(), name: 'Sim', sessionToken: player.sessionToken });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.bowUseTicks).toBe(0);
+    expect(resumed.player.miningTarget).toBeUndefined();
+    expect(resumed.player.lastActionSeq).toBe(-1);
+    expect(resumed.player.lastInput.use).toBe(false);
+  });
+
   it('multiple disconnect/resume cycles keep accepting seq 1', async () => {
     const world = await bootWorld();
     const joined = join(world, 'Loop');

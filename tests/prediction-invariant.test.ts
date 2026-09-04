@@ -187,5 +187,29 @@ describe('prediction live-state invariant', () => {
     });
     expect(buffer.entries).toHaveLength(0);
     expect(Math.hypot(client.position.x - snap.x, client.position.z - snap.z)).toBeLessThan(1e-4);
+    assertLiveEqualsCheckpointPlusPending(client, buffer, world);
+  });
+
+  it('reconnect wipes pending commands so live equals the welcome checkpoint', () => {
+    const world = flatWorld() as unknown as VoxelWorld;
+    const client = new PlayerController({ position: [0.5, 1, 0.5] });
+    client.tick(world, { yaw: 0, pitch: 0, movement: () => idle }, FIXED_DT);
+    const buffer = createPredictionBuffer();
+    seedPredictionCheckpoint(buffer, client.captureMovementState(), 0);
+    for (let seq = 1; seq <= 8; seq += 1) {
+      predictLocalMove(client, world, buffer, move(seq, { forward: 1 }));
+    }
+    expect(buffer.entries.length).toBeGreaterThan(0);
+    const snapped = snapshotFrom(client, -1, { x: 4.5, ackCommandSeq: -1, inputSeq: -1 });
+    resetPredictionBuffer(buffer);
+    client.teleport([snapped.x, snapped.y, snapped.z]);
+    seedPredictionCheckpoint(buffer, client.captureMovementState(), -1);
+    buffer.lastAckedSeq = snapped.inputSeq ?? -1;
+    expect(buffer.entries).toHaveLength(0);
+    expect(buffer.lastAckedSeq).toBe(-1);
+    assertLiveEqualsCheckpointPlusPending(client, buffer, world);
+    predictLocalMove(client, world, buffer, move(1, { forward: 1 }));
+    expect(buffer.entries.map((entry) => entry.seq)).toEqual([1]);
+    assertLiveEqualsCheckpointPlusPending(client, buffer, world);
   });
 });

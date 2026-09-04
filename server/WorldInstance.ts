@@ -72,6 +72,8 @@ const IDLE_INPUT: ClientInputMessage = {
   yaw: 0,
   pitch: 0,
   selectedSlot: 0,
+  use: false,
+  mining: false,
 };
 
 export class ServerPlayer implements GameplayPlayer {
@@ -1064,6 +1066,13 @@ export class WorldInstance {
     });
     player.appliedStepsThisLoop.length = 0;
     player.actionPoseHistory.length = 0;
+    player.miningTarget = undefined;
+    player.miningProgress = 0;
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.lastUse = false;
+    player.lastSprint = false;
+    player.vehicleForward = 0;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
