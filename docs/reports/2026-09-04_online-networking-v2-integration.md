@@ -1,7 +1,7 @@
 # Online Networking V2 Integration
 
 **Date:** 2026-09-04  
-**Status:** in progress (Phase 0 complete)  
+**Status:** in progress (Phase 1 complete)  
 **Integration branch:** `cursor/online-networking-v2-integrated-3ff8`  
 **PR:** TBD (draft until two-client QA)
 
@@ -11,7 +11,7 @@
 |---|---|---|---|
 | BASE | `cursor/online-networking-v2-3ff8` | `1f5aafe93b699ee0e77fa4ecfa5eaed4c4070ed5` | Matches known audit SHA. HEAD unchanged. Draft PR #40. |
 | DONOR | `codex/online-command-pipeline-v2` | `aa2ae9e625bacf704a7f0f64c2e5689966e1a3d4` | Matches known audit SHA. HEAD unchanged. |
-| Merge-base | `cursor/remote-player-interpolation-86e1` | `ade7113c3f6c9d7b3a5e9c8f0d1a2b3c4d5e6f70` | Donor sits on PR #38, **without** PR #39 live local aim. |
+| Merge-base | `cursor/remote-player-interpolation-86e1` | `ade7113122a9cdc5949ff34b10f19e17918285cb` | Donor sits on PR #38, **without** PR #39 live local aim. |
 | Integration start | this branch | `1f5aafe` | Created from BASE HEAD. No main merge. |
 
 BASE lineage: #39 local aim (`c5fba74`) → #38 remote interp (`ade7113`) → #37 prediction (`fd02b67`) → `main` `4d803e5`.
@@ -26,9 +26,10 @@ DONOR lineage: one commit `aa2ae9e` on `ade7113`. It does **not** contain FIFO, 
 
 | Commit | Phase |
 |---|---|
-| this file | Phase 0 baseline / architecture comparison |
+| `d1effb6` | Phase 0 baseline / architecture comparison |
+| Phase 1 | Strict block intent: `targetBlockId`, hit-in-voxel, exact face, LOS+face, `commandSeq` pose history |
 
-Later phases land as separate commits (block, bow, backlog, invariants, remote, session, diagnostics, regression).
+Later phases land as separate commits (bow, backlog, invariants, remote, session, diagnostics, regression).
 
 ## 4. Subsystem comparison
 
@@ -158,6 +159,8 @@ Client sends: targetXYZ, **targetBlockId**, face, hit, actionSeq, commandSeq, se
 Server: ACCEPT A or REJECT A. Never execute B.
 
 If historical pose for `commandSeq` is unavailable: REJECT, do not substitute current look.
+
+**Phase 1 implemented:** `PROTOCOL_VERSION = 3`. `BlockTargetIntent.targetBlockId` is required on captured targeted actions. Validation: exact ±X/±Y/±Z face, hit inside voxel (`HIT_EPSILON=0.05`), current block id match, LOS first intercept must match XYZ **and face**. Action eye comes from `actionPoseHistory[commandSeq]` (pending gap ≤ 32 uses current pose because later look is not yet simulated). Incomplete captured fields reject; intent-less `place_block`/`break_block` still use lookHit for legacy tests/SP-like paths. Mining finish reuses `miningIntent` from `break_start`. Movement / FIFO / ACK unchanged.
 
 ## 12. Bow lifecycle (Phase 2 target)
 

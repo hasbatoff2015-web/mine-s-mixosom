@@ -2,7 +2,7 @@
 
 ## Online networking v2 — 2026-09-04
 
-**Current contract.** Supersedes Prediction checkpoint (Model B), latest-input `lastInput`, and silent server re-raycast for Online actions. WebSocket + 20 TPS + shared `PlayerController` remain. `PROTOCOL_VERSION = 2`. A v1 join is rejected.
+**Current contract.** Supersedes Prediction checkpoint (Model B), latest-input `lastInput`, and silent server re-raycast for Online actions. WebSocket + 20 TPS + shared `PlayerController` remain. `PROTOCOL_VERSION = 3`. Older joins are rejected. Targeted actions require `targetBlockId` and validate from the authoritative pose of `commandSeq`.
 
 **CLIENT OWNS INTENT. SERVER OWNS RESULT.**
 

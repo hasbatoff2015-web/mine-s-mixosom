@@ -191,6 +191,7 @@ describe('online client does not simulate use', () => {
       faceX: 0,
       faceY: 1,
       faceZ: 0,
+      targetBlockId: BlockId.Stone,
     }));
     expect(world.getBlock(5, 41, 5, false)).toBe(BlockId.Air);
     expect(inventory.getSlot(0)?.itemId).toBe('torch');

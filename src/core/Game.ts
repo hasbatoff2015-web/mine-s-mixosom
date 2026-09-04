@@ -203,7 +203,7 @@ import {
   bowReleaseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
-import { angularError } from '../../shared/playerActions';
+import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
 import {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,
@@ -342,13 +342,14 @@ export interface OnlineAnarchySession {
   lastAliveTick?: number;
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
-  lastBlockDiag?: {
-    actionSeq: number;
-    commandSeq: number;
-    target?: string;
-    face?: string;
-    result?: string;
-  };
+      lastBlockDiag?: {
+        actionSeq: number;
+        commandSeq: number;
+        target?: string;
+        face?: string;
+        blockId?: number;
+        result?: string;
+      };
   lastBowDiag?: {
     actionSeq: number;
     commandSeq: number;
@@ -358,6 +359,8 @@ export interface OnlineAnarchySession {
     serverPitch?: number;
   };
   miningLocked?: boolean;
+  /** Captured break_start target; finish/abort must not retarget. */
+  miningIntent?: BlockTargetIntent;
   /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
   ignoreNetworkSend?: boolean;
   /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
@@ -1651,6 +1654,7 @@ export class Game {
       this.commitOnlineActionSeq(session, source);
       online.client.send(actionMessageFromBreakAbort(action));
       online.miningLocked = false;
+      online.miningIntent = undefined;
     }
   }
 
@@ -1677,6 +1681,7 @@ export class Game {
         commandSeq: action.commandSeq,
         target: `${action.targetX},${action.targetY},${action.targetZ}`,
         face: `${action.faceX},${action.faceY},${action.faceZ}`,
+        blockId: action.targetBlockId,
       };
       online.client.send(interactMessageFromUse(action));
       return;
@@ -1716,11 +1721,24 @@ export class Game {
     const action = captureBlockBreakStart(source, hit);
     this.commitOnlineActionSeq(session, source);
     online.miningLocked = true;
+    online.miningIntent = {
+      targetX: action.targetX,
+      targetY: action.targetY,
+      targetZ: action.targetZ,
+      targetBlockId: action.targetBlockId,
+      faceX: action.faceX,
+      faceY: action.faceY,
+      faceZ: action.faceZ,
+      hitX: action.hitX,
+      hitY: action.hitY,
+      hitZ: action.hitZ,
+    };
     online.lastBlockDiag = {
       actionSeq: action.actionSeq,
       commandSeq: action.commandSeq,
       target: `${action.targetX},${action.targetY},${action.targetZ}`,
       face: `${action.faceX},${action.faceY},${action.faceZ}`,
+      blockId: action.targetBlockId,
     };
     online.client.send(actionMessageFromBreakStart(action));
   }
@@ -3569,10 +3587,21 @@ export class Game {
       }
       session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
       const source = this.onlineActionSource(session);
-      const action = captureBlockBreakFinish(source, hit);
+      const captured = session.online.miningIntent;
+      const action = captured
+        ? { ...captureBlockBreakFinish(source, hit), ...captured }
+        : captureBlockBreakFinish(source, hit);
       this.commitOnlineActionSeq(session, source);
+      session.online.lastBlockDiag = {
+        actionSeq: action.actionSeq,
+        commandSeq: action.commandSeq,
+        target: `${action.targetX},${action.targetY},${action.targetZ}`,
+        face: `${action.faceX},${action.faceY},${action.faceZ}`,
+        blockId: action.targetBlockId,
+      };
       session.online.client.send(actionMessageFromBreakFinish(action));
       session.online.miningLocked = false;
+      session.online.miningIntent = undefined;
       this.firstPerson?.swing();
       return;
     }
@@ -4530,7 +4559,7 @@ export class Game {
           this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
           if (session.online.lastBlockDiag) {
             const block = session.online.lastBlockDiag;
-            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}`;
+            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}`;
           }
           if (session.online.lastBowDiag) {
             const bow = session.online.lastBowDiag;

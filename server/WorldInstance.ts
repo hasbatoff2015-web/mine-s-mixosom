@@ -31,6 +31,8 @@ import type {
   WorldModifications,
 } from '../shared/protocol';
 import type { BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
+import type { ActionPoseSample } from '../shared/actionPoseHistory';
+import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
 import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
@@ -83,6 +85,7 @@ export class ServerPlayer implements GameplayPlayer {
   lastActionSeq = -1;
   lastBowReleaseSeq = -1;
   readonly appliedStepsThisLoop: AppliedMovementStep[] = [];
+  readonly actionPoseHistory: ActionPoseSample[] = [];
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
   lastServerSimAt: number | undefined;
@@ -669,9 +672,18 @@ export class WorldInstance {
     y: number,
     z: number,
     intent?: BlockTargetIntent,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (intent && (intent.targetX !== x || intent.targetY !== y || intent.targetZ !== z)) {
       return { ok: false, reason: 'invalid' };
+    }
+    if (player.miningTarget
+      && (player.miningTarget.x !== x || player.miningTarget.y !== y || player.miningTarget.z !== z)) {
+      return { ok: false, reason: 'mining' };
+    }
+    if (intent) {
+      const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq);
+      if (!validated.ok) return validated;
     }
     const result = this.gameplay.breakBlock(player, x, y, z);
     if (result.ok) {
@@ -690,8 +702,9 @@ export class WorldInstance {
     z: number,
     requestedBlock?: number,
     intent?: BlockTargetIntent,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
-    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock, intent);
+    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock, intent, commandSeq);
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
@@ -705,9 +718,10 @@ export class WorldInstance {
     player: ServerPlayer,
     intent: BlockTargetIntent,
     actionSeq?: number,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
-    return this.gameplay.beginMining(player, intent);
+    return this.gameplay.beginMining(player, intent, commandSeq);
   }
 
   abortMining(player: ServerPlayer): void {
@@ -743,9 +757,10 @@ export class WorldInstance {
     player: ServerPlayer,
     intent?: BlockTargetIntent,
     actionSeq?: number,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
-    const result = this.gameplay.useHeld(player, intent);
+    const result = this.gameplay.useHeld(player, intent, commandSeq);
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
@@ -1046,6 +1061,7 @@ export class WorldInstance {
       selectedSlot: player.selectedSlot,
     });
     player.appliedStepsThisLoop.length = 0;
+    player.actionPoseHistory.length = 0;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -1160,6 +1176,14 @@ export class WorldInstance {
           player.controller.teleport(before);
         }
       }
+      const eye = player.controller.eyePosition();
+      recordActionPose(player.actionPoseHistory, {
+        commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+        eyeX: eye.x,
+        eyeY: eye.y,
+        eyeZ: eye.z,
+        selectedSlot: player.selectedSlot,
+      });
     }
   }
 

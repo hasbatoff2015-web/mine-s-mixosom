@@ -1,4 +1,4 @@
-import { snapUnitAxisFace } from './playerCommand';
+import { exactUnitAxisFace } from './playerCommand';
 
 export const ACTION_HISTORY_MAX = 64;
 
@@ -14,6 +14,8 @@ export interface BlockTargetIntent {
   readonly targetX: number;
   readonly targetY: number;
   readonly targetZ: number;
+  /** Block id observed at capture. Server rejects if the cell changed. */
+  readonly targetBlockId: number;
   readonly faceX: number;
   readonly faceY: number;
   readonly faceZ: number;
@@ -111,6 +113,44 @@ export function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+export function hasTargetCoordinates(raw: {
+  readonly targetX?: number;
+  readonly targetY?: number;
+  readonly targetZ?: number;
+  readonly x?: number;
+  readonly y?: number;
+  readonly z?: number;
+}): boolean {
+  return (raw.targetX ?? raw.x) !== undefined
+    || (raw.targetY ?? raw.y) !== undefined
+    || (raw.targetZ ?? raw.z) !== undefined;
+}
+
+/** True when the client sent captured-intent fields (not place/break destination xyz). */
+export function hasCapturedBlockIntent(raw: {
+  readonly targetX?: number;
+  readonly targetY?: number;
+  readonly targetZ?: number;
+  readonly targetBlockId?: number;
+  readonly faceX?: number;
+  readonly faceY?: number;
+  readonly faceZ?: number;
+  readonly hitX?: number;
+  readonly hitY?: number;
+  readonly hitZ?: number;
+}): boolean {
+  return raw.targetX !== undefined
+    || raw.targetY !== undefined
+    || raw.targetZ !== undefined
+    || raw.targetBlockId !== undefined
+    || raw.faceX !== undefined
+    || raw.faceY !== undefined
+    || raw.faceZ !== undefined
+    || raw.hitX !== undefined
+    || raw.hitY !== undefined
+    || raw.hitZ !== undefined;
+}
+
 export function parseBlockTarget(raw: Record<string, unknown>): BlockTargetIntent | { error: string } {
   if (!Number.isInteger(raw.targetX) || !Number.isInteger(raw.targetY) || !Number.isInteger(raw.targetZ)) {
     return { error: 'target coordinates must be integers' };
@@ -118,10 +158,13 @@ export function parseBlockTarget(raw: Record<string, unknown>): BlockTargetInten
   if (!isFiniteNumber(raw.targetX) || !isFiniteNumber(raw.targetY) || !isFiniteNumber(raw.targetZ)) {
     return { error: 'target coordinates invalid' };
   }
+  if (!Number.isInteger(raw.targetBlockId) || !isFiniteNumber(raw.targetBlockId) || raw.targetBlockId < 0) {
+    return { error: 'targetBlockId invalid' };
+  }
   if (!isFiniteNumber(raw.faceX) || !isFiniteNumber(raw.faceY) || !isFiniteNumber(raw.faceZ)) {
     return { error: 'face invalid' };
   }
-  const face = snapUnitAxisFace(raw.faceX, raw.faceY, raw.faceZ);
+  const face = exactUnitAxisFace(raw.faceX, raw.faceY, raw.faceZ);
   if (!face) return { error: 'face must be a unit axis' };
   if (!isFiniteNumber(raw.hitX) || !isFiniteNumber(raw.hitY) || !isFiniteNumber(raw.hitZ)) {
     return { error: 'hit point invalid' };
@@ -130,6 +173,7 @@ export function parseBlockTarget(raw: Record<string, unknown>): BlockTargetInten
     targetX: raw.targetX,
     targetY: raw.targetY,
     targetZ: raw.targetZ,
+    targetBlockId: raw.targetBlockId,
     faceX: face.x,
     faceY: face.y,
     faceZ: face.z,
@@ -143,6 +187,7 @@ export function blockIntentFromFields(raw: {
   readonly targetX?: number;
   readonly targetY?: number;
   readonly targetZ?: number;
+  readonly targetBlockId?: number;
   readonly x?: number;
   readonly y?: number;
   readonly z?: number;
@@ -157,12 +202,14 @@ export function blockIntentFromFields(raw: {
   const targetY = raw.targetY ?? raw.y;
   const targetZ = raw.targetZ ?? raw.z;
   if (targetX === undefined || targetY === undefined || targetZ === undefined) return undefined;
+  if (raw.targetBlockId === undefined) return undefined;
   if (raw.faceX === undefined || raw.faceY === undefined || raw.faceZ === undefined) return undefined;
   if (raw.hitX === undefined || raw.hitY === undefined || raw.hitZ === undefined) return undefined;
   const parsed = parseBlockTarget({
     targetX,
     targetY,
     targetZ,
+    targetBlockId: raw.targetBlockId,
     faceX: raw.faceX,
     faceY: raw.faceY,
     faceZ: raw.faceZ,

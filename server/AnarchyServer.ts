@@ -12,7 +12,7 @@ import {
   type ServerMessage,
   type ServerWelcomeMessage,
 } from '../shared/protocol';
-import { blockIntentFromFields } from '../shared/playerActions';
+import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerActions';
 import type { ServerConfig } from './config';
 import { serverLog } from './log';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
@@ -288,7 +288,29 @@ export class AnarchyServer {
         return;
       case 'break_block': {
         const intent = blockIntentFromFields(message);
-        const result = this.world.tryBreak(player, message.x, message.y, message.z, intent);
+        if (hasCapturedBlockIntent(message) && !intent) {
+          this.world.sendTo(player, {
+            type: 'block_result',
+            ok: false,
+            action: 'break',
+            x: message.x,
+            y: message.y,
+            z: message.z,
+            reason: 'invalid',
+          });
+          this.world.sendTo(player, {
+            type: 'action_result',
+            actionSeq: message.actionSeq ?? -1,
+            kind: 'break',
+            ok: false,
+            reason: 'invalid',
+            targetX: message.x,
+            targetY: message.y,
+            targetZ: message.z,
+          });
+          return;
+        }
+        const result = this.world.tryBreak(player, message.x, message.y, message.z, intent, message.commandSeq);
         this.world.sendTo(player, {
           type: 'block_result',
           ok: result.ok,
@@ -315,7 +337,29 @@ export class AnarchyServer {
       }
       case 'place_block': {
         const intent = blockIntentFromFields(message);
-        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId, intent);
+        if (hasCapturedBlockIntent(message) && !intent) {
+          this.world.sendTo(player, {
+            type: 'block_result',
+            ok: false,
+            action: 'place',
+            x: message.x,
+            y: message.y,
+            z: message.z,
+            reason: 'invalid',
+          });
+          this.world.sendTo(player, {
+            type: 'action_result',
+            actionSeq: message.actionSeq ?? -1,
+            kind: 'place',
+            ok: false,
+            reason: 'invalid',
+            targetX: message.x,
+            targetY: message.y,
+            targetZ: message.z,
+          });
+          return;
+        }
+        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId, intent, message.commandSeq);
         this.world.sendTo(player, {
           type: 'block_result',
           ok: result.ok,
@@ -362,7 +406,17 @@ export class AnarchyServer {
         return;
       case 'interact': {
         const intent = blockIntentFromFields(message);
-        const result = this.world.interact(player, intent, message.actionSeq);
+        if (hasCapturedBlockIntent(message) && !intent) {
+          this.world.sendTo(player, {
+            type: 'action_result',
+            actionSeq: message.actionSeq ?? -1,
+            kind: 'block_use',
+            ok: false,
+            reason: 'invalid',
+          });
+          return;
+        }
+        const result = this.world.interact(player, intent, message.actionSeq, message.commandSeq);
         this.world.sendTo(player, {
           type: 'action_result',
           actionSeq: message.actionSeq ?? -1,
@@ -417,15 +471,16 @@ export class AnarchyServer {
     message: Extract<ClientMessage, { type: 'action' }>,
   ): void {
     const intent = blockIntentFromFields(message);
+    const targeted = message.kind === 'block_use'
+      || message.kind === 'block_break_start'
+      || message.kind === 'block_break_finish';
     let result: { ok: true } | { ok: false; reason: string };
-    if (message.kind === 'block_use') {
-      result = this.world.interact(player, intent, message.actionSeq);
+    if (targeted && !intent) {
+      result = { ok: false, reason: 'invalid' };
+    } else if (message.kind === 'block_use') {
+      result = this.world.interact(player, intent, message.actionSeq, message.commandSeq);
     } else if (message.kind === 'block_break_start') {
-      if (!intent) {
-        result = { ok: false, reason: 'invalid' };
-      } else {
-        result = this.world.beginMining(player, intent, message.actionSeq);
-      }
+      result = this.world.beginMining(player, intent!, message.actionSeq, message.commandSeq);
     } else if (message.kind === 'block_break_abort') {
       if (!this.world.acceptClientActionSeq(player, message.actionSeq)) {
         result = { ok: false, reason: 'duplicate' };
@@ -442,7 +497,7 @@ export class AnarchyServer {
       } else if (!this.world.acceptClientActionSeq(player, message.actionSeq)) {
         result = { ok: false, reason: 'duplicate' };
       } else {
-        result = this.world.tryBreak(player, x, y, z, intent);
+        result = this.world.tryBreak(player, x, y, z, intent, message.commandSeq);
       }
     } else if (message.kind === 'bow_release') {
       if (message.yaw === undefined || message.pitch === undefined) {

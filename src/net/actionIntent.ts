@@ -32,6 +32,7 @@ export function blockTargetFromHit(hit: VoxelHit) {
     targetX: hit.x,
     targetY: hit.y,
     targetZ: hit.z,
+    targetBlockId: hit.block,
     faceX: face.x,
     faceY: face.y,
     faceZ: face.z,

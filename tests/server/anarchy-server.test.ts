@@ -147,9 +147,12 @@ class MemorySink {
 }
 
 describe('protocol validation', () => {
-  it('rejects a v1 join against protocol 2', () => {
+  it('rejects a stale protocol join', () => {
     expect(parseClientMessage({ type: 'join', protocol: 1, name: 'old' })).toEqual({
       error: 'unsupported protocol 1',
+    });
+    expect(parseClientMessage({ type: 'join', protocol: 2, name: 'v2' })).toEqual({
+      error: 'unsupported protocol 2',
     });
     expect(parseClientMessage({ type: 'join', protocol: PROTOCOL_VERSION, name: 'ok' })).toMatchObject({
       type: 'join',

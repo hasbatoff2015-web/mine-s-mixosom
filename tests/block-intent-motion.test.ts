@@ -17,10 +17,11 @@ describe('block intent vs delayed server ray', () => {
     const eyes = [
       { x: 5.5, y: 41.62, z: 3.5 },
       { x: 5.2, y: 41.62, z: 3.4 },
-      { x: 5.8, y: 42.1, z: 3.6 },
+      { x: 5.8, y: 41.9, z: 3.6 },
     ];
     const intent = {
       targetX: 5, targetY: 41, targetZ: 5,
+      targetBlockId: BlockId.OakLog,
       faceX: 0, faceY: 0, faceZ: -1,
       hitX: 5.5, hitY: 41.5, hitZ: 5,
     };

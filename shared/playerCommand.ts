@@ -39,7 +39,20 @@ export interface AppliedMovementStep {
   readonly sprinting: boolean;
 }
 
+/** Exact ±X/±Y/±Z. No snapping. Used for Online block intent. */
+export function exactUnitAxisFace(
+  x: number,
+  y: number,
+  z: number,
+): { x: number; y: number; z: number } | undefined {
+  if (![x, y, z].every((value) => Number.isInteger(value) && Number.isFinite(value))) return undefined;
+  if (Math.abs(x) + Math.abs(y) + Math.abs(z) !== 1) return undefined;
+  if (![x, y, z].every((value) => value === -1 || value === 0 || value === 1)) return undefined;
+  return { x, y, z };
+}
+
 export function isUnitAxisFace(x: number, y: number, z: number): boolean {
+  if (exactUnitAxisFace(x, y, z)) return true;
   if (![x, y, z].every(Number.isFinite)) return false;
   const ax = Math.abs(x);
   const ay = Math.abs(y);

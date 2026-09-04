@@ -225,6 +225,7 @@ export interface ClientBlockIntentFields {
   readonly actionSeq?: number;
   readonly commandSeq?: number;
   readonly selectedSlot?: number;
+  readonly targetBlockId?: number;
   readonly faceX?: number;
   readonly faceY?: number;
   readonly faceZ?: number;
@@ -318,6 +319,7 @@ export interface ClientActionMessage {
   readonly targetX?: number;
   readonly targetY?: number;
   readonly targetZ?: number;
+  readonly targetBlockId?: number;
   readonly faceX?: number;
   readonly faceY?: number;
   readonly faceZ?: number;
@@ -749,6 +751,8 @@ function parseIntentFields(raw: Record<string, unknown>): ClientBlockIntentField
   if (raw.commandSeq !== undefined && commandSeq === undefined) return { error: 'commandSeq invalid' };
   const selectedSlot = optionalInteger(raw.selectedSlot);
   if (raw.selectedSlot !== undefined && selectedSlot === undefined) return { error: 'selectedSlot invalid' };
+  const targetBlockId = optionalInteger(raw.targetBlockId);
+  if (raw.targetBlockId !== undefined && targetBlockId === undefined) return { error: 'targetBlockId invalid' };
   const faceX = raw.faceX === undefined ? undefined : finite(raw.faceX) ? raw.faceX : undefined;
   const faceY = raw.faceY === undefined ? undefined : finite(raw.faceY) ? raw.faceY : undefined;
   const faceZ = raw.faceZ === undefined ? undefined : finite(raw.faceZ) ? raw.faceZ : undefined;
@@ -769,6 +773,7 @@ function parseIntentFields(raw: Record<string, unknown>): ClientBlockIntentField
     ...(actionSeq !== undefined ? { actionSeq } : {}),
     ...(commandSeq !== undefined ? { commandSeq } : {}),
     ...(selectedSlot !== undefined ? { selectedSlot: clampNumber(selectedSlot, 0, 8) } : {}),
+    ...(targetBlockId !== undefined ? { targetBlockId } : {}),
     ...(faceX !== undefined ? { faceX } : {}),
     ...(faceY !== undefined ? { faceY } : {}),
     ...(faceZ !== undefined ? { faceZ } : {}),

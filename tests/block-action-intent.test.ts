@@ -7,6 +7,7 @@ import {
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
 import { Vec3 } from '../src/math/vec3';
+import { parseBlockTarget } from '../shared/playerActions';
 
 function stoneWorld() {
   const world = new VoxelWorld('block-intent');
@@ -20,11 +21,18 @@ function stoneWorld() {
 
 const eye = { x: 5.5, y: 41.62, z: 3.5 };
 
-function intentFor(x: number, y: number, z: number, face = { x: 0, y: 0, z: -1 }) {
+function intentFor(
+  x: number,
+  y: number,
+  z: number,
+  face = { x: 0, y: 0, z: -1 },
+  blockId = y === 40 ? BlockId.Stone : BlockId.OakLog,
+) {
   return {
     targetX: x,
     targetY: y,
     targetZ: z,
+    targetBlockId: blockId,
     faceX: face.x,
     faceY: face.y,
     faceZ: face.z,
@@ -35,6 +43,14 @@ function intentFor(x: number, y: number, z: number, face = { x: 0, y: 0, z: -1 }
 }
 
 describe('block action intent contract', () => {
+  it('requires targetBlockId when parsing a targeted action', () => {
+    expect(parseBlockTarget({
+      targetX: 5, targetY: 41, targetZ: 5,
+      faceX: 0, faceY: 0, faceZ: -1,
+      hitX: 5.5, hitY: 41.5, hitZ: 5,
+    })).toEqual({ error: 'targetBlockId invalid' });
+  });
+
   it('accepts a valid client target', () => {
     const world = stoneWorld();
     const result = validateBlockTargetIntent(world, eye, intentFor(5, 41, 5));
@@ -43,6 +59,7 @@ describe('block action intent contract', () => {
       expect(result.value.hit.x).toBe(5);
       expect(result.value.hit.y).toBe(41);
       expect(result.value.hit.z).toBe(5);
+      expect(result.value.hit.block).toBe(BlockId.OakLog);
     }
   });
 
@@ -53,6 +70,24 @@ describe('block action intent contract', () => {
       faceX: 0.3, faceY: 0.3, faceZ: 0.3,
     });
     expect(result).toEqual({ ok: false, reason: 'face' });
+  });
+
+  it('rejects a non-axis integer face', () => {
+    const world = stoneWorld();
+    const result = validateBlockTargetIntent(world, eye, {
+      ...intentFor(5, 41, 5),
+      faceX: 1, faceY: 1, faceZ: 0,
+    });
+    expect(result).toEqual({ ok: false, reason: 'face' });
+  });
+
+  it('rejects a hit that is not on the target voxel', () => {
+    const world = stoneWorld();
+    const result = validateBlockTargetIntent(world, eye, {
+      ...intentFor(5, 41, 5),
+      hitX: 8.5, hitY: 41.5, hitZ: 5,
+    });
+    expect(result).toEqual({ ok: false, reason: 'hit' });
   });
 
   it('rejects a non-finite hit', () => {
@@ -70,11 +105,28 @@ describe('block action intent contract', () => {
     expect(result).toEqual({ ok: false, reason: 'reach' });
   });
 
-  it('rejects empty / stale target', () => {
+  it('rejects empty target', () => {
     const world = stoneWorld();
     const result = validateBlockTargetIntent(world, eye, intentFor(6, 41, 5));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason === 'empty' || result.reason === 'los').toBe(true);
+    expect(result).toEqual({ ok: false, reason: 'empty' });
+  });
+
+  it('rejects stale targetBlockId instead of executing the new block', () => {
+    const world = stoneWorld();
+    const result = validateBlockTargetIntent(world, eye, {
+      ...intentFor(5, 41, 5),
+      targetBlockId: BlockId.Dirt,
+    });
+    expect(result).toEqual({ ok: false, reason: 'stale' });
+  });
+
+  it('rejects when first intercept is a different face of the same voxel', () => {
+    const world = stoneWorld();
+    const result = validateBlockTargetIntent(world, eye, {
+      ...intentFor(5, 41, 5),
+      faceX: 1, faceY: 0, faceZ: 0,
+    });
+    expect(result).toEqual({ ok: false, reason: 'los' });
   });
 
   it('never substitutes server current ray B for client target A', () => {

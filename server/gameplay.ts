@@ -60,6 +60,8 @@ import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
 import type { BlockTargetIntent } from '../shared/playerActions';
+import type { ActionPoseSample } from '../shared/actionPoseHistory';
+import { resolveActionEye } from '../shared/actionPoseHistory';
 import { viewDirectionFromLook } from '../src/player/localAim';
 import {
   validateBlockTargetIntent,
@@ -118,6 +120,8 @@ export interface GameplayPlayer {
   vehicleForward: number;
   inventoryDirty: boolean;
   lastInput?: ClientInputMessage;
+  appliedCommandSeq?: number;
+  actionPoseHistory?: ActionPoseSample[];
 }
 
 export interface GameplayMetrics {
@@ -594,13 +598,16 @@ export class ServerGameplay {
     z: number,
     requestedBlock?: number,
     intent?: BlockTargetIntent,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
-    if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
+    if (!intent && !this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     let hit: VoxelHit | undefined;
     if (intent) {
-      const validated = validateBlockTargetIntent(this.world, this.actionEye(player), intent);
+      const eye = this.intentEye(player, commandSeq);
+      if (!eye.ok) return { ok: false, reason: eye.reason };
+      const validated = validateBlockTargetIntent(this.world, eye.value, intent);
       if (!validated.ok) return { ok: false, reason: validated.reason };
       hit = validated.value.hit;
     } else {
@@ -612,11 +619,14 @@ export class ServerGameplay {
   useHeld(
     player: GameplayPlayer,
     intent?: BlockTargetIntent,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     let hit: VoxelHit | undefined;
     if (intent) {
-      const validated = validateBlockTargetIntent(this.world, this.actionEye(player), intent);
+      const eye = this.intentEye(player, commandSeq);
+      if (!eye.ok) return { ok: false, reason: eye.reason };
+      const validated = validateBlockTargetIntent(this.world, eye.value, intent);
       if (!validated.ok) return { ok: false, reason: validated.reason };
       hit = validated.value.hit;
     } else {
@@ -633,9 +643,12 @@ export class ServerGameplay {
   beginMining(
     player: GameplayPlayer,
     intent: BlockTargetIntent,
+    commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
-    const validated = validateBlockTargetIntent(this.world, this.actionEye(player), intent);
+    const eye = this.intentEye(player, commandSeq);
+    if (!eye.ok) return { ok: false, reason: eye.reason };
+    const validated = validateBlockTargetIntent(this.world, eye.value, intent);
     if (!validated.ok) return { ok: false, reason: validated.reason };
     const hit = validated.value.hit;
     const definition = getBlockDefinition(hit.block);
@@ -651,6 +664,18 @@ export class ServerGameplay {
       player.miningTarget = { x: hit.x, y: hit.y, z: hit.z };
       player.miningProgress = 0;
     }
+    return { ok: true };
+  }
+
+  validatePlayerIntent(
+    player: GameplayPlayer,
+    intent: BlockTargetIntent,
+    commandSeq?: number,
+  ): { ok: true } | { ok: false; reason: string } {
+    const eye = this.intentEye(player, commandSeq);
+    if (!eye.ok) return eye;
+    const validated = validateBlockTargetIntent(this.world, eye.value, intent);
+    if (!validated.ok) return { ok: false, reason: validated.reason };
     return { ok: true };
   }
 
@@ -930,6 +955,21 @@ export class ServerGameplay {
     this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id);
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
     return { ok: true, yaw, pitch };
+  }
+
+  private intentEye(
+    player: GameplayPlayer,
+    commandSeq?: number,
+  ): { ok: true; value: ActionEye } | { ok: false; reason: string } {
+    const current = this.actionEye(player);
+    const resolved = resolveActionEye(
+      player.actionPoseHistory ?? [],
+      player.appliedCommandSeq ?? -1,
+      current,
+      commandSeq,
+    );
+    if (!resolved.ok) return resolved;
+    return { ok: true, value: resolved.eye };
   }
 
   private actionEye(player: GameplayPlayer): ActionEye {
