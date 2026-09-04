@@ -28,7 +28,8 @@ DONOR lineage: one commit `aa2ae9e` on `ade7113`. It does **not** contain FIFO, 
 |---|---|
 | `d1effb6` | Phase 0 baseline / architecture comparison |
 | `7a558f1` | Phase 1 strict block intent |
-| Phase 2 | Bow lifecycle: explicit draw is not cancelled by stale `use:false` |
+| `5de1a27` | Phase 2 bow lifecycle |
+| Phase 3 | FIFO overflow compact continuous-state only; `queueCompacted` range |
 
 Later phases land as separate commits (bow, backlog, invariants, remote, session, diagnostics, regression).
 
@@ -142,6 +143,8 @@ FIFO one command / server tick is correct. Burst creates backlog.
 If a range is skipped: protocol must say so (`queueCompacted` / `droppedCommandRange`). Client discards skipped, replays remaining.
 
 Current BASE silent `queue.shift()` on overflow is **not** acceptable and will be replaced.
+
+**Phase 3 implemented:** overflow runs `compactContinuousCommands` (WASD/look only). Jump/use/mining/slot/flight/vehicle edges stay. Dropped seqs are reported on `player_state.queueCompacted`. Client `discardCompactedPrediction` rebuilds live pose from the last checkpoint plus remaining pending. Last-resort drop of an uncompactable oldest command still reports the range. ACK identity unchanged.
 
 ## 10. Reconciliation invariant
 
