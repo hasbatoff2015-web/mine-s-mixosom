@@ -1,7 +1,7 @@
 # Online Networking V2 Integration
 
 **Date:** 2026-09-04  
-**Status:** in progress (Phase 1 complete)  
+**Status:** in progress (Phase 2 complete)  
 **Integration branch:** `cursor/online-networking-v2-integrated-3ff8`  
 **PR:** TBD (draft until two-client QA)
 
@@ -27,7 +27,8 @@ DONOR lineage: one commit `aa2ae9e` on `ade7113`. It does **not** contain FIFO, 
 | Commit | Phase |
 |---|---|
 | `d1effb6` | Phase 0 baseline / architecture comparison |
-| Phase 1 | Strict block intent: `targetBlockId`, hit-in-voxel, exact face, LOS+face, `commandSeq` pose history |
+| `7a558f1` | Phase 1 strict block intent |
+| Phase 2 | Bow lifecycle: explicit draw is not cancelled by stale `use:false` |
 
 Later phases land as separate commits (bow, backlog, invariants, remote, session, diagnostics, regression).
 
@@ -172,6 +173,8 @@ RMB press → usePressed → draw started (server)
 ```
 
 Once draw is started by explicit interact, **do not cancel** from stale movement `use:false`. Cancel on: bow_release, item/slot change, death, explicit abort.
+
+**Phase 2 implemented:** `advanceUseHold` keeps charging while the held item is still a bow. Stale FIFO `use:false` no longer wipes an explicit interact draw. Captured-aim Online arrows spawn with spread 0. F3 bow line reports press/draw/release/sent/result/spawn. Tests cover 20 consecutive draw→release cycles, FIFO use:false after interact, captured aim after a look flick, no-draw/charge/duplicate/ammo.
 
 No magic retry. Diagnostics must name the failed stage.
 

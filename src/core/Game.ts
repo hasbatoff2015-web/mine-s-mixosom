@@ -357,6 +357,12 @@ export interface OnlineAnarchySession {
     clientPitch: number;
     serverYaw?: number;
     serverPitch?: number;
+    pressCaptured?: boolean;
+    drawStarted?: boolean;
+    releaseCaptured?: boolean;
+    sent?: boolean;
+    result?: string;
+    spawned?: boolean;
   };
   miningLocked?: boolean;
   /** Captured break_start target; finish/abort must not retarget. */
@@ -1591,6 +1597,8 @@ export class Game {
           ...online.lastBowDiag,
           serverYaw: message.yaw,
           serverPitch: message.pitch,
+          result: message.ok ? 'accepted' : `rejected:${message.reason ?? 'unknown'}`,
+          spawned: message.ok,
         };
       }
       return;
@@ -1665,6 +1673,16 @@ export class Game {
     if (this.selectedStack()?.itemId === ItemId.Bow) {
       source.actionSeq += 1;
       this.commitOnlineActionSeq(session, source);
+      online.lastBowDiag = {
+        actionSeq: source.actionSeq,
+        commandSeq: source.inputSeq,
+        clientYaw: this.input.yaw,
+        clientPitch: this.input.pitch,
+        pressCaptured: true,
+        drawStarted: true,
+        sent: true,
+        result: 'draw-sent',
+      };
       online.client.send({
         type: 'interact',
         actionSeq: source.actionSeq,
@@ -1700,7 +1718,12 @@ export class Game {
     const online = session.online;
     if (!online) return;
     const holdingBow = this.selectedStack()?.itemId === ItemId.Bow;
-    if (!holdingBow && session.bowUseTicks <= 0) return;
+    if (!holdingBow && session.bowUseTicks <= 0) {
+      if (online.lastBowDiag) {
+        online.lastBowDiag = { ...online.lastBowDiag, result: 'skipped-no-draw' };
+      }
+      return;
+    }
     const source = this.onlineActionSource(session);
     const action = captureBowRelease(source, { yaw: this.input.yaw, pitch: this.input.pitch });
     this.commitOnlineActionSeq(session, source);
@@ -1709,6 +1732,11 @@ export class Game {
       commandSeq: action.commandSeq,
       clientYaw: action.yaw,
       clientPitch: action.pitch,
+      pressCaptured: online.lastBowDiag?.pressCaptured === true,
+      drawStarted: online.lastBowDiag?.drawStarted === true,
+      releaseCaptured: true,
+      sent: true,
+      result: 'release-sent',
     };
     online.client.send(bowReleaseMessage(action));
   }
@@ -4566,7 +4594,7 @@ export class Game {
             const ang = bow.serverYaw !== undefined && bow.serverPitch !== undefined
               ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
               : undefined;
-            this.cachedDebugText += `\nBow a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
           }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;

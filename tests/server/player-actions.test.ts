@@ -7,6 +7,7 @@ import { PLAYER_NET_REACH } from '../../src/core/constants';
 import { createItemStack } from '../../src/inventory';
 import { Vec3 } from '../../src/math/vec3';
 import { blockTargetFromHit } from '../../src/net/actionIntent';
+import { viewDirectionFromLook } from '../../src/player/localAim';
 import type { ClientInputMessage } from '../../shared/protocol';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
@@ -145,5 +146,94 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     }, 1)).toEqual({ ok: false, reason: 'mining' });
     expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: true });
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('does not cancel an explicit bow draw when FIFO later applies use:false', async () => {
+    const { world, player } = await boot();
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    player.inventory.setSlot(1, createItemStack('arrow', 16));
+    for (let seq = 1; seq <= 4; seq += 1) {
+      world.applyInput(player, input(seq, { use: false, forward: 1 }));
+    }
+    expect(world.interact(player, undefined, 1)).toEqual({ ok: true });
+    expect(player.bowUseTicks).toBeGreaterThan(0);
+    world.tick();
+    expect(player.bowUseTicks).toBeGreaterThan(1);
+    world.tick();
+    world.tick();
+    expect(player.bowUseTicks).toBeGreaterThan(3);
+    expect(world.releaseBow(player, { actionSeq: 2, commandSeq: 1, yaw: 0.4, pitch: -0.1 }).ok).toBe(true);
+    expect(world.gameplay.arrows.count).toBe(1);
+  });
+
+  it('fires 20 consecutive draw-release cycles without dropping a shot', async () => {
+    const { world, player } = await boot();
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    let actionSeq = 0;
+    let commandSeq = 0;
+    for (let shot = 0; shot < 20; shot += 1) {
+      commandSeq += 1;
+      world.applyInput(player, input(commandSeq, { use: false }));
+      actionSeq += 1;
+      expect(world.interact(player, undefined, actionSeq, commandSeq)).toEqual({ ok: true });
+      for (let tick = 0; tick < 4; tick += 1) {
+        commandSeq += 1;
+        world.applyInput(player, input(commandSeq, { use: tick % 2 === 0 }));
+        world.tick();
+      }
+      actionSeq += 1;
+      expect(world.releaseBow(player, {
+        actionSeq,
+        commandSeq,
+        yaw: 0.2 * shot,
+        pitch: -0.05,
+      }).ok).toBe(true);
+      expect(world.gameplay.arrows.count).toBe(shot + 1);
+    }
+  });
+
+  it.each([
+    ['stationary', {}],
+    ['walking', { forward: 1 }],
+    ['sprinting', { forward: 1, sprint: true }],
+    ['jumping', { jump: true }],
+  ] as const)('keeps captured bow aim while %s after a later look flick', async (_name, movement) => {
+    const { world, player } = await boot();
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    world.applyInput(player, input(1, { ...movement, use: true }));
+    expect(world.interact(player, undefined, 1, 1)).toEqual({ ok: true });
+    player.bowUseTicks = 20;
+    const yaw = 1.17;
+    const pitch = 0.31;
+    world.applyInput(player, input(2, { ...movement, use: false, yaw: -2.4, pitch: -0.2 }));
+    world.tick();
+    expect(world.releaseBow(player, { actionSeq: 2, commandSeq: 2, yaw, pitch }).ok).toBe(true);
+    const expected = viewDirectionFromLook(yaw, pitch);
+    const actual = world.gameplay.arrows.entities.at(-1)!.velocity.clone().normalize();
+    const dot = actual.x * expected.x + actual.y * expected.y + actual.z * expected.z;
+    expect(dot).toBeGreaterThan(1 - 1e-6);
+    const released = actual.clone();
+    world.applyInput(player, input(3, { yaw: 2.8, pitch: -0.7 }));
+    expect(world.gameplay.arrows.entities.at(-1)!.velocity.clone().normalize()).toEqual(released);
+  });
+
+  it('rejects no-draw, insufficient charge, duplicate release, and survival ammo', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    player.inventory.setSlot(1, createItemStack('arrow', 1));
+    expect(world.releaseBow(player, { actionSeq: 1, commandSeq: 1, yaw: 0, pitch: 0 }))
+      .toEqual({ ok: false, reason: 'no-draw' });
+    expect(world.interact(player, undefined, 2, 1)).toEqual({ ok: true });
+    expect(world.releaseBow(player, { actionSeq: 3, commandSeq: 1, yaw: 0, pitch: 0 }))
+      .toEqual({ ok: false, reason: 'charge' });
+    player.bowUseTicks = 20;
+    const release = { actionSeq: 4, commandSeq: 1, yaw: 0.7, pitch: 0.1 };
+    expect(world.releaseBow(player, release).ok).toBe(true);
+    expect(player.inventory.count('arrow')).toBe(0);
+    expect(world.releaseBow(player, release)).toEqual({ ok: false, reason: 'duplicate' });
+    player.bowUseTicks = 20;
+    expect(world.releaseBow(player, { actionSeq: 5, commandSeq: 1, yaw: 0, pitch: 0 }))
+      .toEqual({ ok: false, reason: 'ammo' });
   });
 });

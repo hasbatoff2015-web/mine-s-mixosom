@@ -821,9 +821,11 @@ export class ServerGameplay {
     const stack = player.inventory.getSlot(player.selectedSlot);
     const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
     if (player.bowUseTicks > 0) {
-      if (using && stack?.itemId === ItemId.Bow) player.bowUseTicks += 1;
-      else {
+      if (stack?.itemId !== ItemId.Bow) {
+        bowDebug(player.id, 'draw_cancel', 'item');
         player.bowUseTicks = 0;
+      } else {
+        player.bowUseTicks += 1;
       }
     }
     if (player.foodUseTicks <= 0) return;
@@ -952,7 +954,7 @@ export class ServerGameplay {
     } else flaming = player.inventory.has(ItemId.FireArrow, 1);
     const direction = viewDirectionFromLook(yaw, pitch);
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
-    this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id);
+    this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0);
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
     return { ok: true, yaw, pitch };
   }
