@@ -32,6 +32,18 @@ export {
   snapshotComparePath,
 } from './localPlayerPrediction';
 export {
+  captureBlockHitIntent,
+  captureBowRelease,
+  captureBreakAbort,
+  captureBreakFinish,
+  captureBreakStart,
+  captureUseAction,
+  createClientActionSequence,
+  nextActionContext,
+  resetClientActionSequence,
+  type ClientActionSequence,
+} from './playerActions';
+export {
   evaluateHiddenTabResume,
   hiddenServerTravelMeters,
   resyncLocalPlayerAfterHiddenTab,

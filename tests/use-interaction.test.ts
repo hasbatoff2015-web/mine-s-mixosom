@@ -160,7 +160,7 @@ describe('shared placeFromHit (one simulation path)', () => {
 });
 
 describe('online client does not simulate use', () => {
-  it('Game.useTargetOrItem only sends interact when online', () => {
+  it('Game.useTargetOrItem captures the exact block intent when online', () => {
     const send = vi.fn();
     const game = Object.create(Game.prototype) as { useTargetOrItem: () => void; session: object };
     const world = new VoxelWorld('online-use');
@@ -170,7 +170,7 @@ describe('online client does not simulate use', () => {
     const inventory = new Inventory();
     inventory.setSlot(0, createItemStack('torch'));
     game.session = {
-      online: { client: { send } },
+      online: { client: { send }, inputSeq: 7, actionSequence: { next: 0 } },
       world,
       inventory,
       selectedSlot: 0,
@@ -183,7 +183,22 @@ describe('online client does not simulate use', () => {
       },
     };
     game.useTargetOrItem();
-    expect(send).toHaveBeenCalledWith({ type: 'interact' });
+    expect(send).toHaveBeenCalledWith({
+      type: 'block_use',
+      actionSeq: 1,
+      commandSeq: 7,
+      selectedSlot: 0,
+      targetX: 5,
+      targetY: 40,
+      targetZ: 5,
+      targetBlockId: BlockId.Stone,
+      faceX: 0,
+      faceY: 1,
+      faceZ: 0,
+      hitX: 5.5,
+      hitY: 40.5,
+      hitZ: 5.5,
+    });
     expect(world.getBlock(5, 41, 5, false)).toBe(BlockId.Air);
     expect(inventory.getSlot(0)?.itemId).toBe('torch');
   });

@@ -47,8 +47,9 @@ export interface PlayerSnapshot {
   /** Last input seq used for this pose (latest movement state that tick). */
   readonly inputSeq?: number;
   /**
-   * DEV: last few server physics ticks with the input seq actually applied.
-   * Latest `inputSeq` alone cannot reconstruct a multi-tick interval.
+   * Authoritative movement timeline. Each row says exactly which movement
+   * state was applied by one server physics tick. A client filters rows after
+   * its last accepted server tick and replays them in tick order.
    */
   readonly appliedTicks?: readonly AppliedInputTick[];
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
@@ -66,13 +67,18 @@ export interface PlayerSnapshot {
 
 export interface AppliedInputTick {
   readonly tick: number;
+  /** Movement command/state actually sampled for this server physics tick. */
   readonly seq: number;
   readonly forward: number;
   readonly right: number;
   readonly jump: boolean;
   readonly sneak: boolean;
+  readonly sprint: boolean;
   readonly descend: boolean;
   readonly flySprint: boolean;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly locomotion: boolean;
   readonly y: number;
   readonly vy: number;
   readonly flying: boolean;
@@ -190,6 +196,7 @@ export interface ClientJoinMessage {
 
 export interface ClientInputMessage {
   readonly type: 'input';
+  /** Movement command sequence. This is a client input-state id, not a server tick. */
   readonly seq: number;
   readonly forward: number;
   readonly right: number;
@@ -208,19 +215,55 @@ export interface ClientInputMessage {
   readonly clientSentAt?: number;
 }
 
-export interface ClientBreakBlockMessage {
-  readonly type: 'break_block';
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
+export interface ClientActionContext {
+  /** Monotonic across all discrete actions in one connection. */
+  readonly actionSeq: number;
+  /** Client input `seq` whose movement/look context captured this action. */
+  readonly commandSeq: number;
+  /** Claimed slot at capture time. The server verifies it against authority. */
+  readonly selectedSlot: number;
 }
 
-export interface ClientPlaceBlockMessage {
-  readonly type: 'place_block';
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-  readonly blockId?: number;
+export interface ClientBlockHitIntent {
+  readonly targetX: number;
+  readonly targetY: number;
+  readonly targetZ: number;
+  /** Block id observed by the client; detects stale/changed targets. */
+  readonly targetBlockId: number;
+  readonly faceX: number;
+  readonly faceY: number;
+  readonly faceZ: number;
+  readonly hitX: number;
+  readonly hitY: number;
+  readonly hitZ: number;
+}
+
+export interface ClientBlockUseMessage extends ClientActionContext, ClientBlockHitIntent {
+  readonly type: 'block_use';
+}
+
+/** Explicit no-block use. The server must not substitute a later raycast hit. */
+export interface ClientUseItemMessage extends ClientActionContext {
+  readonly type: 'use_item';
+}
+
+export interface ClientBreakStartMessage extends ClientActionContext, ClientBlockHitIntent {
+  readonly type: 'break_start';
+}
+
+export interface ClientBreakAbortMessage extends ClientActionContext {
+  readonly type: 'break_abort';
+}
+
+export interface ClientBreakFinishMessage extends ClientActionContext, ClientBlockHitIntent {
+  readonly type: 'break_finish';
+}
+
+export interface ClientBowReleaseMessage extends ClientActionContext {
+  readonly type: 'bow_release';
+  /** Exact live camera aim captured on the release edge. */
+  readonly yaw: number;
+  readonly pitch: number;
 }
 
 export interface ClientChatMessage {
@@ -260,10 +303,6 @@ export interface ClientCraftMessage {
   readonly shift?: boolean;
 }
 
-export interface ClientInteractMessage {
-  readonly type: 'interact';
-}
-
 export interface ClientAttackMessage {
   readonly type: 'attack';
 }
@@ -283,14 +322,17 @@ export interface ClientVehicleInputMessage {
 export type ClientMessage =
   | ClientJoinMessage
   | ClientInputMessage
-  | ClientBreakBlockMessage
-  | ClientPlaceBlockMessage
+  | ClientBlockUseMessage
+  | ClientUseItemMessage
+  | ClientBreakStartMessage
+  | ClientBreakAbortMessage
+  | ClientBreakFinishMessage
+  | ClientBowReleaseMessage
   | ClientChatMessage
   | ClientViewMessage
   | ClientPingMessage
   | ClientInventoryActionMessage
   | ClientCraftMessage
-  | ClientInteractMessage
   | ClientAttackMessage
   | ClientPickupMessage
   | ClientVehicleInputMessage;
@@ -298,6 +340,8 @@ export type ClientMessage =
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
   readonly protocol: typeof PROTOCOL_VERSION;
+  /** Authoritative checkpoint tick represented by `you`. */
+  readonly serverTick: number;
   readonly playerId: string;
   readonly sessionToken: string;
   readonly name: string;
@@ -373,14 +417,18 @@ export interface ServerBlockBatchMessage {
   readonly changes: readonly BlockChange[];
 }
 
-export interface ServerBlockResultMessage {
-  readonly type: 'block_result';
+export type PlayerActionKind = 'block_use' | 'use_item' | 'break_start' | 'break_abort' | 'break_finish' | 'bow_release';
+
+export interface ServerActionResultMessage {
+  readonly type: 'action_result';
+  readonly action: PlayerActionKind;
+  readonly actionSeq: number;
+  readonly commandSeq: number;
   readonly ok: boolean;
-  readonly action: 'break' | 'place';
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
   readonly reason?: string;
+  readonly targetX?: number;
+  readonly targetY?: number;
+  readonly targetZ?: number;
 }
 
 export interface ServerChunkMessage {
@@ -486,7 +534,7 @@ export type ServerMessage =
   | ServerPlayerStateMessage
   | ServerBlockUpdateMessage
   | ServerBlockBatchMessage
-  | ServerBlockResultMessage
+  | ServerActionResultMessage
   | ServerChunkMessage
   | ServerUnloadChunkMessage
   | ServerChatMessage
@@ -504,14 +552,17 @@ export type ServerMessage =
 export const CLIENT_MESSAGE_TYPES = [
   'join',
   'input',
-  'break_block',
-  'place_block',
+  'block_use',
+  'use_item',
+  'break_start',
+  'break_abort',
+  'break_finish',
+  'bow_release',
   'chat',
   'view',
   'ping',
   'inventory_action',
   'craft',
-  'interact',
   'attack',
   'pickup',
   'vehicle_input',
@@ -524,7 +575,7 @@ export const SERVER_MESSAGE_TYPES = [
   'player_state',
   'block_update',
   'block_batch',
-  'block_result',
+  'action_result',
   'chunk_data',
   'unload_chunk',
   'chat',
@@ -583,6 +634,47 @@ function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseActionContext(raw: Record<string, unknown>): ClientActionContext | undefined {
+  if (!Number.isInteger(raw.actionSeq) || !finite(raw.actionSeq)
+    || raw.actionSeq < 0 || raw.actionSeq > 2_147_483_647) return undefined;
+  if (!Number.isInteger(raw.commandSeq) || !finite(raw.commandSeq)
+    || raw.commandSeq < 0 || raw.commandSeq > 2_147_483_647) return undefined;
+  if (!Number.isInteger(raw.selectedSlot) || !finite(raw.selectedSlot)
+    || raw.selectedSlot < 0 || raw.selectedSlot > 8) return undefined;
+  return {
+    actionSeq: raw.actionSeq,
+    commandSeq: raw.commandSeq,
+    selectedSlot: raw.selectedSlot,
+  };
+}
+
+function parseBlockHitIntent(raw: Record<string, unknown>): ClientBlockHitIntent | undefined {
+  const integers = [raw.targetX, raw.targetY, raw.targetZ, raw.targetBlockId, raw.faceX, raw.faceY, raw.faceZ];
+  if (integers.some((value) => !Number.isInteger(value) || !finite(value))) return undefined;
+  if (!finite(raw.hitX) || !finite(raw.hitY) || !finite(raw.hitZ)) return undefined;
+  const faceX = raw.faceX as number;
+  const faceY = raw.faceY as number;
+  const faceZ = raw.faceZ as number;
+  if (Math.abs(faceX) + Math.abs(faceY) + Math.abs(faceZ) !== 1
+    || ![-1, 0, 1].includes(faceX)
+    || ![-1, 0, 1].includes(faceY)
+    || ![-1, 0, 1].includes(faceZ)) return undefined;
+  const targetBlockId = raw.targetBlockId as number;
+  if (targetBlockId < 0 || targetBlockId > 2_147_483_647) return undefined;
+  return {
+    targetX: raw.targetX as number,
+    targetY: raw.targetY as number,
+    targetZ: raw.targetZ as number,
+    targetBlockId,
+    faceX,
+    faceY,
+    faceZ,
+    hitX: raw.hitX,
+    hitY: raw.hitY,
+    hitZ: raw.hitZ,
+  };
 }
 
 const NETWORK_ATTACHMENTS: ReadonlySet<string> = new Set(['floor', 'wall', 'ceiling']);
@@ -711,29 +803,6 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
           : {}),
       };
     }
-    case 'break_block':
-    case 'place_block': {
-      if (!Number.isInteger(raw.x) || !Number.isInteger(raw.y) || !Number.isInteger(raw.z)) {
-        return { error: 'block coordinates must be integers' };
-      }
-      if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z)) {
-        return { error: 'block coordinates invalid' };
-      }
-      if (raw.type === 'break_block') {
-        return { type: 'break_block', x: raw.x, y: raw.y, z: raw.z };
-      }
-      const blockId = raw.blockId === undefined ? undefined : raw.blockId;
-      if (blockId !== undefined && (!Number.isInteger(blockId) || !finite(blockId))) {
-        return { error: 'place_block.blockId invalid' };
-      }
-      return {
-        type: 'place_block',
-        x: raw.x,
-        y: raw.y,
-        z: raw.z,
-        ...(blockId === undefined ? {} : { blockId }),
-      };
-    }
     case 'chat': {
       if (typeof raw.text !== 'string') return { error: 'chat.text required' };
       const text = raw.text.replace(/\s+$/g, '').slice(0, MAX_CHAT_LENGTH);
@@ -804,8 +873,32 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'craft.shift invalid' };
       return { type: 'craft', ...(raw.shift === true ? { shift: true } : {}) };
     }
-    case 'interact':
-      return { type: 'interact' };
+    case 'block_use':
+    case 'break_start':
+    case 'break_finish': {
+      const context = parseActionContext(raw);
+      if (!context) return { error: `${raw.type} action context invalid` };
+      const hit = parseBlockHitIntent(raw);
+      if (!hit) return { error: `${raw.type} block intent invalid` };
+      return { type: raw.type, ...context, ...hit };
+    }
+    case 'use_item':
+    case 'break_abort': {
+      const context = parseActionContext(raw);
+      if (!context) return { error: `${raw.type} action context invalid` };
+      return { type: raw.type, ...context };
+    }
+    case 'bow_release': {
+      const context = parseActionContext(raw);
+      if (!context) return { error: 'bow_release action context invalid' };
+      if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'bow_release aim invalid' };
+      return {
+        type: 'bow_release',
+        ...context,
+        yaw: raw.yaw,
+        pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2),
+      };
+    }
     case 'attack':
       return { type: 'attack' };
     case 'pickup': {
@@ -870,22 +963,34 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       }
       return { type: 'block_batch', changes };
     }
-    case 'block_result': {
-      if (!bool(raw.ok) || (raw.action !== 'break' && raw.action !== 'place')) {
-        return { error: 'block_result invalid' };
-      }
-      if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !Number.isInteger(raw.x) || !Number.isInteger(raw.y) || !Number.isInteger(raw.z)) {
-        return { error: 'block_result coordinates invalid' };
+    case 'action_result': {
+      const actions: readonly PlayerActionKind[] = [
+        'block_use', 'use_item', 'break_start', 'break_abort', 'break_finish', 'bow_release',
+      ];
+      if (!bool(raw.ok) || typeof raw.action !== 'string' || !actions.includes(raw.action as PlayerActionKind)
+        || !Number.isInteger(raw.actionSeq) || !finite(raw.actionSeq)
+        || !Number.isInteger(raw.commandSeq) || !finite(raw.commandSeq)) {
+        return { error: 'action_result invalid' };
       }
       const reason = typeof raw.reason === 'string' ? raw.reason.slice(0, 64) : undefined;
+      const targetX = optionalInteger(raw.targetX);
+      const targetY = optionalInteger(raw.targetY);
+      const targetZ = optionalInteger(raw.targetZ);
+      if ((raw.targetX !== undefined && targetX === undefined)
+        || (raw.targetY !== undefined && targetY === undefined)
+        || (raw.targetZ !== undefined && targetZ === undefined)) {
+        return { error: 'action_result target invalid' };
+      }
       return {
-        type: 'block_result',
+        type: 'action_result',
+        action: raw.action as PlayerActionKind,
+        actionSeq: raw.actionSeq,
+        commandSeq: raw.commandSeq,
         ok: raw.ok,
-        action: raw.action,
-        x: raw.x,
-        y: raw.y,
-        z: raw.z,
         ...(reason ? { reason } : {}),
+        ...(targetX !== undefined ? { targetX } : {}),
+        ...(targetY !== undefined ? { targetY } : {}),
+        ...(targetZ !== undefined ? { targetZ } : {}),
       };
     }
     case 'entity_snapshot': {

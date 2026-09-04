@@ -4,7 +4,7 @@ import type { PredictionFlightTrace } from './localPlayerPrediction';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import type { AckRejectReason } from './localMotionDiagnostics';
 
-type SnapshotComparePath = 'checkpoint' | 'history[N]' | 'history[N]+extra' | 'live' | 'none';
+type SnapshotComparePath = 'applied-timeline' | 'checkpoint' | 'history[N]' | 'history[N]+extra' | 'live' | 'none';
 
 interface PredictedMoveLike {
   readonly seq: number;
@@ -390,7 +390,9 @@ export function formatCorrectionDiag(diag: CorrectionDiag): string {
     `  tickGap=serverTick-lastStateTick uses last *received* player_state, not last reconciled checkpoint`,
     `  pendingSlotOverwrites=${diag.pendingOverwrites ?? '—'} (latest-only queue between tickOnline flushes)`,
     `  comparePath=${diag.comparePath}  `
-    + (diag.comparePath === 'checkpoint'
+    + (diag.comparePath === 'applied-timeline'
+      ? `authoritative applied server-tick timeline (${diag.simTicks ?? diag.extraTicks} tick(s))`
+      : diag.comparePath === 'checkpoint'
       ? `checkpoint: lastAcked pose + ${diag.simTicks ?? diag.extraTicks} latest-input tick(s); inputSeq is state, not the checkpoint`
       : diag.extraTicks === 0
         ? 'compare exactly history[N]'

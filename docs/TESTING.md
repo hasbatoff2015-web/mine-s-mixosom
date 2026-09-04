@@ -1,5 +1,43 @@
 # Тестирование
 
+## 2026-09-04 Online command pipeline v2
+
+Report: `reports/2026-09-04_online-command-pipeline-v2.md`.
+
+Focused contract gate:
+
+```text
+npx vitest run tests/applied-movement-timeline.test.ts tests/local-player-prediction.test.ts tests/pred-isolation-matrix.test.ts tests/server/client-server-lockstep.test.ts tests/server/player-actions.test.ts tests/use-interaction.test.ts tests/remote-player-interpolation.test.ts tests/remote-player-view.test.ts tests/remote-interp-diagnostics.test.ts tests/server/anarchy-server.test.ts --maxWorkers=2
+```
+
+Movement matrix covers idle/walk/strafe/sprint over 100 ticks, jump, Creative hover/flight+SHIFT, same-phase and 10/25/40 ms delivery phase, two-packet batches, one command over multiple authoritative ticks, 2/3-tick catch-up, W→WD, W→idle, W→S, strafe reverse, sprint press/release, jump press/release latch, rapid yaw, descend transition, and continuous 360° turning. Matching exact timelines require zero false corrections and zero accepted-path live writes.
+
+Action matrix covers stationary/walking/strafe/jump placement, flick target A→B without target substitution, invalid face/stale target/out-of-reach/duplicate action, break start/abort/finish, bow release while stationary/walking/sprinting/jumping, later yaw independence, survival ammo/dedupe/no-draw/insufficient charge, and Creative ammo preservation.
+
+Remote matrix covers perfect 20 Hz, ±5/±20/±30 ms jitter, delayed and batched delivery, missing snapshots, stale/reordered packets, teleport, respawn, walk, jump/fall, sudden stop/recovery, and capped extrapolation. Diagnostics assert p50/p95, adaptive delay, buffer depth, underflow/extrap/stale counters.
+
+Full release gate:
+
+```text
+npm run typecheck
+npm run typecheck:sim
+npm run typecheck:client
+npm run typecheck:server
+npm run check:boundaries
+npm run smoke:sim
+npm run smoke:server
+npm run test:sim
+npm run test:server
+npm test -- --maxWorkers=2
+npm run build
+npm run check:size
+npm run check:archive
+```
+
+Manual localhost QA: start `npm run dev:server` and the client; in client A test sustained walk/sprint/strafe, jump/landing, Creative hover/ascend/descend, rapid direction changes, block use/place while moving and flicking the camera, break start/abort/finish, and charged bow release followed immediately by a look flick. Expect `corr/s=0` during stable localhost movement and no wrong-target mutation. Open client B with an independent session: observe A walking/sprinting/jumping/strafing/flying, sudden stop, teleport/respawn, and record `?remoteDiag=1`; expect smooth server-timeline motion, bounded short coast only on genuine underflow, no jump glide, and no permanent freeze-step. Recheck Singleplayer movement/use/break/bow after Online.
+
+Recorded gate: focused networking 10 files / 147 tests PASS; `test:sim` 42/42 PASS; all typechecks, boundaries, both Node smokes, build, size and archive PASS. Full suite produced 1458 passed / 19 failed / 1 worker timeout. The v2 `pred-isolation-matrix` regression exposed by that run was fixed and the prediction subset re-ran 63/63. Remaining failures reproduce outside edited subsystems: heavy minecart/worldgen 5 s timeouts, existing reference-extractor parse error, closed generated-item source hash mismatch, and `tick-load-flight` max 97–106 ms vs 80 ms. Persistence passes 6/6 sequentially; ordinary server gameplay tick latency remains below 50 ms.
+
 ## 2026-09-03 Remote player interpolation
 
 Report: `reports/2026-09-03_remote-player-interpolation.md`.

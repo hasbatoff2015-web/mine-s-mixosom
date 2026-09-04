@@ -305,7 +305,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     const last = poses[poses.length - 1]!;
     expect(last.inspectKind).toBe('accepted');
     expect(last.physicsTicks).toBe(1);
-    expect(last.comparePath).toBe('checkpoint');
+    expect(last.comparePath).toBe('applied-timeline');
     expect(Math.hypot(last.client.x - last.server.x, last.client.y - last.server.y, last.client.z - last.server.z))
       .toBeLessThan(1e-6);
   });
@@ -377,7 +377,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
       serverTick: world.tickNumber,
     });
     expect(first.kind).toBe('accepted');
-    expect(first.comparePath).toBe('checkpoint');
+    expect(first.comparePath).toBe('applied-timeline');
     reconcilePredictedPlayer(client, world.world, buffer, player.snapshot(), undefined, {
       physicsTicks: 1,
       serverTick: world.tickNumber,
@@ -408,7 +408,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     expect(inspect.physicsTicks).toBe(1);
     expect(inspect.seqGap).toBe(2);
     expect(inspect.simTicks).toBe(1);
-    expect(inspect.comparePath).toBe('checkpoint');
+    expect(inspect.comparePath).toBe('applied-timeline');
     expect(inspect.predicted).toBeDefined();
     expect(Math.hypot(
       inspect.predicted!.x - snapshot.x,
@@ -468,6 +468,7 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     expect(asTwo.comparePath).toBe('checkpoint');
     expect(asTwo.simTicks).toBe(2);
     expect(asTick.simTicks).toBe(2);
+    expect(asTick.comparePath).toBe('applied-timeline');
     expect(asOne.kind).toBe('corrected');
     expect(asTwo.kind).toBe('accepted');
     expect(asTick.kind).toBe('accepted');

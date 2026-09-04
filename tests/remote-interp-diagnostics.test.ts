@@ -13,10 +13,13 @@ describe('remote interpolation diagnostics', () => {
       snapshotsPerSecond: 20,
       serverTick: 440,
       bufferDepth: 2,
+      bufferDepthMs: 100,
       bufferTargetDepth: 2,
       sampleCount: 6,
       interArrivalMs: 50,
       jitterMs: 2,
+      arrivalJitterP50Ms: 1,
+      arrivalJitterP95Ms: 2,
       renderDelayMs: 100,
       underflowsPerSecond: 0,
       extrapolationMs: 0,
@@ -29,7 +32,7 @@ describe('remote interpolation diagnostics', () => {
     const line = formatRemoteInterpHud('abcd1234', diag);
     expect(line).toContain('Remote abcd1234');
     expect(line).toContain('tick=440');
-    expect(line).toContain('buf=2/2');
+    expect(line).toContain('buf=2/2.0');
     expect(line).toContain('delay=100ms');
     expect(line).toContain('under/s=0');
   });

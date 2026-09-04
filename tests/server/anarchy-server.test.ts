@@ -15,6 +15,7 @@ import { WorldInstance } from '../../server/WorldInstance';
 import { createItemStack } from '../../src/inventory';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
 import { inputSeqAfterReconnect } from '../../src/core/onlineSession';
+import { captureBlockHitIntent, captureBowRelease } from '../../src/net/playerActions';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-anarchy-'));
@@ -147,10 +148,22 @@ class MemorySink {
 }
 
 describe('protocol validation', () => {
-  it('rejects unknown message types and non-integer block coords', () => {
+  it('rejects unknown message types and malformed action intents', () => {
     expect(parseClientMessage({ type: 'explode_world' })).toEqual({ error: 'unknown message type explode_world' });
-    expect(parseClientMessage({ type: 'break_block', x: 1.5, y: 2, z: 3 })).toEqual({
-      error: 'block coordinates must be integers',
+    expect(parseClientMessage({ type: 'interact' })).toEqual({ error: 'unknown message type interact' });
+    expect(parseClientMessage({ type: 'break_block', x: 1, y: 2, z: 3 })).toEqual({ error: 'unknown message type break_block' });
+    expect(parseClientMessage({ type: 'place_block', x: 1, y: 2, z: 3 })).toEqual({ error: 'unknown message type place_block' });
+    expect(parseClientMessage({
+      type: 'block_use', actionSeq: 1, commandSeq: 2, selectedSlot: 3,
+      targetX: 1, targetY: 2, targetZ: 3, targetBlockId: BlockId.Stone,
+      faceX: 0, faceY: 1, faceZ: 0, hitX: 1.5, hitY: 3, hitZ: 3.5,
+    })).toMatchObject({ type: 'block_use', actionSeq: 1, commandSeq: 2, selectedSlot: 3 });
+    expect(parseClientMessage({
+      type: 'block_use', actionSeq: 1, commandSeq: 1, selectedSlot: 0,
+      targetX: 1.5, targetY: 2, targetZ: 3, targetBlockId: BlockId.Stone,
+      faceX: 0, faceY: 1, faceZ: 0, hitX: 1.5, hitY: 3, hitZ: 3.5,
+    })).toEqual({
+      error: 'block_use block intent invalid',
     });
     expect(parseClientMessage({ type: 'inventory_action', action: 'yeet' })).toEqual({ error: 'inventory_action.action invalid' });
     expect(parseClientMessage({ type: 'attack' })).toEqual({ type: 'attack' });
@@ -164,17 +177,8 @@ describe('protocol validation', () => {
   it('rejects unknown and malformed server messages instead of swallowing them', () => {
     expect(parseServerMessage({ type: 'teleport_all' })).toEqual({ error: 'unknown message type teleport_all' });
     expect(parseServerMessage({ type: 'player_state', tick: 1.5, players: [] })).toEqual({ error: 'player_state invalid' });
-    expect(parseServerMessage({ type: 'block_result', ok: true, action: 'break', x: 1.2, y: 2, z: 3 })).toEqual({
-      error: 'block_result coordinates invalid',
-    });
-    expect(parseServerMessage({ type: 'block_result', ok: false, action: 'break', x: 1, y: 2, z: 3, reason: 'reach' })).toEqual({
-      type: 'block_result',
-      ok: false,
-      action: 'break',
-      x: 1,
-      y: 2,
-      z: 3,
-      reason: 'reach',
+    expect(parseServerMessage({ type: 'block_result', ok: true, action: 'break', x: 1, y: 2, z: 3 })).toEqual({
+      error: 'unknown message type block_result',
     });
   });
 });
@@ -314,43 +318,71 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
 
     a.send({ type: 'chat', text: '/gamemode creative' });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const origin = [Math.floor(welcomeA.you.x), Math.floor(welcomeA.you.y), Math.floor(welcomeA.you.z)] as const;
-    let placedAt: readonly [number, number, number] | undefined;
-    let seq = 2;
-    for (let dz = 1; dz <= 4 && !placedAt; dz += 1) {
-      for (let dx = -2; dx <= 2 && !placedAt; dx += 1) {
-        const x = origin[0] + dx;
-        const y = origin[1] + 3;
-        const z = origin[2] + dz;
-        if (server.world.world.getBlock(x, y, z) !== BlockId.Air) continue;
-        const look = lookAngles(welcomeA.you, x, y, z);
-        a.send(moveInput(seq, look));
-        seq += 1;
-        a.send({ type: 'place_block', x, y, z, blockId: BlockId.Dirt });
-        try {
-          await a.waitForMatch('block_result', (message) => message.ok && message.action === 'place' && message.x === x && message.y === y && message.z === z, 400);
-          placedAt = [x, y, z];
-        } catch {
-          /* try next cell */
-        }
-      }
+    const serverPlayer = server.world.players.get(welcomeA.playerId)!;
+    serverPlayer.inventory.setSlot(0, createItemStack('dirt', 64));
+    const eye = serverPlayer.controller.eyePosition();
+    const targetX = Math.floor(eye.x);
+    const targetY = Math.floor(eye.y);
+    const targetZ = Math.floor(eye.z) - 3;
+    for (let z = targetZ; z <= Math.floor(eye.z); z += 1) {
+      server.world.world.setBlock(targetX, targetY, z, BlockId.Air);
     }
-    expect(placedAt).toBeDefined();
-    const [px, py, pz] = placedAt!;
+    server.world.world.setBlock(targetX, targetY, targetZ, BlockId.Stone);
+    let seq = 2;
+    const placeLook = lookAngles(serverPlayer.controller.position, targetX, targetY, targetZ);
+    const placeCommandSeq = seq;
+    a.send(moveInput(placeCommandSeq, placeLook));
+    seq += 1;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const placeHit = server.world.world.raycast(
+      serverPlayer.controller.eyePosition(),
+      serverPlayer.controller.viewDirection(),
+      PLAYER_NET_REACH,
+    );
+    expect(placeHit).toMatchObject({ x: targetX, y: targetY, z: targetZ });
+    const px = placeHit!.x + placeHit!.normal.x;
+    const py = placeHit!.y + placeHit!.normal.y;
+    const pz = placeHit!.z + placeHit!.normal.z;
+    server.world.world.setBlock(px, py, pz, BlockId.Air);
+    a.send({
+      type: 'block_use', actionSeq: 1, commandSeq: placeCommandSeq, selectedSlot: 0,
+      ...captureBlockHitIntent(placeHit!),
+    });
+    await a.waitForMatch('action_result', (message) => message.actionSeq === 1 && message.action === 'block_use' && message.ok);
     expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Dirt);
     expect(a.messages.some((message) => message.type === 'block_update' && message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Dirt)).toBe(true);
     expect(b.messages.some((message) => message.type === 'block_update' && message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Dirt)).toBe(true);
 
-    a.send({ type: 'break_block', x: px, y: py, z: pz });
-    await a.waitForMatch('block_result', (message) => message.ok && message.action === 'break' && message.x === px && message.y === py && message.z === pz);
+    const breakLook = lookAngles(serverPlayer.controller.position, px, py, pz);
+    const breakCommandSeq = seq;
+    a.send(moveInput(breakCommandSeq, { ...breakLook, mining: true }));
+    seq += 1;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const breakHit = server.world.world.raycast(
+      serverPlayer.controller.eyePosition(),
+      serverPlayer.controller.viewDirection(),
+      PLAYER_NET_REACH,
+    );
+    expect(breakHit).toMatchObject({ x: px, y: py, z: pz });
+    const breakIntent = captureBlockHitIntent(breakHit!);
+    a.send({ type: 'break_start', actionSeq: 2, commandSeq: breakCommandSeq, selectedSlot: 0, ...breakIntent });
+    await a.waitForMatch('action_result', (message) => message.actionSeq === 2 && message.ok);
+    await a.waitForMatch('block_update', (message) => message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Air);
     expect(server.world.world.getBlock(px, py, pz)).toBe(BlockId.Air);
     expect(b.messages.some((message) => message.type === 'block_update' && message.x === px && message.y === py && message.z === pz && message.blockId === BlockId.Air)).toBe(true);
 
-    const updatesBeforeReject = b.messages.filter((message) => message.type === 'block_update').length;
-    a.send({ type: 'break_block', x: px + 80, y: py, z: pz });
+    server.world.world.setBlock(px + 80, py, pz, BlockId.Dirt);
+    a.send({
+      type: 'break_start', actionSeq: 3, commandSeq: breakCommandSeq, selectedSlot: 0,
+      targetX: px + 80, targetY: py, targetZ: pz, targetBlockId: BlockId.Dirt,
+      faceX: 0, faceY: 1, faceZ: 0,
+      hitX: px + 80.5, hitY: py + 1, hitZ: pz + 0.5,
+    });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(b.messages.filter((message) => message.type === 'block_update').length).toBe(updatesBeforeReject);
-    expect(a.latest('block_result')).toMatchObject({ ok: false, action: 'break', reason: 'reach' });
+    expect(server.world.world.getBlock(px + 80, py, pz)).toBe(BlockId.Dirt);
+    expect(b.messages.some((message) => message.type === 'block_update'
+      && message.x === px + 80 && message.y === py && message.z === pz && message.blockId === BlockId.Air)).toBe(false);
+    expect(a.latest('action_result')).toMatchObject({ ok: false, action: 'break_start', reason: 'reach' });
 
     a.send({ type: 'chat', text: 'hello anarchy' });
     await b.waitFor('chat');
@@ -370,16 +402,34 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     const welcome = await client.connect(first.wsUrl(), { name: 'Builder' });
     client.send({ type: 'chat', text: '/gamemode creative' });
     await new Promise((resolve) => setTimeout(resolve, 40));
-    const x = Math.floor(welcome.you.x) + 1;
-    const y = Math.floor(welcome.you.y) + 3;
-    const z = Math.floor(welcome.you.z) + 1;
-    if (first.world.world.getBlock(x, y, z) !== BlockId.Air) {
-      first.world.world.setBlock(x, y, z, BlockId.Air);
+    const player = first.world.players.get(welcome.playerId)!;
+    player.inventory.setSlot(0, createItemStack('cobblestone', 64));
+    const eye = player.controller.eyePosition();
+    const supportX = Math.floor(eye.x);
+    const supportY = Math.floor(eye.y);
+    const supportZ = Math.floor(eye.z) - 3;
+    for (let lineZ = supportZ; lineZ <= Math.floor(eye.z); lineZ += 1) {
+      first.world.world.setBlock(supportX, supportY, lineZ, BlockId.Air);
     }
-    const look = lookAngles(welcome.you, x, y, z);
+    first.world.world.setBlock(supportX, supportY, supportZ, BlockId.Stone);
+    const look = lookAngles(player.controller.position, supportX, supportY, supportZ);
     client.send(moveInput(1, look));
-    client.send({ type: 'place_block', x, y, z, blockId: BlockId.Cobblestone });
-    await client.waitForMatch('block_result', (message) => message.ok && message.action === 'place' && message.x === x && message.y === y && message.z === z);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const hit = first.world.world.raycast(
+      player.controller.eyePosition(),
+      player.controller.viewDirection(),
+      PLAYER_NET_REACH,
+    );
+    if (!hit) throw new Error('persistence target missing');
+    const x = hit.x + hit.normal.x;
+    const y = hit.y + hit.normal.y;
+    const z = hit.z + hit.normal.z;
+    first.world.world.setBlock(x, y, z, BlockId.Air);
+    client.send({
+      type: 'block_use', actionSeq: 1, commandSeq: 1, selectedSlot: 0,
+      ...captureBlockHitIntent(hit),
+    });
+    await client.waitForMatch('action_result', (message) => message.ok && message.action === 'block_use');
     expect(first.world.world.getBlock(x, y, z)).toBe(BlockId.Cobblestone);
     client.close();
     await first.stop();
@@ -624,6 +674,27 @@ describe('WorldInstance foundation simulation', () => {
     expect(last.physicsTicks).toBe(2);
   });
 
+  it('sends applied movement rows only to their owning client', async () => {
+    const world = await bootWorld();
+    const sinkA = new MemorySink();
+    const sinkB = new MemorySink();
+    const a = world.join({ sink: sinkA, name: 'A' });
+    const b = world.join({ sink: sinkB, name: 'B' });
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    world.applyInput(a.player, moveInput(1, { forward: 1 }));
+    world.applyInput(b.player, moveInput(1, { right: 1 }));
+    world.tick();
+    const latest = (sink: MemorySink) => [...sink.payloads].reverse().find((payload) => (
+      (payload as { type?: string }).type === 'player_state'
+    )) as { players: Array<{ id: string; appliedTicks?: unknown[] }> };
+    const stateA = latest(sinkA);
+    const stateB = latest(sinkB);
+    expect(stateA.players.find((player) => player.id === a.player.id)?.appliedTicks).toHaveLength(1);
+    expect(stateA.players.find((player) => player.id === b.player.id)?.appliedTicks).toBeUndefined();
+    expect(stateB.players.find((player) => player.id === b.player.id)?.appliedTicks).toHaveLength(1);
+    expect(stateB.players.find((player) => player.id === a.player.id)?.appliedTicks).toBeUndefined();
+  });
+
   it('predsim reports identical lockstep controllers and a coalesce gap', async () => {
     const world = await bootWorld();
     const sink = new MemorySink();
@@ -692,7 +763,7 @@ describe('WorldInstance foundation simulation', () => {
     expect(player.controller.position.y).toBeGreaterThan(startY + 0.2);
   });
 
-  it('fires a charged bow on the next tick after use release, not after a movement backlog', async () => {
+  it('fires a charged bow from an explicit release action, not an inferred input edge', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -713,6 +784,11 @@ describe('WorldInstance foundation simulation', () => {
     }
     world.tick();
     expect(player.lastInput.use).toBe(false);
+    expect(world.bowRelease(player, captureBowRelease(
+      { actionSeq: 1, commandSeq: 48, selectedSlot: 0 },
+      player.controller.yaw,
+      player.controller.pitch,
+    ))).toEqual({ ok: true });
     expect(player.bowUseTicks).toBe(0);
     expect(world.gameplay.arrows.count).toBeGreaterThan(arrowsBefore);
   });
@@ -730,7 +806,7 @@ describe('WorldInstance foundation simulation', () => {
       world.applyInput(player, moveInput(seq, { forward: 1, use: false }));
     }
     expect(player.bowUseTicks).toBe(0);
-    world.interact(player);
+    expect(world.useItem(player, { actionSeq: 1, commandSeq: 12, selectedSlot: 0 })).toEqual({ ok: true });
     expect(player.bowUseTicks).toBeGreaterThan(0);
     const charged = player.bowUseTicks;
     world.applyInput(player, moveInput(13, { forward: 1, use: true }));

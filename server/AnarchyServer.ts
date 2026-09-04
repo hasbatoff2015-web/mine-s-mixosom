@@ -13,7 +13,7 @@ import {
   type ServerWelcomeMessage,
 } from '../shared/protocol';
 import type { ServerConfig } from './config';
-import { serverLog } from './log';
+import { netDebug, serverLog } from './log';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
 
 interface SocketBinding {
@@ -237,6 +237,7 @@ export class AnarchyServer {
     const welcome: ServerWelcomeMessage = {
       type: 'welcome',
       protocol: PROTOCOL_VERSION,
+      serverTick: this.world.tickNumber,
       playerId: player.id,
       sessionToken: player.sessionToken,
       name: player.name,
@@ -285,35 +286,52 @@ export class AnarchyServer {
       case 'input':
         this.world.applyInput(player, message, { connectionId });
         return;
-      case 'break_block': {
-        const result = this.world.tryBreak(player, message.x, message.y, message.z);
+      case 'block_use':
+      case 'use_item':
+      case 'break_start':
+      case 'break_abort':
+      case 'break_finish':
+      case 'bow_release': {
+        const result = message.type === 'block_use'
+          ? this.world.blockUse(player, message)
+          : message.type === 'use_item'
+            ? this.world.useItem(player, message)
+            : message.type === 'break_start'
+              ? this.world.breakStart(player, message)
+              : message.type === 'break_abort'
+                ? this.world.breakAbort(player, message)
+                : message.type === 'break_finish'
+                  ? this.world.breakFinish(player, message)
+                  : this.world.bowRelease(player, message);
         this.world.sendTo(player, {
-          type: 'block_result',
+          type: 'action_result',
+          action: message.type,
+          actionSeq: message.actionSeq,
+          commandSeq: message.commandSeq,
           ok: result.ok,
-          action: 'break',
-          x: message.x,
-          y: message.y,
-          z: message.z,
           ...(result.ok ? {} : { reason: result.reason }),
+          ...('targetX' in message ? {
+            targetX: message.targetX,
+            targetY: message.targetY,
+            targetZ: message.targetZ,
+          } : {}),
         });
+        const target = 'targetX' in message
+          ? ` target=${message.targetX},${message.targetY},${message.targetZ} face=${message.faceX},${message.faceY},${message.faceZ}`
+          : '';
+        const aim = message.type === 'bow_release'
+          ? ` release=${message.yaw.toFixed(4)},${message.pitch.toFixed(4)} used=${message.yaw.toFixed(4)},${message.pitch.toFixed(4)} angular=0`
+          : '';
+        netDebug(
+          'action',
+          `type=${message.type} action=${message.actionSeq} command=${message.commandSeq}${target}${aim} `
+          + `${result.ok ? 'accepted' : `rejected=${result.reason}`}`,
+        );
         if (!result.ok) {
-          serverLog(`break rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
-        }
-        return;
-      }
-      case 'place_block': {
-        const result = this.world.tryPlace(player, message.x, message.y, message.z, message.blockId);
-        this.world.sendTo(player, {
-          type: 'block_result',
-          ok: result.ok,
-          action: 'place',
-          x: message.x,
-          y: message.y,
-          z: message.z,
-          ...(result.ok ? {} : { reason: result.reason }),
-        });
-        if (!result.ok) {
-          serverLog(`place rejected: ${result.reason} ${message.x},${message.y},${message.z} by ${player.name}`, 'warn');
+          serverLog(
+            `${message.type} rejected: ${result.reason} action=${message.actionSeq} command=${message.commandSeq} by ${player.name}`,
+            'warn',
+          );
         }
         return;
       }
@@ -336,9 +354,6 @@ export class AnarchyServer {
           key: 'result',
           shift: message.shift === true,
         });
-        return;
-      case 'interact':
-        this.world.interact(player);
         return;
       case 'attack':
         this.world.attack(player);

@@ -1,4 +1,4 @@
-import { BlockId, isKnownBlockId } from '../src/blocks';
+import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
@@ -20,6 +20,9 @@ import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   AppliedInputTick,
+  ClientActionContext,
+  ClientBlockHitIntent,
+  ClientBowReleaseMessage,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -44,6 +47,7 @@ import { placeholderPlayer } from '../src/save/snapshot';
 import { netDebug, serverLog, bowDebug } from './log';
 import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { validateBlockHitIntent } from './playerActionValidation';
 
 /** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
 const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
@@ -73,6 +77,8 @@ export class ServerPlayer implements GameplayPlayer {
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
   /** Highest received input seq. Snapshot.inputSeq is this value after the tick that used lastInput. */
   lastInputSeq = -1;
+  /** Highest discrete action claimed on this connection. */
+  lastActionSeq = -1;
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
   lastServerSimAt: number | undefined;
@@ -82,8 +88,6 @@ export class ServerPlayer implements GameplayPlayer {
   readonly appliedInputTrace: AppliedInputTick[] = [];
   /** Jump pulse seen since the last physics tick (latest-input coalescing). */
   pendingJump = false;
-  /** use=false seen while charging, so a coalesced release is not lost. */
-  pendingUseRelease = false;
   viewCx = 0;
   viewCz = 0;
   viewRadius = 4;
@@ -100,7 +104,7 @@ export class ServerPlayer implements GameplayPlayer {
   craftSlots: Array<ItemStack | null> = [null, null, null, null];
   window: InventoryWindow = { kind: 'inventory' };
   ridingCartId?: string;
-  miningTarget?: { x: number; y: number; z: number };
+  miningTarget?: { x: number; y: number; z: number; block?: number };
   miningProgress = 0;
   bowUseTicks = 0;
   foodUseTicks = 0;
@@ -128,7 +132,7 @@ export class ServerPlayer implements GameplayPlayer {
     return this.survival.health;
   }
 
-  snapshot(): PlayerSnapshot {
+  snapshot(includeAppliedTicks = true): PlayerSnapshot {
     const position = this.controller.position;
     const velocity = this.controller.velocity;
     return {
@@ -156,7 +160,7 @@ export class ServerPlayer implements GameplayPlayer {
       dead: this.survival.dead,
       inputSeq: this.lastInputSeq,
       flying: this.controller.isFlying,
-      appliedTicks: this.appliedInputTrace.slice(),
+      ...(includeAppliedTicks ? { appliedTicks: this.appliedInputTrace.slice() } : {}),
       session: {
         tokenFp: sessionTokenFingerprint(this.sessionToken),
         connectionId: this.connectionId,
@@ -186,8 +190,12 @@ export class ServerPlayer implements GameplayPlayer {
     readonly right: number;
     readonly jump: boolean;
     readonly sneak: boolean;
+    readonly sprint: boolean;
     readonly descend: boolean;
     readonly flySprint: boolean;
+    readonly yaw: number;
+    readonly pitch: number;
+    readonly locomotion: boolean;
   }): void {
     this.appliedInputTrace.push({
       tick,
@@ -196,14 +204,21 @@ export class ServerPlayer implements GameplayPlayer {
       right: applied.right,
       jump: applied.jump,
       sneak: applied.sneak,
+      sprint: applied.sprint,
       descend: applied.descend,
       flySprint: applied.flySprint,
+      yaw: applied.yaw,
+      pitch: applied.pitch,
+      locomotion: applied.locomotion,
       y: this.controller.position.y,
       vy: this.controller.velocity.y,
       flying: this.controller.isFlying,
       onGround: this.controller.onGround,
     });
-    const extra = this.appliedInputTrace.length - 8;
+    // Covers ordinary batching/catch-up without making every 20 Hz snapshot an
+    // unbounded command log. A client outside this window restores the
+    // authoritative checkpoint instead of guessing the absent interval.
+    const extra = this.appliedInputTrace.length - 16;
     if (extra > 0) this.appliedInputTrace.splice(0, extra);
   }
 
@@ -602,10 +617,7 @@ export class WorldInstance {
     player.lastServerRecvAt = recvAt;
     player.inputPacketsThisLoop += 1;
     if (input.jump) player.pendingJump = true;
-    if (input.use !== true && (player.bowUseTicks > 0 || player.foodUseTicks > 0 || player.lastInput.use === true)) {
-      player.pendingUseRelease = true;
-      bowDebug(player.id, 'release_received', `seq=${input.seq} charge=${player.bowUseTicks}`);
-    } else if (input.use === true && player.lastInput.use !== true) {
+    if (input.use === true && player.lastInput.use !== true) {
       bowDebug(player.id, 'press_hold_received', `seq=${input.seq}`);
     }
     player.lastInput = input;
@@ -654,11 +666,97 @@ export class WorldInstance {
     this.flushPlayerInventory(player);
   }
 
-  interact(player: ServerPlayer): void {
-    this.gameplay.useHeld(player);
+  private claimAction(player: ServerPlayer, action: ClientActionContext): { ok: true } | { ok: false; reason: string } {
+    if (action.actionSeq <= player.lastActionSeq) {
+      return { ok: false, reason: action.actionSeq === player.lastActionSeq ? 'duplicate-action' : 'stale-action' };
+    }
+    player.lastActionSeq = action.actionSeq;
+    if (action.commandSeq > player.lastInputSeq) return { ok: false, reason: 'future-command' };
+    if (action.selectedSlot !== player.selectedSlot) return { ok: false, reason: 'selected-slot' };
+    return { ok: true };
+  }
+
+  private validateActionHit(player: ServerPlayer, intent: ClientBlockHitIntent) {
+    return validateBlockHitIntent(this.world, player.controller, intent);
+  }
+
+  blockUse(
+    player: ServerPlayer,
+    action: ClientActionContext & ClientBlockHitIntent,
+  ): { ok: true } | { ok: false; reason: string } {
+    const claimed = this.claimAction(player, action);
+    if (!claimed.ok) return claimed;
+    if (player.survival.dead) return { ok: false, reason: 'dead' };
+    const validated = this.validateActionHit(player, action);
+    if (!validated.ok) return validated;
+    this.gameplay.useHeld(player, validated.hit, true);
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    return { ok: true };
+  }
+
+  useItem(player: ServerPlayer, action: ClientActionContext): { ok: true } | { ok: false; reason: string } {
+    const claimed = this.claimAction(player, action);
+    if (!claimed.ok) return claimed;
+    if (player.survival.dead) return { ok: false, reason: 'dead' };
+    this.gameplay.useHeld(player, undefined, true);
+    this.dirty = true;
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+    return { ok: true };
+  }
+
+  breakStart(
+    player: ServerPlayer,
+    action: ClientActionContext & ClientBlockHitIntent,
+  ): { ok: true } | { ok: false; reason: string } {
+    const claimed = this.claimAction(player, action);
+    if (!claimed.ok) return claimed;
+    if (player.survival.dead) return { ok: false, reason: 'dead' };
+    const validated = this.validateActionHit(player, action);
+    if (!validated.ok) return validated;
+    const definition = getBlockDefinition(validated.hit.block);
+    if (definition.breakable === false || definition.hardness < 0) return { ok: false, reason: 'unbreakable' };
+    player.miningTarget = {
+      x: validated.hit.x,
+      y: validated.hit.y,
+      z: validated.hit.z,
+      block: validated.hit.block,
+    };
+    player.miningProgress = 0;
+    return { ok: true };
+  }
+
+  breakAbort(player: ServerPlayer, action: ClientActionContext): { ok: true } | { ok: false; reason: string } {
+    const claimed = this.claimAction(player, action);
+    if (!claimed.ok) return claimed;
+    player.miningTarget = undefined;
+    player.miningProgress = 0;
+    return { ok: true };
+  }
+
+  breakFinish(
+    player: ServerPlayer,
+    action: ClientActionContext & ClientBlockHitIntent,
+  ): { ok: true } | { ok: false; reason: string } {
+    const claimed = this.claimAction(player, action);
+    if (!claimed.ok) return claimed;
+    const validated = this.validateActionHit(player, action);
+    if (!validated.ok) return validated;
+    const target = player.miningTarget;
+    if (!target || target.x !== action.targetX || target.y !== action.targetY || target.z !== action.targetZ) {
+      return { ok: false, reason: 'mining-target' };
+    }
+    return this.tryBreak(player, action.targetX, action.targetY, action.targetZ);
+  }
+
+  bowRelease(player: ServerPlayer, action: ClientBowReleaseMessage): { ok: true } | { ok: false; reason: string } {
+    const claimed = this.claimAction(player, action);
+    if (!claimed.ok) return claimed;
+    const result = this.gameplay.releaseBow(player, { yaw: action.yaw, pitch: action.pitch });
+    this.flushPlayerInventory(player);
+    return result.ok ? { ok: true } : result;
   }
 
   pickup(player: ServerPlayer): void {
@@ -860,9 +958,10 @@ export class WorldInstance {
       if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
     }
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
-    const snapshots = this.connectedPlayers().map((player) => player.snapshot());
-    if (snapshots.length > 0) {
-      this.broadcast({
+    const connected = this.connectedPlayers();
+    const publicSnapshots = connected.map((player) => player.snapshot(false));
+    if (publicSnapshots.length > 0) {
+      const common = {
         type: 'player_state',
         tick: this.tickNumber,
         physicsTicks: Math.max(1, this.lastPhysicsTicksThisLoop),
@@ -888,8 +987,16 @@ export class WorldInstance {
           inputGapMs: this.maxInputGapMs(),
           inputPackets: this.maxInputPacketsThisLoop(),
         },
-        players: snapshots,
-      });
+      } as const;
+      for (let receiverIndex = 0; receiverIndex < connected.length; receiverIndex += 1) {
+        const receiver = connected[receiverIndex]!;
+        // Applied movement rows are an owner-only reconciliation contract.
+        // Remote presentation needs only poses; do not multiply this payload
+        // by every observed player.
+        const players = publicSnapshots.slice();
+        players[receiverIndex] = receiver.snapshot(true);
+        this.sendTo(receiver, { ...common, players });
+      }
       this.snapshotsSent += 1;
     }
     this.resetInputPacketCounters();
@@ -931,8 +1038,9 @@ export class WorldInstance {
    */
   private resetConnectionInput(player: ServerPlayer): void {
     player.lastInputSeq = inputSeqAfterReconnect();
+    player.lastActionSeq = -1;
+    player.appliedInputTrace.length = 0;
     player.pendingJump = false;
-    player.pendingUseRelease = false;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -947,9 +1055,8 @@ export class WorldInstance {
       if (!player.connected) continue;
       const input = player.lastInput;
       const jump = input.jump || player.pendingJump;
-      const using = player.pendingUseRelease ? false : input.use === true;
+      const using = input.use === true;
       player.pendingJump = false;
-      player.pendingUseRelease = false;
       // One physics step per server tick using the latest movement *state*.
       // Packets between ticks replace lastInput; skipped seqs are not simulated.
       const before = player.controller.position.clone();
@@ -1006,8 +1113,12 @@ export class WorldInstance {
         right: riding ? 0 : input.right,
         jump: riding ? false : jump,
         sneak: input.sneak,
+        sprint: input.sprint,
         descend: input.descend === true,
         flySprint: input.flySprint === true,
+        yaw: input.yaw,
+        pitch: input.pitch,
+        locomotion: !riding,
       });
       const moved = player.controller.position.distanceTo(before);
       if (moved > 1e-4) {

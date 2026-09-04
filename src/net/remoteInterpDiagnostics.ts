@@ -21,9 +21,9 @@ export function formatRemoteInterpHud(
 ): string {
   return (
     `Remote ${label} tick=${diag.serverTick} render=${diag.renderTick.toFixed(2)} ${diag.mode} `
-    + `buf=${diag.bufferDepth}/${diag.bufferTargetDepth} n=${diag.sampleCount} `
+    + `buf=${diag.bufferDepth}/${diag.bufferTargetDepth.toFixed(1)} (${diag.bufferDepthMs.toFixed(0)}ms) n=${diag.sampleCount} `
     + `delay=${diag.renderDelayMs}ms snap/s=${diag.snapshotsPerSecond} `
-    + `arr=${diag.interArrivalMs.toFixed(0)}ms jitter=${diag.jitterMs.toFixed(0)}ms `
+    + `arr=${diag.interArrivalMs.toFixed(0)}ms jitter50/95=${diag.arrivalJitterP50Ms.toFixed(0)}/${diag.arrivalJitterP95Ms.toFixed(0)}ms `
     + `under/s=${diag.underflowsPerSecond} extrap=${diag.extrapolationMs.toFixed(0)}ms `
     + `extrap/s=${diag.extrapolationEventsPerSecond} stale/s=${diag.staleSnapshotsPerSecond}`
   );

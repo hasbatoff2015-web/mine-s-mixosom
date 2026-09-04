@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-04: Online command pipeline v2
+
+- [x] Protocol v2: separate movement `commandSeq` semantics and monotonic `actionSeq` for discrete actions.
+- [x] Authoritative per-server-tick applied-command trace; exact historical comparison; accepted ACK is a live-motion no-op; correction restores snapshot and replays only commands newer than ACK.
+- [x] Explicit block use and break lifecycle with captured target/face/hit/block id, reach/LOS/state/slot validation, replay rejection, and no delayed server target substitution.
+- [x] Explicit bow release with captured yaw/pitch; authoritative draw/charge/ammo/dedupe/projectile spawn.
+- [x] Adaptive remote interpolation delay 80–180 ms, bounded 100 ms extrapolation/recovery, teleport/respawn reset, jitter/depth/underflow telemetry.
+- [x] Deterministic movement/action/remote matrices and updated WebSocket protocol tests.
+- [ ] Owner manual QA: one-client local movement + block/bow tests, then two clients for remote walk/sprint/jump/strafe/flight and teleport/respawn.
+- [ ] Publish/merge only after manual QA and the full gate recorded in the final report.
+
 ## 2026-09-03: Remote player interpolation v1
 
 - [x] Server-tick snapshot buffer per remote (`player_state.tick`), not packet arrival time.

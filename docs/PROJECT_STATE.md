@@ -1,6 +1,16 @@
 # Состояние проекта
 
-Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: Online command pipeline v2
+
+- Рабочая ветка `codex/online-command-pipeline-v2` от `cursor/remote-player-interpolation-86e1` (`ade7113`). Protocol version **2**; 20 TPS, shared `PlayerController`, WebSocket transport и server authority сохранены.
+- Movement command `seq` — id latest-state command, не physics tick. Каждый server physics tick записывает `{serverTick, commandSeq, full movement state}`; `player_state.appliedTicks` несёт bounded последние 16 строк. Клиент сравнивает snapshot с точным historical replay от последнего принятого `serverTick`. Один command может применяться несколько ticks; skipped/coalesced commands не симулируются. Неполный trace вызывает authoritative restore, никогда guess latest-input × N.
+- Explicit actions имеют отдельный монотонный `actionSeq`, `commandSeq` context и `selectedSlot`. Block use/break start/abort/finish передают captured integer target, face, hit point и target block id. Сервер проверяет bounds, alive, current selected slot, command context, unchanged block, reach, LOS и exact face; другой target не подставляет.
+- Bow release — отдельный packet с captured yaw/pitch. Сервер владеет draw duration, minimum charge, inventory/ammo, dedupe и spawn; следующий look packet не меняет уже созданную стрелу.
+- Remote presentation: server-tick buffer 12 samples, adaptive delay `clamp(100ms + arrivalJitterP95, 80..180ms)`, bounded velocity extrapolation ≤100 ms, recovery blend ≤100 ms, teleport/dead→alive reset. F3/`?remoteDiag=1`: p50/p95 arrival, delay, buffer depth, underflow/extrap/stale.
+- Новые deterministic matrices: exact movement timeline (25 cases), explicit player actions (13), adaptive remote interpolation (24 cases), protocol/WebSocket persistence. Report: `docs/reports/2026-09-04_online-command-pipeline-v2.md`.
+- Gate: typecheck sim/client/server, boundaries, smoke sim/server, focused networking **10 files / 147 tests**, `test:sim` **42/42**, build/size/archive **PASS** (3.96 MiB). Full suite: **1458 passed / 19 failed / 1 worker error**; one v2 regression found there was fixed and rechecked 63/63. Remaining failures are pre-existing heavy-suite timeouts, closed geometry hash, reference extractor syntax, and the independent `setView` 80 ms budget. Local protocol-v2 handshake ran at ~20 TPS; full pointer-lock/two-client playtest remains owner QA.
 
 ## Последний проход: Remote player interpolation v1
 

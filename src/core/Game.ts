@@ -206,6 +206,16 @@ import {
   type ReconcileResult,
 } from '../net/localPlayerPrediction';
 import {
+  captureBowRelease,
+  captureBreakAbort,
+  captureBreakFinish,
+  captureBreakStart,
+  captureUseAction,
+  createClientActionSequence,
+  nextActionContext,
+  type ClientActionSequence,
+} from '../net/playerActions';
+import {
   evaluateHiddenTabResume,
   hiddenTabPacketSample,
   resyncLocalPlayerAfterHiddenTab,
@@ -312,12 +322,14 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  actionSequence: ClientActionSequence;
   prediction: PredictionBuffer;
   urgentMeshKeys: Set<string>;
   lastViewKey?: string;
   lastStateTick: number;
   lastAliveTick?: number;
-  pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
+  pendingBlockAction?: { kind: 'break'; x: number; y: number; z: number };
+  activeBreakTarget?: { x: number; y: number; z: number };
   rejectedBlockKey?: string;
   /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
   ignoreNetworkSend?: boolean;
@@ -724,6 +736,7 @@ export class Game {
         remotes,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        actionSequence: createClientActionSequence(),
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
@@ -750,7 +763,7 @@ export class Game {
     this.input.pitch = welcome.you.pitch;
     this.syncLocalRenderFromPlayer();
     resetPredictionBuffer(session.online.prediction);
-    seedPredictionCheckpoint(session.online.prediction, session.player.captureMovementState(), -1);
+    seedPredictionCheckpoint(session.online.prediction, session.player.captureMovementState(), welcome.serverTick);
     session.online.prediction.lastAckedSeq = welcome.you.inputSeq ?? -1;
     motionProbe.reset();
     resetFirstCorrectionDump();
@@ -903,8 +916,22 @@ export class Game {
         return;
       case 'command_result':
         return;
-      case 'block_result':
-        this.handleOnlineBlockResult(session, message);
+      case 'action_result':
+        if ((message.action === 'break_finish' || (!message.ok && message.action === 'break_start'))
+          && message.targetX !== undefined && message.targetY !== undefined && message.targetZ !== undefined) {
+          this.clearOnlineBlockPending(session, message.targetX, message.targetY, message.targetZ);
+        }
+        if (!message.ok && message.action === 'block_use'
+          && message.targetX !== undefined && message.targetY !== undefined && message.targetZ !== undefined
+          && session.online) {
+          session.online.rejectedBlockKey = `${message.targetX},${message.targetY},${message.targetZ}`;
+        }
+        if (!message.ok && isDevRuntime()) {
+          console.warn(
+            `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} `
+            + `action=${message.actionSeq} command=${message.commandSeq}`,
+          );
+        }
         return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
@@ -1142,10 +1169,9 @@ export class Game {
   }
 
   /**
-   * Local `player_state` apply. A matching localhost snapshot (checkpoint +
-   * simTicks of the latest input state equals the authoritative pose) must not
-   * write movement, look, render, or camera. Health/hunger restore only when
-   * the value actually changes.
+   * Local `player_state` apply. A snapshot that matches the exact authoritative
+   * applied-command timeline must not write movement, look, render, or camera.
+   * Health/hunger restore only when the value actually changes.
    */
   private applyLocalPlayerSnapshot(
     session: GameSession,
@@ -1530,25 +1556,17 @@ export class Game {
     if (inVolume) motionProbe.note('world:volume');
   }
 
-  private handleOnlineBlockResult(
-    session: GameSession,
-    message: Extract<ServerMessage, { type: 'block_result' }>,
-  ): void {
-    this.clearOnlineBlockPending(session, message.x, message.y, message.z);
-    if (message.ok) return;
-    const key = `${message.x},${message.y},${message.z}`;
-    if (session.online) session.online.rejectedBlockKey = key;
-    console.warn(
-      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`,
-    );
-  }
-
   private clearOnlineBlockPending(session: GameSession, x: number, y: number, z: number): void {
     const online = session.online;
-    if (!online?.pendingBlockAction) return;
+    if (!online) return;
     const pending = online.pendingBlockAction;
-    if (pending.x !== x || pending.y !== y || pending.z !== z) return;
-    online.pendingBlockAction = undefined;
+    if (pending && pending.x === x && pending.y === y && pending.z === z) {
+      online.pendingBlockAction = undefined;
+    }
+    const active = online.activeBreakTarget;
+    if (active && active.x === x && active.y === y && active.z === z) {
+      online.activeBreakTarget = undefined;
+    }
   }
 
   private stepOnlineAuthority(session: GameSession, _dt: number): void {
@@ -2955,6 +2973,10 @@ export class Game {
     const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
     const riding = Boolean(session.ridingCartId);
     const using = gameplayAllowed && this.input.using;
+    const selectedAtTick = this.selectedStack();
+    const releasingBow = session.bowUseTicks > 0
+      && selectedAtTick?.itemId === ItemId.Bow
+      && !using;
     if (this.bowDiag && using !== this.lastOnlineUsing) {
       console.info(
         `[bowDiag] client_${using ? 'press' : 'release'} t=${performance.now().toFixed(1)} seq=${online.inputSeq + 1}`,
@@ -2991,9 +3013,16 @@ export class Game {
       });
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
+      if (releasingBow) {
+        online.client.send(captureBowRelease(
+          this.nextOnlineActionContext(session),
+          this.input.yaw,
+          this.input.pitch,
+        ));
+      }
     }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
-    const selected = this.selectedStack();
+    const selected = selectedAtTick;
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
@@ -3217,6 +3246,36 @@ export class Game {
     this.addSimPart('other', simMark);
   }
 
+  private nextOnlineActionContext(session: GameSession) {
+    const online = session.online!;
+    // Keeps isolated unit harnesses made before protocol v2 deterministic.
+    online.actionSequence ??= createClientActionSequence();
+    return nextActionContext(online.actionSequence, online.inputSeq, session.selectedSlot);
+  }
+
+  private abortOnlineBreak(session: GameSession): void {
+    const online = session.online;
+    if (!online?.activeBreakTarget) return;
+    online.client.send(captureBreakAbort(this.nextOnlineActionContext(session)));
+    online.activeBreakTarget = undefined;
+  }
+
+  private beginOnlineBreak(session: GameSession, hit: VoxelHit): void {
+    const online = session.online;
+    if (!online) return;
+    const active = online.activeBreakTarget;
+    if (active && active.x === hit.x && active.y === hit.y && active.z === hit.z) return;
+    if (active) this.abortOnlineBreak(session);
+    online.activeBreakTarget = { x: hit.x, y: hit.y, z: hit.z };
+    online.client.send(captureBreakStart(this.nextOnlineActionContext(session), hit));
+  }
+
+  private sendOnlineUse(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    online.client.send(captureUseAction(this.nextOnlineActionContext(session), session.target));
+  }
+
   private updateTargetAndActions(): void {
     const session = this.session!;
     const origin = session.player.eyePosition();
@@ -3242,12 +3301,14 @@ export class Game {
       session.online.rejectedBlockKey = undefined;
     }
     if (remoteCloser && session.online) {
+      this.abortOnlineBreak(session);
       session.miningTarget = undefined;
       session.miningProgress = 0;
       for (let click = 0; click < attackPresses; click += 1) {
         session.online.client.send({ type: 'attack' });
       }
     } else if (attack?.kind === 'mob' && mobTarget) {
+      if (session.online) this.abortOnlineBreak(session);
       session.miningTarget = undefined;
       session.miningProgress = 0;
       if (session.online) {
@@ -3286,6 +3347,7 @@ export class Game {
         }
       }
     } else if (attack?.kind === 'minecart') {
+      if (session.online) this.abortOnlineBreak(session);
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
@@ -3294,10 +3356,12 @@ export class Game {
         else this.breakMinecart(attack.cart);
       }
     } else if (!this.input.mining || !session.target) {
+      if (session.online) this.abortOnlineBreak(session);
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
     } else {
+      if (session.online) this.beginOnlineBreak(session, session.target);
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
         session.miningProgress = 0;
@@ -3317,8 +3381,9 @@ export class Game {
     session.combat.setHeldItem(this.selectedStack()?.itemId);
     if (this.input.consumeUsePressed()) {
       if (session.online) {
-        // Server useHeld owns interact + placement from authoritative look/raycast.
-        session.online.client.send({ type: 'interact' });
+        // Capture the exact client hit. The server validates it and never
+        // substitutes a later authoritative raycast target.
+        this.sendOnlineUse(session);
       } else {
         this.useTargetOrItem();
       }
@@ -3340,7 +3405,7 @@ export class Game {
         return;
       }
       session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
-      session.online.client.send({ type: 'break_block', x: hit.x, y: hit.y, z: hit.z });
+      session.online.client.send(captureBreakFinish(this.nextOnlineActionContext(session), hit));
       this.firstPerson?.swing();
       return;
     }
@@ -3411,7 +3476,7 @@ export class Game {
   private useTargetOrItem(): void {
     const session = this.session!;
     if (session.online) {
-      session.online.client.send({ type: 'interact' });
+      this.sendOnlineUse(session);
       return;
     }
     performUseHeld(this.singleplayerUseContext());
@@ -4282,7 +4347,7 @@ export class Game {
         if (isQuietWorldQueryEnabled()) this.cachedDebugText += '\nquietWorld=ON rd=1';
         this.cachedDebugText += `\n${this.longTasks.hudLine()}`;
         if (session.online) {
-          this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
+          this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction)}`;
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;
         }
