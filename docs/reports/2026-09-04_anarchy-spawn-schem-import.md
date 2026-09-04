@@ -10,80 +10,80 @@ Load the real Sponge schematic `frontier_spawn2.schem` into canonical Anarchy fi
 
 ## Result
 
-Offline CLI exists and reuses the existing importer:
+Canonical Anarchy filesystem world is the baked spawn map.
 
-```bash
-npm run server:import -- path/to/frontier_spawn2.schem [--force]
-npm run server:import -- --schem [--force]
-```
+**Source:** uploaded `frontier_spawn2.schem` (gzip Sponge v2, 64816 bytes; Windows FAT origin). Not committed.
 
-`parseSchematic` + `importAnarchySpawn` (`ANARCHY_SPAWN_Y_SHIFT = -28`) bake into `FsWorldStore` at `loadServerConfig().dataDir` / `anarchy` (`WORLD_PATH` / default `server/data/worlds/anarchy`). Existing worlds require `--force`. `--force` copies the previous directory to `anarchy.backup-<timestamp>` and keeps the player roster.
+| Field | Value |
+|---|---|
+| Format | Sponge schematic v2, gzip |
+| Size | 108×60×141 (913680 cells) |
+| Palette | 132 names |
+| Non-air in schem | 380150 (380138 after cocoa→air) |
+| Placement | `yShift=-28`, offset `(0, 40, 0)`, world Y 40..94 |
+| Applied / chunks | 361576 cells / 63 chunks |
+| Mapped | 380133; jungle→oak 1191; cocoa→air 12; diamond fallback 5 |
+| Canonical spawn | **53.5, 68.01, 70.5** |
+| World id / seed | `anarchy` / `anarchy-spawn-v1` |
+| Output | `server/data/worlds/anarchy/{meta,world,players}.json` |
+| Backup | `server/data/worlds/anarchy.backup-2026-09-04T18-44-32-704Z` |
 
-**The owner schematic was not readable on this Cloud VM.** Checked:
+Without `--force` the CLI refused (`World already exists`). With `--force` it backed up the old procedural world (spawn `0.5, 69.01, 0.5`) and wrote the map. Player roster kept.
 
-- `C:\Users\миша\Desktop\GAMES\mine123\spawn_map\frontier_spawn2.schem`
-- `/mnt/c/Users/миша/Desktop/GAMES/mine123/spawn_map/frontier_spawn2.schem`
-- `public/maps/frontier_spawn2.schem` (only `.gitkeep`)
-- `./frontier_spawn2.schem`, `./spawn_map/frontier_spawn2.schem`
-- `FRONTIER_SPAWN_SCHEM`
-- git history (never committed; `public/maps/.gitkeep` only)
+Sample persisted blocks: stone at `(0,40,0)`, stone_bricks 2686, glowstone 183, oak_planks 8807, oak_log 4594, black_wool 522, water 6284. After restart a gold/farmland/potato marker at `(55,71,70)` survived (`Farmland=150` hydrated, `PotatoCrop=153` age 4). `fetch` was never called.
 
-No fake `.schem` was generated. `server/data/worlds/anarchy` was **not** overwritten. It remains the previous procedural world (2 chunks / 11 cells, spawn `0.5, 69.01, 0.5`).
-
-Owner bake on a machine that has the file:
-
-```bash
-npm run server:import -- "C:\Users\миша\Desktop\GAMES\mine123\spawn_map\frontier_spawn2.schem" --force
-npm run dev:server
-```
-
-Then restart once to confirm restore-only (no second schematic read).
+Two AnarchyServer starts + websocket join: welcome pose `53.5, 68.01, 70.5`, seed `anarchy-spawn-v1`, `modChunks=63`. Second start did not re-read `.schem`.
 
 ## Implemented
 
 - `server/importSchematic.ts` — inspect + bake via `importAnarchySpawn` → `WorldSnapshot` → `WorldStore.save`
-- `server/schematicPaths.ts` — `.schem` detection and candidate paths (including the owner Desktop path)
+- `server/schematicPaths.ts` — `.schem` detection and candidate paths
 - `server/backupWorldDir.ts` — recursive copy before destructive replace
 - `server/importWorld.ts` — JSON dump **or** schematic; `--schem` searches candidates
 - Tests: refuse without `--force`, Y shift −28, player preserve, `WorldInstance` restore without `fetch`, farming IDs 150/153 survive restart
-- Docs: `LOCAL_SERVER.md`, `ARCHITECTURE.md`, `PROJECT_STATE.md`, `ROADMAP.md`
 
 ## Changed files
 
-- `server/importWorld.ts`, `server/importSchematic.ts`, `server/schematicPaths.ts`, `server/backupWorldDir.ts`
+- `server/importWorld.ts`, `server/importSchematic.ts`, `server/schematicPaths.ts`, `server/backupWorldDir.ts`, `server/WorldInstance.ts` (operator log only)
 - `tests/server/import-schematic.test.ts`
 - `docs/LOCAL_SERVER.md`, `docs/ARCHITECTURE.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`, this report
 
-Not changed: Farming simulation, Networking V2, `WorldInstance.initialize` restore path, block registry IDs.
+Not committed: `.schem`, `server/data/worlds/**`.  
+Not changed: Farming simulation, Networking V2, restore-only `WorldInstance.initialize`.
 
 ## Architecture decisions
 
 - Reuse `importAnarchySpawn` / `importSchematicIntoWorld`. No second mapper.
 - Startup stays `FsWorldStore.load` → restore. CLI is the only schematic reader.
-- `--force` is required when `dataDir/anarchy` exists. Backup is filesystem copy, gitignored with `server/data/worlds/**`.
+- `--force` is required when `dataDir/anarchy` exists.
 - Preserve `players` on schematic replace; do not keep procedural mobs from the old world.
 - Canonical seed remains `anarchy-spawn-v1`. World height remains `WORLD_HEIGHT = 256`.
-- Do not commit `.schem` or runtime `server/data/worlds/**`.
 
-## Tests
+## Tests / commands
 
-- `tests/server/import-schematic.test.ts` 5/5
-- `tests/fs-world-store.test.ts`, `tests/anarchy-world.test.ts`, `tests/schematic-import.test.ts` still pass
-- Gates in this pass: `npm run typecheck` PASS; `npm run typecheck:server` PASS; `npm run test:server` **125/125**; `npm run build` PASS; `check:boundaries` OK.
-- Extra: `tests/server/import-schematic.test.ts` 5/5; `farming-v2-two-client` 2/2; `farming-networking-v2-integration` 10/10.
+```
+npm run server:import -- <uploaded>.schem            # exit 2, exists
+npm run server:import -- <uploaded>.schem --force    # bake
+npx vite-node .local/verify-anarchy-import.ts        # restore ×2, fetch=0
+npx vite-node .local/join-imported-anarchy.ts        # ws join ×2 on map spawn
+npm run typecheck / typecheck:server / test:server / build
+```
+
+- `npm run test:server` **125/125**
+- `farming-v2-two-client` 2/2; `farming-networking-v2-integration` 10/10
 
 ## Visual QA
 
-Not run: the real `frontier_spawn2.schem` is not on this VM, so a client cannot spawn on the imported map here.
+No browser/WebGL pass in Cloud. Headless: WorldInstance restore + websocket welcome at map spawn, twice, without reading `.schem`.
 
 ## Performance
 
-Unchanged. Import is offline/CLI. Startup does not parse NBT.
+Offline CLI import ~3.6 s for 913k cells. Startup restore only. Welcome encode ~100 ms / 3.7 MiB because 63 modification chunks.
 
 ## Known issues
 
-- Cloud / this checkout cannot see the owner Windows path. CLI exits with the list of paths it tried.
-- Current `server/data/worlds/anarchy` is still procedural until the owner runs `--schem --force`.
+- Find-open-spawn picked a column whose floor is oak leaves at `(53,67,70)`. Existing `findOpenSpawn` rules; not changed in this pass.
+- Verification joins added `SpawnProbe` rows to `players.json` (runtime only).
 
 ## Deferred
 
@@ -92,10 +92,11 @@ Unchanged. Import is offline/CLI. Startup does not parse NBT.
 
 ## Next work
 
-On the owner machine: run `npm run server:import -- --schem --force`, restart Anarchy, confirm spawn on the map, restart again, confirm persistence.
+Owner localhost: `npm run dev:server` then `Играть онлайн → Анархия PvP` and walk the spawn structure.
 
 ## Git
 
 - Branch: `cursor/anarchy-spawn-schem-import-3ff8`
 - Base: `main` `165f563`
+- PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/46
 - Ordinary push. No force push. `.schem` and `server/data/worlds/**` not committed.

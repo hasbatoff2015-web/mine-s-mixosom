@@ -5,7 +5,7 @@
 - [x] Extend `npm run server:import` to bake `frontier_spawn2.schem` via existing `importAnarchySpawn` into `FsWorldStore` (`ANARCHY_SPAWN_Y_SHIFT = -28`).
 - [x] Refuse overwrite without `--force`; backup `dataDir/anarchy` before replacement; keep player roster.
 - [x] Keep production startup as restore-only (no `.schem` on `dev:server`).
-- [ ] Owner/Cloud must run the CLI against the real local `frontier_spawn2.schem` (not in git).
+- [x] Owner/Cloud baked the real `frontier_spawn2.schem` into `server/data/worlds/anarchy` (file not in git).
 
 ## 2026-09-04: Farming V1 + Networking V2 union
 

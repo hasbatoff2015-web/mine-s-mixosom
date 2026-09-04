@@ -208,6 +208,8 @@ JSON IndexedDB dumps still work: `npm run server:import -- dump.json [--force]`.
 
 Restart the server after import. Do not commit `.schem` or `server/data/worlds/**`.
 
+This Cloud checkout already ran that bake: spawn `53.5, 68.01, 70.5`, 63 chunks / 361576 modified cells. Other machines still need the local `.schem` + the same CLI if their `server/data/worlds/anarchy` is empty or procedural.
+
 ## Future VPS migration
 
 Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/reverse proxy). Do not rewrite world simulation. There is no Docker requirement in this pass.

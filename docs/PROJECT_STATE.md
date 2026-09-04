@@ -7,7 +7,7 @@
 - `npm run server:import` принимает `.schem` / `--schem` и печёт через существующие `parseSchematic` + `importAnarchySpawn` (`ANARCHY_SPAWN_Y_SHIFT = -28`) в `FsWorldStore` (`WORLD_PATH` / `server/data/worlds/anarchy`). JSON dump сохранён.
 - Существующий мир не перезаписывается молча: нужен `--force`, перед записью копия `anarchy.backup-<timestamp>`, roster `players` сохраняется. Farming IDs 150–157 и Networking V2 не менялись.
 - Production startup по-прежнему `FsWorldStore.load("anarchy")` → restore. `WorldInstance.initialize` **не** читает `.schem`.
-- Cloud VM не видит `C:\Users\миша\Desktop\GAMES\mine123\spawn_map\frontier_spawn2.schem`. Импорт реального файла — локальная команда владельца с тем же CLI.
+- Cloud VM не видит Windows `C:\Users\...`. Реальный `frontier_spawn2.schem` загружен в этот проход и испечён в `server/data/worlds/anarchy` (spawn `53.5, 68.01, 70.5`, 63 чанка / 361576 клеток, Y shift −28). `.schem` и runtime world **не** в git. Startup `.schem` не читает.
 - Report: `docs/reports/2026-09-04_anarchy-spawn-schem-import.md`.
 
 ## Последний проход: Farming V1 + Networking V2 union
