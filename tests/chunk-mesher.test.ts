@@ -47,4 +47,38 @@ describe('ChunkMesher hot path', () => {
     cheap.water.dispose();
     cheap.fire.dispose();
   });
+
+  it('neighborhood light cache keeps the same vertex count and sky samples as uncached AO', () => {
+    const world = new VoxelWorld('mesher-light-cache');
+    const chunk = world.getChunk(0, 0)!;
+    world.ensureChunkLighting(chunk);
+    world.getChunk(1, 0);
+    world.getChunk(-1, 0);
+    world.getChunk(0, 1);
+    world.getChunk(0, -1);
+    const mesher = new ChunkMesher(atlasStub);
+    const full = mesher.build(chunk, world, { vertexLight: 'full' });
+    const cached = mesher.build(chunk, world, { vertexLight: 'full', neighborhoodLightCache: true });
+    expect(cached.faces).toBe(full.faces);
+    const fullSky = full.opaque.getAttribute('skyLight') as { array: ArrayLike<number> };
+    const cachedSky = cached.opaque.getAttribute('skyLight') as { array: ArrayLike<number> };
+    expect(cachedSky.array.length).toBe(fullSky.array.length);
+    let mismatch = 0;
+    for (let i = 0; i < fullSky.array.length; i += 1) {
+      if (Math.abs(fullSky.array[i]! - cachedSky.array[i]!) > 1e-5) mismatch += 1;
+    }
+    expect(mismatch).toBe(0);
+    full.opaque.dispose();
+    full.cutout.dispose();
+    full.vegetation.dispose();
+    full.translucent.dispose();
+    full.water.dispose();
+    full.fire.dispose();
+    cached.opaque.dispose();
+    cached.cutout.dispose();
+    cached.vegetation.dispose();
+    cached.translucent.dispose();
+    cached.water.dispose();
+    cached.fire.dispose();
+  });
 });

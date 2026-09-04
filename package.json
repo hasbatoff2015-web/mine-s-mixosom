@@ -29,6 +29,7 @@
     "benchmark:fluids": "vite-node scripts/benchmark-fluids.ts",
     "benchmark:farming": "vite-node scripts/benchmark-farming.ts",
     "benchmark:spawn": "vite-node scripts/benchmark-spawn-perf.ts",
+    "benchmark:mesh-scan": "vite-node scripts/benchmark-mesh-scan.ts",
     "build": "tsc --noEmit && vite build",
     "check:size": "node scripts/check-build.mjs",
     "check:archive": "node scripts/check-build.mjs --archive",

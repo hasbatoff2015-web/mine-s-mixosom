@@ -498,6 +498,15 @@ const BLOCK_DEFINITIONS_BY_ID: readonly (BlockDefinition | undefined)[] = (() =>
   return definitions;
 })();
 
+/** 1 if the block occludes neighbor faces. Avoids object lookup in the mesher light hot path. */
+export const BLOCK_OCCLUDES_FACES = (() => {
+  const flags = new Uint8Array(256);
+  for (let id = 0; id < flags.length; id += 1) {
+    if (BLOCK_DEFINITIONS_BY_ID[id]?.occludesFaces) flags[id] = 1;
+  }
+  return flags;
+})();
+
 export function getBlockDefinition(id: BlockId): BlockDefinition {
   const definition = BLOCK_DEFINITIONS_BY_ID[id];
   if (definition === undefined) throw new RangeError(`Unknown block id: ${id}`);
