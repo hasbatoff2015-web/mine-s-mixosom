@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-04: Anarchy spawn schematic → FsWorldStore
+
+- [x] Extend `npm run server:import` to bake `frontier_spawn2.schem` via existing `importAnarchySpawn` into `FsWorldStore` (`ANARCHY_SPAWN_Y_SHIFT = -28`).
+- [x] Refuse overwrite without `--force`; backup `dataDir/anarchy` before replacement; keep player roster.
+- [x] Keep production startup as restore-only (no `.schem` on `dev:server`).
+- [x] Owner/Cloud baked the real `frontier_spawn2.schem` into `server/data/worlds/anarchy` (file not in git).
+
 ## 2026-09-04: Farming V1 + Networking V2 union
 
 - [x] Integrate PR #42 (`e5c77f3`) onto Farming `main` (`aa0ee07`) without dropping IDs 150–157 or `tickFarming`.
@@ -434,7 +441,7 @@
 - [x] Persist entities/inventory; explicit `npm run server:import` only (no auto IndexedDB, no `.schem`).
 - [x] Targeted tests 22/22 (`anarchy-server` + `anarchy-gameplay`). Docs + draft PR. **No main merge.**
 - [ ] Owner two-client localhost QA before any main merge.
-- [ ] Explicit IndexedDB → `npm run server:import` of the accepted spawn map (not in git).
+- [x] Explicit `npm run server:import -- --schem` of `frontier_spawn2.schem` (file stays local, not in git).
 - [ ] Later: VPS deploy, accounts, anti-cheat beyond look/reach/mining checks.
 
 ## 2026-08-29: Anarchy server QA fixes (no new features)

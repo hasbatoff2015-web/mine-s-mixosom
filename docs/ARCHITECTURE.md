@@ -596,7 +596,7 @@ Simulation talks to `WorldSnapshot` + `WorldStore`. Adapters own IndexedDB vs fi
 - **IDB:** database name and store key unchanged. `SaveService` remains the IDB engine; `IdbWorldStore` parses/validates.
 - **FS:** still `meta.json` + `world.json` + `players.json`. Mapper `snapshotToFsRecords` / `fsRecordsToSnapshot`. Writes are queued; files use temp+rename; `world.json`/`players.json` then `meta.json`.
 - **Empty vs corrupt:** missing `meta.json` → `null` (create). Existing corrupt/incomplete files throw `PersistenceError` — no silent procedural overwrite.
-- **Import:** `npm run server:import` parses a dump as `WorldSnapshot` then `FsWorldStore.save`. Not startup. Not `.schem`.
+- **Import:** `npm run server:import` is dump JSON **or** `.schem` (existing `importAnarchySpawn`) → `FsWorldStore.save`. Not startup. `--force` + backup if the world already exists.
 
 ### Shared RNG + lighting adapters (Phase 6)
 
@@ -744,7 +744,7 @@ index = y × 16 × 16 + z × 16 + x
 
 `WORLD_HEIGHT` в индекс не входит: старые save deltas по linear index остаются валидными после увеличения высоты. Lighting arrays (`skyLight` / `blockLight`) того же размера. Generator заполняет только `0..max(surface, sea)`; `Chunk.occupancyTop` ограничивает sky fill, emitter scan, fluid activation и mesher, чтобы пустой столб Y=85..255 не стоил как полный мир. `WORLD_LIGHT_BUDGET_MS = 2` не поднимается из‑за высоты.
 
-Schematic import живёт в `src/world/import/` как DEV/offline tool (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production `Играть онлайн → Анархия PvP` больше не читает IndexedDB и не вызывает importer.** Клиент коннектится к `ws://127.0.0.1:2567`. Сервер владеет world id `anarchy`, seed `anarchy-spawn-v1`, filesystem persist. Если server data пустой — procedural create + `estimateWorldSpawn`, без `.schem`. Исторический IndexedDB `anarchy` остаётся local-only и не является online authority. Явный перенос: `npm run server:import -- dump.json` (см. `docs/LOCAL_SERVER.md`). `openAnarchyWorld()` сохранён для тестов/legacy IndexedDB path и **не** вызывается из UI connect.
+Schematic import живёт в `src/world/import/` как DEV/offline library (NBT + Sponge `.schem` + Minecraft→Frontier mapper). `jungle_log` / `jungle_wood` → `oak_log`; `cocoa` → Air; прочие unknown → `diamond_block`. **Production `Играть онлайн → Анархия PvP` не читает IndexedDB и не вызывает importer на старте.** Клиент коннектится к `ws://127.0.0.1:2567`. Сервер владеет world id `anarchy`, seed `anarchy-spawn-v1`, filesystem persist. Если server data пустой — procedural create + `estimateWorldSpawn`, без `.schem`. Явный перенос карты: `npm run server:import -- frontier_spawn2.schem` (или `--schem`) через тот же `importAnarchySpawn`; JSON dump тоже принимается. `openAnarchyWorld()` сохранён для тестов/legacy IndexedDB path и **не** вызывается из UI connect.
 
 `VoxelWorld` переводит world coordinates в chunk/local coordinates через floor division и positive modulo, что корректно работает с отрицательными X/Z.
 
@@ -990,7 +990,7 @@ flowchart LR
 
 **Online Anarchy** does not write IndexedDB. Server persist interval and shutdown save are unchanged. Snapshot creation runs only on save/export, not per tick.
 
-`npm run server:import -- dump.json` is IndexedDB dump → `WorldSnapshot` → `FsWorldStore`. It does not run at startup and does not read `.schem`.
+`npm run server:import` is a one-shot CLI, not startup. JSON dump → `parseWorldSnapshot` → `FsWorldStore.save`. `.schem` / `--schem` → existing `importAnarchySpawn` (Y shift −28) → snapshot → `FsWorldStore.save`. Existing worlds require `--force`; the CLI copies `dataDir/<worldId>` to `<worldId>.backup-<timestamp>` first. Production `WorldInstance.initialize` only restores the snapshot.
 
 ## Yandex adapter
 
