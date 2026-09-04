@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: typed-array mesher emit (after PR #48)
+
+- Ветка `cursor/mesher-typed-emit-3ff8` от PR #48 (`d85a27b`). Stack: **#49 → #48 → #47**. `origin/main` ещё без #47.
+- Cube emit пишет в переиспользуемые `Float32Array`/`Uint32Array`; `toGeometry` делает один `slice` в `BufferAttribute`. Solid neighbors в `faceVisible` идут через `BLOCK_OCCLUDES_FACES`. AO формула не менялась.
+- Isolation fullAo+cache: 20.0 → **16.2 ms** avg. Emit ~7–11 → **3.7 ms**. Conversion 1–3 → **0.48 ms**. Spawn walk mesh avg 16.3 → **12.3**, max 24.6 → **18.2**. Faces **419181**. Stacked gen+mesh = **0**. Heap isolation −7 MB vs прежние +35…52 MB.
+- Цель nearby <8 / max <12 **не достигнута**: остаток voxel walk ~6 ms + cached AO ~6 ms. Greedy/worker только в `benchmark:mesh-scan` (6-dir upper bound 5.39×). GPU/FPS не измерялись.
+- Report: `docs/reports/2026-09-04_mesher-typed-emit.md`.
+
 ## Последний проход: mesher scan audit after PR #47
 
 - Ветка `cursor/mesher-scan-audit-3ff8` от PR #47 (`2682e65`). `origin/main` ещё без #47 (PR OPEN).

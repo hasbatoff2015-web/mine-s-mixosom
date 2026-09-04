@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-04: typed-array mesher emit (after PR #48)
+
+- [x] Profile emit (`number[]` vs reusable TypedArray) and GC on the same spawn 9×9.
+- [x] Write vertices/indices into growable Float32/Uint32 lists; one compact copy into `BufferAttribute`.
+- [x] Keep AO bitwise-equivalent; do not ship greedy or worker.
+- [x] Expand `npm run benchmark:mesh-scan` (phases + 6-dir greedy estimate + worker clone).
+- [ ] Nearby mesh still ~16 ms avg / ~22–29 ms max — target <8/<12 needs topology, cheaper nearby AO, or a worker (hide hitch only).
+- [ ] GPU/FPS / `renderer.info` on a real device.
+
 ## 2026-09-04: mesher scan audit (after PR #47)
 
 - [x] Isolation breakdown of nearby mesh (visibility / emit / cheap light / full AO / light cache).
@@ -7,7 +16,7 @@
 - [x] Neighborhood light cache for full AO + occlusion LUT.
 - [x] `npm run benchmark:mesh-scan` with p50/p95/p99/max.
 - [ ] GPU/FPS / `renderer.info` on a real device.
-- [ ] Next CPU candidate: typed vertex bags (`number[]` emit is ~7–11 ms).
+- [x] Next CPU candidate: typed vertex bags (`number[]` emit was ~7–11 ms).
 
 ## 2026-09-04: spawn performance audit
 
