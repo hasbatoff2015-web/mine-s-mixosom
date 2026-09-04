@@ -1,5 +1,11 @@
 # Архитектура
 
+## Anarchy movement on current `main` (not Networking V2)
+
+Current `origin/main` still uses protocol **1**: the server overwrites `lastInput` and ticks that state once per `setInterval(50)` callback; the online client does not run local physics. Snapshots drive `ingestAuthoritativePosition` + per-frame `stepTowardTarget`. Remote players interpolate a wall-clock buffer (`performance.now()`, max 8 samples, 80 ms delay).
+
+FIFO `PlayerCommandQueue`, `ackCommandSeq`, `localPlayerPrediction`, `tickScheduler`/`tickCatchUp`, and serverTick `RemoteInterpolationBuffer` live only on unmerged PR **#42** (`PROTOCOL_VERSION = 3`). They are not part of this tree. See `docs/reports/2026-09-04_mp-smoothness-regression.md`.
+
 ## Farming V1 — shared sparse simulation
 
 `src/farming/` is the single farming simulation module. `FarmingSystem` subscribes to `VoxelWorld.observeCommittedBlocks`, keeps a sparse map of Farmland/crop/stem positions by chunk, and lazily builds water indices only for nearby loaded chunks. Chunk unload discards runtime indices; restored modifications rebuild them on load. Canonical world modifications and `blockStates` remain the only persistence source—there is no farming save file or per-crop timestamp.

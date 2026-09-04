@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Multiplayer smoothness regression — 2026-09-04
+
+- **Networking V2 не в `main`.** Draft PR **#42** `e5c77f334fa46b726372fb7d7d27283f213ea184` всё ещё OPEN (`mergedAt: null`). `origin/main` = `aa0ee07403874fc72e483f53c2b1db176d33b649` = old Anarchy (`PROTOCOL_VERSION = 1`, latest-input, chase/snap, wall-clock remote interp) **+** Farming V1 (PR **#43**).
+- Merge-base PR #42 vs `main` = `4d803e5de22e551e3f71941c0abb03c91e78cf4c`. `git diff 4d803e5 aa0ee07 -- src/net/` пустой: Farming не перезаписывал V2 — V2 сюда не попадал.
+- Ощущение «после Farming снова дёргается» = сравнение ветки #42 с актуальным `main`, а не регресс V2. `Unknown block id: 150` на checkout #42 — несовместимость save (IDs 150–157), не причина rubber-band.
+- Farming на пустом мире ~0.01 ms/tick; online-клиент `tickFarming` не вызывает. Пульс 1024 клеток ~1–6 ms — вторичный hitch только на реальных фермах + remesh.
+- Исправление: интегрировать #42 **на** текущий Farming `main` (union kernel/protocol/Game.ts), не откатывать ни V2, ни Farming.
+- Handoff: `docs/reports/2026-09-04_mp-smoothness-regression.md`. Characterization tests: `tests/anarchy-movement-stack-identity.test.ts`, `tests/farming-tick-budget.test.ts`.
+
 ## Farming V1 — 2026-09-04
 
 - Feature branch: `codex/farming-core`, based on `origin/main` `4d803e5de22e551e3f71941c0abb03c91e78cf4c`. Existing block IDs are unchanged; Farming uses appended IDs 150–157.
