@@ -70,7 +70,7 @@ const simRoots = [
   'src/input/MoveInput.ts',
   'src/ui/recipeBook.ts',
   'src/ui/containerInteractions.ts',
-  'shared/protocol.ts',
+  'shared',
 ];
 
 function isSimFile(rel) {

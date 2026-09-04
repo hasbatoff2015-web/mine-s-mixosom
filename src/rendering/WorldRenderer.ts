@@ -114,6 +114,8 @@ export class WorldRenderer {
     options: {
       meshRadius?: number;
       requireNeighborLight?: boolean;
+      allowPendingLighting?: boolean;
+      preferKeys?: ReadonlySet<string>;
       counters?: { attempted: number; completed: number; skippedBlocked: number };
       onMeshStart?: (chunk: Chunk) => void;
       onMeshComplete?: (chunk: Chunk) => void;
@@ -126,6 +128,8 @@ export class WorldRenderer {
     const centerZ = originZ === undefined ? this.world.viewChunkZ : floorDiv(originZ, CHUNK_SIZE);
     const meshRadius = options.meshRadius;
     const requireNeighborLight = options.requireNeighborLight === true;
+    const allowPendingLighting = options.allowPendingLighting === true;
+    const preferKeys = options.preferKeys;
     const counters = options.counters;
     const dirX = options.dirX ?? 0;
     const dirZ = options.dirZ ?? 0;
@@ -133,6 +137,7 @@ export class WorldRenderer {
     const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
       if (!chunk.dirty && !chunk.lightMeshStale) continue;
+      if (preferKeys && !preferKeys.has(chunkKey(chunk.x, chunk.z))) continue;
       if (meshRadius !== undefined) {
         const distance = Math.max(Math.abs(chunk.x - centerX), Math.abs(chunk.z - centerZ));
         if (distance > meshRadius) continue;
@@ -147,7 +152,14 @@ export class WorldRenderer {
     let rebuilt = 0;
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
-      if (!chunk.lightingReady || this.world.hasPendingLighting(chunk)) {
+      if (!chunk.lightingReady) {
+        if (counters) {
+          counters.attempted += 1;
+          counters.skippedBlocked += 1;
+        }
+        continue;
+      }
+      if (!allowPendingLighting && this.world.hasPendingLighting(chunk)) {
         // Skip blocked head; keep scanning for a later ready chunk.
         if (counters) {
           counters.attempted += 1;

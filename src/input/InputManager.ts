@@ -60,6 +60,8 @@ export class InputManager {
   using = false;
   private attackPresses = 0;
   usePressed = false;
+  useReleased = false;
+  miningReleased = false;
   lastUnlockReason: PointerUnlockReason = 'unknown';
   private readonly keys = new Set<string>();
   private touchForward = 0;
@@ -152,11 +154,25 @@ export class InputManager {
     return value;
   }
 
+  consumeUseReleased(): boolean {
+    const value = this.useReleased;
+    this.useReleased = false;
+    return value;
+  }
+
+  consumeMiningReleased(): boolean {
+    const value = this.miningReleased;
+    this.miningReleased = false;
+    return value;
+  }
+
   releaseActions(): void {
     this.mining = false;
     this.using = false;
     this.attackPressed = false;
     this.usePressed = false;
+    this.useReleased = false;
+    this.miningReleased = false;
     this.touchJump = false;
   }
 
@@ -308,8 +324,14 @@ export class InputManager {
       }
     });
     window.addEventListener('mouseup', (event) => {
-      if (event.button === 0) this.mining = false;
-      if (event.button === 2) this.using = false;
+      if (event.button === 0) {
+        if (this.mining) this.miningReleased = true;
+        this.mining = false;
+      }
+      if (event.button === 2) {
+        if (this.using) this.useReleased = true;
+        this.using = false;
+      }
     });
     this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
     this.canvas.addEventListener('wheel', (event) => {
@@ -408,9 +430,13 @@ export class InputManager {
         else if (action === 'pause') this.callbacks.togglePause();
       };
       const up = () => {
-        if (action === 'mine') this.mining = false;
-        else if (action === 'use') this.using = false;
-        else if (action === 'jump') this.touchJump = false;
+        if (action === 'mine') {
+          if (this.mining) this.miningReleased = true;
+          this.mining = false;
+        } else if (action === 'use') {
+          if (this.using) this.useReleased = true;
+          this.using = false;
+        } else if (action === 'jump') this.touchJump = false;
       };
       button.addEventListener('pointerdown', down);
       button.addEventListener('pointerup', up);

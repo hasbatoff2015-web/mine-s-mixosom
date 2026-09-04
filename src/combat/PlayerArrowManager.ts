@@ -114,10 +114,11 @@ export class PlayerArrowManager {
     flaming = false,
     id?: string,
     ownerId?: string,
+    spread?: number,
   ): void {
     if (this.arrows.length >= 48) this.remove(0);
     const originVec = new Vec3(origin.x, origin.y, origin.z);
-    const velocity = inaccurateArrowDirection(direction, this.random).multiplyScalar(speedBlocksPerTick);
+    const velocity = inaccurateArrowDirection(direction, this.random, spread).multiplyScalar(speedBlocksPerTick);
     const visual = this.host.createArrow(flaming) as EntityVisual | undefined;
     if (visual) {
       this.host.setPosition(visual, originVec.x, originVec.y, originVec.z);

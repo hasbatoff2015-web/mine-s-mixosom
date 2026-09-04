@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Farming V1 + Networking V2 union
+
+- Ветка `cursor/farming-networking-v2-3ff8` от `origin/main` `aa0ee07403874fc72e483f53c2b1db176d33b649` (Farming V1 / PR #43). Donor Networking V2 = PR #42 `e5c77f334fa46b726372fb7d7d27283f213ea184`. Не blind `-X theirs`.
+- Сохранены Farming IDs 150–157, `FarmingSystem`, kernel `world → farming → falling → players`, `hydrated`/`age` в protocol, SP/server hosts, assets, tests.
+- Движение: FIFO `PlayerCommandQueue`, `ackCommandSeq`, prediction/reconciliation, serverTick remote interpolation, `PROTOCOL_VERSION = 3`. Старый latest-input + `stepTowardTarget` chase **не** production.
+- Online-клиент по-прежнему не тикает farming. Сервер тикает `FarmingSystem` в том же 20 TPS kernel, затем FIFO players.
+- Расследование регрессии: `docs/reports/2026-09-04_mp-smoothness-regression.md`. Integration: `docs/reports/2026-09-04_farming-networking-v2-union.md`.
+
 ## Farming V1 — 2026-09-04
 
 - Feature branch: `codex/farming-core`, based on `origin/main` `4d803e5de22e551e3f71941c0abb03c91e78cf4c`. Existing block IDs are unchanged; Farming uses appended IDs 150–157.
@@ -10,7 +18,203 @@
 - Automated gates: directed farming/regression 267/267, core Farming 35/35, `test:sim` 42/42, `test:server` 78/78, all typechecks, import boundaries, Node/server smokes, build/size/archive PASS. Exact-main full-suite comparison added 36 passing tests and no failure class. Benchmarks: 1024 positions 6.066 ms; 4096 positions 13.908 ms on this machine. DEV WebGL `?qaFarming=1` visually checked dry/wet plots, all stages, stems/fruits, hoes, Bone Meal, and farming items.
 - Detailed handoff: `docs/reports/2026-09-04_farming-core.md`.
 
-Срез: **2026-09-02**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: Online networking v2 integration
+
+- Ветка `cursor/online-networking-v2-integrated-3ff8` от BASE `cursor/online-networking-v2-3ff8` (`1f5aafe`). Donor `codex/online-command-pipeline-v2` (`aa2ae9e`) — не mechanical merge. **Не merge main.** Существующие #37/#38/#39/#40 не rewrite.
+- Контракт: CLIENT OWNS INTENT / SERVER OWNS RESULT. `LIVE = checkpoint[ackCommandSeq] + truly pending`. `PROTOCOL_VERSION = 3`.
+- Movement: BASE FIFO + `ackCommandSeq`. Accepted ACK не мутирует live pose. Overflow compact только continuous-state; `queueCompacted` на протоколе.
+- Block: BASE explicit intent + donor `targetBlockId` / hit-in-voxel / exact face / LOS+face. Eye из `actionPoseHistory[commandSeq]` или REJECT. Never silent B.
+- Bow: BASE `localAim.ts`. Draw не сбрасывается stale FIFO `use:false`. Captured-aim Online spread=0. Reconnect zeros `bowUseTicks`.
+- Remote: один `RemoteInterpolationBuffer`. serverTick clock, 12 samples, delay 100 ms пока нет underflow, затем clamp(100+jitterP95, 80..180). Recovery ≤100 ms. Teleport/respawn snap. Flying сохранён.
+- Report: `docs/reports/2026-09-04_online-networking-v2-integration.md`. Final audit: `docs/reports/2026-09-04_final-online-and-gameplay-integration.md`.
+- Integrated onto Farming `main` (`aa0ee07`) as union: FIFO/`ackCommandSeq` + Farming kernel `tickFarming` + block IDs 150–157. Protocol 3 keeps `hydrated`/`age`.
+
+## Предыдущий проход: Online networking v2 (BASE PR #40)
+
+- Ветка `cursor/online-networking-v2-3ff8`, от HEAD PR #39 (`c5fba74`). **Не merge в main.** Не rewrite #37/#38/#39.
+- Контракт: CLIENT OWNS INTENT / SERVER OWNS RESULT. `PROTOCOL_VERSION = 3`.
+- Movement: FIFO `PlayerCommandQueue`, one command per 20 TPS tick, sticky last if empty. ACK = `serverTick` + `ackCommandSeq` + bounded `appliedSteps[]`.
+- Reconciliation: compare `history[ackCommandSeq]`. Accepted ACK must not mutate live pose (`diffMotionFull === []`). Real mismatch → restore + replay. Equiv 1e-4, not 0.03 pose slop.
+- Block: sequenced `action` / targeted `interact` with target/face/hit. Validate A or reject. Never substitute neighbor B from delayed server ray. Mining locked to `break_start` target.
+- Bow: `bow_release` with captured yaw/pitch. Use falling edge does not spawn arrows. Later look cannot change a released projectile.
+- Remote: PR #38 serverTick buffer kept; telemetry expanded (jitter p50/p95, late/s, maxVisualStep).
+- Local aim: PR #39 live look kept for capture; physics stays 20 TPS.
+- DEV `predNo*` remains diagnostic only.
+- Report: `docs/reports/2026-09-04_online-networking-v2.md`. Baseline: `docs/reports/2026-09-04_online-networking-v2-baseline.md`.
+- Owner: two-client live QA still required (draft PR until confirmed).
+
+## Последний проход: Local interaction aim (live look)
+
+- Ветка `cursor/local-aim-desync-86e1`, от PR #38. **Не merge в main.** Remote interpolation / local prediction physics / server authority **не трогали**.
+- Bug: first-person camera uses `InputManager` yaw/pitch every RAF; block pick / outline / bow used `PlayerController.viewDirection()` only on the 20 TPS tick → crosshair and selection could disagree (e.g. between two logs).
+- Fix: one Node-safe `localInteractionAim` (canonical eye + live look). `refreshLocalCrosshair` on render for the outline; break/place/bow reuse the same aim. Physics still copies look inside `PlayerController.tick` / `tickOnline`. Third-person targeting stays eye+facing, not the presentation camera.
+- DEV F3 `Aim cam/ply/look tgt n face`. `?aimDiag=1` documented; HUD is on in DEV F3.
+- Tests: `tests/local-aim.test.ts`. Typecheck client/server/sim PASS.
+- Report: `docs/reports/2026-09-04_local-aim-desync.md`.
+
+## Последний проход: Remote player interpolation v1
+
+- Ветка `cursor/remote-player-interpolation-86e1`, от HEAD PR #37 (`fd02b67`). **Не merge в main.** Local prediction / PlayerController / server TPS **не трогали**.
+- Remote samples keyed by `player_state.tick`, not `performance.now()`. Arrival time is telemetry + elapsed term of the latest sample only.
+- Clock: `clockTick = latestServerTick + (now - latestReceivedAt) / 50ms`; `renderTick = max(prev, clockTick - 2)`. Delay **100 ms** (2 ticks). Buffer max 8.
+- Lerp xyz/pitch/velocity; shortest-path yaw; midpoint booleans. One snapshot → hold. Underflow → velocity coast ≤ 100 ms, then hold the **capped** pose (no snap back, no infinite coast).
+- Rejoin `player_joined` resets the timeline. `player_left` disposes. Animator uses interpolated xz speed + vy/onGround/sprint/sneak. Actions still false/0 (next PR).
+- DEV: F3 nearest-remote HUD; `?remoteDiag=1` logs one timeline/s.
+- Tests: `tests/remote-player-interpolation.test.ts` A–K + jitter/yaw/reset/telemetry; view + diagnostics; entity tests uncoupled from remotes.
+- Report: `docs/reports/2026-09-03_remote-player-interpolation.md`.
+- Owner: two-client QA still required (A moves, B observes).
+
+## Последний проход: Online Creative Flight permission (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Live dump: server hover `y=71.666 vy=0 fly=true`, idle input every tick. Client checkpoint/history `fly=false` + gravity (`vy≈-1.57` then `-3.10`) → repeated Y correction / vertical jitter.
+- Root cause: **не timeline.** `PlayerController.tick()` clears `isFlying` when `creativeFlightAllowed` is false. Singleplayer sets the flag every tick from `summary.mode`. Online `tickOnline` never did. Welcome set `summary.mode=creative` but left the new controller at default `false`. `player_state` only wrote the flag when gamemode **changed**, so it stayed false forever. Scratch `predictedStateFromCheckpoint` copies movement state only — permission is outside `PlayerMovementState`.
+- Fix: sync `creativeFlightAllowed` from gamemode on startSession / tickOnline / sendOnlineIdle / snapshot **before** reconcile / inventory / respawn / setGameMode (same as SP). Scratch always receives that permission. `[corrDiag]` `FLIGHT:` prints local/scratch allowed vs checkpoint/predicted/snapshot flying.
+- Не трогали physics constants, Y tolerance, smoothing, applied-input timeline.
+- Tests: `tests/online-creative-flight-prediction.test.ts` — unsynced live falls vs server hover; scratch without permission drops fly; SP vs Online hover 200 ticks `corr=0`; flight forward / SHIFT / reconnect / alt-tab; survival walk/jump.
+- Report: `docs/reports/2026-09-03_online-creative-flight-permission.md`.
+
+## Последний проход: extra=3 vs tickGap=1 (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: `extra=seqGap` при `tickGap=1 physicsTicks=1`. **Не seqGap heuristic.** `extraTicks = simTicks = serverTick - lastAckedServerTick`. Comparable = lastAcked + **N ticks of latest input**.
+- `tickGap` считается от last **received** `player_state` (`lastStateTick` на ingest). `lastAckedServerTick` только на reconcile commit. Latest-only pending slot теряет промежуточные snapshot'ы → simTicks=3, tickGap=1. seqGap совпадает случайно (клиент тоже натикал ~3 seq).
+- Старый dump врал: `extra=max(0, physicsTicks-seqGap)` печатался рядом с значением simTicks.
+- Stationary flight y-jitter **не** leftover `vy` от extra>1: live applied-input timeline показал server hover `vy=0 fly=true` while client prediction had `fly=false` + gravity. See Creative Flight permission pass.
+- DEV: snapshot `appliedTicks` (последние 8 server physics ticks), `[corrDiag]` APPLIED INPUT TIMELINE + `extraAssignSite` + `pendingSlotOverwrites` + checkpoint y/vy.
+- Report: `docs/reports/2026-09-03_checkpoint-extra-source.md`.
+
+## Последний проход: prediction checkpoint (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner dump: `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x reject=xz`. Клиент предсказал seq 544 и 545; сервер сделал **один** physics tick latest-input 545. `history[545]` ≈ на один walk step впереди.
+- **`inputSeq` не checkpoint.** Snapshot: `serverTick` / `tickNumber`, `physicsTicks=N`, `inputSeq` = latest movement **state**. Client history keyed by `clientPredTick`. Compare = last accepted pose + `simTicks` of that latest input. Не FIFO. Не seqGap heuristic / lerp / tolerance.
+- Model B: клиент предсказывает каждый локальный 20 TPS tick; snapshot несёт authoritative tick. Model A отклонён (клиент не знает server slot). Model C (FIFO) запрещён.
+- Timeline harness (`src/net/predictionTimeline.ts`): owner gap=2 воспроизводится; history would correct, checkpoint dist=0. То же для phase batches и fly+SHIFT 2-vs-1. Stationary flight checkpoint dist=0 (тот же timeline, не отдельный physics bug).
+- Game: welcome/resync seed checkpoint; `reconcilePredictedPlayer(..., { physicsTicks, serverTick: message.tick })`.
+- Tests: timeline + prediction + lockstep coalesce now **accept**; pipeline 10 Hz coalesce **corr=0**.
+- Report: `docs/reports/2026-09-03_prediction-checkpoint.md`.
+
+## Последний проход: one-correction diagnostic (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: 20/20 localhost, `sess socks=1`, всё ещё `corr/s` 5–11, `netPos/s`=`corr/s`, soft/snap/dup=0. Это **реальные positional corrections**, не TPS и не duplicate socket.
+- **Диагностика, не фикс.** `[corrDiag:first]` полный dump (SEQ/TIMING/PHYSICS/INPUT/POSE/DIFF/STATE/WORLD). `physicsTicks=1` → compare `history[N]`; `=2` → `history[N]` + extra того же latest input. `lastInputSeq` ≠ physics tick.
+- PlayerController lockstep 1…20 identical (walk/strafe/jump/idle/flight hover/fly+SHIFT). WorldInstance 1:1 vs `predictLocalMove` на Anarchy **совпадает** (тот же мир и frozen copy). Category C на этом harness снята.
+- Coalesce-пример: seqGap=2 physicsTicks=1 → `firstDiff=z` distance≈0.208≈walkStep. Это B, не 20/20 1:1.
+- Live 20/20 причина **ещё не доказана**. Нужен owner paste `[corrDiag:first]` с `?corrDiag=1`.
+- Tests: correction-diag **10/10**; lockstep **6/6**; prediction **29/29**; typecheck PASS.
+- Report: `docs/reports/2026-09-03_one-correction-diag.md`.
+
+## Последний проход: hidden-tab Page Visibility (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: одна вкладка игры, переключение на ChatGPT на 1–2 с → jitter сильно хуже / иногда снова гладко. Не duplicate sessionToken.
+- **Пока вкладка BACKGROUND:** `tickOnline` не бежит (pred=0, send=0). Сервер продолжает `lastInput` на 20 TPS. `player_state` приходит, но latest-slot + `duplicate-seq` ignore. Локальная поза заморожена, сервер уходит на ~`WALK_SPEED×hiddenSeconds`. Resume: RAF freeze → до 4 catch-up ticks со stale pose → correction storm. Сервер **не** копит FIFO команд — sticky lastInput.
+- **Политика:** hide → один idle (сервер останавливается); show → `previousTime`/`accumulator` reset, force resync к последнему snapshot, history сброшена, look сохранён. Не меняли physics / tolerance / interpolation / TPS.
+- DEV: F3 `visibility/focus/hiddenDurationMs/resumeTicks/resumeSnapshots`, `inGap/inBurst`; логи `[vis]`, `[vis-resume]`, `[vis-resync]`.
+- Tests: hidden-tab **9/9**; prediction **29/29**; tick-clock **6/6**; typecheck client/server/sim PASS.
+- Report: `docs/reports/2026-09-03_hidden-tab-visibility.md`.
+
+## Последний проход: session isolation + event-loop / reconnect load (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner: вторая вкладка с тем же sessionToken; после reconnect frame spike ~1697 ms; через минуту corr/s=0 но jitter; flight: snapSent~15, corr/s~11, catchUp/s=4, dropped=8.
+- **Session:** `join()` заменял `sink`, но старый WebSocket оставался в `sockets` и мог звать `applyInput`. Close старого сокета делал `disconnect` живого игрока. Теперь: новый `connectionId` на resume, старый сокет `session_taken` + close, input только с live connectionId, close stale не дисконнектит. F3 `sess socks/src/snap/resume/fp` (fingerprint, не token). QA: **ровно одна вкладка**.
+- **Load:** `syncChunksFor` больше не вызывает `serializeModifications()` на весь мир на каждый новый chunk. Бюджет 2 новых generate/sync, drain каждый outer loop. Welcome encode timed. Client: `[reconnectLoad]`, `[frameSpike]`, `[longtask]`, `?quietWorld=1`.
+- tickClock: lateness/callback/ELD p95/p99/max, tickWall, entities, chunkSend/gen.
+- Tests: tick-clock **6/6**; prediction **29/29**; isolation flags **8/8**; `test:sim` **42/42**; `test:server` **94/94**; typecheck/build PASS.
+
+## Последний проход: 20 TPS server clock + catch-up comparable snapshots (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner F3: pred/s=20, state/s=17, corr/s=3, netPos/s=3, soft=0. Остаток — **реальные xz/y corrections**, не speed/flying.
+- Root cause: `setTimeout(tickMs - work)` копит Node slack → outer loop ~17 Hz. Catch-up крутит 20 physics ticks, но **один** snapshot после 2 ticks с `inputSeq=N`. Клиент сравнивал `history[N]` (1 tick) с позой на 2 ticks → rewind ~walk step, corr/s≈3.
+- Fix: абсолютный 20 Hz слот (`scheduleNextTickSlot`); snapshot несёт `physicsTicks`; reconcile сравнивает `history[N]` плюс `max(0, physicsTicks - seqGap)` extra ticks того же latest input. Не lerp, не больше tolerance.
+- DEV: F3 `srv phys/s snapGen/s snapSent/s`; `[corrDiag]` на каждую коррекцию (`firstDiff`, `physicsTicks`).
+- Tests: tick-clock + prediction + move-sim + isolation **69/69**; `test:sim` **42/42**; `test:server` **89/89**; typecheck/build PASS.
+- Report: `docs/reports/2026-09-03_server-tick-clock-corrections.md`.
+
+## Последний проход: incoming local `player_state` side effects (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Owner QA: Normal Online jitter; `?predNoState=1` полностью гладкий (`send=on state=OFF`). Значит, prediction / PlayerController / fixed-step render / outbound input OK. Баг — **приём local `player_state`**.
+- Root cause: `ackRejectReason` rewind'ил на `speed` / `onGround` / `flying` даже при совпавшем xz/y. Fly+SHIFT `vy ≈ 7.5` vs `PREDICTION_ACCEPT_SPEED = 0.2` → каждый snapshot `restoreAuthoritativePlayer` писал `velocity.y` + replay без `LocalPlayerRenderState.pushAfterTick`. `predNoState` этот путь пропускает.
+- Fix (минимальный): pose-only accept (`xz`/`y`); speed/onGround/flying = `softReject` (лог, без restore). Snapshot queue до начала `tickOnline`. Survival `restore` только если health/hunger/dead изменились.
+- DEV: `?predStateObserve=1`; category skips; per-field mutation log; `[firstBadEvent]` + `soft=`. `predNoState` сохранён.
+- Tests: flags **8/8**, matrix **8/8**, prediction **28/28**, player-main **4/4**, pipeline **8/8**, render-state **8/8**, remesh **4/4**; `test:sim` **42/42**; `test:server` **83/83**; typecheck/build PASS. Full vitest **1346 passed / 8 failed** (pre-existing authored ENOENT + minecart 5s timeouts).
+
+## Последний проход: network-path isolation (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Ручной A/B: Normal Online jitter; `?predNoNet=1` идеально гладкий. Значит, остаток в **online network path**, не в PlayerController и не в generic render interpolation.
+- DEV isolation: `?predNoState=1` (send+predict, skip local `player_state`), `?predNoSend=1` (no movement send, still receive/apply), `predNoNet` = оба. F3: `online/normal|noState|noSend|noNet`.
+- Accepted/ignored local snapshot больше не пишет look/riding/gamemode unless the value changed; reconcile accept is a full-field no-op.
+- DEV trace: every local-player network mutation (source/old/new), send/recv rates, collision-volume block/chunk events, first visible render jump dump, optional `clientSentAt` → snapshot `netTiming`.
+- Physics constants / render lerp / correction tolerance / urgent remesh не менялись.
+- Tests: flags **6/6**, matrix **6/6**, prediction **24/24**, pipeline **8/8**, render-state **8/8**, remesh **4/4**; `test:sim` **42/42**; `test:server` **83/83**; build PASS.
+
+## Последний проход: LocalPlayerRenderState (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Restore `previousPosition` на pose до всего кадра **не** помог QA (~155 FPS, `corr/s≈0`) и математически тянет камеру назад к `S1` (`lerp(S1,S3,leftover/dt)`).
+- Render больше не читает `PlayerController.previousPosition`. `LocalPlayerRenderState` хранит завершённые sim-pose и интерполирует **соседнюю** пару `S_{n-1}→S_n` при `alpha = leftover/dt`. Physics previousPosition только для fall distance.
+- DEV: F3 `rΔ min/max/neg/s/big/s` + camera; `?predNoNet=1` (predict без send/snapshot). Синтетика 60/120/144/165 FPS без WebSocket.
+- Tests: render-state **8/8**, pipeline **8/8**, prediction **24/24**; `test:sim` **42/42**; `test:server` **83/83**; build PASS.
+- Report: `docs/reports/2026-09-03_local-player-render-state.md`.
+
+## Последний проход: fixed-step interpolation window (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- Ручной QA: jitter на walk/sprint/jump/strafe/flight/fly+SHIFT при `corr/s=0`. Stationary чистый. Это не rubber-band и не FIFO.
+- Root cause: `PlayerController.tick` копирует `previousPosition` на **каждый** inner tick. `render = lerp(prev, pos, leftover/dt)` после 2 ticks в одном кадре показывает начало последнего tick ≈ целый physics step относительно прошлого кадра (alpha был ~1). Online чаще даёт 2-tick кадры (remesh/WS hitch); выражение то же, что в SP.
+- Fix: в `Game.frame` после цикла ticks вернуть `previousPosition` на pose **до** первого tick кадра. Один tick — no-op. Physics constants / networking / urgent remesh / smoothing не трогали.
+- Tests: fixed-step **6/6**, pipeline **7/7**, prediction **24/24**, remesh **4/4**; `typecheck*` PASS; `test:sim` **42/42**; `test:server` **83/83**; build PASS.
+- Report: `docs/reports/2026-09-02_fixed-step-interpolation.md`.
+
+## Последний проход: диагностика correction 0.3–0.6 и 20 TPS catch-up (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- F3: `prd/s=20` `state/s=18` `corr/s=1` avg 0.34 max 0.64. Lockstep PlayerController **не** расходится (1…20 ticks). Это не H.
+- Причина: `setInterval(50)` ≈ 18 Hz без catch-up; клиент предсказывает 20 шагов, сервер один latest-input tick → rewind на 1–3 walk step. `tickCatchUp` симулирует owed ticks и шлёт **один** snapshot. FIFO не возвращали.
+- DEV: `?corrDiag=1`, F3 snap recv/drop/gap, `FC_DEBUG_SNAP=1`, `/predsim`.
+- Report: `docs/reports/2026-09-02_online-correction-diagnosis.md`.
+
+## Последний проход: убрать FIFO movement queue (PR #37)
+
+- Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
+- FIFO `inputQueue` (1 пакет / tick, cap 64) давал 300–400 ms stale WASD и bow release 3.2 s (64×50 ms). Старые `use:false` в очереди сбрасывали charge → стрела иногда не вылетала.
+- Movement снова **latest state**: `lastInput` / `lastInputSeq`, один `PlayerController.tick` за 20 TPS, `snapshot.inputSeq = lastInputSeq`. Jump pulse и bow/food release latch. Attack/break/place по-прежнему отдельные immediate messages.
+- Prediction: сравнивать `history[N]` с latest seq; не replay'ить пропущенные movement seq. Urgent remesh / GRAVITY / 20 TPS не трогали.
+- Report: `docs/reports/2026-09-02_online-input-queue-revert.md`.
+
+## Последний проход: Online local-motion pipeline (SP vs Online)
+
+- Ветка `cursor/online-prediction-remesh-86e1` (PR **#37**). **Не merge в main.**
+- Accept-path PR #37 был прав: matching ack **не** пишет pose. Ручной QA без улучшения — потому что localhost `lastInput` coalescing давал **correction каждый снимок**, а не accept.
+- Root cause визуального 20 Hz: сервер симулировал только последний пакет за tick; `history[N]` = два клиентских шага, snapshot = один. Restore на предыдущий tick совпадает с `previousPosition` → `lerp` вырождается. Камера уже была `interpolated-local` (те же строки, что SP).
+- Попытка FIFO `inputQueue` (один seq / tick) дала 300–400 ms stale WASD и bow delay 3.2 s — **откатили**. Актуальная семантика: latest-input, см. проход выше. Small correction по-прежнему не копирует `previousPosition = position`. GRAVITY/JUMP/WALK/SPRINT/FIXED_DT/offline physics/urgent remesh не трогали.
+- DEV F3 `Motion …` + `?motionDiag=1` (2 s trace). Pipeline: SP и queued online mean render step ~0.070; coalesce 10 Hz = 20 corrections / 2 s.
+- Report: `docs/reports/2026-09-02_online-local-motion-pipeline.md`.
+
+## Последний проход: Online Anarchy prediction-history jitter fix
+
+- Ветка `cursor/online-prediction-remesh-86e1` (PR **#37**). **Не merge в main.**
+- Root cause jitter: каждый `player_state` делал restore+replay, даже когда prediction уже совпадала. Сравнивался live pose с результатом replay, а не snapshot seq N с predicted state **после** seq N. `previousPosition`/`position` дёргались на 20 Hz. Server `inputSeq` = lastInput этого tick (пропущенные seq не симулируются).
+- Исправление: history 64 `{seq, input, stateAfter}`. Ack сравнивает snapshot с predicted state at N. В пределах допуска — **не трогать** position/velocity/previousPosition и не replay. Иначе rewind к N и replay только seq > N. Duplicate `inputSeq === lastAckedSeq` игнорируется (server reused lastInput).
+- Urgent remesh из того же PR сохранён. GRAVITY/JUMP/WALK/SPRINT, 20 TPS, offline physics не менялись.
+- Report: `docs/reports/2026-09-02_online-prediction-jitter.md`.
+
+## Последний проход: Online Anarchy prediction + urgent remesh
+
+- Ветка `cursor/online-prediction-remesh-86e1` от актуального `origin/main` `4d803e5`. **Не merge в main.**
+- Root cause движения: клиент **не** крутил `PlayerController` online. `player_state` становился XYZ-target, `stepTowardTarget` (`LOCAL_APPROACH_PER_SECOND = 18`) экспоненциально догонял **включая Y**. Серверная jump arc визуально превращалась в chase stale target → floaty / levitation / краткий «залип» в воздухе. GRAVITY/JUMP_VELOCITY не менялись. Offline physics не трогали.
+- Исправление: тот же `PlayerController` на клиенте предсказывает каждый 20 TPS input; buffer unacked seq; snapshot несёт `inputSeq`; rewind + replay. Нет per-frame XYZ chase. Snap только при коррекции ≥ 6 блоков. Server остаётся gameplay authority (health/world/combat).
+- Root cause блоков: `applyNetworkBlockChanges` сразу пишет VoxelWorld (collision), а `WorldRenderer.rebuildDirty` ждал `!hasPendingLighting`. Видимая геометрия отставала на кадр+. Urgent remesh: `preferKeys` + `allowPendingLighting`, budget 2 ms / 3 chunks. `WORLD_JOB_BUDGET_MS` / `WORLD_LIGHT_BUDGET_MS` не поднимались. Remesh не в WebSocket handler.
+- Server tick hitch: DEV `FC_DEBUG_TICK_MS=1`. Измерение 40 walk/sprint/jump ticks: mean gameplay ~0.32 ms, max wall ~4.1 ms, **нет spike > 50 ms**. Обычный air hitch — клиентский chase, не server tick. Performance guess-fix не делали.
+- Report: `docs/reports/2026-09-02_online-prediction-remesh.md`.
 
 ## Последний проход: интеграция UI PR #22 с server + breaking + player main
 

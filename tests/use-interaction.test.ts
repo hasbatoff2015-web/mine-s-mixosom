@@ -170,7 +170,7 @@ describe('online client does not simulate use', () => {
     const inventory = new Inventory();
     inventory.setSlot(0, createItemStack('torch'));
     game.session = {
-      online: { client: { send } },
+      online: { client: { send }, inputSeq: 3, actionSeq: 0 },
       world,
       inventory,
       selectedSlot: 0,
@@ -183,7 +183,16 @@ describe('online client does not simulate use', () => {
       },
     };
     game.useTargetOrItem();
-    expect(send).toHaveBeenCalledWith({ type: 'interact' });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'interact',
+      targetX: 5,
+      targetY: 40,
+      targetZ: 5,
+      faceX: 0,
+      faceY: 1,
+      faceZ: 0,
+      targetBlockId: BlockId.Stone,
+    }));
     expect(world.getBlock(5, 41, 5, false)).toBe(BlockId.Air);
     expect(inventory.getSlot(0)?.itemId).toBe('torch');
   });

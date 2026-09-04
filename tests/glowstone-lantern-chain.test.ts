@@ -91,6 +91,7 @@ function placementFixture(block = BlockId.Stone, normal = faces[2]!) {
   };
   Object.assign(game, {
     session,
+    input: { yaw: 0, pitch: 0 },
     ui: { toast: vi.fn() },
     audio: { playTone: vi.fn(), play: vi.fn(), playAt: vi.fn(), playBlock: vi.fn() },
     firstPerson: { swing: vi.fn() },

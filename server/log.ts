@@ -12,3 +12,9 @@ export function netDebug(scope: string, message: string): void {
   if (process.env.FC_DEBUG_NET !== '1') return;
   serverLog(`${scope} ${message}`);
 }
+
+/** Opt-in (`FC_DEBUG_BOW=1`). Bow press/release/fire timing on the server. */
+export function bowDebug(playerId: string, event: string, extra = ''): void {
+  if (process.env.FC_DEBUG_BOW !== '1') return;
+  serverLog(`bow ${playerId} ${event} t=${Date.now()}${extra ? ` ${extra}` : ''}`);
+}

@@ -12,6 +12,7 @@ import { SaveService } from '../../src/save/SaveService';
 import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
+import { createItemStack } from '../../src/inventory';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
 import { inputSeqAfterReconnect } from '../../src/core/onlineSession';
 
@@ -146,6 +147,18 @@ class MemorySink {
 }
 
 describe('protocol validation', () => {
+  it('rejects a stale protocol join', () => {
+    expect(parseClientMessage({ type: 'join', protocol: 1, name: 'old' })).toEqual({
+      error: 'unsupported protocol 1',
+    });
+    expect(parseClientMessage({ type: 'join', protocol: 2, name: 'v2' })).toEqual({
+      error: 'unsupported protocol 2',
+    });
+    expect(parseClientMessage({ type: 'join', protocol: PROTOCOL_VERSION, name: 'ok' })).toMatchObject({
+      type: 'join',
+      protocol: PROTOCOL_VERSION,
+    });
+  });
   it('rejects unknown message types and non-integer block coords', () => {
     expect(parseClientMessage({ type: 'explode_world' })).toEqual({ error: 'unknown message type explode_world' });
     expect(parseClientMessage({ type: 'break_block', x: 1.5, y: 2, z: 3 })).toEqual({
@@ -224,6 +237,61 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(second.playerId).toBe(welcome.playerId);
     expect(server.world.onlineCount()).toBe(1);
     resumed.close();
+  });
+
+  it('live resume kicks the old socket and ignores its movement', async () => {
+    const server = await boot();
+    const first = new TestClient();
+    const welcome = await first.connect(server.wsUrl(), { name: 'Alpha' });
+    const second = new TestClient();
+    const resumed = await second.connect(server.wsUrl(), { name: 'Alpha', sessionToken: welcome.sessionToken });
+    expect(resumed.playerId).toBe(welcome.playerId);
+    expect(server.world.onlineCount()).toBe(1);
+    expect(server.activeSocketCount(welcome.playerId)).toBe(1);
+    await first.waitForMatch('error', (message) => message.code === 'session_taken');
+
+    const origin = server.world.players.get(welcome.playerId)!.controller.position.clone();
+    first.send({
+      type: 'input',
+      seq: 1,
+      forward: 1,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: 0,
+      pitch: 0,
+      selectedSlot: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const afterStale = server.world.players.get(welcome.playerId)!.controller.position.clone();
+    expect(afterStale.distanceTo(origin)).toBeLessThan(0.01);
+
+    second.send({
+      type: 'input',
+      seq: 1,
+      forward: 1,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: 0,
+      pitch: 0,
+      selectedSlot: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const afterLive = server.world.players.get(welcome.playerId)!.controller.position.clone();
+    expect(afterLive.distanceTo(origin)).toBeGreaterThan(0.05);
+
+    first.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.world.onlineCount()).toBe(1);
+    expect(server.activeSocketCount(welcome.playerId)).toBe(1);
+    second.close();
   });
 
   it('lets two clients see each other, movement, break and place', async () => {
@@ -509,6 +577,229 @@ describe('WorldInstance foundation simulation', () => {
     expect(world.applyInput(player, moveInput(2, { forward: 0 }))).toBe(true);
     expect(player.lastInput.forward).toBe(0);
     expect(player.lastInputSeq).toBe(2);
+    world.tick();
+    expect(player.lastInputSeq).toBe(2);
+    expect(player.snapshot().inputSeq).toBe(2);
+  });
+
+  it('applies one queued command per tick; extra packets wait in FIFO', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    expect(world.applyInput(player, moveInput(1, { forward: 1 }))).toBe(true);
+    expect(world.applyInput(player, moveInput(2, { forward: 1 }))).toBe(true);
+    expect(world.applyInput(player, moveInput(3, { forward: 1 }))).toBe(true);
+    expect(player.lastInputSeq).toBe(3);
+
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(1);
+    expect(player.snapshot().ackCommandSeq).toBe(1);
+    const afterBurst = player.controller.position.clone();
+    const firstStep = Math.hypot(afterBurst.x - start.x, afterBurst.z - start.z);
+    expect(firstStep).toBeGreaterThan(0.05);
+    expect(firstStep).toBeLessThan(0.35);
+
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(2);
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(3);
+    expect(Math.hypot(
+      player.controller.position.x - afterBurst.x,
+      player.controller.position.z - afterBurst.z,
+    )).toBeGreaterThan(0.05);
+  });
+
+  it('catch-up simulates two physics ticks but broadcasts one player_state', async () => {
+    const world = await bootWorld();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name: 'Sim' });
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    world.applyInput(player, moveInput(1, { forward: 1 }));
+    const beforeStates = sink.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+    world.tickCatchUp(2);
+    const after = Math.hypot(
+      player.controller.position.x - start.x,
+      player.controller.position.z - start.z,
+    );
+    expect(after).toBeGreaterThan(0.12);
+    expect(after).toBeLessThan(0.55);
+    const states = sink.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state');
+    expect(states.length - beforeStates).toBe(1);
+    const last = states[states.length - 1] as {
+      tick: number;
+      physicsTicks?: number;
+      players: Array<{ inputSeq: number }>;
+    };
+    expect(last.players[0]?.inputSeq).toBe(1);
+    expect(last.physicsTicks).toBe(2);
+    const lastPlayer = last.players[0] as { appliedSteps?: Array<{ serverTick: number; commandSeq: number }> };
+    expect(lastPlayer.appliedSteps?.length).toBe(2);
+    expect(lastPlayer.appliedSteps?.[0]?.commandSeq).toBe(1);
+    expect(lastPlayer.appliedSteps?.[1]?.commandSeq).toBe(1);
+  });
+
+  it('predsim reports identical lockstep controllers and a coalesce gap', async () => {
+    const world = await bootWorld();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name: 'Sim' });
+    if ('error' in joined) throw new Error(joined.error);
+    world.handleChat(joined.player, '/predsim 5');
+    const result = [...sink.payloads].reverse().find((payload) => (
+      payload as { type?: string }).type === 'command_result'
+    ) as { ok: boolean; lines: string[] } | undefined;
+    expect(result?.ok).toBe(true);
+    expect(result?.lines.some((line) => line.includes('identical=yes'))).toBe(true);
+    expect(result?.lines.some((line) => line.includes('coalesce clientTicks=2'))).toBe(true);
+  });
+
+  it('bounds a 64-packet burst and applies one command per tick', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const start = player.controller.position.clone();
+    for (let seq = 1; seq <= 64; seq += 1) {
+      expect(world.applyInput(player, moveInput(seq, { forward: 1 }))).toBe(true);
+    }
+    world.tick();
+    const applied = player.snapshot().inputSeq ?? -1;
+    expect(applied).toBeGreaterThanOrEqual(1);
+    expect(applied).toBeLessThanOrEqual(64);
+    expect(player.commandQueue.length).toBeLessThanOrEqual(32);
+    const afterOne = Math.hypot(
+      player.controller.position.x - start.x,
+      player.controller.position.z - start.z,
+    );
+    expect(afterOne).toBeGreaterThan(0.05);
+    expect(afterOne).toBeLessThan(0.35);
+  });
+
+  it('drains leftover walk commands before a later idle command', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    for (let seq = 1; seq <= 8; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1 }));
+      world.tick();
+    }
+    for (let seq = 9; seq <= 20; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: seq === 20 ? 0 : 1 }));
+    }
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(9);
+    for (let i = 0; i < 11; i += 1) world.tick();
+    expect(player.lastInput.forward).toBe(0);
+    expect(player.snapshot().inputSeq).toBe(20);
+    const before = player.controller.position.clone();
+    world.tick();
+    expect(Math.hypot(
+      player.controller.position.x - before.x,
+      player.controller.position.z - before.z,
+    )).toBeLessThan(0.08);
+  });
+
+  it('latches a jump pulse that arrives before later non-jump packets in the same window', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const startY = player.controller.position.y;
+    expect(world.applyInput(player, moveInput(1, { jump: true }))).toBe(true);
+    expect(world.applyInput(player, moveInput(2, { jump: false, forward: 1 }))).toBe(true);
+    world.tick();
+    expect(player.controller.position.y).toBeGreaterThan(startY + 0.2);
+  });
+
+  it('fires a charged bow from captured release aim, not use:false falling edge', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'creative');
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    player.inventory.setSlot(1, createItemStack('arrow', 16));
+    player.selectedSlot = 0;
+    player.bowUseTicks = 1;
+    for (let seq = 1; seq <= 8; seq += 1) {
+      world.applyInput(player, moveInput(seq, { use: true }));
+      world.tick();
+    }
+    expect(player.bowUseTicks).toBeGreaterThan(3);
+    const arrowsBefore = world.gameplay.arrows.count;
+    for (let seq = 9; seq <= 48; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, use: seq < 48 }));
+    }
+    world.tick();
+    expect(world.gameplay.arrows.count).toBe(arrowsBefore);
+    const fired = world.releaseBow(player, { actionSeq: 1, commandSeq: 48, yaw: 0.4, pitch: -0.2 });
+    expect(fired.ok).toBe(true);
+    expect(player.bowUseTicks).toBe(0);
+    expect(world.gameplay.arrows.count).toBeGreaterThan(arrowsBefore);
+    const later = world.releaseBow(player, { actionSeq: 1, commandSeq: 49, yaw: 1.2, pitch: 0.5 });
+    expect(later.ok).toBe(false);
+  });
+
+  it('starts bow charge on interact immediately, before the next movement tick', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'creative');
+    player.inventory.setSlot(0, createItemStack('bow', 1));
+    player.selectedSlot = 0;
+    player.controller.pitch = -Math.PI / 2;
+    for (let seq = 1; seq <= 12; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, use: false }));
+      world.tick();
+    }
+    expect(player.bowUseTicks).toBe(0);
+    world.interact(player);
+    expect(player.bowUseTicks).toBeGreaterThan(0);
+    const charged = player.bowUseTicks;
+    world.applyInput(player, moveInput(13, { forward: 1, use: true }));
+    expect(player.bowUseTicks).toBe(charged);
+    world.tick();
+    expect(player.bowUseTicks).toBe(charged + 1);
+    expect(player.snapshot().inputSeq).toBe(13);
+  });
+
+  it('applies latest creative flight and SHIFT descend once per tick', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    world.setGameMode(player, 'creative');
+    world.applyInput(player, moveInput(1, { jump: true }));
+    world.tick();
+    world.applyInput(player, moveInput(2, { jump: false }));
+    world.tick();
+    world.applyInput(player, moveInput(3, { jump: true }));
+    world.tick();
+    expect(player.controller.isFlying).toBe(true);
+    const startY = player.controller.position.y;
+    for (let seq = 4; seq <= 11; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, jump: true }));
+      world.tick();
+    }
+    expect(player.snapshot().inputSeq).toBe(11);
+    expect(player.controller.isFlying).toBe(true);
+    const afterUp = player.controller.position.clone();
+    expect(afterUp.y).toBeGreaterThan(startY + 0.05);
+
+    for (let seq = 12; seq <= 19; seq += 1) {
+      world.applyInput(player, moveInput(seq, { forward: 1, descend: true }));
+      world.tick();
+    }
+    expect(player.snapshot().inputSeq).toBe(19);
+    const afterFirstDescend = player.controller.position.y;
+    world.tick();
+    expect(player.snapshot().inputSeq).toBe(19);
+    expect(player.controller.position.y).toBeLessThan(afterFirstDescend);
   });
 
   it('accepts a valid break, mutates the world, and rejects air/reach/bounds', async () => {
@@ -628,6 +919,37 @@ describe('WorldInstance foundation simulation', () => {
     expect(resumed.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
   });
 
+  it('reconnect clears mining and bow hold so a stale draw cannot fire', async () => {
+    const world = await bootWorld();
+    const joined = join(world);
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    player.bowUseTicks = 12;
+    player.miningTarget = { x: 3, y: 4, z: 5 };
+    player.miningProgress = 0.8;
+    player.foodUseTicks = 5;
+    player.lastUse = true;
+    player.lastActionSeq = 9;
+    expect(world.applyInput(player, moveInput(1, { forward: 1, use: true }))).toBe(true);
+    world.disconnect(player.id);
+    expect(player.bowUseTicks).toBe(0);
+    expect(player.miningTarget).toBeUndefined();
+    expect(player.miningProgress).toBe(0);
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.lastUse).toBe(false);
+    expect(player.lastActionSeq).toBe(-1);
+    expect(player.commandQueue.length).toBe(0);
+
+    player.bowUseTicks = 12;
+    player.miningTarget = { x: 1, y: 2, z: 3 };
+    const resumed = world.join({ sink: new MemorySink(), name: 'Sim', sessionToken: player.sessionToken });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.bowUseTicks).toBe(0);
+    expect(resumed.player.miningTarget).toBeUndefined();
+    expect(resumed.player.lastActionSeq).toBe(-1);
+    expect(resumed.player.lastInput.use).toBe(false);
+  });
+
   it('multiple disconnect/resume cycles keep accepting seq 1', async () => {
     const world = await bootWorld();
     const joined = join(world, 'Loop');
@@ -646,6 +968,38 @@ describe('WorldInstance foundation simulation', () => {
       expect(again.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
       seqOwner = again.player;
     }
+  });
+
+  it('resuming a live player rejects the old connectionId and snapshots only the new sink', async () => {
+    const world = await bootWorld();
+    const sinkA = new MemorySink();
+    const first = world.join({ sink: sinkA, name: 'Solo' });
+    if ('error' in first) throw new Error(first.error);
+    const connA = first.player.connectionId;
+    expect(world.applyInput(first.player, moveInput(1, { forward: 1 }), { connectionId: connA })).toBe(true);
+    world.tick();
+    const sinkABefore = sinkA.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+
+    const sinkB = new MemorySink();
+    const second = world.join({ sink: sinkB, name: 'Solo', sessionToken: first.player.sessionToken });
+    if ('error' in second) throw new Error(second.error);
+    expect(second.resumed).toBe(true);
+    expect(second.player.id).toBe(first.player.id);
+    expect(second.player.connectionId).not.toBe(connA);
+    expect(second.previousConnectionId).toBe(connA);
+    expect(world.applyInput(second.player, moveInput(1, { forward: 0 }), { connectionId: connA })).toBe(false);
+    expect(world.applyInput(second.player, moveInput(1, { forward: 1 }), { connectionId: second.player.connectionId })).toBe(true);
+    const origin = second.player.controller.position.clone();
+    world.tick();
+    expect(second.player.controller.position.distanceTo(origin)).toBeGreaterThan(0.01);
+    const afterA = sinkA.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+    const afterB = sinkB.payloads.filter((payload) => (payload as { type?: string }).type === 'player_state').length;
+    expect(afterA).toBe(sinkABefore);
+    expect(afterB).toBeGreaterThan(0);
+    world.disconnect(second.player.id, true, connA);
+    expect(second.player.connected).toBe(true);
+    world.disconnect(second.player.id, true, second.player.connectionId);
+    expect(second.player.connected).toBe(false);
   });
 });
 
