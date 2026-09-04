@@ -28,6 +28,7 @@ export {
   simulationTicksFromServerTick,
   comparableExtraTicks,
   consumeAckedCommands,
+  discardCompactedPrediction,
   consumeOldestPredTicks,
   extraAssignSite,
   overwriteLatestSlot,

@@ -65,6 +65,14 @@ export interface PlayerSnapshot {
   readonly appliedTicks?: readonly AppliedInputTick[];
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
   readonly flying?: boolean;
+  /**
+   * Command seqs the server deliberately skipped via continuous-state compaction.
+   * Client must discard these pending predictions, not wait for an ACK.
+   */
+  readonly queueCompacted?: {
+    readonly fromCommandSeq: number;
+    readonly toCommandSeq: number;
+  };
   /** DEV localhost RTT trace for the input seq this pose used. */
   readonly netTiming?: {
     readonly clientSentAt?: number;

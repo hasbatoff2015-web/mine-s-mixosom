@@ -168,6 +168,7 @@ export class ServerPlayer implements GameplayPlayer {
       flying: this.controller.isFlying,
       appliedTicks: this.appliedInputTrace.slice(),
       appliedSteps: this.appliedStepsThisLoop.slice(),
+      ...(this.commandQueue.lastCompacted ? { queueCompacted: this.commandQueue.lastCompacted } : {}),
       session: {
         tokenFp: sessionTokenFingerprint(this.sessionToken),
         connectionId: this.connectionId,
@@ -970,6 +971,7 @@ export class WorldInstance {
     }
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
+    for (const player of this.connectedPlayers()) player.commandQueue.lastCompacted = undefined;
     if (snapshots.length > 0) {
       this.broadcast({
         type: 'player_state',

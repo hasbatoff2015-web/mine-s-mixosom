@@ -1,14 +1,21 @@
 import type { PlayerCommand } from '../shared/playerCommand';
 import { COMMAND_QUEUE_MAX } from '../shared/playerCommand';
+import {
+  compactContinuousCommands,
+  mergeDroppedRange,
+  type DroppedCommandRange,
+} from '../shared/commandCompaction';
 
 /**
  * FIFO of movement commands. One command is applied per physics tick.
  * Empty queue repeats the last applied command (hold W / idle).
+ * Overflow compact continuous-state commands and reports the dropped seq range.
  */
 export class PlayerCommandQueue {
   private readonly items: PlayerCommand[] = [];
   lastEnqueuedSeq = -1;
   lastApplied: PlayerCommand | null = null;
+  lastCompacted: DroppedCommandRange | undefined;
 
   get length(): number {
     return this.items.length;
@@ -17,6 +24,7 @@ export class PlayerCommandQueue {
   clear(keepLook?: { readonly yaw: number; readonly pitch: number; readonly selectedSlot: number }): void {
     this.items.length = 0;
     this.lastEnqueuedSeq = -1;
+    this.lastCompacted = undefined;
     if (this.lastApplied && keepLook) {
       this.lastApplied = {
         ...this.lastApplied,
@@ -44,7 +52,18 @@ export class PlayerCommandQueue {
   enqueue(command: PlayerCommand): 'ok' | 'stale' | 'duplicate' {
     if (command.commandSeq < this.lastEnqueuedSeq) return 'stale';
     if (command.commandSeq === this.lastEnqueuedSeq) return 'duplicate';
-    if (this.items.length >= COMMAND_QUEUE_MAX) this.items.shift();
+    if (this.items.length >= COMMAND_QUEUE_MAX) {
+      const compacted = compactContinuousCommands(this.items);
+      if (compacted) this.lastCompacted = mergeDroppedRange(this.lastCompacted, compacted);
+      while (this.items.length >= COMMAND_QUEUE_MAX) {
+        const dropped = this.items.shift();
+        if (!dropped) break;
+        this.lastCompacted = mergeDroppedRange(this.lastCompacted, {
+          fromCommandSeq: dropped.commandSeq,
+          toCommandSeq: dropped.commandSeq,
+        });
+      }
+    }
     this.items.push(command);
     this.lastEnqueuedSeq = command.commandSeq;
     return 'ok';

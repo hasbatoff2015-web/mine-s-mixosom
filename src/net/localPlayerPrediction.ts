@@ -368,6 +368,34 @@ export function findPredictedEntry(
   return buffer.entries.find((entry) => entry.seq === seq);
 }
 
+/**
+ * Server compacted continuous-state commands. Those seqs will never be ACKed.
+ * Rebuild live pose from the last checkpoint plus remaining pending commands.
+ */
+export function discardCompactedPrediction(
+  buffer: PredictionBuffer,
+  fromCommandSeq: number,
+  toCommandSeq: number,
+  player?: PlayerController,
+  world?: VoxelWorld,
+  dt = FIXED_DT,
+): number {
+  const before = buffer.entries.length;
+  buffer.entries = buffer.entries.filter(
+    (entry) => entry.seq < fromCommandSeq || entry.seq > toCommandSeq,
+  );
+  const dropped = before - buffer.entries.length;
+  if (dropped > 0 && player && world && buffer.lastAckedState) {
+    player.applyMovementState(buffer.lastAckedState);
+    for (const entry of buffer.entries) {
+      applyPredictedTick(player, world, entry.input, dt);
+      entry.state = player.captureMovementState();
+    }
+  }
+  buffer.debug.pending = buffer.entries.length;
+  return dropped;
+}
+
 function trimHistory(buffer: PredictionBuffer): void {
   if (buffer.entries.length > PREDICTION_HISTORY) {
     buffer.entries.splice(0, buffer.entries.length - PREDICTION_HISTORY);
@@ -682,6 +710,16 @@ export function inspectPredictedPlayer(
     readonly dt?: number;
   },
 ): SnapshotInspect {
+  if (snapshot.queueCompacted) {
+    discardCompactedPrediction(
+      buffer,
+      snapshot.queueCompacted.fromCommandSeq,
+      snapshot.queueCompacted.toCommandSeq,
+      player,
+      options?.world,
+      options?.dt,
+    );
+  }
   const physicsTicks = Math.max(1, Math.floor(options?.physicsTicks ?? 1));
   const serverTick = options?.serverTick;
   const ackSeq = snapshot.ackCommandSeq ?? snapshot.inputSeq;

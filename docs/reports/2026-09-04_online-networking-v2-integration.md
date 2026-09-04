@@ -1,7 +1,7 @@
 # Online Networking V2 Integration
 
 **Date:** 2026-09-04  
-**Status:** in progress (Phase 2 complete)  
+**Status:** in progress (Phase 3 complete)  
 **Integration branch:** `cursor/online-networking-v2-integrated-3ff8`  
 **PR:** TBD (draft until two-client QA)
 
