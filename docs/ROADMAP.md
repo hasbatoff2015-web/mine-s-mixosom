@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-04: Multiplayer smoothness after Farming
+
+- [x] Prove PR #42 was never merged; current `main` is `4d803e5` + Farming #43 (`aa0ee07`).
+- [x] Prove `src/net/` is bit-identical `4d803e5`→`aa0ee07`; V2 files exist only on `e5c77f3`.
+- [x] Measure Farming tick cost (empty ≪ 1 ms; 1024-cell pulse < 50 ms). Online client does not tick farming.
+- [ ] Integrate Networking V2 (`e5c77f3`) onto Farming `main` without dropping `tickFarming`, block IDs 150–157, or FIFO/`ackCommandSeq`/serverTick interpolation.
+- [ ] Replace `tests/anarchy-movement-stack-identity.test.ts` with the protocol-3 contract after that merge.
+- [ ] Owner two-client QA on a **new** world (do not reuse Farming saves on a pre-150 checkout).
+
 ## 2026-09-04: Farming V1
 
 - [x] Add stable appended block IDs 150–157 and farming item IDs without renumbering existing content.
