@@ -26,6 +26,7 @@ import {
   meshWaitMs,
   pendingMeshInRadius,
   planMeshFrame,
+  shouldDeferGenerateForMesh,
   takeReadyMeshJobs,
   type MeshFramePlan,
 } from './streamingScheduler';
@@ -181,11 +182,16 @@ export function stepStreamingFrame(
   const originCz = floorDiv(originZ, CHUNK_SIZE);
   const unlock = lightingUnlockNeighborKeys(world, originCx, originCz, meshRadius, generateRadius);
   const missing = missingChunkCoords(world, originX, originZ, generateRadius, unlock);
+  const peekJobs = collectReadyMeshJobs(world, originX, originZ, meshRadius, options.now, options.dirX ?? 0, options.dirZ ?? 0);
   let generated = 0;
-  for (const coord of missing) {
-    if (generated >= generateLimit) break;
-    world.getChunk(coord.x, coord.z);
-    generated += 1;
+  const deferGenerate = options.policy !== 'legacy-skip-on-gen'
+    && shouldDeferGenerateForMesh(loading, options.consecutiveGenWithoutMesh, peekJobs);
+  if (!deferGenerate) {
+    for (const coord of missing) {
+      if (generated >= generateLimit) break;
+      world.getChunk(coord.x, coord.z);
+      generated += 1;
+    }
   }
   if (options.instantLight) {
     for (const chunk of world.chunks.values()) {

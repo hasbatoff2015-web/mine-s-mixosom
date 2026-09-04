@@ -28,6 +28,7 @@
     "benchmark:worldgen": "vite-node scripts/benchmark-worldgen.ts",
     "benchmark:fluids": "vite-node scripts/benchmark-fluids.ts",
     "benchmark:farming": "vite-node scripts/benchmark-farming.ts",
+    "benchmark:spawn": "vite-node scripts/benchmark-spawn-perf.ts",
     "build": "tsc --noEmit && vite build",
     "check:size": "node scripts/check-build.mjs",
     "check:archive": "node scripts/check-build.mjs --archive",

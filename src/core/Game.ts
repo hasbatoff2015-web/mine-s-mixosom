@@ -290,6 +290,7 @@ import {
   lightingUnlockNeighborKeys,
   pendingMeshInRadius,
   planMeshFrame,
+  shouldDeferGenerateForMesh,
 } from '../world/streamingScheduler';
 import { blockCollisionBoxes, rayAabbDistance } from '../world/collision';
 import {
@@ -397,6 +398,8 @@ interface RuntimeSettings {
 }
 
 const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
+const DESKTOP_PIXEL_RATIO_CAP = 1.25;
+const MOBILE_PIXEL_RATIO_CAP = 1;
 
 function raycastRemotePlayers(
   remotes: Map<string, RemotePlayerView>,
@@ -576,7 +579,7 @@ export class Game {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Two render passes share one frame; reset once so F3 counts world + viewmodel.
     this.renderer.info.autoReset = false;
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
+    this.applyPixelRatio();
     this.scene.background = this.currentSkyColor;
     this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
     this.ambient.intensity = 0.22;
@@ -2328,22 +2331,41 @@ export class Game {
     }
     const generateLimit = loading ? 8 : 1;
     const generateBudget = Math.max(budget, loading ? 1 : 0);
-    for (const coord of missing) {
-      if (generated >= generateLimit) break;
-      if (generateBudget > 0 && performance.now() - jobStart >= generateBudget) break;
-      if (inspect) {
-        this.jobFrame.genAttempted += 1;
-        this.streamingTrace.mark('generationStarted', coord.x, coord.z, performance.now());
-      }
-      const genStart = performance.now();
-      session.world.getChunk(coord.x, coord.z);
-      this.lastGenerateMs += performance.now() - genStart;
-      generated += 1;
-      if (inspect) {
-        this.jobFrame.genCompleted += 1;
-        const doneAt = performance.now();
-        this.streamingTrace.mark('generated', coord.x, coord.z, doneAt);
-        this.streamingTrace.mark('meshQueued', coord.x, coord.z, doneAt);
+    const velocity = session.player.velocity;
+    if (!loading && this.genWithoutMeshStreak >= 1) {
+      const peekJobs = collectReadyMeshJobs(
+        session.world,
+        originX,
+        originZ,
+        meshRadius,
+        performance.now(),
+        velocity.x,
+        velocity.z,
+      );
+      this.jobFrame.genDeferredForMesh = shouldDeferGenerateForMesh(
+        loading,
+        this.genWithoutMeshStreak,
+        peekJobs,
+      );
+    }
+    if (!this.jobFrame.genDeferredForMesh) {
+      for (const coord of missing) {
+        if (generated >= generateLimit) break;
+        if (generateBudget > 0 && performance.now() - jobStart >= generateBudget) break;
+        if (inspect) {
+          this.jobFrame.genAttempted += 1;
+          this.streamingTrace.mark('generationStarted', coord.x, coord.z, performance.now());
+        }
+        const genStart = performance.now();
+        session.world.getChunk(coord.x, coord.z);
+        this.lastGenerateMs += performance.now() - genStart;
+        generated += 1;
+        if (inspect) {
+          this.jobFrame.genCompleted += 1;
+          const doneAt = performance.now();
+          this.streamingTrace.mark('generated', coord.x, coord.z, doneAt);
+          this.streamingTrace.mark('meshQueued', coord.x, coord.z, doneAt);
+        }
       }
     }
     this.lastChunkGenerationJobs = generated;
@@ -2366,7 +2388,6 @@ export class Game {
     this.lastStreamChunkZ = playerCz;
     discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
 
-    const velocity = session.player.velocity;
     const readyJobs = collectReadyMeshJobs(
       session.world,
       originX,
@@ -2376,7 +2397,7 @@ export class Game {
       velocity.x,
       velocity.z,
     );
-    const defaultMeshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
+    const defaultMeshLimit = loading ? 4 : 1;
     const plan = planMeshFrame({
       loading,
       generatedThisFrame: generated > 0,
@@ -4897,9 +4918,15 @@ export class Game {
     document.addEventListener('contextmenu', (event) => event.preventDefault());
   }
 
+  private applyPixelRatio(): void {
+    const cap = isCoarsePointer() ? MOBILE_PIXEL_RATIO_CAP : DESKTOP_PIXEL_RATIO_CAP;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+  }
+
   private resize(): void {
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
+    this.applyPixelRatio();
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();

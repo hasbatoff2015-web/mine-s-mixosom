@@ -6,7 +6,7 @@ import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { lightContextReady } from '../world/worldJobs';
 import { meshJobSortScore, meshWaitMs } from '../world/streamingScheduler';
-import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
+import { ChunkMesher, CHEAP_VERTEX_LIGHT_CHEBYSHEV, type BlockRenderStateResolver } from './ChunkMesher';
 import { ChestRenderer } from './ChestRenderer';
 import { BlockBreakingOverlay, type BreakingOverlaySnapshot } from './BlockBreakingOverlay';
 import {
@@ -135,7 +135,12 @@ export class WorldRenderer {
     const dirZ = options.dirZ ?? 0;
     const now = performance.now();
     const dirty: Chunk[] = [];
-    for (const chunk of this.world.chunks.values()) {
+    const candidates = options.preferKeys
+      ? preferKeyChunks(this.world, options.preferKeys)
+      : this.world.pendingMesh.size > 0
+        ? pendingMeshChunks(this.world)
+        : this.world.chunks.values();
+    for (const chunk of candidates) {
       if (!chunk.dirty && !chunk.lightMeshStale) continue;
       if (preferKeys && !preferKeys.has(chunkKey(chunk.x, chunk.z))) continue;
       if (meshRadius !== undefined) {
@@ -199,9 +204,12 @@ export class WorldRenderer {
     const meshStart = performance.now();
     const key = chunkKey(chunk.x, chunk.z);
     this.removeChunk(key);
-    const meshed = this.mesher.build(chunk, this.world);
+    const meshed = this.mesher.build(chunk, this.world, {
+      cheapVertexLight: chunkChebyshev(chunk, this.world) >= CHEAP_VERTEX_LIGHT_CHEBYSHEV,
+    });
     const group = new THREE.Group();
     group.name = `chunk-${key}`;
+    group.matrixAutoUpdate = false;
     if (meshed.opaque.getAttribute('position').count > 0) group.add(new THREE.Mesh(meshed.opaque, this.opaqueMaterial));
     else meshed.opaque.dispose();
     if (meshed.cutout.getAttribute('position').count > 0) {
@@ -229,6 +237,11 @@ export class WorldRenderer {
       mesh.renderOrder = 4;
       group.add(mesh);
     } else meshed.fire.dispose();
+    for (const child of group.children) {
+      child.matrixAutoUpdate = false;
+      child.updateMatrix();
+    }
+    group.updateMatrix();
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
     chunk.dirty = false;
@@ -341,4 +354,26 @@ export class WorldRenderer {
     for (const child of existing.group.children) if (child instanceof THREE.Mesh) child.geometry.dispose();
     this.chunks.delete(key);
   }
+}
+
+function chunkChebyshev(chunk: Chunk, world: VoxelWorld): number {
+  return Math.max(Math.abs(chunk.x - world.viewChunkX), Math.abs(chunk.z - world.viewChunkZ));
+}
+
+function pendingMeshChunks(world: VoxelWorld): Chunk[] {
+  const chunks: Chunk[] = [];
+  for (const key of world.pendingMesh) {
+    const chunk = world.chunks.get(key);
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function preferKeyChunks(world: VoxelWorld, keys: ReadonlySet<string>): Chunk[] {
+  const chunks: Chunk[] = [];
+  for (const key of keys) {
+    const chunk = world.chunks.get(key);
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
 }

@@ -24,4 +24,27 @@ describe('ChunkMesher hot path', () => {
     meshed.water.dispose();
     meshed.fire.dispose();
   });
+
+  it('cheap vertex light keeps the same face count as full AO', () => {
+    const world = new VoxelWorld('mesher-cheap-light');
+    const chunk = world.getChunk(0, 0)!;
+    world.ensureChunkLighting(chunk);
+    const mesher = new ChunkMesher(atlasStub);
+    const full = mesher.build(chunk, world);
+    const cheap = mesher.build(chunk, world, { cheapVertexLight: true });
+    expect(cheap.faces).toBe(full.faces);
+    expect(cheap.opaque.getAttribute('position').count).toBe(full.opaque.getAttribute('position').count);
+    full.opaque.dispose();
+    full.cutout.dispose();
+    full.vegetation.dispose();
+    full.translucent.dispose();
+    full.water.dispose();
+    full.fire.dispose();
+    cheap.opaque.dispose();
+    cheap.cutout.dispose();
+    cheap.vegetation.dispose();
+    cheap.translucent.dispose();
+    cheap.water.dispose();
+    cheap.fire.dispose();
+  });
 });

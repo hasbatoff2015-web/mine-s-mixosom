@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: spawn FPS audit + unstack generate/mesh
+
+- Ветка `cursor/perf-audit-spawn-3ff8` от `origin/main` `03685a9` (Farming + V2 + spawn bake).
+- CPU audit (`npm run benchmark:spawn`): walking the baked Anarchy spawn stacked generate+mesh on **39/48** PLAYING frames (avg 29.5 ms, max 39.1 ms). Lighting was already inside budget. Mesh scan (AO) is still 15–30 ms.
+- PLAYING now **generate XOR mesh**. After a gen-only frame, `shouldDeferGenerateForMesh` skips generate if any mesh job is ready. PLAYING `meshLimit = 1`. Distant chunks (Chebyshev ≥ 3) skip 4-corner AO. Pixel ratio cap 1.25 desktop / 1.0 mobile.
+- AFTER: **0 stacked frames**. Worst remaining job is one mesh (~19–29 ms). GPU/FPS not measured in Cloud. Farming / Networking V2 / spawn cells not changed. Greedy/worker meshing deferred.
+- Report: `docs/reports/2026-09-04_perf-audit-spawn.md`.
+
 ## Последний проход: Anarchy spawn schematic → filesystem
 
 - Ветка `cursor/anarchy-spawn-schem-import-3ff8` от `origin/main` `165f563` (Farming V1 + Networking V2).
