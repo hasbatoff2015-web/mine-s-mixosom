@@ -393,7 +393,7 @@ export class WorldInstance {
     this.readyState = 'READY';
     serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
     serverLog(
-      'Fresh procedural Anarchy world. Browser IndexedDB is not imported. To load an exported dump: npm run server:import -- <dump.json>',
+      'Fresh procedural Anarchy world. Browser IndexedDB is not imported. To bake frontier_spawn2.schem: npm run server:import -- --schem --force',
     );
   }
 

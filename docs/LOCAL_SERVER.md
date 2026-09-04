@@ -188,29 +188,25 @@ Shared types: `shared/protocol.ts`. Incoming messages are type-checked; client c
 
 Join bootstrap reuses the existing save representation: **seed + modification deltas + blockStates**. Unmodified terrain is generated from the same seed on both sides. Live edits are `block_update` deltas. `view` / `chunk_data` / `unload_chunk` are the interest-radius streaming hooks.
 
-## Current accepted spawn map
+## Canonical spawn map
 
-The playtested Anarchy spawn (schematic baked into **your browser IndexedDB**) is **not** in git and **not** on the server disk.
+The accepted Anarchy spawn is the Sponge schematic `frontier_spawn2.schem` (owner path `C:\Users\миша\Desktop\GAMES\mine123\spawn_map\frontier_spawn2.schem`). It is **not** in git.
 
-This pass:
+Ordinary `npm run dev:server` **never** reads that file. Startup is `FsWorldStore.load("anarchy")` → restore, or a fresh procedural world if the directory is empty.
 
-- does **not** auto-import `frontier_spawn2.schem` on startup;
-- creates a new server world with seed `anarchy-spawn-v1` and a **procedural** spawn (`estimateWorldSpawn`) if `server/data/worlds/anarchy/` is empty.
-
-### Missing migration step
-
-To move the IndexedDB world onto the server:
-
-1. Export the IndexedDB record `frontier-cubes-saves` / `worlds` / id `anarchy` as JSON (`WorldSnapshot` / `SerializedWorldState`).
-2. Run **explicitly** (never on ordinary startup):
+### Bake the schematic into filesystem persistence (one-shot CLI)
 
 ```bash
-npm run server:import -- path/to/anarchy-idb.json
+npm run server:import -- path/to/frontier_spawn2.schem --force
+# or, search known local paths including the owner Desktop copy:
+npm run server:import -- --schem --force
 ```
 
-3. Restart `npm run dev:server`.
+This uses the existing `parseSchematic` / `importAnarchySpawn` path (`ANARCHY_SPAWN_Y_SHIFT = -28`) and writes `server/data/worlds/anarchy/{meta,world,players}.json`. If that directory already exists, the importer refuses unless `--force` is passed; `--force` copies the previous world to `anarchy.backup-<timestamp>` first and keeps `players.json` roster rows.
 
-Use `--force` only if a server world already exists and you intend to overwrite it.
+JSON IndexedDB dumps still work: `npm run server:import -- dump.json [--force]`.
+
+Restart the server after import. Do not commit `.schem` or `server/data/worlds/**`.
 
 ## Future VPS migration
 

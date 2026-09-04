@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Anarchy spawn schematic → filesystem
+
+- Ветка `cursor/anarchy-spawn-schem-import-3ff8` от `origin/main` `165f563` (Farming V1 + Networking V2).
+- Canonical spawn source: owner `frontier_spawn2.schem` (Sponge). Не в git. Не IndexedDB dump. Не procedural world.
+- `npm run server:import` принимает `.schem` / `--schem` и печёт через существующие `parseSchematic` + `importAnarchySpawn` (`ANARCHY_SPAWN_Y_SHIFT = -28`) в `FsWorldStore` (`WORLD_PATH` / `server/data/worlds/anarchy`). JSON dump сохранён.
+- Существующий мир не перезаписывается молча: нужен `--force`, перед записью копия `anarchy.backup-<timestamp>`, roster `players` сохраняется. Farming IDs 150–157 и Networking V2 не менялись.
+- Production startup по-прежнему `FsWorldStore.load("anarchy")` → restore. `WorldInstance.initialize` **не** читает `.schem`.
+- Cloud VM не видит `C:\Users\миша\Desktop\GAMES\mine123\spawn_map\frontier_spawn2.schem`. Импорт реального файла — локальная команда владельца с тем же CLI.
+- Report: `docs/reports/2026-09-04_anarchy-spawn-schem-import.md`.
+
 ## Последний проход: Farming V1 + Networking V2 union
 
 - Ветка `cursor/farming-networking-v2-3ff8` от `origin/main` `aa0ee07403874fc72e483f53c2b1db176d33b649` (Farming V1 / PR #43). Donor Networking V2 = PR #42 `e5c77f334fa46b726372fb7d7d27283f213ea184`. Не blind `-X theirs`.
