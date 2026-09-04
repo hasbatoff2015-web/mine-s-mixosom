@@ -1,6 +1,15 @@
 # Состояние проекта
 
-Срез: **2026-09-03**. Версия: `0.1.0`, playable alpha.
+Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
+
+## Последний проход: Local interaction aim (live look)
+
+- Ветка `cursor/local-aim-desync-86e1`, от PR #38. **Не merge в main.** Remote interpolation / local prediction physics / server authority **не трогали**.
+- Bug: first-person camera uses `InputManager` yaw/pitch every RAF; block pick / outline / bow used `PlayerController.viewDirection()` only on the 20 TPS tick → crosshair and selection could disagree (e.g. between two logs).
+- Fix: one Node-safe `localInteractionAim` (canonical eye + live look). `refreshLocalCrosshair` on render for the outline; break/place/bow reuse the same aim. Physics still copies look inside `PlayerController.tick` / `tickOnline`. Third-person targeting stays eye+facing, not the presentation camera.
+- DEV F3 `Aim cam/ply/look tgt n face`. `?aimDiag=1` documented; HUD is on in DEV F3.
+- Tests: `tests/local-aim.test.ts`. Typecheck client/server/sim PASS.
+- Report: `docs/reports/2026-09-04_local-aim-desync.md`.
 
 ## Последний проход: Remote player interpolation v1
 

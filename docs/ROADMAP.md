@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-04: Local interaction aim (live look)
+
+- [x] Trace camera RAF look vs 20 TPS `PlayerController.viewDirection` raycast/bow.
+- [x] One `localInteractionAim` source: player eye + `InputManager` yaw/pitch.
+- [x] Refresh selection outline every render; break/place/bow use the same aim.
+- [x] Do not change fixed-tick physics, server authority, or remote interpolation.
+- [x] Tests: live look vs stale tick look; selection===action; bow matches camera; unchanged look matches controller.
+- [ ] Owner: look between two logs — outline matches crosshair; bow flies along first-person aim.
+- [ ] Do not merge main.
+
 ## 2026-09-03: Remote player interpolation v1
 
 - [x] Server-tick snapshot buffer per remote (`player_state.tick`), not packet arrival time.

@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-04 Local interaction aim
+
+Report: `reports/2026-09-04_local-aim-desync.md`.
+
+```text
+npx vitest run tests/local-aim.test.ts tests/player-main-integration.test.ts tests/camera-look.test.ts tests/use-interaction.test.ts
+```
+
+Contracts: when `PlayerController` look is still the last tick and `InputManager` look has moved, the live-aim raycast hits the camera block (not the stale tick block); selection and action share origin/direction; bow direction matches `viewDirectionFromLook(live yaw/pitch)` and differs from stale `player.viewDirection()`; unchanged look matches the controller. Game targeting does not use `session.player.viewDirection()` or `camera.getWorldDirection`. Physics/TPS/remote interpolation unchanged. Manual: look between two logs — outline matches crosshair.
+
 ## 2026-09-03 Remote player interpolation
 
 Report: `reports/2026-09-03_remote-player-interpolation.md`.

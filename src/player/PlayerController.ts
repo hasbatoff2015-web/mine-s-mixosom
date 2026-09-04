@@ -33,6 +33,7 @@ import {
   isClimbIntent,
   ladderVerticalVelocity,
 } from './ladderMotion';
+import { viewDirectionFromLook } from './localAim';
 
 const COLLISION_EPSILON = 1e-7;
 const GROUND_PROBE = 0.075;
@@ -191,12 +192,7 @@ export class PlayerController {
   }
 
   viewDirection(target = new Vec3()): Vec3 {
-    const horizontal = Math.cos(this.pitch);
-    return target.set(
-      -Math.sin(this.yaw) * horizontal,
-      Math.sin(this.pitch),
-      -Math.cos(this.yaw) * horizontal,
-    ).normalize();
+    return viewDirectionFromLook(this.yaw, this.pitch, target);
   }
 
   /** True when the given world-space boxes overlap the player AABB. */

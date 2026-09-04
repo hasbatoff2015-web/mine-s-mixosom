@@ -105,6 +105,13 @@ import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
+  bowSpawnFromAim,
+  formatLocalAimHud,
+  localInteractionAim,
+  viewDirectionFromLook,
+  type LocalAim,
+} from '../player/localAim';
+import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
   type PlayerAppearance,
@@ -396,6 +403,9 @@ export class Game {
   private readonly cameraPivot = new THREE.Vector3();
   private readonly cameraTravelDirection = new THREE.Vector3();
   private readonly frontCameraLook = { yaw: 0, pitch: 0 };
+  private readonly localAimOrigin = new Vec3();
+  private readonly localAimDirection = new Vec3();
+  private lastLocalAim: LocalAim | undefined;
   private readonly daySkyColor = new THREE.Color(0x7fb9dc);
   private readonly duskSkyColor = new THREE.Color(0xd9785a);
   private readonly nightSkyColor = new THREE.Color(0x071426);
@@ -2567,12 +2577,14 @@ export class Game {
         this.polishQaDispose = mountGameplayPolishQa(session, this.input, {
           use: () => {
             this.ui.hidePointerLockFallback();
-            session.target = session.world.raycast(session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH);
+            const aim = this.sampleLocalAim(session);
+            session.target = session.world.raycast(aim.origin, aim.direction, PLAYER_REACH);
             this.useTargetOrItem();
           },
           break: () => {
             this.ui.hidePointerLockFallback();
-            session.target = session.world.raycast(session.player.eyePosition(), session.player.viewDirection(), PLAYER_REACH);
+            const aim = this.sampleLocalAim(session);
+            session.target = session.world.raycast(aim.origin, aim.direction, PLAYER_REACH);
             this.breakTarget();
           },
         });
@@ -3217,10 +3229,25 @@ export class Game {
     this.addSimPart('other', simMark);
   }
 
-  private updateTargetAndActions(): void {
-    const session = this.session!;
-    const origin = session.player.eyePosition();
-    const direction = session.player.viewDirection();
+  private sampleLocalAim(session: GameSession): LocalAim {
+    const aim = localInteractionAim(
+      session.player,
+      this.input,
+      this.localAimOrigin,
+      this.localAimDirection,
+    );
+    this.lastLocalAim = aim;
+    return aim;
+  }
+
+  /** Outline / session.target from live input look. Does not consume clicks or advance mining. */
+  private refreshLocalCrosshair(session: GameSession, aim = this.sampleLocalAim(session)): {
+    remoteCloser: boolean;
+    attack: ReturnType<typeof resolvePlayerAttackTarget>;
+    mobTarget: ReturnType<GameSession['mobs']['raycast']>;
+  } {
+    const origin = aim.origin;
+    const direction = aim.direction;
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
     const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
@@ -3235,6 +3262,12 @@ export class Game {
     );
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
+    return { remoteCloser, attack, mobTarget };
+  }
+
+  private updateTargetAndActions(): void {
+    const session = this.session!;
+    const { remoteCloser, attack, mobTarget } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
@@ -3429,8 +3462,8 @@ export class Game {
       reach: PLAYER_REACH,
       hit: session.target,
       eyePosition: () => session.player.eyePosition(),
-      viewDirection: () => session.player.viewDirection(),
-      get yaw() { return session.player.yaw; },
+      viewDirection: () => viewDirectionFromLook(game.input.yaw, game.input.pitch),
+      get yaw() { return game.input.yaw; },
       get position() { return session.player.position; },
       intersectsBlock: (x, y, z) => session.player.intersectsBlock(x, y, z),
       intersectsCollisionBoxes: (boxes) => session.player.intersectsCollisionBoxes(boxes),
@@ -3534,10 +3567,10 @@ export class Game {
     if (session.summary.mode !== 'survival') {
       this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow : ItemId.Arrow;
     }
-    const direction = session.player.viewDirection();
-    const origin = session.player.eyePosition().addScaledVector(direction, 0.35);
+    const aim = this.sampleLocalAim(session);
+    const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
-    session.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
+    session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
@@ -3726,7 +3759,7 @@ export class Game {
     }
     const dropped = { ...stack, count: 1 };
     session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-    session.drops.drop(dropped, session.player.eyePosition(), session.player.viewDirection());
+    session.drops.drop(dropped, session.player.eyePosition(), viewDirectionFromLook(this.input.yaw, this.input.pitch));
     this.refreshHud();
   }
 
@@ -4058,6 +4091,9 @@ export class Game {
       const position = this.interpolatedPlayerPosition.set(sampled.x, sampled.y, sampled.z);
       this.lastRenderAlpha = sampled.alpha;
       this.updatePlayerPresentation(session, position, now);
+      if (playerGameplayAllowed(this.lifecycle.state, this.ui.isBlockingOverlay())) {
+        this.refreshLocalCrosshair(session);
+      }
       motionProbe.recordRender({
         online: Boolean(session.online),
         fps: this.fps,
@@ -4281,6 +4317,7 @@ export class Game {
         this.cachedDebugText += `\n${this.visibilityProbe.formatHud()}`;
         if (isQuietWorldQueryEnabled()) this.cachedDebugText += '\nquietWorld=ON rd=1';
         this.cachedDebugText += `\n${this.longTasks.hudLine()}`;
+        this.cachedDebugText += `\n${this.formatLocalAimDebug(session)}`;
         if (session.online) {
           this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
           const remoteHud = this.formatRemoteInterpDebug(session);
@@ -4299,6 +4336,30 @@ export class Game {
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
+    });
+  }
+
+  private formatLocalAimDebug(session: GameSession): string {
+    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    const camera = this.cameraPerspective === 'thirdPersonFront' ? this.frontCameraLook : this.input;
+    const hit = session.target;
+    return formatLocalAimHud({
+      cameraYaw: camera.yaw,
+      cameraPitch: camera.pitch,
+      playerYaw: session.player.yaw,
+      playerPitch: session.player.pitch,
+      aimYaw: aim.yaw,
+      aimPitch: aim.pitch,
+      ...(hit
+        ? {
+          targetX: hit.x,
+          targetY: hit.y,
+          targetZ: hit.z,
+          normalX: hit.normal.x,
+          normalY: hit.normal.y,
+          normalZ: hit.normal.z,
+        }
+        : {}),
     });
   }
 
