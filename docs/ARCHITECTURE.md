@@ -1,5 +1,52 @@
 # Архитектура
 
+## Online networking v2 — 2026-09-04
+
+**Current contract.** Supersedes Prediction checkpoint (Model B), latest-input `lastInput`, and silent server re-raycast for Online actions. WebSocket + 20 TPS + shared `PlayerController` remain. `PROTOCOL_VERSION = 2`. A v1 join is rejected.
+
+**CLIENT OWNS INTENT. SERVER OWNS RESULT.**
+
+```text
+MOVEMENT:
+  InputManager → PlayerCommand(commandSeq, clientTick, WASD/look/slot)
+  → predictLocalMove (history[commandSeq] = pre+post)
+  → WS input
+  → PlayerCommandQueue.enqueue (bound 32)
+  → serverTick N: takeForTick() one command or sticky last
+  → AppliedMovementStep { serverTick, commandSeq, pose }
+  → player_state.ackCommandSeq + appliedSteps[]
+  → inspect history[ackCommandSeq] vs snapshot
+  → accept: bookkeeping only (diffMotionFull === [])
+  → mismatch: restore snapshot, replay unacked commands
+
+BLOCK / BOW:
+  RAF live aim (PR #39 localInteractionAim)
+  → capture actionSeq + commandSeq + target/face/hit or yaw/pitch
+  → server validates that intent
+  → execute A or reject
+  → never silent B from delayed current ray
+```
+
+FIFO answers:
+
+| Question | Answer |
+|---|---|
+| What does this ACK confirm? | `ackCommandSeq` after `serverTick` |
+| Which command did serverTick N use? | `appliedSteps[].commandSeq` for that tick; sticky last if the queue was empty |
+| Which history entry matches? | `history[ackCommandSeq]` post-state |
+| Which target did this place/break use? | `action` / `interact` fields, not server look |
+| Which aim spawned this arrow? | `bow_release.yaw/pitch` captured at release |
+
+Equivalence epsilon is `1e-4` xz/y and `1e-3` speed. Speed / onGround / flying disagreement is a real correction. `predNo*` flags remain DEV-only.
+
+Modules: `shared/playerCommand.ts`, `shared/playerActions.ts`, `server/playerCommandQueue.ts`, `src/gameplay/actionValidation.ts`, `src/net/actionIntent.ts`, `src/net/onlineActionMessages.ts`. `Game.ts` orchestrates; it does not own the algorithms.
+
+Look-based raycast remains **only** when an action has no intent (SP tests, untargeted bow charge / eat). Network targeted actions always carry intent.
+
+Remote interpolation (PR #38) is unchanged in clock: `serverTick` samples, 100 ms delay, 100 ms extrap then freeze. Telemetry adds jitter p50/p95, late/s, maxVisualStep, velocityContinuity.
+
+Historical Model B / latest-input sections below describe the **previous** Online pipeline. Do not re-implement them.
+
 ## Local interaction aim (live look) — 2026-09-04
 
 Local block pick and first-person camera must share one look source. `applyImmediateRenderLook` already applies `InputManager.yaw/pitch` every RAF. `PlayerController.yaw/pitch` still update only inside the 20 TPS tick (physics / serialized view / walk facing).
@@ -9,7 +56,7 @@ Do **not** raycast with `session.player.viewDirection()` for local interaction. 
 - origin = `player.eyePosition()` (canonical eye, not third-person camera)
 - direction = `viewDirectionFromLook(input.yaw, input.pitch)` (same YXZ basis as the first-person camera)
 
-`Game.refreshLocalCrosshair` runs on the render path so the selection outline tracks the crosshair between ticks. `updateTargetAndActions` (20 TPS) reuses that helper, then consumes clicks / mining. `releaseBow` / SP `useInteraction` / Q-drop use the same look. Server still raycasts for Online interact/break.
+`Game.refreshLocalCrosshair` runs on the render path so the selection outline tracks the crosshair between ticks. `updateTargetAndActions` (20 TPS) reuses that helper, then consumes clicks / mining. Online use/bow/break capture that same live aim into sequenced actions. SP `useInteraction` / Q-drop use the same look.
 
 Third-person: targeting stays eye + player facing. Front camera look is inverted for presentation only.
 
@@ -44,9 +91,11 @@ Live `extra=3` with `tickGap=1 physicsTicks=1` is **not** a seqGap heuristic. `i
 
 `lastAccepted + latestInput × simTicks` is valid only when every skipped server tick used that same input. Server samples `lastInput` per physics tick. DEV `PlayerSnapshot.appliedTicks` is the per-tick applied seq/y/vy trace (last 8). The next production compare should replay that span, not one latest seq × N.
 
-## Prediction checkpoint (Model B) — 2026-09-03
+## Prediction checkpoint (Model B) — 2026-09-03 (historical)
 
-Owner dump `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x` proved `inputSeq` is not a physics tick. The client predicted seq 544 and 545; the server simulated **one** latest-input tick of 545. `history[545]` is one walk step ahead of the authoritative pose.
+**Superseded by Online networking v2 FIFO.** Kept as the record of why latest-input + `history[latest]` false-corrected. Production compare is `history[ackCommandSeq]` with no extraTicks replay.
+
+Owner dump `seq=545 lastAck=543 gap=2 physicsTicks=1 firstDiff=x` proved `inputSeq` is not a physics tick. The client predicted seq 544 and 545; the **old** server simulated **one** latest-input tick of 545. `history[545]` is one walk step ahead of that authoritative pose. FIFO applies 544 then 545 on consecutive ticks instead.
 
 Three clocks:
 

@@ -1,5 +1,29 @@
 # Тестирование
 
+## 2026-09-04 Online networking v2
+
+Report: `reports/2026-09-04_online-networking-v2.md`.
+
+```text
+npx vitest run \
+  tests/player-command-queue.test.ts \
+  tests/block-action-intent.test.ts \
+  tests/bow-release-intent.test.ts \
+  tests/online-networking-v2-contract.test.ts \
+  tests/local-player-prediction.test.ts \
+  tests/prediction-timeline.test.ts \
+  tests/checkpoint-extra-source.test.ts \
+  tests/local-motion-pipeline.test.ts \
+  tests/server/client-server-lockstep.test.ts \
+  tests/server/anarchy-server.test.ts \
+  tests/remote-player-interpolation.test.ts \
+  tests/hidden-tab-motion.test.ts
+```
+
+Contracts: FIFO applies one queued command per physics tick; sticky last when empty; `history[ackCommandSeq]` accept does not mutate live pose; catch-up of extra sticky ticks is a classified correction; client target A vs server ray B never becomes B; bow release aim is captured and later yaw is ignored; remote samples stay on `serverTick`; protocol 1 join is rejected.
+
+Manual two-client: see the report checklist. Client and server must both be protocol 2.
+
 ## 2026-09-04 Local interaction aim
 
 Report: `reports/2026-09-04_local-aim-desync.md`.

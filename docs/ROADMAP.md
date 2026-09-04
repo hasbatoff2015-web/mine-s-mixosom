@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-09-04: Online networking v2
+
+- [x] Phase 0 baseline call graph / temporal axes (`docs/reports/2026-09-04_online-networking-v2-baseline.md`).
+- [x] Explicit block action intent (validate A or reject, never B).
+- [x] Explicit bow release aim (immutable after send).
+- [x] FIFO movement command timeline + `ackCommandSeq` / `appliedSteps`.
+- [x] Reconciliation: accepted ACK does not mutate live motion; mismatch replays.
+- [x] Remote server-tick interpolation telemetry (PR #38 clock kept).
+- [x] Session/reconnect: queue + actionSeq reset on `resetConnectionInput`; hide still sends idle.
+- [x] Remove latest-input jump OR / use-edge bow fire / Model B extraTicks compare.
+- [x] Protocol bump to 2. Tests + typecheck.
+- [ ] Owner two-client live QA (local / block / bow / remote matrix). Keep PR draft until confirmed.
+- [ ] Do not merge main.
+
 ## 2026-09-04: Local interaction aim (live look)
 
 - [x] Trace camera RAF look vs 20 TPS `PlayerController.viewDirection` raycast/bow.

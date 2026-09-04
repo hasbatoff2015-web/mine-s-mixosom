@@ -80,6 +80,8 @@ npm run dev:anarchy
 
 Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarchyPort=`.
 
+`PROTOCOL_VERSION` is **2**. A client or server still on v1 will fail join (`unsupported protocol`). Rebuild both processes after pulling this branch. World files in `server/data/worlds/anarchy/` are unchanged.
+
 ## Two-client test
 
 1. Start `npm run dev:server` and `npm run dev`.

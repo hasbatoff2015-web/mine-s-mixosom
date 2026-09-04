@@ -2,6 +2,20 @@
 
 Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
 
+## Последний проход: Online networking v2
+
+- Ветка `cursor/online-networking-v2-3ff8`, от HEAD PR #39 (`c5fba74`). **Не merge в main.** Не rewrite #37/#38/#39.
+- Контракт: CLIENT OWNS INTENT / SERVER OWNS RESULT. `PROTOCOL_VERSION = 2`.
+- Movement: FIFO `PlayerCommandQueue`, one command per 20 TPS tick, sticky last if empty. ACK = `serverTick` + `ackCommandSeq` + bounded `appliedSteps[]`.
+- Reconciliation: compare `history[ackCommandSeq]`. Accepted ACK must not mutate live pose (`diffMotionFull === []`). Real mismatch → restore + replay. Equiv 1e-4, not 0.03 pose slop.
+- Block: sequenced `action` / targeted `interact` with target/face/hit. Validate A or reject. Never substitute neighbor B from delayed server ray. Mining locked to `break_start` target.
+- Bow: `bow_release` with captured yaw/pitch. Use falling edge does not spawn arrows. Later look cannot change a released projectile.
+- Remote: PR #38 serverTick buffer kept; telemetry expanded (jitter p50/p95, late/s, maxVisualStep).
+- Local aim: PR #39 live look kept for capture; physics stays 20 TPS.
+- DEV `predNo*` remains diagnostic only.
+- Report: `docs/reports/2026-09-04_online-networking-v2.md`. Baseline: `docs/reports/2026-09-04_online-networking-v2-baseline.md`.
+- Owner: two-client live QA still required (draft PR until confirmed).
+
 ## Последний проход: Local interaction aim (live look)
 
 - Ветка `cursor/local-aim-desync-86e1`, от PR #38. **Не merge в main.** Remote interpolation / local prediction physics / server authority **не трогали**.
