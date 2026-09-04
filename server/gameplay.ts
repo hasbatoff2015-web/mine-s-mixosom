@@ -48,6 +48,7 @@ import {
 import { Inventory, createItemStack, damageItem, type ItemStack } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { ItemId, tryGetItemDefinition } from '../src/items';
+import { FarmingSystem, farmingDropsForBlock } from '../src/farming';
 import { PlayerController } from '../src/player';
 import { RedstoneSystem } from '../src/redstone';
 import {
@@ -128,6 +129,7 @@ export class ServerGameplay {
   readonly minecarts: MinecartManager;
   readonly arrows: PlayerArrowManager;
   readonly redstone: RedstoneSystem;
+  readonly farming: FarmingSystem;
   readonly explosions = new ExplosionQueue();
   readonly random = systemRandomFn;
   lastTickMs = 0;
@@ -185,6 +187,7 @@ export class ServerGameplay {
       onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
     });
     this.redstone = new RedstoneSystem(world);
+    this.farming = new FarmingSystem(world, { random: this.random });
   }
 
   consumeBlockChanges(): Array<{ x: number; y: number; z: number; blockId: number; state?: BlockRenderState }> {
@@ -234,6 +237,12 @@ export class ServerGameplay {
     tickGameplayKernel({
       tickWorld: () => {
         this.world.tick();
+      },
+      tickFarming: () => {
+        this.farming.tick(connected.map((player) => ({
+          x: player.controller.position.x,
+          z: player.controller.position.z,
+        })));
       },
       tickFalling: () => {
         for (const spawn of this.world.consumeFallingBlocks()) {
@@ -543,6 +552,7 @@ export class ServerGameplay {
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air) return { ok: false, reason: 'empty' };
     const definition = getBlockDefinition(block);
+    const blockState = this.world.getBlockState(x, y, z);
     if (definition.breakable === false) return { ok: false, reason: 'unbreakable' };
     if (player.gamemode === 'survival' && definition.hardness > 0) {
       const mining = player.miningTarget;
@@ -559,11 +569,18 @@ export class ServerGameplay {
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
     this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
-    if (player.gamemode === 'survival' && harvestable && definition.drop) {
-      const count = rollBlockDropCount(definition.drop, this.random);
-      const extra = isSlabBlock(block) && defaultSlabType(this.world.getBlockState(x, y, z)) === 'double' ? count : 0;
-      if (count + extra > 0) {
-        this.spawnDroppedStack(createItemStack(definition.drop.item, count + extra), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+    if (player.gamemode === 'survival' && harvestable) {
+      const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
+      if (farmingDrops !== undefined) {
+        for (const drop of farmingDrops) if (drop.count > 0) {
+          this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        }
+      } else if (definition.drop) {
+        const count = rollBlockDropCount(definition.drop, this.random);
+        const extra = isSlabBlock(block) && defaultSlabType(blockState) === 'double' ? count : 0;
+        if (count + extra > 0) {
+          this.spawnDroppedStack(createItemStack(definition.drop.item, count + extra), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        }
       }
     }
     if (player.gamemode === 'survival') {
@@ -633,6 +650,7 @@ export class ServerGameplay {
       set ridingCartId(value) { player.ridingCartId = value; },
       minecarts: this.minecarts,
       redstone: this.redstone,
+      random: this.random,
       setSpawnPoint: (position) => player.survival.setSpawnPoint(position),
       allowInteract: (x, y, z, block) => {
         const event = gameplay.events.createPlayerInteract(player.id, x, y, z, block);
@@ -915,8 +933,16 @@ export class ServerGameplay {
     const events = this.world.consumeDetachedBlocks();
     if (events.length) this.redstone.notifyBlocksChanged(events);
     for (const event of events) {
+      if (event.reason === 'lava') continue;
+      const farmingDrops = farmingDropsForBlock(event.block, event.state, this.random);
+      if (farmingDrops !== undefined) {
+        for (const drop of farmingDrops) if (drop.count > 0) {
+          this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+        }
+        continue;
+      }
       const drop = getBlockDefinition(event.block).drop;
-      if (!drop || event.reason === 'lava') continue;
+      if (!drop) continue;
       const count = rollBlockDropCount(drop, this.random);
       if (count > 0) {
         this.spawnDroppedStack(createItemStack(drop.item, count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));

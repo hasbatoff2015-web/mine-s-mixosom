@@ -6,6 +6,7 @@ const TIER_RANK: Readonly<Record<ToolTier, number>> = Object.freeze({
   wood: 1,
   stone: 2,
   iron: 3,
+  gold: 1,
   diamond: 4,
 });
 

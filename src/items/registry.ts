@@ -103,6 +103,7 @@ const toolDamage: Readonly<Record<ItemToolType, number>> = {
   pickaxe: 3,
   axe: 4,
   shovel: 2,
+  hoe: 1,
 };
 
 const tools: ItemDefinition[] = tiers.flatMap((stats) =>
@@ -123,6 +124,21 @@ const tools: ItemDefinition[] = tiers.flatMap((stats) =>
     });
   }),
 );
+
+const hoes: ItemDefinition[] = [
+  ...tiers.map((stats): ToolItemDefinition => Object.freeze({
+    id: `${stats.prefix}_hoe`, name: requiredDisplayName(`${stats.prefix}_hoe`),
+    kind: 'tool', maxStack: 1, texture: `item/${stats.prefix}_hoe`,
+    tags: Object.freeze(['tool', 'hoe', `tier:${stats.tier}`]),
+    tool: 'hoe', tier: stats.tier, durability: stats.durability,
+    miningSpeed: stats.miningSpeed, attackDamage: 1 + stats.damageBonus,
+  })),
+  Object.freeze({
+    id: ItemId.GoldenHoe, name: requiredDisplayName(ItemId.GoldenHoe), kind: 'tool', maxStack: 1,
+    texture: 'item/golden_hoe', tags: Object.freeze(['tool', 'hoe', 'tier:gold']),
+    tool: 'hoe', tier: 'gold', durability: 32, miningSpeed: 12, attackDamage: 1,
+  } satisfies ToolItemDefinition),
+];
 
 const swords: ItemDefinition[] = tiers.map((stats): WeaponItemDefinition => {
   const id = `${stats.prefix}_sword`;
@@ -209,11 +225,19 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.WaterBucket, { placesBlockId: BlockId.Water, maxStack: 1 }),
   resource(ItemId.LavaBucket, { placesBlockId: BlockId.Lava, maxStack: 1 }),
   resource(ItemId.Minecart),
+  resource(ItemId.WheatSeeds), resource(ItemId.Wheat),
+  resource(ItemId.MelonSeeds), resource(ItemId.PumpkinSeeds),
+  resource(ItemId.Bone), resource(ItemId.BoneMeal),
 ];
 
 const foods: readonly ItemDefinition[] = [
   food(ItemId.Apple, 4, 2.4),
   food(ItemId.Bread, 5, 6),
+  food(ItemId.Carrot, 3, 3.6),
+  food(ItemId.Potato, 1, 0.6),
+  food(ItemId.BakedPotato, 5, 6),
+  food(ItemId.MelonSlice, 2, 1.2),
+  food(ItemId.PumpkinPie, 8, 4.8),
   food(ItemId.Beef, 3, 1.8),
   food(ItemId.CookedBeef, 8, 12.8),
   food(ItemId.Porkchop, 3, 1.8),
@@ -241,6 +265,7 @@ const foods: readonly ItemDefinition[] = [
 
 const equipment: readonly ItemDefinition[] = [
   ...tools,
+  ...hoes,
   ...swords,
   Object.freeze({
     id: ItemId.Bow, name: requiredDisplayName(ItemId.Bow), kind: 'weapon', maxStack: 1, texture: 'item/bow',

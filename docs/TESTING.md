@@ -1,5 +1,18 @@
 # Тестирование
 
+## 2026-09-04 Farming V1
+
+Report: `reports/2026-09-04_farming-core.md`. Baseline/integration main: `4d803e5de22e551e3f71941c0abb03c91e78cf4c`.
+
+- Core Farming files (`farming`, complete rules, performance, rendering, server authority) — **35/35 passed**. The wider interaction/save/network/render regression gate — **30 files / 267 tests passed**.
+- `npm run test:sim -- --testTimeout=15000 --silent` — **9 files / 42 tests passed**.
+- `npm run test:server -- --testTimeout=15000 --silent` — **6 files / 78 tests passed**.
+- `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `smoke:sim`, `smoke:server` — PASS.
+- `npm run benchmark:farming`: 1024 indexed/visited in **6.066 ms**, 4096 in **13.908 ms**; no state/fruit writes in the dry benchmark fixture and no per-position timer.
+- `build`, `check:size`, `check:archive` — PASS at **3.91 MiB / 326 files**. The source/public/dist audit verified 43 required assets (129 exact-case PNG copies), all 32×32 with identical SHA-256.
+- Exact-main full suite (`4d803e5`, same command/environment): **113/122 files and 1253/1267 tests passed; 14 tests plus one parse-suite failed; 2 RPC errors**. Farming: **121/127 files and 1291/1303 tests passed; 12 tests plus one parse-suite failed; 2 RPC errors**. All 36 added tests passed and Farming introduced no failure class; its failures are a strict subset of the established main reference-parser and CPU-sensitive lighting/worldgen/fire/minecart/streaming classes.
+- Actual in-app WebGL `?qaFarming=1`: dry/wet farmland, water channels, Wheat ages 0–7, Carrot/Potato stage mapping, attached Melon/Pumpkin stems, both fruits, five hoes, Bone Meal, seeds/foods rendered without missing textures. Manual native SP/two-client interaction remains owner QA.
+
 ## 2026-09-02 PR #22 post-server + player integration
 
 Reports: `reports/2026-08-30_ui-visual-system-hud-menu-polish.md` (`POST-SERVER + PLAYER INTEGRATION`) and `reports/2026-09-02_pr22-ui-server-player-integration.md`. Integrated exact main: `020d9d38d58f2d23231683a6aca736acf813bcb7`.

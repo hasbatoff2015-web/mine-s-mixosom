@@ -27,6 +27,11 @@ const VEGETATION_SUBSTRATES: ReadonlyMap<BlockId, ReadonlySet<BlockId>> = new Ma
   [BlockId.Poppy, GRASS_PLANT_SUBSTRATES],
   [BlockId.OxeyeDaisy, GRASS_PLANT_SUBSTRATES],
   [BlockId.DeadBush, DEAD_BUSH_SUBSTRATES],
+  [BlockId.WheatCrop, new Set([BlockId.Farmland])],
+  [BlockId.CarrotCrop, new Set([BlockId.Farmland])],
+  [BlockId.PotatoCrop, new Set([BlockId.Farmland])],
+  [BlockId.MelonStem, new Set([BlockId.Farmland])],
+  [BlockId.PumpkinStem, new Set([BlockId.Farmland])],
 ]);
 
 export function isVegetationBlock(block: BlockId): boolean {

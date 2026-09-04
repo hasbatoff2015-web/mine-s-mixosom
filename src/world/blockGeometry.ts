@@ -404,6 +404,7 @@ export const FIRE_BOX: LocalBox = { minX: 0.2, minY: 0, minZ: 0.2, maxX: 0.8, ma
 export const WIRE_BOX: LocalBox = { minX: 0.05, minY: 0, minZ: 0.05, maxX: 0.95, maxY: 0.0625, maxZ: 0.95 };
 export const CACTUS_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 1, maxZ: 15 / 16 };
 export const CHEST_BOX: LocalBox = { minX: 1 / 16, minY: 0, minZ: 1 / 16, maxX: 15 / 16, maxY: 14 / 16, maxZ: 15 / 16 };
+export const FARMLAND_BOX: LocalBox = { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 15 / 16, maxZ: 1 };
 
 export function isHangingLantern(state: BlockRenderState | undefined): boolean {
   return state?.attachment === 'ceiling';
@@ -652,6 +653,8 @@ export function selectionLocalBoxes(
       return [lanternSelectionLocalBox(state)];
     case 'chain':
       return [chainSelectionLocalBox()];
+    case 'farmland':
+      return [FARMLAND_BOX];
     case 'cube':
     default:
       return [FULL_BLOCK];
@@ -674,6 +677,8 @@ export function selectionShapeKey(
     state?.slabType ?? '',
     state?.stairHalf ?? '',
     state?.railShape ?? '',
+    state?.hydrated === true ? 'wet' : 'dry',
+    String(state?.age ?? ''),
     stairShape,
     String(state?.power ?? ''),
   ].join('|');

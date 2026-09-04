@@ -97,9 +97,10 @@ function columnLength(matrix: THREE.Matrix4, column: number): number {
 
 describe('GeneratedItemGeometry closed baseline', () => {
   it('does not modify the production geometry source file', () => {
+    const normalizedSource = generatedItemGeometrySource.replace(/\r\n/g, '\n');
     let hash = 5381;
-    for (let i = 0; i < generatedItemGeometrySource.length; i += 1) {
-      hash = (hash << 5) + hash ^ generatedItemGeometrySource.charCodeAt(i);
+    for (let i = 0; i < normalizedSource.length; i += 1) {
+      hash = (hash << 5) + hash ^ normalizedSource.charCodeAt(i);
     }
     expect((hash >>> 0).toString(16)).toBe(GENERATED_ITEM_GEOMETRY_SOURCE_DJB2);
   });

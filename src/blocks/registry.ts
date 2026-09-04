@@ -339,6 +339,58 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     renderLayer: 'cutout', renderShape: 'chain',
   }),
   stone(BlockId.DiamondBlock, 'diamond_block', 5, 'iron', 'building'),
+  block(BlockId.Farmland, 'farmland', {
+    category: 'terrain', hardness: 0.6, tool: 'shovel', tier: 'hand',
+    opaque: false, occludesFaces: false, renderShape: 'farmland',
+    drop: { item: 'dirt', count: 1 },
+    textures: {
+      top: 'block/farmland', moist: 'block/farmland_moist',
+      bottom: 'block/dirt', side: 'block/dirt',
+    },
+  }),
+  block(BlockId.WheatCrop, 'wheat_crop', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    fluidDisplaceable: true, renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', hasItem: false, drop: false,
+    textures: {
+      stage0: 'block/wheat_stage0', stage1: 'block/wheat_stage1', stage2: 'block/wheat_stage2',
+      stage3: 'block/wheat_stage3', stage4: 'block/wheat_stage4', stage5: 'block/wheat_stage5',
+      stage6: 'block/wheat_stage6', stage7: 'block/wheat_stage7',
+    },
+  }),
+  block(BlockId.CarrotCrop, 'carrot_crop', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    fluidDisplaceable: true, renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', hasItem: false, drop: false,
+    textures: {
+      stage0: 'block/carrots_stage0', stage1: 'block/carrots_stage1',
+      stage2: 'block/carrots_stage2', stage3: 'block/carrots_stage3',
+    },
+  }),
+  block(BlockId.PotatoCrop, 'potato_crop', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    fluidDisplaceable: true, renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', hasItem: false, drop: false,
+    textures: {
+      stage0: 'block/potatoes_stage0', stage1: 'block/potatoes_stage1',
+      stage2: 'block/potatoes_stage2', stage3: 'block/potatoes_stage3',
+    },
+  }),
+  block(BlockId.MelonStem, 'melon_stem', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    fluidDisplaceable: true, renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', hasItem: false, drop: false,
+    textures: { all: 'block/melon_stem', attached: 'block/attached_melon_stem' },
+  }),
+  block(BlockId.PumpkinStem, 'pumpkin_stem', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    fluidDisplaceable: true, renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation', hasItem: false, drop: false,
+    textures: { all: 'block/pumpkin_stem', attached: 'block/attached_pumpkin_stem' },
+  }),
+  block(BlockId.Melon, 'melon', {
+    category: 'terrain', hardness: 1, tool: 'axe', tier: 'hand', drop: false,
+    textures: { top: 'block/melon_top', bottom: 'block/melon_top', side: 'block/melon' },
+  }),
+  block(BlockId.Pumpkin, 'pumpkin', {
+    category: 'terrain', hardness: 1, tool: 'axe', tier: 'hand', drop: false,
+    textures: { top: 'block/pumpkin_top', bottom: 'block/pumpkin_top', side: 'block/pumpkin' },
+  }),
 
   ...BLOCK_FAMILIES.flatMap((family) => {
     const shaped: BlockDefinition[] = [];

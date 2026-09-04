@@ -140,7 +140,7 @@ describe('item registry', () => {
 
   it('does not implement excluded progression content', () => {
     const ids = new Set(ITEMS.map((item) => item.id));
-    for (const excluded of ['lapis_lazuli', 'emerald', 'raw_copper', 'wooden_hoe', 'golden_pickaxe', 'golden_sword']) {
+    for (const excluded of ['lapis_lazuli', 'emerald', 'raw_copper', 'golden_pickaxe', 'golden_sword']) {
       expect(ids.has(excluded), excluded).toBe(false);
     }
   });

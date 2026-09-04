@@ -21,6 +21,7 @@ function recordingHost(
   };
   const host: GameplayKernelHost = {
     tickWorld: () => bump('world'),
+    tickFarming: () => bump('farming'),
     tickFalling: () => bump('falling'),
     tickPlayers: () => { bump('players'); },
     tickPlayerActions: () => { bump('playerActions'); },
@@ -64,8 +65,9 @@ describe('GameplayKernel', () => {
     });
     const trace: string[] = [];
     expect(tickGameplayKernel(host, trace)).toBe(true);
-    expect(trace).toEqual(['world', 'falling', 'players']);
+    expect(trace).toEqual(['world', 'farming', 'falling', 'players']);
     expect(counts.world).toBe(1);
+    expect(counts.farming).toBe(1);
     expect(counts.falling).toBe(1);
     expect(counts.players).toBe(1);
     expect(counts.projectiles).toBeUndefined();

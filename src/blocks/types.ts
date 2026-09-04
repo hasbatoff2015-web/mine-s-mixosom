@@ -1,6 +1,6 @@
 export type ToolType = 'pickaxe' | 'axe' | 'shovel' | 'hoe' | 'shears';
 
-export type ToolTier = 'hand' | 'wood' | 'stone' | 'iron' | 'diamond';
+export type ToolTier = 'hand' | 'wood' | 'stone' | 'iron' | 'gold' | 'diamond';
 
 export type BlockRenderLayer = 'opaque' | 'cutout' | 'translucent';
 
@@ -27,7 +27,8 @@ export type BlockRenderShape =
   | 'fence'
   | 'rail'
   | 'lantern'
-  | 'chain';
+  | 'chain'
+  | 'farmland';
 
 export type RailShape =
   | 'north_south'
@@ -72,6 +73,9 @@ export interface BlockRenderState {
   readonly fluidLevel?: number;
   readonly fluidFalling?: boolean;
   readonly railShape?: RailShape;
+  /** Farming V1 state. Missing values preserve old saves as dry / age zero. */
+  readonly hydrated?: boolean;
+  readonly age?: number;
 }
 
 export interface BlockTextures {
@@ -82,6 +86,16 @@ export interface BlockTextures {
   readonly front?: string;
   /** Burning furnace (and similar) front face. Not used as default cube front. */
   readonly litFront?: string;
+  readonly moist?: string;
+  readonly stage0?: string;
+  readonly stage1?: string;
+  readonly stage2?: string;
+  readonly stage3?: string;
+  readonly stage4?: string;
+  readonly stage5?: string;
+  readonly stage6?: string;
+  readonly stage7?: string;
+  readonly attached?: string;
 }
 
 export interface BlockDrop {
@@ -262,4 +276,12 @@ export enum BlockId {
   Lantern = 147,
   Chain = 148,
   DiamondBlock = 149,
+  Farmland = 150,
+  WheatCrop = 151,
+  CarrotCrop = 152,
+  PotatoCrop = 153,
+  MelonStem = 154,
+  PumpkinStem = 155,
+  Melon = 156,
+  Pumpkin = 157,
 }

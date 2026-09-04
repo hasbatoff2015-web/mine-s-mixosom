@@ -26,10 +26,16 @@ if (import.meta.env.DEV) {
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
   const qaPlayer = search.get('qaPlayer') === '1';
+  const qaFarming = search.get('qaFarming') === '1' || search.get('qaFarming') === 'true';
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
-  if (qaUi && uiScenes.has(qaUi)) {
+  if (qaFarming) {
+    runningDevHarness = true;
+    void import('./dev/FarmingQaHarness').then(async ({ startFarmingQaHarness }) => {
+      disposeApplication = await startFarmingQaHarness(canvas, uiRoot);
+    });
+  } else if (qaUi && uiScenes.has(qaUi)) {
     runningDevHarness = true;
     void import('./dev/UiQaHarness').then(({ startUiQaHarness }) => {
       disposeApplication = startUiQaHarness(canvas, uiRoot, qaUi as import('./dev/UiQaHarness').UiQaScene);

@@ -50,6 +50,7 @@ import {
 import { fluidCellGeometry } from '../world/fluidSurface';
 import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
 import { sampleSurfaceVertexLight, type SurfaceLight } from '../world/lightSampling';
+import { attachedStemDirection, cropAge, cropTextureStage, isStemBlock } from '../farming';
 
 export { leverHandleAngle } from './specialBlockGeometry';
 export { bakedVertexLight } from './worldLighting';
@@ -501,7 +502,7 @@ export class ChunkMesher {
       case 'lever': return this.addLever(buffers, definition, state, world, x, y, z);
       case 'button': return this.addButton(buffers, definition, state, world, x, y, z);
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
-      case 'cross': return this.addCrossPlant(buffers, definition, world, x, y, z);
+      case 'cross': return this.addCrossPlant(buffers, definition, state, world, x, y, z);
       case 'fire': return this.addFire(buffers, definition, world, x, y, z);
       case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
@@ -511,6 +512,7 @@ export class ChunkMesher {
       case 'rail': return this.addRail(buffers, definition, state, world, x, y, z);
       case 'lantern': return this.addLantern(buffers, definition, state, world, x, y, z);
       case 'chain': return this.addChain(buffers, definition, world, x, y, z);
+      case 'farmland': return this.addFarmland(buffers, definition, state, world, x, y, z);
       case 'chest': return 0;
       case 'cube': return 0;
     }
@@ -519,22 +521,32 @@ export class ChunkMesher {
   private addCrossPlant(
     buffers: GeometryBuffers,
     definition: BlockDefinition,
+    state: BlockRenderState | undefined,
     world: VoxelWorld,
     x: number,
     y: number,
     z: number,
   ): number {
-    const texture = definition.textures.all ?? `block/${definition.key}`;
+    const stage = cropTextureStage(definition.id, state);
+    const stagedTexture = definition.textures[`stage${stage}` as keyof typeof definition.textures];
+    const attached = isStemBlock(definition.id)
+      ? attachedStemDirection(world, x, y, z, definition.id)
+      : undefined;
+    const texture = attached
+      ? definition.textures.attached ?? definition.textures.all ?? `block/${definition.key}`
+      : stagedTexture ?? definition.textures.all ?? `block/${definition.key}`;
     const lighting = this.lightingFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
+    if (attached) return this.addAttachedStem(buffers, texture, lighting, x, y, z, attached);
     const inset = 0.08;
+    const height = isStemBlock(definition.id) ? Math.max(2 / 16, (cropAge(state) + 1) * 1.75 / 16) : 0.9;
     const planes: readonly (readonly (readonly [number, number, number])[])[] = [
       [
         [x + inset, y, z + inset], [x + 1 - inset, y, z + 1 - inset],
-        [x + 1 - inset, y + 0.9, z + 1 - inset], [x + inset, y + 0.9, z + inset],
+        [x + 1 - inset, y + height, z + 1 - inset], [x + inset, y + height, z + inset],
       ],
       [
         [x + 1 - inset, y, z + inset], [x + inset, y, z + 1 - inset],
-        [x + inset, y + 0.9, z + 1 - inset], [x + 1 - inset, y + 0.9, z + inset],
+        [x + inset, y + height, z + 1 - inset], [x + 1 - inset, y + height, z + inset],
       ],
     ];
     for (const corners of planes) {
@@ -550,6 +562,60 @@ export class ChunkMesher {
       );
     }
     return 4;
+  }
+
+  private addAttachedStem(
+    buffers: GeometryBuffers,
+    texture: string,
+    lighting: VertexLighting,
+    x: number,
+    y: number,
+    z: number,
+    facing: HorizontalFacing,
+  ): number {
+    const northSouth = facing === 'north' || facing === 'south';
+    const toward = facing === 'north' || facing === 'west' ? -0.48 : 0.48;
+    const cx = x + 0.5, cz = z + 0.5;
+    const endX = northSouth ? cx : cx + toward;
+    const endZ = northSouth ? cz + toward : cz;
+    const width = 0.08;
+    const corners: Array<[number, number, number]> = northSouth
+      ? [[cx - width, y, cz], [endX - width, y, endZ], [endX + width, y + 0.5, endZ], [cx + width, y + 0.5, cz]]
+      : [[cx, y, cz + width], [endX, y, endZ + width], [endX, y + 0.5, endZ - width], [cx, y + 0.5, cz - width]];
+    const normal = this.quadNormal(corners);
+    this.addQuad(buffers, texture, corners, normal, lighting);
+    this.addQuad(buffers, texture, [corners[0]!, corners[3]!, corners[2]!, corners[1]!], normal, lighting, [0, 0, 1, 1], true);
+    return 2;
+  }
+
+  private addFarmland(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const box: LocalBox = { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 15 / 16, maxZ: 1 };
+    let faces = 0;
+    for (const face of FACES) {
+      if (this.localFaceCulled(box, face, world, x, y, z)) continue;
+      const texture = face.normal[1] > 0.5
+        ? (state?.hydrated ? definition.textures.moist : definition.textures.top) ?? 'block/farmland'
+        : face.normal[1] < -0.5
+          ? definition.textures.bottom ?? 'block/dirt'
+          : definition.textures.side ?? 'block/dirt';
+      const corners = face.corners.map((corner) => [
+        x + box.minX + corner[0] * (box.maxX - box.minX),
+        y + box.minY + corner[1] * (box.maxY - box.minY),
+        z + box.minZ + corner[2] * (box.maxZ - box.minZ),
+      ] as [number, number, number]);
+      this.addQuad(buffers, texture, corners, face.normal,
+        this.lightingFor(world, definition, texture, x, y, z, face.normal, face.shade), localFaceUv(face, box));
+      faces += 1;
+    }
+    return faces;
   }
 
   private addFire(

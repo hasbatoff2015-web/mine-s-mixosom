@@ -75,7 +75,16 @@ export interface VoxelHit {
 
 export interface DetachedBlockEvent {
   x: number; y: number; z: number; block: BlockId;
+  state?: BlockRenderState;
   reason: 'support' | 'water' | 'lava';
+}
+
+export interface CommittedBlockChange {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly previous: BlockId;
+  readonly block: BlockId;
 }
 
 export interface FallingBlockSpawn {
@@ -216,6 +225,7 @@ export class VoxelWorld {
     z: number;
     block: BlockId;
   }) => void;
+  private readonly committedBlockObservers = new Set<(changes: readonly CommittedBlockChange[]) => void>();
   private pendingEmitters: Array<readonly [number, number, number]> = [];
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
@@ -234,6 +244,12 @@ export class VoxelWorld {
 
   constructor(readonly seed: string) {
     this.generator = new TerrainGenerator(seed);
+  }
+
+  /** Additional shared-simulation observers; the server callback remains single-owner. */
+  observeCommittedBlocks(observer: (changes: readonly CommittedBlockChange[]) => void): () => void {
+    this.committedBlockObservers.add(observer);
+    return () => this.committedBlockObservers.delete(observer);
   }
 
   restore(state: Pick<SerializedWorldState, 'timeOfDay' | 'modifications' | 'chests' | 'furnaces' | 'blockStates'>): void {
@@ -434,7 +450,7 @@ export class VoxelWorld {
       }
       if (!isBlockStillSupported(this, x, y, z)) {
         removals.push({ x, y, z, block: BlockId.Air });
-        this.detachedBlocks.push({ x, y, z, block, reason: 'support' });
+        this.detachedBlocks.push({ x, y, z, block, state: this.getBlockState(x, y, z), reason: 'support' });
       }
     }
     if (removals.length) this.applyBlockBatch(removals, { deferLighting: true });
@@ -568,7 +584,10 @@ export class VoxelWorld {
       this.invalidateImportedChunkLighting(dirtyChunks);
     }
 
-    if (committed.length > 0) this.onCommittedBlocks?.(committed);
+    if (committed.length > 0) {
+      this.onCommittedBlocks?.(committed);
+      for (const observer of this.committedBlockObservers) observer(committed);
+    }
 
     return {
       applied,
@@ -623,6 +642,7 @@ export class VoxelWorld {
     const chunk = this.getChunk(chunkX, chunkZ)!;
     const previous = chunk.get(localX, y, localZ) as BlockId;
     if (previous === block) return undefined;
+    const previousState = this.getBlockState(x, y, z);
     // A new material/lifetime must not inherit an old pending (or in-flight) deadline.
     this.cancelFluidTick(x, y, z);
     const previousDefinition = getBlockDefinition(previous);
@@ -633,7 +653,14 @@ export class VoxelWorld {
     if ((block === BlockId.Water || block === BlockId.Lava)
       && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid
       && (previousDefinition.fluidDisplaceable || previousDefinition.replaceable)) {
-      this.detachedBlocks.push({ x, y, z, block: previous, reason: block === BlockId.Water ? 'water' : 'lava' });
+      this.detachedBlocks.push({
+        x,
+        y,
+        z,
+        block: previous,
+        state: previousState,
+        reason: block === BlockId.Water ? 'water' : 'lava',
+      });
     }
     if (record) {
       const key = chunkKey(chunkX, chunkZ);
