@@ -10,12 +10,18 @@ export interface CommandSender {
   readonly playerId: string;
   readonly name: string;
   readonly gamemode: GameMode;
-  /** Minimal Anarchy model: `player` unless the name is in `FC_OPERATORS`. */
+  /** True when PermissionService (or FC_OPERATORS) treats the sender as OP. */
   readonly operator?: boolean;
 }
 
-/** Phase 8: `player` (anyone online) or `operator` (FC_OPERATORS names). */
-export type CommandPermission = 'player' | 'operator';
+/**
+ * `'player'` — anyone online.
+ * `'operator'` — OP / FC_OPERATORS (legacy).
+ * Any other string is a permission node (`home.use`, `server.*`, …).
+ */
+export type CommandPermission = 'player' | 'operator' | (string & {});
+
+export type PermissionCheck = (sender: CommandSender, permission: CommandPermission) => boolean;
 
 export interface CommandHandler {
   readonly name: string;
@@ -28,6 +34,11 @@ export interface CommandHandler {
 
 export class CommandRegistry {
   private readonly byName = new Map<string, CommandHandler>();
+  private permissionCheck: PermissionCheck | undefined;
+
+  setPermissionCheck(check: PermissionCheck | undefined): void {
+    this.permissionCheck = check;
+  }
 
   register(handler: CommandHandler): () => void {
     const names = [handler.name, ...(handler.aliases ?? [])];
@@ -84,11 +95,17 @@ export class CommandRegistry {
         result: { ok: false, lines: [`Unknown command '${parsed.name}'. Type /help for a list.`] },
       };
     }
-    if (handler.permission === 'operator' && sender.operator !== true) {
-      return {
-        parsed,
-        result: { ok: false, lines: ['You do not have permission.'] },
-      };
+    const permission = handler.permission ?? 'player';
+    if (permission !== 'player') {
+      const allowed = this.permissionCheck
+        ? this.permissionCheck(sender, permission)
+        : permission === 'operator' && sender.operator === true;
+      if (!allowed) {
+        return {
+          parsed,
+          result: { ok: false, lines: ['You do not have permission.'] },
+        };
+      }
     }
     return { parsed, result: handler.execute(parsed.args, sender) };
   }

@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. It is not homes, economy, TPA, kits, or moderation. Those are future features.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -28,7 +28,7 @@ Installing a plugin gives it **server-level authority** through the runtime. Thi
 - Singleplayer (`Game`) never imports `PluginManager`.
 - Clients receive ordinary protocol messages. Plugins cannot send raw packets.
 
-Restart the server to reload plugins. There is no hot reload.
+Restart the server to pick up **source file** changes. In-game `/plugins reload <name>` re-runs disable → cleanup → load → enable on the same instance. Failed plugins still need a restart.
 
 ## Lifecycle
 
@@ -66,7 +66,7 @@ disable plugins (flush registrations/tasks) → save world → close connections
 - skip `_` prefixed files, README, `.gitkeep`
 - export `plugin`, or `default` (object or factory function)
 - missing directory is fine — the server still starts
-- `/hello` is **not** a built-in. Stock `server/plugins/` is empty on purpose.
+- `/hello` is **not** a built-in. Stock `server/plugins/` is empty on purpose. Core Anarchy plugins live in `server/builtin-plugins/` and are registered by `WorldInstance.loadPlugins()`.
 
 The canonical example is `server/plugin-examples/hello.ts`. It is **not** auto-loaded. Broken/invalid modules stay under `tests/server/fixtures/plugins/` and must not be used as `FC_PLUGIN_DIR` for ordinary QA.
 
@@ -110,7 +110,31 @@ Env:
 
 - `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the live plugin directory
 - `FC_EXAMPLE_PLUGIN=1` — register the bundled example without copying it into `server/plugins/`
-- `FC_OPERATORS` — comma-separated player names treated as `operator`
+- `FC_OPERATORS` — comma-separated player names treated as OP (seeded into PermissionService, cannot `/deop`)
+- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms pack
+
+## Permissions
+
+`CommandRegistry` still accepts legacy `permission: 'operator'`. Any other string is a permission node (`home.use`, `plugins.manage`, `server.*`). OP (`/op`, `FC_OPERATORS`) matches every node. Default/moderator/admin/vip/premium roles exist as infrastructure; vip/premium are not auto-assigned.
+
+In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`.
+
+## Builtin Anarchy plugins
+
+| Plugin | Commands | Persistent data |
+| --- | --- | --- |
+| permissions | `/permissions`, `/op`, `/deop` | `plugin-data/permissions.json` |
+| plugin-admin | `/plugins` | — |
+| tpa | `/tpa`, `/tpahere`, `/tpaccept`, `/tpdeny` | config |
+| spawn | `/spawn`, `/setspawn` | world spawn + config |
+| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` |
+| back | `/back` | memory (teleport history) |
+| rtp | `/rtp` | config |
+| rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
+| claims | `/claim` | `plugin-data/claims/claims.json` |
+| holograms | `/holograms` | `plugin-data/holograms/holograms.json` |
+
+`/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
 
 ## API version
 
@@ -137,6 +161,11 @@ Plugins receive a frozen `ServerAPI` scoped to that plugin:
 | `registerEvent(name, handler)` | EventBus; returns unsubscribe |
 | `scheduleOnce(ms, fn)` / `scheduleRepeating(ms, fn)` | Node timers; cancelled on disable |
 | `log(message)` | `[server] plugin <name> …` |
+| `hasPermission` / `isOperator` | PermissionService |
+| `teleport` / `lastTeleport` / `consumeLastTeleport` | TeleportService |
+| `loadData` / `saveData` | namespaced JSON under `plugin-data/` |
+| `loadConfig` / `getConfig` / `setConfig` | in-game mutable plugin config |
+| `formatHelp` | standard `/<plugin> help` lines |
 
 `registerCommand` / `registerEvent` / timers are remembered. On disable they all disappear. You do not need to store every handle yourself.
 
@@ -154,14 +183,15 @@ Not exposed: WebSocket, session token, input sequence, interpolation, renderer, 
 
 ### Commands
 
-One registry (`server/commands.ts`). Built-ins stay: `/help` `/gamemode` `/seed` `/spawn` `/give` `/time` `/tp` `/clear` `/kill`.
+One registry (`server/commands.ts`). Built-ins stay: `/help` `/gamemode` `/seed` `/give` `/time` `/tp` `/clear` `/kill`. `/spawn` is provided by the Spawn plugin.
 
-Permission is minimal:
+Permission:
 
 - default `player` — anyone online
-- `operator` — name listed in `FC_OPERATORS`
+- `operator` — OP / `FC_OPERATORS`
+- any other string — permission node (`home.use`, `plugins.manage`, wildcards)
 
-There is no permission database.
+`/<plugin> help` is the standard help form. Help for a plugin root command is available without admin unless that command itself is operator-only (`/op`).
 
 ### Inventory
 
@@ -246,11 +276,12 @@ Plugin callbacks run on the Node event loop / server tick that emitted the event
 
 ## Persistence
 
-Phase 8 does **not** add plugin storage. A future namespaced data API is allowed; do not add a database now.
+Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Config defaults are written on enable so admins can also change them with `/<plugin> config set`.
 
 ## What this is not
 
 - Not a Bukkit/Spigot jar loader
 - Not a second combat / fluid / inventory system
 - Not client mods
-- Not gameplay plugins (homes, TPA, economy, kits, moderation)
+- Not Auction House / economy / kits
+- Not a WorldGuard clone (claims are a basic flag + member model)

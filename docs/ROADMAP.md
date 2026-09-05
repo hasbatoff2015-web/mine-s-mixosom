@@ -1,6 +1,19 @@
 # Roadmap
 
+## 2026-09-05: Anarchy plugin platform + base plugins
+
+- [x] Evolve CommandRegistry + PermissionService (roles, wildcards, persistent OP/DEOP, FC_OPERATORS seed).
+- [x] Plugin help standard (`/<plugin> help`) and in-game `/plugins` enable/disable/reload.
+- [x] Shared TeleportService + history; TPA without replacing `/tp <x> <y> <z>`.
+- [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
+- [x] Claims with cancellable events and configurable flags (not WorldGuard).
+- [x] Holograms MVP (named, lines, range, persistence). No Auction House.
+- [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, hologram chat range.
+- [ ] Client hologram rendering / click actions / placeholders — later.
+- [ ] Auction House after inventory/GUI market framework.
+
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
+
 
 - [x] Extend `npm run server:import` to bake `frontier_spawn2.schem` via existing `importAnarchySpawn` into `FsWorldStore` (`ANARCHY_SPAWN_Y_SHIFT = -28`).
 - [x] Refuse overwrite without `--force`; backup `dataDir/anarchy` before replacement; keep player roster.
