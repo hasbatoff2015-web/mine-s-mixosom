@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: stuck Anarchy block after failed finish
+
+- После неуспешного `block_break_finish` клиент оставлял `pendingBlockAction` на тех же координатах. Sequenced path шлёт только `action_result`, не `block_result`, и без `block_update` pending никогда не сбрасывался. Повторный finish того же блока глотался; другие блоки работали; Creative тоже нет (тот же client gate); reconnect создавал новую session и снимал lock.
+- Сервер блок не удалял. Reverse hypothesis (server air, client dirt) отвергнута: reconnect снова показывает ломаемый dirt.
+- Report: `docs/reports/2026-09-05_stuck-block-break.md`.
+
 ## Последний проход: intermittent Anarchy block-break desync
 
 - Вне claim ломание dirt/grass могло «доиграть» анимацию и не удалить блок: клиент слал `block_break_finish` на тик раньше сервера (`14/15 < 0.95`), отпускание ЛКМ слало `abort` + `mining:false` и сбрасывало серверный прогресс. Claims не участвовали.

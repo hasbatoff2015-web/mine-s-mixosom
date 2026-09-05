@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-05: Stuck Anarchy block after failed finish
+
+- [x] Clear client `pendingBlockAction` on sequenced `action_result` (failed finish has no `block_update`).
+- [x] Same-block retry after mouse-up / new start without looking away or reconnect.
+- [x] Locked miningTarget finish skips LOS re-validation from a later commandSeq.
+- [ ] Owner QA: place dirt, full crack overlay, block stays, release and break the same cell in Survival and Creative without reconnect.
+
 ## 2026-09-05: Anarchy block-break desync
 
 - [x] Keep server mining held after client finish; do not abort that target on mouse-up.

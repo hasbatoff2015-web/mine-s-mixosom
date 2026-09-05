@@ -545,7 +545,16 @@ export class AnarchyServer {
       ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
     });
     if (!result.ok) {
-      serverLog(`action ${message.kind} rejected: ${result.reason} by ${player.name}`, 'warn');
+      const at = intent
+        ? ` at ${intent.targetX},${intent.targetY},${intent.targetZ} id=${intent.targetBlockId}`
+        : '';
+      const mine = player.miningTarget
+        ? ` mine=${player.miningTarget.x},${player.miningTarget.y},${player.miningTarget.z} progress=${player.miningProgress}`
+        : ' mine=—';
+      serverLog(
+        `action ${message.kind} rejected: ${result.reason} by ${player.name}${at}${mine} mode=${player.gamemode} block=${intent ? this.world.world.getBlock(intent.targetX, intent.targetY, intent.targetZ) : '—'}`,
+        'warn',
+      );
     }
   }
 
