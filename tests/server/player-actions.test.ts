@@ -148,6 +148,45 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
   });
 
+  it('accepts a survival finish while server mining is still below 0.95', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    const hit = prepareTarget(world, player);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const dirtHit = { ...hit, block: BlockId.Dirt };
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    const intent = blockTargetFromHit(dirtHit);
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    expect(player.miningProgress).toBe(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: false, reason: 'mining' });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(player.miningProgress).toBeGreaterThan(0);
+    expect(player.miningProgress).toBeLessThan(0.95);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('wipes unfinished mining when the client stops holding before finish', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    const hit = prepareTarget(world, player);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const intent = blockTargetFromHit({ ...hit, block: BlockId.Dirt });
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(player.miningProgress).toBeGreaterThan(0);
+    world.applyInput(player, input(3, { mining: false }));
+    world.tick();
+    expect(player.miningTarget).toBeUndefined();
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: false, reason: 'mining' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Dirt);
+  });
+
   it('does not cancel an explicit bow draw when FIFO later applies use:false', async () => {
     const { world, player } = await boot();
     player.inventory.setSlot(0, createItemStack('bow', 1));

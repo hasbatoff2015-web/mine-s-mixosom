@@ -1,5 +1,9 @@
 # Архитектура
 
+## Anarchy block-break finish vs abort — 2026-09-05
+
+Survival mining is server-authoritative (`advanceMining` + `block_break_finish`). The client overlay can reach 1.0 one tick before the server (dirt/hand is 15 ticks; `14/15 < 0.95`). After sending finish the client must keep `input.mining` and must not send `block_break_abort` for that target until the block is gone or a hard reject. `reason: mining` is in-flight, not a deny. Claims are unchanged: no overlapping claim ⇒ no cancel.
+
 ## Claim boundary feedback — 2026-09-05
 
 Denied `block-break` / `block-place` still cancel + chat. WorldInstance `ClaimBoundaryNetwork` then `sendTo` **one** player one `{ type: 'claim_boundary', ... }` per related claim. Plugins still cannot send raw packets.

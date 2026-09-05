@@ -573,9 +573,12 @@ export class ServerGameplay {
     if (definition.breakable === false) return { ok: false, reason: 'unbreakable' };
     if (player.gamemode === 'survival' && definition.hardness > 0) {
       const mining = player.miningTarget;
-      if (!mining || mining.x !== x || mining.y !== y || mining.z !== z || player.miningProgress < 0.95) {
+      if (!mining || mining.x !== x || mining.y !== y || mining.z !== z) {
         return { ok: false, reason: 'mining' };
       }
+      // Client finish is typically one 20-tick ahead of advanceMining (dirt/grass
+      // then sits at 14/15 < 0.95). Require that mining actually started, not 95%.
+      if (player.miningProgress <= 0) return { ok: false, reason: 'mining' };
     }
     const event = this.events.createBlockBreak(player.id, x, y, z, block);
     this.events.emit('blockBreak', event);

@@ -207,6 +207,13 @@ import {
   bowReleaseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
+import {
+  isInFlightBreakReject,
+  miningBlockKey,
+  shouldHoldServerMining,
+  shouldRetargetOnlineMine,
+  shouldSendBreakAbort,
+} from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
 import {
   applyAuthoritativeContainerSlots,
@@ -372,6 +379,8 @@ export interface OnlineAnarchySession {
   miningLocked?: boolean;
   /** Captured break_start target; finish/abort must not retarget. */
   miningIntent?: BlockTargetIntent;
+  /** `x,y,z` of a finish already sent; wait for the server break before aborting. */
+  miningFinishKey?: string;
   /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
   ignoreNetworkSend?: boolean;
   /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
@@ -902,6 +911,7 @@ export class Game {
         this.noteWorldNearPlayer('block_update', message.x, message.y, message.z);
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
+        this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
           this.playBlockSound('break', previous, message.x, message.y, message.z);
         } else {
@@ -917,6 +927,7 @@ export class Game {
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
+          this.clearOnlineMiningFinish(session, change.x, change.y, change.z);
         }
         return;
       }
@@ -1642,8 +1653,18 @@ export class Game {
           : {}),
       };
     }
-    if (!message.ok && message.targetX !== undefined) {
+    if (
+      !message.ok
+      && message.targetX !== undefined
+      && message.targetY !== undefined
+      && message.targetZ !== undefined
+      && !isInFlightBreakReject(message.reason)
+    ) {
       online.rejectedBlockKey = `${message.targetX},${message.targetY},${message.targetZ}`;
+      this.clearOnlineMiningFinish(session, message.targetX, message.targetY, message.targetZ);
+    }
+    if (message.ok && message.targetX !== undefined && message.targetY !== undefined && message.targetZ !== undefined) {
+      this.clearOnlineMiningFinish(session, message.targetX, message.targetY, message.targetZ);
     }
   }
 
@@ -1651,13 +1672,30 @@ export class Game {
     session: GameSession,
     message: Extract<ServerMessage, { type: 'block_result' }>,
   ): void {
+    if (message.action === 'break' && isInFlightBreakReject(message.reason)) return;
     this.clearOnlineBlockPending(session, message.x, message.y, message.z);
-    if (message.ok) return;
+    if (message.ok) {
+      this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
+      return;
+    }
     const key = `${message.x},${message.y},${message.z}`;
     if (session.online) session.online.rejectedBlockKey = key;
+    this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
     console.warn(
       `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`,
     );
+  }
+
+  private clearOnlineMiningFinish(session: GameSession, x: number, y: number, z: number): void {
+    const online = session.online;
+    if (!online?.miningFinishKey) return;
+    if (online.miningFinishKey !== miningBlockKey(x, y, z)) return;
+    online.miningFinishKey = undefined;
+    online.miningLocked = false;
+    if (session.miningTarget === miningBlockKey(x, y, z)) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+    }
   }
 
   private clearOnlineBlockPending(session: GameSession, x: number, y: number, z: number): void {
@@ -1687,6 +1725,11 @@ export class Game {
     if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
     if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
     if (this.input.consumeMiningReleased() && session.miningTarget) {
+      if (!shouldSendBreakAbort({
+        miningReleased: true,
+        miningTarget: session.miningTarget,
+        finishKey: online.miningFinishKey,
+      })) return;
       const source = this.onlineActionSource(session);
       const action = captureBlockBreakAbort(source);
       this.commitOnlineActionSeq(session, source);
@@ -3240,7 +3283,10 @@ export class Game {
         yaw: predicted.yaw,
         pitch: predicted.pitch,
         selectedSlot: session.selectedSlot,
-        mining: gameplayAllowed && this.input.mining,
+        mining: gameplayAllowed && shouldHoldServerMining({
+          buttonDown: this.input.mining,
+          finishKey: online.miningFinishKey,
+        }),
         use: gameplayAllowed && this.input.using,
         vehicleForward: riding ? movement.forward : 0,
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
@@ -3573,6 +3619,8 @@ export class Game {
         if (session.online) session.online.client.send({ type: 'attack' });
         else this.breakMinecart(attack.cart);
       }
+    } else if (session.online?.miningFinishKey) {
+      /* Finish already sent: keep miningTarget until the server breaks or hard-rejects. */
     } else if (!this.input.mining || !session.target) {
       if (session.online?.miningLocked) {
         const source = this.onlineActionSource(session);
@@ -3585,7 +3633,11 @@ export class Game {
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
     } else {
-      if (session.miningTarget !== targetKey) {
+      if (shouldRetargetOnlineMine({
+        nextTargetKey: targetKey,
+        currentTarget: session.miningTarget,
+        finishKey: session.online?.miningFinishKey,
+      })) {
         session.miningTarget = targetKey;
         session.miningProgress = 0;
         if (session.online) {
@@ -3645,10 +3697,12 @@ export class Game {
     if (session.online) {
       const pending = session.online.pendingBlockAction;
       if (session.online.rejectedBlockKey === `${hit.x},${hit.y},${hit.z}`) return;
+      if (session.online.miningFinishKey === miningBlockKey(hit.x, hit.y, hit.z)) return;
       if (pending && pending.kind === 'break' && pending.x === hit.x && pending.y === hit.y && pending.z === hit.z) {
         return;
       }
       session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
+      session.online.miningFinishKey = miningBlockKey(hit.x, hit.y, hit.z);
       const source = this.onlineActionSource(session);
       const captured = session.online.miningIntent;
       const action = captured
@@ -3663,7 +3717,6 @@ export class Game {
         blockId: action.targetBlockId,
       };
       session.online.client.send(actionMessageFromBreakFinish(action));
-      session.online.miningLocked = false;
       session.online.miningIntent = undefined;
       this.firstPerson?.swing();
       return;
@@ -4604,15 +4657,19 @@ export class Game {
   private updateBreakingOverlay(): void {
     const session = this.session;
     if (!session) return;
-    const target = session.target;
+    const finishKey = session.online?.miningFinishKey;
+    const awaiting = Boolean(finishKey && session.miningTarget === finishKey);
+    const overlayHit = awaiting ? this.onlineMiningHit(session) : session.target;
     const mining = this.lifecycle.state === 'PLAYING'
       && session.miningTarget !== undefined
-      && target !== undefined
-      && session.miningProgress > 0
-      && session.miningProgress < 1;
+      && overlayHit !== undefined
+      && (
+        (session.miningProgress > 0 && session.miningProgress < 1)
+        || awaiting
+      );
     session.worldRenderer.setBreakingProgress(
-      mining ? target : undefined,
-      mining ? session.miningProgress : 0,
+      mining ? overlayHit : undefined,
+      mining ? (awaiting ? Math.max(session.miningProgress, 0.99) : session.miningProgress) : 0,
     );
   }
 

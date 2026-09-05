@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-05: Anarchy block-break desync
+
+- [x] Keep server mining held after client finish; do not abort that target on mouse-up.
+- [x] Accept survival finish when mining started (`progress > 0`), not only at 0.95.
+- [ ] Owner QA: break dirt/grass outside spawn; animation completion then release still removes the block.
+
 ## 2026-09-05: Claim boundary visibility
 
 - [x] Unlit fog-free `#ff0000` fat wireframe (LineSegments2, 6px).

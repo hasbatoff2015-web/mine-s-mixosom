@@ -185,4 +185,10 @@ describe('overlapping claims per-flag priority', () => {
     const pvpOnly = claimsAt([spawn, arena], 'anarchy', 7, 10, 7);
     expect(protectionSources(pvpOnly, 'block-break', 'bob').map((entry) => entry.name)).toEqual(['spawn']);
   });
+
+  it('has no protection source outside any claim', () => {
+    expect(claimsAt([spawn, arena], 'anarchy', 100, 10, 100)).toEqual([]);
+    expect(protectionSource([], 'block-break', 'bob')).toBeUndefined();
+    expect(protectionSources([], 'block-break', 'bob')).toEqual([]);
+  });
 });

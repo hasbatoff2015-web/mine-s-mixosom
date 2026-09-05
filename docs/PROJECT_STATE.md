@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: intermittent Anarchy block-break desync
+
+- Вне claim ломание dirt/grass могло «доиграть» анимацию и не удалить блок: клиент слал `block_break_finish` на тик раньше сервера (`14/15 < 0.95`), отпускание ЛКМ слало `abort` + `mining:false` и сбрасывало серверный прогресс. Claims не участвовали.
+- Клиент после finish держит `input.mining` и не abort'ит этот target, пока не придёт break. Overlay остаётся до authoritative air. Server finish принимает matching `miningTarget` с `progress > 0`.
+- Report: `docs/reports/2026-09-05_block-break-desync.md`.
+
 ## Последний проход: claim boundary visibility (red + overlapping)
 
 - Wireframe всегда `#ff0000`, `fog=false`, `toneMapped=false`, 6px `LineSegments2` — цвет не смешивается с небом/туманом.
