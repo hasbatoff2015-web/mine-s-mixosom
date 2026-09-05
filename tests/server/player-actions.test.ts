@@ -225,6 +225,8 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 4)).toEqual({ ok: true });
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
   });
+
+  it('wipes unfinished mining when the client stops holding before finish', async () => {
     const { world, player } = await boot();
     world.setGameMode(player, 'survival');
     const hit = prepareTarget(world, player);
