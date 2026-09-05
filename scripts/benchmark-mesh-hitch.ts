@@ -2,7 +2,7 @@
  * Hitch / budgeted-mesh / AO 3×3 / greedy-realistic / worker clone research.
  * Does not change production greedy or worker paths.
  */
-import { CHUNK_SIZE, MESH_SLICE_BUDGET_MS } from '../src/core/constants';
+import { BlockId, BLOCK_OCCLUDES_FACES } from '../src/blocks';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import { compareAo3x3, greedyRealistic, packedNeighborhoodFillMs } from '../src/rendering/meshResearch';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
@@ -11,7 +11,7 @@ import { ANARCHY_WORLD_ID, ANARCHY_WORLD_SEED } from '../src/world/import/anarch
 import { FsWorldStore } from '../server/FsWorldStore';
 import { loadServerConfig } from '../server/config';
 import { collectReadyMeshJobs, planMeshFrame, shouldDeferGenerateForMesh } from '../src/world/streamingScheduler';
-import { WORLD_JOB_BUDGET_MS, WORLD_LIGHT_BUDGET_MS } from '../src/core/constants';
+import { WORLD_JOB_BUDGET_MS, WORLD_LIGHT_BUDGET_MS, CHUNK_SIZE, MESH_SLICE_BUDGET_MS } from '../src/core/constants';
 import { CHEAP_VERTEX_LIGHT_CHEBYSHEV } from '../src/rendering/ChunkMesher';
 
 const atlasStub = {
@@ -108,13 +108,17 @@ const packedFill = [];
 for (let i = 0; i < 5; i += 1) packedFill.push(packedNeighborhoodFillMs(sample));
 
 const aoRead: (x: number, y: number, z: number) => number = (x, y, z) => {
+  if (y < 0) return 256;
   const chunk = spawnWorld.getChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE), false);
-  if (!chunk || y < 0) return 256;
+  if (!chunk) return 15;
   const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
   const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-  const packed = chunk.skyLightAtIndex(y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx)
-    | (chunk.blockLight[y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx]! << 4);
-  return packed;
+  const index = y * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx;
+  const id = chunk.blocks[index] ?? BlockId.Air;
+  const occ = BLOCK_OCCLUDES_FACES[id] ? 256 : 0;
+  return (chunk.skyLightAtIndex(index) & 15)
+    | ((chunk.blockLight[index]! & 15) << 4)
+    | occ;
 };
 const ao = compareAo3x3(spawnWorld, sampleCx, sampleCz, aoRead);
 const greedy = greedyRealistic(spawnWorld, sampleCx, sampleCz, aoRead);

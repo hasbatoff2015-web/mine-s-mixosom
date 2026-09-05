@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: budgeted PLAYING mesh slices (after PR #49)
+
+- Ветка `cursor/mesher-hitch-slices-3ff8` от PR #49. Stack: **#50 → #49 → #48 → #47**. #49 не мержить автоматически.
+- PLAYING mesh режется на Y-slices `MESH_SLICE_BUDGET_MS = 8`. Старый GPU mesh живёт до commit. LOADING / urgent remesh — one-shot. Generate XOR mesh: generate пропускается, пока slice in progress.
+- Spawn walk hitch: mesh avg 12.27 → **6.20**, max 18.24 → **8.39**. Stacked = **0**. Faces **419181**. Oneshot nearby total CPU без изменения (~14–16 ms).
+- 3×3 AO: 0 mismatches, не в production. Greedy/worker только research (`npm run benchmark:mesh-hitch`). Packed 18×18 fill ~2.3 ms — не внедряли.
+- Report: `docs/reports/2026-09-05_mesher-hitch-slices.md`.
+
 ## Последний проход: typed-array mesher emit (after PR #48)
 
 - Ветка `cursor/mesher-typed-emit-3ff8` от PR #48 (`d85a27b`). Stack: **#49 → #48 → #47**. `origin/main` ещё без #47.
