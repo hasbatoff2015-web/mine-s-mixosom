@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-05: Claim boundary visibility
+
+- [x] Unlit fog-free `#ff0000` fat wireframe (LineSegments2, 6px).
+- [x] Show every overlapping claim that participates in the denied build flag.
+- [ ] Owner QA: nested spawn+arena both `block-break=false` show two red boxes; sky stays pure red.
+
 ## 2026-09-05: Claim boundary wireframe on denied build
 
 - [x] Server `claim_boundary` to the blocked player only after denied `block-break` / `block-place`.

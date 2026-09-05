@@ -426,6 +426,54 @@ describe('Anarchy builtin plugins', () => {
     expect(ada.sink.payloads.filter(isBoundary)).toHaveLength(0);
   });
 
+  it('shows every overlapping claim that also denies the same build flag', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const x = Math.floor(ada.player.controller.position.x) + 2;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 8.5, y + 4, z + 8.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create spawn');
+    chat(world, ada, '/claim flag spawn block-break false');
+    ada.player.controller.teleport([x + 3.5, y, z + 3.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 5.5, y + 3, z + 5.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create arena');
+    chat(world, ada, '/claim priority arena 10');
+    chat(world, ada, '/claim flag arena pvp true');
+    chat(world, ada, '/claim flag arena block-break false');
+    world.world.setBlock(x + 4, y + 1, z + 4, BlockId.Dirt);
+    world.setGameMode(bob.player, 'creative');
+    bob.player.controller.teleport([x + 4.5, y, z + 4.5]);
+
+    const isBoundary = (payload: unknown): payload is {
+      type: 'claim_boundary';
+      claimId: string;
+      name: string;
+      minX: number;
+      maxX: number;
+    } => (payload as { type?: string }).type === 'claim_boundary';
+
+    bob.sink.payloads.length = 0;
+    ada.sink.payloads.length = 0;
+    expect(world.tryBreak(bob.player, x + 4, y + 1, z + 4)).toEqual({ ok: false, reason: 'cancelled' });
+    const shown = bob.sink.payloads.filter(isBoundary);
+    expect(shown.map((entry) => entry.name).sort()).toEqual(['arena', 'spawn']);
+    expect(new Set(shown.map((entry) => entry.claimId)).size).toBe(2);
+    expect(shown.find((entry) => entry.name === 'spawn')).toMatchObject({ minX: x, maxX: x + 8 });
+    expect(shown.find((entry) => entry.name === 'arena')).toMatchObject({ minX: x + 3, maxX: x + 5 });
+    expect(ada.sink.payloads.filter(isBoundary)).toHaveLength(0);
+
+    bob.sink.payloads.length = 0;
+    expect(world.tryBreak(bob.player, x + 4, y + 1, z + 4)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(bob.sink.payloads.filter(isBoundary).map((entry) => entry.name).sort()).toEqual(['arena', 'spawn']);
+  });
+
   it('restricts /claim priority to the owner, claim.admin, or OP', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');

@@ -11,6 +11,7 @@ import {
   migrateClaimStore,
   ownFlagLines,
   protectionSource,
+  protectionSources,
   type Claim,
 } from '../../server/services/claims';
 
@@ -162,5 +163,26 @@ describe('overlapping claims per-flag priority', () => {
     const overlay = claim({ name: 'overlay', priority: 5, volume: spawnVolume, flags: {} });
     expect(protectionSource([garden, overlay], 'block-break', 'bob')?.name).toBe('overlay');
     expect(protectionSource([garden, overlay], 'block-break', 'ada')).toBeUndefined();
+  });
+
+  it('lists every overlapping deny claim, not only the winning setter', () => {
+    const spawnBoth = claim({
+      name: 'spawn',
+      priority: 0,
+      volume: spawnVolume,
+      flags: { 'block-break': false, 'block-place': false },
+    });
+    const arenaBreak = claim({
+      name: 'arena',
+      priority: 10,
+      volume: arenaVolume,
+      flags: { pvp: true, 'block-break': false },
+    });
+    const inside = claimsAt([spawnBoth, arenaBreak], 'anarchy', 7, 10, 7);
+    expect(protectionSources(inside, 'block-break', 'bob').map((entry) => entry.name)).toEqual(['arena', 'spawn']);
+    expect(protectionSources(inside, 'block-place', 'bob').map((entry) => entry.name)).toEqual(['spawn']);
+    expect(protectionSources(inside, 'pvp', 'bob')).toEqual([]);
+    const pvpOnly = claimsAt([spawn, arena], 'anarchy', 7, 10, 7);
+    expect(protectionSources(pvpOnly, 'block-break', 'bob').map((entry) => entry.name)).toEqual(['spawn']);
   });
 });

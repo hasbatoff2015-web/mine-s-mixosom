@@ -1,7 +1,12 @@
 import * as THREE from 'three';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { ServerClaimBoundaryMessage } from '../../shared/protocol';
 
-const EDGE_COLOR = 0xff3b3b;
+const EDGE_COLOR = 0xff0000;
+/** Screen-space CSS pixels. LineBasicMaterial cannot do this in WebGL. */
+const EDGE_WIDTH_PX = 6;
 
 interface ClaimBoundaryVisual {
   claimId: string;
@@ -12,9 +17,8 @@ interface ClaimBoundaryVisual {
   maxY: number;
   maxZ: number;
   expiresAt: number;
-  lines: THREE.LineSegments;
-  geometry: THREE.BufferGeometry;
-  material: THREE.LineBasicMaterial;
+  lines: LineSegments2;
+  geometry: LineSegmentsGeometry;
 }
 
 function sameVolume(visual: ClaimBoundaryVisual, message: ServerClaimBoundaryMessage): boolean {
@@ -57,12 +61,28 @@ export function claimBoundaryEdgePositions(
   ]);
 }
 
+function createBoundaryMaterial(): LineMaterial {
+  const material = new LineMaterial({
+    linewidth: EDGE_WIDTH_PX,
+    worldUnits: false,
+    dashed: false,
+    depthTest: false,
+    depthWrite: false,
+    fog: false,
+    toneMapped: false,
+    transparent: false,
+  });
+  material.color.setHex(EDGE_COLOR);
+  return material;
+}
+
 /**
  * Local-only red wireframe of a claim AABB. Server sends coordinates;
  * other players never receive this packet.
  */
 export class ClaimBoundaryRenderer {
   private readonly visuals = new Map<string, ClaimBoundaryVisual>();
+  private readonly material = createBoundaryMaterial();
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -77,32 +97,21 @@ export class ClaimBoundaryRenderer {
     }
     if (existing) this.disposeVisual(existing);
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      'position',
-      new THREE.BufferAttribute(
-        claimBoundaryEdgePositions(
-          message.minX,
-          message.minY,
-          message.minZ,
-          message.maxX,
-          message.maxY,
-          message.maxZ,
-        ),
-        3,
+    const geometry = new LineSegmentsGeometry();
+    geometry.setPositions(
+      claimBoundaryEdgePositions(
+        message.minX,
+        message.minY,
+        message.minZ,
+        message.maxX,
+        message.maxY,
+        message.maxZ,
       ),
     );
-    const material = new THREE.LineBasicMaterial({
-      color: EDGE_COLOR,
-      transparent: true,
-      opacity: 0.92,
-      depthTest: false,
-      depthWrite: false,
-    });
-    const lines = new THREE.LineSegments(geometry, material);
+    const lines = new LineSegments2(geometry, this.material);
     lines.name = `claim-boundary:${message.claimId}`;
     lines.frustumCulled = false;
-    lines.renderOrder = 22;
+    lines.renderOrder = 50;
     this.scene.add(lines);
     this.visuals.set(message.claimId, {
       claimId: message.claimId,
@@ -115,7 +124,6 @@ export class ClaimBoundaryRenderer {
       expiresAt,
       lines,
       geometry,
-      material,
     });
   }
 
@@ -130,11 +138,11 @@ export class ClaimBoundaryRenderer {
   dispose(): void {
     for (const visual of this.visuals.values()) this.disposeVisual(visual);
     this.visuals.clear();
+    this.material.dispose();
   }
 
   private disposeVisual(visual: ClaimBoundaryVisual): void {
     this.scene.remove(visual.lines);
     visual.geometry.dispose();
-    visual.material.dispose();
   }
 }

@@ -11,7 +11,7 @@ import {
   isTrusted,
   migrateClaimStore,
   ownFlagLines,
-  protectionSource,
+  protectionSources,
   sortClaimsByPriority,
   type Claim,
   type ClaimStore,
@@ -90,8 +90,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         if (allowFlag(claims, flag, player.id, player.name)) return false;
         event.cancel();
         player.sendMessage('This land is claimed.');
-        const source = protectionSource(claims, flag, player.name);
-        if (source) ctx.claimBoundaries.show(player.id, source);
+        ctx.claimBoundaries.showAll(player.id, protectionSources(claims, flag, player.name));
         return true;
       };
 

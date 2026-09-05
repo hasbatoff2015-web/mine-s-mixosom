@@ -8,7 +8,7 @@ export class ClaimBoundaryNetwork {
     private readonly sendToPlayer: (playerId: string, message: ServerMessage) => void,
   ) {}
 
-  /** Show the denying claim's AABB to that player only. Never broadcast. */
+  /** Show each denying claim's AABB to that player only. Never broadcast. */
   show(playerId: string, claim: Claim): void {
     this.sendToPlayer(playerId, {
       type: 'claim_boundary',
@@ -23,5 +23,9 @@ export class ClaimBoundaryNetwork {
       maxZ: claim.volume.maxZ,
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
     });
+  }
+
+  showAll(playerId: string, claims: readonly Claim[]): void {
+    for (const claim of claims) this.show(playerId, claim);
   }
 }

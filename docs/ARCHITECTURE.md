@@ -2,9 +2,9 @@
 
 ## Claim boundary feedback — 2026-09-05
 
-Denied `block-break` / `block-place` still cancel + chat. WorldInstance `ClaimBoundaryNetwork` then `sendTo` **one** player `{ type: 'claim_boundary', claimId, name, worldId, min/max, durationMs }`. Plugins still cannot send raw packets.
+Denied `block-break` / `block-place` still cancel + chat. WorldInstance `ClaimBoundaryNetwork` then `sendTo` **one** player one `{ type: 'claim_boundary', ... }` per related claim. Plugins still cannot send raw packets.
 
-The AABB is `protectionSource()`: the per-flag setter claim, or the highest-priority untrusted overlapping claim when nobody set the flag. Client `ClaimBoundaryRenderer` draws 12 LineSegments edges over inclusive volume `[min, max+1]` and disposes after expiry.
+`protectionSources()` returns every overlapping untrusted claim that participates in the deny: all explicit `flag=false` regions, or every untrusted overlapping region when nobody set the flag. `protectionSource()` is the first of that list (the winning setter). Client `ClaimBoundaryRenderer` draws 12 unlit `#ff0000` `LineSegments2` edges (`fog`/`toneMapped` off, 6px) over inclusive volume `[min, max+1]` and disposes after each claim's own 10s expiry.
 
 ## Claims overlap, chat scroll, 3D holograms — 2026-09-05
 
@@ -43,7 +43,7 @@ disk plugins from server/plugins/
 
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
 - Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
-- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`). Flags are partial; overlapping claims resolve **per flag** by priority. A denied break/place also sends a one-player `claim_boundary` wireframe packet via `ClaimBoundaryNetwork`.
+- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`). Flags are partial; overlapping claims resolve **per flag** by priority. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim.
 - Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
 
 ## Farming V1 + Networking V2 — 2026-09-04

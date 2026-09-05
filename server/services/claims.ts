@@ -112,13 +112,28 @@ export function protectionSource(
   flag: ClaimFlag,
   playerName: string,
 ): Claim | undefined {
-  if (effectiveFlag(claims, flag)) return undefined;
+  return protectionSources(claims, flag, playerName)[0];
+}
+
+/**
+ * Every overlapping untrusted claim that participates in this deny.
+ * Explicit `flag=false` claims are all shown (nested spawn + arena).
+ * When nobody set the flag, every untrusted overlapping region is shown.
+ */
+export function protectionSources(
+  claims: readonly Claim[],
+  flag: ClaimFlag,
+  playerName: string,
+): Claim[] {
+  if (effectiveFlag(claims, flag)) return [];
   const setter = flagSetter(claims, flag);
-  if (setter) return isTrusted(setter, playerName) ? undefined : setter;
-  for (const claim of sortClaimsByPriority(claims)) {
-    if (!isTrusted(claim, playerName)) return claim;
+  if (setter) {
+    if (isTrusted(setter, playerName)) return [];
+    return sortClaimsByPriority(claims).filter(
+      (claim) => claim.flags[flag] === false && !isTrusted(claim, playerName),
+    );
   }
-  return undefined;
+  return sortClaimsByPriority(claims).filter((claim) => !isTrusted(claim, playerName));
 }
 
 /**

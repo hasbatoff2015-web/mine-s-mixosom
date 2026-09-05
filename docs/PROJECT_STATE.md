@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: claim boundary visibility (red + overlapping)
+
+- Wireframe всегда `#ff0000`, `fog=false`, `toneMapped=false`, 6px `LineSegments2` — цвет не смешивается с небом/туманом.
+- Запрещённый break/place показывает **все** overlapping claims, у которых этот флаг явно `false` (и все untrusted overlapping, если флаг никто не задал). Arena только с `pvp=true` по-прежнему не рисуется на block-break.
+- Report: `docs/reports/2026-09-05_claim-boundary-visibility.md`.
+
 ## Последний проход: claim boundary wireframe feedback
 
 - Запрещённый `block-break` / `block-place` в чужом claim по-прежнему пишет в чат `This land is claimed.` и отменяет действие.
