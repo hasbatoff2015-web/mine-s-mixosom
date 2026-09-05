@@ -1225,7 +1225,9 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'claim_boundary invalid' };
       }
       if (
-        !Number.isInteger(raw.minX) || !Number.isInteger(raw.minY) || !Number.isInteger(raw.minZ)
+        !finite(raw.minX) || !finite(raw.minY) || !finite(raw.minZ)
+        || !finite(raw.maxX) || !finite(raw.maxY) || !finite(raw.maxZ)
+        || !Number.isInteger(raw.minX) || !Number.isInteger(raw.minY) || !Number.isInteger(raw.minZ)
         || !Number.isInteger(raw.maxX) || !Number.isInteger(raw.maxY) || !Number.isInteger(raw.maxZ)
       ) {
         return { error: 'claim_boundary invalid' };

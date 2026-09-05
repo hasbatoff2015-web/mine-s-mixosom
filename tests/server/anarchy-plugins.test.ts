@@ -420,6 +420,7 @@ describe('Anarchy builtin plugins', () => {
     expect(placeShown[0]!.claimId).toBe(breakShown[0]!.claimId);
 
     ada.sink.payloads.length = 0;
+    world.setGameMode(ada.player, 'creative');
     world.world.setBlock(x + 4, y + 1, z + 4, BlockId.Dirt);
     expect(world.tryBreak(ada.player, x + 4, y + 1, z + 4)).toEqual({ ok: true });
     expect(ada.sink.payloads.filter(isBoundary)).toHaveLength(0);
