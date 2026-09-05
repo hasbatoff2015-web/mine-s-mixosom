@@ -208,11 +208,20 @@ import {
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
 import {
+  abandonInFlightFinish,
+  applyBreakActionResult,
+  breakFinishHoldReason,
+  formatBreakGateDiag,
   isInFlightBreakReject,
   miningBlockKey,
+  noteBreakAbortSent,
+  noteBreakFinishSent,
+  noteBreakStartSent,
+  noteMiningReleased,
   shouldHoldServerMining,
   shouldRetargetOnlineMine,
   shouldSendBreakAbort,
+  shouldWaitForInFlightFinish,
 } from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
 import {
@@ -361,6 +370,7 @@ export interface OnlineAnarchySession {
         face?: string;
         blockId?: number;
         result?: string;
+        gate?: string;
       };
   lastBowDiag?: {
     actionSeq: number;
@@ -377,8 +387,8 @@ export interface OnlineAnarchySession {
     spawned?: boolean;
   };
   miningLocked?: boolean;
-  /** Captured break_start target; finish/abort must not retarget. */
-  miningIntent?: BlockTargetIntent;
+  /** Captured break_start target + commandSeq; finish must not retarget. */
+  miningIntent?: BlockTargetIntent & { commandSeq: number };
   /** `x,y,z` of a finish already sent; wait for the server break before aborting. */
   miningFinishKey?: string;
   /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
@@ -1653,17 +1663,36 @@ export class Game {
           : {}),
       };
     }
+    applyBreakActionResult(online, {
+      ok: message.ok,
+      reason: message.reason,
+      kind: message.kind,
+      x: message.targetX,
+      y: message.targetY,
+      z: message.targetZ,
+    });
+    if (online.lastBlockDiag && online.lastBlockDiag.actionSeq === message.actionSeq) {
+      online.lastBlockDiag = {
+        ...online.lastBlockDiag,
+        gate: formatBreakGateDiag(online, { miningTarget: session.miningTarget }),
+      };
+    }
+    const key = message.targetX !== undefined
+      && message.targetY !== undefined
+      && message.targetZ !== undefined
+      ? miningBlockKey(message.targetX, message.targetY, message.targetZ)
+      : undefined;
+    if (message.kind === 'block_break_start' && !message.ok && key && session.miningTarget === key) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+    }
     if (
-      !message.ok
+      message.kind === 'block_break_finish'
       && message.targetX !== undefined
       && message.targetY !== undefined
       && message.targetZ !== undefined
-      && !isInFlightBreakReject(message.reason)
+      && (message.ok || !isInFlightBreakReject(message.reason))
     ) {
-      online.rejectedBlockKey = `${message.targetX},${message.targetY},${message.targetZ}`;
-      this.clearOnlineMiningFinish(session, message.targetX, message.targetY, message.targetZ);
-    }
-    if (message.ok && message.targetX !== undefined && message.targetY !== undefined && message.targetZ !== undefined) {
       this.clearOnlineMiningFinish(session, message.targetX, message.targetY, message.targetZ);
     }
   }
@@ -1672,6 +1701,17 @@ export class Game {
     session: GameSession,
     message: Extract<ServerMessage, { type: 'block_result' }>,
   ): void {
+    const online = session.online;
+    if (message.action === 'break' && online) {
+      applyBreakActionResult(online, {
+        ok: message.ok,
+        reason: message.reason,
+        kind: 'block_break_finish',
+        x: message.x,
+        y: message.y,
+        z: message.z,
+      });
+    }
     if (message.action === 'break' && isInFlightBreakReject(message.reason)) return;
     this.clearOnlineBlockPending(session, message.x, message.y, message.z);
     if (message.ok) {
@@ -1679,20 +1719,21 @@ export class Game {
       return;
     }
     const key = `${message.x},${message.y},${message.z}`;
-    if (session.online) session.online.rejectedBlockKey = key;
     this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
     console.warn(
-      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`,
+      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`
+      + (online ? ` ${formatBreakGateDiag(online, { miningTarget: session.miningTarget })}` : ''),
     );
   }
 
   private clearOnlineMiningFinish(session: GameSession, x: number, y: number, z: number): void {
     const online = session.online;
-    if (!online?.miningFinishKey) return;
-    if (online.miningFinishKey !== miningBlockKey(x, y, z)) return;
-    online.miningFinishKey = undefined;
-    online.miningLocked = false;
-    if (session.miningTarget === miningBlockKey(x, y, z)) {
+    const key = miningBlockKey(x, y, z);
+    if (online?.miningFinishKey === key) {
+      online.miningFinishKey = undefined;
+      online.miningLocked = false;
+    }
+    if (session.miningTarget === key) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
     }
@@ -1724,7 +1765,9 @@ export class Game {
     if (!online) return;
     if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
     if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
-    if (this.input.consumeMiningReleased() && session.miningTarget) {
+    if (this.input.consumeMiningReleased()) {
+      noteMiningReleased(online);
+      if (!session.miningTarget) return;
       if (!shouldSendBreakAbort({
         miningReleased: true,
         miningTarget: session.miningTarget,
@@ -1734,7 +1777,7 @@ export class Game {
       const action = captureBlockBreakAbort(source);
       this.commitOnlineActionSeq(session, source);
       online.client.send(actionMessageFromBreakAbort(action));
-      online.miningLocked = false;
+      noteBreakAbortSent(online);
       online.miningIntent = undefined;
     }
   }
@@ -1821,7 +1864,7 @@ export class Game {
     const source = this.onlineActionSource(session);
     const action = captureBlockBreakStart(source, hit);
     this.commitOnlineActionSeq(session, source);
-    online.miningLocked = true;
+    noteBreakStartSent(online, action.targetX, action.targetY, action.targetZ);
     online.miningIntent = {
       targetX: action.targetX,
       targetY: action.targetY,
@@ -1833,6 +1876,7 @@ export class Game {
       hitX: action.hitX,
       hitY: action.hitY,
       hitZ: action.hitZ,
+      commandSeq: action.commandSeq,
     };
     online.lastBlockDiag = {
       actionSeq: action.actionSeq,
@@ -1840,6 +1884,10 @@ export class Game {
       target: `${action.targetX},${action.targetY},${action.targetZ}`,
       face: `${action.faceX},${action.faceY},${action.faceZ}`,
       blockId: action.targetBlockId,
+      gate: formatBreakGateDiag(online, {
+        blockId: action.targetBlockId,
+        miningTarget: session.miningTarget,
+      }),
     };
     online.client.send(actionMessageFromBreakStart(action));
   }
@@ -3619,40 +3667,54 @@ export class Game {
         if (session.online) session.online.client.send({ type: 'attack' });
         else this.breakMinecart(attack.cart);
       }
-    } else if (session.online?.miningFinishKey) {
-      /* Finish already sent: keep miningTarget until the server breaks or hard-rejects. */
-    } else if (!this.input.mining || !session.target) {
-      if (session.online?.miningLocked) {
+    } else if (shouldWaitForInFlightFinish({
+      finishKey: session.online?.miningFinishKey,
+      targetKey,
+    })) {
+      /* Finish already sent for this block: keep miningTarget until air or a hard reject. */
+    } else {
+      if (session.online?.miningFinishKey) {
         const source = this.onlineActionSource(session);
         const action = captureBlockBreakAbort(source);
         this.commitOnlineActionSeq(session, source);
         session.online.client.send(actionMessageFromBreakAbort(action));
-        session.online.miningLocked = false;
+        abandonInFlightFinish(session.online);
+        session.online.miningIntent = undefined;
       }
-      session.miningTarget = undefined;
-      session.miningProgress = 0;
-      resetMiningSound(this.miningSound);
-    } else {
-      if (shouldRetargetOnlineMine({
-        nextTargetKey: targetKey,
-        currentTarget: session.miningTarget,
-        finishKey: session.online?.miningFinishKey,
-      })) {
-        session.miningTarget = targetKey;
-        session.miningProgress = 0;
-        if (session.online) {
-          session.online.miningLocked = false;
-          this.sendOnlineBreakStart(session);
+      if (!this.input.mining || !session.target) {
+        if (session.online?.miningLocked) {
+          const source = this.onlineActionSource(session);
+          const action = captureBlockBreakAbort(source);
+          this.commitOnlineActionSeq(session, source);
+          session.online.client.send(actionMessageFromBreakAbort(action));
+          noteBreakAbortSent(session.online);
+          session.online.miningIntent = undefined;
         }
-      }
-      const definition = getBlockDefinition(session.target.block);
-      if (definition.breakable !== false && definition.hardness >= 0) {
-        const delta = session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
-        const kind = nextMiningSound(this.miningSound, targetKey, session.miningProgress, delta);
-        session.miningProgress += delta;
-        if (kind === 'break' || session.miningProgress >= 1) this.breakTarget();
-        else if (kind === 'hit') {
-          this.playBlockSound('hit', session.target.block, session.target.x, session.target.y, session.target.z);
+        session.miningTarget = undefined;
+        session.miningProgress = 0;
+        resetMiningSound(this.miningSound);
+      } else {
+        if (shouldRetargetOnlineMine({
+          nextTargetKey: targetKey,
+          currentTarget: session.miningTarget,
+          finishKey: session.online?.miningFinishKey,
+        })) {
+          session.miningTarget = targetKey;
+          session.miningProgress = 0;
+          if (session.online) {
+            session.online.miningLocked = false;
+            this.sendOnlineBreakStart(session);
+          }
+        }
+        const definition = getBlockDefinition(session.target.block);
+        if (definition.breakable !== false && definition.hardness >= 0) {
+          const delta = session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
+          const kind = nextMiningSound(this.miningSound, targetKey, session.miningProgress, delta);
+          session.miningProgress += delta;
+          if (kind === 'break' || session.miningProgress >= 1) this.breakTarget();
+          else if (kind === 'hit') {
+            this.playBlockSound('hit', session.target.block, session.target.x, session.target.y, session.target.z);
+          }
         }
       }
     }
@@ -3695,14 +3757,20 @@ export class Game {
     const hit = session.online ? this.onlineMiningHit(session) : session.target;
     if (!hit) return;
     if (session.online) {
-      const pending = session.online.pendingBlockAction;
-      if (session.online.rejectedBlockKey === `${hit.x},${hit.y},${hit.z}`) return;
-      if (session.online.miningFinishKey === miningBlockKey(hit.x, hit.y, hit.z)) return;
-      if (pending && pending.kind === 'break' && pending.x === hit.x && pending.y === hit.y && pending.z === hit.z) {
+      const hold = breakFinishHoldReason(session.online, hit.x, hit.y, hit.z);
+      if (hold !== 'ok') {
+        if (hold === 'pending' && !session.online.miningFinishKey) {
+          console.warn(
+            `[anarchy] break finish swallowed at ${hit.x},${hit.y},${hit.z} ${formatBreakGateDiag(session.online, {
+              blockId: hit.block,
+              miningTarget: session.miningTarget,
+              hold,
+            })}`,
+          );
+        }
         return;
       }
-      session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
-      session.online.miningFinishKey = miningBlockKey(hit.x, hit.y, hit.z);
+      noteBreakFinishSent(session.online, hit.x, hit.y, hit.z);
       const source = this.onlineActionSource(session);
       const captured = session.online.miningIntent;
       const action = captured
@@ -3715,6 +3783,11 @@ export class Game {
         target: `${action.targetX},${action.targetY},${action.targetZ}`,
         face: `${action.faceX},${action.faceY},${action.faceZ}`,
         blockId: action.targetBlockId,
+        gate: formatBreakGateDiag(session.online, {
+          blockId: hit.block,
+          miningTarget: session.miningTarget,
+          hold: 'finish-inflight',
+        }),
       };
       session.online.client.send(actionMessageFromBreakFinish(action));
       session.online.miningIntent = undefined;
@@ -4699,7 +4772,7 @@ export class Game {
           this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
           if (session.online.lastBlockDiag) {
             const block = session.online.lastBlockDiag;
-            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}`;
+            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}${block.gate ? ` ${block.gate}` : ''}`;
           }
           if (session.online.lastBowDiag) {
             const bow = session.online.lastBowDiag;

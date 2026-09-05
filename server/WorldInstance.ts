@@ -790,11 +790,36 @@ export class WorldInstance {
     }
     if (player.miningTarget
       && (player.miningTarget.x !== x || player.miningTarget.y !== y || player.miningTarget.z !== z)) {
+      netDebug('break rejected', `${player.name} ${x},${y},${z} reason=mining locked=${player.miningTarget.x},${player.miningTarget.y},${player.miningTarget.z} mode=${player.gamemode}`);
       return { ok: false, reason: 'mining' };
     }
     if (intent) {
-      const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq);
-      if (!validated.ok) return validated;
+      const lockedToThis = Boolean(
+        player.miningTarget
+        && player.miningTarget.x === x
+        && player.miningTarget.y === y
+        && player.miningTarget.z === z,
+      );
+      if (lockedToThis) {
+        const block = this.world.getBlock(x, y, z);
+        if (block === BlockId.Air) {
+          netDebug('break rejected', `${player.name} ${x},${y},${z} reason=empty locked=1 id=${block}`);
+          return { ok: false, reason: 'empty' };
+        }
+        if (block !== intent.targetBlockId) {
+          netDebug('break rejected', `${player.name} ${x},${y},${z} reason=stale locked=1 id=${block} intent=${intent.targetBlockId}`);
+          return { ok: false, reason: 'stale' };
+        }
+      } else {
+        const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq);
+        if (!validated.ok) {
+          netDebug(
+            'break rejected',
+            `${player.name} ${x},${y},${z} reason=${validated.reason} locked=0 id=${this.world.getBlock(x, y, z)} mode=${player.gamemode}`,
+          );
+          return validated;
+        }
+      }
     }
     const result = this.gameplay.breakBlock(player, x, y, z);
     if (result.ok) {
@@ -802,6 +827,11 @@ export class WorldInstance {
       this.flushBlockChanges();
       this.flushPlayerInventory(player);
       netDebug('break accepted', `${player.name} ${x},${y},${z}`);
+    } else {
+      netDebug(
+        'break rejected',
+        `${player.name} ${x},${y},${z} reason=${result.reason} id=${this.world.getBlock(x, y, z)} mine=${player.miningTarget ? `${player.miningTarget.x},${player.miningTarget.y},${player.miningTarget.z}` : '—'} progress=${player.miningProgress} mode=${player.gamemode}`,
+      );
     }
     return result;
   }
