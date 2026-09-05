@@ -59,6 +59,7 @@ import { PlayerSelectionService } from './services/selection';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork } from './services/holograms';
+import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { formatGameplayKernelTrace } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
@@ -317,6 +318,7 @@ export class WorldInstance {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly holograms: HologramNetwork;
+  readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
@@ -421,6 +423,10 @@ export class WorldInstance {
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
+      const player = this.players.get(playerId);
+      if (player) this.sendTo(player, message);
+    });
     this.commands.setPermissionCheck((sender, permission) => {
       if (isConsoleSender(sender) || sender.hasPermission?.(permission) === true) return true;
       if (permission === 'operator') {
@@ -494,6 +500,7 @@ export class WorldInstance {
         worldId: () => this.worldId,
         markDirty: () => { this.dirty = true; },
         holograms: this.holograms,
+        claimBoundaries: this.claimBoundaries,
       });
       for (const plugin of builtins) {
         if (this.plugins.list().some((entry) => entry.name === plugin.name)) continue;

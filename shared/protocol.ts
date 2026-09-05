@@ -589,6 +589,23 @@ export interface ServerHologramsMessage {
   readonly holograms: readonly NetworkHologram[];
 }
 
+/** How long a denied-claim wireframe stays on the client. */
+export const CLAIM_BOUNDARY_DURATION_MS = 10_000;
+
+export interface ServerClaimBoundaryMessage {
+  readonly type: 'claim_boundary';
+  readonly claimId: string;
+  readonly name: string;
+  readonly worldId: string;
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+  readonly durationMs: number;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -611,7 +628,8 @@ export type ServerMessage =
   | ServerEntityEventMessage
   | ServerCommandResultMessage
   | ServerTimeMessage
-  | ServerHologramsMessage;
+  | ServerHologramsMessage
+  | ServerClaimBoundaryMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -654,6 +672,7 @@ export const SERVER_MESSAGE_TYPES = [
   'command_result',
   'time',
   'holograms',
+  'claim_boundary',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1197,6 +1216,36 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         });
       }
       return { type: 'holograms', holograms };
+    }
+    case 'claim_boundary': {
+      if (typeof raw.claimId !== 'string' || raw.claimId.length === 0) {
+        return { error: 'claim_boundary invalid' };
+      }
+      if (typeof raw.name !== 'string' || typeof raw.worldId !== 'string') {
+        return { error: 'claim_boundary invalid' };
+      }
+      if (
+        !Number.isInteger(raw.minX) || !Number.isInteger(raw.minY) || !Number.isInteger(raw.minZ)
+        || !Number.isInteger(raw.maxX) || !Number.isInteger(raw.maxY) || !Number.isInteger(raw.maxZ)
+      ) {
+        return { error: 'claim_boundary invalid' };
+      }
+      const durationMs = finite(raw.durationMs)
+        ? Math.max(1_000, Math.min(30_000, Math.round(raw.durationMs)))
+        : CLAIM_BOUNDARY_DURATION_MS;
+      return {
+        type: 'claim_boundary',
+        claimId: raw.claimId.slice(0, 64),
+        name: raw.name.slice(0, 32),
+        worldId: raw.worldId.slice(0, 64),
+        minX: raw.minX,
+        minY: raw.minY,
+        minZ: raw.minZ,
+        maxX: raw.maxX,
+        maxY: raw.maxY,
+        maxZ: raw.maxZ,
+        durationMs,
+      };
     }
     default:
       return raw as unknown as ServerMessage;

@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-05: Claim boundary wireframe on denied build
+
+- [x] Server `claim_boundary` to the blocked player only after denied `block-break` / `block-place`.
+- [x] Visualize the per-flag protection source AABB, not the first overlapping claim.
+- [x] Client red 12-edge wireframe for 10s; reuse + reset expiry on repeat deny.
+- [ ] Owner QA: stranger sees red claim box after a denied break/place; nearby players do not.
+
 ## 2026-09-05: Named claim commands, chat open-at-bottom, account nick typing
 
 - [x] `/claim flag|members|addmember|removemember` accept an explicit claim name without standing inside it.

@@ -129,6 +129,7 @@ import { updateSharedFireAnimation } from '../rendering/fireTexture';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { HologramRenderer } from '../rendering/HologramRenderer';
+import { ClaimBoundaryRenderer } from '../rendering/ClaimBoundaryRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
@@ -513,6 +514,7 @@ export class Game {
   private deathShown = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
+  private claimBoundaries?: ClaimBoundaryRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly longTasks = new LongTaskMonitor();
@@ -830,6 +832,8 @@ export class Game {
     this.holograms?.dispose();
     this.holograms = new HologramRenderer(this.scene, this.camera);
     this.holograms.sync(welcome.holograms ?? []);
+    this.claimBoundaries?.dispose();
+    this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
     client.onMessage((message) => {
       if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
       this.handleOnlineMessage(message);
@@ -1035,6 +1039,9 @@ export class Game {
         return;
       case 'holograms':
         this.holograms?.sync(message.holograms);
+        return;
+      case 'claim_boundary':
+        this.claimBoundaries?.show(message);
         return;
       case 'pong':
       case 'status':
@@ -4454,6 +4461,7 @@ export class Game {
     this.ui.setHurtFlash(this.hurt.flashAlpha(now));
     this.ui.fadeChatLines(now, chatLineOpacity);
     this.holograms?.update();
+    this.claimBoundaries?.update(now);
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -4719,6 +4727,8 @@ export class Game {
     }
     this.holograms?.dispose();
     this.holograms = undefined;
+    this.claimBoundaries?.dispose();
+    this.claimBoundaries = undefined;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();

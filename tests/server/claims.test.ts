@@ -10,6 +10,7 @@ import {
   effectiveFlags,
   migrateClaimStore,
   ownFlagLines,
+  protectionSource,
   type Claim,
 } from '../../server/services/claims';
 
@@ -146,5 +147,20 @@ describe('overlapping claims per-flag priority', () => {
     expect(effectiveFlag(here, 'explosions')).toBe(false);
     expect(effectiveFlag(here, 'block-break')).toBe(true);
     expect(effectiveFlag(here, 'item-drop')).toBe(DEFAULT_CLAIM_FLAGS['item-drop']);
+  });
+
+  it('picks the per-flag setter as the protection source, not the highest-priority claim', () => {
+    const inside = claimsAt([spawn, arena], 'anarchy', 7, 10, 7);
+    expect(protectionSource(inside, 'block-break', 'bob')?.name).toBe('spawn');
+    expect(protectionSource(inside, 'block-place', 'bob')?.name).toBe('spawn');
+    expect(protectionSource(inside, 'pvp', 'bob')).toBeUndefined();
+    expect(protectionSource(inside, 'block-break', 'ada')).toBeUndefined();
+  });
+
+  it('uses the highest-priority untrusted claim when nobody set the flag', () => {
+    const garden = claim({ name: 'garden', priority: 0, volume: spawnVolume, flags: {} });
+    const overlay = claim({ name: 'overlay', priority: 5, volume: spawnVolume, flags: {} });
+    expect(protectionSource([garden, overlay], 'block-break', 'bob')?.name).toBe('overlay');
+    expect(protectionSource([garden, overlay], 'block-break', 'ada')).toBeUndefined();
   });
 });

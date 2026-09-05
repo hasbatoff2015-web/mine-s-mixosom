@@ -104,6 +104,24 @@ export function isTrusted(claim: Claim, playerKey: string): boolean {
 }
 
 /**
+ * Claim that actually denied `flag` via per-flag priority.
+ * Used for the temporary client wireframe — not “first overlapping claim”.
+ */
+export function protectionSource(
+  claims: readonly Claim[],
+  flag: ClaimFlag,
+  playerName: string,
+): Claim | undefined {
+  if (effectiveFlag(claims, flag)) return undefined;
+  const setter = flagSetter(claims, flag);
+  if (setter) return isTrusted(setter, playerName) ? undefined : setter;
+  for (const claim of sortClaimsByPriority(claims)) {
+    if (!isTrusted(claim, playerName)) return claim;
+  }
+  return undefined;
+}
+
+/**
  * Old claims stored every flag as a boolean, including removed `fire-spread`.
  * Keep those stored booleans as explicit so previous behaviour is preserved.
  * Drop `fire-spread`. Default priority 0.

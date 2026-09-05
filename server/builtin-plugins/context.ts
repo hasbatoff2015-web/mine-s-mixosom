@@ -6,6 +6,7 @@ import type { TeleportHistoryService, TeleportService } from '../services/telepo
 import type { PluginManager } from '../PluginManager';
 import type { VoxelWorld } from '../../src/world/World';
 import type { HologramNetwork } from '../services/holograms';
+import type { ClaimBoundaryNetwork } from '../services/claimBoundaries';
 
 export interface BuiltinPluginContext {
   readonly permissions: PermissionService;
@@ -20,4 +21,5 @@ export interface BuiltinPluginContext {
   readonly worldId: () => string;
   readonly markDirty: () => void;
   readonly holograms: HologramNetwork;
+  readonly claimBoundaries: ClaimBoundaryNetwork;
 }

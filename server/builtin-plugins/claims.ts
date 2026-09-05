@@ -11,6 +11,7 @@ import {
   isTrusted,
   migrateClaimStore,
   ownFlagLines,
+  protectionSource,
   sortClaimsByPriority,
   type Claim,
   type ClaimStore,
@@ -80,23 +81,33 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         return claims.some((claim) => isTrusted(claim, playerName));
       };
 
+      const denyBuild = (
+        event: { cancel(): void },
+        claims: readonly Claim[],
+        flag: 'block-break' | 'block-place',
+        player: { id: string; name: string; sendMessage(text: string): void },
+      ): boolean => {
+        if (allowFlag(claims, flag, player.id, player.name)) return false;
+        event.cancel();
+        player.sendMessage('This land is claimed.');
+        const source = protectionSource(claims, flag, player.name);
+        if (source) ctx.claimBoundaries.show(player.id, source);
+        return true;
+      };
+
       api.registerEvent('blockBreak', (event) => {
         const claims = overlapping(event.x, event.y, event.z);
         if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        if (allowFlag(claims, 'block-break', player.id, player.name)) return;
-        event.cancel();
-        player.sendMessage('This land is claimed.');
+        denyBuild(event, claims, 'block-break', player);
       });
       api.registerEvent('blockPlace', (event) => {
         const claims = overlapping(event.x, event.y, event.z);
         if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        if (allowFlag(claims, 'block-place', player.id, player.name)) return;
-        event.cancel();
-        player.sendMessage('This land is claimed.');
+        denyBuild(event, claims, 'block-place', player);
       });
       api.registerEvent('playerDamage', (event) => {
         const player = api.getPlayer(event.playerId);

@@ -26,7 +26,7 @@ Installing a plugin gives it **server-level authority** through the runtime. Thi
 - Loaded by `AnarchyServer` after the world is READY, before the WebSocket listener is marked ready.
 - Missing `server/plugins/` is fine. The server still starts.
 - Singleplayer (`Game`) never imports `PluginManager`.
-- Clients receive ordinary protocol messages. Plugins cannot send raw packets.
+- Clients receive ordinary protocol messages. Plugins cannot send raw packets. Builtin claims denied-build feedback uses WorldInstance `ClaimBoundaryNetwork` (`claim_boundary` to one player), the same pattern as holograms.
 
 Restart the server to pick up **source file** changes. In-game `/plugins reload <name>` re-runs disable → cleanup → load → enable on the same instance. Failed plugins still need a restart.
 

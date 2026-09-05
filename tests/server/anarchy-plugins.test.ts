@@ -343,6 +343,88 @@ describe('Anarchy builtin plugins', () => {
     expect(info.some((line) => line.includes('Effective flags:'))).toBe(true);
   });
 
+  it('shows the denying claim boundary only to the blocked player', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const x = Math.floor(ada.player.controller.position.x) + 2;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 8.5, y + 4, z + 8.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create spawn');
+    chat(world, ada, '/claim flag block-break false');
+    chat(world, ada, '/claim flag block-place false');
+    ada.player.controller.teleport([x + 3.5, y, z + 3.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 5.5, y + 3, z + 5.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create arena');
+    chat(world, ada, '/claim priority arena 10');
+    chat(world, ada, '/claim flag pvp true');
+    world.world.setBlock(x + 4, y + 1, z + 4, BlockId.Dirt);
+    world.world.setBlock(x + 4, y + 2, z + 4, BlockId.Air);
+    world.setGameMode(bob.player, 'creative');
+    bob.player.controller.teleport([x + 4.5, y, z + 4.5]);
+
+    const isBoundary = (payload: unknown): payload is {
+      type: 'claim_boundary';
+      claimId: string;
+      name: string;
+      worldId: string;
+      minX: number;
+      minY: number;
+      minZ: number;
+      maxX: number;
+      maxY: number;
+      maxZ: number;
+      durationMs: number;
+    } => (payload as { type?: string }).type === 'claim_boundary';
+
+    bob.sink.payloads.length = 0;
+    ada.sink.payloads.length = 0;
+    expect(world.tryBreak(bob.player, x + 4, y + 1, z + 4)).toEqual({ ok: false, reason: 'cancelled' });
+    const breakShown = bob.sink.payloads.filter(isBoundary);
+    expect(breakShown).toHaveLength(1);
+    expect(breakShown[0]).toMatchObject({
+      type: 'claim_boundary',
+      name: 'spawn',
+      worldId: world.worldId,
+      minX: x,
+      minY: y,
+      minZ: z,
+      maxX: x + 8,
+      maxY: y + 4,
+      maxZ: z + 8,
+      durationMs: 10_000,
+    });
+    expect(breakShown[0]!.claimId.length).toBeGreaterThan(0);
+    expect(ada.sink.payloads.filter(isBoundary)).toHaveLength(0);
+    expect(bob.sink.payloads.some((payload) => {
+      const record = payload as { type?: string; text?: string };
+      return record.type === 'chat' && record.text === 'This land is claimed.';
+    })).toBe(true);
+
+    bob.sink.payloads.length = 0;
+    expect(world.tryPlace(bob.player, x + 4, y + 2, z + 4, BlockId.Dirt)).toEqual({ ok: false, reason: 'cancelled' });
+    const placeShown = bob.sink.payloads.filter(isBoundary);
+    expect(placeShown).toHaveLength(1);
+    expect(placeShown[0]).toMatchObject({
+      name: 'spawn',
+      minX: x,
+      maxX: x + 8,
+      durationMs: 10_000,
+    });
+    expect(placeShown[0]!.claimId).toBe(breakShown[0]!.claimId);
+
+    ada.sink.payloads.length = 0;
+    world.world.setBlock(x + 4, y + 1, z + 4, BlockId.Dirt);
+    expect(world.tryBreak(ada.player, x + 4, y + 1, z + 4)).toEqual({ ok: true });
+    expect(ada.sink.payloads.filter(isBoundary)).toHaveLength(0);
+  });
+
   it('restricts /claim priority to the owner, claim.admin, or OP', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');

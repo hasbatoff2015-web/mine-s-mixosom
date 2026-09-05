@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: claim boundary wireframe feedback
+
+- Запрещённый `block-break` / `block-place` в чужом claim по-прежнему пишет в чат `This land is claimed.` и отменяет действие.
+- Сервер шлёт **только этому игроку** `claim_boundary` с AABB claim, который реально запретил флаг (per-flag setter), `durationMs: 10000`.
+- Клиент рисует красный 12-рёберный wireframe через `ClaimBoundaryRenderer`. Повтор в том же claim продлевает таймер, не дублирует геометрию.
+- Report: `docs/reports/2026-09-05_claim-boundary-feedback.md`.
+
 ## Последний проход: named /claim commands, chat open scroll, account nick input
 
 - `/claim flag|members|addmember|removemember` принимают явное `<name>` без требования стоять в claim. Старый standing-синтаксис сохранён. Parser: если первый токен — известный flag, это standing-форма.
