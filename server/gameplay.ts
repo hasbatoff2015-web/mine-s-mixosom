@@ -111,7 +111,8 @@ export interface GameplayPlayer {
   craftSlots: Array<ItemStack | null>;
   window: InventoryWindow;
   ridingCartId?: string;
-  miningTarget?: { x: number; y: number; z: number };
+  miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
+  presentSwing?(): void;
   miningProgress: number;
   bowUseTicks: number;
   foodUseTicks: number;
@@ -153,10 +154,12 @@ export class ServerGameplay {
     readonly world: VoxelWorld,
     readonly events: EventBus,
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
+    private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
   ) {
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
       for (const change of changes) {
+        this.onBlockReplaced?.(change.x, change.y, change.z);
         this.noteBlockDelta(change.x, change.y, change.z, change.block);
         this.redstone.notifyBlockChanged(change.x, change.y, change.z);
         if (isFluidBlock(change.block) || isFluidBlock(change.previous)) {
@@ -588,6 +591,7 @@ export class ServerGameplay {
     }
     player.miningProgress = 0;
     player.miningTarget = undefined;
+    player.presentSwing?.();
     return { ok: true };
   }
 
@@ -660,8 +664,9 @@ export class ServerGameplay {
       || player.miningTarget.x !== hit.x
       || player.miningTarget.y !== hit.y
       || player.miningTarget.z !== hit.z
+      || player.miningTarget.blockId !== hit.block
     ) {
-      player.miningTarget = { x: hit.x, y: hit.y, z: hit.z };
+      player.miningTarget = { x: hit.x, y: hit.y, z: hit.z, blockId: hit.block };
       player.miningProgress = 0;
     }
     return { ok: true };
@@ -716,7 +721,11 @@ export class ServerGameplay {
       },
       enterVehicle: (cartId) => gameplay.enterVehicle(player, cartId),
       effects: {
+        swing: () => player.presentSwing?.(),
+        onBedUsed: () => player.presentSwing?.(),
+        onFlintIgnite: () => player.presentSwing?.(),
         openContainer: (kind, x, y, z) => {
+          player.presentSwing?.();
           if (kind === 'crafting-table') {
             player.window = { kind: 'crafting-table', x, y, z };
             player.craftSlots = Array.from({ length: 9 }, () => null);
@@ -737,6 +746,9 @@ export class ServerGameplay {
   }
 
   attack(player: GameplayPlayer, others: readonly GameplayPlayer[] = []): void {
+    if (!player.connected || player.survival.dead) return;
+    // A validated attack attempt swings even on a miss or damage immunity.
+    player.presentSwing?.();
     const origin = player.controller.eyePosition(this.tmpEye);
     const direction = player.controller.viewDirection(this.tmpDir);
     const blockHit = this.world.raycast(origin, direction, PLAYER_REACH);
@@ -804,7 +816,7 @@ export class ServerGameplay {
     const target = player.miningTarget;
     if (!target) return;
     const block = this.world.getBlock(target.x, target.y, target.z);
-    if (block === BlockId.Air) {
+    if (block === BlockId.Air || (target.blockId !== undefined && block !== target.blockId)) {
       player.miningProgress = 0;
       player.miningTarget = undefined;
       return;
@@ -955,6 +967,7 @@ export class ServerGameplay {
     const direction = viewDirectionFromLook(yaw, pitch);
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
     this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0);
+    player.presentSwing?.();
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
     return { ok: true, yaw, pitch };
   }

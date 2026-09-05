@@ -1,6 +1,8 @@
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, PROTOCOL_VERSION } from './config';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, PlayerActionKind } from './playerActions';
+import type { PlayerPresentationState } from './playerPresentation';
+export type { PlayerPresentationState } from './playerPresentation';
 
 export type { AppliedMovementStep } from './playerCommand';
 export type { ActionRejectReason, PlayerActionKind } from './playerActions';
@@ -27,6 +29,7 @@ export type EntityKind = 'item' | 'mob' | 'minecart' | 'tnt' | 'arrow' | 'fallin
 export type VehicleAction = 'enter' | 'exit' | 'steer';
 
 export interface PlayerSnapshot {
+  readonly presentation?: PlayerPresentationState;
   readonly id: string;
   readonly name: string;
   readonly x: number;
@@ -111,6 +114,7 @@ export interface PlayerSessionDiag {
 }
 
 export interface RemotePlayerInfo {
+  readonly presentation?: PlayerPresentationState;
   readonly id: string;
   readonly name: string;
   readonly x: number;

@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-05 Remote action presentation v2
+
+Focused: `npx vitest run tests/remote-action-presentation.test.ts tests/remote-breaking-overlays.test.ts tests/server/remote-presentation.test.ts tests/server/anarchy-server.test.ts --maxWorkers=2`.
+
+Покрытие: initial state до spatial samples; mining/bow/food/blocking/held item → existing visual API; event dedupe и late ticks; stages 0..9, max same-target, local arbitration, geometry reuse и disposal; abort/finish/switch, world replacement, stale/unload/disconnect/session cleanup; server formula, inventory authority, validation/plugin rejection, bow outcome, death/resume. Wire test подключает второй WS client во время копания и проверяет welcome, player_state, duplicate attack, abort и player_left.
+
+Manual gate остаётся отдельным: A observes B mining with a pickaxe, all crack stages, abort/target switch/finish, movement while mining, bow draw/release и disconnect. Фактические browser наблюдения и baseline/full-suite comparison — в `reports/2026-09-06_remote-action-presentation-v2.md`.
+
 ## 2026-09-04 Online networking v2
 
 Report: `reports/2026-09-04_online-networking-v2.md`.

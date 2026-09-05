@@ -281,7 +281,7 @@ import {
   type UseSimulationContext,
 } from '../gameplay';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
-import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -822,11 +822,11 @@ export class Game {
     });
   }
 
-  private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
+  private spawnRemotePlayer(session: GameSession, info: RemotePlayerInfo): void {
     if (!session.online || info.id === session.online.playerId) return;
     const existing = session.online.remotes.get(info.id);
     if (existing) {
-      existing.reset(info);
+      existing.reset(info, performance.now());
       return;
     }
     const view = new RemotePlayerView(info, {
@@ -837,7 +837,9 @@ export class Game {
         DEFAULT_PLAYER_APPEARANCE,
       ),
       world: session.world,
-    });
+      onMining: (id, mining, now) => session.worldRenderer.remoteBreaking.setBreaker(id, mining, now),
+      onRemove: (id) => session.worldRenderer.remoteBreaking.removeBreaker(id),
+    }, performance.now());
     session.online.remotes.set(info.id, view);
     this.scene.add(view.group);
   }
@@ -867,6 +869,7 @@ export class Game {
         this.applyOnlinePlayerState(session, message);
         return;
       case 'block_update': {
+        session.worldRenderer.remoteBreaking.invalidateBlock(message.x, message.y, message.z);
         const previous = session.world.getBlock(message.x, message.y, message.z, false);
         const applied = applyNetworkBlockChanges(session.world, [{
           x: message.x,
@@ -886,6 +889,9 @@ export class Game {
         return;
       }
       case 'block_batch': {
+        for (const change of message.changes) {
+          session.worldRenderer.remoteBreaking.invalidateBlock(change.x, change.y, change.z);
+        }
         const applied = applyNetworkBlockChanges(session.world, message.changes);
         for (const change of message.changes) {
           this.noteWorldNearPlayer('block_batch', change.x, change.y, change.z);

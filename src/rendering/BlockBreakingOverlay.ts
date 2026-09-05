@@ -211,8 +211,8 @@ function createBreakingMaterial(): THREE.MeshBasicMaterial {
 export type BlockRenderStateResolver = (x: number, y: number, z: number) => BlockRenderState | undefined;
 
 /**
- * Local-player visual overlay. Does not mutate the world and is not break authority.
- * A later `breakerId` map can sit beside this single mesh without changing mining.
+ * Canonical single-target visual overlay, reused by local and remote breakers.
+ * Does not mutate the world and is not break authority.
  */
 export class BlockBreakingOverlay {
   readonly group = new THREE.Group();
@@ -289,6 +289,7 @@ export class BlockBreakingOverlay {
       : undefined;
     const key = breakingOverlayShapeKey(definition, state, stairShape, fence);
     if (key !== this.shapeKey) {
+      if (this.shapeKey === '') this.mesh.geometry.dispose();
       let geometry = this.geometries.get(key);
       if (!geometry) {
         geometry = createBreakingOverlayGeometry(breakingOverlayBoxes(definition, state, stairShape, fence));

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { PlayerSnapshot, RemotePlayerInfo } from '../../shared/protocol';
+import { IDLE_PLAYER_PRESENTATION, REMOTE_ACTION_STALE_MS, type PlayerPresentationState } from '../../shared/playerPresentation';
 import type { PlayerVisual } from '../rendering/player/PlayerVisual';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -18,6 +19,8 @@ export { REMOTE_INTERP_DELAY_MS };
 export interface RemotePlayerViewOptions {
   readonly visual: PlayerVisual;
   readonly world: VoxelWorld;
+  readonly onMining?: (id: string, mining: PlayerPresentationState['mining'], now: number) => void;
+  readonly onRemove?: (id: string) => void;
 }
 
 export class RemotePlayerView {
@@ -27,6 +30,10 @@ export class RemotePlayerView {
   private readonly id: string;
   private spawnYaw: number;
   private spawnPitch: number;
+  private presentation = IDLE_PLAYER_PRESENTATION;
+  private presentationTick = -1;
+  private presentationReceivedAt = 0;
+  private swingSeq = 0;
 
   constructor(
     info: RemotePlayerInfo,
@@ -49,14 +56,40 @@ export class RemotePlayerView {
     this.spawnPitch = info.pitch;
     this.group.position.set(info.x, info.y, info.z);
     this.visual.animator.reset(info.yaw);
+    this.presentationTick = -1;
+    this.presentation = info.presentation ?? IDLE_PLAYER_PRESENTATION;
+    this.presentationReceivedAt = _now;
+    this.swingSeq = this.presentation.swingSeq;
+    this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.options.onMining?.(this.id, this.presentation.mining, _now);
   }
 
   applySnapshot(snapshot: PlayerSnapshot | RemotePlayerInfo, now = 0, tick?: number): void {
     if (tick === undefined || !Number.isInteger(tick)) return;
     this.buffer.push(remoteSampleFromSnapshot(snapshot, tick, now));
+    if (tick <= this.presentationTick) return;
+    this.presentationTick = tick;
+    this.presentationReceivedAt = now;
+    const dead = 'dead' in snapshot && snapshot.dead === true;
+    const next = snapshot.presentation ?? IDLE_PLAYER_PRESENTATION;
+    if (dead) this.visual.animator.reset(snapshot.yaw);
+    else if (next.swingSeq > this.swingSeq) this.visual.swing();
+    this.swingSeq = Math.max(this.swingSeq, next.swingSeq);
+    this.presentation = dead ? { ...IDLE_PLAYER_PRESENTATION, swingSeq: this.swingSeq } : next;
+    this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.options.onMining?.(this.id, this.presentation.mining, now);
   }
 
   interpolate(now = 0, deltaSeconds = 0, daylight = 1): RemoteSampledPose | undefined {
+    const active = now - this.presentationReceivedAt <= REMOTE_ACTION_STALE_MS;
+    const actions = active ? this.presentation : IDLE_PLAYER_PRESENTATION;
+    const mining = actions.mining;
+    const actionFrame = {
+      mining: mining !== null && this.options.world.getBlock(mining.x, mining.y, mining.z, false) === mining.blockId,
+      bowCharge: actions.bowCharge,
+      swordBlocking: actions.swordBlocking,
+      foodUseProgress: actions.foodUseProgress,
+    };
     const pose = this.buffer.sample(now);
     if (!pose) {
       this.visual.update(deltaSeconds, {
@@ -67,10 +100,7 @@ export class RemotePlayerView {
         sneaking: false,
         sprinting: false,
         verticalVelocity: 0,
-        mining: false,
-        bowCharge: 0,
-        swordBlocking: false,
-        foodUseProgress: 0,
+        ...actionFrame,
         invisible: false,
         hurtFlash: 0,
       });
@@ -85,10 +115,7 @@ export class RemotePlayerView {
       sneaking: pose.sneaking,
       sprinting: pose.sprinting,
       verticalVelocity: pose.vy,
-      mining: false,
-      bowCharge: 0,
-      swordBlocking: false,
-      foodUseProgress: 0,
+      ...actionFrame,
       invisible: pose.invisible,
       hurtFlash: 0,
     });
@@ -102,6 +129,7 @@ export class RemotePlayerView {
   }
 
   dispose(): void {
+    this.options.onRemove?.(this.id);
     this.buffer.reset();
     this.visual.dispose();
     this.group.removeFromParent();

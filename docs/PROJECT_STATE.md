@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Remote player action presentation v2 — 2026-09-05
+
+- Ветка `codex/remote-action-presentation-v2` от актуальной `origin/cursor/online-networking-v2-integrated-3ff8`, SHA `e5c77f334fa46b726372fb7d7d27283f213ea184`. Main не объединялся.
+- `RemotePlayerInfo` и `PlayerSnapshot` несут optional `presentation`: authoritative mining target/block/progress, selected held item, bow charge, food progress, sword blocking и отдельный server-owned `swingSeq`. Старые snapshots получают neutral fallback; wire protocol остаётся 3 (additive fields).
+- `RemotePlayerView` передаёт latest action state в существующий `PlayerVisual`/animator независимо от spatial interpolation. Join/reset устанавливает baseline sequence; repeated/late snapshots не повторяют swing. Continuous actions истекают через 1500 ms без новых данных.
+- `WorldRenderer.remoteBreaking` хранит breaker ownership и использует canonical `BlockBreakingOverlay`, один mesh на target с max progress. Local overlay сохраняет свой target/progress, совпадающие local/remote targets рисуются одним mesh. Stage 0 поддерживается с первого accepted mining state. Нет remesh на stage change.
+- Voxel mutation, abort/finish, target switch, death/respawn, disconnect/remove, reconnect/session replacement, unload и stale timeout очищают presentation. Сервер фиксирует исходный block ID и сбрасывает mining при замене voxel.
+- FIFO, commandSeq/ackCommandSeq, prediction/reconciliation, `remotePlayerInterpolation.ts`, captured bow aim и 20 TPS не переписывались.
+- Handoff и проверки: `docs/reports/2026-09-06_remote-action-presentation-v2.md`. Полный двухклиентный visual acceptance остаётся открытым; wire/animator/overlay tests не считаются manual QA.
+
 Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
 
 ## Последний проход: Online networking v2 integration

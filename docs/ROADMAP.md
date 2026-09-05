@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-05: Remote action presentation v2
+
+- [x] Authoritative presentation state в join и существующих player snapshots.
+- [x] Mining/held item/bow/food/sword-block → canonical PlayerVisualAnimator.
+- [x] Server-owned swing sequence; successful use effects; valid attack misses; observer dedupe.
+- [x] Multi-breaker crack overlay, max stage на общем target, сохранение local path.
+- [x] Lifecycle / voxel replacement / stale cleanup, deterministic server/client/overlay tests и wire join test.
+- [ ] Полный ручной checklist двумя интерактивными клиентами: movement + held tool + mining hand + stages + abort/switch/finish + bow/release + disconnect. Выполненная часть описана в свежем report.
+- [ ] Merge в main только отдельным решением владельца после live acceptance.
+
 ## 2026-09-04: Online networking v2 integration
 
 - [x] Integration branch `cursor/online-networking-v2-integrated-3ff8` off BASE `cursor/online-networking-v2-3ff8` (no main merge).

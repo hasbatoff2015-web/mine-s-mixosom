@@ -1,5 +1,26 @@
 # Архитектура
 
+## Remote action presentation v2 — 2026-09-05
+
+`shared/playerPresentation.ts` — Node-safe additive contract. `ServerPlayer.presentation()` читает authoritative inventory/selectedSlot, mining accumulator, combat и use timers. `RemotePlayerInfo.presentation` покрывает welcome/player_joined; `PlayerSnapshot.presentation` piggybacks на существующий 20 TPS `player_state`. Optional поле позволяет neutral fallback для старых fixtures/servers без второго протокола.
+
+```text
+ServerGameplay accepted outcome / continuous state
+  → ServerPlayer.presentation()
+  → welcome.players / player_joined / player_state.players[].presentation
+  → RemotePlayerView latest presentation (separate tick guard, no spatial lerp)
+      → PlayerVisual.setHeldItem / swing / update → existing animator
+      → WorldRenderer.remoteBreaking: breakerId → target → max progress → BlockBreakingOverlay
+```
+
+`miningProgress` уже normalized: `miningProgressPerTick(hardness, tool)` прибавляется сервером; `>= 1` вызывает authoritative break. Payload содержит captured block ID и XYZ; viewer никогда не считает время разрушения. Null mining означает inactive. Remote progress 0 рисует canonical stage 0 через минимальное положительное значение; существующий local `(0,1)` mapping не меняется.
+
+`swingSeq` принадлежит серверу и не связан с ingress `lastActionSeq`: последнее увеличивается до gameplay validation. Counter изменяется через successful `UseHostEffects` (placement/interaction), successful break / arrow spawn, или принятую атаку (включая промах и damage immunity). No-op use, rejected placement, invalid/stale/duplicate intent и rejected bow release counter не меняют. Sequence сохраняется при live resume; новый view/reset запоминает baseline и не воспроизводит историю. Каждый новый observed counter запускает один swing; несколько действий между snapshots визуально coalesce в один swing, history/animation frames не пересылаются.
+
+`RemoteBreakingOverlays` расширяет существующий overlay. Breakers coalesce один раз за render frame, targets имеют max progress, local tie/greater stage suppresses remote mesh; greater remote stage временно скрывает local group, сохраняя local state. Targets проходят loaded-voxel + renderer-chunk visibility checks. Stage textures разделяются; mesh/material/geometry освобождаются при удалении target. Geometry creation не использует chunk remesh.
+
+Committed voxel replacements сбрасывают совпадающий mining target на сервере. `block_update`/`block_batch` инвалидируют observer overlay сразу, включая same-ID replacement. Latest snapshot управляет abort/finish/death/respawn; view removal/reset и renderer disposal покрывают disconnect/reconnect/session replacement. Loaded-world validation и timeout 1500 ms очищают stale data без prediction. Existing local overlay и `remotePlayerInterpolation.ts` остаются каноническими владельцами своих данных.
+
 ## Online networking v2 — 2026-09-04
 
 **Current contract.** Supersedes Prediction checkpoint (Model B), latest-input `lastInput`, and silent server re-raycast for Online actions. WebSocket + 20 TPS + shared `PlayerController` remain. `PROTOCOL_VERSION = 3`. Older joins are rejected. Targeted actions require `targetBlockId` and validate from the authoritative pose of `commandSeq`.

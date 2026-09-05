@@ -9,6 +9,7 @@ import { meshJobSortScore, meshWaitMs } from '../world/streamingScheduler';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
 import { ChestRenderer } from './ChestRenderer';
 import { BlockBreakingOverlay, type BreakingOverlaySnapshot } from './BlockBreakingOverlay';
+import { RemoteBreakingOverlays } from './RemoteBreakingOverlays';
 import {
   createSelectionGeometry,
   resolveStairShape,
@@ -29,6 +30,7 @@ export class WorldRenderer {
   readonly group = new THREE.Group();
   readonly selection: THREE.LineSegments;
   readonly breaking: BlockBreakingOverlay;
+  readonly remoteBreaking: RemoteBreakingOverlays;
   readonly chests = new ChestRenderer();
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
@@ -93,6 +95,9 @@ export class WorldRenderer {
     this.selection.renderOrder = 10;
     this.selection.matrixAutoUpdate = false;
     this.breaking = new BlockBreakingOverlay(world, resolveState);
+    this.remoteBreaking = new RemoteBreakingOverlays(world, this.breaking, resolveState,
+      (x, z) => this.chunks.has(chunkKey(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE))));
+    this.group.add(this.remoteBreaking.group);
     this.group.add(this.breaking.group);
     this.group.add(this.selection);
     this.group.add(this.chests.group);
@@ -281,6 +286,7 @@ export class WorldRenderer {
    */
   setBreakingProgress(hit?: VoxelHit, progress = 0): void {
     this.breaking.setProgress(hit, progress);
+    this.remoteBreaking.update(performance.now());
   }
 
   debugBreakingOverlay(): BreakingOverlaySnapshot {
@@ -326,6 +332,7 @@ export class WorldRenderer {
     this.selectionGeometries.clear();
     this.group.remove(this.breaking.group);
     this.breaking.dispose();
+    this.remoteBreaking.dispose();
     this.opaqueMaterial.dispose();
     this.cutoutMaterial.dispose();
     this.vegetationMaterial.dispose();

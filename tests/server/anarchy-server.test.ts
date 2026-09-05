@@ -13,6 +13,8 @@ import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
 import { createItemStack } from '../../src/inventory';
+import { blockTargetFromHit } from '../../src/net/actionIntent';
+import { Vec3 } from '../../src/math/vec3';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
 import { inputSeqAfterReconnect } from '../../src/core/onlineSession';
 
@@ -218,6 +220,35 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(status.ready).toBe(true);
     expect(status.world).toBe('anarchy');
     expect(status.online).toBe(0);
+  });
+
+  it('sends active mining in a second client welcome and deduplicates accepted/rejected attack presentation on the wire', async () => {
+    const server = await boot();
+    const actor = new TestClient();
+    const first = await actor.connect(server.wsUrl(), { name: 'Actor' });
+    const player = server.world.connectedPlayers().find(p => p.id === first.playerId)!;
+    player.controller.teleport([8.5, 100, 8.5]);
+    player.inventory.setSlot(0, createItemStack('iron_pickaxe'));
+    server.world.world.setBlock(8, 101, 5, BlockId.Stone);
+    server.world.applyInput(player, moveInput(1, { mining: true }));
+    const eye = player.controller.eyePosition();
+    const hit = server.world.world.raycast(eye, new Vec3(8.5, 101.5, 5.5).sub(eye).normalize(), 5)!;
+    expect(server.world.beginMining(player, blockTargetFromHit(hit), 1).ok).toBe(true);
+    const observer = new TestClient();
+    const welcome = await observer.connect(server.wsUrl(), { name: 'Observer' });
+    const remote = welcome.players.find(p => p.id === player.id)!;
+    expect(remote.presentation).toMatchObject({ heldItemId: 'iron_pickaxe', mining: { x: 8, y: 101, z: 5, blockId: BlockId.Stone } });
+    expect(remote).not.toHaveProperty('inventory');
+    actor.send({ type: 'attack', actionSeq: 2 });
+    await observer.waitForMatch('player_state', message => message.players.some(p => p.id === player.id && p.presentation?.swingSeq === 1));
+    actor.send({ type: 'attack', actionSeq: 2 });
+    await actor.waitForMatch('action_result', message => message.actionSeq === 2 && !message.ok);
+    expect(player.presentation().swingSeq).toBe(1);
+    actor.send({ type: 'action', kind: 'block_break_abort', actionSeq: 3, commandSeq: 1 });
+    await observer.waitForMatch('player_state', message => message.players.some(p => p.id === player.id && p.presentation?.mining === null));
+    actor.close();
+    await observer.waitForMatch('player_left', message => message.playerId === player.id);
+    observer.close();
   });
 
   it('assigns authoritative spawn on join and resumes without duplicates', async () => {
