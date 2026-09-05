@@ -1,6 +1,29 @@
 # Архитектура
 
+## Anarchy plugin platform — 2026-09-05
+
+Builtin Anarchy plugins run **only** on the server. They extend Phase 8 `PluginManager` / `ServerAPI` / `EventBus`; they do not import Three, DOM, `Game`, or the client renderer.
+
+```text
+WorldInstance
+  PermissionService / TeleportService / RtpSessionManager / PluginConfigService
+  JsonFileStore  →  <worldDir>/plugin-data/
+        │
+        ▼
+PluginManager.scopedApi (permissions, teleport, config, data, help)
+        │
+        ▼
+builtin-plugins (permissions, tpa, spawn, home, back, rtp, rtpportal, claims, holograms)
+disk plugins from server/plugins/
+```
+
+- Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
+- Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
+- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`). They do not patch gameplay systems directly.
+- Protocol / player visuals / Three.js are unchanged. Holograms persist server-side; nearby players get a one-shot chat dump until a client renderer exists.
+
 ## Farming V1 + Networking V2 — 2026-09-04
+
 
 Current `main` integration keeps sparse Farming simulation in `GameplayKernel` (`world → farming → falling → players → …`) and replaces the old latest-input / chase-snap Anarchy movement with Networking V2.
 
@@ -679,9 +702,9 @@ EventBus  ──►  Plugins (ServerAPI)
 
 `src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
 
-Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
 
-**Not here:** homes / TPA / economy / kits / moderation. Those are later features, not Phase 8.
+**Not here:** Auction House / economy / kits. Homes, TPA, claims, and holograms **are** the current Anarchy plugin pack.
 
 **Tests:** default Vitest environment remains Node (unchanged). Client visual tests import Three and use `setupClientEntityHost.ts`. Shared packs: `npm run test:sim`. Server: `npm run test:server`.
 

@@ -439,6 +439,17 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
       'scheduleOnce',
       'scheduleRepeating',
       'log',
+      'hasPermission',
+      'isOperator',
+      'teleport',
+      'lastTeleport',
+      'consumeLastTeleport',
+      'loadData',
+      'saveData',
+      'loadConfig',
+      'getConfig',
+      'setConfig',
+      'formatHelp',
     ]);
     expect(loaded!.apiVersion).toBe(1);
     await server.world.plugins.whenReady();

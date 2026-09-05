@@ -1,6 +1,18 @@
 # Состояние проекта
 
+## Последний проход: Anarchy Plugin Platform — permissions, teleport plugins, claims, holograms
+
+- Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
+- Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms. Auction House не делался.
+- `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
+- Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
+- Holograms: server-side persistence + range chat notify. Клиентский DecentHolograms renderer не добавлялся (networking/player visuals не трогались).
+- Claim flags `fire-spread` / `mob-spawn` хранятся, но не enforced: соответствующих cancellable events нет.
+- Report: `docs/reports/2026-09-05_anarchy-plugin-platform.md`.
+
 ## Последний проход: Anarchy spawn schematic → filesystem
+
 
 - Ветка `cursor/anarchy-spawn-schem-import-3ff8` от `origin/main` `165f563` (Farming V1 + Networking V2).
 - Canonical spawn source: owner `frontier_spawn2.schem` (Sponge). Не в git. Не IndexedDB dump. Не procedural world.

@@ -1,4 +1,5 @@
-import { BlockId, isKnownBlockId } from '../src/blocks';
+import { join } from 'node:path';
+import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
@@ -41,6 +42,13 @@ import { CommandRegistry, fail, ok, type CommandSender } from './commands';
 import { gameplayTicksDue, scheduleNextTickSlot } from './tickScheduler';
 import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
+import { createBuiltinPlugins } from './builtin-plugins';
+import { JsonFileStore } from './services/jsonStore';
+import { PermissionService } from './services/permissions';
+import { PluginConfigService } from './services/pluginConfig';
+import { PlayerSelectionService } from './services/selection';
+import { RtpService, RtpSessionManager } from './services/rtp';
+import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { formatGameplayKernelTrace } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
@@ -290,6 +298,14 @@ export class WorldInstance {
   readonly events = new EventBus();
   readonly commands = new CommandRegistry();
   readonly plugins = new PluginManager(this.events, this.commands);
+  readonly pluginStore: JsonFileStore;
+  readonly permissions: PermissionService;
+  readonly teleports: TeleportService;
+  readonly teleportHistory: TeleportHistoryService;
+  readonly pluginConfig: PluginConfigService;
+  readonly rtp: RtpService;
+  readonly rtpSessions: RtpSessionManager;
+  readonly selection = new PlayerSelectionService();
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
@@ -349,6 +365,53 @@ export class WorldInstance {
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
+    this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
+    this.permissions = new PermissionService(this.pluginStore, config.operators, (idOrName) => {
+      const direct = this.players.get(idOrName);
+      if (direct) return direct.name;
+      const lower = idOrName.toLowerCase();
+      const named = [...this.players.values()].find((player) => player.name.toLowerCase() === lower);
+      return named?.name ?? idOrName;
+    });
+    this.teleportHistory = new TeleportHistoryService();
+    this.teleports = new TeleportService(config.worldId, this.teleportHistory, (playerId) => {
+      const player = this.players.get(playerId);
+      if (!player) return undefined;
+      return {
+        id: player.id,
+        position: () => ({
+          x: player.controller.position.x,
+          y: player.controller.position.y,
+          z: player.controller.position.z,
+        }),
+        teleport: (x, y, z) => {
+          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
+            return false;
+          }
+          player.controller.teleport([x, y, z]);
+          return true;
+        },
+        sendMessage: (text) => {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text,
+            kind: 'system',
+          });
+        },
+      };
+    });
+    this.teleports.attach(this.events);
+    this.pluginConfig = new PluginConfigService(this.pluginStore);
+    this.rtp = new RtpService(this.world);
+    this.rtpSessions = new RtpSessionManager(this.rtp);
+    this.commands.setPermissionCheck((sender, permission) => {
+      if (permission === 'operator') {
+        return this.permissions.isOperator(sender.name) || this.permissions.isOperator(sender.playerId);
+      }
+      return this.permissions.has(sender.playerId, permission) || this.permissions.has(sender.name, permission);
+    });
     this.registerBuiltinCommands();
     this.plugins.attachHost(this.createPluginHost());
   }
@@ -380,6 +443,7 @@ export class WorldInstance {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
       }
       this.gameplay.restoreEntities(existing);
+      this.permissions.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -387,6 +451,7 @@ export class WorldInstance {
     }
     this.spawn = estimateWorldSpawn(this.world);
     this.createdAt = Date.now();
+    this.permissions.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -399,6 +464,25 @@ export class WorldInstance {
 
   async loadPlugins(): Promise<void> {
     await this.plugins.discover(this.config.pluginDir);
+    if (this.config.loadBuiltinPlugins !== false) {
+      const builtins = createBuiltinPlugins({
+        permissions: this.permissions,
+        teleports: this.teleports,
+        history: this.teleportHistory,
+        rtp: this.rtp,
+        rtpSessions: this.rtpSessions,
+        selection: this.selection,
+        config: this.pluginConfig,
+        plugins: this.plugins,
+        world: this.world,
+        worldId: () => this.worldId,
+        markDirty: () => { this.dirty = true; },
+      });
+      for (const plugin of builtins) {
+        if (this.plugins.list().some((entry) => entry.name === plugin.name)) continue;
+        this.plugins.register(plugin, { source: 'builtin' });
+      }
+    }
     if (this.config.loadExamplePlugin) await this.plugins.loadBundledExample();
     await this.plugins.loadAll();
   }
@@ -963,7 +1047,48 @@ export class WorldInstance {
       );
     }
     this.lastTickMetrics = metrics;
+    this.finishRtpSearches();
+    this.teleports.tick(dt * 1000);
     if (this.connectedPlayers().length > 0) this.snapshotsGenerated += 1;
+  }
+
+  private finishRtpSearches(): void {
+    for (const result of this.rtpSessions.tick()) {
+      const player = this.players.get(result.playerId);
+      if (result.dest) {
+        const teleported = this.teleports.schedule(result.playerId, result.dest, result.request.reason, {
+          warmupMs: result.request.warmupMs,
+          cooldownMs: result.request.cooldownMs,
+          cancelOnMove: result.request.cancelOnMove,
+          cancelOnDamage: result.request.cancelOnDamage,
+        });
+        if (!teleported.ok && player) {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: teleported.error ?? 'RTP failed.',
+            kind: 'error',
+          });
+        } else if (player) {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: 'Found a safe location.',
+            kind: 'system',
+          });
+        }
+      } else if (player) {
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text: 'Could not find a safe RTP location. Try again.',
+          kind: 'error',
+        });
+      }
+    }
   }
 
   private flushTickNetwork(): void {
@@ -1359,6 +1484,12 @@ export class WorldInstance {
       get seed() { return instance.seed; },
       get worldId() { return instance.worldId; },
       spawn: (): [number, number, number] => instance.spawn,
+      setSpawn: (x: number, y: number, z: number) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+        instance.spawn = [x, y, z];
+        instance.dirty = true;
+        return true;
+      },
       getTimeOfDay: () => instance.world.timeOfDay,
       getBlock: (x: number, y: number, z: number) => instance.world.getBlock(x, y, z),
       setBlock: (x: number, y: number, z: number, blockId: number) => {
@@ -1379,12 +1510,14 @@ export class WorldInstance {
         if (instance.players.has(id)) return { id, kind: 'player' };
         return instance.gameplay.lookupEntity(id);
       },
+      surfaceY: (x: number, z: number) => instance.world.surfaceY(x, z),
+      isSolid: (x: number, y: number, z: number) => getBlockDefinition(instance.world.getBlock(x, y, z)).solid,
+      isLiquid: (x: number, y: number, z: number) => getBlockDefinition(instance.world.getBlock(x, y, z)).liquid === true,
     });
   }
 
   private isOperator(player: ServerPlayer): boolean {
-    const names = this.config.operators.map((name) => name.toLowerCase());
-    return names.includes(player.name.toLowerCase());
+    return this.permissions.isOperator(player.name) || this.permissions.isOperator(player.id);
   }
 
   private createPluginPlayer(player: ServerPlayer): PlayerView {
@@ -1481,6 +1614,12 @@ export class WorldInstance {
         return found ? instance.createPluginPlayer(found) : undefined;
       },
       broadcast: (text) => instance.broadcastChat('system', 'server', text),
+      permissions: () => instance.permissions,
+      teleports: () => instance.teleports,
+      history: () => instance.teleportHistory,
+      config: () => instance.pluginConfig,
+      dataLoad: (plugin, key, fallback) => instance.pluginStore.load(`${plugin}/${key}`, fallback),
+      dataSave: (plugin, key, value) => instance.pluginStore.save(`${plugin}/${key}`, value),
     };
   }
 
@@ -1607,17 +1746,6 @@ export class WorldInstance {
       execute: () => ok(`Seed: ${this.seed}`),
     });
     this.commands.register({
-      name: 'spawn',
-      usage: '/spawn',
-      description: 'Teleport to the server spawn',
-      execute: (_args, sender) => {
-        const player = this.players.get(sender.playerId);
-        if (!player) return fail('Player not found.');
-        player.controller.teleport(this.spawn);
-        return ok('Teleported to spawn.');
-      },
-    });
-    this.commands.register({
       name: 'give',
       usage: '/give <item> [count]',
       description: 'Give an item to yourself',
@@ -1671,7 +1799,8 @@ export class WorldInstance {
           return fail('Usage: /tp <x> <y> <z>');
         }
         if (!isValidWorldY(y)) return fail('Y is outside the world.');
-        player.controller.teleport([x, y, z]);
+        const result = this.teleports.now(player.id, { x, y, z }, 'command', { silent: true });
+        if (!result.ok) return fail(result.error ?? 'Teleport failed.');
         return ok(`Teleported to ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`);
       },
     });

@@ -105,6 +105,7 @@ export interface PlayerDamageEvent extends Cancellable {
   readonly playerId: string;
   readonly amount: number;
   readonly cause: string;
+  readonly attackerId?: string;
 }
 
 export interface EntityDamageEvent extends Cancellable {
@@ -123,6 +124,7 @@ export interface PlayerDamagedEvent {
   readonly playerId: string;
   readonly amount: number;
   readonly cause: string;
+  readonly attackerId?: string;
 }
 
 export interface EntityDamagedEvent {
@@ -298,8 +300,8 @@ export class EventBus {
     return cancellable({ playerId, x, y, z, blockId });
   }
 
-  createPlayerDamage(playerId: string, amount: number, cause: string): PlayerDamageEvent {
-    return cancellable({ playerId, amount, cause });
+  createPlayerDamage(playerId: string, amount: number, cause: string, attackerId?: string): PlayerDamageEvent {
+    return cancellable({ playerId, amount, cause, ...(attackerId ? { attackerId } : {}) });
   }
 
   createEntityDamage(entityId: string, amount: number, cause: string): EntityDamageEvent {

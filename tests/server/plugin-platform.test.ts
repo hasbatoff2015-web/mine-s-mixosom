@@ -40,6 +40,7 @@ function testConfig(dataDir: string, pluginDir = pathJoin(dataDir, 'no-plugins')
     persistIntervalMs: 60_000,
     pluginDir,
     loadExamplePlugin: false,
+    loadBuiltinPlugins: false,
   };
 }
 
@@ -374,6 +375,32 @@ describe('Phase 8 plugin platform', () => {
     join(world, 'Three');
     expect(bHits).toEqual(['One', 'Two']);
     expect(world.events.listenerCount('playerJoin')).toBe(0);
+  });
+
+  it('reloads a plugin through disable, cleanup, load, and enable', async () => {
+    const world = await bootWorld();
+    const counts = { load: 0, enable: 0, disable: 0 };
+    world.plugins.register({
+      name: 'reloadable',
+      onLoad() { counts.load += 1; },
+      onEnable(api) {
+        counts.enable += 1;
+        api.registerCommand({
+          name: 'pingreload',
+          usage: '/pingreload',
+          description: 'ping',
+          execute: () => ({ ok: true, lines: ['pong'] }),
+        });
+      },
+      onDisable() { counts.disable += 1; },
+    });
+    await world.plugins.enableAll();
+    expect(world.commands.find('pingreload')).toBeDefined();
+    const reloaded = await world.plugins.reload('reloadable');
+    expect(reloaded.ok).toBe(true);
+    expect(counts).toEqual({ load: 2, enable: 2, disable: 1 });
+    expect(world.commands.find('pingreload')).toBeDefined();
+    expect(world.plugins.phaseOf('reloadable')).toBe('enabled');
   });
 
   it('cancels scheduled tasks when the plugin disables', async () => {

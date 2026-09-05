@@ -1185,6 +1185,7 @@ export class ServerGameplay {
     const accepted = this.hurtPlayer(victim, result.damage, 'melee', attacker.controller.position, {
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerYaw: result.attackerYaw,
+      attackerId: attacker.id,
     });
     completeMeleeAttack(result, accepted, attacker.controller);
     if (accepted && attacker.gamemode === 'survival') {
@@ -1206,10 +1207,11 @@ export class ServerGameplay {
       readonly extraKnockbackLevel?: number;
       readonly attackerYaw?: number;
       readonly ignite?: boolean;
+      readonly attackerId?: string;
     } = {},
   ): boolean {
     if (victim.gamemode !== 'survival' || victim.survival.dead) return false;
-    const event = this.events.createPlayerDamage(victim.id, amount, cause);
+    const event = this.events.createPlayerDamage(victim.id, amount, cause, extras.attackerId);
     this.events.emit('playerDamage', event);
     if (event.cancelled) return false;
     const result = victim.survival.damage(amount, cause, {
@@ -1217,7 +1219,12 @@ export class ServerGameplay {
       swordBlocking: victim.combat.swordBlocking,
     });
     if (!result.accepted) return false;
-    this.events.emit('playerDamaged', { playerId: victim.id, amount, cause });
+    this.events.emit('playerDamaged', {
+      playerId: victim.id,
+      amount,
+      cause,
+      ...(extras.attackerId ? { attackerId: extras.attackerId } : {}),
+    });
     if (victim.survival.dead) {
       this.events.emit('entityDeath', { entityId: victim.id, cause, playerId: victim.id });
     }
