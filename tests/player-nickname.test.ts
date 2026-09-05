@@ -37,7 +37,8 @@ describe('player display nickname', () => {
     expect(sanitizePlayerName('')).toBeUndefined();
     expect(sanitizePlayerName('  ')).toBeUndefined();
     expect(sanitizePlayerName('Mi sha')).toBeUndefined();
-    expect(sanitizePlayerName('Misha\n')).toBeUndefined();
+    expect(sanitizePlayerName('Mi\nsha')).toBeUndefined();
+    expect(sanitizePlayerName('Mi\tsha')).toBeUndefined();
     expect(playerNicknameError('')).toMatch(/пустым/);
     expect(playerNicknameError('Mi sha')).toMatch(/Пробелы/);
     expect(playerNicknameError('a'.repeat(MAX_PLAYER_NAME_LENGTH + 1))).toMatch(/длиннее/);
