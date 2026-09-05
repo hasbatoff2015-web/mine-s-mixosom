@@ -1,4 +1,5 @@
-import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, PROTOCOL_VERSION } from './config';
+import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
+import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, PlayerActionKind } from './playerActions';
 
@@ -664,10 +665,7 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 function sanitizeName(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim().slice(0, MAX_PLAYER_NAME_LENGTH);
-  if (!/^[A-Za-z0-9_А-Яа-яЁё -]+$/.test(trimmed)) return undefined;
-  return trimmed.length > 0 ? trimmed : undefined;
+  return sanitizePlayerName(raw);
 }
 
 function optionalInteger(value: unknown): number | undefined {

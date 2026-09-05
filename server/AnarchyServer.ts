@@ -14,6 +14,7 @@ import {
 } from '../shared/protocol';
 import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerActions';
 import type { ServerConfig } from './config';
+import type { CommandResult } from './commands';
 import { serverLog } from './log';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
 
@@ -53,6 +54,10 @@ export class AnarchyServer {
 
   wsUrl(): string {
     return `ws://${this.host}:${this.port}`;
+  }
+
+  dispatchConsole(raw: string): CommandResult {
+    return this.world.dispatchConsole(raw);
   }
 
   async start(): Promise<void> {

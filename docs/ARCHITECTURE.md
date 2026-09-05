@@ -1,5 +1,11 @@
 # Архитектура
 
+## Nickname and server console — 2026-09-05
+
+Display nickname is **not** an account id. The client stores it in `localStorage` (`fc.player.nickname`) and sends it on Anarchy `join.name`. `WorldInstance.join` uses that name when it is valid; otherwise it keeps `Player-XXXX`. `playerId` remains a UUID.
+
+Server stdin is `ConsoleCommandSender` in `server/index.ts` → `WorldInstance.dispatchConsole` → the existing `CommandRegistry`. It is not a fake player and does not use `FC_OPERATORS`.
+
 ## Anarchy plugin platform — 2026-09-05
 
 Builtin Anarchy plugins run **only** on the server. They extend Phase 8 `PluginManager` / `ServerAPI` / `EventBus`; they do not import Three, DOM, `Game`, or the client renderer.

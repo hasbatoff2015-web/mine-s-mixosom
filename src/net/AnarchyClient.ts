@@ -9,11 +9,13 @@ import {
   decodeJson,
   encodeMessage,
   parseServerMessage,
+  type ClientJoinMessage,
   type ClientMessage,
   type ConnectionState,
   type ServerMessage,
   type ServerWelcomeMessage,
 } from '../../shared/protocol';
+import { sanitizePlayerName } from '../../shared/playerName';
 
 const SESSION_KEY = 'fc.anarchy.sessionToken';
 
@@ -84,12 +86,7 @@ export class AnarchyClient {
       socket.addEventListener('open', () => {
         if (this.generation !== generation || this.socket !== socket) return;
         const sessionToken = sessionStorage.getItem(SESSION_KEY) ?? undefined;
-        this.send({
-          type: 'join',
-          protocol: PROTOCOL_VERSION,
-          ...(name ? { name } : {}),
-          ...(sessionToken ? { sessionToken } : {}),
-        });
+        this.send(buildAnarchyJoinMessage(name, sessionToken));
       });
       socket.addEventListener('message', (event) => {
         if (this.generation !== generation || this.socket !== socket) return;
@@ -172,6 +169,16 @@ export class AnarchyClient {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = undefined;
   }
+}
+
+export function buildAnarchyJoinMessage(name?: string, sessionToken?: string): ClientJoinMessage {
+  const sanitized = sanitizePlayerName(name);
+  return {
+    type: 'join',
+    protocol: PROTOCOL_VERSION,
+    ...(sanitized ? { name: sanitized } : {}),
+    ...(sessionToken ? { sessionToken } : {}),
+  };
 }
 
 export async function fetchAnarchyStatus(): Promise<{

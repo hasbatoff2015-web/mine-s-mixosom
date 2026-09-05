@@ -11,6 +11,12 @@ function sourceSection(source: string, start: string, end: string): string {
 }
 
 describe('UI visual pass on the authoritative main contracts', () => {
+  it('keeps the Account nickname panel on the existing main menu', () => {
+    expect(gameUiSource).toContain('data-action="account"');
+    expect(gameUiSource).toContain('showAccount(');
+    expect(gameSource).toContain('account: () => this.showAccount()');
+  });
+
   it('keeps live online status and the existing server connect callbacks', () => {
     const onlineUi = sourceSection(gameUiSource, 'showOnlineServers(', 'showCreateWorld(');
     expect(onlineUi).toContain('live?: OnlineServerLiveStatus');
