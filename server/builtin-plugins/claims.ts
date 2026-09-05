@@ -239,24 +239,26 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Set priority of '${live.name}' to ${live.priority}.`);
           }
           if (sub === 'addmember' || sub === 'removemember' || sub === 'members' || sub === 'flag') {
-            const resolveEditable = (claimName: string | undefined) => {
+            const resolveEditable = (claimName: string | undefined):
+              { readonly ok: true; readonly store: ClaimStore; readonly live: Claim }
+              | { readonly ok: false; readonly error: ReturnType<typeof fail> } => {
               const store = load();
               if (claimName) {
                 const live = findClaimByName(store.claims, claimName, ownerKey);
-                if (!live) return { error: fail(`Claim '${claimName}' not found.`) };
-                if (!canEdit(live, sender)) return { error: fail('You do not have permission.') };
-                return { store, live };
+                if (!live) return { ok: false, error: fail(`Claim '${claimName}' not found.`) };
+                if (!canEdit(live, sender)) return { ok: false, error: fail('You do not have permission.') };
+                return { ok: true, store, live };
               }
               const claim = editableAtFeet(sender) ?? topAt(sender.playerId);
-              if (!claim) return { error: fail('You are not standing in a claim.') };
-              if (!canEdit(claim, sender)) return { error: fail('Only the claim owner can do that.') };
+              if (!claim) return { ok: false, error: fail('You are not standing in a claim.') };
+              if (!canEdit(claim, sender)) return { ok: false, error: fail('Only the claim owner can do that.') };
               const live = store.claims.find((entry) => entry.id === claim.id);
-              if (!live) return { error: fail('Claim not found.') };
-              return { store, live };
+              if (!live) return { ok: false, error: fail('Claim not found.') };
+              return { ok: true, store, live };
             };
             if (sub === 'members') {
               const resolved = resolveEditable(args[1]?.toLowerCase());
-              if ('error' in resolved) return resolved.error;
+              if (!resolved.ok) return resolved.error;
               return ok(`Members: ${resolved.live.members.join(', ') || '(none)'}`);
             }
             if (sub === 'addmember' || sub === 'removemember') {
@@ -267,7 +269,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
                   : '/claim removemember [name] <player>');
               }
               const resolved = resolveEditable(parsed.claimName);
-              if ('error' in resolved) return resolved.error;
+              if (!resolved.ok) return resolved.error;
               if (sub === 'addmember') {
                 if (!resolved.live.members.includes(parsed.player)) resolved.live.members.push(parsed.player);
                 save(resolved.store);
@@ -282,7 +284,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               return usageError(`/claim flag [name] <${CLAIM_FLAGS.join('|')}> <true|false>`);
             }
             const resolved = resolveEditable(parsed.claimName);
-            if ('error' in resolved) return resolved.error;
+            if (!resolved.ok) return resolved.error;
             resolved.live.flags[parsed.flag] = parsed.value;
             save(resolved.store);
             return ok(`Set ${parsed.flag}=${parsed.value} on claim '${resolved.live.name}'.`);
