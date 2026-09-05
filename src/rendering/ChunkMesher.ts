@@ -84,16 +84,126 @@ function localFaceUv(face: Face, box: LocalBox): TextureUvRect {
   return [box.maxX, box.minY, box.minX, box.maxY];
 }
 
-interface GeometryBuffers {
-  positions: number[];
-  normals: number[];
-  colors: number[];
-  uvs: number[];
-  indices: number[];
-  skyLights: number[];
-  blockLights: number[];
-  faceShades: number[];
-  emissions: number[];
+class FloatList {
+  data: Float32Array;
+  length = 0;
+
+  constructor(capacity = 16384) {
+    this.data = new Float32Array(capacity);
+  }
+
+  reset(): void {
+    this.length = 0;
+  }
+
+  /** Exact-size copy so Three.js can own the buffer while this list is reused. */
+  compact(): Float32Array {
+    return this.data.slice(0, this.length);
+  }
+
+  ensure(additional: number): void {
+    const needed = this.length + additional;
+    if (needed > this.data.length) this.grow(needed);
+  }
+
+  private grow(needed: number): void {
+    let cap = this.data.length || 16384;
+    while (cap < needed) cap *= 2;
+    const next = new Float32Array(cap);
+    next.set(this.data.subarray(0, this.length));
+    this.data = next;
+  }
+
+  push1(a: number): void {
+    if (this.length + 1 > this.data.length) this.grow(this.length + 1);
+    this.data[this.length++] = a;
+  }
+
+  push2(a: number, b: number): void {
+    const i = this.length;
+    if (i + 2 > this.data.length) this.grow(i + 2);
+    const data = this.data;
+    data[i] = a;
+    data[i + 1] = b;
+    this.length = i + 2;
+  }
+
+  push3(a: number, b: number, c: number): void {
+    const i = this.length;
+    if (i + 3 > this.data.length) this.grow(i + 3);
+    const data = this.data;
+    data[i] = a;
+    data[i + 1] = b;
+    data[i + 2] = c;
+    this.length = i + 3;
+  }
+}
+
+class IndexList {
+  data: Uint32Array;
+  length = 0;
+
+  constructor(capacity = 16384) {
+    this.data = new Uint32Array(capacity);
+  }
+
+  reset(): void {
+    this.length = 0;
+  }
+
+  compact(): Uint32Array {
+    return this.data.slice(0, this.length);
+  }
+
+  ensure(additional: number): void {
+    const needed = this.length + additional;
+    if (needed > this.data.length) this.grow(needed);
+  }
+
+  private grow(needed: number): void {
+    let cap = this.data.length || 16384;
+    while (cap < needed) cap *= 2;
+    const next = new Uint32Array(cap);
+    next.set(this.data.subarray(0, this.length));
+    this.data = next;
+  }
+
+  push6(a: number, b: number, c: number, d: number, e: number, f: number): void {
+    const i = this.length;
+    if (i + 6 > this.data.length) this.grow(i + 6);
+    const data = this.data;
+    data[i] = a;
+    data[i + 1] = b;
+    data[i + 2] = c;
+    data[i + 3] = d;
+    data[i + 4] = e;
+    data[i + 5] = f;
+    this.length = i + 6;
+  }
+}
+
+class GeometryBuffers {
+  readonly positions = new FloatList();
+  readonly normals = new FloatList();
+  readonly colors = new FloatList();
+  readonly uvs = new FloatList();
+  readonly skyLights = new FloatList();
+  readonly blockLights = new FloatList();
+  readonly faceShades = new FloatList();
+  readonly emissions = new FloatList();
+  readonly indices = new IndexList();
+
+  reset(): void {
+    this.positions.reset();
+    this.normals.reset();
+    this.colors.reset();
+    this.uvs.reset();
+    this.skyLights.reset();
+    this.blockLights.reset();
+    this.faceShades.reset();
+    this.emissions.reset();
+    this.indices.reset();
+  }
 }
 
 interface VertexLighting {
@@ -118,20 +228,9 @@ interface LayerBuffers {
   fire: GeometryBuffers;
 }
 
-const createBuffers = (): GeometryBuffers => ({
-  positions: [], normals: [], colors: [], uvs: [], indices: [],
-  skyLights: [], blockLights: [], faceShades: [], emissions: [],
-});
+const createBuffers = (): GeometryBuffers => new GeometryBuffers();
 const resetBuffers = (buffers: GeometryBuffers): void => {
-  buffers.positions.length = 0;
-  buffers.normals.length = 0;
-  buffers.colors.length = 0;
-  buffers.uvs.length = 0;
-  buffers.indices.length = 0;
-  buffers.skyLights.length = 0;
-  buffers.blockLights.length = 0;
-  buffers.faceShades.length = 0;
-  buffers.emissions.length = 0;
+  buffers.reset();
 };
 const WHITE_TINT = [1, 1, 1] as const;
 const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
@@ -283,6 +382,7 @@ export interface ChunkMeshProfile {
   readonly specialFaces: number;
   readonly lightCellReads: number;
   readonly positionFloats: number;
+  readonly indexCount: number;
 }
 
 const EMPTY_MESH_PROFILE: ChunkMeshProfile = {
@@ -299,6 +399,7 @@ const EMPTY_MESH_PROFILE: ChunkMeshProfile = {
   specialFaces: 0,
   lightCellReads: 0,
   positionFloats: 0,
+  indexCount: 0,
 };
 
 /** Skip 4-corner AO for chunks this far from the player (Chebyshev). Nearby rings keep full AO. */
@@ -356,13 +457,52 @@ export class ChunkMesher {
   private lightCache = new Uint16Array(LIGHT_CACHE_STRIDE * 4 * LIGHT_CACHE_STRIDE);
   private lightCacheHeight = 0;
   private detail: { -readonly [K in keyof ChunkMeshProfile]: ChunkMeshProfile[K] } = { ...EMPTY_MESH_PROFILE };
+  private buildJob: {
+    chunk: Chunk;
+    world: VoxelWorld;
+    y: number;
+    chunkHeight: number;
+    faces: number;
+    chests: Array<{ x: number; y: number; z: number }>;
+    contentRevision: number;
+    lightVersion: number;
+    setupDone: boolean;
+    columnCacheMs: number;
+    cacheFillMs: number;
+    buildStart: number;
+  } | null = null;
 
   constructor(
     private readonly atlas: TextureAtlas,
     private readonly resolveState: BlockRenderStateResolver = () => undefined,
   ) {}
 
+  get hasInProgressBuild(): boolean {
+    return this.buildJob !== null;
+  }
+
+  inProgressChunk(): Chunk | undefined {
+    return this.buildJob?.chunk;
+  }
+
+  isBuildStale(): boolean {
+    const job = this.buildJob;
+    if (!job) return false;
+    return job.contentRevision !== job.chunk.contentRevision
+      || job.lightVersion !== job.chunk.lightVersion;
+  }
+
+  abortBuild(): void {
+    this.buildJob = null;
+  }
+
   build(chunk: Chunk, world: VoxelWorld, options: ChunkMeshBuildOptions = {}): MeshedChunk {
+    this.startBuild(chunk, world, options);
+    this.pumpBuild(Number.POSITIVE_INFINITY);
+    return this.takeBuild()!;
+  }
+
+  startBuild(chunk: Chunk, world: VoxelWorld, options: ChunkMeshBuildOptions = {}): void {
     const vertexLight = options.vertexLight
       ?? (options.cheapVertexLight === true ? 'cheap' : 'full');
     this.cheapVertexLight = vertexLight === 'cheap';
@@ -371,146 +511,93 @@ export class ChunkMesher {
     this.collectDetail = options.collectDetail === true;
     this.useLightCache = options.neighborhoodLightCache ?? vertexLight === 'full';
     if (this.collectDetail) this.detail = { ...EMPTY_MESH_PROFILE };
-    const buildStart = performance.now();
     resetBuffers(this.layers.opaque);
     resetBuffers(this.layers.cutout);
     resetBuffers(this.layers.vegetation);
     resetBuffers(this.layers.translucent);
     resetBuffers(this.layers.water);
     resetBuffers(this.layers.fire);
-    const layers = this.layers;
-    const columnStart = performance.now();
-    this.cacheColumns(chunk, world);
-    const columnCacheMs = performance.now() - columnStart;
-    this.lightSelf = chunk;
-    this.lightEast = world.getChunk(chunk.x + 1, chunk.z, false);
-    this.lightWest = world.getChunk(chunk.x - 1, chunk.z, false);
-    this.lightSouth = world.getChunk(chunk.x, chunk.z + 1, false);
-    this.lightNorth = world.getChunk(chunk.x, chunk.z - 1, false);
-    this.lightNorthEast = world.getChunk(chunk.x + 1, chunk.z - 1, false);
-    this.lightNorthWest = world.getChunk(chunk.x - 1, chunk.z - 1, false);
-    this.lightSouthEast = world.getChunk(chunk.x + 1, chunk.z + 1, false);
-    this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
-    let faces = 0;
-    const chests: Array<{ x: number; y: number; z: number }> = [];
     const chunkHeight = Math.min(
       chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE),
       chunk.scanMaxY() + 1,
     );
-    const blocks = chunk.blocks;
-    const eastChunk = this.lightEast;
-    const westChunk = this.lightWest;
-    const southChunk = this.lightSouth;
-    const northChunk = this.lightNorth;
-    const cacheFillStart = performance.now();
-    if (this.useLightCache) this.fillNeighborhoodLightCache(chunkHeight);
-    const cacheFillMs = this.useLightCache ? performance.now() - cacheFillStart : 0;
-    for (let y = 0; y < chunkHeight; y += 1) {
-      const yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
-      for (let z = 0; z < CHUNK_SIZE; z += 1) {
-        const rowOffset = yOffset + z * CHUNK_SIZE;
-        for (let x = 0; x < CHUNK_SIZE; x += 1) {
-          const blockIndex = rowOffset + x;
-          const block = blocks[blockIndex] as BlockId;
-          if (block === BlockId.Air) {
-            if (this.collectDetail) this.detail.air += 1;
-            continue;
-          }
-          if (this.collectDetail) this.detail.cells += 1;
-          const definition = getBlockDefinition(block);
-          const worldX = chunk.x * CHUNK_SIZE + x;
-          const worldZ = chunk.z * CHUNK_SIZE + z;
-          const needsState = definition.renderShape !== 'cube'
-            || definition.id === BlockId.Furnace
-            || definition.liquid === true;
-          const state = needsState ? this.resolveState(worldX, y, worldZ) : undefined;
-          const target = this.buffersFor(layers, definition);
-          if (definition.liquid) {
-            if (this.collectDetail) this.detail.liquids += 1;
-            if (this.emitGeometry) faces += this.addFluid(target, definition, state, world, worldX, y, worldZ);
-            continue;
-          }
-          const meshAsCube = definition.renderShape === 'cube'
-            || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
-          if (definition.renderShape === 'chest') {
-            chests.push({ x: worldX, y, z: worldZ });
-            continue;
-          }
-          if (!meshAsCube) {
-            if (this.collectDetail) this.detail.specials += 1;
-            if (this.emitGeometry) {
-              const added = this.addSpecial(target, definition, state, world, worldX, y, worldZ);
-              faces += added;
-              if (this.collectDetail) this.detail.specialFaces += added;
-            }
-            continue;
-          }
-          if (this.collectDetail) this.detail.cubes += 1;
-          const east = x < CHUNK_SIZE - 1
-            ? blocks[blockIndex + 1] as BlockId
-            : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(east, block, worldX + 1, y, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const west = x > 0
-            ? blocks[blockIndex - 1] as BlockId
-            : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(west, block, worldX - 1, y, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
-          if (this.faceVisible(above, block, worldX, y + 1, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
-          if (this.faceVisible(below, block, worldX, y - 1, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const south = z < CHUNK_SIZE - 1
-            ? blocks[blockIndex + CHUNK_SIZE] as BlockId
-            : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(south, block, worldX, y, worldZ + 1)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const north = z > 0
-            ? blocks[blockIndex - CHUNK_SIZE] as BlockId
-            : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(north, block, worldX, y, worldZ - 1)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-        }
-      }
+    this.buildJob = {
+      chunk,
+      world,
+      y: 0,
+      chunkHeight,
+      faces: 0,
+      chests: [],
+      contentRevision: chunk.contentRevision,
+      lightVersion: chunk.lightVersion,
+      setupDone: false,
+      columnCacheMs: 0,
+      cacheFillMs: 0,
+      buildStart: performance.now(),
+    };
+  }
+
+  /** Advance the current build. Returns true when scan+setup finished and takeBuild() is ready. */
+  pumpBuild(budgetMs: number): boolean {
+    const job = this.buildJob;
+    if (!job) return true;
+    const start = performance.now();
+    if (!job.setupDone) {
+      const { chunk, world } = job;
+      const columnStart = performance.now();
+      this.cacheColumns(chunk, world);
+      job.columnCacheMs = performance.now() - columnStart;
+      this.lightSelf = chunk;
+      this.lightEast = world.getChunk(chunk.x + 1, chunk.z, false);
+      this.lightWest = world.getChunk(chunk.x - 1, chunk.z, false);
+      this.lightSouth = world.getChunk(chunk.x, chunk.z + 1, false);
+      this.lightNorth = world.getChunk(chunk.x, chunk.z - 1, false);
+      this.lightNorthEast = world.getChunk(chunk.x + 1, chunk.z - 1, false);
+      this.lightNorthWest = world.getChunk(chunk.x - 1, chunk.z - 1, false);
+      this.lightSouthEast = world.getChunk(chunk.x + 1, chunk.z + 1, false);
+      this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
+      const cacheFillStart = performance.now();
+      if (this.useLightCache) this.fillNeighborhoodLightCache(job.chunkHeight);
+      job.cacheFillMs = this.useLightCache ? performance.now() - cacheFillStart : 0;
+      job.setupDone = true;
+      if (performance.now() - start >= budgetMs && job.y < job.chunkHeight) return false;
     }
+    while (job.y < job.chunkHeight) {
+      this.scanYLayer(job);
+      job.y += 1;
+      if (performance.now() - start >= budgetMs && job.y < job.chunkHeight) return false;
+    }
+    return true;
+  }
+
+  takeBuild(): MeshedChunk | null {
+    const job = this.buildJob;
+    if (!job || !job.setupDone || job.y < job.chunkHeight) return null;
+    const layers = this.layers;
     const scanEnd = performance.now();
-    const result = {
+    const result: MeshedChunk = {
       opaque: this.toGeometry(layers.opaque),
       cutout: this.toGeometry(layers.cutout),
       vegetation: this.toGeometry(layers.vegetation),
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       fire: this.toGeometry(layers.fire),
-      faces,
-      chests,
+      faces: job.faces,
+      chests: job.chests,
     };
     const buildEnd = performance.now();
     this.lastProfile = this.collectDetail
       ? {
-        scanMs: scanEnd - buildStart,
+        scanMs: scanEnd - job.buildStart,
         geometryMs: buildEnd - scanEnd,
-        columnCacheMs,
-        cacheFillMs,
+        columnCacheMs: job.columnCacheMs,
+        cacheFillMs: job.cacheFillMs,
         cells: this.detail.cells,
         air: this.detail.air,
         cubes: this.detail.cubes,
         specials: this.detail.specials,
         liquids: this.detail.liquids,
-        cubeFaces: Math.max(0, faces - this.detail.specialFaces),
+        cubeFaces: Math.max(0, job.faces - this.detail.specialFaces),
         specialFaces: this.detail.specialFaces,
         lightCellReads: this.detail.lightCellReads,
         positionFloats: layers.opaque.positions.length
@@ -519,21 +606,123 @@ export class ChunkMesher {
           + layers.translucent.positions.length
           + layers.water.positions.length
           + layers.fire.positions.length,
+        indexCount: layers.opaque.indices.length
+          + layers.cutout.indices.length
+          + layers.vegetation.indices.length
+          + layers.translucent.indices.length
+          + layers.water.indices.length
+          + layers.fire.indices.length,
       }
       : {
         ...EMPTY_MESH_PROFILE,
-        scanMs: scanEnd - buildStart,
+        scanMs: scanEnd - job.buildStart,
         geometryMs: buildEnd - scanEnd,
+        columnCacheMs: job.columnCacheMs,
+        cacheFillMs: job.cacheFillMs,
       };
+    this.buildJob = null;
     return result;
+  }
+
+  private scanYLayer(job: NonNullable<ChunkMesher['buildJob']>): void {
+    const { chunk, world, chunkHeight } = job;
+    const y = job.y;
+    const layers = this.layers;
+    const blocks = chunk.blocks;
+    const eastChunk = this.lightEast;
+    const westChunk = this.lightWest;
+    const southChunk = this.lightSouth;
+    const northChunk = this.lightNorth;
+    const yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      const rowOffset = yOffset + z * CHUNK_SIZE;
+      for (let x = 0; x < CHUNK_SIZE; x += 1) {
+        const blockIndex = rowOffset + x;
+        const block = blocks[blockIndex] as BlockId;
+        if (block === BlockId.Air) {
+          if (this.collectDetail) this.detail.air += 1;
+          continue;
+        }
+        if (this.collectDetail) this.detail.cells += 1;
+        const definition = getBlockDefinition(block);
+        const worldX = chunk.x * CHUNK_SIZE + x;
+        const worldZ = chunk.z * CHUNK_SIZE + z;
+        const needsState = definition.renderShape !== 'cube'
+          || definition.id === BlockId.Furnace
+          || definition.liquid === true;
+        const state = needsState ? this.resolveState(worldX, y, worldZ) : undefined;
+        const target = this.buffersFor(layers, definition);
+        if (definition.liquid) {
+          if (this.collectDetail) this.detail.liquids += 1;
+          if (this.emitGeometry) job.faces += this.addFluid(target, definition, state, world, worldX, y, worldZ);
+          continue;
+        }
+        const meshAsCube = definition.renderShape === 'cube'
+          || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
+        if (definition.renderShape === 'chest') {
+          job.chests.push({ x: worldX, y, z: worldZ });
+          continue;
+        }
+        if (!meshAsCube) {
+          if (this.collectDetail) this.detail.specials += 1;
+          if (this.emitGeometry) {
+            const added = this.addSpecial(target, definition, state, world, worldX, y, worldZ);
+            job.faces += added;
+            if (this.collectDetail) this.detail.specialFaces += added;
+          }
+          continue;
+        }
+        if (this.collectDetail) this.detail.cubes += 1;
+        const east = x < CHUNK_SIZE - 1
+          ? blocks[blockIndex + 1] as BlockId
+          : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(east, block, worldX + 1, y, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const west = x > 0
+          ? blocks[blockIndex - 1] as BlockId
+          : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(west, block, worldX - 1, y, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
+        if (this.faceVisible(above, block, worldX, y + 1, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
+        if (this.faceVisible(below, block, worldX, y - 1, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const south = z < CHUNK_SIZE - 1
+          ? blocks[blockIndex + CHUNK_SIZE] as BlockId
+          : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(south, block, worldX, y, worldZ + 1)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const north = z > 0
+          ? blocks[blockIndex - CHUNK_SIZE] as BlockId
+          : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(north, block, worldX, y, worldZ - 1)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+      }
+    }
   }
 
   private faceVisible(adjacent: BlockId, block: BlockId, ax: number, ay: number, az: number): boolean {
     if (adjacent === BlockId.Air) return true;
+    // Solid cubes hit this LUT and skip getBlockDefinition. Slabs/leaves/glass stay on the slow path.
+    if (BLOCK_OCCLUDES_FACES[adjacent]) return false;
     const adjacentDefinition = getBlockDefinition(adjacent);
     if (adjacentDefinition.renderShape === 'slab') {
       if (defaultSlabType(this.resolveState(ax, ay, az)) === 'double') return false;
-    } else if (adjacentDefinition.occludesFaces) return false;
+    }
     const adjacentFull = adjacentDefinition.renderShape === 'cube'
       || (adjacentDefinition.renderShape === 'slab' && defaultSlabType(this.resolveState(ax, ay, az)) === 'double');
     return adjacent !== block || !adjacentFull;
@@ -570,48 +759,50 @@ export class ChunkMesher {
     const tint = this.tintFor(definition, textureKey, biome);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
+    const nx = face.normal[0];
+    const ny = face.normal[1];
+    const nz = face.normal[2];
+    const tr = tint[0];
+    const tg = tint[1];
+    const tb = tint[2];
     let sky = 0;
     let block = 0;
     if (this.flatVertexLight) {
       sky = 1;
       block = 0;
     } else if (this.cheapVertexLight) {
-      const sampleX = x + face.normal[0];
-      const sampleY = y + face.normal[1];
-      const sampleZ = z + face.normal[2];
-      sky = this.packedLight('sky', sampleX, sampleY, sampleZ) / 15;
-      block = this.packedLight('block', sampleX, sampleY, sampleZ) / 15;
+      sky = this.packedLight('sky', x + nx, y + ny, z + nz) / 15;
+      block = this.packedLight('block', x + nx, y + ny, z + nz) / 15;
     }
+    const u0 = tile.u0;
+    const v0 = tile.v0;
+    const u1 = tile.u1;
+    const v1 = tile.v1;
+    buffers.positions.ensure(12);
+    buffers.normals.ensure(12);
+    buffers.colors.ensure(12);
+    buffers.uvs.ensure(8);
+    buffers.skyLights.ensure(4);
+    buffers.blockLights.ensure(4);
+    buffers.faceShades.ensure(4);
+    buffers.emissions.ensure(4);
+    buffers.indices.ensure(6);
     for (let index = 0; index < 4; index += 1) {
       const corner = face.corners[index]!;
-      buffers.positions.push(x + corner[0], y + corner[1], z + corner[2]);
-      buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
+      buffers.positions.push3(x + corner[0], y + corner[1], z + corner[2]);
+      buffers.normals.push3(nx, ny, nz);
+      buffers.uvs.push2(index === 0 || index === 3 ? u0 : u1, index < 2 ? v0 : v1);
       if (this.flatVertexLight || this.cheapVertexLight) {
-        this.pushLighting(buffers, {
-          tint,
-          sky,
-          block,
-          emission,
-          shade: face.shade,
-        });
+        this.pushLighting(buffers, tr, tg, tb, sky, block, emission, face.shade);
       } else {
         const cornerLight = this.fastCornerLight(x, y, z, face.normal, corner);
-        this.pushLighting(buffers, {
-          tint,
-          sky: cornerLight.sky / 15,
-          block: cornerLight.block / 15,
-          emission,
-          shade: face.shade * cornerLight.ao,
-        });
+        this.pushLighting(
+          buffers, tr, tg, tb,
+          cornerLight.sky / 15, cornerLight.block / 15, emission, face.shade * cornerLight.ao,
+        );
       }
     }
-    buffers.uvs.push(
-      tile.u0, tile.v0,
-      tile.u1, tile.v0,
-      tile.u1, tile.v1,
-      tile.u0, tile.v1,
-    );
-    buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    buffers.indices.push6(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
   private addSpecial(
@@ -1321,12 +1512,13 @@ export class ChunkMesher {
       ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
       : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
     for (let index = 0; index < 4; index += 1) {
-      buffers.positions.push(...corners[index]!);
-      buffers.normals.push(...normal);
-      buffers.uvs.push(...uv[index]!);
-      this.pushSurfaceLighting(buffers, lighting, corners[index]!, normal);
+      const corner = corners[index]!;
+      buffers.positions.push3(corner[0], corner[1], corner[2]);
+      buffers.normals.push3(normal[0], normal[1], normal[2]);
+      buffers.uvs.push2(uv[index]![0], uv[index]![1]);
+      this.pushSurfaceLighting(buffers, lighting, corner, normal);
     }
-    buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    buffers.indices.push6(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
   private addLocalUvQuad(
@@ -1338,20 +1530,30 @@ export class ChunkMesher {
     const base = buffers.positions.length / 3;
     const uv = [[0, 0], [1, 0], [1, 1], [0, 1]] as const;
     for (let index = 0; index < 4; index += 1) {
-      buffers.positions.push(...corners[index]!);
-      buffers.normals.push(...normal);
-      buffers.uvs.push(...uv[index]!);
-      this.pushSurfaceLighting(buffers, lighting, corners[index]!, normal);
+      const corner = corners[index]!;
+      buffers.positions.push3(corner[0], corner[1], corner[2]);
+      buffers.normals.push3(normal[0], normal[1], normal[2]);
+      buffers.uvs.push2(uv[index]![0], uv[index]![1]);
+      this.pushSurfaceLighting(buffers, lighting, corner, normal);
     }
-    buffers.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    buffers.indices.push6(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
-  private pushLighting(buffers: GeometryBuffers, lighting: VertexLighting): void {
-    buffers.colors.push(lighting.tint[0], lighting.tint[1], lighting.tint[2]);
-    buffers.skyLights.push(lighting.sky);
-    buffers.blockLights.push(lighting.block);
-    buffers.faceShades.push(lighting.shade);
-    buffers.emissions.push(lighting.emission);
+  private pushLighting(
+    buffers: GeometryBuffers,
+    tr: number,
+    tg: number,
+    tb: number,
+    sky: number,
+    block: number,
+    emission: number,
+    shade: number,
+  ): void {
+    buffers.colors.push3(tr, tg, tb);
+    buffers.skyLights.push1(sky);
+    buffers.blockLights.push1(block);
+    buffers.faceShades.push1(shade);
+    buffers.emissions.push1(emission);
   }
 
   private pushSurfaceLighting(
@@ -1359,13 +1561,16 @@ export class ChunkMesher {
     vertex: readonly [number, number, number], normal: readonly [number, number, number],
   ): void {
     const origin = lighting.origin;
-    if (!origin) { this.pushLighting(buffers, lighting); return; }
+    const tint = lighting.tint;
+    if (!origin) {
+      this.pushLighting(buffers, tint[0], tint[1], tint[2], lighting.sky, lighting.block, lighting.emission, lighting.shade);
+      return;
+    }
     const light = sampleSurfaceVertexLight(this.readLightCell, ...vertex, ...normal, ...origin, this.surfaceLight);
-    buffers.colors.push(...lighting.tint);
-    buffers.skyLights.push(light.sky / 15);
-    buffers.blockLights.push(light.block / 15);
-    buffers.faceShades.push(lighting.shade * light.ao);
-    buffers.emissions.push(lighting.emission);
+    this.pushLighting(
+      buffers, tint[0], tint[1], tint[2],
+      light.sky / 15, light.block / 15, lighting.emission, lighting.shade * light.ao,
+    );
   }
 
   private lightingFor(
@@ -1546,15 +1751,18 @@ export class ChunkMesher {
 
   private toGeometry(buffers: GeometryBuffers): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffers.positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buffers.normals, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(buffers.colors, 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buffers.uvs, 2));
-    geometry.setAttribute('skyLight', new THREE.Float32BufferAttribute(buffers.skyLights, 1));
-    geometry.setAttribute('blockLight', new THREE.Float32BufferAttribute(buffers.blockLights, 1));
-    geometry.setAttribute('faceShade', new THREE.Float32BufferAttribute(buffers.faceShades, 1));
-    geometry.setAttribute('emissionLight', new THREE.Float32BufferAttribute(buffers.emissions, 1));
-    geometry.setIndex(buffers.indices);
+    // BufferAttribute keeps the compact TypedArray. Float32BufferAttribute would copy it again.
+    geometry.setAttribute('position', new THREE.BufferAttribute(buffers.positions.compact(), 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(buffers.normals.compact(), 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(buffers.colors.compact(), 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(buffers.uvs.compact(), 2));
+    geometry.setAttribute('skyLight', new THREE.BufferAttribute(buffers.skyLights.compact(), 1));
+    geometry.setAttribute('blockLight', new THREE.BufferAttribute(buffers.blockLights.compact(), 1));
+    geometry.setAttribute('faceShade', new THREE.BufferAttribute(buffers.faceShades.compact(), 1));
+    geometry.setAttribute('emissionLight', new THREE.BufferAttribute(buffers.emissions.compact(), 1));
+    if (buffers.indices.length > 0) {
+      geometry.setIndex(new THREE.BufferAttribute(buffers.indices.compact(), 1));
+    }
     if (buffers.positions.length > 0) geometry.computeBoundingSphere();
     return geometry;
   }

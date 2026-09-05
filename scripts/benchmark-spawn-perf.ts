@@ -5,7 +5,7 @@
 import { CHEAP_VERTEX_LIGHT_CHEBYSHEV, ChunkMesher } from '../src/rendering/ChunkMesher';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { VoxelWorld } from '../src/world/World';
-import { CHUNK_SIZE, WORLD_JOB_BUDGET_MS, WORLD_LIGHT_BUDGET_MS } from '../src/core/constants';
+import { CHUNK_SIZE, MESH_SLICE_BUDGET_MS, WORLD_JOB_BUDGET_MS, WORLD_LIGHT_BUDGET_MS } from '../src/core/constants';
 import { ANARCHY_WORLD_ID, ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
 import { FsWorldStore } from '../server/FsWorldStore';
 import { loadServerConfig } from '../server/config';
@@ -125,7 +125,8 @@ function walkBudgeted(
     const cz = Math.floor(pos.z / CHUNK_SIZE);
     const genRadius = meshRadius + 1;
     const peek = collectReadyMeshJobs(world, pos.x, pos.z, meshRadius, performance.now(), 4, 0);
-    const deferGenerate = shouldDeferGenerateForMesh(false, consecutiveGenWithoutMesh, peek);
+    const deferGenerate = mesher.hasInProgressBuild
+      || shouldDeferGenerateForMesh(false, consecutiveGenWithoutMesh, peek);
     let generatedThisFrame = 0;
     const genStart = performance.now();
     if (deferGenerate) {
@@ -158,26 +159,34 @@ function walkBudgeted(
     });
     let meshedThisFrame = 0;
     let oneMesh = 0;
-    if (!plan.skipMesh && plan.meshLimit > 0) {
-      let rebuilt = 0;
+    if (mesher.hasInProgressBuild || (!plan.skipMesh && plan.meshLimit > 0)) {
       const meshStart = performance.now();
-      for (const job of ready) {
-        if (rebuilt >= plan.meshLimit) break;
-        if (!job.chunk.lightingReady) continue;
-        const built = mesher.build(job.chunk, world, {
-          cheapVertexLight: job.chebyshev >= CHEAP_VERTEX_LIGHT_CHEBYSHEV,
-        });
-        disposeMeshed(built);
-        job.chunk.dirty = false;
-        world.acknowledgeMeshed(job.chunk);
-        rebuilt += 1;
-        meshes += 1;
-        meshedThisFrame += 1;
-        if (rebuilt > 0 && performance.now() - meshStart >= WORLD_JOB_BUDGET_MS) break;
+      const job = mesher.inProgressChunk()
+        ?? ready.find((item) => item.chunk.lightingReady)?.chunk;
+      if (job) {
+        if (!mesher.hasInProgressBuild) {
+          mesher.startBuild(job, world, {
+            cheapVertexLight: Math.max(
+              Math.abs(job.x - cx),
+              Math.abs(job.z - cz),
+            ) >= CHEAP_VERTEX_LIGHT_CHEBYSHEV,
+          });
+        }
+        const done = mesher.pumpBuild(MESH_SLICE_BUDGET_MS);
+        oneMesh = performance.now() - meshStart;
+        meshMs.push(oneMesh);
+        if (oneMesh > MESH_SLICE_BUDGET_MS + 1) overBudget.push(oneMesh);
+        if (done) {
+          const built = mesher.takeBuild()!;
+          disposeMeshed(built);
+          job.dirty = false;
+          world.acknowledgeMeshed(job);
+          meshes += 1;
+          meshedThisFrame += 1;
+        } else {
+          meshedThisFrame += 1;
+        }
       }
-      oneMesh = performance.now() - meshStart;
-      meshMs.push(oneMesh);
-      if (oneMesh > WORLD_JOB_BUDGET_MS) overBudget.push(oneMesh);
     }
     if (generatedThisFrame > 0 && meshedThisFrame > 0) {
       stackedFrames += 1;

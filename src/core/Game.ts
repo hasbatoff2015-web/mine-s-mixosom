@@ -48,6 +48,7 @@ import {
     WORLD_HEIGHT,
     WORLD_JOB_BUDGET_MS,
   WORLD_LOADING_JOB_BUDGET_MS,
+  MESH_SLICE_BUDGET_MS,
   WORLD_LIGHT_BUDGET_MS,
   WORLD_LOADING_LIGHT_BUDGET_MS,
   TARGET_FRAME_MS,
@@ -2332,7 +2333,9 @@ export class Game {
     const generateLimit = loading ? 8 : 1;
     const generateBudget = Math.max(budget, loading ? 1 : 0);
     const velocity = session.player.velocity;
-    if (!loading && this.genWithoutMeshStreak >= 1) {
+    if (session.worldRenderer.hasInProgressMesh()) {
+      this.jobFrame.genDeferredForMesh = true;
+    } else if (!loading && this.genWithoutMeshStreak >= 1) {
       const peekJobs = collectReadyMeshJobs(
         session.world,
         originX,
@@ -2434,6 +2437,7 @@ export class Game {
         counters: meshCounters,
         dirX: velocity.x,
         dirZ: velocity.z,
+        sliceBudgetMs: loading ? Number.POSITIVE_INFINITY : MESH_SLICE_BUDGET_MS,
         onMeshStart: inspect
           ? (chunk) => {
             this.lastMeshActiveKey = inspectChunkKey(chunk.x, chunk.z);
