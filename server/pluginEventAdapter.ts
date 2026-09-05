@@ -26,6 +26,7 @@ const PRE_TO_BUS: Record<SimulationPreEvent, ServerEventName> = {
   'player-command': 'playerCommand',
   'vehicle-enter': 'vehicleEnter',
   'vehicle-exit': 'vehicleExit',
+  'mob-spawn': 'mobSpawn',
 };
 
 const POST_TO_BUS: Record<SimulationPostEvent, ServerEventName> = {

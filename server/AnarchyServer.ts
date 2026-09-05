@@ -258,6 +258,7 @@ export class AnarchyServer {
       online: this.world.onlineCount(),
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
+      holograms: [...this.world.holograms.list()],
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;
@@ -270,6 +271,7 @@ export class AnarchyServer {
       );
     }
     if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
+    this.send(socket, { type: 'holograms', holograms: [...this.world.holograms.list()] });
     if (!resumed) {
       this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
     }

@@ -128,6 +128,7 @@ import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { updateSharedFireAnimation } from '../rendering/fireTexture';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
+import { HologramRenderer } from '../rendering/HologramRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
@@ -511,6 +512,7 @@ export class Game {
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
   private readonly chat = new ChatLog();
+  private holograms?: HologramRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly longTasks = new LongTaskMonitor();
@@ -825,6 +827,9 @@ export class Game {
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
+    this.holograms?.dispose();
+    this.holograms = new HologramRenderer(this.scene, this.camera);
+    this.holograms.sync(welcome.holograms ?? []);
     client.onMessage((message) => {
       if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
       this.handleOnlineMessage(message);
@@ -1027,6 +1032,9 @@ export class Game {
       case 'error':
         if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
         else this.ui.toast(message.message);
+        return;
+      case 'holograms':
+        this.holograms?.sync(message.holograms);
         return;
       case 'pong':
       case 'status':
@@ -4445,6 +4453,7 @@ export class Game {
     }
     this.ui.setHurtFlash(this.hurt.flashAlpha(now));
     this.ui.fadeChatLines(now, chatLineOpacity);
+    this.holograms?.update();
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -4708,6 +4717,8 @@ export class Game {
       this.session.online.remotes.clear();
       this.session.online.client.disconnect();
     }
+    this.holograms?.dispose();
+    this.holograms = undefined;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();

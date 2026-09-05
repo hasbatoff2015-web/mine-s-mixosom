@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-05: Claims overlap, chat scroll, 3D holograms, spawn respawn
+
+- [x] Respawn at `/setspawn` world spawn, not SurvivalSystem.spawnPoint.
+- [x] Claims V1 defaults, partial flags, overlapping regions, per-flag priority, `/claim priority`, richer `/claim info`.
+- [x] Server-side `mobSpawn` cancel for `mob-spawn=false`; do not despawn existing mobs.
+- [x] Scrollable GameUI chat (desktop wheel + mobile pan-y), stick-to-bottom, new-message hint, 200-message cap.
+- [x] Networked Three.js hologram billboards; remove enter-range chat dump.
+- [ ] Owner QA: spawn/arena overlap PvP, chat scroll on desktop/mobile, hologram visible in world, death→respawn at setspawn.
+
 ## 2026-09-05: Display nickname + server console
 
 - [x] Main-menu Account panel for a locally stored display nickname (no accounts/auth).
@@ -15,8 +24,8 @@
 - [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
-- [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, hologram chat range.
-- [ ] Client hologram rendering / click actions / placeholders — later.
+- [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
+- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore

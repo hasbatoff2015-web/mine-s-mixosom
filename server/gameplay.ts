@@ -155,6 +155,7 @@ export class ServerGameplay {
     readonly world: VoxelWorld,
     readonly events: EventBus,
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
+    private readonly worldSpawn?: () => readonly [number, number, number],
   ) {
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
@@ -180,6 +181,11 @@ export class ServerGameplay {
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
+      allowSpawn: (kind, x, y, z) => {
+        const event = this.events.createMobSpawn(kind, x, y, z);
+        this.events.emit('mobSpawn', event);
+        return !event.cancelled;
+      },
     });
     this.minecarts = new MinecartManager(host, world);
     this.arrows = new PlayerArrowManager(host, world, this.mobs, {
@@ -947,7 +953,7 @@ export class ServerGameplay {
       player.craftSlots = player.craftSlots.map(() => null);
       player.inventoryDirty = true;
     }
-    player.survival.respawn(player.controller, player.survival.spawnPoint);
+    player.survival.respawn(player.controller, this.worldSpawn?.() ?? player.survival.spawnPoint);
     this.flushPlayerLife?.(player);
   }
 

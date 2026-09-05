@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Claims overlap/priority, chat scroll, 3D holograms, spawn respawn
+
+- Ветка `cursor/claims-chat-holograms-3f93` от nickname-console `cursor/nickname-console-3f93`.
+- Respawn после смерти использует authoritative `WorldInstance.spawn` (`/setspawn`), не `SurvivalSystem.spawnPoint`.
+- Claims V1: partial flags, per-flag priority, overlap, новые дефолты, `fire-spread` удалён. `mob-spawn` реально отменяет создание моба через cancellable `mobSpawn`.
+- Chat: scrollable `#chat-log` (wheel / touch pan-y), stick-to-bottom, индикатор «↓ Новые сообщения», лимит `MAX_CHAT_MESSAGES = 200`.
+- Holograms: server `HologramNetwork` → protocol `holograms` → client `HologramRenderer` (Three.js Sprite billboard). Chat dump при входе в range убран.
+- Report: `docs/reports/2026-09-05_claims-chat-holograms.md`.
+
 ## Последний проход: display nickname + server console
 
 - Ветка `cursor/nickname-console-3f93` от plugin-platform `cursor/anarchy-plugin-platform-3f93`.
@@ -16,8 +25,8 @@
 - Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms. Auction House не делался.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
-- Holograms: server-side persistence + range chat notify. Клиентский DecentHolograms renderer не добавлялся (networking/player visuals не трогались).
-- Claim flags `fire-spread` / `mob-spawn` хранятся, но не enforced: соответствующих cancellable events нет.
+- Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.
+- Claim flags: `fire-spread` удалён. `mob-spawn` enforced через cancellable `mobSpawn`. Overlap + per-flag priority.
 - Report: `docs/reports/2026-09-05_anarchy-plugin-platform.md`.
 
 ## Последний проход: Anarchy spawn schematic → filesystem

@@ -391,6 +391,7 @@ export interface ServerWelcomeMessage {
   readonly online: number;
   readonly maxPlayers: number;
   readonly serverName: string;
+  readonly holograms?: readonly NetworkHologram[];
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -573,6 +574,21 @@ export interface ServerTimeMessage {
   readonly timeOfDay: number;
 }
 
+export interface NetworkHologram {
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly lines: readonly string[];
+  readonly range: number;
+  readonly enabled: boolean;
+}
+
+export interface ServerHologramsMessage {
+  readonly type: 'holograms';
+  readonly holograms: readonly NetworkHologram[];
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -594,7 +610,8 @@ export type ServerMessage =
   | ServerEntitySnapshotMessage
   | ServerEntityEventMessage
   | ServerCommandResultMessage
-  | ServerTimeMessage;
+  | ServerTimeMessage
+  | ServerHologramsMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -636,6 +653,7 @@ export const SERVER_MESSAGE_TYPES = [
   'entity_event',
   'command_result',
   'time',
+  'holograms',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1158,6 +1176,27 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'command_result invalid' };
       }
       return raw as unknown as ServerCommandResultMessage;
+    }
+    case 'holograms': {
+      if (!Array.isArray(raw.holograms)) return { error: 'holograms invalid' };
+      const holograms: NetworkHologram[] = [];
+      for (const entry of raw.holograms.slice(0, 64)) {
+        if (!isRecord(entry) || typeof entry.name !== 'string' || entry.name.length === 0) continue;
+        if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z) || !finite(entry.range)) continue;
+        const lines = Array.isArray(entry.lines)
+          ? entry.lines.filter((line): line is string => typeof line === 'string').map((line) => line.slice(0, 80)).slice(0, 8)
+          : [];
+        holograms.push({
+          name: entry.name.slice(0, 32),
+          x: entry.x,
+          y: entry.y,
+          z: entry.z,
+          lines,
+          range: Math.max(1, Math.min(128, entry.range)),
+          enabled: entry.enabled !== false,
+        });
+      }
+      return { type: 'holograms', holograms };
     }
     default:
       return raw as unknown as ServerMessage;

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
+import { Vec3 } from '../../src/math/vec3';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
@@ -238,6 +239,10 @@ describe('Anarchy builtin plugins', () => {
     const event = world.events.createPlayerDamage(ada.player.id, 4, 'melee', bob.player.id);
     world.events.emit('playerDamage', event);
     expect(event.cancelled).toBe(true);
+    const defaultExplosion = world.events.createExplosion(x, y, z, 3, 4);
+    world.events.emit('explosion', defaultExplosion);
+    expect(defaultExplosion.cancelled).toBe(false);
+    chat(world, ada, '/claim flag explosions false');
     const explosion = world.events.createExplosion(x, y, z, 3, 4);
     world.events.emit('explosion', explosion);
     expect(explosion.cancelled).toBe(true);
@@ -247,10 +252,18 @@ describe('Anarchy builtin plugins', () => {
     const world = await boot();
     const op = join(world, 'Op');
     expect(chat(world, op, '/holograms create spawn').some((line) => line.includes("Created hologram"))).toBe(true);
+    expect(op.sink.payloads.some((payload) => {
+      const record = payload as { type?: string; holograms?: Array<{ name: string; lines: string[] }> };
+      return record.type === 'holograms' && record.holograms?.some((entry) => entry.name === 'spawn');
+    })).toBe(true);
     chat(world, op, '/holograms line add spawn Welcome');
     chat(world, op, '/holograms line set spawn 1 Spawn');
     expect(chat(world, op, '/holograms info spawn').some((line) => line.includes('Welcome'))).toBe(true);
     chat(world, op, '/holograms range spawn 24');
+    const pos = op.player.controller.position;
+    op.sink.payloads.length = 0;
+    world.events.emit('playerMove', world.events.createPlayerMove(op.player.id, pos.x, pos.y, pos.z));
+    expect(resultLines(op.sink).some((line) => line.includes('Spawn') || line.includes('Welcome'))).toBe(false);
     await world.save();
     const dir = world.config.dataDir;
     await world.stop();
@@ -264,5 +277,147 @@ describe('Anarchy builtin plugins', () => {
     const info = chat(again, op2, '/holograms info spawn');
     expect(info.some((line) => line.includes('Range: 24'))).toBe(true);
     expect(chat(again, op2, '/holograms delete spawn').some((line) => line.includes('Deleted'))).toBe(true);
+    expect(again.holograms.list()).toEqual([]);
+  });
+
+  it('blocks new mob spawns when mob-spawn is false without deleting existing mobs', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const x = Math.floor(ada.player.controller.position.x) + 2;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 4.5, y + 4, z + 4.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create den');
+    const existing = world.gameplay.mobs.spawn('zombie', new Vec3(x + 1.5, y + 1, z + 1.5), { force: true });
+    expect(existing).toBeDefined();
+    chat(world, ada, '/claim flag mob-spawn false');
+    expect(world.gameplay.mobs.spawn('zombie', new Vec3(x + 2.5, y + 1, z + 2.5))).toBeUndefined();
+    expect(world.gameplay.mobs.get(existing!.id)?.alive).toBe(true);
+    chat(world, ada, '/claim flag mob-spawn true');
+    expect(world.gameplay.mobs.spawn('zombie', new Vec3(x + 2.5, y + 1, z + 2.5))).toBeDefined();
+  });
+
+  it('combines overlapping spawn and arena claims per flag', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const x = Math.floor(ada.player.controller.position.x) + 2;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 8.5, y + 4, z + 8.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create spawn');
+    chat(world, ada, '/claim flag pvp false');
+    chat(world, ada, '/claim flag block-break false');
+    chat(world, ada, '/claim flag block-place false');
+    ada.player.controller.teleport([x + 3.5, y, z + 3.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 5.5, y + 3, z + 5.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create arena');
+    expect(chat(world, ada, '/claim priority arena 10').some((line) => line.includes("priority of 'arena' to 10"))).toBe(true);
+    chat(world, ada, '/claim flag pvp true');
+    world.world.setBlock(x + 4, y + 1, z + 4, BlockId.Dirt);
+    world.setGameMode(bob.player, 'creative');
+
+    ada.player.controller.teleport([x + 4.5, y, z + 4.5]);
+    bob.player.controller.teleport([x + 4.5, y, z + 4.5]);
+    const arenaHit = world.events.createPlayerDamage(ada.player.id, 4, 'melee', bob.player.id);
+    world.events.emit('playerDamage', arenaHit);
+    expect(arenaHit.cancelled).toBe(false);
+    expect(world.tryBreak(bob.player, x + 4, y + 1, z + 4)).toEqual({ ok: false, reason: 'cancelled' });
+
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    const spawnHit = world.events.createPlayerDamage(ada.player.id, 4, 'melee', bob.player.id);
+    world.events.emit('playerDamage', spawnHit);
+    expect(spawnHit.cancelled).toBe(true);
+
+    const info = chat(world, ada, '/claim info spawn');
+    expect(info.some((line) => line.includes('Priority: 0'))).toBe(true);
+    expect(info.some((line) => line.includes('pvp: false'))).toBe(true);
+    expect(info.some((line) => line.includes('Effective flags:'))).toBe(true);
+  });
+
+  it('restricts /claim priority to the owner, claim.admin, or OP', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const op = join(world, 'Op');
+    const x = Math.floor(ada.player.controller.position.x) + 2;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 2.5, y + 2, z + 2.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create garden');
+    expect(chat(world, bob, '/claim priority garden 8').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/claim priority garden -3').some((line) => line.includes("priority of 'garden' to -3"))).toBe(true);
+    expect(chat(world, op, '/claim priority garden 12').some((line) => line.includes("priority of 'garden' to 12"))).toBe(true);
+    expect(chat(world, ada, '/claim info garden').some((line) => line.includes('Priority: 12'))).toBe(true);
+  });
+
+  it('loads old claim JSON with previous explicit flags', async () => {
+    const world = await boot();
+    const origin = world.spawn;
+    world.pluginStore.save('claims/claims', {
+      claims: [{
+        id: 'legacy',
+        name: 'legacy',
+        owner: 'Ada',
+        worldId: world.worldId,
+        volume: {
+          minX: Math.floor(origin[0]) - 2,
+          minY: Math.floor(origin[1]) - 2,
+          minZ: Math.floor(origin[2]) - 2,
+          maxX: Math.floor(origin[0]) + 2,
+          maxY: Math.floor(origin[1]) + 4,
+          maxZ: Math.floor(origin[2]) + 2,
+        },
+        members: [],
+        flags: {
+          pvp: true,
+          'mob-spawn': false,
+          'mob-damage': false,
+          'block-break': false,
+          'block-place': false,
+          explosions: false,
+          'fire-spread': false,
+          'player-damage': true,
+          'item-drop': false,
+          'item-pickup': false,
+        },
+      }],
+    });
+    const ada = join(world, 'Ada');
+    ada.player.controller.teleport([origin[0], origin[1], origin[2]]);
+    const info = chat(world, ada, '/claim info');
+    expect(info.some((line) => line.includes('Claim: legacy'))).toBe(true);
+    expect(info.some((line) => line.includes('pvp: true'))).toBe(true);
+    expect(info.every((line) => !line.includes('fire-spread'))).toBe(true);
+    const explosion = world.events.createExplosion(origin[0], origin[1], origin[2], 3, 4);
+    world.events.emit('explosion', explosion);
+    expect(explosion.cancelled).toBe(true);
+  });
+
+  it('respawns dead players at the /setspawn world spawn', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    op.player.controller.teleport([32.5, 72, 44.5]);
+    expect(chat(world, op, '/setspawn').some((line) => line.includes('Spawn set'))).toBe(true);
+    const survivalSpawn = [...op.player.survival.spawnPoint];
+    op.player.controller.teleport([8.5, 70, 8.5]);
+    chat(world, op, '/kill');
+    expect(op.player.survival.dead).toBe(false);
+    expect(op.player.survival.health).toBe(20);
+    expect(op.player.controller.position.x).toBeCloseTo(32.5, 5);
+    expect(op.player.controller.position.y).toBeCloseTo(72, 5);
+    expect(op.player.controller.position.z).toBeCloseTo(44.5, 5);
+    expect(survivalSpawn).toEqual([0.5, 64, 0.5]);
   });
 });

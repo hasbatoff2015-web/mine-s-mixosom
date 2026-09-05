@@ -1,11 +1,13 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
+import type { HologramRecord } from '../services/holograms';
+import type { BuiltinPluginContext } from './context';
 
 const HELP = {
   name: 'holograms',
   title: 'Holograms',
-  description: 'Named multi-line world text markers (server-side MVP).',
+  description: 'Named multi-line world text markers. The client renders 3D billboards.',
   commands: [
     { usage: '/holograms help', description: 'Show this help' },
     { usage: '/holograms create <name>', description: 'Create a hologram at your position', permission: 'holograms.create' },
@@ -21,56 +23,27 @@ const HELP = {
   ],
 };
 
-export interface Hologram {
-  readonly name: string;
-  worldId: string;
-  x: number;
-  y: number;
-  z: number;
-  lines: string[];
-  range: number;
-  enabled: boolean;
-}
-
 interface HologramStore {
-  holograms: Hologram[];
+  holograms: HologramRecord[];
 }
 
-export function createHologramsPlugin(): Plugin {
+export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
   return {
     name: 'holograms',
-    version: '1.0.0',
+    version: '1.1.0',
     apiVersion: 1,
     onEnable(api) {
-      const load = (): HologramStore => api.loadData<HologramStore>('holograms', { holograms: [] });
-      const save = (store: HologramStore) => api.saveData('holograms', store);
-      const seen = new Map<string, Set<string>>();
+      const load = (): HologramStore => {
+        const raw = api.loadData<HologramStore>('holograms', { holograms: [] });
+        return { holograms: Array.isArray(raw.holograms) ? raw.holograms : [] };
+      };
+      const save = (store: HologramStore) => {
+        api.saveData('holograms', store);
+        ctx.holograms.replace(store.holograms);
+      };
+      ctx.holograms.replace(load().holograms);
 
-      api.scheduleRepeating(1000, () => {
-        const holograms = load().holograms.filter((entry) => entry.enabled);
-        for (const player of api.getPlayers()) {
-          const pos = player.position();
-          for (const hologram of holograms) {
-            if (hologram.worldId !== api.getWorld().worldId) continue;
-            const dx = pos.x - hologram.x;
-            const dy = pos.y - hologram.y;
-            const dz = pos.z - hologram.z;
-            const inRange = dx * dx + dy * dy + dz * dz <= hologram.range * hologram.range;
-            const key = `${player.id}:${hologram.name}`;
-            const bag = seen.get(player.id) ?? new Set<string>();
-            if (inRange && !bag.has(key)) {
-              bag.add(key);
-              seen.set(player.id, bag);
-              player.sendMessage(`[Hologram ${hologram.name}]`);
-              for (const line of hologram.lines) player.sendMessage(line);
-            } else if (!inRange) {
-              bag.delete(key);
-            }
-          }
-        }
-      });
-
-      const requireCreate = (playerId: string, name: string) => (
+      const canEdit = (playerId: string, name: string) => (
         api.hasPermission(playerId, 'holograms.create') || api.isOperator(name)
       );
 
@@ -102,12 +75,12 @@ export function createHologramsPlugin(): Plugin {
               ...hologram.lines.map((line, index) => `  ${index + 1}. ${line}`),
             ]);
           }
-          if (!requireCreate(sender.playerId, sender.name)) return fail('You do not have permission.');
+          if (!canEdit(sender.playerId, sender.name)) return fail('You do not have permission.');
+          const player = api.getPlayer(sender.playerId);
           if (sub === 'create') {
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/holograms create <name>');
             if (store.holograms.some((entry) => entry.name === name)) return fail(`Hologram '${name}' already exists.`);
-            const player = api.getPlayer(sender.playerId);
             if (!player) return fail('Player not found.');
             const pos = player.position();
             store.holograms.push({
@@ -117,7 +90,7 @@ export function createHologramsPlugin(): Plugin {
               y: pos.y + 1.8,
               z: pos.z,
               lines: [name],
-              range: 16,
+              range: 48,
               enabled: true,
             });
             save(store);
@@ -137,7 +110,6 @@ export function createHologramsPlugin(): Plugin {
             if (!name) return usageError('/holograms move <name>');
             const hologram = store.holograms.find((entry) => entry.name === name);
             if (!hologram) return fail(`Hologram '${name}' not found.`);
-            const player = api.getPlayer(sender.playerId);
             if (!player) return fail('Player not found.');
             const pos = player.position();
             hologram.x = pos.x;
@@ -150,14 +122,14 @@ export function createHologramsPlugin(): Plugin {
           if (sub === 'range') {
             const name = args[1]?.toLowerCase();
             const distance = Number(args[2]);
-            if (!name || !Number.isFinite(distance) || distance < 1 || distance > 128) {
+            if (!name || !Number.isFinite(distance)) {
               return usageError('/holograms range <name> <distance>');
             }
             const hologram = store.holograms.find((entry) => entry.name === name);
             if (!hologram) return fail(`Hologram '${name}' not found.`);
-            hologram.range = distance;
+            hologram.range = Math.max(1, Math.min(128, distance));
             save(store);
-            return ok(`Set hologram '${name}' range to ${distance}.`);
+            return ok(`Set hologram '${name}' range to ${hologram.range}.`);
           }
           if (sub === 'line') {
             const action = args[1]?.toLowerCase();
@@ -165,7 +137,7 @@ export function createHologramsPlugin(): Plugin {
             const hologram = name ? store.holograms.find((entry) => entry.name === name) : undefined;
             if (!hologram) return fail(name ? `Hologram '${name}' not found.` : 'Usage: /holograms line add|set|remove ...');
             if (action === 'add') {
-              const text = args.slice(3).join(' ');
+              const text = args.slice(3).join(' ').trim();
               if (!text) return usageError('/holograms line add <name> <text>');
               hologram.lines.push(text);
               save(store);
@@ -173,7 +145,7 @@ export function createHologramsPlugin(): Plugin {
             }
             if (action === 'set') {
               const line = Number(args[3]);
-              const text = args.slice(4).join(' ');
+              const text = args.slice(4).join(' ').trim();
               if (!Number.isInteger(line) || line < 1 || !text) return usageError('/holograms line set <name> <line> <text>');
               if (line > hologram.lines.length) return fail(`Hologram '${name}' has no line ${line}.`);
               hologram.lines[line - 1] = text;
@@ -193,6 +165,9 @@ export function createHologramsPlugin(): Plugin {
           return usageError('/holograms help');
         },
       });
+    },
+    onDisable() {
+      ctx.holograms.replace([]);
     },
   };
 }

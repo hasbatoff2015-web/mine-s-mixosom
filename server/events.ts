@@ -19,6 +19,7 @@ export const PRE_CANCELLABLE_EVENTS = [
   'playerCommand',
   'vehicleEnter',
   'vehicleExit',
+  'mobSpawn',
 ] as const;
 
 export type PreCancellableEventName = (typeof PRE_CANCELLABLE_EVENTS)[number];
@@ -208,6 +209,13 @@ export interface VehicleExitEvent extends Cancellable {
   readonly entityId: string;
 }
 
+export interface MobSpawnEvent extends Cancellable {
+  readonly kind: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
 export interface ServerEvents {
   playerJoin: PlayerJoinEvent;
   playerQuit: PlayerQuitEvent;
@@ -232,6 +240,7 @@ export interface ServerEvents {
   playerCommandExecuted: PlayerCommandExecutedEvent;
   vehicleEnter: VehicleEnterEvent;
   vehicleExit: VehicleExitEvent;
+  mobSpawn: MobSpawnEvent;
 }
 
 export type ServerEventName = keyof ServerEvents;
@@ -345,5 +354,9 @@ export class EventBus {
 
   createVehicleExit(playerId: string, entityId: string): VehicleExitEvent {
     return cancellable({ playerId, entityId });
+  }
+
+  createMobSpawn(kind: string, x: number, y: number, z: number): MobSpawnEvent {
+    return cancellable({ kind, x, y, z });
   }
 }

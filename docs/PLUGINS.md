@@ -219,6 +219,7 @@ The plugin runs **before** the simulation mutates. `event.cancel()` means the ac
 | `itemDrop` / `itemPickup` | before spawn / inventory add | no drop / no pickup |
 | `playerCommand` | after `/`, before registry dispatch | command does not run |
 | `explosion` | before the explosion queue | TNT/creeper does not enqueue |
+| `mobSpawn` | before a new mob is created | mob is not spawned |
 | `vehicleEnter` / `vehicleExit` | before mount/dismount | stay as-is |
 | `playerMove` | after physics moved the player | teleport back |
 
@@ -287,4 +288,4 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a second combat / fluid / inventory system
 - Not client mods
 - Not Auction House / economy / kits
-- Not a WorldGuard clone (claims are a basic flag + member model)
+- Not a WorldGuard clone (claims are overlapping regions with per-flag priority)

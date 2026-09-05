@@ -23,6 +23,6 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createRtpPlugin(ctx),
     createRtpPortalPlugin(ctx),
     createClaimsPlugin(ctx),
-    createHologramsPlugin(),
+    createHologramsPlugin(ctx),
   ];
 }

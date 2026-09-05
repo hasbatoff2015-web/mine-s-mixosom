@@ -1,121 +1,100 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
-import { volumeContains, type SelectionVolume } from '../services/selection';
+import {
+  CLAIM_FLAGS,
+  CLAIM_PRIORITY_DEFAULT,
+  clampClaimPriority,
+  claimsAt,
+  effectiveFlag,
+  effectiveFlags,
+  flagSetter,
+  isClaimFlag,
+  isTrusted,
+  migrateClaimStore,
+  ownFlagLines,
+  sortClaimsByPriority,
+  type Claim,
+  type ClaimStore,
+} from '../services/claims';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
-
-export const CLAIM_FLAGS = [
-  'pvp',
-  'mob-spawn',
-  'mob-damage',
-  'block-break',
-  'block-place',
-  'explosions',
-  'fire-spread',
-  'player-damage',
-  'item-drop',
-  'item-pickup',
-] as const;
-
-export type ClaimFlag = (typeof CLAIM_FLAGS)[number];
-
-export type ClaimFlags = Record<ClaimFlag, boolean>;
-
-export interface Claim {
-  readonly id: string;
-  readonly name: string;
-  readonly owner: string;
-  readonly worldId: string;
-  readonly volume: SelectionVolume;
-  members: string[];
-  flags: ClaimFlags;
-}
-
-interface ClaimStore {
-  claims: Claim[];
-}
-
-const DEFAULT_FLAGS: ClaimFlags = {
-  pvp: false,
-  'mob-spawn': false,
-  'mob-damage': false,
-  'block-break': false,
-  'block-place': false,
-  explosions: false,
-  'fire-spread': false,
-  'player-damage': true,
-  'item-drop': false,
-  'item-pickup': false,
-};
 
 const HELP = {
   name: 'claim',
   title: 'Claims',
-  description: 'Protect land with members and configurable flags.',
+  description: 'Protect land with overlapping regions, per-flag priority, and members.',
   commands: [
     { usage: '/claim help', description: 'Show this help' },
     { usage: '/claim pos1', description: 'Set first corner', permission: 'claim.create' },
     { usage: '/claim pos2', description: 'Set second corner', permission: 'claim.create' },
     { usage: '/claim create <name>', description: 'Create a claim from the selection', permission: 'claim.create' },
     { usage: '/claim delete <name>', description: 'Delete your claim', permission: 'claim.use' },
-    { usage: '/claim info [name]', description: 'Show claim info', permission: 'claim.use' },
+    { usage: '/claim info [name]', description: 'Show claim info and effective flags', permission: 'claim.use' },
     { usage: '/claim list', description: 'List your claims', permission: 'claim.use' },
     { usage: '/claim addmember <player>', description: 'Add a member to the claim you are in', permission: 'claim.use' },
     { usage: '/claim removemember <player>', description: 'Remove a member', permission: 'claim.use' },
     { usage: '/claim members', description: 'List members', permission: 'claim.use' },
-    { usage: '/claim flag <flag> <true|false>', description: 'Set a claim flag', permission: 'claim.use' },
+    { usage: '/claim flag <flag> <true|false>', description: 'Set an explicit claim flag', permission: 'claim.use' },
+    { usage: '/claim priority <name> <number>', description: 'Set claim priority', permission: 'claim.use' },
     { usage: '/claim admin delete <name>', description: 'Delete any claim', permission: 'claim.admin' },
   ],
 };
 
-function flagOf(raw: string): ClaimFlag | undefined {
-  return CLAIM_FLAGS.find((flag) => flag === raw.toLowerCase());
-}
-
-function atPos(store: ClaimStore, worldId: string, x: number, y: number, z: number): Claim | undefined {
-  return store.claims.find((claim) => claim.worldId === worldId && volumeContains(claim.volume, x, y, z));
-}
-
-function isTrusted(claim: Claim, playerKey: string): boolean {
-  const key = playerKey.toLowerCase();
-  return claim.owner === key || claim.members.includes(key);
-}
-
 export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
   return {
     name: 'claims',
-    version: '1.0.0',
+    version: '1.1.0',
     apiVersion: 1,
     onEnable(api) {
-      const load = (): ClaimStore => api.loadData<ClaimStore>('claims', { claims: [] });
+      const load = (): ClaimStore => migrateClaimStore(api.loadData<unknown>('claims', { claims: [] }));
       const save = (store: ClaimStore) => api.saveData('claims', store);
       const keyOf = (sender: { playerId: string; name: string }) => sender.name.toLowerCase();
-      const standing = (playerId: string) => {
+      const worldId = () => api.getWorld().worldId;
+      const overlapping = (x: number, y: number, z: number) => claimsAt(load().claims, worldId(), x, y, z);
+      const standingAll = (playerId: string) => {
         const player = api.getPlayer(playerId);
-        if (!player) return undefined;
+        if (!player) return [];
         const pos = player.position();
-        return atPos(load(), api.getWorld().worldId, Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        return overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
       };
-
+      const topAt = (playerId: string) => sortClaimsByPriority(standingAll(playerId))[0];
       const bypass = (playerId: string, name: string) => (
         api.hasPermission(playerId, 'claim.admin') || api.isOperator(name)
       );
+      const canEdit = (claim: Claim, sender: { playerId: string; name: string }) => (
+        claim.owner === keyOf(sender) || bypass(sender.playerId, sender.name)
+      );
+      const editableAtFeet = (sender: { playerId: string; name: string }) => (
+        sortClaimsByPriority(standingAll(sender.playerId)).find((claim) => canEdit(claim, sender))
+      );
+      const allowFlag = (
+        claims: readonly Claim[],
+        flag: 'block-break' | 'block-place' | 'item-drop' | 'item-pickup',
+        playerId: string,
+        playerName: string,
+      ): boolean => {
+        if (effectiveFlag(claims, flag)) return true;
+        if (bypass(playerId, playerName)) return true;
+        const setter = flagSetter(claims, flag);
+        if (setter) return isTrusted(setter, playerName);
+        return claims.some((claim) => isTrusted(claim, playerName));
+      };
 
       api.registerEvent('blockBreak', (event) => {
-        const claim = atPos(load(), api.getWorld().worldId, event.x, event.y, event.z);
-        if (!claim || claim.flags['block-break']) return;
+        const claims = overlapping(event.x, event.y, event.z);
+        if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        if (bypass(player.id, player.name) || isTrusted(claim, player.name)) return;
+        if (allowFlag(claims, 'block-break', player.id, player.name)) return;
         event.cancel();
         player.sendMessage('This land is claimed.');
       });
       api.registerEvent('blockPlace', (event) => {
-        const claim = atPos(load(), api.getWorld().worldId, event.x, event.y, event.z);
-        if (!claim || claim.flags['block-place']) return;
+        const claims = overlapping(event.x, event.y, event.z);
+        if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        if (bypass(player.id, player.name) || isTrusted(claim, player.name)) return;
+        if (allowFlag(claims, 'block-place', player.id, player.name)) return;
         event.cancel();
         player.sendMessage('This land is claimed.');
       });
@@ -123,37 +102,41 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const pos = player.position();
-        const claim = atPos(load(), api.getWorld().worldId, Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
-        if (!claim) return;
-        if (!claim.flags['player-damage']) {
+        const claims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        if (claims.length === 0) return;
+        if (!effectiveFlag(claims, 'player-damage')) {
           event.cancel();
           return;
         }
-        if (!claim.flags.pvp && event.attackerId) event.cancel();
+        if (!effectiveFlag(claims, 'pvp') && event.attackerId) event.cancel();
         const mobCause = event.cause === 'melee' || event.cause === 'arrow' || event.cause === 'projectile';
-        if (!claim.flags['mob-damage'] && !event.attackerId && mobCause) event.cancel();
+        if (!effectiveFlag(claims, 'mob-damage') && !event.attackerId && mobCause) event.cancel();
       });
       api.registerEvent('explosion', (event) => {
-        const claim = atPos(load(), api.getWorld().worldId, Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
-        if (claim && !claim.flags.explosions) event.cancel();
+        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
+        if (claims.length > 0 && !effectiveFlag(claims, 'explosions')) event.cancel();
       });
       api.registerEvent('itemDrop', (event) => {
         if (!event.playerId) return;
-        const claim = atPos(load(), api.getWorld().worldId, Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
-        if (!claim || claim.flags['item-drop']) return;
+        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
+        if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        if (bypass(player.id, player.name) || isTrusted(claim, player.name)) return;
+        if (allowFlag(claims, 'item-drop', player.id, player.name)) return;
         event.cancel();
       });
       api.registerEvent('itemPickup', (event) => {
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const pos = player.position();
-        const claim = atPos(load(), api.getWorld().worldId, Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
-        if (!claim || claim.flags['item-pickup']) return;
-        if (bypass(player.id, player.name) || isTrusted(claim, player.name)) return;
+        const claims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        if (claims.length === 0) return;
+        if (allowFlag(claims, 'item-pickup', player.id, player.name)) return;
         event.cancel();
+      });
+      api.registerEvent('mobSpawn', (event) => {
+        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
+        if (claims.length > 0 && !effectiveFlag(claims, 'mob-spawn')) event.cancel();
       });
 
       api.registerCommand({
@@ -189,10 +172,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               id: `${ownerKey}:${name}:${Date.now()}`,
               name,
               owner: ownerKey,
-              worldId: api.getWorld().worldId,
+              worldId: worldId(),
               volume,
               members: [],
-              flags: { ...DEFAULT_FLAGS },
+              priority: CLAIM_PRIORITY_DEFAULT,
+              flags: {},
             });
             save(store);
             return ok(`Claim '${name}' created.`);
@@ -215,24 +199,49 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
           }
           if (sub === 'info') {
             const named = args[1]?.toLowerCase();
+            const here = standingAll(sender.playerId);
             const claim = named
               ? load().claims.find((entry) => entry.name === named)
-              : standing(sender.playerId);
+              : sortClaimsByPriority(here)[0];
             if (!claim) return fail(named ? `Claim '${named}' not found.` : 'You are not standing in a claim.');
+            const player = api.getPlayer(sender.playerId);
+            const pos = player?.position();
+            const atPoint = pos
+              ? overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z))
+              : [claim];
+            const own = ownFlagLines(claim);
+            const effective = effectiveFlags(atPoint);
             return ok([
-              `Claim ${claim.name} (${claim.id})`,
+              `Claim: ${claim.name}`,
               `Owner: ${claim.owner}`,
+              `Priority: ${claim.priority}`,
               `Members: ${claim.members.join(', ') || '(none)'}`,
-              `Flags: ${CLAIM_FLAGS.map((flag) => `${flag}=${claim.flags[flag]}`).join(', ')}`,
               `Volume: ${claim.volume.minX},${claim.volume.minY},${claim.volume.minZ} → ${claim.volume.maxX},${claim.volume.maxY},${claim.volume.maxZ}`,
-            ]);
+              here.length > 1 ? `Overlapping: ${sortClaimsByPriority(here).map((entry) => entry.name).join(', ')}` : '',
+              'Own flags:',
+              ...(own.length > 0 ? own : ['(none)']),
+              'Effective flags:',
+              ...CLAIM_FLAGS.map((flag) => `${flag}: ${effective[flag]}`),
+            ].filter((line) => line.length > 0));
+          }
+          if (sub === 'priority') {
+            const name = args[1]?.toLowerCase();
+            const raw = args[2];
+            if (!name || raw === undefined) return usageError('/claim priority <name> <number>');
+            const value = Number(raw);
+            if (!Number.isFinite(value)) return usageError('/claim priority <name> <number>');
+            const store = load();
+            const live = store.claims.find((entry) => entry.name === name);
+            if (!live) return fail(`Claim '${name}' not found.`);
+            if (!canEdit(live, sender)) return fail('You do not have permission.');
+            live.priority = clampClaimPriority(value);
+            save(store);
+            return ok(`Set priority of '${live.name}' to ${live.priority}.`);
           }
           if (sub === 'addmember' || sub === 'removemember' || sub === 'members' || sub === 'flag') {
-            const claim = standing(sender.playerId);
+            const claim = editableAtFeet(sender) ?? topAt(sender.playerId);
             if (!claim) return fail('You are not standing in a claim.');
-            if (claim.owner !== ownerKey && !bypass(sender.playerId, sender.name)) {
-              return fail('Only the claim owner can do that.');
-            }
+            if (!canEdit(claim, sender)) return fail('Only the claim owner can do that.');
             const store = load();
             const live = store.claims.find((entry) => entry.id === claim.id);
             if (!live) return fail('Claim not found.');
@@ -251,14 +260,14 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               save(store);
               return ok(`Removed ${name} from claim '${live.name}'.`);
             }
-            const flag = args[1] ? flagOf(args[1]) : undefined;
+            const flagName = args[1]?.toLowerCase();
             const raw = args[2]?.toLowerCase();
-            if (!flag || (raw !== 'true' && raw !== 'false' && raw !== 'on' && raw !== 'off')) {
+            if (!flagName || !isClaimFlag(flagName) || (raw !== 'true' && raw !== 'false' && raw !== 'on' && raw !== 'off')) {
               return usageError(`/claim flag <${CLAIM_FLAGS.join('|')}> <true|false>`);
             }
-            live.flags[flag] = raw === 'true' || raw === 'on';
+            live.flags[flagName] = raw === 'true' || raw === 'on';
             save(store);
-            return ok(`Set ${flag}=${live.flags[flag]} on claim '${live.name}'.`);
+            return ok(`Set ${flagName}=${live.flags[flagName]} on claim '${live.name}'.`);
           }
           if (sub === 'admin') {
             if (!bypass(sender.playerId, sender.name)) return fail('You do not have permission.');
