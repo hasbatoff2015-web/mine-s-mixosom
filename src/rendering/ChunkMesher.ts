@@ -457,13 +457,52 @@ export class ChunkMesher {
   private lightCache = new Uint16Array(LIGHT_CACHE_STRIDE * 4 * LIGHT_CACHE_STRIDE);
   private lightCacheHeight = 0;
   private detail: { -readonly [K in keyof ChunkMeshProfile]: ChunkMeshProfile[K] } = { ...EMPTY_MESH_PROFILE };
+  private buildJob: {
+    chunk: Chunk;
+    world: VoxelWorld;
+    y: number;
+    chunkHeight: number;
+    faces: number;
+    chests: Array<{ x: number; y: number; z: number }>;
+    contentRevision: number;
+    lightVersion: number;
+    setupDone: boolean;
+    columnCacheMs: number;
+    cacheFillMs: number;
+    buildStart: number;
+  } | null = null;
 
   constructor(
     private readonly atlas: TextureAtlas,
     private readonly resolveState: BlockRenderStateResolver = () => undefined,
   ) {}
 
+  get hasInProgressBuild(): boolean {
+    return this.buildJob !== null;
+  }
+
+  inProgressChunk(): Chunk | undefined {
+    return this.buildJob?.chunk;
+  }
+
+  isBuildStale(): boolean {
+    const job = this.buildJob;
+    if (!job) return false;
+    return job.contentRevision !== job.chunk.contentRevision
+      || job.lightVersion !== job.chunk.lightVersion;
+  }
+
+  abortBuild(): void {
+    this.buildJob = null;
+  }
+
   build(chunk: Chunk, world: VoxelWorld, options: ChunkMeshBuildOptions = {}): MeshedChunk {
+    this.startBuild(chunk, world, options);
+    this.pumpBuild(Number.POSITIVE_INFINITY);
+    return this.takeBuild()!;
+  }
+
+  startBuild(chunk: Chunk, world: VoxelWorld, options: ChunkMeshBuildOptions = {}): void {
     const vertexLight = options.vertexLight
       ?? (options.cheapVertexLight === true ? 'cheap' : 'full');
     this.cheapVertexLight = vertexLight === 'cheap';
@@ -472,146 +511,93 @@ export class ChunkMesher {
     this.collectDetail = options.collectDetail === true;
     this.useLightCache = options.neighborhoodLightCache ?? vertexLight === 'full';
     if (this.collectDetail) this.detail = { ...EMPTY_MESH_PROFILE };
-    const buildStart = performance.now();
     resetBuffers(this.layers.opaque);
     resetBuffers(this.layers.cutout);
     resetBuffers(this.layers.vegetation);
     resetBuffers(this.layers.translucent);
     resetBuffers(this.layers.water);
     resetBuffers(this.layers.fire);
-    const layers = this.layers;
-    const columnStart = performance.now();
-    this.cacheColumns(chunk, world);
-    const columnCacheMs = performance.now() - columnStart;
-    this.lightSelf = chunk;
-    this.lightEast = world.getChunk(chunk.x + 1, chunk.z, false);
-    this.lightWest = world.getChunk(chunk.x - 1, chunk.z, false);
-    this.lightSouth = world.getChunk(chunk.x, chunk.z + 1, false);
-    this.lightNorth = world.getChunk(chunk.x, chunk.z - 1, false);
-    this.lightNorthEast = world.getChunk(chunk.x + 1, chunk.z - 1, false);
-    this.lightNorthWest = world.getChunk(chunk.x - 1, chunk.z - 1, false);
-    this.lightSouthEast = world.getChunk(chunk.x + 1, chunk.z + 1, false);
-    this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
-    let faces = 0;
-    const chests: Array<{ x: number; y: number; z: number }> = [];
     const chunkHeight = Math.min(
       chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE),
       chunk.scanMaxY() + 1,
     );
-    const blocks = chunk.blocks;
-    const eastChunk = this.lightEast;
-    const westChunk = this.lightWest;
-    const southChunk = this.lightSouth;
-    const northChunk = this.lightNorth;
-    const cacheFillStart = performance.now();
-    if (this.useLightCache) this.fillNeighborhoodLightCache(chunkHeight);
-    const cacheFillMs = this.useLightCache ? performance.now() - cacheFillStart : 0;
-    for (let y = 0; y < chunkHeight; y += 1) {
-      const yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
-      for (let z = 0; z < CHUNK_SIZE; z += 1) {
-        const rowOffset = yOffset + z * CHUNK_SIZE;
-        for (let x = 0; x < CHUNK_SIZE; x += 1) {
-          const blockIndex = rowOffset + x;
-          const block = blocks[blockIndex] as BlockId;
-          if (block === BlockId.Air) {
-            if (this.collectDetail) this.detail.air += 1;
-            continue;
-          }
-          if (this.collectDetail) this.detail.cells += 1;
-          const definition = getBlockDefinition(block);
-          const worldX = chunk.x * CHUNK_SIZE + x;
-          const worldZ = chunk.z * CHUNK_SIZE + z;
-          const needsState = definition.renderShape !== 'cube'
-            || definition.id === BlockId.Furnace
-            || definition.liquid === true;
-          const state = needsState ? this.resolveState(worldX, y, worldZ) : undefined;
-          const target = this.buffersFor(layers, definition);
-          if (definition.liquid) {
-            if (this.collectDetail) this.detail.liquids += 1;
-            if (this.emitGeometry) faces += this.addFluid(target, definition, state, world, worldX, y, worldZ);
-            continue;
-          }
-          const meshAsCube = definition.renderShape === 'cube'
-            || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
-          if (definition.renderShape === 'chest') {
-            chests.push({ x: worldX, y, z: worldZ });
-            continue;
-          }
-          if (!meshAsCube) {
-            if (this.collectDetail) this.detail.specials += 1;
-            if (this.emitGeometry) {
-              const added = this.addSpecial(target, definition, state, world, worldX, y, worldZ);
-              faces += added;
-              if (this.collectDetail) this.detail.specialFaces += added;
-            }
-            continue;
-          }
-          if (this.collectDetail) this.detail.cubes += 1;
-          const east = x < CHUNK_SIZE - 1
-            ? blocks[blockIndex + 1] as BlockId
-            : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(east, block, worldX + 1, y, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const west = x > 0
-            ? blocks[blockIndex - 1] as BlockId
-            : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(west, block, worldX - 1, y, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
-          if (this.faceVisible(above, block, worldX, y + 1, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
-          if (this.faceVisible(below, block, worldX, y - 1, worldZ)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const south = z < CHUNK_SIZE - 1
-            ? blocks[blockIndex + CHUNK_SIZE] as BlockId
-            : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(south, block, worldX, y, worldZ + 1)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-          const north = z > 0
-            ? blocks[blockIndex - CHUNK_SIZE] as BlockId
-            : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
-          if (this.faceVisible(north, block, worldX, y, worldZ - 1)) {
-            if (this.emitGeometry) this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
-            faces += 1;
-          }
-        }
-      }
+    this.buildJob = {
+      chunk,
+      world,
+      y: 0,
+      chunkHeight,
+      faces: 0,
+      chests: [],
+      contentRevision: chunk.contentRevision,
+      lightVersion: chunk.lightVersion,
+      setupDone: false,
+      columnCacheMs: 0,
+      cacheFillMs: 0,
+      buildStart: performance.now(),
+    };
+  }
+
+  /** Advance the current build. Returns true when scan+setup finished and takeBuild() is ready. */
+  pumpBuild(budgetMs: number): boolean {
+    const job = this.buildJob;
+    if (!job) return true;
+    const start = performance.now();
+    if (!job.setupDone) {
+      const { chunk, world } = job;
+      const columnStart = performance.now();
+      this.cacheColumns(chunk, world);
+      job.columnCacheMs = performance.now() - columnStart;
+      this.lightSelf = chunk;
+      this.lightEast = world.getChunk(chunk.x + 1, chunk.z, false);
+      this.lightWest = world.getChunk(chunk.x - 1, chunk.z, false);
+      this.lightSouth = world.getChunk(chunk.x, chunk.z + 1, false);
+      this.lightNorth = world.getChunk(chunk.x, chunk.z - 1, false);
+      this.lightNorthEast = world.getChunk(chunk.x + 1, chunk.z - 1, false);
+      this.lightNorthWest = world.getChunk(chunk.x - 1, chunk.z - 1, false);
+      this.lightSouthEast = world.getChunk(chunk.x + 1, chunk.z + 1, false);
+      this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
+      const cacheFillStart = performance.now();
+      if (this.useLightCache) this.fillNeighborhoodLightCache(job.chunkHeight);
+      job.cacheFillMs = this.useLightCache ? performance.now() - cacheFillStart : 0;
+      job.setupDone = true;
+      if (performance.now() - start >= budgetMs && job.y < job.chunkHeight) return false;
     }
+    while (job.y < job.chunkHeight) {
+      this.scanYLayer(job);
+      job.y += 1;
+      if (performance.now() - start >= budgetMs && job.y < job.chunkHeight) return false;
+    }
+    return true;
+  }
+
+  takeBuild(): MeshedChunk | null {
+    const job = this.buildJob;
+    if (!job || !job.setupDone || job.y < job.chunkHeight) return null;
+    const layers = this.layers;
     const scanEnd = performance.now();
-    const result = {
+    const result: MeshedChunk = {
       opaque: this.toGeometry(layers.opaque),
       cutout: this.toGeometry(layers.cutout),
       vegetation: this.toGeometry(layers.vegetation),
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       fire: this.toGeometry(layers.fire),
-      faces,
-      chests,
+      faces: job.faces,
+      chests: job.chests,
     };
     const buildEnd = performance.now();
     this.lastProfile = this.collectDetail
       ? {
-        scanMs: scanEnd - buildStart,
+        scanMs: scanEnd - job.buildStart,
         geometryMs: buildEnd - scanEnd,
-        columnCacheMs,
-        cacheFillMs,
+        columnCacheMs: job.columnCacheMs,
+        cacheFillMs: job.cacheFillMs,
         cells: this.detail.cells,
         air: this.detail.air,
         cubes: this.detail.cubes,
         specials: this.detail.specials,
         liquids: this.detail.liquids,
-        cubeFaces: Math.max(0, faces - this.detail.specialFaces),
+        cubeFaces: Math.max(0, job.faces - this.detail.specialFaces),
         specialFaces: this.detail.specialFaces,
         lightCellReads: this.detail.lightCellReads,
         positionFloats: layers.opaque.positions.length
@@ -629,10 +615,104 @@ export class ChunkMesher {
       }
       : {
         ...EMPTY_MESH_PROFILE,
-        scanMs: scanEnd - buildStart,
+        scanMs: scanEnd - job.buildStart,
         geometryMs: buildEnd - scanEnd,
+        columnCacheMs: job.columnCacheMs,
+        cacheFillMs: job.cacheFillMs,
       };
+    this.buildJob = null;
     return result;
+  }
+
+  private scanYLayer(job: NonNullable<ChunkMesher['buildJob']>): void {
+    const { chunk, world, chunkHeight } = job;
+    const y = job.y;
+    const layers = this.layers;
+    const blocks = chunk.blocks;
+    const eastChunk = this.lightEast;
+    const westChunk = this.lightWest;
+    const southChunk = this.lightSouth;
+    const northChunk = this.lightNorth;
+    const yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
+    for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      const rowOffset = yOffset + z * CHUNK_SIZE;
+      for (let x = 0; x < CHUNK_SIZE; x += 1) {
+        const blockIndex = rowOffset + x;
+        const block = blocks[blockIndex] as BlockId;
+        if (block === BlockId.Air) {
+          if (this.collectDetail) this.detail.air += 1;
+          continue;
+        }
+        if (this.collectDetail) this.detail.cells += 1;
+        const definition = getBlockDefinition(block);
+        const worldX = chunk.x * CHUNK_SIZE + x;
+        const worldZ = chunk.z * CHUNK_SIZE + z;
+        const needsState = definition.renderShape !== 'cube'
+          || definition.id === BlockId.Furnace
+          || definition.liquid === true;
+        const state = needsState ? this.resolveState(worldX, y, worldZ) : undefined;
+        const target = this.buffersFor(layers, definition);
+        if (definition.liquid) {
+          if (this.collectDetail) this.detail.liquids += 1;
+          if (this.emitGeometry) job.faces += this.addFluid(target, definition, state, world, worldX, y, worldZ);
+          continue;
+        }
+        const meshAsCube = definition.renderShape === 'cube'
+          || (definition.renderShape === 'slab' && defaultSlabType(state) === 'double');
+        if (definition.renderShape === 'chest') {
+          job.chests.push({ x: worldX, y, z: worldZ });
+          continue;
+        }
+        if (!meshAsCube) {
+          if (this.collectDetail) this.detail.specials += 1;
+          if (this.emitGeometry) {
+            const added = this.addSpecial(target, definition, state, world, worldX, y, worldZ);
+            job.faces += added;
+            if (this.collectDetail) this.detail.specialFaces += added;
+          }
+          continue;
+        }
+        if (this.collectDetail) this.detail.cubes += 1;
+        const east = x < CHUNK_SIZE - 1
+          ? blocks[blockIndex + 1] as BlockId
+          : (eastChunk?.blocks[yOffset + z * CHUNK_SIZE] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(east, block, worldX + 1, y, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[0]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const west = x > 0
+          ? blocks[blockIndex - 1] as BlockId
+          : (westChunk?.blocks[yOffset + z * CHUNK_SIZE + CHUNK_SIZE - 1] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(west, block, worldX - 1, y, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
+        if (this.faceVisible(above, block, worldX, y + 1, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
+        if (this.faceVisible(below, block, worldX, y - 1, worldZ)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const south = z < CHUNK_SIZE - 1
+          ? blocks[blockIndex + CHUNK_SIZE] as BlockId
+          : (southChunk?.blocks[yOffset + x] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(south, block, worldX, y, worldZ + 1)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[4]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+        const north = z > 0
+          ? blocks[blockIndex - CHUNK_SIZE] as BlockId
+          : (northChunk?.blocks[yOffset + (CHUNK_SIZE - 1) * CHUNK_SIZE + x] ?? BlockId.Air) as BlockId;
+        if (this.faceVisible(north, block, worldX, y, worldZ - 1)) {
+          if (this.emitGeometry) this.addCubeFace(target, definition, FACES[5]!, world, worldX, y, worldZ);
+          job.faces += 1;
+        }
+      }
+    }
   }
 
   private faceVisible(adjacent: BlockId, block: BlockId, ax: number, ay: number, az: number): boolean {

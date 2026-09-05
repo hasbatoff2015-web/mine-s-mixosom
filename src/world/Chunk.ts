@@ -19,6 +19,8 @@ export class Chunk {
    * Sky/emitter/fluid/mesh scans use this instead of walking empty Y=85..255.
    */
   occupancyTop = 0;
+  /** Bumped on every block write so an in-progress sliced mesh can abort. */
+  contentRevision = 0;
   /** Conservative high-water mark of block light, including spill above occupied geometry. */
   blockLightTop = 0;
   dirty = true;
@@ -75,6 +77,7 @@ export class Chunk {
 
   writeIndex(index: number, block: number): void {
     this.blocks[index] = block;
+    this.contentRevision += 1;
     if (block !== 0) {
       const y = Chunk.yFromIndex(index);
       if (y > this.occupancyTop) this.occupancyTop = y;
