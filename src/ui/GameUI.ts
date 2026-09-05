@@ -60,6 +60,7 @@ import {
 export interface MainMenuActions {
   singleplayer(): void;
   online(): void;
+  account(): void;
   settings(): void;
 }
 
@@ -72,6 +73,11 @@ export interface WorldListActions {
 
 export interface CreateWorldActions {
   create(name: string, seed: string, mode: GameMode): void;
+  back(): void;
+}
+
+export interface AccountMenuActions {
+  save(nickname: string): { ok: true; name: string } | { ok: false; error: string };
   back(): void;
 }
 
@@ -336,6 +342,7 @@ export class GameUI {
           <div class="menu-stack main-menu-actions">
             <button class="game-button" data-action="singleplayer">Одиночная игра</button>
             <button class="game-button" data-action="online">Играть онлайн</button>
+            <button class="game-button" data-action="account">Аккаунт</button>
             <button class="game-button" data-action="settings">Настройки</button>
           </div>
           <footer class="main-menu-footer"><span>Frontier Cubes 0.1 · playable alpha</span><span>Локальная браузерная версия</span></footer>
@@ -343,7 +350,45 @@ export class GameUI {
       </section>`);
     this.bindAction('singleplayer', actions.singleplayer);
     this.bindAction('online', actions.online);
+    this.bindAction('account', actions.account);
     this.bindAction('settings', actions.settings);
+  }
+
+  showAccount(current: string | undefined, actions: AccountMenuActions): void {
+    const currentLabel = current
+      ? this.escape(current)
+      : 'не задан — на сервере будет имя вида Player-XXXX';
+    this.setScreen(`
+      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window account-window" id="account-form">
+        <header class="menu-heading"><div><span class="eyebrow">Профиль</span><h1>Аккаунт</h1></div></header>
+        <div class="form-grid">
+          <p class="menu-notice">Текущий никнейм: <strong data-account-current>${currentLabel}</strong></p>
+          <label class="field"><span>Новый никнейм</span><input name="nickname" maxlength="16" autocomplete="nickname" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
+          <p class="menu-notice account-hint">Только отображаемое имя. Оно применяется при следующем подключении к серверу и не меняет внутренний идентификатор игрока.</p>
+          <p class="menu-notice account-error hidden" data-account-error></p>
+        </div>
+        <footer class="menu-footer"><button class="game-button primary" type="submit">Сохранить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
+      </form></section>`, actions.back);
+    this.bindAction('back', actions.back);
+    this.screen!.querySelector<HTMLFormElement>('#account-form')!.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget as HTMLFormElement);
+      const result = actions.save(String(data.get('nickname') ?? ''));
+      const errorNode = this.screen?.querySelector<HTMLElement>('[data-account-error]');
+      const currentNode = this.screen?.querySelector<HTMLElement>('[data-account-current]');
+      if (!result.ok) {
+        if (errorNode) {
+          errorNode.textContent = result.error;
+          errorNode.classList.remove('hidden');
+        }
+        return;
+      }
+      if (errorNode) {
+        errorNode.textContent = '';
+        errorNode.classList.add('hidden');
+      }
+      if (currentNode) currentNode.textContent = result.name;
+    });
   }
 
   showWorldList(worlds: readonly WorldSummary[], actions: WorldListActions): void {

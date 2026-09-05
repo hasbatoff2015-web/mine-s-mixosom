@@ -2279,6 +2279,19 @@ button {
   line-height: 1.5;
 }
 
+.account-window .form-grid {
+  gap: 12px;
+}
+
+.account-window .menu-notice {
+  margin: 0;
+}
+
+.account-error {
+  border-left-color: #c45c5c;
+  color: #f0c0c0;
+}
+
 .form-grid,
 .settings-grid {
   display: grid;

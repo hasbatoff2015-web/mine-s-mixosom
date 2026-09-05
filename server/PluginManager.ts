@@ -1,6 +1,6 @@
 import type { GameMode, PlayerSnapshot } from '../shared/protocol';
 import type { EventBus, ServerEventName, EventHandler } from './events';
-import type { CommandHandler, CommandRegistry } from './commands';
+import { CONSOLE_SENDER_ID, type CommandHandler, type CommandRegistry } from './commands';
 import { bundledExampleDir, discoverPluginModules } from './pluginLoader';
 import { serverLog } from './log';
 import type { PermissionService } from './services/permissions';
@@ -449,8 +449,12 @@ export class PluginManager {
         });
       },
       log: (message: string) => serverLog(`plugin ${pluginName} ${message}`),
-      hasPermission: (playerIdOrName: string, node: string) => host.permissions?.().has(playerIdOrName, node) ?? false,
-      isOperator: (playerIdOrName: string) => host.permissions?.().isOperator(playerIdOrName) ?? false,
+      hasPermission: (playerIdOrName: string, node: string) => (
+        playerIdOrName === CONSOLE_SENDER_ID || (host.permissions?.().has(playerIdOrName, node) ?? false)
+      ),
+      isOperator: (playerIdOrName: string) => (
+        playerIdOrName === CONSOLE_SENDER_ID || (host.permissions?.().isOperator(playerIdOrName) ?? false)
+      ),
       teleport: (playerId: string, x: number, y: number, z: number, reason: TeleportReason = 'command', options?: TeleportScheduleOptions) => {
         const teleports = host.teleports?.();
         if (!teleports) return { ok: false, error: 'Teleport service unavailable.' };

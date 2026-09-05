@@ -190,6 +190,7 @@ import {
   resolveAnarchyStartup,
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import {
   captureBlockBreakAbort,
   captureBlockBreakFinish,
@@ -701,10 +702,22 @@ export class Game {
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
       online: () => void this.showOnlineServerList(),
+      account: () => this.showAccount(),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
       },
+    });
+  }
+
+  private showAccount(): void {
+    this.ui.showAccount(loadPlayerNickname(), {
+      save: (raw) => {
+        const result = savePlayerNickname(raw);
+        if (result.ok) this.ui.toast('Никнейм сохранён. Он будет использован при подключении к серверу.');
+        return result;
+      },
+      back: () => this.showMainMenu(),
     });
   }
 
@@ -724,7 +737,7 @@ export class Game {
     this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect();
+      const welcome = await client.connect(undefined, loadPlayerNickname());
       await this.startOnlineAnarchy(client, welcome);
     } catch {
       client.disconnect();

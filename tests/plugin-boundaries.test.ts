@@ -32,6 +32,7 @@ describe('Phase 8 plugin boundaries', () => {
       'server/plugin-examples/hello.ts',
       'server/events.ts',
       'server/commands.ts',
+      'server/console.ts',
       'src/gameplay/simulationEvents.ts',
       ...walk('server/services'),
       ...walk('server/builtin-plugins'),

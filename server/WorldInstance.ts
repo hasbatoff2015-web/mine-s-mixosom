@@ -38,7 +38,16 @@ import type { PlayerCommand } from '../shared/playerCommand';
 import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig } from './config';
-import { CommandRegistry, fail, ok, type CommandSender } from './commands';
+import {
+  CommandRegistry,
+  createConsoleCommandSender,
+  fail,
+  isConsoleSender,
+  normalizeConsoleCommand,
+  ok,
+  type CommandResult,
+  type CommandSender,
+} from './commands';
 import { gameplayTicksDue, scheduleNextTickSlot } from './tickScheduler';
 import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
@@ -244,6 +253,7 @@ export class ServerPlayer implements GameplayPlayer {
 
   commandSender(): CommandSender {
     return {
+      kind: 'player',
       playerId: this.id,
       name: this.name,
       gamemode: this.gamemode,
@@ -407,6 +417,7 @@ export class WorldInstance {
     this.rtp = new RtpService(this.world);
     this.rtpSessions = new RtpSessionManager(this.rtp);
     this.commands.setPermissionCheck((sender, permission) => {
+      if (isConsoleSender(sender) || sender.hasPermission?.(permission) === true) return true;
       if (permission === 'operator') {
         return this.permissions.isOperator(sender.name) || this.permissions.isOperator(sender.playerId);
       }
@@ -864,6 +875,19 @@ export class WorldInstance {
     else if (message.action === 'enter' && message.entityId) this.gameplay.enterVehicle(player, message.entityId);
     else if (message.action === 'steer' && message.forward !== undefined) {
       player.vehicleForward = Math.max(-1, Math.min(1, message.forward));
+    }
+  }
+
+  dispatchConsole(raw: string): CommandResult {
+    const command = normalizeConsoleCommand(raw);
+    if (!command) return { ok: true, lines: [] };
+    try {
+      const dispatched = this.commands.dispatch(command, createConsoleCommandSender());
+      return dispatched.result ?? { ok: false, lines: ['Empty command.'] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      serverLog(`console command failed: ${message}`, 'error');
+      return { ok: false, lines: [`Command failed: ${message}`] };
     }
   }
 

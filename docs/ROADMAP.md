@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-05: Display nickname + server console
+
+- [x] Main-menu Account panel for a locally stored display nickname (no accounts/auth).
+- [x] Send valid nick on Anarchy join; keep `Player-XXXX` fallback; keep UUID `playerId`.
+- [x] `ConsoleCommandSender` on server stdin with permission bypass through existing CommandRegistry.
+- [ ] Owner QA: set nick, reconnect, `/op` from terminal, player without OP cannot `/op`.
+
 ## 2026-09-05: Anarchy plugin platform + base plugins
 
 - [x] Evolve CommandRegistry + PermissionService (roles, wildcards, persistent OP/DEOP, FC_OPERATORS seed).

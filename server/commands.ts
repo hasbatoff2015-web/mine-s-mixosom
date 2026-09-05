@@ -6,12 +6,43 @@ export interface CommandResult {
   readonly lines: readonly string[];
 }
 
+export type CommandSenderKind = 'player' | 'console';
+
+/** Trusted server stdin. Not a player and not an account id. */
+export const CONSOLE_SENDER_ID = 'console';
+export const CONSOLE_SENDER_NAME = 'Console';
+
 export interface CommandSender {
+  readonly kind?: CommandSenderKind;
   readonly playerId: string;
   readonly name: string;
   readonly gamemode: GameMode;
   /** True when PermissionService (or FC_OPERATORS) treats the sender as OP. */
   readonly operator?: boolean;
+  /** Console always returns true. Players omit this and use PermissionService. */
+  hasPermission?(permission: CommandPermission): boolean;
+}
+
+export function isConsoleSender(sender: CommandSender): boolean {
+  return sender.kind === 'console';
+}
+
+export function createConsoleCommandSender(): CommandSender {
+  return {
+    kind: 'console',
+    playerId: CONSOLE_SENDER_ID,
+    name: CONSOLE_SENDER_NAME,
+    gamemode: 'creative',
+    operator: true,
+    hasPermission: () => true,
+  };
+}
+
+/** Console lines may omit the leading `/`. Player chat parsing is unchanged. */
+export function normalizeConsoleCommand(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
 }
 
 /**
@@ -96,7 +127,7 @@ export class CommandRegistry {
       };
     }
     const permission = handler.permission ?? 'player';
-    if (permission !== 'player') {
+    if (permission !== 'player' && !consoleBypassesPermission(sender, permission)) {
       const allowed = this.permissionCheck
         ? this.permissionCheck(sender, permission)
         : permission === 'operator' && sender.operator === true;
@@ -117,4 +148,9 @@ export function ok(lines: string | readonly string[]): CommandResult {
 
 export function fail(lines: string | readonly string[]): CommandResult {
   return { ok: false, lines: typeof lines === 'string' ? [lines] : lines };
+}
+
+function consoleBypassesPermission(sender: CommandSender, permission: CommandPermission): boolean {
+  if (isConsoleSender(sender)) return true;
+  return sender.hasPermission?.(permission) === true;
 }

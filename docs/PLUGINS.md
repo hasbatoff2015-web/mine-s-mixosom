@@ -117,7 +117,9 @@ Env:
 
 `CommandRegistry` still accepts legacy `permission: 'operator'`. Any other string is a permission node (`home.use`, `plugins.manage`, `server.*`). OP (`/op`, `FC_OPERATORS`) matches every node. Default/moderator/admin/vip/premium roles exist as infrastructure; vip/premium are not auto-assigned.
 
-In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`.
+The server process stdin is a `ConsoleCommandSender` (`kind: 'console'`). It is not a player, not `FC_OPERATORS`, and not a PermissionService role. `hasPermission` is always true, so `op Misha` and `/op Misha` both run through the same `CommandRegistry`. Replies go to stdout. Unknown commands print `Unknown command ...` and do not stop the process.
+
+In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: `op`, `plugins`, `permissions roles` (leading `/` optional).
 
 ## Builtin Anarchy plugins
 
@@ -190,6 +192,7 @@ Permission:
 - default `player` — anyone online
 - `operator` — OP / `FC_OPERATORS`
 - any other string — permission node (`home.use`, `plugins.manage`, wildcards)
+- `ConsoleCommandSender` — trusted stdin, bypasses every node without being a player
 
 `/<plugin> help` is the standard help form. Help for a plugin root command is available without admin unless that command itself is operator-only (`/op`).
 

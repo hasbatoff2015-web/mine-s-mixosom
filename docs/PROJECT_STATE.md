@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: display nickname + server console
+
+- Ветка `cursor/nickname-console-3f93` от plugin-platform `cursor/anarchy-plugin-platform-3f93`.
+- Аккаунт на этом этапе = только локально сохранённый display nickname. Нет регистрации, пароля, email, OAuth, Яндекс SDK, профилей.
+- Главное меню: кнопка «Аккаунт». Ник в `localStorage` (`fc.player.nickname`). Join передаёт `name`, если ник валиден; иначе сервер оставляет `Player-XXXX`. `playerId` остаётся UUID.
+- Смена ника применяется при следующем подключении, не переименовывает живую сессию.
+- Server stdin: `ConsoleCommandSender` с полным bypass permissions, те же команды через `CommandRegistry` (`op Misha` и `/op Misha`).
+- Report: `docs/reports/2026-09-05_nickname-and-server-console.md`.
+
 ## Последний проход: Anarchy Plugin Platform — permissions, teleport plugins, claims, holograms
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
