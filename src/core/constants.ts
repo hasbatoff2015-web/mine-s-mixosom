@@ -6,6 +6,12 @@ export const MAX_CATCH_UP_TICKS = 4;
 export const TARGET_FRAME_MS = 1000 / 60;
 export const WORLD_JOB_BUDGET_MS = 4;
 export const WORLD_LOADING_JOB_BUDGET_MS = 10;
+/**
+ * PLAYING mesh slice cap. One nearby mesh stays ~12–18 ms total but is split
+ * across frames so a single RAF hitch stays near this bound. LOADING and
+ * urgent mutation remesh still complete in one call.
+ */
+export const MESH_SLICE_BUDGET_MS = 8;
 /** Dedicated lighting slice while PLAYING. Must never wrap a 30 ms job. */
 export const WORLD_LIGHT_BUDGET_MS = 2;
 /** Loading screen can spend more; the overlay still animates between slices. */

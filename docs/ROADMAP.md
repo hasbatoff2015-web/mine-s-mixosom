@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-05: budgeted PLAYING mesh slices (after PR #49)
+
+- [x] Research budgeted meshing vs worker vs greedy vs 3×3 AO vs packed neighborhood.
+- [x] Implement PLAYING Y-slices at 8 ms; keep old mesh until commit; skip generate while in progress.
+- [x] Isolated 3×3 AO prototype with 0 mismatches — not production.
+- [x] `npm run benchmark:mesh-hitch`.
+- [ ] Optional next: wire 3×3 cube AO if still 0 mismatch on more scenes.
+- [ ] GPU/FPS / `renderer.info` on a real device.
+- [ ] Greedy/worker still deferred.
+
 ## 2026-09-04: typed-array mesher emit (after PR #48)
 
 - [x] Profile emit (`number[]` vs reusable TypedArray) and GC on the same spawn 9×9.

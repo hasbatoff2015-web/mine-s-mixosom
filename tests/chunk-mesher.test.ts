@@ -121,6 +121,29 @@ describe('ChunkMesher hot path', () => {
     disposeMeshedChunk(withSlab);
     disposeMeshedChunk(withGlass);
   });
+
+  it('budgeted Y slices emit the same geometry as a one-shot build', () => {
+    const world = new VoxelWorld('mesher-sliced-build');
+    const chunk = world.getChunk(0, 0)!;
+    world.ensureChunkLighting(chunk);
+    world.getChunk(1, 0);
+    world.getChunk(-1, 0);
+    world.getChunk(0, 1);
+    world.getChunk(0, -1);
+    const mesher = new ChunkMesher(atlasStub);
+    const full = mesher.build(chunk, world, { vertexLight: 'full' });
+    mesher.startBuild(chunk, world, { vertexLight: 'full' });
+    let slices = 0;
+    while (!mesher.pumpBuild(0)) slices += 1;
+    expect(mesher.pumpBuild(0)).toBe(true);
+    const sliced = mesher.takeBuild();
+    expect(sliced).not.toBeNull();
+    expect(slices).toBeGreaterThan(0);
+    expect(sliced!.faces).toBe(full.faces);
+    expect(attributeMismatch(full, sliced!)).toBe(0);
+    disposeMeshedChunk(full);
+    disposeMeshedChunk(sliced!);
+  });
 });
 
 const LAYER_KEYS = ['opaque', 'cutout', 'vegetation', 'translucent', 'water', 'fire'] as const;

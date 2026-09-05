@@ -121,6 +121,8 @@ export class WorldRenderer {
       onMeshComplete?: (chunk: Chunk) => void;
       dirX?: number;
       dirZ?: number;
+      /** Cap one PLAYING mesh slice. Omit / Infinity = finish the chunk this call. */
+      sliceBudgetMs?: number;
     } = {},
   ): number {
     const start = performance.now();
@@ -133,6 +135,7 @@ export class WorldRenderer {
     const counters = options.counters;
     const dirX = options.dirX ?? 0;
     const dirZ = options.dirZ ?? 0;
+    const sliceBudgetMs = options.sliceBudgetMs ?? Number.POSITIVE_INFINITY;
     const now = performance.now();
     const dirty: Chunk[] = [];
     const candidates = options.preferKeys
@@ -155,6 +158,22 @@ export class WorldRenderer {
       return sa - sb;
     });
     let rebuilt = 0;
+    const inProgress = this.mesher.inProgressChunk();
+    if (inProgress) {
+      const distance = Math.max(Math.abs(inProgress.x - centerX), Math.abs(inProgress.z - centerZ));
+      if (this.mesher.isBuildStale() || (meshRadius !== undefined && distance > meshRadius)) {
+        this.mesher.abortBuild();
+      } else {
+        if (counters) counters.attempted += 1;
+        const committed = this.rebuild(inProgress, sliceBudgetMs);
+        if (committed) {
+          options.onMeshComplete?.(inProgress);
+          if (counters) counters.completed += 1;
+          rebuilt += 1;
+        }
+        return rebuilt > 0 ? rebuilt : 1;
+      }
+    }
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
       if (!chunk.lightingReady) {
@@ -188,10 +207,14 @@ export class WorldRenderer {
       if (rebuilt > 0 && performance.now() - start >= timeBudgetMs) break;
       if (counters) counters.attempted += 1;
       options.onMeshStart?.(chunk);
-      this.rebuild(chunk);
-      options.onMeshComplete?.(chunk);
-      if (counters) counters.completed += 1;
-      rebuilt += 1;
+      const committed = this.rebuild(chunk, sliceBudgetMs);
+      if (committed) {
+        options.onMeshComplete?.(chunk);
+        if (counters) counters.completed += 1;
+        rebuilt += 1;
+      } else {
+        return 1;
+      }
     }
     return rebuilt;
   }
@@ -200,13 +223,36 @@ export class WorldRenderer {
     return this.chunks.has(key);
   }
 
-  rebuild(chunk: Chunk): void {
+  hasInProgressMesh(): boolean {
+    return this.mesher.hasInProgressBuild;
+  }
+
+  rebuild(chunk: Chunk, sliceBudgetMs = Number.POSITIVE_INFINITY): boolean {
     const meshStart = performance.now();
     const key = chunkKey(chunk.x, chunk.z);
+    const active = this.mesher.inProgressChunk();
+    if (active && active !== chunk) this.mesher.abortBuild();
+    if (this.mesher.isBuildStale()) this.mesher.abortBuild();
+    if (!this.mesher.hasInProgressBuild) {
+      this.mesher.startBuild(chunk, this.world, {
+        cheapVertexLight: chunkChebyshev(chunk, this.world) >= CHEAP_VERTEX_LIGHT_CHEBYSHEV,
+      });
+    }
+    const done = this.mesher.pumpBuild(sliceBudgetMs);
+    const sliceMs = performance.now() - meshStart;
+    this.meshMaximumMs = Math.max(this.meshMaximumMs, sliceMs);
+    if (!done) return false;
+    const meshed = this.mesher.takeBuild();
+    if (!meshed) return false;
+    this.commitMeshed(chunk, key, meshed);
+    const meshMilliseconds = this.mesher.lastProfile.scanMs + this.mesher.lastProfile.geometryMs;
+    this.meshSamples += 1;
+    this.meshTotalMs += meshMilliseconds;
+    return true;
+  }
+
+  private commitMeshed(chunk: Chunk, key: string, meshed: ReturnType<ChunkMesher['build']>): void {
     this.removeChunk(key);
-    const meshed = this.mesher.build(chunk, this.world, {
-      cheapVertexLight: chunkChebyshev(chunk, this.world) >= CHEAP_VERTEX_LIGHT_CHEBYSHEV,
-    });
     const group = new THREE.Group();
     group.name = `chunk-${key}`;
     group.matrixAutoUpdate = false;
@@ -247,10 +293,6 @@ export class WorldRenderer {
     chunk.dirty = false;
     chunk.meshedLightVersion = chunk.lightVersion;
     this.world.acknowledgeMeshed(chunk);
-    const meshMilliseconds = performance.now() - meshStart;
-    this.meshSamples += 1;
-    this.meshTotalMs += meshMilliseconds;
-    this.meshMaximumMs = Math.max(this.meshMaximumMs, meshMilliseconds);
   }
 
   removeChunks(keys: readonly string[]): void {
@@ -345,6 +387,7 @@ export class WorldRenderer {
     this.glassMaterial.dispose();
     this.waterMaterial.dispose();
     this.chests.dispose();
+    this.mesher.abortBuild();
   }
 
   private removeChunk(key: string): void {
