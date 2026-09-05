@@ -729,11 +729,28 @@ button {
 }
 
 #chat-log {
-  display: flex;
+  position: relative;
+  display: block;
   max-height: min(38vh, 260px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  pointer-events: none;
+  scrollbar-width: thin;
+}
+
+#chat-log-inner {
+  display: flex;
+  min-height: 100%;
   flex-direction: column;
   justify-content: flex-end;
-  overflow: hidden;
+}
+
+@media (pointer: fine) {
+  #chat-log {
+    pointer-events: auto;
+  }
 }
 
 #chat.open {
@@ -742,8 +759,25 @@ button {
 
 #chat.open #chat-log {
   max-height: min(52vh, 340px);
-  overflow-y: auto;
+  pointer-events: auto;
   padding: 4px 0;
+}
+
+#chat-new {
+  align-self: flex-start;
+  margin: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #ffe9a8;
+  background: rgba(6, 15, 19, 0.86);
+  font: 12px/1.2 var(--font-ui);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#chat-new[hidden] {
+  display: none;
 }
 
 .chat-line {
@@ -2279,8 +2313,10 @@ button {
   line-height: 1.5;
 }
 
-.account-window .form-grid {
-  gap: 12px;
+.account-window .field input {
+  pointer-events: auto;
+  user-select: text;
+  caret-color: #fff;
 }
 
 .account-window .menu-notice {

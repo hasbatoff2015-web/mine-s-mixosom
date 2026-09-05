@@ -391,6 +391,7 @@ export interface ServerWelcomeMessage {
   readonly online: number;
   readonly maxPlayers: number;
   readonly serverName: string;
+  readonly holograms?: readonly NetworkHologram[];
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -573,6 +574,38 @@ export interface ServerTimeMessage {
   readonly timeOfDay: number;
 }
 
+export interface NetworkHologram {
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly lines: readonly string[];
+  readonly range: number;
+  readonly enabled: boolean;
+}
+
+export interface ServerHologramsMessage {
+  readonly type: 'holograms';
+  readonly holograms: readonly NetworkHologram[];
+}
+
+/** How long a denied-claim wireframe stays on the client. */
+export const CLAIM_BOUNDARY_DURATION_MS = 10_000;
+
+export interface ServerClaimBoundaryMessage {
+  readonly type: 'claim_boundary';
+  readonly claimId: string;
+  readonly name: string;
+  readonly worldId: string;
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+  readonly durationMs: number;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -594,7 +627,9 @@ export type ServerMessage =
   | ServerEntitySnapshotMessage
   | ServerEntityEventMessage
   | ServerCommandResultMessage
-  | ServerTimeMessage;
+  | ServerTimeMessage
+  | ServerHologramsMessage
+  | ServerClaimBoundaryMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -636,6 +671,8 @@ export const SERVER_MESSAGE_TYPES = [
   'entity_event',
   'command_result',
   'time',
+  'holograms',
+  'claim_boundary',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1158,6 +1195,59 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'command_result invalid' };
       }
       return raw as unknown as ServerCommandResultMessage;
+    }
+    case 'holograms': {
+      if (!Array.isArray(raw.holograms)) return { error: 'holograms invalid' };
+      const holograms: NetworkHologram[] = [];
+      for (const entry of raw.holograms.slice(0, 64)) {
+        if (!isRecord(entry) || typeof entry.name !== 'string' || entry.name.length === 0) continue;
+        if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z) || !finite(entry.range)) continue;
+        const lines = Array.isArray(entry.lines)
+          ? entry.lines.filter((line): line is string => typeof line === 'string').map((line) => line.slice(0, 80)).slice(0, 8)
+          : [];
+        holograms.push({
+          name: entry.name.slice(0, 32),
+          x: entry.x,
+          y: entry.y,
+          z: entry.z,
+          lines,
+          range: Math.max(1, Math.min(128, entry.range)),
+          enabled: entry.enabled !== false,
+        });
+      }
+      return { type: 'holograms', holograms };
+    }
+    case 'claim_boundary': {
+      if (typeof raw.claimId !== 'string' || raw.claimId.length === 0) {
+        return { error: 'claim_boundary invalid' };
+      }
+      if (typeof raw.name !== 'string' || typeof raw.worldId !== 'string') {
+        return { error: 'claim_boundary invalid' };
+      }
+      if (
+        !finite(raw.minX) || !finite(raw.minY) || !finite(raw.minZ)
+        || !finite(raw.maxX) || !finite(raw.maxY) || !finite(raw.maxZ)
+        || !Number.isInteger(raw.minX) || !Number.isInteger(raw.minY) || !Number.isInteger(raw.minZ)
+        || !Number.isInteger(raw.maxX) || !Number.isInteger(raw.maxY) || !Number.isInteger(raw.maxZ)
+      ) {
+        return { error: 'claim_boundary invalid' };
+      }
+      const durationMs = finite(raw.durationMs)
+        ? Math.max(1_000, Math.min(30_000, Math.round(raw.durationMs)))
+        : CLAIM_BOUNDARY_DURATION_MS;
+      return {
+        type: 'claim_boundary',
+        claimId: raw.claimId.slice(0, 64),
+        name: raw.name.slice(0, 32),
+        worldId: raw.worldId.slice(0, 64),
+        minX: raw.minX,
+        minY: raw.minY,
+        minZ: raw.minZ,
+        maxX: raw.maxX,
+        maxY: raw.maxY,
+        maxZ: raw.maxZ,
+        durationMs,
+      };
     }
     default:
       return raw as unknown as ServerMessage;

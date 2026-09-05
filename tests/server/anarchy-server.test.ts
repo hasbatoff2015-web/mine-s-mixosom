@@ -188,6 +188,27 @@ describe('protocol validation', () => {
       z: 3,
       reason: 'reach',
     });
+    expect(parseServerMessage({
+      type: 'claim_boundary',
+      claimId: 'ada:spawn:1',
+      name: 'spawn',
+      worldId: 'anarchy',
+      minX: 0,
+      minY: 1,
+      minZ: 2,
+      maxX: 10,
+      maxY: 20,
+      maxZ: 30,
+      durationMs: 10_000,
+    })).toMatchObject({
+      type: 'claim_boundary',
+      claimId: 'ada:spawn:1',
+      name: 'spawn',
+      minX: 0,
+      maxZ: 30,
+      durationMs: 10_000,
+    });
+    expect(parseServerMessage({ type: 'claim_boundary', claimId: 'x' })).toEqual({ error: 'claim_boundary invalid' });
   });
 });
 

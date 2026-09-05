@@ -1,5 +1,40 @@
 # Roadmap
 
+## 2026-09-05: Anarchy block-break desync
+
+- [x] Keep server mining held after client finish; do not abort that target on mouse-up.
+- [x] Accept survival finish when mining started (`progress > 0`), not only at 0.95.
+- [ ] Owner QA: break dirt/grass outside spawn; animation completion then release still removes the block.
+
+## 2026-09-05: Claim boundary visibility
+
+- [x] Unlit fog-free `#ff0000` fat wireframe (LineSegments2, 6px).
+- [x] Show every overlapping claim that participates in the denied build flag.
+- [ ] Owner QA: nested spawn+arena both `block-break=false` show two red boxes; sky stays pure red.
+
+## 2026-09-05: Claim boundary wireframe on denied build
+
+- [x] Server `claim_boundary` to the blocked player only after denied `block-break` / `block-place`.
+- [x] Visualize the per-flag protection source AABB, not the first overlapping claim.
+- [x] Client red 12-edge wireframe for 10s; reuse + reset expiry on repeat deny.
+- [ ] Owner QA: stranger sees red claim box after a denied break/place; nearby players do not.
+
+## 2026-09-05: Named claim commands, chat open-at-bottom, account nick typing
+
+- [x] `/claim flag|members|addmember|removemember` accept an explicit claim name without standing inside it.
+- [x] Keep standing `/claim flag <flag> <true|false>` and `/claim addmember <player>`.
+- [x] Open chat always scrolls to latest messages (reveal + rAF).
+- [x] Account nickname input is free-typed; InputManager no longer blurs menu fields.
+
+## 2026-09-05: Claims overlap, chat scroll, 3D holograms, spawn respawn
+
+- [x] Respawn at `/setspawn` world spawn, not SurvivalSystem.spawnPoint.
+- [x] Claims V1 defaults, partial flags, overlapping regions, per-flag priority, `/claim priority`, richer `/claim info`.
+- [x] Server-side `mobSpawn` cancel for `mob-spawn=false`; do not despawn existing mobs.
+- [x] Scrollable GameUI chat (desktop wheel + mobile pan-y), stick-to-bottom, new-message hint, 200-message cap.
+- [x] Networked Three.js hologram billboards; remove enter-range chat dump.
+- [ ] Owner QA: spawn/arena overlap PvP, chat scroll on desktop/mobile, hologram visible in world, death→respawn at setspawn.
+
 ## 2026-09-05: Display nickname + server console
 
 - [x] Main-menu Account panel for a locally stored display nickname (no accounts/auth).
@@ -15,8 +50,8 @@
 - [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
-- [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, hologram chat range.
-- [ ] Client hologram rendering / click actions / placeholders — later.
+- [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
+- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore

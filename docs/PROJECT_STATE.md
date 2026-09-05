@@ -1,5 +1,40 @@
 # Состояние проекта
 
+## Последний проход: intermittent Anarchy block-break desync
+
+- Вне claim ломание dirt/grass могло «доиграть» анимацию и не удалить блок: клиент слал `block_break_finish` на тик раньше сервера (`14/15 < 0.95`), отпускание ЛКМ слало `abort` + `mining:false` и сбрасывало серверный прогресс. Claims не участвовали.
+- Клиент после finish держит `input.mining` и не abort'ит этот target, пока не придёт break. Overlay остаётся до authoritative air. Server finish принимает matching `miningTarget` с `progress > 0`.
+- Report: `docs/reports/2026-09-05_block-break-desync.md`.
+
+## Последний проход: claim boundary visibility (red + overlapping)
+
+- Wireframe всегда `#ff0000`, `fog=false`, `toneMapped=false`, 6px `LineSegments2` — цвет не смешивается с небом/туманом.
+- Запрещённый break/place показывает **все** overlapping claims, у которых этот флаг явно `false` (и все untrusted overlapping, если флаг никто не задал). Arena только с `pvp=true` по-прежнему не рисуется на block-break.
+- Report: `docs/reports/2026-09-05_claim-boundary-visibility.md`.
+
+## Последний проход: claim boundary wireframe feedback
+
+- Запрещённый `block-break` / `block-place` в чужом claim по-прежнему пишет в чат `This land is claimed.` и отменяет действие.
+- Сервер шлёт **только этому игроку** `claim_boundary` с AABB claim, который реально запретил флаг (per-flag setter), `durationMs: 10000`.
+- Клиент рисует красный 12-рёберный wireframe через `ClaimBoundaryRenderer`. Повтор в том же claim продлевает таймер, не дублирует геометрию.
+- Report: `docs/reports/2026-09-05_claim-boundary-feedback.md`.
+
+## Последний проход: named /claim commands, chat open scroll, account nick input
+
+- `/claim flag|members|addmember|removemember` принимают явное `<name>` без требования стоять в claim. Старый standing-синтаксис сохранён. Parser: если первый токен — известный flag, это standing-форма.
+- Открытие чата (T) всегда pin/scroll вниз: сначала reveal hidden lines, затем `scrollTop` + microtask/rAF.
+- Account: InputManager больше не blur'ит меню-поля. Раньше `shouldBlurStaleTextField` снимал фокус с nickname input на каждый keydown, поэтому казалось, что можно только выбрать подсказку браузера. Input: `type=text`, `autocomplete=off`.
+- Report: `docs/reports/2026-09-05_claim-named-commands-chat-account.md`.
+
+## Последний проход: Claims overlap/priority, chat scroll, 3D holograms, spawn respawn
+
+- Ветка `cursor/claims-chat-holograms-3f93` от nickname-console `cursor/nickname-console-3f93`.
+- Respawn после смерти использует authoritative `WorldInstance.spawn` (`/setspawn`), не `SurvivalSystem.spawnPoint`.
+- Claims V1: partial flags, per-flag priority, overlap, новые дефолты, `fire-spread` удалён. `mob-spawn` реально отменяет создание моба через cancellable `mobSpawn`.
+- Chat: scrollable `#chat-log` (wheel / touch pan-y), stick-to-bottom, индикатор «↓ Новые сообщения», лимит `MAX_CHAT_MESSAGES = 200`.
+- Holograms: server `HologramNetwork` → protocol `holograms` → client `HologramRenderer` (Three.js Sprite billboard). Chat dump при входе в range убран.
+- Report: `docs/reports/2026-09-05_claims-chat-holograms.md`.
+
 ## Последний проход: display nickname + server console
 
 - Ветка `cursor/nickname-console-3f93` от plugin-platform `cursor/anarchy-plugin-platform-3f93`.
@@ -16,8 +51,8 @@
 - Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms. Auction House не делался.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
-- Holograms: server-side persistence + range chat notify. Клиентский DecentHolograms renderer не добавлялся (networking/player visuals не трогались).
-- Claim flags `fire-spread` / `mob-spawn` хранятся, но не enforced: соответствующих cancellable events нет.
+- Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.
+- Claim flags: `fire-spread` удалён. `mob-spawn` enforced через cancellable `mobSpawn`. Overlap + per-flag priority.
 - Report: `docs/reports/2026-09-05_anarchy-plugin-platform.md`.
 
 ## Последний проход: Anarchy spawn schematic → filesystem

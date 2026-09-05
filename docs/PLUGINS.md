@@ -26,7 +26,7 @@ Installing a plugin gives it **server-level authority** through the runtime. Thi
 - Loaded by `AnarchyServer` after the world is READY, before the WebSocket listener is marked ready.
 - Missing `server/plugins/` is fine. The server still starts.
 - Singleplayer (`Game`) never imports `PluginManager`.
-- Clients receive ordinary protocol messages. Plugins cannot send raw packets.
+- Clients receive ordinary protocol messages. Plugins cannot send raw packets. Builtin claims denied-build feedback uses WorldInstance `ClaimBoundaryNetwork` (`claim_boundary` to one player), the same pattern as holograms.
 
 Restart the server to pick up **source file** changes. In-game `/plugins reload <name>` re-runs disable → cleanup → load → enable on the same instance. Failed plugins still need a restart.
 
@@ -219,6 +219,7 @@ The plugin runs **before** the simulation mutates. `event.cancel()` means the ac
 | `itemDrop` / `itemPickup` | before spawn / inventory add | no drop / no pickup |
 | `playerCommand` | after `/`, before registry dispatch | command does not run |
 | `explosion` | before the explosion queue | TNT/creeper does not enqueue |
+| `mobSpawn` | before a new mob is created | mob is not spawned |
 | `vehicleEnter` / `vehicleExit` | before mount/dismount | stay as-is |
 | `playerMove` | after physics moved the player | teleport back |
 
@@ -287,4 +288,4 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a second combat / fluid / inventory system
 - Not client mods
 - Not Auction House / economy / kits
-- Not a WorldGuard clone (claims are a basic flag + member model)
+- Not a WorldGuard clone (claims are overlapping regions with per-flag priority)

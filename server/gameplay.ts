@@ -155,6 +155,7 @@ export class ServerGameplay {
     readonly world: VoxelWorld,
     readonly events: EventBus,
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
+    private readonly worldSpawn?: () => readonly [number, number, number],
   ) {
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
@@ -180,6 +181,11 @@ export class ServerGameplay {
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
+      allowSpawn: (kind, x, y, z) => {
+        const event = this.events.createMobSpawn(kind, x, y, z);
+        this.events.emit('mobSpawn', event);
+        return !event.cancelled;
+      },
     });
     this.minecarts = new MinecartManager(host, world);
     this.arrows = new PlayerArrowManager(host, world, this.mobs, {
@@ -567,9 +573,12 @@ export class ServerGameplay {
     if (definition.breakable === false) return { ok: false, reason: 'unbreakable' };
     if (player.gamemode === 'survival' && definition.hardness > 0) {
       const mining = player.miningTarget;
-      if (!mining || mining.x !== x || mining.y !== y || mining.z !== z || player.miningProgress < 0.95) {
+      if (!mining || mining.x !== x || mining.y !== y || mining.z !== z) {
         return { ok: false, reason: 'mining' };
       }
+      // Client finish is typically one 20-tick ahead of advanceMining (dirt/grass
+      // then sits at 14/15 < 0.95). Require that mining actually started, not 95%.
+      if (player.miningProgress <= 0) return { ok: false, reason: 'mining' };
     }
     const event = this.events.createBlockBreak(player.id, x, y, z, block);
     this.events.emit('blockBreak', event);
@@ -947,7 +956,7 @@ export class ServerGameplay {
       player.craftSlots = player.craftSlots.map(() => null);
       player.inventoryDirty = true;
     }
-    player.survival.respawn(player.controller, player.survival.spawnPoint);
+    player.survival.respawn(player.controller, this.worldSpawn?.() ?? player.survival.spawnPoint);
     this.flushPlayerLife?.(player);
   }
 

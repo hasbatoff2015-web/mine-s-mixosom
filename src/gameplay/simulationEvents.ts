@@ -35,6 +35,7 @@ export const SIMULATION_EVENT_KINDS = [
   'player-command-executed',
   'vehicle-enter',
   'vehicle-exit',
+  'mob-spawn',
 ] as const;
 
 export type SimulationEventKind = (typeof SIMULATION_EVENT_KINDS)[number];
@@ -53,6 +54,7 @@ export const SIMULATION_PRE_EVENTS = [
   'player-command',
   'vehicle-enter',
   'vehicle-exit',
+  'mob-spawn',
 ] as const;
 
 export type SimulationPreEvent = (typeof SIMULATION_PRE_EVENTS)[number];

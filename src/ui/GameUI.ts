@@ -39,7 +39,7 @@ import {
   takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
-import { stepTypedHistoryIndex } from '../chat';
+import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
 import type { ClientInventoryActionMessage } from '../../shared/protocol';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
@@ -142,6 +142,9 @@ export class GameUI {
   private hurtFlashAlpha = -1;
   private chat: HTMLElement;
   private chatLogEl: HTMLElement;
+  private chatLogInner: HTMLElement;
+  private chatNewEl: HTMLButtonElement;
+  private chatPinnedToBottom = true;
   private chatForm: HTMLFormElement;
   private chatInput: HTMLInputElement;
   private chatFocusToken = 0;
@@ -193,7 +196,10 @@ export class GameUI {
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
         <div id="chat">
-          <div id="chat-log" aria-live="polite"></div>
+          <div id="chat-log" aria-live="polite">
+            <div id="chat-log-inner"></div>
+          </div>
+          <button type="button" id="chat-new" hidden>↓ Новые сообщения</button>
           <form id="chat-form" autocomplete="off">
             <input id="chat-input" type="text" maxlength="256" spellcheck="false" autocomplete="off" aria-label="Chat" />
           </form>
@@ -217,6 +223,8 @@ export class GameUI {
     this.hurtFlash = this.root.querySelector('#hurt-flash')!;
     this.chat = this.root.querySelector('#chat')!;
     this.chatLogEl = this.root.querySelector('#chat-log')!;
+    this.chatLogInner = this.root.querySelector('#chat-log-inner')!;
+    this.chatNewEl = this.root.querySelector('#chat-new')!;
     this.chatForm = this.root.querySelector('#chat-form')!;
     this.chatInput = this.root.querySelector('#chat-input')!;
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
@@ -232,6 +240,10 @@ export class GameUI {
       const value = this.chatInput.value;
       this.onChatSubmit?.(value);
     });
+    this.chatLogEl.addEventListener('scroll', () => this.onChatLogScroll(), { passive: true });
+    this.chatLogEl.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
+    this.chatLogEl.addEventListener('touchmove', (event) => event.stopPropagation(), { passive: true });
+    this.chatNewEl.addEventListener('click', () => this.scrollChatToBottom());
     this.chatInput.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -363,17 +375,19 @@ export class GameUI {
         <header class="menu-heading"><div><span class="eyebrow">Профиль</span><h1>Аккаунт</h1></div></header>
         <div class="form-grid">
           <p class="menu-notice">Текущий никнейм: <strong data-account-current>${currentLabel}</strong></p>
-          <label class="field"><span>Новый никнейм</span><input name="nickname" maxlength="16" autocomplete="nickname" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
+          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="16" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
           <p class="menu-notice account-hint">Только отображаемое имя. Оно применяется при следующем подключении к серверу и не меняет внутренний идентификатор игрока.</p>
           <p class="menu-notice account-error hidden" data-account-error></p>
         </div>
         <footer class="menu-footer"><button class="game-button primary" type="submit">Сохранить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
       </form></section>`, actions.back);
     this.bindAction('back', actions.back);
+    const nicknameInput = this.screen!.querySelector<HTMLInputElement>('#account-nickname');
+    nicknameInput?.focus();
     this.screen!.querySelector<HTMLFormElement>('#account-form')!.addEventListener('submit', (event) => {
       event.preventDefault();
-      const data = new FormData(event.currentTarget as HTMLFormElement);
-      const result = actions.save(String(data.get('nickname') ?? ''));
+      const typed = nicknameInput?.value ?? '';
+      const result = actions.save(typed);
       const errorNode = this.screen?.querySelector<HTMLElement>('[data-account-error]');
       const currentNode = this.screen?.querySelector<HTMLElement>('[data-account-current]');
       if (!result.ok) {
@@ -728,17 +742,29 @@ export class GameUI {
   }
 
   appendChat(kind: string, text: string, createdAtMs: number): void {
+    const log = this.chatLogEl;
+    const previousTop = log.scrollTop;
+    const previousHeight = log.scrollHeight;
+    const stuck = this.chatPinnedToBottom || isChatStuckToBottom(previousTop, previousHeight, log.clientHeight);
     const line = document.createElement('div');
     line.className = `chat-line kind-${kind}`;
     line.dataset.at = String(createdAtMs);
     line.textContent = text;
-    this.chatLogEl.append(line);
-    while (this.chatLogEl.childElementCount > 100) this.chatLogEl.firstElementChild?.remove();
-    this.chatLogEl.scrollTop = this.chatLogEl.scrollHeight;
+    this.chatLogInner.append(line);
+    while (this.chatLogInner.childElementCount > MAX_CHAT_MESSAGES) {
+      this.chatLogInner.firstElementChild?.remove();
+    }
+    if (stuck) {
+      this.scrollChatToBottom();
+      return;
+    }
+    log.scrollTop = restoreChatScrollTop(previousHeight, previousTop, log.scrollHeight);
+    this.setChatNewVisible(true);
   }
 
   clearChat(): void {
-    this.chatLogEl.replaceChildren();
+    this.chatLogInner.replaceChildren();
+    this.scrollChatToBottom();
     this.closeChat();
   }
 
@@ -751,6 +777,10 @@ export class GameUI {
     this.chat.classList.add('open');
     this.chatInput.value = prefix;
     this.setControlsSuppressed(true);
+    this.revealChatLines();
+    this.chatPinnedToBottom = true;
+    this.scrollChatToBottom();
+    this.scheduleScrollChatToBottom(token);
     window.setTimeout(() => {
       if (token !== this.chatFocusToken || !this.chatOpen) return;
       this.chatInput.focus();
@@ -789,19 +819,54 @@ export class GameUI {
 
   fadeChatLines(nowMs: number, opacityOf: (ageMs: number) => number): void {
     if (this.chatOpen) {
-      for (const node of this.chatLogEl.children) {
-        const line = node as HTMLElement;
-        line.style.opacity = '1';
-        line.style.display = '';
-      }
+      this.revealChatLines();
       return;
     }
-    for (const node of this.chatLogEl.children) {
+    for (const node of this.chatLogInner.children) {
       const line = node as HTMLElement;
       const opacity = opacityOf(nowMs - Number(line.dataset.at ?? nowMs));
       line.style.opacity = String(opacity);
       line.style.display = opacity <= 0.02 ? 'none' : '';
     }
+  }
+
+  private revealChatLines(): void {
+    for (const node of this.chatLogInner.children) {
+      const line = node as HTMLElement;
+      line.style.opacity = '1';
+      line.style.display = '';
+    }
+  }
+
+  private onChatLogScroll(): void {
+    this.chatPinnedToBottom = isChatStuckToBottom(
+      this.chatLogEl.scrollTop,
+      this.chatLogEl.scrollHeight,
+      this.chatLogEl.clientHeight,
+    );
+    if (this.chatPinnedToBottom) this.setChatNewVisible(false);
+  }
+
+  private scrollChatToBottom(): void {
+    this.chatPinnedToBottom = true;
+    this.chatLogEl.scrollTop = chatScrollTopOnOpen(this.chatLogEl.scrollHeight);
+    this.setChatNewVisible(false);
+  }
+
+  private scheduleScrollChatToBottom(token: number): void {
+    const run = () => {
+      if (token !== this.chatFocusToken || !this.chatOpen || !this.chatPinnedToBottom) return;
+      this.scrollChatToBottom();
+    };
+    queueMicrotask(run);
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+  }
+
+  private setChatNewVisible(visible: boolean): void {
+    this.chatNewEl.hidden = !visible;
   }
 
   private chatHistorySource: readonly string[] = [];

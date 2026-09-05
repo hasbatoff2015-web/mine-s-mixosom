@@ -1,5 +1,27 @@
 # Архитектура
 
+## Anarchy block-break finish vs abort — 2026-09-05
+
+Survival mining is server-authoritative (`advanceMining` + `block_break_finish`). The client overlay can reach 1.0 one tick before the server (dirt/hand is 15 ticks; `14/15 < 0.95`). After sending finish the client must keep `input.mining` and must not send `block_break_abort` for that target until the block is gone or a hard reject. `reason: mining` is in-flight, not a deny. Claims are unchanged: no overlapping claim ⇒ no cancel.
+
+## Claim boundary feedback — 2026-09-05
+
+Denied `block-break` / `block-place` still cancel + chat. WorldInstance `ClaimBoundaryNetwork` then `sendTo` **one** player one `{ type: 'claim_boundary', ... }` per related claim. Plugins still cannot send raw packets.
+
+`protectionSources()` returns every overlapping untrusted claim that participates in the deny: all explicit `flag=false` regions, or every untrusted overlapping region when nobody set the flag. `protectionSource()` is the first of that list (the winning setter). Client `ClaimBoundaryRenderer` draws 12 unlit `#ff0000` `LineSegments2` edges (`fog`/`toneMapped` off, 6px) over inclusive volume `[min, max+1]` and disposes after each claim's own 10s expiry.
+
+## Claims overlap, chat scroll, 3D holograms — 2026-09-05
+
+Respawn uses `WorldInstance.spawn` (`/setspawn`). `SurvivalSystem.spawnPoint` is not the Anarchy respawn target.
+
+Claims store **partial** flags (`flags?: { pvp?: boolean }`). Overlapping claims are allowed. For each flag independently: among claims that **explicitly** set that flag, the highest `priority` wins; otherwise the global default. Trust for break/place/drop/pickup is the claim that set that flag, not “any overlapping member”.
+
+`mob-spawn` is enforced on the spawn path only: `MobManager.allowSpawn` → cancellable `mobSpawn`. `force` restore/debug bypasses. Existing mobs are not removed when the flag changes.
+
+Chat scroll lives in `GameUI` `#chat-log` (client-only). `MAX_CHAT_MESSAGES = 200`.
+
+Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws facing Sprite billboards and hides them outside `range`.
+
 ## Nickname and server console — 2026-09-05
 
 Display nickname is **not** an account id. The client stores it in `localStorage` (`fc.player.nickname`) and sends it on Anarchy `join.name`. `WorldInstance.join` uses that name when it is valid; otherwise it keeps `Player-XXXX`. `playerId` remains a UUID.
@@ -25,8 +47,8 @@ disk plugins from server/plugins/
 
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
 - Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
-- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`). They do not patch gameplay systems directly.
-- Protocol / player visuals / Three.js are unchanged. Holograms persist server-side; nearby players get a one-shot chat dump until a client renderer exists.
+- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`). Flags are partial; overlapping claims resolve **per flag** by priority. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim.
+- Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
 
 ## Farming V1 + Networking V2 — 2026-09-04
 
