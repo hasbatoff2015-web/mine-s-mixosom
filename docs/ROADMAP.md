@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-05: Named claim commands, chat open-at-bottom, account nick typing
+
+- [x] `/claim flag|members|addmember|removemember` accept an explicit claim name without standing inside it.
+- [x] Keep standing `/claim flag <flag> <true|false>` and `/claim addmember <player>`.
+- [x] Open chat always scrolls to latest messages (reveal + rAF).
+- [x] Account nickname input is free-typed; InputManager no longer blurs menu fields.
+
 ## 2026-09-05: Claims overlap, chat scroll, 3D holograms, spawn respawn
 
 - [x] Respawn at `/setspawn` world spawn, not SurvivalSystem.spawnPoint.

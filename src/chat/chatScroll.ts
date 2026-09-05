@@ -22,3 +22,8 @@ export function restoreChatScrollTop(
 ): number {
   return Math.max(0, nextScrollHeight - (previousScrollHeight - previousScrollTop));
 }
+
+/** Opening chat (T) always jumps to the latest messages. */
+export function chatScrollTopOnOpen(scrollHeight: number): number {
+  return Math.max(0, scrollHeight);
+}

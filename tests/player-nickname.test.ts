@@ -75,13 +75,20 @@ describe('player display nickname', () => {
     })).not.toHaveProperty('name');
   });
 
-  it('wires the Account menu and passes the stored nick on connect', () => {
-    expect(gameUiSource).toContain('data-action="account"');
-    expect(gameUiSource).toContain('>Аккаунт<');
-    expect(gameUiSource).toContain('<h1>Аккаунт</h1>');
-    expect(gameSource).toContain('loadPlayerNickname()');
-    expect(gameSource).toContain('client.connect(undefined, loadPlayerNickname())');
-    expect(gameSource).not.toMatch(/PluginManager/);
-    expect(gameSource).not.toMatch(/server\/console/);
+  it('wires a free-typed Account nickname input, not a suggestion-only picker', () => {
+    expect(gameUiSource).toContain('id="account-nickname"');
+    expect(gameUiSource).toContain('type="text"');
+    expect(gameUiSource).toContain('autocomplete="off"');
+    expect(gameUiSource).not.toContain('autocomplete="nickname"');
+    expect(gameUiSource).not.toMatch(/<select[^>]*nickname/);
+    expect(gameUiSource).not.toContain('<datalist');
+    expect(gameUiSource).toContain('nicknameInput?.value');
+  });
+
+  it('persists an arbitrary valid custom nick and reloads it', () => {
+    const storage = memoryStorage();
+    expect(savePlayerNickname('Custom_Nick-2', storage)).toEqual({ ok: true, name: 'Custom_Nick-2' });
+    expect(storage.data[PLAYER_NICKNAME_STORAGE_KEY]).toBe('Custom_Nick-2');
+    expect(loadPlayerNickname(storage)).toBe('Custom_Nick-2');
   });
 });

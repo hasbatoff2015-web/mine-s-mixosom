@@ -13,6 +13,11 @@ import {
 import { attachServerConsole, formatConsoleResult } from '../../server/console';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { AnarchyServer } from '../../server/AnarchyServer';
+import {
+  PLAYER_NICKNAME_STORAGE_KEY,
+  loadPlayerNickname,
+  savePlayerNickname,
+} from '../../src/net/playerNickname';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-nickname-console-'));
@@ -153,5 +158,19 @@ describe('display nickname join and server console', () => {
     expect(text).toContain('> unknowncommand');
     expect(text).toContain("Unknown command 'unknowncommand'");
     expect(formatConsoleResult('plugins', { ok: true, lines: ['Plugins:'] })).toContain('> plugins');
+  });
+});
+
+describe('custom display nickname storage', () => {
+  it('saves and reloads an arbitrary valid nick under fc.player.nickname', () => {
+    const data: Record<string, string> = {};
+    const storage = {
+      getItem: (key: string) => data[key] ?? null,
+      setItem: (key: string, value: string) => { data[key] = value; },
+      removeItem: (key: string) => { delete data[key]; },
+    };
+    expect(savePlayerNickname('Custom_Nick-7', storage)).toEqual({ ok: true, name: 'Custom_Nick-7' });
+    expect(data[PLAYER_NICKNAME_STORAGE_KEY]).toBe('Custom_Nick-7');
+    expect(loadPlayerNickname(storage)).toBe('Custom_Nick-7');
   });
 });

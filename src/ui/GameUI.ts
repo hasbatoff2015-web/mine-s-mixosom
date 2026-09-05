@@ -39,7 +39,7 @@ import {
   takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
-import { MAX_CHAT_MESSAGES, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
+import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
 import type { ClientInventoryActionMessage } from '../../shared/protocol';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
@@ -375,17 +375,19 @@ export class GameUI {
         <header class="menu-heading"><div><span class="eyebrow">Профиль</span><h1>Аккаунт</h1></div></header>
         <div class="form-grid">
           <p class="menu-notice">Текущий никнейм: <strong data-account-current>${currentLabel}</strong></p>
-          <label class="field"><span>Новый никнейм</span><input name="nickname" maxlength="16" autocomplete="nickname" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
+          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="16" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
           <p class="menu-notice account-hint">Только отображаемое имя. Оно применяется при следующем подключении к серверу и не меняет внутренний идентификатор игрока.</p>
           <p class="menu-notice account-error hidden" data-account-error></p>
         </div>
         <footer class="menu-footer"><button class="game-button primary" type="submit">Сохранить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
       </form></section>`, actions.back);
     this.bindAction('back', actions.back);
+    const nicknameInput = this.screen!.querySelector<HTMLInputElement>('#account-nickname');
+    nicknameInput?.focus();
     this.screen!.querySelector<HTMLFormElement>('#account-form')!.addEventListener('submit', (event) => {
       event.preventDefault();
-      const data = new FormData(event.currentTarget as HTMLFormElement);
-      const result = actions.save(String(data.get('nickname') ?? ''));
+      const typed = nicknameInput?.value ?? '';
+      const result = actions.save(typed);
       const errorNode = this.screen?.querySelector<HTMLElement>('[data-account-error]');
       const currentNode = this.screen?.querySelector<HTMLElement>('[data-account-current]');
       if (!result.ok) {
@@ -775,7 +777,10 @@ export class GameUI {
     this.chat.classList.add('open');
     this.chatInput.value = prefix;
     this.setControlsSuppressed(true);
-    if (this.chatPinnedToBottom) this.scrollChatToBottom();
+    this.revealChatLines();
+    this.chatPinnedToBottom = true;
+    this.scrollChatToBottom();
+    this.scheduleScrollChatToBottom(token);
     window.setTimeout(() => {
       if (token !== this.chatFocusToken || !this.chatOpen) return;
       this.chatInput.focus();
@@ -814,11 +819,7 @@ export class GameUI {
 
   fadeChatLines(nowMs: number, opacityOf: (ageMs: number) => number): void {
     if (this.chatOpen) {
-      for (const node of this.chatLogInner.children) {
-        const line = node as HTMLElement;
-        line.style.opacity = '1';
-        line.style.display = '';
-      }
+      this.revealChatLines();
       return;
     }
     for (const node of this.chatLogInner.children) {
@@ -826,6 +827,14 @@ export class GameUI {
       const opacity = opacityOf(nowMs - Number(line.dataset.at ?? nowMs));
       line.style.opacity = String(opacity);
       line.style.display = opacity <= 0.02 ? 'none' : '';
+    }
+  }
+
+  private revealChatLines(): void {
+    for (const node of this.chatLogInner.children) {
+      const line = node as HTMLElement;
+      line.style.opacity = '1';
+      line.style.display = '';
     }
   }
 
@@ -840,8 +849,20 @@ export class GameUI {
 
   private scrollChatToBottom(): void {
     this.chatPinnedToBottom = true;
-    this.chatLogEl.scrollTop = this.chatLogEl.scrollHeight;
+    this.chatLogEl.scrollTop = chatScrollTopOnOpen(this.chatLogEl.scrollHeight);
     this.setChatNewVisible(false);
+  }
+
+  private scheduleScrollChatToBottom(token: number): void {
+    const run = () => {
+      if (token !== this.chatFocusToken || !this.chatOpen || !this.chatPinnedToBottom) return;
+      this.scrollChatToBottom();
+    };
+    queueMicrotask(run);
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
   }
 
   private setChatNewVisible(visible: boolean): void {

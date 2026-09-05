@@ -2313,8 +2313,10 @@ button {
   line-height: 1.5;
 }
 
-.account-window .form-grid {
-  gap: 12px;
+.account-window .field input {
+  pointer-events: auto;
+  user-select: text;
+  caret-color: #fff;
 }
 
 .account-window .menu-notice {

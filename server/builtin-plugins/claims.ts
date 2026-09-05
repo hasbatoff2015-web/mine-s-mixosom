@@ -8,7 +8,6 @@ import {
   effectiveFlag,
   effectiveFlags,
   flagSetter,
-  isClaimFlag,
   isTrusted,
   migrateClaimStore,
   ownFlagLines,
@@ -16,6 +15,7 @@ import {
   type Claim,
   type ClaimStore,
 } from '../services/claims';
+import { findClaimByName, parseClaimFlagArgs, parseClaimMemberArgs } from '../services/claimCommands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
 
@@ -31,10 +31,10 @@ const HELP = {
     { usage: '/claim delete <name>', description: 'Delete your claim', permission: 'claim.use' },
     { usage: '/claim info [name]', description: 'Show claim info and effective flags', permission: 'claim.use' },
     { usage: '/claim list', description: 'List your claims', permission: 'claim.use' },
-    { usage: '/claim addmember <player>', description: 'Add a member to the claim you are in', permission: 'claim.use' },
-    { usage: '/claim removemember <player>', description: 'Remove a member', permission: 'claim.use' },
-    { usage: '/claim members', description: 'List members', permission: 'claim.use' },
-    { usage: '/claim flag <flag> <true|false>', description: 'Set an explicit claim flag', permission: 'claim.use' },
+    { usage: '/claim addmember [name] <player>', description: 'Add a member (current claim or named)', permission: 'claim.use' },
+    { usage: '/claim removemember [name] <player>', description: 'Remove a member (current claim or named)', permission: 'claim.use' },
+    { usage: '/claim members [name]', description: 'List members of the current or named claim', permission: 'claim.use' },
+    { usage: '/claim flag [name] <flag> <true|false>', description: 'Set an explicit flag on the current or named claim', permission: 'claim.use' },
     { usage: '/claim priority <name> <number>', description: 'Set claim priority', permission: 'claim.use' },
     { usage: '/claim admin delete <name>', description: 'Delete any claim', permission: 'claim.admin' },
   ],
@@ -201,7 +201,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             const named = args[1]?.toLowerCase();
             const here = standingAll(sender.playerId);
             const claim = named
-              ? load().claims.find((entry) => entry.name === named)
+              ? findClaimByName(load().claims, named, ownerKey)
               : sortClaimsByPriority(here)[0];
             if (!claim) return fail(named ? `Claim '${named}' not found.` : 'You are not standing in a claim.');
             const player = api.getPlayer(sender.playerId);
@@ -231,7 +231,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             const value = Number(raw);
             if (!Number.isFinite(value)) return usageError('/claim priority <name> <number>');
             const store = load();
-            const live = store.claims.find((entry) => entry.name === name);
+            const live = findClaimByName(store.claims, name, ownerKey);
             if (!live) return fail(`Claim '${name}' not found.`);
             if (!canEdit(live, sender)) return fail('You do not have permission.');
             live.priority = clampClaimPriority(value);
@@ -239,35 +239,53 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Set priority of '${live.name}' to ${live.priority}.`);
           }
           if (sub === 'addmember' || sub === 'removemember' || sub === 'members' || sub === 'flag') {
-            const claim = editableAtFeet(sender) ?? topAt(sender.playerId);
-            if (!claim) return fail('You are not standing in a claim.');
-            if (!canEdit(claim, sender)) return fail('Only the claim owner can do that.');
-            const store = load();
-            const live = store.claims.find((entry) => entry.id === claim.id);
-            if (!live) return fail('Claim not found.');
-            if (sub === 'members') return ok(`Members: ${live.members.join(', ') || '(none)'}`);
-            if (sub === 'addmember') {
-              const name = args[1]?.toLowerCase();
-              if (!name) return usageError('/claim addmember <player>');
-              if (!live.members.includes(name)) live.members.push(name);
-              save(store);
-              return ok(`Added ${name} to claim '${live.name}'.`);
+            const resolveEditable = (claimName: string | undefined) => {
+              const store = load();
+              if (claimName) {
+                const live = findClaimByName(store.claims, claimName, ownerKey);
+                if (!live) return { error: fail(`Claim '${claimName}' not found.`) };
+                if (!canEdit(live, sender)) return { error: fail('You do not have permission.') };
+                return { store, live };
+              }
+              const claim = editableAtFeet(sender) ?? topAt(sender.playerId);
+              if (!claim) return { error: fail('You are not standing in a claim.') };
+              if (!canEdit(claim, sender)) return { error: fail('Only the claim owner can do that.') };
+              const live = store.claims.find((entry) => entry.id === claim.id);
+              if (!live) return { error: fail('Claim not found.') };
+              return { store, live };
+            };
+            if (sub === 'members') {
+              const resolved = resolveEditable(args[1]?.toLowerCase());
+              if ('error' in resolved) return resolved.error;
+              return ok(`Members: ${resolved.live.members.join(', ') || '(none)'}`);
             }
-            if (sub === 'removemember') {
-              const name = args[1]?.toLowerCase();
-              if (!name) return usageError('/claim removemember <player>');
-              live.members = live.members.filter((member) => member !== name);
-              save(store);
-              return ok(`Removed ${name} from claim '${live.name}'.`);
+            if (sub === 'addmember' || sub === 'removemember') {
+              const parsed = parseClaimMemberArgs(args.slice(1));
+              if (!parsed.ok) {
+                return usageError(sub === 'addmember'
+                  ? '/claim addmember [name] <player>'
+                  : '/claim removemember [name] <player>');
+              }
+              const resolved = resolveEditable(parsed.claimName);
+              if ('error' in resolved) return resolved.error;
+              if (sub === 'addmember') {
+                if (!resolved.live.members.includes(parsed.player)) resolved.live.members.push(parsed.player);
+                save(resolved.store);
+                return ok(`Added ${parsed.player} to claim '${resolved.live.name}'.`);
+              }
+              resolved.live.members = resolved.live.members.filter((member) => member !== parsed.player);
+              save(resolved.store);
+              return ok(`Removed ${parsed.player} from claim '${resolved.live.name}'.`);
             }
-            const flagName = args[1]?.toLowerCase();
-            const raw = args[2]?.toLowerCase();
-            if (!flagName || !isClaimFlag(flagName) || (raw !== 'true' && raw !== 'false' && raw !== 'on' && raw !== 'off')) {
-              return usageError(`/claim flag <${CLAIM_FLAGS.join('|')}> <true|false>`);
+            const parsed = parseClaimFlagArgs(args.slice(1));
+            if (!parsed.ok) {
+              return usageError(`/claim flag [name] <${CLAIM_FLAGS.join('|')}> <true|false>`);
             }
-            live.flags[flagName] = raw === 'true' || raw === 'on';
-            save(store);
-            return ok(`Set ${flagName}=${live.flags[flagName]} on claim '${live.name}'.`);
+            const resolved = resolveEditable(parsed.claimName);
+            if ('error' in resolved) return resolved.error;
+            resolved.live.flags[parsed.flag] = parsed.value;
+            save(resolved.store);
+            return ok(`Set ${parsed.flag}=${parsed.value} on claim '${resolved.live.name}'.`);
           }
           if (sub === 'admin') {
             if (!bypass(sender.playerId, sender.name)) return fail('You do not have permission.');

@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: named /claim commands, chat open scroll, account nick input
+
+- `/claim flag|members|addmember|removemember` принимают явное `<name>` без требования стоять в claim. Старый standing-синтаксис сохранён. Parser: если первый токен — известный flag, это standing-форма.
+- Открытие чата (T) всегда pin/scroll вниз: сначала reveal hidden lines, затем `scrollTop` + microtask/rAF.
+- Account: InputManager больше не blur'ит меню-поля. Раньше `shouldBlurStaleTextField` снимал фокус с nickname input на каждый keydown, поэтому казалось, что можно только выбрать подсказку браузера. Input: `type=text`, `autocomplete=off`.
+- Report: `docs/reports/2026-09-05_claim-named-commands-chat-account.md`.
+
 ## Последний проход: Claims overlap/priority, chat scroll, 3D holograms, spawn respawn
 
 - Ветка `cursor/claims-chat-holograms-3f93` от nickname-console `cursor/nickname-console-3f93`.
