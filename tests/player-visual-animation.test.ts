@@ -138,6 +138,7 @@ describe('player visual rig hierarchy', () => {
     visual.update(1 / 60, visualFrame);
     const held = visual.rig.heldItem.children[0];
     expect(held).toBeDefined();
+    if (!held) throw new Error('expected held apple model');
     const idleY = held.position.y;
     const idleRotX = held.rotation.x;
     visual.update(1 / 60, { ...visualFrame, foodUseProgress: 0.5 });
