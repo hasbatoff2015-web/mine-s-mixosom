@@ -564,3 +564,226 @@ describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () =>
     expect(world.world.getBlock(bobHit.x, bobHit.y, bobHit.z)).toBe(BlockId.OakLog);
   });
 });
+
+/**
+ * Live bug after PR #59: first START→FINISH is a dry cycle, the second breaks.
+ * Neighbors then break on the first cycle while LMB stays down.
+ *
+ * Cause: `tickOnline` sends `input` then `block_break_start`. The server
+ * accepts START immediately, but `PlayerCommandQueue` still applies older
+ * idle commands (no `mining`) one per physics tick and wipes `miningTarget`.
+ */
+describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_000 }, () => {
+  const dirs: string[] = [];
+  const worlds: WorldInstance[] = [];
+
+  afterEach(async () => {
+    for (const world of worlds.splice(0)) await world.stop();
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function boot(name = 'Ada') {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name });
+    if ('error' in joined) throw new Error(joined.error);
+    world.setGameMode(joined.player, 'survival');
+    joined.player.controller.teleport([8.5, 70, 8.5]);
+    return { world, player: joined.player, sink };
+  }
+
+  function enqueueIdles(world: WorldInstance, player: ServerPlayer, from: number, to: number) {
+    for (let seq = from; seq <= to; seq += 1) world.applyInput(player, input(seq));
+  }
+
+  it('queued idles applied after beginMining must not wipe the lock (cycle #1 would otherwise fail)', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player, BlockId.Dirt);
+    const intent = blockTargetFromHit(hit);
+    const leftover = 8;
+    const startSeq = leftover + 1;
+
+    enqueueIdles(world, player, 1, leftover);
+    world.applyInput(player, input(startSeq, { mining: true }));
+    expect(world.beginMining(player, intent, 1, startSeq)).toEqual({ ok: true });
+    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningProgress).toBe(0);
+
+    const afterStart = {
+      target: player.miningTarget ? { ...player.miningTarget } : undefined,
+      progress: player.miningProgress,
+      applied: player.appliedCommandSeq,
+      startSeq,
+    };
+
+    for (let i = 0; i < leftover; i += 1) world.tick();
+
+    const afterDrain = {
+      target: player.miningTarget ? { ...player.miningTarget } : undefined,
+      progress: player.miningProgress,
+      applied: player.appliedCommandSeq,
+    };
+
+    expect(
+      afterDrain.target,
+      `START #1 accepted ${JSON.stringify(afterStart)} then leftover idles wiped the lock: ${JSON.stringify(afterDrain)}`,
+    ).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningProgress, 'stale pre-START idles must still count as hold ticks after START').toBeGreaterThan(0);
+
+    const ticks = clientTicksToFinish(BlockId.Dirt);
+    let seq = startSeq;
+    for (let tick = leftover + 1; tick <= ticks; tick += 1) {
+      seq += 1;
+      world.applyInput(player, input(seq, { mining: true }));
+      world.tick();
+    }
+    const finish1 = world.world.getBlock(hit.x, hit.y, hit.z) === BlockId.Air
+      ? { ok: true as const, reason: 'auto-break' }
+      : world.tryBreak(player, hit.x, hit.y, hit.z, intent, seq);
+    expect(finish1.ok, `FINISH #1 ${JSON.stringify(finish1)} progress=${player.miningProgress}`).toBe(true);
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('START A#1 with leftover idles, A#2 after remine, then neighbor B on first cycle while holding', async () => {
+    const { world, player } = await boot();
+    const first = prepareTarget(world, player, BlockId.OakPlanks, 0);
+    const firstIntent = blockTargetFromHit(first);
+    const leftover = 8;
+    const start1 = leftover + 1;
+
+    enqueueIdles(world, player, 1, leftover);
+    world.applyInput(player, input(start1, { mining: true }));
+    expect(world.beginMining(player, firstIntent, 1, start1)).toEqual({ ok: true });
+
+    const ticks = clientTicksToFinish(BlockId.OakPlanks);
+    let seq = start1;
+    for (let step = 0; step < leftover; step += 1) world.tick();
+    expect(player.miningTarget, 'cycle #1 lock must survive leftover idle drain').toEqual({
+      x: first.x, y: first.y, z: first.z,
+    });
+
+    for (let tick = leftover + 1; tick <= ticks; tick += 1) {
+      seq += 1;
+      world.applyInput(player, input(seq, { mining: true }));
+      world.tick();
+    }
+    if (world.world.getBlock(first.x, first.y, first.z) !== BlockId.Air) {
+      const finish1 = world.tryBreak(player, first.x, first.y, first.z, firstIntent, seq);
+      expect(finish1, 'FINISH A#1').toEqual({ ok: true });
+    }
+    expect(world.world.getBlock(first.x, first.y, first.z)).toBe(BlockId.Air);
+
+    const second = prepareTarget(world, player, BlockId.Dirt, 1);
+    const secondIntent = blockTargetFromHit(second);
+    seq += 1;
+    const startB = seq;
+    world.applyInput(player, input(startB, { mining: true }));
+    expect(world.beginMining(player, secondIntent, 2, startB)).toEqual({ ok: true });
+    const dirtTicks = clientTicksToFinish(BlockId.Dirt);
+    for (let tick = 1; tick <= dirtTicks; tick += 1) {
+      seq += 1;
+      world.applyInput(player, input(seq, { mining: true }));
+      world.tick();
+    }
+    if (world.world.getBlock(second.x, second.y, second.z) !== BlockId.Air) {
+      expect(world.tryBreak(player, second.x, second.y, second.z, secondIntent, seq)).toEqual({ ok: true });
+    }
+    expect(world.world.getBlock(second.x, second.y, second.z)).toBe(BlockId.Air);
+  });
+
+  it('omitted mining with seq >= START still cancels (real mouse-up)', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player, BlockId.OakLog);
+    const intent = blockTargetFromHit(hit);
+    enqueueIdles(world, player, 1, 4);
+    world.applyInput(player, input(5, { mining: true }));
+    expect(world.beginMining(player, intent, 1, 5)).toEqual({ ok: true });
+    for (let i = 0; i < 4; i += 1) world.tick();
+    world.tick();
+    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    world.applyInput(player, input(6, { mining: true }));
+    world.tick();
+    world.applyInput(player, input(7));
+    world.tick();
+    expect(player.miningTarget).toBeUndefined();
+    expect(player.miningProgress).toBe(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 7)).toEqual({ ok: false, reason: 'mining' });
+  });
+
+  it('sticky lastApplied idle with seq < START must not wipe before the mining command is dequeued', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player, BlockId.Dirt);
+    const intent = blockTargetFromHit(hit);
+    world.applyInput(player, input(1));
+    world.tick();
+    expect(player.appliedCommandSeq).toBe(1);
+    expect(world.beginMining(player, intent, 1, 5)).toEqual({ ok: true });
+    world.tick();
+    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningProgress).toBeGreaterThan(0);
+    world.applyInput(player, input(5, { mining: true }));
+    const ticks = clientTicksToFinish(BlockId.Dirt);
+    let seq = 5;
+    for (let tick = 2; tick <= ticks; tick += 1) {
+      seq += 1;
+      world.applyInput(player, input(seq, { mining: true }));
+      world.tick();
+    }
+    if (world.world.getBlock(hit.x, hit.y, hit.z) !== BlockId.Air) {
+      expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, seq)).toEqual({ ok: true });
+    }
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('Bob connected does not change Ada leftover-idle first cycle', async () => {
+    const { world, player: ada } = await boot('Ada');
+    const bobJoin = world.join({ sink: new MemorySink(), name: 'Bob' });
+    if ('error' in bobJoin) throw new Error(bobJoin.error);
+    const bob = bobJoin.player;
+    world.setGameMode(bob, 'survival');
+    bob.controller.teleport([12.5, 70, 8.5]);
+    world.applyInput(bob, input(1));
+    world.tick();
+
+    const hit = prepareTarget(world, ada, BlockId.Dirt);
+    const intent = blockTargetFromHit(hit);
+    enqueueIdles(world, ada, 1, 8);
+    world.applyInput(ada, input(9, { mining: true }));
+    expect(world.beginMining(ada, intent, 1, 9)).toEqual({ ok: true });
+    for (let i = 0; i < 8; i += 1) world.tick();
+    expect(ada.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(bob.miningTarget).toBeUndefined();
+  });
+
+  it('matrix: leftover-idle first cycle breaks dirt, stone, oak log, oak planks', async () => {
+    const rows: Array<{ key: string; firstCycleOk: boolean }> = [];
+    for (const block of [BlockId.Dirt, BlockId.Stone, BlockId.OakLog, BlockId.OakPlanks] as const) {
+      const { world, player } = await boot(`Matrix-${getBlockDefinition(block).key}`);
+      const hit = prepareTarget(world, player, block);
+      const intent = blockTargetFromHit(hit);
+      const leftover = 8;
+      const startSeq = leftover + 1;
+      enqueueIdles(world, player, 1, leftover);
+      world.applyInput(player, input(startSeq, { mining: true }));
+      expect(world.beginMining(player, intent, 1, startSeq)).toEqual({ ok: true });
+      const ticks = clientTicksToFinish(block);
+      let seq = startSeq;
+      for (let step = 0; step < leftover; step += 1) world.tick();
+      for (let tick = leftover + 1; tick <= ticks; tick += 1) {
+        seq += 1;
+        world.applyInput(player, input(seq, { mining: true }));
+        world.tick();
+      }
+      const auto = world.world.getBlock(hit.x, hit.y, hit.z) === BlockId.Air;
+      const finish = auto ? { ok: true as const } : world.tryBreak(player, hit.x, hit.y, hit.z, intent, seq);
+      rows.push({ key: getBlockDefinition(block).key, firstCycleOk: finish.ok && world.world.getBlock(hit.x, hit.y, hit.z) === BlockId.Air });
+    }
+    for (const row of rows) {
+      expect(row.firstCycleOk, `${row.key} first cycle`).toBe(true);
+    }
+  });
+});

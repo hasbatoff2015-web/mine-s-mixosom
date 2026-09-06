@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: first mining cycle vs queued pre-START idles
+
+- Симптом после PR #59: первый overlay 0→100% → FINISH → блок цел; второй полный цикл ломает. Соседи при удержании ЛКМ ломаются с первого цикла. Не hardness / oak planks / claims / LOS / `miningFinishKey`.
+- Доказательство (тест до фикса): enqueue idle seq 1..8 + `mining` seq 9 + `beginMining(..., 9)` → 8 тиков → `miningTarget` wiped, `applied=8`, `progress=0`. START был принят (`target` set, `applied=-1`).
+- Корень: START обрабатывается сразу, очередь команд — по одной за physics tick. Старые idle без `mining` после START считались mouse-up. Cycle #2 работает, потому что к повторному START очередь уже `mining: true`. Сосед B — то же.
+- Фикс: `miningStartCommandSeq` на accepted START; `shouldKeepMiningLock` если `mining===true` или `appliedCommandSeq < start`. Stale ticks ещё и `advanceMining`. Mouse-up `seq >= start` без mining по-прежнему снимает lock.
+- Live (два Chrome `?miningTrace=1`, B idle, FPS 4 / `inBurst=4`): dirt `9,65,6` — один overlay 0→100% → server auto-break, FINISH `empty` (уже air), не `reason: mining`. Oak planks `id=22` `8,65,6` сломались с первого цикла; соседние доски при удержании ЛКМ тоже с первого. Owner ×5 matrix не закрыт.
+- Report: `docs/reports/2026-09-06_first-cycle-mining-sync.md`.
+
 ## Последний проход: server mining lock hold + deferred finish after reason=mining
 
 - Live QA (agent): B ставил дубовые доски (`id=22`), A целился в них. **5× ломка до 100% в двух Chrome не подтверждена** (`mutated=1` для `id=22` нет). Synthetic/CDP hold сбрасывал `input.mining` (`cleanup idle`). Не утверждать, что live-баг закрыт — owner QA в ROADMAP. Pre-fix trace: `CLIENT FINISH` при 100% → server `mine=—` → `reason: mining` из-за `input` без `mining: true`.

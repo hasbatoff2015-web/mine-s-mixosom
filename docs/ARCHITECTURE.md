@@ -1,5 +1,13 @@
 # Архитектура
 
+## Anarchy first mining cycle vs command queue — 2026-09-06
+
+`tickOnline` sends `input` (seq N) then `block_break_start` (`commandSeq: N`). START is applied **immediately**. The command queue still applies **one packet per physics tick**. Idle packets sent *before* the click (no `mining`) can therefore run *after* `beginMining` and used to wipe `miningTarget`. Client overlay still runs 0→100%; FINISH sees `progress <= 0` / no lock → `reason: mining`. The client resends START; by then the queue is `mining: true`, so cycle #2 and later neighbors succeed on the first overlay.
+
+`shouldKeepMiningLock`: `mining === true` **or** `appliedCommandSeq < miningStartCommandSeq`. Stale pre-START idles keep and **advance** the lock (those physics ticks happen after the click). A later omitted/`mining:false` with `seq >= start` is still mouse-up. `miningStartCommandSeq` is set on accepted START and cleared with the lock (break / abort / air / respawn / disconnect).
+
+This is not oak-planks/hardness/claims/LOS/`miningFinishKey`. PR #59 only tagged *new* packets with `mining: true`; it cannot rewrite commands already queued.
+
 ## Anarchy mining input hold — 2026-09-06
 
 Protocol omits `input.mining` unless it is strictly `true`. Server `tickPlayers` wipes `miningTarget` when the field is missing. That wipe during a long hold (`oak_log` / `oak_planks` 60 ticks, stone 150) is a **client lifecycle error**, not a valid idle: mouse-up, pause, inventory, and target-abandon must clear the hold flags first.

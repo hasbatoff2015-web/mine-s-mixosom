@@ -10,6 +10,8 @@ export interface BreakAttemptTrace {
   readonly blockId: number;
   readonly miningTarget?: { x: number; y: number; z: number };
   readonly miningProgress: number;
+  readonly miningStartCommandSeq?: number;
+  readonly appliedCommandSeq?: number;
   readonly commandSeq?: number;
   readonly stage: string;
   readonly reason?: string;
@@ -40,6 +42,8 @@ export function formatBreakAttempt(trace: BreakAttemptTrace): string {
     `cancelled=${trace.eventCancelled === true ? 1 : 0}`,
     `mine=${mine}`,
     `cmd=${trace.commandSeq ?? '—'}`,
+    `startCmd=${trace.miningStartCommandSeq ?? '—'}`,
+    `applied=${trace.appliedCommandSeq ?? '—'}`,
   ].join(' ') + claim;
 }
 
