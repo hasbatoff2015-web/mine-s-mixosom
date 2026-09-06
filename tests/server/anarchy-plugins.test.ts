@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
+import { PLAYER_NET_REACH } from '../../src/core/constants';
 import { Vec3 } from '../../src/math/vec3';
+import { blockTargetFromHit } from '../../src/net/actionIntent';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
@@ -560,6 +562,145 @@ describe('Anarchy builtin plugins', () => {
     const explosion = world.events.createExplosion(origin[0], origin[1], origin[2], 3, 4);
     world.events.emit('explosion', explosion);
     expect(explosion.cancelled).toBe(true);
+  });
+
+  it('does not register claims blockBreak twice after reload or a second enableAll', async () => {
+    const world = await boot();
+    const before = world.events.listenerCount('blockBreak');
+    expect(before).toBe(1);
+    const reloaded = await world.plugins.reload('claims');
+    expect(reloaded.ok).toBe(true);
+    expect(world.events.listenerCount('blockBreak')).toBe(before);
+    expect(world.events.listenerCount('blockPlace')).toBe(1);
+    await world.plugins.enableAll();
+    expect(world.events.listenerCount('blockBreak')).toBe(before);
+  });
+
+  it('does not leak cancel from one blockBreak event onto the next', async () => {
+    const world = await boot();
+    const first = world.events.createBlockBreak('missing-a', 1, 2, 3, BlockId.Dirt);
+    first.cancel();
+    expect(first.cancelled).toBe(true);
+    const second = world.events.createBlockBreak('missing-b', 1, 2, 3, BlockId.Dirt);
+    expect(second.cancelled).toBe(false);
+    world.events.emit('blockBreak', second);
+    expect(second.cancelled).toBe(false);
+  });
+
+  it('allows two players to break separate no-claim blocks independently', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    world.setGameMode(ada.player, 'creative');
+    world.setGameMode(bob.player, 'creative');
+    const ax = Math.floor(ada.player.controller.position.x) + 8;
+    const ay = Math.floor(ada.player.controller.position.y);
+    const az = Math.floor(ada.player.controller.position.z) + 8;
+    world.world.setBlock(ax, ay, az, BlockId.Dirt);
+    world.world.setBlock(ax + 1, ay, az, BlockId.Dirt);
+    expect(world.tryBreak(ada.player, ax, ay, az)).toEqual({ ok: true });
+    expect(world.tryBreak(bob.player, ax + 1, ay, az)).toEqual({ ok: true });
+    expect(world.world.getBlock(ax, ay, az)).toBe(BlockId.Air);
+    expect(world.world.getBlock(ax + 1, ay, az)).toBe(BlockId.Air);
+  });
+
+  it('keeps a cancelled claim break from blocking a later trusted break of the same cell', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const x = Math.floor(ada.player.controller.position.x) + 2;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    chat(world, ada, '/claim pos1');
+    ada.player.controller.teleport([x + 2.5, y + 3, z + 2.5]);
+    chat(world, ada, '/claim pos2');
+    chat(world, ada, '/claim create garden');
+    world.world.setBlock(x, y + 1, z, BlockId.Dirt);
+    world.setGameMode(ada.player, 'creative');
+    world.setGameMode(bob.player, 'creative');
+    bob.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    expect(world.tryBreak(bob.player, x, y + 1, z)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(world.world.getBlock(x, y + 1, z)).toBe(BlockId.Dirt);
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    expect(world.tryBreak(ada.player, x, y + 1, z)).toEqual({ ok: true });
+    expect(world.world.getBlock(x, y + 1, z)).toBe(BlockId.Air);
+  });
+
+  it('lets a later plugin cancel blockBreak after claims allowed it', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    world.setGameMode(ada.player, 'creative');
+    const x = Math.floor(ada.player.controller.position.x) + 6;
+    const y = Math.floor(ada.player.controller.position.y);
+    const z = Math.floor(ada.player.controller.position.z) + 6;
+    world.world.setBlock(x, y, z, BlockId.Dirt);
+    world.plugins.register({
+      name: 'deny-after-claims',
+      onEnable(api) {
+        api.registerEvent('blockBreak', (event) => event.cancel());
+      },
+    });
+    await world.plugins.enableAll();
+    expect(world.events.listenerCount('blockBreak')).toBe(2);
+    expect(world.tryBreak(ada.player, x, y, z)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.Dirt);
+  });
+
+  it('allows wilderness place-break cycles and an intersecting player with claims loaded', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    world.setGameMode(ada.player, 'creative');
+    world.setGameMode(bob.player, 'creative');
+    ada.player.controller.teleport([12.5, 70.2, 12.5]);
+    bob.player.controller.teleport([12.5, 70.2, 9.5]);
+    world.applyInput(ada.player, {
+      type: 'input', seq: 1, forward: 0, right: 0, jump: false, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 0,
+    });
+    world.applyInput(bob.player, {
+      type: 'input', seq: 1, forward: 0, right: 0, jump: false, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 0,
+    });
+    world.tick();
+    const eye = ada.player.controller.eyePosition();
+    const x = Math.floor(eye.x);
+    const y = Math.floor(eye.y);
+    const z = Math.floor(eye.z);
+    for (let ix = x - 1; ix <= x + 1; ix += 1) {
+      for (let iy = y - 1; iy <= y + 1; iy += 1) {
+        for (let iz = z - 4; iz <= z + 1; iz += 1) world.world.setBlock(ix, iy, iz, BlockId.Air);
+      }
+    }
+    world.world.setBlock(x, y, z, BlockId.Dirt);
+    const event = world.events.createBlockBreak(ada.player.id, x, y, z, BlockId.Dirt);
+    world.events.emit('blockBreak', event);
+    expect(event.cancelled).toBe(false);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      world.world.setBlock(x, y, z - 2, BlockId.Dirt);
+      expect(world.tryBreak(bob.player, x, y, z - 2)).toEqual({ ok: true });
+      expect(world.world.getBlock(x, y, z - 2)).toBe(BlockId.Air);
+    }
+    world.world.setBlock(x, y, z, BlockId.Dirt);
+    const adaIntent = blockTargetFromHit({
+      x, y, z, block: BlockId.Dirt,
+      normal: new Vec3(0, 0, 1),
+      point: new Vec3(x + 0.5, y + 0.5, z + 1),
+      distance: 0.2,
+    });
+    expect(world.beginMining(ada.player, adaIntent, 1, 1)).toEqual({ ok: true });
+    expect(world.tryBreak(ada.player, x, y, z, adaIntent, 1)).toEqual({ ok: true });
+    world.world.setBlock(x, y, z, BlockId.Dirt);
+    const bobEye = bob.player.controller.eyePosition();
+    const bobHit = world.world.raycast(
+      bobEye,
+      new Vec3(x + 0.5 - bobEye.x, y + 0.5 - bobEye.y, z + 0.5 - bobEye.z).normalize(),
+      PLAYER_NET_REACH,
+    );
+    if (!bobHit) throw new Error('bob could not see wilderness dirt');
+    const bobIntent = blockTargetFromHit(bobHit);
+    expect(world.tryBreak(bob.player, x, y, z, bobIntent, 1)).toEqual({ ok: true });
   });
 
   it('respawns dead players at the /setspawn world spawn', async () => {

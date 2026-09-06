@@ -120,12 +120,50 @@ describe('block action intent contract', () => {
     expect(result).toEqual({ ok: false, reason: 'stale' });
   });
 
-  it('rejects when first intercept is a different face of the same voxel', () => {
+  it('accepts a target whose eye is inside the voxel (placed block clipping)', () => {
+    const world = stoneWorld();
+    const inside = { x: 5.5, y: 41.4, z: 5.4 };
+    const result = validateBlockTargetIntent(world, inside, intentFor(5, 41, 5, { x: 0, y: 0, z: -1 }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.hit.x).toBe(5);
+      expect(result.value.hit.y).toBe(41);
+      expect(result.value.hit.z).toBe(5);
+    }
+  });
+
+  it('rejects a face that does not match LOS for place/use', () => {
     const world = stoneWorld();
     const result = validateBlockTargetIntent(world, eye, {
       ...intentFor(5, 41, 5),
       faceX: 1, faceY: 0, faceZ: 0,
     });
+    expect(result).toEqual({ ok: false, reason: 'los' });
+  });
+
+  it('accepts the same voxel with a mismatched face when mining', () => {
+    const world = stoneWorld();
+    const result = validateBlockTargetIntent(world, eye, {
+      ...intentFor(5, 41, 5),
+      faceX: 1, faceY: 0, faceZ: 0,
+    }, { requireMatchingFace: false });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.hit.x).toBe(5);
+      expect(result.value.hit.y).toBe(41);
+      expect(result.value.hit.z).toBe(5);
+    }
+  });
+
+  it('still rejects a neighbor cell even when mining skips face match', () => {
+    const world = stoneWorld();
+    const result = validateBlockTargetIntent(world, eye, {
+      ...intentFor(5, 41, 5),
+      targetX: 5, targetY: 42, targetZ: 5,
+      targetBlockId: BlockId.OakLog,
+      hitX: 5.5, hitY: 42.5, hitZ: 5.5,
+      faceX: 0, faceY: 0, faceZ: -1,
+    }, { requireMatchingFace: false });
     expect(result).toEqual({ ok: false, reason: 'los' });
   });
 

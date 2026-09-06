@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: two-player unbreakable block (intent LOS / claims audit)
+
+- Player A не ломает клетку, Player B ломает ту же: сервер один, reject player-specific. Типичные пути: (1) DDA-грань той же клетки не совпала с clicked face → `los` (mining больше не требует грань); (2) глаз A внутри поставленного блока: DDA даёт *entry* face. Claims при `overlapping=[]` не cancel. Reconnect с resume оставляет ту же позу (иногда не лечит); новый spawn снаружи — лечит.
+- Place/use по-прежнему требуют совпадение грани (она выбирает соседа). Creative больше не держит Survival `miningTarget` lock на другую клетку.
+- Report: `docs/reports/2026-09-06_block-break-two-player.md`.
+
 ## Последний проход: stuck Anarchy block after failed finish
 
 - После неуспешного `block_break_finish` клиент оставлял `pendingBlockAction` на тех же координатах. Sequenced path шлёт только `action_result`, не `block_result`, и без `block_update` pending никогда не сбрасывался. Повторный finish того же блока глотался; другие блоки работали; Creative тоже нет (тот же client gate); reconnect создавал новую session и снимал lock.

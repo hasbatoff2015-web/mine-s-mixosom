@@ -81,6 +81,20 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         return claims.some((claim) => isTrusted(claim, playerName));
       };
 
+      const describeProtection = (
+        claims: readonly Claim[],
+        flag: 'block-break' | 'block-place',
+        playerName: string,
+      ) => {
+        const setter = flagSetter(claims, flag);
+        return {
+          overlap: claims.length,
+          flag: effectiveFlag(claims, flag),
+          trusted: setter ? isTrusted(setter, playerName) : claims.some((claim) => isTrusted(claim, playerName)),
+          names: claims.map((claim) => claim.name).join(','),
+        };
+      };
+
       const denyBuild = (
         event: { cancel(): void },
         claims: readonly Claim[],
@@ -89,6 +103,8 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       ): boolean => {
         if (allowFlag(claims, flag, player.id, player.name)) return false;
         event.cancel();
+        const info = describeProtection(claims, flag, player.name);
+        api.log(`${flag} deny ${player.name} overlap=${info.overlap} [${info.names}] effective=${info.flag} trusted=${info.trusted}`);
         player.sendMessage('This land is claimed.');
         ctx.claimBoundaries.showAll(player.id, protectionSources(claims, flag, player.name));
         return true;
@@ -98,7 +114,10 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const claims = overlapping(event.x, event.y, event.z);
         if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
-        if (!player) return;
+        if (!player) {
+          api.log(`block-break skip-no-player id=${event.playerId} at=${event.x},${event.y},${event.z} overlap=${claims.length}`);
+          return;
+        }
         denyBuild(event, claims, 'block-break', player);
       });
       api.registerEvent('blockPlace', (event) => {

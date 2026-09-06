@@ -674,7 +674,9 @@ export class ServerGameplay {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     const eye = this.intentEye(player, commandSeq);
     if (!eye.ok) return { ok: false, reason: eye.reason };
-    const validated = validateBlockTargetIntent(this.world, eye.value, intent);
+    const validated = validateBlockTargetIntent(this.world, eye.value, intent, {
+      requireMatchingFace: false,
+    });
     if (!validated.ok) return { ok: false, reason: validated.reason };
     const hit = validated.value.hit;
     const definition = getBlockDefinition(hit.block);
@@ -697,10 +699,11 @@ export class ServerGameplay {
     player: GameplayPlayer,
     intent: BlockTargetIntent,
     commandSeq?: number,
+    options?: { readonly requireMatchingFace?: boolean },
   ): { ok: true } | { ok: false; reason: string } {
     const eye = this.intentEye(player, commandSeq);
     if (!eye.ok) return eye;
-    const validated = validateBlockTargetIntent(this.world, eye.value, intent);
+    const validated = validateBlockTargetIntent(this.world, eye.value, intent, options);
     if (!validated.ok) return { ok: false, reason: validated.reason };
     return { ok: true };
   }

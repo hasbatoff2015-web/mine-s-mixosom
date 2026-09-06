@@ -29,8 +29,10 @@ export {
 } from './simulationEvents';
 export {
   ACTION_REACH,
+  eyeInsideTargetVoxel,
   resolveClientTargetVersusServerRay,
   validateBlockTargetIntent,
+  type ValidateBlockTargetOptions,
 } from './actionValidation';
 export {
   cartIsCloser,
