@@ -230,7 +230,7 @@ import {
   shouldResendBreakStartAfterFinishReject,
 } from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
-import { equippedArmorFromInventory } from '../../shared/playerPresentation';
+import { IDLE_PLAYER_PRESENTATION, presentationHurtSeq } from '../../shared/playerPresentation';
 import {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,
@@ -417,6 +417,10 @@ export interface OnlineAnarchySession {
   ignoreNetworkState?: boolean;
   isolationMode?: PredIsolationMode;
   isolation?: PredIsolationFlags;
+  /** Authoritative food-use phase from own `player_state` (ticks stay 0 online). */
+  ownFoodUseProgress?: number;
+  /** Join-baselined own hurtSeq so local third-person can flash like remotes. */
+  ownHurtSeq?: number;
   /**
    * Latest local `player_state` waiting for the next 20 TPS tick. Applying
    * inside the WebSocket callback mutates pose between render samples.
@@ -837,6 +841,8 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
+        ownFoodUseProgress: welcome.you.presentation?.foodUseProgress ?? 0,
+        ownHurtSeq: presentationHurtSeq(welcome.you.presentation ?? IDLE_PLAYER_PRESENTATION),
         ...(() => {
           const isolation = resolvePredIsolation();
           return {
@@ -1286,6 +1292,7 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    this.applyOwnPresentation(session, local.presentation, local.dead === true || local.health <= 0);
     const flags = online.isolation ?? resolvePredIsolation();
     const player = session.player;
     const before = captureMotionFull(player);
@@ -2438,7 +2445,6 @@ export class Game {
       inventory.getSlot(this.session.selectedSlot)?.itemId,
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
-    playerVisual.setArmor(equippedArmorFromInventory(inventory));
     this.deathShown = false;
     this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
@@ -3560,7 +3566,6 @@ export class Game {
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
-    session.playerVisual.setArmor(equippedArmorFromInventory(session.inventory));
     if (gameplayAllowed) this.updateTargetAndActions();
     else {
       this.input.consumeAttackPressed();
@@ -4806,11 +4811,10 @@ export class Game {
       mining: this.input.mining && session.target !== undefined,
       bowCharge: session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0,
       swordBlocking: session.combat.swordBlocking,
-      foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
+      foodUseProgress: this.localFoodUseProgress(session),
       invisible: session.survival.invisible,
-      hurtFlash: this.hurt.flashAlpha(now),
+      hurtFlash: this.hurt.modelIntensity(now),
     });
-    session.playerVisual.setArmor(equippedArmorFromInventory(session.inventory));
     session.playerVisual.applyWorldLight(
       session.world,
       position.x,
@@ -4858,6 +4862,26 @@ export class Game {
     motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
   }
 
+  private localFoodUseProgress(session: GameSession): number {
+    if (session.foodUseTicks > 0) return clamp(session.foodUseTicks / 32, 0, 1);
+    return clamp(session.online?.ownFoodUseProgress ?? 0, 0, 1);
+  }
+
+  private applyOwnPresentation(
+    session: GameSession,
+    presentation: ServerPlayerStateMessage['players'][number]['presentation'],
+    dead: boolean,
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    const nextHurt = presentationHurtSeq(presentation ?? IDLE_PLAYER_PRESENTATION);
+    online.ownFoodUseProgress = dead ? 0 : (presentation?.foodUseProgress ?? 0);
+    if (online.ownHurtSeq !== undefined && nextHurt > online.ownHurtSeq) {
+      session.playerVisual.triggerHurtFlash();
+    }
+    online.ownHurtSeq = Math.max(online.ownHurtSeq ?? 0, nextHurt);
+  }
+
   private updateFirstPerson(deltaSeconds: number): void {
     const viewmodel = this.firstPerson;
     if (!viewmodel) return;
@@ -4872,7 +4896,7 @@ export class Game {
       state.onGround = session.player.onGround;
       state.sprinting = session.player.sprinting;
       state.mining = this.input.mining && session.target !== undefined;
-      state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
+      state.foodUseProgress = this.localFoodUseProgress(session);
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
       state.swordBlocking = session.combat.swordBlocking;
       state.onFire = session.survival.isOnFire;

@@ -17,7 +17,9 @@ import {
   createEntityMaterial,
   setEntityLight,
 } from '../worldLighting';
-import { hurtFlashAlpha } from '../hurtFeedback';
+import { applyMobHurtTint } from '../../entities/MobManager';
+import { applyEatDrinkHeldItemPose } from '../heldItemEatPose';
+import { playerHurtFlashIntensity } from '../hurtFeedback';
 import {
   PLAYER_MODEL_PIXEL,
   PlayerSkinGeometryCache,
@@ -29,8 +31,6 @@ import {
   type PlayerAnimationState,
   type PlayerVisualPose,
 } from './PlayerVisualAnimator';
-import { PlayerArmorOverlay } from './playerArmor';
-import { EMPTY_EQUIPPED_ARMOR, type EquippedArmorPresentation } from '../../../shared/playerPresentation';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly invisible: boolean;
@@ -82,7 +82,6 @@ export class PlayerVisual {
   private hurtFlash = 0;
   private hurtFlashStartedAt = -1;
   private disposed = false;
-  private readonly armorOverlay: PlayerArmorOverlay;
 
   constructor(
     private readonly skins: MinecraftSkinRegistry,
@@ -122,11 +121,6 @@ export class PlayerVisual {
     this.bodyYawRoot.add(upperBody, rightLeg, leftLeg);
     upperBody.add(head, body, rightArm, leftArm);
     rightArm.add(heldItem);
-    this.armorOverlay = new PlayerArmorOverlay(
-      { head, body, rightArm, leftArm, rightLeg, leftLeg },
-      () => this.appearanceValue.model,
-      (part, ...meshes) => this.positionPartMeshes(part, ...meshes),
-    );
     this.configurePivots();
     this.rebuildMeshes();
     bindEntityLightReceiver(this.root);
@@ -154,7 +148,6 @@ export class PlayerVisual {
     if (modelChanged) {
       this.configurePivots();
       this.rebuildMeshes();
-      this.armorOverlay.rebuild(this.invisible);
       bindEntityLightReceiver(this.root);
     } else this.syncLayerVisibility();
     previous.release();
@@ -172,15 +165,6 @@ export class PlayerVisual {
     this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
   }
 
-  setArmor(armor?: EquippedArmorPresentation): void {
-    this.assertActive();
-    this.armorOverlay.setArmor(armor ?? EMPTY_EQUIPPED_ARMOR, this.invisible);
-  }
-
-  get equippedArmor(): EquippedArmorPresentation {
-    return this.armorOverlay.equipped;
-  }
-
   swing(): void {
     this.animator.triggerSwing();
   }
@@ -193,16 +177,20 @@ export class PlayerVisual {
     this.assertActive();
     this.invisible = state.invisible;
     const nowMs = typeof performance !== 'undefined' ? performance.now() : 0;
-    const timedFlash = this.hurtFlashStartedAt >= 0 ? hurtFlashAlpha(nowMs - this.hurtFlashStartedAt) : 0;
+    const timedFlash = this.hurtFlashStartedAt >= 0 ? playerHurtFlashIntensity(nowMs - this.hurtFlashStartedAt) : 0;
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
     const pose = this.animator.advance(deltaSeconds, state);
     this.applyPose(pose);
     this.syncLayerVisibility();
-    if (this.heldModel && this.heldItemId && itemRenderProfile(this.heldItemId).category === 'bow') {
-      const texturePath = bowPullingTexturePath(state.bowCharge);
-      if (texturePath !== this.bowTexturePath) {
-        this.itemVisuals.setGeneratedTextureVariant(this.heldModel, texturePath);
-        this.bowTexturePath = texturePath;
+    if (this.heldModel && this.heldItemId) {
+      this.applyHeldItemTransform(this.heldModel, itemRenderProfile(this.heldItemId).category);
+      applyEatDrinkHeldItemPose(this.heldModel, state.foodUseProgress);
+      if (itemRenderProfile(this.heldItemId).category === 'bow') {
+        const texturePath = bowPullingTexturePath(state.bowCharge);
+        if (texturePath !== this.bowTexturePath) {
+          this.itemVisuals.setGeneratedTextureVariant(this.heldModel, texturePath);
+          this.bowTexturePath = texturePath;
+        }
       }
     }
     return pose;
@@ -211,12 +199,7 @@ export class PlayerVisual {
   applyWorldLight(world: VoxelWorld, x: number, y: number, z: number, daylight = 1): void {
     const sample = applySampledEntityLight(this.root, world, x, y, z, 1.8, daylight);
     if (this.hurtFlash <= 0) return;
-    const flash = this.hurtFlash;
-    setEntityLight(this.root, [
-      Math.min(1.2, sample.rgb[0] + flash * 0.55),
-      sample.rgb[1] * (1 - flash * 0.58),
-      sample.rgb[2] * (1 - flash * 0.58),
-    ]);
+    setEntityLight(this.root, applyMobHurtTint(sample.rgb, this.hurtFlash));
   }
 
   setVisible(visible: boolean): void {
@@ -227,7 +210,6 @@ export class PlayerVisual {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
-    this.armorOverlay.dispose();
     this.material.dispose();
     this.skinHandle.release();
     this.partMeshes.clear();
@@ -299,7 +281,6 @@ export class PlayerVisual {
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
     this.rig.heldItem.visible = this.heldModel !== undefined;
-    this.armorOverlay.setVisible(!this.invisible);
   }
 
   private applyPose(pose: PlayerVisualPose): void {

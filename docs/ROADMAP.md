@@ -1,12 +1,21 @@
 # Roadmap
 
+## 2026-09-06: Player visual follow-up (PR #64)
+
+- [x] Remove the inflated armor overlay renderer only; keep inventory/protocol armor ids.
+- [x] Crouch from the waist pivot without translating upperBody forward of the legs.
+- [x] Reuse the singleplayer eat/drink held-item bobble on local and remote PlayerVisual via `foodUseProgress`.
+- [x] Player model hurt flash uses `applyMobHurtTint` at peak 1.0 (HUD overlay stays 0.28 / 220 ms).
+- [x] Leave air swing (`attack` → `swingSeq`) unchanged.
+- [ ] Owner two-client live QA: crouch over legs, eat/drink both sides, bright PvP flash, air swing still works. No armor boxes on the model.
+
 ## 2026-09-06: Armor overlay, crouch hierarchy, air swing, multiplayer hurt flash
 
 - [x] Parent head/arms to `upperBody` so crouch keeps the torso visually connected.
-- [x] Render equipped armor as inflated shells on the existing PlayerVisual rig (local + remote).
+- [x] Inflated armor overlay shipped then **removed** in the follow-up (inventory/protocol ids kept).
 - [x] Send attack / increment `swingSeq` on air misses via existing `presentSwing`.
 - [x] Authoritative `hurtSeq` for the existing red flash on remotes.
-- [ ] Owner two-client live QA: armor on/off, crouch+walk+attack, air swing both ways, damage flash both ways.
+- [ ] Owner two-client live QA: crouch+walk+attack, air swing both ways, damage flash both ways.
 
 ## 2026-09-06: Integrate remote actions + Networking V2 into plugin/mining line
 

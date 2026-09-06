@@ -1,10 +1,8 @@
 import * as THREE from 'three';
 import type { PlayerSnapshot, RemotePlayerInfo } from '../../shared/protocol';
 import {
-  EMPTY_EQUIPPED_ARMOR,
   IDLE_PLAYER_PRESENTATION,
   REMOTE_ACTION_STALE_MS,
-  equippedArmorFromPartial,
   presentationHurtSeq,
   type PlayerPresentationState,
 } from '../../shared/playerPresentation';
@@ -70,7 +68,6 @@ export class RemotePlayerView {
     this.swingSeq = this.presentation.swingSeq;
     this.hurtSeq = presentationHurtSeq(this.presentation);
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
-    this.visual.setArmor(equippedArmorFromPartial(this.presentation.armor));
     this.options.onMining?.(this.id, this.presentation.mining, _now);
   }
 
@@ -93,11 +90,9 @@ export class RemotePlayerView {
         ...IDLE_PLAYER_PRESENTATION,
         swingSeq: this.swingSeq,
         hurtSeq: this.hurtSeq,
-        armor: EMPTY_EQUIPPED_ARMOR,
       }
       : next;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
-    this.visual.setArmor(equippedArmorFromPartial(this.presentation.armor));
     this.options.onMining?.(this.id, this.presentation.mining, now);
   }
 

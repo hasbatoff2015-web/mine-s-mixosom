@@ -12,7 +12,7 @@ const info: RemotePlayerInfo = { id: 'actor', name: 'Actor', x: 0, y: 70, z: 0, 
 function harness(presentation?: PlayerPresentationState) {
   const visual = {
     root: new THREE.Group(), animator: { reset: vi.fn() },
-    update: vi.fn(), setHeldItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
+    update: vi.fn(), setHeldItem: vi.fn(), swing: vi.fn(),
     triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
   };
   const onMining = vi.fn();
@@ -30,9 +30,6 @@ describe('authoritative remote action presentation', () => {
     view.interpolate(100, 1 / 60);
     expect(visual.update).toHaveBeenLastCalledWith(1 / 60, expect.objectContaining({ mining: true }));
     expect(visual.setHeldItem).toHaveBeenLastCalledWith('iron_pickaxe');
-    expect(visual.setArmor).toHaveBeenLastCalledWith({
-      head: null, chest: null, legs: null, feet: null,
-    });
     expect(onMining).toHaveBeenLastCalledWith('actor', mining, 100);
     expect(visual.swing).not.toHaveBeenCalled();
     view.dispose();
@@ -101,23 +98,23 @@ describe('authoritative remote action presentation', () => {
     expect(onRemove).toHaveBeenCalledWith('actor');
   });
 
-  it('applies equipped armor ids from presentation and clears them on death', () => {
+  it('ignores presentation armor ids and still plays remote food-use state', () => {
     const armor = { head: 'diamond_helmet', chest: 'iron_chestplate', legs: null, feet: 'leather_boots' };
-    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, armor });
-    expect(visual.setArmor).toHaveBeenLastCalledWith(armor);
-    view.applySnapshot({
-      ...info,
-      presentation: { ...IDLE_PLAYER_PRESENTATION, armor: { ...armor, chest: 'diamond_chestplate' } },
-    }, 150, 1);
-    expect(visual.setArmor).toHaveBeenLastCalledWith({ ...armor, chest: 'diamond_chestplate' });
-    view.applySnapshot({
-      ...info,
-      dead: true,
-      presentation: { ...IDLE_PLAYER_PRESENTATION, armor, swingSeq: 1, hurtSeq: 0 },
-    } as never, 200, 2);
-    expect(visual.setArmor).toHaveBeenLastCalledWith({
-      head: null, chest: null, legs: null, feet: null,
+    const { view, visual } = harness({
+      ...IDLE_PLAYER_PRESENTATION,
+      armor,
+      foodUseProgress: 0.4,
+      heldItemId: 'apple',
     });
+    view.interpolate(100, 1 / 60);
+    expect(visual.setHeldItem).toHaveBeenLastCalledWith('apple');
+    expect(visual.update).toHaveBeenLastCalledWith(1 / 60, expect.objectContaining({ foodUseProgress: 0.4 }));
+    view.applySnapshot({
+      ...info,
+      presentation: { ...IDLE_PLAYER_PRESENTATION, armor, foodUseProgress: 0, heldItemId: 'apple' },
+    }, 150, 1);
+    view.interpolate(150, 0.016);
+    expect(visual.update).toHaveBeenLastCalledWith(0.016, expect.objectContaining({ foodUseProgress: 0 }));
     view.dispose();
   });
 

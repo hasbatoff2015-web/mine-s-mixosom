@@ -34,6 +34,7 @@ import {
   REFERENCE_F2_IRON_PICKAXE,
 } from './heldItemLandmarks';
 import type { GeneratedItemMask } from './GeneratedItemGeometry';
+import { applyEatDrinkHeldItemPose } from './heldItemEatPose';
 import { SharedFireTexture } from './fireTexture';
 import {
   SharedPotionParticles,
@@ -272,7 +273,7 @@ export class FirstPersonRenderer {
         this.mainModel.rotation.y += 0.45;
         this.mainModel.rotation.z += 0.85;
       }
-      if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
+      if (state.foodUseProgress > 0) applyEatDrinkHeldItemPose(this.mainModel, state.foodUseProgress);
       if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
     }
 
@@ -398,17 +399,6 @@ export class FirstPersonRenderer {
   private syncArmVisibility(): void {
     this.armPivot.visible = this.mainItem === undefined && !this.invisible;
     this.armOuterMesh.visible = this.appearance.layers.rightSleeve;
-  }
-
-  private applyEatPose(model: THREE.Object3D, progress: number): void {
-    const cadence = Math.abs(Math.cos(progress * Math.PI * 8));
-    const settle = Math.sin(Math.min(1, progress * 1.5) * Math.PI * 0.5);
-    model.position.x -= 0.08 * settle;
-    model.position.y += 0.10 * settle + cadence * 0.018;
-    model.position.z += 0.11 * settle;
-    model.rotation.x += 0.38 * settle;
-    model.rotation.y += 0.25 * settle;
-    model.rotation.z += 0.18 * cadence;
   }
 
   private updateBowTexture(model: THREE.Group, charge: number): void {

@@ -9,9 +9,11 @@ import {
 } from '../src/rendering/fireTexture';
 import { FIRE_PLANE_COUNT } from '../src/rendering/fireGeometry';
 import {
+  HURT_FLASH_DURATION_MS,
   HURT_FLASH_PEAK_ALPHA,
   HURT_KICK_MAX_DEGREES,
   HurtFeedback,
+  playerHurtFlashIntensity,
 } from '../src/rendering/hurtFeedback';
 import { applyImmediateRenderLook } from '../src/rendering/cameraLook';
 import { SurvivalSystem } from '../src/survival';
@@ -95,6 +97,18 @@ describe('hurt feedback', () => {
     const later = new HurtFeedback();
     later.trigger(5000);
     expect(later.flashAlpha(5110)).toBeCloseTo(hurt.flashAlpha(1110), 5);
+  });
+
+  it('keeps the HUD overlay dim while the player model flash peaks at full mob intensity', () => {
+    expect(playerHurtFlashIntensity(0)).toBe(1);
+    expect(playerHurtFlashIntensity(HURT_FLASH_DURATION_MS / 2)).toBeCloseTo(0.5, 5);
+    expect(playerHurtFlashIntensity(HURT_FLASH_DURATION_MS)).toBe(0);
+    const hurt = new HurtFeedback();
+    hurt.trigger(0);
+    expect(hurt.flashAlpha(0)).toBeCloseTo(HURT_FLASH_PEAK_ALPHA, 5);
+    expect(hurt.modelIntensity(0)).toBe(1);
+    expect(hurt.modelIntensity(0)).toBeGreaterThan(hurt.flashAlpha(0) * 3);
+    expect(hurt.modelIntensity(HURT_FLASH_DURATION_MS)).toBe(0);
   });
 
   it('keeps authoritative look and bounds repeated hits', () => {

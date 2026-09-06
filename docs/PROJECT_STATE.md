@@ -1,12 +1,21 @@
 # Состояние проекта
 
+## Последний проход: remove armor visual / crouch hip / eat pose / bright hurt flash — 2026-09-06
+
+- Та же ветка `cursor/armor-crouch-swing-flash-3f93` (PR #64). Весь PR не откатывался: air swing, `hurtSeq`, `presentation.armor`, inventory/armor items, PluginManager/claims/mining/Networking V2 без изменений.
+- **Armor visual удалён.** `PlayerArmorOverlay` и inflated cuboids больше нет. `Inventory.armor` и `presentation.armor` остаются для будущей реализации. На модели игрока брони не видно.
+- **Crouch:** sneak больше не сдвигает `upperBody` по Z/Y. Lean — только `bodyPitch` вокруг талии; стопы/hip XZ на месте; голова/руки/held item остаются детьми `upperBody`.
+- **Eat/drink:** `applyEatDrinkHeldItemPose` — та же SP first-person bobble. `PlayerVisual` применяет её каждый кадр от `foodUseProgress`. Online local читает `presentation.foodUseProgress` (ticks на клиенте = 0). Зелья — `kind: food`, тот же pose.
+- **Hurt flash:** модель использует `applyMobHurtTint` и envelope peak 1.0 / 220 ms. HUD overlay остаётся alpha 0.28.
+- Handoff: `docs/reports/2026-09-06_player-visual-followup.md`.
+
 ## Последний проход: armor overlay / crouch hierarchy / air swing / MP hurt flash — 2026-09-06
 
 - Ветка `cursor/armor-crouch-swing-flash-3f93` от `main` после PR #63 (`bb203ae`).
-- `PlayerVisual`: `upperBody` на талии; голова/руки/held item/броня следуют за sneak pitch. Ноги остаются сиблингами.
-- Броня — inflated overlay на тех же pivots. В `public/textures` нет `models/armor/*_layer_*.png`; используются item icons + tint. Source of truth: `Inventory.armor` / `presentation.armor`.
+- `PlayerVisual`: `upperBody` на талии; голова/руки/held item следуют за sneak pitch. Ноги остаются сиблингами.
+- Визуальная броня из этого прохода **снята** follow-up'ом (см. выше). `Inventory.armor` / `presentation.armor` сохранены.
 - Online: каждый discrete attack click шлёт `{ type: 'attack' }`; серверный `presentSwing()` уже покрывал miss. Hold mining не качает swingSeq каждый кадр.
-- `hurtSeq` на `fullHurt` (не i-frame chip). Remote: тот же `hurtFlashAlpha` 220 ms. SP HUD/camera flash без изменений.
+- `hurtSeq` на `fullHurt` (не i-frame chip). Модельный flash теперь mob-equivalent; HUD alpha 0.28.
 - Protocol v3 additive. PluginManager / claims / mining lock / Networking V2 / swingSeq presentation не переписывались.
 - Handoff: `docs/reports/2026-09-06_armor-crouch-swing-flash.md`.
 

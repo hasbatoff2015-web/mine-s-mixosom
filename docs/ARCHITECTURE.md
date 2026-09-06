@@ -1,29 +1,45 @@
 # Архитектура
 
+## Player visual follow-up — 2026-09-06
+
+Inflated armor overlay (`PlayerArmorOverlay`) is gone. `PlayerVisual` is skin + held item only. `Inventory.armor` and additive `presentation.armor` stay on the wire for a later renderer; they do not spawn meshes.
+
+Crouch is waist-pivot rotation only:
+
+```text
+root → bodyYawRoot
+  upperBody   ← sneak bodyPitch around y = 12px; position stays (0, pivotY, 0)
+    body, head, rightArm, leftArm
+      rightArm → heldItem
+  rightLeg, leftLeg
+```
+
+`bodyYOffset` / `bodyZOffset` are 0 while sneaking so the hip stays over the legs. Head/arms/held item follow pitch as children.
+
+Eat/drink: `src/rendering/heldItemEatPose.ts` is the canonical first-person bobble (food and potions share it). `FirstPersonRenderer` and `PlayerVisual` both apply it from `foodUseProgress`. Online local progress comes from own `player_state.presentation.foodUseProgress`.
+
+Player model hurt flash uses `applyMobHurtTint` with `playerHurtFlashIntensity` (peak 1.0, 220 ms). HUD `#hurt-flash` stays `hurtFlashAlpha` peak 0.28. Air swing is unchanged: discrete `{ type: 'attack' }` → server `presentSwing()` including misses.
+
 ## Armor / crouch / air swing / hurt flash — 2026-09-06
 
 `PlayerVisual` hierarchy:
 
 ```text
 root → bodyYawRoot
-  upperBody   ← sneak bodyPitch + Y/Z offset
+  upperBody   ← sneak bodyPitch (no Y/Z translation)
     body, head, rightArm, leftArm
-      rightArm → heldItem + chest arm armor
-      head → helmet
-      body → chestplate
-  rightLeg, leftLeg → leggings + boots
+      rightArm → heldItem
+  rightLeg, leftLeg
 ```
-
-Armor is `PlayerArmorOverlay`, not a second rig. Inflate: helmet/chest/boots 1 px, leggings/shoulder 0.5 px. Item icons from `public/textures/item/*_{helmet,chestplate,leggings,boots}.png` because the runtime pack has no armor UV sheets.
 
 `PlayerPresentationState` additive fields (protocol 3):
 
-- `armor?: { head, chest, legs, feet }` item ids from `Inventory.armor`
+- `armor?: { head, chest, legs, feet }` item ids from `Inventory.armor` (not rendered)
 - `hurtSeq?: number` — server `fullHurt` only; join baseline; coalesced snapshots flash once
 
 Air swing: client sends `{ type: 'attack' }` once per discrete click even with no target. Server already `presentSwing()` before raycast.
 
-Hurt flash: `SurvivalSystem.addDamageListener` → `presentHurt()`. `PlayerVisual.triggerHurtFlash()` shares `hurtFlashAlpha` with `HurtFeedback`. Local HUD still uses health-drop / `onDamage` HurtFeedback. Remotes do not trust a client “I was hit” packet.
+Hurt flash: `SurvivalSystem.addDamageListener` → `presentHurt()`. `PlayerVisual.triggerHurtFlash()` uses `playerHurtFlashIntensity` + `applyMobHurtTint`. Local HUD still uses health-drop / `onDamage` HurtFeedback. Remotes do not trust a client “I was hit” packet.
 
 ## Integrate remote actions + plugin/mining line — 2026-09-06
 
@@ -146,7 +162,7 @@ ServerGameplay accepted outcome / continuous state
   → ServerPlayer.presentation()
   → welcome.players / player_joined / player_state.players[].presentation
   → RemotePlayerView latest presentation (separate tick guard, no spatial lerp)
-      → PlayerVisual.setHeldItem / setArmor / swing / triggerHurtFlash / update → existing animator
+      → PlayerVisual.setHeldItem / swing / triggerHurtFlash / update → existing animator
       → WorldRenderer.remoteBreaking: breakerId → target → max progress → BlockBreakingOverlay
 ```
 
@@ -459,7 +475,7 @@ Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меня�
 
 Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
 
-Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён; armor overlays are separate inflated boxes parented to the rig. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, armor ids, swingSeq and hurtSeq arrive through additive `presentation`. Appearance (skinId/model/layers) is still local default until a later metadata event.
+Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, armor ids, swingSeq and hurtSeq arrive through additive `presentation`. Armor ids are not rendered. Appearance (skinId/model/layers) is still local default until a later metadata event.
 
 ## Block breaking overlay — integrated 2026-09-02
 
