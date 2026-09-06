@@ -1,5 +1,9 @@
 # Архитектура
 
+## Anarchy oak planks mining lock — 2026-09-06
+
+Oak planks use the same `wood()` mining numbers as oak log (`hardness` 2, 60 ticks by hand). Overlay and `advanceMining` both call `miningProgressPerTick`. Finish must keep the start **voxel** (`composeOnlineBreakFinish`) but use the finish-time `commandSeq`. Spreading the start pose onto finish makes `resolveActionEye` return `stale` once that seq leaves `ACTION_POSE_HISTORY_MAX` (64). Survival finish with no `miningTarget` is `reason: mining`; the client must send `block_break_start` again, not another finish. A closer remote player must not skip `applyOnlineMiningTick` while `miningFinishKey` is set (`shouldSkipMiningTickForRemote`). `block_update` / `block_batch` call `applyAuthoritativeVoxelToMiningGate` only for matching coords — that is why Player B breaking the stuck planks unlocked Player A. Per-player `ServerPlayer.miningTarget`; no world-level mining map.
+
 ## Anarchy mining lifecycle — 2026-09-06
 
 Client overlay at 1.0 sends `block_break_finish` and sets `miningFinishKey` (keeps server `input.mining` true) plus `clientWaitFinish`. Wait is only while **still holding** on that cell or air. Mouse-up clears `clientWaitFinish` so the next pointerdown is `start` / `abandon-start`, not a swallowed wait. Any finish `action_result` clears finish/lock/wait. Inventory/pause resets the whole gate. Trace: `[MINING] …` (`?miningTrace=1` or DEV info; rejects always warn).
@@ -10,7 +14,7 @@ Client overlay at 1.0 sends `block_break_finish` and sets `miningFinishKey` (kee
 
 ## Anarchy block-break finish vs abort — 2026-09-05
 
-Survival mining is server-authoritative (`advanceMining` + `block_break_finish`). The client overlay can reach 1.0 one tick before the server (dirt/hand is 15 ticks; `14/15 < 0.95`). After sending finish the client must keep `input.mining` and must not send `block_break_abort` for that target until the block is gone or a hard reject. `reason: mining` is in-flight, not a deny.
+Survival mining is server-authoritative (`advanceMining` + `block_break_finish`). The client overlay can reach 1.0 one tick before the server (dirt/hand is 15 ticks; `14/15 < 0.95`). After sending finish the client must keep `input.mining` and must not send `block_break_abort` for that target until the block is gone or a hard reject. With the `progress > 0` finish rule, `reason: mining` means the server lock is missing (never started or wiped); resend `block_break_start`, do not loop finish.
 
 Sequenced `block_break_finish` is acked only by `action_result`. `pendingBlockAction` must clear on that ack: a failed finish has no `block_update`/`block_result`, and leaving the coordinate in pending made that cell unbreakable until reconnect (Survival and Creative share the client gate). Finish of a matching `miningTarget` does not re-run LOS against a later `commandSeq`; start already locked the cell. Claims are unchanged: no overlapping claim ⇒ no cancel.
 

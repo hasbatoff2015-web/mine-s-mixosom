@@ -4,6 +4,7 @@ import type {
   BlockBreakAbortAction,
   BlockBreakFinishAction,
   BlockBreakStartAction,
+  BlockTargetIntent,
   BlockUseAction,
   BowReleaseAction,
 } from '../../shared/playerActions';
@@ -69,6 +70,34 @@ export function captureBlockBreakFinish(source: ActionSeqSource, hit: VoxelHit):
     commandSeq: source.inputSeq,
     selectedSlot: source.selectedSlot,
     ...blockTargetFromHit(hit),
+  };
+}
+
+/**
+ * Keep the voxel identity from `block_break_start` so finish cannot retarget a
+ * neighbor, but never reuse the start `commandSeq`. Oak planks/log take 60
+ * ticks; `ACTION_POSE_HISTORY_MAX` is 64. Spreading the start pose onto finish
+ * makes `resolveActionEye` return `stale` once that seq falls out of history
+ * (or was never the applied seq). Locked mining skips LOS; a wiped
+ * `miningTarget` re-validates finish with that dead seq and rejects.
+ */
+export function composeOnlineBreakFinish(
+  fresh: BlockBreakFinishAction,
+  captured?: BlockTargetIntent & { readonly commandSeq?: number },
+): BlockBreakFinishAction {
+  if (!captured) return fresh;
+  return {
+    ...fresh,
+    targetX: captured.targetX,
+    targetY: captured.targetY,
+    targetZ: captured.targetZ,
+    targetBlockId: captured.targetBlockId,
+    faceX: captured.faceX,
+    faceY: captured.faceY,
+    faceZ: captured.faceZ,
+    hitX: captured.hitX,
+    hitY: captured.hitY,
+    hitZ: captured.hitZ,
   };
 }
 

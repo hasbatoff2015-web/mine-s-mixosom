@@ -199,6 +199,7 @@ import {
   captureBlockBreakStart,
   captureBlockUse,
   captureBowRelease,
+  composeOnlineBreakFinish,
 } from '../net/actionIntent';
 import {
   actionMessageFromBreakAbort,
@@ -208,6 +209,7 @@ import {
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
 import {
+  applyAuthoritativeVoxelToMiningGate,
   applyBreakActionResult,
   breakFinishHoldReason,
   formatBreakGateDiag,
@@ -222,6 +224,8 @@ import {
   resolveOnlineMiningTick,
   shouldHoldServerMining,
   shouldSendBreakAbort,
+  shouldSkipMiningTickForRemote,
+  shouldResendBreakStartAfterFinishReject,
 } from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
 import {
@@ -1707,6 +1711,20 @@ export class Game {
       this.clearOnlineMiningFinish(session, message.targetX!, message.targetY!, message.targetZ!);
       this.traceMining(session, 'cleanup', { reason: message.ok ? 'finish-ok' : message.reason });
     }
+    if (
+      message.kind === 'block_break_finish'
+      && key
+      && !message.ok
+      && shouldResendBreakStartAfterFinishReject(message.reason)
+      && session.miningTarget === key
+      && this.input.mining
+      && session.target
+      && miningBlockKey(session.target.x, session.target.y, session.target.z) === key
+    ) {
+      online.miningLocked = false;
+      this.sendOnlineBreakStart(session);
+      this.traceMining(session, 'start', { reason: 'resend-after-mining-reject', targetKey: key });
+    }
   }
 
   private handleOnlineBlockResult(
@@ -1740,15 +1758,10 @@ export class Game {
 
   private clearOnlineMiningFinish(session: GameSession, x: number, y: number, z: number): void {
     const online = session.online;
-    const key = miningBlockKey(x, y, z);
-    if (online?.miningFinishKey === key) {
-      online.miningFinishKey = undefined;
-      online.miningLocked = false;
-    }
-    if (session.miningTarget === key) {
-      session.miningTarget = undefined;
-      session.miningProgress = 0;
-    }
+    if (!online) return;
+    const next = applyAuthoritativeVoxelToMiningGate(online, session.miningTarget, x, y, z);
+    session.miningTarget = next.miningTarget;
+    if (next.clearProgress) session.miningProgress = 0;
   }
 
   private clearOnlineBlockPending(session: GameSession, x: number, y: number, z: number): void {
@@ -3759,7 +3772,10 @@ export class Game {
     if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
       session.online.rejectedBlockKey = undefined;
     }
-    if (remoteCloser && session.online) {
+    if (remoteCloser && session.online && shouldSkipMiningTickForRemote({
+      remoteCloser: true,
+      finishKey: session.online.miningFinishKey,
+    })) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       for (let click = 0; click < attackPresses; click += 1) {
@@ -3892,9 +3908,7 @@ export class Game {
       noteBreakFinishSent(session.online, hit.x, hit.y, hit.z);
       const source = this.onlineActionSource(session);
       const captured = session.online.miningIntent;
-      const action = captured
-        ? { ...captureBlockBreakFinish(source, hit), ...captured }
-        : captureBlockBreakFinish(source, hit);
+      const action = composeOnlineBreakFinish(captureBlockBreakFinish(source, hit), captured);
       this.commitOnlineActionSeq(session, source);
       session.online.lastBlockDiag = {
         actionSeq: action.actionSeq,

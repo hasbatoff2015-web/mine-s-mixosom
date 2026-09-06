@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: oak planks 100% overlay lock after PR #57
+
+- Oak planks **не** особый unbreakable ID. `wood()` как oak log: hardness 2, axe/hand, 60 тиков / 3с. Dirt 15 тиков, stone by hand 150. Client и server берут `miningProgressPerTick` из `src/blocks/mining.ts`. ID 22 round-trip без потерь. При удержании `input.mining` сервер ломает все четыре блока (в т.ч. auto-break на progress>=1).
+- Баг после 100%: finish слал **start `commandSeq`** (`{...fresh, ...captured}`). После wipe `miningTarget` (`input.mining` false) finish → `mining` или `stale` (pose history 64, planks 60 тиков у края). Клиент на `reason: mining` только повторял finish без нового start — блок остаётся. `remoteCloser` пропускал mining tick, `finishWaitTicks` замирал. `block_update` от Player B по **тем же** координатам снимал `miningFinishKey` у A — отсюда «B сломал доски → A снова может».
+- Shared global mining между A и B нет: `ServerPlayer.miningTarget` per-player. `block_update` чистит gate только если ключ совпал.
+- Fix: `composeOnlineBreakFinish` сохраняет voxel start, но `commandSeq`/`actionSeq` — finish-time; mining tick не skip'ается при in-flight finish; `reason: mining` → повторный `block_break_start`; voxel update чистит wait/pending на той клетке.
+- Report: `docs/reports/2026-09-06_oak-planks-mining-lock.md`.
+
 ## Последний проход: mining lifecycle lock after 100% overlay
 
 - После 100% crack overlay клиент ставил `miningFinishKey` + `clientWaitFinish` и `shouldWaitForInFlightFinish` глотал **все** последующие LMB, пока crosshair на том же блоке или в воздухе. Mouse-up не abort'ил (desync-фикс) и не снимал wait. `action_result` без coords / `reason: mining` не очищал finishKey. Отсюда: анимация дошла до 100%, блок не сломался, ломание любых блоков «умирало».
