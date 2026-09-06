@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: first FINISH at server progress 0 (dry overlay)
+
+- Симптом после PR #60: даже один игрок, dirt и другие обычные блоки. Overlay 0→100%, блок цел, анимация сначала, второй цикл ломает. Соседи при удержании ЛКМ — с первого цикла. Короткий A→B может дать тот же сбой, длинный A→B — нет.
+- PR #60 оставляет lock на leftover idle (`applied < startSeq`) и это **нужно сохранить**. Live-баг другой: client и server считают progress независимо. START ставит `miningProgress = 0` и не тикает. Клиент (catch-up / 4 ticks per frame) может дойти overlay до 1.0 и послать FINISH **до первого `advanceMining`**.
+- `breakBlock` считал `progress <= 0` тем же `reason: mining`, что и «нет lock». Клиент на `mining` сбрасывал overlay и слал второй START — видимый сухой цикл. Lock на сервере при этом часто ещё жив.
+- Фикс: matching lock + `progress === 0` → `reason: in_progress`. Клиент **не** ресетит overlay и не resend START; ждёт auto-break. `MAX_FINISH_WAIT_TICKS` после `in_progress` не abort'ит (catch-up сжёг бы 40 клиентских тиков раньше physics). Mouse-up при `awaitingAutoBreak` abort'ит. Нет lock → по-прежнему `mining`. Первый START теперь тоже `miningStartUnacked`. `action_result.kind` больше не считается finish при `undefined`.
+- Report: `docs/reports/2026-09-06_mining-finish-zero-progress.md`.
+
 ## Последний проход: first mining cycle vs queued pre-START idles
 
 - Симптом после PR #59: первый overlay 0→100% → FINISH → блок цел; второй полный цикл ломает. Соседи при удержании ЛКМ ломаются с первого цикла. Не hardness / oak planks / claims / LOS / `miningFinishKey`.

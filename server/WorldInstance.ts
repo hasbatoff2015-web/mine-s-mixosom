@@ -856,6 +856,8 @@ export class WorldInstance {
       miningStartCommandSeq: player.miningStartCommandSeq,
       appliedCommandSeq: player.appliedCommandSeq,
       commandSeq,
+      queueDepth: player.commandQueue.length,
+      inputMining: player.lastInput.mining === true,
       stage,
       reason: result.ok ? undefined : result.reason,
       eventCancelled: extra?.eventCancelled,
@@ -1374,7 +1376,19 @@ export class WorldInstance {
         mining: input.mining,
         appliedCommandSeq: player.appliedCommandSeq,
         miningStartCommandSeq: player.miningStartCommandSeq,
-      })) this.gameplay.advanceMining(player);
+      })) {
+        const before = player.miningProgress;
+        const target = player.miningTarget;
+        this.gameplay.advanceMining(player);
+        if (process.env.FC_DEBUG_MINING === '1' && target) {
+          serverLog(
+            `mine progress ${player.name} target=${target.x},${target.y},${target.z}`
+            + ` ${before.toFixed(3)}→${player.miningProgress.toFixed(3)}`
+            + ` startCmd=${player.miningStartCommandSeq ?? '—'} applied=${player.appliedCommandSeq}`
+            + ` input.mining=${input.mining === true ? 1 : 0} queue=${player.commandQueue.length}`,
+          );
+        }
+      }
       else clearMiningLock(player);
       this.gameplay.advanceUseHold(player, using);
       player.recordAppliedInput(this.tickNumber, {

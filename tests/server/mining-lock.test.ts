@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clearMiningLock, shouldKeepMiningLock } from '../../server/miningLock';
+import { clearMiningLock, shouldKeepMiningLock, survivalFinishLockReject } from '../../server/miningLock';
 
 describe('shouldKeepMiningLock', () => {
   it('holds while the applied command has mining:true', () => {
@@ -42,5 +42,29 @@ describe('shouldKeepMiningLock', () => {
     expect(player.miningTarget).toBeUndefined();
     expect(player.miningProgress).toBe(0);
     expect(player.miningStartCommandSeq).toBeUndefined();
+  });
+});
+
+describe('survivalFinishLockReject', () => {
+  it('is mining when the lock is missing or on another cell', () => {
+    expect(survivalFinishLockReject({ miningProgress: 0.4 }, 1, 2, 3)).toBe('mining');
+    expect(survivalFinishLockReject({
+      miningTarget: { x: 9, y: 2, z: 3 },
+      miningProgress: 0.4,
+    }, 1, 2, 3)).toBe('mining');
+  });
+
+  it('is in_progress when START locked the cell but no tick has advanced yet', () => {
+    expect(survivalFinishLockReject({
+      miningTarget: { x: 1, y: 2, z: 3 },
+      miningProgress: 0,
+    }, 1, 2, 3)).toBe('in_progress');
+  });
+
+  it('allows finish once any server progress exists', () => {
+    expect(survivalFinishLockReject({
+      miningTarget: { x: 1, y: 2, z: 3 },
+      miningProgress: 0.067,
+    }, 1, 2, 3)).toBeUndefined();
   });
 });

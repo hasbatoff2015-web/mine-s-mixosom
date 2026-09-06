@@ -22,6 +22,12 @@ export interface OnlineBreakGate {
    * Finish must not go out while this is set — server `miningProgress` is still 0.
    */
   miningStartUnacked?: boolean;
+  /**
+   * Server accepted START and rejected FINISH only because progress is still 0.
+   * Do not treat `MAX_FINISH_WAIT_TICKS` as a stuck finish: catch-up can burn
+   * those ticks before the next physics `advanceMining`. Wait for auto-break.
+   */
+  awaitingAutoBreak?: boolean;
 }
 
 export type BreakFinishHoldReason = 'ok' | 'pending' | 'rejected' | 'finish-inflight' | 'awaiting-start';
@@ -36,6 +42,7 @@ export type OnlineMiningTickInput = {
   readonly clientWaitFinish?: boolean;
   readonly miningLocked?: boolean;
   readonly finishWaitTicks?: number;
+  readonly awaitingAutoBreak?: boolean;
 };
 
 export type OnlineMiningOp =
@@ -56,8 +63,10 @@ export function shouldSendBreakAbort(input: {
   readonly miningReleased: boolean;
   readonly miningTarget?: string;
   readonly finishKey?: string;
+  readonly awaitingAutoBreak?: boolean;
 }): boolean {
   if (!input.miningReleased || !input.miningTarget) return false;
+  if (input.awaitingAutoBreak) return true;
   return input.finishKey !== input.miningTarget;
 }
 
@@ -155,6 +164,8 @@ export function applyAuthoritativeVoxelToMiningGate(
     gate.miningLocked = false;
     gate.clientWaitFinish = false;
     gate.finishWaitTicks = 0;
+    gate.awaitingAutoBreak = false;
+    gate.miningStartUnacked = false;
   }
   const pending = gate.pendingBlockAction;
   if (pending && pending.x === x && pending.y === y && pending.z === z) {
@@ -172,7 +183,11 @@ export function applyAuthoritativeVoxelToMiningGate(
  */
 export function resolveOnlineMiningTick(input: OnlineMiningTickInput): OnlineMiningOp {
   const finish = input.finishKey;
-  const waitedTooLong = Boolean(finish && (input.finishWaitTicks ?? 0) >= MAX_FINISH_WAIT_TICKS);
+  const waitedTooLong = Boolean(
+    finish
+    && !input.awaitingAutoBreak
+    && (input.finishWaitTicks ?? 0) >= MAX_FINISH_WAIT_TICKS,
+  );
   if (waitedTooLong) {
     if (input.buttonDown && input.targetKey) return { type: 'abandon-start', targetKey: input.targetKey };
     return { type: 'abandon-idle' };
@@ -209,23 +224,30 @@ export function resetOnlineMiningGate(gate: OnlineBreakGate): void {
   gate.clientWaitFinish = false;
   gate.finishWaitTicks = 0;
   gate.miningStartUnacked = false;
+  gate.awaitingAutoBreak = false;
 }
 
 /**
- * `mining` means the server is not done yet (client is typically one tick ahead).
- * It is not a protection deny and must not lock the block as rejected.
+ * `mining` means the server has no lock (start never landed, or input wiped it).
+ * `in_progress` means the lock exists but no physics tick has advanced progress yet.
+ * Only `mining` is a missing lock; `in_progress` must not reset the overlay.
  */
 export function isInFlightBreakReject(reason: string | undefined): boolean {
+  return reason === 'mining' || reason === 'in_progress';
+}
+
+/**
+ * Server finish with a matching lock and `progress > 0` succeeds. `reason: mining`
+ * therefore means there is no lock. Resending finish cannot recover; a new start can.
+ * `in_progress` is the opposite: keep the in-flight finish and wait for auto-break.
+ */
+export function shouldResendBreakStartAfterFinishReject(reason: string | undefined): boolean {
   return reason === 'mining';
 }
 
-/**
- * Server finish now accepts any `miningProgress > 0`. `reason: mining` therefore
- * means there is no lock (start never landed, or `input.mining` went false and
- * wiped the target). Resending finish cannot recover; a new start can.
- */
-export function shouldResendBreakStartAfterFinishReject(reason: string | undefined): boolean {
-  return isInFlightBreakReject(reason);
+/** Premature finish while the server lock is real — stay at 100%, do not restart. */
+export function shouldKeepFinishWait(reason: string | undefined): boolean {
+  return reason === 'in_progress';
 }
 
 /**
@@ -240,6 +262,7 @@ export function noteResendBreakStart(gate: OnlineBreakGate): void {
   gate.finishWaitTicks = 0;
   gate.miningLocked = false;
   gate.miningStartUnacked = true;
+  gate.awaitingAutoBreak = false;
 }
 
 export function breakFinishHoldReason(
@@ -265,6 +288,7 @@ export function shouldSendBreakFinish(gate: OnlineBreakGate, x: number, y: numbe
 
 export function noteBreakStartSent(gate: OnlineBreakGate, x: number, y: number, z: number): void {
   gate.miningLocked = true;
+  gate.miningStartUnacked = true;
   const key = miningBlockKey(x, y, z);
   if (gate.rejectedBlockKey === key) gate.rejectedBlockKey = undefined;
 }
@@ -297,6 +321,13 @@ export function snapshotMiningGate(gate: OnlineBreakGate, extra?: {
   readonly op?: string;
   readonly commandSeq?: number;
   readonly inputSeq?: number;
+  readonly actionSeq?: number;
+  readonly blockId?: number;
+  readonly serverProgress?: number;
+  readonly miningStartCommandSeq?: number;
+  readonly appliedCommandSeq?: number;
+  readonly queueDepth?: number;
+  readonly inputMining?: boolean;
 }): Record<string, string | number | boolean | undefined> {
   return {
     finish: gate.miningFinishKey,
@@ -308,12 +339,20 @@ export function snapshotMiningGate(gate: OnlineBreakGate, extra?: {
     clientWait: Boolean(gate.clientWaitFinish),
     waitTicks: gate.finishWaitTicks ?? 0,
     startUnacked: Boolean(gate.miningStartUnacked),
+    awaitingAutoBreak: Boolean(gate.awaitingAutoBreak),
     mine: extra?.miningTarget,
     button: extra?.buttonDown,
     look: extra?.targetKey,
     op: extra?.op,
     commandSeq: extra?.commandSeq,
     inputSeq: extra?.inputSeq,
+    actionSeq: extra?.actionSeq,
+    blockId: extra?.blockId,
+    serverProgress: extra?.serverProgress,
+    startCmd: extra?.miningStartCommandSeq,
+    applied: extra?.appliedCommandSeq,
+    queueDepth: extra?.queueDepth,
+    inputMining: extra?.inputMining,
   };
 }
 
@@ -328,6 +367,13 @@ export function formatMiningLifecycle(
     readonly progress?: number;
     readonly commandSeq?: number;
     readonly inputSeq?: number;
+    readonly actionSeq?: number;
+    readonly blockId?: number;
+    readonly serverProgress?: number;
+    readonly miningStartCommandSeq?: number;
+    readonly appliedCommandSeq?: number;
+    readonly queueDepth?: number;
+    readonly inputMining?: boolean;
   },
 ): string {
   const snap = snapshotMiningGate(gate, extra);
@@ -336,6 +382,7 @@ export function formatMiningLifecycle(
     extra?.reason ? `because=${extra.reason}` : undefined,
     `look=${snap.look ?? '—'}`,
     `mine=${snap.mine ?? '—'}`,
+    extra?.blockId !== undefined ? `id=${extra.blockId}` : undefined,
     `finish=${snap.finish ?? '—'}`,
     `wait=${snap.clientWait ? 1 : 0}`,
     `locked=${snap.locked ? 1 : 0}`,
@@ -343,18 +390,25 @@ export function formatMiningLifecycle(
     `rejected=${snap.rejected ?? '—'}`,
     `button=${snap.button === true ? 1 : snap.button === false ? 0 : '—'}`,
     `startUnacked=${snap.startUnacked ? 1 : 0}`,
-    extra?.progress !== undefined ? `progress=${extra.progress.toFixed(3)}` : undefined,
+    snap.awaitingAutoBreak ? 'autoBreak=1' : undefined,
+    extra?.progress !== undefined ? `clientProgress=${extra.progress.toFixed(3)}` : undefined,
+    extra?.serverProgress !== undefined ? `serverProgress=${extra.serverProgress.toFixed(3)}` : undefined,
     extra?.commandSeq !== undefined ? `cmd=${extra.commandSeq}` : undefined,
     extra?.inputSeq !== undefined ? `inputSeq=${extra.inputSeq}` : undefined,
+    extra?.actionSeq !== undefined ? `actionSeq=${extra.actionSeq}` : undefined,
+    extra?.miningStartCommandSeq !== undefined ? `startCmd=${extra.miningStartCommandSeq}` : undefined,
+    extra?.appliedCommandSeq !== undefined ? `applied=${extra.appliedCommandSeq}` : undefined,
+    extra?.queueDepth !== undefined ? `queue=${extra.queueDepth}` : undefined,
+    extra?.inputMining !== undefined ? `input.mining=${extra.inputMining ? 1 : 0}` : undefined,
   ];
   return parts.filter((part) => part !== undefined).join(' ');
 }
 
 /**
  * Sequenced `action_result` is the only ack for `block_break_finish`.
- * Any finish ack — success, hard reject, `mining`, or missing coords — must
- * drop `miningFinishKey` / `clientWaitFinish` / `miningLocked`. Leaving those
- * set swallows every later pointerdown via `shouldWaitForInFlightFinish`.
+ * Success, hard reject, `mining`, or missing coords must drop finish wait.
+ * `in_progress` is different: the server lock exists at progress 0, so keep
+ * wait and let auto-break finish the first overlay.
  */
 export function applyBreakActionResult(gate: OnlineBreakGate, result: {
   readonly ok: boolean;
@@ -365,11 +419,16 @@ export function applyBreakActionResult(gate: OnlineBreakGate, result: {
   readonly z?: number;
 }): void {
   const isStart = result.kind === 'block_break_start';
-  const isFinish = result.kind === 'block_break_finish' || result.kind === undefined;
+  const isFinish = result.kind === 'block_break_finish';
   const hasCoords = result.x !== undefined && result.y !== undefined && result.z !== undefined;
   if (isStart) {
     gate.miningStartUnacked = false;
     if (!result.ok) gate.miningLocked = false;
+  }
+  if (isFinish && shouldKeepFinishWait(result.reason)) {
+    gate.finishWaitTicks = 0;
+    gate.awaitingAutoBreak = true;
+    return;
   }
   if (isFinish) {
     const pending = gate.pendingBlockAction;
@@ -381,6 +440,7 @@ export function applyBreakActionResult(gate: OnlineBreakGate, result: {
     gate.miningLocked = false;
     gate.finishWaitTicks = 0;
     gate.miningStartUnacked = false;
+    gate.awaitingAutoBreak = false;
   }
   if (!hasCoords) {
     if (isFinish) gate.rejectedBlockKey = undefined;

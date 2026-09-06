@@ -484,7 +484,7 @@ describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () =>
     world.tick();
     expect(world.beginMining(player, intent, 2, 4)).toEqual({ ok: true });
     expect(player.miningProgress).toBe(0);
-    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 4)).toEqual({ ok: false, reason: 'mining' });
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 4)).toEqual({ ok: false, reason: 'in_progress' });
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.OakPlanks);
 
     world.applyInput(player, input(5, { mining: true }));

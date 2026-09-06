@@ -89,6 +89,7 @@ export type ActionRejectReason =
   | 'cancelled'
   | 'unbreakable'
   | 'mining'
+  | 'in_progress'
   | 'collision'
   | 'no-anchor'
   | 'look'
