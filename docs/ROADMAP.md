@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-06: Server mining lock hold (input.mining)
+
+- [x] Keep `input.mining: true` while `buttonDown || miningFinishKey || miningLocked` (including `sendOnlineIdle`).
+- [x] Do not turn bare idle / pause / inventory / mouse-up into mining.
+- [x] After `reason: mining`, resend START, reset local progress, wait for start ack before FINISH.
+- [x] Regression: 60/150-tick holds, omitted-mining wipe, resend-then-progress, mouse-up, retarget, A/B independence.
+- [ ] Owner QA: two clients; B places oak planks; A holds LMB to 100% ×5; also log/stone/dirt; A mines X while B mines Y.
+
 ## 2026-09-06: Oak planks 100% overlay lock (after PR #57)
 
 - [x] Trace dirt / stone / oak log / oak planks through the same mining pipeline (shared `miningProgressPerTick`).

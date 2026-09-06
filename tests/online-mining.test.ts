@@ -17,6 +17,8 @@ import {
   shouldSendBreakAbort,
   shouldSendBreakFinish,
   shouldWaitForInFlightFinish,
+  inputMiningField,
+  omittedMiningDuringHoldIsClientError,
   type OnlineBreakGate,
 } from '../src/net/onlineMining';
 
@@ -44,6 +46,7 @@ describe('online mining finish/abort coordination', () => {
     expect(shouldHoldServerMining({ buttonDown: false, finishKey: '1,2,3' })).toBe(true);
     expect(shouldHoldServerMining({ buttonDown: false })).toBe(false);
     expect(shouldHoldServerMining({ buttonDown: true })).toBe(true);
+    expect(shouldHoldServerMining({ buttonDown: false, miningLocked: true })).toBe(true);
   });
 
   it('does not retarget while a finish is in flight', () => {
@@ -300,5 +303,15 @@ describe('online mining tick after overlay reaches 100%', () => {
       clientWaitFinish: true,
       finishWaitTicks: MAX_FINISH_WAIT_TICKS,
     })).toEqual({ type: 'abandon-start', targetKey: '8,70,12' });
+  });
+});
+
+describe('input mining hold vs idle omit', () => {
+  it('encodes mining:true only while an action is held', () => {
+    expect(inputMiningField(shouldHoldServerMining({ buttonDown: true }))).toEqual({ mining: true });
+    expect(inputMiningField(shouldHoldServerMining({ buttonDown: false, miningLocked: true }))).toEqual({ mining: true });
+    expect(inputMiningField(shouldHoldServerMining({ buttonDown: false }))).toEqual({});
+    expect(omittedMiningDuringHoldIsClientError({ buttonDown: false, miningLocked: true })).toBe(true);
+    expect(omittedMiningDuringHoldIsClientError({ buttonDown: false })).toBe(false);
   });
 });

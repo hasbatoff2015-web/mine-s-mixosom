@@ -220,6 +220,7 @@ import {
   noteBreakFinishSent,
   noteBreakStartSent,
   noteMiningReleased,
+  noteResendBreakStart,
   resetOnlineMiningGate,
   resolveOnlineMiningTick,
   shouldHoldServerMining,
@@ -391,6 +392,11 @@ export interface OnlineAnarchySession {
     spawned?: boolean;
   };
   miningLocked?: boolean;
+  /**
+   * After `reason: mining` resend: wait for `block_break_start` ack before finish.
+   * Prevents FINISH while server `miningProgress` is still 0.
+   */
+  miningStartUnacked?: boolean;
   /** True between finish-sent and mouse-up / ack; mouse-up must clear so the next LMB can start. */
   clientWaitFinish?: boolean;
   finishWaitTicks?: number;
@@ -1721,7 +1727,8 @@ export class Game {
       && session.target
       && miningBlockKey(session.target.x, session.target.y, session.target.z) === key
     ) {
-      online.miningLocked = false;
+      session.miningProgress = 0;
+      noteResendBreakStart(online);
       this.sendOnlineBreakStart(session);
       this.traceMining(session, 'start', { reason: 'resend-after-mining-reject', targetKey: key });
     }
@@ -2080,6 +2087,11 @@ export class Game {
         yaw: this.input.yaw,
         pitch: this.input.pitch,
         selectedSlot: session.selectedSlot,
+        ...(shouldHoldServerMining({
+          buttonDown: this.input.mining,
+          finishKey: online.miningFinishKey,
+          miningLocked: online.miningLocked,
+        }) ? { mining: true } : {}),
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
       motionProbe.noteSend(online.inputSeq);
@@ -3103,8 +3115,16 @@ export class Game {
   private openPauseMenu(): void {
     this.ui.hidePointerLockFallback();
     if (openingPauseMenuPausesSimulation()) this.lifecycle.setState('PAUSED');
-    if (this.session?.online) this.sendOnlineIdle(this.session);
-    else void this.saveSession();
+    const session = this.session;
+    if (session?.online) {
+      if (session.online.miningLocked && !session.online.miningFinishKey) {
+        this.sendOnlineMiningAbort(session);
+      }
+      session.miningProgress = 0;
+      session.miningTarget = undefined;
+      resetOnlineMiningGate(session.online);
+      this.sendOnlineIdle(session);
+    } else void this.saveSession();
     this.ui.showPause({
       resume: () => this.resumeFromPause(),
       settings: () => {
@@ -3489,6 +3509,7 @@ export class Game {
         mining: gameplayAllowed && shouldHoldServerMining({
           buttonDown: this.input.mining,
           finishKey: online.miningFinishKey,
+          miningLocked: online.miningLocked,
         }),
         use: gameplayAllowed && this.input.using,
         vehicleForward: riding ? movement.forward : 0,

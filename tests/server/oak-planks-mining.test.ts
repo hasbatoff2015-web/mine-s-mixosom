@@ -379,3 +379,188 @@ describe('oak planks mining pipeline vs dirt/stone/oak log', { timeout: 30_000 }
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
   });
 });
+
+describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () => {
+  const dirs: string[] = [];
+  const worlds: WorldInstance[] = [];
+
+  afterEach(async () => {
+    for (const world of worlds.splice(0)) await world.stop();
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function boot(name = 'Ada') {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name });
+    if ('error' in joined) throw new Error(joined.error);
+    world.setGameMode(joined.player, 'survival');
+    joined.player.controller.teleport([8.5, 70, 8.5]);
+    return { world, player: joined.player };
+  }
+
+  async function holdThenFinish(block: BlockId) {
+    const { world, player } = await boot(`Hold-${getBlockDefinition(block).key}`);
+    const hit = prepareTarget(world, player, block);
+    const intent = blockTargetFromHit(hit);
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    const ticks = clientTicksToFinish(block);
+    let seq = 1;
+    for (let tick = 1; tick <= ticks; tick += 1) {
+      seq += 1;
+      world.applyInput(player, input(seq, { mining: true }));
+      world.tick();
+      if (world.world.getBlock(hit.x, hit.y, hit.z) === BlockId.Air) {
+        return { world, player, hit, ticks, auto: true };
+      }
+    }
+    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningProgress).toBeGreaterThan(0);
+    const finish = world.tryBreak(player, hit.x, hit.y, hit.z, intent, seq);
+    expect(finish, `${getBlockDefinition(block).key} finish`).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+    return { world, player, hit, ticks, auto: false };
+  }
+
+  it('1) long hold with mining:true every tick breaks the block', async () => {
+    const result = await holdThenFinish(BlockId.OakPlanks);
+    expect(result.ticks).toBe(60);
+  });
+
+  it('2) omitted mining during an active lock is cancel, not idle — client must not send it while holding', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player, BlockId.OakPlanks);
+    const intent = blockTargetFromHit(hit);
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    world.applyInput(player, input(3));
+    world.tick();
+    expect(player.miningTarget).toBeUndefined();
+    expect(player.miningProgress).toBe(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 3)).toEqual({ ok: false, reason: 'mining' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.OakPlanks);
+  });
+
+  it('3) oak log 60 ticks with mining:true breaks', async () => {
+    const result = await holdThenFinish(BlockId.OakLog);
+    expect(result.ticks).toBe(60);
+  });
+
+  it('4) oak planks 60 ticks with mining:true breaks', async () => {
+    const result = await holdThenFinish(BlockId.OakPlanks);
+    expect(result.ticks).toBe(60);
+  });
+
+  it('5) stone 150 ticks with mining:true breaks', async () => {
+    const result = await holdThenFinish(BlockId.Stone);
+    expect(result.ticks).toBe(150);
+  });
+
+  it('6-7) mining reject → resend start → wait progress>0 → finish ok; finish at progress=0 fails', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player, BlockId.OakPlanks);
+    const intent = blockTargetFromHit(hit);
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    world.applyInput(player, input(3));
+    world.tick();
+    expect(player.miningTarget).toBeUndefined();
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 3)).toEqual({ ok: false, reason: 'mining' });
+
+    world.applyInput(player, input(4, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 2, 4)).toEqual({ ok: true });
+    expect(player.miningProgress).toBe(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 4)).toEqual({ ok: false, reason: 'mining' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.OakPlanks);
+
+    world.applyInput(player, input(5, { mining: true }));
+    world.tick();
+    expect(player.miningProgress).toBeGreaterThan(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 5)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('8) mouse-up (mining omitted) clears server miningTarget', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player, BlockId.OakLog);
+    const intent = blockTargetFromHit(hit);
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(player.miningTarget).toBeDefined();
+    world.applyInput(player, input(3));
+    world.tick();
+    expect(player.miningTarget).toBeUndefined();
+  });
+
+  it('9) changing target replaces the server lock; cell A is not left active', async () => {
+    const { world, player } = await boot();
+    const first = prepareTarget(world, player, BlockId.OakPlanks, 0);
+    const second = prepareTarget(world, player, BlockId.Dirt, 1);
+    world.world.setBlock(first.x, first.y, first.z, BlockId.OakPlanks);
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, blockTargetFromHit(first), 1, 1)).toEqual({ ok: true });
+    expect(player.miningTarget).toEqual({ x: first.x, y: first.y, z: first.z });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, blockTargetFromHit(second), 2, 2)).toEqual({ ok: true });
+    expect(player.miningTarget).toEqual({ x: second.x, y: second.y, z: second.z });
+    expect(player.miningTarget).not.toEqual({ x: first.x, y: first.y, z: first.z });
+    expect(world.world.getBlock(first.x, first.y, first.z)).toBe(BlockId.OakPlanks);
+  });
+
+  it('10) Ada mining X and Bob mining Y stay independent', async () => {
+    const { world, player: ada } = await boot('Ada');
+    const bobJoin = world.join({ sink: new MemorySink(), name: 'Bob' });
+    if ('error' in bobJoin) throw new Error(bobJoin.error);
+    const bob = bobJoin.player;
+    world.setGameMode(bob, 'survival');
+    bob.controller.teleport([12.5, 70, 8.5]);
+    world.applyInput(bob, input(1));
+    world.tick();
+    const adaHit = prepareTarget(world, ada, BlockId.OakPlanks, 0);
+    const bobEye = bob.controller.eyePosition();
+    const bobX = Math.floor(bobEye.x);
+    const bobY = Math.floor(bobEye.y);
+    const bobZ = Math.floor(bobEye.z) - 3;
+    carveAir(world, bobX - 1, bobY - 1, bobZ, bobX + 1, bobY + 1, Math.floor(bobEye.z));
+    world.world.setBlock(bobX, bobY, bobZ, BlockId.OakLog);
+    const bobRay = world.world.raycast(
+      bobEye,
+      new Vec3(bobX + 0.5 - bobEye.x, bobY + 0.5 - bobEye.y, bobZ + 0.5 - bobEye.z).normalize(),
+      PLAYER_NET_REACH,
+    );
+    if (!bobRay) throw new Error('bob log was not raycastable');
+    const bobHit = { ...bobRay, block: BlockId.OakLog };
+    world.applyInput(ada, input(2, { mining: true }));
+    world.applyInput(bob, input(2, { mining: true }));
+    world.tick();
+    expect(world.beginMining(ada, blockTargetFromHit(adaHit), 1, 2)).toEqual({ ok: true });
+    expect(world.beginMining(bob, blockTargetFromHit(bobHit), 1, 2)).toEqual({ ok: true });
+    expect(ada.miningTarget).not.toEqual(bob.miningTarget);
+    world.applyInput(ada, input(3, { mining: true }));
+    world.applyInput(bob, input(3, { mining: true }));
+    world.tick();
+    expect(ada.miningTarget).toEqual({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
+    expect(bob.miningTarget).toEqual({ x: bobHit.x, y: bobHit.y, z: bobHit.z });
+    expect(world.world.getBlock(adaHit.x, adaHit.y, adaHit.z)).toBe(BlockId.OakPlanks);
+    expect(world.world.getBlock(bobHit.x, bobHit.y, bobHit.z)).toBe(BlockId.OakLog);
+  });
+});

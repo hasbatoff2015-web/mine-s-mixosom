@@ -1,5 +1,13 @@
 # Архитектура
 
+## Anarchy mining input hold — 2026-09-06
+
+Protocol omits `input.mining` unless it is strictly `true`. Server `tickPlayers` wipes `miningTarget` when the field is missing. That wipe during a long hold (`oak_log` / `oak_planks` 60 ticks, stone 150) is a **client lifecycle error**, not a valid idle: mouse-up, pause, inventory, and target-abandon must clear the hold flags first.
+
+`shouldHoldServerMining` is `buttonDown || finishKey || miningLocked`. The 20 TPS `input` packet and `sendOnlineIdle` (hidden tab / blur) both send `mining: true` while those flags are set. Pause aborts and resets the gate, then idle without mining.
+
+After `block_break_finish` `reason: mining`, the client resets overlay progress, sets `miningStartUnacked`, and resends `block_break_start`. `breakFinishHoldReason` is `awaiting-start` until that start is acked — finish must not go out at server `miningProgress = 0`.
+
 ## Anarchy oak planks mining lock — 2026-09-06
 
 Oak planks use the same `wood()` mining numbers as oak log (`hardness` 2, 60 ticks by hand). Overlay and `advanceMining` both call `miningProgressPerTick`. Finish must keep the start **voxel** (`composeOnlineBreakFinish`) but use the finish-time `commandSeq`. Spreading the start pose onto finish makes `resolveActionEye` return `stale` once that seq leaves `ACTION_POSE_HISTORY_MAX` (64). Survival finish with no `miningTarget` is `reason: mining`; the client must send `block_break_start` again, not another finish. A closer remote player must not skip `applyOnlineMiningTick` while `miningFinishKey` is set (`shouldSkipMiningTickForRemote`). `block_update` / `block_batch` call `applyAuthoritativeVoxelToMiningGate` only for matching coords — that is why Player B breaking the stuck planks unlocked Player A. Per-player `ServerPlayer.miningTarget`; no world-level mining map.
