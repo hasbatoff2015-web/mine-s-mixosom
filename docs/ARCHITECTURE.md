@@ -1,5 +1,9 @@
 # Архитектура
 
+## Anarchy block-break: intent LOS — 2026-09-06
+
+`validateBlockTargetIntent` skips LOS/face when the eye is inside the target voxel. Mining also accepts the same voxel when DDA reports a different face (`requireMatchingFace: false`); place/use still require the captured face because it chooses the neighbor cell. Voxel DDA from inside reports the *entry* face, which does not match the clicked face; that is clipping, not a neighbor retarget. Creative `tryBreak` ignores Survival `miningTarget` lock on a different cell. Claims still cancel only when `claimsAt` is non-empty and the player is untrusted; a new event object is created per attempt (`cancelled` does not leak). A later plugin listener can still cancel after Claims allows. Rejects log player, coords, blockId, stage, miningTarget (`FC_DEBUG_BREAK=1` also logs successes).
+
 ## Anarchy block-break finish vs abort — 2026-09-05
 
 Survival mining is server-authoritative (`advanceMining` + `block_break_finish`). The client overlay can reach 1.0 one tick before the server (dirt/hand is 15 ticks; `14/15 < 0.95`). After sending finish the client must keep `input.mining` and must not send `block_break_abort` for that target until the block is gone or a hard reject. `reason: mining` is in-flight, not a deny.

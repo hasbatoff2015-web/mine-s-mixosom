@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-06: Two-player unbreakable block
+
+- [x] Eye inside the mined voxel skips LOS/face (DDA entry-face mismatch).
+- [x] Mining ignores same-cell face mismatch; place/use still require the face.
+- [x] Creative instant break ignores Survival miningTarget lock on a different cell.
+- [x] Break-attempt reject logs: player, coords, blockId, stage, cancelled, miningTarget.
+- [x] Two-player + claims lifecycle tests (no stale cancel, no duplicate listeners).
+- [ ] Owner QA: A clips a placed dirt, B breaks it; A then breaks the next placed dirt without reconnect.
+
 ## 2026-09-05: Stuck Anarchy block after failed finish
 
 - [x] Clear client `pendingBlockAction` on sequenced `action_result` (failed finish has no `block_update`).

@@ -68,6 +68,7 @@ import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { placeholderPlayer } from '../src/save/snapshot';
 import { netDebug, serverLog } from './log';
+import { logBreakAttempt } from './breakDiagnostics';
 import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 
@@ -785,13 +786,19 @@ export class WorldInstance {
     intent?: BlockTargetIntent,
     commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
+    const before = this.world.getBlock(x, y, z);
+    const fail = (stage: string, reason: string, extra?: { eventCancelled?: boolean }) => {
+      this.noteBreakAttempt(player, x, y, z, commandSeq, stage, { ok: false, reason }, before, extra);
+      return { ok: false as const, reason };
+    };
     if (intent && (intent.targetX !== x || intent.targetY !== y || intent.targetZ !== z)) {
-      return { ok: false, reason: 'invalid' };
+      return fail('tryBreak.intentMismatch', 'invalid');
     }
-    if (player.miningTarget
+    const creative = player.gamemode === 'creative';
+    if (!creative
+      && player.miningTarget
       && (player.miningTarget.x !== x || player.miningTarget.y !== y || player.miningTarget.z !== z)) {
-      netDebug('break rejected', `${player.name} ${x},${y},${z} reason=mining locked=${player.miningTarget.x},${player.miningTarget.y},${player.miningTarget.z} mode=${player.gamemode}`);
-      return { ok: false, reason: 'mining' };
+      return fail('tryBreak.miningLock', 'mining');
     }
     if (intent) {
       const lockedToThis = Boolean(
@@ -801,39 +808,56 @@ export class WorldInstance {
         && player.miningTarget.z === z,
       );
       if (lockedToThis) {
-        const block = this.world.getBlock(x, y, z);
-        if (block === BlockId.Air) {
-          netDebug('break rejected', `${player.name} ${x},${y},${z} reason=empty locked=1 id=${block}`);
-          return { ok: false, reason: 'empty' };
-        }
-        if (block !== intent.targetBlockId) {
-          netDebug('break rejected', `${player.name} ${x},${y},${z} reason=stale locked=1 id=${block} intent=${intent.targetBlockId}`);
-          return { ok: false, reason: 'stale' };
-        }
+        if (before === BlockId.Air) return fail('tryBreak.lockedEmpty', 'empty');
+        if (before !== intent.targetBlockId) return fail('tryBreak.lockedStale', 'stale');
       } else {
-        const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq);
-        if (!validated.ok) {
-          netDebug(
-            'break rejected',
-            `${player.name} ${x},${y},${z} reason=${validated.reason} locked=0 id=${this.world.getBlock(x, y, z)} mode=${player.gamemode}`,
-          );
-          return validated;
-        }
+        const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq, {
+          requireMatchingFace: false,
+        });
+        if (!validated.ok) return fail('tryBreak.intent', validated.reason);
       }
     }
     const result = this.gameplay.breakBlock(player, x, y, z);
+    const after = this.world.getBlock(x, y, z);
+    this.noteBreakAttempt(player, x, y, z, commandSeq, 'tryBreak.breakBlock', result, before, {
+      eventCancelled: result.ok === false && result.reason === 'cancelled',
+      blockAfter: after,
+      mutated: result.ok,
+    });
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
       this.flushPlayerInventory(player);
-      netDebug('break accepted', `${player.name} ${x},${y},${z}`);
-    } else {
-      netDebug(
-        'break rejected',
-        `${player.name} ${x},${y},${z} reason=${result.reason} id=${this.world.getBlock(x, y, z)} mine=${player.miningTarget ? `${player.miningTarget.x},${player.miningTarget.y},${player.miningTarget.z}` : '—'} progress=${player.miningProgress} mode=${player.gamemode}`,
-      );
     }
     return result;
+  }
+
+  private noteBreakAttempt(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    commandSeq: number | undefined,
+    stage: string,
+    result: { ok: true } | { ok: false; reason: string },
+    blockId: number,
+    extra?: { eventCancelled?: boolean; blockAfter?: number; mutated?: boolean },
+  ): void {
+    logBreakAttempt({
+      playerId: player.id,
+      playerName: player.name,
+      gamemode: player.gamemode,
+      x, y, z,
+      blockId,
+      miningTarget: player.miningTarget,
+      miningProgress: player.miningProgress,
+      commandSeq,
+      stage,
+      reason: result.ok ? undefined : result.reason,
+      eventCancelled: extra?.eventCancelled,
+      blockAfter: extra?.blockAfter,
+      mutated: extra?.mutated === true,
+    });
   }
 
   tryPlace(
@@ -861,8 +885,20 @@ export class WorldInstance {
     actionSeq?: number,
     commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
-    if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
-    return this.gameplay.beginMining(player, intent, commandSeq);
+    const before = this.world.getBlock(intent.targetX, intent.targetY, intent.targetZ);
+    if (!this.acceptActionSeq(player, actionSeq)) {
+      this.noteBreakAttempt(
+        player, intent.targetX, intent.targetY, intent.targetZ, commandSeq,
+        'beginMining.duplicate', { ok: false, reason: 'duplicate' }, before,
+      );
+      return { ok: false, reason: 'duplicate' };
+    }
+    const result = this.gameplay.beginMining(player, intent, commandSeq);
+    this.noteBreakAttempt(
+      player, intent.targetX, intent.targetY, intent.targetZ, commandSeq,
+      'beginMining', result, before, { mutated: false },
+    );
+    return result;
   }
 
   abortMining(player: ServerPlayer): void {

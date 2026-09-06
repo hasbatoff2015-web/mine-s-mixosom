@@ -31,11 +31,33 @@ function pointInsideTarget(intent: BlockTargetIntent): boolean {
     && intent.hitZ <= intent.targetZ + 1 + HIT_EPSILON;
 }
 
+/**
+ * Eye inside the target cell: voxel DDA reports the *entry* face (behind the
+ * player) while the client captured the face they clicked. That is not a
+ * neighbor retarget; the player is intersecting the block they are mining.
+ */
+export function eyeInsideTargetVoxel(eye: ActionEye, intent: BlockTargetIntent, epsilon = 1e-3): boolean {
+  return eye.x >= intent.targetX - epsilon && eye.x <= intent.targetX + 1 + epsilon
+    && eye.y >= intent.targetY - epsilon && eye.y <= intent.targetY + 1 + epsilon
+    && eye.z >= intent.targetZ - epsilon && eye.z <= intent.targetZ + 1 + epsilon;
+}
+
+export interface ValidateBlockTargetOptions {
+  readonly requireBlock?: boolean;
+  readonly reach?: number;
+  /**
+   * Place/use must match the captured face (it chooses the neighbor cell).
+   * Mining only needs the same voxel: pose lag and DDA-from-inside often
+   * report a different face of the *same* block. That is not a neighbor retarget.
+   */
+  readonly requireMatchingFace?: boolean;
+}
+
 export function validateBlockTargetIntent(
   world: VoxelWorld,
   eye: ActionEye,
   intent: BlockTargetIntent,
-  options?: { readonly requireBlock?: boolean; readonly reach?: number },
+  options?: ValidateBlockTargetOptions,
 ): { ok: true; value: ValidatedBlockIntent } | { ok: false; reason: ActionRejectReason } {
   if (!isValidWorldY(intent.targetY) || !Number.isInteger(intent.targetX) || !Number.isInteger(intent.targetZ)) {
     return { ok: false, reason: 'bounds' };
@@ -58,25 +80,41 @@ export function validateBlockTargetIntent(
   }
 
   const reach = options?.reach ?? ACTION_REACH;
+  const inside = eyeInsideTargetVoxel(eye, intent);
+  const requireMatchingFace = options?.requireMatchingFace !== false;
   const dx = intent.hitX - eye.x;
   const dy = intent.hitY - eye.y;
   const dz = intent.hitZ - eye.z;
   const distance = Math.hypot(dx, dy, dz);
-  if (!Number.isFinite(distance) || distance > reach || distance <= 1e-6) {
-    return { ok: false, reason: 'reach' };
-  }
-
-  const origin = new Vec3(eye.x, eye.y, eye.z);
-  const direction = new Vec3(dx / distance, dy / distance, dz / distance);
-  const los = world.raycast(origin, direction, Math.min(reach, distance + LOS_EPSILON));
-  if (!los
-    || los.x !== intent.targetX
-    || los.y !== intent.targetY
-    || los.z !== intent.targetZ
-    || los.normal.x !== face.x
-    || los.normal.y !== face.y
-    || los.normal.z !== face.z) {
-    return { ok: false, reason: 'los' };
+  if (!inside) {
+    if (!Number.isFinite(distance) || distance > reach || distance <= 1e-6) {
+      return { ok: false, reason: 'reach' };
+    }
+    const origin = new Vec3(eye.x, eye.y, eye.z);
+    const direction = new Vec3(dx / distance, dy / distance, dz / distance);
+    const los = world.raycast(origin, direction, Math.min(reach, distance + LOS_EPSILON));
+    const sameCell = Boolean(
+      los
+      && los.x === intent.targetX
+      && los.y === intent.targetY
+      && los.z === intent.targetZ,
+    );
+    const sameFace = Boolean(
+      los
+      && los.normal.x === face.x
+      && los.normal.y === face.y
+      && los.normal.z === face.z,
+    );
+    if (!sameCell || (requireMatchingFace && !sameFace)) {
+      return { ok: false, reason: 'los' };
+    }
+  } else {
+    const cx = intent.targetX + 0.5 - eye.x;
+    const cy = intent.targetY + 0.5 - eye.y;
+    const cz = intent.targetZ + 0.5 - eye.z;
+    if (cx * cx + cy * cy + cz * cz > reach * reach) {
+      return { ok: false, reason: 'reach' };
+    }
   }
 
   const definition = getBlockDefinition(block);
