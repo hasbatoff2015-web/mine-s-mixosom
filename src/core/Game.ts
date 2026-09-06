@@ -214,6 +214,7 @@ import {
   breakFinishHoldReason,
   formatBreakGateDiag,
   formatMiningLifecycle,
+  inputMiningField,
   isInFlightBreakReject,
   miningBlockKey,
   noteBreakAbortSent,
@@ -393,10 +394,15 @@ export interface OnlineAnarchySession {
   };
   miningLocked?: boolean;
   /**
-   * After `reason: mining` resend: wait for `block_break_start` ack before finish.
-   * Prevents FINISH while server `miningProgress` is still 0.
+   * True after every `block_break_start` until that start is acked.
+   * Finish must not go out while this is set — server `miningProgress` is still 0.
    */
   miningStartUnacked?: boolean;
+  /**
+   * Server lock exists at progress 0; wait for auto-break instead of the
+   * stuck-finish timeout (catch-up can expire that timeout first).
+   */
+  awaitingAutoBreak?: boolean;
   /** True between finish-sent and mouse-up / ack; mouse-up must clear so the next LMB can start. */
   clientWaitFinish?: boolean;
   finishWaitTicks?: number;
@@ -1693,6 +1699,13 @@ export class Game {
       reason: message.reason,
       targetKey: key,
     });
+    if (message.kind === 'block_break_finish' && !message.ok && message.reason === 'in_progress') {
+      this.traceMining(session, 'finish wait', {
+        reason: 'in_progress',
+        targetKey: key,
+        progress: session.miningProgress,
+      });
+    }
     if (online.lastBlockDiag && online.lastBlockDiag.actionSeq === message.actionSeq) {
       online.lastBlockDiag = {
         ...online.lastBlockDiag,
@@ -1804,6 +1817,7 @@ export class Game {
         miningReleased: true,
         miningTarget: session.miningTarget,
         finishKey: online.miningFinishKey,
+        awaitingAutoBreak: online.awaitingAutoBreak,
       })) return;
       const source = this.onlineActionSource(session);
       const action = captureBlockBreakAbort(source);
@@ -1897,6 +1911,8 @@ export class Game {
       readonly targetKey?: string;
       readonly progress?: number;
       readonly commandSeq?: number;
+      readonly actionSeq?: number;
+      readonly blockId?: number;
     },
   ): void {
     const online = session.online;
@@ -1909,6 +1925,8 @@ export class Game {
       progress: extra?.progress ?? session.miningProgress,
       commandSeq: extra?.commandSeq ?? online.miningIntent?.commandSeq,
       inputSeq: online.inputSeq,
+      actionSeq: extra?.actionSeq ?? online.actionSeq,
+      blockId: extra?.blockId,
     });
     if (extra?.reason) console.warn(line);
     else if (this.miningTraceEnabled()) console.info(line);
@@ -1942,8 +1960,10 @@ export class Game {
     const delta = session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
     const kind = nextMiningSound(this.miningSound, targetKey, session.miningProgress, delta);
     session.miningProgress += delta;
+    if (this.miningTraceEnabled()) {
+      this.traceMining(session, 'progress', { targetKey, progress: session.miningProgress, blockId: hit.block });
+    }
     if (kind === 'break' || session.miningProgress >= 1) {
-      this.traceMining(session, 'progress 100%', { targetKey, progress: session.miningProgress });
       this.breakTarget();
     } else if (kind === 'hit') {
       this.playBlockSound('hit', hit.block, hit.x, hit.y, hit.z);
@@ -1959,7 +1979,9 @@ export class Game {
       session.online.pendingBlockAction = undefined;
       session.online.finishWaitTicks = 0;
       session.online.miningLocked = false;
+      session.online.awaitingAutoBreak = false;
       this.sendOnlineBreakStart(session);
+      this.traceMining(session, 'start', { targetKey, progress: 0, blockId: session.target?.block });
     }
   }
 
@@ -1978,6 +2000,7 @@ export class Game {
       clientWaitFinish: online.clientWaitFinish,
       miningLocked: online.miningLocked,
       finishWaitTicks: online.finishWaitTicks,
+      awaitingAutoBreak: online.awaitingAutoBreak,
     });
     if (op.type === 'wait') {
       if (attackPressed) {
@@ -2018,7 +2041,6 @@ export class Game {
     }
     if (op.type === 'start') {
       this.startOnlineMine(session, op.targetKey);
-      this.traceMining(session, 'start', { targetKey: op.targetKey });
       this.advanceLocalMining(session, op.targetKey);
       return;
     }
@@ -3513,11 +3535,11 @@ export class Game {
         yaw: predicted.yaw,
         pitch: predicted.pitch,
         selectedSlot: session.selectedSlot,
-        mining: gameplayAllowed && shouldHoldServerMining({
+        ...inputMiningField(gameplayAllowed && shouldHoldServerMining({
           buttonDown: this.input.mining,
           finishKey: online.miningFinishKey,
           miningLocked: online.miningLocked,
-        }),
+        })),
         use: gameplayAllowed && this.input.using,
         vehicleForward: riding ? movement.forward : 0,
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
@@ -3955,6 +3977,9 @@ export class Game {
       this.traceMining(session, 'finish', {
         targetKey: miningBlockKey(hit.x, hit.y, hit.z),
         commandSeq: action.commandSeq,
+        actionSeq: action.actionSeq,
+        blockId: hit.block,
+        progress: session.miningProgress,
       });
       this.firstPerson?.swing();
       return;

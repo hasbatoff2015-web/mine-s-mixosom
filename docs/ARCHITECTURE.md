@@ -1,5 +1,13 @@
 # Архитектура
 
+## Anarchy first FINISH vs server progress 0 — 2026-09-06
+
+Client overlay and server `advanceMining` are independent 20 TPS counters. `beginMining` sets `progress = 0` and does not add a tick. `tickOnline` can run up to `MAX_CATCH_UP_TICKS` (4) per frame, so dirt (15 ticks) can reach overlay 1.0 before the next physics tick. FINISH then saw `progress === 0` with a **live** `miningTarget` and returned `reason: mining`. The client treated that as a missing lock (PR #59 resend START + overlay 0), which is the dry first cycle. Neighbors work because catch-up has drained and the queue is already `mining: true`.
+
+`survivalFinishLockReject`: no matching target → `mining` (resend START). Matching target and `progress <= 0` → `in_progress` (keep finish wait, do not reset overlay; server auto-break). Matching target and `progress > 0` still accepts finish (1-tick client lead). After `in_progress`, `awaitingAutoBreak` skips `MAX_FINISH_WAIT_TICKS` so catch-up cannot abort into a second overlay; mouse-up still aborts.
+
+Every `noteBreakStartSent` sets `miningStartUnacked`. `applyBreakActionResult` treats only `kind === 'block_break_finish'` as finish (not `undefined`). Leftover-idle lock from PR #60 (`shouldKeepMiningLock`) is unchanged.
+
 ## Anarchy first mining cycle vs command queue — 2026-09-06
 
 `tickOnline` sends `input` (seq N) then `block_break_start` (`commandSeq: N`). START is applied **immediately**. The command queue still applies **one packet per physics tick**. Idle packets sent *before* the click (no `mining`) can therefore run *after* `beginMining` and used to wipe `miningTarget`. Client overlay still runs 0→100%; FINISH sees `progress <= 0` / no lock → `reason: mining`. The client resends START; by then the queue is `mining: true`, so cycle #2 and later neighbors succeed on the first overlay.

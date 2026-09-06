@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-06: First FINISH at server progress 0
+
+- [x] Distinguish missing lock (`reason: mining`) from START-accepted / not-yet-advanced (`reason: in_progress`).
+- [x] Do not reset the client overlay or resend START on `in_progress`; wait for auto-break.
+- [x] After `in_progress`, do not abandon via `MAX_FINISH_WAIT_TICKS` (catch-up); mouse-up still aborts.
+- [x] Set `miningStartUnacked` on the first START, not only after a mining reject.
+- [x] Do not treat `action_result` without `kind` as `block_break_finish`.
+- [x] Regression: catch-up overlay 1.0 with 0 server ticks; short vs long A→B; A→B→C→D; dirt/stone/log/planks; 1-tick retarget; mouse-up still cancels.
+- [ ] Owner QA: one client, `?miningTrace=1`, hold LMB on dirt/stone/log/planks; first overlay must break the block (pause at 100% then air is OK; restart from 0 is not). Fast and slow A→B. A→B→C→D while holding.
+
 ## 2026-09-06: First mining cycle / command-queue sync
 
 - [x] Prove leftover idle commands applied after `beginMining` wipe `miningTarget` (cycle #1 dry, cycle #2 breaks).

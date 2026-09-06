@@ -184,7 +184,7 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     const intent = blockTargetFromHit(dirtHit);
     expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
     expect(player.miningProgress).toBe(0);
-    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: false, reason: 'mining' });
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: false, reason: 'in_progress' });
     world.applyInput(player, input(2, { mining: true }));
     world.tick();
     expect(player.miningProgress).toBeGreaterThan(0);

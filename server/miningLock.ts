@@ -31,3 +31,24 @@ export function clearMiningLock(player: {
   player.miningProgress = 0;
   player.miningStartCommandSeq = undefined;
 }
+
+/**
+ * Survival finish vs the mining lock.
+ *
+ * `reason: mining` means there is no lock on this cell (START never landed, or
+ * a later input cancelled it). The client must send a new START.
+ *
+ * `reason: in_progress` means START already locked this cell but
+ * `advanceMining` has not ticked yet (`progress === 0`). That is not a missing
+ * lock. Treating it as `mining` makes the client reset the overlay (dry first
+ * cycle) while the server still holds the target.
+ */
+export function survivalFinishLockReject(player: {
+  readonly miningTarget?: { x: number; y: number; z: number };
+  readonly miningProgress: number;
+}, x: number, y: number, z: number): 'mining' | 'in_progress' | undefined {
+  const mining = player.miningTarget;
+  if (!mining || mining.x !== x || mining.y !== y || mining.z !== z) return 'mining';
+  if (player.miningProgress <= 0) return 'in_progress';
+  return undefined;
+}

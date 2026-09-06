@@ -19,11 +19,17 @@ import {
   shouldWaitForInFlightFinish,
   inputMiningField,
   omittedMiningDuringHoldIsClientError,
+  shouldKeepFinishWait,
+  shouldResendBreakStartAfterFinishReject,
   type OnlineBreakGate,
 } from '../src/net/onlineMining';
 
 function gate(partial: OnlineBreakGate = {}): OnlineBreakGate {
   return { ...partial };
+}
+
+function ackStart(state: OnlineBreakGate, x: number, y: number, z: number): void {
+  applyBreakActionResult(state, { ok: true, kind: 'block_break_start', x, y, z });
 }
 
 describe('online mining finish/abort coordination', () => {
@@ -83,6 +89,7 @@ describe('online mining finish/abort coordination', () => {
 
   it('treats mining rejects as in-flight, not a hard deny', () => {
     expect(isInFlightBreakReject('mining')).toBe(true);
+    expect(isInFlightBreakReject('in_progress')).toBe(true);
     expect(isInFlightBreakReject('cancelled')).toBe(false);
     expect(isInFlightBreakReject('empty')).toBe(false);
     expect(isInFlightBreakReject('los')).toBe(false);
@@ -94,6 +101,7 @@ describe('online break gate after a failed finish', () => {
   it('does not leave a coordinate permanently unbreakable after a hard reject', () => {
     const state = gate();
     noteBreakStartSent(state, 8, 70, 12);
+    ackStart(state, 8, 70, 12);
     noteBreakFinishSent(state, 8, 70, 12);
     expect(shouldSendBreakFinish(state, 8, 70, 12)).toBe(false);
     expect(breakFinishHoldReason(state, 8, 70, 12)).toBe('finish-inflight');
@@ -112,6 +120,7 @@ describe('online break gate after a failed finish', () => {
 
     noteMiningReleased(state);
     noteBreakStartSent(state, 8, 70, 12);
+    ackStart(state, 8, 70, 12);
     expect(shouldSendBreakFinish(state, 8, 70, 12)).toBe(true);
   });
 
@@ -126,6 +135,7 @@ describe('online break gate after a failed finish', () => {
     });
     expect(shouldSendBreakFinish(state, 9, 70, 12)).toBe(true);
     noteBreakStartSent(state, 9, 70, 12);
+    ackStart(state, 9, 70, 12);
     expect(shouldSendBreakFinish(state, 9, 70, 12)).toBe(true);
   });
 
@@ -163,6 +173,7 @@ describe('online break gate after a failed finish', () => {
   it('does not require a reconnect-equivalent empty gate after Survival then Creative retry', () => {
     const state = gate();
     noteBreakStartSent(state, 3, 68, 10);
+    ackStart(state, 3, 68, 10);
     noteBreakFinishSent(state, 3, 68, 10);
     applyBreakActionResult(state, {
       ok: false,
@@ -172,6 +183,7 @@ describe('online break gate after a failed finish', () => {
     });
     noteMiningReleased(state);
     noteBreakStartSent(state, 3, 68, 10);
+    ackStart(state, 3, 68, 10);
     expect(shouldSendBreakFinish(state, 3, 68, 10)).toBe(true);
 
     const reconnected = gate();
@@ -217,6 +229,7 @@ describe('online mining tick after overlay reaches 100%', () => {
   function afterFinish(): OnlineBreakGate {
     const state = gate();
     noteBreakStartSent(state, 8, 70, 12);
+    ackStart(state, 8, 70, 12);
     noteBreakFinishSent(state, 8, 70, 12);
     return state;
   }
@@ -267,6 +280,7 @@ describe('online mining tick after overlay reaches 100%', () => {
     abandonInFlightFinish(state);
     resetOnlineMiningGate(state);
     noteBreakStartSent(state, 9, 70, 12);
+    ackStart(state, 9, 70, 12);
     expect(state.miningLocked).toBe(true);
     expect(shouldSendBreakFinish(state, 9, 70, 12)).toBe(true);
   });
@@ -313,5 +327,65 @@ describe('input mining hold vs idle omit', () => {
     expect(inputMiningField(shouldHoldServerMining({ buttonDown: false }))).toEqual({});
     expect(omittedMiningDuringHoldIsClientError({ buttonDown: false, miningLocked: true })).toBe(true);
     expect(omittedMiningDuringHoldIsClientError({ buttonDown: false })).toBe(false);
+  });
+});
+
+describe('first START ack vs premature finish', () => {
+  it('blocks finish until the first start is acked', () => {
+    const state = gate();
+    noteBreakStartSent(state, 8, 65, 6);
+    expect(state.miningStartUnacked).toBe(true);
+    expect(breakFinishHoldReason(state, 8, 65, 6)).toBe('awaiting-start');
+    expect(shouldSendBreakFinish(state, 8, 65, 6)).toBe(false);
+    ackStart(state, 8, 65, 6);
+    expect(state.miningStartUnacked).toBe(false);
+    expect(shouldSendBreakFinish(state, 8, 65, 6)).toBe(true);
+  });
+
+  it('does not treat a missing kind as a finish ack', () => {
+    const state = gate();
+    noteBreakStartSent(state, 8, 65, 6);
+    noteBreakFinishSent(state, 8, 65, 6);
+    applyBreakActionResult(state, { ok: true, x: 8, y: 65, z: 6 });
+    expect(state.miningFinishKey).toBe('8,65,6');
+    expect(state.clientWaitFinish).toBe(true);
+    expect(state.miningLocked).toBe(true);
+  });
+
+  it('keeps the in-flight finish when the server lock exists at progress 0', () => {
+    const state = gate();
+    noteBreakStartSent(state, 8, 65, 6);
+    ackStart(state, 8, 65, 6);
+    noteBreakFinishSent(state, 8, 65, 6);
+    applyBreakActionResult(state, {
+      ok: false,
+      reason: 'in_progress',
+      kind: 'block_break_finish',
+      x: 8, y: 65, z: 6,
+    });
+    expect(shouldKeepFinishWait('in_progress')).toBe(true);
+    expect(shouldResendBreakStartAfterFinishReject('in_progress')).toBe(false);
+    expect(shouldResendBreakStartAfterFinishReject('mining')).toBe(true);
+    expect(state.miningFinishKey).toBe('8,65,6');
+    expect(state.clientWaitFinish).toBe(true);
+    expect(state.miningLocked).toBe(true);
+    expect(state.finishWaitTicks).toBe(0);
+    expect(shouldSendBreakFinish(state, 8, 65, 6)).toBe(false);
+    expect(state.awaitingAutoBreak).toBe(true);
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '8,65,6',
+      miningTarget: '8,65,6',
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: true,
+      finishWaitTicks: MAX_FINISH_WAIT_TICKS,
+      awaitingAutoBreak: true,
+    }).type).toBe('wait');
+    expect(shouldSendBreakAbort({
+      miningReleased: true,
+      miningTarget: '8,65,6',
+      finishKey: '8,65,6',
+      awaitingAutoBreak: true,
+    })).toBe(true);
   });
 });

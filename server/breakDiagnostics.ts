@@ -13,6 +13,8 @@ export interface BreakAttemptTrace {
   readonly miningStartCommandSeq?: number;
   readonly appliedCommandSeq?: number;
   readonly commandSeq?: number;
+  readonly queueDepth?: number;
+  readonly inputMining?: boolean;
   readonly stage: string;
   readonly reason?: string;
   readonly eventCancelled?: boolean;
@@ -44,6 +46,8 @@ export function formatBreakAttempt(trace: BreakAttemptTrace): string {
     `cmd=${trace.commandSeq ?? '—'}`,
     `startCmd=${trace.miningStartCommandSeq ?? '—'}`,
     `applied=${trace.appliedCommandSeq ?? '—'}`,
+    `queue=${trace.queueDepth ?? '—'}`,
+    `input.mining=${trace.inputMining === true ? 1 : trace.inputMining === false ? 0 : '—'}`,
   ].join(' ') + claim;
 }
 
