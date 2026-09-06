@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: claim boundary depth + thinner wire
+
+- Клиентский `ClaimBoundaryRenderer`: линии **3px** (было 6) и обычный depth test/write. Раньше `depthTest: false` + `renderOrder: 50` рисовали box поверх мира. Сервер, протокол и claims-логика без изменений. Mining не трогали.
+- Report: `docs/reports/2026-09-06_claim-boundary-depth.md`.
+
 ## Последний проход: first FINISH at server progress 0 (dry overlay)
 
 - Симптом после PR #60: даже один игрок, dirt и другие обычные блоки. Overlay 0→100%, блок цел, анимация сначала, второй цикл ломает. Соседи при удержании ЛКМ — с первого цикла. Короткий A→B может дать тот же сбой, длинный A→B — нет.
@@ -58,7 +63,7 @@
 
 ## Последний проход: claim boundary visibility (red + overlapping)
 
-- Wireframe всегда `#ff0000`, `fog=false`, `toneMapped=false`, 6px `LineSegments2` — цвет не смешивается с небом/туманом.
+- Wireframe всегда `#ff0000`, `fog=false`, `toneMapped=false`, **3px** `LineSegments2`, `depthTest`/`depthWrite` как у мира — линии прячутся за блоками.
 - Запрещённый break/place показывает **все** overlapping claims, у которых этот флаг явно `false` (и все untrusted overlapping, если флаг никто не задал). Arena только с `pvp=true` по-прежнему не рисуется на block-break.
 - Report: `docs/reports/2026-09-05_claim-boundary-visibility.md`.
 
