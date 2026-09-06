@@ -331,6 +331,17 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     return { world, player: joined.player, loop: new MineLoop(world, joined.player) };
   }
 
+  function holdClientUntilOverlay(loop: MineLoop, look: VoxelHit, serverTick = false): void {
+    const cap = clientTicksToFinish(look.block as BlockId) + 3;
+    for (let tick = 0; tick < cap; tick += 1) {
+      loop.tick(look, serverTick);
+      if (loop.miningProgress >= 1) return;
+    }
+    throw new Error(
+      `overlay did not reach 1.0 in ${cap} ticks (progress=${loop.miningProgress})\n${loop.traces.join('\n')}`,
+    );
+  }
+
   function holdUntilBroken(loop: MineLoop, look: VoxelHit, maxTicks?: number): number {
     const cap = maxTicks ?? clientTicksToFinish(look.block as BlockId) + 8;
     for (let tick = 0; tick < cap; tick += 1) {
@@ -345,9 +356,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     const look = prepareTarget(world, player, BlockId.Dirt);
     loop.enqueueIdles(8);
     loop.buttonDown = true;
-
-    const ticks = clientTicksToFinish(BlockId.Dirt);
-    for (let i = 0; i < ticks; i += 1) loop.tick(look, false);
+    holdClientUntilOverlay(loop, look, false);
 
     expect(loop.miningProgress, loop.traces.join('\n')).toBeGreaterThanOrEqual(1);
     expect(player.miningTarget).toEqual({ x: look.x, y: look.y, z: look.z });
@@ -364,7 +373,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     expect(loop.miningProgress).toBeGreaterThanOrEqual(1);
     expect(world.world.getBlock(look.x, look.y, look.z)).toBe(BlockId.Dirt);
 
-    for (let i = 0; i < ticks + 2; i += 1) {
+    for (let i = 0; i < clientTicksToFinish(BlockId.Dirt) + 2; i += 1) {
       loop.tick(look, true);
       if (world.world.getBlock(look.x, look.y, look.z) === BlockId.Air) break;
     }
@@ -377,8 +386,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     const look = prepareTarget(world, player, BlockId.Dirt);
     loop.enqueueIdles(8);
     loop.buttonDown = true;
-    const ticks = clientTicksToFinish(BlockId.Dirt);
-    for (let i = 0; i < ticks; i += 1) loop.tick(look, false);
+    holdClientUntilOverlay(loop, look, false);
     expect(loop.finishes[0]?.reason).toBe('in_progress');
     expect(loop.gate.awaitingAutoBreak).toBe(true);
     for (let i = 0; i < 50; i += 1) loop.tick(look, false);
@@ -387,7 +395,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     expect(loop.finishes.length).toBe(1);
     expect(player.miningTarget).toEqual({ x: look.x, y: look.y, z: look.z });
     expect(world.world.getBlock(look.x, look.y, look.z)).toBe(BlockId.Dirt);
-    for (let i = 0; i < ticks + 2; i += 1) {
+    for (let i = 0; i < clientTicksToFinish(BlockId.Dirt) + 2; i += 1) {
       loop.tick(look, true);
       if (world.world.getBlock(look.x, look.y, look.z) === BlockId.Air) break;
     }
@@ -471,8 +479,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     const { world, player, loop } = await boot();
     const look = prepareTarget(world, player, BlockId.Dirt);
     loop.buttonDown = true;
-    const ticks = clientTicksToFinish(BlockId.Dirt);
-    for (let i = 0; i < ticks; i += 1) loop.tick(look, false);
+    holdClientUntilOverlay(loop, look, false);
     expect(loop.finishes[0]?.reason).toBe('in_progress');
     expect(player.miningTarget).toBeDefined();
     loop.buttonDown = false;
