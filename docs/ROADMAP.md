@@ -7,7 +7,7 @@
 - [x] Advance mining during those stale ticks so dirt (15) is not starved by a deep FIFO.
 - [x] After a successful break, a neighbor while LMB is held still breaks on the first cycle.
 - [x] Bob connecting does not create the wipe; Ada leftover queue does.
-- [ ] Owner QA: two Chrome clients `?miningTrace=1`; first LMB after idle must break on the first overlay; hold across A→B→C.
+- [ ] Owner QA: two Chrome clients `?miningTrace=1`; first LMB after idle must break on the first overlay; hold across A→B→C. Agent live: dirt and oak planks broke on the first overlay with B idle (FPS 4); not a ×5 matrix.
 
 ## 2026-09-06: Server mining lock hold (input.mining)
 
