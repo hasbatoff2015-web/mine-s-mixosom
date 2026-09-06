@@ -157,13 +157,8 @@ describe('block action intent contract', () => {
 
   it('still rejects a neighbor cell even when mining skips face match', () => {
     const world = stoneWorld();
-    const result = validateBlockTargetIntent(world, eye, {
-      ...intentFor(5, 41, 5),
-      targetX: 5, targetY: 42, targetZ: 5,
-      targetBlockId: BlockId.OakLog,
-      hitX: 5.5, hitY: 42.5, hitZ: 5.5,
-      faceX: 0, faceY: 0, faceZ: -1,
-    }, { requireMatchingFace: false });
+    world.chunks.get('0,0')!.set(5, 41, 4, BlockId.Stone);
+    const result = validateBlockTargetIntent(world, eye, intentFor(5, 41, 5), { requireMatchingFace: false });
     expect(result).toEqual({ ok: false, reason: 'los' });
   });
 

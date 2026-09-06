@@ -593,9 +593,11 @@ describe('Anarchy builtin plugins', () => {
     const bob = join(world, 'Bob');
     world.setGameMode(ada.player, 'creative');
     world.setGameMode(bob.player, 'creative');
-    const ax = Math.floor(ada.player.controller.position.x) + 8;
+    const ax = Math.floor(ada.player.controller.position.x) + 2;
     const ay = Math.floor(ada.player.controller.position.y);
-    const az = Math.floor(ada.player.controller.position.z) + 8;
+    const az = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([ax + 0.5, ay, az + 0.5]);
+    bob.player.controller.teleport([ax + 1.5, ay, az + 0.5]);
     world.world.setBlock(ax, ay, az, BlockId.Dirt);
     world.world.setBlock(ax + 1, ay, az, BlockId.Dirt);
     expect(world.tryBreak(ada.player, ax, ay, az)).toEqual({ ok: true });
@@ -631,9 +633,10 @@ describe('Anarchy builtin plugins', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     world.setGameMode(ada.player, 'creative');
-    const x = Math.floor(ada.player.controller.position.x) + 6;
+    const x = Math.floor(ada.player.controller.position.x) + 2;
     const y = Math.floor(ada.player.controller.position.y);
-    const z = Math.floor(ada.player.controller.position.z) + 6;
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
     world.world.setBlock(x, y, z, BlockId.Dirt);
     world.plugins.register({
       name: 'deny-after-claims',
