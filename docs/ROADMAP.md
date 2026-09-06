@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-07: Online arrow PvP + FireArrow pickup
+
+- [x] Carry `PlayerArrow.ownerId` through `onPlayerHit` into pre/post player damage events as `attackerId`.
+- [x] Route player arrows by Claims `pvp`; keep ownerless mob projectiles on `mob-damage`.
+- [x] Keep authoritative swept player/block ordering, owner exclusion, Creative victim filter, FireArrow ignition and server health mutation.
+- [x] Return embedded `flaming=true` projectiles to `ItemId.FireArrow`; normal arrows remain `ItemId.Arrow`.
+- [x] Preserve Creative removal-only pickup, full-inventory leftover, exactly-once removal and ordinary authoritative inventory sync.
+- [x] Automated regression: no-claim PvP, both Claims flag combinations, pre/post attacker, wall first/player first, miss/owner, Creative victim, fire damage/ignite, pickup identity/full/exactly-once/end-to-end sync.
+- [ ] Owner manual two-client QA: wilderness Arrow/FireArrow hit, wall occlusion, FireArrow pickup counter, and `pvp=false`/`pvp=true + mob-damage=false` claim matrix.
+
 ## 2026-09-06: Integrate remote actions + Networking V2 into plugin/mining line
 
 - [x] Merge `codex/remote-action-presentation-v2` into `cursor/claim-boundary-depth-3f93` (functional union, not file takeover).

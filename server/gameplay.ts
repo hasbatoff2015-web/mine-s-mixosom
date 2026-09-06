@@ -284,7 +284,7 @@ export class ServerGameplay {
           players: connected
             .filter((player) => player.gamemode === 'survival' && !player.survival.dead)
             .map((player) => ({ id: player.id, aabb: player.controller.aabb })),
-          onPlayerHit: (playerId, damage, flaming, position) => {
+          onPlayerHit: (playerId, damage, flaming, position, attackerId) => {
             const victim = connected.find((player) => player.id === playerId);
             if (!victim) return;
             this.events.emit('projectileHit', {
@@ -297,6 +297,7 @@ export class ServerGameplay {
             this.hurtPlayer(victim, damage, 'projectile', position, {
               knockback: flaming ? 4.2 : 2.4,
               ignite: flaming,
+              attackerId,
             });
           },
         });

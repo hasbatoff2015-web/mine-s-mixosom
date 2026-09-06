@@ -1,5 +1,21 @@
 # Архитектура
 
+## Online player-arrow damage attribution and pickup identity — 2026-09-07
+
+Player arrows stay inside the existing fixed-20-TPS authoritative path. `releaseBowWithAim` captures aim, consumes ammo and spawns one `PlayerArrow` with `ownerId=shooter.id`; `PlayerArrowManager.tick` performs swept AABB/block ordering and excludes that owner. On a player hit, the existing callback now also carries `ownerId` into `ServerGameplay.hurtPlayer(..., { attackerId })`. Both cancellable `playerDamage` and observation-only `playerDamaged` therefore expose the same shooter id. Claims continues its existing classification: present player `attackerId` → `pvp`; absent attacker on mob melee/arrow/projectile → `mob-damage`. No client hit report, direct health decrement, second damage system, or protocol field was added.
+
+```text
+bow intent → server PlayerArrow(ownerId)
+  → swept authoritative player hit
+  → hurtPlayer(attackerId=ownerId)
+  → playerDamage (Claims may cancel)
+  → SurvivalSystem.damage
+  → playerDamaged (same attackerId)
+  → health sync
+```
+
+Embedded player-arrow identity remains the existing `flaming` bit. Survival pickup maps `false → ItemId.Arrow` and `true → ItemId.FireArrow`, calls the existing `Inventory.addItem`, and removes the projectile only when leftover is zero. Creative removes without adding. `inventoryDirty` and the normal inventory packet update the client/UI; there is no FireArrow counter packet or HUD-side increment.
+
 ## Integrate remote actions + plugin/mining line — 2026-09-06
 
 Одна линия: plugin platform / claims / mining lifecycle (наша ветка) ∪ Networking V2 ∪ remote action presentation (PR #54). `PROTOCOL_VERSION` остаётся 3; `presentation?` additive. `ServerGameplay` принимает и `worldSpawn`, и `onBlockReplaced`. Mining lock (`miningStartCommandSeq`, `shouldKeepMiningLock`, `clearMiningLock`, `in_progress` finish) не заменяется presentation-wipe. `BlockBreakingOverlay` общий для local и remote; local progress mapping не меняется. Claim wires остаются 3px + `depthTest`/`depthWrite`.

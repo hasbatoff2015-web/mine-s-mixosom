@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { FIRE_ARROW_IGNITE_TICKS, flamingArrowBlockHit } from '../src/combat';
-import { MobManager } from '../src/entities';
+import { FIRE_ARROW_IGNITE_TICKS, PlayerArrowManager, flamingArrowBlockHit } from '../src/combat';
+import { HeadlessEntityHost, MobManager } from '../src/entities';
+import { Inventory, createItemStack } from '../src/inventory';
 import { ItemId } from '../src/items';
+import { Vec3 } from '../src/math/vec3';
 import { classifyItemForRendering } from '../src/items/itemRenderProfiles';
 import { ChunkMesher, disposeMeshedChunk } from '../src/rendering/ChunkMesher';
 import { FIRE_PLANE_COUNT, fireBlockPlanes } from '../src/rendering/fireGeometry';
@@ -54,6 +56,81 @@ describe('fire arrow combat', () => {
     manager.update(0.05);
     expect(cow!.fireTicks).toBe(0);
     manager.dispose();
+  });
+
+  it.each([
+    [false, ItemId.Arrow, ItemId.FireArrow],
+    [true, ItemId.FireArrow, ItemId.Arrow],
+  ] as const)('returns embedded flaming=%s projectiles to the matching ammo stack', (flaming, expected, other) => {
+    const world = new VoxelWorld(`arrow-pickup-${flaming}`);
+    const host = new HeadlessEntityHost();
+    const mobs = new MobManager(host, world, { automaticSpawning: false });
+    const arrows = new PlayerArrowManager(host, world, mobs, { random: () => 0.5 });
+    arrows.spawn(new Vec3(4.5, 80, 4.5), new Vec3(1, 0, 0), 0, 0, false, flaming, undefined, 'shooter');
+    const projectile = arrows.entities[0]!;
+    projectile.inGround = true;
+    projectile.pickupDelay = 0;
+    const inventory = new Inventory();
+    const player = { minX: 4, minY: 79, minZ: 4, maxX: 5, maxY: 81, maxZ: 5 };
+    const collect = () => arrows.tryCollect(player, {
+      mode: 'survival',
+      addItem: (itemId, count) => inventory.addItem(itemId, count),
+    });
+
+    expect(collect()).toBe(1);
+    expect(inventory.count(expected)).toBe(1);
+    expect(inventory.count(other)).toBe(0);
+    expect(arrows.count).toBe(0);
+    expect(collect()).toBe(0);
+    expect(inventory.count(expected)).toBe(1);
+    arrows.dispose();
+    mobs.dispose();
+  });
+
+  it('keeps an embedded fire arrow in the world when the FireArrow stack cannot accept it', () => {
+    const world = new VoxelWorld('fire-arrow-full-pickup');
+    const host = new HeadlessEntityHost();
+    const mobs = new MobManager(host, world, { automaticSpawning: false });
+    const arrows = new PlayerArrowManager(host, world, mobs, { random: () => 0.5 });
+    arrows.spawn(new Vec3(4.5, 80, 4.5), new Vec3(1, 0, 0), 0, 0, false, true, undefined, 'shooter');
+    const projectile = arrows.entities[0]!;
+    projectile.inGround = true;
+    projectile.pickupDelay = 0;
+    const inventory = new Inventory();
+    for (let slot = 0; slot < Inventory.SLOT_COUNT; slot += 1) {
+      inventory.setSlot(slot, createItemStack('dirt', 64));
+    }
+
+    expect(arrows.tryCollect(
+      { minX: 4, minY: 79, minZ: 4, maxX: 5, maxY: 81, maxZ: 5 },
+      { mode: 'survival', addItem: (itemId, count) => inventory.addItem(itemId, count) },
+    )).toBe(0);
+    expect(inventory.count(ItemId.Arrow)).toBe(0);
+    expect(inventory.count(ItemId.FireArrow)).toBe(0);
+    expect(arrows.count).toBe(1);
+    expect(arrows.entities[0]).toBe(projectile);
+    arrows.dispose();
+    mobs.dispose();
+  });
+
+  it('keeps Creative pickup removal-only for fire arrows', () => {
+    const world = new VoxelWorld('fire-arrow-creative-pickup');
+    const host = new HeadlessEntityHost();
+    const mobs = new MobManager(host, world, { automaticSpawning: false });
+    const arrows = new PlayerArrowManager(host, world, mobs, { random: () => 0.5 });
+    arrows.spawn(new Vec3(4.5, 80, 4.5), new Vec3(1, 0, 0), 0, 0, false, true, undefined, 'shooter');
+    arrows.entities[0]!.inGround = true;
+    arrows.entities[0]!.pickupDelay = 0;
+    const added: string[] = [];
+
+    expect(arrows.tryCollect(
+      { minX: 4, minY: 79, minZ: 4, maxX: 5, maxY: 81, maxZ: 5 },
+      { mode: 'creative', addItem: (itemId) => { added.push(itemId); return 0; } },
+    )).toBe(1);
+    expect(added).toEqual([]);
+    expect(arrows.count).toBe(0);
+    arrows.dispose();
+    mobs.dispose();
   });
 });
 
