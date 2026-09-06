@@ -42,7 +42,12 @@ Follow-up on `cursor/armor-crouch-swing-flash-3f93`. No new protocol, no new ani
 
 ## Tests
 
-Recorded after the commit in this report’s Git section.
+- `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` PASS
+- `check:boundaries` PASS
+- Directed 65/65: `player-visual-animation`, `player-skins`, `remote-action-presentation`, `remote-player-view`, `server/remote-presentation` (armor ids still published; air miss still increments `swingSeq`), `fire-overlay-hurt`, `item-rendering`
+- `test:sim` 42/42 PASS
+- `test:server` 231/232 — the only failure is pre-existing `tick-load-flight` wall-clock (`setView` max 143–163 ms vs `< 80` on this VM). Same flake as the previous commit on this branch (118–157 ms). Not weakened.
+- `build` PASS (1.25 MB main chunk)
 
 ## Visual QA
 
@@ -68,4 +73,4 @@ Owner live QA both directions (A↔B): crouch over legs (stand/walk/attack/mine/
 
 ## Git
 
-Branch `cursor/armor-crouch-swing-flash-3f93` (PR #64), follow-up on `4bed9ae`.
+Branch `cursor/armor-crouch-swing-flash-3f93` (PR #64), follow-up after `4bed9ae`.
