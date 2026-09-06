@@ -11,6 +11,8 @@ describe('break attempt diagnostics', () => {
       blockId: 3,
       miningTarget: { x: 8, y: 70, z: 12 },
       miningProgress: 0.4,
+      miningStartCommandSeq: 9,
+      appliedCommandSeq: 12,
       commandSeq: 12,
       stage: 'tryBreak.intent',
       reason: 'los',
@@ -28,6 +30,8 @@ describe('break attempt diagnostics', () => {
     expect(line).toContain('cancelled=0');
     expect(line).toContain('mine=8,70,12@0.400');
     expect(line).toContain('cmd=12');
+    expect(line).toContain('startCmd=9');
+    expect(line).toContain('applied=12');
     expect(line).toContain('claims=0');
   });
 });

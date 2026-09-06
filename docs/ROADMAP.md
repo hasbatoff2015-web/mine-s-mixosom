@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-06: First mining cycle / command-queue sync
+
+- [x] Prove leftover idle commands applied after `beginMining` wipe `miningTarget` (cycle #1 dry, cycle #2 breaks).
+- [x] Keep the lock when `appliedCommandSeq < miningStartCommandSeq`; omitted mining with `seq >= start` still cancels.
+- [x] Advance mining during those stale ticks so dirt (15) is not starved by a deep FIFO.
+- [x] After a successful break, a neighbor while LMB is held still breaks on the first cycle.
+- [x] Bob connecting does not create the wipe; Ada leftover queue does.
+- [ ] Owner QA: two Chrome clients `?miningTrace=1`; first LMB after idle must break on the first overlay; hold across A→B→C.
+
 ## 2026-09-06: Server mining lock hold (input.mining)
 
 - [x] Keep `input.mining: true` while `buttonDown || miningFinishKey || miningLocked` (including `sendOnlineIdle`).

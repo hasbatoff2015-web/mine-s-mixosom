@@ -295,6 +295,8 @@ export function snapshotMiningGate(gate: OnlineBreakGate, extra?: {
   readonly buttonDown?: boolean;
   readonly targetKey?: string;
   readonly op?: string;
+  readonly commandSeq?: number;
+  readonly inputSeq?: number;
 }): Record<string, string | number | boolean | undefined> {
   return {
     finish: gate.miningFinishKey,
@@ -310,6 +312,8 @@ export function snapshotMiningGate(gate: OnlineBreakGate, extra?: {
     button: extra?.buttonDown,
     look: extra?.targetKey,
     op: extra?.op,
+    commandSeq: extra?.commandSeq,
+    inputSeq: extra?.inputSeq,
   };
 }
 
@@ -322,6 +326,8 @@ export function formatMiningLifecycle(
     readonly targetKey?: string;
     readonly reason?: string;
     readonly progress?: number;
+    readonly commandSeq?: number;
+    readonly inputSeq?: number;
   },
 ): string {
   const snap = snapshotMiningGate(gate, extra);
@@ -336,7 +342,10 @@ export function formatMiningLifecycle(
     `pending=${snap.pending ?? '—'}`,
     `rejected=${snap.rejected ?? '—'}`,
     `button=${snap.button === true ? 1 : snap.button === false ? 0 : '—'}`,
+    `startUnacked=${snap.startUnacked ? 1 : 0}`,
     extra?.progress !== undefined ? `progress=${extra.progress.toFixed(3)}` : undefined,
+    extra?.commandSeq !== undefined ? `cmd=${extra.commandSeq}` : undefined,
+    extra?.inputSeq !== undefined ? `inputSeq=${extra.inputSeq}` : undefined,
   ];
   return parts.filter((part) => part !== undefined).join(' ');
 }

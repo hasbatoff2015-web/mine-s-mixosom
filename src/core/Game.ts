@@ -1892,7 +1892,12 @@ export class Game {
   private traceMining(
     session: GameSession,
     phase: string,
-    extra?: { readonly reason?: string; readonly targetKey?: string; readonly progress?: number },
+    extra?: {
+      readonly reason?: string;
+      readonly targetKey?: string;
+      readonly progress?: number;
+      readonly commandSeq?: number;
+    },
   ): void {
     const online = session.online;
     if (!online || typeof console === 'undefined') return;
@@ -1902,6 +1907,8 @@ export class Game {
       targetKey: extra?.targetKey,
       reason: extra?.reason,
       progress: extra?.progress ?? session.miningProgress,
+      commandSeq: extra?.commandSeq ?? online.miningIntent?.commandSeq,
+      inputSeq: online.inputSeq,
     });
     if (extra?.reason) console.warn(line);
     else if (this.miningTraceEnabled()) console.info(line);
@@ -3945,7 +3952,10 @@ export class Game {
       };
       session.online.client.send(actionMessageFromBreakFinish(action));
       session.online.miningIntent = undefined;
-      this.traceMining(session, 'finish', { targetKey: miningBlockKey(hit.x, hit.y, hit.z) });
+      this.traceMining(session, 'finish', {
+        targetKey: miningBlockKey(hit.x, hit.y, hit.z),
+        commandSeq: action.commandSeq,
+      });
       this.firstPerson?.swing();
       return;
     }

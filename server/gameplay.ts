@@ -1,4 +1,5 @@
 import { Vec3, type Vec3Like } from '../src/math/vec3';
+import { clearMiningLock } from './miningLock';
 import {
   BlockId,
   getBlockDefinition,
@@ -114,6 +115,7 @@ export interface GameplayPlayer {
   ridingCartId?: string;
   miningTarget?: { x: number; y: number; z: number };
   miningProgress: number;
+  miningStartCommandSeq?: number;
   bowUseTicks: number;
   foodUseTicks: number;
   lastUse: boolean;
@@ -612,8 +614,7 @@ export class ServerGameplay {
       }
       player.survival.addExhaustion(0.005);
     }
-    player.miningProgress = 0;
-    player.miningTarget = undefined;
+    clearMiningLock(player);
     return { ok: true };
   }
 
@@ -691,6 +692,10 @@ export class ServerGameplay {
     ) {
       player.miningTarget = { x: hit.x, y: hit.y, z: hit.z };
       player.miningProgress = 0;
+    }
+    if (commandSeq !== undefined) player.miningStartCommandSeq = commandSeq;
+    else if (player.appliedCommandSeq !== undefined && player.appliedCommandSeq >= 0) {
+      player.miningStartCommandSeq = player.appliedCommandSeq;
     }
     return { ok: true };
   }
@@ -835,8 +840,7 @@ export class ServerGameplay {
     if (!target) return;
     const block = this.world.getBlock(target.x, target.y, target.z);
     if (block === BlockId.Air) {
-      player.miningProgress = 0;
-      player.miningTarget = undefined;
+      clearMiningLock(player);
       return;
     }
     const definition = getBlockDefinition(block);
@@ -927,8 +931,7 @@ export class ServerGameplay {
     this.flushPlayerLife?.(player);
     if (player.ridingCartId) this.exitVehicle(player);
     player.window = { kind: 'inventory' };
-    player.miningTarget = undefined;
-    player.miningProgress = 0;
+    clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
     player.lastUse = false;

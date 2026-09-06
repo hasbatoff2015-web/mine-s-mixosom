@@ -61,6 +61,7 @@ import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
+import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
@@ -133,6 +134,7 @@ export class ServerPlayer implements GameplayPlayer {
   ridingCartId?: string;
   miningTarget?: { x: number; y: number; z: number };
   miningProgress = 0;
+  miningStartCommandSeq?: number;
   bowUseTicks = 0;
   foodUseTicks = 0;
   lastUse = false;
@@ -851,6 +853,8 @@ export class WorldInstance {
       blockId,
       miningTarget: player.miningTarget,
       miningProgress: player.miningProgress,
+      miningStartCommandSeq: player.miningStartCommandSeq,
+      appliedCommandSeq: player.appliedCommandSeq,
       commandSeq,
       stage,
       reason: result.ok ? undefined : result.reason,
@@ -902,8 +906,7 @@ export class WorldInstance {
   }
 
   abortMining(player: ServerPlayer): void {
-    player.miningProgress = 0;
-    player.miningTarget = undefined;
+    clearMiningLock(player);
   }
 
   releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
@@ -1294,8 +1297,7 @@ export class WorldInstance {
     });
     player.appliedStepsThisLoop.length = 0;
     player.actionPoseHistory.length = 0;
-    player.miningTarget = undefined;
-    player.miningProgress = 0;
+    clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
     player.lastUse = false;
@@ -1368,11 +1370,12 @@ export class WorldInstance {
         });
         this.flushHealthIfDeadThenRespawn(player);
       }
-      if (input.mining) this.gameplay.advanceMining(player);
-      else {
-        player.miningProgress = 0;
-        player.miningTarget = undefined;
-      }
+      if (shouldKeepMiningLock({
+        mining: input.mining,
+        appliedCommandSeq: player.appliedCommandSeq,
+        miningStartCommandSeq: player.miningStartCommandSeq,
+      })) this.gameplay.advanceMining(player);
+      else clearMiningLock(player);
       this.gameplay.advanceUseHold(player, using);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
