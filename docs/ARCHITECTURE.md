@@ -1,5 +1,9 @@
 # Архитектура
 
+## Anarchy mining lifecycle — 2026-09-06
+
+Client overlay at 1.0 sends `block_break_finish` and sets `miningFinishKey` (keeps server `input.mining` true) plus `clientWaitFinish`. Wait is only while **still holding** on that cell or air. Mouse-up clears `clientWaitFinish` so the next pointerdown is `start` / `abandon-start`, not a swallowed wait. Any finish `action_result` clears finish/lock/wait. Inventory/pause resets the whole gate. Trace: `[MINING] …` (`?miningTrace=1` or DEV info; rejects always warn).
+
 ## Anarchy block-break: intent LOS — 2026-09-06
 
 `validateBlockTargetIntent` skips LOS/face when the eye is inside the target voxel. Mining also accepts the same voxel when DDA reports a different face (`requireMatchingFace: false`); place/use still require the captured face because it chooses the neighbor cell. Voxel DDA from inside reports the *entry* face, which does not match the clicked face; that is clipping, not a neighbor retarget. Creative `tryBreak` ignores Survival `miningTarget` lock on a different cell. Claims still cancel only when `claimsAt` is non-empty and the player is untrusted; a new event object is created per attempt (`cancelled` does not leak). A later plugin listener can still cancel after Claims allows. Rejects log player, coords, blockId, stage, miningTarget (`FC_DEBUG_BREAK=1` also logs successes).
