@@ -14,6 +14,7 @@ import {
 } from '../shared/protocol';
 import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerActions';
 import type { ServerConfig } from './config';
+import type { CommandResult } from './commands';
 import { serverLog } from './log';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
 
@@ -53,6 +54,10 @@ export class AnarchyServer {
 
   wsUrl(): string {
     return `ws://${this.host}:${this.port}`;
+  }
+
+  dispatchConsole(raw: string): CommandResult {
+    return this.world.dispatchConsole(raw);
   }
 
   async start(): Promise<void> {
@@ -253,6 +258,7 @@ export class AnarchyServer {
       online: this.world.onlineCount(),
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
+      holograms: [...this.world.holograms.list()],
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;
@@ -265,6 +271,7 @@ export class AnarchyServer {
       );
     }
     if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
+    this.send(socket, { type: 'holograms', holograms: [...this.world.holograms.list()] });
     if (!resumed) {
       this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
     }
@@ -538,7 +545,16 @@ export class AnarchyServer {
       ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
     });
     if (!result.ok) {
-      serverLog(`action ${message.kind} rejected: ${result.reason} by ${player.name}`, 'warn');
+      const at = intent
+        ? ` at ${intent.targetX},${intent.targetY},${intent.targetZ} id=${intent.targetBlockId}`
+        : '';
+      const mine = player.miningTarget
+        ? ` mine=${player.miningTarget.x},${player.miningTarget.y},${player.miningTarget.z} progress=${player.miningProgress}`
+        : ' mine=—';
+      serverLog(
+        `action ${message.kind} rejected: ${result.reason} by ${player.name}${at}${mine} mode=${player.gamemode} block=${intent ? this.world.world.getBlock(intent.targetX, intent.targetY, intent.targetZ) : '—'}`,
+        'warn',
+      );
     }
   }
 

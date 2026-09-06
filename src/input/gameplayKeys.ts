@@ -16,8 +16,10 @@ export function shouldCaptureGameplayKey(options: {
 export function shouldBlurStaleTextField(options: {
   readonly typingInField: boolean;
   readonly chatOpen: boolean;
+  /** Only leftover chat input is a stale gameplay field. Menu/account inputs must keep focus. */
+  readonly isChatInput?: boolean;
 }): boolean {
-  return options.typingInField && !options.chatOpen;
+  return options.typingInField && !options.chatOpen && options.isChatInput === true;
 }
 
 export function movementAfterChatClose(live: MoveInput, chatOpen: boolean): MoveInput {

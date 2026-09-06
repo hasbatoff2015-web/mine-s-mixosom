@@ -1,11 +1,13 @@
-import { BlockId, isKnownBlockId } from '../src/blocks';
+import { join } from 'node:path';
+import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { isKnownItemId } from '../src/items';
+import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
+import type { PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
   compareLatestInputCoalesce,
@@ -37,11 +39,30 @@ import type { PlayerCommand } from '../shared/playerCommand';
 import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig } from './config';
-import { CommandRegistry, fail, ok, type CommandSender } from './commands';
+import {
+  CommandRegistry,
+  createConsoleCommandSender,
+  fail,
+  isConsoleSender,
+  normalizeConsoleCommand,
+  ok,
+  type CommandResult,
+  type CommandSender,
+} from './commands';
 import { gameplayTicksDue, scheduleNextTickSlot } from './tickScheduler';
 import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
+import { createBuiltinPlugins } from './builtin-plugins';
+import { JsonFileStore } from './services/jsonStore';
+import { PermissionService } from './services/permissions';
+import { PluginConfigService } from './services/pluginConfig';
+import { PlayerSelectionService } from './services/selection';
+import { RtpService, RtpSessionManager } from './services/rtp';
+import { TeleportHistoryService, TeleportService } from './services/teleport';
+import { HologramNetwork } from './services/holograms';
+import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
+import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
@@ -49,6 +70,7 @@ import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { placeholderPlayer } from '../src/save/snapshot';
 import { netDebug, serverLog } from './log';
+import { logBreakAttempt } from './breakDiagnostics';
 import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 
@@ -111,8 +133,10 @@ export class ServerPlayer implements GameplayPlayer {
   craftSlots: Array<ItemStack | null> = [null, null, null, null];
   window: InventoryWindow = { kind: 'inventory' };
   ridingCartId?: string;
-  miningTarget?: { x: number; y: number; z: number };
+  miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
+  private presentationSwingSeq = 0;
   miningProgress = 0;
+  miningStartCommandSeq?: number;
   bowUseTicks = 0;
   foodUseTicks = 0;
   lastUse = false;
@@ -139,6 +163,29 @@ export class ServerPlayer implements GameplayPlayer {
     return this.survival.health;
   }
 
+  /** Called only by authoritative gameplay outcomes; independent of actionSeq. */
+  presentSwing(): void {
+    if (this.connected && !this.survival.dead) this.presentationSwingSeq += 1;
+  }
+
+  presentation(): PlayerPresentationState {
+    const alive = this.connected && !this.survival.dead;
+    const heldItemId = this.inventory.getSlot(this.selectedSlot)?.itemId ?? null;
+    const target = this.miningTarget;
+    return {
+      mining: alive && target?.blockId !== undefined && this.miningProgress < 1
+        ? { ...target, blockId: target.blockId, progress: Math.max(0, this.miningProgress) }
+        : null,
+      heldItemId,
+      bowCharge: alive && heldItemId === ItemId.Bow && this.bowUseTicks > 0
+        ? this.combat.bowCharge(this.bowUseTicks).power : 0,
+      foodUseProgress: alive && heldItemId && tryGetItemDefinition(heldItemId)?.kind === 'food'
+        ? Math.min(1, Math.max(0, this.foodUseTicks / 32)) : 0,
+      swordBlocking: alive && this.combat.swordBlocking,
+      swingSeq: this.presentationSwingSeq,
+    };
+  }
+
   snapshot(): PlayerSnapshot {
     const position = this.controller.position;
     const velocity = this.controller.velocity;
@@ -159,6 +206,7 @@ export class ServerPlayer implements GameplayPlayer {
       sprinting: this.controller.sprinting,
       onGround: this.controller.onGround,
       selectedSlot: this.selectedSlot,
+      presentation: this.presentation(),
       invisible: this.survival.invisible,
       onFire: this.survival.isOnFire,
       hunger: this.survival.hunger,
@@ -231,11 +279,13 @@ export class ServerPlayer implements GameplayPlayer {
       z: snap.z,
       yaw: snap.yaw,
       pitch: snap.pitch,
+      presentation: snap.presentation,
     };
   }
 
   commandSender(): CommandSender {
     return {
+      kind: 'player',
       playerId: this.id,
       name: this.name,
       gamemode: this.gamemode,
@@ -290,6 +340,16 @@ export class WorldInstance {
   readonly events = new EventBus();
   readonly commands = new CommandRegistry();
   readonly plugins = new PluginManager(this.events, this.commands);
+  readonly pluginStore: JsonFileStore;
+  readonly permissions: PermissionService;
+  readonly teleports: TeleportService;
+  readonly teleportHistory: TeleportHistoryService;
+  readonly pluginConfig: PluginConfigService;
+  readonly rtp: RtpService;
+  readonly rtpSessions: RtpSessionManager;
+  readonly holograms: HologramNetwork;
+  readonly claimBoundaries: ClaimBoundaryNetwork;
+  readonly selection = new PlayerSelectionService();
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
@@ -345,10 +405,70 @@ export class WorldInstance {
     this.world = new VoxelWorld(config.worldSeed);
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
+    }, () => this.spawn, (x, y, z) => {
+      for (const player of this.players.values()) {
+        const target = player.miningTarget;
+        if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
+      }
     });
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
+    this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
+    this.permissions = new PermissionService(this.pluginStore, config.operators, (idOrName) => {
+      const direct = this.players.get(idOrName);
+      if (direct) return direct.name;
+      const lower = idOrName.toLowerCase();
+      const named = [...this.players.values()].find((player) => player.name.toLowerCase() === lower);
+      return named?.name ?? idOrName;
+    });
+    this.teleportHistory = new TeleportHistoryService();
+    this.teleports = new TeleportService(config.worldId, this.teleportHistory, (playerId) => {
+      const player = this.players.get(playerId);
+      if (!player) return undefined;
+      return {
+        id: player.id,
+        position: () => ({
+          x: player.controller.position.x,
+          y: player.controller.position.y,
+          z: player.controller.position.z,
+        }),
+        teleport: (x, y, z) => {
+          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
+            return false;
+          }
+          player.controller.teleport([x, y, z]);
+          return true;
+        },
+        sendMessage: (text) => {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text,
+            kind: 'system',
+          });
+        },
+      };
+    });
+    this.teleports.attach(this.events);
+    this.pluginConfig = new PluginConfigService(this.pluginStore);
+    this.rtp = new RtpService(this.world);
+    this.rtpSessions = new RtpSessionManager(this.rtp);
+    this.holograms = new HologramNetwork((list) => {
+      this.broadcast({ type: 'holograms', holograms: [...list] });
+    });
+    this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
+      const player = this.players.get(playerId);
+      if (player) this.sendTo(player, message);
+    });
+    this.commands.setPermissionCheck((sender, permission) => {
+      if (isConsoleSender(sender) || sender.hasPermission?.(permission) === true) return true;
+      if (permission === 'operator') {
+        return this.permissions.isOperator(sender.name) || this.permissions.isOperator(sender.playerId);
+      }
+      return this.permissions.has(sender.playerId, permission) || this.permissions.has(sender.name, permission);
+    });
     this.registerBuiltinCommands();
     this.plugins.attachHost(this.createPluginHost());
   }
@@ -380,6 +500,7 @@ export class WorldInstance {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
       }
       this.gameplay.restoreEntities(existing);
+      this.permissions.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -387,6 +508,7 @@ export class WorldInstance {
     }
     this.spawn = estimateWorldSpawn(this.world);
     this.createdAt = Date.now();
+    this.permissions.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -399,6 +521,27 @@ export class WorldInstance {
 
   async loadPlugins(): Promise<void> {
     await this.plugins.discover(this.config.pluginDir);
+    if (this.config.loadBuiltinPlugins !== false) {
+      const builtins = createBuiltinPlugins({
+        permissions: this.permissions,
+        teleports: this.teleports,
+        history: this.teleportHistory,
+        rtp: this.rtp,
+        rtpSessions: this.rtpSessions,
+        selection: this.selection,
+        config: this.pluginConfig,
+        plugins: this.plugins,
+        world: this.world,
+        worldId: () => this.worldId,
+        markDirty: () => { this.dirty = true; },
+        holograms: this.holograms,
+        claimBoundaries: this.claimBoundaries,
+      });
+      for (const plugin of builtins) {
+        if (this.plugins.list().some((entry) => entry.name === plugin.name)) continue;
+        this.plugins.register(plugin, { source: 'builtin' });
+      }
+    }
     if (this.config.loadExamplePlugin) await this.plugins.loadBundledExample();
     await this.plugins.loadAll();
   }
@@ -677,25 +820,82 @@ export class WorldInstance {
     intent?: BlockTargetIntent,
     commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
+    const before = this.world.getBlock(x, y, z);
+    const fail = (stage: string, reason: string, extra?: { eventCancelled?: boolean }) => {
+      this.noteBreakAttempt(player, x, y, z, commandSeq, stage, { ok: false, reason }, before, extra);
+      return { ok: false as const, reason };
+    };
     if (intent && (intent.targetX !== x || intent.targetY !== y || intent.targetZ !== z)) {
-      return { ok: false, reason: 'invalid' };
+      return fail('tryBreak.intentMismatch', 'invalid');
     }
-    if (player.miningTarget
+    const creative = player.gamemode === 'creative';
+    if (!creative
+      && player.miningTarget
       && (player.miningTarget.x !== x || player.miningTarget.y !== y || player.miningTarget.z !== z)) {
-      return { ok: false, reason: 'mining' };
+      return fail('tryBreak.miningLock', 'mining');
     }
     if (intent) {
-      const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq);
-      if (!validated.ok) return validated;
+      const lockedToThis = Boolean(
+        player.miningTarget
+        && player.miningTarget.x === x
+        && player.miningTarget.y === y
+        && player.miningTarget.z === z,
+      );
+      if (lockedToThis) {
+        if (before === BlockId.Air) return fail('tryBreak.lockedEmpty', 'empty');
+        if (before !== intent.targetBlockId) return fail('tryBreak.lockedStale', 'stale');
+      } else {
+        const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq, {
+          requireMatchingFace: false,
+        });
+        if (!validated.ok) return fail('tryBreak.intent', validated.reason);
+      }
     }
     const result = this.gameplay.breakBlock(player, x, y, z);
+    const after = this.world.getBlock(x, y, z);
+    this.noteBreakAttempt(player, x, y, z, commandSeq, 'tryBreak.breakBlock', result, before, {
+      eventCancelled: result.ok === false && result.reason === 'cancelled',
+      blockAfter: after,
+      mutated: result.ok,
+    });
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
       this.flushPlayerInventory(player);
-      netDebug('break accepted', `${player.name} ${x},${y},${z}`);
     }
     return result;
+  }
+
+  private noteBreakAttempt(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    commandSeq: number | undefined,
+    stage: string,
+    result: { ok: true } | { ok: false; reason: string },
+    blockId: number,
+    extra?: { eventCancelled?: boolean; blockAfter?: number; mutated?: boolean },
+  ): void {
+    logBreakAttempt({
+      playerId: player.id,
+      playerName: player.name,
+      gamemode: player.gamemode,
+      x, y, z,
+      blockId,
+      miningTarget: player.miningTarget,
+      miningProgress: player.miningProgress,
+      miningStartCommandSeq: player.miningStartCommandSeq,
+      appliedCommandSeq: player.appliedCommandSeq,
+      commandSeq,
+      queueDepth: player.commandQueue.length,
+      inputMining: player.lastInput.mining === true,
+      stage,
+      reason: result.ok ? undefined : result.reason,
+      eventCancelled: extra?.eventCancelled,
+      blockAfter: extra?.blockAfter,
+      mutated: extra?.mutated === true,
+    });
   }
 
   tryPlace(
@@ -723,13 +923,24 @@ export class WorldInstance {
     actionSeq?: number,
     commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
-    if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
-    return this.gameplay.beginMining(player, intent, commandSeq);
+    const before = this.world.getBlock(intent.targetX, intent.targetY, intent.targetZ);
+    if (!this.acceptActionSeq(player, actionSeq)) {
+      this.noteBreakAttempt(
+        player, intent.targetX, intent.targetY, intent.targetZ, commandSeq,
+        'beginMining.duplicate', { ok: false, reason: 'duplicate' }, before,
+      );
+      return { ok: false, reason: 'duplicate' };
+    }
+    const result = this.gameplay.beginMining(player, intent, commandSeq);
+    this.noteBreakAttempt(
+      player, intent.targetX, intent.targetY, intent.targetZ, commandSeq,
+      'beginMining', result, before, { mutated: false },
+    );
+    return result;
   }
 
   abortMining(player: ServerPlayer): void {
-    player.miningProgress = 0;
-    player.miningTarget = undefined;
+    clearMiningLock(player);
   }
 
   releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
@@ -780,6 +991,19 @@ export class WorldInstance {
     else if (message.action === 'enter' && message.entityId) this.gameplay.enterVehicle(player, message.entityId);
     else if (message.action === 'steer' && message.forward !== undefined) {
       player.vehicleForward = Math.max(-1, Math.min(1, message.forward));
+    }
+  }
+
+  dispatchConsole(raw: string): CommandResult {
+    const command = normalizeConsoleCommand(raw);
+    if (!command) return { ok: true, lines: [] };
+    try {
+      const dispatched = this.commands.dispatch(command, createConsoleCommandSender());
+      return dispatched.result ?? { ok: false, lines: ['Empty command.'] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      serverLog(`console command failed: ${message}`, 'error');
+      return { ok: false, lines: [`Command failed: ${message}`] };
     }
   }
 
@@ -963,7 +1187,48 @@ export class WorldInstance {
       );
     }
     this.lastTickMetrics = metrics;
+    this.finishRtpSearches();
+    this.teleports.tick(dt * 1000);
     if (this.connectedPlayers().length > 0) this.snapshotsGenerated += 1;
+  }
+
+  private finishRtpSearches(): void {
+    for (const result of this.rtpSessions.tick()) {
+      const player = this.players.get(result.playerId);
+      if (result.dest) {
+        const teleported = this.teleports.schedule(result.playerId, result.dest, result.request.reason, {
+          warmupMs: result.request.warmupMs,
+          cooldownMs: result.request.cooldownMs,
+          cancelOnMove: result.request.cancelOnMove,
+          cancelOnDamage: result.request.cancelOnDamage,
+        });
+        if (!teleported.ok && player) {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: teleported.error ?? 'RTP failed.',
+            kind: 'error',
+          });
+        } else if (player) {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: 'Found a safe location.',
+            kind: 'system',
+          });
+        }
+      } else if (player) {
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text: 'Could not find a safe RTP location. Try again.',
+          kind: 'error',
+        });
+      }
+    }
   }
 
   private flushTickNetwork(): void {
@@ -1066,8 +1331,7 @@ export class WorldInstance {
     });
     player.appliedStepsThisLoop.length = 0;
     player.actionPoseHistory.length = 0;
-    player.miningTarget = undefined;
-    player.miningProgress = 0;
+    clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
     player.lastUse = false;
@@ -1140,11 +1404,24 @@ export class WorldInstance {
         });
         this.flushHealthIfDeadThenRespawn(player);
       }
-      if (input.mining) this.gameplay.advanceMining(player);
-      else {
-        player.miningProgress = 0;
-        player.miningTarget = undefined;
+      if (shouldKeepMiningLock({
+        mining: input.mining,
+        appliedCommandSeq: player.appliedCommandSeq,
+        miningStartCommandSeq: player.miningStartCommandSeq,
+      })) {
+        const before = player.miningProgress;
+        const target = player.miningTarget;
+        this.gameplay.advanceMining(player);
+        if (process.env.FC_DEBUG_MINING === '1' && target) {
+          serverLog(
+            `mine progress ${player.name} target=${target.x},${target.y},${target.z}`
+            + ` ${before.toFixed(3)}→${player.miningProgress.toFixed(3)}`
+            + ` startCmd=${player.miningStartCommandSeq ?? '—'} applied=${player.appliedCommandSeq}`
+            + ` input.mining=${input.mining === true ? 1 : 0} queue=${player.commandQueue.length}`,
+          );
+        }
       }
+      else clearMiningLock(player);
       this.gameplay.advanceUseHold(player, using);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
@@ -1359,6 +1636,12 @@ export class WorldInstance {
       get seed() { return instance.seed; },
       get worldId() { return instance.worldId; },
       spawn: (): [number, number, number] => instance.spawn,
+      setSpawn: (x: number, y: number, z: number) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+        instance.spawn = [x, y, z];
+        instance.dirty = true;
+        return true;
+      },
       getTimeOfDay: () => instance.world.timeOfDay,
       getBlock: (x: number, y: number, z: number) => instance.world.getBlock(x, y, z),
       setBlock: (x: number, y: number, z: number, blockId: number) => {
@@ -1379,12 +1662,14 @@ export class WorldInstance {
         if (instance.players.has(id)) return { id, kind: 'player' };
         return instance.gameplay.lookupEntity(id);
       },
+      surfaceY: (x: number, z: number) => instance.world.surfaceY(x, z),
+      isSolid: (x: number, y: number, z: number) => getBlockDefinition(instance.world.getBlock(x, y, z)).solid,
+      isLiquid: (x: number, y: number, z: number) => getBlockDefinition(instance.world.getBlock(x, y, z)).liquid === true,
     });
   }
 
   private isOperator(player: ServerPlayer): boolean {
-    const names = this.config.operators.map((name) => name.toLowerCase());
-    return names.includes(player.name.toLowerCase());
+    return this.permissions.isOperator(player.name) || this.permissions.isOperator(player.id);
   }
 
   private createPluginPlayer(player: ServerPlayer): PlayerView {
@@ -1481,6 +1766,12 @@ export class WorldInstance {
         return found ? instance.createPluginPlayer(found) : undefined;
       },
       broadcast: (text) => instance.broadcastChat('system', 'server', text),
+      permissions: () => instance.permissions,
+      teleports: () => instance.teleports,
+      history: () => instance.teleportHistory,
+      config: () => instance.pluginConfig,
+      dataLoad: (plugin, key, fallback) => instance.pluginStore.load(`${plugin}/${key}`, fallback),
+      dataSave: (plugin, key, value) => instance.pluginStore.save(`${plugin}/${key}`, value),
     };
   }
 
@@ -1607,17 +1898,6 @@ export class WorldInstance {
       execute: () => ok(`Seed: ${this.seed}`),
     });
     this.commands.register({
-      name: 'spawn',
-      usage: '/spawn',
-      description: 'Teleport to the server spawn',
-      execute: (_args, sender) => {
-        const player = this.players.get(sender.playerId);
-        if (!player) return fail('Player not found.');
-        player.controller.teleport(this.spawn);
-        return ok('Teleported to spawn.');
-      },
-    });
-    this.commands.register({
       name: 'give',
       usage: '/give <item> [count]',
       description: 'Give an item to yourself',
@@ -1671,7 +1951,8 @@ export class WorldInstance {
           return fail('Usage: /tp <x> <y> <z>');
         }
         if (!isValidWorldY(y)) return fail('Y is outside the world.');
-        player.controller.teleport([x, y, z]);
+        const result = this.teleports.now(player.id, { x, y, z }, 'command', { silent: true });
+        if (!result.ok) return fail(result.error ?? 'Teleport failed.');
         return ok(`Teleported to ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`);
       },
     });

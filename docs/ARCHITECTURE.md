@@ -1,6 +1,99 @@
 # Архитектура
 
+## Integrate remote actions + plugin/mining line — 2026-09-06
+
+Одна линия: plugin platform / claims / mining lifecycle (наша ветка) ∪ Networking V2 ∪ remote action presentation (PR #54). `PROTOCOL_VERSION` остаётся 3; `presentation?` additive. `ServerGameplay` принимает и `worldSpawn`, и `onBlockReplaced`. Mining lock (`miningStartCommandSeq`, `shouldKeepMiningLock`, `clearMiningLock`, `in_progress` finish) не заменяется presentation-wipe. `BlockBreakingOverlay` общий для local и remote; local progress mapping не меняется. Claim wires остаются 3px + `depthTest`/`depthWrite`.
+
+## Anarchy first FINISH vs server progress 0 — 2026-09-06
+
+Client overlay and server `advanceMining` are independent 20 TPS counters. `beginMining` sets `progress = 0` and does not add a tick. `tickOnline` can run up to `MAX_CATCH_UP_TICKS` (4) per frame, so dirt (15 ticks) can reach overlay 1.0 before the next physics tick. FINISH then saw `progress === 0` with a **live** `miningTarget` and returned `reason: mining`. The client treated that as a missing lock (PR #59 resend START + overlay 0), which is the dry first cycle. Neighbors work because catch-up has drained and the queue is already `mining: true`.
+
+`survivalFinishLockReject`: no matching target → `mining` (resend START). Matching target and `progress <= 0` → `in_progress` (keep finish wait, do not reset overlay; server auto-break). Matching target and `progress > 0` still accepts finish (1-tick client lead). After `in_progress`, `awaitingAutoBreak` skips `MAX_FINISH_WAIT_TICKS` so catch-up cannot abort into a second overlay; mouse-up still aborts.
+
+Every `noteBreakStartSent` sets `miningStartUnacked`. `applyBreakActionResult` treats only `kind === 'block_break_finish'` as finish (not `undefined`). Leftover-idle lock from PR #60 (`shouldKeepMiningLock`) is unchanged.
+
+## Anarchy first mining cycle vs command queue — 2026-09-06
+
+`tickOnline` sends `input` (seq N) then `block_break_start` (`commandSeq: N`). START is applied **immediately**. The command queue still applies **one packet per physics tick**. Idle packets sent *before* the click (no `mining`) can therefore run *after* `beginMining` and used to wipe `miningTarget`. Client overlay still runs 0→100%; FINISH sees `progress <= 0` / no lock → `reason: mining`. The client resends START; by then the queue is `mining: true`, so cycle #2 and later neighbors succeed on the first overlay.
+
+`shouldKeepMiningLock`: `mining === true` **or** `appliedCommandSeq < miningStartCommandSeq`. Stale pre-START idles keep and **advance** the lock (those physics ticks happen after the click). A later omitted/`mining:false` with `seq >= start` is still mouse-up. `miningStartCommandSeq` is set on accepted START and cleared with the lock (break / abort / air / respawn / disconnect).
+
+This is not oak-planks/hardness/claims/LOS/`miningFinishKey`. PR #59 only tagged *new* packets with `mining: true`; it cannot rewrite commands already queued.
+
+## Anarchy mining input hold — 2026-09-06
+
+Protocol omits `input.mining` unless it is strictly `true`. Server `tickPlayers` wipes `miningTarget` when the field is missing. That wipe during a long hold (`oak_log` / `oak_planks` 60 ticks, stone 150) is a **client lifecycle error**, not a valid idle: mouse-up, pause, inventory, and target-abandon must clear the hold flags first.
+
+`shouldHoldServerMining` is `buttonDown || finishKey || miningLocked`. The 20 TPS `input` packet and `sendOnlineIdle` (hidden tab / blur) both send `mining: true` while those flags are set. Pause aborts and resets the gate, then idle without mining.
+
+After `block_break_finish` `reason: mining`, the client resets overlay progress, sets `miningStartUnacked`, and resends `block_break_start`. `breakFinishHoldReason` is `awaiting-start` until that start is acked — finish must not go out at server `miningProgress = 0`.
+
+## Anarchy oak planks mining lock — 2026-09-06
+
+Oak planks use the same `wood()` mining numbers as oak log (`hardness` 2, 60 ticks by hand). Overlay and `advanceMining` both call `miningProgressPerTick`. Finish must keep the start **voxel** (`composeOnlineBreakFinish`) but use the finish-time `commandSeq`. Spreading the start pose onto finish makes `resolveActionEye` return `stale` once that seq leaves `ACTION_POSE_HISTORY_MAX` (64). Survival finish with no `miningTarget` is `reason: mining`; the client must send `block_break_start` again, not another finish. A closer remote player must not skip `applyOnlineMiningTick` while `miningFinishKey` is set (`shouldSkipMiningTickForRemote`). `block_update` / `block_batch` call `applyAuthoritativeVoxelToMiningGate` only for matching coords — that is why Player B breaking the stuck planks unlocked Player A. Per-player `ServerPlayer.miningTarget`; no world-level mining map.
+
+## Anarchy mining lifecycle — 2026-09-06
+
+Client overlay at 1.0 sends `block_break_finish` and sets `miningFinishKey` (keeps server `input.mining` true) plus `clientWaitFinish`. Wait is only while **still holding** on that cell or air. Mouse-up clears `clientWaitFinish` so the next pointerdown is `start` / `abandon-start`, not a swallowed wait. Any finish `action_result` clears finish/lock/wait. Inventory/pause resets the whole gate. Trace: `[MINING] …` (`?miningTrace=1` or DEV info; rejects always warn).
+
+## Anarchy block-break: intent LOS — 2026-09-06
+
+`validateBlockTargetIntent` skips LOS/face when the eye is inside the target voxel. Mining also accepts the same voxel when DDA reports a different face (`requireMatchingFace: false`); place/use still require the captured face because it chooses the neighbor cell. Voxel DDA from inside reports the *entry* face, which does not match the clicked face; that is clipping, not a neighbor retarget. Creative `tryBreak` ignores Survival `miningTarget` lock on a different cell. Claims still cancel only when `claimsAt` is non-empty and the player is untrusted; a new event object is created per attempt (`cancelled` does not leak). A later plugin listener can still cancel after Claims allows. Rejects log player, coords, blockId, stage, miningTarget (`FC_DEBUG_BREAK=1` also logs successes).
+
+## Anarchy block-break finish vs abort — 2026-09-05
+
+Survival mining is server-authoritative (`advanceMining` + `block_break_finish`). The client overlay can reach 1.0 one tick before the server (dirt/hand is 15 ticks; `14/15 < 0.95`). After sending finish the client must keep `input.mining` and must not send `block_break_abort` for that target until the block is gone or a hard reject. With the `progress > 0` finish rule, `reason: mining` means the server lock is missing (never started or wiped); resend `block_break_start`, do not loop finish.
+
+Sequenced `block_break_finish` is acked only by `action_result`. `pendingBlockAction` must clear on that ack: a failed finish has no `block_update`/`block_result`, and leaving the coordinate in pending made that cell unbreakable until reconnect (Survival and Creative share the client gate). Finish of a matching `miningTarget` does not re-run LOS against a later `commandSeq`; start already locked the cell. Claims are unchanged: no overlapping claim ⇒ no cancel.
+
+## Claim boundary feedback — 2026-09-05
+
+Denied `block-break` / `block-place` still cancel + chat. WorldInstance `ClaimBoundaryNetwork` then `sendTo` **one** player one `{ type: 'claim_boundary', ... }` per related claim. Plugins still cannot send raw packets.
+
+`protectionSources()` returns every overlapping untrusted claim that participates in the deny: all explicit `flag=false` regions, or every untrusted overlapping region when nobody set the flag. `protectionSource()` is the first of that list (the winning setter). Client `ClaimBoundaryRenderer` draws 12 unlit `#ff0000` `LineSegments2` edges (`fog`/`toneMapped` off, 3px, `depthTest`/`depthWrite` on) over inclusive volume `[min, max+1]` and disposes after each claim's own 10s expiry. The wire is ordinary world geometry: blocks in front hide it.
+
+## Claims overlap, chat scroll, 3D holograms — 2026-09-05
+
+Respawn uses `WorldInstance.spawn` (`/setspawn`). `SurvivalSystem.spawnPoint` is not the Anarchy respawn target.
+
+Claims store **partial** flags (`flags?: { pvp?: boolean }`). Overlapping claims are allowed. For each flag independently: among claims that **explicitly** set that flag, the highest `priority` wins; otherwise the global default. Trust for break/place/drop/pickup is the claim that set that flag, not “any overlapping member”.
+
+`mob-spawn` is enforced on the spawn path only: `MobManager.allowSpawn` → cancellable `mobSpawn`. `force` restore/debug bypasses. Existing mobs are not removed when the flag changes.
+
+Chat scroll lives in `GameUI` `#chat-log` (client-only). `MAX_CHAT_MESSAGES = 200`.
+
+Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws facing Sprite billboards and hides them outside `range`.
+
+## Nickname and server console — 2026-09-05
+
+Display nickname is **not** an account id. The client stores it in `localStorage` (`fc.player.nickname`) and sends it on Anarchy `join.name`. `WorldInstance.join` uses that name when it is valid; otherwise it keeps `Player-XXXX`. `playerId` remains a UUID.
+
+Server stdin is `ConsoleCommandSender` in `server/index.ts` → `WorldInstance.dispatchConsole` → the existing `CommandRegistry`. It is not a fake player and does not use `FC_OPERATORS`.
+
+## Anarchy plugin platform — 2026-09-05
+
+Builtin Anarchy plugins run **only** on the server. They extend Phase 8 `PluginManager` / `ServerAPI` / `EventBus`; they do not import Three, DOM, `Game`, or the client renderer.
+
+```text
+WorldInstance
+  PermissionService / TeleportService / RtpSessionManager / PluginConfigService
+  JsonFileStore  →  <worldDir>/plugin-data/
+        │
+        ▼
+PluginManager.scopedApi (permissions, teleport, config, data, help)
+        │
+        ▼
+builtin-plugins (permissions, tpa, spawn, home, back, rtp, rtpportal, claims, holograms)
+disk plugins from server/plugins/
+```
+
+- Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
+- Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
+- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`). Flags are partial; overlapping claims resolve **per flag** by priority. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim.
+- Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
+
 ## Farming V1 + Networking V2 — 2026-09-04
+
 
 Current `main` integration keeps sparse Farming simulation in `GameplayKernel` (`world → farming → falling → players → …`) and replaces the old latest-input / chase-snap Anarchy movement with Networking V2.
 
@@ -19,7 +112,26 @@ Farmland stores `hydrated?: boolean`; crops/stems store `age?: number` clamped t
 
 Farmland extends canonical `blockGeometry`/collision/selection at 15/16 height. `ChunkMesher` writes dry/wet farmland into the opaque batch and every crop/stem quad into the existing per-chunk vegetation `BufferGeometry`; it creates no mesh/material per plant. Carrot/Potato map ages `0–1/2–3/4–6/7` to their four textures. Attached mature stems resolve their N/E/S/W direction from adjacent matching fruit at render time, avoiding redundant network state.
 
+## Remote action presentation v2 — 2026-09-05
 
+`shared/playerPresentation.ts` — Node-safe additive contract. `ServerPlayer.presentation()` читает authoritative inventory/selectedSlot, mining accumulator, combat и use timers. `RemotePlayerInfo.presentation` покрывает welcome/player_joined; `PlayerSnapshot.presentation` piggybacks на существующий 20 TPS `player_state`. Optional поле позволяет neutral fallback для старых fixtures/servers без второго протокола.
+
+```text
+ServerGameplay accepted outcome / continuous state
+  → ServerPlayer.presentation()
+  → welcome.players / player_joined / player_state.players[].presentation
+  → RemotePlayerView latest presentation (separate tick guard, no spatial lerp)
+      → PlayerVisual.setHeldItem / swing / update → existing animator
+      → WorldRenderer.remoteBreaking: breakerId → target → max progress → BlockBreakingOverlay
+```
+
+`miningProgress` уже normalized: `miningProgressPerTick(hardness, tool)` прибавляется сервером; `>= 1` вызывает authoritative break. Payload содержит captured block ID и XYZ; viewer никогда не считает время разрушения. Null mining означает inactive. Remote progress 0 рисует canonical stage 0 через минимальное положительное значение; существующий local `(0,1)` mapping не меняется.
+
+`swingSeq` принадлежит серверу и не связан с ingress `lastActionSeq`: последнее увеличивается до gameplay validation. Counter изменяется через successful `UseHostEffects` (placement/interaction), successful break / arrow spawn, или принятую атаку (включая промах и damage immunity). No-op use, rejected placement, invalid/stale/duplicate intent и rejected bow release counter не меняют. Sequence сохраняется при live resume; новый view/reset запоминает baseline и не воспроизводит историю. Каждый новый observed counter запускает один swing; несколько действий между snapshots визуально coalesce в один swing, history/animation frames не пересылаются.
+
+`RemoteBreakingOverlays` расширяет существующий overlay. Breakers coalesce один раз за render frame, targets имеют max progress, local tie/greater stage suppresses remote mesh; greater remote stage временно скрывает local group, сохраняя local state. Targets проходят loaded-voxel + renderer-chunk visibility checks. Stage textures разделяются; mesh/material/geometry освобождаются при удалении target. Geometry creation не использует chunk remesh.
+
+Committed voxel replacements сбрасывают совпадающий mining target на сервере. `block_update`/`block_batch` инвалидируют observer overlay сразу, включая same-ID replacement. Latest snapshot управляет abort/finish/death/respawn; view removal/reset и renderer disposal покрывают disconnect/reconnect/session replacement. Loaded-world validation и timeout 1500 ms очищают stale data без prediction. Existing local overlay и `remotePlayerInterpolation.ts` остаются каноническими владельцами своих данных.
 
 ## Online networking v2 — 2026-09-04
 
@@ -679,9 +791,9 @@ EventBus  ──►  Plugins (ServerAPI)
 
 `src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
 
-Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
 
-**Not here:** homes / TPA / economy / kits / moderation. Those are later features, not Phase 8.
+**Not here:** Auction House / economy / kits. Homes, TPA, claims, and holograms **are** the current Anarchy plugin pack.
 
 **Tests:** default Vitest environment remains Node (unchanged). Client visual tests import Three and use `setupClientEntityHost.ts`. Shared packs: `npm run test:sim`. Server: `npm run test:server`.
 

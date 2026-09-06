@@ -261,8 +261,10 @@ export class InputManager {
       }
       if (typing) {
         const chatOpen = this.callbacks.isChatOpen?.() === true;
+        const isChatInput = event.target instanceof HTMLElement && event.target.id === 'chat-input';
+        if (!isChatInput) return;
         if (!shouldCaptureGameplayKey({ typingInField: true, chatOpen })) return;
-        if (shouldBlurStaleTextField({ typingInField: true, chatOpen })) {
+        if (shouldBlurStaleTextField({ typingInField: true, chatOpen, isChatInput: true })) {
           if (event.target instanceof HTMLElement) event.target.blur();
         } else {
           return;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ChatLog,
+  CHAT_MAX_MESSAGES,
   TIME_PRESETS,
   chatLineOpacity,
   deathMessage,
@@ -174,6 +175,14 @@ describe('chat log fade and history', () => {
     expect(stepTypedHistoryIndex(-1, -1, 2)).toEqual({ kind: 'index', index: 1 });
     expect(stepTypedHistoryIndex(1, -1, 2)).toEqual({ kind: 'index', index: 0 });
     expect(stepTypedHistoryIndex(1, 1, 2)).toEqual({ kind: 'draft' });
+  });
+
+  it('caps stored messages at MAX_CHAT_MESSAGES', () => {
+    const log = new ChatLog();
+    for (let i = 0; i < CHAT_MAX_MESSAGES + 5; i += 1) log.push('system', `line-${i}`, i);
+    expect(log.entries).toHaveLength(CHAT_MAX_MESSAGES);
+    expect(log.entries[0]?.text).toBe('line-5');
+    expect(log.entries[CHAT_MAX_MESSAGES - 1]?.text).toBe(`line-${CHAT_MAX_MESSAGES + 4}`);
   });
 });
 

@@ -1,3 +1,5 @@
+import { MAX_CHAT_MESSAGES } from './chatScroll';
+
 export type ChatMessageKind = 'system' | 'player' | 'command' | 'death' | 'error';
 
 export interface ChatMessage {
@@ -8,7 +10,7 @@ export interface ChatMessage {
 
 export const CHAT_VISIBLE_MS = 8_000;
 export const CHAT_FADE_MS = 2_000;
-export const CHAT_MAX_MESSAGES = 100;
+export const CHAT_MAX_MESSAGES = MAX_CHAT_MESSAGES;
 export const CHAT_HISTORY_LIMIT = 40;
 
 export function chatLineOpacity(ageMs: number): number {

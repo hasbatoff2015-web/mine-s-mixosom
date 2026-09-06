@@ -781,6 +781,7 @@ describe('Anarchy server gameplay authority', () => {
     world.setGameMode(player, 'survival');
     player.survival.restore({ health: 1, dead: false });
     const from = healthPackets(joined.sink).length;
+    player.controller.teleport([player.controller.position.x + 8, player.controller.position.y, player.controller.position.z + 8]);
     standInBlock(world, player, BlockId.Fire);
     tickUntilCanonicalRespawn(world, player, joined.sink, from);
     expectCanonicalDeadThenAlive(joined.sink, from);
@@ -795,6 +796,7 @@ describe('Anarchy server gameplay authority', () => {
     world.setGameMode(player, 'survival');
     player.survival.restore({ health: 4, dead: false });
     const from = healthPackets(joined.sink).length;
+    player.controller.teleport([player.controller.position.x + 8, player.controller.position.y, player.controller.position.z + 8]);
     standInBlock(world, player, BlockId.Lava);
     tickUntilCanonicalRespawn(world, player, joined.sink, from);
     expectCanonicalDeadThenAlive(joined.sink, from);

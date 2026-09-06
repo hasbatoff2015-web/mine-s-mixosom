@@ -6,16 +6,53 @@ export interface CommandResult {
   readonly lines: readonly string[];
 }
 
+export type CommandSenderKind = 'player' | 'console';
+
+/** Trusted server stdin. Not a player and not an account id. */
+export const CONSOLE_SENDER_ID = 'console';
+export const CONSOLE_SENDER_NAME = 'Console';
+
 export interface CommandSender {
+  readonly kind?: CommandSenderKind;
   readonly playerId: string;
   readonly name: string;
   readonly gamemode: GameMode;
-  /** Minimal Anarchy model: `player` unless the name is in `FC_OPERATORS`. */
+  /** True when PermissionService (or FC_OPERATORS) treats the sender as OP. */
   readonly operator?: boolean;
+  /** Console always returns true. Players omit this and use PermissionService. */
+  hasPermission?(permission: CommandPermission): boolean;
 }
 
-/** Phase 8: `player` (anyone online) or `operator` (FC_OPERATORS names). */
-export type CommandPermission = 'player' | 'operator';
+export function isConsoleSender(sender: CommandSender): boolean {
+  return sender.kind === 'console';
+}
+
+export function createConsoleCommandSender(): CommandSender {
+  return {
+    kind: 'console',
+    playerId: CONSOLE_SENDER_ID,
+    name: CONSOLE_SENDER_NAME,
+    gamemode: 'creative',
+    operator: true,
+    hasPermission: () => true,
+  };
+}
+
+/** Console lines may omit the leading `/`. Player chat parsing is unchanged. */
+export function normalizeConsoleCommand(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+/**
+ * `'player'` — anyone online.
+ * `'operator'` — OP / FC_OPERATORS (legacy).
+ * Any other string is a permission node (`home.use`, `server.*`, …).
+ */
+export type CommandPermission = 'player' | 'operator' | (string & {});
+
+export type PermissionCheck = (sender: CommandSender, permission: CommandPermission) => boolean;
 
 export interface CommandHandler {
   readonly name: string;
@@ -28,6 +65,11 @@ export interface CommandHandler {
 
 export class CommandRegistry {
   private readonly byName = new Map<string, CommandHandler>();
+  private permissionCheck: PermissionCheck | undefined;
+
+  setPermissionCheck(check: PermissionCheck | undefined): void {
+    this.permissionCheck = check;
+  }
 
   register(handler: CommandHandler): () => void {
     const names = [handler.name, ...(handler.aliases ?? [])];
@@ -84,11 +126,17 @@ export class CommandRegistry {
         result: { ok: false, lines: [`Unknown command '${parsed.name}'. Type /help for a list.`] },
       };
     }
-    if (handler.permission === 'operator' && sender.operator !== true) {
-      return {
-        parsed,
-        result: { ok: false, lines: ['You do not have permission.'] },
-      };
+    const permission = handler.permission ?? 'player';
+    if (permission !== 'player' && !consoleBypassesPermission(sender, permission)) {
+      const allowed = this.permissionCheck
+        ? this.permissionCheck(sender, permission)
+        : permission === 'operator' && sender.operator === true;
+      if (!allowed) {
+        return {
+          parsed,
+          result: { ok: false, lines: ['You do not have permission.'] },
+        };
+      }
     }
     return { parsed, result: handler.execute(parsed.args, sender) };
   }
@@ -100,4 +148,9 @@ export function ok(lines: string | readonly string[]): CommandResult {
 
 export function fail(lines: string | readonly string[]): CommandResult {
   return { ok: false, lines: typeof lines === 'string' ? [lines] : lines };
+}
+
+function consoleBypassesPermission(sender: CommandSender, permission: CommandPermission): boolean {
+  if (isConsoleSender(sender)) return true;
+  return sender.hasPermission?.(permission) === true;
 }

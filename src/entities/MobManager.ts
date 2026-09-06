@@ -194,6 +194,11 @@ export interface MobManagerOptions {
   readonly onProjectileRemove?: (id: string) => void;
   /** Fired once when a skeleton arrow embeds in a collision block. */
   readonly onArrowBlockHit?: (x: number, y: number, z: number) => void;
+  /**
+   * Return false to skip creating a new mob. Restore / `force` spawn bypasses this.
+   * Existing mobs are never removed by this callback.
+   */
+  readonly allowSpawn?: (kind: MobKind, x: number, y: number, z: number) => boolean;
 }
 
 export interface MobRaycastHit {
@@ -498,6 +503,10 @@ export class MobManager {
     this.assertActive();
     const definition = getMobDefinition(kind);
     if (!spawnOptions.force && !this.hasPopulationRoom(definition.disposition)) return undefined;
+    if (!spawnOptions.force && this.options.allowSpawn
+      && !this.options.allowSpawn(kind, position.x, position.y, position.z)) {
+      return undefined;
+    }
     if (this.mobsById.size >= this.maxMobs) {
       if (!spawnOptions.force) return undefined;
       this.evictFarthestOrOldest(position);

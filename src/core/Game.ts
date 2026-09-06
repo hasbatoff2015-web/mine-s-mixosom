@@ -128,6 +128,8 @@ import { ArrowVisualFactory } from '../rendering/ArrowVisualFactory';
 import { updateSharedFireAnimation } from '../rendering/fireTexture';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
+import { HologramRenderer } from '../rendering/HologramRenderer';
+import { ClaimBoundaryRenderer } from '../rendering/ClaimBoundaryRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
@@ -190,12 +192,14 @@ import {
   resolveAnarchyStartup,
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import {
   captureBlockBreakAbort,
   captureBlockBreakFinish,
   captureBlockBreakStart,
   captureBlockUse,
   captureBowRelease,
+  composeOnlineBreakFinish,
 } from '../net/actionIntent';
 import {
   actionMessageFromBreakAbort,
@@ -204,6 +208,27 @@ import {
   bowReleaseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
+import {
+  applyAuthoritativeVoxelToMiningGate,
+  applyBreakActionResult,
+  breakFinishHoldReason,
+  formatBreakGateDiag,
+  formatMiningLifecycle,
+  inputMiningField,
+  isInFlightBreakReject,
+  miningBlockKey,
+  noteBreakAbortSent,
+  noteBreakFinishSent,
+  noteBreakStartSent,
+  noteMiningReleased,
+  noteResendBreakStart,
+  resetOnlineMiningGate,
+  resolveOnlineMiningTick,
+  shouldHoldServerMining,
+  shouldSendBreakAbort,
+  shouldSkipMiningTickForRemote,
+  shouldResendBreakStartAfterFinishReject,
+} from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
 import {
   applyAuthoritativeContainerSlots,
@@ -282,7 +307,7 @@ import {
   type UseSimulationContext,
 } from '../gameplay';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
-import type { ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -351,6 +376,7 @@ export interface OnlineAnarchySession {
         face?: string;
         blockId?: number;
         result?: string;
+        gate?: string;
       };
   lastBowDiag?: {
     actionSeq: number;
@@ -367,8 +393,23 @@ export interface OnlineAnarchySession {
     spawned?: boolean;
   };
   miningLocked?: boolean;
-  /** Captured break_start target; finish/abort must not retarget. */
-  miningIntent?: BlockTargetIntent;
+  /**
+   * True after every `block_break_start` until that start is acked.
+   * Finish must not go out while this is set — server `miningProgress` is still 0.
+   */
+  miningStartUnacked?: boolean;
+  /**
+   * Server lock exists at progress 0; wait for auto-break instead of the
+   * stuck-finish timeout (catch-up can expire that timeout first).
+   */
+  awaitingAutoBreak?: boolean;
+  /** True between finish-sent and mouse-up / ack; mouse-up must clear so the next LMB can start. */
+  clientWaitFinish?: boolean;
+  finishWaitTicks?: number;
+  /** Captured break_start target + commandSeq; finish must not retarget. */
+  miningIntent?: BlockTargetIntent & { commandSeq: number };
+  /** `x,y,z` of a finish already sent; wait for the server break before aborting. */
+  miningFinishKey?: string;
   /** DEV `?predNoNet=1` / `?predNoSend=1`: skip local movement `input` send. */
   ignoreNetworkSend?: boolean;
   /** DEV `?predNoNet=1` / `?predNoState=1`: skip local `player_state` apply/reconcile. */
@@ -510,6 +551,8 @@ export class Game {
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
   private readonly chat = new ChatLog();
+  private holograms?: HologramRenderer;
+  private claimBoundaries?: ClaimBoundaryRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly longTasks = new LongTaskMonitor();
@@ -701,10 +744,22 @@ export class Game {
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
       online: () => void this.showOnlineServerList(),
+      account: () => this.showAccount(),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
       },
+    });
+  }
+
+  private showAccount(): void {
+    this.ui.showAccount(loadPlayerNickname(), {
+      save: (raw) => {
+        const result = savePlayerNickname(raw);
+        if (result.ok) this.ui.toast('Никнейм сохранён. Он будет использован при подключении к серверу.');
+        return result;
+      },
+      back: () => this.showMainMenu(),
     });
   }
 
@@ -724,7 +779,7 @@ export class Game {
     this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect();
+      const welcome = await client.connect(undefined, loadPlayerNickname());
       await this.startOnlineAnarchy(client, welcome);
     } catch {
       client.disconnect();
@@ -812,6 +867,11 @@ export class Game {
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
+    this.holograms?.dispose();
+    this.holograms = new HologramRenderer(this.scene, this.camera);
+    this.holograms.sync(welcome.holograms ?? []);
+    this.claimBoundaries?.dispose();
+    this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
     client.onMessage((message) => {
       if (!shouldHandleOnlineClientEvent(this.session?.online?.client, client)) return;
       this.handleOnlineMessage(message);
@@ -824,11 +884,11 @@ export class Game {
     });
   }
 
-  private spawnRemotePlayer(session: GameSession, info: { id: string; name: string; x: number; y: number; z: number; yaw: number; pitch: number }): void {
+  private spawnRemotePlayer(session: GameSession, info: RemotePlayerInfo): void {
     if (!session.online || info.id === session.online.playerId) return;
     const existing = session.online.remotes.get(info.id);
     if (existing) {
-      existing.reset(info);
+      existing.reset(info, performance.now());
       return;
     }
     const view = new RemotePlayerView(info, {
@@ -839,7 +899,9 @@ export class Game {
         DEFAULT_PLAYER_APPEARANCE,
       ),
       world: session.world,
-    });
+      onMining: (id, mining, now) => session.worldRenderer.remoteBreaking.setBreaker(id, mining, now),
+      onRemove: (id) => session.worldRenderer.remoteBreaking.removeBreaker(id),
+    }, performance.now());
     session.online.remotes.set(info.id, view);
     this.scene.add(view.group);
   }
@@ -869,6 +931,7 @@ export class Game {
         this.applyOnlinePlayerState(session, message);
         return;
       case 'block_update': {
+        session.worldRenderer.remoteBreaking.invalidateBlock(message.x, message.y, message.z);
         const previous = session.world.getBlock(message.x, message.y, message.z, false);
         const applied = applyNetworkBlockChanges(session.world, [{
           x: message.x,
@@ -880,6 +943,7 @@ export class Game {
         this.noteWorldNearPlayer('block_update', message.x, message.y, message.z);
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         this.clearOnlineBlockPending(session, message.x, message.y, message.z);
+        this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
         if (message.blockId === BlockId.Air) {
           this.playBlockSound('break', previous, message.x, message.y, message.z);
         } else {
@@ -888,6 +952,9 @@ export class Game {
         return;
       }
       case 'block_batch': {
+        for (const change of message.changes) {
+          session.worldRenderer.remoteBreaking.invalidateBlock(change.x, change.y, change.z);
+        }
         const applied = applyNetworkBlockChanges(session.world, message.changes);
         for (const change of message.changes) {
           this.noteWorldNearPlayer('block_batch', change.x, change.y, change.z);
@@ -895,6 +962,7 @@ export class Game {
         this.queueUrgentMutationMesh(session, applied.meshKeys);
         for (const change of message.changes) {
           this.clearOnlineBlockPending(session, change.x, change.y, change.z);
+          this.clearOnlineMiningFinish(session, change.x, change.y, change.z);
         }
         return;
       }
@@ -1014,6 +1082,12 @@ export class Game {
       case 'error':
         if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
         else this.ui.toast(message.message);
+        return;
+      case 'holograms':
+        this.holograms?.sync(message.holograms);
+        return;
+      case 'claim_boundary':
+        this.claimBoundaries?.show(message);
         return;
       case 'pong':
       case 'status':
@@ -1614,8 +1688,68 @@ export class Game {
           : {}),
       };
     }
-    if (!message.ok && message.targetX !== undefined) {
-      online.rejectedBlockKey = `${message.targetX},${message.targetY},${message.targetZ}`;
+    const key = message.targetX !== undefined
+      && message.targetY !== undefined
+      && message.targetZ !== undefined
+      ? miningBlockKey(message.targetX, message.targetY, message.targetZ)
+      : undefined;
+    applyBreakActionResult(online, {
+      ok: message.ok,
+      reason: message.reason,
+      kind: message.kind,
+      x: message.targetX,
+      y: message.targetY,
+      z: message.targetZ,
+    });
+    this.traceMining(session, message.ok ? 'server result ok' : 'server result reject', {
+      reason: message.reason,
+      targetKey: key,
+    });
+    if (message.kind === 'block_break_finish' && !message.ok && message.reason === 'in_progress') {
+      this.traceMining(session, 'finish wait', {
+        reason: 'in_progress',
+        targetKey: key,
+        progress: session.miningProgress,
+      });
+    }
+    if (online.lastBlockDiag && online.lastBlockDiag.actionSeq === message.actionSeq) {
+      online.lastBlockDiag = {
+        ...online.lastBlockDiag,
+        gate: formatBreakGateDiag(online, { miningTarget: session.miningTarget }),
+      };
+    }
+    if (message.kind === 'block_break_start' && !message.ok && key && session.miningTarget === key) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      this.traceMining(session, 'cleanup', { reason: 'start-rejected' });
+    }
+    if (message.kind === 'block_break_finish' && !key) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      this.traceMining(session, 'cleanup', { reason: 'finish-no-coords' });
+    }
+    if (
+      message.kind === 'block_break_finish'
+      && key
+      && (message.ok || !isInFlightBreakReject(message.reason))
+    ) {
+      this.clearOnlineMiningFinish(session, message.targetX!, message.targetY!, message.targetZ!);
+      this.traceMining(session, 'cleanup', { reason: message.ok ? 'finish-ok' : message.reason });
+    }
+    if (
+      message.kind === 'block_break_finish'
+      && key
+      && !message.ok
+      && shouldResendBreakStartAfterFinishReject(message.reason)
+      && session.miningTarget === key
+      && this.input.mining
+      && session.target
+      && miningBlockKey(session.target.x, session.target.y, session.target.z) === key
+    ) {
+      session.miningProgress = 0;
+      noteResendBreakStart(online);
+      this.sendOnlineBreakStart(session);
+      this.traceMining(session, 'start', { reason: 'resend-after-mining-reject', targetKey: key });
     }
   }
 
@@ -1623,13 +1757,37 @@ export class Game {
     session: GameSession,
     message: Extract<ServerMessage, { type: 'block_result' }>,
   ): void {
+    const online = session.online;
+    if (message.action === 'break' && online) {
+      applyBreakActionResult(online, {
+        ok: message.ok,
+        reason: message.reason,
+        kind: 'block_break_finish',
+        x: message.x,
+        y: message.y,
+        z: message.z,
+      });
+    }
+    if (message.action === 'break' && isInFlightBreakReject(message.reason)) return;
     this.clearOnlineBlockPending(session, message.x, message.y, message.z);
-    if (message.ok) return;
+    if (message.ok) {
+      this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
+      return;
+    }
     const key = `${message.x},${message.y},${message.z}`;
-    if (session.online) session.online.rejectedBlockKey = key;
+    this.clearOnlineMiningFinish(session, message.x, message.y, message.z);
     console.warn(
-      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`,
+      `[anarchy] ${message.action} rejected: ${message.reason ?? 'unknown'} at ${key}`
+      + (online ? ` ${formatBreakGateDiag(online, { miningTarget: session.miningTarget })}` : ''),
     );
+  }
+
+  private clearOnlineMiningFinish(session: GameSession, x: number, y: number, z: number): void {
+    const online = session.online;
+    if (!online) return;
+    const next = applyAuthoritativeVoxelToMiningGate(online, session.miningTarget, x, y, z);
+    session.miningTarget = next.miningTarget;
+    if (next.clearProgress) session.miningProgress = 0;
   }
 
   private clearOnlineBlockPending(session: GameSession, x: number, y: number, z: number): void {
@@ -1658,12 +1816,20 @@ export class Game {
     if (!online) return;
     if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
     if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
-    if (this.input.consumeMiningReleased() && session.miningTarget) {
+    if (this.input.consumeMiningReleased()) {
+      noteMiningReleased(online);
+      if (!session.miningTarget) return;
+      if (!shouldSendBreakAbort({
+        miningReleased: true,
+        miningTarget: session.miningTarget,
+        finishKey: online.miningFinishKey,
+        awaitingAutoBreak: online.awaitingAutoBreak,
+      })) return;
       const source = this.onlineActionSource(session);
       const action = captureBlockBreakAbort(source);
       this.commitOnlineActionSeq(session, source);
       online.client.send(actionMessageFromBreakAbort(action));
-      online.miningLocked = false;
+      noteBreakAbortSent(online);
       online.miningIntent = undefined;
     }
   }
@@ -1743,6 +1909,150 @@ export class Game {
     online.client.send(bowReleaseMessage(action));
   }
 
+  private traceMining(
+    session: GameSession,
+    phase: string,
+    extra?: {
+      readonly reason?: string;
+      readonly targetKey?: string;
+      readonly progress?: number;
+      readonly commandSeq?: number;
+      readonly actionSeq?: number;
+      readonly blockId?: number;
+    },
+  ): void {
+    const online = session.online;
+    if (!online || typeof console === 'undefined') return;
+    const line = formatMiningLifecycle(phase, online, {
+      miningTarget: session.miningTarget,
+      buttonDown: this.input.mining,
+      targetKey: extra?.targetKey,
+      reason: extra?.reason,
+      progress: extra?.progress ?? session.miningProgress,
+      commandSeq: extra?.commandSeq ?? online.miningIntent?.commandSeq,
+      inputSeq: online.inputSeq,
+      actionSeq: extra?.actionSeq ?? online.actionSeq,
+      blockId: extra?.blockId,
+    });
+    if (extra?.reason) console.warn(line);
+    else if (this.miningTraceEnabled()) console.info(line);
+  }
+
+  private miningTraceEnabled(): boolean {
+    if (typeof location === 'undefined') return isDevRuntime();
+    try {
+      return isDevRuntime() || new URLSearchParams(location.search).get('miningTrace') === '1';
+    } catch {
+      return isDevRuntime();
+    }
+  }
+
+  private sendOnlineMiningAbort(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    const source = this.onlineActionSource(session);
+    const action = captureBlockBreakAbort(source);
+    this.commitOnlineActionSeq(session, source);
+    online.client.send(actionMessageFromBreakAbort(action));
+    noteBreakAbortSent(online);
+    online.miningIntent = undefined;
+  }
+
+  private advanceLocalMining(session: GameSession, targetKey: string): void {
+    const hit = session.target;
+    if (!hit) return;
+    const definition = getBlockDefinition(hit.block);
+    if (definition.breakable === false || definition.hardness < 0) return;
+    const delta = session.summary.mode === 'creative' ? 1 : this.miningDelta(definition, this.selectedStack());
+    const kind = nextMiningSound(this.miningSound, targetKey, session.miningProgress, delta);
+    session.miningProgress += delta;
+    if (this.miningTraceEnabled()) {
+      this.traceMining(session, 'progress', { targetKey, progress: session.miningProgress, blockId: hit.block });
+    }
+    if (kind === 'break' || session.miningProgress >= 1) {
+      this.breakTarget();
+    } else if (kind === 'hit') {
+      this.playBlockSound('hit', hit.block, hit.x, hit.y, hit.z);
+    }
+  }
+
+  private startOnlineMine(session: GameSession, targetKey: string): void {
+    session.miningTarget = targetKey;
+    session.miningProgress = 0;
+    if (session.online) {
+      session.online.miningFinishKey = undefined;
+      session.online.clientWaitFinish = false;
+      session.online.pendingBlockAction = undefined;
+      session.online.finishWaitTicks = 0;
+      session.online.miningLocked = false;
+      session.online.awaitingAutoBreak = false;
+      this.sendOnlineBreakStart(session);
+      this.traceMining(session, 'start', { targetKey, progress: 0, blockId: session.target?.block });
+    }
+  }
+
+  private applyOnlineMiningTick(session: GameSession, targetKey: string | undefined, attackPressed: boolean): void {
+    const online = session.online!;
+    if (online.miningFinishKey) {
+      online.finishWaitTicks = (online.finishWaitTicks ?? 0) + 1;
+    } else {
+      online.finishWaitTicks = 0;
+    }
+    const op = resolveOnlineMiningTick({
+      buttonDown: this.input.mining,
+      targetKey,
+      miningTarget: session.miningTarget,
+      finishKey: online.miningFinishKey,
+      clientWaitFinish: online.clientWaitFinish,
+      miningLocked: online.miningLocked,
+      finishWaitTicks: online.finishWaitTicks,
+      awaitingAutoBreak: online.awaitingAutoBreak,
+    });
+    if (op.type === 'wait') {
+      if (attackPressed) {
+        this.traceMining(session, 'pointerdown rejected', { reason: 'wait-finish', targetKey });
+      }
+      return;
+    }
+    if (op.type === 'hold-idle') {
+      if (session.miningTarget) {
+        this.traceMining(session, 'cleanup', { reason: 'hold-idle-mouseup', targetKey });
+      }
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
+      return;
+    }
+    if (op.type === 'abandon-start' || op.type === 'abandon-idle') {
+      this.traceMining(session, 'cleanup', { reason: op.type, targetKey });
+      this.sendOnlineMiningAbort(session);
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
+      if (op.type === 'abandon-idle') return;
+      this.startOnlineMine(session, op.targetKey);
+      this.traceMining(session, 'start', { targetKey: op.targetKey });
+      this.advanceLocalMining(session, op.targetKey);
+      return;
+    }
+    if (op.type === 'idle') {
+      if (online.miningLocked && !online.miningFinishKey) this.sendOnlineMiningAbort(session);
+      if (session.miningTarget || online.miningLocked) {
+        this.traceMining(session, 'cleanup', { reason: 'idle', targetKey });
+      }
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
+      return;
+    }
+    if (op.type === 'start') {
+      this.startOnlineMine(session, op.targetKey);
+      this.advanceLocalMining(session, op.targetKey);
+      return;
+    }
+    this.advanceLocalMining(session, session.miningTarget ?? targetKey ?? '');
+  }
+
   private sendOnlineBreakStart(session: GameSession): void {
     const online = session.online;
     const hit = session.target;
@@ -1750,7 +2060,7 @@ export class Game {
     const source = this.onlineActionSource(session);
     const action = captureBlockBreakStart(source, hit);
     this.commitOnlineActionSeq(session, source);
-    online.miningLocked = true;
+    noteBreakStartSent(online, action.targetX, action.targetY, action.targetZ);
     online.miningIntent = {
       targetX: action.targetX,
       targetY: action.targetY,
@@ -1762,6 +2072,7 @@ export class Game {
       hitX: action.hitX,
       hitY: action.hitY,
       hitZ: action.hitZ,
+      commandSeq: action.commandSeq,
     };
     online.lastBlockDiag = {
       actionSeq: action.actionSeq,
@@ -1769,6 +2080,10 @@ export class Game {
       target: `${action.targetX},${action.targetY},${action.targetZ}`,
       face: `${action.faceX},${action.faceY},${action.faceZ}`,
       blockId: action.targetBlockId,
+      gate: formatBreakGateDiag(online, {
+        blockId: action.targetBlockId,
+        miningTarget: session.miningTarget,
+      }),
     };
     online.client.send(actionMessageFromBreakStart(action));
   }
@@ -1807,6 +2122,11 @@ export class Game {
         yaw: this.input.yaw,
         pitch: this.input.pitch,
         selectedSlot: session.selectedSlot,
+        ...(shouldHoldServerMining({
+          buttonDown: this.input.mining,
+          finishKey: online.miningFinishKey,
+          miningLocked: online.miningLocked,
+        }) ? { mining: true } : {}),
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
       motionProbe.noteSend(online.inputSeq);
@@ -2830,8 +3150,16 @@ export class Game {
   private openPauseMenu(): void {
     this.ui.hidePointerLockFallback();
     if (openingPauseMenuPausesSimulation()) this.lifecycle.setState('PAUSED');
-    if (this.session?.online) this.sendOnlineIdle(this.session);
-    else void this.saveSession();
+    const session = this.session;
+    if (session?.online) {
+      if (session.online.miningLocked && !session.online.miningFinishKey) {
+        this.sendOnlineMiningAbort(session);
+      }
+      session.miningProgress = 0;
+      session.miningTarget = undefined;
+      resetOnlineMiningGate(session.online);
+      this.sendOnlineIdle(session);
+    } else void this.saveSession();
     this.ui.showPause({
       resume: () => this.resumeFromPause(),
       settings: () => {
@@ -2893,6 +3221,7 @@ export class Game {
     if (this.session) {
       this.session.miningProgress = 0;
       this.session.miningTarget = undefined;
+      if (this.session.online) resetOnlineMiningGate(this.session.online);
     }
   }
 
@@ -3212,7 +3541,11 @@ export class Game {
         yaw: predicted.yaw,
         pitch: predicted.pitch,
         selectedSlot: session.selectedSlot,
-        mining: gameplayAllowed && this.input.mining,
+        ...inputMiningField(gameplayAllowed && shouldHoldServerMining({
+          buttonDown: this.input.mining,
+          finishKey: online.miningFinishKey,
+          miningLocked: online.miningLocked,
+        })),
         use: gameplayAllowed && this.input.using,
         vehicleForward: riding ? movement.forward : 0,
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
@@ -3231,6 +3564,7 @@ export class Game {
       this.input.consumeUsePressed();
       session.miningProgress = 0;
       session.miningTarget = undefined;
+      if (online) resetOnlineMiningGate(online);
     }
     const cx = floorDiv(Math.floor(session.player.position.x), 16);
     const cz = floorDiv(Math.floor(session.player.position.z), 16);
@@ -3354,6 +3688,7 @@ export class Game {
           this.input.consumeUsePressed();
           session.miningProgress = 0;
           session.miningTarget = undefined;
+          if (session.online) resetOnlineMiningGate(session.online);
           resetMiningSound(this.miningSound);
         }
         simMark = this.addSimPart('other', simMark);
@@ -3493,7 +3828,10 @@ export class Game {
     if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
       session.online.rejectedBlockKey = undefined;
     }
-    if (remoteCloser && session.online) {
+    if (remoteCloser && session.online && shouldSkipMiningTickForRemote({
+      remoteCloser: true,
+      finishKey: session.online.miningFinishKey,
+    })) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       for (let click = 0; click < attackPresses; click += 1) {
@@ -3545,14 +3883,9 @@ export class Game {
         if (session.online) session.online.client.send({ type: 'attack' });
         else this.breakMinecart(attack.cart);
       }
+    } else if (session.online) {
+      this.applyOnlineMiningTick(session, targetKey, attackPressed);
     } else if (!this.input.mining || !session.target) {
-      if (session.online?.miningLocked) {
-        const source = this.onlineActionSource(session);
-        const action = captureBlockBreakAbort(source);
-        this.commitOnlineActionSeq(session, source);
-        session.online.client.send(actionMessageFromBreakAbort(action));
-        session.online.miningLocked = false;
-      }
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
@@ -3560,10 +3893,6 @@ export class Game {
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
         session.miningProgress = 0;
-        if (session.online) {
-          session.online.miningLocked = false;
-          this.sendOnlineBreakStart(session);
-        }
       }
       const definition = getBlockDefinition(session.target.block);
       if (definition.breakable !== false && definition.hardness >= 0) {
@@ -3615,17 +3944,27 @@ export class Game {
     const hit = session.online ? this.onlineMiningHit(session) : session.target;
     if (!hit) return;
     if (session.online) {
-      const pending = session.online.pendingBlockAction;
-      if (session.online.rejectedBlockKey === `${hit.x},${hit.y},${hit.z}`) return;
-      if (pending && pending.kind === 'break' && pending.x === hit.x && pending.y === hit.y && pending.z === hit.z) {
+      const hold = breakFinishHoldReason(session.online, hit.x, hit.y, hit.z);
+      if (hold !== 'ok') {
+        if (hold === 'pending' && !session.online.miningFinishKey) {
+          console.warn(
+            `[anarchy] break finish swallowed at ${hit.x},${hit.y},${hit.z} ${formatBreakGateDiag(session.online, {
+              blockId: hit.block,
+              miningTarget: session.miningTarget,
+              hold,
+            })}`,
+          );
+        }
+        this.traceMining(session, 'finish rejected', {
+          reason: hold,
+          targetKey: miningBlockKey(hit.x, hit.y, hit.z),
+        });
         return;
       }
-      session.online.pendingBlockAction = { kind: 'break', x: hit.x, y: hit.y, z: hit.z };
+      noteBreakFinishSent(session.online, hit.x, hit.y, hit.z);
       const source = this.onlineActionSource(session);
       const captured = session.online.miningIntent;
-      const action = captured
-        ? { ...captureBlockBreakFinish(source, hit), ...captured }
-        : captureBlockBreakFinish(source, hit);
+      const action = composeOnlineBreakFinish(captureBlockBreakFinish(source, hit), captured);
       this.commitOnlineActionSeq(session, source);
       session.online.lastBlockDiag = {
         actionSeq: action.actionSeq,
@@ -3633,10 +3972,21 @@ export class Game {
         target: `${action.targetX},${action.targetY},${action.targetZ}`,
         face: `${action.faceX},${action.faceY},${action.faceZ}`,
         blockId: action.targetBlockId,
+        gate: formatBreakGateDiag(session.online, {
+          blockId: hit.block,
+          miningTarget: session.miningTarget,
+          hold: 'finish-inflight',
+        }),
       };
       session.online.client.send(actionMessageFromBreakFinish(action));
-      session.online.miningLocked = false;
       session.online.miningIntent = undefined;
+      this.traceMining(session, 'finish', {
+        targetKey: miningBlockKey(hit.x, hit.y, hit.z),
+        commandSeq: action.commandSeq,
+        actionSeq: action.actionSeq,
+        blockId: hit.block,
+        progress: session.miningProgress,
+      });
       this.firstPerson?.swing();
       return;
     }
@@ -4432,6 +4782,8 @@ export class Game {
     }
     this.ui.setHurtFlash(this.hurt.flashAlpha(now));
     this.ui.fadeChatLines(now, chatLineOpacity);
+    this.holograms?.update();
+    this.claimBoundaries?.update(now);
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -4574,15 +4926,19 @@ export class Game {
   private updateBreakingOverlay(): void {
     const session = this.session;
     if (!session) return;
-    const target = session.target;
+    const finishKey = session.online?.miningFinishKey;
+    const awaiting = Boolean(finishKey && session.miningTarget === finishKey);
+    const overlayHit = awaiting ? this.onlineMiningHit(session) : session.target;
     const mining = this.lifecycle.state === 'PLAYING'
       && session.miningTarget !== undefined
-      && target !== undefined
-      && session.miningProgress > 0
-      && session.miningProgress < 1;
+      && overlayHit !== undefined
+      && (
+        (session.miningProgress > 0 && session.miningProgress < 1)
+        || awaiting
+      );
     session.worldRenderer.setBreakingProgress(
-      mining ? target : undefined,
-      mining ? session.miningProgress : 0,
+      mining ? overlayHit : undefined,
+      mining ? (awaiting ? Math.max(session.miningProgress, 0.99) : session.miningProgress) : 0,
     );
   }
 
@@ -4612,7 +4968,7 @@ export class Game {
           this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
           if (session.online.lastBlockDiag) {
             const block = session.online.lastBlockDiag;
-            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}`;
+            this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}${block.gate ? ` ${block.gate}` : ''}`;
           }
           if (session.online.lastBowDiag) {
             const bow = session.online.lastBowDiag;
@@ -4695,6 +5051,10 @@ export class Game {
       this.session.online.remotes.clear();
       this.session.online.client.disconnect();
     }
+    this.holograms?.dispose();
+    this.holograms = undefined;
+    this.claimBoundaries?.dispose();
+    this.claimBoundaries = undefined;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();

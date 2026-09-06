@@ -80,12 +80,13 @@ describe('online input recovery', () => {
 
   it('keeps chat typing exclusive while open and does not leak that into gameplay keys', () => {
     expect(shouldCaptureGameplayKey({ typingInField: true, chatOpen: true })).toBe(false);
-    expect(shouldBlurStaleTextField({ typingInField: true, chatOpen: false })).toBe(true);
+    expect(shouldBlurStaleTextField({ typingInField: true, chatOpen: false, isChatInput: true })).toBe(true);
+    expect(shouldBlurStaleTextField({ typingInField: true, chatOpen: false, isChatInput: false })).toBe(false);
     expect(shouldCaptureGameplayKey({ typingInField: true, chatOpen: false })).toBe(true);
   });
 
   it('accepts WASD after chat closes even if a text field is still focused', () => {
-    expect(shouldBlurStaleTextField({ typingInField: true, chatOpen: false })).toBe(true);
+    expect(shouldBlurStaleTextField({ typingInField: true, chatOpen: false, isChatInput: true })).toBe(true);
     expect(shouldCaptureGameplayKey({ typingInField: true, chatOpen: false })).toBe(true);
     expect(movementAfterChatClose(live, false).forward).toBe(1);
   });

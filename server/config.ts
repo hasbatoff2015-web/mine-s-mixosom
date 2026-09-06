@@ -24,6 +24,8 @@ export interface ServerConfig {
   readonly operators: readonly string[];
   /** When true, register `server/plugin-examples/hello.ts` without copying it into pluginDir. */
   readonly loadExamplePlugin: boolean;
+  /** Core Anarchy plugins (permissions, TPA, home, …). Default on. */
+  readonly loadBuiltinPlugins: boolean;
 }
 
 function integerEnv(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number): number {
@@ -59,6 +61,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .map((name) => name.trim())
       .filter(Boolean),
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
+    loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
   };
 }
 

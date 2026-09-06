@@ -1,6 +1,136 @@
 # Состояние проекта
 
+## Последний проход: integrate remote actions into plugin/mining line — 2026-09-06
+
+- Интеграционная ветка `cursor/integrate-remote-actions-3f93` от `cursor/claim-boundary-depth-3f93` (`9c92b176`). Влита `codex/remote-action-presentation-v2` (`63e8358e`) merge, не cherry-pick.
+- Source of truth: наша линия — plugin/claims/holograms/chat/permissions и исправленный mining lifecycle + claim wires 3px/depth. PR #54 — Networking V2 (уже предок нашей линии) и remote-player presentation.
+- Конфликты в `server/WorldInstance.ts`, `server/gameplay.ts` и docs разрешены как функциональный union: `clearMiningLock` / `miningStartCommandSeq` / `worldSpawn` сохранены; добавлены `presentSwing`, `presentation()`, captured `blockId`, `onBlockReplaced`.
+- `src/core/Game.ts`, `shared/protocol.ts`, overlay/remote view смержились автоматически: claims + local mining + remote presentation.
+- Не merge'ить PR #54 напрямую в `main`. Handoff: `docs/reports/2026-09-06_integrate-remote-actions.md`.
+- После merge: typecheck* / boundaries / directed 140 / test:sim 42 / test:server 230 / build PASS. Live Anarchy: 2 Chrome + 2 WS; F3 Remote interpolate 12 samples; wire `swingSeq`/`heldItemId`/`player_left`. Full visual crack checklist — owner (VM ~4 FPS).
+
+## Последний проход: Remote player action presentation v2 — 2026-09-05
+
+- Ветка `codex/remote-action-presentation-v2` от актуальной `origin/cursor/online-networking-v2-integrated-3ff8`, SHA `e5c77f334fa46b726372fb7d7d27283f213ea184`. Main не объединялся.
+- `RemotePlayerInfo` и `PlayerSnapshot` несут optional `presentation`: authoritative mining target/block/progress, selected held item, bow charge, food progress, sword blocking и отдельный server-owned `swingSeq`. Старые snapshots получают neutral fallback; wire protocol остаётся 3 (additive fields).
+- `RemotePlayerView` передаёт latest action state в существующий `PlayerVisual`/animator независимо от spatial interpolation. Join/reset устанавливает baseline sequence; repeated/late snapshots не повторяют swing. Continuous actions истекают через 1500 ms без новых данных.
+- `WorldRenderer.remoteBreaking` хранит breaker ownership и использует canonical `BlockBreakingOverlay`, один mesh на target с max progress. Local overlay сохраняет свой target/progress, совпадающие local/remote targets рисуются одним mesh. Stage 0 поддерживается с первого accepted mining state. Нет remesh на stage change.
+- Voxel mutation, abort/finish, target switch, death/respawn, disconnect/remove, reconnect/session replacement, unload и stale timeout очищают presentation. Сервер фиксирует исходный block ID и сбрасывает mining при замене voxel.
+- FIFO, commandSeq/ackCommandSeq, prediction/reconciliation, `remotePlayerInterpolation.ts`, captured bow aim и 20 TPS не переписывались.
+- Handoff и проверки: `docs/reports/2026-09-06_remote-action-presentation-v2.md`. Полный двухклиентный visual acceptance остаётся открытым; wire/animator/overlay tests не считаются manual QA.
+
+## Последний проход: claim boundary depth + thinner wire
+
+- Клиентский `ClaimBoundaryRenderer`: линии **3px** (было 6) и обычный depth test/write. Раньше `depthTest: false` + `renderOrder: 50` рисовали box поверх мира. Сервер, протокол и claims-логика без изменений. Mining не трогали.
+- Report: `docs/reports/2026-09-06_claim-boundary-depth.md`.
+
+## Последний проход: first FINISH at server progress 0 (dry overlay)
+
+- Симптом после PR #60: даже один игрок, dirt и другие обычные блоки. Overlay 0→100%, блок цел, анимация сначала, второй цикл ломает. Соседи при удержании ЛКМ — с первого цикла. Короткий A→B может дать тот же сбой, длинный A→B — нет.
+- PR #60 оставляет lock на leftover idle (`applied < startSeq`) и это **нужно сохранить**. Live-баг другой: client и server считают progress независимо. START ставит `miningProgress = 0` и не тикает. Клиент (catch-up / 4 ticks per frame) может дойти overlay до 1.0 и послать FINISH **до первого `advanceMining`**.
+- `breakBlock` считал `progress <= 0` тем же `reason: mining`, что и «нет lock». Клиент на `mining` сбрасывал overlay и слал второй START — видимый сухой цикл. Lock на сервере при этом часто ещё жив.
+- Фикс: matching lock + `progress === 0` → `reason: in_progress`. Клиент **не** ресетит overlay и не resend START; ждёт auto-break. `MAX_FINISH_WAIT_TICKS` после `in_progress` не abort'ит (catch-up сжёг бы 40 клиентских тиков раньше physics). Mouse-up при `awaitingAutoBreak` abort'ит. Нет lock → по-прежнему `mining`. Первый START теперь тоже `miningStartUnacked`. `action_result.kind` больше не считается finish при `undefined`.
+- Report: `docs/reports/2026-09-06_mining-finish-zero-progress.md`.
+
+## Последний проход: first mining cycle vs queued pre-START idles
+
+- Симптом после PR #59: первый overlay 0→100% → FINISH → блок цел; второй полный цикл ломает. Соседи при удержании ЛКМ ломаются с первого цикла. Не hardness / oak planks / claims / LOS / `miningFinishKey`.
+- Доказательство (тест до фикса): enqueue idle seq 1..8 + `mining` seq 9 + `beginMining(..., 9)` → 8 тиков → `miningTarget` wiped, `applied=8`, `progress=0`. START был принят (`target` set, `applied=-1`).
+- Корень: START обрабатывается сразу, очередь команд — по одной за physics tick. Старые idle без `mining` после START считались mouse-up. Cycle #2 работает, потому что к повторному START очередь уже `mining: true`. Сосед B — то же.
+- Фикс: `miningStartCommandSeq` на accepted START; `shouldKeepMiningLock` если `mining===true` или `appliedCommandSeq < start`. Stale ticks ещё и `advanceMining`. Mouse-up `seq >= start` без mining по-прежнему снимает lock.
+- Live (два Chrome `?miningTrace=1`, B idle, FPS 4 / `inBurst=4`): dirt `9,65,6` — один overlay 0→100% → server auto-break, FINISH `empty` (уже air), не `reason: mining`. Oak planks `id=22` `8,65,6` сломались с первого цикла; соседние доски при удержании ЛКМ тоже с первого. Owner ×5 matrix не закрыт.
+- Report: `docs/reports/2026-09-06_first-cycle-mining-sync.md`.
+
+## Последний проход: server mining lock hold + deferred finish after reason=mining
+
+- Live QA (agent): B ставил дубовые доски (`id=22`), A целился в них. **5× ломка до 100% в двух Chrome не подтверждена** (`mutated=1` для `id=22` нет). Synthetic/CDP hold сбрасывал `input.mining` (`cleanup idle`). Не утверждать, что live-баг закрыт — owner QA в ROADMAP. Pre-fix trace: `CLIENT FINISH` при 100% → server `mine=—` → `reason: mining` из-за `input` без `mining: true`.
+- FIX 1: `shouldHoldServerMining` = `buttonDown || finishKey || miningLocked`. Обычный tick и `sendOnlineIdle` шлют `mining: true`, пока действие живо. Pause abort'ит и сбрасывает gate, затем idle **без** mining. Mouse-up / смена цели / inventory по-прежнему снимают lock.
+- FIX 2: после `reason: mining` — `miningProgress = 0`, `noteResendBreakStart` (`miningStartUnacked`), новый START. Finish запрещён (`awaiting-start`), пока `block_break_start` не ack. Нельзя сразу FINISH при локальном 1.0 / server progress=0.
+- Report: `docs/reports/2026-09-06_mining-hold-input.md`.
+
+## Последний проход: oak planks 100% overlay lock after PR #57
+
+- Oak planks **не** особый unbreakable ID. `wood()` как oak log: hardness 2, axe/hand, 60 тиков / 3с. Dirt 15 тиков, stone by hand 150. Client и server берут `miningProgressPerTick` из `src/blocks/mining.ts`. ID 22 round-trip без потерь. При удержании `input.mining` сервер ломает все четыре блока (в т.ч. auto-break на progress>=1).
+- Баг после 100%: finish слал **start `commandSeq`** (`{...fresh, ...captured}`). После wipe `miningTarget` (`input.mining` false) finish → `mining` или `stale` (pose history 64, planks 60 тиков у края). Клиент на `reason: mining` только повторял finish без нового start — блок остаётся. `remoteCloser` пропускал mining tick, `finishWaitTicks` замирал. `block_update` от Player B по **тем же** координатам снимал `miningFinishKey` у A — отсюда «B сломал доски → A снова может».
+- Shared global mining между A и B нет: `ServerPlayer.miningTarget` per-player. `block_update` чистит gate только если ключ совпал.
+- Fix: `composeOnlineBreakFinish` сохраняет voxel start, но `commandSeq`/`actionSeq` — finish-time; mining tick не skip'ается при in-flight finish; `reason: mining` → повторный `block_break_start`; voxel update чистит wait/pending на той клетке.
+- Report: `docs/reports/2026-09-06_oak-planks-mining-lock.md`.
+
+## Последний проход: mining lifecycle lock after 100% overlay
+
+- После 100% crack overlay клиент ставил `miningFinishKey` + `clientWaitFinish` и `shouldWaitForInFlightFinish` глотал **все** последующие LMB, пока crosshair на том же блоке или в воздухе. Mouse-up не abort'ил (desync-фикс) и не снимал wait. `action_result` без coords / `reason: mining` не очищал finishKey. Отсюда: анимация дошла до 100%, блок не сломался, ломание любых блоков «умирало».
+- Place/attack/raycast не в том gate. Claims не оставляют lock между попытками.
+- Report: `docs/reports/2026-09-06_mining-lifecycle-lock.md`.
+
+## Последний проход: two-player unbreakable block (intent LOS / claims audit)
+
+- Player A не ломает клетку, Player B ломает ту же: сервер один, reject player-specific. Типичные пути: (1) DDA-грань той же клетки не совпала с clicked face → `los` (mining больше не требует грань); (2) глаз A внутри поставленного блока: DDA даёт *entry* face. Claims при `overlapping=[]` не cancel. Reconnect с resume оставляет ту же позу (иногда не лечит); новый spawn снаружи — лечит.
+- Place/use по-прежнему требуют совпадение грани (она выбирает соседа). Creative больше не держит Survival `miningTarget` lock на другую клетку.
+- Report: `docs/reports/2026-09-06_block-break-two-player.md`.
+
+## Последний проход: stuck Anarchy block after failed finish
+
+- После неуспешного `block_break_finish` клиент оставлял `pendingBlockAction` на тех же координатах. Sequenced path шлёт только `action_result`, не `block_result`, и без `block_update` pending никогда не сбрасывался. Повторный finish того же блока глотался; другие блоки работали; Creative тоже нет (тот же client gate); reconnect создавал новую session и снимал lock.
+- Сервер блок не удалял. Reverse hypothesis (server air, client dirt) отвергнута: reconnect снова показывает ломаемый dirt.
+- Report: `docs/reports/2026-09-05_stuck-block-break.md`.
+
+## Последний проход: intermittent Anarchy block-break desync
+
+- Вне claim ломание dirt/grass могло «доиграть» анимацию и не удалить блок: клиент слал `block_break_finish` на тик раньше сервера (`14/15 < 0.95`), отпускание ЛКМ слало `abort` + `mining:false` и сбрасывало серверный прогресс. Claims не участвовали.
+- Клиент после finish держит `input.mining` и не abort'ит этот target, пока не придёт break. Overlay остаётся до authoritative air. Server finish принимает matching `miningTarget` с `progress > 0`.
+- Report: `docs/reports/2026-09-05_block-break-desync.md`.
+
+## Последний проход: claim boundary visibility (red + overlapping)
+
+- Wireframe всегда `#ff0000`, `fog=false`, `toneMapped=false`, **3px** `LineSegments2`, `depthTest`/`depthWrite` как у мира — линии прячутся за блоками.
+- Запрещённый break/place показывает **все** overlapping claims, у которых этот флаг явно `false` (и все untrusted overlapping, если флаг никто не задал). Arena только с `pvp=true` по-прежнему не рисуется на block-break.
+- Report: `docs/reports/2026-09-05_claim-boundary-visibility.md`.
+
+## Последний проход: claim boundary wireframe feedback
+
+- Запрещённый `block-break` / `block-place` в чужом claim по-прежнему пишет в чат `This land is claimed.` и отменяет действие.
+- Сервер шлёт **только этому игроку** `claim_boundary` с AABB claim, который реально запретил флаг (per-flag setter), `durationMs: 10000`.
+- Клиент рисует красный 12-рёберный wireframe через `ClaimBoundaryRenderer`. Повтор в том же claim продлевает таймер, не дублирует геометрию.
+- Report: `docs/reports/2026-09-05_claim-boundary-feedback.md`.
+
+## Последний проход: named /claim commands, chat open scroll, account nick input
+
+- `/claim flag|members|addmember|removemember` принимают явное `<name>` без требования стоять в claim. Старый standing-синтаксис сохранён. Parser: если первый токен — известный flag, это standing-форма.
+- Открытие чата (T) всегда pin/scroll вниз: сначала reveal hidden lines, затем `scrollTop` + microtask/rAF.
+- Account: InputManager больше не blur'ит меню-поля. Раньше `shouldBlurStaleTextField` снимал фокус с nickname input на каждый keydown, поэтому казалось, что можно только выбрать подсказку браузера. Input: `type=text`, `autocomplete=off`.
+- Report: `docs/reports/2026-09-05_claim-named-commands-chat-account.md`.
+
+## Последний проход: Claims overlap/priority, chat scroll, 3D holograms, spawn respawn
+
+- Ветка `cursor/claims-chat-holograms-3f93` от nickname-console `cursor/nickname-console-3f93`.
+- Respawn после смерти использует authoritative `WorldInstance.spawn` (`/setspawn`), не `SurvivalSystem.spawnPoint`.
+- Claims V1: partial flags, per-flag priority, overlap, новые дефолты, `fire-spread` удалён. `mob-spawn` реально отменяет создание моба через cancellable `mobSpawn`.
+- Chat: scrollable `#chat-log` (wheel / touch pan-y), stick-to-bottom, индикатор «↓ Новые сообщения», лимит `MAX_CHAT_MESSAGES = 200`.
+- Holograms: server `HologramNetwork` → protocol `holograms` → client `HologramRenderer` (Three.js Sprite billboard). Chat dump при входе в range убран.
+- Report: `docs/reports/2026-09-05_claims-chat-holograms.md`.
+
+## Последний проход: display nickname + server console
+
+- Ветка `cursor/nickname-console-3f93` от plugin-platform `cursor/anarchy-plugin-platform-3f93`.
+- Аккаунт на этом этапе = только локально сохранённый display nickname. Нет регистрации, пароля, email, OAuth, Яндекс SDK, профилей.
+- Главное меню: кнопка «Аккаунт». Ник в `localStorage` (`fc.player.nickname`). Join передаёт `name`, если ник валиден; иначе сервер оставляет `Player-XXXX`. `playerId` остаётся UUID.
+- Смена ника применяется при следующем подключении, не переименовывает живую сессию.
+- Server stdin: `ConsoleCommandSender` с полным bypass permissions, те же команды через `CommandRegistry` (`op Misha` и `/op Misha`).
+- Report: `docs/reports/2026-09-05_nickname-and-server-console.md`.
+
+## Последний проход: Anarchy Plugin Platform — permissions, teleport plugins, claims, holograms
+
+- Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
+- Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms. Auction House не делался.
+- `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
+- Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
+- Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.
+- Claim flags: `fire-spread` удалён. `mob-spawn` enforced через cancellable `mobSpawn`. Overlap + per-flag priority.
+- Report: `docs/reports/2026-09-05_anarchy-plugin-platform.md`.
+
 ## Последний проход: Anarchy spawn schematic → filesystem
+
 
 - Ветка `cursor/anarchy-spawn-schem-import-3ff8` от `origin/main` `165f563` (Farming V1 + Networking V2).
 - Canonical spawn source: owner `frontier_spawn2.schem` (Sponge). Не в git. Не IndexedDB dump. Не procedural world.
@@ -27,7 +157,6 @@
 - Anarchy stays server-authoritative for tilling, consumption/durability, growth RNG, Bone Meal, fruit, harvest, drops, crafting, furnace, and food. Online clients only request and render canonical state.
 - Automated gates: directed farming/regression 267/267, core Farming 35/35, `test:sim` 42/42, `test:server` 78/78, all typechecks, import boundaries, Node/server smokes, build/size/archive PASS. Exact-main full-suite comparison added 36 passing tests and no failure class. Benchmarks: 1024 positions 6.066 ms; 4096 positions 13.908 ms on this machine. DEV WebGL `?qaFarming=1` visually checked dry/wet plots, all stages, stems/fruits, hoes, Bone Meal, and farming items.
 - Detailed handoff: `docs/reports/2026-09-04_farming-core.md`.
-
 Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
 
 ## Последний проход: Online networking v2 integration

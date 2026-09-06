@@ -1,6 +1,148 @@
 # Roadmap
 
+## 2026-09-06: Integrate remote actions + Networking V2 into plugin/mining line
+
+- [x] Merge `codex/remote-action-presentation-v2` into `cursor/claim-boundary-depth-3f93` (functional union, not file takeover).
+- [x] Keep plugin platform, permissions/OP, claims, holograms, chat/nickname/console.
+- [x] Keep mining lock / first-cycle / `in_progress` finish lifecycle.
+- [x] Keep claim wires 3px + depth test (PR #62).
+- [x] Keep Networking V2 (FIFO, commandSeq, prediction, serverTick remotes).
+- [x] Add remote player action presentation (held item, cracks, swing, bow, food, block).
+- [ ] Owner two-client live QA of the union (presentation checklist + mining first-cycle + claim occlusion).
+- [ ] Merge this integration branch into `main` only after owner acceptance. Do not merge PR #54 directly.
+
+## 2026-09-05: Remote action presentation v2
+
+- [x] Authoritative presentation state в join и существующих player snapshots.
+- [x] Mining/held item/bow/food/sword-block → canonical PlayerVisualAnimator.
+- [x] Server-owned swing sequence; successful use effects; valid attack misses; observer dedupe.
+- [x] Multi-breaker crack overlay, max stage на общем target, сохранение local path.
+- [x] Lifecycle / voxel replacement / stale cleanup, deterministic server/client/overlay tests и wire join test.
+- [ ] Полный ручной checklist двумя интерактивными клиентами: movement + held tool + mining hand + stages + abort/switch/finish + bow/release + disconnect. Выполненная часть описана в свежем report.
+- [ ] Merge в main только отдельным решением владельца после live acceptance.
+
+## 2026-09-06: Claim boundary depth and width
+
+- [x] Halve screen-space claim wire width (6px → 3px).
+- [x] Enable LineMaterial depth test/write; drop overlay `renderOrder` so blocks occlude the box.
+- [ ] Owner QA: denied build shows a thin red AABB that disappears behind terrain and stays visible in open air.
+
+## 2026-09-06: First FINISH at server progress 0
+
+- [x] Distinguish missing lock (`reason: mining`) from START-accepted / not-yet-advanced (`reason: in_progress`).
+- [x] Do not reset the client overlay or resend START on `in_progress`; wait for auto-break.
+- [x] After `in_progress`, do not abandon via `MAX_FINISH_WAIT_TICKS` (catch-up); mouse-up still aborts.
+- [x] Set `miningStartUnacked` on the first START, not only after a mining reject.
+- [x] Do not treat `action_result` without `kind` as `block_break_finish`.
+- [x] Regression: catch-up overlay 1.0 with 0 server ticks; short vs long A→B; A→B→C→D; dirt/stone/log/planks; 1-tick retarget; mouse-up still cancels.
+- [ ] Owner QA: one client, `?miningTrace=1`, hold LMB on dirt/stone/log/planks; first overlay must break the block (pause at 100% then air is OK; restart from 0 is not). Fast and slow A→B. A→B→C→D while holding.
+
+## 2026-09-06: First mining cycle / command-queue sync
+
+- [x] Prove leftover idle commands applied after `beginMining` wipe `miningTarget` (cycle #1 dry, cycle #2 breaks).
+- [x] Keep the lock when `appliedCommandSeq < miningStartCommandSeq`; omitted mining with `seq >= start` still cancels.
+- [x] Advance mining during those stale ticks so dirt (15) is not starved by a deep FIFO.
+- [x] After a successful break, a neighbor while LMB is held still breaks on the first cycle.
+- [x] Bob connecting does not create the wipe; Ada leftover queue does.
+- [ ] Owner QA: two Chrome clients `?miningTrace=1`; first LMB after idle must break on the first overlay; hold across A→B→C. Agent live: dirt and oak planks broke on the first overlay with B idle (FPS 4); not a ×5 matrix.
+
+## 2026-09-06: Server mining lock hold (input.mining)
+
+- [x] Keep `input.mining: true` while `buttonDown || miningFinishKey || miningLocked` (including `sendOnlineIdle`).
+- [x] Do not turn bare idle / pause / inventory / mouse-up into mining.
+- [x] After `reason: mining`, resend START, reset local progress, wait for start ack before FINISH.
+- [x] Regression: 60/150-tick holds, omitted-mining wipe, resend-then-progress, mouse-up, retarget, A/B independence.
+- [ ] Owner QA: two clients; B places oak planks; A holds LMB to 100% ×5; also log/stone/dirt; A mines X while B mines Y.
+
+## 2026-09-06: Oak planks 100% overlay lock (after PR #57)
+
+- [x] Trace dirt / stone / oak log / oak planks through the same mining pipeline (shared `miningProgressPerTick`).
+- [x] Stop copying start `commandSeq` onto `block_break_finish`.
+- [x] Do not skip the client mining tick while a finish is in flight just because a remote player is closer.
+- [x] Resend `block_break_start` after `reason: mining` (wiped/never-started lock); finish-only retry cannot recover.
+- [x] Coordinate-matched `block_update` clears finish wait; A/B mining maps stay independent.
+- [ ] Owner QA: two clients; B places oak planks; overlay 100%; if the block stays, release and mine another block without waiting for B to break the planks.
+
+## 2026-09-06: Mining lifecycle lock after 100% overlay
+
+- [x] Split server-hold (`miningFinishKey`) from client wait (`clientWaitFinish` cleared on mouse-up).
+- [x] Any finish `action_result` (ok / hard reject / `mining` / missing coords) clears finish wait + lock.
+- [x] Next pointerdown on the same or another block starts mining without reconnect.
+- [x] Timeout `MAX_FINISH_WAIT_TICKS` abandons a stuck in-flight finish.
+- [ ] Owner QA: break dirt to 100% overlay; if it stays, release and LMB another block — crack overlay must start.
+
+## 2026-09-06: Two-player unbreakable block
+
+- [x] Eye inside the mined voxel skips LOS/face (DDA entry-face mismatch).
+- [x] Mining ignores same-cell face mismatch; place/use still require the face.
+- [x] Creative instant break ignores Survival miningTarget lock on a different cell.
+- [x] Break-attempt reject logs: player, coords, blockId, stage, cancelled, miningTarget.
+- [x] Two-player + claims lifecycle tests (no stale cancel, no duplicate listeners).
+- [ ] Owner QA: A clips a placed dirt, B breaks it; A then breaks the next placed dirt without reconnect.
+
+## 2026-09-05: Stuck Anarchy block after failed finish
+
+- [x] Clear client `pendingBlockAction` on sequenced `action_result` (failed finish has no `block_update`).
+- [x] Same-block retry after mouse-up / new start without looking away or reconnect.
+- [x] Locked miningTarget finish skips LOS re-validation from a later commandSeq.
+- [ ] Owner QA: place dirt, full crack overlay, block stays, release and break the same cell in Survival and Creative without reconnect.
+
+## 2026-09-05: Anarchy block-break desync
+
+- [x] Keep server mining held after client finish; do not abort that target on mouse-up.
+- [x] Accept survival finish when mining started (`progress > 0`), not only at 0.95.
+- [ ] Owner QA: break dirt/grass outside spawn; animation completion then release still removes the block.
+
+## 2026-09-05: Claim boundary visibility
+
+- [x] Unlit fog-free `#ff0000` wireframe (LineSegments2, 3px, depth-tested).
+- [x] Show every overlapping claim that participates in the denied build flag.
+- [ ] Owner QA: nested spawn+arena both `block-break=false` show two red boxes; sky stays pure red.
+
+## 2026-09-05: Claim boundary wireframe on denied build
+
+- [x] Server `claim_boundary` to the blocked player only after denied `block-break` / `block-place`.
+- [x] Visualize the per-flag protection source AABB, not the first overlapping claim.
+- [x] Client red 12-edge wireframe for 10s; reuse + reset expiry on repeat deny.
+- [ ] Owner QA: stranger sees red claim box after a denied break/place; nearby players do not.
+
+## 2026-09-05: Named claim commands, chat open-at-bottom, account nick typing
+
+- [x] `/claim flag|members|addmember|removemember` accept an explicit claim name without standing inside it.
+- [x] Keep standing `/claim flag <flag> <true|false>` and `/claim addmember <player>`.
+- [x] Open chat always scrolls to latest messages (reveal + rAF).
+- [x] Account nickname input is free-typed; InputManager no longer blurs menu fields.
+
+## 2026-09-05: Claims overlap, chat scroll, 3D holograms, spawn respawn
+
+- [x] Respawn at `/setspawn` world spawn, not SurvivalSystem.spawnPoint.
+- [x] Claims V1 defaults, partial flags, overlapping regions, per-flag priority, `/claim priority`, richer `/claim info`.
+- [x] Server-side `mobSpawn` cancel for `mob-spawn=false`; do not despawn existing mobs.
+- [x] Scrollable GameUI chat (desktop wheel + mobile pan-y), stick-to-bottom, new-message hint, 200-message cap.
+- [x] Networked Three.js hologram billboards; remove enter-range chat dump.
+- [ ] Owner QA: spawn/arena overlap PvP, chat scroll on desktop/mobile, hologram visible in world, death→respawn at setspawn.
+
+## 2026-09-05: Display nickname + server console
+
+- [x] Main-menu Account panel for a locally stored display nickname (no accounts/auth).
+- [x] Send valid nick on Anarchy join; keep `Player-XXXX` fallback; keep UUID `playerId`.
+- [x] `ConsoleCommandSender` on server stdin with permission bypass through existing CommandRegistry.
+- [ ] Owner QA: set nick, reconnect, `/op` from terminal, player without OP cannot `/op`.
+
+## 2026-09-05: Anarchy plugin platform + base plugins
+
+- [x] Evolve CommandRegistry + PermissionService (roles, wildcards, persistent OP/DEOP, FC_OPERATORS seed).
+- [x] Plugin help standard (`/<plugin> help`) and in-game `/plugins` enable/disable/reload.
+- [x] Shared TeleportService + history; TPA without replacing `/tp <x> <y> <z>`.
+- [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
+- [x] Claims with cancellable events and configurable flags (not WorldGuard).
+- [x] Holograms MVP (named, lines, range, persistence). No Auction House.
+- [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
+- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
+- [ ] Auction House after inventory/GUI market framework.
+
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
+
 
 - [x] Extend `npm run server:import` to bake `frontier_spawn2.schem` via existing `importAnarchySpawn` into `FsWorldStore` (`ANARCHY_SPAWN_Y_SHIFT = -28`).
 - [x] Refuse overwrite without `--force`; backup `dataDir/anarchy` before replacement; keep player roster.
@@ -24,8 +166,9 @@
 - [x] Cover water boundaries, planting/tilling matrix, inactive chunks, RNG/bounds, persistence, server concurrency/coalescing, rendering batches, recipes/food, and 1024/4096-position performance.
 - [x] Add DEV `?qaFarming=1` and complete automated visual smoke for farmland, stages, stems/fruits, hoes, Bone Meal, and item sprites.
 - [ ] Owner manual gameplay acceptance: native pointer lock, save/reload UX, furnace/crafting screens, F5/overlay, and two visible Online clients including reconnect/server restart.
-- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.## 2026-09-04: Online networking v2 integration
+- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.
 
+## 2026-09-04: Online networking v2 integration
 - [x] Integration branch `cursor/online-networking-v2-integrated-3ff8` off BASE `cursor/online-networking-v2-3ff8` (no main merge).
 - [x] Strict block intent: `targetBlockId`, historical `commandSeq` pose, A or reject.
 - [x] Bow draw survives stale FIFO `use:false`; captured aim; 20× draw→release tests.

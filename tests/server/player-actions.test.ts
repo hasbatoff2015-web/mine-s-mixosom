@@ -42,6 +42,14 @@ function input(seq: number, extra: Partial<ClientInputMessage> = {}): ClientInpu
   };
 }
 
+function carveAir(world: WorldInstance, minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number) {
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) world.world.setBlock(x, y, z, BlockId.Air);
+    }
+  }
+}
+
 function prepareTarget(world: WorldInstance, player: ServerPlayer, offsetX = 0) {
   const eye = player.controller.eyePosition();
   const targetX = Math.floor(eye.x) + offsetX;
@@ -132,19 +140,216 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
       .toBe(BlockId.Dirt);
   });
 
-  it('keeps break start/finish locked to the captured target', async () => {
+  it('keeps survival break start/finish locked to the captured target', async () => {
     const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
     const hit = prepareTarget(world, player);
     world.applyInput(player, input(1, { mining: true }));
     world.tick();
     const intent = blockTargetFromHit(hit);
     expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
     player.controller.yaw += Math.PI / 2;
     expect(world.tryBreak(player, hit.x + 1, hit.y, hit.z, {
       ...intent,
       targetX: hit.x + 1,
     }, 1)).toEqual({ ok: false, reason: 'mining' });
     expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('lets creative break a different cell without the survival mining lock', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player);
+    const other = { x: hit.x + 2, y: hit.y, z: hit.z };
+    world.world.setBlock(other.x, other.y, other.z, BlockId.Dirt);
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    const intent = blockTargetFromHit(hit);
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    expect(world.tryBreak(player, other.x, other.y, other.z)).toEqual({ ok: true });
+    expect(world.world.getBlock(other.x, other.y, other.z)).toBe(BlockId.Air);
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Stone);
+  });
+
+  it('accepts a survival finish while server mining is still below 0.95', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    const hit = prepareTarget(world, player);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const dirtHit = { ...hit, block: BlockId.Dirt };
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    const intent = blockTargetFromHit(dirtHit);
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    expect(player.miningProgress).toBe(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: false, reason: 'in_progress' });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(player.miningProgress).toBeGreaterThan(0);
+    expect(player.miningProgress).toBeLessThan(0.95);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('accepts a locked finish after look drifted to a later commandSeq', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    const hit = prepareTarget(world, player);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const intent = blockTargetFromHit({ ...hit, block: BlockId.Dirt });
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    player.controller.yaw += Math.PI / 2;
+    world.applyInput(player, input(3, { mining: true, yaw: player.controller.yaw }));
+    world.tick();
+    expect(player.miningProgress).toBeGreaterThan(0);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 3)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('lets Survival and Creative break the same cell after a failed finish without reconnect', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const intent = blockTargetFromHit({ ...hit, block: BlockId.Dirt });
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    const before = world.world.getBlock(hit.x, hit.y, hit.z);
+    expect(before).toBe(BlockId.Dirt);
+
+    world.setGameMode(player, 'survival');
+    const staleFinish = world.tryBreak(player, hit.x, hit.y, hit.z, {
+      ...intent,
+      targetBlockId: BlockId.Stone,
+    }, 1);
+    expect(staleFinish).toEqual({ ok: false, reason: 'stale' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Dirt);
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
+
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 2)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    world.setGameMode(player, 'creative');
+    world.applyInput(player, input(3, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 3, 3)).toEqual({ ok: true });
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, {
+      ...intent,
+      targetBlockId: BlockId.Stone,
+    }, 3)).toEqual({ ok: false, reason: 'stale' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Dirt);
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 4)).toEqual({ ok: true });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
+  });
+
+  it('wipes unfinished mining when the client stops holding before finish', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    const hit = prepareTarget(world, player);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const intent = blockTargetFromHit({ ...hit, block: BlockId.Dirt });
+    world.applyInput(player, input(1, { mining: true }));
+    world.tick();
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(2, { mining: true }));
+    world.tick();
+    expect(player.miningProgress).toBeGreaterThan(0);
+    world.applyInput(player, input(3, { mining: false }));
+    world.tick();
+    expect(player.miningTarget).toBeUndefined();
+    expect(world.tryBreak(player, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: false, reason: 'mining' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Dirt);
+  });
+
+  it('lets a distant player break the same cell an intersecting player cannot steal', async () => {
+    const { world, player: ada } = await boot();
+    const bobJoin = world.join({ sink: new MemorySink(), name: 'Bob' });
+    if ('error' in bobJoin) throw new Error(bobJoin.error);
+    const bob = bobJoin.player;
+    world.setGameMode(bob, 'creative');
+    ada.controller.teleport([12.5, 70.2, 12.5]);
+    bob.controller.teleport([12.5, 70.2, 9.5]);
+    world.applyInput(ada, input(1));
+    world.applyInput(bob, input(1));
+    world.tick();
+    const eye = ada.controller.eyePosition();
+    const x = Math.floor(eye.x);
+    const y = Math.floor(eye.y);
+    const z = Math.floor(eye.z);
+    carveAir(world, x - 1, y - 1, z - 4, x + 1, y + 1, z + 1);
+    world.world.setBlock(x, y, z, BlockId.Dirt);
+    const adaIntent = blockTargetFromHit({
+      x, y, z, block: BlockId.Dirt,
+      normal: new Vec3(0, 0, 1),
+      point: new Vec3(x + 0.5, y + 0.5, z + 1),
+      distance: 0.2,
+    });
+    expect(world.beginMining(ada, adaIntent, 1, 1).ok).toBe(true);
+    const bobEye = bob.controller.eyePosition();
+    const bobHit = world.world.raycast(
+      bobEye,
+      new Vec3(x + 0.5 - bobEye.x, y + 0.5 - bobEye.y, z + 0.5 - bobEye.z).normalize(),
+      PLAYER_NET_REACH,
+    );
+    if (!bobHit) throw new Error('bob could not see the dirt');
+    const bobIntent = blockTargetFromHit(bobHit);
+    expect(world.beginMining(bob, bobIntent, 1, 1)).toEqual({ ok: true });
+    expect(world.tryBreak(bob, x, y, z, bobIntent, 1)).toEqual({ ok: true });
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
+  });
+
+  it('lets the intersecting player break that cell without reconnect', async () => {
+    const { world, player } = await boot();
+    player.controller.teleport([12.5, 70.2, 12.5]);
+    world.applyInput(player, input(1));
+    world.tick();
+    const eye = player.controller.eyePosition();
+    const x = Math.floor(eye.x);
+    const y = Math.floor(eye.y);
+    const z = Math.floor(eye.z);
+    carveAir(world, x - 1, y - 1, z - 1, x + 1, y + 1, z + 1);
+    world.world.setBlock(x, y, z, BlockId.Dirt);
+    const intent = blockTargetFromHit({
+      x, y, z, block: BlockId.Dirt,
+      normal: new Vec3(0, 0, 1),
+      point: new Vec3(x + 0.5, y + 0.5, z + 1),
+      distance: 0.2,
+    });
+    expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
+    expect(world.tryBreak(player, x, y, z, intent, 1)).toEqual({ ok: true });
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
+  });
+
+  it('lets a second player break after the first finish was rejected as stale', async () => {
+    const { world, player: ada } = await boot();
+    const bobJoin = world.join({ sink: new MemorySink(), name: 'Bob' });
+    if ('error' in bobJoin) throw new Error(bobJoin.error);
+    const bob = bobJoin.player;
+    world.setGameMode(bob, 'creative');
+    ada.controller.teleport([8.5, 70, 8.5]);
+    bob.controller.teleport([8.5, 70, 8.5]);
+    world.applyInput(ada, input(1));
+    world.applyInput(bob, input(1));
+    world.tick();
+    const hit = prepareTarget(world, ada);
+    world.world.setBlock(hit.x, hit.y, hit.z, BlockId.Dirt);
+    const intent = blockTargetFromHit({ ...hit, block: BlockId.Dirt });
+    expect(world.beginMining(ada, intent, 1, 1)).toEqual({ ok: true });
+    expect(world.tryBreak(ada, hit.x, hit.y, hit.z, {
+      ...intent,
+      targetBlockId: BlockId.Stone,
+    }, 1)).toEqual({ ok: false, reason: 'stale' });
+    expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Dirt);
+    expect(world.tryBreak(bob, hit.x, hit.y, hit.z, intent, 1)).toEqual({ ok: true });
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Air);
   });
 

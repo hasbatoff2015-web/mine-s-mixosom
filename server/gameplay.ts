@@ -1,4 +1,5 @@
 import { Vec3, type Vec3Like } from '../src/math/vec3';
+import { clearMiningLock, survivalFinishLockReject } from './miningLock';
 import {
   BlockId,
   getBlockDefinition,
@@ -112,8 +113,10 @@ export interface GameplayPlayer {
   craftSlots: Array<ItemStack | null>;
   window: InventoryWindow;
   ridingCartId?: string;
-  miningTarget?: { x: number; y: number; z: number };
+  miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
+  presentSwing?(): void;
   miningProgress: number;
+  miningStartCommandSeq?: number;
   bowUseTicks: number;
   foodUseTicks: number;
   lastUse: boolean;
@@ -155,10 +158,13 @@ export class ServerGameplay {
     readonly world: VoxelWorld,
     readonly events: EventBus,
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
+    private readonly worldSpawn?: () => readonly [number, number, number],
+    private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
   ) {
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
       for (const change of changes) {
+        this.onBlockReplaced?.(change.x, change.y, change.z);
         this.noteBlockDelta(change.x, change.y, change.z, change.block);
         this.redstone.notifyBlockChanged(change.x, change.y, change.z);
         if (isFluidBlock(change.block) || isFluidBlock(change.previous)) {
@@ -180,6 +186,11 @@ export class ServerGameplay {
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
+      allowSpawn: (kind, x, y, z) => {
+        const event = this.events.createMobSpawn(kind, x, y, z);
+        this.events.emit('mobSpawn', event);
+        return !event.cancelled;
+      },
     });
     this.minecarts = new MinecartManager(host, world);
     this.arrows = new PlayerArrowManager(host, world, this.mobs, {
@@ -566,10 +577,8 @@ export class ServerGameplay {
     const blockState = this.world.getBlockState(x, y, z);
     if (definition.breakable === false) return { ok: false, reason: 'unbreakable' };
     if (player.gamemode === 'survival' && definition.hardness > 0) {
-      const mining = player.miningTarget;
-      if (!mining || mining.x !== x || mining.y !== y || mining.z !== z || player.miningProgress < 0.95) {
-        return { ok: false, reason: 'mining' };
-      }
+      const lockReject = survivalFinishLockReject(player, x, y, z);
+      if (lockReject) return { ok: false, reason: lockReject };
     }
     const event = this.events.createBlockBreak(player.id, x, y, z, block);
     this.events.emit('blockBreak', event);
@@ -603,8 +612,8 @@ export class ServerGameplay {
       }
       player.survival.addExhaustion(0.005);
     }
-    player.miningProgress = 0;
-    player.miningTarget = undefined;
+    clearMiningLock(player);
+    player.presentSwing?.();
     return { ok: true };
   }
 
@@ -665,7 +674,9 @@ export class ServerGameplay {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     const eye = this.intentEye(player, commandSeq);
     if (!eye.ok) return { ok: false, reason: eye.reason };
-    const validated = validateBlockTargetIntent(this.world, eye.value, intent);
+    const validated = validateBlockTargetIntent(this.world, eye.value, intent, {
+      requireMatchingFace: false,
+    });
     if (!validated.ok) return { ok: false, reason: validated.reason };
     const hit = validated.value.hit;
     const definition = getBlockDefinition(hit.block);
@@ -677,9 +688,14 @@ export class ServerGameplay {
       || player.miningTarget.x !== hit.x
       || player.miningTarget.y !== hit.y
       || player.miningTarget.z !== hit.z
+      || player.miningTarget.blockId !== hit.block
     ) {
-      player.miningTarget = { x: hit.x, y: hit.y, z: hit.z };
+      player.miningTarget = { x: hit.x, y: hit.y, z: hit.z, blockId: hit.block };
       player.miningProgress = 0;
+    }
+    if (commandSeq !== undefined) player.miningStartCommandSeq = commandSeq;
+    else if (player.appliedCommandSeq !== undefined && player.appliedCommandSeq >= 0) {
+      player.miningStartCommandSeq = player.appliedCommandSeq;
     }
     return { ok: true };
   }
@@ -688,10 +704,11 @@ export class ServerGameplay {
     player: GameplayPlayer,
     intent: BlockTargetIntent,
     commandSeq?: number,
+    options?: { readonly requireMatchingFace?: boolean },
   ): { ok: true } | { ok: false; reason: string } {
     const eye = this.intentEye(player, commandSeq);
     if (!eye.ok) return eye;
-    const validated = validateBlockTargetIntent(this.world, eye.value, intent);
+    const validated = validateBlockTargetIntent(this.world, eye.value, intent, options);
     if (!validated.ok) return { ok: false, reason: validated.reason };
     return { ok: true };
   }
@@ -734,7 +751,11 @@ export class ServerGameplay {
       },
       enterVehicle: (cartId) => gameplay.enterVehicle(player, cartId),
       effects: {
+        swing: () => player.presentSwing?.(),
+        onBedUsed: () => player.presentSwing?.(),
+        onFlintIgnite: () => player.presentSwing?.(),
         openContainer: (kind, x, y, z) => {
+          player.presentSwing?.();
           if (kind === 'crafting-table') {
             player.window = { kind: 'crafting-table', x, y, z };
             player.craftSlots = Array.from({ length: 9 }, () => null);
@@ -755,6 +776,9 @@ export class ServerGameplay {
   }
 
   attack(player: GameplayPlayer, others: readonly GameplayPlayer[] = []): void {
+    if (!player.connected || player.survival.dead) return;
+    // A validated attack attempt swings even on a miss or damage immunity.
+    player.presentSwing?.();
     const origin = player.controller.eyePosition(this.tmpEye);
     const direction = player.controller.viewDirection(this.tmpDir);
     const blockHit = this.world.raycast(origin, direction, PLAYER_REACH);
@@ -822,9 +846,8 @@ export class ServerGameplay {
     const target = player.miningTarget;
     if (!target) return;
     const block = this.world.getBlock(target.x, target.y, target.z);
-    if (block === BlockId.Air) {
-      player.miningProgress = 0;
-      player.miningTarget = undefined;
+    if (block === BlockId.Air || (target.blockId !== undefined && block !== target.blockId)) {
+      clearMiningLock(player);
       return;
     }
     const definition = getBlockDefinition(block);
@@ -915,8 +938,7 @@ export class ServerGameplay {
     this.flushPlayerLife?.(player);
     if (player.ridingCartId) this.exitVehicle(player);
     player.window = { kind: 'inventory' };
-    player.miningTarget = undefined;
-    player.miningProgress = 0;
+    clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
     player.lastUse = false;
@@ -947,7 +969,7 @@ export class ServerGameplay {
       player.craftSlots = player.craftSlots.map(() => null);
       player.inventoryDirty = true;
     }
-    player.survival.respawn(player.controller, player.survival.spawnPoint);
+    player.survival.respawn(player.controller, this.worldSpawn?.() ?? player.survival.spawnPoint);
     this.flushPlayerLife?.(player);
   }
 
@@ -973,6 +995,7 @@ export class ServerGameplay {
     const direction = viewDirectionFromLook(yaw, pitch);
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
     this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0);
+    player.presentSwing?.();
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
     return { ok: true, yaw, pitch };
   }
@@ -1185,6 +1208,7 @@ export class ServerGameplay {
     const accepted = this.hurtPlayer(victim, result.damage, 'melee', attacker.controller.position, {
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerYaw: result.attackerYaw,
+      attackerId: attacker.id,
     });
     completeMeleeAttack(result, accepted, attacker.controller);
     if (accepted && attacker.gamemode === 'survival') {
@@ -1206,10 +1230,11 @@ export class ServerGameplay {
       readonly extraKnockbackLevel?: number;
       readonly attackerYaw?: number;
       readonly ignite?: boolean;
+      readonly attackerId?: string;
     } = {},
   ): boolean {
     if (victim.gamemode !== 'survival' || victim.survival.dead) return false;
-    const event = this.events.createPlayerDamage(victim.id, amount, cause);
+    const event = this.events.createPlayerDamage(victim.id, amount, cause, extras.attackerId);
     this.events.emit('playerDamage', event);
     if (event.cancelled) return false;
     const result = victim.survival.damage(amount, cause, {
@@ -1217,7 +1242,12 @@ export class ServerGameplay {
       swordBlocking: victim.combat.swordBlocking,
     });
     if (!result.accepted) return false;
-    this.events.emit('playerDamaged', { playerId: victim.id, amount, cause });
+    this.events.emit('playerDamaged', {
+      playerId: victim.id,
+      amount,
+      cause,
+      ...(extras.attackerId ? { attackerId: extras.attackerId } : {}),
+    });
     if (victim.survival.dead) {
       this.events.emit('entityDeath', { entityId: victim.id, cause, playerId: victim.id });
     }
