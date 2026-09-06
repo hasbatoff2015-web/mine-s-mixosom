@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: mining lifecycle lock after 100% overlay
+
+- После 100% crack overlay клиент ставил `miningFinishKey` + `clientWaitFinish` и `shouldWaitForInFlightFinish` глотал **все** последующие LMB, пока crosshair на том же блоке или в воздухе. Mouse-up не abort'ил (desync-фикс) и не снимал wait. `action_result` без coords / `reason: mining` не очищал finishKey. Отсюда: анимация дошла до 100%, блок не сломался, ломание любых блоков «умирало».
+- Place/attack/raycast не в том gate. Claims не оставляют lock между попытками.
+- Report: `docs/reports/2026-09-06_mining-lifecycle-lock.md`.
+
 ## Последний проход: two-player unbreakable block (intent LOS / claims audit)
 
 - Player A не ломает клетку, Player B ломает ту же: сервер один, reject player-specific. Типичные пути: (1) DDA-грань той же клетки не совпала с clicked face → `los` (mining больше не требует грань); (2) глаз A внутри поставленного блока: DDA даёт *entry* face. Claims при `overlapping=[]` не cancel. Reconnect с resume оставляет ту же позу (иногда не лечит); новый spawn снаружи — лечит.

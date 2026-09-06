@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-06: Mining lifecycle lock after 100% overlay
+
+- [x] Split server-hold (`miningFinishKey`) from client wait (`clientWaitFinish` cleared on mouse-up).
+- [x] Any finish `action_result` (ok / hard reject / `mining` / missing coords) clears finish wait + lock.
+- [x] Next pointerdown on the same or another block starts mining without reconnect.
+- [x] Timeout `MAX_FINISH_WAIT_TICKS` abandons a stuck in-flight finish.
+- [ ] Owner QA: break dirt to 100% overlay; if it stays, release and LMB another block — crack overlay must start.
+
 ## 2026-09-06: Two-player unbreakable block
 
 - [x] Eye inside the mined voxel skips LOS/face (DDA entry-face mismatch).

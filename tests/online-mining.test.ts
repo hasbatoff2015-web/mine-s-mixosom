@@ -4,11 +4,14 @@ import {
   applyBreakActionResult,
   breakFinishHoldReason,
   isInFlightBreakReject,
+  MAX_FINISH_WAIT_TICKS,
   miningBlockKey,
   noteBreakAbortSent,
   noteBreakFinishSent,
   noteBreakStartSent,
   noteMiningReleased,
+  resetOnlineMiningGate,
+  resolveOnlineMiningTick,
   shouldHoldServerMining,
   shouldRetargetOnlineMine,
   shouldSendBreakAbort,
@@ -55,11 +58,24 @@ describe('online mining finish/abort coordination', () => {
     })).toBe(true);
   });
 
-  it('waits for in-flight finish only on the same block or empty air', () => {
-    expect(shouldWaitForInFlightFinish({ finishKey: '1,2,3' })).toBe(true);
-    expect(shouldWaitForInFlightFinish({ finishKey: '1,2,3', targetKey: '1,2,3' })).toBe(true);
-    expect(shouldWaitForInFlightFinish({ finishKey: '1,2,3', targetKey: '9,9,9' })).toBe(false);
-    expect(shouldWaitForInFlightFinish({ targetKey: '1,2,3' })).toBe(false);
+  it('waits for in-flight finish only while still holding on that block or air', () => {
+    expect(shouldWaitForInFlightFinish({ finishKey: '1,2,3', clientWaitFinish: true })).toBe(true);
+    expect(shouldWaitForInFlightFinish({
+      finishKey: '1,2,3',
+      targetKey: '1,2,3',
+      clientWaitFinish: true,
+    })).toBe(true);
+    expect(shouldWaitForInFlightFinish({
+      finishKey: '1,2,3',
+      targetKey: '9,9,9',
+      clientWaitFinish: true,
+    })).toBe(false);
+    expect(shouldWaitForInFlightFinish({ finishKey: '1,2,3' })).toBe(false);
+    expect(shouldWaitForInFlightFinish({
+      finishKey: '1,2,3',
+      targetKey: '1,2,3',
+      clientWaitFinish: false,
+    })).toBe(false);
   });
 
   it('treats mining rejects as in-flight, not a hard deny', () => {
@@ -110,7 +126,7 @@ describe('online break gate after a failed finish', () => {
     expect(shouldSendBreakFinish(state, 9, 70, 12)).toBe(true);
   });
 
-  it('clears pending on in-flight mining reject so a later hard outcome can retry', () => {
+  it('unlocks the client gate on a mining reject so the next tick can resend finish', () => {
     const state = gate();
     noteBreakFinishSent(state, 4, 65, 4);
     applyBreakActionResult(state, {
@@ -120,17 +136,24 @@ describe('online break gate after a failed finish', () => {
       x: 4, y: 65, z: 4,
     });
     expect(state.pendingBlockAction).toBeUndefined();
-    expect(state.miningFinishKey).toBe('4,65,4');
+    expect(state.miningFinishKey).toBeUndefined();
+    expect(state.clientWaitFinish).toBe(false);
+    expect(state.miningLocked).toBe(false);
     expect(state.rejectedBlockKey).toBeUndefined();
-    expect(shouldSendBreakFinish(state, 4, 65, 4)).toBe(false);
+    expect(shouldSendBreakFinish(state, 4, 65, 4)).toBe(true);
+  });
 
+  it('unlocks even when action_result has no coordinates', () => {
+    const state = gate();
+    noteBreakFinishSent(state, 4, 65, 4);
     applyBreakActionResult(state, {
       ok: false,
-      reason: 'los',
+      reason: 'invalid',
       kind: 'block_break_finish',
-      x: 4, y: 65, z: 4,
     });
-    noteMiningReleased(state);
+    expect(state.miningFinishKey).toBeUndefined();
+    expect(state.clientWaitFinish).toBe(false);
+    expect(state.miningLocked).toBe(false);
     expect(shouldSendBreakFinish(state, 4, 65, 4)).toBe(true);
   });
 
@@ -184,5 +207,98 @@ describe('online break gate after a failed finish', () => {
     expect(state.pendingBlockAction).toBeUndefined();
     expect(state.miningFinishKey).toBeUndefined();
     expect(shouldSendBreakFinish(state, 1, 1, 1)).toBe(true);
+  });
+});
+
+describe('online mining tick after overlay reaches 100%', () => {
+  function afterFinish(): OnlineBreakGate {
+    const state = gate();
+    noteBreakStartSent(state, 8, 70, 12);
+    noteBreakFinishSent(state, 8, 70, 12);
+    return state;
+  }
+
+  it('waits only while still holding the finished cell', () => {
+    const state = afterFinish();
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '8,70,12',
+      miningTarget: '8,70,12',
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: true,
+    }).type).toBe('wait');
+  });
+
+  it('does not swallow the next pointerdown after mouse-up on the same cell', () => {
+    const state = afterFinish();
+    noteMiningReleased(state);
+    expect(state.clientWaitFinish).toBe(false);
+    expect(shouldHoldServerMining({ buttonDown: false, finishKey: state.miningFinishKey })).toBe(true);
+    expect(resolveOnlineMiningTick({
+      buttonDown: false,
+      targetKey: '8,70,12',
+      miningTarget: '8,70,12',
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: state.clientWaitFinish,
+    })).toEqual({ type: 'hold-idle' });
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '8,70,12',
+      miningTarget: undefined,
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: false,
+    })).toEqual({ type: 'start', targetKey: '8,70,12' });
+  });
+
+  it('starts a second block after a stuck finish without reconnect', () => {
+    const state = afterFinish();
+    noteMiningReleased(state);
+    const second = resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '9,70,12',
+      miningTarget: undefined,
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: false,
+    });
+    expect(second).toEqual({ type: 'abandon-start', targetKey: '9,70,12' });
+    abandonInFlightFinish(state);
+    resetOnlineMiningGate(state);
+    noteBreakStartSent(state, 9, 70, 12);
+    expect(state.miningLocked).toBe(true);
+    expect(shouldSendBreakFinish(state, 9, 70, 12)).toBe(true);
+  });
+
+  it('resets every mining flag after a hard reject so another coordinate is accepted', () => {
+    const state = afterFinish();
+    applyBreakActionResult(state, {
+      ok: false,
+      reason: 'los',
+      kind: 'block_break_finish',
+      x: 8, y: 70, z: 12,
+    });
+    expect(state.miningFinishKey).toBeUndefined();
+    expect(state.clientWaitFinish).toBe(false);
+    expect(state.miningLocked).toBe(false);
+    expect(state.pendingBlockAction).toBeUndefined();
+    noteMiningReleased(state);
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '10,70,12',
+      miningTarget: undefined,
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: state.clientWaitFinish,
+    })).toEqual({ type: 'start', targetKey: '10,70,12' });
+  });
+
+  it('abandons a stuck finish after MAX_FINISH_WAIT_TICKS', () => {
+    const state = afterFinish();
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '8,70,12',
+      miningTarget: '8,70,12',
+      finishKey: state.miningFinishKey,
+      clientWaitFinish: true,
+      finishWaitTicks: MAX_FINISH_WAIT_TICKS,
+    })).toEqual({ type: 'abandon-start', targetKey: '8,70,12' });
   });
 });
