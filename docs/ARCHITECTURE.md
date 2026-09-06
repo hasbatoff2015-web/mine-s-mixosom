@@ -46,7 +46,7 @@ Sequenced `block_break_finish` is acked only by `action_result`. `pendingBlockAc
 
 Denied `block-break` / `block-place` still cancel + chat. WorldInstance `ClaimBoundaryNetwork` then `sendTo` **one** player one `{ type: 'claim_boundary', ... }` per related claim. Plugins still cannot send raw packets.
 
-`protectionSources()` returns every overlapping untrusted claim that participates in the deny: all explicit `flag=false` regions, or every untrusted overlapping region when nobody set the flag. `protectionSource()` is the first of that list (the winning setter). Client `ClaimBoundaryRenderer` draws 12 unlit `#ff0000` `LineSegments2` edges (`fog`/`toneMapped` off, 6px) over inclusive volume `[min, max+1]` and disposes after each claim's own 10s expiry.
+`protectionSources()` returns every overlapping untrusted claim that participates in the deny: all explicit `flag=false` regions, or every untrusted overlapping region when nobody set the flag. `protectionSource()` is the first of that list (the winning setter). Client `ClaimBoundaryRenderer` draws 12 unlit `#ff0000` `LineSegments2` edges (`fog`/`toneMapped` off, 3px, `depthTest`/`depthWrite` on) over inclusive volume `[min, max+1]` and disposes after each claim's own 10s expiry. The wire is ordinary world geometry: blocks in front hide it.
 
 ## Claims overlap, chat scroll, 3D holograms — 2026-09-05
 

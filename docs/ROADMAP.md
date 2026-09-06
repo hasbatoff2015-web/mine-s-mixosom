@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-06: Claim boundary depth and width
+
+- [x] Halve screen-space claim wire width (6px → 3px).
+- [x] Enable LineMaterial depth test/write; drop overlay `renderOrder` so blocks occlude the box.
+- [ ] Owner QA: denied build shows a thin red AABB that disappears behind terrain and stays visible in open air.
+
 ## 2026-09-06: First FINISH at server progress 0
 
 - [x] Distinguish missing lock (`reason: mining`) from START-accepted / not-yet-advanced (`reason: in_progress`).
@@ -68,7 +74,7 @@
 
 ## 2026-09-05: Claim boundary visibility
 
-- [x] Unlit fog-free `#ff0000` fat wireframe (LineSegments2, 6px).
+- [x] Unlit fog-free `#ff0000` wireframe (LineSegments2, 3px, depth-tested).
 - [x] Show every overlapping claim that participates in the denied build flag.
 - [ ] Owner QA: nested spawn+arena both `block-break=false` show two red boxes; sky stays pure red.
 

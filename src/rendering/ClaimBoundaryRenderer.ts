@@ -5,8 +5,8 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { ServerClaimBoundaryMessage } from '../../shared/protocol';
 
 const EDGE_COLOR = 0xff0000;
-/** Screen-space CSS pixels. LineBasicMaterial cannot do this in WebGL. */
-const EDGE_WIDTH_PX = 6;
+/** Screen-space CSS pixels. Previously 6; half that so the box is a thin wire. */
+export const CLAIM_BOUNDARY_EDGE_WIDTH_PX = 3;
 
 interface ClaimBoundaryVisual {
   claimId: string;
@@ -61,13 +61,13 @@ export function claimBoundaryEdgePositions(
   ]);
 }
 
-function createBoundaryMaterial(): LineMaterial {
+export function createClaimBoundaryMaterial(): LineMaterial {
   const material = new LineMaterial({
-    linewidth: EDGE_WIDTH_PX,
+    linewidth: CLAIM_BOUNDARY_EDGE_WIDTH_PX,
     worldUnits: false,
     dashed: false,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
     fog: false,
     toneMapped: false,
     transparent: false,
@@ -82,7 +82,7 @@ function createBoundaryMaterial(): LineMaterial {
  */
 export class ClaimBoundaryRenderer {
   private readonly visuals = new Map<string, ClaimBoundaryVisual>();
-  private readonly material = createBoundaryMaterial();
+  private readonly material = createClaimBoundaryMaterial();
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -111,7 +111,6 @@ export class ClaimBoundaryRenderer {
     const lines = new LineSegments2(geometry, this.material);
     lines.name = `claim-boundary:${message.claimId}`;
     lines.frustumCulled = false;
-    lines.renderOrder = 50;
     this.scene.add(lines);
     this.visuals.set(message.claimId, {
       claimId: message.claimId,
