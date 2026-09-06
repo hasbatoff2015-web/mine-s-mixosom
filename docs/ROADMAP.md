@@ -1,5 +1,26 @@
 # Roadmap
 
+## 2026-09-06: Integrate remote actions + Networking V2 into plugin/mining line
+
+- [x] Merge `codex/remote-action-presentation-v2` into `cursor/claim-boundary-depth-3f93` (functional union, not file takeover).
+- [x] Keep plugin platform, permissions/OP, claims, holograms, chat/nickname/console.
+- [x] Keep mining lock / first-cycle / `in_progress` finish lifecycle.
+- [x] Keep claim wires 3px + depth test (PR #62).
+- [x] Keep Networking V2 (FIFO, commandSeq, prediction, serverTick remotes).
+- [x] Add remote player action presentation (held item, cracks, swing, bow, food, block).
+- [ ] Owner two-client live QA of the union (presentation checklist + mining first-cycle + claim occlusion).
+- [ ] Merge this integration branch into `main` only after owner acceptance. Do not merge PR #54 directly.
+
+## 2026-09-05: Remote action presentation v2
+
+- [x] Authoritative presentation state в join и существующих player snapshots.
+- [x] Mining/held item/bow/food/sword-block → canonical PlayerVisualAnimator.
+- [x] Server-owned swing sequence; successful use effects; valid attack misses; observer dedupe.
+- [x] Multi-breaker crack overlay, max stage на общем target, сохранение local path.
+- [x] Lifecycle / voxel replacement / stale cleanup, deterministic server/client/overlay tests и wire join test.
+- [ ] Полный ручной checklist двумя интерактивными клиентами: movement + held tool + mining hand + stages + abort/switch/finish + bow/release + disconnect. Выполненная часть описана в свежем report.
+- [ ] Merge в main только отдельным решением владельца после live acceptance.
+
 ## 2026-09-06: Claim boundary depth and width
 
 - [x] Halve screen-space claim wire width (6px → 3px).
@@ -145,8 +166,9 @@
 - [x] Cover water boundaries, planting/tilling matrix, inactive chunks, RNG/bounds, persistence, server concurrency/coalescing, rendering batches, recipes/food, and 1024/4096-position performance.
 - [x] Add DEV `?qaFarming=1` and complete automated visual smoke for farmland, stages, stems/fruits, hoes, Bone Meal, and item sprites.
 - [ ] Owner manual gameplay acceptance: native pointer lock, save/reload UX, furnace/crafting screens, F5/overlay, and two visible Online clients including reconnect/server restart.
-- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.## 2026-09-04: Online networking v2 integration
+- [x] Stop after Farming V1; Market/Economy/Farming V2 remain out of scope.
 
+## 2026-09-04: Online networking v2 integration
 - [x] Integration branch `cursor/online-networking-v2-integrated-3ff8` off BASE `cursor/online-networking-v2-3ff8` (no main merge).
 - [x] Strict block intent: `targetBlockId`, historical `commandSeq` pose, A or reject.
 - [x] Bow draw survives stale FIFO `use:false`; captured aim; 20× draw→release tests.

@@ -1,5 +1,23 @@
 # Состояние проекта
 
+## Последний проход: integrate remote actions into plugin/mining line — 2026-09-06
+
+- Интеграционная ветка `cursor/integrate-remote-actions-3f93` от `cursor/claim-boundary-depth-3f93` (`9c92b176`). Влита `codex/remote-action-presentation-v2` (`63e8358e`) merge, не cherry-pick.
+- Source of truth: наша линия — plugin/claims/holograms/chat/permissions и исправленный mining lifecycle + claim wires 3px/depth. PR #54 — Networking V2 (уже предок нашей линии) и remote-player presentation.
+- Конфликты в `server/WorldInstance.ts`, `server/gameplay.ts` и docs разрешены как функциональный union: `clearMiningLock` / `miningStartCommandSeq` / `worldSpawn` сохранены; добавлены `presentSwing`, `presentation()`, captured `blockId`, `onBlockReplaced`.
+- `src/core/Game.ts`, `shared/protocol.ts`, overlay/remote view смержились автоматически: claims + local mining + remote presentation.
+- Не merge'ить PR #54 напрямую в `main`. Handoff: `docs/reports/2026-09-06_integrate-remote-actions.md`.
+
+## Последний проход: Remote player action presentation v2 — 2026-09-05
+
+- Ветка `codex/remote-action-presentation-v2` от актуальной `origin/cursor/online-networking-v2-integrated-3ff8`, SHA `e5c77f334fa46b726372fb7d7d27283f213ea184`. Main не объединялся.
+- `RemotePlayerInfo` и `PlayerSnapshot` несут optional `presentation`: authoritative mining target/block/progress, selected held item, bow charge, food progress, sword blocking и отдельный server-owned `swingSeq`. Старые snapshots получают neutral fallback; wire protocol остаётся 3 (additive fields).
+- `RemotePlayerView` передаёт latest action state в существующий `PlayerVisual`/animator независимо от spatial interpolation. Join/reset устанавливает baseline sequence; repeated/late snapshots не повторяют swing. Continuous actions истекают через 1500 ms без новых данных.
+- `WorldRenderer.remoteBreaking` хранит breaker ownership и использует canonical `BlockBreakingOverlay`, один mesh на target с max progress. Local overlay сохраняет свой target/progress, совпадающие local/remote targets рисуются одним mesh. Stage 0 поддерживается с первого accepted mining state. Нет remesh на stage change.
+- Voxel mutation, abort/finish, target switch, death/respawn, disconnect/remove, reconnect/session replacement, unload и stale timeout очищают presentation. Сервер фиксирует исходный block ID и сбрасывает mining при замене voxel.
+- FIFO, commandSeq/ackCommandSeq, prediction/reconciliation, `remotePlayerInterpolation.ts`, captured bow aim и 20 TPS не переписывались.
+- Handoff и проверки: `docs/reports/2026-09-06_remote-action-presentation-v2.md`. Полный двухклиентный visual acceptance остаётся открытым; wire/animator/overlay tests не считаются manual QA.
+
 ## Последний проход: claim boundary depth + thinner wire
 
 - Клиентский `ClaimBoundaryRenderer`: линии **3px** (было 6) и обычный depth test/write. Раньше `depthTest: false` + `renderOrder: 50` рисовали box поверх мира. Сервер, протокол и claims-логика без изменений. Mining не трогали.
@@ -138,7 +156,6 @@
 - Anarchy stays server-authoritative for tilling, consumption/durability, growth RNG, Bone Meal, fruit, harvest, drops, crafting, furnace, and food. Online clients only request and render canonical state.
 - Automated gates: directed farming/regression 267/267, core Farming 35/35, `test:sim` 42/42, `test:server` 78/78, all typechecks, import boundaries, Node/server smokes, build/size/archive PASS. Exact-main full-suite comparison added 36 passing tests and no failure class. Benchmarks: 1024 positions 6.066 ms; 4096 positions 13.908 ms on this machine. DEV WebGL `?qaFarming=1` visually checked dry/wet plots, all stages, stems/fruits, hoes, Bone Meal, and farming items.
 - Detailed handoff: `docs/reports/2026-09-04_farming-core.md`.
-
 Срез: **2026-09-04**. Версия: `0.1.0`, playable alpha.
 
 ## Последний проход: Online networking v2 integration

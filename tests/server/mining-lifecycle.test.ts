@@ -359,7 +359,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     holdClientUntilOverlay(loop, look, false);
 
     expect(loop.miningProgress, loop.traces.join('\n')).toBeGreaterThanOrEqual(1);
-    expect(player.miningTarget).toEqual({ x: look.x, y: look.y, z: look.z });
+    expect(player.miningTarget).toMatchObject({ x: look.x, y: look.y, z: look.z });
     expect(player.miningProgress).toBe(0);
 
     const first = loop.finishes[0];
@@ -393,7 +393,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     expect(loop.overlayResets, loop.traces.join('\n')).toBe(0);
     expect(loop.startCount, 'catch-up must not START a second cycle').toBe(1);
     expect(loop.finishes.length).toBe(1);
-    expect(player.miningTarget).toEqual({ x: look.x, y: look.y, z: look.z });
+    expect(player.miningTarget).toMatchObject({ x: look.x, y: look.y, z: look.z });
     expect(world.world.getBlock(look.x, look.y, look.z)).toBe(BlockId.Dirt);
     for (let i = 0; i < clientTicksToFinish(BlockId.Dirt) + 2; i += 1) {
       loop.tick(look, true);
@@ -468,7 +468,7 @@ describe('Anarchy mining lifecycle: first FINISH vs server progress 0', { timeou
     const look = prepareTarget(world, player, BlockId.Dirt);
     loop.buttonDown = true;
     loop.tick(look);
-    expect(player.miningTarget).toEqual({ x: look.x, y: look.y, z: look.z });
+    expect(player.miningTarget).toMatchObject({ x: look.x, y: look.y, z: look.z });
     loop.buttonDown = false;
     loop.tick(look);
     expect(player.miningTarget).toBeUndefined();

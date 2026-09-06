@@ -334,8 +334,8 @@ describe('oak planks mining pipeline vs dirt/stone/oak log', { timeout: 30_000 }
     world.tick();
     expect(world.beginMining(ada, blockTargetFromHit(adaHit), 1, 2)).toEqual({ ok: true });
     expect(world.beginMining(bob, blockTargetFromHit(bobHit), 1, 2)).toEqual({ ok: true });
-    expect(ada.miningTarget).toEqual({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
-    expect(bob.miningTarget).toEqual({ x: bobHit.x, y: bobHit.y, z: bobHit.z });
+    expect(ada.miningTarget).toMatchObject({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
+    expect(bob.miningTarget).toMatchObject({ x: bobHit.x, y: bobHit.y, z: bobHit.z });
     expect(ada.miningTarget).not.toBe(bob.miningTarget);
 
     world.applyInput(ada, input(3, { mining: true }));
@@ -351,7 +351,7 @@ describe('oak planks mining pipeline vs dirt/stone/oak log', { timeout: 30_000 }
     }
     expect(world.world.getBlock(bobHit.x, bobHit.y, bobHit.z)).toBe(BlockId.Air);
     expect(world.world.getBlock(adaHit.x, adaHit.y, adaHit.z)).toBe(BlockId.OakPlanks);
-    expect(ada.miningTarget).toEqual({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
+    expect(ada.miningTarget).toMatchObject({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
   });
 
   it('does not share a WorldInstance-level miningTarget; Air on Ada cell wipes only Ada', async () => {
@@ -420,7 +420,7 @@ describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () =>
         return { world, player, hit, ticks, auto: true };
       }
     }
-    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     expect(player.miningProgress).toBeGreaterThan(0);
     const finish = world.tryBreak(player, hit.x, hit.y, hit.z, intent, seq);
     expect(finish, `${getBlockDefinition(block).key} finish`).toEqual({ ok: true });
@@ -442,7 +442,7 @@ describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () =>
     expect(world.beginMining(player, intent, 1, 1)).toEqual({ ok: true });
     world.applyInput(player, input(2, { mining: true }));
     world.tick();
-    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     world.applyInput(player, input(3));
     world.tick();
     expect(player.miningTarget).toBeUndefined();
@@ -517,12 +517,12 @@ describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () =>
     world.applyInput(player, input(1, { mining: true }));
     world.tick();
     expect(world.beginMining(player, blockTargetFromHit(first), 1, 1)).toEqual({ ok: true });
-    expect(player.miningTarget).toEqual({ x: first.x, y: first.y, z: first.z });
+    expect(player.miningTarget).toMatchObject({ x: first.x, y: first.y, z: first.z });
     world.applyInput(player, input(2, { mining: true }));
     world.tick();
     expect(world.beginMining(player, blockTargetFromHit(second), 2, 2)).toEqual({ ok: true });
-    expect(player.miningTarget).toEqual({ x: second.x, y: second.y, z: second.z });
-    expect(player.miningTarget).not.toEqual({ x: first.x, y: first.y, z: first.z });
+    expect(player.miningTarget).toMatchObject({ x: second.x, y: second.y, z: second.z });
+    expect(player.miningTarget).not.toMatchObject({ x: first.x, y: first.y, z: first.z });
     expect(world.world.getBlock(first.x, first.y, first.z)).toBe(BlockId.OakPlanks);
   });
 
@@ -558,8 +558,8 @@ describe('server mining lock hold vs omitted mining', { timeout: 30_000 }, () =>
     world.applyInput(ada, input(3, { mining: true }));
     world.applyInput(bob, input(3, { mining: true }));
     world.tick();
-    expect(ada.miningTarget).toEqual({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
-    expect(bob.miningTarget).toEqual({ x: bobHit.x, y: bobHit.y, z: bobHit.z });
+    expect(ada.miningTarget).toMatchObject({ x: adaHit.x, y: adaHit.y, z: adaHit.z });
+    expect(bob.miningTarget).toMatchObject({ x: bobHit.x, y: bobHit.y, z: bobHit.z });
     expect(world.world.getBlock(adaHit.x, adaHit.y, adaHit.z)).toBe(BlockId.OakPlanks);
     expect(world.world.getBlock(bobHit.x, bobHit.y, bobHit.z)).toBe(BlockId.OakLog);
   });
@@ -610,7 +610,7 @@ describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_0
     enqueueIdles(world, player, 1, leftover);
     world.applyInput(player, input(startSeq, { mining: true }));
     expect(world.beginMining(player, intent, 1, startSeq)).toEqual({ ok: true });
-    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     expect(player.miningProgress).toBe(0);
 
     const afterStart = {
@@ -631,7 +631,7 @@ describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_0
     expect(
       afterDrain.target,
       `START #1 accepted ${JSON.stringify(afterStart)} then leftover idles wiped the lock: ${JSON.stringify(afterDrain)}`,
-    ).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    ).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     expect(player.miningProgress, 'stale pre-START idles must still count as hold ticks after START').toBeGreaterThan(0);
 
     const ticks = clientTicksToFinish(BlockId.Dirt);
@@ -662,7 +662,7 @@ describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_0
     const ticks = clientTicksToFinish(BlockId.OakPlanks);
     let seq = start1;
     for (let step = 0; step < leftover; step += 1) world.tick();
-    expect(player.miningTarget, 'cycle #1 lock must survive leftover idle drain').toEqual({
+    expect(player.miningTarget, 'cycle #1 lock must survive leftover idle drain').toMatchObject({
       x: first.x, y: first.y, z: first.z,
     });
 
@@ -704,7 +704,7 @@ describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_0
     expect(world.beginMining(player, intent, 1, 5)).toEqual({ ok: true });
     for (let i = 0; i < 4; i += 1) world.tick();
     world.tick();
-    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     world.applyInput(player, input(6, { mining: true }));
     world.tick();
     world.applyInput(player, input(7));
@@ -723,7 +723,7 @@ describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_0
     expect(player.appliedCommandSeq).toBe(1);
     expect(world.beginMining(player, intent, 1, 5)).toEqual({ ok: true });
     world.tick();
-    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     expect(player.miningProgress).toBeGreaterThan(0);
     world.applyInput(player, input(5, { mining: true }));
     const ticks = clientTicksToFinish(BlockId.Dirt);
@@ -755,7 +755,7 @@ describe('first mining cycle vs queued pre-START idle commands', { timeout: 30_0
     world.applyInput(ada, input(9, { mining: true }));
     expect(world.beginMining(ada, intent, 1, 9)).toEqual({ ok: true });
     for (let i = 0; i < 8; i += 1) world.tick();
-    expect(ada.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(ada.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
     expect(bob.miningTarget).toBeUndefined();
   });
 

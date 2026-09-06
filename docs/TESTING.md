@@ -1,5 +1,38 @@
 # Тестирование
 
+## 2026-09-06 Integrate remote actions into plugin/mining line
+
+Merge `codex/remote-action-presentation-v2` into `cursor/claim-boundary-depth-3f93` (branch `cursor/integrate-remote-actions-3f93`). Report: `reports/2026-09-06_integrate-remote-actions.md`.
+
+Directed (mining + claims + presentation + Anarchy):
+
+```text
+npx vitest run \
+  tests/server/mining-lifecycle.test.ts \
+  tests/server/mining-lock.test.ts \
+  tests/server/oak-planks-mining.test.ts \
+  tests/online-mining.test.ts \
+  tests/oak-planks-mining-pipeline.test.ts \
+  tests/mining.test.ts \
+  tests/claim-boundary.test.ts \
+  tests/server/claims.test.ts \
+  tests/remote-action-presentation.test.ts \
+  tests/remote-breaking-overlays.test.ts \
+  tests/server/remote-presentation.test.ts \
+  tests/server/anarchy-server.test.ts \
+  --maxWorkers=2
+```
+
+Also: `typecheck`, `typecheck:client`, `typecheck:server`, `typecheck:sim`, `test:sim`, `test:server`, `build`, `check:boundaries`. Do not weaken VM-flake thresholds.
+
+## 2026-09-05 Remote action presentation v2
+
+Focused: `npx vitest run tests/remote-action-presentation.test.ts tests/remote-breaking-overlays.test.ts tests/server/remote-presentation.test.ts tests/server/anarchy-server.test.ts --maxWorkers=2`.
+
+Покрытие: initial state до spatial samples; mining/bow/food/blocking/held item → existing visual API; event dedupe и late ticks; stages 0..9, max same-target, local arbitration, geometry reuse и disposal; abort/finish/switch, world replacement, stale/unload/disconnect/session cleanup; server formula, inventory authority, validation/plugin rejection, bow outcome, death/resume. Wire test подключает второй WS client во время копания и проверяет welcome, player_state, duplicate attack, abort и player_left.
+
+Manual gate остаётся отдельным: A observes B mining with a pickaxe, all crack stages, abort/target switch/finish, movement while mining, bow draw/release и disconnect. Фактические browser наблюдения и baseline/full-suite comparison — в `reports/2026-09-06_remote-action-presentation-v2.md`.
+
 ## 2026-09-04 Farming V1 + Networking V2 union
 
 Report: `reports/2026-09-04_farming-networking-v2-union.md`.

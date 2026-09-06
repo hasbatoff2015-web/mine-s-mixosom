@@ -6,7 +6,8 @@ import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/consta
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { isKnownItemId } from '../src/items';
+import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
+import type { PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
   compareLatestInputCoalesce,
@@ -132,7 +133,8 @@ export class ServerPlayer implements GameplayPlayer {
   craftSlots: Array<ItemStack | null> = [null, null, null, null];
   window: InventoryWindow = { kind: 'inventory' };
   ridingCartId?: string;
-  miningTarget?: { x: number; y: number; z: number };
+  miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
+  private presentationSwingSeq = 0;
   miningProgress = 0;
   miningStartCommandSeq?: number;
   bowUseTicks = 0;
@@ -161,6 +163,29 @@ export class ServerPlayer implements GameplayPlayer {
     return this.survival.health;
   }
 
+  /** Called only by authoritative gameplay outcomes; independent of actionSeq. */
+  presentSwing(): void {
+    if (this.connected && !this.survival.dead) this.presentationSwingSeq += 1;
+  }
+
+  presentation(): PlayerPresentationState {
+    const alive = this.connected && !this.survival.dead;
+    const heldItemId = this.inventory.getSlot(this.selectedSlot)?.itemId ?? null;
+    const target = this.miningTarget;
+    return {
+      mining: alive && target?.blockId !== undefined && this.miningProgress < 1
+        ? { ...target, blockId: target.blockId, progress: Math.max(0, this.miningProgress) }
+        : null,
+      heldItemId,
+      bowCharge: alive && heldItemId === ItemId.Bow && this.bowUseTicks > 0
+        ? this.combat.bowCharge(this.bowUseTicks).power : 0,
+      foodUseProgress: alive && heldItemId && tryGetItemDefinition(heldItemId)?.kind === 'food'
+        ? Math.min(1, Math.max(0, this.foodUseTicks / 32)) : 0,
+      swordBlocking: alive && this.combat.swordBlocking,
+      swingSeq: this.presentationSwingSeq,
+    };
+  }
+
   snapshot(): PlayerSnapshot {
     const position = this.controller.position;
     const velocity = this.controller.velocity;
@@ -181,6 +206,7 @@ export class ServerPlayer implements GameplayPlayer {
       sprinting: this.controller.sprinting,
       onGround: this.controller.onGround,
       selectedSlot: this.selectedSlot,
+      presentation: this.presentation(),
       invisible: this.survival.invisible,
       onFire: this.survival.isOnFire,
       hunger: this.survival.hunger,
@@ -253,6 +279,7 @@ export class ServerPlayer implements GameplayPlayer {
       z: snap.z,
       yaw: snap.yaw,
       pitch: snap.pitch,
+      presentation: snap.presentation,
     };
   }
 
@@ -378,7 +405,12 @@ export class WorldInstance {
     this.world = new VoxelWorld(config.worldSeed);
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
-    }, () => this.spawn);
+    }, () => this.spawn, (x, y, z) => {
+      for (const player of this.players.values()) {
+        const target = player.miningTarget;
+        if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
+      }
+    });
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();

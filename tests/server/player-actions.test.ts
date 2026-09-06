@@ -230,7 +230,7 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     }, 1);
     expect(staleFinish).toEqual({ ok: false, reason: 'stale' });
     expect(world.world.getBlock(hit.x, hit.y, hit.z)).toBe(BlockId.Dirt);
-    expect(player.miningTarget).toEqual({ x: hit.x, y: hit.y, z: hit.z });
+    expect(player.miningTarget).toMatchObject({ x: hit.x, y: hit.y, z: hit.z });
 
     world.applyInput(player, input(2, { mining: true }));
     world.tick();
