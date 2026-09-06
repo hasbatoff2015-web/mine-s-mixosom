@@ -90,6 +90,51 @@ export function shouldWaitForInFlightFinish(input: {
 }
 
 /**
+ * A closer remote player must not steal the mining tick while a finish is
+ * in flight. Skipping `applyOnlineMiningTick` freezes `finishWaitTicks` at 0,
+ * so `MAX_FINISH_WAIT_TICKS` never fires. That is the "Player B stands at the
+ * oak planks → Player A cannot mine anything until B breaks that cell" lock:
+ * B's later `block_update` is what finally clears `miningFinishKey`.
+ */
+export function shouldSkipMiningTickForRemote(input: {
+  readonly remoteCloser: boolean;
+  readonly finishKey?: string;
+}): boolean {
+  if (input.finishKey) return false;
+  return input.remoteCloser;
+}
+
+/**
+ * Authoritative voxel change (`block_update` / `block_batch` / successful
+ * break). Coordinate-matched only — another player's edit of cell X must not
+ * wipe mining of cell Y. Matching cell X *does* unlock a stuck finish on X,
+ * which is why Player B breaking the oak planks "heals" Player A.
+ */
+export function applyAuthoritativeVoxelToMiningGate(
+  gate: OnlineBreakGate,
+  miningTarget: string | undefined,
+  x: number,
+  y: number,
+  z: number,
+): { miningTarget?: string; clearProgress: boolean } {
+  const key = miningBlockKey(x, y, z);
+  if (gate.miningFinishKey === key) {
+    gate.miningFinishKey = undefined;
+    gate.miningLocked = false;
+    gate.clientWaitFinish = false;
+    gate.finishWaitTicks = 0;
+  }
+  const pending = gate.pendingBlockAction;
+  if (pending && pending.x === x && pending.y === y && pending.z === z) {
+    gate.pendingBlockAction = undefined;
+  }
+  if (miningTarget === key) {
+    return { miningTarget: undefined, clearProgress: true };
+  }
+  return { miningTarget, clearProgress: false };
+}
+
+/**
  * Single client mining tick after raycast. Encodes: wait vs hold-idle vs
  * abandon vs start vs progress. Used by Game.ts and regression tests.
  */
@@ -139,6 +184,15 @@ export function resetOnlineMiningGate(gate: OnlineBreakGate): void {
  */
 export function isInFlightBreakReject(reason: string | undefined): boolean {
   return reason === 'mining';
+}
+
+/**
+ * Server finish now accepts any `miningProgress > 0`. `reason: mining` therefore
+ * means there is no lock (start never landed, or `input.mining` went false and
+ * wiped the target). Resending finish cannot recover; a new start can.
+ */
+export function shouldResendBreakStartAfterFinishReject(reason: string | undefined): boolean {
+  return isInFlightBreakReject(reason);
 }
 
 export function breakFinishHoldReason(

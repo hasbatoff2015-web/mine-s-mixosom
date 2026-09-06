@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-06: Oak planks 100% overlay lock (after PR #57)
+
+- [x] Trace dirt / stone / oak log / oak planks through the same mining pipeline (shared `miningProgressPerTick`).
+- [x] Stop copying start `commandSeq` onto `block_break_finish`.
+- [x] Do not skip the client mining tick while a finish is in flight just because a remote player is closer.
+- [x] Resend `block_break_start` after `reason: mining` (wiped/never-started lock); finish-only retry cannot recover.
+- [x] Coordinate-matched `block_update` clears finish wait; A/B mining maps stay independent.
+- [ ] Owner QA: two clients; B places oak planks; overlay 100%; if the block stays, release and mine another block without waiting for B to break the planks.
+
 ## 2026-09-06: Mining lifecycle lock after 100% overlay
 
 - [x] Split server-hold (`miningFinishKey`) from client wait (`clientWaitFinish` cleared on mouse-up).
