@@ -6,7 +6,7 @@ Produce one integration branch that keeps the current plugin/claims/mining worki
 
 ## Result
 
-Merge of `codex/remote-action-presentation-v2` (`63e8358e`) into `cursor/claim-boundary-depth-3f93` (`9c92b176`) on branch `cursor/integrate-remote-actions-3f93`. Functional union, not cherry-pick.
+Merge of `codex/remote-action-presentation-v2` (`63e8358e`) into `cursor/claim-boundary-depth-3f93` (`9c92b176`) on branch `cursor/integrate-remote-actions-3f93`. Functional union, not cherry-pick. Integration commit `b1f8e6d6`. Automated gates passed. Live two-Chrome Anarchy join + Networking V2 remote interpolation confirmed; full visual crack/swing checklist remains owner QA (SwiftShader ~4 FPS).
 
 ## Ancestry
 
@@ -50,11 +50,33 @@ Unchanged from our line: `ClaimBoundaryRenderer` (3px, depthTest/Write true, no 
 
 ## Tests
 
-Directed mining/claims/presentation/Anarchy plus `typecheck*` / `test:sim` / `test:server` / `build` / `check:boundaries`. Compare any VM-flake names (`tick-latency`, `tick-load-flight`) to prior baseline; do not weaken thresholds.
+All required gates on this branch after the merge:
+
+| Gate | Result |
+|---|---|
+| `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` | PASS |
+| `check:boundaries` | PASS |
+| Directed mining + claims + presentation + Anarchy (12 files) | **140/140** |
+| `test:sim` | **9 files / 42 tests** |
+| `test:server --maxWorkers=2` | **24 files / 230 tests** (includes `tick-latency` / `tick-load-flight`; no flake this run) |
+| Extra V2 + plugin/claims (`player-command-queue`, `online-networking-v2-contract`, `local-player-prediction`, `remote-player-interpolation`, `plugin-platform`, `console-and-nickname`, `claim-commands`, `permissions`) | **8 files / 114 tests** |
+| `build` | PASS (vite client) |
+
+No production thresholds were relaxed. `miningTarget` assertions in lifecycle/oak-planks/player-actions tests now `toMatchObject({x,y,z})` so captured `blockId` from presentation does not break lock-coord checks.
+
+Live wire against the **restarted** Anarchy process (`ws://127.0.0.1:2567`, plugins: permissions/claims/holograms/…): two WebSocket clients. Observer welcome carries actor `presentation`; attack miss publishes `swingSeq=1`; `player_state` has `heldItemId`/`bowCharge`/`foodUseProgress`/`swordBlocking`; disconnect emits `player_left`. 9/9 PASS.
 
 ## Visual QA
 
-Two-client interactive checklist (held item, cracks, swing, bow, food, block, disconnect/reconnect, shared/different targets, claim 3px occlusion) remains owner/live QA. Cloud/SwiftShader is not a substitute for native two-Chrome Anarchy.
+Two Chromium clients (`ObserverA`, `ActorB`) joined the same live Anarchy world after server restart on merged code. Status `online: 2`. F3 on both:
+
+- Observer: `Remote 03b49ec7 … interpolate buf=3/3.6 n=12 delay=180ms snap/s=14` (ActorB).
+- Actor: `Remote 27c19a87 … interpolate buf=3/3.6 n=12 delay=180ms snap/s=19` (ObserverA).
+- `TPS 20`, `Ack cmd=…`, prediction/reconciliation lines present. Actor survival with iron pickaxe; observer creative. Actor hold-mine excavated dirt.
+
+Cloud SwiftShader ran at **~4 FPS**. Remote player model and crack overlays were **not** independently accepted as a complete visual pass (spawn pit, look direction, frame hitch). Wire + F3 interpolation **do** prove presentation and Networking V2 on the live process. Claim 3px/depth remains covered by `tests/claim-boundary.test.ts` (`linewidth=3`, `depthTest=true`); not re-shot as a deny-build overlay in this pass.
+
+Owner still needs native two-desktop checklist: held item, crack stages 0–9, abort/switch/finish, swing miss, bow, food, sword block, disconnect/reconnect, A+B same/different blocks, claim occlusion.
 
 ## Performance
 
@@ -75,4 +97,6 @@ Owner QA of the union, then merge `cursor/integrate-remote-actions-3f93` → `ma
 ## Git
 
 Branch: `cursor/integrate-remote-actions-3f93`  
-Parents: `9c92b176` (ours) + `63e8358e` (PR #54)
+Parents: `9c92b176` (ours) + `63e8358e` (PR #54)  
+Merge commit: `b1f8e6d6`  
+PR to main: do not merge GitHub PR #54. Integration vehicle is this branch → `main`.

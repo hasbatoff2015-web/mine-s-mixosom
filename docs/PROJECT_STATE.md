@@ -7,6 +7,7 @@
 - Конфликты в `server/WorldInstance.ts`, `server/gameplay.ts` и docs разрешены как функциональный union: `clearMiningLock` / `miningStartCommandSeq` / `worldSpawn` сохранены; добавлены `presentSwing`, `presentation()`, captured `blockId`, `onBlockReplaced`.
 - `src/core/Game.ts`, `shared/protocol.ts`, overlay/remote view смержились автоматически: claims + local mining + remote presentation.
 - Не merge'ить PR #54 напрямую в `main`. Handoff: `docs/reports/2026-09-06_integrate-remote-actions.md`.
+- После merge: typecheck* / boundaries / directed 140 / test:sim 42 / test:server 230 / build PASS. Live Anarchy: 2 Chrome + 2 WS; F3 Remote interpolate 12 samples; wire `swingSeq`/`heldItemId`/`player_left`. Full visual crack checklist — owner (VM ~4 FPS).
 
 ## Последний проход: Remote player action presentation v2 — 2026-09-05
 
