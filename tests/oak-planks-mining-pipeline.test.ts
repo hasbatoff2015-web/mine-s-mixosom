@@ -20,6 +20,12 @@ import {
   resolveOnlineMiningTick,
   shouldResendBreakStartAfterFinishReject,
   shouldSkipMiningTickForRemote,
+  shouldHoldServerMining,
+  inputMiningField,
+  omittedMiningDuringHoldIsClientError,
+  noteResendBreakStart,
+  shouldSendBreakFinish,
+  breakFinishHoldReason,
   type OnlineBreakGate,
 } from '../src/net/onlineMining';
 import { ACTION_POSE_HISTORY_MAX } from '../shared/actionPoseHistory';
@@ -218,5 +224,67 @@ describe('Player B block_update unlocks Player A gate (coordinate-matched only)'
     expect(shouldResendBreakStartAfterFinishReject('mining')).toBe(true);
     expect(shouldResendBreakStartAfterFinishReject('stale')).toBe(false);
     expect(shouldResendBreakStartAfterFinishReject('los')).toBe(false);
+  });
+
+  it('does not allow finish until the resent start is acked (server progress still 0)', () => {
+    const state = gate();
+    noteBreakFinishSent(state, 8, 70, 12);
+    applyBreakActionResult(state, {
+      ok: false,
+      reason: 'mining',
+      kind: 'block_break_finish',
+      x: 8, y: 70, z: 12,
+    });
+    noteResendBreakStart(state);
+    expect(state.miningFinishKey).toBeUndefined();
+    expect(state.clientWaitFinish).toBe(false);
+    expect(state.miningLocked).toBe(false);
+    expect(state.miningStartUnacked).toBe(true);
+    expect(shouldSendBreakFinish(state, 8, 70, 12)).toBe(false);
+    expect(breakFinishHoldReason(state, 8, 70, 12)).toBe('awaiting-start');
+
+    noteBreakStartSent(state, 8, 70, 12);
+    expect(state.miningLocked).toBe(true);
+    expect(state.miningStartUnacked).toBe(true);
+    expect(shouldSendBreakFinish(state, 8, 70, 12)).toBe(false);
+
+    applyBreakActionResult(state, {
+      ok: true,
+      kind: 'block_break_start',
+      x: 8, y: 70, z: 12,
+    });
+    expect(state.miningStartUnacked).toBe(false);
+    expect(state.miningLocked).toBe(true);
+    expect(shouldSendBreakFinish(state, 8, 70, 12)).toBe(true);
+  });
+});
+
+describe('input.mining hold encoding', () => {
+  it('keeps mining:true while buttonDown, finishKey, or miningLocked — not on bare idle', () => {
+    expect(shouldHoldServerMining({ buttonDown: true })).toBe(true);
+    expect(shouldHoldServerMining({ buttonDown: false, finishKey: '8,70,12' })).toBe(true);
+    expect(shouldHoldServerMining({ buttonDown: false, miningLocked: true })).toBe(true);
+    expect(shouldHoldServerMining({ buttonDown: false })).toBe(false);
+    expect(inputMiningField(true)).toEqual({ mining: true });
+    expect(inputMiningField(false)).toEqual({});
+    const encodedHold = parseClientMessage(JSON.parse(encodeMessage({
+      type: 'input', seq: 4, forward: 0, right: 0, jump: false, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 0,
+      ...inputMiningField(shouldHoldServerMining({ miningLocked: true })),
+    })));
+    expect(encodedHold).toMatchObject({ mining: true });
+    const encodedIdle = parseClientMessage(JSON.parse(encodeMessage({
+      type: 'input', seq: 5, forward: 0, right: 0, jump: false, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 0,
+      ...inputMiningField(shouldHoldServerMining({ buttonDown: false })),
+    })));
+    expect(encodedIdle).not.toHaveProperty('mining');
+  });
+
+  it('treats omitted mining during an active hold as a client lifecycle error, not valid idle', () => {
+    expect(omittedMiningDuringHoldIsClientError({ buttonDown: true })).toBe(true);
+    expect(omittedMiningDuringHoldIsClientError({ buttonDown: false, miningLocked: true })).toBe(true);
+    expect(omittedMiningDuringHoldIsClientError({ buttonDown: false, finishKey: '1,2,3' })).toBe(true);
+    expect(omittedMiningDuringHoldIsClientError({ buttonDown: false })).toBe(false);
   });
 });

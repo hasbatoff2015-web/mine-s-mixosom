@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: server mining lock hold + deferred finish after reason=mining
+
+- Live QA: `CLIENT FINISH` при 100% → server `mine=—` → `reason: mining`. Между `beginMining` и finish приходил `input` **без** `mining: true` (idle/hide/`sendOnlineIdle`, blur). Protocol кодирует `mining` только если true; omitted = wipe lock. Длинный hold (oak log/planks 60 тиков, stone 150) ловит это чаще dirt.
+- FIX 1: `shouldHoldServerMining` = `buttonDown || finishKey || miningLocked`. Обычный tick и `sendOnlineIdle` шлют `mining: true`, пока действие живо. Pause abort'ит и сбрасывает gate, затем idle **без** mining. Mouse-up / смена цели / inventory по-прежнему снимают lock.
+- FIX 2: после `reason: mining` — `miningProgress = 0`, `noteResendBreakStart` (`miningStartUnacked`), новый START. Finish запрещён (`awaiting-start`), пока `block_break_start` не ack. Нельзя сразу FINISH при локальном 1.0 / server progress=0.
+- Report: `docs/reports/2026-09-06_mining-hold-input.md`.
+
 ## Последний проход: oak planks 100% overlay lock after PR #57
 
 - Oak planks **не** особый unbreakable ID. `wood()` как oak log: hardness 2, axe/hand, 60 тиков / 3с. Dirt 15 тиков, stone by hand 150. Client и server берут `miningProgressPerTick` из `src/blocks/mining.ts`. ID 22 round-trip без потерь. При удержании `input.mining` сервер ломает все четыре блока (в т.ч. auto-break на progress>=1).
