@@ -3,6 +3,12 @@ import type { DamageSource } from '../survival';
 
 export const HURT_FLASH_DURATION_MS = 220;
 export const HURT_FLASH_PEAK_ALPHA = 0.28;
+
+/** Same envelope as the local HUD flash. Shared by third-person / remote PlayerVisual. */
+export function hurtFlashAlpha(elapsedMs: number, durationMs = HURT_FLASH_DURATION_MS): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= durationMs) return 0;
+  return HURT_FLASH_PEAK_ALPHA * (1 - elapsedMs / durationMs);
+}
 export const HURT_KICK_DURATION_MS = 180;
 export const HURT_KICK_DEGREES = 2.1;
 export const HURT_KICK_DOT_SCALE = 0.42;
@@ -36,8 +42,7 @@ export class HurtFeedback {
 
   flashAlpha(nowMs: number): number {
     if (nowMs >= this.flashUntilMs) return 0;
-    const t = (nowMs - this.flashStartMs) / HURT_FLASH_DURATION_MS;
-    return HURT_FLASH_PEAK_ALPHA * (1 - Math.min(1, Math.max(0, t)));
+    return hurtFlashAlpha(nowMs - this.flashStartMs);
   }
 
   cameraRoll(nowMs: number): number {

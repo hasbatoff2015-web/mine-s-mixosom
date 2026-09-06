@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: armor overlay / crouch hierarchy / air swing / MP hurt flash — 2026-09-06
+
+- Ветка `cursor/armor-crouch-swing-flash-3f93` от `main` после PR #63 (`bb203ae`).
+- `PlayerVisual`: `upperBody` на талии; голова/руки/held item/броня следуют за sneak pitch. Ноги остаются сиблингами.
+- Броня — inflated overlay на тех же pivots. В `public/textures` нет `models/armor/*_layer_*.png`; используются item icons + tint. Source of truth: `Inventory.armor` / `presentation.armor`.
+- Online: каждый discrete attack click шлёт `{ type: 'attack' }`; серверный `presentSwing()` уже покрывал miss. Hold mining не качает swingSeq каждый кадр.
+- `hurtSeq` на `fullHurt` (не i-frame chip). Remote: тот же `hurtFlashAlpha` 220 ms. SP HUD/camera flash без изменений.
+- Protocol v3 additive. PluginManager / claims / mining lock / Networking V2 / swingSeq presentation не переписывались.
+- Handoff: `docs/reports/2026-09-06_armor-crouch-swing-flash.md`.
+
 ## Последний проход: integrate remote actions into plugin/mining line — 2026-09-06
 
 - Интеграционная ветка `cursor/integrate-remote-actions-3f93` от `cursor/claim-boundary-depth-3f93` (`9c92b176`). Влита `codex/remote-action-presentation-v2` (`63e8358e`) merge, не cherry-pick.

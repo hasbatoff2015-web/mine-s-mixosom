@@ -230,6 +230,7 @@ import {
   shouldResendBreakStartAfterFinishReject,
 } from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
+import { equippedArmorFromInventory } from '../../shared/playerPresentation';
 import {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,
@@ -2437,6 +2438,7 @@ export class Game {
       inventory.getSlot(this.session.selectedSlot)?.itemId,
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
+    playerVisual.setArmor(equippedArmorFromInventory(inventory));
     this.deathShown = false;
     this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
@@ -3558,6 +3560,7 @@ export class Game {
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
+    session.playerVisual.setArmor(equippedArmorFromInventory(session.inventory));
     if (gameplayAllowed) this.updateTargetAndActions();
     else {
       this.input.consumeAttackPressed();
@@ -3824,6 +3827,11 @@ export class Game {
     const { remoteCloser, attack, mobTarget } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
+    if (session.online && attackPresses > 0) {
+      for (let click = 0; click < attackPresses; click += 1) {
+        session.online.client.send({ type: 'attack' });
+      }
+    }
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
     if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
       session.online.rejectedBlockKey = undefined;
@@ -3834,17 +3842,10 @@ export class Game {
     })) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
-      for (let click = 0; click < attackPresses; click += 1) {
-        session.online.client.send({ type: 'attack' });
-      }
     } else if (attack?.kind === 'mob' && mobTarget) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
-      if (session.online) {
-        for (let click = 0; click < attackPresses; click += 1) {
-          session.online.client.send({ type: 'attack' });
-        }
-      } else {
+      if (!session.online) {
         for (let click = 0; click < attackPresses; click += 1) {
           const stack = this.selectedStack();
           const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
@@ -3879,10 +3880,7 @@ export class Game {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
-      if (attackPressed) {
-        if (session.online) session.online.client.send({ type: 'attack' });
-        else this.breakMinecart(attack.cart);
-      }
+      if (attackPressed && !session.online) this.breakMinecart(attack.cart);
     } else if (session.online) {
       this.applyOnlineMiningTick(session, targetKey, attackPressed);
     } else if (!this.input.mining || !session.target) {
@@ -4812,6 +4810,7 @@ export class Game {
       invisible: session.survival.invisible,
       hurtFlash: this.hurt.flashAlpha(now),
     });
+    session.playerVisual.setArmor(equippedArmorFromInventory(session.inventory));
     session.playerVisual.applyWorldLight(
       session.world,
       position.x,

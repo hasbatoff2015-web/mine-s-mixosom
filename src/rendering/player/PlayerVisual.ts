@@ -17,6 +17,7 @@ import {
   createEntityMaterial,
   setEntityLight,
 } from '../worldLighting';
+import { hurtFlashAlpha } from '../hurtFeedback';
 import {
   PLAYER_MODEL_PIXEL,
   PlayerSkinGeometryCache,
@@ -28,13 +29,18 @@ import {
   type PlayerAnimationState,
   type PlayerVisualPose,
 } from './PlayerVisualAnimator';
+import { PlayerArmorOverlay } from './playerArmor';
+import { EMPTY_EQUIPPED_ARMOR, type EquippedArmorPresentation } from '../../../shared/playerPresentation';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly invisible: boolean;
   readonly hurtFlash: number;
 }
 
+export const UPPER_BODY_PIVOT_Y = 12 * PLAYER_MODEL_PIXEL;
+
 export interface PlayerVisualRig {
+  readonly upperBody: THREE.Group;
   readonly head: THREE.Group;
   readonly body: THREE.Group;
   readonly rightArm: THREE.Group;
@@ -74,7 +80,9 @@ export class PlayerVisual {
   private bowTexturePath = 'item/bow';
   private invisible = false;
   private hurtFlash = 0;
+  private hurtFlashStartedAt = -1;
   private disposed = false;
+  private readonly armorOverlay: PlayerArmorOverlay;
 
   constructor(
     private readonly skins: MinecraftSkinRegistry,
@@ -93,6 +101,7 @@ export class PlayerVisual {
     this.material.name = 'player-skin-material';
     this.root.name = 'player-visual';
     this.bodyYawRoot.name = 'player-visual:yaw';
+    const upperBody = new THREE.Group();
     const head = new THREE.Group();
     const body = new THREE.Group();
     const rightArm = new THREE.Group();
@@ -100,6 +109,7 @@ export class PlayerVisual {
     const rightLeg = new THREE.Group();
     const leftLeg = new THREE.Group();
     const heldItem = new THREE.Group();
+    upperBody.name = 'player:upper-body';
     head.name = 'player:head-pivot';
     body.name = 'player:body-pivot';
     rightArm.name = 'player:right-arm-pivot';
@@ -107,10 +117,16 @@ export class PlayerVisual {
     rightLeg.name = 'player:right-leg-pivot';
     leftLeg.name = 'player:left-leg-pivot';
     heldItem.name = 'player:right-hand-item';
-    this.rig = { head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem };
+    this.rig = { upperBody, head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem };
     this.root.add(this.bodyYawRoot);
-    this.bodyYawRoot.add(head, body, rightArm, leftArm, rightLeg, leftLeg);
+    this.bodyYawRoot.add(upperBody, rightLeg, leftLeg);
+    upperBody.add(head, body, rightArm, leftArm);
     rightArm.add(heldItem);
+    this.armorOverlay = new PlayerArmorOverlay(
+      { head, body, rightArm, leftArm, rightLeg, leftLeg },
+      () => this.appearanceValue.model,
+      (part, ...meshes) => this.positionPartMeshes(part, ...meshes),
+    );
     this.configurePivots();
     this.rebuildMeshes();
     bindEntityLightReceiver(this.root);
@@ -138,6 +154,7 @@ export class PlayerVisual {
     if (modelChanged) {
       this.configurePivots();
       this.rebuildMeshes();
+      this.armorOverlay.rebuild(this.invisible);
       bindEntityLightReceiver(this.root);
     } else this.syncLayerVisibility();
     previous.release();
@@ -155,14 +172,29 @@ export class PlayerVisual {
     this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
   }
 
+  setArmor(armor?: EquippedArmorPresentation): void {
+    this.assertActive();
+    this.armorOverlay.setArmor(armor ?? EMPTY_EQUIPPED_ARMOR, this.invisible);
+  }
+
+  get equippedArmor(): EquippedArmorPresentation {
+    return this.armorOverlay.equipped;
+  }
+
   swing(): void {
     this.animator.triggerSwing();
+  }
+
+  triggerHurtFlash(nowMs = typeof performance !== 'undefined' ? performance.now() : 0): void {
+    this.hurtFlashStartedAt = nowMs;
   }
 
   update(deltaSeconds: number, state: Readonly<PlayerVisualFrameState>): PlayerVisualPose {
     this.assertActive();
     this.invisible = state.invisible;
-    this.hurtFlash = THREE.MathUtils.clamp(state.hurtFlash, 0, 1);
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : 0;
+    const timedFlash = this.hurtFlashStartedAt >= 0 ? hurtFlashAlpha(nowMs - this.hurtFlashStartedAt) : 0;
+    this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
     const pose = this.animator.advance(deltaSeconds, state);
     this.applyPose(pose);
     this.syncLayerVisibility();
@@ -195,6 +227,7 @@ export class PlayerVisual {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
+    this.armorOverlay.dispose();
     this.material.dispose();
     this.skinHandle.release();
     this.partMeshes.clear();
@@ -204,11 +237,14 @@ export class PlayerVisual {
   private configurePivots(): void {
     const pixel = PLAYER_MODEL_PIXEL;
     const slim = this.appearanceValue.model === 'slim';
-    this.rig.head.position.set(0, 24 * pixel, 0);
-    this.rig.body.position.set(0, 12 * pixel, 0);
+    this.rig.upperBody.position.set(0, UPPER_BODY_PIVOT_Y, 0);
+    this.rig.upperBody.rotation.set(0, 0, 0);
+    this.rig.head.position.set(0, 12 * pixel, 0);
+    this.rig.body.position.set(0, 0, 0);
+    this.rig.body.rotation.set(0, 0, 0);
     this.rig.rightLeg.position.set(-1.9 * pixel, 12 * pixel, 0);
     this.rig.leftLeg.position.set(1.9 * pixel, 12 * pixel, 0);
-    const shoulderY = (slim ? 21.5 : 22) * pixel;
+    const shoulderY = (slim ? 21.5 : 22) * pixel - UPPER_BODY_PIVOT_Y;
     this.rig.rightArm.position.set(-5 * pixel, shoulderY, 0);
     this.rig.leftArm.position.set(5 * pixel, shoulderY, 0);
     const armCenterX = (slim ? 0.5 : 1) * pixel;
@@ -263,21 +299,15 @@ export class PlayerVisual {
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
     this.rig.heldItem.visible = this.heldModel !== undefined;
+    this.armorOverlay.setVisible(!this.invisible);
   }
 
   private applyPose(pose: PlayerVisualPose): void {
     this.bodyYawRoot.rotation.y = pose.bodyYaw;
+    this.rig.upperBody.rotation.x = pose.bodyPitch;
+    this.rig.upperBody.position.set(0, UPPER_BODY_PIVOT_Y + pose.bodyYOffset, pose.bodyZOffset);
     this.rig.head.rotation.set(pose.headPitch, pose.headYaw, 0, 'YXZ');
-    this.rig.head.position.y = 24 * PLAYER_MODEL_PIXEL + pose.bodyYOffset;
-    this.rig.head.position.z = pose.bodyZOffset * 0.65;
-    this.rig.body.rotation.x = pose.bodyPitch;
-    this.rig.body.position.y = 12 * PLAYER_MODEL_PIXEL + pose.bodyYOffset;
-    this.rig.body.position.z = pose.bodyZOffset;
-    const shoulderY = (this.appearanceValue.model === 'slim' ? 21.5 : 22) * PLAYER_MODEL_PIXEL;
-    this.rig.rightArm.position.y = shoulderY + pose.bodyYOffset;
-    this.rig.leftArm.position.y = shoulderY + pose.bodyYOffset;
-    this.rig.rightArm.position.z = pose.bodyZOffset * 0.8;
-    this.rig.leftArm.position.z = pose.bodyZOffset * 0.8;
+    this.rig.body.rotation.set(0, 0, 0);
     this.rig.rightArm.rotation.set(pose.rightArmX, pose.rightArmY, pose.rightArmZ, 'YXZ');
     this.rig.leftArm.rotation.set(pose.leftArmX, pose.leftArmY, pose.leftArmZ, 'YXZ');
     this.rig.rightLeg.rotation.x = pose.rightLegX;

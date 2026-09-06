@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-06: Armor overlay, crouch hierarchy, air swing, multiplayer hurt flash
+
+- [x] Parent head/arms to `upperBody` so crouch keeps the torso visually connected.
+- [x] Render equipped armor as inflated shells on the existing PlayerVisual rig (local + remote).
+- [x] Send attack / increment `swingSeq` on air misses via existing `presentSwing`.
+- [x] Authoritative `hurtSeq` for the existing red flash on remotes.
+- [ ] Owner two-client live QA: armor on/off, crouch+walk+attack, air swing both ways, damage flash both ways.
+
 ## 2026-09-06: Integrate remote actions + Networking V2 into plugin/mining line
 
 - [x] Merge `codex/remote-action-presentation-v2` into `cursor/claim-boundary-depth-3f93` (functional union, not file takeover).

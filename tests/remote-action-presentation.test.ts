@@ -12,7 +12,8 @@ const info: RemotePlayerInfo = { id: 'actor', name: 'Actor', x: 0, y: 70, z: 0, 
 function harness(presentation?: PlayerPresentationState) {
   const visual = {
     root: new THREE.Group(), animator: { reset: vi.fn() },
-    update: vi.fn(), setHeldItem: vi.fn(), swing: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
+    update: vi.fn(), setHeldItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
+    triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
   };
   const onMining = vi.fn();
   const onRemove = vi.fn();
@@ -29,6 +30,9 @@ describe('authoritative remote action presentation', () => {
     view.interpolate(100, 1 / 60);
     expect(visual.update).toHaveBeenLastCalledWith(1 / 60, expect.objectContaining({ mining: true }));
     expect(visual.setHeldItem).toHaveBeenLastCalledWith('iron_pickaxe');
+    expect(visual.setArmor).toHaveBeenLastCalledWith({
+      head: null, chest: null, legs: null, feet: null,
+    });
     expect(onMining).toHaveBeenLastCalledWith('actor', mining, 100);
     expect(visual.swing).not.toHaveBeenCalled();
     view.dispose();
@@ -95,5 +99,39 @@ describe('authoritative remote action presentation', () => {
     expect(visual.swing).toHaveBeenCalledTimes(1);
     view.dispose();
     expect(onRemove).toHaveBeenCalledWith('actor');
+  });
+
+  it('applies equipped armor ids from presentation and clears them on death', () => {
+    const armor = { head: 'diamond_helmet', chest: 'iron_chestplate', legs: null, feet: 'leather_boots' };
+    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, armor });
+    expect(visual.setArmor).toHaveBeenLastCalledWith(armor);
+    view.applySnapshot({
+      ...info,
+      presentation: { ...IDLE_PLAYER_PRESENTATION, armor: { ...armor, chest: 'diamond_chestplate' } },
+    }, 150, 1);
+    expect(visual.setArmor).toHaveBeenLastCalledWith({ ...armor, chest: 'diamond_chestplate' });
+    view.applySnapshot({
+      ...info,
+      dead: true,
+      presentation: { ...IDLE_PLAYER_PRESENTATION, armor, swingSeq: 1, hurtSeq: 0 },
+    } as never, 200, 2);
+    expect(visual.setArmor).toHaveBeenLastCalledWith({
+      head: null, chest: null, legs: null, feet: null,
+    });
+    view.dispose();
+  });
+
+  it('triggers one hurt flash when hurtSeq increases, including coalesced 0 → 2, and never on join baseline', () => {
+    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, hurtSeq: 4 });
+    expect(visual.triggerHurtFlash).not.toHaveBeenCalled();
+    view.applySnapshot({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 4 } }, 150, 1);
+    expect(visual.triggerHurtFlash).not.toHaveBeenCalled();
+    view.applySnapshot({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 6 } }, 200, 2);
+    expect(visual.triggerHurtFlash).toHaveBeenCalledTimes(1);
+    view.applySnapshot({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 6 } }, 250, 3);
+    expect(visual.triggerHurtFlash).toHaveBeenCalledTimes(1);
+    view.applySnapshot({ ...info, dead: true, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 7 } } as never, 300, 4);
+    expect(visual.triggerHurtFlash).toHaveBeenCalledTimes(2);
+    view.dispose();
   });
 });

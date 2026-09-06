@@ -1,5 +1,30 @@
 # Архитектура
 
+## Armor / crouch / air swing / hurt flash — 2026-09-06
+
+`PlayerVisual` hierarchy:
+
+```text
+root → bodyYawRoot
+  upperBody   ← sneak bodyPitch + Y/Z offset
+    body, head, rightArm, leftArm
+      rightArm → heldItem + chest arm armor
+      head → helmet
+      body → chestplate
+  rightLeg, leftLeg → leggings + boots
+```
+
+Armor is `PlayerArmorOverlay`, not a second rig. Inflate: helmet/chest/boots 1 px, leggings/shoulder 0.5 px. Item icons from `public/textures/item/*_{helmet,chestplate,leggings,boots}.png` because the runtime pack has no armor UV sheets.
+
+`PlayerPresentationState` additive fields (protocol 3):
+
+- `armor?: { head, chest, legs, feet }` item ids from `Inventory.armor`
+- `hurtSeq?: number` — server `fullHurt` only; join baseline; coalesced snapshots flash once
+
+Air swing: client sends `{ type: 'attack' }` once per discrete click even with no target. Server already `presentSwing()` before raycast.
+
+Hurt flash: `SurvivalSystem.addDamageListener` → `presentHurt()`. `PlayerVisual.triggerHurtFlash()` shares `hurtFlashAlpha` with `HurtFeedback`. Local HUD still uses health-drop / `onDamage` HurtFeedback. Remotes do not trust a client “I was hit” packet.
+
 ## Integrate remote actions + plugin/mining line — 2026-09-06
 
 Одна линия: plugin platform / claims / mining lifecycle (наша ветка) ∪ Networking V2 ∪ remote action presentation (PR #54). `PROTOCOL_VERSION` остаётся 3; `presentation?` additive. `ServerGameplay` принимает и `worldSpawn`, и `onBlockReplaced`. Mining lock (`miningStartCommandSeq`, `shouldKeepMiningLock`, `clearMiningLock`, `in_progress` finish) не заменяется presentation-wipe. `BlockBreakingOverlay` общий для local и remote; local progress mapping не меняется. Claim wires остаются 3px + `depthTest`/`depthWrite`.
@@ -121,13 +146,15 @@ ServerGameplay accepted outcome / continuous state
   → ServerPlayer.presentation()
   → welcome.players / player_joined / player_state.players[].presentation
   → RemotePlayerView latest presentation (separate tick guard, no spatial lerp)
-      → PlayerVisual.setHeldItem / swing / update → existing animator
+      → PlayerVisual.setHeldItem / setArmor / swing / triggerHurtFlash / update → existing animator
       → WorldRenderer.remoteBreaking: breakerId → target → max progress → BlockBreakingOverlay
 ```
 
 `miningProgress` уже normalized: `miningProgressPerTick(hardness, tool)` прибавляется сервером; `>= 1` вызывает authoritative break. Payload содержит captured block ID и XYZ; viewer никогда не считает время разрушения. Null mining означает inactive. Remote progress 0 рисует canonical stage 0 через минимальное положительное значение; существующий local `(0,1)` mapping не меняется.
 
-`swingSeq` принадлежит серверу и не связан с ingress `lastActionSeq`: последнее увеличивается до gameplay validation. Counter изменяется через successful `UseHostEffects` (placement/interaction), successful break / arrow spawn, или принятую атаку (включая промах и damage immunity). No-op use, rejected placement, invalid/stale/duplicate intent и rejected bow release counter не меняют. Sequence сохраняется при live resume; новый view/reset запоминает baseline и не воспроизводит историю. Каждый новый observed counter запускает один swing; несколько действий между snapshots визуально coalesce в один swing, history/animation frames не пересылаются.
+`swingSeq` принадлежит серверу и не связан с ingress `lastActionSeq`: последнее увеличивается до gameplay validation. Counter изменяется через successful `UseHostEffects` (placement/interaction), successful break / arrow spawn, или принятую атаку (включая промах и damage immunity). Online client now sends `{ type: 'attack' }` for every discrete attack click, including air and block mining starts, so observers see the miss swing. Hold-mining does not emit a new click per frame. No-op use, rejected placement, invalid/stale/duplicate intent и rejected bow release counter не меняют. Sequence сохраняется при live resume; новый view/reset запоминает baseline и не воспроизводит историю. Каждый новый observed counter запускает один swing; несколько действий между snapshots визуально coalesce в один swing, history/animation frames не пересылаются.
+
+`hurtSeq` — тот же event-counter паттерн для red flash: только `DamageResult.fullHurt`, не i-frame chip и не клиентский “меня ударили”. `armor` в presentation — item ids слотов, не stacks/durability; stale 1500 ms timeout не снимает броню.
 
 `RemoteBreakingOverlays` расширяет существующий overlay. Breakers coalesce один раз за render frame, targets имеют max progress, local tie/greater stage suppresses remote mesh; greater remote stage временно скрывает local group, сохраняя local state. Targets проходят loaded-voxel + renderer-chunk visibility checks. Stage textures разделяются; mesh/material/geometry освобождаются при удалении target. Geometry creation не использует chunk remesh.
 
@@ -432,7 +459,7 @@ Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меня�
 
 Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
 
-Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Текущий protocol не содержит authoritative held item id или appearance metadata, поэтому remote visual использует `DEFAULT_PLAYER_APPEARANCE` и neutral empty hand — ничего не угадывается. Будущий appearance sync остаётся редким metadata event `{ skinId, model, layers? }`, никогда PNG/base64 или per-tick texture payload. Remote attack/mining/bow/eating sync is a later PR.
+Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён; armor overlays are separate inflated boxes parented to the rig. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, armor ids, swingSeq and hurtSeq arrive through additive `presentation`. Appearance (skinId/model/layers) is still local default until a later metadata event.
 
 ## Block breaking overlay — integrated 2026-09-02
 
