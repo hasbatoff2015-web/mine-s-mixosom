@@ -6,6 +6,7 @@
 - Доказательство (тест до фикса): enqueue idle seq 1..8 + `mining` seq 9 + `beginMining(..., 9)` → 8 тиков → `miningTarget` wiped, `applied=8`, `progress=0`. START был принят (`target` set, `applied=-1`).
 - Корень: START обрабатывается сразу, очередь команд — по одной за physics tick. Старые idle без `mining` после START считались mouse-up. Cycle #2 работает, потому что к повторному START очередь уже `mining: true`. Сосед B — то же.
 - Фикс: `miningStartCommandSeq` на accepted START; `shouldKeepMiningLock` если `mining===true` или `appliedCommandSeq < start`. Stale ticks ещё и `advanceMining`. Mouse-up `seq >= start` без mining по-прежнему снимает lock.
+- Live (два Chrome `?miningTrace=1`, B idle, FPS 4 / `inBurst=4`): dirt `9,65,6` — один overlay 0→100% → server auto-break, FINISH `empty` (уже air), не `reason: mining`. Oak planks `id=22` `8,65,6` сломались с первого цикла; соседние доски при удержании ЛКМ тоже с первого. Owner ×5 matrix не закрыт.
 - Report: `docs/reports/2026-09-06_first-cycle-mining-sync.md`.
 
 ## Последний проход: server mining lock hold + deferred finish after reason=mining

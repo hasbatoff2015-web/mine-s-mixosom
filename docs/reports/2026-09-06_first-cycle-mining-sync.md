@@ -120,7 +120,37 @@ Advancing on stale-after-start is required: skip-wipe alone leaves `progress = 0
 
 ## Visual QA
 
-Live two-Chrome `http://localhost:4173/?miningTrace=1` is required after this change. Synthetic CDP LMB is unreliable (PR #59). Record: first LMB after standing idle; hold A→B→C; dirt/stone/log/planks; Ada vs Bob idle.
+Two Chrome clients `http://localhost:4173/?miningTrace=1`, Anarchy `ws://127.0.0.1:2567`, `FC_DEBUG_BREAK=1`. SwiftShader ~4 FPS, TPS 20, `inBurst=4` / `pend=9` — leftover FIFO is real in this environment. Player B joined and stayed idle.
+
+**Dirt `id=3` at `9,65,6` (one canvas mousedown, no retrigger):**
+
+```
+CLIENT START cmd=3372 inputSeq=3372 mine=9,65,6 progress=0 button=1
+CLIENT start ack ok progress=0.533 (visual lead; lock still mine=9,65,6)
+CLIENT progress 100% cmd=3372 progress=1.067
+CLIENT FINISH cmd=3387 (finish-time seq, not start seq)
+SERVER beginMining OK startCmd=3372 mine=9,65,6@0.000
+SERVER auto-broke (advanceMining) before FINISH
+SERVER FINISH tryBreak REJECT empty (cell already air) — not reason:mining
+```
+
+Target then `9,64,6` stone while LMB still down — neighbor first cycle started. No second overlay on the dirt.
+
+**Oak planks `id=22` at `8,65,6` then neighbor `9,65,6` (LMB held):**
+
+```
+START cmd=3964 mine=8,65,6 start ack ok progress=0.133
+~3.2s later START neighbor cmd=3992 mine=9,65,6 (first plank gone)
+then stone 9,64,6 (second plank gone)
+```
+
+One overlay per plank, not dry+real. B idle. Mouse-up → `cleanup because=idle` (expected).
+
+**Stone at spawn `1,51,-3`:** `beginMining` `startCmd=1416`, later same cell `@0.593` (lock not wiped), then cell air, coal underneath. Extra STARTs on that cell were QA `mousedown` retriggers (`attackPressed`), not finish-fail cycles.
+
+Not done: owner ×5 matrix; oak log as a separate hold; A and B mining different cells at the same time. Synthetic CDP hold is still fragile; the dirt/planks oneshot (single mousedown) is the usable live evidence.
+
+## Performance
 
 ## Performance
 
