@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Online arrow PvP attribution + FireArrow pickup — 2026-09-07
+
+- Ветка `codex/fix-arrow-pvp-firearrow` создана от актуального `origin/main` `bb203aebc0568fe2f46f8dc36e63bd7b5463f63b`; протокол остаётся `3`, новых packets/client damage path нет.
+- Server player arrow теперь передаёт существующий `PlayerArrow.ownerId` как `attackerId` через `onPlayerHit` в `ServerGameplay.hurtPlayer`. `playerDamage` и `playerDamaged` сохраняют shooter id; Claims классифицирует player projectile по `pvp`, а projectile без player owner — по `mob-damage`.
+- `PlayerArrowManager.tryCollect` возвращает `ItemId.FireArrow` для `flaming=true` и `ItemId.Arrow` для обычной стрелы. Creative остаётся removal-only; leftover оставляет projectile в мире; inventory sync остаётся существующим server-authoritative path.
+- Pre-fix доказательство: no-claim damage проходил, но оба damage events теряли attacker; `pvp=true/mob-damage=false` блокировал player arrow, обратная комбинация разрешала; flaming pickup увеличивал Arrow. Collision/AABB/order не были root cause.
+- Regression: focused combat/claims **96/96**, новые targeted **13/13**, remote presentation/V2 **64/64**, все typechecks/boundaries/build PASS. Full server: **238/239**; только известный CPU-sensitive `tick-load-flight` превысил 80 ms и повторился изолированно. Manual two-client QA не выполнялся.
+- Handoff: `docs/reports/2026-09-07_arrow-pvp-firearrow-pickup.md`.
+
 ## Последний проход: integrate remote actions into plugin/mining line — 2026-09-06
 
 - Интеграционная ветка `cursor/integrate-remote-actions-3f93` от `cursor/claim-boundary-depth-3f93` (`9c92b176`). Влита `codex/remote-action-presentation-v2` (`63e8358e`) merge, не cherry-pick.

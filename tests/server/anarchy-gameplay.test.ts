@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BlockId, chestFacingFromYaw, furnaceFacingFromYaw } from '../../src/blocks';
 import { PLAYER_EYE_HEIGHT } from '../../src/core/constants';
+import { ItemId } from '../../src/items';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { applyFluidWrites, computeFluidUpdate } from '../../src/world/fluids';
 import { AnarchyServer } from '../../server/AnarchyServer';
@@ -88,6 +89,26 @@ describe('Anarchy server gameplay authority', () => {
     const result = world.join({ sink, name });
     if ('error' in result) return result;
     return { ...result, sink };
+  }
+
+  function fireAt(
+    world: WorldInstance,
+    shooter: ServerPlayer,
+    target: { controller: { position: { x: number; y: number; z: number } } },
+    ammo: typeof ItemId.Arrow | typeof ItemId.FireArrow = ItemId.Arrow,
+  ): void {
+    shooter.inventory.clear();
+    shooter.inventory.addItem(ItemId.Bow, 1);
+    shooter.inventory.addItem(ammo, 1);
+    shooter.selectedSlot = 0;
+    shooter.bowUseTicks = 20;
+    const aim = lookAt(
+      shooter.controller.position,
+      target.controller.position.x,
+      target.controller.position.y + 0.9,
+      target.controller.position.z,
+    );
+    expect(world.gameplay.releaseBowWithAim(shooter, aim.yaw, aim.pitch)).toMatchObject({ ok: true });
   }
 
   it('keeps inventory ownership per player and crafts server-side', async () => {
@@ -241,6 +262,155 @@ describe('Anarchy server gameplay authority', () => {
     const mobHealth = mob.health;
     world.attack(a.player);
     expect(mob.health).toBeLessThan(mobHealth);
+  });
+
+  it('applies a real server bow shot outside claims and preserves attackerId in both damage events', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'ArrowA');
+    const b = join(world, 'ArrowB');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([20.5, 100, 20.5]);
+    b.player.controller.teleport([20.5, 100, 22.5]);
+    const before = b.player.survival.health;
+    const pre: Array<{ playerId: string; attackerId?: string; cause: string }> = [];
+    const post: Array<{ playerId: string; attackerId?: string; cause: string }> = [];
+    world.events.on('playerDamage', (event) => pre.push(event));
+    world.events.on('playerDamaged', (event) => post.push(event));
+
+    fireAt(world, a.player, b.player);
+    world.tick();
+
+    expect(b.player.survival.health).toBeLessThan(before);
+    expect(pre).toHaveLength(1);
+    expect(post).toHaveLength(1);
+    expect(pre[0]).toMatchObject({ playerId: b.player.id, attackerId: a.player.id, cause: 'projectile' });
+    expect(post[0]).toMatchObject({ playerId: b.player.id, attackerId: a.player.id, cause: 'projectile' });
+    expect(world.gameplay.arrows.count).toBe(0);
+  });
+
+  it('excludes the shooter and misses a nearby off-axis Survival player', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'ArrowOwner');
+    const b = join(world, 'ArrowMiss');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([30.5, 100, 30.5]);
+    b.player.controller.teleport([32.5, 100, 32.5]);
+    const ownerHealth = a.player.survival.health;
+    const victimHealth = b.player.survival.health;
+    const straightAhead = { controller: { position: { x: 30.5, y: 100, z: 34.5 } } };
+
+    fireAt(world, a.player, straightAhead);
+    world.tick();
+
+    expect(a.player.survival.health).toBe(ownerHealth);
+    expect(b.player.survival.health).toBe(victimHealth);
+    expect(world.gameplay.arrows.count).toBe(1);
+  });
+
+  it('lets a wall win swept collision before a Survival player', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'ArrowWallA');
+    const b = join(world, 'ArrowWallB');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([40.5, 100, 40.5]);
+    b.player.controller.teleport([40.5, 100, 43.5]);
+    world.world.setBlock(40, 100, 42, BlockId.Stone);
+    world.world.setBlock(40, 101, 42, BlockId.Stone);
+    const before = b.player.survival.health;
+
+    fireAt(world, a.player, b.player);
+    world.tick();
+
+    expect(b.player.survival.health).toBe(before);
+    expect(world.gameplay.arrows.count).toBe(1);
+    expect(world.gameplay.arrows.entities[0]?.inGround).toBe(true);
+  });
+
+  it('round-trips FireArrow through an embedded server projectile and authoritative inventory sync', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'FireArrowPickup');
+    if ('error' in a) throw new Error('join failed');
+    a.player.controller.teleport([45.5, 100, 45.5]);
+    world.world.setBlock(45, 100, 47, BlockId.Stone);
+    world.world.setBlock(45, 101, 47, BlockId.Stone);
+    const wall = { controller: { position: { x: 45.5, y: 100, z: 48.5 } } };
+    const inventoryPackets = () => a.sink.payloads.filter((payload) => (
+      payload && typeof payload === 'object' && (payload as { type?: string }).type === 'inventory'
+    )).length;
+    const beforeShotSync = inventoryPackets();
+
+    fireAt(world, a.player, wall, ItemId.FireArrow);
+    expect(a.player.inventory.count(ItemId.FireArrow)).toBe(0);
+    world.tick();
+    expect(inventoryPackets()).toBeGreaterThan(beforeShotSync);
+    const embedded = world.gameplay.arrows.entities[0];
+    expect(embedded?.inGround).toBe(true);
+    a.player.controller.teleport([
+      embedded!.position.x,
+      embedded!.position.y - 0.8,
+      embedded!.position.z,
+    ]);
+    const beforePickupSync = inventoryPackets();
+    for (let tick = 0; tick < 6; tick += 1) world.tick();
+
+    expect(world.gameplay.arrows.count).toBe(0);
+    expect(a.player.inventory.count(ItemId.FireArrow)).toBe(1);
+    expect(a.player.inventory.count(ItemId.Arrow)).toBe(0);
+    expect(inventoryPackets()).toBeGreaterThan(beforePickupSync);
+  });
+
+  it('lets a Survival player win swept collision before the wall behind them', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'ArrowNearA');
+    const b = join(world, 'ArrowNearB');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([50.5, 100, 50.5]);
+    b.player.controller.teleport([50.5, 100, 52.5]);
+    world.world.setBlock(50, 100, 53, BlockId.Stone);
+    world.world.setBlock(50, 101, 53, BlockId.Stone);
+    const before = b.player.survival.health;
+
+    fireAt(world, a.player, b.player);
+    world.tick();
+
+    expect(b.player.survival.health).toBeLessThan(before);
+    expect(world.gameplay.arrows.count).toBe(0);
+  });
+
+  it('does not include a Creative victim in server projectile PvP targets', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'ArrowSurvival');
+    const b = join(world, 'ArrowCreative');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([60.5, 100, 60.5]);
+    b.player.controller.teleport([60.5, 100, 62.5]);
+    world.setGameMode(b.player, 'creative');
+    const before = b.player.survival.health;
+
+    fireAt(world, a.player, b.player);
+    world.tick();
+
+    expect(b.player.survival.health).toBe(before);
+    expect(world.gameplay.arrows.count).toBe(1);
+  });
+
+  it('applies FireArrow direct damage, ignition, and shooter attribution', async () => {
+    const world = await bootWorld();
+    const a = join(world, 'FireArrowA');
+    const b = join(world, 'FireArrowB');
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([70.5, 100, 70.5]);
+    b.player.controller.teleport([70.5, 100, 72.5]);
+    const before = b.player.survival.health;
+    const attackers: Array<string | undefined> = [];
+    world.events.on('playerDamaged', (event) => attackers.push(event.attackerId));
+
+    fireAt(world, a.player, b.player, ItemId.FireArrow);
+    world.tick();
+
+    expect(b.player.survival.health).toBeLessThan(before);
+    expect(b.player.survival.arrowFireTicks).toBeGreaterThan(0);
+    expect(attackers).toEqual([a.player.id]);
   });
 
   it('survival death drops inventory then respawns', async () => {

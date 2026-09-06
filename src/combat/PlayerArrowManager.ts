@@ -42,6 +42,7 @@ export interface ArrowTickOptions {
     damage: number,
     flaming: boolean,
     position: Vec3,
+    attackerId?: string,
   ) => void;
 }
 
@@ -250,6 +251,7 @@ export class PlayerArrowManager {
             arrowDamageFromVelocity(arrow.velocity, arrow.critical),
             arrow.flaming,
             arrow.position,
+            arrow.ownerId,
           );
           this.remove(index);
           removed = true;
@@ -350,7 +352,8 @@ export class PlayerArrowManager {
         collected += 1;
         continue;
       }
-      if (options.addItem(ItemId.Arrow, 1) !== 0) continue;
+      const pickupItemId = arrow.flaming ? ItemId.FireArrow : ItemId.Arrow;
+      if (options.addItem(pickupItemId, 1) !== 0) continue;
       this.remove(index);
       collected += 1;
     }
