@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Follow-up: Online food/potion render-edge sequencing — 2026-09-07
+
+- На ветке `codex/fix-gameplay-bugs-2026-09-07` поверх `868206de5a095b67f9255f8ae7305090de7333ec` исправлен race реального client order: `interact(commandSeq=N)` может прийти после render-edge, но до первого fixed input `N+1` с `use=true` и новым hotbar slot.
+- Server food session хранит action boundary `N`. Pre-use state с `commandSeq <= N` не отменяет use; первый strictly newer command подтверждает `use=true + captured slot` либо отменяет. Старый synthetic порядок, где сам boundary command уже содержит matching `use=true`, также поддержан.
+- Captured slot может отличаться от свежего boundary command только для самого нового принятого `lastInputSeq`; индекс строго ограничен hotbar. Item ID никогда не приходит от клиента: use читает stack из server `Inventory`. Старый command с slot mismatch, invalid slot и stale/invalid block intent по-прежнему отклоняются.
+- Local food presentation не очищается delayed snapshot для boundary `N`; authoritative zero progress очищает её только при `snapshot.inputSeq > N`. Release/slot/item/action reject/respawn cleanup сохранены.
+- Red-first realistic-order tests воспроизвели оба бага. После fix: consumable/bow/presentation **130/130 PASS**, Networking V2/mining **182/182 PASS**, все typechecks/boundaries/build PASS. Protocol v3, bow release/aim, mining, movement и остальные пять fixes не менялись.
+- Handoff: `docs/reports/2026-09-07_online-consumable-render-edge-sequencing.md`.
+
 ## Последний проход: six gameplay / Online regressions — 2026-09-07
 
 - Ветка `codex/fix-gameplay-bugs-2026-09-07` создана от актуального `origin/main` `bf2ed08d80fbdad315e13f9ca7051962ad0906fa`; protocol остаётся `3`, новых packet types и client-authoritative gameplay нет.

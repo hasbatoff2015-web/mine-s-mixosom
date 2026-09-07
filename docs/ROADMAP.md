@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-07: Online consumable render-edge follow-up
+
+- [x] Reproduce real order: applied pre-use command N → render-edge `interact(N)` → fixed input N+1.
+- [x] Keep a newly accepted food/potion session through pre-use state `<= N`; let the first strictly newer command confirm or cancel it.
+- [x] Accept an immediate captured hotbar switch only at the freshest action boundary; validate index and read the item exclusively from server inventory.
+- [x] Preserve stale command, invalid slot, target block ID, face/reach and server inventory validation for targeted block interactions.
+- [x] Keep delayed boundary snapshot N from clearing local eat/drink presentation; zero progress from `> N` may clear it.
+- [x] Cover confirm, release cancel, slot cancel, potion completion/effect/bottle, delayed snapshot and targeted-use security regressions.
+- [ ] Owner live QA: between-tick Apple/Potion use, immediate number-key/scroll switch + RMB, release/switch cancel, visible animation through the first delayed snapshot.
+
 ## 2026-09-07: six gameplay / Online regressions
 
 - [x] Cobweb blocks ordinary jump and strongly damps vertical velocity; leaving the web restores normal jump.

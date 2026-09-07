@@ -995,6 +995,7 @@ describe('WorldInstance foundation simulation', () => {
     player.useStartCommandSeq = 1;
     player.useSelectedSlot = 3;
     player.useItemId = ItemId.Apple;
+    player.foodUseBoundaryCommandConfirmed = true;
     player.lastUse = true;
     player.lastActionSeq = 9;
     expect(world.applyInput(player, moveInput(1, { forward: 1, use: true }))).toBe(true);
@@ -1006,6 +1007,7 @@ describe('WorldInstance foundation simulation', () => {
     expect(player.useStartCommandSeq).toBeUndefined();
     expect(player.useSelectedSlot).toBeUndefined();
     expect(player.useItemId).toBeUndefined();
+    expect(player.foodUseBoundaryCommandConfirmed).toBeUndefined();
     expect(player.lastUse).toBe(false);
     expect(player.lastActionSeq).toBe(-1);
     expect(player.commandQueue.length).toBe(0);

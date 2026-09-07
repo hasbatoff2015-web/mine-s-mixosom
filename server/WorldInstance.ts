@@ -142,6 +142,7 @@ export class ServerPlayer implements GameplayPlayer {
   useStartCommandSeq: number | undefined;
   useSelectedSlot: number | undefined;
   useItemId: string | undefined;
+  foodUseBoundaryCommandConfirmed: boolean | undefined;
   lastUse = false;
   lastSprint = false;
   vehicleForward = 0;
@@ -980,7 +981,13 @@ export class WorldInstance {
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
     const slot = this.resolveActionSlot(player, commandSeq, selectedSlot);
     if (!slot.ok) return slot;
-    const result = this.gameplay.useHeld(player, intent, commandSeq, slot.value);
+    const result = this.gameplay.useHeld(
+      player,
+      intent,
+      commandSeq,
+      slot.value,
+      slot.boundaryCommandConfirmsUse,
+    );
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
@@ -1329,22 +1336,46 @@ export class WorldInstance {
     player: ServerPlayer,
     commandSeq: number | undefined,
     selectedSlot: number | undefined,
-  ): { ok: true; value: number } | { ok: false; reason: string } {
-    if (selectedSlot === undefined) return { ok: true, value: player.selectedSlot };
+  ): { ok: true; value: number; boundaryCommandConfirmsUse: boolean } | { ok: false; reason: string } {
+    if (selectedSlot === undefined) {
+      return {
+        ok: true,
+        value: player.selectedSlot,
+        boundaryCommandConfirmsUse: player.lastInput.use === true,
+      };
+    }
     if (!Number.isInteger(selectedSlot) || selectedSlot < 0 || selectedSlot >= Inventory.HOTBAR_SIZE) {
       return { ok: false, reason: 'slot' };
     }
-    if (commandSeq === undefined) return { ok: true, value: selectedSlot };
+    if (commandSeq === undefined) {
+      return {
+        ok: true,
+        value: selectedSlot,
+        boundaryCommandConfirmsUse: player.lastInput.use === true && player.selectedSlot === selectedSlot,
+      };
+    }
     const historical = player.actionPoseHistory.find((sample) => sample.commandSeq === commandSeq);
-    const command = historical ?? player.commandQueue.find(commandSeq);
-    if (!command) {
+    const command = player.commandQueue.find(commandSeq);
+    const commandState = command ?? historical;
+    if (!commandState) {
       if (commandSeq === player.appliedCommandSeq && selectedSlot === player.selectedSlot) {
-        return { ok: true, value: selectedSlot };
+        return {
+          ok: true,
+          value: selectedSlot,
+          boundaryCommandConfirmsUse: player.lastInput.use === true,
+        };
       }
       return { ok: false, reason: 'stale' };
     }
-    if (command.selectedSlot !== selectedSlot) return { ok: false, reason: 'slot' };
-    return { ok: true, value: selectedSlot };
+    const slotChangedAfterBoundary = commandState.selectedSlot !== selectedSlot;
+    if (slotChangedAfterBoundary && commandSeq !== player.lastInputSeq) {
+      return { ok: false, reason: 'slot' };
+    }
+    return {
+      ok: true,
+      value: selectedSlot,
+      boundaryCommandConfirmsUse: command?.use === true && !slotChangedAfterBoundary,
+    };
   }
 
   private resetConnectionInput(player: ServerPlayer): void {
@@ -1365,6 +1396,7 @@ export class WorldInstance {
     player.useStartCommandSeq = undefined;
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     player.vehicleForward = 0;

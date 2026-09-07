@@ -8,9 +8,13 @@
 
 ### Captured Online consumable use
 
-`interact` / `player_action(block_use)` already carry `commandSeq` and `selectedSlot`. `WorldInstance.resolveActionSlot` validates that slot against action pose history, the pending/applied command queue or the current applied state. `ServerGameplay.useHeld` starts bow/food from that server inventory slot and records `useStartCommandSeq`, `useSelectedSlot` and `useItemId`. Commands older than the start cannot cancel the hold; a current release, selected-slot change, item replacement, death or reconnect clears it. Completion consumes exactly one item from the captured slot, applies `SurvivalSystem` effects, marks inventory dirty, and inserts a returned bottle through the authoritative inventory (or spawns the overflow as a world drop).
+`interact` / `player_action(block_use)` already carry `commandSeq` and `selectedSlot`. For a render-edge action, `commandSeq=N` is an **action boundary**: it is the last input already sent and can still contain the pre-use `use=false` / old slot state. A food/potion session therefore ignores state at `<= N`; the first strictly newer command must contain `use=true` and the captured slot or the session is cancelled. If the boundary command itself already contains matching `use=true + slot` (the alternate frame ordering), it is explicitly marked as confirmed and may advance at N.
 
-The client keeps only an immediate `localFoodUse` presentation token for the first-person/remote-visible eating progress. It never consumes or applies effects. Rejects, release, slot/item mismatch, inventory sync, respawn and an authoritative zero-progress snapshot clear the token.
+`WorldInstance.resolveActionSlot` still requires a real command/history boundary. A captured slot differing from command N is accepted only when N is the newest received `lastInputSeq`, which is the legitimate between-ticks slot switch. Older mismatches and indices outside `0..HOTBAR_SIZE-1` are rejected. `ServerGameplay.useHeld` always reads the stack from the server `Inventory`; no client item id is accepted. Block target pose/ID/face/reach validation is unchanged.
+
+`ServerGameplay.useHeld` records `useStartCommandSeq`, `useSelectedSlot`, `useItemId` and whether the boundary command itself confirmed food use. A current release, selected-slot change, item replacement, death or reconnect clears it. Completion consumes exactly one item from the captured slot, applies `SurvivalSystem` effects, marks inventory dirty, and inserts a returned bottle through the authoritative inventory (or spawns the overflow as a world drop).
+
+The client keeps only an immediate `localFoodUse` presentation token for the first-person/remote-visible eating progress. It never consumes or applies effects. Snapshot N describes the pre-use boundary and cannot clear that token; only an authoritative zero-progress snapshot with `inputSeq > N` can. Rejects, release, slot/item mismatch, inventory sync and respawn still clear it.
 
 ### Claims damage routing
 

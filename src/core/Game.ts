@@ -309,6 +309,7 @@ import {
 } from '../gameplay';
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
+import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
 import type { RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -1150,8 +1151,11 @@ export class Game {
         history: this.predictedHistoryPose(online, local.inputSeq),
       });
       const localFoodUse = online.localFoodUse;
-      if (localFoodUse && (local.inputSeq ?? -1) >= localFoodUse.commandSeq
-        && local.presentation?.foodUseProgress === 0) {
+      if (localFoodUse && shouldClearLocalFoodUseFromSnapshot({
+        actionBoundaryCommandSeq: localFoodUse.commandSeq,
+        snapshotInputSeq: local.inputSeq,
+        authoritativeFoodUseProgress: local.presentation?.foodUseProgress,
+      })) {
         session.foodUseTicks = 0;
         online.localFoodUse = undefined;
       }

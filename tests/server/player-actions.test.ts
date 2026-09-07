@@ -372,6 +372,108 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     expect(world.gameplay.arrows.count).toBe(1);
   });
 
+  it('keeps a render-edge food action alive through the equal pre-use command until N+1 confirms it', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack(ItemId.Apple, 1));
+    world.applyInput(player, input(15, { selectedSlot: 0, use: false }));
+    world.tick();
+
+    expect(world.interact(player, undefined, 1, 15, 0)).toEqual({ ok: true });
+    expect(player.foodUseTicks).toBe(1);
+    world.tick();
+    expect(player.foodUseTicks).toBe(1);
+
+    world.applyInput(player, input(16, { selectedSlot: 0, use: true }));
+    world.tick();
+    expect(player.foodUseTicks).toBe(2);
+    for (let tick = 0; tick < 30; tick += 1) world.tick();
+    expect(player.inventory.count(ItemId.Apple)).toBe(0);
+    expect(player.foodUseTicks).toBe(0);
+  });
+
+  it('accepts an immediate render-edge slot switch and consumes the server-owned potion after N+1 confirms it', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack('stone', 1));
+    player.inventory.setSlot(3, createItemStack(ItemId.PotionRegeneration, 1));
+    world.applyInput(player, input(15, { selectedSlot: 0, use: false }));
+    world.tick();
+
+    expect(world.interact(player, undefined, 1, 15, 3)).toEqual({ ok: true });
+    expect(player.foodUseTicks).toBe(1);
+    expect(player.useItemId).toBe(ItemId.PotionRegeneration);
+    world.tick();
+    expect(player.foodUseTicks).toBe(1);
+
+    world.applyInput(player, input(16, { selectedSlot: 3, use: true }));
+    world.tick();
+    for (let tick = 0; tick < 30; tick += 1) world.tick();
+    expect(player.inventory.count(ItemId.PotionRegeneration)).toBe(0);
+    expect(player.inventory.count(ItemId.GlassBottle)).toBe(1);
+    expect(player.survival.effectTicks('regeneration')).toBeGreaterThan(0);
+  });
+
+  it('cancels a render-edge food action when the first strictly newer command has use=false', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack(ItemId.Apple, 1));
+    world.applyInput(player, input(15, { selectedSlot: 0, use: false }));
+    world.tick();
+    expect(world.interact(player, undefined, 1, 15, 0)).toEqual({ ok: true });
+
+    world.applyInput(player, input(16, { selectedSlot: 0, use: false }));
+    world.tick();
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.inventory.count(ItemId.Apple)).toBe(1);
+  });
+
+  it('cancels a render-edge food action when the first strictly newer command selects another slot', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack(ItemId.Apple, 1));
+    player.inventory.setSlot(1, createItemStack('stone', 1));
+    world.applyInput(player, input(15, { selectedSlot: 0, use: false }));
+    world.tick();
+    expect(world.interact(player, undefined, 1, 15, 0)).toEqual({ ok: true });
+
+    world.applyInput(player, input(16, { selectedSlot: 1, use: true }));
+    world.tick();
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.inventory.count(ItemId.Apple)).toBe(1);
+  });
+
+  it('keeps slot and block-intent validation strict for targeted render-edge use', async () => {
+    const { world, player } = await boot();
+    const hit = prepareTarget(world, player);
+    const intent = blockTargetFromHit(hit);
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack('stone', 1));
+    player.inventory.setSlot(3, createItemStack('dirt', 2));
+    world.applyInput(player, input(15, { selectedSlot: 0, use: false }));
+    world.tick();
+
+    expect(world.interact(player, { ...intent, targetBlockId: BlockId.Dirt }, 1, 15, 3))
+      .toEqual({ ok: false, reason: 'stale' });
+    expect(world.interact(player, intent, 2, 15, 36))
+      .toEqual({ ok: false, reason: 'slot' });
+
+    world.applyInput(player, input(16, { selectedSlot: 0, use: false }));
+    world.tick();
+    expect(world.interact(player, intent, 3, 15, 3))
+      .toEqual({ ok: false, reason: 'slot' });
+    expect(world.world.getBlock(hit.x + hit.normal.x, hit.y + hit.normal.y, hit.z + hit.normal.z))
+      .toBe(BlockId.Air);
+    expect(player.inventory.count('dirt')).toBe(2);
+  });
+
   it('starts food from the captured slot and ignores older FIFO use=false commands', async () => {
     const { world, player } = await boot();
     world.setGameMode(player, 'survival');
@@ -426,6 +528,7 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     expect(player.useStartCommandSeq).toBe(1);
     expect(player.useSelectedSlot).toBe(2);
     expect(player.useItemId).toBe(ItemId.Apple);
+    expect(player.foodUseBoundaryCommandConfirmed).toBe(true);
 
     player.survival.damage(100, 'generic', { ignoreInvulnerability: true });
     world.gameplay.respawnIfDead(player);
@@ -434,6 +537,7 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     expect(player.useStartCommandSeq).toBeUndefined();
     expect(player.useSelectedSlot).toBeUndefined();
     expect(player.useItemId).toBeUndefined();
+    expect(player.foodUseBoundaryCommandConfirmed).toBeUndefined();
     expect(player.lastUse).toBe(false);
   });
 

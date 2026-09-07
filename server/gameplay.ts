@@ -122,6 +122,7 @@ export interface GameplayPlayer {
   useStartCommandSeq?: number;
   useSelectedSlot?: number;
   useItemId?: string;
+  foodUseBoundaryCommandConfirmed?: boolean;
   lastUse: boolean;
   lastSprint: boolean;
   vehicleForward: number;
@@ -651,6 +652,7 @@ export class ServerGameplay {
     intent?: BlockTargetIntent,
     commandSeq?: number,
     selectedSlot = player.selectedSlot,
+    boundaryCommandConfirmsUse = false,
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     let hit: VoxelHit | undefined;
@@ -677,6 +679,9 @@ export class ServerGameplay {
       );
       player.useSelectedSlot = selectedSlot;
       player.useItemId = heldItemId;
+      player.foodUseBoundaryCommandConfirmed = player.foodUseTicks === 1
+        ? boundaryCommandConfirmsUse
+        : undefined;
     }
     if (player.bowUseTicks > 0 && beforeBow === 0) {
       bowDebug(player.id, 'server_press', `charge=${player.bowUseTicks}`);
@@ -887,7 +892,12 @@ export class ServerGameplay {
     const stack = player.inventory.getSlot(activeSlot);
     const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
     const commandAware = player.useStartCommandSeq !== undefined;
-    if (commandAware && commandSeq < player.useStartCommandSeq!) return;
+    if (commandAware && (
+      commandSeq < player.useStartCommandSeq!
+      || (player.foodUseTicks > 0
+        && commandSeq === player.useStartCommandSeq
+        && player.foodUseBoundaryCommandConfirmed !== true)
+    )) return;
     const wrongSlot = player.useSelectedSlot !== undefined && selectedSlot !== player.useSelectedSlot;
     const wrongItem = player.useItemId !== undefined && stack?.itemId !== player.useItemId;
     if (wrongSlot || wrongItem || (!using && player.foodUseTicks > 0)) {
@@ -930,6 +940,7 @@ export class ServerGameplay {
     player.useStartCommandSeq = undefined;
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
   }
 
   updateRiding(player: GameplayPlayer, sprint: boolean): void {
@@ -995,6 +1006,7 @@ export class ServerGameplay {
     player.useStartCommandSeq = undefined;
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     if (player.lastInput) {
