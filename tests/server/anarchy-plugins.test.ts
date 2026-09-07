@@ -126,6 +126,30 @@ describe('Anarchy builtin plugins', () => {
     });
   }
 
+  function installPvpZone(
+    world: WorldInstance,
+    player: ReturnType<typeof join>['player'],
+    id: string,
+    pvp: boolean,
+  ): void {
+    const x = Math.floor(player.controller.position.x);
+    const y = Math.floor(player.controller.position.y);
+    const z = Math.floor(player.controller.position.z);
+    const current = world.pluginStore.load<{ claims?: unknown[] }>('claims/claims', { claims: [] });
+    world.pluginStore.save('claims/claims', {
+      claims: [...(current.claims ?? []), {
+        id,
+        name: id,
+        owner: 'zone-owner',
+        worldId: world.worldId,
+        volume: { minX: x, minY: y - 1, minZ: z, maxX: x, maxY: y + 2, maxZ: z },
+        members: [],
+        priority: 0,
+        flags: { pvp, 'player-damage': true },
+      }],
+    });
+  }
+
   it('keeps /tp coordinates and adds /tpa without replacing it', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
@@ -320,6 +344,72 @@ describe('Anarchy builtin plugins', () => {
     const mobProjectile = world.events.createPlayerDamage(b.player.id, 1, 'projectile');
     world.events.emit('playerDamage', mobProjectile);
     expect(mobProjectile.cancelled).toBe(!mobDamage);
+  });
+
+  it.each([
+    { attackerZone: 'wild', victimZone: 'wild', cancelled: false },
+    { attackerZone: 'true', victimZone: 'true', cancelled: false },
+    { attackerZone: 'false', victimZone: 'true', cancelled: true },
+    { attackerZone: 'true', victimZone: 'false', cancelled: true },
+    { attackerZone: 'false', victimZone: 'false', cancelled: true },
+    { attackerZone: 'wild', victimZone: 'false', cancelled: true },
+    { attackerZone: 'false', victimZone: 'wild', cancelled: true },
+    { attackerZone: 'wild', victimZone: 'true', cancelled: false },
+    { attackerZone: 'true', victimZone: 'wild', cancelled: false },
+  ] as const)('requires PvP at both player endpoints: attacker=$attackerZone victim=$victimZone', async ({
+    attackerZone, victimZone, cancelled,
+  }) => {
+    const world = await boot();
+    const attacker = join(world, `MatrixA-${attackerZone}-${victimZone}`);
+    const victim = join(world, `MatrixB-${attackerZone}-${victimZone}`);
+    attacker.player.controller.teleport([110.5, 100, 110.5]);
+    victim.player.controller.teleport([110.5, 100, 114.5]);
+    if (attackerZone !== 'wild') {
+      installPvpZone(world, attacker.player, 'attacker-zone', attackerZone === 'true');
+    }
+    if (victimZone !== 'wild') {
+      installPvpZone(world, victim.player, 'victim-zone', victimZone === 'true');
+    }
+
+    const event = world.events.createPlayerDamage(victim.player.id, 2, 'melee', attacker.player.id);
+    world.events.emit('playerDamage', event);
+
+    expect(event.cancelled).toBe(cancelled);
+  });
+
+  it('blocks real melee damage initiated inside a no-PvP claim against a wilderness victim', async () => {
+    const world = await boot();
+    const attacker = join(world, 'SafeMeleeAttacker');
+    const victim = join(world, 'WildMeleeVictim');
+    attacker.player.controller.teleport([120.5, 100, 120.5]);
+    victim.player.controller.teleport([120.5, 100, 122.5]);
+    const direction = victim.player.controller.position.clone().sub(attacker.player.controller.position);
+    attacker.player.controller.yaw = Math.atan2(-direction.x, -direction.z);
+    attacker.player.controller.pitch = 0;
+    installPvpZone(world, attacker.player, 'melee-safe', false);
+    const before = victim.player.survival.health;
+
+    world.attack(attacker.player);
+
+    expect(victim.player.survival.health).toBe(before);
+  });
+
+  it.each([
+    { flaming: false, label: 'Arrow' },
+    { flaming: true, label: 'FireArrow' },
+  ])('blocks real $label damage fired inside a no-PvP claim at a wilderness victim', async ({ flaming }) => {
+    const world = await boot();
+    const attacker = join(world, `SafeArrowAttacker-${flaming}`);
+    const victim = join(world, `WildArrowVictim-${flaming}`);
+    attacker.player.controller.teleport([130.5, 100, 130.5]);
+    victim.player.controller.teleport([130.5, 100, 132.5]);
+    installPvpZone(world, attacker.player, `arrow-safe-${flaming}`, false);
+    const before = victim.player.survival.health;
+
+    spawnPlayerArrow(world, attacker.player, victim.player, flaming);
+    world.tick();
+
+    expect(victim.player.survival.health).toBe(before);
   });
 
   it('creates, edits, and persists holograms with multiple lines', async () => {

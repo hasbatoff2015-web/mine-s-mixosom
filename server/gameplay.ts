@@ -119,6 +119,10 @@ export interface GameplayPlayer {
   miningStartCommandSeq?: number;
   bowUseTicks: number;
   foodUseTicks: number;
+  useStartCommandSeq?: number;
+  useSelectedSlot?: number;
+  useItemId?: string;
+  foodUseBoundaryCommandConfirmed?: boolean;
   lastUse: boolean;
   lastSprint: boolean;
   vehicleForward: number;
@@ -647,6 +651,8 @@ export class ServerGameplay {
     player: GameplayPlayer,
     intent?: BlockTargetIntent,
     commandSeq?: number,
+    selectedSlot = player.selectedSlot,
+    boundaryCommandConfirmsUse = false,
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     let hit: VoxelHit | undefined;
@@ -660,7 +666,23 @@ export class ServerGameplay {
       hit = this.lookHit(player);
     }
     const beforeBow = player.bowUseTicks;
-    performUseHeld(this.useContext(player, hit));
+    const beforeFood = player.foodUseTicks;
+    const heldItemId = player.inventory.getSlot(selectedSlot)?.itemId;
+    performUseHeld(this.useContext(player, hit, selectedSlot));
+    if ((player.bowUseTicks === 1 && beforeBow !== 1) || (player.foodUseTicks === 1 && beforeFood !== 1)) {
+      if (player.bowUseTicks === 1) player.foodUseTicks = 0;
+      if (player.foodUseTicks === 1) player.bowUseTicks = 0;
+      player.useStartCommandSeq = commandSeq ?? (
+        player.appliedCommandSeq !== undefined && player.appliedCommandSeq >= 0
+          ? player.appliedCommandSeq
+          : undefined
+      );
+      player.useSelectedSlot = selectedSlot;
+      player.useItemId = heldItemId;
+      player.foodUseBoundaryCommandConfirmed = player.foodUseTicks === 1
+        ? boundaryCommandConfirmsUse
+        : undefined;
+    }
     if (player.bowUseTicks > 0 && beforeBow === 0) {
       bowDebug(player.id, 'server_press', `charge=${player.bowUseTicks}`);
     }
@@ -714,13 +736,14 @@ export class ServerGameplay {
     return { ok: true };
   }
 
-  private useContext(player: GameplayPlayer, hit?: VoxelHit): UseSimulationContext {
+  private useContext(player: GameplayPlayer, hit?: VoxelHit, selectedSlot = player.selectedSlot): UseSimulationContext {
     const gameplay = this;
+    let useSlot = selectedSlot;
     return {
       world: this.world,
       inventory: player.inventory,
-      get selectedSlot() { return player.selectedSlot; },
-      set selectedSlot(value) { player.selectedSlot = value; },
+      get selectedSlot() { return useSlot; },
+      set selectedSlot(value) { useSlot = value; },
       gamemode: player.gamemode,
       reach: PLAYER_REACH,
       ...(hit ? { hit } : {}),
@@ -859,27 +882,65 @@ export class ServerGameplay {
     if (player.miningProgress >= 1) this.breakBlock(player, target.x, target.y, target.z);
   }
 
-  advanceUseHold(player: GameplayPlayer, using: boolean): void {
-    const stack = player.inventory.getSlot(player.selectedSlot);
+  advanceUseHold(
+    player: GameplayPlayer,
+    using: boolean,
+    commandSeq = player.appliedCommandSeq ?? -1,
+    selectedSlot = player.selectedSlot,
+  ): void {
+    const activeSlot = player.useSelectedSlot ?? player.selectedSlot;
+    const stack = player.inventory.getSlot(activeSlot);
     const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
+    const commandAware = player.useStartCommandSeq !== undefined;
+    if (commandAware && (
+      commandSeq < player.useStartCommandSeq!
+      || (player.foodUseTicks > 0
+        && commandSeq === player.useStartCommandSeq
+        && player.foodUseBoundaryCommandConfirmed !== true)
+    )) return;
+    const wrongSlot = player.useSelectedSlot !== undefined && selectedSlot !== player.useSelectedSlot;
+    const wrongItem = player.useItemId !== undefined && stack?.itemId !== player.useItemId;
+    if (wrongSlot || wrongItem || (!using && player.foodUseTicks > 0)) {
+      this.clearUseHold(player);
+      return;
+    }
     if (player.bowUseTicks > 0) {
       if (stack?.itemId !== ItemId.Bow) {
         bowDebug(player.id, 'draw_cancel', 'item');
-        player.bowUseTicks = 0;
+        this.clearUseHold(player);
       } else {
         player.bowUseTicks += 1;
       }
     }
     if (player.foodUseTicks <= 0) return;
     if (!using || item?.kind !== 'food' || !player.survival.canConsumeFood(item.id)) {
-      player.foodUseTicks = 0;
+      this.clearUseHold(player);
       return;
     }
     player.foodUseTicks += 1;
     if (player.foodUseTicks >= 32) {
-      if (player.survival.consumeFood(item, player.inventory)) player.inventoryDirty = true;
-      player.foodUseTicks = 0;
+      const current = player.inventory.getSlot(activeSlot);
+      if (current?.itemId === item.id && player.survival.consumeFood(item)) {
+        player.inventory.setSlot(activeSlot, current.count <= 1 ? null : { ...current, count: current.count - 1 });
+        if (item.food.returnsItem) {
+          const overflow = player.inventory.addItem(item.food.returnsItem, 1);
+          if (overflow > 0) {
+            this.spawnDroppedStack(createItemStack(item.food.returnsItem, overflow), player.controller.position.clone(), player.id);
+          }
+        }
+        player.inventoryDirty = true;
+      }
+      this.clearUseHold(player);
     }
+  }
+
+  private clearUseHold(player: GameplayPlayer): void {
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.useStartCommandSeq = undefined;
+    player.useSelectedSlot = undefined;
+    player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
   }
 
   updateRiding(player: GameplayPlayer, sprint: boolean): void {
@@ -942,6 +1003,10 @@ export class ServerGameplay {
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
+    player.useStartCommandSeq = undefined;
+    player.useSelectedSlot = undefined;
+    player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     if (player.lastInput) {
@@ -985,7 +1050,7 @@ export class ServerGameplay {
     if (player.bowUseTicks <= 0) return { ok: false, reason: 'no-draw' };
     const charge = player.combat.bowCharge(player.bowUseTicks);
     bowDebug(player.id, 'server_fire', `charge=${player.bowUseTicks} canFire=${charge.canFire} yaw=${yaw.toFixed(4)} pitch=${pitch.toFixed(4)}`);
-    player.bowUseTicks = 0;
+    this.clearUseHold(player);
     if (!charge.canFire) return { ok: false, reason: 'charge' };
     let flaming = false;
     if (player.gamemode === 'survival') {

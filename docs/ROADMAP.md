@@ -1,5 +1,27 @@
 # Roadmap
 
+## 2026-09-07: Online consumable render-edge follow-up
+
+- [x] Reproduce real order: applied pre-use command N → render-edge `interact(N)` → fixed input N+1.
+- [x] Keep a newly accepted food/potion session through pre-use state `<= N`; let the first strictly newer command confirm or cancel it.
+- [x] Accept an immediate captured hotbar switch only at the freshest action boundary; validate index and read the item exclusively from server inventory.
+- [x] Preserve stale command, invalid slot, target block ID, face/reach and server inventory validation for targeted block interactions.
+- [x] Keep delayed boundary snapshot N from clearing local eat/drink presentation; zero progress from `> N` may clear it.
+- [x] Cover confirm, release cancel, slot cancel, potion completion/effect/bottle, delayed snapshot and targeted-use security regressions.
+- [ ] Owner live QA: between-tick Apple/Potion use, immediate number-key/scroll switch + RMB, release/switch cancel, visible animation through the first delayed snapshot.
+
+## 2026-09-07: six gameplay / Online regressions
+
+- [x] Cobweb blocks ordinary jump and strongly damps vertical velocity; leaving the web restores normal jump.
+- [x] Ground-support landing resets `fallDistance` after repeated low-ceiling jumps without hiding real fall damage.
+- [x] Online primed TNT runs the existing render pulse while fuse/explosion remain server-authoritative.
+- [x] Claims PvP checks both victim and real player attacker locations for melee, Arrow and FireArrow; wilderness stays allowed and mob/environment routing is unchanged.
+- [x] Bow/sword use movement uses one shared Node-safe 0.2 transform in SP, Online prediction and server simulation, with sprint/fly-sprint disabled and no double application on wire input.
+- [x] Online Apple, GoldenApple and both potions use a captured authoritative slot; stale FIFO input cannot cancel the new action; release/switch/death/reconnect do cancel; bottle overflow becomes a world drop.
+- [x] Immediate local eat/drink presentation reconciles against action reject, inventory and authoritative food progress.
+- [x] Automated regressions cover the six roots, PvP claim matrix, actual melee/Arrow/FireArrow, 20 bow cycles, consumable lifecycle/effects/bottles and TNT presentation/removal.
+- [ ] Owner manual two-client QA: cobweb + low ceiling, TNT pulse/explosion/removal, attacker/victim claim edges, bow strafe/sprint, visible Apple/GoldenApple/potion use and cancel cases.
+
 ## 2026-09-07: Online arrow PvP + FireArrow pickup
 
 - [x] Carry `PlayerArrow.ownerId` through `onPlayerHit` into pre/post player damage events as `attackerId`.

@@ -52,3 +52,8 @@ export {
   type UseIntentKind,
   type UseSimulationContext,
 } from './useInteraction';
+export {
+  ACTIVE_USE_MOVEMENT_MULTIPLIER,
+  movementDuringItemUse,
+  slowsMovementWhileUsing,
+} from './useMovement';
