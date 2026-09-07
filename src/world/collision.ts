@@ -101,7 +101,7 @@ export function blockCollisionBoxes(
   if (block === BlockId.OakDoor) {
     return [doorCollisionBox(x, y, z, state)];
   }
-  if (block === BlockId.Chest) {
+  if (block === BlockId.Chest || block === BlockId.PortalChest) {
     return offsetLocalBoxes(x, y, z, [CHEST_BOX]);
   }
   if (block === BlockId.Lantern) {

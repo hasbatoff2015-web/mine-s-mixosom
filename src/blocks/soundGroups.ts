@@ -17,7 +17,7 @@ const DIRT_KEYS = new Set([
 const WOOD_KEYS = new Set([
   'oak_log', 'birch_log', 'spruce_log',
   'oak_planks', 'birch_planks', 'spruce_planks',
-  'bookshelf', 'crafting_table', 'chest', 'oak_door', 'ladder', 'white_bed',
+  'bookshelf', 'crafting_table', 'chest', 'portal_chest', 'oak_door', 'ladder', 'white_bed',
   'oak_pressure_plate', 'torch',
 ]);
 const GLASS_KEYS = new Set(['glass', 'ice']);

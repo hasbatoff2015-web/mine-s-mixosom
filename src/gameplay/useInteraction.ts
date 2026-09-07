@@ -62,6 +62,7 @@ export type UseIntentKind =
   | 'pickup-bucket'
   | 'open-crafting-table'
   | 'open-chest'
+  | 'open-portal-chest'
   | 'open-furnace'
   | 'toggle-lever'
   | 'press-button'
@@ -114,7 +115,7 @@ export interface UseHostEffects {
   swing?(): void;
   playWorld?(event: string, x: number, y: number, z: number, options?: { pitch?: number }): void;
   playBlock?(action: 'place', block: BlockId, x: number, y: number, z: number): void;
-  openContainer?(kind: 'crafting-table' | 'chest' | 'furnace', x: number, y: number, z: number): void;
+  openContainer?(kind: 'crafting-table' | 'chest' | 'furnace' | 'portal-chest', x: number, y: number, z: number): void;
   onBedUsed?(skippedNight: boolean): void;
   onInventoryChanged?(): void;
   onFlintIgnite?(): void;
@@ -201,6 +202,7 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
     switch (input.hit.block) {
       case BlockId.CraftingTable: return 'open-crafting-table';
       case BlockId.Chest: return 'open-chest';
+      case BlockId.PortalChest: return 'open-portal-chest';
       case BlockId.Furnace: return 'open-furnace';
       case BlockId.Lever: return 'toggle-lever';
       case BlockId.StoneButton: return 'press-button';
@@ -253,6 +255,10 @@ export function performUseHeld(ctx: UseSimulationContext): void {
     }
     if (hit.block === BlockId.Chest) {
       ctx.effects?.openContainer?.('chest', hit.x, hit.y, hit.z);
+      return;
+    }
+    if (hit.block === BlockId.PortalChest) {
+      ctx.effects?.openContainer?.('portal-chest', hit.x, hit.y, hit.z);
       return;
     }
     if (hit.block === BlockId.Furnace) {
@@ -575,7 +581,7 @@ export function placeBlockAt(
     return { ok: true };
   }
 
-  if (blockId === BlockId.Chest) {
+  if (blockId === BlockId.Chest || blockId === BlockId.PortalChest) {
     if (placed.solid && ctx.intersectsBlock(x, y, z)) return { ok: false, reason: 'collision' };
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
     if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };

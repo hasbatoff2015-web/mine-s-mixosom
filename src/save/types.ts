@@ -31,6 +31,8 @@ export interface SerializedPlayerState {
   selectedSlot: number;
   spawnPoint?: [number, number, number];
   inventory: unknown;
+  /** Personal portal-chest slots. Missing on old saves means empty. */
+  portalChest?: unknown;
 }
 
 /**
@@ -53,6 +55,8 @@ export interface SerializedPersistedPlayer {
   readonly updatedAt: number;
   readonly survival?: unknown;
   readonly cursor?: unknown;
+  /** Personal portal-chest slots. Missing on old saves means empty. */
+  readonly portalChest?: unknown;
 }
 
 export interface SerializedServerWorld {

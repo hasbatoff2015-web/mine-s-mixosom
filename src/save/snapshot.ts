@@ -77,6 +77,7 @@ function parsePlayer(value: unknown): SerializedPlayerState {
     selectedSlot: Math.max(0, Math.floor(finiteNumber(value.selectedSlot, 0))),
     ...(parseVec3(value.spawnPoint) ? { spawnPoint: parseVec3(value.spawnPoint) } : {}),
     inventory: value.inventory ?? emptyInventoryBlob(),
+    ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
   };
 }
 
@@ -102,6 +103,7 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     updatedAt: finiteNumber(value.updatedAt, Date.now()),
     ...(value.survival !== undefined ? { survival: value.survival } : {}),
     ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
+    ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
   };
 }
 

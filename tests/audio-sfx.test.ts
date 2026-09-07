@@ -90,6 +90,7 @@ describe('block sound groups', () => {
     expect(getBlockDefinition(BlockId.Furnace).soundGroup).toBe('stone');
     expect(getBlockDefinition(BlockId.OakPlanks).soundGroup).toBe('wood');
     expect(getBlockDefinition(BlockId.Chest).soundGroup).toBe('wood');
+    expect(getBlockDefinition(BlockId.PortalChest).soundGroup).toBe('wood');
     expect(getBlockDefinition(BlockId.OakDoor).soundGroup).toBe('wood');
     expect(getBlockDefinition(BlockId.Dirt).soundGroup).toBe('dirt');
     expect(getBlockDefinition(BlockId.GrassBlock).soundGroup).toBe('dirt');

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BlockId } from '../../src/blocks';
 import { CombatSystem } from '../../src/combat';
-import { Inventory, createItemStack } from '../../src/inventory';
+import { Inventory, createItemStack, createPortalChestInventory } from '../../src/inventory';
 import { ItemId } from '../../src/items';
 import { Vec3 } from '../../src/math/vec3';
 import { PlayerController } from '../../src/player';
@@ -15,7 +15,7 @@ function playerNear(x: number, y: number, z: number): GameplayPlayer {
   return {
     id: 'farmer', connected: true,
     controller: new PlayerController({ position: [x + 0.5, y, z + 1.5], yaw: 0, pitch: 0 }),
-    inventory: new Inventory(), survival: new SurvivalSystem(), combat: new CombatSystem(),
+    inventory: new Inventory(), portalChest: createPortalChestInventory(), survival: new SurvivalSystem(), combat: new CombatSystem(),
     gamemode: 'survival', selectedSlot: 0, cursor: null,
     craftSlots: [null, null, null, null], window: { kind: 'inventory' },
     miningTarget: { x, y, z }, miningProgress: 1,

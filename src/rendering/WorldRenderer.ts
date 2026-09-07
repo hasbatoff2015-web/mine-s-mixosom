@@ -7,7 +7,8 @@ import type { VoxelHit, VoxelWorld } from '../world/World';
 import { lightContextReady } from '../world/worldJobs';
 import { meshJobSortScore, meshWaitMs } from '../world/streamingScheduler';
 import { ChunkMesher, type BlockRenderStateResolver } from './ChunkMesher';
-import { ChestRenderer } from './ChestRenderer';
+import { ChestRenderer, type ChestRenderCell } from './ChestRenderer';
+import { chestTextureKeyForBlock } from './chestModel';
 import { BlockBreakingOverlay, type BreakingOverlaySnapshot } from './BlockBreakingOverlay';
 import { RemoteBreakingOverlays } from './RemoteBreakingOverlays';
 import {
@@ -298,12 +299,13 @@ export class WorldRenderer {
   }
 
   updateChests(dtSeconds: number): void {
-    const cells: Array<{ x: number; y: number; z: number; facing?: HorizontalFacing }> = [];
+    const cells: ChestRenderCell[] = [];
     for (const visual of this.chunks.values()) {
       for (const chest of visual.chests) {
         cells.push({
           ...chest,
           facing: this.resolveState(chest.x, chest.y, chest.z)?.facing as HorizontalFacing | undefined,
+          textureKey: chestTextureKeyForBlock(this.world.getBlock(chest.x, chest.y, chest.z, false)),
         });
       }
     }

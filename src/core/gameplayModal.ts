@@ -2,7 +2,7 @@ import type { MoveInput } from '../input/MoveInput';
 import type { LifecycleState } from './lifecycleTypes';
 
 /** Player-facing container overlays. Recipe Book is a panel inside these, not a pause. */
-export type GameplayModalKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace';
+export type GameplayModalKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
 
 export const BLOCKED_MOVE_INPUT: MoveInput = Object.freeze({
   forward: 0,

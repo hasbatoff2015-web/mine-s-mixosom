@@ -1,6 +1,7 @@
 /** In-game container copy. The rest of GameUI is Russian-only; follow that policy. */
 export const CONTAINER_STRINGS = Object.freeze({
   chest: 'Сундук',
+  portalChest: 'Портальный сундук',
   inventory: 'Инвентарь',
   catalog: 'Каталог',
   crafting: 'Создание',

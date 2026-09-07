@@ -61,7 +61,7 @@ describe('placement anchors and sturdy attachment faces', () => {
     }
   });
 
-  it.each(['stone', 'oak_slab', 'oak_stairs', 'oak_door', 'chest', 'furnace', 'rail', 'oak_pressure_plate', 'redstone_dust'])('preserves %s on stone', (item) => {
+  it.each(['stone', 'oak_slab', 'oak_stairs', 'oak_door', 'chest', 'portal_chest', 'furnace', 'rail', 'oak_pressure_plate', 'redstone_dust'])('preserves %s on stone', (item) => {
     const f = fixture(); f.place(item);
     expect(f.world.getBlock(5, 41, 5, false)).toBe(getItemDefinition(item).placesBlockId);
   });

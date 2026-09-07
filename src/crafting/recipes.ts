@@ -30,6 +30,15 @@ const recipes: Recipe[] = [
     output: { item: 'chest', count: 1 }, gridSize: 3,
   },
   {
+    id: 'portal_chest', type: 'shaped', pattern: [' R ', ' C ', 'OOO'],
+    key: {
+      R: exact(ItemId.RedstoneDust),
+      C: exact('chest'),
+      O: exact('obsidian'),
+    },
+    output: { item: 'portal_chest', count: 1 }, gridSize: 3,
+  },
+  {
     id: 'furnace', type: 'shaped', pattern: ['CCC', 'C C', 'CCC'], key: { C: exact('cobblestone') },
     output: { item: 'furnace', count: 1 }, gridSize: 3,
   },

@@ -243,6 +243,10 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     category: 'utility', hardness: 2.5, tool: 'axe', tier: 'hand', flammable: true,
     opaque: false, occludesFaces: false, renderShape: 'chest',
   }),
+  block(BlockId.PortalChest, 'portal_chest', {
+    category: 'utility', hardness: 2.5, tool: 'axe', tier: 'hand',
+    opaque: false, occludesFaces: false, renderShape: 'chest',
+  }),
   block(BlockId.Furnace, 'furnace', {
     category: 'utility', hardness: 3.5, tool: 'pickaxe', tier: 'wood',
     drop: { item: 'furnace', count: 1, requiresCorrectTool: true },
