@@ -1,5 +1,17 @@
 # Архитектура
 
+## Vanilla-style player armor presentation — 2026-09-07
+
+`PlayerArmorVisual` is a presentation child of the canonical `PlayerVisual`; it is not a second rig. Its head, torso, arm and leg shell meshes attach directly to the existing articulated pivots, so `PlayerVisualAnimator` remains the sole owner of idle/walk/sprint/sneak/jump/attack/mining/bow/eat/block motion. Base model dimensions and legacy 64×32 cuboid UV islands are reused with vanilla armor deformation: outer `layer_1` shells inflate by 1 model pixel, inner leggings `layer_2` by 0.5 pixel. Helmet uses head, chestplate uses torso+arms, leggings use waist+legs, and boots use legs. Slim skins retain their 3 px body arms and shoulder pivot while armor sleeves intentionally keep vanilla 4 px shell width.
+
+`PlayerArmorGeometryCache` shares immutable cuboid geometry by part/layer; `PlayerArmorMaterialCache` shares one loaded texture/template per material/layer/pass and creates only per-player entity-light material clones. Textures are sRGB, nearest-filtered, clamp-to-edge, mipmaps off and alpha-tested with depth write. Slot signatures make unchanged render frames a no-op: equip/unequip swaps visibility/material references on meshes built once per view, never rebuilding geometry per tick or snapshot. Leather is a tinted base pass plus white overlay; chainmail holes use the same alpha-cutout path. Missing assets log a deterministic error and do not silently substitute iron.
+
+Local armor is derived from the canonical `Inventory.armor` exact item IDs every render and applied only to the local third-person `PlayerVisual`. `FirstPersonRenderer` has no equipment input and creates no helmet, chestplate sleeve, torso, leggings or boots around the camera, matching vanilla first-person semantics. `PlayerVisual` invisibility hides skin base and enabled outer layers only; armor shells and the held-item child keep their equipment-driven visibility. Remote players inherit the same rule because `RemotePlayerView` renders through the same `PlayerVisual`.
+
+Online authority remains server-side. The Node-safe optional `PlayerEquipmentState { head, chest, legs, feet }` is included in `RemotePlayerInfo` and `PlayerSnapshot`; `WorldInstance` derives it from each server `Inventory`, never from a client equipment claim. `RemotePlayerView.reset/applySnapshot` updates the already existing `PlayerVisual`, and dead/reset views force empty equipment. Optional fields preserve empty fallback compatibility for older fixtures without a protocol version bump or second packet stream. This changes presentation only: armor points, damage reduction, durability, inventory sync and fixed 20 TPS gameplay paths are untouched.
+
+The current gameplay registry contains leather/gold/iron/diamond armor only. Chainmail texture routing is accepted for exact conventional item IDs by the isolated presentation resolver and QA harness so transparent assets are correct when/if supplied; this pass does not expose chainmail in Creative, recipes, saves or combat.
+
 ## PR #64 onto current main — 2026-09-07
 
 Eat/drink animation is PR #65's `FirstPersonRenderer.applyEatPose` plus `localFoodUse` / captured slot / `foodUseProgress`. There is no `heldItemEatPose.ts`.
@@ -14,7 +26,7 @@ root → bodyYawRoot
   rightLeg, leftLeg
 ```
 
-`bodyYOffset` / `bodyZOffset` are 0 while sneaking. Player model hurt flash uses `applyMobHurtTint` with `playerHurtFlashIntensity` (peak 1.0, 220 ms). HUD `#hurt-flash` stays `hurtFlashAlpha` peak 0.28. Air swing: discrete `{ type: 'attack' }` → server `presentSwing()` including misses. Claim wires: 3px, `depthTest`/`depthWrite`. No inflated armor overlay; `presentation.armor` ids stay on the wire.
+`bodyYOffset` / `bodyZOffset` are 0 while sneaking. Player model hurt flash uses `applyMobHurtTint` with `playerHurtFlashIntensity` (peak 1.0, 220 ms). HUD `#hurt-flash` stays `hurtFlashAlpha` peak 0.28. Air swing: discrete `{ type: 'attack' }` → server `presentSwing()` including misses. Claim wires: 3px, `depthTest`/`depthWrite`. The legacy inflated armor overlay from PR #64 remains dropped: `presentation.armor` ids stay on the wire for compatibility but are neither authoritative nor rendered. The separate production `PlayerArmorVisual` described above renders only server-owned `equipment` state.
 
 ## Gameplay / Online regression invariants — 2026-09-07
 
@@ -492,7 +504,7 @@ Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меня�
 
 Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
 
-Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, armor ids, swingSeq and hurtSeq arrive through additive `presentation`. Armor ids are not rendered. Appearance (skinId/model/layers) is still local default until a later metadata event.
+Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, legacy armor ids, `swingSeq` and `hurtSeq` arrive through additive `presentation`; legacy `presentation.armor` is ignored for armor rendering. Protocol separately carries authoritative exact armor equipment as additive `equipment?`; `RemotePlayerView` applies that server-owned snapshot state to `PlayerArmorVisual`. Appearance (skinId/model/layers) still uses `DEFAULT_PLAYER_APPEARANCE` until a later rare metadata event `{ skinId, model, layers? }`, never PNG/base64 or a per-tick texture payload.
 
 ## Block breaking overlay — integrated 2026-09-02
 

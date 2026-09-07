@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { PlayerSnapshot, RemotePlayerInfo } from '../shared/protocol';
+import { IDLE_PLAYER_PRESENTATION } from '../shared/playerPresentation';
 import { RemotePlayerView } from '../src/net/RemotePlayerView';
 import { REMOTE_TICK_MS } from '../src/net/remotePlayerInterpolation';
 import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
@@ -66,6 +67,10 @@ describe('remote player view presentation', () => {
         pitch: 0.25,
         vx: 4,
         vz: 0,
+        equipment: {
+          head: 'iron_helmet', chest: 'diamond_chestplate', legs: null, feet: null,
+        },
+        presentation: { ...IDLE_PLAYER_PRESENTATION, heldItemId: 'diamond_sword' },
       }), tick * REMOTE_TICK_MS, tick);
     }
     const pose = view.interpolate(16 * REMOTE_TICK_MS, 1 / 60, 0.7);
@@ -73,7 +78,27 @@ describe('remote player view presentation', () => {
     expect(view.group.position.x).toBeCloseTo(pose!.x);
     expect(visual.rig.head.rotation.x).toBeCloseTo(0.25);
     expect((visual.rig.head.getObjectByName('player:head:base') as THREE.Mesh).visible).toBe(false);
-    expect(visual.heldItem).toBeUndefined();
+    expect((visual.rig.head.getObjectByName('player:head:outer') as THREE.Mesh).visible).toBe(false);
+    expect(visual.armor.meshes('head')[0]!.base.visible).toBe(true);
+    expect(visual.armor.meshes('chest').every((pair) => pair.base.visible)).toBe(true);
+    expect(visual.heldItem).toBe('diamond_sword');
+    expect(visual.rig.heldItem.visible).toBe(true);
+
+    for (let tick = 17; tick <= 23; tick += 1) {
+      view.applySnapshot(snapshot({
+        invisible: false,
+        equipment: {
+          head: 'iron_helmet', chest: 'diamond_chestplate', legs: null, feet: null,
+        },
+        presentation: { ...IDLE_PLAYER_PRESENTATION, heldItemId: 'diamond_sword' },
+      }), tick * REMOTE_TICK_MS, tick);
+    }
+    view.interpolate(23 * REMOTE_TICK_MS, 1 / 60, 0.7);
+    expect((visual.rig.head.getObjectByName('player:head:base') as THREE.Mesh).visible).toBe(true);
+    expect((visual.rig.head.getObjectByName('player:head:outer') as THREE.Mesh).visible).toBe(true);
+    expect(visual.armor.meshes('head')[0]!.base.visible).toBe(true);
+    expect(visual.armor.meshes('chest').every((pair) => pair.base.visible)).toBe(true);
+    expect(visual.rig.heldItem.visible).toBe(true);
 
     view.reset(remoteInfo);
     expect(view.buffer.sampleCount).toBe(0);

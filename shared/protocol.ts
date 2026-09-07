@@ -29,8 +29,17 @@ export type EntityKind = 'item' | 'mob' | 'minecart' | 'tnt' | 'arrow' | 'fallin
 
 export type VehicleAction = 'enter' | 'exit' | 'steer';
 
+/** Exact server-owned armor identities used only for player presentation. */
+export interface PlayerEquipmentState {
+  readonly head: string | null;
+  readonly chest: string | null;
+  readonly legs: string | null;
+  readonly feet: string | null;
+}
+
 export interface PlayerSnapshot {
   readonly presentation?: PlayerPresentationState;
+  readonly equipment?: PlayerEquipmentState;
   readonly id: string;
   readonly name: string;
   readonly x: number;
@@ -116,6 +125,7 @@ export interface PlayerSessionDiag {
 
 export interface RemotePlayerInfo {
   readonly presentation?: PlayerPresentationState;
+  readonly equipment?: PlayerEquipmentState;
   readonly id: string;
   readonly name: string;
   readonly x: number;

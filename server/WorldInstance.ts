@@ -9,6 +9,7 @@ import {
   createItemStack,
   createPortalChestInventory,
   normalizePortalChestSlots,
+  playerEquipmentFromInventory,
   type ItemStack,
   type PortalChestInventory,
 } from '../src/inventory';
@@ -230,6 +231,7 @@ export class ServerPlayer implements GameplayPlayer {
       onGround: this.controller.onGround,
       selectedSlot: this.selectedSlot,
       presentation: this.presentation(),
+      equipment: playerEquipmentFromInventory(this.inventory),
       invisible: this.survival.invisible,
       onFire: this.survival.isOnFire,
       hunger: this.survival.hunger,
@@ -303,6 +305,7 @@ export class ServerPlayer implements GameplayPlayer {
       yaw: snap.yaw,
       pitch: snap.pitch,
       presentation: snap.presentation,
+      equipment: snap.equipment,
     };
   }
 
