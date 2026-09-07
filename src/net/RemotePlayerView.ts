@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import type { PlayerSnapshot, RemotePlayerInfo } from '../../shared/protocol';
-import { IDLE_PLAYER_PRESENTATION, REMOTE_ACTION_STALE_MS, type PlayerPresentationState } from '../../shared/playerPresentation';
+import {
+  IDLE_PLAYER_PRESENTATION,
+  REMOTE_ACTION_STALE_MS,
+  presentationHurtSeq,
+  type PlayerPresentationState,
+} from '../../shared/playerPresentation';
 import type { PlayerVisual } from '../rendering/player/PlayerVisual';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -34,6 +39,7 @@ export class RemotePlayerView {
   private presentationTick = -1;
   private presentationReceivedAt = 0;
   private swingSeq = 0;
+  private hurtSeq = 0;
 
   constructor(
     info: RemotePlayerInfo,
@@ -60,6 +66,7 @@ export class RemotePlayerView {
     this.presentation = info.presentation ?? IDLE_PLAYER_PRESENTATION;
     this.presentationReceivedAt = _now;
     this.swingSeq = this.presentation.swingSeq;
+    this.hurtSeq = presentationHurtSeq(this.presentation);
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
   }
@@ -74,8 +81,17 @@ export class RemotePlayerView {
     const next = snapshot.presentation ?? IDLE_PLAYER_PRESENTATION;
     if (dead) this.visual.animator.reset(snapshot.yaw);
     else if (next.swingSeq > this.swingSeq) this.visual.swing();
+    const nextHurt = presentationHurtSeq(next);
+    if (nextHurt > this.hurtSeq) this.visual.triggerHurtFlash();
     this.swingSeq = Math.max(this.swingSeq, next.swingSeq);
-    this.presentation = dead ? { ...IDLE_PLAYER_PRESENTATION, swingSeq: this.swingSeq } : next;
+    this.hurtSeq = Math.max(this.hurtSeq, nextHurt);
+    this.presentation = dead
+      ? {
+        ...IDLE_PLAYER_PRESENTATION,
+        swingSeq: this.swingSeq,
+        hurtSeq: this.hurtSeq,
+      }
+      : next;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.options.onMining?.(this.id, this.presentation.mining, now);
   }

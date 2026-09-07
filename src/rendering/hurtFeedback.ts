@@ -3,6 +3,23 @@ import type { DamageSource } from '../survival';
 
 export const HURT_FLASH_DURATION_MS = 220;
 export const HURT_FLASH_PEAK_ALPHA = 0.28;
+
+/** Linear 0→1 decay over the flash window. HUD multiplies this by peak alpha. */
+export function hurtFlashEnvelope(elapsedMs: number, durationMs = HURT_FLASH_DURATION_MS): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= durationMs) return 0;
+  return 1 - elapsedMs / durationMs;
+}
+
+/** Screen overlay alpha. Dim on purpose so the HUD does not wash out the world. */
+export function hurtFlashAlpha(elapsedMs: number, durationMs = HURT_FLASH_DURATION_MS): number {
+  return HURT_FLASH_PEAK_ALPHA * hurtFlashEnvelope(elapsedMs, durationMs);
+}
+
+/** Peak 1.0 envelope for PlayerVisual tint (same duration as the HUD flash). */
+export function playerHurtFlashIntensity(elapsedMs: number, durationMs = HURT_FLASH_DURATION_MS): number {
+  return hurtFlashEnvelope(elapsedMs, durationMs);
+}
+
 export const HURT_KICK_DURATION_MS = 180;
 export const HURT_KICK_DEGREES = 2.1;
 export const HURT_KICK_DOT_SCALE = 0.42;
@@ -36,8 +53,13 @@ export class HurtFeedback {
 
   flashAlpha(nowMs: number): number {
     if (nowMs >= this.flashUntilMs) return 0;
-    const t = (nowMs - this.flashStartMs) / HURT_FLASH_DURATION_MS;
-    return HURT_FLASH_PEAK_ALPHA * (1 - Math.min(1, Math.max(0, t)));
+    return hurtFlashAlpha(nowMs - this.flashStartMs);
+  }
+
+  /** Model tint intensity 0–1. HUD overlay stays on flashAlpha. */
+  modelIntensity(nowMs: number): number {
+    if (nowMs >= this.flashUntilMs) return 0;
+    return playerHurtFlashIntensity(nowMs - this.flashStartMs);
   }
 
   cameraRoll(nowMs: number): number {

@@ -193,6 +193,7 @@ export class SurvivalSystem {
   private readonly onDamage?: (result: DamageResult) => void;
   private readonly onDeath?: (source: DamageSource) => void;
   private readonly isSwordBlocking?: () => boolean;
+  private readonly damageListeners: Array<(result: DamageResult) => void> = [];
 
   constructor(options: SurvivalOptions = {}) {
     this.health = clamp(options.health ?? MAX_HEALTH, 0, MAX_HEALTH);
@@ -231,6 +232,10 @@ export class SurvivalSystem {
       if (this.saturation > 0) this.saturation = Math.max(0, this.saturation - 1);
       else if (this.hunger > 0) this.hunger -= 1;
     }
+  }
+
+  addDamageListener(listener: (result: DamageResult) => void): void {
+    this.damageListeners.push(listener);
   }
 
   heal(amount: number): number {
@@ -280,6 +285,7 @@ export class SurvivalSystem {
     this.lastDamage = result;
     options.onDamage?.(result);
     this.onDamage?.(result);
+    for (const listener of this.damageListeners) listener(result);
     if (killed) {
       options.onDeath?.(source);
       this.onDeath?.(source);

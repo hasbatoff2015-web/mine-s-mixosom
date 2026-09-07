@@ -141,8 +141,9 @@ export class PlayerVisualAnimator {
       headYaw,
       headPitch: state.viewPitch,
       bodyPitch: state.sneaking ? -0.48 : 0,
-      bodyYOffset: state.sneaking ? -0.10 : 0,
-      bodyZOffset: state.sneaking ? -0.10 : 0,
+      // Hip stays over the legs; sneak lean is rotation around the waist pivot.
+      bodyYOffset: 0,
+      bodyZOffset: 0,
       rightArmX,
       rightArmY,
       rightArmZ,

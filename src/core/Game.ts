@@ -230,6 +230,7 @@ import {
   shouldResendBreakStartAfterFinishReject,
 } from '../net/onlineMining';
 import { angularError, type BlockTargetIntent } from '../../shared/playerActions';
+import { IDLE_PLAYER_PRESENTATION, presentationHurtSeq } from '../../shared/playerPresentation';
 import {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,
@@ -420,6 +421,8 @@ export interface OnlineAnarchySession {
   ignoreNetworkState?: boolean;
   isolationMode?: PredIsolationMode;
   isolation?: PredIsolationFlags;
+  /** Join-baselined own hurtSeq so local third-person can flash like remotes. */
+  ownHurtSeq?: number;
   /**
    * Latest local `player_state` waiting for the next 20 TPS tick. Applying
    * inside the WebSocket callback mutates pose between render samples.
@@ -840,6 +843,7 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
+        ownHurtSeq: presentationHurtSeq(welcome.you.presentation ?? IDLE_PLAYER_PRESENTATION),
         ...(() => {
           const isolation = resolvePredIsolation();
           return {
@@ -1306,6 +1310,7 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    this.applyOwnPresentation(session, local.presentation);
     const flags = online.isolation ?? resolvePredIsolation();
     const player = session.player;
     const before = captureMotionFull(player);
@@ -3893,6 +3898,11 @@ export class Game {
     const { remoteCloser, attack, mobTarget } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
+    if (session.online && attackPresses > 0) {
+      for (let click = 0; click < attackPresses; click += 1) {
+        session.online.client.send({ type: 'attack' });
+      }
+    }
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
     if (session.online && session.online.rejectedBlockKey && session.online.rejectedBlockKey !== targetKey) {
       session.online.rejectedBlockKey = undefined;
@@ -3903,17 +3913,10 @@ export class Game {
     })) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
-      for (let click = 0; click < attackPresses; click += 1) {
-        session.online.client.send({ type: 'attack' });
-      }
     } else if (attack?.kind === 'mob' && mobTarget) {
       session.miningTarget = undefined;
       session.miningProgress = 0;
-      if (session.online) {
-        for (let click = 0; click < attackPresses; click += 1) {
-          session.online.client.send({ type: 'attack' });
-        }
-      } else {
+      if (!session.online) {
         for (let click = 0; click < attackPresses; click += 1) {
           const stack = this.selectedStack();
           const result = session.combat.performMeleeAttack(stack?.itemId ?? null, {
@@ -3948,10 +3951,7 @@ export class Game {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
-      if (attackPressed) {
-        if (session.online) session.online.client.send({ type: 'attack' });
-        else this.breakMinecart(attack.cart);
-      }
+      if (attackPressed && !session.online) this.breakMinecart(attack.cart);
     } else if (session.online) {
       this.applyOnlineMiningTick(session, targetKey, attackPressed);
     } else if (!this.input.mining || !session.target) {
@@ -4883,7 +4883,7 @@ export class Game {
       swordBlocking: session.combat.swordBlocking,
       foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
       invisible: session.survival.invisible,
-      hurtFlash: this.hurt.flashAlpha(now),
+      hurtFlash: this.hurt.modelIntensity(now),
     });
     session.playerVisual.applyWorldLight(
       session.world,
@@ -4930,6 +4930,19 @@ export class Game {
       applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
     } else applyImmediateRenderLook(this.camera, this.input, roll);
     motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
+  }
+
+  private applyOwnPresentation(
+    session: GameSession,
+    presentation: ServerPlayerStateMessage['players'][number]['presentation'],
+  ): void {
+    const online = session.online;
+    if (!online) return;
+    const nextHurt = presentationHurtSeq(presentation ?? IDLE_PLAYER_PRESENTATION);
+    if (online.ownHurtSeq !== undefined && nextHurt > online.ownHurtSeq) {
+      session.playerVisual.triggerHurtFlash();
+    }
+    online.ownHurtSeq = Math.max(online.ownHurtSeq ?? 0, nextHurt);
   }
 
   private updateFirstPerson(deltaSeconds: number): void {
