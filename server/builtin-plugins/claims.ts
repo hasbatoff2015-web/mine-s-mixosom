@@ -1,5 +1,15 @@
+import { BlockId } from '../../src/blocks';
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
+import {
+  BLOCK_CLAIM_OVERLAP_MESSAGE,
+  CLAIM_ANCHOR_RADIUS,
+  allocateBlockClaimName,
+  claimAnchorKey,
+  claimAnchorVolume,
+  findClaimByAnchor,
+  overlappingAnchorClaims,
+} from '../services/claimAnchors';
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
@@ -44,7 +54,7 @@ const HELP = {
 export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
   return {
     name: 'claims',
-    version: '1.1.0',
+    version: '1.2.0',
     apiVersion: 1,
     onEnable(api) {
       const load = (): ClaimStore => migrateClaimStore(api.loadData<unknown>('claims', { claims: [] }));
@@ -121,11 +131,52 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         denyBuild(event, claims, 'block-break', player);
       });
       api.registerEvent('blockPlace', (event) => {
-        const claims = overlapping(event.x, event.y, event.z);
-        if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        denyBuild(event, claims, 'block-place', player);
+        const claims = overlapping(event.x, event.y, event.z);
+        if (claims.length > 0 && denyBuild(event, claims, 'block-place', player)) return;
+        const key = claimAnchorKey(event.blockId);
+        if (!key) return;
+        const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        if (overlappingAnchorClaims(load().claims, worldId(), volume).length === 0) return;
+        event.cancel();
+        player.sendMessage(BLOCK_CLAIM_OVERLAP_MESSAGE);
+      });
+      api.registerEvent('blockPlaced', (event) => {
+        const key = claimAnchorKey(event.blockId);
+        if (!key) return;
+        const player = api.getPlayer(event.playerId);
+        if (!player) return;
+        const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        const store = load();
+        if (overlappingAnchorClaims(store.claims, worldId(), volume).length > 0) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(BLOCK_CLAIM_OVERLAP_MESSAGE);
+          return;
+        }
+        const ownerKey = keyOf({ playerId: player.id, name: player.name });
+        const name = allocateBlockClaimName(store, ownerKey);
+        store.claims.push({
+          id: `${ownerKey}:${name}:${Date.now()}`,
+          name,
+          owner: ownerKey,
+          worldId: worldId(),
+          volume,
+          members: [],
+          priority: CLAIM_PRIORITY_DEFAULT,
+          flags: {},
+          anchor: { x: event.x, y: event.y, z: event.z, block: key },
+        });
+        save(store);
+        player.sendMessage(`Claim '${name}' created.`);
+      });
+      api.registerEvent('blockBroken', (event) => {
+        const store = load();
+        const claim = findClaimByAnchor(store.claims, worldId(), event.x, event.y, event.z);
+        if (!claim) return;
+        store.claims = store.claims.filter((entry) => entry.id !== claim.id);
+        save(store);
       });
       api.registerEvent('playerDamage', (event) => {
         const player = api.getPlayer(event.playerId);
@@ -251,9 +302,17 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               : [claim];
             const own = ownFlagLines(claim);
             const effective = effectiveFlags(atPoint);
+            const anchorLines = claim.anchor
+              ? [
+                'Type: block',
+                `Anchor: ${claim.anchor.x},${claim.anchor.y},${claim.anchor.z} ${claim.anchor.block}`,
+                `Radius: ${CLAIM_ANCHOR_RADIUS[claim.anchor.block]}`,
+              ]
+              : [];
             return ok([
               `Claim: ${claim.name}`,
               `Owner: ${claim.owner}`,
+              ...anchorLines,
               `Priority: ${claim.priority}`,
               `Members: ${claim.members.join(', ') || '(none)'}`,
               `Volume: ${claim.volume.minX},${claim.volume.minY},${claim.volume.minZ} → ${claim.volume.maxX},${claim.volume.maxY},${claim.volume.maxZ}`,

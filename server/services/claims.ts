@@ -33,6 +33,15 @@ export const DEFAULT_CLAIM_FLAGS: Record<ClaimFlag, boolean> = {
   'item-pickup': true,
 };
 
+export type ClaimAnchorBlock = 'iron_block' | 'gold_block' | 'diamond_block';
+
+export interface ClaimAnchor {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly block: ClaimAnchorBlock;
+}
+
 export interface Claim {
   readonly id: string;
   readonly name: string;
@@ -42,10 +51,14 @@ export interface Claim {
   members: string[];
   priority: number;
   flags: ClaimFlagMap;
+  /** Present only on claims created by placing an iron/gold/diamond block. */
+  readonly anchor?: ClaimAnchor;
 }
 
 export interface ClaimStore {
   claims: Claim[];
+  /** Last allocated per-owner block-claim number. Deleted names are not reused. */
+  blockClaimSeq?: Record<string, number>;
 }
 
 export function isClaimFlag(raw: string): raw is ClaimFlag {
@@ -151,6 +164,7 @@ export function migrateClaim(raw: unknown): Claim | undefined {
   const members = Array.isArray(record.members)
     ? record.members.filter((member): member is string => typeof member === 'string').map((member) => member.toLowerCase())
     : [];
+  const anchor = migrateAnchor(record.anchor);
   return {
     id: record.id,
     name: record.name,
@@ -160,6 +174,7 @@ export function migrateClaim(raw: unknown): Claim | undefined {
     members,
     priority: clampClaimPriority(typeof record.priority === 'number' ? record.priority : CLAIM_PRIORITY_DEFAULT),
     flags: migrateFlags(record.flags),
+    ...(anchor ? { anchor } : {}),
   };
 }
 
@@ -168,7 +183,8 @@ export function migrateClaimStore(raw: unknown): ClaimStore {
   const claims = Array.isArray((raw as { claims?: unknown }).claims)
     ? (raw as { claims: unknown[] }).claims.map(migrateClaim).filter((claim): claim is Claim => Boolean(claim))
     : [];
-  return { claims };
+  const blockClaimSeq = migrateBlockClaimSeq((raw as { blockClaimSeq?: unknown }).blockClaimSeq);
+  return blockClaimSeq ? { claims, blockClaimSeq } : { claims };
 }
 
 function migrateFlags(raw: unknown): ClaimFlagMap {
@@ -185,4 +201,28 @@ function isVolume(value: unknown): value is SelectionVolume {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const volume = value as Record<string, unknown>;
   return ['minX', 'minY', 'minZ', 'maxX', 'maxY', 'maxZ'].every((key) => Number.isInteger(volume[key]));
+}
+
+function isClaimAnchorBlock(value: unknown): value is ClaimAnchorBlock {
+  return value === 'iron_block' || value === 'gold_block' || value === 'diamond_block';
+}
+
+function migrateAnchor(raw: unknown): ClaimAnchor | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (!Number.isInteger(record.x) || !Number.isInteger(record.y) || !Number.isInteger(record.z)) {
+    return undefined;
+  }
+  if (!isClaimAnchorBlock(record.block)) return undefined;
+  return { x: record.x, y: record.y, z: record.z, block: record.block };
+}
+
+function migrateBlockClaimSeq(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const seq: Record<string, number> = {};
+  for (const [owner, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+    seq[owner.toLowerCase()] = Math.trunc(value);
+  }
+  return Object.keys(seq).length > 0 ? seq : undefined;
 }

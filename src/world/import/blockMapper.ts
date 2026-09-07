@@ -185,6 +185,8 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   cocoa_bean: 'air',
   cocoa_beans: 'air',
   diamond_block: 'diamond_block',
+  gold_block: 'gold_block',
+  iron_block: 'iron_block',
 });
 
 const VARIANT_WOOD: Readonly<Record<string, string>> = Object.freeze({

@@ -159,7 +159,7 @@ disk plugins from server/plugins/
 
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
 - Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
-- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`). Flags are partial; overlapping claims resolve **per flag** by priority. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim.
+- Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`) plus observation `blockPlaced` / `blockBroken` for iron/gold/diamond block-claims. Flags are partial; overlapping claims resolve **per flag** by priority. Two block-claims may not overlap each other (priority is ignored for that pair). A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim.
 - Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
 
 ## Farming V1 + Networking V2 — 2026-09-04

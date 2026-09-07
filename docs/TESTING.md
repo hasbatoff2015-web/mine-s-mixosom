@@ -1,5 +1,23 @@
 # Тестирование
 
+## 2026-09-07 Claim-anchor blocks
+
+Report: `reports/2026-09-07_claim-anchor-blocks.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchors.test.ts \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/server/claims.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/crafting.test.ts \
+  tests/block-registry.test.ts \
+  tests/claim-anchor-textures.test.mjs \
+  --maxWorkers=2
+```
+
+Contracts: iron/gold/diamond radii 10/20/30; block-claim ∩ block-claim always denied; regular `/claim create` overlap unchanged; per-owner `"1"`, `"2"` without reuse; `Claim.anchor` optional; break of the stored cell deletes that claim only.
+
 ## 2026-09-07 Portal Chest texture polish
 
 Report: `reports/2026-09-07_portal-chest-texture.md`.

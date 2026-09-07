@@ -47,6 +47,17 @@ describe('crafting matcher', () => {
     expect(findCraftingRecipe(redBed)).toBeUndefined();
   });
 
+  it('crafts mineral blocks from a filled 3x3 of diamonds or ingots', () => {
+    const filled = (item: string) => grid(
+      [item, item, item],
+      [item, item, item],
+      [item, item, item],
+    );
+    expect(findCraftingRecipe(filled(ItemId.Diamond))?.output).toEqual({ item: 'diamond_block', count: 1 });
+    expect(findCraftingRecipe(filled(ItemId.GoldIngot))?.output).toEqual({ item: 'gold_block', count: 1 });
+    expect(findCraftingRecipe(filled(ItemId.IronIngot))?.output).toEqual({ item: 'iron_block', count: 1 });
+  });
+
   it('returns a deterministic consumption plan for stacked inputs', () => {
     const input = [createItemStack('oak_log', 5), null, null, null];
     const match = matchCraftingRecipe(input, 2, 2);
@@ -65,6 +76,7 @@ describe('crafting matcher', () => {
       'bow', 'arrows', 'white_bed', 'oak_door', 'oak_slab', 'cobblestone_stairs',
       'birch_stairs', 'stone_pressure_plate', 'brick_stairs',
       'gold_chestplate', 'tnt', 'minecart', 'portal_chest',
+      'diamond_block', 'gold_block', 'iron_block',
     ];
     const ids = new Set(CRAFTING_RECIPES.map((recipe) => recipe.id));
     for (const id of expected) expect(ids.has(id), id).toBe(true);

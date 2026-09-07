@@ -133,7 +133,7 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | back | `/back` | memory (teleport history) |
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
-| claims | `/claim` | `plugin-data/claims/claims.json` |
+| claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
 | holograms | `/holograms` | `plugin-data/holograms/holograms.json` |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
@@ -288,4 +288,4 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a second combat / fluid / inventory system
 - Not client mods
 - Not Auction House / economy / kits
-- Not a WorldGuard clone (claims are overlapping regions with per-flag priority)
+- Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)

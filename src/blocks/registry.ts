@@ -343,6 +343,8 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     renderLayer: 'cutout', renderShape: 'chain',
   }),
   stone(BlockId.DiamondBlock, 'diamond_block', 5, 'iron', 'building'),
+  stone(BlockId.GoldBlock, 'gold_block', 5, 'iron', 'building'),
+  stone(BlockId.IronBlock, 'iron_block', 5, 'iron', 'building'),
   block(BlockId.Farmland, 'farmland', {
     category: 'terrain', hardness: 0.6, tool: 'shovel', tier: 'hand',
     opaque: false, occludesFaces: false, renderShape: 'farmland',
