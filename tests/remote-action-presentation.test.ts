@@ -12,7 +12,8 @@ const info: RemotePlayerInfo = { id: 'actor', name: 'Actor', x: 0, y: 70, z: 0, 
 function harness(presentation?: PlayerPresentationState) {
   const visual = {
     root: new THREE.Group(), animator: { reset: vi.fn() },
-    update: vi.fn(), setHeldItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
+    update: vi.fn(), setHeldItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
+    triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
   };
   const onMining = vi.fn();
   const onRemove = vi.fn();
@@ -95,5 +96,39 @@ describe('authoritative remote action presentation', () => {
     expect(visual.swing).toHaveBeenCalledTimes(1);
     view.dispose();
     expect(onRemove).toHaveBeenCalledWith('actor');
+  });
+
+  it('ignores presentation armor ids and still plays remote food-use state', () => {
+    const armor = { head: 'diamond_helmet', chest: 'iron_chestplate', legs: null, feet: 'leather_boots' };
+    const { view, visual } = harness({
+      ...IDLE_PLAYER_PRESENTATION,
+      armor,
+      foodUseProgress: 0.4,
+      heldItemId: 'apple',
+    });
+    view.interpolate(100, 1 / 60);
+    expect(visual.setHeldItem).toHaveBeenLastCalledWith('apple');
+    expect(visual.update).toHaveBeenLastCalledWith(1 / 60, expect.objectContaining({ foodUseProgress: 0.4 }));
+    view.applySnapshot({
+      ...info,
+      presentation: { ...IDLE_PLAYER_PRESENTATION, armor, foodUseProgress: 0, heldItemId: 'apple' },
+    }, 150, 1);
+    view.interpolate(150, 0.016);
+    expect(visual.update).toHaveBeenLastCalledWith(0.016, expect.objectContaining({ foodUseProgress: 0 }));
+    view.dispose();
+  });
+
+  it('triggers one hurt flash when hurtSeq increases, including coalesced 0 → 2, and never on join baseline', () => {
+    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, hurtSeq: 4 });
+    expect(visual.triggerHurtFlash).not.toHaveBeenCalled();
+    view.applySnapshot({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 4 } }, 150, 1);
+    expect(visual.triggerHurtFlash).not.toHaveBeenCalled();
+    view.applySnapshot({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 6 } }, 200, 2);
+    expect(visual.triggerHurtFlash).toHaveBeenCalledTimes(1);
+    view.applySnapshot({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 6 } }, 250, 3);
+    expect(visual.triggerHurtFlash).toHaveBeenCalledTimes(1);
+    view.applySnapshot({ ...info, dead: true, presentation: { ...IDLE_PLAYER_PRESENTATION, hurtSeq: 7 } } as never, 300, 4);
+    expect(visual.triggerHurtFlash).toHaveBeenCalledTimes(2);
+    view.dispose();
   });
 });

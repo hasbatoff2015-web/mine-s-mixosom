@@ -11,6 +11,15 @@
 - Manual WebGL QA основного armor pass через `?qaPlayer=1`: full/mixed/equip/unequip, leather overlay, chainmail holes, Classic/Slim и locomotion/action poses. Дополнительно два реальных Online-клиента с разными server player IDs подтвердили mixed equip, live chest unequip, обратный iron chest render, Survival death/drop без ghost armor и disconnect cleanup (`Remote (none)`); warn/error console обоих клиентов пуст. Follow-up first-person/invisibility semantics покрыты scene-graph и remote interpolation regressions.
 - Handoff: `docs/reports/2026-09-07_player-armor-vanilla-rendering-followup.md`.
 
+## Интегрированный main baseline: PR #64 onto current main (PR #65) — 2026-09-07
+
+- Ветка `cursor/armor-crouch-swing-flash-3f93` смержила актуальный `origin/main` (`bcc35df`, PR #65) merge, не rebase/force-push.
+- **Канонический eat/drink — PR #65.** `localFoodUse`, captured slot, `commandSeq` boundary, `FirstPersonRenderer.applyEatPose`, authoritative consume/bottle. Наш `heldItemEatPose.ts` / `applyEatDrinkHeldItemPose` / `ownFoodUseProgress` удалены.
+- Сохранено из PR #64: crouch hip (`bodyPitch` на талии, `bodyYOffset`/`bodyZOffset` = 0), яркий model hurt flash (`applyMobHurtTint`, peak 1.0), air swing и `hurtSeq`. Legacy inflated overlay отброшен; `presentation.armor` остаётся compatibility wire data и не рендерится. Новый `PlayerArmorVisual` использует отдельный server-owned `equipment` state.
+- Сохранено из PR #62: claim wires 3px + `depthTest`/`depthWrite`.
+- Сохранено из PR #65: cobweb, fallDistance, TNT pulse, claims attacker/victim PvP, `movementDuringItemUse`, food/potion lifecycle.
+- Handoff: `docs/reports/2026-09-07_pr64-onto-pr65-main.md`.
+
 ## Follow-up: Online food/potion render-edge sequencing — 2026-09-07
 
 - На ветке `codex/fix-gameplay-bugs-2026-09-07` поверх `868206de5a095b67f9255f8ae7305090de7333ec` исправлен race реального client order: `interact(commandSeq=N)` может прийти после render-edge, но до первого fixed input `N+1` с `use=true` и новым hotbar slot.

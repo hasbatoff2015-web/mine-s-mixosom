@@ -7,7 +7,7 @@ import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import { Inventory, createItemStack, playerEquipmentFromInventory, type ItemStack } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
-import type { PlayerPresentationState } from '../shared/playerPresentation';
+import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
   compareLatestInputCoalesce,
@@ -135,6 +135,7 @@ export class ServerPlayer implements GameplayPlayer {
   ridingCartId?: string;
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
   private presentationSwingSeq = 0;
+  private presentationHurtSeq = 0;
   miningProgress = 0;
   miningStartCommandSeq?: number;
   bowUseTicks = 0;
@@ -161,6 +162,9 @@ export class ServerPlayer implements GameplayPlayer {
     survival?: SurvivalSystem,
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
+    this.survival.addDamageListener((result) => {
+      if (result.fullHurt) this.presentHurt();
+    });
   }
 
   get health(): number {
@@ -170,6 +174,11 @@ export class ServerPlayer implements GameplayPlayer {
   /** Called only by authoritative gameplay outcomes; independent of actionSeq. */
   presentSwing(): void {
     if (this.connected && !this.survival.dead) this.presentationSwingSeq += 1;
+  }
+
+  /** Called from SurvivalSystem on authoritative fullHurt, including the killing blow. */
+  presentHurt(): void {
+    if (this.connected) this.presentationHurtSeq += 1;
   }
 
   presentation(): PlayerPresentationState {
@@ -187,6 +196,8 @@ export class ServerPlayer implements GameplayPlayer {
         ? Math.min(1, Math.max(0, this.foodUseTicks / 32)) : 0,
       swordBlocking: alive && this.combat.swordBlocking,
       swingSeq: this.presentationSwingSeq,
+      armor: equippedArmorFromInventory(this.inventory),
+      hurtSeq: this.presentationHurtSeq,
     };
   }
 

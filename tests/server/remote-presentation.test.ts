@@ -169,4 +169,41 @@ describe('server remote presentation publication', { timeout: 20_000 }, () => {
     if ('error' in resumed) throw new Error(resumed.error);
     expect(resumed.player.presentation()).toMatchObject({ mining: null, swingSeq: 1 });
   });
+
+  it('publishes equipped armor item ids and clears them when the slot is emptied', async () => {
+    const { player } = await boot();
+    expect(player.presentation().armor).toEqual({ head: null, chest: null, legs: null, feet: null });
+    player.inventory.setSlot({ section: 'armor', slot: 'head' }, createItemStack('diamond_helmet'));
+    player.inventory.setSlot({ section: 'armor', slot: 'chest' }, createItemStack('iron_chestplate'));
+    player.inventory.setSlot({ section: 'armor', slot: 'feet' }, createItemStack('leather_boots'));
+    expect(player.presentation().armor).toEqual({
+      head: 'diamond_helmet',
+      chest: 'iron_chestplate',
+      legs: null,
+      feet: 'leather_boots',
+    });
+    expect(player.snapshot().presentation?.armor?.head).toBe('diamond_helmet');
+    expect(player.remoteInfo().presentation?.armor?.chest).toBe('iron_chestplate');
+    player.inventory.setSlot({ section: 'armor', slot: 'head' }, null);
+    expect(player.presentation().armor?.head).toBeNull();
+  });
+
+  it('increments hurtSeq on fullHurt, not on i-frame chips, and still swings on an air miss', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    expect(player.presentation().hurtSeq).toBe(0);
+    expect(player.survival.damage(4, 'melee', { armor: player.inventory }).fullHurt).toBe(true);
+    expect(player.presentation().hurtSeq).toBe(1);
+    expect(player.survival.damage(4, 'melee', { armor: player.inventory }).accepted).toBe(false);
+    expect(player.presentation().hurtSeq).toBe(1);
+    expect(player.survival.damage(10, 'melee', { armor: player.inventory }).fullHurt).toBe(false);
+    expect(player.presentation().hurtSeq).toBe(1);
+    const beforeSwing = player.presentation().swingSeq;
+    world.attack(player);
+    expect(player.presentation().swingSeq).toBe(beforeSwing + 1);
+    player.survival.hurtResistance.reset();
+    expect(player.survival.damage(2, 'melee', { armor: player.inventory }).fullHurt).toBe(true);
+    expect(player.presentation().hurtSeq).toBe(2);
+    expect(player.snapshot().presentation?.hurtSeq).toBe(2);
+  });
 });

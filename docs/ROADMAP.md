@@ -13,6 +13,14 @@
 - [x] Follow-up: invisibility hides only skin base/outer layers while armor and held item remain visible for local/remote players; first-person full equipment creates zero armor meshes. Focused regression 33/33, all typechecks/boundaries/build pass.
 - [ ] Chainmail remains presentation/QA-only until a separately scoped gameplay registry/recipe/damage task explicitly adds it.
 
+## 2026-09-07: PR #64 onto current main (PR #65)
+
+- [x] Merge `origin/main` (PR #65) into `cursor/armor-crouch-swing-flash-3f93` without dropping cobweb/TNT/PvP/use-movement/consumables.
+- [x] Delete PR #64 `heldItemEatPose` / `applyEatDrinkHeldItemPose` / `ownFoodUseProgress`; keep PR #65 `applyEatPose` + `localFoodUse`.
+- [x] Keep crouch hip (`bodyYOffset`/`bodyZOffset` = 0), bright player hurt flash and air swing; keep the legacy PR #64 inflated overlay dropped while the new authoritative-equipment `PlayerArmorVisual` remains implemented.
+- [x] Keep PR #62 claim wires 3px + depth test.
+- [ ] Owner two-client QA of the union: crouch, PR #65 eat/drink, bright PvP flash, air swing, claim occlusion.
+
 ## 2026-09-07: Online consumable render-edge follow-up
 
 - [x] Reproduce real order: applied pre-use command N → render-edge `interact(N)` → fixed input N+1.
