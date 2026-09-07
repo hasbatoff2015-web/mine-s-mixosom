@@ -423,7 +423,7 @@ export class AnarchyServer {
           });
           return;
         }
-        const result = this.world.interact(player, intent, message.actionSeq, message.commandSeq);
+        const result = this.world.interact(player, intent, message.actionSeq, message.commandSeq, message.selectedSlot);
         this.world.sendTo(player, {
           type: 'action_result',
           actionSeq: message.actionSeq ?? -1,
@@ -485,7 +485,7 @@ export class AnarchyServer {
     if (targeted && !intent) {
       result = { ok: false, reason: 'invalid' };
     } else if (message.kind === 'block_use') {
-      result = this.world.interact(player, intent, message.actionSeq, message.commandSeq);
+      result = this.world.interact(player, intent, message.actionSeq, message.commandSeq, message.selectedSlot);
     } else if (message.kind === 'block_break_start') {
       result = this.world.beginMining(player, intent!, message.actionSeq, message.commandSeq);
     } else if (message.kind === 'block_break_abort') {

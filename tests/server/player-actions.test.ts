@@ -12,6 +12,7 @@ import type { ClientInputMessage } from '../../shared/protocol';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
+import { ItemId } from '../../src/items';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-actions-int-'));
@@ -360,15 +361,122 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     for (let seq = 1; seq <= 4; seq += 1) {
       world.applyInput(player, input(seq, { use: false, forward: 1 }));
     }
-    expect(world.interact(player, undefined, 1)).toEqual({ ok: true });
+    world.applyInput(player, input(5, { use: true, forward: 1 }));
+    expect(world.interact(player, undefined, 1, 5, 0)).toEqual({ ok: true });
     expect(player.bowUseTicks).toBeGreaterThan(0);
-    world.tick();
-    expect(player.bowUseTicks).toBeGreaterThan(1);
-    world.tick();
-    world.tick();
+    for (let tick = 0; tick < 4; tick += 1) world.tick();
+    expect(player.bowUseTicks).toBe(1);
+    for (let tick = 0; tick < 3; tick += 1) world.tick();
     expect(player.bowUseTicks).toBeGreaterThan(3);
-    expect(world.releaseBow(player, { actionSeq: 2, commandSeq: 1, yaw: 0.4, pitch: -0.1 }).ok).toBe(true);
+    expect(world.releaseBow(player, { actionSeq: 2, commandSeq: 5, yaw: 0.4, pitch: -0.1 }).ok).toBe(true);
     expect(world.gameplay.arrows.count).toBe(1);
+  });
+
+  it('starts food from the captured slot and ignores older FIFO use=false commands', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack('stone', 1));
+    player.inventory.setSlot(3, createItemStack(ItemId.Apple, 2));
+    world.applyInput(player, input(1, { selectedSlot: 0, use: false }));
+    world.applyInput(player, input(2, { selectedSlot: 3, use: true }));
+
+    expect(world.interact(player, undefined, 1, 2, 3)).toEqual({ ok: true });
+    expect(player.foodUseTicks).toBe(1);
+    world.tick();
+    expect(player.foodUseTicks).toBe(1);
+    world.tick();
+    expect(player.foodUseTicks).toBe(2);
+  });
+
+  it('cancels food use on a newer release or slot switch without consuming an item', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(0, createItemStack(ItemId.Apple, 2));
+    player.inventory.setSlot(1, createItemStack('stone', 1));
+    world.applyInput(player, input(1, { selectedSlot: 0, use: true }));
+    expect(world.interact(player, undefined, 1, 1, 0)).toEqual({ ok: true });
+    world.tick();
+    expect(player.foodUseTicks).toBeGreaterThan(1);
+    world.applyInput(player, input(2, { selectedSlot: 0, use: false }));
+    world.tick();
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.inventory.count(ItemId.Apple)).toBe(2);
+
+    world.applyInput(player, input(3, { selectedSlot: 0, use: true }));
+    expect(world.interact(player, undefined, 2, 3, 0)).toEqual({ ok: true });
+    world.tick();
+    world.applyInput(player, input(4, { selectedSlot: 1, use: true }));
+    world.tick();
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.inventory.count(ItemId.Apple)).toBe(2);
+  });
+
+  it('cancels captured food use metadata when the player dies and respawns', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(2, createItemStack(ItemId.Apple, 1));
+    world.applyInput(player, input(1, { selectedSlot: 2, use: true }));
+    expect(world.interact(player, undefined, 1, 1, 2)).toEqual({ ok: true });
+    expect(player.useStartCommandSeq).toBe(1);
+    expect(player.useSelectedSlot).toBe(2);
+    expect(player.useItemId).toBe(ItemId.Apple);
+
+    player.survival.damage(100, 'generic', { ignoreInvulnerability: true });
+    world.gameplay.respawnIfDead(player);
+
+    expect(player.foodUseTicks).toBe(0);
+    expect(player.useStartCommandSeq).toBeUndefined();
+    expect(player.useSelectedSlot).toBeUndefined();
+    expect(player.useItemId).toBeUndefined();
+    expect(player.lastUse).toBe(false);
+  });
+
+  it.each([
+    { itemId: ItemId.Apple, effect: undefined },
+    { itemId: ItemId.GoldenApple, effect: 'absorption' as const },
+    { itemId: ItemId.PotionRegeneration, effect: 'regeneration' as const },
+    { itemId: ItemId.PotionInvisibility, effect: 'invisibility' as const },
+  ])('completes authoritative online use for $itemId from the captured slot', async ({ itemId, effect }) => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.survival.restore({ hunger: 10 });
+    player.inventory.clear();
+    player.inventory.setSlot(4, createItemStack(itemId, 1));
+    world.applyInput(player, input(1, { selectedSlot: 4, use: true }));
+    expect(world.interact(player, undefined, 1, 1, 4)).toEqual({ ok: true });
+
+    for (let tick = 0; tick < 31; tick += 1) world.tick();
+
+    expect(player.inventory.count(itemId)).toBe(0);
+    expect(player.foodUseTicks).toBe(0);
+    if (effect) expect(player.survival.effectTicks(effect)).toBeGreaterThan(0);
+    if (itemId === ItemId.PotionRegeneration || itemId === ItemId.PotionInvisibility) {
+      expect(player.inventory.count(ItemId.GlassBottle)).toBe(1);
+    }
+  });
+
+  it('drops a returned potion bottle when the authoritative inventory is full', async () => {
+    const { world, player } = await boot();
+    world.setGameMode(player, 'survival');
+    player.inventory.clear();
+    for (let slot = 0; slot < 36; slot += 1) {
+      player.inventory.setSlot(slot, createItemStack('stone', 64));
+    }
+    player.inventory.setSlot(5, createItemStack(ItemId.PotionRegeneration, 2));
+    world.applyInput(player, input(1, { selectedSlot: 5, use: true }));
+    expect(world.interact(player, undefined, 1, 1, 5)).toEqual({ ok: true });
+
+    for (let tick = 0; tick < 31; tick += 1) world.tick();
+
+    expect(player.inventory.count(ItemId.PotionRegeneration)).toBe(1);
+    expect(player.inventory.count(ItemId.GlassBottle)).toBe(0);
+    expect(world.gameplay.drops.entities.some((drop) => drop.stack.itemId === ItemId.GlassBottle)).toBe(true);
   });
 
   it('fires 20 consecutive draw-release cycles without dropping a shot', async () => {
@@ -378,14 +486,17 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     let commandSeq = 0;
     for (let shot = 0; shot < 20; shot += 1) {
       commandSeq += 1;
-      world.applyInput(player, input(commandSeq, { use: false }));
+      world.applyInput(player, input(commandSeq, { use: true }));
       actionSeq += 1;
-      expect(world.interact(player, undefined, actionSeq, commandSeq)).toEqual({ ok: true });
-      for (let tick = 0; tick < 4; tick += 1) {
+      expect(world.interact(player, undefined, actionSeq, commandSeq, 0)).toEqual({ ok: true });
+      world.tick();
+      for (let tick = 0; tick < 3; tick += 1) {
         commandSeq += 1;
-        world.applyInput(player, input(commandSeq, { use: tick % 2 === 0 }));
+        world.applyInput(player, input(commandSeq, { use: true }));
         world.tick();
       }
+      commandSeq += 1;
+      world.applyInput(player, input(commandSeq, { use: false }));
       actionSeq += 1;
       expect(world.releaseBow(player, {
         actionSeq,
@@ -394,6 +505,7 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
         pitch: -0.05,
       }).ok).toBe(true);
       expect(world.gameplay.arrows.count).toBe(shot + 1);
+      world.tick();
     }
   });
 

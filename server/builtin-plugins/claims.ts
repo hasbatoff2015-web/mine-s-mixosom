@@ -131,15 +131,26 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const pos = player.position();
-        const claims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
-        if (claims.length === 0) return;
-        if (!effectiveFlag(claims, 'player-damage')) {
+        const victimClaims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        if (victimClaims.length > 0 && !effectiveFlag(victimClaims, 'player-damage')) {
           event.cancel();
           return;
         }
-        if (!effectiveFlag(claims, 'pvp') && event.attackerId) event.cancel();
+        const attacker = event.attackerId ? api.getPlayer(event.attackerId) : undefined;
+        if (attacker) {
+          if (victimClaims.length > 0 && !effectiveFlag(victimClaims, 'pvp')) {
+            event.cancel();
+            return;
+          }
+          const attackerPos = attacker.position();
+          const attackerClaims = overlapping(
+            Math.floor(attackerPos.x), Math.floor(attackerPos.y), Math.floor(attackerPos.z),
+          );
+          if (attackerClaims.length > 0 && !effectiveFlag(attackerClaims, 'pvp')) event.cancel();
+          return;
+        }
         const mobCause = event.cause === 'melee' || event.cause === 'arrow' || event.cause === 'projectile';
-        if (!effectiveFlag(claims, 'mob-damage') && !event.attackerId && mobCause) event.cancel();
+        if (victimClaims.length > 0 && !effectiveFlag(victimClaims, 'mob-damage') && mobCause) event.cancel();
       });
       api.registerEvent('explosion', (event) => {
         const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));

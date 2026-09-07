@@ -560,6 +560,9 @@ export class RedstoneSystem {
       const x = lerp(entity.previousPosition.x, entity.position.x, t);
       const y = lerp(entity.previousPosition.y, entity.position.y, t);
       const z = lerp(entity.previousPosition.z, entity.position.z, t);
+      const elapsed = entity.totalFuseSeconds - entity.fuseSeconds;
+      const urgency = 1 - entity.fuseSeconds / entity.totalFuseSeconds;
+      this.host.pulsePrimedTnt?.(entity.visual, elapsed, urgency);
       this.host.setPosition(entity.visual, x, y + 0.49, z);
       this.host.applyLight(entity.visual, this.world, x, y, z, 0.98);
     }

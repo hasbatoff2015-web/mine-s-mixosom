@@ -63,7 +63,7 @@ import { HologramNetwork } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
-import { formatGameplayKernelTrace } from '../src/gameplay';
+import { formatGameplayKernelTrace, movementDuringItemUse } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -139,6 +139,9 @@ export class ServerPlayer implements GameplayPlayer {
   miningStartCommandSeq?: number;
   bowUseTicks = 0;
   foodUseTicks = 0;
+  useStartCommandSeq: number | undefined;
+  useSelectedSlot: number | undefined;
+  useItemId: string | undefined;
   lastUse = false;
   lastSprint = false;
   vehicleForward = 0;
@@ -972,9 +975,12 @@ export class WorldInstance {
     intent?: BlockTargetIntent,
     actionSeq?: number,
     commandSeq?: number,
+    selectedSlot?: number,
   ): { ok: true } | { ok: false; reason: string } {
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
-    const result = this.gameplay.useHeld(player, intent, commandSeq);
+    const slot = this.resolveActionSlot(player, commandSeq, selectedSlot);
+    if (!slot.ok) return slot;
+    const result = this.gameplay.useHeld(player, intent, commandSeq, slot.value);
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
@@ -1319,6 +1325,28 @@ export class WorldInstance {
     return true;
   }
 
+  private resolveActionSlot(
+    player: ServerPlayer,
+    commandSeq: number | undefined,
+    selectedSlot: number | undefined,
+  ): { ok: true; value: number } | { ok: false; reason: string } {
+    if (selectedSlot === undefined) return { ok: true, value: player.selectedSlot };
+    if (!Number.isInteger(selectedSlot) || selectedSlot < 0 || selectedSlot >= Inventory.HOTBAR_SIZE) {
+      return { ok: false, reason: 'slot' };
+    }
+    if (commandSeq === undefined) return { ok: true, value: selectedSlot };
+    const historical = player.actionPoseHistory.find((sample) => sample.commandSeq === commandSeq);
+    const command = historical ?? player.commandQueue.find(commandSeq);
+    if (!command) {
+      if (commandSeq === player.appliedCommandSeq && selectedSlot === player.selectedSlot) {
+        return { ok: true, value: selectedSlot };
+      }
+      return { ok: false, reason: 'stale' };
+    }
+    if (command.selectedSlot !== selectedSlot) return { ok: false, reason: 'slot' };
+    return { ok: true, value: selectedSlot };
+  }
+
   private resetConnectionInput(player: ServerPlayer): void {
     player.lastInputSeq = inputSeqAfterReconnect();
     player.appliedCommandSeq = -1;
@@ -1334,6 +1362,9 @@ export class WorldInstance {
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
+    player.useStartCommandSeq = undefined;
+    player.useSelectedSlot = undefined;
+    player.useItemId = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     player.vehicleForward = 0;
@@ -1362,6 +1393,16 @@ export class WorldInstance {
       const input = player.lastInput;
       const jump = input.jump;
       const using = input.use === true;
+      const heldItemId = player.inventory.getSlot(player.selectedSlot)?.itemId;
+      const movement = movementDuringItemUse({
+        forward: input.forward,
+        right: input.right,
+        jump,
+        sneak: input.sneak,
+        sprint: input.sprint,
+        descend: input.descend,
+        flySprint: input.flySprint,
+      }, heldItemId, using);
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
@@ -1370,13 +1411,13 @@ export class WorldInstance {
         pitch: input.pitch,
         locomotion: !riding,
         movement: () => ({
-          forward: riding ? 0 : input.forward,
-          right: riding ? 0 : input.right,
-          jump: riding ? false : jump,
-          sneak: input.sneak,
-          sprint: input.sprint,
-          descend: input.descend,
-          flySprint: input.flySprint,
+          forward: riding ? 0 : movement.forward,
+          right: riding ? 0 : movement.right,
+          jump: riding ? false : movement.jump,
+          sneak: movement.sneak,
+          sprint: movement.sprint,
+          descend: movement.descend,
+          flySprint: movement.flySprint,
         }),
       }, dt, (amount, cause) => {
         if (player.gamemode !== 'survival') return;
@@ -1422,7 +1463,7 @@ export class WorldInstance {
         }
       }
       else clearMiningLock(player);
-      this.gameplay.advanceUseHold(player, using);
+      this.gameplay.advanceUseHold(player, using, player.appliedCommandSeq, player.selectedSlot);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
         forward: riding ? 0 : input.forward,

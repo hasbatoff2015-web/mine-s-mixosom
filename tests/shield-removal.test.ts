@@ -82,7 +82,7 @@ describe('removed shield migration and damage', () => {
     for (const source of [gameSource, combatSource, firstPersonSource, itemTypesSource, registrySource, profilesSource]) {
       expect(source).not.toMatch(/shield/i);
     }
-    expect(gameSource.includes('drawingBow || session.combat.swordBlocking ? 0.2 : 1')).toBe(true);
+    expect(gameSource).toContain('movementDuringItemUse(');
     expect(gameSource).toContain('this.input.using');
   });
 });

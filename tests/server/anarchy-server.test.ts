@@ -13,6 +13,7 @@ import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
 import { createItemStack } from '../../src/inventory';
+import { ItemId } from '../../src/items';
 import { blockTargetFromHit } from '../../src/net/actionIntent';
 import { Vec3 } from '../../src/math/vec3';
 import type { Plugin, ServerAPI } from '../../server/PluginManager';
@@ -991,6 +992,9 @@ describe('WorldInstance foundation simulation', () => {
     player.miningTarget = { x: 3, y: 4, z: 5 };
     player.miningProgress = 0.8;
     player.foodUseTicks = 5;
+    player.useStartCommandSeq = 1;
+    player.useSelectedSlot = 3;
+    player.useItemId = ItemId.Apple;
     player.lastUse = true;
     player.lastActionSeq = 9;
     expect(world.applyInput(player, moveInput(1, { forward: 1, use: true }))).toBe(true);
@@ -999,6 +1003,9 @@ describe('WorldInstance foundation simulation', () => {
     expect(player.miningTarget).toBeUndefined();
     expect(player.miningProgress).toBe(0);
     expect(player.foodUseTicks).toBe(0);
+    expect(player.useStartCommandSeq).toBeUndefined();
+    expect(player.useSelectedSlot).toBeUndefined();
+    expect(player.useItemId).toBeUndefined();
     expect(player.lastUse).toBe(false);
     expect(player.lastActionSeq).toBe(-1);
     expect(player.commandQueue.length).toBe(0);

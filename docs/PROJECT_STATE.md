@@ -1,5 +1,16 @@
 # Состояние проекта
 
+## Последний проход: six gameplay / Online regressions — 2026-09-07
+
+- Ветка `codex/fix-gameplay-bugs-2026-09-07` создана от актуального `origin/main` `bf2ed08d80fbdad315e13f9ca7051962ad0906fa`; protocol остаётся `3`, новых packet types и client-authoritative gameplay нет.
+- `PlayerController`: паутина больше не разрешает обычный ground jump и сразу гасит вертикальную скорость; приземление завершает накопление `fallDistance` по итоговому ground support, поэтому короткие прыжки под низким потолком не копят скрытый урон.
+- Online TNT снова вызывает существующий `pulsePrimedTnt` из render interpolation; server snapshots остаются единственным источником fuse/position, клиент не тикает и не взрывает сетевой TNT.
+- Claims PvP требует разрешения `pvp` и в claim жертвы, и в claim реального player-attacker. Wilderness разрешён. Неизвестный/отсутствующий attacker для melee/arrow/projectile остаётся `mob-damage`; правило покрывает melee, Arrow и FireArrow.
+- Shared Node-safe `movementDuringItemUse` применяет vanilla-like `0.2` к bow/sword use и выключает sprint/fly-sprint одинаково в SP, Online prediction и authoritative server simulation. На wire отправляется исходный input, поэтому двойного замедления нет.
+- Online food/potions используют captured authoritative hotbar slot + `commandSeq`: старые FIFO `use:false` не отменяют новый use; release/slot/item/death/reconnect отменяют; Apple/GoldenApple/regen/invisibility, bottle return и full-inventory bottle drop покрыты server tests. Локальная eat/drink pose стартует сразу и сверяется с authoritative snapshot/inventory.
+- Focused regression: **156/156 PASS**. Все четыре typecheck, boundaries PASS. Full server: **259/260**, только известный CPU-sensitive `tick-load-flight` >80 ms. Full suite: **1770 PASS / 16 FAIL** под сильной нагрузкой; кроме того же gate, это существующие 5s timeouts в worldgen/fire-contact и отдельная Vitest parse failure reference extractor. Изменённый `shield-removal` после обновления source-contract проходит изолированно.
+- Handoff: `docs/reports/2026-09-07_six-gameplay-online-fixes.md`. Manual two-client QA не выполнялся.
+
 ## Последний проход: Online arrow PvP attribution + FireArrow pickup — 2026-09-07
 
 - Ветка `codex/fix-arrow-pvp-firearrow` создана от актуального `origin/main` `bb203aebc0568fe2f46f8dc36e63bd7b5463f63b`; протокол остаётся `3`, новых packets/client damage path нет.

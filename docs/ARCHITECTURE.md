@@ -1,5 +1,27 @@
 # Архитектура
 
+## Gameplay / Online regression invariants — 2026-09-07
+
+### Use movement
+
+`src/gameplay/useMovement.ts` is the single Node-safe transform for active bow/sword movement: horizontal intent is multiplied by `0.2`; sprint and fly-sprint are disabled. SP, local Online prediction and `WorldInstance.tickConnectedPlayers` call the same function. The Online packet deliberately carries the raw pre-transform movement intent; prediction and server each apply the transform once. This preserves FIFO/ACK/replay semantics and prevents a `0.2 × 0.2` double slowdown.
+
+### Captured Online consumable use
+
+`interact` / `player_action(block_use)` already carry `commandSeq` and `selectedSlot`. `WorldInstance.resolveActionSlot` validates that slot against action pose history, the pending/applied command queue or the current applied state. `ServerGameplay.useHeld` starts bow/food from that server inventory slot and records `useStartCommandSeq`, `useSelectedSlot` and `useItemId`. Commands older than the start cannot cancel the hold; a current release, selected-slot change, item replacement, death or reconnect clears it. Completion consumes exactly one item from the captured slot, applies `SurvivalSystem` effects, marks inventory dirty, and inserts a returned bottle through the authoritative inventory (or spawns the overflow as a world drop).
+
+The client keeps only an immediate `localFoodUse` presentation token for the first-person/remote-visible eating progress. It never consumes or applies effects. Rejects, release, slot/item mismatch, inventory sync, respawn and an authoritative zero-progress snapshot clear the token.
+
+### Claims damage routing
+
+Claims first applies `player-damage` at the victim. If `attackerId` resolves to a live server player, `pvp` must allow combat at both victim and attacker positions; no claim means no added restriction. Melee, Arrow and FireArrow share that path. Missing or unknown attacker ids are not trusted as PvP: melee/arrow/projectile causes continue through victim-side `mob-damage`; environmental causes remain unaffected.
+
+### Player physics and Online TNT presentation
+
+Cobweb contact suppresses ordinary grounded jump and damps vertical velocity before physics. Fall completion is based on final authoritative ground support, not only a downward collision edge, so head bumps followed by supported ticks cannot leave stale `fallDistance`; actual accumulated falls still damage on landing.
+
+Online primed TNT is created/updated/removed only by server entity snapshots. Render interpolation invokes the existing `EntityHost.pulsePrimedTnt` from the authoritative fuse and applies interpolated position/light. This is presentation only: no client fuse decrement, detonation, block mutation or second TNT simulation exists.
+
 ## Online player-arrow damage attribution and pickup identity — 2026-09-07
 
 Player arrows stay inside the existing fixed-20-TPS authoritative path. `releaseBowWithAim` captures aim, consumes ammo and spawns one `PlayerArrow` with `ownerId=shooter.id`; `PlayerArrowManager.tick` performs swept AABB/block ordering and excludes that owner. On a player hit, the existing callback now also carries `ownerId` into `ServerGameplay.hurtPlayer(..., { attackerId })`. Both cancellable `playerDamage` and observation-only `playerDamaged` therefore expose the same shooter id. Claims continues its existing classification: present player `attackerId` → `pvp`; absent attacker on mob melee/arrow/projectile → `mob-damage`. No client hit report, direct health decrement, second damage system, or protocol field was added.
