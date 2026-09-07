@@ -1,6 +1,13 @@
 # Состояние проекта
 
-## Последний проход: Portal Chest — 2026-09-07
+## Последний проход: Portal Chest texture polish — 2026-09-07
+
+- Тот же блок `portal_chest`; менялась только визуальная текстура. Модель, UV 128×128, lid, рецепт и личный инвентарь не трогались.
+- `entity/chest/portal.png`: тёмная сине-зелёная основа, бирюзовые рёбра, фиолетовые портальные акценты; золотая/лаймовая закрывашка 12×10 скопирована 1:1.
+- Fallback `block/portal_chest.png` обновлён. Обычный `entity/chest/normal.png` без изменений.
+- Handoff: `docs/reports/2026-09-07_portal-chest-texture.md`. Функциональный отчёт: `docs/reports/2026-09-07_portal-chest.md`.
+
+## Предыдущий проход: Portal Chest — 2026-09-07
 
 - Ветка `cursor/portal-chest-3f93` от актуального `main` (`26552b4`). Draft PR **#67**.
 - Новый блок `portal_chest` / «Портальный сундук» (`BlockId.PortalChest = 158`): та же chest-геометрия, lid, facing и 27-slot GUI, отдельная текстура `entity/chest/portal`.

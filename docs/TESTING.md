@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-07 Portal Chest texture polish
+
+Report: `reports/2026-09-07_portal-chest-texture.md`.
+
+```text
+npx vitest run tests/portal-chest-texture.test.mjs tests/portal-chest.test.ts tests/chest-model.test.ts --maxWorkers=2
+```
+
+Contracts: `portal.png` stays 128×128; latch 12×10 gold/lime hex unchanged; lid/body have purple+teal accents; `normal.png` wooden latch is not gold.
+
 ## 2026-09-07 Portal Chest
 
 Report: `reports/2026-09-07_portal-chest.md`.

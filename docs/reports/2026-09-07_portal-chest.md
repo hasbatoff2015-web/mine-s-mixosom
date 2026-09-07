@@ -16,7 +16,7 @@ Any physical `portal_chest` is only an access point. The server opens that playe
 - Server: `GameplayPlayer.portalChest`; `openContainer('portal-chest')`; `applyInventory` / `flushPlayerInventory` bind player store; `releaseContents` does not drop/wipe personal slots; persist on `SerializedPersistedPlayer.portalChest`.
 - Client SP: `GameSession.portalChest` in snapshot save/load; same chest GUI; lid animation via existing `ChestRenderer.setOpenTarget`.
 - Online: `ContainerKind` += `'portal-chest'`. Not a shared window. `applyAuthoritativeContainerSlots` writes portal slots onto the player store, never `world.getChest`.
-- Texture: authored `public/textures/entity/chest/portal.png` (128×128, same UV layout as `normal.png`, dark teal/purple + lime latch). Fallback tile `public/textures/block/portal_chest.png`.
+- Texture: authored `public/textures/entity/chest/portal.png` (128×128, same UV layout as `normal.png`, dark teal body + purple accents; gold/lime latch 12×10 unchanged). Fallback tile `public/textures/block/portal_chest.png`. Visual polish: `docs/reports/2026-09-07_portal-chest-texture.md`.
 - Claims: existing `blockPlace` / `blockBreak` / `playerInteract`. No new claim flag and no extra bypass.
 
 ## Changed files
@@ -62,7 +62,7 @@ npm run build
 
 ## Visual QA
 
-Not run in a live client this pass. Texture is authored (not a Minecraft Ender Chest copy). Owner should craft, place two portal chests, confirm lid + dark teal look, and confirm two players on one block see different inventories.
+Follow-up texture pass: `docs/reports/2026-09-07_portal-chest-texture.md`. Body/lid now use dark teal + purple accents; gold/lime latch is unchanged. Owner should still craft, place two portal chests, and confirm two players on one block see different inventories.
 
 ## Performance
 

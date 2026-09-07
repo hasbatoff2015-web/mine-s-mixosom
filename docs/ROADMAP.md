@@ -4,6 +4,7 @@
 
 - [x] Register `portal_chest` (`BlockId.PortalChest = 158`) with the existing chest model, lid, collision and container UI.
 - [x] Author a distinct teal/purple entity texture; do not copy Minecraft Ender Chest 1:1.
+- [x] Polish body/lid toward dark teal + purple portal accents; keep the gold/lime latch 1:1.
 - [x] Recipe: redstone over chest over three obsidian → 1 portal chest.
 - [x] Bind any physical portal chest to `player.portalChest` (27 slots, player UUID); never `VoxelWorld.chests`.
 - [x] Persist on SP player snapshot and Anarchy `players.json`; missing field → empty store.
