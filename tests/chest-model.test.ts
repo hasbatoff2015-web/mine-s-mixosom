@@ -133,6 +133,7 @@ describe('chest world model', () => {
 
   it('does not mount the Creative catalog inside a chest screen', () => {
     expect(showsCreativeCatalog('chest', 'creative')).toBe(false);
+    expect(showsCreativeCatalog('portal-chest', 'creative')).toBe(false);
     expect(showsCreativeCatalog('furnace', 'creative')).toBe(false);
     expect(showsCreativeCatalog('crafting-table', 'creative')).toBe(false);
     expect(showsCreativeCatalog('inventory', 'creative')).toBe(true);

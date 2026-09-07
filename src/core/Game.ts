@@ -104,8 +104,10 @@ import {
   Inventory,
   createItemStack,
   damageItem,
+  normalizePortalChestSlots,
   playerEquipmentFromInventory,
   type ItemStack,
+  type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
@@ -321,7 +323,7 @@ import {
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
-import type { RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ContainerKind, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -347,6 +349,7 @@ export interface GameSession {
   survival: SurvivalSystem;
   combat: CombatSystem;
   inventory: Inventory;
+  portalChest: PortalChestInventory;
   drops: DroppedItemManager;
   falling: FallingBlockManager;
   mobs: MobManager;
@@ -1101,7 +1104,7 @@ export class Game {
             session.online.localFoodUse = undefined;
           }
         }
-        applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
+        applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack, session.portalChest);
         this.ui.applyAuthoritativeCursor(
           parseNetworkItemStack(message.cursor),
           parseNetworkItemStacks(message.craftSlots),
@@ -1135,16 +1138,20 @@ export class Game {
 
   private openOnlineContainer(
     session: GameSession,
-    kind: 'crafting-table' | 'chest' | 'furnace',
+    kind: Exclude<ContainerKind, 'inventory'>,
     window: { readonly x?: number; readonly y?: number; readonly z?: number; readonly slots?: unknown },
   ): void {
     const x = window.x ?? 0;
     const y = window.y ?? 0;
     const z = window.z ?? 0;
-    applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack);
+    applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack, session.portalChest);
+    const block = kind === 'chest' ? BlockId.Chest
+      : kind === 'portal-chest' ? BlockId.PortalChest
+        : kind === 'furnace' ? BlockId.Furnace
+          : BlockId.CraftingTable;
     this.openBlockInventory(kind, {
       x, y, z,
-      block: kind === 'chest' ? BlockId.Chest : kind === 'furnace' ? BlockId.Furnace : BlockId.CraftingTable,
+      block,
       normal: new Vec3(0, 1, 0),
       distance: 0,
       point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
@@ -2491,6 +2498,9 @@ export class Game {
       survival,
       combat,
       inventory,
+      portalChest: {
+        slots: normalizePortalChestSlots(restored?.player.portalChest),
+      },
       drops,
       falling,
       mobs,
@@ -3302,11 +3312,11 @@ export class Game {
     }
   }
 
-  private openBlockInventory(kind: 'crafting-table' | 'chest' | 'furnace', hit: VoxelHit): void {
+  private openBlockInventory(kind: Exclude<ContainerKind, 'inventory'>, hit: VoxelHit): void {
     const session = this.session!;
     if (this.lifecycle.state !== 'PLAYING') return;
     this.openGameplayModal();
-    if (kind === 'chest') {
+    if (kind === 'chest' || kind === 'portal-chest') {
       const key = blockKey(hit.x, hit.y, hit.z);
       if (this.openChestKey !== key) {
         this.playWorld('chest.open', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
@@ -3319,6 +3329,7 @@ export class Game {
       mode: session.summary.mode,
       kind,
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
+      ...(kind === 'portal-chest' ? { chest: session.portalChest } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
       onClose: () => {
         this.closeInventoryAndResumeLook();
@@ -3398,6 +3409,7 @@ export class Game {
         selectedSlot: session.selectedSlot,
         spawnPoint: [...session.survival.spawnPoint],
         inventory: session.inventory.serialize(),
+        portalChest: session.portalChest.slots,
       },
       modifications: session.world.serializeModifications(),
       chests: Object.fromEntries(session.world.chests),
@@ -4150,6 +4162,8 @@ export class Game {
       const chest = session.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
       session.world.chests.delete(key);
+    } else if (hit.block === BlockId.PortalChest) {
+      // Personal portal storage stays with the player.
     } else if (hit.block === BlockId.Furnace) {
       const furnace = session.world.furnaces.get(key);
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));

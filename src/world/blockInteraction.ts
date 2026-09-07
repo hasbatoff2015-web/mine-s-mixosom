@@ -4,6 +4,7 @@ import { BlockId } from '../blocks';
 export function isUseTargetBlock(block: BlockId): boolean {
   return block === BlockId.CraftingTable
     || block === BlockId.Chest
+    || block === BlockId.PortalChest
     || block === BlockId.Furnace
     || block === BlockId.Lever
     || block === BlockId.StoneButton

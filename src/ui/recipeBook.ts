@@ -102,6 +102,7 @@ export function categorizeCraftingRecipe(recipe: Recipe): CraftingBookCategory {
       || tags.includes('stairs')
       || result.id === 'crafting_table'
       || result.id === 'chest'
+      || result.id === 'portal_chest'
       || result.id === 'furnace'
       || result.id === 'glass'
       || result.id === 'bricks'

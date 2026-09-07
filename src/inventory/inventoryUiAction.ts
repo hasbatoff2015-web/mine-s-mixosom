@@ -15,6 +15,7 @@ import {
 import { allCraftingBookEntries } from '../ui/recipeBook';
 import type { ChestState, FurnaceState } from '../world/World';
 import type { ClientInventoryActionMessage, ContainerKind } from '../../shared/protocol';
+import { isChestWindowKind } from './portalChest';
 
 export interface InventoryWindow {
   kind: ContainerKind;
@@ -158,7 +159,7 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
   if (key.startsWith('inventory-')) {
     const index = Number(key.slice('inventory-'.length));
     if (!Number.isInteger(index) || index < 0 || index >= Inventory.SLOT_COUNT) return emptyResult(false);
-    if (shift && state.window.kind === 'chest' && state.chest) {
+    if (shift && isChestWindowKind(state.window.kind) && state.chest) {
       quickMoveInventoryToContainer(state, index, state.chest);
       return emptyResult(true);
     }

@@ -23,7 +23,9 @@ import {
   pickIngredientItem,
 } from './recipeBook';
 
-export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace';
+import type { ContainerKind } from '../../shared/protocol';
+
+export type { ContainerKind };
 
 export interface GhostCraftState {
   readonly recipeId: string;

@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import type { HorizontalFacing } from '../blocks';
 
+import { BlockId } from '../blocks';
+
 /** Faithful/vanilla entity atlas. UV math is in 64×64 logical pixels. */
 export const CHEST_TEXTURE_KEY = 'entity/chest/normal';
+export const PORTAL_CHEST_TEXTURE_KEY = 'entity/chest/portal';
 
 export const CHEST_ATLAS_LOGICAL = 64;
 export const CHEST_INSET = 1 / 16;
@@ -76,8 +79,15 @@ export function chestLatchWorldNormal(facing: HorizontalFacing): readonly [numbe
   return [-sin, 0, -cos];
 }
 
+export function chestTextureKeyForBlock(block: BlockId): string {
+  return block === BlockId.PortalChest ? PORTAL_CHEST_TEXTURE_KEY : CHEST_TEXTURE_KEY;
+}
+
 export function isChestEntityTextureKey(key: string): boolean {
-  return key === CHEST_TEXTURE_KEY || key.endsWith('/chest/normal');
+  return key === CHEST_TEXTURE_KEY
+    || key === PORTAL_CHEST_TEXTURE_KEY
+    || key.endsWith('/chest/normal')
+    || key.endsWith('/chest/portal');
 }
 
 /** World Y of the lid's front-top edge after hinge rotation (block-local). */

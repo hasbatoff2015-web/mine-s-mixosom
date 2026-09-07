@@ -57,11 +57,11 @@ export function containerUiScale(
 }
 
 export function containerStageSize(
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'creative',
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'creative',
   recipeBookOpen: boolean,
 ): { width: number; height: number } {
   if (kind === 'creative') return { width: MC_CREATIVE_WIDTH, height: MC_CREATIVE_HEIGHT };
-  const height = kind === 'chest' ? MC_CHEST_HEIGHT
+  const height = kind === 'chest' || kind === 'portal-chest' ? MC_CHEST_HEIGHT
     : kind === 'furnace' || kind === 'crafting-table' ? MC_FURNACE_HEIGHT
       : MC_INVENTORY_HEIGHT;
   const bookExtra = recipeBookOpen ? MC_RECIPE_BOOK_WIDTH + MC_RECIPE_BOOK_GAP : 0;

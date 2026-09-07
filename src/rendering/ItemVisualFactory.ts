@@ -29,7 +29,7 @@ import {
 } from './GeneratedItemGeometry';
 import { TextureAtlas, type AtlasTile } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
-import { CHEST_TEXTURE_KEY, createClosedChestGeometry } from './chestModel';
+import { CHEST_TEXTURE_KEY, chestTextureKeyForBlock, createClosedChestGeometry } from './chestModel';
 
 interface AtlasSource {
   readonly texture: THREE.Texture;
@@ -82,7 +82,7 @@ export function specialPreviewEntityTexturePaths(): string[] {
   for (const item of ITEMS) {
     if (itemIconDescriptor(item).kind !== 'special_preview') continue;
     if (item.kind === 'block' && getBlockDefinition(item.blockId).renderShape === 'chest') {
-      paths.add(CHEST_TEXTURE_KEY);
+      paths.add(chestTextureKeyForBlock(item.blockId));
     }
   }
   return [...paths];
@@ -110,7 +110,7 @@ export class ItemVisualFactory {
   private readonly generatedGeometries = new Map<string, THREE.BufferGeometry>();
   private readonly generatedMasks = new Map<string, GeneratedItemMask>();
   private readonly specialHeldGeometries = new Map<string, THREE.BufferGeometry>();
-  private chestEntityMaterial?: THREE.MeshBasicMaterial;
+  private readonly chestEntityMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private readonly fallbackTexture: THREE.Texture;
   private readonly atlas?: AtlasSource;
   private disposed = false;
@@ -153,7 +153,7 @@ export class ItemVisualFactory {
     } else if (meshKind === 'special_model' && definition.kind === 'block') {
       const block = getBlockDefinition(definition.blockId);
       const mesh = block.renderShape === 'chest'
-        ? new THREE.Mesh(this.specialHeldGeometry(definition.id), this.chestMaterial())
+        ? new THREE.Mesh(this.specialHeldGeometry(definition.id), this.chestMaterial(chestTextureKeyForBlock(block.id)))
         : new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
       mesh.name = `${root.name}:special`;
       bindEntityLightReceiver(mesh);
@@ -252,8 +252,8 @@ export class ItemVisualFactory {
     this.generatedGeometries.clear();
     this.generatedMasks.clear();
     this.specialHeldGeometries.clear();
-    this.chestEntityMaterial?.dispose();
-    this.chestEntityMaterial = undefined;
+    for (const material of this.chestEntityMaterials.values()) material.dispose();
+    this.chestEntityMaterials.clear();
     this.disposed = true;
   }
 
@@ -520,14 +520,16 @@ export class ItemVisualFactory {
     return material;
   }
 
-  private chestMaterial(): THREE.MeshBasicMaterial {
-    if (this.chestEntityMaterial) return this.chestEntityMaterial;
-    this.chestEntityMaterial = createEntityMaterial({
-      map: this.itemTexture(CHEST_TEXTURE_KEY),
+  private chestMaterial(textureKey = CHEST_TEXTURE_KEY): THREE.MeshBasicMaterial {
+    const existing = this.chestEntityMaterials.get(textureKey);
+    if (existing) return existing;
+    const material = createEntityMaterial({
+      map: this.itemTexture(textureKey),
       wrap: false,
     });
-    this.chestEntityMaterial.userData.chestEntityTexture = CHEST_TEXTURE_KEY;
-    return this.chestEntityMaterial;
+    material.userData.chestEntityTexture = textureKey;
+    this.chestEntityMaterials.set(textureKey, material);
+    return material;
   }
 
   private generatedMesh(texturePath: string): THREE.Mesh {

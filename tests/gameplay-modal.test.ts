@@ -24,7 +24,7 @@ const live: MoveInput = {
   flySprint: true,
 };
 
-const containers: readonly GameplayModalKind[] = ['inventory', 'crafting-table', 'chest', 'furnace'];
+const containers: readonly GameplayModalKind[] = ['inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest'];
 
 describe('container modal vs real pause', () => {
   it('Esc Pause stops world simulation', () => {

@@ -3,6 +3,7 @@ import {
   applySlotClick,
   createItemStack,
   Inventory,
+  isChestWindowKind,
   type ItemStack,
 } from '../inventory';
 import { getItemDefinition, obtainableItems } from '../items';
@@ -113,7 +114,7 @@ export interface HudState {
 export interface InventoryContext {
   inventory: Inventory;
   mode: GameMode;
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace';
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
   chest?: ChestState;
   furnace?: FurnaceState;
   onClose(): void;
@@ -1160,9 +1161,10 @@ export class GameUI {
   }
 
   private containerBodyHtml(context: InventoryContext): string {
-    if (context.kind === 'chest') {
+    if (isChestWindowKind(context.kind)) {
       const slots = context.chest?.slots ?? Array.from({ length: 27 }, () => null);
-      return `<div class="mc-label">${CONTAINER_STRINGS.chest}</div>
+      const label = context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest : CONTAINER_STRINGS.chest;
+      return `<div class="mc-label">${label}</div>
         <div class="mc-grid mc-grid-9">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
     }
     if (context.kind === 'furnace') return this.furnaceHtml(context.furnace!);
@@ -1313,7 +1315,7 @@ export class GameUI {
 
   private handleRecipeClick(recipeId: string, right: boolean, shift: boolean): void {
     const context = this.inventoryContext;
-    if (!context || context.kind === 'furnace' || context.kind === 'chest') return;
+    if (!context || context.kind === 'furnace' || isChestWindowKind(context.kind)) return;
     if (context.submitAction) {
       context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId, shift });
       return;
@@ -1352,7 +1354,7 @@ export class GameUI {
     }
     if (key.startsWith('inventory-')) {
       const index = Number(key.slice('inventory-'.length));
-      if (shift && context.kind === 'chest' && context.chest) this.quickMoveInventoryToContainer(index, context.chest);
+      if (shift && isChestWindowKind(context.kind) && context.chest) this.quickMoveInventoryToContainer(index, context.chest);
       else if (shift && context.kind === 'furnace' && context.furnace) this.shiftInventoryToFurnace(index);
       else this.cursorStack = context.inventory.clickSlot(index, this.cursorStack, button);
     } else if (key.startsWith('armor-')) {

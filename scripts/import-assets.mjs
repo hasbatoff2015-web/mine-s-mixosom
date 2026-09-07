@@ -168,6 +168,7 @@ for (const [target, source] of Object.entries(blocks)) copies.push([join('blocks
 for (const [target, source] of Object.entries(items)) copies.push([join('items', source), join('item', `${target}.png`)]);
 for (const [target, source] of Object.entries(entities)) copies.push([join('entity', source), join('entity', `${target}.png`)]);
 copies.push([join('entity', 'chest', 'normal.png'), join('entity', 'chest', 'normal.png')]);
+// Portal chest uses an authored Frontier texture (`entity/chest/portal.png`), not a Minecraft Ender Chest sheet.
 copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);
 copies.push([join('particle', 'particles.png'), join('particle', 'particles.png')]);

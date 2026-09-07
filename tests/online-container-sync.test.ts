@@ -14,6 +14,8 @@ describe('online container GUI sync', () => {
     expect(shouldOpenOnlineContainer('chest', true)).toBe(false);
     expect(shouldOpenOnlineContainer('furnace', true)).toBe(false);
     expect(shouldOpenOnlineContainer('inventory', false)).toBe(false);
+    expect(shouldOpenOnlineContainer('portal-chest', false)).toBe(true);
+    expect(shouldOpenOnlineContainer('portal-chest', true)).toBe(false);
   });
 
   it('applies put/take to the live chest object while a GUI would already be open', () => {
@@ -126,5 +128,20 @@ describe('online container GUI sync', () => {
     }).ok).toBe(true);
     expect(chest.slots[0]?.itemId).toBe('diamond');
     expect(inventory.has('diamond', 1)).toBe(false);
+  });
+
+  it('writes portal-chest snapshots onto personal storage, never a world chest', () => {
+    const world = new VoxelWorld('online-portal-chest-gui');
+    const portal = { slots: Array.from({ length: 27 }, () => null as ReturnType<typeof createItemStack> | null) };
+    expect(applyAuthoritativeContainerSlots(world, {
+      kind: 'portal-chest',
+      x: 4,
+      y: 40,
+      z: 4,
+      slots: [{ itemId: 'diamond', count: 3 }, ...Array.from({ length: 26 }, () => null)],
+    }, parseNetworkItemStack, portal)).toBe(true);
+    expect(portal.slots[0]).toEqual(createItemStack('diamond', 3));
+    expect(world.chests.size).toBe(0);
+    expect(shouldOpenOnlineContainer('portal-chest', true)).toBe(false);
   });
 });

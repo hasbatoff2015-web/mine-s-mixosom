@@ -1,4 +1,4 @@
-import { createItemStack, type ItemStack } from '../inventory';
+import { assignPortalChestSlots, createItemStack, type ItemStack, type PortalChestInventory } from '../inventory';
 import type { ContainerKind } from '../../shared/protocol';
 import type { VoxelWorld } from '../world/World';
 
@@ -29,16 +29,24 @@ export function parseNetworkItemStacks(value: unknown): Array<ItemStack | null> 
 
 /**
  * Copy server chest/furnace slots onto the local world object the open GUI reads.
+ * Portal-chest slots go onto the player's personal store, never the block.
  * Always apply — including while the container GUI is already open.
  */
 export function applyAuthoritativeContainerSlots(
   world: VoxelWorld,
   window: AuthoritativeWindowPayload | undefined,
   parseStack: (value: unknown) => ItemStack | null = parseNetworkItemStack,
+  portalChest?: PortalChestInventory,
 ): boolean {
-  if (!window || (window.kind !== 'chest' && window.kind !== 'furnace')) return false;
-  if (window.x === undefined || window.y === undefined || window.z === undefined) return false;
+  if (!window) return false;
   const slots = window.slots;
+  if (window.kind === 'portal-chest') {
+    if (!portalChest || !Array.isArray(slots)) return false;
+    assignPortalChestSlots(portalChest, slots.map((entry) => parseStack(entry)));
+    return true;
+  }
+  if (window.kind !== 'chest' && window.kind !== 'furnace') return false;
+  if (window.x === undefined || window.y === undefined || window.z === undefined) return false;
   if (!Array.isArray(slots)) return false;
   if (window.kind === 'chest') {
     const chest = world.getChest(window.x, window.y, window.z);

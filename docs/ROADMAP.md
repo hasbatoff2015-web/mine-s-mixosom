@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-07: Portal Chest (personal Ender-style store)
+
+- [x] Register `portal_chest` (`BlockId.PortalChest = 158`) with the existing chest model, lid, collision and container UI.
+- [x] Author a distinct teal/purple entity texture; do not copy Minecraft Ender Chest 1:1.
+- [x] Polish body/lid toward dark teal + purple portal accents; keep the gold/lime latch 1:1.
+- [x] Recipe: redstone over chest over three obsidian → 1 portal chest.
+- [x] Bind any physical portal chest to `player.portalChest` (27 slots, player UUID); never `VoxelWorld.chests`.
+- [x] Persist on SP player snapshot and Anarchy `players.json`; missing field → empty store.
+- [x] Breaking the block does not wipe personal contents; claims still use existing place/break/interact.
+- [ ] Owner live QA: craft, open two portal chests, two players on one block, claim place/break, ordinary chest still shared.
+
 ## 2026-09-07: Vanilla-style visual armor for local and remote players
 
 - [x] Audit and extend the canonical `PlayerVisual` pivot hierarchy; add no parallel player model or animator.

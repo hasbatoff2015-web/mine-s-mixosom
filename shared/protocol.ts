@@ -14,7 +14,7 @@ export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecte
 
 export type Vec3 = readonly [number, number, number];
 
-export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace';
+export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
 
 export type InventoryActionKind =
   | 'click'
@@ -694,7 +694,7 @@ const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
 ];
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
-  'inventory', 'crafting-table', 'chest', 'furnace',
+  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
 ];
 
 const VEHICLE_ACTIONS: readonly VehicleAction[] = ['enter', 'exit', 'steer'];

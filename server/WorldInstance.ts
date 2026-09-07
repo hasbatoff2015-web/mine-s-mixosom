@@ -4,7 +4,15 @@ import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
-import { Inventory, createItemStack, playerEquipmentFromInventory, type ItemStack } from '../src/inventory';
+import {
+  Inventory,
+  createItemStack,
+  createPortalChestInventory,
+  normalizePortalChestSlots,
+  playerEquipmentFromInventory,
+  type ItemStack,
+  type PortalChestInventory,
+} from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
@@ -148,6 +156,7 @@ export class ServerPlayer implements GameplayPlayer {
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
 
@@ -1586,9 +1595,11 @@ export class WorldInstance {
   private flushPlayerInventory(player: ServerPlayer, force = true): void {
     if (!force && !player.inventoryDirty) return;
     player.inventoryDirty = false;
-    const chest = player.window.kind === 'chest' && player.window.x !== undefined
-      ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
-      : undefined;
+    const chest = player.window.kind === 'portal-chest'
+      ? player.portalChest
+      : player.window.kind === 'chest' && player.window.x !== undefined
+        ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
+        : undefined;
     const furnace = player.window.kind === 'furnace' && player.window.x !== undefined
       ? this.world.getFurnace(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
       : undefined;
@@ -1893,6 +1904,7 @@ export class WorldInstance {
         player.cursor = null;
       }
     }
+    player.portalChest.slots = normalizePortalChestSlots(stored.portalChest);
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     this.players.set(player.id, player);
@@ -1931,6 +1943,7 @@ export class WorldInstance {
       updatedAt: Date.now(),
       survival: player.survival.serialize(),
       cursor: player.cursor,
+      portalChest: player.portalChest.slots,
     };
   }
 
