@@ -5,11 +5,12 @@
 - [x] Audit and extend the canonical `PlayerVisual` pivot hierarchy; add no parallel player model or animator.
 - [x] Render helmet, chestplate, leggings and boots as independent UV-correct cuboid shells using `layer_1` / `layer_2`, with mixed-set support.
 - [x] Support leather tinted base + untinted overlay and alpha-cutout chainmail; preserve nearest filtering and shared geometry/texture/material caches.
-- [x] Drive local third-person and first-person sleeve from authoritative inventory; keep helmet/body/legs out of first-person near-plane geometry.
+- [x] Drive local third-person from authoritative inventory; keep all armor, including the chestplate sleeve, out of first-person camera-space geometry.
 - [x] Add exact optional head/chest/legs/feet IDs to authoritative server player metadata/snapshots and apply live equip/unequip/death cleanup to existing remote views.
-- [x] Verify Classic/Slim pivots, all locomotion/action poses, full/mixed/equip/unequip sets, leather, chainmail and first-person through `?qaPlayer=1` WebGL QA with a clean console.
+- [x] Verify Classic/Slim pivots, all locomotion/action poses, full/mixed/equip/unequip sets, leather and chainmail through `?qaPlayer=1` WebGL QA with a clean console.
 - [x] Add visual/cache/UV/material and server→remote network regressions; final armor/player-focused 26/26 and related 117/117 pass, typechecks/boundaries/build pass.
 - [x] Live two-client acceptance: distinct server players, mixed equip and chest unequip without reconnect, reverse iron-chest observation, Survival death/drop cleanup and disconnect removal; both browser consoles clean. Rejoin/reset equipment is also covered by the remote integration test.
+- [x] Follow-up: invisibility hides only skin base/outer layers while armor and held item remain visible for local/remote players; first-person full equipment creates zero armor meshes. Focused regression 33/33, all typechecks/boundaries/build pass.
 - [ ] Chainmail remains presentation/QA-only until a separately scoped gameplay registry/recipe/damage task explicitly adds it.
 
 ## 2026-09-07: Online consumable render-edge follow-up

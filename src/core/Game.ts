@@ -708,10 +708,6 @@ export class Game {
     this.firstPerson = new FirstPersonRenderer(this.itemVisuals, {
       skinRegistry: this.playerSkins,
       skinGeometries: this.playerSkinGeometries,
-      armorResources: {
-        materials: this.playerArmorMaterials,
-        geometries: this.playerArmorGeometries,
-      },
       appearance: this.playerAppearance,
       onSwing: () => this.session?.playerVisual?.swing(),
     });
@@ -4896,7 +4892,6 @@ export class Game {
     const thirdPerson = this.cameraPerspective !== 'firstPerson';
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
-    this.firstPerson?.setArmor(equipment);
     session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson

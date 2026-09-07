@@ -83,7 +83,6 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   const firstPerson = new FirstPersonRenderer(items, {
     skinRegistry: skins,
     skinGeometries: geometries,
-    armorResources,
     appearance,
     onSwing: () => player.swing(),
   });
@@ -104,7 +103,6 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     feet: 'iron_boots',
   };
   player.setArmor(equipment);
-  firstPerson.setArmor(equipment);
 
   uiRoot.innerHTML = `<div id="player-qa" style="position:fixed;left:12px;top:12px;z-index:20;width:min(470px,calc(100vw - 24px));padding:12px;background:#10151de8;color:#fff;font:12px/1.35 monospace;pointer-events:auto;border:1px solid #ffffff35">
     <strong>PLAYER QA · 64×64 / Classic + Slim / shared held items</strong>
@@ -167,7 +165,6 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     select.addEventListener('change', () => {
       equipment[slot] = select.value || null;
       player.setArmor(equipment);
-      firstPerson.setArmor(equipment);
     });
   }
   yawInput.addEventListener('input', () => { viewYaw = THREE.MathUtils.degToRad(Number(yawInput.value)); });

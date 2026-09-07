@@ -287,7 +287,6 @@ export class PlayerVisual {
       meshes.base.visible = !this.invisible;
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
-    this.armor.setHidden(this.invisible);
     this.rig.heldItem.visible = this.heldModel !== undefined;
   }
 

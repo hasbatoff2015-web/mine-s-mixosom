@@ -39,14 +39,6 @@ import {
   SharedPotionParticles,
   type PotionParticleKind,
 } from './potionParticles';
-import type { PlayerEquipmentState } from '../../shared/protocol';
-import {
-  FirstPersonArmorSleeve,
-  PlayerArmorGeometryCache,
-  PlayerArmorMaterialCache,
-  type PlayerArmorResources,
-} from './player/PlayerArmorVisual';
-import { bindEntityLightReceiver, setEntityLight } from './worldLighting';
 
 export interface FirstPersonFrameState {
   visible: boolean;
@@ -75,12 +67,10 @@ export class FirstPersonRenderer {
   private readonly itemHolder = new THREE.Group();
   private readonly armMesh: THREE.Mesh;
   private readonly armOuterMesh: THREE.Mesh;
-  readonly armorSleeve: FirstPersonArmorSleeve;
   private readonly skins: MinecraftSkinRegistry;
   private readonly skinGeometries: PlayerSkinGeometryCache;
   private readonly ownsSkinRegistry: boolean;
   private readonly ownsSkinGeometries: boolean;
-  private readonly ownedArmorResources?: PlayerArmorResources;
   private skinHandle: SkinTextureHandle;
   private appearance: PlayerAppearance;
   private readonly armMaterial: THREE.MeshLambertMaterial;
@@ -112,7 +102,6 @@ export class FirstPersonRenderer {
       readonly freezeIdleMotion?: boolean;
       readonly skinRegistry?: MinecraftSkinRegistry;
       readonly skinGeometries?: PlayerSkinGeometryCache;
-      readonly armorResources?: PlayerArmorResources;
       readonly appearance?: PlayerAppearance;
       readonly onSwing?: () => void;
     } = {},
@@ -148,14 +137,6 @@ export class FirstPersonRenderer {
     this.armOuterMesh.position.y = -0.22;
     this.armOuterMesh.renderOrder = 1;
     this.armPivot.add(this.armMesh, this.armOuterMesh);
-    const armorResources = options.armorResources ?? {
-      materials: new PlayerArmorMaterialCache(),
-      geometries: new PlayerArmorGeometryCache(),
-    };
-    if (!options.armorResources) this.ownedArmorResources = armorResources;
-    this.armorSleeve = new FirstPersonArmorSleeve(this.armPivot, armorResources);
-    bindEntityLightReceiver(this.root);
-    setEntityLight(this.root, [1, 1, 1]);
     this.fireOverlay = SharedFireTexture.instance().createFirstPersonOverlay();
     this.fireOverlay.visible = false;
     this.scene.add(this.fireOverlay);
@@ -209,11 +190,6 @@ export class FirstPersonRenderer {
     this.armOuterMesh.geometry = this.skinGeometries.get('rightArm', next.model, 'outer', 'firstPerson');
     this.armOuterMesh.visible = next.layers.rightSleeve;
     previous.release();
-  }
-
-  setArmor(equipment: PlayerEquipmentState): void {
-    if (this.disposed) return;
-    this.armorSleeve.setEquipment(equipment);
   }
 
   swing(): void {
@@ -406,13 +382,10 @@ export class FirstPersonRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.mainModel?.removeFromParent();
-    this.armorSleeve.dispose();
     this.armMaterial.dispose();
     this.skinHandle.release();
     if (this.ownsSkinGeometries) this.skinGeometries.dispose();
     if (this.ownsSkinRegistry) this.skins.dispose();
-    this.ownedArmorResources?.materials.dispose();
-    this.ownedArmorResources?.geometries.dispose();
     this.fireOverlay.removeFromParent();
     this.fireOverlay.traverse((object) => {
       if (object instanceof THREE.Mesh) object.geometry.dispose();
@@ -425,7 +398,6 @@ export class FirstPersonRenderer {
   private syncArmVisibility(): void {
     this.armPivot.visible = this.mainItem === undefined && !this.invisible;
     this.armOuterMesh.visible = this.appearance.layers.rightSleeve;
-    this.armorSleeve.setHidden(this.invisible);
   }
 
   private applyEatPose(model: THREE.Object3D, progress: number): void {

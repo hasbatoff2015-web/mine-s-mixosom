@@ -64,6 +64,24 @@ function materialName(mesh: THREE.Mesh): string {
   return (mesh.material as THREE.Material).name;
 }
 
+function updateVisibility(visual: PlayerVisual, invisible: boolean): void {
+  visual.update(0, {
+    viewYaw: 0, viewPitch: 0, movementSpeed: 0, onGround: true, sneaking: false,
+    sprinting: false, verticalVelocity: 0, mining: false, bowCharge: 0,
+    swordBlocking: false, foodUseProgress: 0, invisible, hurtFlash: 0,
+  });
+}
+
+function skinMeshes(visual: PlayerVisual, layer: 'base' | 'outer'): THREE.Mesh[] {
+  const meshes: THREE.Mesh[] = [];
+  visual.root.traverse((object) => {
+    if (object instanceof THREE.Mesh && object.name.match(new RegExp(`^player:[^:]+:${layer}$`))) {
+      meshes.push(object);
+    }
+  });
+  return meshes;
+}
+
 describe('vanilla armor item presentation mapping', () => {
   it('maps every material slot to layer 1 except leggings on layer 2', () => {
     for (const material of ARMOR_VISUAL_MATERIALS) {
@@ -192,7 +210,7 @@ describe('PlayerArmorVisual slot visibility', () => {
     fixture.dispose();
   });
 
-  it('renders leather base tint plus untinted overlay and hides both with invisibility', () => {
+  it('renders leather base tint plus untinted overlay', () => {
     const fixture = createVisual();
     const visual = fixture.visual;
     visual.setArmor({ ...EMPTY, chest: 'leather_chestplate' });
@@ -202,13 +220,34 @@ describe('PlayerArmorVisual slot visibility', () => {
       expect((pair.base.material as THREE.MeshBasicMaterial).color.getHex()).toBe(DEFAULT_LEATHER_ARMOR_COLOR);
       expect((pair.overlay.material as THREE.MeshBasicMaterial).color.getHex()).toBe(0xffffff);
     }
-    visual.update(0, {
-      viewYaw: 0, viewPitch: 0, movementSpeed: 0, onGround: true, sneaking: false,
-      sprinting: false, verticalVelocity: 0, mining: false, bowCharge: 0,
-      swordBlocking: false, foodUseProgress: 0, invisible: true, hurtFlash: 0,
-    });
-    expect(visibleBaseCount(visual, 'chest')).toBe(0);
-    expect(visual.armor.meshes('chest').every((pair) => !pair.overlay.visible)).toBe(true);
+    fixture.dispose();
+  });
+
+  it('keeps iron and diamond armor plus the held item visible while only skin is invisible', () => {
+    const fixture = createVisual();
+    const visual = fixture.visual;
+    visual.setArmor({ ...EMPTY, head: 'iron_helmet', chest: 'diamond_chestplate' });
+    visual.setHeldItem('diamond_sword');
+
+    updateVisibility(visual, false);
+    expect(skinMeshes(visual, 'base').every((mesh) => mesh.visible)).toBe(true);
+    expect(skinMeshes(visual, 'outer').every((mesh) => mesh.visible)).toBe(true);
+    expect(visibleBaseCount(visual, 'head')).toBe(1);
+    expect(visibleBaseCount(visual, 'chest')).toBe(3);
+    expect(visual.rig.heldItem.visible).toBe(true);
+
+    updateVisibility(visual, true);
+    expect(skinMeshes(visual, 'base').every((mesh) => !mesh.visible)).toBe(true);
+    expect(skinMeshes(visual, 'outer').every((mesh) => !mesh.visible)).toBe(true);
+    expect(visibleBaseCount(visual, 'head')).toBe(1);
+    expect(visibleBaseCount(visual, 'chest')).toBe(3);
+    expect(visual.rig.heldItem.visible).toBe(true);
+
+    updateVisibility(visual, false);
+    expect(skinMeshes(visual, 'base').every((mesh) => mesh.visible)).toBe(true);
+    expect(skinMeshes(visual, 'outer').every((mesh) => mesh.visible)).toBe(true);
+    expect(visibleBaseCount(visual, 'head')).toBe(1);
+    expect(visibleBaseCount(visual, 'chest')).toBe(3);
     fixture.dispose();
   });
 
@@ -230,27 +269,21 @@ describe('PlayerArmorVisual slot visibility', () => {
 });
 
 describe('first-person armor presentation', () => {
-  it('adds only a chestplate sleeve and never creates camera-space helmet or leg shells', () => {
-    const items = new ItemVisualFactory();
-    const materials = new PlayerArmorMaterialCache();
-    const geometries = new PlayerArmorGeometryCache();
-    const renderer = new FirstPersonRenderer(items, {
-      armorResources: { materials, geometries },
-    });
-    renderer.setArmor({
+  it('keeps a full armor set out of the first-person player arm scene', () => {
+    const fixture = createVisual();
+    const renderer = new FirstPersonRenderer(fixture.items);
+    fixture.visual.setArmor({
       head: 'iron_helmet', chest: 'diamond_chestplate', legs: 'gold_leggings', feet: 'leather_boots',
     });
-    expect(renderer.armorSleeve.base.visible).toBe(true);
-    expect(materialName(renderer.armorSleeve.base)).toContain(':diamond:1:base');
+    expect(visibleBaseCount(fixture.visual, 'head')).toBe(1);
+    expect(visibleBaseCount(fixture.visual, 'chest')).toBe(3);
+    expect(visibleBaseCount(fixture.visual, 'legs')).toBe(3);
+    expect(visibleBaseCount(fixture.visual, 'feet')).toBe(2);
     const names: string[] = [];
     renderer.root.traverse((object) => names.push(object.name));
-    expect(names.some((name) => name.includes('armor-sleeve'))).toBe(true);
-    expect(names.some((name) => /armor.*(head|leg|boot)/.test(name))).toBe(false);
-    renderer.setArmor({ ...EMPTY, chest: null });
-    expect(renderer.armorSleeve.base.visible).toBe(false);
+    expect(names.some((name) => name.includes('armor'))).toBe(false);
+    expect('setArmor' in renderer).toBe(false);
     renderer.dispose();
-    items.dispose();
-    materials.dispose();
-    geometries.dispose();
+    fixture.dispose();
   });
 });

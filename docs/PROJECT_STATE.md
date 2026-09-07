@@ -1,14 +1,15 @@
 # Состояние проекта
 
-## Последний проход: vanilla-style visual armor игроков — 2026-09-07
+## Последний проход: vanilla armor rendering semantics follow-up — 2026-09-07
 
 - Ветка `codex/player-armor-visuals` создана от актуального `origin/main` `bcc35df7a736b14b95e8d7507431a7cc57620554`; protocol остаётся `3`, новое поле `equipment?` additive и обратно совместимо с neutral empty fallback.
 - `PlayerArmorVisual` расширяет канонический `PlayerVisual`: отдельные cuboid-shell meshes сидят на существующих head/body/arm/leg pivots, поэтому idle/walk/sprint/sneak/jump/attack/mining/bow/eat/block transforms наследуются без второй animator-системы. `layer_1` обслуживает helmet/chest/boots, `layer_2` — leggings; outer inflate = 1 model pixel, inner leggings = 0.5 pixel.
-- Local third-person и first-person sleeve читают exact item IDs из authoritative `Inventory`. First-person не создаёт helmet/body/leg geometry возле камеры. Remote `RemotePlayerInfo`/`PlayerSnapshot` получают exact head/chest/legs/feet IDs из server `Inventory`; `RemotePlayerView` меняет слоты на уже созданной модели без reconnect и очищает armor при death/reset.
+- Local third-person читает exact item IDs из authoritative `Inventory`. `FirstPersonRenderer` намеренно не получает equipment и не создаёт никакие armor meshes: vanilla first-person показывает только обычную skin arm/held item presentation. Remote `RemotePlayerInfo`/`PlayerSnapshot` получают exact head/chest/legs/feet IDs из server `Inventory`; `RemotePlayerView` меняет слоты на уже созданной модели без reconnect и очищает armor при death/reset.
+- Invisibility скрывает только skin base и включённые outer layers. Экипированная armor и held item остаются видимыми и у local third-person, и у remote players; authoritative equipment при этом не меняется.
 - Texture/material/geometry resources общие и кэшированные; nearest, sRGB, mipmaps off, alpha cutout. Leather использует tinted base + untinted overlay. Chainmail PNG поддержан presentation resolver/QA с корректной прозрачностью, но chainmail gameplay items намеренно не добавлены в текущий registry/recipes/combat.
-- Regression: финальный armor/player-focused run **26/26 PASS**, расширенный related player/inventory/network/render suite **117/117 PASS**, все typechecks/boundaries/build PASS. Full suite: **1791 PASS / 14 FAIL**, 1 unchanged extractor parse suite и 1 worker timeout; failures совпадают по классам с pre-existing CPU-sensitive worldgen/minecart/sunlight/tick-load gates и не затрагивают armor tests.
-- Manual WebGL QA через `?qaPlayer=1`: full/mixed/equip/unequip, leather overlay, chainmail holes, Classic/Slim, locomotion/action poses и first-person sleeve/no near-camera armor. Дополнительно два реальных Online-клиента с разными server player IDs подтвердили mixed equip, live chest unequip, обратный iron chest render, Survival death/drop без ghost armor и disconnect cleanup (`Remote (none)`); warn/error console обоих клиентов пуст.
-- Handoff: `docs/reports/2026-09-07_player-armor-visuals.md`.
+- Follow-up regression: armor/player-focused run **33/33 PASS**, все четыре typecheck, boundaries и production build PASS. Предыдущий расширенный related suite **117/117 PASS** и full-suite baseline остаются зафиксированы в основном armor report.
+- Manual WebGL QA основного armor pass через `?qaPlayer=1`: full/mixed/equip/unequip, leather overlay, chainmail holes, Classic/Slim и locomotion/action poses. Дополнительно два реальных Online-клиента с разными server player IDs подтвердили mixed equip, live chest unequip, обратный iron chest render, Survival death/drop без ghost armor и disconnect cleanup (`Remote (none)`); warn/error console обоих клиентов пуст. Follow-up first-person/invisibility semantics покрыты scene-graph и remote interpolation regressions.
+- Handoff: `docs/reports/2026-09-07_player-armor-vanilla-rendering-followup.md`.
 
 ## Follow-up: Online food/potion render-edge sequencing — 2026-09-07
 

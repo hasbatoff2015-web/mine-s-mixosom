@@ -13,7 +13,7 @@ Implement Minecraft-like visible armor for local and remote players without addi
 
 ## Result
 
-Local third-person, first-person right sleeve, and remote players now render independently equipped helmet/chest/legs/feet armor with vanilla-style shells and atlas selection. Exact equipment comes from authoritative inventory state. Existing player animation, lighting, invisibility, interpolation and gameplay armor calculations remain canonical.
+Local third-person and remote players now render independently equipped helmet/chest/legs/feet armor with vanilla-style shells and atlas selection. Exact equipment comes from authoritative inventory state. First-person intentionally renders no armor. Invisibility hides player skin while equipped armor and held items remain visible. Existing player animation, lighting, interpolation and gameplay armor calculations remain canonical.
 
 ## Current player model
 
@@ -33,7 +33,7 @@ The existing hierarchy remains `root → bodyYawRoot → head/body/rightArm/left
 
 ## Local player
 
-`playerEquipmentFromInventory` maps the canonical local `Inventory.armor` stacks to exact item IDs. `Game.updatePlayerPresentation` sends the result to the local third-person `PlayerVisual` and the first-person renderer. The first-person armor implementation is only a right-arm chestplate sleeve and never creates helmet/torso/leg shells near the camera.
+`playerEquipmentFromInventory` maps the canonical local `Inventory.armor` stacks to exact item IDs. `Game.updatePlayerPresentation` sends the result only to the local third-person `PlayerVisual`. `FirstPersonRenderer` has no armor equipment API and creates no armor meshes, including no chestplate sleeve.
 
 ## Remote players
 
@@ -52,9 +52,9 @@ The Node-safe protocol now has optional `PlayerEquipmentState` on both `RemotePl
 - `shared/protocol.ts`: optional exact equipment snapshot contract.
 - `src/inventory/equipment.ts`, `src/inventory/index.ts`: canonical inventory-to-presentation mapping/export.
 - `server/WorldInstance.ts`: authoritative equipment in join and tick snapshots.
-- `src/rendering/player/PlayerArmorVisual.ts`: shells, UV mapping, material/texture/geometry caches and first-person sleeve.
-- `src/rendering/player/PlayerVisual.ts`: armor lifecycle and visibility integration.
-- `src/rendering/FirstPersonRenderer.ts`: right sleeve integration.
+- `src/rendering/player/PlayerArmorVisual.ts`: third-person shells, UV mapping and material/texture/geometry caches.
+- `src/rendering/player/PlayerVisual.ts`: armor lifecycle plus skin-only invisibility visibility integration.
+- `src/rendering/FirstPersonRenderer.ts`: skin arm and held-item presentation; no armor integration.
 - `src/core/Game.ts`: shared resources and local/remote equipment wiring.
 - `src/net/RemotePlayerView.ts`: initial/live/death equipment application.
 - `src/dev/PlayerQaHarness.ts`: deterministic per-slot material QA controls.
@@ -85,8 +85,7 @@ WebGL QA used the real `PlayerVisual` through `?qaPlayer=1`:
 - Full chainmail attack: transparent holes, no visible sorting artifacts.
 - Full leather bow: tinted base plus untinted overlay.
 - Classic and Slim arm/pivot alignment.
-- First-person with chest equipped: sleeve only; helmet/legs/boots did not enter the camera.
-- First-person chest unequipped while other slots remained: bare arm and no near-plane armor.
+- Follow-up automated scene-graph QA verifies that a full equipped set creates no armor meshes in the first-person scene.
 - Browser console warning/error lists were empty.
 - Two real Online clients joined the same local authoritative server with distinct player/session IDs. Client B saw client A's iron helmet + diamond chest + gold leggings + leather boots, then saw the diamond chest disappear without reconnect while the other pieces remained. Client A then saw client B's iron chestplate.
 - Client B switched to Survival and ran `/kill`; the server dropped the chestplate, respawned B with empty inventory, and client A rendered the respawned player without ghost armor. Closing B removed the remote immediately (`Remote (none)`). Rejoin/reset equipment replacement is asserted in the network integration test.
