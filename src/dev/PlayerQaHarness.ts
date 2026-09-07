@@ -14,8 +14,16 @@ import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual, type PlayerVisualFrameState } from '../rendering/player/PlayerVisual';
+import {
+  ARMOR_VISUAL_MATERIALS,
+  PlayerArmorGeometryCache,
+  PlayerArmorMaterialCache,
+  armorVisualItemId,
+} from '../rendering/player/PlayerArmorVisual';
 import { nextCameraPerspective, type CameraPerspective } from '../rendering/player/ThirdPersonCamera';
 import { setEntityLight } from '../rendering/worldLighting';
+import type { PlayerEquipmentState } from '../../shared/protocol';
+import type { ArmorSlot } from '../items';
 
 type QaPose = 'idle' | 'walk' | 'sprint' | 'sneak' | 'jump' | 'attack' | 'mining' | 'bow' | 'block' | 'eat';
 
@@ -27,6 +35,20 @@ const QA_ITEMS = Object.freeze({
   bow: 'bow',
   food: 'apple',
 });
+
+const QA_ARMOR_SLOT_NAMES: Readonly<Record<ArmorSlot, string>> = Object.freeze({
+  head: 'helmet', chest: 'chestplate', legs: 'leggings', feet: 'boots',
+});
+
+function armorOptions(slot: ArmorSlot, selected: string | null): string {
+  return [
+    `<option value="">none</option>`,
+    ...ARMOR_VISUAL_MATERIALS.map((material) => {
+      const id = armorVisualItemId(material, slot);
+      return `<option value="${id}"${id === selected ? ' selected' : ''}>${material}</option>`;
+    }),
+  ].join('');
+}
 
 export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement): Promise<() => void> {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -52,12 +74,16 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   await items.preload();
   const skins = new MinecraftSkinRegistry();
   const geometries = new PlayerSkinGeometryCache();
+  const armorMaterials = new PlayerArmorMaterialCache();
+  const armorGeometries = new PlayerArmorGeometryCache();
+  const armorResources = { materials: armorMaterials, geometries: armorGeometries };
   let appearance = DEFAULT_PLAYER_APPEARANCE;
-  const player = new PlayerVisual(skins, geometries, items, appearance);
+  const player = new PlayerVisual(skins, geometries, items, appearance, { armorResources });
   scene.add(player.root);
   const firstPerson = new FirstPersonRenderer(items, {
     skinRegistry: skins,
     skinGeometries: geometries,
+    armorResources,
     appearance,
     onSwing: () => player.swing(),
   });
@@ -71,6 +97,14 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   let viewYaw = 0;
   let viewPitch = 0;
   let lastAttack = 0;
+  const equipment: { -readonly [K in keyof PlayerEquipmentState]: PlayerEquipmentState[K] } = {
+    head: 'iron_helmet',
+    chest: 'iron_chestplate',
+    legs: 'iron_leggings',
+    feet: 'iron_boots',
+  };
+  player.setArmor(equipment);
+  firstPerson.setArmor(equipment);
 
   uiRoot.innerHTML = `<div id="player-qa" style="position:fixed;left:12px;top:12px;z-index:20;width:min(470px,calc(100vw - 24px));padding:12px;background:#10151de8;color:#fff;font:12px/1.35 monospace;pointer-events:auto;border:1px solid #ffffff35">
     <strong>PLAYER QA · 64×64 / Classic + Slim / shared held items</strong>
@@ -79,6 +113,10 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       <label for="qa-model">model</label><select id="qa-model"><option>classic</option><option>slim</option></select>
       <label for="qa-pose">pose</label><select id="qa-pose">${(['idle', 'walk', 'sprint', 'sneak', 'jump', 'attack', 'mining', 'bow', 'block', 'eat'] as QaPose[]).map((name) => `<option>${name}</option>`).join('')}</select>
       <label for="qa-held">held</label><select id="qa-held">${Object.entries(QA_ITEMS).map(([name, id]) => `<option value="${id}">${name}</option>`).join('')}</select>
+      <label for="qa-armor-head">helmet</label><select id="qa-armor-head">${armorOptions('head', equipment.head)}</select>
+      <label for="qa-armor-chest">chestplate</label><select id="qa-armor-chest">${armorOptions('chest', equipment.chest)}</select>
+      <label for="qa-armor-legs">leggings</label><select id="qa-armor-legs">${armorOptions('legs', equipment.legs)}</select>
+      <label for="qa-armor-feet">boots</label><select id="qa-armor-feet">${armorOptions('feet', equipment.feet)}</select>
       <label for="qa-yaw">head yaw</label><input id="qa-yaw" type="range" min="-120" max="120" value="0">
       <label for="qa-pitch">head pitch</label><input id="qa-pitch" type="range" min="-80" max="80" value="0">
     </div>
@@ -92,6 +130,10 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   const heldSelect = root.querySelector<HTMLSelectElement>('#qa-held')!;
   const yawInput = root.querySelector<HTMLInputElement>('#qa-yaw')!;
   const pitchInput = root.querySelector<HTMLInputElement>('#qa-pitch')!;
+  const armorSelects = (Object.keys(QA_ARMOR_SLOT_NAMES) as ArmorSlot[]).map((slot) => ({
+    slot,
+    select: root.querySelector<HTMLSelectElement>(`#qa-armor-${slot}`)!,
+  }));
   const output = root.querySelector<HTMLOutputElement>('output')!;
   modelSelect.value = appearance.model;
 
@@ -121,6 +163,13 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     player.setHeldItem(heldItem || undefined);
     firstPerson.setHeldItems(heldItem || undefined);
   });
+  for (const { slot, select } of armorSelects) {
+    select.addEventListener('change', () => {
+      equipment[slot] = select.value || null;
+      player.setArmor(equipment);
+      firstPerson.setArmor(equipment);
+    });
+  }
   yawInput.addEventListener('input', () => { viewYaw = THREE.MathUtils.degToRad(Number(yawInput.value)); });
   pitchInput.addEventListener('input', () => { viewPitch = THREE.MathUtils.degToRad(Number(pitchInput.value)); });
   const onClick = (event: MouseEvent): void => {
@@ -221,7 +270,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     renderer.info.reset();
     renderer.render(scene, camera);
     firstPerson.render(renderer);
-    output.textContent = `${appearance.skinId} · ${appearance.model} · outer ${outer ? 'on' : 'off'}\n${pose} · ${perspective} · held ${heldItem || 'empty'}\ncache skins ${skins.cacheSize} refs ${skins.referenceCount(appearance.skinId)} · geometry ${geometries.size}\ndraw ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`;
+    output.textContent = `${appearance.skinId} · ${appearance.model} · outer ${outer ? 'on' : 'off'}\n${pose} · ${perspective} · held ${heldItem || 'empty'}\narmor ${equipment.head ?? '-'} | ${equipment.chest ?? '-'} | ${equipment.legs ?? '-'} | ${equipment.feet ?? '-'}\ncache skins ${skins.cacheSize} refs ${skins.referenceCount(appearance.skinId)} · geometry ${geometries.size} · armor ${armorGeometries.size}/${armorMaterials.textureCount}\ndraw ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`;
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);
@@ -234,6 +283,8 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     player.dispose();
     firstPerson.dispose();
     geometries.dispose();
+    armorGeometries.dispose();
+    armorMaterials.dispose();
     skins.dispose();
     items.dispose();
     atlas.dispose();

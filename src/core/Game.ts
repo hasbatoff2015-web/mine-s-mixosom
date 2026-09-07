@@ -100,7 +100,13 @@ import {
   shouldShowPointerLockFallback,
   type PointerUnlockReason,
 } from '../input/pointerLock';
-import { Inventory, createItemStack, damageItem, type ItemStack } from '../inventory';
+import {
+  Inventory,
+  createItemStack,
+  damageItem,
+  playerEquipmentFromInventory,
+  type ItemStack,
+} from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
 import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
@@ -134,6 +140,10 @@ import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import {
+  PlayerArmorGeometryCache,
+  PlayerArmorMaterialCache,
+} from '../rendering/player/PlayerArmorVisual';
 import {
   THIRD_PERSON_CAMERA_DISTANCE,
   availableThirdPersonDistance,
@@ -517,6 +527,8 @@ export class Game {
   private firstPerson?: FirstPersonRenderer;
   private readonly playerSkins = new MinecraftSkinRegistry();
   private readonly playerSkinGeometries = new PlayerSkinGeometryCache();
+  private readonly playerArmorMaterials = new PlayerArmorMaterialCache();
+  private readonly playerArmorGeometries = new PlayerArmorGeometryCache();
   private playerAppearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
   private cameraPerspective: CameraPerspective = 'firstPerson';
   private thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
@@ -696,6 +708,10 @@ export class Game {
     this.firstPerson = new FirstPersonRenderer(this.itemVisuals, {
       skinRegistry: this.playerSkins,
       skinGeometries: this.playerSkinGeometries,
+      armorResources: {
+        materials: this.playerArmorMaterials,
+        geometries: this.playerArmorGeometries,
+      },
       appearance: this.playerAppearance,
       onSwing: () => this.session?.playerVisual?.swing(),
     });
@@ -732,6 +748,8 @@ export class Game {
     this.firstPerson?.dispose();
     this.playerSkinGeometries.dispose();
     this.playerSkins.dispose();
+    this.playerArmorMaterials.dispose();
+    this.playerArmorGeometries.dispose();
     this.itemVisuals?.dispose();
     this.itemIcons?.dispose();
     this.arrowVisuals?.dispose();
@@ -901,6 +919,12 @@ export class Game {
         this.playerSkinGeometries,
         this.itemVisuals!,
         DEFAULT_PLAYER_APPEARANCE,
+        {
+          armorResources: {
+            materials: this.playerArmorMaterials,
+            geometries: this.playerArmorGeometries,
+          },
+        },
       ),
       world: session.world,
       onMining: (id, mining, now) => session.worldRenderer.remoteBreaking.setBreaker(id, mining, now),
@@ -2447,6 +2471,12 @@ export class Game {
       this.playerSkinGeometries,
       itemVisuals,
       this.playerAppearance,
+      {
+        armorResources: {
+          materials: this.playerArmorMaterials,
+          geometries: this.playerArmorGeometries,
+        },
+      },
     );
     this.scene.add(playerVisual.root);
 
@@ -4864,6 +4894,9 @@ export class Game {
 
   private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
     const thirdPerson = this.cameraPerspective !== 'firstPerson';
+    const equipment = playerEquipmentFromInventory(session.inventory);
+    session.playerVisual.setArmor(equipment);
+    this.firstPerson?.setArmor(equipment);
     session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson

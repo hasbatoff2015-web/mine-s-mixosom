@@ -28,6 +28,13 @@ import {
   type PlayerAnimationState,
   type PlayerVisualPose,
 } from './PlayerVisualAnimator';
+import {
+  PlayerArmorGeometryCache,
+  PlayerArmorMaterialCache,
+  PlayerArmorVisual,
+  type PlayerArmorResources,
+} from './PlayerArmorVisual';
+import type { PlayerEquipmentState } from '../../../shared/protocol';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly invisible: boolean;
@@ -64,6 +71,7 @@ export class PlayerVisual {
   readonly root = new THREE.Group();
   readonly rig: PlayerVisualRig;
   readonly animator = new PlayerVisualAnimator();
+  readonly armor: PlayerArmorVisual;
   private readonly bodyYawRoot = new THREE.Group();
   private readonly material: THREE.MeshBasicMaterial;
   private readonly partMeshes = new Map<PlayerSkinPart, SkinPartMeshes>();
@@ -75,12 +83,14 @@ export class PlayerVisual {
   private invisible = false;
   private hurtFlash = 0;
   private disposed = false;
+  private readonly ownedArmorResources?: PlayerArmorResources;
 
   constructor(
     private readonly skins: MinecraftSkinRegistry,
     private readonly geometries: PlayerSkinGeometryCache,
     private readonly itemVisuals: ItemVisualFactory,
     appearance: PlayerAppearance,
+    options: { readonly armorResources?: PlayerArmorResources } = {},
   ) {
     this.appearanceValue = createPlayerAppearance(appearance);
     this.skinHandle = skins.acquire(this.appearanceValue.skinId);
@@ -112,6 +122,12 @@ export class PlayerVisual {
     this.bodyYawRoot.add(head, body, rightArm, leftArm, rightLeg, leftLeg);
     rightArm.add(heldItem);
     this.configurePivots();
+    const armorResources = options.armorResources ?? {
+      materials: new PlayerArmorMaterialCache(),
+      geometries: new PlayerArmorGeometryCache(),
+    };
+    if (!options.armorResources) this.ownedArmorResources = armorResources;
+    this.armor = new PlayerArmorVisual(this.rig, armorResources, this.appearanceValue.model);
     this.rebuildMeshes();
     bindEntityLightReceiver(this.root);
     setEntityLight(this.root, [1, 1, 1]);
@@ -138,6 +154,7 @@ export class PlayerVisual {
     if (modelChanged) {
       this.configurePivots();
       this.rebuildMeshes();
+      this.armor.setModel(next.model);
       bindEntityLightReceiver(this.root);
     } else this.syncLayerVisibility();
     previous.release();
@@ -153,6 +170,11 @@ export class PlayerVisual {
     if (!this.heldModel || !itemId) return;
     this.rig.heldItem.add(this.heldModel);
     this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
+  }
+
+  setArmor(equipment: PlayerEquipmentState): void {
+    this.assertActive();
+    this.armor.setEquipment(equipment);
   }
 
   swing(): void {
@@ -195,9 +217,12 @@ export class PlayerVisual {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
+    this.armor.dispose();
     this.material.dispose();
     this.skinHandle.release();
     this.partMeshes.clear();
+    this.ownedArmorResources?.materials.dispose();
+    this.ownedArmorResources?.geometries.dispose();
     this.disposed = true;
   }
 
@@ -262,6 +287,7 @@ export class PlayerVisual {
       meshes.base.visible = !this.invisible;
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
+    this.armor.setHidden(this.invisible);
     this.rig.heldItem.visible = this.heldModel !== undefined;
   }
 
