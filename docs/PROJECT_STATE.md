@@ -8,7 +8,7 @@
 - Рецепт: `[ ][redstone_dust][ ]` / `[ ][chest][ ]` / `[obsidian][obsidian][obsidian]` → 1. Не ванильный Ender Chest.
 - Persistence: optional `portalChest` на SP `SerializedPlayerState` и Anarchy `SerializedPersistedPlayer`. Старые saves → пустые 27 слотов. Разрушение блока не трогает личные слоты.
 - Protocol v3 без новых packet types: `ContainerKind` += `'portal-chest'`. Ordinary chest sharing не менялся.
-- Focused **125 PASS**. Typechecks/boundaries/`test:sim` **42/42**/build PASS. `test:server` **274/275**, только известный `tick-load-flight`.
+- Focused **118 PASS**. Typechecks/boundaries/`test:sim` **42/42**/build PASS. `test:server` **274/275**, только известный `tick-load-flight`.
 - Handoff: `docs/reports/2026-09-07_portal-chest.md`.
 
 ## Последний проход: PR #64 onto current main (PR #65) — 2026-09-07
