@@ -112,6 +112,7 @@ describe('Anarchy claim-anchor blocks', () => {
   function prepareCell(world: WorldInstance, player: ServerPlayer, x: number, y: number, z: number): void {
     player.controller.teleport([x + 0.5, y, z + 2.5]);
     world.world.setBlock(x, y, z, BlockId.Air);
+    world.world.setBlock(x, y, z - 1, BlockId.Dirt);
     lookAt(player, x, y, z);
   }
 

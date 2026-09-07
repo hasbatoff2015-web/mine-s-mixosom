@@ -38,7 +38,10 @@ Implemented. `diamond_block` keeps id `149`. New `gold_block` (`159`) and `iron_
 
 ## Tests
 
-Unit: radii, inclusive overlap, sequence, migration. Anarchy: radii/flags/names, foreign deny, owner break of one anchor, leftover `/claim delete`, overlap deny including own diamond vs iron, iron inside own regular claim, regular overlay create, restart without dupes, reconnect, OP break, survival race rollback.
+Focused:
+- `claim-anchors` 8/8, `claim-anchor-blocks` 6/6, textures 1/1, crafting 10/10, block-registry 13/13, claims 10/10, anarchy-plugins 36/36.
+- Typechecks (all four) PASS. Boundaries PASS. `test:sim` 42/42. Production build PASS.
+- `test:server` 287 PASS / 2 FAIL: known CPU-sensitive `tick-load-flight` (>80 ms) and a load-flake `anarchy-server` two-client reach check (passes isolated).
 
 ## Visual QA
 

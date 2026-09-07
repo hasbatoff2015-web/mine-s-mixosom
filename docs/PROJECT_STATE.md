@@ -8,7 +8,8 @@
 - Постановка блока создаёт cuboid-приват (радиус X/Z 10/20/30, Y `0…255`). Пересечение двух блок-приватов всегда запрещено. Обычный `/claim create` по priority без изменений.
 - Якорь хранится в `Claim.anchor`; счётчик имён — `ClaimStore.blockClaimSeq`. Старые JSON без этих полей мигрируют как обычные регионы.
 - Ломание ячейки якоря удаляет только этот claim. `/claim delete` оставляет физический блок.
-- Handoff: `docs/reports/2026-09-07_claim-anchor-blocks.md`.
+- Focused claim-anchor + related: unit 32, Anarchy integration 6, anarchy-plugins 36, all four typechecks, boundaries, `test:sim` 42, build PASS.
+- `test:server` **287 PASS / 2 FAIL**: known `tick-load-flight` and a load-flake two-client reach check (passes isolated).
 
 ## Предыдущий проход: Portal Chest texture polish — 2026-09-07
 

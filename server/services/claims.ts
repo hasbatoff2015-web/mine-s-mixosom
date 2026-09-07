@@ -210,11 +210,13 @@ function isClaimAnchorBlock(value: unknown): value is ClaimAnchorBlock {
 function migrateAnchor(raw: unknown): ClaimAnchor | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
-  if (!Number.isInteger(record.x) || !Number.isInteger(record.y) || !Number.isInteger(record.z)) {
-    return undefined;
-  }
   if (!isClaimAnchorBlock(record.block)) return undefined;
-  return { x: record.x, y: record.y, z: record.z, block: record.block };
+  const x = record.x;
+  const y = record.y;
+  const z = record.z;
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return undefined;
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return undefined;
+  return { x, y, z, block: record.block };
 }
 
 function migrateBlockClaimSeq(raw: unknown): Record<string, number> | undefined {
