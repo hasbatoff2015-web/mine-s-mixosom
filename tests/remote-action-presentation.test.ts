@@ -12,7 +12,7 @@ const info: RemotePlayerInfo = { id: 'actor', name: 'Actor', x: 0, y: 70, z: 0, 
 function harness(presentation?: PlayerPresentationState) {
   const visual = {
     root: new THREE.Group(), animator: { reset: vi.fn() },
-    update: vi.fn(), setHeldItem: vi.fn(), swing: vi.fn(),
+    update: vi.fn(), setHeldItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
     triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
   };
   const onMining = vi.fn();

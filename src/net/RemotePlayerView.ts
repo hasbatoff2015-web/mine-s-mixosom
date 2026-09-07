@@ -7,6 +7,7 @@ import {
   type PlayerPresentationState,
 } from '../../shared/playerPresentation';
 import type { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { EMPTY_PLAYER_EQUIPMENT } from '../inventory';
 import type { VoxelWorld } from '../world/World';
 import {
   maybeLogRemoteTimeline,
@@ -68,6 +69,7 @@ export class RemotePlayerView {
     this.swingSeq = this.presentation.swingSeq;
     this.hurtSeq = presentationHurtSeq(this.presentation);
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
   }
 
@@ -93,6 +95,7 @@ export class RemotePlayerView {
       }
       : next;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.options.onMining?.(this.id, this.presentation.mining, now);
   }
 

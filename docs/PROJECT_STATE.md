@@ -1,10 +1,21 @@
 # Состояние проекта
 
-## Последний проход: PR #64 onto current main (PR #65) — 2026-09-07
+## Последний проход: vanilla armor rendering semantics follow-up — 2026-09-07
+
+- Ветка `codex/player-armor-visuals` создана от актуального `origin/main` `bcc35df7a736b14b95e8d7507431a7cc57620554`; protocol остаётся `3`, новое поле `equipment?` additive и обратно совместимо с neutral empty fallback.
+- `PlayerArmorVisual` расширяет канонический `PlayerVisual`: отдельные cuboid-shell meshes сидят на существующих head/body/arm/leg pivots, поэтому idle/walk/sprint/sneak/jump/attack/mining/bow/eat/block transforms наследуются без второй animator-системы. `layer_1` обслуживает helmet/chest/boots, `layer_2` — leggings; outer inflate = 1 model pixel, inner leggings = 0.5 pixel.
+- Local third-person читает exact item IDs из authoritative `Inventory`. `FirstPersonRenderer` намеренно не получает equipment и не создаёт никакие armor meshes: vanilla first-person показывает только обычную skin arm/held item presentation. Remote `RemotePlayerInfo`/`PlayerSnapshot` получают exact head/chest/legs/feet IDs из server `Inventory`; `RemotePlayerView` меняет слоты на уже созданной модели без reconnect и очищает armor при death/reset.
+- Invisibility скрывает только skin base и включённые outer layers. Экипированная armor и held item остаются видимыми и у local third-person, и у remote players; authoritative equipment при этом не меняется.
+- Texture/material/geometry resources общие и кэшированные; nearest, sRGB, mipmaps off, alpha cutout. Leather использует tinted base + untinted overlay. Chainmail PNG поддержан presentation resolver/QA с корректной прозрачностью, но chainmail gameplay items намеренно не добавлены в текущий registry/recipes/combat.
+- Follow-up regression: armor/player-focused run **33/33 PASS**, все четыре typecheck, boundaries и production build PASS. Предыдущий расширенный related suite **117/117 PASS** и full-suite baseline остаются зафиксированы в основном armor report.
+- Manual WebGL QA основного armor pass через `?qaPlayer=1`: full/mixed/equip/unequip, leather overlay, chainmail holes, Classic/Slim и locomotion/action poses. Дополнительно два реальных Online-клиента с разными server player IDs подтвердили mixed equip, live chest unequip, обратный iron chest render, Survival death/drop без ghost armor и disconnect cleanup (`Remote (none)`); warn/error console обоих клиентов пуст. Follow-up first-person/invisibility semantics покрыты scene-graph и remote interpolation regressions.
+- Handoff: `docs/reports/2026-09-07_player-armor-vanilla-rendering-followup.md`.
+
+## Интегрированный main baseline: PR #64 onto current main (PR #65) — 2026-09-07
 
 - Ветка `cursor/armor-crouch-swing-flash-3f93` смержила актуальный `origin/main` (`bcc35df`, PR #65) merge, не rebase/force-push.
 - **Канонический eat/drink — PR #65.** `localFoodUse`, captured slot, `commandSeq` boundary, `FirstPersonRenderer.applyEatPose`, authoritative consume/bottle. Наш `heldItemEatPose.ts` / `applyEatDrinkHeldItemPose` / `ownFoodUseProgress` удалены.
-- Сохранено из PR #64: crouch hip (`bodyPitch` на талии, `bodyYOffset`/`bodyZOffset` = 0), яркий model hurt flash (`applyMobHurtTint`, peak 1.0), air swing, `hurtSeq`/`presentation.armor` без inflated overlay.
+- Сохранено из PR #64: crouch hip (`bodyPitch` на талии, `bodyYOffset`/`bodyZOffset` = 0), яркий model hurt flash (`applyMobHurtTint`, peak 1.0), air swing и `hurtSeq`. Legacy inflated overlay отброшен; `presentation.armor` остаётся compatibility wire data и не рендерится. Новый `PlayerArmorVisual` использует отдельный server-owned `equipment` state.
 - Сохранено из PR #62: claim wires 3px + `depthTest`/`depthWrite`.
 - Сохранено из PR #65: cobweb, fallDistance, TNT pulse, claims attacker/victim PvP, `movementDuringItemUse`, food/potion lifecycle.
 - Handoff: `docs/reports/2026-09-07_pr64-onto-pr65-main.md`.
@@ -833,7 +844,7 @@
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют. Lid `openProgress` — runtime-only. Lid underside — `down` face с `CHEST_LID_SEAM`.
 - Печь тикает в общем world tick независимо от открытого GUI. Flame/arrow патчатся live. Recipe Book в печи сознательно отсутствует. GUI icon печи — `block/furnace_front`, не side.
 - Recipe Book читает `CRAFTING_RECIPES`. `SMELTING_RECIPES` остаются источником furnace simulation, не UI-книги. Все crafting registry recipes считаются known/unlocked. Нет vanilla advancement unlocks.
-- First-person generated/handheld/bow pose записан из manual visual QA: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, scale `0.60`. Это **не** vanilla idle matrix и не pixel-perfect F2. Live panel и `qaPose` candidates остаются QA-only. Generic offhand storage сохранён; offhand renderer и shield entity отсутствуют. Leather overlay вне текущего pass. Слот второй руки в container GUI скрыт.
+- First-person generated/handheld/bow pose записан из manual visual QA: `[0.67, -0.29, -0.70]`, `[1, -90, 34]°`, scale `0.60`. Это **не** vanilla idle matrix и не pixel-perfect F2. Live panel и `qaPose` candidates остаются QA-only. Generic offhand storage сохранён; offhand renderer и shield entity отсутствуют. Leather armor base tint + overlay теперь реализованы в player armor pass. Слот второй руки в container GUI скрыт.
 
 ## Игрок и survival
 

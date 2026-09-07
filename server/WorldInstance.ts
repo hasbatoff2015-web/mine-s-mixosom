@@ -4,7 +4,7 @@ import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
-import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
+import { Inventory, createItemStack, playerEquipmentFromInventory, type ItemStack } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
@@ -222,6 +222,7 @@ export class ServerPlayer implements GameplayPlayer {
       onGround: this.controller.onGround,
       selectedSlot: this.selectedSlot,
       presentation: this.presentation(),
+      equipment: playerEquipmentFromInventory(this.inventory),
       invisible: this.survival.invisible,
       onFire: this.survival.isOnFire,
       hunger: this.survival.hunger,
@@ -295,6 +296,7 @@ export class ServerPlayer implements GameplayPlayer {
       yaw: snap.yaw,
       pitch: snap.pitch,
       presentation: snap.presentation,
+      equipment: snap.equipment,
     };
   }
 
