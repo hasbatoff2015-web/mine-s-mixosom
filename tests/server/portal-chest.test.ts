@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join as pathJoin } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
 import { PLAYER_EYE_HEIGHT } from '../../src/core/constants';
@@ -11,7 +11,7 @@ import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
 import type { ServerInventoryMessage } from '../../shared/protocol';
 
 async function tempDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'fc-portal-chest-'));
+  return mkdtemp(pathJoin(tmpdir(), 'fc-portal-chest-'));
 }
 
 function testConfig(dataDir: string) {
@@ -182,7 +182,7 @@ describe('Anarchy portal chest', () => {
     openPortalChest(world, joined.player, x, y, z);
     putDiamond(world, joined.player);
     world.applyInventoryAction(joined.player, { type: 'inventory_action', action: 'close' });
-    expect(world.breakBlock(joined.player, x, y, z)).toEqual({ ok: true });
+    expect(world.tryBreak(joined.player, x, y, z)).toEqual({ ok: true });
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
     expect(world.world.chests.has(`${x},${y},${z}`)).toBe(false);
     expect(joined.player.portalChest.slots[0]).toEqual(createItemStack('diamond', 10));
@@ -296,7 +296,7 @@ describe('Anarchy portal chest', () => {
     dirs.push(dir);
     const world = new WorldInstance({
       ...testConfig(dir),
-      pluginDir: join(dir, 'no-plugins'),
+      pluginDir: pathJoin(dir, 'no-plugins'),
       loadExamplePlugin: false,
       loadBuiltinPlugins: true,
     });
@@ -322,7 +322,7 @@ describe('Anarchy portal chest', () => {
 
     world.setGameMode(ada.player, 'creative');
     world.setGameMode(bob.player, 'creative');
-    ada.player.controller.teleport([x + 1.5, y, z + 1.5]);
+    ada.player.controller.teleport([x + 0.5, y, z + 0.5]);
     world.world.setBlock(x + 1, y, z + 1, BlockId.Air);
     const lookAda = lookAngles(ada.player.controller.position, x + 1, y, z + 1);
     ada.player.controller.yaw = lookAda.yaw;

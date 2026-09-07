@@ -1,6 +1,7 @@
 import { BlockId } from '../blocks';
 import type { ContainerKind } from '../../shared/protocol';
-import { createItemStack, type ItemStack } from './stack';
+import { createItemStack } from './stack';
+import type { ItemStack } from './types';
 
 export const PORTAL_CHEST_SLOT_COUNT = 27;
 export const PORTAL_CHEST_ITEM_ID = 'portal_chest';

@@ -1,5 +1,16 @@
 # Состояние проекта
 
+## Последний проход: Portal Chest — 2026-09-07
+
+- Ветка `cursor/portal-chest-3f93` от актуального `main` (`26552b4`). Draft PR **#67**.
+- Новый блок `portal_chest` / «Портальный сундук» (`BlockId.PortalChest = 158`): та же chest-геометрия, lid, facing и 27-slot GUI, отдельная текстура `entity/chest/portal`.
+- Личное хранилище — `player.portalChest.slots`, ключ = server player UUID. Физический блок только точка доступа. `isSharedContainerWindow` остаётся true только для `chest` и `furnace`.
+- Рецепт: `[ ][redstone_dust][ ]` / `[ ][chest][ ]` / `[obsidian][obsidian][obsidian]` → 1. Не ванильный Ender Chest.
+- Persistence: optional `portalChest` на SP `SerializedPlayerState` и Anarchy `SerializedPersistedPlayer`. Старые saves → пустые 27 слотов. Разрушение блока не трогает личные слоты.
+- Protocol v3 без новых packet types: `ContainerKind` += `'portal-chest'`. Ordinary chest sharing не менялся.
+- Focused **125 PASS**. Typechecks/boundaries/`test:sim` **42/42**/build PASS. `test:server` **274/275**, только известный `tick-load-flight`.
+- Handoff: `docs/reports/2026-09-07_portal-chest.md`.
+
 ## Последний проход: PR #64 onto current main (PR #65) — 2026-09-07
 
 - Ветка `cursor/armor-crouch-swing-flash-3f93` смержила актуальный `origin/main` (`bcc35df`, PR #65) merge, не rebase/force-push.
@@ -758,7 +769,7 @@
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
 | Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs, close × outside panel |
-| Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI, furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
+| Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI; **portal chest** uses the same model with a personal 27-slot player store; furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT with TNT texture + fuse tint pulse, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
 | Combat | Реализовано; browser acceptance pending | Classic 1.8 click-driven melee, shared hurt resistance, fixed armor, sprint persistence after hit, sword blocking, Frontier vertical KB height; staged bow draw/shared arrows сохранены, shield отсутствует |

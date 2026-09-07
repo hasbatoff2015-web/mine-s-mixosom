@@ -1,5 +1,30 @@
 # Тестирование
 
+## 2026-09-07 Portal Chest
+
+Report: `reports/2026-09-07_portal-chest.md`.
+
+```text
+npx vitest run \
+  tests/portal-chest.test.ts \
+  tests/server/portal-chest.test.ts \
+  tests/crafting.test.ts \
+  tests/online-container-sync.test.ts \
+  tests/chest-model.test.ts \
+  tests/special-preview-contract.test.ts \
+  tests/gameplay-modal.test.ts \
+  tests/placement-support.test.ts \
+  tests/audio-sfx.test.ts \
+  tests/server/anarchy-chest-sync.test.ts \
+  --maxWorkers=2
+npm run typecheck && npm run typecheck:client && npm run typecheck:server && npm run typecheck:sim
+npm run check:boundaries
+npm run test:sim && npm run test:server -- --maxWorkers=2
+npm run build
+```
+
+Contracts: distinct `portal_chest` id; recipe redstone/chest/obsidian×3; 27 personal slots keyed by player id; not written to `VoxelWorld.chests`; two players do not share; persist across restart; break/replace keeps store; claims place/break still cancel; ordinary chest still shared.
+
 ## 2026-09-07 PR #64 onto current main (PR #65)
 
 Report: `reports/2026-09-07_pr64-onto-pr65-main.md`.
@@ -723,7 +748,9 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/ladder-climbing.test.ts` | 13 | Thin ladder contact, N/S/E/W into-wall climb, back+S climb, descent clamp, gravity resume, stairs are not ladders |
 | `tests/icon-scroll-fixes.test.ts` | 6 | Icon auto-fit extent, no per-item padding, Creative patch-dynamic keeps scroll/catalog, special-icon preview lighting (bright face shades, entity-light hooks stripped on clone) |
 | `tests/pointer-lock.test.ts` | 11 | Unlock reasons (escape/programmatic/focus-lost), Esc pause without duplicate exit, Continue one request, failed request → fallback, no auto-retry |
-| `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, lid interior `down` face, coplanar seam, held special_model, 27-slot persist, Creative catalog gate, shift transfer, single open target |
+| `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, lid interior `down` face, coplanar seam, held special_model, 27-slot persist, Creative catalog gate (chest **and** portal-chest), shift transfer, single open target |
+| `tests/portal-chest.test.ts` | 7 | Distinct block id/texture, recipe, 27 personal slots, not shared, snapshot parse, meshing/collision |
+| `tests/server/portal-chest.test.ts` | 8 | Open, second block same store, two players, break/replace, persist/restart, playerInteract cancel, claims place/break, ordinary chest still shared |
 | `tests/container-ui.test.ts` | 21 | Logical 176×166 scale, book button in craft row (no extra closed width), no furnace Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
 | `tests/creative-flight.test.ts` | 8 | 7-tick edge double-tap, Survival never flies, toggle on/off, hover/ascend/descend/Ctrl sprint, collision/landing/ladder override, mode switch, GUI input block while world ticks |
 | `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules; `LOADING_WORLD` is not simulating |
