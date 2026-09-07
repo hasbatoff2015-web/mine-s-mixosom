@@ -1,21 +1,44 @@
 # Roadmap
 
-## 2026-09-06: Player visual follow-up (PR #64)
+## 2026-09-07: PR #64 onto current main (PR #65)
 
-- [x] Remove the inflated armor overlay renderer only; keep inventory/protocol armor ids.
-- [x] Crouch from the waist pivot without translating upperBody forward of the legs.
-- [x] Reuse the singleplayer eat/drink held-item bobble on local and remote PlayerVisual via `foodUseProgress`.
-- [x] Player model hurt flash uses `applyMobHurtTint` at peak 1.0 (HUD overlay stays 0.28 / 220 ms).
-- [x] Leave air swing (`attack` → `swingSeq`) unchanged.
-- [ ] Owner two-client live QA: crouch over legs, eat/drink both sides, bright PvP flash, air swing still works. No armor boxes on the model.
+- [x] Merge `origin/main` (PR #65) into `cursor/armor-crouch-swing-flash-3f93` without dropping cobweb/TNT/PvP/use-movement/consumables.
+- [x] Delete PR #64 `heldItemEatPose` / `applyEatDrinkHeldItemPose` / `ownFoodUseProgress`; keep PR #65 `applyEatPose` + `localFoodUse`.
+- [x] Keep crouch hip (`bodyYOffset`/`bodyZOffset` = 0), bright player hurt flash, air swing, no armor overlay.
+- [x] Keep PR #62 claim wires 3px + depth test.
+- [ ] Owner two-client QA of the union: crouch, PR #65 eat/drink, bright PvP flash, air swing, claim occlusion.
 
-## 2026-09-06: Armor overlay, crouch hierarchy, air swing, multiplayer hurt flash
+## 2026-09-07: Online consumable render-edge follow-up
 
-- [x] Parent head/arms to `upperBody` so crouch keeps the torso visually connected.
-- [x] Inflated armor overlay shipped then **removed** in the follow-up (inventory/protocol ids kept).
-- [x] Send attack / increment `swingSeq` on air misses via existing `presentSwing`.
-- [x] Authoritative `hurtSeq` for the existing red flash on remotes.
-- [ ] Owner two-client live QA: crouch+walk+attack, air swing both ways, damage flash both ways.
+- [x] Reproduce real order: applied pre-use command N → render-edge `interact(N)` → fixed input N+1.
+- [x] Keep a newly accepted food/potion session through pre-use state `<= N`; let the first strictly newer command confirm or cancel it.
+- [x] Accept an immediate captured hotbar switch only at the freshest action boundary; validate index and read the item exclusively from server inventory.
+- [x] Preserve stale command, invalid slot, target block ID, face/reach and server inventory validation for targeted block interactions.
+- [x] Keep delayed boundary snapshot N from clearing local eat/drink presentation; zero progress from `> N` may clear it.
+- [x] Cover confirm, release cancel, slot cancel, potion completion/effect/bottle, delayed snapshot and targeted-use security regressions.
+- [ ] Owner live QA: between-tick Apple/Potion use, immediate number-key/scroll switch + RMB, release/switch cancel, visible animation through the first delayed snapshot.
+
+## 2026-09-07: six gameplay / Online regressions
+
+- [x] Cobweb blocks ordinary jump and strongly damps vertical velocity; leaving the web restores normal jump.
+- [x] Ground-support landing resets `fallDistance` after repeated low-ceiling jumps without hiding real fall damage.
+- [x] Online primed TNT runs the existing render pulse while fuse/explosion remain server-authoritative.
+- [x] Claims PvP checks both victim and real player attacker locations for melee, Arrow and FireArrow; wilderness stays allowed and mob/environment routing is unchanged.
+- [x] Bow/sword use movement uses one shared Node-safe 0.2 transform in SP, Online prediction and server simulation, with sprint/fly-sprint disabled and no double application on wire input.
+- [x] Online Apple, GoldenApple and both potions use a captured authoritative slot; stale FIFO input cannot cancel the new action; release/switch/death/reconnect do cancel; bottle overflow becomes a world drop.
+- [x] Immediate local eat/drink presentation reconciles against action reject, inventory and authoritative food progress.
+- [x] Automated regressions cover the six roots, PvP claim matrix, actual melee/Arrow/FireArrow, 20 bow cycles, consumable lifecycle/effects/bottles and TNT presentation/removal.
+- [ ] Owner manual two-client QA: cobweb + low ceiling, TNT pulse/explosion/removal, attacker/victim claim edges, bow strafe/sprint, visible Apple/GoldenApple/potion use and cancel cases.
+
+## 2026-09-07: Online arrow PvP + FireArrow pickup
+
+- [x] Carry `PlayerArrow.ownerId` through `onPlayerHit` into pre/post player damage events as `attackerId`.
+- [x] Route player arrows by Claims `pvp`; keep ownerless mob projectiles on `mob-damage`.
+- [x] Keep authoritative swept player/block ordering, owner exclusion, Creative victim filter, FireArrow ignition and server health mutation.
+- [x] Return embedded `flaming=true` projectiles to `ItemId.FireArrow`; normal arrows remain `ItemId.Arrow`.
+- [x] Preserve Creative removal-only pickup, full-inventory leftover, exactly-once removal and ordinary authoritative inventory sync.
+- [x] Automated regression: no-claim PvP, both Claims flag combinations, pre/post attacker, wall first/player first, miss/owner, Creative victim, fire damage/ignite, pickup identity/full/exactly-once/end-to-end sync.
+- [ ] Owner manual two-client QA: wilderness Arrow/FireArrow hit, wall occlusion, FireArrow pickup counter, and `pvp=false`/`pvp=true + mob-damage=false` claim matrix.
 
 ## 2026-09-06: Integrate remote actions + Networking V2 into plugin/mining line
 

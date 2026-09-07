@@ -110,6 +110,53 @@ describe('RedstoneSystem', () => {
     redstone.dispose();
   });
 
+  it('animates network-owned primed TNT during render interpolation without simulating its fuse', () => {
+    const world = new VoxelWorld('network-tnt-presentation');
+    const scene = new THREE.Scene();
+    const host = createThreeEntityHost(scene);
+    const pulsePrimedTnt = host.pulsePrimedTnt.bind(host);
+    const pulses: Array<{ elapsed: number; urgency: number }> = [];
+    host.pulsePrimedTnt = (visual, elapsed, urgency): void => {
+      pulses.push({ elapsed, urgency });
+      pulsePrimedTnt(visual, elapsed, urgency);
+    };
+    const redstone = new RedstoneSystem(world, { host });
+
+    redstone.syncNetworkPrimed([{
+      id: 'online-tnt',
+      x: 6.5,
+      y: 70,
+      z: 4.5,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      fuse: 4,
+    }]);
+    redstone.syncNetworkPrimed([{
+      id: 'online-tnt',
+      x: 4.5,
+      y: 70,
+      z: 4.5,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      fuse: 2,
+    }]);
+    redstone.interpolatePrimedTnt(0.5);
+
+    expect(pulses).toHaveLength(1);
+    expect(pulses[0]?.elapsed).toBeCloseTo(2);
+    expect(pulses[0]?.urgency).toBeCloseTo(0.5);
+    expect((redstone.primedTnt[0]?.visual as THREE.Object3D).position.x).toBeCloseTo(5.5);
+    expect(redstone.primedTnt[0]?.fuseSeconds).toBe(2);
+    expect(redstone.primedTntCount).toBe(1);
+    expect(redstone.consumeExplosionEvents()).toHaveLength(0);
+    redstone.syncNetworkPrimed([]);
+    expect(redstone.primedTntCount).toBe(0);
+    expect(scene.children).toHaveLength(0);
+    redstone.dispose();
+  });
+
   it('round-trips powered sources and primed TNT without persisting derived wire power', () => {
     const world = new VoxelWorld('redstone-save');
     const y = 76;

@@ -39,6 +39,7 @@ const COLLISION_EPSILON = 1e-7;
 const GROUND_PROBE = 0.075;
 const STEP_HEIGHT = 0.6;
 const SNEAK_TRIM_INCREMENT = 0.05;
+const COBWEB_VERTICAL_VELOCITY_MULTIPLIER = 0.05;
 
 export interface PlayerInputSource {
   readonly yaw: number;
@@ -285,6 +286,9 @@ export class PlayerController {
 
     const wasOnGround = this.onGround || this.hasGroundSupport(world, this.position);
     this.updateFluidState(world);
+    if (this.inCobweb && !this.isFlying && !this.inWater && !this.inLava) {
+      this.velocity.y *= COBWEB_VERTICAL_VELOCITY_MULTIPLIER;
+    }
     if (this.isFlying || this.inWater || this.inLava || this.onLadder || input.locomotion === false) {
       this.meleeKnockback = false;
     }
@@ -302,14 +306,15 @@ export class PlayerController {
       ? Boolean(movement.flySprint) && (Math.abs(movement.forward) > 0.05 || Math.abs(movement.right) > 0.05)
       : movement.sprint && movement.forward > 0.05
         && !this.sneaking && !this.inWater && !this.inLava;
-    const jumped = !this.isFlying && !this.meleeKnockback && movement.jump && wasOnGround && !this.inWater && !this.inLava;
+    const jumped = !this.isFlying && !this.meleeKnockback && movement.jump && wasOnGround
+      && !this.inWater && !this.inLava && !this.inCobweb;
 
     if (this.isFlying) this.updateFlyVelocity(movement, stepDt);
     else this.updateHorizontalVelocity(movement, stepDt, wasOnGround);
     if (this.isFlying) {
       /* Flight owns vertical velocity. */
     } else if (this.inWater || this.inLava) this.updateFluidVerticalVelocity(movement, stepDt);
-    else if (movement.jump && wasOnGround && !this.meleeKnockback) this.velocity.y = JUMP_VELOCITY;
+    else if (movement.jump && wasOnGround && !this.meleeKnockback && !this.inCobweb) this.velocity.y = JUMP_VELOCITY;
 
     const wish = desiredHorizontalWish(this.yaw, movement.forward, movement.right);
     const ladderAtStart = this.isFlying ? undefined : findLadderContact(world, this.aabb);
@@ -377,10 +382,13 @@ export class PlayerController {
         this.fallDistance = 0;
       } else if (!this.onGround) {
         if (actualDrop > 0) this.fallDistance += actualDrop;
-      } else if (landed) {
-        this.lastFallDistance = this.fallDistance + actualDrop;
-        fallDamage = Math.max(0, Math.ceil(this.lastFallDistance - 3));
-        this.lastFallDamage = fallDamage;
+      } else if (this.onGround) {
+        const completedFallDistance = this.fallDistance + actualDrop;
+        if (completedFallDistance > 0) {
+          this.lastFallDistance = completedFallDistance;
+          fallDamage = Math.max(0, Math.ceil(this.lastFallDistance - 3));
+          this.lastFallDamage = fallDamage;
+        }
         this.fallDistance = 0;
         if (fallDamage > 0) onDamage?.(fallDamage, 'fall');
       }

@@ -102,4 +102,69 @@ describe('PlayerController voxel physics', () => {
     expect(first.jumped).toBe(true);
     expect(second.jumped).toBe(false);
   });
+
+  it('does not apply a normal ground jump while the player overlaps a cobweb', () => {
+    const world = flatWorld();
+    world.set(0, 1, 0, BlockId.Cobweb);
+    const player = new PlayerController({ position: [0.5, 1, 0.5] });
+
+    const result = player.tick(world as unknown as VoxelWorld, input({ jump: true }), 0.05);
+
+    expect(player.inCobweb).toBe(true);
+    expect(result.jumped).toBe(false);
+    expect(player.position.y).toBeCloseTo(1, 6);
+    expect(player.velocity.y).toBeLessThanOrEqual(0);
+
+    world.set(0, 1, 0, BlockId.Air);
+    player.tick(world as unknown as VoxelWorld, input(), 0.05);
+    const afterExit = player.tick(world as unknown as VoxelWorld, input({ jump: true }), 0.05);
+    expect(player.inCobweb).toBe(false);
+    expect(afterExit.jumped).toBe(true);
+    expect(player.velocity.y).toBeGreaterThan(0);
+  });
+
+  it('slows existing downward velocity while the player overlaps a cobweb', () => {
+    const world = flatWorld();
+    world.set(0, 3, 0, BlockId.Cobweb);
+    const player = new PlayerController({ position: [0.5, 3, 0.5] });
+    player.velocity.y = -8;
+
+    player.tick(world as unknown as VoxelWorld, input(), 0.05);
+
+    expect(player.inCobweb).toBe(true);
+    expect(player.position.y).toBeGreaterThan(2.9);
+  });
+
+  it('clears a short fall session when grounded after repeated low-ceiling jumps', () => {
+    const world = flatWorld();
+    world.set(0, 3, 0, BlockId.Stone);
+    const player = new PlayerController({ position: [0.5, 1, 0.5] });
+    const damage: number[] = [];
+
+    for (let jump = 0; jump < 24; jump += 1) {
+      player.tick(world as unknown as VoxelWorld, input({ jump: true }), 0.05, (amount) => damage.push(amount));
+      for (let tick = 0; tick < 8 && !player.onGround; tick += 1) {
+        player.tick(world as unknown as VoxelWorld, input(), 0.05, (amount) => damage.push(amount));
+      }
+      player.tick(world as unknown as VoxelWorld, input(), 0.05, (amount) => damage.push(amount));
+      expect(player.onGround).toBe(true);
+      expect(player.fallDistance).toBe(0);
+    }
+
+    expect(damage).toEqual([]);
+  });
+
+  it('finishes fall tracking when the ground probe finds support without a landing collision', () => {
+    const world = flatWorld();
+    const player = new PlayerController({ position: [0.5, 1.07, 0.5] });
+    player.fallDistance = 0.25;
+    player.velocity.y = -0.1;
+
+    const result = player.tick(world as unknown as VoxelWorld, input(), 0.05);
+
+    expect(result.landed).toBe(false);
+    expect(player.onGround).toBe(true);
+    expect(player.fallDistance).toBe(0);
+    expect(result.fallDamage).toBe(0);
+  });
 });

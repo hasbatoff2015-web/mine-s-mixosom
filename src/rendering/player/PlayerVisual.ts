@@ -18,7 +18,6 @@ import {
   setEntityLight,
 } from '../worldLighting';
 import { applyMobHurtTint } from '../../entities/MobManager';
-import { applyEatDrinkHeldItemPose } from '../heldItemEatPose';
 import { playerHurtFlashIntensity } from '../hurtFeedback';
 import {
   PLAYER_MODEL_PIXEL,
@@ -182,15 +181,11 @@ export class PlayerVisual {
     const pose = this.animator.advance(deltaSeconds, state);
     this.applyPose(pose);
     this.syncLayerVisibility();
-    if (this.heldModel && this.heldItemId) {
-      this.applyHeldItemTransform(this.heldModel, itemRenderProfile(this.heldItemId).category);
-      applyEatDrinkHeldItemPose(this.heldModel, state.foodUseProgress);
-      if (itemRenderProfile(this.heldItemId).category === 'bow') {
-        const texturePath = bowPullingTexturePath(state.bowCharge);
-        if (texturePath !== this.bowTexturePath) {
-          this.itemVisuals.setGeneratedTextureVariant(this.heldModel, texturePath);
-          this.bowTexturePath = texturePath;
-        }
+    if (this.heldModel && this.heldItemId && itemRenderProfile(this.heldItemId).category === 'bow') {
+      const texturePath = bowPullingTexturePath(state.bowCharge);
+      if (texturePath !== this.bowTexturePath) {
+        this.itemVisuals.setGeneratedTextureVariant(this.heldModel, texturePath);
+        this.bowTexturePath = texturePath;
       }
     }
     return pose;

@@ -1,23 +1,42 @@
 # Состояние проекта
 
-## Последний проход: remove armor visual / crouch hip / eat pose / bright hurt flash — 2026-09-06
+## Последний проход: PR #64 onto current main (PR #65) — 2026-09-07
 
-- Та же ветка `cursor/armor-crouch-swing-flash-3f93` (PR #64). Весь PR не откатывался: air swing, `hurtSeq`, `presentation.armor`, inventory/armor items, PluginManager/claims/mining/Networking V2 без изменений.
-- **Armor visual удалён.** `PlayerArmorOverlay` и inflated cuboids больше нет. `Inventory.armor` и `presentation.armor` остаются для будущей реализации. На модели игрока брони не видно.
-- **Crouch:** sneak больше не сдвигает `upperBody` по Z/Y. Lean — только `bodyPitch` вокруг талии; стопы/hip XZ на месте; голова/руки/held item остаются детьми `upperBody`.
-- **Eat/drink:** `applyEatDrinkHeldItemPose` — та же SP first-person bobble. `PlayerVisual` применяет её каждый кадр от `foodUseProgress`. Online local читает `presentation.foodUseProgress` (ticks на клиенте = 0). Зелья — `kind: food`, тот же pose.
-- **Hurt flash:** модель использует `applyMobHurtTint` и envelope peak 1.0 / 220 ms. HUD overlay остаётся alpha 0.28.
-- Handoff: `docs/reports/2026-09-06_player-visual-followup.md`.
+- Ветка `cursor/armor-crouch-swing-flash-3f93` смержила актуальный `origin/main` (`bcc35df`, PR #65) merge, не rebase/force-push.
+- **Канонический eat/drink — PR #65.** `localFoodUse`, captured slot, `commandSeq` boundary, `FirstPersonRenderer.applyEatPose`, authoritative consume/bottle. Наш `heldItemEatPose.ts` / `applyEatDrinkHeldItemPose` / `ownFoodUseProgress` удалены.
+- Сохранено из PR #64: crouch hip (`bodyPitch` на талии, `bodyYOffset`/`bodyZOffset` = 0), яркий model hurt flash (`applyMobHurtTint`, peak 1.0), air swing, `hurtSeq`/`presentation.armor` без inflated overlay.
+- Сохранено из PR #62: claim wires 3px + `depthTest`/`depthWrite`.
+- Сохранено из PR #65: cobweb, fallDistance, TNT pulse, claims attacker/victim PvP, `movementDuringItemUse`, food/potion lifecycle.
+- Handoff: `docs/reports/2026-09-07_pr64-onto-pr65-main.md`.
 
-## Последний проход: armor overlay / crouch hierarchy / air swing / MP hurt flash — 2026-09-06
+## Follow-up: Online food/potion render-edge sequencing — 2026-09-07
 
-- Ветка `cursor/armor-crouch-swing-flash-3f93` от `main` после PR #63 (`bb203ae`).
-- `PlayerVisual`: `upperBody` на талии; голова/руки/held item следуют за sneak pitch. Ноги остаются сиблингами.
-- Визуальная броня из этого прохода **снята** follow-up'ом (см. выше). `Inventory.armor` / `presentation.armor` сохранены.
-- Online: каждый discrete attack click шлёт `{ type: 'attack' }`; серверный `presentSwing()` уже покрывал miss. Hold mining не качает swingSeq каждый кадр.
-- `hurtSeq` на `fullHurt` (не i-frame chip). Модельный flash теперь mob-equivalent; HUD alpha 0.28.
-- Protocol v3 additive. PluginManager / claims / mining lock / Networking V2 / swingSeq presentation не переписывались.
-- Handoff: `docs/reports/2026-09-06_armor-crouch-swing-flash.md`.
+- На ветке `codex/fix-gameplay-bugs-2026-09-07` поверх `868206de5a095b67f9255f8ae7305090de7333ec` исправлен race реального client order: `interact(commandSeq=N)` может прийти после render-edge, но до первого fixed input `N+1` с `use=true` и новым hotbar slot.
+- Server food session хранит action boundary `N`. Pre-use state с `commandSeq <= N` не отменяет use; первый strictly newer command подтверждает `use=true + captured slot` либо отменяет. Старый synthetic порядок, где сам boundary command уже содержит matching `use=true`, также поддержан.
+- Captured slot может отличаться от свежего boundary command только для самого нового принятого `lastInputSeq`; индекс строго ограничен hotbar. Item ID никогда не приходит от клиента: use читает stack из server `Inventory`. Старый command с slot mismatch, invalid slot и stale/invalid block intent по-прежнему отклоняются.
+- Local food presentation не очищается delayed snapshot для boundary `N`; authoritative zero progress очищает её только при `snapshot.inputSeq > N`. Release/slot/item/action reject/respawn cleanup сохранены.
+- Red-first realistic-order tests воспроизвели оба бага. После fix: consumable/bow/presentation **130/130 PASS**, Networking V2/mining **182/182 PASS**, все typechecks/boundaries/build PASS. Protocol v3, bow release/aim, mining, movement и остальные пять fixes не менялись.
+- Handoff: `docs/reports/2026-09-07_online-consumable-render-edge-sequencing.md`.
+
+## Последний проход: six gameplay / Online regressions — 2026-09-07
+
+- Ветка `codex/fix-gameplay-bugs-2026-09-07` создана от актуального `origin/main` `bf2ed08d80fbdad315e13f9ca7051962ad0906fa`; protocol остаётся `3`, новых packet types и client-authoritative gameplay нет.
+- `PlayerController`: паутина больше не разрешает обычный ground jump и сразу гасит вертикальную скорость; приземление завершает накопление `fallDistance` по итоговому ground support, поэтому короткие прыжки под низким потолком не копят скрытый урон.
+- Online TNT снова вызывает существующий `pulsePrimedTnt` из render interpolation; server snapshots остаются единственным источником fuse/position, клиент не тикает и не взрывает сетевой TNT.
+- Claims PvP требует разрешения `pvp` и в claim жертвы, и в claim реального player-attacker. Wilderness разрешён. Неизвестный/отсутствующий attacker для melee/arrow/projectile остаётся `mob-damage`; правило покрывает melee, Arrow и FireArrow.
+- Shared Node-safe `movementDuringItemUse` применяет vanilla-like `0.2` к bow/sword use и выключает sprint/fly-sprint одинаково в SP, Online prediction и authoritative server simulation. На wire отправляется исходный input, поэтому двойного замедления нет.
+- Online food/potions используют captured authoritative hotbar slot + `commandSeq`: старые FIFO `use:false` не отменяют новый use; release/slot/item/death/reconnect отменяют; Apple/GoldenApple/regen/invisibility, bottle return и full-inventory bottle drop покрыты server tests. Локальная eat/drink pose стартует сразу и сверяется с authoritative snapshot/inventory.
+- Focused regression: **156/156 PASS**. Все четыре typecheck, boundaries PASS. Full server: **259/260**, только известный CPU-sensitive `tick-load-flight` >80 ms. Full suite: **1770 PASS / 16 FAIL** под сильной нагрузкой; кроме того же gate, это существующие 5s timeouts в worldgen/fire-contact и отдельная Vitest parse failure reference extractor. Изменённый `shield-removal` после обновления source-contract проходит изолированно.
+- Handoff: `docs/reports/2026-09-07_six-gameplay-online-fixes.md`. Manual two-client QA не выполнялся.
+
+## Последний проход: Online arrow PvP attribution + FireArrow pickup — 2026-09-07
+
+- Ветка `codex/fix-arrow-pvp-firearrow` создана от актуального `origin/main` `bb203aebc0568fe2f46f8dc36e63bd7b5463f63b`; протокол остаётся `3`, новых packets/client damage path нет.
+- Server player arrow теперь передаёт существующий `PlayerArrow.ownerId` как `attackerId` через `onPlayerHit` в `ServerGameplay.hurtPlayer`. `playerDamage` и `playerDamaged` сохраняют shooter id; Claims классифицирует player projectile по `pvp`, а projectile без player owner — по `mob-damage`.
+- `PlayerArrowManager.tryCollect` возвращает `ItemId.FireArrow` для `flaming=true` и `ItemId.Arrow` для обычной стрелы. Creative остаётся removal-only; leftover оставляет projectile в мире; inventory sync остаётся существующим server-authoritative path.
+- Pre-fix доказательство: no-claim damage проходил, но оба damage events теряли attacker; `pvp=true/mob-damage=false` блокировал player arrow, обратная комбинация разрешала; flaming pickup увеличивал Arrow. Collision/AABB/order не были root cause.
+- Regression: focused combat/claims **96/96**, новые targeted **13/13**, remote presentation/V2 **64/64**, все typechecks/boundaries/build PASS. Full server: **238/239**; только известный CPU-sensitive `tick-load-flight` превысил 80 ms и повторился изолированно. Manual two-client QA не выполнялся.
+- Handoff: `docs/reports/2026-09-07_arrow-pvp-firearrow-pickup.md`.
 
 ## Последний проход: integrate remote actions into plugin/mining line — 2026-09-06
 

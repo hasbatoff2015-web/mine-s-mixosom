@@ -79,4 +79,9 @@ export class PlayerCommandQueue {
   peek(): PlayerCommand | undefined {
     return this.items[0];
   }
+
+  find(commandSeq: number): PlayerCommand | undefined {
+    if (this.lastApplied?.commandSeq === commandSeq) return this.lastApplied;
+    return this.items.find((command) => command.commandSeq === commandSeq);
+  }
 }

@@ -1,8 +1,8 @@
 # Архитектура
 
-## Player visual follow-up — 2026-09-06
+## PR #64 onto current main — 2026-09-07
 
-Inflated armor overlay (`PlayerArmorOverlay`) is gone. `PlayerVisual` is skin + held item only. `Inventory.armor` and additive `presentation.armor` stay on the wire for a later renderer; they do not spawn meshes.
+Eat/drink animation is PR #65's `FirstPersonRenderer.applyEatPose` plus `localFoodUse` / captured slot / `foodUseProgress`. There is no `heldItemEatPose.ts`.
 
 Crouch is waist-pivot rotation only:
 
@@ -14,32 +14,49 @@ root → bodyYawRoot
   rightLeg, leftLeg
 ```
 
-`bodyYOffset` / `bodyZOffset` are 0 while sneaking so the hip stays over the legs. Head/arms/held item follow pitch as children.
+`bodyYOffset` / `bodyZOffset` are 0 while sneaking. Player model hurt flash uses `applyMobHurtTint` with `playerHurtFlashIntensity` (peak 1.0, 220 ms). HUD `#hurt-flash` stays `hurtFlashAlpha` peak 0.28. Air swing: discrete `{ type: 'attack' }` → server `presentSwing()` including misses. Claim wires: 3px, `depthTest`/`depthWrite`. No inflated armor overlay; `presentation.armor` ids stay on the wire.
 
-Eat/drink: `src/rendering/heldItemEatPose.ts` is the canonical first-person bobble (food and potions share it). `FirstPersonRenderer` and `PlayerVisual` both apply it from `foodUseProgress`. Online local progress comes from own `player_state.presentation.foodUseProgress`.
+## Gameplay / Online regression invariants — 2026-09-07
 
-Player model hurt flash uses `applyMobHurtTint` with `playerHurtFlashIntensity` (peak 1.0, 220 ms). HUD `#hurt-flash` stays `hurtFlashAlpha` peak 0.28. Air swing is unchanged: discrete `{ type: 'attack' }` → server `presentSwing()` including misses.
+### Use movement
 
-## Armor / crouch / air swing / hurt flash — 2026-09-06
+`src/gameplay/useMovement.ts` is the single Node-safe transform for active bow/sword movement: horizontal intent is multiplied by `0.2`; sprint and fly-sprint are disabled. SP, local Online prediction and `WorldInstance.tickConnectedPlayers` call the same function. The Online packet deliberately carries the raw pre-transform movement intent; prediction and server each apply the transform once. This preserves FIFO/ACK/replay semantics and prevents a `0.2 × 0.2` double slowdown.
 
-`PlayerVisual` hierarchy:
+### Captured Online consumable use
+
+`interact` / `player_action(block_use)` already carry `commandSeq` and `selectedSlot`. For a render-edge action, `commandSeq=N` is an **action boundary**: it is the last input already sent and can still contain the pre-use `use=false` / old slot state. A food/potion session therefore ignores state at `<= N`; the first strictly newer command must contain `use=true` and the captured slot or the session is cancelled. If the boundary command itself already contains matching `use=true + slot` (the alternate frame ordering), it is explicitly marked as confirmed and may advance at N.
+
+`WorldInstance.resolveActionSlot` still requires a real command/history boundary. A captured slot differing from command N is accepted only when N is the newest received `lastInputSeq`, which is the legitimate between-ticks slot switch. Older mismatches and indices outside `0..HOTBAR_SIZE-1` are rejected. `ServerGameplay.useHeld` always reads the stack from the server `Inventory`; no client item id is accepted. Block target pose/ID/face/reach validation is unchanged.
+
+`ServerGameplay.useHeld` records `useStartCommandSeq`, `useSelectedSlot`, `useItemId` and whether the boundary command itself confirmed food use. A current release, selected-slot change, item replacement, death or reconnect clears it. Completion consumes exactly one item from the captured slot, applies `SurvivalSystem` effects, marks inventory dirty, and inserts a returned bottle through the authoritative inventory (or spawns the overflow as a world drop).
+
+The client keeps only an immediate `localFoodUse` presentation token for the first-person/remote-visible eating progress. It never consumes or applies effects. Snapshot N describes the pre-use boundary and cannot clear that token; only an authoritative zero-progress snapshot with `inputSeq > N` can. Rejects, release, slot/item mismatch, inventory sync and respawn still clear it.
+
+### Claims damage routing
+
+Claims first applies `player-damage` at the victim. If `attackerId` resolves to a live server player, `pvp` must allow combat at both victim and attacker positions; no claim means no added restriction. Melee, Arrow and FireArrow share that path. Missing or unknown attacker ids are not trusted as PvP: melee/arrow/projectile causes continue through victim-side `mob-damage`; environmental causes remain unaffected.
+
+### Player physics and Online TNT presentation
+
+Cobweb contact suppresses ordinary grounded jump and damps vertical velocity before physics. Fall completion is based on final authoritative ground support, not only a downward collision edge, so head bumps followed by supported ticks cannot leave stale `fallDistance`; actual accumulated falls still damage on landing.
+
+Online primed TNT is created/updated/removed only by server entity snapshots. Render interpolation invokes the existing `EntityHost.pulsePrimedTnt` from the authoritative fuse and applies interpolated position/light. This is presentation only: no client fuse decrement, detonation, block mutation or second TNT simulation exists.
+
+## Online player-arrow damage attribution and pickup identity — 2026-09-07
+
+Player arrows stay inside the existing fixed-20-TPS authoritative path. `releaseBowWithAim` captures aim, consumes ammo and spawns one `PlayerArrow` with `ownerId=shooter.id`; `PlayerArrowManager.tick` performs swept AABB/block ordering and excludes that owner. On a player hit, the existing callback now also carries `ownerId` into `ServerGameplay.hurtPlayer(..., { attackerId })`. Both cancellable `playerDamage` and observation-only `playerDamaged` therefore expose the same shooter id. Claims continues its existing classification: present player `attackerId` → `pvp`; absent attacker on mob melee/arrow/projectile → `mob-damage`. No client hit report, direct health decrement, second damage system, or protocol field was added.
 
 ```text
-root → bodyYawRoot
-  upperBody   ← sneak bodyPitch (no Y/Z translation)
-    body, head, rightArm, leftArm
-      rightArm → heldItem
-  rightLeg, leftLeg
+bow intent → server PlayerArrow(ownerId)
+  → swept authoritative player hit
+  → hurtPlayer(attackerId=ownerId)
+  → playerDamage (Claims may cancel)
+  → SurvivalSystem.damage
+  → playerDamaged (same attackerId)
+  → health sync
 ```
 
-`PlayerPresentationState` additive fields (protocol 3):
-
-- `armor?: { head, chest, legs, feet }` item ids from `Inventory.armor` (not rendered)
-- `hurtSeq?: number` — server `fullHurt` only; join baseline; coalesced snapshots flash once
-
-Air swing: client sends `{ type: 'attack' }` once per discrete click even with no target. Server already `presentSwing()` before raycast.
-
-Hurt flash: `SurvivalSystem.addDamageListener` → `presentHurt()`. `PlayerVisual.triggerHurtFlash()` uses `playerHurtFlashIntensity` + `applyMobHurtTint`. Local HUD still uses health-drop / `onDamage` HurtFeedback. Remotes do not trust a client “I was hit” packet.
+Embedded player-arrow identity remains the existing `flaming` bit. Survival pickup maps `false → ItemId.Arrow` and `true → ItemId.FireArrow`, calls the existing `Inventory.addItem`, and removes the projectile only when leftover is zero. Creative removes without adding. `inventoryDirty` and the normal inventory packet update the client/UI; there is no FireArrow counter packet or HUD-side increment.
 
 ## Integrate remote actions + plugin/mining line — 2026-09-06
 

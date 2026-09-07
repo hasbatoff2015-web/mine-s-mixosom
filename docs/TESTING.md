@@ -1,6 +1,35 @@
 # Тестирование
 
-## 2026-09-06 Player visual follow-up (no armor overlay / crouch hip / eat pose / bright flash)
+## 2026-09-07 PR #64 onto current main (PR #65)
+
+Report: `reports/2026-09-07_pr64-onto-pr65-main.md`.
+
+```text
+npx vitest run \
+  tests/player-visual-animation.test.ts \
+  tests/player-skins.test.ts \
+  tests/remote-action-presentation.test.ts \
+  tests/remote-player-view.test.ts \
+  tests/server/remote-presentation.test.ts \
+  tests/fire-overlay-hurt.test.ts \
+  tests/item-rendering.test.ts \
+  tests/online-consumable-use.test.ts \
+  tests/player-physics.test.ts \
+  tests/claim-boundary.test.ts \
+  tests/server/claims.test.ts \
+  tests/server/player-actions.test.ts \
+  tests/redstone.test.ts \
+  --maxWorkers=2
+npm run typecheck && npm run typecheck:client && npm run typecheck:server && npm run typecheck:sim
+npm run check:boundaries
+npm run test:sim && npm run test:server -- --maxWorkers=2
+npm run build
+```
+
+Contracts: no `heldItemEatPose` / `player-armor:*`; sneak hip XZ stable; HUD flash 0.28 vs model peak 1; air miss still increments `swingSeq`; PR #65 food/potion/cobweb/TNT/PvP/use-movement remain; claim wires 3px + depth.
+
+## 2026-09-06 Player visual follow-up (no armor overlay / crouch hip / bright flash)
+
 
 Report: `reports/2026-09-06_player-visual-followup.md`.
 

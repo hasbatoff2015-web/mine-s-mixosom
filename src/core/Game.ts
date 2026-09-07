@@ -302,12 +302,15 @@ import {
   dropScatterVelocity,
   formatGameplayKernelTrace,
   performUseHeld,
+  movementDuringItemUse,
   rollDropCount,
   systemRandomFn,
   tickGameplayKernel,
   type UseSimulationContext,
 } from '../gameplay';
+import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
+import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
 import type { RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -363,6 +366,7 @@ export interface OnlineAnarchySession {
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
   actionSeq: number;
+  localFoodUse?: { itemId: string; selectedSlot: number; commandSeq: number; actionSeq: number };
   prediction: PredictionBuffer;
   urgentMeshKeys: Set<string>;
   lastViewKey?: string;
@@ -417,8 +421,6 @@ export interface OnlineAnarchySession {
   ignoreNetworkState?: boolean;
   isolationMode?: PredIsolationMode;
   isolation?: PredIsolationFlags;
-  /** Authoritative food-use phase from own `player_state` (ticks stay 0 online). */
-  ownFoodUseProgress?: number;
   /** Join-baselined own hurtSeq so local third-person can flash like remotes. */
   ownHurtSeq?: number;
   /**
@@ -841,7 +843,6 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
-        ownFoodUseProgress: welcome.you.presentation?.foodUseProgress ?? 0,
         ownHurtSeq: presentationHurtSeq(welcome.you.presentation ?? IDLE_PLAYER_PRESENTATION),
         ...(() => {
           const isolation = resolvePredIsolation();
@@ -1072,6 +1073,14 @@ export class Game {
           this.syncLocalCreativeFlight(session, message.gamemode);
         }
         if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
+        if (session.online.localFoodUse) {
+          const use = session.online.localFoodUse;
+          if (session.selectedSlot !== use.selectedSlot
+            || session.inventory.getSlot(use.selectedSlot)?.itemId !== use.itemId) {
+            session.foodUseTicks = 0;
+            session.online.localFoodUse = undefined;
+          }
+        }
         applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack);
         this.ui.applyAuthoritativeCursor(
           parseNetworkItemStack(message.cursor),
@@ -1145,6 +1154,15 @@ export class Game {
         physicsTicks: message.physicsTicks,
         history: this.predictedHistoryPose(online, local.inputSeq),
       });
+      const localFoodUse = online.localFoodUse;
+      if (localFoodUse && shouldClearLocalFoodUseFromSnapshot({
+        actionBoundaryCommandSeq: localFoodUse.commandSeq,
+        snapshotInputSeq: local.inputSeq,
+        authoritativeFoodUseProgress: local.presentation?.foodUseProgress,
+      })) {
+        session.foodUseTicks = 0;
+        online.localFoodUse = undefined;
+      }
       const flags = online.isolation ?? resolvePredIsolation();
       if (flags.observe) {
         motionProbe.note('skip:observe');
@@ -1292,7 +1310,7 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
-    this.applyOwnPresentation(session, local.presentation, local.dead === true || local.health <= 0);
+    this.applyOwnPresentation(session, local.presentation);
     const flags = online.isolation ?? resolvePredIsolation();
     const player = session.player;
     const before = captureMotionFull(player);
@@ -1675,6 +1693,11 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    if (message.kind === 'block_use' && !message.ok
+      && online.localFoodUse?.actionSeq === message.actionSeq) {
+      session.foodUseTicks = 0;
+      online.localFoodUse = undefined;
+    }
     if (message.kind === 'bow_release') {
       if (online.lastBowDiag && online.lastBowDiag.actionSeq === message.actionSeq) {
         online.lastBowDiag = {
@@ -1846,6 +1869,7 @@ export class Game {
     const online = session.online;
     if (!online) return;
     const source = this.onlineActionSource(session);
+    const selected = this.selectedStack();
     if (this.selectedStack()?.itemId === ItemId.Bow) {
       source.actionSeq += 1;
       this.commitOnlineActionSeq(session, source);
@@ -1870,6 +1894,16 @@ export class Game {
     if (session.target) {
       const action = captureBlockUse(source, session.target);
       this.commitOnlineActionSeq(session, source);
+      if (selected && tryGetItemDefinition(selected.itemId)?.kind === 'food'
+        && !isUseTargetBlock(session.target.block)) {
+        session.foodUseTicks = 1;
+        online.localFoodUse = {
+          itemId: selected.itemId,
+          selectedSlot: action.selectedSlot,
+          commandSeq: action.commandSeq,
+          actionSeq: action.actionSeq,
+        };
+      }
       online.lastBlockDiag = {
         actionSeq: action.actionSeq,
         commandSeq: action.commandSeq,
@@ -1882,6 +1916,15 @@ export class Game {
     }
     source.actionSeq += 1;
     this.commitOnlineActionSeq(session, source);
+    if (selected && tryGetItemDefinition(selected.itemId)?.kind === 'food') {
+      session.foodUseTicks = 1;
+      online.localFoodUse = {
+        itemId: selected.itemId,
+        selectedSlot: source.selectedSlot,
+        commandSeq: source.inputSeq,
+        actionSeq: source.actionSeq,
+      };
+    }
     online.client.send({
       type: 'interact',
       actionSeq: source.actionSeq,
@@ -3516,9 +3559,11 @@ export class Game {
     session.playTicks += 1;
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
-    const movement = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    const movementBeforeUse = resolvePlayerMoveInput(overlayOpen, this.input.movement());
     const riding = Boolean(session.ridingCartId);
     const using = gameplayAllowed && this.input.using;
+    const selected = this.selectedStack();
+    const movement = movementDuringItemUse(movementBeforeUse, selected?.itemId, using);
     if (this.bowDiag && using !== this.lastOnlineUsing) {
       console.info(
         `[bowDiag] client_${using ? 'press' : 'release'} t=${performance.now().toFixed(1)} seq=${online.inputSeq + 1}`,
@@ -3527,6 +3572,12 @@ export class Game {
     this.lastOnlineUsing = using;
     this.syncLocalCreativeFlight(session);
     online.inputSeq += 1;
+    const inputIntent = predictedMoveFromInput(
+      online.inputSeq,
+      movementBeforeUse,
+      { yaw: this.input.yaw, pitch: this.input.pitch },
+      !riding,
+    );
     const predicted = predictedMoveFromInput(
       online.inputSeq,
       movement,
@@ -3539,15 +3590,15 @@ export class Game {
         type: 'input',
         seq: online.inputSeq,
         clientTick: session.playTicks,
-        forward: predicted.forward,
-        right: predicted.right,
-        jump: predicted.jump,
-        sneak: predicted.sneak,
-        sprint: predicted.sprint,
-        descend: predicted.descend,
-        flySprint: predicted.flySprint,
-        yaw: predicted.yaw,
-        pitch: predicted.pitch,
+        forward: inputIntent.forward,
+        right: inputIntent.right,
+        jump: inputIntent.jump,
+        sneak: inputIntent.sneak,
+        sprint: inputIntent.sprint,
+        descend: inputIntent.descend,
+        flySprint: inputIntent.flySprint,
+        yaw: inputIntent.yaw,
+        pitch: inputIntent.pitch,
         selectedSlot: session.selectedSlot,
         ...inputMiningField(gameplayAllowed && shouldHoldServerMining({
           buttonDown: this.input.mining,
@@ -3555,14 +3606,13 @@ export class Game {
           miningLocked: online.miningLocked,
         })),
         use: gameplayAllowed && this.input.using,
-        vehicleForward: riding ? movement.forward : 0,
+        vehicleForward: riding ? movementBeforeUse.forward : 0,
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
     predictLocalMove(session.player, session.world, online.prediction, predicted);
-    const selected = this.selectedStack();
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
@@ -3600,6 +3650,19 @@ export class Game {
       && this.input.using
       && this.selectedStack()?.itemId === ItemId.Bow;
     session.bowUseTicks = stepVisualBowUseTicks(session.bowUseTicks, holdingBow);
+    const localFoodUse = online.localFoodUse;
+    if (localFoodUse) {
+      const current = session.inventory.getSlot(localFoodUse.selectedSlot);
+      const item = current ? tryGetItemDefinition(current.itemId) : undefined;
+      if (!using || session.selectedSlot !== localFoodUse.selectedSlot
+        || current?.itemId !== localFoodUse.itemId || item?.kind !== 'food'
+        || !session.survival.canConsumeFood(item.id)) {
+        session.foodUseTicks = 0;
+        online.localFoodUse = undefined;
+      } else {
+        session.foodUseTicks = Math.min(32, session.foodUseTicks + 1);
+      }
+    }
     if (session.playTicks % 2 === 0) this.refreshHud();
   }
 
@@ -3645,22 +3708,25 @@ export class Game {
 
         session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
         const drawingBow = session.bowUseTicks > 0;
-        const movementMultiplier = drawingBow || session.combat.swordBlocking ? 0.2 : 1;
+        const movement = movementDuringItemUse(
+          movementBefore,
+          selected?.itemId,
+          drawingBow || session.combat.swordBlocking,
+        );
         this.syncLocalCreativeFlight(session);
         const playerInput = {
           yaw: this.input.yaw,
           pitch: this.input.pitch,
           locomotion: !riding,
           movement: () => ({
-            ...movementBefore,
-            forward: riding ? 0 : movementBefore.forward * movementMultiplier,
-            right: riding ? 0 : movementBefore.right * movementMultiplier,
-            jump: riding ? false : movementBefore.jump,
-            sprint: !riding && !drawingBow && movementBefore.sprint
-              && movementMultiplier === 1
+            ...movement,
+            forward: riding ? 0 : movement.forward,
+            right: riding ? 0 : movement.right,
+            jump: riding ? false : movement.jump,
+            sprint: !riding && movement.sprint
               && (session.summary.mode === 'creative' || session.survival.hunger > 6),
-            descend: movementBefore.descend === true,
-            flySprint: movementMultiplier === 1 && movementBefore.flySprint === true,
+            descend: movement.descend === true,
+            flySprint: movement.flySprint === true,
           }),
         };
         const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
@@ -4480,6 +4546,7 @@ export class Game {
     this.session.miningTarget = undefined;
     this.session.foodUseTicks = 0;
     this.session.bowUseTicks = 0;
+    if (this.session.online) this.session.online.localFoodUse = undefined;
     this.session.combat.setHeldItem(this.selectedStack()?.itemId);
     this.refreshHud();
   }
@@ -4672,6 +4739,9 @@ export class Game {
     session.ridingCartId = undefined;
     session.miningProgress = 0;
     session.miningTarget = undefined;
+    session.foodUseTicks = 0;
+    session.bowUseTicks = 0;
+    session.online.localFoodUse = undefined;
     session.worldRenderer.setOpenChest(undefined);
     const chatOpen = this.ui.isChatOpen();
     const inventoryOpen = this.ui.isInventoryOpen();
@@ -4811,7 +4881,7 @@ export class Game {
       mining: this.input.mining && session.target !== undefined,
       bowCharge: session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0,
       swordBlocking: session.combat.swordBlocking,
-      foodUseProgress: this.localFoodUseProgress(session),
+      foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
       invisible: session.survival.invisible,
       hurtFlash: this.hurt.modelIntensity(now),
     });
@@ -4862,20 +4932,13 @@ export class Game {
     motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
   }
 
-  private localFoodUseProgress(session: GameSession): number {
-    if (session.foodUseTicks > 0) return clamp(session.foodUseTicks / 32, 0, 1);
-    return clamp(session.online?.ownFoodUseProgress ?? 0, 0, 1);
-  }
-
   private applyOwnPresentation(
     session: GameSession,
     presentation: ServerPlayerStateMessage['players'][number]['presentation'],
-    dead: boolean,
   ): void {
     const online = session.online;
     if (!online) return;
     const nextHurt = presentationHurtSeq(presentation ?? IDLE_PLAYER_PRESENTATION);
-    online.ownFoodUseProgress = dead ? 0 : (presentation?.foodUseProgress ?? 0);
     if (online.ownHurtSeq !== undefined && nextHurt > online.ownHurtSeq) {
       session.playerVisual.triggerHurtFlash();
     }
@@ -4896,7 +4959,7 @@ export class Game {
       state.onGround = session.player.onGround;
       state.sprinting = session.player.sprinting;
       state.mining = this.input.mining && session.target !== undefined;
-      state.foodUseProgress = this.localFoodUseProgress(session);
+      state.foodUseProgress = session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0;
       state.bowCharge = session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0;
       state.swordBlocking = session.combat.swordBlocking;
       state.onFire = session.survival.isOnFire;

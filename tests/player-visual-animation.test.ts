@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
 import { applyMobHurtTint } from '../src/entities/MobManager';
-import { applyEatDrinkHeldItemPose } from '../src/rendering/heldItemEatPose';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
@@ -122,40 +121,6 @@ describe('player visual rig hierarchy', () => {
     visual.update(0.12, { ...visualFrame, sneaking: true });
     expect(visual.rig.rightArm.rotation.x).toBeGreaterThan(0.5);
     expect(visual.rig.heldItem.parent).toBe(visual.rig.rightArm);
-
-    visual.dispose();
-    geometries.dispose();
-    items.dispose();
-    skins.dispose();
-  });
-
-  it('applies the shared eat/drink held-item bobble while foodUseProgress is active and clears it after', () => {
-    const skins = new MinecraftSkinRegistry();
-    const geometries = new PlayerSkinGeometryCache();
-    const items = new ItemVisualFactory();
-    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
-    visual.setHeldItem('apple');
-    visual.update(1 / 60, visualFrame);
-    const held = visual.rig.heldItem.children[0];
-    expect(held).toBeDefined();
-    if (!held) throw new Error('expected held apple model');
-    const idleY = held.position.y;
-    const idleRotX = held.rotation.x;
-    visual.update(1 / 60, { ...visualFrame, foodUseProgress: 0.5 });
-    expect(held.position.y).toBeGreaterThan(idleY);
-    expect(held.rotation.x).toBeGreaterThan(idleRotX);
-    visual.update(1 / 60, visualFrame);
-    expect(held.position.y).toBeCloseTo(idleY);
-    expect(held.rotation.x).toBeCloseTo(idleRotX);
-
-    const potion = new THREE.Group();
-    potion.position.set(0, -0.04, -0.06);
-    potion.rotation.set(-0.16, 0, -0.72);
-    const before = potion.position.y;
-    applyEatDrinkHeldItemPose(potion, 0.4);
-    expect(potion.position.y).toBeGreaterThan(before);
-    applyEatDrinkHeldItemPose(potion, 0);
-    expect(potion.position.y).toBeGreaterThan(before);
 
     visual.dispose();
     geometries.dispose();

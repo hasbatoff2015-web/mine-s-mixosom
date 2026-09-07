@@ -27,6 +27,9 @@ import { dumpControllerTicks, formatPoseDump } from '../../src/player/moveSimCom
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { Chunk } from '../../src/world/Chunk';
 import { VoxelWorld } from '../../src/world/World';
+import { createItemStack } from '../../src/inventory';
+import { ItemId } from '../../src/items';
+import { movementDuringItemUse } from '../../src/gameplay';
 import type { ClientInputMessage } from '../../shared/protocol';
 
 async function tempDir(): Promise<string> {
@@ -308,6 +311,60 @@ describe('client predictLocalMove vs WorldInstance tick lockstep', { timeout: 30
     expect(last.comparePath).toBe('history[N]');
     expect(Math.hypot(last.client.x - last.server.x, last.client.y - last.server.y, last.client.z - last.server.z))
       .toBeLessThan(1e-6);
+  });
+
+  it('applies the same bow-use slowdown to client prediction and authoritative movement', async () => {
+    const world = await boot();
+    const player = join(world);
+    player.inventory.setSlot(0, createItemStack(ItemId.Bow, 1));
+    for (let settle = 0; settle < 8; settle += 1) world.tick();
+    const client = cloneController(player.controller);
+    const buffer = createPredictionBuffer();
+    const packet = moveInput(1, { forward: 1, sprint: true, use: true, selectedSlot: 0 });
+    const predictedMovement = movementDuringItemUse({
+      forward: packet.forward,
+      right: packet.right,
+      jump: packet.jump,
+      sneak: packet.sneak,
+      sprint: packet.sprint,
+      descend: packet.descend,
+      flySprint: packet.flySprint,
+    }, ItemId.Bow, packet.use === true);
+    const predicted = predictedMoveFromInput(
+      1,
+      predictedMovement,
+      { yaw: packet.yaw, pitch: packet.pitch },
+      true,
+    );
+
+    expect(predictedMovement).toMatchObject({ forward: 0.2, right: 0, sprint: false, flySprint: false });
+    expect(world.applyInput(player, packet)).toBe(true);
+    predictLocalMove(client, world.world, buffer, predicted);
+    world.tick();
+
+    expect(player.controller.sprinting).toBe(false);
+    expect(player.controller.captureMovementState()).toMatchObject(client.captureMovementState());
+
+    const releasedPacket = moveInput(2, { forward: 1, sprint: true, use: false, selectedSlot: 0 });
+    const releasedMovement = movementDuringItemUse({
+      forward: releasedPacket.forward,
+      right: releasedPacket.right,
+      jump: releasedPacket.jump,
+      sneak: releasedPacket.sneak,
+      sprint: releasedPacket.sprint,
+      descend: releasedPacket.descend,
+      flySprint: releasedPacket.flySprint,
+    }, ItemId.Bow, releasedPacket.use === true);
+    expect(releasedMovement).toMatchObject({ forward: 1, sprint: true });
+    expect(world.applyInput(player, releasedPacket)).toBe(true);
+    predictLocalMove(client, world.world, buffer, predictedMoveFromInput(
+      2,
+      releasedMovement,
+      { yaw: releasedPacket.yaw, pitch: releasedPacket.pitch },
+      true,
+    ));
+    world.tick();
+    expect(player.controller.captureMovementState()).toMatchObject(client.captureMovementState());
   });
 
   it('1:1 Anarchy walk on a copied collision world (client world.tick never runs) matches or dumps', async () => {
