@@ -40,7 +40,14 @@ Texture pack asserts 128×128, latch hex, purple/teal on body/lid, and wooden `n
 
 ## Visual QA
 
-Isolated `?qaItem=portal_chest` vs `?qaItem=chest` in the item harness (lid top diamond, front latch, sides, ordinary chest unchanged). In-world place/open remains the owner gameplay QA from the original portal-chest report.
+Isolated item harness `?qaItem=portal_chest` (`qaView=back/front/left/right`) vs `?qaItem=chest`:
+
+- Latch/front: existing gold/lime «нос» is unchanged; teal oval and dark recess around it; purple energy at lower corners.
+- Back: teal ribs + clustered purple energy, no latch.
+- Sides: vertical teal ribbing, purple along the bottom; lid top shows the concentric purple diamond.
+- Ordinary wooden chest still oak/brown with a silver latch.
+
+Typechecks (all four) PASS. Texture + chest-model tests PASS. `npm run build` PASS.
 
 ## Performance
 
