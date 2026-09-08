@@ -3,6 +3,7 @@ export {
   SYSTEM_RANDOM,
   asRandomFn,
   dropScatterVelocity,
+  dropScatterOrigin,
   rollBlockDropCount,
   rollDropCount,
   seededRandomFn,

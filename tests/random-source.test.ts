@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
 import {
   dropScatterVelocity,
+  dropScatterOrigin,
   rollDropCount,
   seededRandomFn,
   seededRandomSource,
@@ -43,6 +44,15 @@ describe('simulation RandomSource', () => {
     expect(x).toBeLessThanOrEqual(0.7);
     expect(z).toBeGreaterThanOrEqual(-0.7);
     expect(z).toBeLessThanOrEqual(0.7);
+  });
+
+  it('death drop origin jitters around the player without a huge radius', () => {
+    const origin = dropScatterOrigin({ x: 10, y: 64, z: -4 }, seededRandomFn(3));
+    expect(origin[0]).toBeGreaterThanOrEqual(10 - 0.25);
+    expect(origin[0]).toBeLessThanOrEqual(10 + 0.25);
+    expect(origin[1]).toBeCloseTo(64.35, 5);
+    expect(origin[2]).toBeGreaterThanOrEqual(-4 - 0.25);
+    expect(origin[2]).toBeLessThanOrEqual(-4 + 0.25);
   });
 
   it('explosion resolution uses the injected source, not a second Math.random path', () => {

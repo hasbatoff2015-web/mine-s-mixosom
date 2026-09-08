@@ -21,6 +21,7 @@ import {
 import {
   allCraftingBookEntries,
   inventoryAndGridCounts,
+  inventoryItemCounts,
   paginateRecipeBook,
   queryRecipeBook,
   recipeEntryCraftable,
@@ -33,6 +34,7 @@ import {
   clickFurnaceSlot,
   furnaceAccepts,
   furnaceShiftRoute,
+  ghostFromRecipe,
   hasRecipeBook,
   placeCraftingRecipe,
   shiftMoveStack,
@@ -710,7 +712,7 @@ export class GameUI {
   showDeath(onRespawn: () => void, onQuit: () => void): void {
     this.setScreen(`
       <section class="screen"><div class="menu-card">
-        <h1 class="death-title">Вы погибли</h1>
+        <h1 class="death-title">Вы умерли</h1>
         <div class="menu-stack"><button class="game-button primary" data-action="respawn">Возродиться</button><button class="game-button ghost" data-action="quit">Главное меню</button></div>
       </div></section>`);
     this.bindAction('respawn', onRespawn);
@@ -974,7 +976,10 @@ export class GameUI {
 
   applyAuthoritativeCursor(cursor: ItemStack | null, craftSlots?: Array<ItemStack | null>): void {
     this.cursorStack = cursor;
-    if (craftSlots) this.craftSlots = craftSlots;
+    if (craftSlots) {
+      this.craftSlots = craftSlots;
+      if (craftSlots.some((stack) => stack !== null)) this.ghostCraft = undefined;
+    }
     if (this.inventoryContext) this.renderInventory();
   }
 
@@ -1400,10 +1405,6 @@ export class GameUI {
   private handleRecipeClick(recipeId: string, right: boolean, shift: boolean): void {
     const context = this.inventoryContext;
     if (!context || context.kind === 'furnace' || isChestWindowKind(context.kind)) return;
-    if (context.submitAction) {
-      context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId, shift });
-      return;
-    }
     const gridSize = context.kind === 'crafting-table' ? 3 : 2;
     const variants = allCraftingBookEntries().filter((entry) => {
       const current = allCraftingBookEntries().find((item) => item.id === recipeId);
@@ -1417,6 +1418,13 @@ export class GameUI {
     }
     const recipe = entry.recipe;
     if (!recipe) return;
+    if (context.submitAction) {
+      const counts = inventoryItemCounts(context.inventory);
+      this.ghostCraft = ghostFromRecipe(recipe, gridSize, counts);
+      context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId: entry.id, shift });
+      this.renderInventory();
+      return;
+    }
     const placed = placeCraftingRecipe(recipe, this.craftSlots, context.inventory, gridSize, shift ? 64 : 1);
     if (placed.aborted) {
       context.onChanged();

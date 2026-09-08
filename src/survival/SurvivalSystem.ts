@@ -325,8 +325,21 @@ export class SurvivalSystem {
     return list;
   }
 
+  /** Authoritative Online burning flag. Overlay uses `isOnFire`; this is not a second fire system. */
+  private networkOnFire = false;
+
   get isOnFire(): boolean {
-    return this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0;
+    return this.contactFire || this.arrowFireTicks > 0 || this.fireTicks > 0 || this.networkOnFire;
+  }
+
+  /** Apply `health.fire` / `PlayerSnapshot.onFire` without inventing client-side burn timers. */
+  syncNetworkFire(onFire: boolean): void {
+    if (onFire) {
+      this.networkOnFire = true;
+      return;
+    }
+    this.networkOnFire = false;
+    this.extinguish();
   }
 
   ignite(ticks = 160): void {
@@ -389,6 +402,7 @@ export class SurvivalSystem {
     this.fireTicks = 0;
     this.arrowFireTicks = 0;
     this.contactFire = false;
+    this.networkOnFire = false;
     this.dead = false;
     this.hurtResistance.reset();
     this.drownTimer = 0;

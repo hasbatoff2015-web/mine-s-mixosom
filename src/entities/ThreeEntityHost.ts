@@ -18,6 +18,11 @@ import {
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import type { VoxelWorld } from '../world/World';
 import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './EntityHost';
+import {
+  humanoidDeathProgress,
+  humanoidDeathRotationZ,
+  humanoidDeathScale,
+} from './humanoidDeath';
 import type { MobKind } from './mobDefinitions';
 import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
@@ -275,9 +280,9 @@ export class ThreeEntityHost implements EntityHost {
       });
     }
     if (state.state === 'die') {
-      const progress = THREE.MathUtils.clamp(state.deathSeconds / 0.7, 0, 1);
-      visual.rotation.z = progress * Math.PI * 0.5;
-      visual.scale.setScalar(1 - progress * 0.25);
+      const progress = humanoidDeathProgress(state.deathSeconds);
+      visual.rotation.z = humanoidDeathRotationZ(progress);
+      visual.scale.setScalar(humanoidDeathScale(progress));
     } else if (state.kind === 'creeper') {
       const fuseProgress = THREE.MathUtils.clamp(state.fuseSeconds / 1.5, 0, 1);
       const pulse = fuseProgress > 0

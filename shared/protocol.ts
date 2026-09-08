@@ -137,6 +137,7 @@ export interface RemotePlayerInfo {
   readonly equipment?: PlayerEquipmentState;
   readonly appearance?: PlayerAppearance;
   readonly health?: number;
+  readonly dead?: boolean;
   readonly id: string;
   readonly name: string;
   readonly x: number;
@@ -382,6 +383,10 @@ export interface ClientPickupMessage {
   readonly entityId?: string;
 }
 
+export interface ClientRespawnMessage {
+  readonly type: 'respawn';
+}
+
 export interface ClientVehicleInputMessage {
   readonly type: 'vehicle_input';
   readonly action: VehicleAction;
@@ -405,6 +410,7 @@ export type ClientMessage =
   | ClientBowReleaseMessage
   | ClientActionMessage
   | ClientPickupMessage
+  | ClientRespawnMessage
   | ClientVehicleInputMessage;
 
 export interface ServerWelcomeMessage {
@@ -602,6 +608,20 @@ export interface ServerEntityEventMessage {
   readonly events: readonly NetworkEntityEvent[];
 }
 
+export interface WorldSoundEvent {
+  readonly event: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly pitch?: number;
+  readonly volume?: number;
+}
+
+export interface ServerWorldSoundMessage {
+  readonly type: 'world_sound';
+  readonly sounds: readonly WorldSoundEvent[];
+}
+
 export interface ServerCommandResultMessage {
   readonly type: 'command_result';
   readonly ok: boolean;
@@ -667,6 +687,7 @@ export type ServerMessage =
   | ServerEffectsMessage
   | ServerEntitySnapshotMessage
   | ServerEntityEventMessage
+  | ServerWorldSoundMessage
   | ServerCommandResultMessage
   | ServerTimeMessage
   | ServerHologramsMessage
@@ -688,6 +709,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'bow_release',
   'action',
   'pickup',
+  'respawn',
   'vehicle_input',
 ] as const satisfies readonly ClientMessage['type'][];
 
@@ -712,6 +734,7 @@ export const SERVER_MESSAGE_TYPES = [
   'effects',
   'entity_snapshot',
   'entity_event',
+  'world_sound',
   'command_result',
   'time',
   'holograms',
@@ -1132,6 +1155,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const entityId = optionalString(raw.entityId, 64);
       return { type: 'pickup', ...(entityId ? { entityId } : {}) };
     }
+    case 'respawn':
+      return { type: 'respawn' };
     case 'vehicle_input': {
       if (typeof raw.action !== 'string' || !(VEHICLE_ACTIONS as readonly string[]).includes(raw.action)) {
         return { error: 'vehicle_input.action invalid' };
@@ -1247,6 +1272,27 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         events.push({ entityId: entry.entityId, kind: entry.kind });
       }
       return { type: 'entity_event', tick: raw.tick, events };
+    }
+    case 'world_sound': {
+      if (!Array.isArray(raw.sounds)) return { error: 'world_sound invalid' };
+      const sounds: WorldSoundEvent[] = [];
+      for (const entry of raw.sounds.slice(0, 32)) {
+        if (!isRecord(entry) || typeof entry.event !== 'string' || entry.event.length === 0) continue;
+        if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z)) continue;
+        const pitch = entry.pitch === undefined ? undefined : finite(entry.pitch) ? entry.pitch : undefined;
+        const volume = entry.volume === undefined ? undefined : finite(entry.volume) ? entry.volume : undefined;
+        if (entry.pitch !== undefined && pitch === undefined) continue;
+        if (entry.volume !== undefined && volume === undefined) continue;
+        sounds.push({
+          event: entry.event.slice(0, 64),
+          x: entry.x,
+          y: entry.y,
+          z: entry.z,
+          ...(pitch !== undefined ? { pitch } : {}),
+          ...(volume !== undefined ? { volume } : {}),
+        });
+      }
+      return { type: 'world_sound', sounds };
     }
     case 'health': {
       if (!finite(raw.health) || !finite(raw.hunger) || !bool(raw.dead) || !bool(raw.fire)) {

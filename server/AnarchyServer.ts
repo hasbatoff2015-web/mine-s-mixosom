@@ -480,6 +480,9 @@ export class AnarchyServer {
       case 'appearance':
         this.world.setAppearance(player, message);
         return;
+      case 'respawn':
+        this.world.respawn(player);
+        return;
     }
   }
 

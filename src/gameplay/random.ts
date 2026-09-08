@@ -56,3 +56,19 @@ export function dropScatterVelocity(
 ): readonly [number, number, number] {
   return [(random() - 0.5) * 1.4, 2.2, (random() - 0.5) * 1.4];
 }
+
+/**
+ * Small Minecraft-like origin jitter around a death/block drop point.
+ * Horizontal span is ~0.5 blocks so stacks fan out without a huge radius.
+ */
+export function dropScatterOrigin(
+  base: { readonly x: number; readonly y: number; readonly z: number },
+  random: RandomFn = systemRandomFn,
+  yOffset = 0.35,
+): readonly [number, number, number] {
+  return [
+    base.x + (random() - 0.5) * 0.5,
+    base.y + yOffset,
+    base.z + (random() - 0.5) * 0.5,
+  ];
+}

@@ -880,6 +880,8 @@ describe('Anarchy builtin plugins', () => {
     const survivalSpawn = [...op.player.survival.spawnPoint];
     op.player.controller.teleport([8.5, 70, 8.5]);
     chat(world, op, '/kill');
+    expect(op.player.survival.dead).toBe(true);
+    expect(world.respawn(op.player)).toBe(true);
     expect(op.player.survival.dead).toBe(false);
     expect(op.player.survival.health).toBe(20);
     expect(op.player.controller.position.x).toBeCloseTo(32.5, 5);

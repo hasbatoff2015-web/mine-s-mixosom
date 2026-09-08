@@ -33,9 +33,11 @@ import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
 import { rayAabbDistance } from '../world/collision';
 
+import { HUMANOID_DEATH_ANIMATION_SECONDS } from './humanoidDeath';
+
 export const MOB_HURT_FLASH_SECONDS = 0.22;
 /** Client death pose duration. Simulation removal uses the same window. */
-export const MOB_DEATH_ANIMATION_SECONDS = 0.7;
+export const MOB_DEATH_ANIMATION_SECONDS = HUMANOID_DEATH_ANIMATION_SECONDS;
 /** Night surface hostile attempts relative to the previous unrestricted rate. */
 export const SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5;
 /** Skip a new cave hostile if another living hostile is already this close. */
