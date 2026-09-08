@@ -17,14 +17,16 @@ const SLOT_NAMES = {
   feet: 'boots',
 } as const;
 
-const VANILLA_DEFENSE = {
+const ARMOR_DEFENSE = {
   leather: { head: 1, chest: 3, legs: 2, feet: 1, total: 7 },
   gold: { head: 2, chest: 5, legs: 3, feet: 1, total: 11 },
   iron: { head: 2, chest: 6, legs: 5, feet: 2, total: 15 },
-  diamond: { head: 3, chest: 8, legs: 6, feet: 3, total: 20 },
+  diamond: { head: 3, chest: 7, legs: 5, feet: 2, total: 17 },
+  ruby: { head: 3, chest: 7, legs: 5, feet: 3, total: 18 },
+  titanium: { head: 3, chest: 8, legs: 5, feet: 3, total: 19 },
 } as const;
 
-function armorId(material: keyof typeof VANILLA_DEFENSE, slot: keyof typeof SLOT_NAMES): string {
+function armorId(material: keyof typeof ARMOR_DEFENSE, slot: keyof typeof SLOT_NAMES): string {
   return `${material}_${SLOT_NAMES[slot]}`;
 }
 
@@ -34,7 +36,7 @@ function equip(inventory: Inventory, pieces: ReadonlyArray<readonly [keyof typeo
   }
 }
 
-function equipSet(inventory: Inventory, material: keyof typeof VANILLA_DEFENSE): void {
+function equipSet(inventory: Inventory, material: keyof typeof ARMOR_DEFENSE): void {
   equip(inventory, (Object.keys(SLOT_NAMES) as Array<keyof typeof SLOT_NAMES>).map((slot) => [slot, armorId(material, slot)]));
 }
 
@@ -49,12 +51,12 @@ function iconCounts(points: number): { full: number; half: number; empty: number
 }
 
 describe('existing armor piece values', () => {
-  it('keeps leather, gold, iron and diamond defense on the vanilla 1.9 table', () => {
+  it('keeps the exact six-tier flat-defense progression', () => {
     expect(ItemId.GoldHelmet).toBe('gold_helmet');
     expect(ItemId.LeatherHelmet).toBe('leather_helmet');
-    for (const [material, expected] of Object.entries(VANILLA_DEFENSE)) {
+    for (const [material, expected] of Object.entries(ARMOR_DEFENSE)) {
       for (const slot of Object.keys(SLOT_NAMES) as Array<keyof typeof SLOT_NAMES>) {
-        const definition = getItemDefinition(armorId(material as keyof typeof VANILLA_DEFENSE, slot));
+        const definition = getItemDefinition(armorId(material as keyof typeof ARMOR_DEFENSE, slot));
         expect(definition.kind).toBe('armor');
         if (definition.kind !== 'armor') continue;
         expect(definition.defense, `${material} ${slot}`).toBe(expected[slot]);
@@ -72,9 +74,9 @@ describe('canonical armor totals', () => {
   it('sums equipped pieces to vanilla full-set totals', () => {
     const inventory = new Inventory();
     expect(getArmorPoints(inventory)).toBe(0);
-    for (const [material, expected] of Object.entries(VANILLA_DEFENSE)) {
+    for (const [material, expected] of Object.entries(ARMOR_DEFENSE)) {
       inventory.clear();
-      equipSet(inventory, material as keyof typeof VANILLA_DEFENSE);
+      equipSet(inventory, material as keyof typeof ARMOR_DEFENSE);
       expect(getArmorPoints(inventory), material).toBe(expected.total);
       expect(getArmorStats(inventory).points).toBe(getArmorPoints(inventory));
     }
@@ -88,16 +90,16 @@ describe('canonical armor totals', () => {
       ['legs', ItemId.DiamondLeggings],
       ['feet', ItemId.LeatherBoots],
     ]);
-    expect(getArmorPoints(inventory)).toBe(15);
+    expect(getArmorPoints(inventory)).toBe(14);
     expect(armorHudIcons(getArmorPoints(inventory))).toMatchObject({
       visible: true,
-      points: 15,
+      points: 14,
     });
-    expect(iconCounts(getArmorPoints(inventory))).toEqual({ visible: true, full: 7, half: 1, empty: 2 });
+    expect(iconCounts(getArmorPoints(inventory))).toEqual({ visible: true, full: 7, half: 0, empty: 3 });
 
     inventory.setSlot({ section: 'armor', slot: 'feet' }, null);
-    expect(getArmorPoints(inventory)).toBe(14);
-    expect(iconCounts(getArmorPoints(inventory))).toEqual({ visible: true, full: 7, half: 0, empty: 3 });
+    expect(getArmorPoints(inventory)).toBe(13);
+    expect(iconCounts(getArmorPoints(inventory))).toEqual({ visible: true, full: 6, half: 1, empty: 3 });
   });
 
   it('clamps the canonical total used by both HUD and damage', () => {

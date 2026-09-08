@@ -1,5 +1,27 @@
 # Состояние проекта
 
+## Последний проход: Ruby / Titanium equipment integration — 2026-09-08
+
+- Endgame progression зарегистрирован как `diamond -> ruby -> titanium` без отдельной Ruby Ore и без прямых Titanium equipment recipes.
+- Ruby Ingot — shapeless sink `1 diamond + 3 gold ingots + 3 iron ingots`; все 9 Ruby equipment recipes расширяют существующие material loops. Все 9 Titanium pieces получаются только shapeless upgrade `matching Ruby piece + 1 titanium_ingot`.
+- `BlockId.TitaniumOre = 161`; руда имеет hardness 5, требует pickaxe rank Ruby и дропает себя только при correct tool. Канонический rank: hand 0, wood 1, stone 2, iron 3, gold 1, diamond 4, ruby 5, titanium 6.
+- Titanium worldgen добавлен последним ore rule: Y 4–12, одна vein size 3, `spawnChance=0.75`. Старые ore rules не получают дополнительного RNG call; fixed-seed digest старых ore positions сохранился. На выборке 49 chunks: Diamond 198, Titanium 76, то есть Titanium в 2.61 раза реже.
+- Armor totals: Leather 7, Gold 11, Iron 15, Diamond 17, Ruby 18, Titanium 19; damage reduction остаётся flat 4%/point, toughness penetration не добавлялась. Tools: Ruby 2100/10/+4, Titanium 2800/12/+5; swords 9/10 damage.
+- `PlayerArmorVisual` использует существующий shell/pivot/cache path и новые Ruby/Titanium layers. Authoritative `snapshot.equipment` остаётся generic string-ID transport; protocol не менялся. Invisibility и first-person semantics сохранены.
+- Все 25 runtime PNG, включая 8 отдельных armor inventory icons, проверены детерминированным generator `--check`; Creative catalog подхватывает новые obtainable items автоматически.
+- Focused integration pack: 103/103 PASS; отдельный final feature test: 11/11 PASS. Все четыре typecheck, import boundaries и production build PASS. Full suite: 1853/1869 PASS; 16 timeout/performance failures, один прежний extractor parse failure и worker RPC timeout — те же документированные baseline-классы вне изменённого feature path.
+- Известное ограничение старых миров: save schema хранит seed + deltas, но не полный manifest посещённых неизменённых procedural chunks. Backfill/migration не выполняется и загруженные chunks не меняются, однако после restart невозможно отличить ранее посещённый неизменённый chunk от нового. Подробности: `docs/reports/2026-09-08_ruby-titanium-equipment.md`.
+
+## Последний проход: Ruby / Titanium code-generated pixel assets — 2026-09-08
+
+- Созданы 25 финальных PNG: по два armor UV layer, по ingot, пять tools и четыре armor inventory icons для Ruby/Titanium, плюс `titanium_ore`.
+- `scripts/generate-tier-assets.py` делает controlled luminance palette-remap через Pillow. Alpha/silhouette остаются от шаблонов; item/block canvas не ресайзится и не сглаживается.
+- Ruby armor использует `diamond_layer_*`. Titanium armor использует предоставленные `netherite_layer_*`: это точные 5× pixel replications, которые приводятся к ожидаемым `128×64` только nearest-neighbor.
+- Tools используют iron silhouettes; четыре RGB-уровня дерева берутся из `stick.png` и сохраняются пиксель-в-пиксель. `titanium_ore` меняет только цветные emerald inclusions, оставляя grayscale stone matrix точной копией.
+- `--check` подтвердил все 25 outputs: размеры, alpha masks, palette membership, handles, stone background и отсутствие stale pixels. Contact sheet прошёл visual QA.
+- Item/block assets лежат в runtime `public/textures/{item,block}`; armor layers — в каноническом Vite-import path `assets/minecraft/textures/models/armor`.
+- Этот первоначальный asset-only pass не менял gameplay; последующая интеграция описана секцией выше. Asset handoff: `docs/reports/2026-09-08_ruby-titanium-tier-assets.md`.
+
 ## Последний проход: Claim-anchor cubic volume + visible bounds — 2026-09-08
 
 - Баг границ PR #69: `show()` и пакет `claim_boundary` уже шли. Клиентский `ClaimBoundaryRenderer` получал AABB с Y `0…255`. Горизонтальные рёбра были у bedrock/потолка, вертикальные 256-блочные fat-lines не читались рядом с игроком. Обычные маленькие `/claim create` боксы работали.

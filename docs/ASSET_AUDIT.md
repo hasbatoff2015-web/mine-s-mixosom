@@ -234,6 +234,7 @@ assets/
 - Gold armor icons: `gold_helmet.png`, `gold_chestplate.png`, `gold_leggings.png`, `gold_boots.png`.
 - Diamond armor icons: `diamond_helmet.png`, `diamond_chestplate.png`, `diamond_leggings.png`, `diamond_boots.png`.
 - Armor UV sheets для отображения на модели: `minecraft/textures/models/armor/{leather,iron,gold,diamond}_layer_1.png` и `_layer_2.png`; для leather также есть overlay sheets.
+- Generated Ruby/Titanium set (2026-09-08): `scripts/generate-tier-assets.py` derives Ruby armor from Diamond layers, Titanium armor from the provided Netherite layers, both ingots/tools from Iron sprites, eight armor inventory icons from Diamond item silhouettes, and Titanium Ore from Emerald Ore. Outputs are 4 armor sheets under `assets/minecraft/textures/models/armor`, 20 runtime items under `public/textures/item`, and `public/textures/block/titanium_ore.png` (25 generated PNG total). The transform is a deterministic palette remap, not AI art; derivatives retain the provenance/licensing requirements of their input templates.
 - Еда из обязательного scope: `beef_raw.png`, `beef_cooked.png`, `porkchop_raw.png`, `porkchop_cooked.png`, `chicken_raw.png`, `chicken_cooked.png`, `apple.png`.
 - Базовые материалы/дропы: `coal.png`, `iron_ingot.png`, `gold_ingot.png`, `diamond.png`, `stick.png`, `flint.png`, `feather.png`, `leather.png`, `bone.png`, `string.png`, `gunpowder.png`, `rotten_flesh.png`.
 - `bread.png` присутствует, но по ТЗ нужен максимум как Creative item, без farming chain.
