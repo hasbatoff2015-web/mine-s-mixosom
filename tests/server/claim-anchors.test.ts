@@ -33,7 +33,7 @@ function claim(partial: Partial<Claim> & Pick<Claim, 'name' | 'volume'>): Claim 
 }
 
 describe('claim anchor geometry', () => {
-  it('maps iron/gold/diamond blocks to radii 10/20/30 and full world height', () => {
+  it('maps iron/gold/diamond blocks to cubic radii 10/20/30 on X/Y/Z', () => {
     expect(isClaimAnchorBlock(BlockId.IronBlock)).toBe(true);
     expect(isClaimAnchorBlock(BlockId.GoldBlock)).toBe(true);
     expect(isClaimAnchorBlock(BlockId.DiamondBlock)).toBe(true);
@@ -44,11 +44,17 @@ describe('claim anchor geometry', () => {
     const iron = claimAnchorVolume(100, 64, 50, 'iron_block');
     expect(iron).toEqual({
       minX: 90, maxX: 110,
-      minY: MIN_WORLD_Y, maxY: MAX_WORLD_Y,
+      minY: 54, maxY: 74,
       minZ: 40, maxZ: 60,
     });
-    expect(claimAnchorVolume(0, 10, 0, 'gold_block')).toMatchObject({ minX: -20, maxX: 20, minY: 0, maxY: 255 });
-    expect(claimAnchorVolume(0, 10, 0, 'diamond_block')).toMatchObject({ minX: -30, maxX: 30 });
+    expect(claimAnchorVolume(0, 10, 0, 'gold_block')).toEqual({
+      minX: -20, maxX: 20, minY: 0, maxY: 30, minZ: -20, maxZ: 20,
+    });
+    expect(claimAnchorVolume(0, 40, 0, 'diamond_block')).toMatchObject({
+      minX: -30, maxX: 30, minY: 10, maxY: 70, minZ: -30, maxZ: 30,
+    });
+    expect(claimAnchorVolume(8, 2, 8, 'iron_block').minY).toBe(MIN_WORLD_Y);
+    expect(claimAnchorVolume(8, 250, 8, 'iron_block').maxY).toBe(MAX_WORLD_Y);
   });
 
   it('treats inclusive AABB contact as overlap, including dx=20 for two iron radii', () => {
@@ -58,6 +64,10 @@ describe('claim anchor geometry', () => {
     expect(volumesOverlap(first, touching)).toBe(true);
     expect(volumesOverlap(first, separate)).toBe(false);
     expect(volumesOverlap(claimAnchorVolume(0, 10, 0, 'diamond_block'), claimAnchorVolume(0, 10, 0, 'iron_block'))).toBe(true);
+    const stackedTouch = claimAnchorVolume(0, 30, 0, 'iron_block');
+    const stackedClear = claimAnchorVolume(0, 31, 0, 'iron_block');
+    expect(volumesOverlap(first, stackedTouch)).toBe(true);
+    expect(volumesOverlap(first, stackedClear)).toBe(false);
   });
 });
 
@@ -122,6 +132,25 @@ describe('claim store migration with anchors', () => {
     expect(store.blockClaimSeq).toBeUndefined();
     expect(store.claims[0]!.flags).toEqual({ pvp: false });
     expect(DEFAULT_CLAIM_FLAGS['block-break']).toBe(false);
+  });
+
+  it('rebuilds block-claim volume from the stored anchor instead of keeping a full-height box', () => {
+    const store = migrateClaimStore({
+      claims: [{
+        id: 'ada:1:1',
+        name: '1',
+        owner: 'ada',
+        worldId: 'anarchy',
+        volume: { minX: 0, minY: MIN_WORLD_Y, minZ: 0, maxX: 20, maxY: MAX_WORLD_Y, maxZ: 20 },
+        members: [],
+        flags: {},
+        anchor: { x: 10, y: 64, z: 10, block: 'gold_block' },
+      }],
+    });
+    expect(store.claims[0]!.volume).toEqual(claimAnchorVolume(10, 64, 10, 'gold_block'));
+    expect(store.claims[0]!.volume).toEqual({
+      minX: -10, maxX: 30, minY: 44, maxY: 84, minZ: -10, maxZ: 30,
+    });
   });
 
   it('round-trips block-claim anchors and per-owner sequence', () => {

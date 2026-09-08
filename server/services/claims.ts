@@ -1,4 +1,5 @@
 import { volumeContains, type SelectionVolume } from './selection';
+import { claimAnchorVolume } from './claimAnchors';
 
 export const CLAIM_FLAGS = [
   'pvp',
@@ -170,7 +171,9 @@ export function migrateClaim(raw: unknown): Claim | undefined {
     name: record.name,
     owner: record.owner.toLowerCase(),
     worldId: record.worldId,
-    volume: record.volume,
+    volume: anchor
+      ? claimAnchorVolume(anchor.x, anchor.y, anchor.z, anchor.block)
+      : record.volume,
     members,
     priority: clampClaimPriority(typeof record.priority === 'number' ? record.priority : CLAIM_PRIORITY_DEFAULT),
     flags: migrateFlags(record.flags),

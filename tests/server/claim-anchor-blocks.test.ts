@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
-import { MAX_WORLD_Y, PLAYER_EYE_HEIGHT } from '../../src/core/constants';
+import { PLAYER_EYE_HEIGHT } from '../../src/core/constants';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { BLOCK_CLAIM_OVERLAP_MESSAGE } from '../../server/services/claimAnchors';
@@ -174,7 +174,7 @@ describe('Anarchy claim-anchor blocks', () => {
     world.tick();
   }
 
-  it('creates full-height cuboid block-claims with radii 10/20/30, default flags and per-player names', async () => {
+  it('creates cubic block-claims with radii 10/20/30 on X/Y/Z, default flags and per-player names', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const bob = join(world, 'Bob');
@@ -189,8 +189,8 @@ describe('Anarchy claim-anchor blocks', () => {
       worldId: world.worldId,
       minX: x - 10,
       maxX: x + 10,
-      minY: 0,
-      maxY: MAX_WORLD_Y,
+      minY: y - 10,
+      maxY: y + 10,
       minZ: z - 10,
       maxZ: z + 10,
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
@@ -203,6 +203,8 @@ describe('Anarchy claim-anchor blocks', () => {
       name: '2',
       minX: x + 11,
       maxX: x + 51,
+      minY: y - 20,
+      maxY: y + 20,
       minZ: z - 20,
       maxZ: z + 20,
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
@@ -214,6 +216,8 @@ describe('Anarchy claim-anchor blocks', () => {
       name: '3',
       minX: x + 52,
       maxX: x + 112,
+      minY: y - 30,
+      maxY: y + 30,
       minZ: z - 30,
       maxZ: z + 30,
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
@@ -233,9 +237,11 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(iron.anchor).toEqual({ x, y, z, block: 'iron_block' });
     expect(gold.anchor).toEqual({ x: x + 31, y, z, block: 'gold_block' });
     expect(diamond.anchor).toEqual({ x: x + 82, y, z, block: 'diamond_block' });
-    expect(iron.volume).toEqual({ minX: x - 10, maxX: x + 10, minY: 0, maxY: MAX_WORLD_Y, minZ: z - 10, maxZ: z + 10 });
+    expect(iron.volume).toEqual({ minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10, minZ: z - 10, maxZ: z + 10 });
     expect(gold.volume.maxX - gold.volume.minX).toBe(40);
+    expect(gold.volume.maxY - gold.volume.minY).toBe(40);
     expect(diamond.volume.maxX - diamond.volume.minX).toBe(60);
+    expect(diamond.volume.maxY - diamond.volume.minY).toBe(60);
     expect(iron.flags).toEqual({});
     expect(iron.priority).toBe(0);
     expect(iron.members).toEqual([]);
@@ -276,8 +282,8 @@ describe('Anarchy claim-anchor blocks', () => {
       name: '1',
       minX: x - 10,
       maxX: x + 10,
-      minY: 0,
-      maxY: MAX_WORLD_Y,
+      minY: y - 10,
+      maxY: y + 10,
       minZ: z - 10,
       maxZ: z + 10,
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
@@ -324,7 +330,9 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
     const ownDiamondOverlap = boundaryPackets(ada.sink);
     expect(ownDiamondOverlap).toHaveLength(1);
-    expect(ownDiamondOverlap[0]).toMatchObject({ name: '1', minX: x - 10, maxX: x + 10 });
+    expect(ownDiamondOverlap[0]).toMatchObject({
+      name: '1', minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10,
+    });
     expect(ownDiamondOverlap[0]!.maxX - ownDiamondOverlap[0]!.minX).toBe(20);
 
     bob.sink.payloads.length = 0;
@@ -336,6 +344,8 @@ describe('Anarchy claim-anchor blocks', () => {
       name: '1',
       minX: x - 10,
       maxX: x + 10,
+      minY: y - 10,
+      maxY: y + 10,
     })]);
     expect(boundaryPackets(ada.sink)).toEqual([]);
 
@@ -346,8 +356,12 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(world.world.getBlock(x + 10, y, z)).toBe(BlockId.Air);
     const multi = boundaryPackets(ada.sink);
     expect(multi.map((entry) => entry.name).sort()).toEqual(['1', '2']);
-    expect(multi.find((entry) => entry.name === '1')).toMatchObject({ minX: x - 10, maxX: x + 10 });
-    expect(multi.find((entry) => entry.name === '2')).toMatchObject({ minX: x + 11, maxX: x + 31 });
+    expect(multi.find((entry) => entry.name === '1')).toMatchObject({
+      minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10,
+    });
+    expect(multi.find((entry) => entry.name === '2')).toMatchObject({
+      minX: x + 11, maxX: x + 31, minY: y - 10, maxY: y + 10,
+    });
     expect(loadClaims(world).claims.filter((claim) => claim.anchor)).toHaveLength(2);
 
     ada.player.controller.teleport([x + 80.5, y, z + 0.5]);
@@ -384,6 +398,29 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(chat(world, ada, '/claim create overlay').some((line) => line.includes("Claim 'overlay' created"))).toBe(true);
   });
 
+  it('treats vertical iron spacing 20 as overlap and 21 as clear, same as X/Z', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const { x, y, z } = originOf(ada.player);
+    expect(placeAnchor(world, ada.player, x, y, z, BlockId.IronBlock)).toEqual({ ok: true });
+    ada.sink.payloads.length = 0;
+    expect(placeAnchor(world, ada.player, x, y + 20, z, BlockId.IronBlock)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
+    expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
+      name: '1',
+      minX: x - 10,
+      maxX: x + 10,
+      minY: y - 10,
+      maxY: y + 10,
+    })]);
+    expect(world.world.getBlock(x, y + 20, z)).toBe(BlockId.Air);
+    expect(placeAnchor(world, ada.player, x, y + 21, z, BlockId.IronBlock)).toEqual({ ok: true });
+    const stacked = loadClaims(world).claims.find((claim) => claim.anchor?.y === y + 21)!;
+    expect(stacked.volume).toEqual({
+      minX: x - 10, maxX: x + 10, minY: y + 11, maxY: y + 31, minZ: z - 10, maxZ: z + 10,
+    });
+  });
+
   it('keeps anchors across restart without duplicating leftover blocks, and OP can break them', async () => {
     const dir = await tempDir();
     dirs.push(dir);
@@ -392,6 +429,14 @@ describe('Anarchy claim-anchor blocks', () => {
     const { x, y, z } = originOf(ada.player);
     expect(placeAnchor(first, ada.player, x, y, z, BlockId.IronBlock)).toEqual({ ok: true });
     first.world.setBlock(x + 21, y, z, BlockId.IronBlock);
+    const stale = loadClaims(first);
+    stale.claims[0] = {
+      ...stale.claims[0]!,
+      volume: {
+        minX: x - 10, maxX: x + 10, minY: 0, maxY: 255, minZ: z - 10, maxZ: z + 10,
+      },
+    };
+    first.pluginStore.save('claims/claims', stale);
     const token = ada.player.sessionToken;
     await first.save();
     await first.stop();
@@ -401,6 +446,9 @@ describe('Anarchy claim-anchor blocks', () => {
     const restored = loadClaims(second);
     expect(restored.claims).toHaveLength(1);
     expect(restored.claims[0]!.anchor).toEqual({ x, y, z, block: 'iron_block' });
+    expect(restored.claims[0]!.volume).toEqual({
+      minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10, minZ: z - 10, maxZ: z + 10,
+    });
     expect(restored.blockClaimSeq).toEqual({ ada: 1 });
 
     const resumed = join(second, 'Ada', token);
@@ -455,7 +503,7 @@ describe('Anarchy claim-anchor blocks', () => {
         owner: 'other',
         worldId: world.worldId,
         volume: {
-          minX: x - 10, maxX: x + 10, minY: 0, maxY: MAX_WORLD_Y, minZ: z - 10, maxZ: z + 10,
+          minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10, minZ: z - 10, maxZ: z + 10,
         },
         members: [],
         priority: 0,
@@ -474,8 +522,8 @@ describe('Anarchy claim-anchor blocks', () => {
       name: 'race',
       minX: x - 10,
       maxX: x + 10,
-      minY: 0,
-      maxY: MAX_WORLD_Y,
+      minY: y - 10,
+      maxY: y + 10,
       minZ: z - 10,
       maxZ: z + 10,
     })]);

@@ -14,7 +14,7 @@ Implemented. `diamond_block` keeps id `149`. New `gold_block` (`159`) and `iron_
 - Shaped 3×3 recipes from `diamond` / `gold_ingot` / `iron_ingot`.
 - `Claim.anchor?: { x, y, z, block }` and `ClaimStore.blockClaimSeq`.
 - Place → `blockPlace` overlap deny + `blockPlaced` create. Break → `blockBroken` lookup by stored coords.
-- Radii: iron 10, gold 20, diamond 30 on X/Z; Y `MIN_WORLD_Y…MAX_WORLD_Y` (0…255).
+- Radii: iron 10, gold 20, diamond 30 on X/Z **and Y** (cubic, clamped to world). Superseded the original full-height Y `0…255`; see `docs/reports/2026-09-08_claim-anchor-cube-bounds.md`.
 - Block-claim ∩ block-claim always denied (own/foreign/priority ignored). Regular `/claim create` overlap unchanged.
 - Per-owner names `"1"`, `"2"`, …; deleted numbers are not reused.
 - `/claim info` adds Type / Anchor / Radius when `anchor` is set.
