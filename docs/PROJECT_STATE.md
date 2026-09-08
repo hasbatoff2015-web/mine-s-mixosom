@@ -1,12 +1,16 @@
 # Состояние проекта
 
-## Последний проход: TNT minecart fall distance 20/30 — 2026-09-08
+## Последний проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
 
-- Баг: `maxFallBlocks` 20/30 был в entity и проходил void-тесты, но в реальной игре рельс всегда на блоке. Hop `vy=4` возвращал TNT на support; `landed && falling` взрывал при drop≈0. Лимит никогда не успевал сработать.
-- Исправление: `launchOriginY - currentY` — единственная метрика. Пока drop < `MINECART_TNT_PLATFORM_CLEARANCE` (2) TNT не коллизится с платформой вагонетки. Дальше: пол раньше лимита → взрыв на столкновении; иначе воздух при 20 (ordinary) / 30 (powerful, destructive).
-- `vy=4`, gravity 32, радиусы 4/6/4 не менялись. `blockId` по-прежнему с cargo.
-- Focused `tnt-minecart` 13/13 + `server/tnt-minecart` 5/5. `test:sim` 42/42. All four typechecks, boundaries, production build PASS.
-- Handoff: `docs/reports/2026-09-08_tnt-minecart-fall-distance.md`.
+- Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.
+- Поставленный TNT (`primeTnt`): после поджига падает вниз от Y прайма. Ordinary max 20; powerful и destructive max 30. Пол раньше лимита → взрыв на столкновении; иначе воздух на лимите. Fuse 4s — safety.
+- TNT в вагонетке: прежняя механика fire-arrow eject (`launchMinecartTnt`, hop `vy=4`, inherit `vx/vz`, fuse 4s). **Нет** `launchOriginY` / `maxFallBlocks`, нет noclip платформы, нет принудительного полёта вниз на 20/30. `tntBlockId`, snapshot, joiner, flint/ordinary-arrow не поджигают — без изменений. Off-rail push 50% без изменений.
+- Handoff: `docs/reports/2026-09-08_tnt-placed-fall-distance.md`.
+
+## Предыдущий проход: TNT minecart fall distance 20/30 — 2026-09-08
+
+- **Ошибочная постановка:** 20/30 считались для TNT в вагонетке. Снято следующим проходом; лимиты относятся только к поставленному блоку TNT.
+- Handoff (исторический): `docs/reports/2026-09-08_tnt-minecart-fall-distance.md`.
 
 ## Предыдущий проход: TNT in minecart online + off-rail push — 2026-09-08
 

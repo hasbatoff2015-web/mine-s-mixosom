@@ -1,11 +1,16 @@
 # Roadmap
 
+## 2026-09-08: Placed TNT fall distance (not minecart)
+
+- [x] Apply 20/30 downward fall only to primed **placed** TNT (`primeTnt` sets `launchOriginY` + `maxFallBlocks`).
+- [x] Remove the mistaken 20/30 vertical flight from TNT minecart (`launchMinecartTnt` has hop/fuse only).
+- [x] Tests: placed ordinary 20, powerful/destructive 30, floor before cap, startY from primed Y; minecart does not fly down 20/30; `tntBlockId` + chain + fire-arrow-only stay.
+- [ ] Owner live QA: flint a placed TNT over a drop (20/30/30) vs fire-arrow a TNT cart (no forced fall).
+
 ## 2026-09-08: TNT minecart fall distance
 
 - [x] Diagnose why 20/30 did not change live flight (hop-land on rail support at drop≈0).
-- [x] Count fall as `launchOriginY - currentY`; air-detonate at 20/30; land-detonate only after leaving the cart platform.
-- [x] Simulation tests: ordinary 20, powerful/destructive 30, not the old 20, floor before cap, different world Y, rail-on-stone over void, blockId, chain.
-- [ ] Owner live QA: cart on a 1-block bridge over a drop, all three TNT types, startY→explosionY≈20/30/30.
+- **Superseded:** that 20/30 cap belonged to placed TNT, not minecart cargo. See placed-TNT fall pass.
 
 ## 2026-09-08: TNT in minecart online + off-rail push
 
@@ -14,7 +19,7 @@
 - [x] Allow all three TNT item IDs into a minecart; reuse the cargo mesh with `block/tnt*` textures.
 - [x] Ignite cart TNT only from a fire arrow; flint and ordinary arrows must not.
 - [x] Fire-arrow ignition works inside others' block-claims without weakening place/break protection.
-- [x] Eject primed TNT of the stored type (`vy=4`, max fall 20/30, explode on land or at cap); chain keeps `blockId`.
+- [x] Eject primed TNT of the stored type (`vy=4`, 4s fuse); chain keeps `blockId`. Fall cap 20/30 is placed TNT only.
 - [x] Off-rail player push at 50% of `MINECART_PUSH_GAIN`; on-rail push unchanged.
 - [ ] Owner live Anarchy QA: two clients, three TNT types in carts, fire-arrow vs flint, claim interior shot, off-rail shove.
 

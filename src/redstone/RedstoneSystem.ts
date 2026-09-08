@@ -13,9 +13,8 @@ import { blockKey, lerp } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
 import {
   getTntProfile,
-  minecartTntFallDistance,
-  minecartTntMaxFall,
-  MINECART_TNT_PLATFORM_CLEARANCE,
+  tntFallDistance,
+  tntMaxFall,
 } from '../world/tnt';
 import { moveVoxelBody } from '../entities/voxelPhysics';
 import { HeadlessEntityHost, type EntityHost, type EntityVisual } from '../entities/EntityHost';
@@ -69,7 +68,7 @@ export class PrimedTnt {
   readonly totalFuseSeconds: number;
   readonly visual?: EntityVisual;
   readonly blockId: BlockId;
-  /** Present only for TNT ejected from a minecart by a fire arrow. */
+  /** Present only for primed TNT that came from a placed block. Minecart cargo must not set these. */
   readonly launchOriginY?: number;
   readonly maxFallBlocks?: number;
 
@@ -421,18 +420,21 @@ export class RedstoneSystem {
       if (!this.world.setBlock(x, y, z, BlockId.Air)) return undefined;
       this.notifyBlockChanged(x, y, z);
     }
+    const resolved = blockId !== undefined && isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    const originY = y;
     return this.createPrimedTnt(
       undefined,
       new Vec3(x + 0.5, y, z + 0.5),
       Math.max(0.05, fuseSeconds),
       undefined,
-      blockId,
+      resolved,
+      { originY, maxFallBlocks: tntMaxFall(resolved) },
     );
   }
 
   /**
-   * TNT ejected from a minecart by a fire arrow. Same primed physics as block TNT,
-   * plus a downward travel cap from the eject Y (`launchOriginY - currentY`).
+   * TNT ejected from a minecart by a fire arrow. Same primed hop/fuse as before
+   * the fall-cap work; does not use placed-TNT startY/maxFallBlocks.
    */
   launchMinecartTnt(
     position: Vec3Like,
@@ -448,7 +450,6 @@ export class RedstoneSystem {
       this.defaultTntFuseSeconds,
       [velocity.x, 4, velocity.z],
       resolved,
-      { originY: position.y, maxFallBlocks: minecartTntMaxFall(resolved) },
     );
   }
 
@@ -577,40 +578,24 @@ export class RedstoneSystem {
         this.detonate(entity);
         continue;
       }
+      const falling = entity.velocity.y < 0;
       entity.velocity.y -= 32 * deltaSeconds;
       entity.velocity.x *= Math.exp(-0.5 * deltaSeconds);
       entity.velocity.z *= Math.exp(-0.5 * deltaSeconds);
-      const launched = entity.launchOriginY !== undefined && entity.maxFallBlocks !== undefined;
-      const originY = launched ? entity.launchOriginY : undefined;
-      const drop = originY !== undefined
-        ? minecartTntFallDistance(originY, entity.position.y)
-        : 0;
-      // Hop-return would land on the rail's support block (drop≈0). Leave that
-      // platform without exploding so a real 20/30 air fall can happen below.
-      if (launched && drop < MINECART_TNT_PLATFORM_CLEARANCE) {
-        entity.position.x += entity.velocity.x * deltaSeconds;
-        entity.position.y += entity.velocity.y * deltaSeconds;
-        entity.position.z += entity.velocity.z * deltaSeconds;
-        if (this.shouldDetonateMinecartLaunch(entity, false)) {
-          this.detonate(entity);
-          continue;
-        }
-      } else {
-        const result = moveVoxelBody(
-          this.world,
-          entity.position,
-          entity.velocity,
-          deltaSeconds,
-          { width: 0.98, height: 0.98 },
-        );
-        if (result.hitX) entity.velocity.x = 0;
-        if (result.hitZ) entity.velocity.z = 0;
-        if (result.hitY) entity.velocity.y = 0;
-        const landed = result.onGround || result.hitY;
-        if (this.shouldDetonateMinecartLaunch(entity, landed)) {
-          this.detonate(entity);
-          continue;
-        }
+      const result = moveVoxelBody(
+        this.world,
+        entity.position,
+        entity.velocity,
+        deltaSeconds,
+        { width: 0.98, height: 0.98 },
+      );
+      if (result.hitX) entity.velocity.x = 0;
+      if (result.hitZ) entity.velocity.z = 0;
+      if (result.hitY) entity.velocity.y = 0;
+      const landed = result.onGround || (falling && result.hitY);
+      if (this.shouldDetonatePlacedFall(entity, falling, landed)) {
+        this.detonate(entity);
+        continue;
       }
       if (entity.visual) {
         const elapsed = entity.totalFuseSeconds - entity.fuseSeconds;
@@ -850,14 +835,16 @@ export class RedstoneSystem {
     return entity;
   }
 
-  private shouldDetonateMinecartLaunch(
+  /** Placed TNT only. Minecart-ejected TNT has no launch fields and uses fuse. */
+  private shouldDetonatePlacedFall(
     entity: PrimedTnt,
+    falling: boolean,
     landed: boolean,
   ): boolean {
     if (entity.maxFallBlocks === undefined || entity.launchOriginY === undefined) return false;
-    const drop = minecartTntFallDistance(entity.launchOriginY, entity.position.y);
+    const drop = tntFallDistance(entity.launchOriginY, entity.position.y);
     if (drop >= entity.maxFallBlocks) return true;
-    return landed && drop >= MINECART_TNT_PLATFORM_CLEARANCE;
+    return landed && falling;
   }
 
   private detonate(entity: PrimedTnt): void {

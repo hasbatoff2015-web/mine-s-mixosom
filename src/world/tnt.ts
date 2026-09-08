@@ -18,26 +18,20 @@ export const ORDINARY_TNT_RADIUS = 4;
 export const ORDINARY_TNT_POWER = 4;
 export const POWERFUL_TNT_RADIUS = 6;
 
-/** Max downward travel after a fire-arrow launch from a minecart. */
-export const MINECART_TNT_MAX_FALL_ORDINARY = 20;
-export const MINECART_TNT_MAX_FALL_POWERFUL = 30;
-export const MINECART_TNT_MAX_FALL_DESTRUCTIVE = 30;
-/**
- * Rail sits on a solid block. Primed TNT is ~1 block tall, so the hop-return
- * would land on that support and explode at drop≈0. Ignore collision/landing
- * until the entity has fallen this far past launch Y (rail + support).
- */
-export const MINECART_TNT_PLATFORM_CLEARANCE = 2;
+/** Max downward travel after a placed TNT block is primed. */
+export const TNT_MAX_FALL_ORDINARY = 20;
+export const TNT_MAX_FALL_POWERFUL = 30;
+export const TNT_MAX_FALL_DESTRUCTIVE = 30;
 
-export function minecartTntMaxFall(blockId: number): number {
+export function tntMaxFall(blockId: number): number {
   const kind = tntKindForBlock(blockId);
-  if (kind === 'powerful') return MINECART_TNT_MAX_FALL_POWERFUL;
-  if (kind === 'destructive') return MINECART_TNT_MAX_FALL_DESTRUCTIVE;
-  return MINECART_TNT_MAX_FALL_ORDINARY;
+  if (kind === 'powerful') return TNT_MAX_FALL_POWERFUL;
+  if (kind === 'destructive') return TNT_MAX_FALL_DESTRUCTIVE;
+  return TNT_MAX_FALL_ORDINARY;
 }
 
-/** Vertical distance from eject Y to current TNT feet Y. */
-export function minecartTntFallDistance(originY: number, currentY: number): number {
+/** Vertical distance from primed Y to current TNT feet Y. */
+export function tntFallDistance(originY: number, currentY: number): number {
   return originY - currentY;
 }
 

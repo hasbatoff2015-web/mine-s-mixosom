@@ -179,7 +179,7 @@ describe('Anarchy TNT minecart', () => {
     expect(world.gameplay.redstone.primedTntCount).toBe(0);
   });
 
-  it('falls ~20 blocks after a fire arrow hits a TNT cart on a rail over a void', async () => {
+  it('does not apply placed-TNT 20/30 fall fields after a fire arrow hits a TNT cart', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const x = Math.floor(ada.player.controller.position.x);
@@ -208,17 +208,13 @@ describe('Anarchy TNT minecart', () => {
     world.tick();
     const primed = world.gameplay.redstone.primedTnt[0];
     expect(primed).toBeDefined();
-    expect(primed!.launchOriginY).toBe(startY);
-    expect(primed!.maxFallBlocks).toBe(20);
+    expect(primed!.launchOriginY).toBeUndefined();
+    expect(primed!.maxFallBlocks).toBeUndefined();
     expect(primed!.blockId).toBe(BlockId.Tnt);
-    for (let i = 0; i < 120 && world.gameplay.redstone.primedTntCount > 0; i += 1) {
-      world.tick();
-    }
-    expect(world.gameplay.redstone.primedTntCount).toBe(0);
-    const deltaY = startY - primed!.position.y;
-    expect(deltaY).toBeGreaterThan(8);
-    expect(deltaY).toBeGreaterThanOrEqual(18.5);
-    expect(deltaY).toBeLessThan(22.5);
+    for (let i = 0; i < 25; i += 1) world.tick();
+    expect(world.gameplay.redstone.primedTntCount).toBe(1);
+    expect(startY - primed!.position.y).toBeLessThan(8);
+    expect(primed!.fuseSeconds).toBeGreaterThan(2);
   });
 
   it('pushes TNT carts off rails at half on-rail impulse and snapshots the motion', async () => {

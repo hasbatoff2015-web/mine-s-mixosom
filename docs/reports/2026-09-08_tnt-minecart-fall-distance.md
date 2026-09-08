@@ -1,5 +1,7 @@
 # 2026-09-08 — TNT minecart fall distance 20/30
 
+**Superseded 2026-09-08.** The 20/30 fall cap belongs to **placed** TNT, not minecart cargo. See `2026-09-08_tnt-placed-fall-distance.md`. This report is historical.
+
 ## Goal
 
 Почему в реальной игре дальность падения TNT из вагонетки не стала 20/30,

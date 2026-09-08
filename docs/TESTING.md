@@ -1,5 +1,21 @@
 # Тестирование
 
+## 2026-09-08 Placed TNT fall distance (minecart uncapped)
+
+Report: `reports/2026-09-08_tnt-placed-fall-distance.md`.
+
+```text
+npx vitest run \
+  tests/tnt-placed-fall.test.ts \
+  tests/tnt-minecart.test.ts \
+  tests/server/tnt-minecart.test.ts \
+  tests/redstone.test.ts \
+  tests/lighting-physics-interaction.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: `primeTnt` sets `launchOriginY`/`maxFallBlocks`; ordinary air-explodes ~20, powerful/destructive ~30, from primed Y not world Y=20/30; closer floor explodes on collision. `launchMinecartTnt` omits those fields; after fire-arrow ignition a cart TNT does not start a 20-block downward flight. Fire arrow remains the only cart ignition; `tntBlockId` and chain type stay.
+
 ## 2026-09-08 TNT minecart fall distance
 
 Report: `reports/2026-09-08_tnt-minecart-fall-distance.md`.
@@ -27,7 +43,7 @@ npx vitest run \
 
 Isolated TNT-routing describes in `tests/fire-contact-sunlight-minecart.test.ts` also cover flint-none and fire-arrow eject. The full fire-contact file often hits Vitest's 5s timeout under load (pre-existing derail/sunlight class).
 
-Contracts: all three TNT types store `tntBlockId` and show cargo from a live snapshot without respawn; late joiner sees `tnt_powerful`; fire arrow ejects primed TNT of that type (hop `vy=4`, max fall 20/30); ordinary arrow and flint do not ignite cart cargo; fire-arrow ignition works inside a foreign iron block-claim; chain keeps `blockId`; off-rail push is 50% of `MINECART_PUSH_GAIN`.
+Contracts: all three TNT types store `tntBlockId` and show cargo from a live snapshot without respawn; late joiner sees `tnt_powerful`; fire arrow ejects primed TNT of that type (hop `vy=4`, 4s fuse, no 20/30 fall cap); ordinary arrow and flint do not ignite cart cargo; fire-arrow ignition works inside a foreign iron block-claim; chain keeps `blockId`; off-rail push is 50% of `MINECART_PUSH_GAIN`.
 
 ## 2026-09-08 Anarchy TNT types
 

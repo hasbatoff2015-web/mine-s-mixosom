@@ -21,8 +21,7 @@ Done. Онлайн-синхронизация cargo идёт через `tntBloc
   резолвит `tnt` / `tnt_powerful` / `tnt_destructive`.
 - Fire-arrow hit: `igniteMinecartTntFromFireArrow` → `ejectTntCargo` +
   `launchMinecartTnt` (shared, SP + server). Flint cargo-prime отключён.
-- Primed TNT: hop `vy=4`, gravity 32, inherit cart `vx/vz`, `launchOriginY` +
-  `maxFallBlocks`. Explode on landing or at max fall. Fuse 4s остаётся safety.
+**Later correction:** the 20/30 fall cap was moved to **placed** TNT. Minecart eject keeps hop/`tntBlockId`/fire-arrow-only; see `2026-09-08_tnt-placed-fall-distance.md`.
 - Off-rail push: `player.vxz * PUSH_GAIN * 0.5`, cap `MINECART_MAX_SPEED`.
   On-rail push не тронут.
 - `MinecartVisualFactory.setVariant(visual, variant, textureKey)` — один cargo

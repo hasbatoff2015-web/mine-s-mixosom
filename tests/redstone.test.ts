@@ -75,7 +75,7 @@ describe('RedstoneSystem', () => {
     redstone.dispose();
   });
 
-  it('automatically primes powered TNT, runs a four-second fuse and emits an event', () => {
+  it('automatically primes powered TNT, keeps the primed texture, then air-detonates at the fall cap', () => {
     const world = new VoxelWorld('powered-tnt');
     const scene = new THREE.Scene();
     const y = 76;
@@ -89,24 +89,32 @@ describe('RedstoneSystem', () => {
     expect(redstone.primedTntCount).toBe(1);
     expect(scene.children).toHaveLength(1);
     const primed = redstone.primedTnt[0]!;
+    expect(primed.launchOriginY).toBe(y);
+    expect(primed.maxFallBlocks).toBe(20);
     const material = (primed.visual as THREE.Mesh | undefined)?.material;
     expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
     const meshMaterial = material as THREE.MeshBasicMaterial;
     expect(meshMaterial.map).toBeTruthy();
     expect(meshMaterial.map?.name).toBe(PRIMED_TNT_TEXTURE_KEY);
     const mapBefore = meshMaterial.map;
-    for (let tick = 0; tick < 40; tick += 1) redstone.update(0.05);
+    const startY = primed.position.y;
+    for (let tick = 0; tick < 8; tick += 1) redstone.update(0.05);
+    expect(redstone.primedTntCount).toBe(1);
     expect(meshMaterial.map).toBe(mapBefore);
     expect(meshMaterial.map?.name).toBe(PRIMED_TNT_TEXTURE_KEY);
     expect(meshMaterial.color.getHex()).not.toBe(0xc33b2e);
-    for (let tick = 0; tick < 39; tick += 1) redstone.update(0.05);
-    expect(redstone.consumeExplosionEvents()).toHaveLength(0);
-    redstone.update(0.05);
+    let ticks = 8;
+    for (; ticks < 80; ticks += 1) {
+      redstone.update(0.05);
+      if (redstone.primedTntCount === 0) break;
+    }
     const explosions = redstone.consumeExplosionEvents();
     expect(explosions).toHaveLength(1);
     expect(explosions[0]?.power).toBe(4);
     expect(redstone.primedTntCount).toBe(0);
     expect(scene.children).toHaveLength(0);
+    expect(ticks * 0.05).toBeLessThan(4);
+    expect(startY - primed.position.y).toBeGreaterThanOrEqual(18.5);
     redstone.dispose();
   });
 
