@@ -1,6 +1,14 @@
 # Состояние проекта
 
-## Последний проход: Claim-anchor explosion cleanup — 2026-09-08
+## Последний проход: Claim-anchor boundary UX — 2026-09-08
+
+- Успешная постановка iron/gold/diamond показывает игроку границы нового block-claim через существующий `ClaimBoundaryNetwork` / `ClaimBoundaryRenderer` (радиусы 10/20/30, тот же красный wire, 10 с).
+- Deny из-за пересечения двух block-claims оставляет сообщение про пересечение и показывает AABB **уже существующих** overlapping block-claims, не будущий объём. Несколько пересечений — `showAll`.
+- Обычный deny «This land is claimed.» без изменений. Новой системы границ нет.
+- `claim-anchor-blocks` 7/7, related 61/61, all four typechecks, boundaries, production build PASS.
+- Handoff: `docs/reports/2026-09-08_claim-anchor-boundary-ux.md`.
+
+## Предыдущий проход: Claim-anchor explosion cleanup — 2026-09-08
 
 - TNT / `ExplosionQueue` теперь эмитит `blockBroken` (без `playerId`) для каждого реально уничтоженного вокселя. Claims удаляет block-claim по сохранённому `Claim.anchor`, той же связью что и ручное ломание.
 - Взрыв рядом, который не уничтожил ячейку якоря, claim не трогает. Обычные `/claim create` регионы без изменений.

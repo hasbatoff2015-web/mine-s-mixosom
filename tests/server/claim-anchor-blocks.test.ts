@@ -9,6 +9,7 @@ import { loadServerConfig } from '../../server/config';
 import { BLOCK_CLAIM_OVERLAP_MESSAGE } from '../../server/services/claimAnchors';
 import { DEFAULT_CLAIM_FLAGS, migrateClaimStore } from '../../server/services/claims';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
+import { CLAIM_BOUNDARY_DURATION_MS } from '../../shared/protocol';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-claim-anchors-'));
@@ -52,6 +53,36 @@ function resultLines(sink: MemorySink): string[] {
     if (record.type === 'chat' && record.text) lines.push(record.text);
   }
   return lines;
+}
+
+function boundaryPackets(sink: MemorySink): Array<{
+  type: 'claim_boundary';
+  claimId: string;
+  name: string;
+  worldId: string;
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+  durationMs: number;
+}> {
+  return sink.payloads.filter(
+    (payload): payload is {
+      type: 'claim_boundary';
+      claimId: string;
+      name: string;
+      worldId: string;
+      minX: number;
+      minY: number;
+      minZ: number;
+      maxX: number;
+      maxY: number;
+      maxZ: number;
+      durationMs: number;
+    } => (payload as { type?: string }).type === 'claim_boundary',
+  );
 }
 
 function lookAngles(
@@ -149,9 +180,44 @@ describe('Anarchy claim-anchor blocks', () => {
     const bob = join(world, 'Bob');
     const { x, y, z } = originOf(ada.player);
 
+    ada.sink.payloads.length = 0;
+    bob.sink.payloads.length = 0;
     expect(placeAnchor(world, ada.player, x, y, z, BlockId.IronBlock)).toEqual({ ok: true });
+    expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
+      type: 'claim_boundary',
+      name: '1',
+      worldId: world.worldId,
+      minX: x - 10,
+      maxX: x + 10,
+      minY: 0,
+      maxY: MAX_WORLD_Y,
+      minZ: z - 10,
+      maxZ: z + 10,
+      durationMs: CLAIM_BOUNDARY_DURATION_MS,
+    })]);
+    expect(boundaryPackets(bob.sink)).toEqual([]);
+
+    ada.sink.payloads.length = 0;
     expect(placeAnchor(world, ada.player, x + 31, y, z, BlockId.GoldBlock)).toEqual({ ok: true });
+    expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
+      name: '2',
+      minX: x + 11,
+      maxX: x + 51,
+      minZ: z - 20,
+      maxZ: z + 20,
+      durationMs: CLAIM_BOUNDARY_DURATION_MS,
+    })]);
+
+    ada.sink.payloads.length = 0;
     expect(placeAnchor(world, ada.player, x + 82, y, z, BlockId.DiamondBlock)).toEqual({ ok: true });
+    expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
+      name: '3',
+      minX: x + 52,
+      maxX: x + 112,
+      minZ: z - 30,
+      maxZ: z + 30,
+      durationMs: CLAIM_BOUNDARY_DURATION_MS,
+    })]);
     expect(placeAnchor(world, bob.player, x, y, z + 80, BlockId.IronBlock)).toEqual({ ok: true });
 
     const store = loadClaims(world);
@@ -202,8 +268,21 @@ describe('Anarchy claim-anchor blocks', () => {
     world.setGameMode(bob.player, 'creative');
     prepareCell(world, bob.player, x + 2, y, z);
     bob.sink.payloads.length = 0;
+    ada.sink.payloads.length = 0;
     expect(world.tryPlace(bob.player, x + 2, y, z, BlockId.Dirt)).toEqual({ ok: false, reason: 'cancelled' });
     expect(resultLines(bob.sink)).toContain('This land is claimed.');
+    expect(boundaryPackets(bob.sink)).toEqual([expect.objectContaining({
+      type: 'claim_boundary',
+      name: '1',
+      minX: x - 10,
+      maxX: x + 10,
+      minY: 0,
+      maxY: MAX_WORLD_Y,
+      minZ: z - 10,
+      maxZ: z + 10,
+      durationMs: CLAIM_BOUNDARY_DURATION_MS,
+    })]);
+    expect(boundaryPackets(ada.sink)).toEqual([]);
     expect(world.tryBreak(bob.player, x + 1, y, z)).toEqual({ ok: false, reason: 'cancelled' });
     expect(world.tryBreak(bob.player, x, y, z)).toEqual({ ok: false, reason: 'cancelled' });
 
@@ -232,10 +311,44 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(placeAnchor(world, ada.player, x + 20, y, z, BlockId.IronBlock)).toEqual({ ok: false, reason: 'cancelled' });
     expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
     expect(world.world.getBlock(x + 20, y, z)).toBe(BlockId.Air);
+    expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
+      name: '1',
+      minX: x - 10,
+      maxX: x + 10,
+      minZ: z - 10,
+      maxZ: z + 10,
+    })]);
 
     ada.sink.payloads.length = 0;
     expect(placeAnchor(world, ada.player, x + 5, y, z + 5, BlockId.DiamondBlock)).toEqual({ ok: false, reason: 'cancelled' });
     expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
+    const ownDiamondOverlap = boundaryPackets(ada.sink);
+    expect(ownDiamondOverlap).toHaveLength(1);
+    expect(ownDiamondOverlap[0]).toMatchObject({ name: '1', minX: x - 10, maxX: x + 10 });
+    expect(ownDiamondOverlap[0]!.maxX - ownDiamondOverlap[0]!.minX).toBe(20);
+
+    bob.sink.payloads.length = 0;
+    ada.sink.payloads.length = 0;
+    expect(placeAnchor(world, bob.player, x + 20, y, z, BlockId.IronBlock)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(resultLines(bob.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
+    expect(world.world.getBlock(x + 20, y, z)).toBe(BlockId.Air);
+    expect(boundaryPackets(bob.sink)).toEqual([expect.objectContaining({
+      name: '1',
+      minX: x - 10,
+      maxX: x + 10,
+    })]);
+    expect(boundaryPackets(ada.sink)).toEqual([]);
+
+    expect(placeAnchor(world, ada.player, x + 21, y, z, BlockId.IronBlock)).toEqual({ ok: true });
+    ada.sink.payloads.length = 0;
+    expect(placeAnchor(world, ada.player, x + 10, y, z, BlockId.DiamondBlock)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
+    expect(world.world.getBlock(x + 10, y, z)).toBe(BlockId.Air);
+    const multi = boundaryPackets(ada.sink);
+    expect(multi.map((entry) => entry.name).sort()).toEqual(['1', '2']);
+    expect(multi.find((entry) => entry.name === '1')).toMatchObject({ minX: x - 10, maxX: x + 10 });
+    expect(multi.find((entry) => entry.name === '2')).toMatchObject({ minX: x + 11, maxX: x + 31 });
+    expect(loadClaims(world).claims.filter((claim) => claim.anchor)).toHaveLength(2);
 
     ada.player.controller.teleport([x + 80.5, y, z + 0.5]);
     chat(world, ada, '/claim pos1');
@@ -247,6 +360,16 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(placeAnchor(world, bob.player, x + 84, y, z + 4, BlockId.DiamondBlock)).toEqual({ ok: false, reason: 'cancelled' });
     expect(resultLines(bob.sink)).toContain('This land is claimed.');
     expect(world.world.getBlock(x + 84, y, z + 4)).toBe(BlockId.Air);
+    expect(boundaryPackets(bob.sink)).toEqual([expect.objectContaining({
+      name: 'garden',
+      minX: x + 80,
+      maxX: x + 88,
+      minY: y,
+      maxY: y + 4,
+      minZ: z,
+      maxZ: z + 8,
+      durationMs: CLAIM_BOUNDARY_DURATION_MS,
+    })]);
 
     expect(placeAnchor(world, ada.player, x + 84, y, z + 4, BlockId.IronBlock)).toEqual({ ok: true });
     const store = loadClaims(world);
@@ -347,6 +470,15 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
     expect(ada.player.inventory.has('iron_block', 1)).toBe(true);
     expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
+    expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
+      name: 'race',
+      minX: x - 10,
+      maxX: x + 10,
+      minY: 0,
+      maxY: MAX_WORLD_Y,
+      minZ: z - 10,
+      maxZ: z + 10,
+    })]);
     const live = loadClaims(world).claims.filter((claim) => claim.owner === 'ada');
     expect(live).toEqual([]);
   });
