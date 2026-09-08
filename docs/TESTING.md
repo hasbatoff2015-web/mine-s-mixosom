@@ -1,5 +1,22 @@
 # Тестирование
 
+## 2026-09-09 Melee PvP receive-time rewind
+
+Report: `reports/2026-09-09_melee-pvp-receive-time-rewind.md`.
+
+```text
+npx vitest run \
+  tests/melee-action-intent.test.ts \
+  tests/remote-action-presentation.test.ts \
+  tests/combat-pose-history.test.ts \
+  tests/server/melee-lag-compensation.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: receive-time-valid target rewind remains valid while the attack waits for its exact attacker command boundary; a moving target uses the frozen server historical AABB, not its current AABB. Future/older-than-five target ticks are rejected at packet receipt. Pending lifetime is independently bounded at eight ticks, duplicate `actionSeq` cannot damage twice, and a second valid ray hit during HurtResistance is `immune` rather than `miss`/`stale`. Diagnostics expose `receivedServerTick` and `pendingTicks`.
+
+Results: focused 27/27; broad melee/network/prediction/claims 362/362; additional filename-audit network/claim files 28/28; six general suites containing melee contracts 82/82. Total targeted audit: 38 unique files, 499/499 tests PASS. `test:sim` 42/42 PASS. `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, import boundaries and production build PASS. No bow behavior is part of this pass.
+
 ## 2026-09-08 Melee PvP client timeline
 
 Report: `reports/2026-09-08_melee-pvp-client-timeline.md`.

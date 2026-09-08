@@ -423,6 +423,8 @@ export interface OnlineAnarchySession {
     resolvedRenderTick?: number;
     rewindTicks?: number;
     distance?: number;
+    receivedServerTick?: number;
+    pendingTicks?: number;
   };
   miningLocked?: boolean;
   /**
@@ -5157,7 +5159,7 @@ export class Game {
           }
           if (session.online.lastCombatDiag) {
             const combat = session.online.lastCombatDiag;
-            this.cachedDebugText += `\nMelee ${combat.result} a=${combat.actionSeq} c=${combat.commandSeq} target=${combat.targetId?.slice(0, 8) ?? '—'} req=${combat.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${combat.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${combat.rewindTicks?.toFixed(2) ?? '—'} dist=${combat.distance?.toFixed(3) ?? '—'}`;
+            this.cachedDebugText += `\nMelee ${combat.result} a=${combat.actionSeq} c=${combat.commandSeq} target=${combat.targetId?.slice(0, 8) ?? '—'} recv=${combat.receivedServerTick ?? '—'} pending=${combat.pendingTicks ?? '—'} req=${combat.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${combat.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${combat.rewindTicks?.toFixed(2) ?? '—'} dist=${combat.distance?.toFixed(3) ?? '—'}`;
           }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;

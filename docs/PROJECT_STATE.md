@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: melee PvP receive-time rewind — 2026-09-09
+
+- Live regression подтверждён: valid `targetRenderTick` повторно проверялся только при dequeue sequenced attack, поэтому visual interpolation delay и ожидание attacker `commandSeq` суммировались против `MAX_PVP_REWIND_TICKS = 5`.
+- Сервер теперь при приёме attack создаёт `PendingMeleeAttack`: фиксирует `receivedServerTick`, валидирует target tick именно относительно него и сохраняет server-owned `RewoundCombatPose`. Клиентский AABB не принимается.
+- После появления exact authoritative attacker command-boundary используется сохранённая historical target pose без повторного rewind относительно более позднего world tick. Current target existence/connection/death/survival и attacker validity всё равно перепроверяются перед обычными ray/reach/LOS/claims/damage gates.
+- Security limits не ослаблены: rewind остаётся 5 ticks / 250 ms, hitbox и reach не увеличены. Pending FIFO имеет отдельный `MAX_PENDING_MELEE_TICKS = 8` и отдаёт диагностический `pending_timeout` после превышения.
+- Combat diagnostics дополнены `receivedServerTick` и `pendingTicks`; F3 различает `hit`, `immune`, `miss`, `stale` и `pending_timeout`.
+- Regression tests покрывают stationary/moving target с backlog 4 ticks, stale/future at receive, bounded pending lifetime, duplicate `actionSeq` и hurt-resistance `immune`. Целевой melee/network/prediction/claims аудит: 38 files, 499/499 tests PASS; `test:sim` 42/42 PASS; все четыре typecheck, boundaries и production build PASS.
+- Handoff: `docs/reports/2026-09-09_melee-pvp-receive-time-rewind.md`.
+
 ## Последний проход: melee PvP hit registration по client timeline — 2026-09-08
 
 - Root cause: production client посылал bare `{ type: 'attack' }`; сервер считал melee по receipt-time eye/yaw, а remote client уже целился в интерполированную delayed pose (adaptive delay 80–180 ms). FIFO input мог дополнительно применить более новый yaw до обработки атаки.

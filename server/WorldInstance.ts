@@ -85,9 +85,11 @@ import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import {
   combatPoseForCommand,
   MAX_PENDING_MELEE_ACTIONS,
+  MAX_PENDING_MELEE_TICKS,
   recordCombatPose,
   rewindCombatPose,
   type CombatPoseSample,
+  type RewoundCombatPose,
 } from './combatPoseHistory';
 
 /** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
@@ -95,6 +97,16 @@ const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
 
 export interface ConnectedSink {
   send(payload: unknown): void;
+}
+
+export interface PendingMeleeAttack {
+  readonly action: AttackAction;
+  readonly receivedServerTick: number;
+  readonly target?: {
+    readonly playerId: string;
+    readonly requestedRenderTick: number;
+    readonly pose: RewoundCombatPose;
+  };
 }
 
 const IDLE_INPUT: ClientInputMessage = {
@@ -127,7 +139,7 @@ export class ServerPlayer implements GameplayPlayer {
   readonly appliedStepsThisLoop: AppliedMovementStep[] = [];
   readonly actionPoseHistory: ActionPoseSample[] = [];
   readonly combatPoseHistory: CombatPoseSample[] = [];
-  readonly pendingAttacks: AttackAction[] = [];
+  readonly pendingAttacks: PendingMeleeAttack[] = [];
   appliedCommandBoundaryThisTick = false;
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
@@ -1034,59 +1046,114 @@ export class WorldInstance {
       || action.targetId === player.id) {
       return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'invalid' } };
     }
+    const pending = this.capturePendingMeleeAttack(player, action);
+    if ('ok' in pending) return { status: 'resolved', result: pending };
     const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
-    if (pose) return { status: 'resolved', result: this.resolveSequencedAttack(player, action, pose) };
+    if (pose) return { status: 'resolved', result: this.resolveSequencedAttack(player, pending, pose) };
     if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
       if (player.pendingAttacks.length >= MAX_PENDING_MELEE_ACTIONS) {
         return {
           status: 'resolved',
-          result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'stale', combat: this.staleCombat(action) },
+          result: {
+            ok: false,
+            actionSeq: action.actionSeq,
+            kind: 'attack',
+            reason: 'stale',
+            combat: this.combatStatus(pending, 'stale'),
+          },
         };
       }
-      player.pendingAttacks.push(action);
+      player.pendingAttacks.push(pending);
       return { status: 'pending' };
     }
     return {
       status: 'resolved',
-      result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'stale', combat: this.staleCombat(action) },
+      result: {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: 'stale',
+        combat: this.combatStatus(pending, 'stale'),
+      },
+    };
+  }
+
+  /** Validate and freeze the server-owned target pose at packet receive time. */
+  private capturePendingMeleeAttack(
+    player: ServerPlayer,
+    action: AttackAction,
+  ): PendingMeleeAttack | ActionResult {
+    const pending: PendingMeleeAttack = {
+      action,
+      receivedServerTick: this.tickNumber,
+    };
+    if (action.targetId === undefined || action.targetRenderTick === undefined) return pending;
+    const target = this.players.get(action.targetId);
+    const pose = target
+      ? rewindCombatPose(target.combatPoseHistory, action.targetRenderTick, pending.receivedServerTick)
+      : undefined;
+    if (!target || target.id === player.id || !target.connected || target.survival.dead
+      || target.gamemode !== 'survival' || !pose || pose.dead) {
+      return {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: 'stale',
+        combat: this.combatStatus(pending, 'stale'),
+      };
+    }
+    return {
+      ...pending,
+      target: {
+        playerId: target.id,
+        requestedRenderTick: action.targetRenderTick,
+        pose,
+      },
     };
   }
 
   private resolveSequencedAttack(
     player: ServerPlayer,
-    action: AttackAction,
+    pending: PendingMeleeAttack,
     attackerPose: CombatPoseSample,
   ): ActionResult {
+    const { action } = pending;
     if (attackerPose.dead || action.selectedSlot !== attackerPose.selectedSlot) {
       return {
         ok: false,
         actionSeq: action.actionSeq,
         kind: 'attack',
         reason: attackerPose.dead ? 'dead' : 'slot',
-        combat: this.staleCombat(action),
+        combat: this.combatStatus(pending, 'stale'),
       };
     }
-    if (action.targetId !== undefined && action.targetRenderTick !== undefined) {
-      const target = this.players.get(action.targetId);
-      const rewound = target
-        ? rewindCombatPose(target.combatPoseHistory, action.targetRenderTick, this.tickNumber)
-        : undefined;
+    if (pending.target) {
+      const target = this.players.get(pending.target.playerId);
       if (!target || target.id === player.id || !target.connected || target.survival.dead
-        || target.gamemode !== 'survival' || !rewound) {
+        || target.gamemode !== 'survival') {
         return {
           ok: true,
           actionSeq: action.actionSeq,
           kind: 'attack',
-          combat: this.staleCombat(action),
+          combat: this.combatStatus(pending, 'stale'),
         };
       }
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
-        target: { player: target, pose: rewound, requestedRenderTick: action.targetRenderTick },
+        target: {
+          player: target,
+          pose: pending.target.pose,
+          requestedRenderTick: pending.target.requestedRenderTick,
+        },
       });
       this.flushBlockChanges();
       this.flushPlayerInventory(player);
-      return { ok: true, actionSeq: action.actionSeq, kind: 'attack', combat };
+      return {
+        ok: true,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        combat: { ...combat, ...this.combatTiming(pending) },
+      };
     }
     const combat = this.gameplay.attack(player, [...this.players.values()], {
       attackerPose,
@@ -1094,14 +1161,35 @@ export class WorldInstance {
     });
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
-    return { ok: true, actionSeq: action.actionSeq, kind: 'attack', combat };
+    return {
+      ok: true,
+      actionSeq: action.actionSeq,
+      kind: 'attack',
+      combat: { ...combat, ...this.combatTiming(pending) },
+    };
   }
 
-  private staleCombat(action: AttackAction) {
+  private combatTiming(pending: PendingMeleeAttack) {
     return {
-      result: 'stale' as const,
+      receivedServerTick: pending.receivedServerTick,
+      pendingTicks: Math.max(0, this.tickNumber - pending.receivedServerTick),
+    };
+  }
+
+  private combatStatus(
+    pending: PendingMeleeAttack,
+    result: 'stale' | 'pending_timeout',
+  ) {
+    const { action } = pending;
+    return {
+      result,
       ...(action.targetId !== undefined ? { targetId: action.targetId } : {}),
       ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+      ...(pending.target ? {
+        resolvedRenderTick: pending.target.pose.resolvedTick,
+        rewindTicks: pending.target.pose.rewindTicks,
+      } : {}),
+      ...this.combatTiming(pending),
     };
   }
 
@@ -1737,15 +1825,27 @@ export class WorldInstance {
   private processPendingAttacks(): void {
     for (const player of this.players.values()) {
       if (player.pendingAttacks.length === 0) continue;
-      const keep: AttackAction[] = [];
-      for (const action of player.pendingAttacks) {
+      const keep: PendingMeleeAttack[] = [];
+      for (const pending of player.pendingAttacks) {
+        const { action } = pending;
+        const pendingTicks = this.tickNumber - pending.receivedServerTick;
+        if (pendingTicks > MAX_PENDING_MELEE_TICKS) {
+          this.sendAttackActionResult(player, action, {
+            ok: false,
+            actionSeq: action.actionSeq,
+            kind: 'attack',
+            reason: 'stale',
+            combat: this.combatStatus(pending, 'pending_timeout'),
+          });
+          continue;
+        }
         const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
         if (pose) {
-          this.sendAttackActionResult(player, action, this.resolveSequencedAttack(player, action, pose));
+          this.sendAttackActionResult(player, action, this.resolveSequencedAttack(player, pending, pose));
           continue;
         }
         if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
-          keep.push(action);
+          keep.push(pending);
           continue;
         }
         this.sendAttackActionResult(player, action, {
@@ -1753,7 +1853,7 @@ export class WorldInstance {
           actionSeq: action.actionSeq,
           kind: 'attack',
           reason: 'stale',
-          combat: this.staleCombat(action),
+          combat: this.combatStatus(pending, 'stale'),
         });
       }
       player.pendingAttacks.length = 0;

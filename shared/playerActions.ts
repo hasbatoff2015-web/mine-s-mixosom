@@ -69,7 +69,8 @@ export type CombatActionResultKind =
   | 'blocked'
   | 'occluded'
   | 'out_of_reach'
-  | 'stale';
+  | 'stale'
+  | 'pending_timeout';
 
 export interface CombatActionDiagnostics {
   readonly result: CombatActionResultKind;
@@ -78,6 +79,10 @@ export interface CombatActionDiagnostics {
   readonly resolvedRenderTick?: number;
   readonly rewindTicks?: number;
   readonly distance?: number;
+  /** Authoritative server tick on which the attack packet was accepted. */
+  readonly receivedServerTick?: number;
+  /** Server simulation ticks spent waiting for the attacker's command boundary. */
+  readonly pendingTicks?: number;
 }
 
 export type PlayerAction =

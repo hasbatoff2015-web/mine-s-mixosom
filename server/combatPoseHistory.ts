@@ -5,6 +5,8 @@ export const COMBAT_HISTORY_TICKS = 12;
 /** 5 ticks at 20 TPS = 250 ms. Requests outside this window are rejected. */
 export const MAX_PVP_REWIND_TICKS = 5;
 export const MAX_PENDING_MELEE_ACTIONS = 32;
+/** Command wait budget; independent from the already-validated target rewind window. */
+export const MAX_PENDING_MELEE_TICKS = 8;
 
 export interface CombatPoseSample {
   readonly serverTick: number;

@@ -1,5 +1,13 @@
 # Архитектура
 
+## Melee PvP receive-time rewind ownership — 2026-09-09
+
+Target timeline validation и attacker command resolution — разные часы. При получении sequenced melee packet `WorldInstance` создаёт server-owned `PendingMeleeAttack`, фиксирует `receivedServerTick` и сразу вызывает `rewindCombatPose` относительно этого tick. Если `targetRenderTick` future, старше `MAX_PVP_REWIND_TICKS = 5`, не имеет authoritative history sample или target уже невалиден, attack отклоняется на receive path. В envelope сохраняется только серверный `RewoundCombatPose` с cloned/interpolated AABB; клиент не передаёт hitbox, distance или damage.
+
+Если exact attacker `commandSeq` ещё находится в FIFO, envelope ждёт boundary. При dequeue сервер берёт exact `CombatPoseSample` атакующего и сохранённую receive-time target pose; target rewind повторно относительно текущего `WorldInstance.tickNumber` не выполняется. Перед raycast сервер всё равно проверяет актуальные attacker validity и target existence/connection/death/survival, затем использует прежние server-authoritative ray/AABB, reach 3, current-world voxel LOS, claims/plugins, hurt resistance, armor, knockback и durability.
+
+Два лимита независимы: очередь по-прежнему ограничена 32 actions, `MAX_PENDING_MELEE_TICKS = 8` ограничивает время ожидания command boundary, а `MAX_PVP_REWIND_TICKS = 5` измеряется только один раз относительно receive tick. Expired envelope возвращает `pending_timeout`; уже validated rewind от ожидания не становится `stale`. `action_result.combat` и F3 включают `receivedServerTick` и фактические `pendingTicks` для разделения receive-time stale от FIFO timeout.
+
 ## Sequenced melee PvP timeline authority — 2026-09-08
 
 Онлайн-melee следует правилу **client owns intent, server owns result**. На нажатии LMB клиент снимает live camera yaw/pitch, текущие `commandSeq`/hotbar slot и, только если ближайшим объектом под прицелом был уже отрисованный remote player, его `targetId` и точный `RemotePlayerView.lastRenderTick`. Сообщение всегда идёт через общий sequenced `action(kind=attack)`; клиент не сообщает damage, distance или результат попадания.
@@ -8,7 +16,7 @@
 
 PvP target rewind ограничен `MAX_PVP_REWIND_TICKS = 5` (250 ms при 20 TPS). Для fractional render tick AABB интерполируется между двумя authoritative samples; future, слишком старый или отсутствующий sample даёт безопасный `stale` miss. Attacker eye/look берутся из authoritative command pose с допустимым client live-look intent, target hitbox — только из server history. Сервер заново проверяет ray/AABB, reach 3 блока, текущую voxel line-of-sight, death, blocking, claims/plugins, armor, hurt resistance, critical, knockback и durability. Hitbox inflation и доверия client-reported distance нет.
 
-Если клиент указал player target, промах по его rewound AABB не переходит на другого игрока. Intent без player hint сохраняет прежние server-owned air swing, mob и minecart interactions, но не выбирает игрока по receipt-time pose. Legacy unsequenced `attack` оставлен как совместимый безопасный current-state fallback; production client его больше не отправляет. `action_result.combat` содержит только bounded diagnostics (`hit/miss/immune/blocked/occluded/out_of_reach/stale`, ticks, rewind и server distance) для F3/тестов.
+Если клиент указал player target, промах по его rewound AABB не переходит на другого игрока. Intent без player hint сохраняет прежние server-owned air swing, mob и minecart interactions, но не выбирает игрока по receipt-time pose. Legacy unsequenced `attack` оставлен как совместимый безопасный current-state fallback; production client его больше не отправляет. `action_result.combat` содержит только bounded diagnostics (`hit/miss/immune/blocked/occluded/out_of_reach/stale/pending_timeout`, receive/pending ticks, rewind и server distance) для F3/тестов.
 
 ## Deterministic armor cutout depth policy — 2026-09-08
 

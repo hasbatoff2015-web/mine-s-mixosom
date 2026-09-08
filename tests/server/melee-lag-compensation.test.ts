@@ -11,7 +11,11 @@ import { viewDirectionFromLook } from '../../src/player/localAim';
 import { rayAabbDistance } from '../../src/world/collision';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
-import { MAX_PVP_REWIND_TICKS, combatPoseForCommand } from '../../server/combatPoseHistory';
+import {
+  MAX_PENDING_MELEE_TICKS,
+  MAX_PVP_REWIND_TICKS,
+  combatPoseForCommand,
+} from '../../server/combatPoseHistory';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import type { AttackAction } from '../../shared/playerActions';
 import type { ClientInputMessage, ServerActionResultMessage } from '../../shared/protocol';
@@ -114,6 +118,8 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
     if ('error' in a || 'error' in b) throw new Error('join failed');
     a.player.controller.teleport([20.5, 100, 20.5]);
     b.player.controller.teleport([20.5, 100, 22.5]);
+    world.world.setBlock(20, 99, 20, BlockId.Stone);
+    world.world.setBlock(20, 99, 22, BlockId.Stone);
     a.player.inventory.clear();
     a.player.inventory.setSlot(0, createItemStack(ItemId.DiamondSword));
     return { world, attacker: a.player, victim: b.player, attackerSink, victimSink };
@@ -125,6 +131,34 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
     world.applyInput(victim, input(seq));
     world.tick();
     return look;
+  }
+
+  function recordStationaryTimeline(
+    world: WorldInstance,
+    attacker: ServerPlayer,
+    victim: ServerPlayer,
+    throughSeq: number,
+  ) {
+    let look = lookAt(attacker, victim);
+    for (let seq = 1; seq <= throughSeq; seq += 1) {
+      look = lookAt(attacker, victim);
+      world.applyInput(attacker, input(seq, look.yaw, look.pitch));
+      world.applyInput(victim, input(seq));
+      world.tick();
+    }
+    return look;
+  }
+
+  function enqueueAttackerBacklog(
+    world: WorldInstance,
+    attacker: ServerPlayer,
+    fromSeq: number,
+    throughSeq: number,
+    look: { yaw: number; pitch: number },
+  ): void {
+    for (let seq = fromSeq; seq <= throughSeq; seq += 1) {
+      world.applyInput(attacker, input(seq, look.yaw, look.pitch));
+    }
   }
 
   it('FAST FLICK waits for command N and uses its authoritative look, never the old pose', async () => {
@@ -169,6 +203,61 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
     });
   });
 
+  it('STATIONARY TARGET + QUEUE BACKLOG keeps receive-time-valid rewind after four pending ticks', async () => {
+    const { world, attacker, victim, attackerSink } = await boot();
+    const look = recordStationaryTimeline(world, attacker, victim, 4);
+    const receivedServerTick = world.tickNumber;
+    const targetRenderTick = receivedServerTick - 2.5;
+    enqueueAttackerBacklog(world, attacker, 5, 8, look);
+    attackerSink.payloads.length = 0;
+    const before = victim.survival.health;
+    const start = victim.controller.position.clone();
+
+    world.handleSequencedAttack(attacker, action(1, 8, look, victim, targetRenderTick));
+    expect(attacker.pendingAttacks).toHaveLength(1);
+    for (let tick = 0; tick < 4; tick += 1) world.tick();
+
+    expect(victim.controller.position.distanceTo(start)).toBeLessThan(1e-6);
+    expect(victim.survival.health).toBeLessThan(before);
+    expect(result(attackerSink, 1).combat).toMatchObject({
+      result: 'hit', requestedRenderTick: targetRenderTick, resolvedRenderTick: targetRenderTick,
+      receivedServerTick, pendingTicks: 4, rewindTicks: 2.5,
+    });
+  });
+
+  it('MOVING TARGET + QUEUE BACKLOG executes against the AABB validated at receive time', async () => {
+    const { world, attacker, victim, attackerSink } = await boot();
+    const historicalLook = recordInitial(world, attacker, victim);
+    const targetRenderTick = world.tickNumber;
+    victim.controller.teleport([22.5, 100, 22.5]);
+    world.world.setBlock(22, 99, 22, BlockId.Stone);
+    for (let seq = 2; seq <= 4; seq += 1) {
+      world.applyInput(attacker, input(seq, historicalLook.yaw, historicalLook.pitch));
+      world.applyInput(victim, input(seq));
+      world.tick();
+    }
+    const receivedServerTick = world.tickNumber;
+    enqueueAttackerBacklog(world, attacker, 5, 8, historicalLook);
+    const attackerPose = combatPoseForCommand(attacker.combatPoseHistory, 4)!;
+    expect(rayAabbDistance(
+      { x: attackerPose.eyeX, y: attackerPose.eyeY, z: attackerPose.eyeZ },
+      viewDirectionFromLook(attackerPose.yaw, attackerPose.pitch),
+      victim.controller.aabb,
+    )).toBeUndefined();
+    attackerSink.payloads.length = 0;
+    const before = victim.survival.health;
+
+    world.handleSequencedAttack(attacker, action(1, 8, historicalLook, victim, targetRenderTick));
+    for (let tick = 0; tick < 4; tick += 1) world.tick();
+
+    expect(world.tickNumber).toBe(receivedServerTick + 4);
+    expect(victim.survival.health).toBeLessThan(before);
+    expect(result(attackerSink, 1).combat).toMatchObject({
+      result: 'hit', requestedRenderTick: targetRenderTick, resolvedRenderTick: targetRenderTick,
+      receivedServerTick, pendingTicks: 4, rewindTicks: 3,
+    });
+  });
+
   it('rejects rewind older than five ticks and any future target tick', async () => {
     const old = await boot();
     const look = recordInitial(old.world, old.attacker, old.victim);
@@ -181,7 +270,9 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
     old.attackerSink.payloads.length = 0;
     old.world.handleSequencedAttack(old.attacker, action(1, 1, look, old.victim, 1));
     expect(old.victim.survival.health).toBe(before);
-    expect(result(old.attackerSink, 1).combat?.result).toBe('stale');
+    expect(result(old.attackerSink, 1).combat).toMatchObject({
+      result: 'stale', receivedServerTick: old.world.tickNumber, pendingTicks: 0,
+    });
 
     const future = await boot();
     const futureLook = recordInitial(future.world, future.attacker, future.victim);
@@ -191,7 +282,38 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
       action(1, 1, futureLook, future.victim, future.world.tickNumber + 1),
     );
     expect(future.victim.survival.health).toBe(20);
-    expect(result(future.attackerSink, 1).combat?.result).toBe('stale');
+    expect(result(future.attackerSink, 1).combat).toMatchObject({
+      result: 'stale', receivedServerTick: future.world.tickNumber, pendingTicks: 0,
+    });
+  });
+
+  it('expires a validated pending attack without expanding the receive-time rewind window', async () => {
+    const { world, attacker, victim, attackerSink } = await boot();
+    const look = recordInitial(world, attacker, victim);
+    const receivedServerTick = world.tickNumber;
+    const commandSeq = MAX_PENDING_MELEE_TICKS + 2;
+    enqueueAttackerBacklog(world, attacker, 2, commandSeq, look);
+    attackerSink.payloads.length = 0;
+    const before = victim.survival.health;
+
+    world.handleSequencedAttack(attacker, action(1, commandSeq, look, victim, receivedServerTick));
+    expect(attacker.pendingAttacks).toHaveLength(1);
+    for (let tick = 0; tick <= MAX_PENDING_MELEE_TICKS; tick += 1) world.tick();
+
+    expect(attacker.pendingAttacks).toHaveLength(0);
+    expect(victim.survival.health).toBe(before);
+    expect(result(attackerSink, 1)).toMatchObject({
+      ok: false,
+      reason: 'stale',
+      combat: {
+        result: 'pending_timeout',
+        receivedServerTick,
+        pendingTicks: MAX_PENDING_MELEE_TICKS + 1,
+        requestedRenderTick: receivedServerTick,
+        resolvedRenderTick: receivedServerTick,
+        rewindTicks: 0,
+      },
+    });
   });
 
   it('classifies current-world wall occlusion and reach beyond three blocks', async () => {

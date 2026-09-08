@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-09: Melee PvP receive-time rewind regression
+
+- [x] Measure the five-tick target rewind window at server packet receipt, not delayed FIFO execution.
+- [x] Store `receivedServerTick` plus the server-authoritative rewound target pose in a `PendingMeleeAttack` envelope.
+- [x] Resolve attacker only from the exact command boundary while reusing the frozen target pose without a second rewind.
+- [x] Revalidate current attacker/target state and retain server raycast, 3-block reach, current-world LOS, claims and damage authority.
+- [x] Keep `MAX_PVP_REWIND_TICKS = 5`; add an independent eight-tick pending lifetime and `pending_timeout` diagnostics.
+- [x] Cover stationary and moving queue backlog, stale/future-at-receive, pending expiry, duplicate action and hurt immunity.
+- [ ] Owner live Anarchy QA: two stationary clients with repeated LMB, then moving target and artificial input backlog; inspect F3 `recv`/`pending` classification.
+
 ## 2026-09-08: Melee PvP client-timeline hit registration
 
 - [x] Replace production bare attack with sequenced attack intent carrying live look and command/slot context.
