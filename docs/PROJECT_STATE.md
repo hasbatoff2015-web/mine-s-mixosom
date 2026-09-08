@@ -5,6 +5,7 @@
 - Успешная постановка iron/gold/diamond показывает игроку границы нового block-claim через существующий `ClaimBoundaryNetwork` / `ClaimBoundaryRenderer` (радиусы 10/20/30, тот же красный wire, 10 с).
 - Deny из-за пересечения двух block-claims оставляет сообщение про пересечение и показывает AABB **уже существующих** overlapping block-claims, не будущий объём. Несколько пересечений — `showAll`.
 - Обычный deny «This land is claimed.» без изменений. Новой системы границ нет.
+- `claim-anchor-blocks` 7/7, related 61/61, all four typechecks, boundaries, production build PASS.
 - Handoff: `docs/reports/2026-09-08_claim-anchor-boundary-ux.md`.
 
 ## Предыдущий проход: Claim-anchor explosion cleanup — 2026-09-08
