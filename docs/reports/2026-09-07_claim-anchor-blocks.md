@@ -53,14 +53,14 @@ No extra tick work. Overlap is a linear scan of the existing claim list, same as
 
 ## Known issues
 
-- TNT / `ExplosionQueue` voxel destroy does not emit `blockBroken`. Default `explosions: true` can remove the physical anchor and leave a ghost claim until `/claim delete`.
 - `/claim admin delete <name>` still deletes every claim with that name (pre-existing, now more visible because many players share `"1"`).
 
 ## Deferred
 
-- Explosion-destroyed anchors.
 - Reverse recipes (block → 9 ingots).
 - Owner live two-client Anarchy QA.
+
+Explosion-destroyed anchors: fixed in `docs/reports/2026-09-08_claim-anchor-explosion.md`.
 
 ## Next work
 

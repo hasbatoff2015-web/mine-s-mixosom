@@ -230,7 +230,7 @@ Not cancellable.
 | Event | When |
 | --- | --- |
 | `playerJoin` / `playerQuit` | after session connect/disconnect |
-| `blockBroken` / `blockPlaced` | after the voxel write |
+| `blockBroken` / `blockPlaced` | after the voxel write (player mining, or each cell `ExplosionQueue` actually destroyed) |
 | `playerDamaged` / `entityDamaged` | after health applied |
 | `entityDeath` | after a player or mob dies |
 | `playerCommandExecuted` | after dispatch (`ok` is the result) |
@@ -247,7 +247,11 @@ break_block request
   → server validation (reach, bounds, mining)
   → blockBreak (pre)     plugin may cancel
   → if not cancelled: set Air, drops, notify clients
-  → blockBroken (post)
+  → blockBroken (post, playerId set)
+
+ExplosionQueue.applyBlockBatch
+  → blockBroken (post, playerId omitted) for each destroyed voxel
+  Nearby blast that did not destroy a cell does not emit.
 ```
 
 ### Example: damage

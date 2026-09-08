@@ -57,6 +57,7 @@ import {
 } from '../src/world/blockGeometry';
 import { SurvivalSystem } from '../src/survival';
 import { ExplosionQueue } from '../src/world/ExplosionQueue';
+import type { DestroyedBlock } from '../src/world/Explosion';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
@@ -1187,15 +1188,28 @@ export class ServerGameplay {
 
   private processExplosions(players: readonly GameplayPlayer[]): void {
     if (this.explosions.pendingCount === 0) return;
+    const destroyed: DestroyedBlock[] = [];
     this.explosions.process(this.world, {
       budgetMs: 3.5, maxJobs: 12, maxVoxels: 512,
       remainingPrimedCapacity: this.redstone.primedCapacityRemaining,
       random: this.random,
       onResolved: (job) => this.applyExplosionDamage(players, job.x, job.y, job.z, job.radius, job.power),
+      onContents: (block) => { destroyed.push(block); },
       onChainedTnt: (tnt) => {
         this.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, { blockAlreadyRemoved: true });
       },
     });
+    // Same post-observation as player mining: Claims deletes by stored Claim.anchor coords.
+    // Nearby blast that did not destroy a cell is not in `destroyed`.
+    for (const entry of destroyed) {
+      if (entry.previous === BlockId.Air) continue;
+      this.events.emit('blockBroken', {
+        x: entry.x,
+        y: entry.y,
+        z: entry.z,
+        blockId: entry.previous,
+      });
+    }
   }
 
   private applyExplosionDamage(

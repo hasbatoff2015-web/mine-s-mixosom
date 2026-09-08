@@ -9,7 +9,8 @@
 - [x] Deny any block-claim ∩ block-claim overlap, including own iron vs own diamond; keep regular `/claim create` overlap on priority.
 - [x] Persist optional `Claim.anchor` and per-owner `blockClaimSeq`; do not recreate claims from leftover blocks on load.
 - [x] Delete the matching claim when the stored anchor cell is broken; reuse `/claim info|list|flag|…`.
-- [ ] Owner live Anarchy QA: craft, place, overlap deny, two-player protection, restart, OP break.
+- [x] ExplosionQueue voxel destroy emits `blockBroken` so a TNT-destroyed anchor deletes that block-claim; nearby miss does not.
+- [ ] Owner live Anarchy QA: craft, place, overlap deny, two-player protection, restart, OP break, TNT on the anchor.
 
 ## 2026-09-07: Portal Chest (personal Ender-style store)
 

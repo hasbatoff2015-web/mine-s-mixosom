@@ -1,6 +1,13 @@
 # Состояние проекта
 
-## Последний проход: Claim-anchor blocks — 2026-09-07
+## Последний проход: Claim-anchor explosion cleanup — 2026-09-08
+
+- TNT / `ExplosionQueue` теперь эмитит `blockBroken` (без `playerId`) для каждого реально уничтоженного вокселя. Claims удаляет block-claim по сохранённому `Claim.anchor`, той же связью что и ручное ломание.
+- Взрыв рядом, который не уничтожил ячейку якоря, claim не трогает. Обычные `/claim create` регионы без изменений.
+- Не вторая система приватов: `shared` ExplosionQueue по-прежнему без PluginManager; адаптер только в `ServerGameplay.processExplosions`.
+- Handoff: `docs/reports/2026-09-08_claim-anchor-explosion.md`.
+
+## Предыдущий проход: Claim-anchor blocks — 2026-09-07
 
 - Три блока-якоря в существующем Claims plugin. Второй системы приватов нет.
 - `diamond_block` остаётся `BlockId.DiamondBlock = 149`; новые `gold_block` / `GoldBlock = 159` и `iron_block` / `IronBlock = 160`. Текстуры 16×16 в `public/textures/block/`.
@@ -10,6 +17,7 @@
 - Ломание ячейки якоря удаляет только этот claim. `/claim delete` оставляет физический блок.
 - Focused claim-anchor + related: unit 32, Anarchy integration 6, anarchy-plugins 36, all four typechecks, boundaries, `test:sim` 42, build PASS.
 - `test:server` **287 PASS / 2 FAIL**: known `tick-load-flight` and a load-flake two-client reach check (passes isolated).
+- Handoff: `docs/reports/2026-09-07_claim-anchor-blocks.md`.
 
 ## Предыдущий проход: Portal Chest texture polish — 2026-09-07
 

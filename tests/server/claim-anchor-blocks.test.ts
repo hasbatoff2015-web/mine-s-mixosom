@@ -137,6 +137,12 @@ describe('Anarchy claim-anchor blocks', () => {
     };
   }
 
+  function detonateTntBeside(world: WorldInstance, x: number, y: number, z: number): void {
+    world.world.setBlock(x, y, z, BlockId.Tnt);
+    expect(world.gameplay.redstone.primeTnt(x, y, z, 0.05)).toBeDefined();
+    world.tick();
+  }
+
   it('creates full-height cuboid block-claims with radii 10/20/30, default flags and per-player names', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
@@ -343,5 +349,66 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
     const live = loadClaims(world).claims.filter((claim) => claim.owner === 'ada');
     expect(live).toEqual([]);
+  });
+
+  it('removes only the block-claim whose stored anchor ExplosionQueue actually destroyed', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const { x, y, z } = originOf(ada.player);
+
+    expect(placeAnchor(world, ada.player, x, y, z, BlockId.IronBlock)).toEqual({ ok: true });
+    expect(placeAnchor(world, ada.player, x + 31, y, z, BlockId.GoldBlock)).toEqual({ ok: true });
+    expect(placeAnchor(world, ada.player, x + 82, y, z, BlockId.DiamondBlock)).toEqual({ ok: true });
+    expect(loadClaims(world).claims).toHaveLength(3);
+
+    world.world.setBlock(x + 1, y, z, BlockId.Dirt);
+    world.gameplay.explosions.enqueue({
+      x: x + 1.5, y: y + 0.5, z: z + 0.5, radius: 1.5, power: 4,
+    });
+    world.tick();
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.IronBlock);
+    expect(world.world.getBlock(x + 1, y, z)).toBe(BlockId.Air);
+    expect(loadClaims(world).claims).toHaveLength(3);
+
+    world.gameplay.explosions.enqueue({
+      x: x + 31 + 8.5, y: y + 0.5, z: z + 0.5, radius: 4, power: 4,
+    });
+    world.tick();
+    expect(world.world.getBlock(x + 31, y, z)).toBe(BlockId.GoldBlock);
+    expect(loadClaims(world).claims.some((claim) => claim.anchor?.block === 'gold_block')).toBe(true);
+
+    detonateTntBeside(world, x + 1, y, z);
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.Air);
+    const afterIron = loadClaims(world).claims;
+    expect(afterIron).toHaveLength(2);
+    expect(afterIron.map((claim) => claim.anchor?.block).sort()).toEqual(['diamond_block', 'gold_block']);
+
+    world.setGameMode(bob.player, 'creative');
+    prepareCell(world, bob.player, x + 2, y, z);
+    expect(world.tryPlace(bob.player, x + 2, y, z, BlockId.Dirt)).toEqual({ ok: true });
+    expect(world.world.getBlock(x + 2, y, z)).toBe(BlockId.Dirt);
+
+    world.setGameMode(ada.player, 'creative');
+    ada.player.controller.teleport([x + 31.5, y, z + 0.5]);
+    expect(world.tryBreak(ada.player, x + 31, y, z)).toEqual({ ok: true });
+    const afterGold = loadClaims(world).claims;
+    expect(afterGold).toHaveLength(1);
+    expect(afterGold[0]!.anchor).toEqual({ x: x + 82, y, z, block: 'diamond_block' });
+    expect(world.world.getBlock(x + 31, y, z)).toBe(BlockId.Air);
+
+    prepareCell(world, bob.player, x + 32, y, z);
+    expect(world.tryPlace(bob.player, x + 32, y, z, BlockId.Dirt)).toEqual({ ok: true });
+
+    bob.sink.payloads.length = 0;
+    prepareCell(world, bob.player, x + 83, y, z);
+    expect(world.tryPlace(bob.player, x + 83, y, z, BlockId.Dirt)).toEqual({ ok: false, reason: 'cancelled' });
+    expect(resultLines(bob.sink)).toContain('This land is claimed.');
+
+    detonateTntBeside(world, x + 83, y, z);
+    expect(world.world.getBlock(x + 82, y, z)).toBe(BlockId.Air);
+    expect(loadClaims(world).claims).toEqual([]);
+    prepareCell(world, bob.player, x + 83, y, z);
+    expect(world.tryPlace(bob.player, x + 83, y, z, BlockId.Dirt)).toEqual({ ok: true });
   });
 });
