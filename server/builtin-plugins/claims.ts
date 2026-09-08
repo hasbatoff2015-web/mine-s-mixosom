@@ -138,9 +138,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const key = claimAnchorKey(event.blockId);
         if (!key) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
-        if (overlappingAnchorClaims(load().claims, worldId(), volume).length === 0) return;
+        const overlappingAnchors = overlappingAnchorClaims(load().claims, worldId(), volume);
+        if (overlappingAnchors.length === 0) return;
         event.cancel();
         player.sendMessage(BLOCK_CLAIM_OVERLAP_MESSAGE);
+        ctx.claimBoundaries.showAll(player.id, overlappingAnchors);
       });
       api.registerEvent('blockPlaced', (event) => {
         const key = claimAnchorKey(event.blockId);
@@ -149,15 +151,17 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         if (!player) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
         const store = load();
-        if (overlappingAnchorClaims(store.claims, worldId(), volume).length > 0) {
+        const overlappingAnchors = overlappingAnchorClaims(store.claims, worldId(), volume);
+        if (overlappingAnchors.length > 0) {
           api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
           if (player.gamemode !== 'creative') player.give(key, 1);
           player.sendMessage(BLOCK_CLAIM_OVERLAP_MESSAGE);
+          ctx.claimBoundaries.showAll(player.id, overlappingAnchors);
           return;
         }
         const ownerKey = keyOf({ playerId: player.id, name: player.name });
         const name = allocateBlockClaimName(store, ownerKey);
-        store.claims.push({
+        const created: Claim = {
           id: `${ownerKey}:${name}:${Date.now()}`,
           name,
           owner: ownerKey,
@@ -167,9 +171,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
           priority: CLAIM_PRIORITY_DEFAULT,
           flags: {},
           anchor: { x: event.x, y: event.y, z: event.z, block: key },
-        });
+        };
+        store.claims.push(created);
         save(store);
         player.sendMessage(`Claim '${name}' created.`);
+        ctx.claimBoundaries.show(player.id, created);
       });
       api.registerEvent('blockBroken', (event) => {
         const store = load();

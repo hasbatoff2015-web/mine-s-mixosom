@@ -34,6 +34,19 @@ npx vitest run \
 
 Contracts: primed TNT / `ExplosionQueue.process` emits `blockBroken` without `playerId` for destroyed voxels; Claims deletes only the claim whose stored `anchor` coords match; owner `tryBreak` of an surviving gold/diamond anchor still deletes that claim.
 
+## 2026-09-08 Claim-anchor boundary UX
+
+Report: `reports/2026-09-08_claim-anchor-boundary-ux.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: successful iron/gold/diamond place unicasts `claim_boundary` for that claim's stored volume; overlap deny unicasts existing overlapping block-claim AABBs (not the attempted radius); regular denied place/break still uses `protectionSources` + the same packet.
+
 ## 2026-09-07 Portal Chest texture polish
 
 Report: `reports/2026-09-07_portal-chest-texture.md`.
