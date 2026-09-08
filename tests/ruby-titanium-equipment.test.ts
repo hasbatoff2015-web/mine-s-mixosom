@@ -58,9 +58,9 @@ const ARMOR_STATS = {
     total: 18,
   },
   titanium: {
-    defense: { head: 3, chest: 8, legs: 5, feet: 3 },
+    defense: { head: 3, chest: 8, legs: 6, feet: 3 },
     durability: { head: 650, chest: 940, legs: 880, feet: 760 },
-    total: 19,
+    total: 20,
   },
 } as const;
 
@@ -190,7 +190,7 @@ describe('Ruby and Titanium armor balance', () => {
   it('keeps flat 4% per point reduction, ignores toughness and sums mixed pieces', () => {
     const inventory = new Inventory();
     for (const [material, points, reduction] of [
-      ['diamond', 17, 0.68], ['ruby', 18, 0.72], ['titanium', 19, 0.76],
+      ['diamond', 17, 0.68], ['ruby', 18, 0.72], ['titanium', 20, 0.80],
     ] as const) {
       inventory.clear();
       equipFullSet(inventory, material);

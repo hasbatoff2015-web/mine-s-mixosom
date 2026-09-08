@@ -1,5 +1,11 @@
 # Архитектура
 
+## Deterministic armor cutout depth policy — 2026-09-08
+
+Armor remains a child presentation of the canonical `PlayerVisual` rig. Its textures are alpha-tested cutouts, not blended transparent objects: base and leather overlay use `transparent=false`, `alphaTest=0.1`, `depthTest=true` and `depthWrite=true`. This keeps the meshes in Three.js's opaque queue and removes camera-distance transparent sorting from the result.
+
+Intentional cuboid overlaps use one material-independent priority table: body/head `0`, right arm/leg `1`, left arm/leg `2`. Base mesh `renderOrder` is `20 + priority`; leather overlay is `30 + priority`, after both skin passes and its corresponding base. Dynamic QA showed that opaque ordering alone still left a coplanar hatch at oblique crouch angles, so entity-owned per-priority material clones also apply a bounded polygon bias: disabled/zero for priority 0, then factor+units `-1/-1` and `-2/-2`. This is a depth tie-breaker only; geometry dimensions, positions, scale, UVs, texture atlases, pivots and inner/outer inflate remain unchanged.
+
 ## Ruby / Titanium equipment progression — 2026-09-08
 
 Ruby и Titanium расширяют существующие item/block/crafting/mining systems, а не создают параллельную equipment систему. `ItemTier` и armor material имеют два новых значения; data-driven item registry создаёт обычные tools, weapons и armor с цепочкой `diamond -> ruby -> titanium`. Ruby — crafted resource sink. Titanium — редкий exploration/final tier.
@@ -11,6 +17,8 @@ Ruby gear использует существующие shaped material loops. T
 Titanium Ore — последний `ORE_RULES` entry (Y 4–12, one attempt, size 3, 0.75 per chunk). `spawnChance` вызывает RNG только когда поле присутствует, поэтому старые rules сохраняют прежнюю RNG sequence и старые ore positions. Генератор не сканирует и не изменяет уже загруженные chunks. Текущая persistence model хранит seed и modification deltas, но не полный manifest неизменённых посещённых chunks; поэтому строгая pre-update visited-chunk идентичность после process restart без изменения save schema технически недоказуема и зафиксирована как известное ограничение, а не скрытая migration.
 
 Armor rendering остаётся в `PlayerVisual -> PlayerArmorVisual`: Ruby/Titanium выбирают свои layer 1/2 через тот же slot resolver, shell geometry, body pivots и shared caches. Сеть передаёт только authoritative item IDs в существующем `snapshot.equipment`; material не принимается от клиента и protocol shape не меняется. Invisibility скрывает skin/body, но оставляет armor/held item; first person не создаёт armor meshes.
+
+Canonical armor totals: Diamond 17, Ruby 18, Titanium 20. `SurvivalSystem` продолжает применять fixed `(25 - armorPoints) / 25`, поэтому reductions равны 68%, 72% и 80%; `MAX_ARMOR_POINTS` остаётся 20, toughness/penetration не вводились.
 
 ## Ruby / Titanium generated asset pipeline — 2026-09-08
 

@@ -29,7 +29,7 @@ Flat protection остаётся `4% × armor point`, максимум 20. Tough
 | Iron | 2 | 6 | 5 | 2 | 15 | 60% |
 | Diamond | 3 | 7 | 5 | 2 | 17 | 68% |
 | Ruby | 3 | 7 | 5 | 3 | 18 | 72% |
-| Titanium | 3 | 8 | 5 | 3 | 19 | 76% |
+| Titanium | 3 | 8 | 6 | 3 | 20 | 80% |
 
 | Material | Helmet durability | Chestplate | Leggings | Boots |
 |---|---:|---:|---:|---:|
