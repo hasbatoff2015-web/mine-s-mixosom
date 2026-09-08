@@ -11,6 +11,11 @@ function place(world: VoxelWorld, x: number, y: number, z: number, block: BlockI
   expect(world.setBlock(x, y, z, block)).toBe(true);
 }
 
+function clearColumn(world: VoxelWorld, x: number, z: number): void {
+  world.getChunk(Math.floor(x / 16), Math.floor(z / 16));
+  for (let y = 0; y < 256; y += 1) world.setBlock(x, y, z, BlockId.Air);
+}
+
 const atlasStub = {
   tile: () => ({ u0: 0, v0: 0, u1: 1, v1: 1 }),
 } as unknown as TextureAtlas;
@@ -79,6 +84,8 @@ describe('RedstoneSystem', () => {
     const world = new VoxelWorld('powered-tnt');
     const scene = new THREE.Scene();
     const y = 76;
+    clearColumn(world, 5, 5);
+    clearColumn(world, 6, 5);
     place(world, 5, y, 5, BlockId.Lever);
     place(world, 6, y, 5, BlockId.Tnt);
     const redstone = new RedstoneSystem(world, { host: createThreeEntityHost(scene) });
