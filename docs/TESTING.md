@@ -1,5 +1,24 @@
 # Тестирование
 
+## 2026-09-08 Player skin selector, appearance sync, nameplates
+
+Report: `reports/2026-09-08_player-skin-selector-sync.md`.
+
+```text
+npx vitest run \
+  tests/player-skin-selector.test.ts \
+  tests/player-appearance-network.test.ts \
+  tests/player-nameplate.test.ts \
+  tests/player-skins.test.ts \
+  tests/player-skin-assets.test.mjs \
+  tests/remote-player-view.test.ts \
+  tests/ui-main-integration.test.ts \
+  tests/server/player-appearance.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: selector sees 45 production skins; preview/cancel/confirm; `Game.setPlayerAppearance` is the apply path; join/welcome/`player_appearance` carry `{ skinId, model, layers }` only; invalid skinId rejected; PNG/base64 never on the wire; reconnect and server restart restore appearance from `players.json`; remote nameplate shows nickname + ❤ HP from authoritative snapshots; interpolation follows `RemotePlayerView`; local player has no nameplate.
+
 ## 2026-09-08 Placed TNT fall distance (minecart uncapped)
 
 Report: `reports/2026-09-08_tnt-placed-fall-distance.md`.

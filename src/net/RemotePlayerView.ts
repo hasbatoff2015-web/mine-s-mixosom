@@ -19,6 +19,12 @@ import {
   type RemoteInterpDiagnostics,
   type RemoteSampledPose,
 } from './remotePlayerInterpolation';
+import { PlayerNameplate } from '../rendering/player/PlayerNameplate';
+import {
+  DEFAULT_PLAYER_APPEARANCE,
+  createPlayerAppearance,
+  type PlayerAppearance,
+} from '../player/appearance/PlayerAppearance';
 
 export { REMOTE_INTERP_DELAY_MS };
 
@@ -33,6 +39,7 @@ export class RemotePlayerView {
   readonly group = new THREE.Group();
   readonly visual: PlayerVisual;
   readonly buffer = new RemoteInterpolationBuffer();
+  readonly nameplate: PlayerNameplate;
   private readonly id: string;
   private spawnYaw: number;
   private spawnPitch: number;
@@ -41,6 +48,7 @@ export class RemotePlayerView {
   private presentationReceivedAt = 0;
   private swingSeq = 0;
   private hurtSeq = 0;
+  private lastInvisible = false;
 
   constructor(
     info: RemotePlayerInfo,
@@ -54,6 +62,9 @@ export class RemotePlayerView {
     this.group.name = `remote-player:${info.id}`;
     this.group.add(this.visual.root);
     this.visual.root.position.set(0, 0, 0);
+    this.nameplate = new PlayerNameplate(info.name, info.health ?? 20);
+    this.group.add(this.nameplate.sprite);
+    if (info.appearance) this.visual.setAppearance(createPlayerAppearance(info.appearance));
     this.reset(info, now);
   }
 
@@ -70,7 +81,13 @@ export class RemotePlayerView {
     this.hurtSeq = presentationHurtSeq(this.presentation);
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
+    this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
+    if (info.appearance) this.setAppearance(info.appearance);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
+  }
+
+  setAppearance(appearance: PlayerAppearance): void {
+    this.visual.setAppearance(createPlayerAppearance(appearance ?? DEFAULT_PLAYER_APPEARANCE));
   }
 
   applySnapshot(snapshot: PlayerSnapshot | RemotePlayerInfo, now = 0, tick?: number): void {
@@ -96,6 +113,11 @@ export class RemotePlayerView {
       : next;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
+    if ('health' in snapshot && typeof snapshot.health === 'number') {
+      this.nameplate.setIdentity(snapshot.name, snapshot.health);
+    } else if (snapshot.name !== this.nameplate.name) {
+      this.nameplate.setIdentity(snapshot.name, this.nameplate.health);
+    }
     this.options.onMining?.(this.id, this.presentation.mining, now);
   }
 
@@ -138,9 +160,16 @@ export class RemotePlayerView {
       invisible: pose.invisible,
       hurtFlash: 0,
     });
+    this.lastInvisible = pose.invisible === true;
+    this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);
     maybeLogRemoteTimeline(this.id.slice(0, 8), this.buffer.snapshots(), this.buffer.diagnostics(now), now);
     return pose;
+  }
+
+  updateNameplate(camera: THREE.Camera): void {
+    this.nameplate.setInvisible(this.lastInvisible);
+    this.nameplate.update(camera);
   }
 
   diagnostics(now = 0): RemoteInterpDiagnostics {
@@ -150,6 +179,7 @@ export class RemotePlayerView {
   dispose(): void {
     this.options.onRemove?.(this.id);
     this.buffer.reset();
+    this.nameplate.dispose();
     this.visual.dispose();
     this.group.removeFromParent();
   }

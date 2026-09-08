@@ -57,12 +57,25 @@ import {
   formatSettingValue,
   MENU_SERVER_ENTRIES,
 } from './menuModel';
+import { PRODUCTION_PLAYER_SKINS } from '../player/appearance/builtinSkins';
+import type { PlayerAppearance, PlayerModelVariant } from '../player/appearance/PlayerAppearance';
+import { drawSkinPortrait } from '../rendering/player/SkinPortrait';
 
 export interface MainMenuActions {
   singleplayer(): void;
   online(): void;
   account(): void;
   settings(): void;
+  selectSkin(): void;
+  onCharacterCanvas?(canvas: HTMLCanvasElement): void;
+}
+
+export interface SkinSelectorActions {
+  preview(skinId: string): void;
+  setModel(model: PlayerModelVariant): void;
+  confirm(): void;
+  cancel(): void;
+  onPreviewCanvas?(canvas: HTMLCanvasElement): void;
 }
 
 export interface WorldListActions {
@@ -352,11 +365,18 @@ export class GameUI {
           <div class="frontier-logo" aria-label="Frontier Cubes">
             <span>FRONTIER</span><strong>CUBES</strong><small>survival alpha</small>
           </div>
-          <div class="menu-stack main-menu-actions">
-            <button class="game-button" data-action="singleplayer">Одиночная игра</button>
-            <button class="game-button" data-action="online">Играть онлайн</button>
-            <button class="game-button" data-action="account">Аккаунт</button>
-            <button class="game-button" data-action="settings">Настройки</button>
+          <div class="main-menu-center">
+            <div class="menu-stack main-menu-actions">
+              <button class="game-button" data-action="singleplayer">Одиночная игра</button>
+              <button class="game-button" data-action="online">Играть онлайн</button>
+              <button class="game-button" data-action="account">Аккаунт</button>
+              <button class="game-button" data-action="settings">Настройки</button>
+            </div>
+            <aside class="character-panel" aria-label="Персонаж">
+              <h2>Персонаж</h2>
+              <canvas class="character-preview-canvas" data-character-preview width="280" height="360" aria-hidden="true"></canvas>
+              <button class="game-button primary" data-action="select-skin">Выбрать скин</button>
+            </aside>
           </div>
           <footer class="main-menu-footer"><span>Frontier Cubes 0.1 · playable alpha</span><span>Локальная браузерная версия</span></footer>
         </div>
@@ -365,6 +385,70 @@ export class GameUI {
     this.bindAction('online', actions.online);
     this.bindAction('account', actions.account);
     this.bindAction('settings', actions.settings);
+    this.bindAction('select-skin', actions.selectSkin);
+    const canvas = this.screen?.querySelector<HTMLCanvasElement>('[data-character-preview]');
+    if (canvas) actions.onCharacterCanvas?.(canvas);
+  }
+
+  showSkinSelector(
+    appearance: PlayerAppearance,
+    actions: SkinSelectorActions,
+  ): void {
+    const cards = PRODUCTION_PLAYER_SKINS.map((skin) => `
+      <button type="button" class="skin-card${skin.id === appearance.skinId ? ' selected' : ''}" data-skin-id="${this.escape(skin.id)}" aria-pressed="${skin.id === appearance.skinId}">
+        <canvas class="skin-card-preview" width="64" height="64" data-skin-thumb="${this.escape(skin.id)}" data-skin-model="${skin.defaultModel}" aria-hidden="true"></canvas>
+        <span class="skin-card-model">${skin.defaultModel === 'slim' ? 'Slim' : 'Classic'}</span>
+      </button>`).join('');
+    this.setScreen(`
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window skin-selector-window">
+        <header class="menu-heading"><div><span class="eyebrow">Персонаж</span><h1>Выбор скина</h1></div></header>
+        <div class="skin-selector-body">
+          <aside class="skin-selector-preview">
+            <canvas class="character-preview-canvas large" data-skin-preview width="320" height="420" aria-hidden="true"></canvas>
+            <div class="skin-model-toggle" role="group" aria-label="Модель">
+              <button type="button" class="game-button${appearance.model === 'classic' ? ' primary' : ''}" data-model="classic">Classic</button>
+              <button type="button" class="game-button${appearance.model === 'slim' ? ' primary' : ''}" data-model="slim">Slim</button>
+            </div>
+          </aside>
+          <div class="skin-card-grid" role="listbox" aria-label="Доступные скины">${cards}</div>
+        </div>
+        <footer class="menu-footer">
+          <button class="game-button" data-action="cancel">Отмена</button>
+          <button class="game-button primary" data-action="confirm">Подтвердить</button>
+        </footer>
+      </div></section>`, actions.cancel);
+    this.bindAction('cancel', actions.cancel);
+    this.bindAction('confirm', actions.confirm);
+    const preview = this.screen?.querySelector<HTMLCanvasElement>('[data-skin-preview]');
+    if (preview) actions.onPreviewCanvas?.(preview);
+    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-skin-id]')) {
+      button.addEventListener('click', () => {
+        const skinId = button.dataset.skinId;
+        if (!skinId) return;
+        for (const card of this.screen!.querySelectorAll<HTMLButtonElement>('[data-skin-id]')) {
+          const selected = card === button;
+          card.classList.toggle('selected', selected);
+          card.setAttribute('aria-pressed', String(selected));
+        }
+        actions.preview(skinId);
+      });
+    }
+    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-model]')) {
+      button.addEventListener('click', () => {
+        const model = button.dataset.model as PlayerModelVariant;
+        for (const toggle of this.screen!.querySelectorAll<HTMLButtonElement>('[data-model]')) {
+          toggle.classList.toggle('primary', toggle === button);
+        }
+        actions.setModel(model);
+      });
+    }
+    this.paintSkinThumbs();
+  }
+
+  markSkinModel(model: PlayerModelVariant): void {
+    for (const toggle of this.screen?.querySelectorAll<HTMLButtonElement>('[data-model]') ?? []) {
+      toggle.classList.toggle('primary', toggle.dataset.model === model);
+    }
   }
 
   showAccount(current: string | undefined, actions: AccountMenuActions): void {
@@ -1532,6 +1616,22 @@ export class GameUI {
 
   private bindAction(action: string, callback: () => void): void {
     this.screen?.querySelector(`[data-action="${action}"]`)?.addEventListener('click', callback);
+  }
+
+  private paintSkinThumbs(): void {
+    for (const canvas of this.screen?.querySelectorAll<HTMLCanvasElement>('[data-skin-thumb]') ?? []) {
+      const skinId = canvas.dataset.skinThumb;
+      const model = canvas.dataset.skinModel === 'slim' ? 'slim' : 'classic';
+      if (!skinId) continue;
+      const image = new Image();
+      image.decoding = 'async';
+      image.onload = () => {
+        const context = canvas.getContext('2d');
+        if (!context) return;
+        drawSkinPortrait(context, image, model, canvas.width);
+      };
+      image.src = TextureAtlas.url(`player/skins/${skinId}`);
+    }
   }
 
   private setControlsSuppressed(suppressed: boolean): void {

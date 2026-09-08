@@ -15,7 +15,10 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(gameUiSource).toContain('data-action="account"');
     expect(gameUiSource).toContain('showAccount(');
     expect(gameUiSource).toContain('id="account-nickname"');
+    expect(gameUiSource).toContain('data-action="select-skin"');
+    expect(gameUiSource).toContain('character-panel');
     expect(gameSource).toContain('account: () => this.showAccount()');
+    expect(gameSource).toContain('selectSkin: () => this.showSkinSelector()');
   });
 
   it('keeps live online status and the existing server connect callbacks', () => {

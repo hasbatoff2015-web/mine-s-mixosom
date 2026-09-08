@@ -3,7 +3,12 @@ import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, PlayerActionKind } from './playerActions';
 import type { PlayerPresentationState } from './playerPresentation';
+import {
+  parseNetworkAppearance,
+  type PlayerAppearance,
+} from '../src/player/appearance/PlayerAppearance';
 export type { PlayerPresentationState } from './playerPresentation';
+export type { PlayerAppearance };
 
 export type { AppliedMovementStep } from './playerCommand';
 export type { ActionRejectReason, PlayerActionKind } from './playerActions';
@@ -40,6 +45,10 @@ export interface PlayerEquipmentState {
 export interface PlayerSnapshot {
   readonly presentation?: PlayerPresentationState;
   readonly equipment?: PlayerEquipmentState;
+  /**
+   * Join/welcome only. Live ticks must omit this; appearance uses `player_appearance`.
+   */
+  readonly appearance?: PlayerAppearance;
   readonly id: string;
   readonly name: string;
   readonly x: number;
@@ -126,6 +135,8 @@ export interface PlayerSessionDiag {
 export interface RemotePlayerInfo {
   readonly presentation?: PlayerPresentationState;
   readonly equipment?: PlayerEquipmentState;
+  readonly appearance?: PlayerAppearance;
+  readonly health?: number;
   readonly id: string;
   readonly name: string;
   readonly x: number;
@@ -223,6 +234,14 @@ export interface ClientJoinMessage {
   readonly protocol: typeof PROTOCOL_VERSION;
   readonly name?: string;
   readonly sessionToken?: string;
+  readonly appearance?: PlayerAppearance;
+}
+
+export interface ClientAppearanceMessage {
+  readonly type: 'appearance';
+  readonly skinId: string;
+  readonly model: PlayerAppearance['model'];
+  readonly layers: PlayerAppearance['layers'];
 }
 
 export interface ClientInputMessage {
@@ -372,6 +391,7 @@ export interface ClientVehicleInputMessage {
 
 export type ClientMessage =
   | ClientJoinMessage
+  | ClientAppearanceMessage
   | ClientInputMessage
   | ClientBreakBlockMessage
   | ClientPlaceBlockMessage
@@ -411,6 +431,12 @@ export interface ServerWelcomeMessage {
 export interface ServerPlayerJoinedMessage {
   readonly type: 'player_joined';
   readonly player: RemotePlayerInfo;
+}
+
+export interface ServerPlayerAppearanceMessage {
+  readonly type: 'player_appearance';
+  readonly playerId: string;
+  readonly appearance: PlayerAppearance;
 }
 
 export interface ServerPlayerLeftMessage {
@@ -623,6 +649,7 @@ export interface ServerClaimBoundaryMessage {
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
+  | ServerPlayerAppearanceMessage
   | ServerPlayerLeftMessage
   | ServerPlayerStateMessage
   | ServerBlockUpdateMessage
@@ -647,6 +674,7 @@ export type ServerMessage =
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
+  'appearance',
   'input',
   'break_block',
   'place_block',
@@ -666,6 +694,7 @@ export const CLIENT_MESSAGE_TYPES = [
 export const SERVER_MESSAGE_TYPES = [
   'welcome',
   'player_joined',
+  'player_appearance',
   'player_left',
   'player_state',
   'block_update',
@@ -857,11 +886,24 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       }
       const name = sanitizeName(raw.name);
       const sessionToken = typeof raw.sessionToken === 'string' ? raw.sessionToken.slice(0, 80) : undefined;
+      const appearance = raw.appearance === undefined ? undefined : parseNetworkAppearance(raw.appearance);
+      if (raw.appearance !== undefined && !appearance) return { error: 'join.appearance invalid' };
       return {
         type: 'join',
         protocol: PROTOCOL_VERSION,
         ...(name ? { name } : {}),
         ...(sessionToken ? { sessionToken } : {}),
+        ...(appearance ? { appearance } : {}),
+      };
+    }
+    case 'appearance': {
+      const appearance = parseNetworkAppearance(raw);
+      if (!appearance) return { error: 'appearance invalid' };
+      return {
+        type: 'appearance',
+        skinId: appearance.skinId,
+        model: appearance.model,
+        layers: appearance.layers,
       };
     }
     case 'input': {
@@ -1121,6 +1163,18 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
     return { error: `unknown message type ${raw.type}` };
   }
   switch (raw.type) {
+    case 'player_appearance': {
+      if (typeof raw.playerId !== 'string' || raw.playerId.length === 0) {
+        return { error: 'player_appearance invalid' };
+      }
+      const appearance = parseNetworkAppearance(raw.appearance);
+      if (!appearance) return { error: 'player_appearance invalid' };
+      return {
+        type: 'player_appearance',
+        playerId: raw.playerId.slice(0, 64),
+        appearance,
+      };
+    }
     case 'player_state': {
       if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.players)) {
         return { error: 'player_state invalid' };

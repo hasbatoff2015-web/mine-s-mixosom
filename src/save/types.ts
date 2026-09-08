@@ -33,6 +33,8 @@ export interface SerializedPlayerState {
   inventory: unknown;
   /** Personal portal-chest slots. Missing on old saves means empty. */
   portalChest?: unknown;
+  /** Local player skin metadata. Missing on old saves uses the default explorer. */
+  appearance?: unknown;
 }
 
 /**
@@ -57,6 +59,8 @@ export interface SerializedPersistedPlayer {
   readonly cursor?: unknown;
   /** Personal portal-chest slots. Missing on old saves means empty. */
   readonly portalChest?: unknown;
+  /** Authoritative online skin metadata. Missing on old saves uses the default explorer. */
+  readonly appearance?: unknown;
 }
 
 export interface SerializedServerWorld {

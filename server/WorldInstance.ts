@@ -18,6 +18,13 @@ import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
+  DEFAULT_PLAYER_APPEARANCE,
+  appearancesEqual,
+  sanitizeRegisteredAppearance,
+  toNetworkAppearance,
+  type PlayerAppearance,
+} from '../src/player/appearance/PlayerAppearance';
+import {
   compareLatestInputCoalesce,
   compareLockstepModes,
   dumpControllerTicks,
@@ -160,6 +167,7 @@ export class ServerPlayer implements GameplayPlayer {
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
+  appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
 
   constructor(
     readonly id: string,
@@ -170,8 +178,10 @@ export class ServerPlayer implements GameplayPlayer {
     public gamemode: GameMode,
     public selectedSlot: number,
     survival?: SurvivalSystem,
+    appearance?: PlayerAppearance,
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
+    this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
     });
@@ -307,6 +317,8 @@ export class ServerPlayer implements GameplayPlayer {
       pitch: snap.pitch,
       presentation: snap.presentation,
       equipment: snap.equipment,
+      appearance: toNetworkAppearance(this.appearance),
+      health: snap.health,
     };
   }
 
@@ -707,6 +719,7 @@ export class WorldInstance {
     sink: ConnectedSink;
     name?: string;
     sessionToken?: string;
+    appearance?: PlayerAppearance;
   }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string } {
     if (this.readyState !== 'READY') return { error: 'world not ready' };
     if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
@@ -724,6 +737,8 @@ export class WorldInstance {
         existing.resumeCount += 1;
         existing.lastInputConnectionId = existing.connectionId;
         if (options.name) existing.name = options.name;
+        const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
+        if (joinedAppearance) existing.appearance = joinedAppearance;
         this.resetConnectionInput(existing);
         const fp = sessionTokenFingerprint(existing.sessionToken);
         serverLog(
@@ -737,6 +752,8 @@ export class WorldInstance {
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
       if (stored) {
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name);
+        const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
+        if (joinedAppearance) restored.appearance = joinedAppearance;
         restored.joinCount += 1;
         restored.resumeCount += 1;
         serverLog(
@@ -761,6 +778,8 @@ export class WorldInstance {
       inventory,
       'survival',
       0,
+      undefined,
+      sanitizeRegisteredAppearance(options.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
@@ -1903,6 +1922,7 @@ export class WorldInstance {
       isGameMode(stored.gamemode) ? stored.gamemode : 'survival',
       stored.selectedSlot,
       survival,
+      sanitizeRegisteredAppearance(stored.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
     if (stored.cursor) {
       try {
@@ -1951,7 +1971,34 @@ export class WorldInstance {
       survival: player.survival.serialize(),
       cursor: player.cursor,
       portalChest: player.portalChest.slots,
+      appearance: toNetworkAppearance(player.appearance),
     };
+  }
+
+  setAppearance(
+    player: ServerPlayer,
+    raw: unknown,
+  ): { ok: true; appearance: PlayerAppearance } | { ok: false; reason: 'invalid' } {
+    const allowed = sanitizeRegisteredAppearance(raw);
+    if (!allowed) {
+      this.sendTo(player, {
+        type: 'player_appearance',
+        playerId: player.id,
+        appearance: toNetworkAppearance(player.appearance),
+      });
+      return { ok: false, reason: 'invalid' };
+    }
+    if (!appearancesEqual(player.appearance, allowed)) {
+      player.appearance = allowed;
+      this.storedPlayers[player.id] = this.toStored(player);
+      this.dirty = true;
+    }
+    this.broadcast({
+      type: 'player_appearance',
+      playerId: player.id,
+      appearance: toNetworkAppearance(player.appearance),
+    });
+    return { ok: true, appearance: player.appearance };
   }
 
   private broadcastChat(kind: 'player' | 'system', playerId: string, text: string, from?: string): void {
