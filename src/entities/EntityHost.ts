@@ -61,8 +61,8 @@ export interface EntityHost {
   createDroppedItem(itemId: string, count: number): EntityVisual | undefined;
   updateDroppedItem(visual: EntityVisual, itemId: string, count: number): void;
   createFallingBlock(itemKey: string): EntityVisual | undefined;
-  createMinecart(variant: 'normal' | 'tnt'): EntityVisual | undefined;
-  setMinecartVariant(visual: EntityVisual, variant: 'normal' | 'tnt'): void;
+  createMinecart(variant: 'normal' | 'tnt', tntTextureKey?: string): EntityVisual | undefined;
+  setMinecartVariant(visual: EntityVisual, variant: 'normal' | 'tnt', tntTextureKey?: string): void;
   pulseMinecartTnt(visual: EntityVisual, fuseRatio: number): void;
   createMob(kind: MobKind): { visual: EntityVisual; model: MobModel } | undefined;
   createArrow(flaming?: boolean): EntityVisual | undefined;
@@ -111,7 +111,7 @@ export class HeadlessEntityHost implements EntityHost {
     return undefined;
   }
 
-  createMinecart(_variant: 'normal' | 'tnt'): undefined {
+  createMinecart(_variant: 'normal' | 'tnt', _tntTextureKey?: string): undefined {
     return undefined;
   }
 

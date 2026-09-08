@@ -22,6 +22,9 @@ export interface SerializedPrimedTnt {
   readonly velocity?: readonly [number, number, number];
   /** Missing on old saves → ordinary TNT. */
   readonly blockId?: number;
+  /** Minecart fire-arrow launch: explode after this much downward travel. */
+  readonly launchOriginY?: number;
+  readonly maxFallBlocks?: number;
 }
 
 export interface SerializedRedstoneState {

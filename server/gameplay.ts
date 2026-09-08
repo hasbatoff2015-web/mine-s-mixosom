@@ -45,6 +45,7 @@ import {
   MobManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
+  igniteMinecartTntFromFireArrow,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
@@ -213,7 +214,7 @@ export class ServerGameplay {
         }
       },
       onMinecartHit: (cart, flaming) => {
-        if (flaming && cart.variant === 'tnt') this.minecarts.explodeNow(cart);
+        if (flaming) igniteMinecartTntFromFireArrow(this.minecarts, this.redstone, cart);
       },
       onSpawn: (id) => this.pushEntityEvent(id, 'projectile_spawn'),
       onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
@@ -336,7 +337,9 @@ export class ServerGameplay {
           riderYaw: rider?.controller.yaw,
         });
         for (const boom of this.minecarts.consumeExplosions()) {
-          this.enqueueExplosion(boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power);
+          this.enqueueExplosion(
+            boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power, boom.blockId,
+          );
           for (const player of players) {
             if (player.ridingCartId === boom.id) player.ridingCartId = undefined;
           }
@@ -497,6 +500,9 @@ export class ServerGameplay {
         vx: cart.velocity.x, vy: cart.velocity.y, vz: cart.velocity.z,
         variant: cart.variant, primed: cart.fuseTicks > 0, fuse: cart.fuseTicks,
         passengerId: passengers?.get(cart.id),
+        ...(cart.variant === 'tnt'
+          ? { blockId: cart.tntBlockId ?? BlockId.Tnt }
+          : {}),
       });
     }
     const mobs: EntitySnapshot[] = [];

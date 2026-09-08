@@ -29,3 +29,16 @@ export function tntTextureKey(blockId: number): string {
   if (blockId === BlockId.TntDestructive) return 'block/tnt_destructive';
   return PRIMED_TNT_TEXTURE_KEY;
 }
+
+export function tntItemId(blockId: number): string {
+  if (blockId === BlockId.TntPowerful) return 'tnt_powerful';
+  if (blockId === BlockId.TntDestructive) return 'tnt_destructive';
+  return 'tnt';
+}
+
+export function tntBlockIdFromItem(itemId: string | undefined): TntBlockId | undefined {
+  if (itemId === 'tnt') return BlockId.Tnt;
+  if (itemId === 'tnt_powerful') return BlockId.TntPowerful;
+  if (itemId === 'tnt_destructive') return BlockId.TntDestructive;
+  return undefined;
+}

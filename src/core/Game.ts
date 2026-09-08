@@ -85,6 +85,7 @@ import {
   MinecartManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
+  igniteMinecartTntFromFireArrow,
   MobManager,
   type MinecartEntity,
   type MobPlayerDamageEvent,
@@ -2472,7 +2473,7 @@ export class Game {
       onMinecartHit: (cart, flaming) => {
         const session = this.session;
         if (!session || !flaming) return;
-        if (cart.variant === 'tnt') session.minecarts.explodeNow(cart);
+        igniteMinecartTntFromFireArrow(session.minecarts, session.redstone, cart);
       },
     });
     const playerVisual = new PlayerVisual(
@@ -3841,6 +3842,7 @@ export class Game {
             z: boom.position.z,
             radius: boom.radius,
             power: boom.power,
+            profile: getTntProfile(boom.blockId),
           });
           if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
         }

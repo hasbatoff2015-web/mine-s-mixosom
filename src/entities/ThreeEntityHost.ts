@@ -89,14 +89,14 @@ export class ThreeEntityHost implements EntityHost {
     return visual;
   }
 
-  createMinecart(variant: 'normal' | 'tnt'): EntityVisual {
+  createMinecart(variant: 'normal' | 'tnt', tntTextureKey?: string): EntityVisual {
     const visual = (this.minecartVisuals ??= new MinecartVisualFactory()).create();
-    this.minecartVisuals.setVariant(visual, variant);
+    this.minecartVisuals.setVariant(visual, variant, tntTextureKey);
     return visual;
   }
 
-  setMinecartVariant(visual: EntityVisual, variant: 'normal' | 'tnt'): void {
-    (this.minecartVisuals ??= new MinecartVisualFactory()).setVariant(asObject3D(visual), variant);
+  setMinecartVariant(visual: EntityVisual, variant: 'normal' | 'tnt', tntTextureKey?: string): void {
+    (this.minecartVisuals ??= new MinecartVisualFactory()).setVariant(asObject3D(visual), variant, tntTextureKey);
   }
 
   pulseMinecartTnt(visual: EntityVisual, fuseRatio: number): void {

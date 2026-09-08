@@ -11,7 +11,7 @@ import {
 } from '../blocks';
 import { blockKey, lerp } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
-import { getTntProfile } from '../world/tnt';
+import { getTntProfile, minecartTntMaxFall } from '../world/tnt';
 import { moveVoxelBody } from '../entities/voxelPhysics';
 import { HeadlessEntityHost, type EntityHost, type EntityVisual } from '../entities/EntityHost';
 import type {
@@ -64,6 +64,9 @@ export class PrimedTnt {
   readonly totalFuseSeconds: number;
   readonly visual?: EntityVisual;
   readonly blockId: BlockId;
+  /** Present only for TNT ejected from a minecart by a fire arrow. */
+  readonly launchOriginY?: number;
+  readonly maxFallBlocks?: number;
 
   constructor(
     readonly id: string,
@@ -72,6 +75,7 @@ export class PrimedTnt {
     visual?: EntityVisual,
     velocity?: Vec3Like,
     blockId: BlockId = BlockId.Tnt,
+    launch?: { readonly originY: number; readonly maxFallBlocks: number },
   ) {
     this.position = new Vec3(position.x, position.y, position.z);
     this.previousPosition = this.position.clone();
@@ -82,6 +86,8 @@ export class PrimedTnt {
     this.totalFuseSeconds = fuseSeconds;
     this.visual = visual;
     this.blockId = isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    this.launchOriginY = launch?.originY;
+    this.maxFallBlocks = launch?.maxFallBlocks;
   }
 }
 
@@ -419,6 +425,28 @@ export class RedstoneSystem {
     );
   }
 
+  /**
+   * TNT ejected from a minecart by a fire arrow. Same primed physics as block TNT,
+   * plus a downward travel cap and detonation on landing.
+   */
+  launchMinecartTnt(
+    position: Vec3Like,
+    velocity: Vec3Like,
+    blockId: number,
+  ): PrimedTnt | undefined {
+    this.assertActive();
+    if (this.primedById.size >= this.maxPrimedTnt) return undefined;
+    const resolved = isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    return this.createPrimedTnt(
+      undefined,
+      position,
+      this.defaultTntFuseSeconds,
+      [velocity.x, 4, velocity.z],
+      resolved,
+      { originY: position.y, maxFallBlocks: minecartTntMaxFall(resolved) },
+    );
+  }
+
   update(deltaSeconds: number): RedstoneUpdateStats {
     if (this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) {
       return this.stats(0);
@@ -449,6 +477,9 @@ export class RedstoneSystem {
         fuseSeconds: entity.fuseSeconds,
         velocity: [entity.velocity.x, entity.velocity.y, entity.velocity.z],
         ...(entity.blockId !== BlockId.Tnt ? { blockId: entity.blockId } : {}),
+        ...(entity.maxFallBlocks !== undefined && entity.launchOriginY !== undefined
+          ? { launchOriginY: entity.launchOriginY, maxFallBlocks: entity.maxFallBlocks }
+          : {}),
       })),
     };
   }
@@ -487,6 +518,9 @@ export class RedstoneSystem {
         snapshot.fuseSeconds,
         snapshot.velocity,
         snapshot.blockId,
+        snapshot.maxFallBlocks !== undefined && snapshot.launchOriginY !== undefined
+          ? { originY: snapshot.launchOriginY, maxFallBlocks: snapshot.maxFallBlocks }
+          : undefined,
       );
       restored += 1;
     }
@@ -538,6 +572,7 @@ export class RedstoneSystem {
         this.detonate(entity);
         continue;
       }
+      const falling = entity.velocity.y < 0;
       entity.velocity.y -= 32 * deltaSeconds;
       entity.velocity.x *= Math.exp(-0.5 * deltaSeconds);
       entity.velocity.z *= Math.exp(-0.5 * deltaSeconds);
@@ -551,6 +586,10 @@ export class RedstoneSystem {
       if (result.hitX) entity.velocity.x = 0;
       if (result.hitZ) entity.velocity.z = 0;
       if (result.hitY) entity.velocity.y = 0;
+      if (this.shouldDetonateMinecartLaunch(entity, falling, result.onGround || (falling && result.hitY))) {
+        this.detonate(entity);
+        continue;
+      }
       if (entity.visual) {
         const elapsed = entity.totalFuseSeconds - entity.fuseSeconds;
         const urgency = 1 - entity.fuseSeconds / entity.totalFuseSeconds;
@@ -765,6 +804,7 @@ export class RedstoneSystem {
     fuseSeconds: number,
     velocity?: readonly [number, number, number],
     blockId: number = BlockId.Tnt,
+    launch?: { readonly originY: number; readonly maxFallBlocks: number },
   ): PrimedTnt {
     const id = this.allocateTntId(requestedId);
     const resolvedBlock = isTntBlock(blockId) ? blockId : BlockId.Tnt;
@@ -781,10 +821,21 @@ export class RedstoneSystem {
       visual,
       velocity ? new Vec3(...velocity) : undefined,
       resolvedBlock,
+      launch,
     );
     this.primedById.set(id, entity);
     this.options.onTntPrimed?.(entity);
     return entity;
+  }
+
+  private shouldDetonateMinecartLaunch(
+    entity: PrimedTnt,
+    falling: boolean,
+    landed: boolean,
+  ): boolean {
+    if (entity.maxFallBlocks === undefined || entity.launchOriginY === undefined) return false;
+    if (landed && falling) return true;
+    return entity.launchOriginY - entity.position.y >= entity.maxFallBlocks;
   }
 
   private detonate(entity: PrimedTnt): void {

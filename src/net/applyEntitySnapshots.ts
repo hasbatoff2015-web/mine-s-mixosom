@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BlockId, isKnownBlockId } from '../blocks';
+import { BlockId, isKnownBlockId, isTntBlock } from '../blocks';
 import type { PlayerArrowManager } from '../combat/PlayerArrowManager';
 import {
   DroppedItemManager,
@@ -128,17 +128,24 @@ export function applyEntitySnapshots(
       case 'minecart': {
         let cart = session.minecarts.get(snap.id);
         const variant = snap.variant === 'tnt' ? 'tnt' as const : 'normal' as const;
+        const tntBlockId = variant === 'tnt'
+          ? (snap.blockId !== undefined && isTntBlock(snap.blockId) ? snap.blockId : BlockId.Tnt)
+          : undefined;
         if (!cart) {
-          cart = session.minecarts.spawn(snap.x - 0.5, snap.y, snap.z - 0.5, snap.id, variant);
+          cart = session.minecarts.spawn(snap.x - 0.5, snap.y, snap.z - 0.5, snap.id, variant, tntBlockId);
         }
         if (!cart) break;
         cart.position.set(snap.x, snap.y, snap.z);
         if (cart.velocity) cart.velocity.set(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0);
         cart.yaw = snap.yaw ?? cart.yaw;
         cart.pitch = snap.pitch ?? cart.pitch;
-        cart.variant = variant;
-        cart.fuseTicks = snap.primed ? Math.max(1, Math.round(snap.fuse ?? 1)) : 0;
-        cart.rider = Boolean(snap.passengerId);
+        session.minecarts.applyNetworkSnapshot(cart, {
+          variant,
+          tntBlockId,
+          primed: snap.primed,
+          fuse: snap.fuse,
+          rider: Boolean(snap.passengerId),
+        });
         ingestPose(interpolator, snap, tick, now);
         break;
       }

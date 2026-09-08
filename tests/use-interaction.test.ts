@@ -45,6 +45,21 @@ describe('resolveUseIntent (shared SP / server order)', () => {
       cartRay: { rideable: true, distance: 1 },
     })).toBe('flint');
     expect(intent({
+      itemId: 'tnt',
+      placesBlockId: BlockId.Tnt,
+      cartRay: { rideable: true, distance: 1 },
+    })).toBe('insert-tnt-cart');
+    expect(intent({
+      itemId: 'tnt_powerful',
+      placesBlockId: BlockId.TntPowerful,
+      cartRay: { rideable: true, distance: 1 },
+    })).toBe('insert-tnt-cart');
+    expect(intent({
+      itemId: 'tnt_destructive',
+      placesBlockId: BlockId.TntDestructive,
+      cartRay: { rideable: true, distance: 1 },
+    })).toBe('insert-tnt-cart');
+    expect(intent({
       hit: { block: BlockId.Stone, distance: 3 },
       cartRay: { rideable: true, distance: 1 },
     })).toBe('mount-cart');

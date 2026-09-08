@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-08: TNT in minecart online + off-rail push
+
+- [x] Store cargo as `tntBlockId` (ordinary/powerful/destructive), not a boolean variant.
+- [x] Authoritative snapshot sync (`EntitySnapshot.blockId`) so cargo is visible immediately, including late joiners.
+- [x] Allow all three TNT item IDs into a minecart; reuse the cargo mesh with `block/tnt*` textures.
+- [x] Ignite cart TNT only from a fire arrow; flint and ordinary arrows must not.
+- [x] Fire-arrow ignition works inside others' block-claims without weakening place/break protection.
+- [x] Eject primed TNT of the stored type (`vy=4`, max fall 20/30, explode on land or at cap); chain keeps `blockId`.
+- [x] Off-rail player push at 50% of `MINECART_PUSH_GAIN`; on-rail push unchanged.
+- [ ] Owner live Anarchy QA: two clients, three TNT types in carts, fire-arrow vs flint, claim interior shot, off-rail shove.
+
 ## 2026-09-08: Anarchy TNT types
 
 - [x] Keep ordinary TNT radius 4; never break iron/gold/diamond anchors or regular `/claim` voxels.

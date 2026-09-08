@@ -18,6 +18,18 @@ export const ORDINARY_TNT_RADIUS = 4;
 export const ORDINARY_TNT_POWER = 4;
 export const POWERFUL_TNT_RADIUS = 6;
 
+/** Max downward travel after a fire-arrow launch from a minecart. */
+export const MINECART_TNT_MAX_FALL_ORDINARY = 20;
+export const MINECART_TNT_MAX_FALL_POWERFUL = 30;
+export const MINECART_TNT_MAX_FALL_DESTRUCTIVE = 30;
+
+export function minecartTntMaxFall(blockId: number): number {
+  const kind = tntKindForBlock(blockId);
+  if (kind === 'powerful') return MINECART_TNT_MAX_FALL_POWERFUL;
+  if (kind === 'destructive') return MINECART_TNT_MAX_FALL_DESTRUCTIVE;
+  return MINECART_TNT_MAX_FALL_ORDINARY;
+}
+
 export const ORDINARY_TNT_PROFILE: TntProfile = Object.freeze({
   kind: 'ordinary',
   blockId: BlockId.Tnt,
