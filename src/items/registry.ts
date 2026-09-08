@@ -186,7 +186,7 @@ const armorStats = {
   },
   titanium: {
     durability: { head: 650, chest: 940, legs: 880, feet: 760 },
-    defense: { head: 3, chest: 8, legs: 5, feet: 3 },
+    defense: { head: 3, chest: 8, legs: 6, feet: 3 },
     toughness: 0,
   },
 } as const;

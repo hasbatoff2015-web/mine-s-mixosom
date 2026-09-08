@@ -6,6 +6,9 @@ import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import {
+  ARMOR_BASE_RENDER_ORDER,
+  ARMOR_OVERLAY_RENDER_ORDER,
+  ARMOR_PART_RENDER_PRIORITY,
   ARMOR_TEXTURE_URLS,
   ARMOR_VISUAL_MATERIALS,
   DEFAULT_LEATHER_ARMOR_COLOR,
@@ -145,22 +148,97 @@ describe('vanilla armor geometry and resources', () => {
 
   it('shares cached nearest-neighbor cutout textures and templates', () => {
     const cache = new PlayerArmorMaterialCache();
+    for (const material of ARMOR_VISUAL_MATERIALS) {
+      const base = cache.template(material, 1);
+      expect(cache.template(material, 1)).toBe(base);
+      expect(base.map?.magFilter, material).toBe(THREE.NearestFilter);
+      expect(base.map?.minFilter, material).toBe(THREE.NearestFilter);
+      expect(base.map?.generateMipmaps, material).toBe(false);
+      expect(base.alphaTest, material).toBeGreaterThan(0);
+      expect(base.transparent, material).toBe(false);
+      expect(base.depthWrite, material).toBe(true);
+      expect(base.depthTest, material).toBe(true);
+    }
     const iron = cache.template('iron', 1);
-    expect(cache.template('iron', 1)).toBe(iron);
-    expect(iron.map?.magFilter).toBe(THREE.NearestFilter);
-    expect(iron.map?.minFilter).toBe(THREE.NearestFilter);
-    expect(iron.map?.generateMipmaps).toBe(false);
-    expect(iron.alphaTest).toBeGreaterThan(0);
-    expect(iron.transparent).toBe(true);
-    expect(iron.depthWrite).toBe(true);
     const chain = cache.template('chainmail', 1);
     expect(chain.map).not.toBe(iron.map);
-    expect(chain.alphaTest).toBeGreaterThan(0);
+    const leatherOverlay = cache.template('leather', 1, 'overlay');
+    expect(leatherOverlay.alphaTest).toBeGreaterThan(0);
+    expect(leatherOverlay.transparent).toBe(false);
+    expect(leatherOverlay.depthWrite).toBe(true);
+    expect(leatherOverlay.depthTest).toBe(true);
     cache.dispose();
   });
 });
 
 describe('PlayerArmorVisual slot visibility', () => {
+  it('uses deterministic part render order independent of armor material', () => {
+    const fixture = createVisual();
+    const visual = fixture.visual;
+    expect(ARMOR_PART_RENDER_PRIORITY).toEqual({
+      head: 0, body: 0, rightArm: 1, leftArm: 2, rightLeg: 1, leftLeg: 2,
+    });
+
+    for (const material of ['iron', 'ruby', 'titanium'] as const) {
+      visual.setArmor({
+        head: `${material}_helmet`,
+        chest: `${material}_chestplate`,
+        legs: `${material}_leggings`,
+        feet: `${material}_boots`,
+      });
+      for (const slot of ['head', 'chest', 'legs', 'feet'] as const) {
+        for (const pair of visual.armor.meshes(slot)) {
+          const priority = ARMOR_PART_RENDER_PRIORITY[pair.part];
+          const baseMaterial = pair.base.material as THREE.MeshBasicMaterial;
+          expect(pair.base.renderOrder, `${material}:${slot}:${pair.part}:base`)
+            .toBe(ARMOR_BASE_RENDER_ORDER + priority);
+          expect(pair.overlay.renderOrder, `${material}:${slot}:${pair.part}:overlay`)
+            .toBe(ARMOR_OVERLAY_RENDER_ORDER + priority);
+          expect(baseMaterial.transparent, `${material}:${slot}:${pair.part}:transparent`).toBe(false);
+          expect(baseMaterial.depthWrite, `${material}:${slot}:${pair.part}:depthWrite`).toBe(true);
+          expect(baseMaterial.depthTest, `${material}:${slot}:${pair.part}:depthTest`).toBe(true);
+          expect(baseMaterial.polygonOffset, `${material}:${slot}:${pair.part}:polygonOffset`)
+            .toBe(priority > 0);
+          expect(baseMaterial.polygonOffsetFactor, `${material}:${slot}:${pair.part}:polygonOffsetFactor`)
+            .toBe(-priority);
+          expect(baseMaterial.polygonOffsetUnits, `${material}:${slot}:${pair.part}:polygonOffsetUnits`)
+            .toBe(-priority);
+        }
+      }
+    }
+
+    const chest = Object.fromEntries(visual.armor.meshes('chest').map((pair) => [pair.part, pair.base.renderOrder]));
+    expect(chest).toMatchObject({ body: 20, rightArm: 21, leftArm: 22 });
+    const legs = Object.fromEntries(visual.armor.meshes('legs').map((pair) => [pair.part, pair.base.renderOrder]));
+    expect(legs).toMatchObject({ body: 20, rightLeg: 21, leftLeg: 22 });
+    const feet = Object.fromEntries(visual.armor.meshes('feet').map((pair) => [pair.part, pair.base.renderOrder]));
+    expect(feet).toEqual({ rightLeg: 21, leftLeg: 22 });
+    fixture.dispose();
+  });
+
+  it('always renders a leather overlay after its corresponding base', () => {
+    const fixture = createVisual();
+    fixture.visual.setArmor({
+      head: 'leather_helmet', chest: 'leather_chestplate',
+      legs: 'leather_leggings', feet: 'leather_boots',
+    });
+    for (const slot of ['head', 'chest', 'legs', 'feet'] as const) {
+      for (const pair of fixture.visual.armor.meshes(slot)) {
+        expect(pair.overlay.visible).toBe(true);
+        expect(pair.overlay.renderOrder).toBeGreaterThan(pair.base.renderOrder);
+        const baseMaterial = pair.base.material as THREE.MeshBasicMaterial;
+        const overlayMaterial = pair.overlay.material as THREE.MeshBasicMaterial;
+        expect(overlayMaterial.transparent).toBe(false);
+        expect(overlayMaterial.depthWrite).toBe(true);
+        expect(overlayMaterial.depthTest).toBe(true);
+        expect(overlayMaterial.polygonOffset).toBe(baseMaterial.polygonOffset);
+        expect(overlayMaterial.polygonOffsetFactor).toBe(baseMaterial.polygonOffsetFactor);
+        expect(overlayMaterial.polygonOffsetUnits).toBe(baseMaterial.polygonOffsetUnits);
+      }
+    }
+    fixture.dispose();
+  });
+
   it('shows only the shell group selected by each independent slot', () => {
     const fixture = createVisual();
     const visual = fixture.visual;

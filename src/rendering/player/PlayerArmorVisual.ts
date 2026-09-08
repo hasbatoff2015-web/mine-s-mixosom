@@ -80,6 +80,16 @@ export const ARMOR_VISUAL_MATERIALS: readonly ArmorVisualMaterial[] = Object.fre
 export const PLAYER_ARMOR_INNER_INFLATE = 0.5 * PLAYER_MODEL_PIXEL;
 export const PLAYER_ARMOR_OUTER_INFLATE = 1 * PLAYER_MODEL_PIXEL;
 export const DEFAULT_LEATHER_ARMOR_COLOR = 0xa06540;
+export const ARMOR_BASE_RENDER_ORDER = 20;
+export const ARMOR_OVERLAY_RENDER_ORDER = 30;
+export const ARMOR_PART_RENDER_PRIORITY: Readonly<Record<ArmorVisualPart, number>> = Object.freeze({
+  head: 0,
+  body: 0,
+  rightArm: 1,
+  leftArm: 2,
+  rightLeg: 1,
+  leftLeg: 2,
+});
 
 export const ARMOR_TEXTURE_URLS: Readonly<
   Record<ArmorVisualMaterial, Readonly<Record<ArmorTextureLayer, string>>>
@@ -256,7 +266,7 @@ export class PlayerArmorMaterialCache {
         map: texture,
         color: material === 'leather' && pass === 'base' ? DEFAULT_LEATHER_ARMOR_COLOR : 0xffffff,
         alphaTest: 0.1,
-        transparent: true,
+        transparent: false,
         depthWrite: true,
       });
       template.name = `player-armor-material:${key}`;
@@ -380,8 +390,9 @@ export class PlayerArmorVisual {
     const overlay = new THREE.Mesh(geometry, this.placeholder);
     base.name = `player-armor:${slot}:${part}:shell-base`;
     overlay.name = `player-armor:${slot}:${part}:shell-overlay`;
-    base.renderOrder = 2;
-    overlay.renderOrder = 3;
+    const priority = ARMOR_PART_RENDER_PRIORITY[part];
+    base.renderOrder = ARMOR_BASE_RENDER_ORDER + priority;
+    overlay.renderOrder = ARMOR_OVERLAY_RENDER_ORDER + priority;
     base.visible = false;
     overlay.visible = false;
     this.rig[part].add(base, overlay);
@@ -407,12 +418,20 @@ export class PlayerArmorVisual {
     slot: ArmorSlot,
     descriptor: ArmorVisualDescriptor,
     pass: ArmorTexturePass,
+    part: ArmorVisualPart,
   ): THREE.MeshBasicMaterial {
-    const key = `${slot}:${descriptor.material}:${descriptor.textureLayer}:${pass}`;
+    const priority = ARMOR_PART_RENDER_PRIORITY[part];
+    const key = `${slot}:${descriptor.material}:${descriptor.textureLayer}:${pass}:priority-${priority}`;
     let material = this.ownedMaterials.get(key);
     if (!material) {
       material = this.resources.materials.owned(descriptor.material, descriptor.textureLayer, pass);
       material.name = `player-armor-owned:${key}`;
+      // Opaque render ordering removes camera-dependent transparent sorting. A
+      // one-step slope/unit bias per overlapping sibling is the smallest second-line
+      // tie-breaker for coplanar shoulders and leg seams observed in dynamic QA.
+      material.polygonOffset = priority > 0;
+      material.polygonOffsetFactor = -priority;
+      material.polygonOffsetUnits = -priority;
       this.ownedMaterials.set(key, material);
     }
     if (descriptor.material === 'leather' && pass === 'base') material.color.set(this.leatherColor);
@@ -427,9 +446,9 @@ export class PlayerArmorVisual {
         pair.base.visible = visible;
         pair.overlay.visible = visible && descriptor?.material === 'leather';
         if (!visible || !descriptor) continue;
-        pair.base.material = this.ownedMaterial(slot, descriptor, 'base');
+        pair.base.material = this.ownedMaterial(slot, descriptor, 'base', pair.part);
         if (descriptor.material === 'leather') {
-          pair.overlay.material = this.ownedMaterial(slot, descriptor, 'overlay');
+          pair.overlay.material = this.ownedMaterial(slot, descriptor, 'overlay', pair.part);
         }
       }
     }

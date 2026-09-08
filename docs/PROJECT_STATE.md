@@ -1,12 +1,20 @@
 # Состояние проекта
 
+## Последний проход: armor cutout z-fighting + Titanium 20 — 2026-09-08
+
+- `PlayerArmorVisual` больше не отправляет alpha-tested armor в transparent queue: все base и leather overlay materials используют `transparent=false`, `alphaTest=0.1`, `depthTest=true`, `depthWrite=true`.
+- Порядок пересекающихся cuboids детерминирован и не зависит от материала/камеры: base `20/21/22`, overlay `30/31/32` для body/head, right limb и left limb. После первого QA cutout+order всё ещё показывали тонкий coplanar pattern в crouch на косом угле; поэтому per-part owned materials получили минимальный slope/unit `polygonOffset`: `0/-1/-2` по той же priority. Geometry, UV, atlas, pivots и inflate `1/0.5 px` не менялись.
+- Titanium armor теперь `3 + 8 + 6 + 3 = 20`, то есть 80% flat protection и 10 полных HUD icons. Diamond остаётся 17/68%, Ruby 18/72%, `MAX_ARMOR_POINTS=20`; toughness/penetration нет.
+- Focused armor/Ruby-Titanium/HUD/network pack: **34/34 PASS**. Все четыре typecheck, import boundaries и production build PASS. Browser QA через `?qaPlayer=1`: Ruby/Titanium full sets, front/back/oblique rotation, walk/sprint/sneak/jump/attack; Iron/Diamond regression and leather overlay; warn/error console пуст.
+- Handoff: `docs/reports/2026-09-08_armor-z-fighting-titanium-20.md`.
+
 ## Последний проход: Ruby / Titanium equipment integration — 2026-09-08
 
 - Endgame progression зарегистрирован как `diamond -> ruby -> titanium` без отдельной Ruby Ore и без прямых Titanium equipment recipes.
 - Ruby Ingot — shapeless sink `1 diamond + 3 gold ingots + 3 iron ingots`; все 9 Ruby equipment recipes расширяют существующие material loops. Все 9 Titanium pieces получаются только shapeless upgrade `matching Ruby piece + 1 titanium_ingot`.
 - `BlockId.TitaniumOre = 161`; руда имеет hardness 5, требует pickaxe rank Ruby и дропает себя только при correct tool. Канонический rank: hand 0, wood 1, stone 2, iron 3, gold 1, diamond 4, ruby 5, titanium 6.
 - Titanium worldgen добавлен последним ore rule: Y 4–12, одна vein size 3, `spawnChance=0.75`. Старые ore rules не получают дополнительного RNG call; fixed-seed digest старых ore positions сохранился. На выборке 49 chunks: Diamond 198, Titanium 76, то есть Titanium в 2.61 раза реже.
-- Armor totals: Leather 7, Gold 11, Iron 15, Diamond 17, Ruby 18, Titanium 19; damage reduction остаётся flat 4%/point, toughness penetration не добавлялась. Tools: Ruby 2100/10/+4, Titanium 2800/12/+5; swords 9/10 damage.
+- Armor totals: Leather 7, Gold 11, Iron 15, Diamond 17, Ruby 18, Titanium 20; damage reduction остаётся flat 4%/point, toughness penetration не добавлялась. Tools: Ruby 2100/10/+4, Titanium 2800/12/+5; swords 9/10 damage.
 - `PlayerArmorVisual` использует существующий shell/pivot/cache path и новые Ruby/Titanium layers. Authoritative `snapshot.equipment` остаётся generic string-ID transport; protocol не менялся. Invisibility и first-person semantics сохранены.
 - Все 25 runtime PNG, включая 8 отдельных armor inventory icons, проверены детерминированным generator `--check`; Creative catalog подхватывает новые obtainable items автоматически.
 - Focused integration pack: 103/103 PASS; отдельный final feature test: 11/11 PASS. Все четыре typecheck, import boundaries и production build PASS. Full suite: 1853/1869 PASS; 16 timeout/performance failures, один прежний extractor parse failure и worker RPC timeout — те же документированные baseline-классы вне изменённого feature path.
