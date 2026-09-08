@@ -5,6 +5,7 @@
 - TNT / `ExplosionQueue` теперь эмитит `blockBroken` (без `playerId`) для каждого реально уничтоженного вокселя. Claims удаляет block-claim по сохранённому `Claim.anchor`, той же связью что и ручное ломание.
 - Взрыв рядом, который не уничтожил ячейку якоря, claim не трогает. Обычные `/claim create` регионы без изменений.
 - Не вторая система приватов: `shared` ExplosionQueue по-прежнему без PluginManager; адаптер только в `ServerGameplay.processExplosions`.
+- Focused: `claim-anchor-blocks` 7/7, related server suite 80/80, all four typechecks, boundaries, `test:sim` 42/42, production build PASS.
 - Handoff: `docs/reports/2026-09-08_claim-anchor-explosion.md`.
 
 ## Предыдущий проход: Claim-anchor blocks — 2026-09-07

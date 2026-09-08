@@ -31,6 +31,8 @@ Fixed. `ServerGameplay.processExplosions` emits the existing post-observation `b
 
 - New Anarchy case: place iron/gold/diamond; small blast destroys adjacent dirt and leaves the iron claim; far TNT-radius blast misses gold; primed TNT (fuse 0.05, same redstone → enqueue → process path) destroys iron then diamond; owner `tryBreak` still deletes gold; Bob can build only after that claim is gone.
 - Existing owner/foreigner/OP break cases remain.
+- `claim-anchor-blocks` 7/7. Related (`claim-anchors` 8, `claims` 10, `anarchy-plugins` 36, `plugin-platform` 19) combined **80/80**.
+- All four typechecks PASS. Boundaries PASS. `test:sim` 42/42. Production build PASS.
 
 ## Visual QA
 
