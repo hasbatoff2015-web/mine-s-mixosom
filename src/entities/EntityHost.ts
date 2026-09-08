@@ -66,7 +66,7 @@ export interface EntityHost {
   pulseMinecartTnt(visual: EntityVisual, fuseRatio: number): void;
   createMob(kind: MobKind): { visual: EntityVisual; model: MobModel } | undefined;
   createArrow(flaming?: boolean): EntityVisual | undefined;
-  createPrimedTnt?(id: string): EntityVisual | undefined;
+  createPrimedTnt?(id: string, textureKey?: string): EntityVisual | undefined;
   /** Fuse pulse / flash for primed TNT. Headless no-op. */
   pulsePrimedTnt?(visual: EntityVisual, elapsed: number, urgency: number): void;
   attach(visual: EntityVisual): void;
@@ -127,7 +127,7 @@ export class HeadlessEntityHost implements EntityHost {
     return undefined;
   }
 
-  createPrimedTnt(_id: string): undefined {
+  createPrimedTnt(_id: string, _textureKey?: string): undefined {
     return undefined;
   }
 

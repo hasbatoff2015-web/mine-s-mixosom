@@ -1,5 +1,5 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
-import { BlockId } from '../blocks';
+import { BlockId, isTntBlock } from '../blocks';
 import { clamp, FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import type { VoxelWorld } from '../world/World';
@@ -91,7 +91,7 @@ export function resolveFlintAndSteelUse(
   if (cart === 'primed') return { type: 'prime-cart', wear: true };
   if (cart === 'already') return { type: 'already-primed', wear: false };
   if (!hit) return { type: 'none' };
-  if (hit.block === BlockId.Tnt) {
+  if (isTntBlock(hit.block)) {
     return { type: 'prime-tnt-block', x: hit.x, y: hit.y, z: hit.z, wear: true };
   }
   return {

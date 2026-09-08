@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Anarchy TNT types — 2026-09-08
+
+- Три профиля на существующем `ExplosionQueue` / `resolveExplosion`: ordinary (`tnt` 109, radius 4), powerful (`tnt_powerful` 161, radius 6), destructive (`tnt_destructive` 162, ordinary radius). Нет второй explosion-системы.
+- Ordinary TNT не ломает iron/gold/diamond anchors и не удаляет block-claims. Powerful/destructive ломают якорь; `blockBroken` по-прежнему снимает claim.
+- Все три типа не разрушают воксели внутри обычных `/claim` (adapter `canDestroy` из `ServerGameplay`, shared sim без PluginManager).
+- Обсидиан — пространственный щит (voxel DDA) для ordinary/powerful; destructive ломает обсидиан и игнорирует щит. Взрыв идёт вокруг стены, не отменяется целиком.
+- Цепной взрыв передаёт `ChainedTnt.blockId`; второй TNT сохраняет свой профиль.
+- Рецепты: shapeless TNT+gold_block → powerful; shaped 8 obsidian + TNT в центре → destructive. Текстуры 32×32: красное тело → чёрное / тёмно-фиолетовое. Та же primed mesh/pulse.
+- Handoff: `docs/reports/2026-09-08_anarchy-tnt-types.md`. Focused 61/61, `test:sim` 42/42, all four typechecks, boundaries, production build PASS.
+
 ## Последний проход: Claim-anchor cubic volume + visible bounds — 2026-09-08
 
 - Баг границ PR #69: `show()` и пакет `claim_boundary` уже шли. Клиентский `ClaimBoundaryRenderer` получал AABB с Y `0…255`. Горизонтальные рёбра были у bedrock/потолка, вертикальные 256-блочные fat-lines не читались рядом с игроком. Обычные маленькие `/claim create` боксы работали.
@@ -967,6 +977,7 @@
 - Redstone torch является постоянным source; lever переключается use action; stone button даёт timed pulse; oak pressure plate реагирует на игрока, мобов и dropped items.
 - Powered TNT превращается в отдельную visual primed entity с gravity/voxel collision, исчезает как block и взрывается после `4 s`.
 - TNT explosion использует общий radial pipeline, но apply идёт batch: один lighting pass на slice, chain TNT без повторного `setBlock`. Mass TNT стоит в `ExplosionQueue` с time/job/voxel budget.
+- Три TNT-профиля (`src/world/tnt.ts`): ordinary radius 4 / не ломает якоря и обсидиан; powerful radius 6 / ломает якоря; destructive ordinary radius / ломает обсидиан и якоря. Обсидиан щит — DDA в `resolveExplosion`, не глобальный cancel. Обычные `/claim` защищены per-voxel `canDestroy` на сервере.
 - Active sources, остаток button pulse и primed TNT с оставшимся fuse сохраняются/восстанавливаются. Redstone state v2 также хранит lever attachment/facing; v1 получает fallback `floor/north`. Derived wire power не хранится и пересчитывается после restore.
 - Lever состоит из stone base и отдельной handle с pivot/rotation; placement поддерживает floor/wall/ceiling и четыре wall facings. Powered change инвалидирует chunk mesh.
 - Torch/redstone torch — cuboid `0.22×0.88` с UV crop opaque региона torch.png; wall torch основанием касается стены, пламя наружу/вверх. Dust — ground quad с power tint, button — малый выступ на любой стороне, pressure plate — тонкую горизонтальную plate.

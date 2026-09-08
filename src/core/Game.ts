@@ -337,6 +337,7 @@ import {
   defaultSlabType,
 } from '../world/blockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
+import { getTntProfile } from '../world/tnt';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 
 export interface GameSession {
@@ -4398,6 +4399,7 @@ export class Game {
         z: event.position.z,
         radius: event.radius,
         power: event.power,
+        profile: getTntProfile(event.blockId),
       });
     }
   }
@@ -4447,7 +4449,10 @@ export class Game {
         });
       },
       onChainedTnt: (tnt) => {
-        session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, { blockAlreadyRemoved: true });
+        session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, {
+          blockAlreadyRemoved: true,
+          blockId: tnt.blockId,
+        });
       },
     });
     if (changed.length > 0) session.redstone.notifyBlocksChanged(changed);

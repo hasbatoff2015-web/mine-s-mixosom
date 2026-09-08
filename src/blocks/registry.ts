@@ -312,6 +312,14 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     category: 'redstone', hardness: 0, flammable: true,
     textures: { all: 'block/tnt' },
   }),
+  block(BlockId.TntPowerful, 'tnt_powerful', {
+    category: 'redstone', hardness: 0, flammable: true,
+    textures: { all: 'block/tnt_powerful' },
+  }),
+  block(BlockId.TntDestructive, 'tnt_destructive', {
+    category: 'redstone', hardness: 0, flammable: true,
+    textures: { all: 'block/tnt_destructive' },
+  }),
   block(BlockId.Fire, 'fire', {
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
     renderLayer: 'cutout', renderShape: 'fire', lightingMode: 'standard',

@@ -68,7 +68,7 @@ export function applyEntitySnapshots(
 
   const seen = new Set<string>();
   const tnt: Array<{
-    id: string; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number;
+    id: string; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; blockId?: number;
   }> = [];
 
   for (const snap of entities) {
@@ -169,6 +169,7 @@ export function applyEntitySnapshots(
           id: snap.id, x: snap.x, y: snap.y, z: snap.z,
           vx: snap.vx ?? 0, vy: snap.vy ?? 0, vz: snap.vz ?? 0,
           fuse: snap.fuse ?? 1,
+          blockId: snap.blockId,
         });
         ingestPose(interpolator, snap, tick, now);
         break;

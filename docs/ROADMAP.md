@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-08: Anarchy TNT types
+
+- [x] Keep ordinary TNT radius 4; never break iron/gold/diamond anchors or regular `/claim` voxels.
+- [x] Add powerful TNT (`tnt_powerful` 161, radius 6): breaks anchors, obsidian still shields spatially.
+- [x] Add destructive TNT (`tnt_destructive` 162, ordinary radius): breaks anchors and obsidian, no obsidian shield.
+- [x] Extend `ExplosionJob` with `TntProfile` + optional `canDestroy`; voxel DDA obsidian occlusion; chain `blockId`.
+- [x] Shapeless TNT+gold_block and shaped 8-obsidian+TNT recipes; recolor 32×32 textures; same primed mesh/pulse.
+- [ ] Owner live Anarchy QA: craft both types, obsidian wall, block-claim vs `/claim`, mixed chain.
+
 ## 2026-09-07: Claim-anchor blocks (Anarchy Claims)
 
 - [x] Keep `diamond_block` id 149; add `gold_block` 159 and `iron_block` 160 with the same stone/pickaxe pattern.

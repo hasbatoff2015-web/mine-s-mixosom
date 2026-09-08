@@ -50,6 +50,19 @@ describe('block registry', () => {
     expect(getItemDefinition('iron_block').placesBlockId).toBe(BlockId.IronBlock);
   });
 
+  it('registers powerful and destructive TNT with distinct textures', () => {
+    expect(BlockId.TntPowerful).toBe(161);
+    expect(BlockId.TntDestructive).toBe(162);
+    expect(getBlockDefinition(BlockId.TntPowerful)).toMatchObject({
+      key: 'tnt_powerful', name: 'Мощный динамит', textures: { all: 'block/tnt_powerful' },
+    });
+    expect(getBlockDefinition(BlockId.TntDestructive)).toMatchObject({
+      key: 'tnt_destructive', name: 'Разрушительный динамит', textures: { all: 'block/tnt_destructive' },
+    });
+    expect(getItemDefinition('tnt_powerful').placesBlockId).toBe(BlockId.TntPowerful);
+    expect(getItemDefinition('tnt_destructive').placesBlockId).toBe(BlockId.TntDestructive);
+  });
+
   it('classifies cutout and blended materials independently from face occlusion', () => {
     for (const id of [BlockId.OakLeaves, BlockId.BirchLeaves, BlockId.SpruceLeaves]) {
       expect(getBlockDefinition(id)).toMatchObject({

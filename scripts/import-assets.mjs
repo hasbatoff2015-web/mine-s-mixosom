@@ -214,6 +214,13 @@ for (const [source, target] of itemsOnly ? [] : copies) {
 
 console.log(`Imported ${imported}/${copies.length} selected runtime assets into public/textures.`);
 
+try {
+  const { writeTntVariantTextures } = await import('./recolor-tnt.mjs');
+  await writeTntVariantTextures();
+} catch (error) {
+  console.warn('TNT variant textures were not regenerated.', error);
+}
+
 for (const [target, bytes] of authoredItems) {
   const destination = join(outputRoot, target);
   await mkdir(dirname(destination), { recursive: true });

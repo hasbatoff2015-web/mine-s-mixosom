@@ -1,5 +1,24 @@
 # Тестирование
 
+## 2026-09-08 Anarchy TNT types
+
+Report: `reports/2026-09-08_anarchy-tnt-types.md`.
+
+```text
+npx vitest run \
+  tests/tnt-profiles.test.ts \
+  tests/tnt-textures.test.mjs \
+  tests/server/tnt-types.test.ts \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/crafting.test.ts \
+  tests/block-registry.test.ts \
+  tests/redstone.test.ts \
+  tests/explosion-performance.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: ordinary TNT never breaks iron/gold/diamond anchors; powerful/destructive do and `blockBroken` deletes that block-claim; no TNT type destroys regular `/claim` voxels; obsidian is a spatial shield for ordinary/powerful and is breakable for destructive; powerful radius ~6; destructive radius = ordinary 4; chain preserves the second TNT's profile; shapeless powerful and shaped destructive recipes; textures recolor only the red TNT body; primed mesh/pulse reused.
+
 ## 2026-09-07 Claim-anchor blocks
 
 Report: `reports/2026-09-07_claim-anchor-blocks.md`.

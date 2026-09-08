@@ -21,8 +21,7 @@ import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './Entit
 import type { MobKind } from './mobDefinitions';
 import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
-
-const PRIMED_TNT_TEXTURE_KEY = 'block/tnt';
+import { PRIMED_TNT_TEXTURE_KEY } from '../blocks/tnt';
 
 export interface ThreeEntityHostOptions {
   readonly itemVisuals?: ItemVisualFactory;
@@ -46,7 +45,7 @@ export class ThreeEntityHost implements EntityHost {
   private voxelVisuals?: VoxelVisualFactory;
   private minecartVisuals?: MinecartVisualFactory;
   private tntGeometry?: THREE.BoxGeometry;
-  private tntMap?: THREE.Texture;
+  private readonly tntMaps = new Map<string, THREE.Texture>();
   private readonly tntMaterials: THREE.Material[] = [];
   private disposed = false;
 
@@ -113,11 +112,11 @@ export class ThreeEntityHost implements EntityHost {
     return this.arrows().create(flaming);
   }
 
-  createPrimedTnt(id: string): EntityVisual {
+  createPrimedTnt(id: string, textureKey = PRIMED_TNT_TEXTURE_KEY): EntityVisual {
     this.tntGeometry ??= new THREE.BoxGeometry(0.92, 0.92, 0.92);
-    this.tntMap ??= this.createTntTexture();
+    const map = this.tntTexture(textureKey);
     const material = createEntityMaterial({
-      map: this.tntMap,
+      map,
       color: 0xffffff,
       transparent: false,
       depthWrite: true,
@@ -312,7 +311,8 @@ export class ThreeEntityHost implements EntityHost {
     this.voxelVisuals?.dispose();
     this.minecartVisuals?.dispose();
     this.tntGeometry?.dispose();
-    this.tntMap?.dispose();
+    for (const map of this.tntMaps.values()) map.dispose();
+    this.tntMaps.clear();
     for (const material of this.tntMaterials) material.dispose();
     this.tntMaterials.length = 0;
   }
@@ -333,17 +333,25 @@ export class ThreeEntityHost implements EntityHost {
     return state.fireOverlay;
   }
 
-  private createTntTexture(): THREE.Texture {
+  private tntTexture(textureKey: string): THREE.Texture {
+    const existing = this.tntMaps.get(textureKey);
+    if (existing) return existing;
+    const map = this.createTntTexture(textureKey);
+    this.tntMaps.set(textureKey, map);
+    return map;
+  }
+
+  private createTntTexture(textureKey: string): THREE.Texture {
     const map = typeof document === 'undefined'
       ? new THREE.Texture()
-      : new THREE.TextureLoader().load(TextureAtlas.url(PRIMED_TNT_TEXTURE_KEY));
+      : new THREE.TextureLoader().load(TextureAtlas.url(textureKey));
     map.colorSpace = THREE.SRGBColorSpace;
     map.magFilter = THREE.NearestFilter;
     map.minFilter = THREE.NearestFilter;
     map.generateMipmaps = false;
     map.wrapS = THREE.ClampToEdgeWrapping;
     map.wrapT = THREE.ClampToEdgeWrapping;
-    map.name = PRIMED_TNT_TEXTURE_KEY;
+    map.name = textureKey;
     return map;
   }
 }

@@ -77,6 +77,8 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   oak_pressure_plate: 'Дубовая нажимная плита',
   stone_pressure_plate: 'Каменная нажимная плита',
   tnt: 'Динамит',
+  tnt_powerful: 'Мощный динамит',
+  tnt_destructive: 'Разрушительный динамит',
   fire: 'Огонь',
   cobweb: 'Паутина',
   rail: 'Рельсы',

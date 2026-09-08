@@ -58,6 +58,37 @@ describe('crafting matcher', () => {
     expect(findCraftingRecipe(filled(ItemId.IronIngot))?.output).toEqual({ item: 'iron_block', count: 1 });
   });
 
+  it('crafts powerful TNT shapeless from TNT plus a gold block in any cells', () => {
+    const a = grid(
+      ['tnt', 'gold_block', null],
+      [null, null, null],
+      [null, null, null],
+    );
+    const b = grid(
+      [null, null, 'gold_block'],
+      [null, null, null],
+      [null, null, 'tnt'],
+    );
+    expect(findCraftingRecipe(a)?.id).toBe('tnt_powerful');
+    expect(findCraftingRecipe(b)?.id).toBe('tnt_powerful');
+    expect(getCraftingResult(a)).toEqual({ itemId: 'tnt_powerful', count: 1 });
+  });
+
+  it('crafts destructive TNT only with TNT in the center of eight obsidian', () => {
+    const valid = grid(
+      ['obsidian', 'obsidian', 'obsidian'],
+      ['obsidian', 'tnt', 'obsidian'],
+      ['obsidian', 'obsidian', 'obsidian'],
+    );
+    const shifted = grid(
+      ['tnt', 'obsidian', 'obsidian'],
+      ['obsidian', 'obsidian', 'obsidian'],
+      ['obsidian', 'obsidian', 'obsidian'],
+    );
+    expect(findCraftingRecipe(valid)?.id).toBe('tnt_destructive');
+    expect(findCraftingRecipe(shifted)).toBeUndefined();
+  });
+
   it('returns a deterministic consumption plan for stacked inputs', () => {
     const input = [createItemStack('oak_log', 5), null, null, null];
     const match = matchCraftingRecipe(input, 2, 2);
@@ -75,7 +106,7 @@ describe('crafting matcher', () => {
       'crafting_table', 'chest', 'furnace', 'torch', 'wooden_pickaxe', 'diamond_sword',
       'bow', 'arrows', 'white_bed', 'oak_door', 'oak_slab', 'cobblestone_stairs',
       'birch_stairs', 'stone_pressure_plate', 'brick_stairs',
-      'gold_chestplate', 'tnt', 'minecart', 'portal_chest',
+      'gold_chestplate', 'tnt', 'tnt_powerful', 'tnt_destructive', 'minecart', 'portal_chest',
       'diamond_block', 'gold_block', 'iron_block',
     ];
     const ids = new Set(CRAFTING_RECIPES.map((recipe) => recipe.id));

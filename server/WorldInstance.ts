@@ -69,6 +69,7 @@ import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
+import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace, movementDuringItemUse } from '../src/gameplay';
@@ -441,6 +442,12 @@ export class WorldInstance {
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
+    this.gameplay.loadRegularClaimVolumes = () => {
+      const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
+      return store.claims
+        .filter((claim) => !claim.anchor && claim.worldId === this.worldId)
+        .map((claim) => claim.volume);
+    };
     this.permissions = new PermissionService(this.pluginStore, config.operators, (idOrName) => {
       const direct = this.players.get(idOrName);
       if (direct) return direct.name;

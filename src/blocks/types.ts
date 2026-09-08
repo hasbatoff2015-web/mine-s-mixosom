@@ -287,4 +287,6 @@ export enum BlockId {
   PortalChest = 158,
   GoldBlock = 159,
   IronBlock = 160,
+  TntPowerful = 161,
+  TntDestructive = 162,
 }

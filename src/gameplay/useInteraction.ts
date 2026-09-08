@@ -27,6 +27,7 @@ import {
   isRailBlock,
   isSlabBlock,
   isStairBlock,
+  isTntBlock,
   ladderPlacementFromHit,
   lanternPlacementFromHit,
   slabTypeFromHit,
@@ -881,7 +882,7 @@ function applyFlint(
 
 function igniteCell(ctx: UseSimulationContext, x: number, y: number, z: number): boolean {
   const block = ctx.world.getBlock(x, y, z, false);
-  if (block === BlockId.Tnt) {
+  if (isTntBlock(block)) {
     ctx.redstone.primeTnt(x, y, z);
     return true;
   }
