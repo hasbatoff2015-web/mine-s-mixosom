@@ -1,13 +1,15 @@
 import { getItemDefinition } from '../items';
 import type { BlockDefinition, ToolTier, ToolType } from './types';
 
-const TIER_RANK: Readonly<Record<ToolTier, number>> = Object.freeze({
+export const TOOL_TIER_RANK: Readonly<Record<ToolTier, number>> = Object.freeze({
   hand: 0,
   wood: 1,
   stone: 2,
   iron: 3,
   gold: 1,
   diamond: 4,
+  ruby: 5,
+  titanium: 6,
 });
 
 export interface MiningToolView {
@@ -27,7 +29,7 @@ export function canHarvestBlock(definition: BlockDefinition, tool?: MiningToolVi
   if (definition.drop?.requiresCorrectTool !== true) return true;
   if (!definition.tool) return true;
   if (tool?.kind !== 'tool' || tool.tool !== definition.tool) return false;
-  return TIER_RANK[tool.tier ?? 'hand'] >= TIER_RANK[definition.tier ?? 'hand'];
+  return TOOL_TIER_RANK[tool.tier ?? 'hand'] >= TOOL_TIER_RANK[definition.tier ?? 'hand'];
 }
 
 export function miningSpeedMultiplier(definition: BlockDefinition, tool?: MiningToolView | null): number {

@@ -12,6 +12,10 @@ import leatherLayer1Url from '../../../assets/minecraft/textures/models/armor/le
 import leatherLayer1OverlayUrl from '../../../assets/minecraft/textures/models/armor/leather_layer_1_overlay.png?url';
 import leatherLayer2Url from '../../../assets/minecraft/textures/models/armor/leather_layer_2.png?url';
 import leatherLayer2OverlayUrl from '../../../assets/minecraft/textures/models/armor/leather_layer_2_overlay.png?url';
+import rubyLayer1Url from '../../../assets/minecraft/textures/models/armor/ruby_layer_1.png?url';
+import rubyLayer2Url from '../../../assets/minecraft/textures/models/armor/ruby_layer_2.png?url';
+import titaniumLayer1Url from '../../../assets/minecraft/textures/models/armor/titanium_layer_1.png?url';
+import titaniumLayer2Url from '../../../assets/minecraft/textures/models/armor/titanium_layer_2.png?url';
 import { tryGetItemDefinition, type ArmorSlot } from '../../items';
 import { createTexturedCuboidGeometry, type TexturedCuboidDefinition } from '../TexturedCuboid';
 import {
@@ -22,7 +26,7 @@ import type { PlayerModelVariant } from '../../player/appearance/PlayerAppearanc
 import { PLAYER_MODEL_PIXEL, type PlayerSkinPresentation } from './PlayerSkinGeometry';
 
 export type ArmorTextureLayer = 1 | 2;
-export type ArmorVisualMaterial = 'leather' | 'chainmail' | 'gold' | 'iron' | 'diamond';
+export type ArmorVisualMaterial = 'leather' | 'chainmail' | 'gold' | 'iron' | 'diamond' | 'ruby' | 'titanium';
 export type ArmorVisualPart = 'head' | 'body' | 'rightArm' | 'leftArm' | 'rightLeg' | 'leftLeg';
 export type ArmorShell = 'inner' | 'outer';
 export type ArmorTexturePass = 'base' | 'overlay';
@@ -69,6 +73,8 @@ export const ARMOR_VISUAL_MATERIALS: readonly ArmorVisualMaterial[] = Object.fre
   'gold',
   'iron',
   'diamond',
+  'ruby',
+  'titanium',
 ]);
 
 export const PLAYER_ARMOR_INNER_INFLATE = 0.5 * PLAYER_MODEL_PIXEL;
@@ -83,6 +89,8 @@ export const ARMOR_TEXTURE_URLS: Readonly<
   gold: Object.freeze({ 1: goldLayer1Url, 2: goldLayer2Url }),
   iron: Object.freeze({ 1: ironLayer1Url, 2: ironLayer2Url }),
   diamond: Object.freeze({ 1: diamondLayer1Url, 2: diamondLayer2Url }),
+  ruby: Object.freeze({ 1: rubyLayer1Url, 2: rubyLayer2Url }),
+  titanium: Object.freeze({ 1: titaniumLayer1Url, 2: titaniumLayer2Url }),
 });
 
 export const LEATHER_ARMOR_OVERLAY_URLS: Readonly<Record<ArmorTextureLayer, string>> = Object.freeze({

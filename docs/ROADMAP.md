@@ -1,5 +1,29 @@
 # Roadmap
 
+## 2026-09-08: Ruby / Titanium equipment progression
+
+- [x] Register Ruby/Titanium resources, nine equipment IDs per tier and stable `BlockId.TitaniumOre = 161`.
+- [x] Balance armor at Diamond 17, Ruby 18, Titanium 19 while preserving flat 4% protection and no penetration.
+- [x] Add Ruby resource sink + nine normal Ruby recipes and nine matching-only Titanium upgrade recipes.
+- [x] Add Titanium furnace recipe and canonical Ruby/Titanium mining ranks.
+- [x] Generate Titanium at Y 4–12 with 0.75 × size-3 vein budget and preserve old ore RNG layout.
+- [x] Integrate armor layers/icons, RU/EN names, Creative catalog and authoritative remote equipment presentation.
+- [x] Add deterministic registry/armor/crafting/furnace/mining/worldgen/render/network regressions.
+- [ ] Manual in-game two-client QA for craft/mining/combat/F5/remote/invisibility/death and old-world exploration.
+- [ ] If strict visited-chunk identity across upgrades/restarts becomes required, design a persisted generation-manifest/version before another worldgen change.
+- [ ] Future separate scope: boss/event Titanium sources. No boss drop, event chest or event loot is implemented here.
+
+## 2026-09-08: Ruby / Titanium pixel assets
+
+- [x] Generate Ruby armor from the existing Diamond UV layers with a six-level deep-red metal palette.
+- [x] Normalize the exact 5× Netherite sheets to the renderer's 128×64 contract with nearest-neighbor and generate Titanium armor.
+- [x] Generate Ruby/Titanium ingots and five tool sprites from Iron silhouettes while preserving the `stick.png` handle palette exactly.
+- [x] Generate Titanium Ore from Emerald Ore by remapping only colored inclusions and keeping the grayscale stone matrix byte-for-pixel identical.
+- [x] Add eight independent armor inventory icons, a repeatable Pillow generator, `--check` validation, and a nearest-neighbor contact sheet.
+- [x] Keep gameplay integration out of this pass: no registry IDs, recipes, worldgen, tier stats, Creative catalog, or combat changes.
+- [x] Integrate the approved equipment balance in the existing registries and gameplay systems.
+- [ ] Confirm source/derivative asset licensing for publication.
+
 ## 2026-09-07: Claim-anchor blocks (Anarchy Claims)
 
 - [x] Keep `diamond_block` id 149; add `gold_block` 159 and `iron_block` 160 with the same stone/pickaxe pattern.

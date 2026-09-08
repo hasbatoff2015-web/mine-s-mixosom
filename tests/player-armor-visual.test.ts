@@ -133,12 +133,14 @@ describe('vanilla armor geometry and resources', () => {
       'leather_layer_2_overlay.png',
     ];
     const paths = Object.keys(ARMOR_ASSETS);
-    expect(paths).toHaveLength(12);
+    expect(paths).toHaveLength(18);
     for (const filename of expected) expect(paths.some((path) => path.endsWith(filename)), filename).toBe(true);
     expect(new Set(ARMOR_VISUAL_MATERIALS.flatMap((material) => [
       ARMOR_TEXTURE_URLS[material][1], ARMOR_TEXTURE_URLS[material][2],
-    ])).size).toBe(10);
+    ])).size).toBe(14);
     expect(LEATHER_ARMOR_OVERLAY_URLS[1]).not.toBe(ARMOR_TEXTURE_URLS.iron[1]);
+    expect(ARMOR_TEXTURE_URLS.ruby[1]).not.toBe(ARMOR_TEXTURE_URLS.diamond[1]);
+    expect(ARMOR_TEXTURE_URLS.titanium[2]).not.toBe(ARMOR_TEXTURE_URLS.ruby[2]);
   });
 
   it('shares cached nearest-neighbor cutout textures and templates', () => {
@@ -185,17 +187,17 @@ describe('PlayerArmorVisual slot visibility', () => {
     const visual = fixture.visual;
     const helmet = visual.armor.meshes('head')[0]!.base;
     const mixed: PlayerEquipmentState = {
-      head: 'iron_helmet',
-      chest: 'diamond_chestplate',
-      legs: 'gold_leggings',
-      feet: 'leather_boots',
+      head: 'ruby_helmet',
+      chest: 'titanium_chestplate',
+      legs: 'ruby_leggings',
+      feet: 'titanium_boots',
     };
     visual.setArmor(mixed);
     expect(visual.armor.meshes('head')[0]!.base).toBe(helmet);
-    expect(materialName(helmet)).toContain(':iron:1:base');
-    expect(materialName(visual.armor.meshes('chest')[0]!.base)).toContain(':diamond:1:base');
-    expect(materialName(visual.armor.meshes('legs')[0]!.base)).toContain(':gold:2:base');
-    expect(materialName(visual.armor.meshes('feet')[0]!.base)).toContain(':leather:1:base');
+    expect(materialName(helmet)).toContain(':ruby:1:base');
+    expect(materialName(visual.armor.meshes('chest')[0]!.base)).toContain(':titanium:1:base');
+    expect(materialName(visual.armor.meshes('legs')[0]!.base)).toContain(':ruby:2:base');
+    expect(materialName(visual.armor.meshes('feet')[0]!.base)).toContain(':titanium:1:base');
     expect(visibleBaseCount(visual, 'head')).toBe(1);
     expect(visibleBaseCount(visual, 'chest')).toBe(3);
     expect(visibleBaseCount(visual, 'legs')).toBe(3);
@@ -223,11 +225,11 @@ describe('PlayerArmorVisual slot visibility', () => {
     fixture.dispose();
   });
 
-  it('keeps iron and diamond armor plus the held item visible while only skin is invisible', () => {
+  it('keeps Ruby and Titanium armor plus the held item visible while only skin is invisible', () => {
     const fixture = createVisual();
     const visual = fixture.visual;
-    visual.setArmor({ ...EMPTY, head: 'iron_helmet', chest: 'diamond_chestplate' });
-    visual.setHeldItem('diamond_sword');
+    visual.setArmor({ ...EMPTY, head: 'ruby_helmet', chest: 'titanium_chestplate' });
+    visual.setHeldItem('titanium_sword');
 
     updateVisibility(visual, false);
     expect(skinMeshes(visual, 'base').every((mesh) => mesh.visible)).toBe(true);
@@ -273,7 +275,7 @@ describe('first-person armor presentation', () => {
     const fixture = createVisual();
     const renderer = new FirstPersonRenderer(fixture.items);
     fixture.visual.setArmor({
-      head: 'iron_helmet', chest: 'diamond_chestplate', legs: 'gold_leggings', feet: 'leather_boots',
+      head: 'ruby_helmet', chest: 'titanium_chestplate', legs: 'ruby_leggings', feet: 'titanium_boots',
     });
     expect(visibleBaseCount(fixture.visual, 'head')).toBe(1);
     expect(visibleBaseCount(fixture.visual, 'chest')).toBe(3);

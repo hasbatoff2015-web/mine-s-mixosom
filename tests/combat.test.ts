@@ -10,7 +10,7 @@ import { tryGetItemDefinition } from '../src/items';
 
 describe('classic 1.8 melee', () => {
   it.each([
-    ['wooden', 0], ['stone', 1], ['iron', 2], ['diamond', 3],
+    ['wooden', 0], ['stone', 1], ['iron', 2], ['diamond', 3], ['ruby', 4], ['titanium', 5],
   ] as const)('uses total damage for every %s sword and tool', (tier, bonus) => {
     for (const [weapon, base] of [['sword', 5], ['axe', 4], ['pickaxe', 3], ['shovel', 2]] as const) {
       const id = tier + '_' + weapon;

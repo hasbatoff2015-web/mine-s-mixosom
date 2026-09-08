@@ -225,6 +225,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   ore(BlockId.GoldOre, 'gold_ore', 'iron'),
   ore(BlockId.DiamondOre, 'diamond_ore', 'iron', 3, 1, 1, 'diamond'),
   ore(BlockId.RedstoneOre, 'redstone_ore', 'iron', 3, 4, 5, 'redstone_dust'),
+  ore(BlockId.TitaniumOre, 'titanium_ore', 'ruby', 5),
 
   block(BlockId.Glass, 'glass', {
     category: 'building', hardness: 0.3, opaque: false, drop: false,
