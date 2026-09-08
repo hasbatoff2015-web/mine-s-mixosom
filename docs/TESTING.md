@@ -1,5 +1,18 @@
 # Тестирование
 
+## 2026-09-08 TNT minecart fall distance
+
+Report: `reports/2026-09-08_tnt-minecart-fall-distance.md`.
+
+```text
+npx vitest run \
+  tests/tnt-minecart.test.ts \
+  tests/server/tnt-minecart.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: fall is `startY - currentY` from eject, not world Y=20/30 and not fuse time. Ordinary air-explodes ~20; powerful and destructive ~30 (not 20). A floor closer than the cap explodes on collision. A rail on a support block over a void still reaches ~20 (does not hop-explode on the support). Default 4s fuse does not fire first. `blockId` is kept.
+
 ## 2026-09-08 TNT in minecart online
 
 Report: `reports/2026-09-08_tnt-minecart-online.md`.
@@ -895,8 +908,8 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/menu-model.test.ts` | 3 | Offline server mock names/`0 / 300`, desktop bindings including chat `T` / `/`, play-time and setting formatters |
 | `tests/mob-hurt-flash.test.ts` | 8 | Successful mob damage starts per-entity red tint; miss/zero/fire DOT do not; decay + restart; same-type isolation (geometry/texture shared, material/uniform not); three spiders; zombie+spider; owned-material dispose; fire overlay survives |
 | `tests/fire-arrow-and-fire.test.ts` | 5 | Fire arrow only primes TNT / ignites living (no world fire), periodic burn + water extinguish, 6-plane fire mesh, animated fire strip, flint/fire-arrow icons and handheld models |
-| `tests/tnt-minecart.test.ts` | 9 | Cargo `tntBlockId` for all three TNT types, live snapshot visual without respawn, texture keys, fire-arrow eject + profile, max fall 20/30, land explode, chain `blockId`, off-rail 50% push |
-| `tests/server/tnt-minecart.test.ts` | 4 | Two-client + late joiner cargo snapshot, fire arrow inside foreign iron block-claim, ordinary arrow no-ignite, off-rail 50% push snapshot |
+| `tests/tnt-minecart.test.ts` | 13 | Cargo `tntBlockId` for all three TNT types, live snapshot visual without respawn, texture keys, fire-arrow eject + profile, simulated fall 20/30 from eject Y, powerful/destructive not 20, floor before cap, rail-on-stone over void, chain `blockId`, off-rail 50% push |
+| `tests/server/tnt-minecart.test.ts` | 5 | Two-client + late joiner cargo snapshot, fire arrow inside foreign iron block-claim, ordinary arrow no-ignite, fire-arrow rail-over-void fall ~20, off-rail 50% push snapshot |
 | `tests/fire-contact-sunlight-minecart.test.ts` | 39 | Fire AABB contact vs leave, Fire vs Lava cadence, armor reduces Fire/Lava (no bypass), independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert of stored type, Flint does not prime cart cargo, Fire Arrow ejects primed TNT vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
 | `tests/hostile-spawn-balance.test.ts` | 8 | Surface night hostiles ≈ ×0.5, passive day rate independent of the night factor, cave hostiles in dark air not lava/water, min distance / floor / headroom, max 1 new cave hostile per chunk/event, density, respawn after death, global cap |
 | `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |

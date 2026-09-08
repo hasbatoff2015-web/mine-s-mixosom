@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-08: TNT minecart fall distance
+
+- [x] Diagnose why 20/30 did not change live flight (hop-land on rail support at drop≈0).
+- [x] Count fall as `launchOriginY - currentY`; air-detonate at 20/30; land-detonate only after leaving the cart platform.
+- [x] Simulation tests: ordinary 20, powerful/destructive 30, not the old 20, floor before cap, different world Y, rail-on-stone over void, blockId, chain.
+- [ ] Owner live QA: cart on a 1-block bridge over a drop, all three TNT types, startY→explosionY≈20/30/30.
+
 ## 2026-09-08: TNT in minecart online + off-rail push
 
 - [x] Store cargo as `tntBlockId` (ordinary/powerful/destructive), not a boolean variant.

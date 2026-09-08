@@ -179,6 +179,48 @@ describe('Anarchy TNT minecart', () => {
     expect(world.gameplay.redstone.primedTntCount).toBe(0);
   });
 
+  it('falls ~20 blocks after a fire arrow hits a TNT cart on a rail over a void', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const x = Math.floor(ada.player.controller.position.x);
+    const y = 80;
+    const z = Math.floor(ada.player.controller.position.z) + 2;
+    world.world.getChunk(Math.floor(x / 16), Math.floor(z / 16));
+    for (let yy = 0; yy < 81; yy += 1) {
+      world.world.setBlock(x, yy, z, BlockId.Air);
+      world.world.setBlock(x - 1, yy, z, BlockId.Air);
+      world.world.setBlock(x + 1, yy, z, BlockId.Air);
+    }
+    world.world.setBlock(x, y - 1, z, BlockId.Stone);
+    world.world.setBlock(x, y, z, BlockId.Rail);
+    ada.player.controller.teleport([x + 0.5, y, z - 3]);
+    const cart = world.gameplay.minecarts.spawn(x, y, z)!;
+    expect(world.gameplay.minecarts.insertTnt(cart, BlockId.Tnt)).toBe(true);
+    const startY = cart.position.y;
+    world.gameplay.arrows.spawn(
+      { x: cart.position.x, y: cart.position.y + 0.55, z: cart.position.z - 1.6 },
+      { x: 0, y: 0, z: 1 },
+      3,
+      2,
+      false,
+      true,
+    );
+    world.tick();
+    const primed = world.gameplay.redstone.primedTnt[0];
+    expect(primed).toBeDefined();
+    expect(primed!.launchOriginY).toBe(startY);
+    expect(primed!.maxFallBlocks).toBe(20);
+    expect(primed!.blockId).toBe(BlockId.Tnt);
+    for (let i = 0; i < 120 && world.gameplay.redstone.primedTntCount > 0; i += 1) {
+      world.tick();
+    }
+    expect(world.gameplay.redstone.primedTntCount).toBe(0);
+    const deltaY = startY - primed!.position.y;
+    expect(deltaY).toBeGreaterThan(8);
+    expect(deltaY).toBeGreaterThanOrEqual(18.5);
+    expect(deltaY).toBeLessThan(22.5);
+  });
+
   it('pushes TNT carts off rails at half on-rail impulse and snapshots the motion', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
