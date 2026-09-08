@@ -288,4 +288,6 @@ export enum BlockId {
   GoldBlock = 159,
   IronBlock = 160,
   TitaniumOre = 161,
+  TntPowerful = 162,
+  TntDestructive = 163,
 }

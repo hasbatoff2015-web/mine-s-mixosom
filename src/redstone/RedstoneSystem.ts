@@ -3,12 +3,19 @@ import {
   BlockId,
   getBlockDefinition,
   isPressurePlateBlock,
+  isTntBlock,
+  tntTextureKey,
   type BlockAttachment,
   type BlockRenderState,
   type HorizontalFacing,
 } from '../blocks';
 import { blockKey, lerp } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
+import {
+  getTntProfile,
+  tntFallDistance,
+  tntMaxFall,
+} from '../world/tnt';
 import { moveVoxelBody } from '../entities/voxelPhysics';
 import { HeadlessEntityHost, type EntityHost, type EntityVisual } from '../entities/EntityHost';
 import type {
@@ -26,7 +33,7 @@ const NEIGHBOURS = Object.freeze([
   [0, 0, 1], [0, 0, -1],
 ] as const);
 
-export const PRIMED_TNT_TEXTURE_KEY = 'block/tnt';
+export { PRIMED_TNT_TEXTURE_KEY } from '../blocks/tnt';
 
 interface MutableSourceState {
   readonly kind: RedstoneSourceKind;
@@ -60,6 +67,10 @@ export class PrimedTnt {
   fuseSeconds: number;
   readonly totalFuseSeconds: number;
   readonly visual?: EntityVisual;
+  readonly blockId: BlockId;
+  /** Present only for primed TNT that came from a placed block. Minecart cargo must not set these. */
+  readonly launchOriginY?: number;
+  readonly maxFallBlocks?: number;
 
   constructor(
     readonly id: string,
@@ -67,6 +78,8 @@ export class PrimedTnt {
     fuseSeconds: number,
     visual?: EntityVisual,
     velocity?: Vec3Like,
+    blockId: BlockId = BlockId.Tnt,
+    launch?: { readonly originY: number; readonly maxFallBlocks: number },
   ) {
     this.position = new Vec3(position.x, position.y, position.z);
     this.previousPosition = this.position.clone();
@@ -76,6 +89,9 @@ export class PrimedTnt {
     this.fuseSeconds = fuseSeconds;
     this.totalFuseSeconds = fuseSeconds;
     this.visual = visual;
+    this.blockId = isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    this.launchOriginY = launch?.originY;
+    this.maxFallBlocks = launch?.maxFallBlocks;
   }
 }
 
@@ -146,6 +162,7 @@ export class RedstoneSystem {
       readonly vy: number;
       readonly vz: number;
       readonly fuse: number;
+      readonly blockId?: number;
     }>,
     options?: { readonly snapVisual?: boolean },
   ): void {
@@ -169,6 +186,7 @@ export class RedstoneSystem {
         new Vec3(entry.x, entry.y, entry.z),
         Math.max(0.05, entry.fuse),
         [entry.vx, entry.vy, entry.vz],
+        entry.blockId,
       );
     }
     for (const [id, entity] of this.primedById) {
@@ -390,19 +408,48 @@ export class RedstoneSystem {
     y: number,
     z: number,
     fuseSeconds = this.defaultTntFuseSeconds,
-    options: { readonly blockAlreadyRemoved?: boolean } = {},
+    options: { readonly blockAlreadyRemoved?: boolean; readonly blockId?: BlockId } = {},
   ): PrimedTnt | undefined {
     this.assertActive();
     if (this.primedById.size >= this.maxPrimedTnt) return undefined;
+    let blockId = options.blockId;
     if (!options.blockAlreadyRemoved) {
-      if (this.world.getBlock(x, y, z) !== BlockId.Tnt) return undefined;
+      const block = this.world.getBlock(x, y, z);
+      if (!isTntBlock(block)) return undefined;
+      blockId = block;
       if (!this.world.setBlock(x, y, z, BlockId.Air)) return undefined;
       this.notifyBlockChanged(x, y, z);
     }
+    const resolved = blockId !== undefined && isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    const originY = y;
     return this.createPrimedTnt(
       undefined,
       new Vec3(x + 0.5, y, z + 0.5),
       Math.max(0.05, fuseSeconds),
+      undefined,
+      resolved,
+      { originY, maxFallBlocks: tntMaxFall(resolved) },
+    );
+  }
+
+  /**
+   * TNT ejected from a minecart by a fire arrow. Same primed hop/fuse as before
+   * the fall-cap work; does not use placed-TNT startY/maxFallBlocks.
+   */
+  launchMinecartTnt(
+    position: Vec3Like,
+    velocity: Vec3Like,
+    blockId: number,
+  ): PrimedTnt | undefined {
+    this.assertActive();
+    if (this.primedById.size >= this.maxPrimedTnt) return undefined;
+    const resolved = isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    return this.createPrimedTnt(
+      undefined,
+      position,
+      this.defaultTntFuseSeconds,
+      [velocity.x, 4, velocity.z],
+      resolved,
     );
   }
 
@@ -435,6 +482,10 @@ export class RedstoneSystem {
         position: [entity.position.x, entity.position.y, entity.position.z],
         fuseSeconds: entity.fuseSeconds,
         velocity: [entity.velocity.x, entity.velocity.y, entity.velocity.z],
+        ...(entity.blockId !== BlockId.Tnt ? { blockId: entity.blockId } : {}),
+        ...(entity.maxFallBlocks !== undefined && entity.launchOriginY !== undefined
+          ? { launchOriginY: entity.launchOriginY, maxFallBlocks: entity.maxFallBlocks }
+          : {}),
       })),
     };
   }
@@ -472,6 +523,10 @@ export class RedstoneSystem {
         new Vec3(...snapshot.position),
         snapshot.fuseSeconds,
         snapshot.velocity,
+        snapshot.blockId,
+        snapshot.maxFallBlocks !== undefined && snapshot.launchOriginY !== undefined
+          ? { originY: snapshot.launchOriginY, maxFallBlocks: snapshot.maxFallBlocks }
+          : undefined,
       );
       restored += 1;
     }
@@ -523,6 +578,7 @@ export class RedstoneSystem {
         this.detonate(entity);
         continue;
       }
+      const falling = entity.velocity.y < 0;
       entity.velocity.y -= 32 * deltaSeconds;
       entity.velocity.x *= Math.exp(-0.5 * deltaSeconds);
       entity.velocity.z *= Math.exp(-0.5 * deltaSeconds);
@@ -536,6 +592,11 @@ export class RedstoneSystem {
       if (result.hitX) entity.velocity.x = 0;
       if (result.hitZ) entity.velocity.z = 0;
       if (result.hitY) entity.velocity.y = 0;
+      const landed = result.onGround || (falling && result.hitY);
+      if (this.shouldDetonatePlacedFall(entity, falling, landed)) {
+        this.detonate(entity);
+        continue;
+      }
       if (entity.visual) {
         const elapsed = entity.totalFuseSeconds - entity.fuseSeconds;
         const urgency = 1 - entity.fuseSeconds / entity.totalFuseSeconds;
@@ -606,7 +667,7 @@ export class RedstoneSystem {
       return;
     }
     if (this.wirePower.delete(key)) this.enqueueNeighbours(x, y, z);
-    if (block === BlockId.Tnt && this.getReceivedPower(x, y, z) > 0) this.primeTnt(x, y, z);
+    if (isTntBlock(block) && this.getReceivedPower(x, y, z) > 0) this.primeTnt(x, y, z);
   }
 
   private calculateWirePower(x: number, y: number, z: number): number {
@@ -628,7 +689,7 @@ export class RedstoneSystem {
 
   private primeAdjacentTnt(x: number, y: number, z: number): void {
     for (const [dx, dy, dz] of NEIGHBOURS) {
-      if (this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.Tnt) {
+      if (isTntBlock(this.world.getBlock(x + dx, y + dy, z + dz))) {
         this.primeTnt(x + dx, y + dy, z + dz);
       }
     }
@@ -729,7 +790,7 @@ export class RedstoneSystem {
 
   private isRelevantBlock(block: BlockId): boolean {
     return block === BlockId.RedstoneWire
-      || block === BlockId.Tnt
+      || isTntBlock(block)
       || this.sourceKindForBlock(block) !== undefined;
   }
 
@@ -749,9 +810,12 @@ export class RedstoneSystem {
     position: Vec3Like,
     fuseSeconds: number,
     velocity?: readonly [number, number, number],
+    blockId: number = BlockId.Tnt,
+    launch?: { readonly originY: number; readonly maxFallBlocks: number },
   ): PrimedTnt {
     const id = this.allocateTntId(requestedId);
-    const visual = this.host.createPrimedTnt?.(id);
+    const resolvedBlock = isTntBlock(blockId) ? blockId : BlockId.Tnt;
+    const visual = this.host.createPrimedTnt?.(id, tntTextureKey(resolvedBlock));
     if (visual) {
       this.host.setPosition(visual, position.x, position.y + 0.49, position.z);
       this.host.attach(visual);
@@ -763,21 +827,37 @@ export class RedstoneSystem {
       fuseSeconds,
       visual,
       velocity ? new Vec3(...velocity) : undefined,
+      resolvedBlock,
+      launch,
     );
     this.primedById.set(id, entity);
     this.options.onTntPrimed?.(entity);
     return entity;
   }
 
+  /** Placed TNT only. Minecart-ejected TNT has no launch fields and uses fuse. */
+  private shouldDetonatePlacedFall(
+    entity: PrimedTnt,
+    falling: boolean,
+    landed: boolean,
+  ): boolean {
+    if (entity.maxFallBlocks === undefined || entity.launchOriginY === undefined) return false;
+    const drop = tntFallDistance(entity.launchOriginY, entity.position.y);
+    if (drop >= entity.maxFallBlocks) return true;
+    return landed && falling;
+  }
+
   private detonate(entity: PrimedTnt): void {
     if (!this.primedById.delete(entity.id)) return;
     if (entity.visual) this.host.detach(entity.visual);
+    const profile = getTntProfile(entity.blockId);
     const event: RedstoneExplosionEvent = {
       id: entity.id,
       source: 'tnt',
       position: entity.position.clone().setY(entity.position.y + 0.49),
-      power: 4,
-      radius: 4,
+      power: profile.power,
+      radius: profile.radius,
+      blockId: entity.blockId,
     };
     this.explosionEvents.push(event);
     this.options.onExplosion?.(event);

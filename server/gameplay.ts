@@ -45,6 +45,7 @@ import {
   MobManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
+  igniteMinecartTntFromFireArrow,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
@@ -58,6 +59,8 @@ import {
 import { SurvivalSystem } from '../src/survival';
 import { ExplosionQueue } from '../src/world/ExplosionQueue';
 import type { DestroyedBlock } from '../src/world/Explosion';
+import { getTntProfile } from '../src/world/tnt';
+import { volumeContains, type SelectionVolume } from './services/selection';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
@@ -152,6 +155,8 @@ export class ServerGameplay {
   readonly farming: FarmingSystem;
   readonly explosions = new ExplosionQueue();
   readonly random = systemRandomFn;
+  /** Regular /claim volumes; block-claims are filtered by TNT profile instead. */
+  loadRegularClaimVolumes?: () => readonly SelectionVolume[];
   lastTickMs = 0;
   maxTickMs = 0;
   private readonly blockDelta = new Map<string, { x: number; y: number; z: number; blockId: number }>();
@@ -209,7 +214,7 @@ export class ServerGameplay {
         }
       },
       onMinecartHit: (cart, flaming) => {
-        if (flaming && cart.variant === 'tnt') this.minecarts.explodeNow(cart);
+        if (flaming) igniteMinecartTntFromFireArrow(this.minecarts, this.redstone, cart);
       },
       onSpawn: (id) => this.pushEntityEvent(id, 'projectile_spawn'),
       onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
@@ -332,7 +337,9 @@ export class ServerGameplay {
           riderYaw: rider?.controller.yaw,
         });
         for (const boom of this.minecarts.consumeExplosions()) {
-          this.enqueueExplosion(boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power);
+          this.enqueueExplosion(
+            boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power, boom.blockId,
+          );
           for (const player of players) {
             if (player.ridingCartId === boom.id) player.ridingCartId = undefined;
           }
@@ -470,6 +477,7 @@ export class ServerGameplay {
         x: primed.position.x, y: primed.position.y, z: primed.position.z,
         vx: primed.velocity.x, vy: primed.velocity.y, vz: primed.velocity.z,
         primed: true, fuse: primed.fuseSeconds,
+        blockId: primed.blockId,
       });
     }
     const falling: EntitySnapshot[] = [];
@@ -492,6 +500,9 @@ export class ServerGameplay {
         vx: cart.velocity.x, vy: cart.velocity.y, vz: cart.velocity.z,
         variant: cart.variant, primed: cart.fuseTicks > 0, fuse: cart.fuseTicks,
         passengerId: passengers?.get(cart.id),
+        ...(cart.variant === 'tnt'
+          ? { blockId: cart.tntBlockId ?? BlockId.Tnt }
+          : {}),
       });
     }
     const mobs: EntitySnapshot[] = [];
@@ -1175,15 +1186,26 @@ export class ServerGameplay {
     this.activePressurePlates = occupied;
     this.redstone.update(FIXED_DT);
     for (const event of this.redstone.consumeExplosionEvents()) {
-      this.enqueueExplosion(event.position.x, event.position.y, event.position.z, event.radius, event.power);
+      this.enqueueExplosion(
+        event.position.x, event.position.y, event.position.z, event.radius, event.power, event.blockId,
+      );
     }
   }
 
-  private enqueueExplosion(x: number, y: number, z: number, radius: number, power: number): void {
+  private enqueueExplosion(
+    x: number, y: number, z: number, radius: number, power: number, blockId?: number,
+  ): void {
     const event = this.events.createExplosion(x, y, z, radius, power);
     this.events.emit('explosion', event);
     if (event.cancelled) return;
-    this.explosions.enqueue({ x, y, z, radius, power });
+    const profile = getTntProfile(blockId);
+    const volumes = profile.canBreakRegularClaims ? [] : (this.loadRegularClaimVolumes?.() ?? []);
+    this.explosions.enqueue({
+      x, y, z, radius, power, profile,
+      canDestroy: volumes.length === 0
+        ? undefined
+        : (cx, cy, cz) => !volumes.some((volume) => volumeContains(volume, cx, cy, cz)),
+    });
   }
 
   private processExplosions(players: readonly GameplayPlayer[]): void {
@@ -1196,7 +1218,10 @@ export class ServerGameplay {
       onResolved: (job) => this.applyExplosionDamage(players, job.x, job.y, job.z, job.radius, job.power),
       onContents: (block) => { destroyed.push(block); },
       onChainedTnt: (tnt) => {
-        this.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, { blockAlreadyRemoved: true });
+        this.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, {
+          blockAlreadyRemoved: true,
+          blockId: tnt.blockId,
+        });
       },
     });
     // Same post-observation as player mining: Claims deletes by stored Claim.anchor coords.

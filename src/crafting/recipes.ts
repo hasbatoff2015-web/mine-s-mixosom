@@ -117,6 +117,16 @@ const recipes: Recipe[] = [
     output: { item: 'tnt', count: 1 }, gridSize: 3,
   },
   {
+    id: 'tnt_powerful', type: 'shapeless',
+    ingredients: [exact('tnt'), exact('gold_block')],
+    output: { item: 'tnt_powerful', count: 1 }, gridSize: 3,
+  },
+  {
+    id: 'tnt_destructive', type: 'shaped', pattern: ['OOO', 'OTO', 'OOO'],
+    key: { O: exact('obsidian'), T: exact('tnt') },
+    output: { item: 'tnt_destructive', count: 1 }, gridSize: 3,
+  },
+  {
     id: 'fire_arrow', type: 'shapeless',
     ingredients: [exact(ItemId.Arrow), exact(ItemId.LavaBucket)],
     output: { item: ItemId.FireArrow, count: 1 },

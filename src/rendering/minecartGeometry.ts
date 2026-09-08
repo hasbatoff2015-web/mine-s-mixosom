@@ -32,6 +32,7 @@ export interface MinecartVisual extends THREE.Group {
   userData: THREE.Object3D['userData'] & {
     kind: typeof MINECART_ENTITY_KIND;
     variant: 'normal' | 'tnt';
+    tntTextureKey?: string;
   };
 }
 
@@ -57,7 +58,7 @@ export class MinecartVisualFactory {
   private inner?: THREE.MeshBasicMaterial;
   private floor?: THREE.MeshBasicMaterial;
   private wheel?: THREE.MeshBasicMaterial;
-  private tnt?: THREE.MeshBasicMaterial;
+  private tntByKey = new Map<string, THREE.MeshBasicMaterial>();
   private disposed = false;
 
   create(): MinecartVisual {
@@ -113,7 +114,7 @@ export class MinecartVisualFactory {
       group,
       [MINECART_TNT_SIZE, MINECART_TNT_SIZE, MINECART_TNT_SIZE],
       [0, MINECART_FLOOR_TOP + MINECART_TNT_SEAT + MINECART_TNT_SIZE / 2, 0],
-      this.tnt ??= this.texturedMaterial(MINECART_TNT_TEXTURE_KEY),
+      this.tntMaterial(MINECART_TNT_TEXTURE_KEY),
     );
     tnt.name = MINECART_TNT_CARGO_NAME;
     tnt.visible = false;
@@ -121,10 +122,13 @@ export class MinecartVisualFactory {
     return group;
   }
 
-  setVariant(visual: THREE.Object3D, variant: 'normal' | 'tnt'): void {
+  setVariant(visual: THREE.Object3D, variant: 'normal' | 'tnt', textureKey = MINECART_TNT_TEXTURE_KEY): void {
     visual.userData.variant = variant;
+    visual.userData.tntTextureKey = textureKey;
     const cargo = visual.getObjectByName(MINECART_TNT_CARGO_NAME);
-    if (cargo) cargo.visible = variant === 'tnt';
+    if (!(cargo instanceof THREE.Mesh)) return;
+    cargo.visible = variant === 'tnt';
+    if (variant === 'tnt') cargo.material = this.tntMaterial(textureKey);
   }
 
   pulsePrimed(visual: THREE.Object3D, fuseRatio: number): void {
@@ -144,6 +148,14 @@ export class MinecartVisualFactory {
     this.geometryCache.clear();
     this.materials.length = 0;
     this.textures.length = 0;
+  }
+
+  private tntMaterial(textureKey: string): THREE.MeshBasicMaterial {
+    const existing = this.tntByKey.get(textureKey);
+    if (existing) return existing;
+    const material = this.texturedMaterial(textureKey);
+    this.tntByKey.set(textureKey, material);
+    return material;
   }
 
   private addBox(

@@ -168,8 +168,14 @@ describe('Anarchy claim-anchor blocks', () => {
     };
   }
 
-  function detonateTntBeside(world: WorldInstance, x: number, y: number, z: number): void {
-    world.world.setBlock(x, y, z, BlockId.Tnt);
+  function detonateTntBeside(
+    world: WorldInstance,
+    x: number,
+    y: number,
+    z: number,
+    blockId: BlockId = BlockId.TntPowerful,
+  ): void {
+    world.world.setBlock(x, y, z, blockId);
     expect(world.gameplay.redstone.primeTnt(x, y, z, 0.05)).toBeDefined();
     world.tick();
   }

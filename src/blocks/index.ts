@@ -4,3 +4,4 @@ export * from './blockFamilies';
 export * from './mining';
 export * from './placement';
 export * from './soundGroups';
+export * from './tnt';

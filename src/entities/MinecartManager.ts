@@ -1,5 +1,5 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
-import { BlockId } from '../blocks';
+import { BlockId, isTntBlock, tntItemId, tntTextureKey } from '../blocks';
 import { clamp, FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
 import { interpolateVec3 } from '../core/entityInterpolation';
 import type { VoxelWorld } from '../world/World';
@@ -34,10 +34,13 @@ export const TNT_MINECART_FUSE_TICKS = 80;
 export const TNT_MINECART_EXPLOSION_POWER = 4;
 export const TNT_MINECART_EXPLOSION_RADIUS = 4;
 export const MINECART_MAX_SPEED = WALK_SPEED;
+/** On-rail player overlap impulse. Off-rail uses this times OFF_RAIL_PUSH_FACTOR. */
+export const MINECART_PUSH_GAIN = 0.28;
+export const MINECART_OFF_RAIL_PUSH_FACTOR = 0.5;
 const ACCEL_TIME = 0.5;
 const COAST_FRICTION = 0.965;
 const SLOPE_GRAVITY = 6.5;
-const PUSH_GAIN = 0.28;
+const PUSH_GAIN = MINECART_PUSH_GAIN;
 const GROUND_FRICTION = 0.78;
 const AIR_DRAG = 0.995;
 const DERAIL_GRACE_TICKS = 4;
@@ -91,7 +94,7 @@ export function resolveFlintAndSteelUse(
   if (cart === 'primed') return { type: 'prime-cart', wear: true };
   if (cart === 'already') return { type: 'already-primed', wear: false };
   if (!hit) return { type: 'none' };
-  if (hit.block === BlockId.Tnt) {
+  if (isTntBlock(hit.block)) {
     return { type: 'prime-tnt-block', x: hit.x, y: hit.y, z: hit.z, wear: true };
   }
   return {
@@ -115,6 +118,8 @@ export interface SerializedMinecart {
   readonly variant?: MinecartVariant;
   readonly fuseTicks?: number;
   readonly onRail?: boolean;
+  /** Stored TNT cargo type. Missing on old saves → ordinary TNT. */
+  readonly tntBlockId?: number;
 }
 
 export interface MinecartEntity {
@@ -127,6 +132,8 @@ export interface MinecartEntity {
   pitch: number;
   rider: boolean;
   variant: MinecartVariant;
+  /** Set when `variant === 'tnt'`. Ordinary / powerful / destructive. */
+  tntBlockId?: number;
   fuseTicks: number;
   alongSpeed: number;
   progress: number;
@@ -146,6 +153,13 @@ export interface MinecartExplosionEvent {
   readonly position: Vec3;
   readonly power: number;
   readonly radius: number;
+  readonly blockId?: number;
+}
+
+export interface EjectedTntCargo {
+  readonly blockId: number;
+  readonly position: Vec3;
+  readonly velocity: Vec3;
 }
 
 export interface MinecartPushSource {
@@ -187,10 +201,18 @@ export class MinecartManager {
     return this.carts.size;
   }
 
-  spawn(x: number, y: number, z: number, id?: string, variant: MinecartVariant = 'normal'): MinecartEntity | undefined {
+  spawn(
+    x: number,
+    y: number,
+    z: number,
+    id?: string,
+    variant: MinecartVariant = 'normal',
+    tntBlockId?: number,
+  ): MinecartEntity | undefined {
     if (this.disposed || this.carts.size >= this.maxCarts) return undefined;
     const entityId = id ?? `cart-${this.idCounter += 1}`;
-    const visual = this.host.createMinecart(variant) as EntityVisual | undefined;
+    const cargoId = variant === 'tnt' ? resolvedTntBlockId(tntBlockId) : undefined;
+    const visual = this.host.createMinecart(variant, cargoId ? tntTextureKey(cargoId) : undefined) as EntityVisual | undefined;
     if (visual) this.host.attach(visual);
     const entity: MinecartEntity = {
       id: entityId,
@@ -202,6 +224,7 @@ export class MinecartManager {
       pitch: 0,
       rider: false,
       variant,
+      tntBlockId: cargoId,
       fuseTicks: 0,
       alongSpeed: 0,
       progress: 0.5,
@@ -241,6 +264,26 @@ export class MinecartManager {
     return this.carts.get(id);
   }
 
+  /**
+   * Online client: apply an authoritative cart snapshot, including TNT cargo.
+   * Must update the visual immediately — `update()` is not ticked online.
+   */
+  applyNetworkSnapshot(cart: MinecartEntity, snapshot: {
+    readonly variant: MinecartVariant;
+    readonly tntBlockId?: number;
+    readonly primed?: boolean;
+    readonly fuse?: number;
+    readonly rider?: boolean;
+  }): void {
+    cart.variant = snapshot.variant;
+    cart.tntBlockId = snapshot.variant === 'tnt'
+      ? resolvedTntBlockId(snapshot.tntBlockId)
+      : undefined;
+    cart.fuseTicks = snapshot.primed ? Math.max(1, Math.round(snapshot.fuse ?? 1)) : 0;
+    cart.rider = Boolean(snapshot.rider);
+    this.syncCargoVisual(cart);
+  }
+
   removeById(id: string): boolean {
     const cart = this.carts.get(id);
     if (!cart) return false;
@@ -254,25 +297,42 @@ export class MinecartManager {
   }
 
   handleFlintUse(
-    origin: Vec3Like,
-    direction: Vec3Like,
-    reach: number,
-    ignoreId?: string,
+    _origin: Vec3Like,
+    _direction: Vec3Like,
+    _reach: number,
+    _ignoreId?: string,
   ): 'primed' | 'already' | 'none' {
-    const hit = this.raycast(origin, direction, reach, ignoreId);
-    if (hit?.cart.variant !== 'tnt') return 'none';
-    return this.primeTnt(hit.cart) ? 'primed' : 'already';
+    // TNT in a minecart ignites only from a fire arrow.
+    return 'none';
   }
 
   isRideable(cart: MinecartEntity): boolean {
     return cart.variant === 'normal';
   }
 
-  insertTnt(cart: MinecartEntity): boolean {
+  insertTnt(cart: MinecartEntity, blockId: number = BlockId.Tnt): boolean {
     if (cart.variant === 'tnt') return false;
+    if (!isTntBlock(blockId)) return false;
     cart.variant = 'tnt';
-    if (cart.visual) this.host.setMinecartVariant(cart.visual, 'tnt');
+    cart.tntBlockId = blockId;
+    this.syncCargoVisual(cart);
     return true;
+  }
+
+  /** Removes stored TNT cargo and returns it so primed TNT can be launched. */
+  ejectTntCargo(cart: MinecartEntity): EjectedTntCargo | undefined {
+    if (cart.variant !== 'tnt') return undefined;
+    const blockId = resolvedTntBlockId(cart.tntBlockId);
+    const cargo: EjectedTntCargo = {
+      blockId,
+      position: cart.position.clone(),
+      velocity: cart.velocity.clone(),
+    };
+    cart.variant = 'normal';
+    cart.tntBlockId = undefined;
+    cart.fuseTicks = 0;
+    this.syncCargoVisual(cart);
+    return cargo;
   }
 
   primeTnt(cart: MinecartEntity, ticks = TNT_MINECART_FUSE_TICKS): boolean {
@@ -293,7 +353,9 @@ export class MinecartManager {
     if (cart.id === riddenId) return undefined;
     if (!this.carts.has(cart.id)) return undefined;
     if (cart.variant === 'tnt' && cart.fuseTicks > 0) return undefined;
-    const items = cart.variant === 'tnt' ? ['minecart', 'tnt'] : ['minecart'];
+    const items = cart.variant === 'tnt'
+      ? ['minecart', tntItemId(resolvedTntBlockId(cart.tntBlockId))]
+      : ['minecart'];
     const position = cart.position.clone();
     if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(cart.id);
@@ -303,19 +365,35 @@ export class MinecartManager {
   push(cart: MinecartEntity, direction: Vec3Like, strength = 0.18): void {
     const tangent = this.tangentOf(cart);
     const along = (direction.x * tangent.x + direction.z * tangent.z) * strength * 20;
-    cart.alongSpeed = clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    if (cart.rail) {
+      cart.alongSpeed = clamp(cart.alongSpeed + along, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+      return;
+    }
+    const impulse = along * MINECART_OFF_RAIL_PUSH_FACTOR;
+    cart.velocity.x += tangent.x * impulse;
+    cart.velocity.z += tangent.z * impulse;
+    this.clampHorizontalSpeed(cart);
   }
 
   tryPushFromPlayer(player: MinecartPushSource, ridingId?: string): void {
     for (const cart of this.carts.values()) {
       if (cart.id === ridingId) continue;
       if (!this.overlapsCart(cart, player.aabb)) continue;
-      const tangent = this.tangentOf(cart);
-      const along = player.velocity.x * tangent.x + player.velocity.z * tangent.z;
-      if (Math.abs(along) <= 0.05) continue;
-      cart.alongSpeed += along * PUSH_GAIN;
-      const cap = MINECART_MAX_SPEED;
-      cart.alongSpeed = clamp(cart.alongSpeed, -cap, cap);
+      if (cart.rail) {
+        const tangent = this.tangentOf(cart);
+        const along = player.velocity.x * tangent.x + player.velocity.z * tangent.z;
+        if (Math.abs(along) <= 0.05) continue;
+        cart.alongSpeed += along * PUSH_GAIN;
+        cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+        continue;
+      }
+      const hx = player.velocity.x;
+      const hz = player.velocity.z;
+      if (Math.hypot(hx, hz) <= 0.05) continue;
+      const gain = PUSH_GAIN * MINECART_OFF_RAIL_PUSH_FACTOR;
+      cart.velocity.x += hx * gain;
+      cart.velocity.z += hz * gain;
+      this.clampHorizontalSpeed(cart);
     }
   }
 
@@ -429,6 +507,9 @@ export class MinecartManager {
       variant: cart.variant,
       fuseTicks: cart.fuseTicks,
       onRail: cart.rail !== undefined,
+      ...(cart.variant === 'tnt' && cart.tntBlockId && cart.tntBlockId !== BlockId.Tnt
+        ? { tntBlockId: cart.tntBlockId }
+        : {}),
     }));
   }
 
@@ -436,7 +517,12 @@ export class MinecartManager {
     this.clear();
     for (const entry of serialized) {
       const variant = entry.variant === 'tnt' ? 'tnt' : 'normal';
-      const cart = this.spawn(entry.position[0] - 0.5, entry.position[1], entry.position[2] - 0.5, entry.id, variant);
+      const tntBlockId = variant === 'tnt'
+        ? resolvedTntBlockId(entry.tntBlockId)
+        : undefined;
+      const cart = this.spawn(
+        entry.position[0] - 0.5, entry.position[1], entry.position[2] - 0.5, entry.id, variant, tntBlockId,
+      );
       if (!cart) continue;
       cart.position.set(entry.position[0], entry.position[1], entry.position[2]);
       cart.previousPosition.copy(cart.position);
@@ -620,6 +706,22 @@ export class MinecartManager {
     cart.pitch = pose.pitch;
   }
 
+  private clampHorizontalSpeed(cart: MinecartEntity): void {
+    const speed = Math.hypot(cart.velocity.x, cart.velocity.z);
+    if (speed <= MINECART_MAX_SPEED || speed < 1e-8) return;
+    const scale = MINECART_MAX_SPEED / speed;
+    cart.velocity.x *= scale;
+    cart.velocity.z *= scale;
+  }
+
+  private syncCargoVisual(cart: MinecartEntity): void {
+    if (!cart.visual) return;
+    const texture = cart.variant === 'tnt'
+      ? tntTextureKey(resolvedTntBlockId(cart.tntBlockId))
+      : undefined;
+    this.host.setMinecartVariant(cart.visual, cart.variant, texture);
+  }
+
   private tangentOf(cart: MinecartEntity): { x: number; z: number } {
     if (!cart.rail) return { x: Math.sin(cart.yaw), z: Math.cos(cart.yaw) };
     const sample = sampleRail(cart.rail, cart.progress);
@@ -644,6 +746,7 @@ export class MinecartManager {
       position: cart.position.clone(),
       power: TNT_MINECART_EXPLOSION_POWER,
       radius: TNT_MINECART_EXPLOSION_RADIUS,
+      blockId: resolvedTntBlockId(cart.tntBlockId),
     });
     if (cart.visual) this.host.detach(cart.visual);
     this.carts.delete(cart.id);
@@ -653,11 +756,15 @@ export class MinecartManager {
     if (!cart.visual) return;
     this.host.setPosition(cart.visual, cart.position.x, cart.position.y, cart.position.z);
     this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
-    this.host.setMinecartVariant(cart.visual, cart.variant);
+    this.syncCargoVisual(cart);
     this.host.applyLight(
       cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,
     );
   }
+}
+
+function resolvedTntBlockId(blockId: number | undefined): number {
+  return blockId !== undefined && isTntBlock(blockId) ? blockId : BlockId.Tnt;
 }
 
 function rayAabb(

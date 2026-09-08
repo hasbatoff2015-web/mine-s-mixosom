@@ -17,11 +17,12 @@ import {
   TNT_MINECART_EXPLOSION_RADIUS,
   TNT_MINECART_FUSE_TICKS,
   entryProgress,
+  igniteMinecartTntFromFireArrow,
   minecartDismountFromSprint,
   resolveFlintAndSteelUse,
 } from '../src/entities';
 import { DESKTOP_SNEAK_CODE, DESKTOP_SPRINT_CODES } from '../src/input/InputManager';
-import { Inventory, createItemStack, damageItem } from '../src/inventory';
+import { Inventory, createItemStack } from '../src/inventory';
 import { ItemId } from '../src/items';
 import { PlayerController } from '../src/player';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
@@ -45,6 +46,7 @@ import { SurvivalSystem, type DamageResult } from '../src/survival';
 import { allCraftingBookEntries } from '../src/ui/recipeBook';
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
+import { RedstoneSystem } from '../src/redstone';
 import { asObject3D } from './asObject3D';
 
 const grid = (...rows: readonly (readonly (string | null)[])[]): readonly (string | null)[] => rows.flat();
@@ -569,6 +571,7 @@ describe('TNT minecart', () => {
     inventory.setSlot(0, createItemStack('tnt', 4));
     expect(manager.insertTnt(cart)).toBe(true);
     expect(cart.variant).toBe('tnt');
+    expect(cart.tntBlockId).toBe(BlockId.Tnt);
     expect((cart.visual!.getObjectByName('tnt-cargo') as THREE.Object3D | undefined)?.visible).toBe(true);
     expect(manager.isRideable(cart)).toBe(false);
     expect(inventory.remove('tnt', 1)).toBe(1);
@@ -912,7 +915,7 @@ describe('minecart Shift dismount', () => {
 });
 
 describe('TNT minecart ignition routing', () => {
-  it('primes from flint on the entity without placing Fire, wears flint once, and is idempotent', () => {
+  it('does not prime TNT cargo with flint; fire on the rail still does not ignite the cart', () => {
     const world = new VoxelWorld('tnt-flint');
     platform(world, 4, 4, 6, 6);
     world.setBlock(5, 41, 5, BlockId.Rail);
@@ -922,33 +925,20 @@ describe('TNT minecart ignition routing', () => {
     manager.insertTnt(cart);
     const origin = new THREE.Vector3(5.5, 42.1, 5.5);
     const down = new THREE.Vector3(0, -1, 0);
-    expect(manager.handleFlintUse(origin, down, PLAYER_REACH)).toBe('primed');
-    expect(cart.fuseTicks).toBe(TNT_MINECART_FUSE_TICKS);
+    expect(manager.handleFlintUse(origin, down, PLAYER_REACH)).toBe('none');
+    expect(cart.fuseTicks).toBe(0);
+    expect(cart.variant).toBe('tnt');
     expect(fireCount(world, 4, 40, 4, 6, 43, 6)).toBe(0);
     const railHit = { block: BlockId.Rail, x: 5, y: 41, z: 5, normal: { x: 0, y: 1, z: 0 } };
-    expect(resolveFlintAndSteelUse('primed', railHit).type).toBe('prime-cart');
-    expect(resolveFlintAndSteelUse('already', railHit).type).toBe('already-primed');
     expect(resolveFlintAndSteelUse('none', railHit).type).toBe('ignite-cell');
     expect(resolveFlintAndSteelUse('none', {
       block: BlockId.Tnt, x: 5, y: 41, z: 5, normal: { x: 0, y: 1, z: 0 },
     }).type).toBe('prime-tnt-block');
     expect(flamingArrowBlockHit(BlockId.Tnt)).toBe('prime_tnt');
-    const stack = createItemStack(ItemId.FlintAndSteel);
-    const worn = damageItem(stack, 1);
-    expect(worn?.durability).toBe(63);
-    expect(manager.handleFlintUse(origin, down, PLAYER_REACH)).toBe('already');
-    expect(cart.fuseTicks).toBe(TNT_MINECART_FUSE_TICKS);
-    expect(manager.consumeExplosions()).toHaveLength(0);
-    expect(fireCount(world, 4, 40, 4, 6, 43, 6)).toBe(0);
-    const startZ = cart.position.z;
-    cart.alongSpeed = 2;
-    for (let tick = 0; tick < 8; tick += 1) manager.update(0.05);
-    expect(cart.fuseTicks).toBe(TNT_MINECART_FUSE_TICKS - 8);
-    expect(cart.position.z).not.toBeCloseTo(startZ, 2);
     manager.dispose();
   });
 
-  it('detonates immediately from a fire arrow, including a primed cart, and ignores a normal arrow', () => {
+  it('ejects stored TNT from a fire arrow and ignores a normal arrow', () => {
     const world = new VoxelWorld('tnt-arrow-route');
     platform(world, 4, 4, 6, 8);
     world.setBlock(5, 41, 6, BlockId.Rail);
@@ -956,13 +946,14 @@ describe('TNT minecart ignition routing', () => {
     const scene = new THREE.Scene();
     const manager = new MinecartManager(scene, world, new ItemVisualFactory());
     const mobs = new MobManager(scene, world, { automaticSpawning: false });
+    const redstone = new RedstoneSystem(world);
     const cart = manager.spawn(5, 41, 6)!;
-    manager.insertTnt(cart);
+    manager.insertTnt(cart, BlockId.TntPowerful);
     const arrows = new PlayerArrowManager(scene, world, mobs, {
       minecarts: manager,
       random: noSpreadRandom(),
       onMinecartHit: (hit, flaming) => {
-        if (flaming && hit.variant === 'tnt') manager.explodeNow(hit);
+        if (flaming) igniteMinecartTntFromFireArrow(manager, redstone, hit);
       },
       onBlockHit: (x, y, z, flaming) => {
         if (flaming) expect(flamingArrowBlockHit(world.getBlock(x, y, z, false))).not.toBe('none');
@@ -971,21 +962,19 @@ describe('TNT minecart ignition routing', () => {
     arrows.spawn(new THREE.Vector3(5.5, 41.55, 4.4), new THREE.Vector3(0, 0, 1), 3, 2, false, false);
     arrows.tick(0.05);
     expect(manager.count).toBe(1);
-    expect(cart.fuseTicks).toBe(0);
+    expect(cart.variant).toBe('tnt');
+    expect(redstone.primedTntCount).toBe(0);
     arrows.spawn(new THREE.Vector3(5.5, 41.55, 4.4), new THREE.Vector3(0, 0, 1), 3, 2, false, true);
     arrows.tick(0.05);
-    expect(manager.count).toBe(0);
-    expect(manager.consumeExplosions()).toHaveLength(1);
+    expect(cart.variant).toBe('normal');
+    expect(cart.tntBlockId).toBeUndefined();
+    expect(manager.count).toBe(1);
+    expect(redstone.primedTntCount).toBe(1);
+    expect(redstone.primedTnt[0]?.blockId).toBe(BlockId.TntPowerful);
     expect(fireCount(world, 4, 40, 5, 6, 42, 8)).toBe(0);
-
-    const primed = manager.spawn(5, 41, 6)!;
-    manager.insertTnt(primed);
-    expect(manager.primeTnt(primed)).toBe(true);
-    arrows.spawn(new THREE.Vector3(5.5, 41.55, 4.4), new THREE.Vector3(0, 0, 1), 3, 2, false, true);
-    arrows.tick(0.05);
-    expect(manager.count).toBe(0);
     arrows.dispose();
     mobs.dispose();
     manager.dispose();
+    redstone.dispose();
   });
 });

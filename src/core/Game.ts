@@ -85,6 +85,7 @@ import {
   MinecartManager,
   dropsForBrokenMinecart,
   minecartDismountFromSprint,
+  igniteMinecartTntFromFireArrow,
   MobManager,
   type MinecartEntity,
   type MobPlayerDamageEvent,
@@ -337,6 +338,7 @@ import {
   defaultSlabType,
 } from '../world/blockGeometry';
 import { ExplosionQueue } from '../world/ExplosionQueue';
+import { getTntProfile } from '../world/tnt';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 
 export interface GameSession {
@@ -2471,7 +2473,7 @@ export class Game {
       onMinecartHit: (cart, flaming) => {
         const session = this.session;
         if (!session || !flaming) return;
-        if (cart.variant === 'tnt') session.minecarts.explodeNow(cart);
+        igniteMinecartTntFromFireArrow(session.minecarts, session.redstone, cart);
       },
     });
     const playerVisual = new PlayerVisual(
@@ -3840,6 +3842,7 @@ export class Game {
             z: boom.position.z,
             radius: boom.radius,
             power: boom.power,
+            profile: getTntProfile(boom.blockId),
           });
           if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
         }
@@ -4398,6 +4401,7 @@ export class Game {
         z: event.position.z,
         radius: event.radius,
         power: event.power,
+        profile: getTntProfile(event.blockId),
       });
     }
   }
@@ -4447,7 +4451,10 @@ export class Game {
         });
       },
       onChainedTnt: (tnt) => {
-        session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, { blockAlreadyRemoved: true });
+        session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, {
+          blockAlreadyRemoved: true,
+          blockId: tnt.blockId,
+        });
       },
     });
     if (changed.length > 0) session.redstone.notifyBlocksChanged(changed);

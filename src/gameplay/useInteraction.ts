@@ -27,6 +27,8 @@ import {
   isRailBlock,
   isSlabBlock,
   isStairBlock,
+  isTntBlock,
+  tntBlockIdFromItem,
   ladderPlacementFromHit,
   lanternPlacementFromHit,
   slabTypeFromHit,
@@ -217,12 +219,12 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
   if (input.itemId === ItemId.Bow) return 'start-bow';
   if (cartCloser) {
     if (input.itemId === ItemId.FlintAndSteel) return 'flint';
-    if (input.itemId === 'tnt') return 'insert-tnt-cart';
+    if (tntBlockIdFromItem(input.itemId)) return 'insert-tnt-cart';
     if (input.cartRay?.rideable) return 'mount-cart';
     return 'none';
   }
   if (input.itemId === ItemId.FlintAndSteel) return 'flint';
-  if (input.itemId === 'tnt') return 'insert-tnt-cart';
+  if (tntBlockIdFromItem(input.itemId)) return 'insert-tnt-cart';
   if (input.itemId === ItemId.Minecart) return 'place-minecart';
   if (input.nearbyRideableCart) return 'mount-cart';
   if (input.itemId === ItemId.WaterBucket || input.itemId === ItemId.LavaBucket) return 'place-bucket';
@@ -316,7 +318,8 @@ export function performUseHeld(ctx: UseSimulationContext): void {
       applyFlint(ctx, origin, direction, undefined);
       return;
     }
-    if (stack?.itemId === 'tnt' && insertTntCart(ctx, undefined, origin, direction)) return;
+    const tntId = tntBlockIdFromItem(stack?.itemId);
+    if (tntId && insertTntCart(ctx, undefined, origin, direction, tntId)) return;
     if (ctx.minecarts.isRideable(cartRay.cart)) ctx.enterVehicle?.(cartRay.cart.id);
     return;
   }
@@ -325,7 +328,8 @@ export function performUseHeld(ctx: UseSimulationContext): void {
     applyFlint(ctx, origin, direction, hit);
     return;
   }
-  if (stack?.itemId === 'tnt' && insertTntCart(ctx, hit, origin, direction)) return;
+  const tntId = tntBlockIdFromItem(stack?.itemId);
+  if (tntId && insertTntCart(ctx, hit, origin, direction, tntId)) return;
   if (stack?.itemId === ItemId.Minecart) {
     placeMinecartOnRail(ctx, hit);
     return;
@@ -881,7 +885,7 @@ function applyFlint(
 
 function igniteCell(ctx: UseSimulationContext, x: number, y: number, z: number): boolean {
   const block = ctx.world.getBlock(x, y, z, false);
-  if (block === BlockId.Tnt) {
+  if (isTntBlock(block)) {
     ctx.redstone.primeTnt(x, y, z);
     return true;
   }
@@ -895,11 +899,12 @@ function insertTntCart(
   hit: VoxelHit | undefined,
   origin: Vec3Like,
   direction: Vec3Like,
+  blockId: number,
 ): boolean {
   const cart = ctx.minecarts.raycast(origin, direction, ctx.reach, ctx.ridingCartId)?.cart
     ?? (hit ? ctx.minecarts.cartAt(hit.x, hit.y, hit.z) : ctx.minecarts.nearest(ctx.position, 1.6));
-  if (!cart || !ctx.minecarts.insertTnt(cart)) return false;
-  ctx.effects?.playBlock?.('place', BlockId.Tnt, cart.position.x, cart.position.y, cart.position.z);
+  if (!cart || !ctx.minecarts.insertTnt(cart, blockId)) return false;
+  ctx.effects?.playBlock?.('place', blockId as BlockId, cart.position.x, cart.position.y, cart.position.z);
   ctx.effects?.swing?.();
   if (ctx.gamemode === 'survival') consumeHeld(ctx, 1);
   if (ctx.ridingCartId === cart.id) ctx.ridingCartId = undefined;

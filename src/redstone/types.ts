@@ -20,6 +20,11 @@ export interface SerializedPrimedTnt {
   readonly position: readonly [number, number, number];
   readonly fuseSeconds: number;
   readonly velocity?: readonly [number, number, number];
+  /** Missing on old saves → ordinary TNT. */
+  readonly blockId?: number;
+  /** Placed TNT fall: explode after this much downward travel. Minecart TNT must omit these. */
+  readonly launchOriginY?: number;
+  readonly maxFallBlocks?: number;
 }
 
 export interface SerializedRedstoneState {
@@ -34,6 +39,7 @@ export interface RedstoneExplosionEvent {
   readonly position: Vec3;
   readonly power: number;
   readonly radius: number;
+  readonly blockId: number;
 }
 
 export interface RedstoneUpdateStats {

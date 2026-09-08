@@ -112,11 +112,9 @@ describe('lighting, physics and interaction polish', () => {
     falling.dispose();
   });
 
-  it('applies gravity to primed TNT and keeps the fuse', () => {
+  it('applies gravity to primed TNT and keeps the fuse before the 20-block fall cap', () => {
     const world = new VoxelWorld('primed-fall');
-    const scene = new THREE.Scene();
     clearColumn(world, 3, 3);
-    writeBlock(world, 3, 40, 3, BlockId.Stone);
     writeBlock(world, 3, 48, 3, BlockId.Tnt);
     const redstone = new RedstoneSystem(world);
     expect(redstone.primeTnt(3, 48, 3)).toBeDefined();
@@ -125,6 +123,7 @@ describe('lighting, physics and interaction polish', () => {
     expect(redstone.primedTntCount).toBe(1);
     expect(redstone.primedTnt[0]!.position.y).toBeLessThan(startY - 1);
     expect(redstone.primedTnt[0]!.fuseSeconds).toBeGreaterThan(2);
+    expect(startY - redstone.primedTnt[0]!.position.y).toBeLessThan(20);
     redstone.dispose();
   }, 15_000);
 

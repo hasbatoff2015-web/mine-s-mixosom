@@ -1,5 +1,37 @@
 # Roadmap
 
+## 2026-09-08: Placed TNT fall distance (not minecart)
+
+- [x] Apply 20/30 downward fall only to primed **placed** TNT (`primeTnt` sets `launchOriginY` + `maxFallBlocks`).
+- [x] Remove the mistaken 20/30 vertical flight from TNT minecart (`launchMinecartTnt` has hop/fuse only).
+- [x] Tests: placed ordinary 20, powerful/destructive 30, floor before cap, startY from primed Y; minecart does not fly down 20/30; `tntBlockId` + chain + fire-arrow-only stay.
+- [x] Owner live QA: flint a placed TNT over a drop (20/30/30) vs fire-arrow a TNT cart (no forced fall).
+
+## 2026-09-08: TNT minecart fall distance
+
+- [x] Diagnose why 20/30 did not change live flight (hop-land on rail support at drop≈0).
+- **Superseded:** that 20/30 cap belonged to placed TNT, not minecart cargo. See placed-TNT fall pass.
+
+## 2026-09-08: TNT in minecart online + off-rail push
+
+- [x] Store cargo as `tntBlockId` (ordinary/powerful/destructive), not a boolean variant.
+- [x] Authoritative snapshot sync (`EntitySnapshot.blockId`) so cargo is visible immediately, including late joiners.
+- [x] Allow all three TNT item IDs into a minecart; reuse the cargo mesh with `block/tnt*` textures.
+- [x] Ignite cart TNT only from a fire arrow; flint and ordinary arrows must not.
+- [x] Fire-arrow ignition works inside others' block-claims without weakening place/break protection.
+- [x] Eject primed TNT of the stored type (`vy=4`, 4s fuse); chain keeps `blockId`. Fall cap 20/30 is placed TNT only.
+- [x] Off-rail player push at 50% of `MINECART_PUSH_GAIN`; on-rail push unchanged.
+- [ ] Owner live Anarchy QA: two clients, three TNT types in carts, fire-arrow vs flint, claim interior shot, off-rail shove.
+
+## 2026-09-08: Anarchy TNT types
+
+- [x] Keep ordinary TNT radius 4; never break iron/gold/diamond anchors or regular `/claim` voxels.
+- [x] Add powerful TNT (`tnt_powerful` 162, radius 6): breaks anchors, obsidian still shields spatially.
+- [x] Add destructive TNT (`tnt_destructive` 163, ordinary radius): breaks anchors and obsidian, no obsidian shield.
+- [x] Extend `ExplosionJob` with `TntProfile` + optional `canDestroy`; voxel DDA obsidian occlusion; chain `blockId`.
+- [x] Shapeless TNT+gold_block and shaped 8-obsidian+TNT recipes; recolor 32×32 textures; same primed mesh/pulse.
+- [ ] Owner live Anarchy QA: craft both types, obsidian wall, block-claim vs `/claim`, mixed chain.
+
 ## 2026-09-08: Armor z-fighting + Titanium 20
 
 - [x] Render all alpha-tested armor and leather overlay as opaque cutout with depth test/write enabled.
