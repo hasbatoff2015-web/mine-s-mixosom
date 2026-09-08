@@ -226,6 +226,7 @@ export class AnarchyServer {
       sink,
       name: message.name,
       sessionToken: message.sessionToken,
+      appearance: message.appearance,
     });
     if ('error' in result) {
       this.send(socket, { type: 'error', code: 'join_failed', message: result.error });
@@ -250,7 +251,7 @@ export class AnarchyServer {
       worldId: this.world.worldId,
       timeOfDay: this.world.world.timeOfDay,
       spawn: this.world.spawn,
-      you: player.snapshot(),
+      you: { ...player.snapshot(), appearance: player.appearance },
       inventory: player.inventory.serialize(),
       players: others,
       modifications: this.world.modifications(),
@@ -274,6 +275,12 @@ export class AnarchyServer {
     this.send(socket, { type: 'holograms', holograms: [...this.world.holograms.list()] });
     if (!resumed) {
       this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
+    } else {
+      this.world.broadcast({
+        type: 'player_appearance',
+        playerId: player.id,
+        appearance: player.appearance,
+      }, player.id);
     }
     this.world.broadcast({
       type: 'status',
@@ -469,6 +476,9 @@ export class AnarchyServer {
         return;
       case 'vehicle_input':
         this.world.vehicleInput(player, message);
+        return;
+      case 'appearance':
+        this.world.setAppearance(player, message);
         return;
     }
   }

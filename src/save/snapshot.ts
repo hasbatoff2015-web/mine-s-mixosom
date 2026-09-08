@@ -78,6 +78,7 @@ function parsePlayer(value: unknown): SerializedPlayerState {
     ...(parseVec3(value.spawnPoint) ? { spawnPoint: parseVec3(value.spawnPoint) } : {}),
     inventory: value.inventory ?? emptyInventoryBlob(),
     ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
+    ...(value.appearance !== undefined ? { appearance: value.appearance } : {}),
   };
 }
 
@@ -104,6 +105,7 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     ...(value.survival !== undefined ? { survival: value.survival } : {}),
     ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
     ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
+    ...(value.appearance !== undefined ? { appearance: value.appearance } : {}),
   };
 }
 

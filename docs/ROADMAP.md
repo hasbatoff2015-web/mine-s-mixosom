@@ -529,6 +529,15 @@
 - [x] Actual-browser 28-case desktop/mobile matrix plus Creative and World Select interaction smoke; zero browser console diagnostics.
 - [ ] Native-device review with actual touch safe-area insets, OS browser chrome and gameplay pointer lock; automated viewport emulation does not close that hardware gate.
 - [ ] Resolve unrelated full-suite CPU timeouts/fingerprint/parser/RPC baseline separately; do not relax them inside a UI task.
+## 2026-09-08: player skin selector, appearance sync, nameplates
+
+- [x] Main-menu «Персонаж» preview uses canonical `PlayerVisual` + `MinecraftSkinRegistry` + `PlayerSkinGeometryCache`.
+- [x] Skin selector lists all 45 production skins; preview/cancel/confirm; confirm goes through `Game.setPlayerAppearance()`.
+- [x] Client stores `{ skinId, model, layers }` in `fc.player.appearance`; Online Anarchy is server-authoritative and persists in `players.json`.
+- [x] Join/welcome/`player_joined` carry appearance metadata; live change uses `appearance` / `player_appearance`; never PNG/base64/texture bytes and never per-tick appearance.
+- [x] Remote nameplates (nickname + ❤ HP) are player presentation, billboard sprites, interpolated with `RemotePlayerView`, hidden in first/third person for the local player, and follow existing invisibility + distance fade.
+- [ ] Owner two-client visual QA of selector, live skin change, nameplate damage/heal, and invisibility.
+
 ## 2026-09-02: integrate PR #31 player presentation with authoritative main
 
 - [x] Modern Java 64×64 skin contract; 45 unique supplied skins + authored UV QA sheet; Classic/Slim metadata and all six outer-layer toggles.
@@ -538,14 +547,14 @@
 - [x] Render-frame locomotion/use/combat poses, third-person held items from `ItemVisualFactory`, entity light/hurt/invisibility.
 - [x] DEV `?qaPlayer=1`, automated skin/asset/animator/camera tests, live WebGL visual QA with clean console.
 - [ ] Before publication, confirm ownership/licensing of every user-supplied skin; recognizable third-party character art is not cleared by code integration.
-- [ ] After UI PR integration: thin character/skin selector + local IndexedDB custom PNG; reuse `Game.setPlayerAppearance`, no settings redesign in this branch.
+- [x] After UI PR integration: character/skin selector in the main menu using canonical `PlayerVisual` + `Game.setPlayerAppearance()`; localStorage appearance; no custom PNG import yet.
+- [x] Later appearance metadata: rare `{ skinId, model, layers }` join/`appearance`/`player_appearance` events; never texture bytes in snapshots.
 - [x] Merge authoritative Online Anarchy / GameplayKernel / EntityHost / tooling main and merged PR #28 without restoring client world simulation.
 - [x] Replace the `RemotePlayerView` box with shared `PlayerVisual`; keep snapshot interpolation ownership and feed only available authoritative movement/state.
 - [x] Keep protocol unchanged for this integration: default remote appearance, neutral empty hand, no guessed item and no raw/per-tick skin payload.
 - [x] Preserve F5/input/pointer-lock/session recovery and authoritative eye/look targeting in all perspectives.
 - [x] Automated acceptance: focused 41/41, expanded player/server/network/overlay 236/236, sim 42/42, server 73/73, typechecks/boundaries/smokes/build/size/archive PASS; exact-main full-suite comparison adds no new failure class.
 - [x] DEV WebGL acceptance for Classic/Slim, outer layers, all poses, held categories, first/back/front and merged breaking-overlay harness.
-- [ ] Later appearance metadata: rare `{ skinId, model, layers? }` join/change event after selector/rights decisions; never texture bytes in snapshots.
 - [ ] Hardware gameplay acceptance: native pointer-lock F5/camera collision against tight caves/stairs/fences, landscape mobile performance and two visible browser clients. Pure collision/server tests and standalone QA harness do not replace this final device pass.
 
 ## 2026-09-02: integrate PR #28 block breaking overlay with authoritative Anarchy main

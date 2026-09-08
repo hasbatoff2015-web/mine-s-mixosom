@@ -12,6 +12,7 @@ import {
   type ClientJoinMessage,
   type ClientMessage,
   type ConnectionState,
+  type PlayerAppearance,
   type ServerMessage,
   type ServerWelcomeMessage,
 } from '../../shared/protocol';
@@ -59,7 +60,7 @@ export class AnarchyClient {
     this.disconnectHandler = handler;
   }
 
-  connect(url = anarchyClientUrl(), name?: string): Promise<ServerWelcomeMessage> {
+  connect(url = anarchyClientUrl(), name?: string, appearance?: PlayerAppearance): Promise<ServerWelcomeMessage> {
     this.disconnect();
     this.state = 'connecting';
     this.lastError = undefined;
@@ -86,7 +87,7 @@ export class AnarchyClient {
       socket.addEventListener('open', () => {
         if (this.generation !== generation || this.socket !== socket) return;
         const sessionToken = sessionStorage.getItem(SESSION_KEY) ?? undefined;
-        this.send(buildAnarchyJoinMessage(name, sessionToken));
+        this.send(buildAnarchyJoinMessage(name, sessionToken, appearance));
       });
       socket.addEventListener('message', (event) => {
         if (this.generation !== generation || this.socket !== socket) return;
@@ -171,13 +172,24 @@ export class AnarchyClient {
   }
 }
 
-export function buildAnarchyJoinMessage(name?: string, sessionToken?: string): ClientJoinMessage {
+export function buildAnarchyJoinMessage(
+  name?: string,
+  sessionToken?: string,
+  appearance?: PlayerAppearance,
+): ClientJoinMessage {
   const sanitized = sanitizePlayerName(name);
   return {
     type: 'join',
     protocol: PROTOCOL_VERSION,
     ...(sanitized ? { name: sanitized } : {}),
     ...(sessionToken ? { sessionToken } : {}),
+    ...(appearance ? {
+      appearance: {
+        skinId: appearance.skinId,
+        model: appearance.model,
+        layers: appearance.layers,
+      },
+    } : {}),
   };
 }
 

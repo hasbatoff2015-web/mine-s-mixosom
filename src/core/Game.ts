@@ -123,10 +123,15 @@ import {
 } from '../player/localAim';
 import {
   DEFAULT_PLAYER_APPEARANCE,
+  appearancesEqual,
   createPlayerAppearance,
+  toNetworkAppearance,
   type PlayerAppearance,
+  type PlayerModelVariant,
 } from '../player/appearance/PlayerAppearance';
+import { PlayerSkinSelectorSession } from '../player/appearance/PlayerSkinSelector';
 import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
+import { PlayerAppearancePreview } from '../rendering/player/PlayerAppearancePreview';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -206,6 +211,7 @@ import {
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
+import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
 import {
   captureBlockBreakAbort,
   captureBlockBreakFinish,
@@ -537,7 +543,9 @@ export class Game {
   private readonly playerSkinGeometries = new PlayerSkinGeometryCache();
   private readonly playerArmorMaterials = new PlayerArmorMaterialCache();
   private readonly playerArmorGeometries = new PlayerArmorGeometryCache();
-  private playerAppearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  private playerAppearance: PlayerAppearance = loadPlayerAppearance();
+  private characterPreview?: PlayerAppearancePreview;
+  private skinSelector?: PlayerSkinSelectorSession;
   private cameraPerspective: CameraPerspective = 'firstPerson';
   private thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
   private renderDeltaSeconds = 0;
@@ -732,11 +740,20 @@ export class Game {
     return this.cameraPerspective;
   }
 
-  /** Runtime seam for the future character UI and server appearance messages. */
+  /** Runtime seam for the character UI and server appearance messages. */
   setPlayerAppearance(appearance: PlayerAppearance): void {
-    this.playerAppearance = createPlayerAppearance(appearance);
+    const next = createPlayerAppearance(appearance);
+    const changed = !appearancesEqual(this.playerAppearance, next);
+    this.playerAppearance = next;
     this.firstPerson?.setAppearance(this.playerAppearance);
     this.session?.playerVisual?.setAppearance(this.playerAppearance);
+    this.characterPreview?.setAppearance(this.playerAppearance);
+    if (!changed) return;
+    savePlayerAppearance(this.playerAppearance);
+    this.session?.online?.client.send({
+      type: 'appearance',
+      ...toNetworkAppearance(this.playerAppearance),
+    });
   }
 
   setCameraPerspective(perspective: CameraPerspective): void {
@@ -750,6 +767,7 @@ export class Game {
     this.disposeAudioDebug();
     this.disposeSession();
     this.firstPerson?.dispose();
+    this.disposeCharacterPreview();
     this.playerSkinGeometries.dispose();
     this.playerSkins.dispose();
     this.playerArmorMaterials.dispose();
@@ -767,6 +785,8 @@ export class Game {
 
   private showMainMenu(): void {
     this.lifecycle.setState('MENU');
+    this.disposeCharacterPreview();
+    this.skinSelector = undefined;
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
       online: () => void this.showOnlineServerList(),
@@ -775,10 +795,64 @@ export class Game {
         this.screenBeforeSettings = 'main';
         this.showSettings();
       },
+      selectSkin: () => this.showSkinSelector(),
+      onCharacterCanvas: (canvas) => this.attachCharacterPreview(canvas),
     });
   }
 
+  private showSkinSelector(): void {
+    this.disposeCharacterPreview();
+    this.skinSelector = new PlayerSkinSelectorSession(this.playerAppearance);
+    this.ui.showSkinSelector(this.skinSelector.preview, {
+      preview: (skinId) => {
+        const next = this.skinSelector?.selectSkin(skinId);
+        if (!next) return;
+        this.characterPreview?.setAppearance(next);
+        this.ui.markSkinModel(next.model);
+      },
+      setModel: (model: PlayerModelVariant) => {
+        const next = this.skinSelector?.setModel(model);
+        if (!next) return;
+        this.characterPreview?.setAppearance(next);
+      },
+      confirm: () => {
+        const next = this.skinSelector?.confirm();
+        this.skinSelector = undefined;
+        if (next) this.setPlayerAppearance(next);
+        this.showMainMenu();
+      },
+      cancel: () => {
+        this.skinSelector?.cancel();
+        this.skinSelector = undefined;
+        this.showMainMenu();
+      },
+      onPreviewCanvas: (canvas) => this.attachCharacterPreview(canvas, this.skinSelector?.preview),
+    });
+  }
+
+  private attachCharacterPreview(canvas: HTMLCanvasElement, appearance = this.playerAppearance): void {
+    this.disposeCharacterPreview();
+    if (!this.itemVisuals) return;
+    this.characterPreview = new PlayerAppearancePreview({
+      canvas,
+      skins: this.playerSkins,
+      geometries: this.playerSkinGeometries,
+      items: this.itemVisuals,
+      appearance,
+      armorResources: {
+        materials: this.playerArmorMaterials,
+        geometries: this.playerArmorGeometries,
+      },
+    });
+  }
+
+  private disposeCharacterPreview(): void {
+    this.characterPreview?.dispose();
+    this.characterPreview = undefined;
+  }
+
   private showAccount(): void {
+    this.disposeCharacterPreview();
     this.ui.showAccount(loadPlayerNickname(), {
       save: (raw) => {
         const result = savePlayerNickname(raw);
@@ -790,6 +864,7 @@ export class Game {
   }
 
   private async showOnlineServerList(): Promise<void> {
+    this.disposeCharacterPreview();
     const live = await fetchAnarchyStatus();
     this.ui.showOnlineServers({
       back: () => this.showMainMenu(),
@@ -805,7 +880,7 @@ export class Game {
     this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect(undefined, loadPlayerNickname());
+      const welcome = await client.connect(undefined, loadPlayerNickname(), this.playerAppearance);
       await this.startOnlineAnarchy(client, welcome);
     } catch {
       client.disconnect();
@@ -894,6 +969,7 @@ export class Game {
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
+    if (welcome.you.appearance) this.setPlayerAppearance(welcome.you.appearance);
     this.holograms?.dispose();
     this.holograms = new HologramRenderer(this.scene, this.camera);
     this.holograms.sync(welcome.holograms ?? []);
@@ -919,11 +995,11 @@ export class Game {
       return;
     }
     const view = new RemotePlayerView(info, {
-      visual: new PlayerVisual(
+        visual: new PlayerVisual(
         this.playerSkins,
         this.playerSkinGeometries,
         this.itemVisuals!,
-        DEFAULT_PLAYER_APPEARANCE,
+        createPlayerAppearance(info.appearance ?? DEFAULT_PLAYER_APPEARANCE),
         {
           armorResources: {
             materials: this.playerArmorMaterials,
@@ -947,6 +1023,14 @@ export class Game {
     session.online?.remotes.delete(playerId);
   }
 
+  private applyOnlineAppearance(session: GameSession, playerId: string, appearance: PlayerAppearance): void {
+    if (playerId === session.online?.playerId) {
+      this.setPlayerAppearance(appearance);
+      return;
+    }
+    session.online?.remotes.get(playerId)?.setAppearance(appearance);
+  }
+
   private handleOnlineMessage(message: ServerMessage): void {
     const session = this.session;
     if (!session?.online) return;
@@ -959,6 +1043,9 @@ export class Game {
         return;
       case 'player_left':
         this.removeRemotePlayer(session, message.playerId);
+        return;
+      case 'player_appearance':
+        this.applyOnlineAppearance(session, message.playerId, message.appearance);
         return;
       case 'player_state':
         this.applyOnlinePlayerState(session, message);
@@ -2267,6 +2354,7 @@ export class Game {
   }
 
   private async showWorldList(): Promise<void> {
+    this.disposeCharacterPreview();
     const worlds = await this.worldStore.listWorlds();
     this.ui.showWorldList(worlds, {
       load: (id) => void this.loadWorld(id),
@@ -3362,6 +3450,7 @@ export class Game {
   }
 
   private showSettings(): void {
+    this.disposeCharacterPreview();
     this.ui.showSettings((settings) => {
       this.settings = settings;
       this.audio.setVolume(settings.volume);
@@ -4873,11 +4962,14 @@ export class Game {
         ignoreNetworkSend: Boolean(session.online?.ignoreNetworkSend),
         ignoreNetworkState: Boolean(session.online?.ignoreNetworkState),
       });
-      session.online?.remotes.forEach((remote) => remote.interpolate(
-        now,
-        this.renderDeltaSeconds,
-        daylightFactor(session.world.timeOfDay),
-      ));
+      session.online?.remotes.forEach((remote) => {
+        remote.interpolate(
+          now,
+          this.renderDeltaSeconds,
+          daylightFactor(session.world.timeOfDay),
+        );
+        remote.updateNameplate(this.camera);
+      });
       if (session.online) {
         applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
       } else {
@@ -4907,6 +4999,7 @@ export class Game {
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
+    this.characterPreview?.render(this.renderDeltaSeconds);
   }
 
   private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
