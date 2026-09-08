@@ -30,6 +30,8 @@ Implemented. Successful `blockPlaced` calls `claimBoundaries.show` with the crea
 ## Tests
 
 Covered in `claim-anchor-blocks` plus existing `anarchy-plugins` deny-build boundary cases.
+- `claim-anchor-blocks` 7/7. Related (`claim-anchors` 8, `claims` 10, `anarchy-plugins` 36) combined **61/61**.
+- All four typechecks PASS. Boundaries PASS. Production build PASS.
 
 ## Visual QA
 
