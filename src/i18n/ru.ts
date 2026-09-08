@@ -34,6 +34,8 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   gold_ore: 'Золотая руда',
   diamond_ore: 'Алмазная руда',
   diamond_block: 'Алмазный блок',
+  gold_block: 'Золотой блок',
+  iron_block: 'Железный блок',
   redstone_ore: 'Редстоуновая руда',
 
   glass: 'Стекло',

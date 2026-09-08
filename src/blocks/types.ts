@@ -285,4 +285,6 @@ export enum BlockId {
   Melon = 156,
   Pumpkin = 157,
   PortalChest = 158,
+  GoldBlock = 159,
+  IronBlock = 160,
 }

@@ -26,7 +26,7 @@ Installing a plugin gives it **server-level authority** through the runtime. Thi
 - Loaded by `AnarchyServer` after the world is READY, before the WebSocket listener is marked ready.
 - Missing `server/plugins/` is fine. The server still starts.
 - Singleplayer (`Game`) never imports `PluginManager`.
-- Clients receive ordinary protocol messages. Plugins cannot send raw packets. Builtin claims denied-build feedback uses WorldInstance `ClaimBoundaryNetwork` (`claim_boundary` to one player), the same pattern as holograms.
+- Clients receive ordinary protocol messages. Plugins cannot send raw packets. Builtin claims denied-build feedback uses WorldInstance `ClaimBoundaryNetwork` (`claim_boundary` to one player), the same pattern as holograms. Successful iron/gold/diamond block-claims and overlap denies reuse that same unicast.
 
 Restart the server to pick up **source file** changes. In-game `/plugins reload <name>` re-runs disable → cleanup → load → enable on the same instance. Failed plugins still need a restart.
 
@@ -133,7 +133,7 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | back | `/back` | memory (teleport history) |
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
-| claims | `/claim` | `plugin-data/claims/claims.json` |
+| claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
 | holograms | `/holograms` | `plugin-data/holograms/holograms.json` |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
@@ -230,7 +230,7 @@ Not cancellable.
 | Event | When |
 | --- | --- |
 | `playerJoin` / `playerQuit` | after session connect/disconnect |
-| `blockBroken` / `blockPlaced` | after the voxel write |
+| `blockBroken` / `blockPlaced` | after the voxel write (player mining, or each cell `ExplosionQueue` actually destroyed) |
 | `playerDamaged` / `entityDamaged` | after health applied |
 | `entityDeath` | after a player or mob dies |
 | `playerCommandExecuted` | after dispatch (`ok` is the result) |
@@ -247,7 +247,11 @@ break_block request
   → server validation (reach, bounds, mining)
   → blockBreak (pre)     plugin may cancel
   → if not cancelled: set Air, drops, notify clients
-  → blockBroken (post)
+  → blockBroken (post, playerId set)
+
+ExplosionQueue.applyBlockBatch
+  → blockBroken (post, playerId omitted) for each destroyed voxel
+  Nearby blast that did not destroy a cell does not emit.
 ```
 
 ### Example: damage
@@ -288,4 +292,4 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a second combat / fluid / inventory system
 - Not client mods
 - Not Auction House / economy / kits
-- Not a WorldGuard clone (claims are overlapping regions with per-flag priority)
+- Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)

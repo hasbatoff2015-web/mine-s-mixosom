@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-09-07: Claim-anchor blocks (Anarchy Claims)
+
+- [x] Keep `diamond_block` id 149; add `gold_block` 159 and `iron_block` 160 with the same stone/pickaxe pattern.
+- [x] Ship 16×16 diamond/gold/iron textures from the provided pixel-art sheets.
+- [x] Add 3×3 recipes from diamond / gold ingot / iron ingot.
+- [x] Create cuboid block-claims on `blockPlaced` (radii 10/20/30 on X, Y and Z) inside the existing Claims plugin.
+- [x] Deny any block-claim ∩ block-claim overlap, including own iron vs own diamond; keep regular `/claim create` overlap on priority.
+- [x] Persist optional `Claim.anchor` and per-owner `blockClaimSeq`; do not recreate claims from leftover blocks on load.
+- [x] Delete the matching claim when the stored anchor cell is broken; reuse `/claim info|list|flag|…`.
+- [x] ExplosionQueue voxel destroy emits `blockBroken` so a TNT-destroyed anchor deletes that block-claim; nearby miss does not.
+- [x] Show existing `claim_boundary` wires on successful block-claim place and on overlap deny (existing claims, not the attempted volume).
+- [x] Block-claim volume is cubic (±radius on Y, same as X/Z); load rebuilds volume from `Claim.anchor` so old full-height saves are not kept.
+- [ ] Owner live Anarchy QA: craft, place, overlap deny, two-player protection, restart, OP break, TNT on the anchor.
+
 ## 2026-09-07: Portal Chest (personal Ender-style store)
 
 - [x] Register `portal_chest` (`BlockId.PortalChest = 158`) with the existing chest model, lid, collision and container UI.

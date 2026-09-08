@@ -87,7 +87,8 @@ export interface BlockPlaceEvent extends Cancellable {
 }
 
 export interface BlockBrokenEvent {
-  readonly playerId: string;
+  /** Present for player mining. Omitted when ExplosionQueue destroys the voxel. */
+  readonly playerId?: string;
   readonly x: number;
   readonly y: number;
   readonly z: number;

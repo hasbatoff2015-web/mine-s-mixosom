@@ -1,6 +1,42 @@
 # Состояние проекта
 
-## Последний проход: Portal Chest texture polish — 2026-09-07
+## Последний проход: Claim-anchor cubic volume + visible bounds — 2026-09-08
+
+- Баг границ PR #69: `show()` и пакет `claim_boundary` уже шли. Клиентский `ClaimBoundaryRenderer` получал AABB с Y `0…255`. Горизонтальные рёбра были у bedrock/потолка, вертикальные 256-блочные fat-lines не читались рядом с игроком. Обычные маленькие `/claim create` боксы работали.
+- `claimAnchorVolume` теперь куб: iron/gold/diamond ±10/±20/±30 по X, Y и Z (inclusive, Y clamp к миру). Тот же `Claim.volume` кормит и защиту, и renderer.
+- Load: block-claim с `anchor` пересобирает volume из якоря/радиуса, даже если в JSON был full-height.
+- `claim-anchor-blocks` 8/8, `claim-anchors` 9/9, runtime boundary 2/2, related anarchy/claims/plugin-platform PASS. All four typechecks, boundaries, production build PASS.
+- Handoff: `docs/reports/2026-09-08_claim-anchor-cube-bounds.md`.
+
+## Предыдущий проход: Claim-anchor boundary UX — 2026-09-08
+
+- Успешная постановка iron/gold/diamond показывает игроку границы нового block-claim через существующий `ClaimBoundaryNetwork` / `ClaimBoundaryRenderer` (радиусы 10/20/30, тот же красный wire, 10 с).
+- Deny из-за пересечения двух block-claims оставляет сообщение про пересечение и показывает AABB **уже существующих** overlapping block-claims, не будущий объём. Несколько пересечений — `showAll`.
+- Обычный deny «This land is claimed.» без изменений. Новой системы границ нет.
+- `claim-anchor-blocks` 7/7, related 61/61, all four typechecks, boundaries, production build PASS.
+- Handoff: `docs/reports/2026-09-08_claim-anchor-boundary-ux.md`.
+
+## Предыдущий проход: Claim-anchor explosion cleanup — 2026-09-08
+
+- TNT / `ExplosionQueue` теперь эмитит `blockBroken` (без `playerId`) для каждого реально уничтоженного вокселя. Claims удаляет block-claim по сохранённому `Claim.anchor`, той же связью что и ручное ломание.
+- Взрыв рядом, который не уничтожил ячейку якоря, claim не трогает. Обычные `/claim create` регионы без изменений.
+- Не вторая система приватов: `shared` ExplosionQueue по-прежнему без PluginManager; адаптер только в `ServerGameplay.processExplosions`.
+- Focused: `claim-anchor-blocks` 7/7, related server suite 80/80, all four typechecks, boundaries, `test:sim` 42/42, production build PASS.
+- Handoff: `docs/reports/2026-09-08_claim-anchor-explosion.md`.
+
+## Предыдущий проход: Claim-anchor blocks — 2026-09-07
+
+- Три блока-якоря в существующем Claims plugin. Второй системы приватов нет.
+- `diamond_block` остаётся `BlockId.DiamondBlock = 149`; новые `gold_block` / `GoldBlock = 159` и `iron_block` / `IronBlock = 160`. Текстуры 16×16 в `public/textures/block/`.
+- Рецепты 3×3: 9 алмазов / золотых слитков / железных слитков → 1 блок.
+- Постановка блока создаёт cuboid-приват (радиус X/Z 10/20/30, Y `0…255`). Пересечение двух блок-приватов всегда запрещено. Обычный `/claim create` по priority без изменений.
+- Якорь хранится в `Claim.anchor`; счётчик имён — `ClaimStore.blockClaimSeq`. Старые JSON без этих полей мигрируют как обычные регионы.
+- Ломание ячейки якоря удаляет только этот claim. `/claim delete` оставляет физический блок.
+- Focused claim-anchor + related: unit 32, Anarchy integration 6, anarchy-plugins 36, all four typechecks, boundaries, `test:sim` 42, build PASS.
+- `test:server` **287 PASS / 2 FAIL**: known `tick-load-flight` and a load-flake two-client reach check (passes isolated).
+- Handoff: `docs/reports/2026-09-07_claim-anchor-blocks.md`.
+
+## Предыдущий проход: Portal Chest texture polish — 2026-09-07
 
 - Тот же блок `portal_chest`; менялась только визуальная текстура. Модель, UV 128×128, lid, рецепт и личный инвентарь не трогались.
 - `entity/chest/portal.png`: тёмная сине-зелёная основа, бирюзовые рёбра, фиолетовые портальные акценты; золотая/лаймовая закрывашка 12×10 скопирована 1:1.

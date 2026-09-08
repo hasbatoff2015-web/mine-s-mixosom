@@ -1,5 +1,69 @@
 # Тестирование
 
+## 2026-09-07 Claim-anchor blocks
+
+Report: `reports/2026-09-07_claim-anchor-blocks.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchors.test.ts \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/server/claims.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/crafting.test.ts \
+  tests/block-registry.test.ts \
+  tests/claim-anchor-textures.test.mjs \
+  --maxWorkers=2
+```
+
+Contracts: iron/gold/diamond radii 10/20/30; block-claim ∩ block-claim always denied; regular `/claim create` overlap unchanged; per-owner `"1"`, `"2"` without reuse; `Claim.anchor` optional; break of the stored cell deletes that claim only; TNT/`ExplosionQueue` destroy of the stored cell deletes that claim, nearby miss does not.
+
+## 2026-09-08 Claim-anchor explosion cleanup
+
+Report: `reports/2026-09-08_claim-anchor-explosion.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchors.test.ts \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/server/claims.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/server/plugin-platform.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: primed TNT / `ExplosionQueue.process` emits `blockBroken` without `playerId` for destroyed voxels; Claims deletes only the claim whose stored `anchor` coords match; owner `tryBreak` of an surviving gold/diamond anchor still deletes that claim.
+
+## 2026-09-08 Claim-anchor boundary UX
+
+Report: `reports/2026-09-08_claim-anchor-boundary-ux.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: successful iron/gold/diamond place unicasts `claim_boundary` for that claim's stored volume; overlap deny unicasts existing overlapping block-claim AABBs (not the attempted radius); regular denied place/break still uses `protectionSources` + the same packet.
+
+## 2026-09-08 Claim-anchor cubic volume
+
+Report: `reports/2026-09-08_claim-anchor-cube-bounds.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchors.test.ts \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/claim-boundary.test.ts \
+  tests/claim-boundary-runtime.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/server/claims.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: iron/gold/diamond `Claim.volume` is ±10/±20/±30 on X, Y and Z; load rebuilds volume from `anchor`; `ClaimBoundaryNetwork` → `encodeMessage` → `parseServerMessage` → `ClaimBoundaryRenderer.show` keeps the mesh until the 10s expiry; vertical spacing 20 overlaps, 21 does not.
+
 ## 2026-09-07 Portal Chest texture polish
 
 Report: `reports/2026-09-07_portal-chest-texture.md`.

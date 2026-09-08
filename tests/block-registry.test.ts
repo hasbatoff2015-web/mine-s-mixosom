@@ -34,6 +34,22 @@ describe('block registry', () => {
     expect(getBlockDefinition(BlockId.Bedrock).drop).toBeUndefined();
   });
 
+  it('registers iron/gold/diamond claim-anchor blocks with Russian names', () => {
+    expect(BlockId.GoldBlock).toBe(159);
+    expect(BlockId.IronBlock).toBe(160);
+    expect(getBlockDefinition(BlockId.DiamondBlock)).toMatchObject({
+      key: 'diamond_block', name: 'Алмазный блок', category: 'building', hardness: 5, tool: 'pickaxe', tier: 'iron',
+    });
+    expect(getBlockDefinition(BlockId.GoldBlock)).toMatchObject({
+      key: 'gold_block', name: 'Золотой блок', category: 'building', hardness: 5, tool: 'pickaxe', tier: 'iron',
+    });
+    expect(getBlockDefinition(BlockId.IronBlock)).toMatchObject({
+      key: 'iron_block', name: 'Железный блок', category: 'building', hardness: 5, tool: 'pickaxe', tier: 'iron',
+    });
+    expect(getItemDefinition('gold_block').placesBlockId).toBe(BlockId.GoldBlock);
+    expect(getItemDefinition('iron_block').placesBlockId).toBe(BlockId.IronBlock);
+  });
+
   it('classifies cutout and blended materials independently from face occlusion', () => {
     for (const id of [BlockId.OakLeaves, BlockId.BirchLeaves, BlockId.SpruceLeaves]) {
       expect(getBlockDefinition(id)).toMatchObject({

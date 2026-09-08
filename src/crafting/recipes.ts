@@ -39,6 +39,21 @@ const recipes: Recipe[] = [
     output: { item: 'portal_chest', count: 1 }, gridSize: 3,
   },
   {
+    id: 'diamond_block', type: 'shaped', pattern: ['DDD', 'DDD', 'DDD'],
+    key: { D: exact(ItemId.Diamond) },
+    output: { item: 'diamond_block', count: 1 }, gridSize: 3,
+  },
+  {
+    id: 'gold_block', type: 'shaped', pattern: ['GGG', 'GGG', 'GGG'],
+    key: { G: exact(ItemId.GoldIngot) },
+    output: { item: 'gold_block', count: 1 }, gridSize: 3,
+  },
+  {
+    id: 'iron_block', type: 'shaped', pattern: ['III', 'III', 'III'],
+    key: { I: exact(ItemId.IronIngot) },
+    output: { item: 'iron_block', count: 1 }, gridSize: 3,
+  },
+  {
     id: 'furnace', type: 'shaped', pattern: ['CCC', 'C C', 'CCC'], key: { C: exact('cobblestone') },
     output: { item: 'furnace', count: 1 }, gridSize: 3,
   },
