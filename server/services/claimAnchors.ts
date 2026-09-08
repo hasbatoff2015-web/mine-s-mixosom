@@ -35,10 +35,10 @@ export function claimAnchorVolume(
   const radius = CLAIM_ANCHOR_RADIUS[block];
   return {
     minX: x - radius,
-    minY: MIN_WORLD_Y,
+    minY: Math.max(MIN_WORLD_Y, y - radius),
     minZ: z - radius,
     maxX: x + radius,
-    maxY: MAX_WORLD_Y,
+    maxY: Math.min(MAX_WORLD_Y, y + radius),
     maxZ: z + radius,
   };
 }

@@ -1,6 +1,14 @@
 # Состояние проекта
 
-## Последний проход: Claim-anchor boundary UX — 2026-09-08
+## Последний проход: Claim-anchor cubic volume + visible bounds — 2026-09-08
+
+- Баг границ PR #69: `show()` и пакет `claim_boundary` уже шли. Клиентский `ClaimBoundaryRenderer` получал AABB с Y `0…255`. Горизонтальные рёбра были у bedrock/потолка, вертикальные 256-блочные fat-lines не читались рядом с игроком. Обычные маленькие `/claim create` боксы работали.
+- `claimAnchorVolume` теперь куб: iron/gold/diamond ±10/±20/±30 по X, Y и Z (inclusive, Y clamp к миру). Тот же `Claim.volume` кормит и защиту, и renderer.
+- Load: block-claim с `anchor` пересобирает volume из якоря/радиуса, даже если в JSON был full-height.
+- `claim-anchor-blocks` 8/8, `claim-anchors` 9/9, runtime boundary 2/2, related anarchy/claims/plugin-platform PASS. All four typechecks, boundaries, production build PASS.
+- Handoff: `docs/reports/2026-09-08_claim-anchor-cube-bounds.md`.
+
+## Предыдущий проход: Claim-anchor boundary UX — 2026-09-08
 
 - Успешная постановка iron/gold/diamond показывает игроку границы нового block-claim через существующий `ClaimBoundaryNetwork` / `ClaimBoundaryRenderer` (радиусы 10/20/30, тот же красный wire, 10 с).
 - Deny из-за пересечения двух block-claims оставляет сообщение про пересечение и показывает AABB **уже существующих** overlapping block-claims, не будущий объём. Несколько пересечений — `showAll`.

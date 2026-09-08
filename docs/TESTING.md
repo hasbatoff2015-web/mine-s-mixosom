@@ -47,6 +47,23 @@ npx vitest run \
 
 Contracts: successful iron/gold/diamond place unicasts `claim_boundary` for that claim's stored volume; overlap deny unicasts existing overlapping block-claim AABBs (not the attempted radius); regular denied place/break still uses `protectionSources` + the same packet.
 
+## 2026-09-08 Claim-anchor cubic volume
+
+Report: `reports/2026-09-08_claim-anchor-cube-bounds.md`.
+
+```text
+npx vitest run \
+  tests/server/claim-anchors.test.ts \
+  tests/server/claim-anchor-blocks.test.ts \
+  tests/claim-boundary.test.ts \
+  tests/claim-boundary-runtime.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/server/claims.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: iron/gold/diamond `Claim.volume` is ±10/±20/±30 on X, Y and Z; load rebuilds volume from `anchor`; `ClaimBoundaryNetwork` → `encodeMessage` → `parseServerMessage` → `ClaimBoundaryRenderer.show` keeps the mesh until the 10s expiry; vertical spacing 20 overlaps, 21 does not.
+
 ## 2026-09-07 Portal Chest texture polish
 
 Report: `reports/2026-09-07_portal-chest-texture.md`.
