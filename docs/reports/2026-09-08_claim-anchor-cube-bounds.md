@@ -49,7 +49,9 @@ No extra `show()` was added. No renderer/style/protocol change.
 
 ## Tests
 
-See verification in PROJECT_STATE after the run.
+- `claim-anchors` 9/9, `claim-anchor-blocks` 8/8, `claim-boundary` 2/2, `claim-boundary-runtime` 2/2.
+- Related `anarchy-plugins` + `claims` + `plugin-platform` PASS.
+- All four typechecks PASS. Boundaries PASS. Production build PASS.
 
 ## Visual QA
 

@@ -6,7 +6,7 @@ import { BlockId } from '../../src/blocks';
 import { PLAYER_EYE_HEIGHT } from '../../src/core/constants';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
-import { BLOCK_CLAIM_OVERLAP_MESSAGE } from '../../server/services/claimAnchors';
+import { BLOCK_CLAIM_OVERLAP_MESSAGE, claimAnchorVolume } from '../../server/services/claimAnchors';
 import { DEFAULT_CLAIM_FLAGS, migrateClaimStore } from '../../server/services/claims';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import { CLAIM_BOUNDARY_DURATION_MS } from '../../shared/protocol';
@@ -502,13 +502,11 @@ describe('Anarchy claim-anchor blocks', () => {
         name: 'race',
         owner: 'other',
         worldId: world.worldId,
-        volume: {
-          minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10, minZ: z - 10, maxZ: z + 10,
-        },
+        volume: claimAnchorVolume(x + 5, y, z, 'iron_block'),
         members: [],
         priority: 0,
         flags: {},
-        anchor: { x: x + 40, y, z, block: 'iron_block' },
+        anchor: { x: x + 5, y, z, block: 'iron_block' },
       });
       world.pluginStore.save('claims/claims', current);
     });
@@ -520,8 +518,8 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(resultLines(ada.sink)).toContain(BLOCK_CLAIM_OVERLAP_MESSAGE);
     expect(boundaryPackets(ada.sink)).toEqual([expect.objectContaining({
       name: 'race',
-      minX: x - 10,
-      maxX: x + 10,
+      minX: x + 5 - 10,
+      maxX: x + 5 + 10,
       minY: y - 10,
       maxY: y + 10,
       minZ: z - 10,
