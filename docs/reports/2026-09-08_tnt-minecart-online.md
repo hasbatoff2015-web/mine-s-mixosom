@@ -56,12 +56,14 @@ Done. Онлайн-синхронизация cargo идёт через `tntBloc
 
 ## Tests
 
-- `npx vitest run tests/tnt-minecart.test.ts tests/server/tnt-minecart.test.ts`
-  — 13 passed.
+- `npx vitest run tests/tnt-minecart.test.ts tests/server/tnt-minecart.test.ts tests/use-interaction.test.ts`
+  — 23 passed.
+- Isolated `TNT minecart ignition routing` in `fire-contact-sunlight-minecart` — 2/2.
+- `npm run test:sim` — 42/42.
 - `npx tsc --noEmit` ×4 + `npm run check:boundaries` — PASS.
 - `npx vite build` — PASS.
-- `fire-contact-sunlight-minecart` TNT-routing describes pass isolated;
-  полный файл часто ловит 5s timeout под нагрузкой (pre-existing derail/sunlight).
+- Полный `fire-contact-sunlight-minecart` часто ловит 5s timeout под нагрузкой
+  (pre-existing derail/sunlight); isolated TNT routing is green.
 
 ## Visual QA
 

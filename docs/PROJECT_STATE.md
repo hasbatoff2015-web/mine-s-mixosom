@@ -9,7 +9,7 @@
 - Fire-arrow hit не идёт через `playerInteract` / claims — работает внутри чужих блок-приватов. Place/break claims не ослаблялись. После вылета профили взрыва те же (ordinary не ломает якоря; `/claim` защищён `canDestroy`).
 - Вылет: primed TNT своего типа, hop `vy=4`, gravity 32, inherit cart `vx/vz`. Max fall от origin Y: ordinary 20, powerful/destructive 30. Explode при посадке или в воздухе на лимите. Fuse 4s — safety.
 - Цепочка передаёт `blockId`. Off-rail push: `player.vxz * PUSH_GAIN * 0.5` (on-rail tangent push без изменений).
-- Focused `tnt-minecart` + `server/tnt-minecart` 13/13. All four typechecks, boundaries, production build PASS.
+- Focused `tnt-minecart` + `server/tnt-minecart` + `use-interaction` 23/23, isolated fire-contact TNT routing 2/2, `test:sim` 42/42. All four typechecks, boundaries, production build PASS.
 - Handoff: `docs/reports/2026-09-08_tnt-minecart-online.md`.
 
 ## Предыдущий проход: Anarchy TNT types — 2026-09-08
