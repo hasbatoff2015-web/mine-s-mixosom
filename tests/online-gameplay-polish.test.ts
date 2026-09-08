@@ -96,11 +96,11 @@ describe('sound call-site audit', () => {
   it('every catalog event is either called in SP/Online or explicitly local-only', () => {
     const keys = [...SOUND_CATALOG.keys()];
     expect(keys.length).toBeGreaterThan(20);
-    expect(gameplaySource).toContain("this.emitWorldSound('explosion'");
-    expect(gameplaySource).toContain("this.emitWorldSound('bow.shoot'");
-    expect(gameplaySource).toContain("this.emitWorldSound('combat.hit'");
-    expect(gameplaySource).toContain("this.emitWorldSound('item.pickup'");
-    expect(gameplaySource).toContain("this.emitWorldSound('fire.ignite'");
+    expect(gameplaySource).toContain("emitWorldSound('explosion'");
+    expect(gameplaySource).toContain("emitWorldSound('bow.shoot'");
+    expect(gameplaySource).toContain("emitWorldSound('combat.hit'");
+    expect(gameplaySource).toContain("emitWorldSound('item.pickup'");
+    expect(gameplaySource).toContain("emitWorldSound('fire.ignite'");
     expect(gameSource).toContain("case 'world_sound'");
     expect(gameSource).toContain('this.updateFootsteps(session');
     expect(gameSource).toContain('consumableSoundEvent(item)');

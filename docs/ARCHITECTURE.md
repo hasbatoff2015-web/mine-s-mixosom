@@ -1,5 +1,15 @@
 # Архитектура
 
+## Online death, fire overlay, world sounds, recipe ghosts — 2026-09-08
+
+Anarchy no longer auto-respawns in the death tick. `ServerGameplay.respawnIfDead` drops loot once (`deathLootDropped`), freezes the corpse, and keeps `survival.dead`. The client death screen sends `{ type: 'respawn' }`; `respawnPlayer` is the only revive path and rejects a living player. `PlayerSnapshot.dead` / `RemotePlayerInfo.dead` are therefore visible long enough for the existing humanoid death pose (`HUMANOID_DEATH_ANIMATION_SECONDS = 0.7`, `rotation.z = progress * π/2`, scale `1 - 0.25 * progress`) on canonical `PlayerVisual`. `RemotePlayerView` starts that clock on the dead edge only.
+
+Local fire overlay is still `FirstPersonRenderer` + `SharedFireTexture`. Online does not tick `SurvivalSystem` fire locally; `syncNetworkFire` ORs authoritative `health.fire` / `player_state.onFire` into `isOnFire`.
+
+World SFX share the SP catalog. The server emits `{ type: 'world_sound', sounds: [{ event, x, y, z }] }` (no audio bytes). The client plays through `AudioManager.playAt`. Local Online footsteps and eat/drink cadence stay client-side, matching SP presentation.
+
+Recipe Book Online still sends `inventory_action recipe` so a previous grid returns to inventory, but the client always installs `ghostFromRecipe` so missing ingredients render red. Server `applyRecipe` / result click remain the craft authority.
+
 ## Deterministic armor cutout depth policy — 2026-09-08
 
 Armor remains a child presentation of the canonical `PlayerVisual` rig. Its textures are alpha-tested cutouts, not blended transparent objects: base and leather overlay use `transparent=false`, `alphaTest=0.1`, `depthTest=true` and `depthWrite=true`. This keeps the meshes in Three.js's opaque queue and removes camera-distance transparent sorting from the result.

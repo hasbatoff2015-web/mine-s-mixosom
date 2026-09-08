@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-08: Online/Anarchy gameplay polish
+
+- [x] Drive the existing SP first-person fire overlay from authoritative Online fire state.
+- [x] Scatter death item entities around the corpse (server-authoritative, no duplicate loot).
+- [x] Reuse zombie/humanoid death pose on `PlayerVisual` / `RemotePlayerView`; stay dead until `respawn`.
+- [x] Show existing death UI («Вы умерли» / «Возродиться») and one-shot `{ type: 'respawn' }`.
+- [x] Full SP→Online sound catalog audit; add missing authoritative `world_sound` calls.
+- [x] Recipe-book selection without ingredients (ghost/missing red); keep server craft rejection.
+- [ ] Owner live Anarchy QA: fire overlay, death scatter, remote death pose, TNT boom, recipe ghosts.
+
 ## 2026-09-08: Placed TNT fall distance (not minecart)
 
 - [x] Apply 20/30 downward fall only to primed **placed** TNT (`primeTnt` sets `launchOriginY` + `maxFallBlocks`).
