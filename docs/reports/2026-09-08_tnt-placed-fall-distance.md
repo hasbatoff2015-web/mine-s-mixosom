@@ -46,7 +46,9 @@ clearance и `shouldDetonateMinecartLaunch` были повешены на
 
 ## Tests
 
-See verification section after the focused vitest run.
+- `npx vitest run tests/tnt-placed-fall.test.ts tests/tnt-minecart.test.ts tests/server/tnt-minecart.test.ts tests/redstone.test.ts tests/lighting-physics-interaction.test.ts tests/tnt-profiles.test.ts tests/use-interaction.test.ts tests/content-pass.test.ts --maxWorkers=2` — 61 passed.
+- `npm run test:sim` — 42/42.
+- four typechecks + boundaries + `npx vite build` — PASS.
 
 ## Visual QA
 

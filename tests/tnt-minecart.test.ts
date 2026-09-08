@@ -43,6 +43,13 @@ function carts(world: VoxelWorld): MinecartManager {
   return new MinecartManager(new THREE.Scene(), world, new ItemVisualFactory());
 }
 
+/** Box-Muller zeros: u=0.5, v=0.25 → no arrow spread. */
+function noSpreadRandom(): () => number {
+  let index = 0;
+  const seq = [0.5, 0.25];
+  return () => seq[index++ % 2]!;
+}
+
 function sessionOf(world: VoxelWorld) {
   const scene = new THREE.Scene();
   const mobs = new MobManager(scene, world, { automaticSpawning: false });
@@ -190,9 +197,14 @@ describe('minecart TNT fire-arrow ignition', () => {
 
   it('ignites minecart TNT only from a fire arrow, not flint or an ordinary arrow', () => {
     const world = new VoxelWorld('cart-tnt-fire-arrow-only');
-    emptyColumn(world, 5, 6);
-    stoneAt(world, 5, 40, 6);
+    for (let x = 4; x <= 6; x += 1) {
+      for (let z = 4; z <= 8; z += 1) {
+        stoneAt(world, x, 40, z);
+        for (let above = 41; above < 48; above += 1) world.setBlock(x, above, z, BlockId.Air);
+      }
+    }
     world.setBlock(5, 41, 6, BlockId.Rail);
+    world.setBlockState(5, 41, 6, { railShape: 'north_south' });
     const scene = new THREE.Scene();
     const manager = new MinecartManager(scene, world, new ItemVisualFactory());
     const mobs = new MobManager(scene, world, { automaticSpawning: false });
@@ -210,7 +222,7 @@ describe('minecart TNT fire-arrow ignition', () => {
 
     const arrows = new PlayerArrowManager(scene, world, mobs, {
       minecarts: manager,
-      random: () => 0,
+      random: noSpreadRandom(),
       onMinecartHit: (hit, flaming) => {
         if (flaming) igniteMinecartTntFromFireArrow(manager, redstone, hit);
       },

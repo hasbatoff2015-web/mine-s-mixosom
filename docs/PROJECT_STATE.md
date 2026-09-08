@@ -5,7 +5,7 @@
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.
 - Поставленный TNT (`primeTnt`): после поджига падает вниз от Y прайма. Ordinary max 20; powerful и destructive max 30. Пол раньше лимита → взрыв на столкновении; иначе воздух на лимите. Fuse 4s — safety.
 - TNT в вагонетке: прежняя механика fire-arrow eject (`launchMinecartTnt`, hop `vy=4`, inherit `vx/vz`, fuse 4s). **Нет** `launchOriginY` / `maxFallBlocks`, нет noclip платформы, нет принудительного полёта вниз на 20/30. `tntBlockId`, snapshot, joiner, flint/ordinary-arrow не поджигают — без изменений. Off-rail push 50% без изменений.
-- Handoff: `docs/reports/2026-09-08_tnt-placed-fall-distance.md`.
+- Focused: placed-fall 6, tnt-minecart 8, server/tnt-minecart 5, redstone 9, lighting-physics, tnt-profiles, use-interaction, content-pass — 61/61. `test:sim` 42/42. All four typechecks, boundaries, production build PASS.
 
 ## Предыдущий проход: TNT minecart fall distance 20/30 — 2026-09-08
 
