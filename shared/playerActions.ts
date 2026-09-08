@@ -56,6 +56,28 @@ export interface AttackAction extends SequencedAction {
   readonly kind: 'attack';
   readonly yaw?: number;
   readonly pitch?: number;
+  /** Remote player rendered under the crosshair. Hint only; server proves the hit. */
+  readonly targetId?: string;
+  /** Server-tick timeline on which targetId was actually rendered. */
+  readonly targetRenderTick?: number;
+}
+
+export type CombatActionResultKind =
+  | 'hit'
+  | 'miss'
+  | 'immune'
+  | 'blocked'
+  | 'occluded'
+  | 'out_of_reach'
+  | 'stale';
+
+export interface CombatActionDiagnostics {
+  readonly result: CombatActionResultKind;
+  readonly targetId?: string;
+  readonly requestedRenderTick?: number;
+  readonly resolvedRenderTick?: number;
+  readonly rewindTicks?: number;
+  readonly distance?: number;
 }
 
 export type PlayerAction =
@@ -108,6 +130,7 @@ export interface ActionResult {
   readonly faceZ?: number;
   readonly yaw?: number;
   readonly pitch?: number;
+  readonly combat?: CombatActionDiagnostics;
 }
 
 export function isFiniteNumber(value: unknown): value is number {

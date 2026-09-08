@@ -127,6 +127,7 @@ export function captureBowRelease(
 export function captureAttack(
   source: ActionSeqSource,
   look?: { readonly yaw: number; readonly pitch: number },
+  target?: { readonly id: string; readonly renderTick: number },
 ): AttackAction {
   return {
     kind: 'attack',
@@ -134,5 +135,6 @@ export function captureAttack(
     commandSeq: source.inputSeq,
     selectedSlot: source.selectedSlot,
     ...(look ? { yaw: look.yaw, pitch: look.pitch } : {}),
+    ...(target ? { targetId: target.id, targetRenderTick: target.renderTick } : {}),
   };
 }

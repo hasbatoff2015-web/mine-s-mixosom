@@ -25,6 +25,18 @@ function harness(presentation?: PlayerPresentationState) {
 }
 
 describe('authoritative remote action presentation', () => {
+  it('exposes the tick of the pose already rendered, without sampling twice', () => {
+    const { view } = harness();
+    expect(view.lastRenderTick).toBeUndefined();
+    view.applySnapshot(info, 150, 12);
+    const pose = view.interpolate(150, 0.016);
+    expect(pose?.renderTick).toBe(10);
+    expect(view.lastRenderTick).toBe(pose?.renderTick);
+    view.reset(info, 200);
+    expect(view.lastRenderTick).toBeUndefined();
+    view.dispose();
+  });
+
   it('renders initial mining and held tool before any spatial snapshot, without replaying past swings', () => {
     const { view, visual, onMining } = harness({ ...IDLE_PLAYER_PRESENTATION, mining, heldItemId: 'iron_pickaxe', swingSeq: 9 });
     view.interpolate(100, 1 / 60);

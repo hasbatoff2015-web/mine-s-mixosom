@@ -518,12 +518,19 @@ export class AnarchyServer {
         });
       }
     } else {
-      if (message.actionSeq !== undefined && !this.world.acceptClientActionSeq(player, message.actionSeq)) {
-        result = { ok: false, reason: 'duplicate' };
-      } else {
-        this.world.attack(player);
-        result = { ok: true };
-      }
+      this.world.handleSequencedAttack(player, {
+        kind: 'attack',
+        actionSeq: message.actionSeq,
+        commandSeq: message.commandSeq,
+        // Sequenced melee must carry the captured slot. The dedicated legacy
+        // attack message remains the current-state compatibility path.
+        selectedSlot: message.selectedSlot ?? -1,
+        ...(message.yaw !== undefined ? { yaw: message.yaw } : {}),
+        ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
+        ...(message.targetId !== undefined ? { targetId: message.targetId } : {}),
+        ...(message.targetRenderTick !== undefined ? { targetRenderTick: message.targetRenderTick } : {}),
+      });
+      return;
     }
     this.world.sendTo(player, {
       type: 'action_result',

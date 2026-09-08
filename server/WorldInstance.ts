@@ -40,7 +40,7 @@ import type {
   WorldBlockStates,
   WorldModifications,
 } from '../shared/protocol';
-import type { BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
+import type { ActionResult, AttackAction, BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
@@ -82,6 +82,13 @@ import { netDebug, serverLog } from './log';
 import { logBreakAttempt } from './breakDiagnostics';
 import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import {
+  combatPoseForCommand,
+  MAX_PENDING_MELEE_ACTIONS,
+  recordCombatPose,
+  rewindCombatPose,
+  type CombatPoseSample,
+} from './combatPoseHistory';
 
 /** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
 const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
@@ -119,6 +126,9 @@ export class ServerPlayer implements GameplayPlayer {
   lastBowReleaseSeq = -1;
   readonly appliedStepsThisLoop: AppliedMovementStep[] = [];
   readonly actionPoseHistory: ActionPoseSample[] = [];
+  readonly combatPoseHistory: CombatPoseSample[] = [];
+  readonly pendingAttacks: AttackAction[] = [];
+  appliedCommandBoundaryThisTick = false;
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
   lastServerSimAt: number | undefined;
@@ -1000,6 +1010,114 @@ export class WorldInstance {
     this.flushPlayerInventory(player);
   }
 
+  handleSequencedAttack(player: ServerPlayer, action: AttackAction): void {
+    const resolution = this.attackSequenced(player, action);
+    if (resolution.status === 'resolved') this.sendAttackActionResult(player, action, resolution.result);
+  }
+
+  attackSequenced(
+    player: ServerPlayer,
+    action: AttackAction,
+  ): { status: 'pending' } | { status: 'resolved'; result: ActionResult } {
+    if (!this.acceptActionSeq(player, action.actionSeq)) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'duplicate' } };
+    }
+    if (!player.connected || player.survival.dead) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'dead' } };
+    }
+    if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
+      || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
+      || (action.yaw !== undefined && !Number.isFinite(action.yaw))
+      || (action.pitch !== undefined && !Number.isFinite(action.pitch))
+      || (action.targetId === undefined) !== (action.targetRenderTick === undefined)
+      || (action.targetRenderTick !== undefined && !Number.isFinite(action.targetRenderTick))
+      || action.targetId === player.id) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'invalid' } };
+    }
+    const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+    if (pose) return { status: 'resolved', result: this.resolveSequencedAttack(player, action, pose) };
+    if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+      if (player.pendingAttacks.length >= MAX_PENDING_MELEE_ACTIONS) {
+        return {
+          status: 'resolved',
+          result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'stale', combat: this.staleCombat(action) },
+        };
+      }
+      player.pendingAttacks.push(action);
+      return { status: 'pending' };
+    }
+    return {
+      status: 'resolved',
+      result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'stale', combat: this.staleCombat(action) },
+    };
+  }
+
+  private resolveSequencedAttack(
+    player: ServerPlayer,
+    action: AttackAction,
+    attackerPose: CombatPoseSample,
+  ): ActionResult {
+    if (attackerPose.dead || action.selectedSlot !== attackerPose.selectedSlot) {
+      return {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: attackerPose.dead ? 'dead' : 'slot',
+        combat: this.staleCombat(action),
+      };
+    }
+    if (action.targetId !== undefined && action.targetRenderTick !== undefined) {
+      const target = this.players.get(action.targetId);
+      const rewound = target
+        ? rewindCombatPose(target.combatPoseHistory, action.targetRenderTick, this.tickNumber)
+        : undefined;
+      if (!target || target.id === player.id || !target.connected || target.survival.dead
+        || target.gamemode !== 'survival' || !rewound) {
+        return {
+          ok: true,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          combat: this.staleCombat(action),
+        };
+      }
+      const combat = this.gameplay.attack(player, [...this.players.values()], {
+        attackerPose,
+        target: { player: target, pose: rewound, requestedRenderTick: action.targetRenderTick },
+      });
+      this.flushBlockChanges();
+      this.flushPlayerInventory(player);
+      return { ok: true, actionSeq: action.actionSeq, kind: 'attack', combat };
+    }
+    const combat = this.gameplay.attack(player, [...this.players.values()], {
+      attackerPose,
+      allowCurrentPlayerTargets: false,
+    });
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+    return { ok: true, actionSeq: action.actionSeq, kind: 'attack', combat };
+  }
+
+  private staleCombat(action: AttackAction) {
+    return {
+      result: 'stale' as const,
+      ...(action.targetId !== undefined ? { targetId: action.targetId } : {}),
+      ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+    };
+  }
+
+  private sendAttackActionResult(player: ServerPlayer, action: AttackAction, result: ActionResult): void {
+    this.sendTo(player, {
+      type: 'action_result',
+      actionSeq: action.actionSeq,
+      kind: 'attack',
+      ok: result.ok,
+      ...(result.reason ? { reason: result.reason } : {}),
+      ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
+      ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
+      ...(result.combat ? { combat: result.combat } : {}),
+    });
+  }
+
   interact(
     player: ServerPlayer,
     intent?: BlockTargetIntent,
@@ -1207,6 +1325,7 @@ export class WorldInstance {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
       player.lastServerSimAt = started;
+      player.appliedCommandBoundaryThisTick = false;
     }
     if (this.debugTickOrder) this.kernelTrace.length = 0;
     const metrics = this.gameplay.tick([...this.players.values()], dt, {
@@ -1217,6 +1336,8 @@ export class WorldInstance {
       if (!player.connected) continue;
       this.gameplay.updateRiding(player, player.lastInput.sprint);
     }
+    this.recordCombatPoses();
+    this.processPendingAttacks();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.flushBlockChanges();
@@ -1419,6 +1540,8 @@ export class WorldInstance {
     });
     player.appliedStepsThisLoop.length = 0;
     player.actionPoseHistory.length = 0;
+    player.combatPoseHistory.length = 0;
+    player.pendingAttacks.length = 0;
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
@@ -1441,7 +1564,9 @@ export class WorldInstance {
   private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
+      const queuedCommand = player.commandQueue.peek();
       const command = player.commandQueue.takeForTick();
+      player.appliedCommandBoundaryThisTick = command !== null && command === queuedCommand;
       if (command) {
         player.lastInput = inputFromCommand(command);
         player.appliedCommandSeq = command.commandSeq;
@@ -1574,6 +1699,65 @@ export class WorldInstance {
         eyeZ: eye.z,
         selectedSlot: player.selectedSlot,
       });
+    }
+  }
+
+  /** Snapshot combat state only after the complete authoritative physics/gameplay tick. */
+  private recordCombatPoses(): void {
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const eye = player.controller.eyePosition();
+      const aabb = player.controller.aabb;
+      const position = player.controller.position;
+      recordCombatPose(player.combatPoseHistory, {
+        serverTick: this.tickNumber,
+        commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+        commandBoundary: player.appliedCommandBoundaryThisTick,
+        eyeX: eye.x,
+        eyeY: eye.y,
+        eyeZ: eye.z,
+        positionX: position.x,
+        positionY: position.y,
+        positionZ: position.z,
+        yaw: player.controller.yaw,
+        pitch: player.controller.pitch,
+        selectedSlot: player.selectedSlot,
+        aabb: { ...aabb },
+        dead: player.survival.dead,
+        fallDistance: player.controller.fallDistance,
+        onGround: player.controller.onGround,
+        sprinting: player.controller.sprinting,
+        inWater: player.controller.inWater,
+        onLadder: player.controller.onLadder,
+        riding: Boolean(player.ridingCartId),
+      });
+    }
+  }
+
+  private processPendingAttacks(): void {
+    for (const player of this.players.values()) {
+      if (player.pendingAttacks.length === 0) continue;
+      const keep: AttackAction[] = [];
+      for (const action of player.pendingAttacks) {
+        const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+        if (pose) {
+          this.sendAttackActionResult(player, action, this.resolveSequencedAttack(player, action, pose));
+          continue;
+        }
+        if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+          keep.push(action);
+          continue;
+        }
+        this.sendAttackActionResult(player, action, {
+          ok: false,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          reason: 'stale',
+          combat: this.staleCombat(action),
+        });
+      }
+      player.pendingAttacks.length = 0;
+      player.pendingAttacks.push(...keep);
     }
   }
 

@@ -211,6 +211,7 @@ import {
   captureBlockBreakFinish,
   captureBlockBreakStart,
   captureBlockUse,
+  captureAttack,
   captureBowRelease,
   composeOnlineBreakFinish,
 } from '../net/actionIntent';
@@ -218,6 +219,7 @@ import {
   actionMessageFromBreakAbort,
   actionMessageFromBreakFinish,
   actionMessageFromBreakStart,
+  attackMessageFromAttack,
   bowReleaseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
@@ -412,6 +414,16 @@ export interface OnlineAnarchySession {
     result?: string;
     spawned?: boolean;
   };
+  lastCombatDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    result: string;
+    targetId?: string;
+    requestedRenderTick?: number;
+    resolvedRenderTick?: number;
+    rewindTicks?: number;
+    distance?: number;
+  };
   miningLocked?: boolean;
   /**
    * True after every `block_break_start` until that start is acked.
@@ -466,10 +478,12 @@ function raycastRemotePlayers(
   origin: Vec3Like,
   direction: Vec3Like,
   maxDistance: number,
-): { id: string; distance: number } | undefined {
+): { id: string; distance: number; renderTick: number } | undefined {
   const half = PLAYER_WIDTH * 0.5;
-  let closest: { id: string; distance: number } | undefined;
+  let closest: { id: string; distance: number; renderTick: number } | undefined;
   for (const [id, view] of remotes) {
+    const renderTick = view.lastRenderTick;
+    if (renderTick === undefined) continue;
     const position = view.group.position;
     const hit = rayAabbDistance(origin, direction, {
       minX: position.x - half,
@@ -481,7 +495,7 @@ function raycastRemotePlayers(
     });
     if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
     if (closest && hit.distance >= closest.distance) continue;
-    closest = { id, distance: hit.distance };
+    closest = { id, distance: hit.distance, renderTick };
   }
   return closest;
 }
@@ -1722,6 +1736,19 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    if (message.kind === 'attack') {
+      const pending = online.lastCombatDiag;
+      if (pending?.actionSeq === message.actionSeq) {
+        online.lastCombatDiag = {
+          ...pending,
+          result: message.ok
+            ? message.combat?.result ?? 'accepted'
+            : `rejected:${message.reason ?? 'unknown'}`,
+          ...(message.combat ?? {}),
+        };
+      }
+      return;
+    }
     if (message.kind === 'block_use' && !message.ok
       && online.localFoodUse?.actionSeq === message.actionSeq) {
       session.foodUseTicks = 0;
@@ -3912,8 +3939,10 @@ export class Game {
   /** Outline / session.target from live input look. Does not consume clicks or advance mining. */
   private refreshLocalCrosshair(session: GameSession, aim = this.sampleLocalAim(session)): {
     remoteCloser: boolean;
+    remoteTarget?: { id: string; distance: number; renderTick: number };
     attack: ReturnType<typeof resolvePlayerAttackTarget>;
     mobTarget: ReturnType<GameSession['mobs']['raycast']>;
+    aim: LocalAim;
   } {
     const origin = aim.origin;
     const direction = aim.direction;
@@ -3931,17 +3960,31 @@ export class Game {
     );
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
-    return { remoteCloser, attack, mobTarget };
+    return { remoteCloser, remoteTarget: remoteCloser ? remoteHit : undefined, attack, mobTarget, aim };
   }
 
   private updateTargetAndActions(): void {
     const session = this.session!;
-    const { remoteCloser, attack, mobTarget } = this.refreshLocalCrosshair(session);
+    const { remoteCloser, remoteTarget, attack, mobTarget, aim } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
     if (session.online && attackPresses > 0) {
       for (let click = 0; click < attackPresses; click += 1) {
-        session.online.client.send({ type: 'attack' });
+        const source = this.onlineActionSource(session);
+        const action = captureAttack(
+          source,
+          { yaw: aim.yaw, pitch: aim.pitch },
+          remoteTarget ? { id: remoteTarget.id, renderTick: remoteTarget.renderTick } : undefined,
+        );
+        this.commitOnlineActionSeq(session, source);
+        session.online.lastCombatDiag = {
+          actionSeq: action.actionSeq,
+          commandSeq: action.commandSeq,
+          result: 'pending',
+          ...(action.targetId ? { targetId: action.targetId } : {}),
+          ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+        };
+        session.online.client.send(attackMessageFromAttack(action));
       }
     }
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
@@ -5111,6 +5154,10 @@ export class Game {
               ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
               : undefined;
             this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+          }
+          if (session.online.lastCombatDiag) {
+            const combat = session.online.lastCombatDiag;
+            this.cachedDebugText += `\nMelee ${combat.result} a=${combat.actionSeq} c=${combat.commandSeq} target=${combat.targetId?.slice(0, 8) ?? '—'} req=${combat.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${combat.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${combat.rewindTicks?.toFixed(2) ?? '—'} dist=${combat.distance?.toFixed(3) ?? '—'}`;
           }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;

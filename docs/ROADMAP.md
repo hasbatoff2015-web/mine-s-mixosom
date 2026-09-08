@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-08: Melee PvP client-timeline hit registration
+
+- [x] Replace production bare attack with sequenced attack intent carrying live look and command/slot context.
+- [x] Attach only the actually rendered nearest remote player's `targetId` and render tick.
+- [x] Resolve attacker from an exact authoritative command-boundary; bound pending actions and pose history.
+- [x] Rewind target authoritative AABB by at most 5 ticks / 250 ms; interpolate fractional render ticks.
+- [x] Revalidate reach, current-world voxel LOS, claims/plugins, blocking, immunity, armor and all existing melee effects server-side.
+- [x] Preserve legacy safe fallback plus non-player mob/minecart hits and air swings; no bow changes.
+- [x] Add deterministic diagnostics and automated coverage for lag, flick, stale/future, obstruction, reach, duplicate and protection cases.
+- [ ] Owner live Anarchy QA: two clients under normal and throttled latency; flick-to-hit, moving target, wall rejection, mobile touch attack.
+
 ## 2026-09-08: Placed TNT fall distance (not minecart)
 
 - [x] Apply 20/30 downward fall only to primed **placed** TNT (`primeTnt` sets `launchOriginY` + `maxFallBlocks`).

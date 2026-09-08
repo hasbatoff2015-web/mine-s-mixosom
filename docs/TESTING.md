@@ -1,5 +1,22 @@
 # Тестирование
 
+## 2026-09-08 Melee PvP client timeline
+
+Report: `reports/2026-09-08_melee-pvp-client-timeline.md`.
+
+```text
+npx vitest run \
+  tests/melee-action-intent.test.ts \
+  tests/remote-action-presentation.test.ts \
+  tests/combat-pose-history.test.ts \
+  tests/server/melee-lag-compensation.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: production LMB uses sequenced `action(kind=attack)`; target hint is the exact delayed render sample rather than the newest snapshot; attack waits for an exact authoritative command-boundary; target rewind accepts at most 5 ticks and rejects stale/future data. Server ray/AABB, 3-block reach and current voxel LOS stay authoritative. A missed hinted player never falls through to another player. Duplicate, hurt immunity, attacker/victim claim cancellation, mob, minecart and air-swing behavior are covered.
+
+Results: focused 24/24; adjacent combat/network/action/interpolation/prediction 309/309; `plugin-platform` + server melee rerun 27/27; `test:sim` 42/42; `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, boundaries and production build PASS. The full default-timeout run reached 1907/1924 before its one discovered compatibility failure was fixed and rerun. Remaining unrelated baseline classes were reproduced separately: two `worldgen-terrain` 5s timeouts, `fire-contact-sunlight-minecart` 5s timeouts, `tick-load-flight` max 103–110 ms vs <80 ms, and the unchanged `minecraft-reference-extractor` parse error. No timeout or threshold was relaxed.
+
 ## 2026-09-08 Placed TNT fall distance (minecart uncapped)
 
 Report: `reports/2026-09-08_tnt-placed-fall-distance.md`.

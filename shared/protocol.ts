@@ -1,12 +1,13 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
-import type { ActionRejectReason, PlayerActionKind } from './playerActions';
+import type { ActionRejectReason, CombatActionDiagnostics, PlayerActionKind } from './playerActions';
 import type { PlayerPresentationState } from './playerPresentation';
 export type { PlayerPresentationState } from './playerPresentation';
 
 export type { AppliedMovementStep } from './playerCommand';
 export type { ActionRejectReason, PlayerActionKind } from './playerActions';
+export type { CombatActionDiagnostics } from './playerActions';
 
 export type GameMode = 'survival' | 'creative';
 
@@ -324,6 +325,8 @@ export interface ClientAttackMessage {
   readonly commandSeq?: number;
   readonly yaw?: number;
   readonly pitch?: number;
+  readonly targetId?: string;
+  readonly targetRenderTick?: number;
 }
 
 export interface ClientBowReleaseMessage {
@@ -353,6 +356,8 @@ export interface ClientActionMessage {
   readonly hitZ?: number;
   readonly yaw?: number;
   readonly pitch?: number;
+  readonly targetId?: string;
+  readonly targetRenderTick?: number;
   readonly x?: number;
   readonly y?: number;
   readonly z?: number;
@@ -490,6 +495,7 @@ export interface ServerActionResultMessage {
   readonly faceZ?: number;
   readonly yaw?: number;
   readonly pitch?: number;
+  readonly combat?: CombatActionDiagnostics;
 }
 
 export interface ServerChunkMessage {
@@ -1031,12 +1037,19 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.commandSeq !== undefined && commandSeq === undefined) return { error: 'attack.commandSeq invalid' };
       if (raw.yaw !== undefined && !finite(raw.yaw)) return { error: 'attack.yaw invalid' };
       if (raw.pitch !== undefined && !finite(raw.pitch)) return { error: 'attack.pitch invalid' };
+      const targetId = optionalString(raw.targetId, 64);
+      if (raw.targetId !== undefined && targetId === undefined) return { error: 'attack.targetId invalid' };
+      if (raw.targetRenderTick !== undefined && !finite(raw.targetRenderTick)) {
+        return { error: 'attack.targetRenderTick invalid' };
+      }
       return {
         type: 'attack',
         ...(actionSeq !== undefined ? { actionSeq } : {}),
         ...(commandSeq !== undefined ? { commandSeq } : {}),
         ...(finite(raw.yaw) ? { yaw: raw.yaw } : {}),
         ...(finite(raw.pitch) ? { pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2) } : {}),
+        ...(targetId ? { targetId } : {}),
+        ...(finite(raw.targetRenderTick) ? { targetRenderTick: raw.targetRenderTick } : {}),
       };
     }
     case 'bow_release': {
@@ -1073,6 +1086,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const targetX = optionalInteger(raw.targetX ?? raw.x);
       const targetY = optionalInteger(raw.targetY ?? raw.y);
       const targetZ = optionalInteger(raw.targetZ ?? raw.z);
+      const targetId = optionalString(raw.targetId, 64);
+      if (raw.targetId !== undefined && targetId === undefined) return { error: 'action.targetId invalid' };
+      if (raw.targetRenderTick !== undefined && !finite(raw.targetRenderTick)) {
+        return { error: 'action.targetRenderTick invalid' };
+      }
       return {
         type: 'action',
         actionSeq,
@@ -1084,6 +1102,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(targetZ !== undefined ? { targetZ } : {}),
         ...(finite(raw.yaw) ? { yaw: raw.yaw } : {}),
         ...(finite(raw.pitch) ? { pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2) } : {}),
+        ...(targetId ? { targetId } : {}),
+        ...(finite(raw.targetRenderTick) ? { targetRenderTick: raw.targetRenderTick } : {}),
       };
     }
     case 'pickup': {

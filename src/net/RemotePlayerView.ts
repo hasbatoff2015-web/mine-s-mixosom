@@ -41,6 +41,7 @@ export class RemotePlayerView {
   private presentationReceivedAt = 0;
   private swingSeq = 0;
   private hurtSeq = 0;
+  private lastRenderedPose?: RemoteSampledPose;
 
   constructor(
     info: RemotePlayerInfo,
@@ -59,6 +60,7 @@ export class RemotePlayerView {
 
   reset(info: RemotePlayerInfo, _now = 0): void {
     this.buffer.reset();
+    this.lastRenderedPose = undefined;
     this.spawnYaw = info.yaw;
     this.spawnPitch = info.pitch;
     this.group.position.set(info.x, info.y, info.z);
@@ -126,6 +128,7 @@ export class RemotePlayerView {
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
+    this.lastRenderedPose = pose;
     this.visual.update(deltaSeconds, {
       viewYaw: pose.yaw,
       viewPitch: pose.pitch,
@@ -141,6 +144,11 @@ export class RemotePlayerView {
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);
     maybeLogRemoteTimeline(this.id.slice(0, 8), this.buffer.snapshots(), this.buffer.diagnostics(now), now);
     return pose;
+  }
+
+  /** Read-only timeline of the pose already applied to group.position this frame. */
+  get lastRenderTick(): number | undefined {
+    return this.lastRenderedPose?.renderTick;
   }
 
   diagnostics(now = 0): RemoteInterpDiagnostics {

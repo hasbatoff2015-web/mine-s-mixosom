@@ -1,5 +1,16 @@
 # Состояние проекта
 
+## Последний проход: melee PvP hit registration по client timeline — 2026-09-08
+
+- Root cause: production client посылал bare `{ type: 'attack' }`; сервер считал melee по receipt-time eye/yaw, а remote client уже целился в интерполированную delayed pose (adaptive delay 80–180 ms). FIFO input мог дополнительно применить более новый yaw до обработки атаки.
+- LMB теперь фиксирует live aim, command/slot и `targetId + targetRenderTick` реально отрисованного ближайшего remote player и отправляет sequenced `action(kind=attack)`. Bare attack из production path удалён; legacy protocol path сохранён.
+- Серверная `combatPoseHistory` содержит 12 полных 20 TPS poses с exact command-boundary. Pending attacks bounded до 32; rewind цели ограничен 5 ticks / 250 ms, fractional ticks интерполируют только authoritative AABB.
+- Сервер остаётся владельцем результата: ray/AABB, reach 3, current-world voxel LOS, claims/plugins, armor, blocking, immunity, critical, knockback и durability. Нет hitbox inflation, client damage/distance или fallback на другого player после miss указанной цели.
+- Без player hint сохраняются air swing, mob и minecart melee. F3 получает серверные combat diagnostics через `action_result`.
+- Автотесты покрывают fast flick/queue boundary, moving rewound target, stale/future hints, wall/reach, duplicates, immunity, обе стороны claims, mob/minecart и air swing. Owner live two-client QA остаётся в roadmap.
+- Validation: focused 24/24, adjacent combat/network/action/prediction 309/309, plugin compatibility + melee 27/27, `test:sim` 42/42; все четыре typecheck, boundaries и production build PASS. Full suite достиг 1907/1924 до исправления найденного boolean plugin-контракта; оставшиеся классы — уже документированные 5s worldgen/fire-minecart timeouts, `tick-load-flight` <80 ms gate и reference-extractor parse failure, воспроизводимые изолированно.
+- Handoff: `docs/reports/2026-09-08_melee-pvp-client-timeline.md`.
+
 ## Последний проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
 
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.

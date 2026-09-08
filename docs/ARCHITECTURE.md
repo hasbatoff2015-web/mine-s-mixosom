@@ -1,5 +1,15 @@
 # Архитектура
 
+## Sequenced melee PvP timeline authority — 2026-09-08
+
+Онлайн-melee следует правилу **client owns intent, server owns result**. На нажатии LMB клиент снимает live camera yaw/pitch, текущие `commandSeq`/hotbar slot и, только если ближайшим объектом под прицелом был уже отрисованный remote player, его `targetId` и точный `RemotePlayerView.lastRenderTick`. Сообщение всегда идёт через общий sequenced `action(kind=attack)`; клиент не сообщает damage, distance или результат попадания.
+
+Сервер хранит для каждого игрока bounded `combatPoseHistory` из 12 полных simulation-tick состояний. Запись делается после `ServerGameplay.tick` и riding update и помечает точную границу применённой queued-команды. Attack разрешается только по такой exact command-boundary; пришедший раньше команды intent остаётся в bounded очереди (до 32) и исполняется после применения команды. Sticky/current pose не подставляется вместо отсутствующей boundary.
+
+PvP target rewind ограничен `MAX_PVP_REWIND_TICKS = 5` (250 ms при 20 TPS). Для fractional render tick AABB интерполируется между двумя authoritative samples; future, слишком старый или отсутствующий sample даёт безопасный `stale` miss. Attacker eye/look берутся из authoritative command pose с допустимым client live-look intent, target hitbox — только из server history. Сервер заново проверяет ray/AABB, reach 3 блока, текущую voxel line-of-sight, death, blocking, claims/plugins, armor, hurt resistance, critical, knockback и durability. Hitbox inflation и доверия client-reported distance нет.
+
+Если клиент указал player target, промах по его rewound AABB не переходит на другого игрока. Intent без player hint сохраняет прежние server-owned air swing, mob и minecart interactions, но не выбирает игрока по receipt-time pose. Legacy unsequenced `attack` оставлен как совместимый безопасный current-state fallback; production client его больше не отправляет. `action_result.combat` содержит только bounded diagnostics (`hit/miss/immune/blocked/occluded/out_of_reach/stale`, ticks, rewind и server distance) для F3/тестов.
+
 ## Deterministic armor cutout depth policy — 2026-09-08
 
 Armor remains a child presentation of the canonical `PlayerVisual` rig. Its textures are alpha-tested cutouts, not blended transparent objects: base and leather overlay use `transparent=false`, `alphaTest=0.1`, `depthTest=true` and `depthWrite=true`. This keeps the meshes in Three.js's opaque queue and removes camera-distance transparent sorting from the result.

@@ -65,7 +65,7 @@ import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
-import type { BlockTargetIntent } from '../shared/playerActions';
+import type { BlockTargetIntent, CombatActionDiagnostics } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { resolveActionEye } from '../shared/actionPoseHistory';
 import { viewDirectionFromLook } from '../src/player/localAim';
@@ -76,6 +76,7 @@ import {
 import type { EventBus } from './events';
 import { bowDebug } from './log';
 import type { WorldSnapshot } from '../src/save/types';
+import type { CombatPoseSample, RewoundCombatPose } from './combatPoseHistory';
 
 export const ENTITY_INTEREST_RADIUS = 48;
 const INTEREST_SQ = ENTITY_INTEREST_RADIUS * ENTITY_INTEREST_RADIUS;
@@ -142,6 +143,19 @@ export interface GameplayMetrics {
   maxTickMs: number;
   entities: number;
   blockChanges: number;
+}
+
+export interface SequencedMeleeTarget {
+  readonly player: GameplayPlayer;
+  readonly pose: RewoundCombatPose;
+  readonly requestedRenderTick: number;
+}
+
+export interface SequencedMeleeOptions {
+  readonly attackerPose: CombatPoseSample;
+  readonly target?: SequencedMeleeTarget;
+  /** Missing player hint preserves mob/minecart/block attacks, without target fallback. */
+  readonly allowCurrentPlayerTargets?: boolean;
 }
 
 export class ServerGameplay {
@@ -816,45 +830,88 @@ export class ServerGameplay {
     };
   }
 
-  attack(player: GameplayPlayer, others: readonly GameplayPlayer[] = []): void {
-    if (!player.connected || player.survival.dead) return;
+  attack(
+    player: GameplayPlayer,
+    others: readonly GameplayPlayer[] = [],
+    options?: SequencedMeleeOptions,
+  ): CombatActionDiagnostics {
+    const hintedTargetId = options?.target?.player.id;
+    const timeline = options?.target
+      ? {
+        targetId: hintedTargetId,
+        requestedRenderTick: options.target.requestedRenderTick,
+        resolvedRenderTick: options.target.pose.resolvedTick,
+        rewindTicks: options.target.pose.rewindTicks,
+      }
+      : {};
+    if (!player.connected || player.survival.dead || options?.attackerPose.dead) {
+      return { result: 'stale', ...timeline };
+    }
     // A validated attack attempt swings even on a miss or damage immunity.
     player.presentSwing?.();
-    const origin = player.controller.eyePosition(this.tmpEye);
-    const direction = player.controller.viewDirection(this.tmpDir);
+    const origin = options
+      ? this.tmpEye.set(options.attackerPose.eyeX, options.attackerPose.eyeY, options.attackerPose.eyeZ)
+      : player.controller.eyePosition(this.tmpEye);
+    const direction = options
+      ? viewDirectionFromLook(options.attackerPose.yaw, options.attackerPose.pitch, this.tmpDir)
+      : player.controller.viewDirection(this.tmpDir);
+
+    if (options?.target) {
+      const target = options.target.player;
+      if (target.id === player.id || !target.connected || target.survival.dead
+        || target.gamemode !== 'survival' || options.target.pose.dead) {
+        return { result: 'stale', ...timeline };
+      }
+      const playerHit = rayAabbDistance(origin, direction, options.target.pose.aabb);
+      if (!playerHit || playerHit.distance < 0) return { result: 'miss', ...timeline };
+      const distance = playerHit.distance;
+      if (distance > 3) return { result: 'out_of_reach', distance, ...timeline };
+      const blockHit = this.world.raycast(origin, direction, distance);
+      if (blockHit && blockHit.distance + 1e-7 < distance) {
+        return { result: 'occluded', distance, ...timeline };
+      }
+      const result = this.meleePlayer(player, target, options.attackerPose);
+      return { result, distance, ...timeline };
+    }
+
     const blockHit = this.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = this.minecarts.raycast(origin, direction, PLAYER_REACH, player.ridingCartId);
     const mobHit = this.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
-    const playerHit = this.raycastPlayers(player, others, origin, direction, Math.min(3, PLAYER_REACH));
+    const playerHit = options?.allowCurrentPlayerTargets === false
+      ? undefined
+      : this.raycastPlayers(player, others, origin, direction, Math.min(3, PLAYER_REACH));
     const playerCloser = playerHit
       && (!mobHit || playerHit.distance <= mobHit.distance)
       && (!cartHit || playerHit.distance <= cartHit.distance)
       && (!blockHit || playerHit.distance < blockHit.distance);
     if (playerCloser && playerHit) {
-      this.meleePlayer(player, playerHit.player);
-      return;
+      return { result: this.meleePlayer(player, playerHit.player), targetId: playerHit.player.id, distance: playerHit.distance };
     }
     const attack = resolvePlayerAttackTarget(blockHit, cartHit, mobHit, player.ridingCartId);
     if (attack?.kind === 'mob' && mobHit) {
-      const stack = player.inventory.getSlot(player.selectedSlot);
+      const selectedSlot = options?.attackerPose.selectedSlot ?? player.selectedSlot;
+      const stack = player.inventory.getSlot(selectedSlot);
       const result = player.combat.performMeleeAttack(stack?.itemId ?? null, {
         critical: {
-          fallDistance: player.controller.fallDistance,
-          onGround: player.controller.onGround,
-          sprinting: player.controller.sprinting,
-          inWater: player.controller.inWater,
-          onLadder: player.controller.onLadder,
-          riding: Boolean(player.ridingCartId),
+          fallDistance: options?.attackerPose.fallDistance ?? player.controller.fallDistance,
+          onGround: options?.attackerPose.onGround ?? player.controller.onGround,
+          sprinting: options?.attackerPose.sprinting ?? player.controller.sprinting,
+          inWater: options?.attackerPose.inWater ?? player.controller.inWater,
+          onLadder: options?.attackerPose.onLadder ?? player.controller.onLadder,
+          riding: options?.attackerPose.riding ?? Boolean(player.ridingCartId),
         },
-        attackerSprinting: player.controller.sprinting,
-        attackerYaw: player.controller.yaw,
+        attackerSprinting: options?.attackerPose.sprinting ?? player.controller.sprinting,
+        attackerYaw: options?.attackerPose.yaw ?? player.controller.yaw,
       });
       const damageEvent = this.events.createEntityDamage(mobHit.mob.id, result.damage, 'melee');
       this.events.emit('entityDamage', damageEvent);
-      if (damageEvent.cancelled) return;
+      if (damageEvent.cancelled) return { result: 'blocked', distance: mobHit.distance };
+      const attackerPosition = options
+        ? new Vec3(options.attackerPose.positionX, options.attackerPose.positionY, options.attackerPose.positionZ)
+        : player.controller.position;
       const accepted = this.mobs.damage(mobHit.mob, result.damage, {
         source: 'player',
-        attackerPosition: player.controller.position,
+        attackerPosition,
         attackerYaw: result.attackerYaw,
         extraKnockbackLevel: result.extraKnockbackLevel,
       });
@@ -864,7 +921,7 @@ export class ServerGameplay {
       completeMeleeAttack(result, accepted, player.controller);
       if (accepted && player.gamemode === 'survival') {
         if (stack && result.profile.durabilityCost > 0) {
-          player.inventory.setSlot(player.selectedSlot, damageItem(stack, result.profile.durabilityCost));
+          player.inventory.setSlot(selectedSlot, damageItem(stack, result.profile.durabilityCost));
           player.inventoryDirty = true;
         }
         player.survival.recordAttack();
@@ -872,15 +929,17 @@ export class ServerGameplay {
       if (!mobHit.mob.alive) {
         this.events.emit('entityDeath', { entityId: mobHit.mob.id, cause: 'melee', playerId: player.id });
       }
-      return;
+      return { result: accepted ? 'hit' : 'immune', distance: mobHit.distance };
     }
     if (attack?.kind === 'minecart') {
       const broken = this.minecarts.breakCart(attack.cart, player.ridingCartId);
-      if (!broken) return;
+      if (!broken) return { result: 'miss', distance: cartHit?.distance };
       for (const itemId of dropsForBrokenMinecart(player.gamemode, broken.items)) {
         this.spawnDroppedStack(createItemStack(itemId), broken.position.clone().add(new Vec3(0, 0.2, 0)), player.id);
       }
+      return { result: 'hit', distance: cartHit?.distance };
     }
+    return { result: 'miss' };
   }
 
   advanceMining(player: GameplayPlayer): void {
@@ -1303,33 +1362,43 @@ export class ServerGameplay {
     return closest;
   }
 
-  private meleePlayer(attacker: GameplayPlayer, victim: GameplayPlayer): void {
-    const stack = attacker.inventory.getSlot(attacker.selectedSlot);
+  private meleePlayer(
+    attacker: GameplayPlayer,
+    victim: GameplayPlayer,
+    pose?: CombatPoseSample,
+  ): 'hit' | 'immune' | 'blocked' {
+    const selectedSlot = pose?.selectedSlot ?? attacker.selectedSlot;
+    const stack = attacker.inventory.getSlot(selectedSlot);
     const result = attacker.combat.performMeleeAttack(stack?.itemId ?? null, {
       critical: {
-        fallDistance: attacker.controller.fallDistance,
-        onGround: attacker.controller.onGround,
-        sprinting: attacker.controller.sprinting,
-        inWater: attacker.controller.inWater,
-        onLadder: attacker.controller.onLadder,
-        riding: Boolean(attacker.ridingCartId),
+        fallDistance: pose?.fallDistance ?? attacker.controller.fallDistance,
+        onGround: pose?.onGround ?? attacker.controller.onGround,
+        sprinting: pose?.sprinting ?? attacker.controller.sprinting,
+        inWater: pose?.inWater ?? attacker.controller.inWater,
+        onLadder: pose?.onLadder ?? attacker.controller.onLadder,
+        riding: pose?.riding ?? Boolean(attacker.ridingCartId),
       },
-      attackerSprinting: attacker.controller.sprinting,
-      attackerYaw: attacker.controller.yaw,
+      attackerSprinting: pose?.sprinting ?? attacker.controller.sprinting,
+      attackerYaw: pose?.yaw ?? attacker.controller.yaw,
     });
-    const accepted = this.hurtPlayer(victim, result.damage, 'melee', attacker.controller.position, {
+    const attackerPosition = pose
+      ? new Vec3(pose.positionX, pose.positionY, pose.positionZ)
+      : attacker.controller.position;
+    const damage = this.hurtPlayerResult(victim, result.damage, 'melee', attackerPosition, {
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerYaw: result.attackerYaw,
       attackerId: attacker.id,
     });
+    const accepted = damage === 'hit';
     completeMeleeAttack(result, accepted, attacker.controller);
     if (accepted && attacker.gamemode === 'survival') {
       if (stack && result.profile.durabilityCost > 0) {
-        attacker.inventory.setSlot(attacker.selectedSlot, damageItem(stack, result.profile.durabilityCost));
+        attacker.inventory.setSlot(selectedSlot, damageItem(stack, result.profile.durabilityCost));
         attacker.inventoryDirty = true;
       }
       attacker.survival.recordAttack();
     }
+    return damage;
   }
 
   private hurtPlayer(
@@ -1345,15 +1414,31 @@ export class ServerGameplay {
       readonly attackerId?: string;
     } = {},
   ): boolean {
-    if (victim.gamemode !== 'survival' || victim.survival.dead) return false;
+    return this.hurtPlayerResult(victim, amount, cause, from, extras) === 'hit';
+  }
+
+  private hurtPlayerResult(
+    victim: GameplayPlayer,
+    amount: number,
+    cause: 'melee' | 'projectile',
+    from: Vec3,
+    extras: {
+      readonly knockback?: number;
+      readonly extraKnockbackLevel?: number;
+      readonly attackerYaw?: number;
+      readonly ignite?: boolean;
+      readonly attackerId?: string;
+    } = {},
+  ): 'hit' | 'immune' | 'blocked' {
+    if (victim.gamemode !== 'survival' || victim.survival.dead) return 'immune';
     const event = this.events.createPlayerDamage(victim.id, amount, cause, extras.attackerId);
     this.events.emit('playerDamage', event);
-    if (event.cancelled) return false;
+    if (event.cancelled) return 'blocked';
     const result = victim.survival.damage(amount, cause, {
       armor: victim.inventory,
       swordBlocking: victim.combat.swordBlocking,
     });
-    if (!result.accepted) return false;
+    if (!result.accepted) return 'immune';
     this.events.emit('playerDamaged', {
       playerId: victim.id,
       amount,
@@ -1382,6 +1467,6 @@ export class ServerGameplay {
       }
     }
     this.respawnIfDead(victim);
-    return true;
+    return 'hit';
   }
 }
