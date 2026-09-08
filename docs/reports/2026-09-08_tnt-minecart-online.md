@@ -16,7 +16,7 @@ Done. Онлайн-синхронизация cargo идёт через `tntBloc
 
 ## Implemented
 
-- Cargo хранит `tntBlockId` (109/161/162), не только `variant === 'tnt'`.
+- Cargo хранит `tntBlockId` (109/162/163), не только `variant === 'tnt'`.
 - `insertTnt(cart, blockId)` принимает любой TNT-блок; `useInteraction`
   резолвит `tnt` / `tnt_powerful` / `tnt_destructive`.
 - Fire-arrow hit: `igniteMinecartTntFromFireArrow` → `ejectTntCargo` +

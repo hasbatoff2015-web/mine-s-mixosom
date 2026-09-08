@@ -5,6 +5,7 @@
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.
 - Поставленный TNT (`primeTnt`): после поджига падает вниз от Y прайма. Ordinary max 20; powerful и destructive max 30. Пол раньше лимита → взрыв на столкновении; иначе воздух на лимите. Fuse 4s — safety.
 - TNT в вагонетке: прежняя механика fire-arrow eject (`launchMinecartTnt`, hop `vy=4`, inherit `vx/vz`, fuse 4s). **Нет** `launchOriginY` / `maxFallBlocks`, нет noclip платформы, нет принудительного полёта вниз на 20/30. `tntBlockId`, snapshot, joiner, flint/ordinary-arrow не поджигают — без изменений. Off-rail push 50% без изменений.
+- Numeric IDs after merge with Ruby/Titanium: `TitaniumOre` remains 161; `TntPowerful` = 162, `TntDestructive` = 163.
 - Focused: placed-fall 6, tnt-minecart 8, server/tnt-minecart 5, redstone 9, lighting-physics, tnt-profiles, use-interaction, content-pass — 61/61. `test:sim` 42/42. All four typechecks, boundaries, production build PASS.
 
 ## Предыдущий проход: TNT minecart fall distance 20/30 — 2026-09-08
@@ -14,7 +15,7 @@
 
 ## Предыдущий проход: TNT in minecart online + off-rail push — 2026-09-08
 
-- Рабочий SP TNT-в-вагонетке перенесён в Anarchy без второй системы. Cargo хранит `tntBlockId` (109/161/162), не только `variant === 'tnt'`.
+- Рабочий SP TNT-в-вагонетке перенесён в Anarchy без второй системы. Cargo хранит `tntBlockId` (109/162/163), не только `variant === 'tnt'`.
 - Баг reconnect: клиент больше не рисует cargo локально. `applyNetworkSnapshot` + `syncCargoVisual` и `EntitySnapshot.blockId` синхронизируют тип всем клиентам и joiners сразу.
 - Все три TNT item ID ставятся в вагонетку (`useInteraction` / `insertTnt`). Тот же cargo mesh, материалы `block/tnt` / `tnt_powerful` / `tnt_destructive`.
 - Поджиг cargo — только огненная стрела (`igniteMinecartTntFromFireArrow`). Flint возвращает `'none'` для вагонетки; TNT-блок по-прежнему праймится. Обычная стрела не поджигает.
@@ -26,13 +27,43 @@
 
 ## Предыдущий проход: Anarchy TNT types — 2026-09-08
 
-- Три профиля на существующем `ExplosionQueue` / `resolveExplosion`: ordinary (`tnt` 109, radius 4), powerful (`tnt_powerful` 161, radius 6), destructive (`tnt_destructive` 162, ordinary radius). Нет второй explosion-системы.
+- Три профиля на существующем `ExplosionQueue` / `resolveExplosion`: ordinary (`tnt` 109, radius 4), powerful (`tnt_powerful` 162, radius 6), destructive (`tnt_destructive` 163, ordinary radius). Нет второй explosion-системы.
 - Ordinary TNT не ломает iron/gold/diamond anchors и не удаляет block-claims. Powerful/destructive ломают якорь; `blockBroken` по-прежнему снимает claim.
 - Все три типа не разрушают воксели внутри обычных `/claim` (adapter `canDestroy` из `ServerGameplay`, shared sim без PluginManager).
 - Обсидиан — пространственный щит (voxel DDA) для ordinary/powerful; destructive ломает обсидиан и игнорирует щит. Взрыв идёт вокруг стены, не отменяется целиком.
 - Цепной взрыв передаёт `ChainedTnt.blockId`; второй TNT сохраняет свой профиль.
 - Рецепты: shapeless TNT+gold_block → powerful; shaped 8 obsidian + TNT в центре → destructive. Текстуры 32×32: красное тело → чёрное / тёмно-фиолетовое. Та же primed mesh/pulse.
 - Handoff: `docs/reports/2026-09-08_anarchy-tnt-types.md`. Focused 61/61, `test:sim` 42/42, all four typechecks, boundaries, production build PASS.
+
+## Предыдущий проход: armor cutout z-fighting + Titanium 20 — 2026-09-08
+
+- `PlayerArmorVisual` больше не отправляет alpha-tested armor в transparent queue: все base и leather overlay materials используют `transparent=false`, `alphaTest=0.1`, `depthTest=true`, `depthWrite=true`.
+- Порядок пересекающихся cuboids детерминирован и не зависит от материала/камеры: base `20/21/22`, overlay `30/31/32` для body/head, right limb и left limb. После первого QA cutout+order всё ещё показывали тонкий coplanar pattern в crouch на косом угле; поэтому per-part owned materials получили минимальный slope/unit `polygonOffset`: `0/-1/-2` по той же priority. Geometry, UV, atlas, pivots и inflate `1/0.5 px` не менялись.
+- Titanium armor теперь `3 + 8 + 6 + 3 = 20`, то есть 80% flat protection и 10 полных HUD icons. Diamond остаётся 17/68%, Ruby 18/72%, `MAX_ARMOR_POINTS=20`; toughness/penetration нет.
+- Focused armor/Ruby-Titanium/HUD/network pack: **34/34 PASS**. Все четыре typecheck, import boundaries и production build PASS. Browser QA через `?qaPlayer=1`: Ruby/Titanium full sets, front/back/oblique rotation, walk/sprint/sneak/jump/attack; Iron/Diamond regression and leather overlay; warn/error console пуст.
+- Handoff: `docs/reports/2026-09-08_armor-z-fighting-titanium-20.md`.
+
+## Последний проход: Ruby / Titanium equipment integration — 2026-09-08
+
+- Endgame progression зарегистрирован как `diamond -> ruby -> titanium` без отдельной Ruby Ore и без прямых Titanium equipment recipes.
+- Ruby Ingot — shapeless sink `1 diamond + 3 gold ingots + 3 iron ingots`; все 9 Ruby equipment recipes расширяют существующие material loops. Все 9 Titanium pieces получаются только shapeless upgrade `matching Ruby piece + 1 titanium_ingot`.
+- `BlockId.TitaniumOre = 161`; руда имеет hardness 5, требует pickaxe rank Ruby и дропает себя только при correct tool. Канонический rank: hand 0, wood 1, stone 2, iron 3, gold 1, diamond 4, ruby 5, titanium 6.
+- Titanium worldgen добавлен последним ore rule: Y 4–12, одна vein size 3, `spawnChance=0.75`. Старые ore rules не получают дополнительного RNG call; fixed-seed digest старых ore positions сохранился. На выборке 49 chunks: Diamond 198, Titanium 76, то есть Titanium в 2.61 раза реже.
+- Armor totals: Leather 7, Gold 11, Iron 15, Diamond 17, Ruby 18, Titanium 20; damage reduction остаётся flat 4%/point, toughness penetration не добавлялась. Tools: Ruby 2100/10/+4, Titanium 2800/12/+5; swords 9/10 damage.
+- `PlayerArmorVisual` использует существующий shell/pivot/cache path и новые Ruby/Titanium layers. Authoritative `snapshot.equipment` остаётся generic string-ID transport; protocol не менялся. Invisibility и first-person semantics сохранены.
+- Все 25 runtime PNG, включая 8 отдельных armor inventory icons, проверены детерминированным generator `--check`; Creative catalog подхватывает новые obtainable items автоматически.
+- Focused integration pack: 103/103 PASS; отдельный final feature test: 11/11 PASS. Все четыре typecheck, import boundaries и production build PASS. Full suite: 1853/1869 PASS; 16 timeout/performance failures, один прежний extractor parse failure и worker RPC timeout — те же документированные baseline-классы вне изменённого feature path.
+- Известное ограничение старых миров: save schema хранит seed + deltas, но не полный manifest посещённых неизменённых procedural chunks. Backfill/migration не выполняется и загруженные chunks не меняются, однако после restart невозможно отличить ранее посещённый неизменённый chunk от нового. Подробности: `docs/reports/2026-09-08_ruby-titanium-equipment.md`.
+
+## Последний проход: Ruby / Titanium code-generated pixel assets — 2026-09-08
+
+- Созданы 25 финальных PNG: по два armor UV layer, по ingot, пять tools и четыре armor inventory icons для Ruby/Titanium, плюс `titanium_ore`.
+- `scripts/generate-tier-assets.py` делает controlled luminance palette-remap через Pillow. Alpha/silhouette остаются от шаблонов; item/block canvas не ресайзится и не сглаживается.
+- Ruby armor использует `diamond_layer_*`. Titanium armor использует предоставленные `netherite_layer_*`: это точные 5× pixel replications, которые приводятся к ожидаемым `128×64` только nearest-neighbor.
+- Tools используют iron silhouettes; четыре RGB-уровня дерева берутся из `stick.png` и сохраняются пиксель-в-пиксель. `titanium_ore` меняет только цветные emerald inclusions, оставляя grayscale stone matrix точной копией.
+- `--check` подтвердил все 25 outputs: размеры, alpha masks, palette membership, handles, stone background и отсутствие stale pixels. Contact sheet прошёл visual QA.
+- Item/block assets лежат в runtime `public/textures/{item,block}`; armor layers — в каноническом Vite-import path `assets/minecraft/textures/models/armor`.
+- Этот первоначальный asset-only pass не менял gameplay; последующая интеграция описана секцией выше. Asset handoff: `docs/reports/2026-09-08_ruby-titanium-tier-assets.md`.
 
 ## Последний проход: Claim-anchor cubic volume + visible bounds — 2026-09-08
 

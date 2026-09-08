@@ -1,5 +1,33 @@
 # Архитектура
 
+## Deterministic armor cutout depth policy — 2026-09-08
+
+Armor remains a child presentation of the canonical `PlayerVisual` rig. Its textures are alpha-tested cutouts, not blended transparent objects: base and leather overlay use `transparent=false`, `alphaTest=0.1`, `depthTest=true` and `depthWrite=true`. This keeps the meshes in Three.js's opaque queue and removes camera-distance transparent sorting from the result.
+
+Intentional cuboid overlaps use one material-independent priority table: body/head `0`, right arm/leg `1`, left arm/leg `2`. Base mesh `renderOrder` is `20 + priority`; leather overlay is `30 + priority`, after both skin passes and its corresponding base. Dynamic QA showed that opaque ordering alone still left a coplanar hatch at oblique crouch angles, so entity-owned per-priority material clones also apply a bounded polygon bias: disabled/zero for priority 0, then factor+units `-1/-1` and `-2/-2`. This is a depth tie-breaker only; geometry dimensions, positions, scale, UVs, texture atlases, pivots and inner/outer inflate remain unchanged.
+
+## Ruby / Titanium equipment progression — 2026-09-08
+
+Ruby и Titanium расширяют существующие item/block/crafting/mining systems, а не создают параллельную equipment систему. `ItemTier` и armor material имеют два новых значения; data-driven item registry создаёт обычные tools, weapons и armor с цепочкой `diamond -> ruby -> titanium`. Ruby — crafted resource sink. Titanium — редкий exploration/final tier.
+
+Ruby gear использует существующие shaped material loops. Titanium намеренно не входит в эти loops: девять shapeless upgrade recipes принимают только соответствующий Ruby item и один Titanium Ingot. Furnace использует обычный `SmeltingRecipe` `titanium_ore -> titanium_ingot`, 200 ticks. Creative catalog продолжает строиться из `obtainableItems()`.
+
+`TOOL_TIER_RANK` в `src/blocks/mining.ts` — единственная числовая шкала harvest requirements: hand 0, wood 1, stone 2, iron 3, gold 1, diamond 4, ruby 5, titanium 6. `BlockId.TitaniumOre = 161` требует Ruby pickaxe rank; серверный и локальный drop paths используют тот же `canHarvestBlock`.
+
+Titanium Ore — последний `ORE_RULES` entry (Y 4–12, one attempt, size 3, 0.75 per chunk). `spawnChance` вызывает RNG только когда поле присутствует, поэтому старые rules сохраняют прежнюю RNG sequence и старые ore positions. Генератор не сканирует и не изменяет уже загруженные chunks. Текущая persistence model хранит seed и modification deltas, но не полный manifest неизменённых посещённых chunks; поэтому строгая pre-update visited-chunk идентичность после process restart без изменения save schema технически недоказуема и зафиксирована как известное ограничение, а не скрытая migration.
+
+Armor rendering остаётся в `PlayerVisual -> PlayerArmorVisual`: Ruby/Titanium выбирают свои layer 1/2 через тот же slot resolver, shell geometry, body pivots и shared caches. Сеть передаёт только authoritative item IDs в существующем `snapshot.equipment`; material не принимается от клиента и protocol shape не меняется. Invisibility скрывает skin/body, но оставляет armor/held item; first person не создаёт armor meshes.
+
+Canonical armor totals: Diamond 17, Ruby 18, Titanium 20. `SurvivalSystem` продолжает применять fixed `(25 - armorPoints) / 25`, поэтому reductions равны 68%, 72% и 80%; `MAX_ARMOR_POINTS` остаётся 20, toughness/penetration не вводились.
+
+## Ruby / Titanium generated asset pipeline — 2026-09-08
+
+`scripts/generate-tier-assets.py` is the single reproducible owner of the 25 Ruby/Titanium PNG outputs. It reads existing RGBA templates, selects material pixels, normalizes source luminance across 4–6 fixed palette levels and writes RGBA PNGs without blur, anti-aliasing or item/block resampling. `--check` regenerates expected pixels in memory and fails on a missing/stale output, size or alpha change, color outside the declared palette, changed wooden handle, or changed ore matrix.
+
+Armor follows the renderer's existing path instead of creating a second asset route: `assets/minecraft/textures/models/armor/{ruby,titanium}_layer_{1,2}.png`. Ruby keeps Diamond UV/silhouette/alpha. Titanium keeps Netherite UV/silhouette/alpha; the supplied Netherite images are exact 5× replications and are reduced from 640×320 to the expected 128×64 with nearest-neighbor before remap.
+
+Item sprites are written to `public/textures/item`, and `titanium_ore.png` to `public/textures/block`, matching the current runtime conventions. Iron tools are the source because their wooden pixels exactly share the four opaque RGB values in `stick.png`; only non-handle opaque pixels enter the material remap. Diamond item armor silhouettes supply the eight independent Ruby/Titanium inventory icons; model layer atlases are never reused as item icons. Emerald Ore is the ore template: its grayscale pixels are the stone matrix, while pixels with RGB channel spread ≥12 are the inclusion mask.
+
 ## Vanilla-style player armor presentation — 2026-09-07
 
 `PlayerArmorVisual` is a presentation child of the canonical `PlayerVisual`; it is not a second rig. Its head, torso, arm and leg shell meshes attach directly to the existing articulated pivots, so `PlayerVisualAnimator` remains the sole owner of idle/walk/sprint/sneak/jump/attack/mining/bow/eat/block motion. Base model dimensions and legacy 64×32 cuboid UV islands are reused with vanilla armor deformation: outer `layer_1` shells inflate by 1 model pixel, inner leggings `layer_2` by 0.5 pixel. Helmet uses head, chestplate uses torso+arms, leggings use waist+legs, and boots use legs. Slim skins retain their 3 px body arms and shoulder pivot while armor sleeves intentionally keep vanilla 4 px shell width.

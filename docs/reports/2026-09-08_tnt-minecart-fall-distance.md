@@ -43,8 +43,8 @@ Debug table from simulation (startY → explosionY, deltaY), default 4s fuse:
 | type | startY | ~deltaY |
 | --- | --- | --- |
 | ordinary 109 | 80 / 100 / 55 | ~20 |
-| powerful 161 | 90 | ~30 |
-| destructive 162 | 90 | ~30 |
+| powerful 162 | 90 | ~30 |
+| destructive 163 | 90 | ~30 |
 | rail+stone over void | 80 | ~20 (not 0) |
 | floor at 60, start 68 | 68 | ~8 |
 

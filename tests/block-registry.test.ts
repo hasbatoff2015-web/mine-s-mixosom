@@ -51,8 +51,8 @@ describe('block registry', () => {
   });
 
   it('registers powerful and destructive TNT with distinct textures', () => {
-    expect(BlockId.TntPowerful).toBe(161);
-    expect(BlockId.TntDestructive).toBe(162);
+    expect(BlockId.TntPowerful).toBe(162);
+    expect(BlockId.TntDestructive).toBe(163);
     expect(getBlockDefinition(BlockId.TntPowerful)).toMatchObject({
       key: 'tnt_powerful', name: 'Мощный динамит', textures: { all: 'block/tnt_powerful' },
     });
@@ -115,14 +115,18 @@ describe('block registry', () => {
     expect(getBlockDefinition(BlockId.DeadBush).biomeTint).toBeUndefined();
   });
 
-  it('contains exactly the intended five ores with 1.9-style iron and gold drops', () => {
+  it('contains the intended ores with 1.9-style iron/gold and gated Titanium drops', () => {
     const ores = BLOCKS.filter((block) => block.category === 'ore');
     expect(ores.map((block) => block.key).sort()).toEqual([
-      'coal_ore', 'diamond_ore', 'gold_ore', 'iron_ore', 'redstone_ore',
+      'coal_ore', 'diamond_ore', 'gold_ore', 'iron_ore', 'redstone_ore', 'titanium_ore',
     ]);
     expect(getBlockDefinition(BlockId.IronOre).drop?.item).toBe('iron_ore');
     expect(getBlockDefinition(BlockId.GoldOre).drop?.item).toBe('gold_ore');
     expect(getBlockDefinition(BlockId.DiamondOre).drop?.item).toBe(ItemId.Diamond);
+    expect(getBlockDefinition(BlockId.TitaniumOre)).toMatchObject({
+      id: 161, tier: 'ruby', hardness: 5,
+      drop: { item: 'titanium_ore', min: 1, max: 1, requiresCorrectTool: true },
+    });
   });
 
   it('registers all 16 classic wool colors', () => {
@@ -142,7 +146,7 @@ describe('block registry', () => {
 });
 
 describe('item registry', () => {
-  it('has unique ids, stack limits, food, equipment and all four armor sets', () => {
+  it('has unique ids, stack limits, food, equipment and all six armor sets', () => {
     expect(new Set(ITEMS.map((item) => item.id)).size).toBe(ITEMS.length);
     expect(getItemDefinition(ItemId.Apple)).toMatchObject({ kind: 'food', maxStack: 64 });
     expect(getItemDefinition(ItemId.CookedChicken)).toMatchObject({

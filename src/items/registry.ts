@@ -86,7 +86,7 @@ function food(
 
 interface TierStats {
   readonly tier: ItemTier;
-  readonly prefix: 'wooden' | 'stone' | 'iron' | 'diamond';
+  readonly prefix: 'wooden' | 'stone' | 'iron' | 'diamond' | 'ruby' | 'titanium';
   readonly durability: number;
   readonly miningSpeed: number;
   readonly damageBonus: number;
@@ -97,6 +97,8 @@ const tiers: readonly TierStats[] = [
   { tier: 'stone', prefix: 'stone', durability: 131, miningSpeed: 4, damageBonus: 1 },
   { tier: 'iron', prefix: 'iron', durability: 250, miningSpeed: 6, damageBonus: 2 },
   { tier: 'diamond', prefix: 'diamond', durability: 1561, miningSpeed: 8, damageBonus: 3 },
+  { tier: 'ruby', prefix: 'ruby', durability: 2100, miningSpeed: 10, damageBonus: 4 },
+  { tier: 'titanium', prefix: 'titanium', durability: 2800, miningSpeed: 12, damageBonus: 5 },
 ];
 
 const toolDamage: Readonly<Record<ItemToolType, number>> = {
@@ -174,8 +176,18 @@ const armorStats = {
   },
   diamond: {
     durability: { head: 363, chest: 528, legs: 495, feet: 429 },
-    defense: { head: 3, chest: 8, legs: 6, feet: 3 },
+    defense: { head: 3, chest: 7, legs: 5, feet: 2 },
     toughness: 2,
+  },
+  ruby: {
+    durability: { head: 500, chest: 720, legs: 675, feet: 585 },
+    defense: { head: 3, chest: 7, legs: 5, feet: 3 },
+    toughness: 0,
+  },
+  titanium: {
+    durability: { head: 650, chest: 940, legs: 880, feet: 760 },
+    defense: { head: 3, chest: 8, legs: 6, feet: 3 },
+    toughness: 0,
   },
 } as const;
 
@@ -213,6 +225,8 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.IronIngot, { tags: ['iron_ingot'] }),
   resource(ItemId.GoldIngot, { tags: ['gold_ingot'] }),
   resource(ItemId.Diamond, { tags: ['diamond'] }),
+  resource(ItemId.RubyIngot, { tags: ['ruby_ingot'] }),
+  resource(ItemId.TitaniumIngot, { tags: ['titanium_ingot'] }),
   resource(ItemId.RedstoneDust, { placesBlockId: BlockId.RedstoneWire }),
   resource(ItemId.Flint), resource(ItemId.ClayBall), resource(ItemId.Brick),
   resource(ItemId.String), resource(ItemId.Feather), resource(ItemId.Leather),

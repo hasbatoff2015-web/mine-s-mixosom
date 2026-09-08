@@ -6,7 +6,7 @@ Add powerful and destructive TNT on the existing Anarchy explosion path. Ordinar
 
 ## Result
 
-Implemented. Ordinary TNT (`BlockId.Tnt = 109`) keeps radius 4. Powerful (`TntPowerful = 161`) radius 6 can break anchors. Destructive (`TntDestructive = 162`) uses ordinary radius, breaks obsidian, ignores the obsidian shield. All three skip regular `/claim` voxels. Chain passes `blockId`.
+Implemented. Ordinary TNT (`BlockId.Tnt = 109`) keeps radius 4. Powerful (`TntPowerful = 162`) radius 6 can break anchors. Destructive (`TntDestructive = 163`) uses ordinary radius, breaks obsidian, ignores the obsidian shield. All three skip regular `/claim` voxels. Chain passes `blockId`.
 
 ## Implemented
 

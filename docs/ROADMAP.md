@@ -5,7 +5,7 @@
 - [x] Apply 20/30 downward fall only to primed **placed** TNT (`primeTnt` sets `launchOriginY` + `maxFallBlocks`).
 - [x] Remove the mistaken 20/30 vertical flight from TNT minecart (`launchMinecartTnt` has hop/fuse only).
 - [x] Tests: placed ordinary 20, powerful/destructive 30, floor before cap, startY from primed Y; minecart does not fly down 20/30; `tntBlockId` + chain + fire-arrow-only stay.
-- [ ] Owner live QA: flint a placed TNT over a drop (20/30/30) vs fire-arrow a TNT cart (no forced fall).
+- [x] Owner live QA: flint a placed TNT over a drop (20/30/30) vs fire-arrow a TNT cart (no forced fall).
 
 ## 2026-09-08: TNT minecart fall distance
 
@@ -26,11 +26,43 @@
 ## 2026-09-08: Anarchy TNT types
 
 - [x] Keep ordinary TNT radius 4; never break iron/gold/diamond anchors or regular `/claim` voxels.
-- [x] Add powerful TNT (`tnt_powerful` 161, radius 6): breaks anchors, obsidian still shields spatially.
-- [x] Add destructive TNT (`tnt_destructive` 162, ordinary radius): breaks anchors and obsidian, no obsidian shield.
+- [x] Add powerful TNT (`tnt_powerful` 162, radius 6): breaks anchors, obsidian still shields spatially.
+- [x] Add destructive TNT (`tnt_destructive` 163, ordinary radius): breaks anchors and obsidian, no obsidian shield.
 - [x] Extend `ExplosionJob` with `TntProfile` + optional `canDestroy`; voxel DDA obsidian occlusion; chain `blockId`.
 - [x] Shapeless TNT+gold_block and shaped 8-obsidian+TNT recipes; recolor 32×32 textures; same primed mesh/pulse.
 - [ ] Owner live Anarchy QA: craft both types, obsidian wall, block-claim vs `/claim`, mixed chain.
+
+## 2026-09-08: Armor z-fighting + Titanium 20
+
+- [x] Render all alpha-tested armor and leather overlay as opaque cutout with depth test/write enabled.
+- [x] Stabilize intersecting armor cuboids with material-independent base `20/21/22`, overlay `30/31/32`, plus the smallest QA-justified per-part polygon depth bias `0/-1/-2`.
+- [x] Preserve the existing armor geometry, UVs, atlases, pivots and inner/outer inflate values.
+- [x] Raise Titanium leggings from 5 to 6: full set 20 points, 80% flat protection and 10 full HUD icons; Diamond 17 and Ruby 18 unchanged.
+- [x] Add material/order/offset/HUD/balance regressions and pass focused 34/34, four typechecks, boundaries, production build and browser visual QA.
+
+## 2026-09-08: Ruby / Titanium equipment progression
+
+- [x] Register Ruby/Titanium resources, nine equipment IDs per tier and stable `BlockId.TitaniumOre = 161`.
+- [x] Balance armor at Diamond 17, Ruby 18, Titanium 20 while preserving flat 4% protection and no penetration.
+- [x] Add Ruby resource sink + nine normal Ruby recipes and nine matching-only Titanium upgrade recipes.
+- [x] Add Titanium furnace recipe and canonical Ruby/Titanium mining ranks.
+- [x] Generate Titanium at Y 4–12 with 0.75 × size-3 vein budget and preserve old ore RNG layout.
+- [x] Integrate armor layers/icons, RU/EN names, Creative catalog and authoritative remote equipment presentation.
+- [x] Add deterministic registry/armor/crafting/furnace/mining/worldgen/render/network regressions.
+- [ ] Manual in-game two-client QA for craft/mining/combat/F5/remote/invisibility/death and old-world exploration.
+- [ ] If strict visited-chunk identity across upgrades/restarts becomes required, design a persisted generation-manifest/version before another worldgen change.
+- [ ] Future separate scope: boss/event Titanium sources. No boss drop, event chest or event loot is implemented here.
+
+## 2026-09-08: Ruby / Titanium pixel assets
+
+- [x] Generate Ruby armor from the existing Diamond UV layers with a six-level deep-red metal palette.
+- [x] Normalize the exact 5× Netherite sheets to the renderer's 128×64 contract with nearest-neighbor and generate Titanium armor.
+- [x] Generate Ruby/Titanium ingots and five tool sprites from Iron silhouettes while preserving the `stick.png` handle palette exactly.
+- [x] Generate Titanium Ore from Emerald Ore by remapping only colored inclusions and keeping the grayscale stone matrix byte-for-pixel identical.
+- [x] Add eight independent armor inventory icons, a repeatable Pillow generator, `--check` validation, and a nearest-neighbor contact sheet.
+- [x] Keep gameplay integration out of this pass: no registry IDs, recipes, worldgen, tier stats, Creative catalog, or combat changes.
+- [x] Integrate the approved equipment balance in the existing registries and gameplay systems.
+- [ ] Confirm source/derivative asset licensing for publication.
 
 ## 2026-09-07: Claim-anchor blocks (Anarchy Claims)
 

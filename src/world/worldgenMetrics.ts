@@ -122,7 +122,8 @@ export function measureWorldgenRegion(
           if (block === BlockId.OakLog && y === h + 1 && column.biome === 'forest') trees += 1;
           if (block === BlockId.Cactus && y === h + 1 && column.biome === 'desert') cactus += 1;
           if (block === BlockId.Stone || block === BlockId.CoalOre || block === BlockId.IronOre
-            || block === BlockId.GoldOre || block === BlockId.RedstoneOre || block === BlockId.DiamondOre) {
+            || block === BlockId.GoldOre || block === BlockId.RedstoneOre || block === BlockId.DiamondOre
+            || block === BlockId.TitaniumOre) {
             stone += 1;
           }
           if (block === BlockId.Air && y > 0 && y < h) {
@@ -362,6 +363,7 @@ export interface OreCounts {
   readonly gold: number;
   readonly redstone: number;
   readonly diamond: number;
+  readonly titanium: number;
 }
 
 function pct(sorted: readonly number[], ratio: number): number {
@@ -596,7 +598,7 @@ export function countExposedBedrock(chunks: Map<string, Chunk>, generator: Terra
 }
 
 export function measureOreCounts(chunks: Map<string, Chunk>): OreCounts {
-  const counts = { coal: 0, iron: 0, gold: 0, redstone: 0, diamond: 0 };
+  const counts = { coal: 0, iron: 0, gold: 0, redstone: 0, diamond: 0, titanium: 0 };
   for (const chunk of chunks.values()) {
     for (let z = 0; z < CHUNK_SIZE; z += 1) {
       for (let x = 0; x < CHUNK_SIZE; x += 1) {
@@ -607,6 +609,7 @@ export function measureOreCounts(chunks: Map<string, Chunk>): OreCounts {
           else if (block === BlockId.GoldOre) counts.gold += 1;
           else if (block === BlockId.RedstoneOre) counts.redstone += 1;
           else if (block === BlockId.DiamondOre) counts.diamond += 1;
+          else if (block === BlockId.TitaniumOre) counts.titanium += 1;
         }
       }
     }

@@ -4,7 +4,7 @@ export type ItemId = string;
 
 export type ItemKind = 'block' | 'resource' | 'food' | 'tool' | 'weapon' | 'armor';
 export type ItemToolType = 'pickaxe' | 'axe' | 'shovel' | 'hoe';
-export type ItemTier = 'wood' | 'stone' | 'iron' | 'gold' | 'diamond';
+export type ItemTier = 'wood' | 'stone' | 'iron' | 'gold' | 'diamond' | 'ruby' | 'titanium';
 export type ArmorSlot = 'head' | 'chest' | 'legs' | 'feet';
 
 export interface BaseItemDefinition {
@@ -78,7 +78,7 @@ export interface ArmorItemDefinition extends BaseItemDefinition {
   readonly kind: 'armor';
   readonly maxStack: 1;
   readonly slot: ArmorSlot;
-  readonly material: 'leather' | 'iron' | 'gold' | 'diamond';
+  readonly material: 'leather' | 'iron' | 'gold' | 'diamond' | 'ruby' | 'titanium';
   readonly durability: number;
   readonly defense: number;
   readonly toughness: number;
@@ -100,6 +100,8 @@ export const ItemId = Object.freeze({
   IronIngot: 'iron_ingot',
   GoldIngot: 'gold_ingot',
   Diamond: 'diamond',
+  RubyIngot: 'ruby_ingot',
+  TitaniumIngot: 'titanium_ingot',
   RedstoneDust: 'redstone_dust',
   Flint: 'flint',
   ClayBall: 'clay_ball',
@@ -153,16 +155,26 @@ export const ItemId = Object.freeze({
   DiamondPickaxe: 'diamond_pickaxe',
   DiamondAxe: 'diamond_axe',
   DiamondShovel: 'diamond_shovel',
+  RubyPickaxe: 'ruby_pickaxe',
+  RubyAxe: 'ruby_axe',
+  RubyShovel: 'ruby_shovel',
+  TitaniumPickaxe: 'titanium_pickaxe',
+  TitaniumAxe: 'titanium_axe',
+  TitaniumShovel: 'titanium_shovel',
   WoodenHoe: 'wooden_hoe',
   StoneHoe: 'stone_hoe',
   IronHoe: 'iron_hoe',
   GoldenHoe: 'golden_hoe',
   DiamondHoe: 'diamond_hoe',
+  RubyHoe: 'ruby_hoe',
+  TitaniumHoe: 'titanium_hoe',
 
   WoodenSword: 'wooden_sword',
   StoneSword: 'stone_sword',
   IronSword: 'iron_sword',
   DiamondSword: 'diamond_sword',
+  RubySword: 'ruby_sword',
+  TitaniumSword: 'titanium_sword',
   Bow: 'bow',
 
   LeatherHelmet: 'leather_helmet',
@@ -181,4 +193,12 @@ export const ItemId = Object.freeze({
   DiamondChestplate: 'diamond_chestplate',
   DiamondLeggings: 'diamond_leggings',
   DiamondBoots: 'diamond_boots',
+  RubyHelmet: 'ruby_helmet',
+  RubyChestplate: 'ruby_chestplate',
+  RubyLeggings: 'ruby_leggings',
+  RubyBoots: 'ruby_boots',
+  TitaniumHelmet: 'titanium_helmet',
+  TitaniumChestplate: 'titanium_chestplate',
+  TitaniumLeggings: 'titanium_leggings',
+  TitaniumBoots: 'titanium_boots',
 } as const);

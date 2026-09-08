@@ -173,6 +173,15 @@ const recipes: Recipe[] = [
     key: { I: exact(ItemId.IronIngot), S: exact(ItemId.Stick) },
     output: { item: 'chain', count: 16 }, gridSize: 3,
   },
+  {
+    id: 'ruby_ingot', type: 'shapeless',
+    ingredients: [
+      exact(ItemId.Diamond),
+      { item: ItemId.GoldIngot, count: 3 },
+      { item: ItemId.IronIngot, count: 3 },
+    ],
+    output: { item: ItemId.RubyIngot, count: 1 }, gridSize: 3,
+  },
 ];
 
 const toolMaterials = [
@@ -180,6 +189,7 @@ const toolMaterials = [
   { prefix: 'stone', ingredient: exact('cobblestone') },
   { prefix: 'iron', ingredient: exact(ItemId.IronIngot) },
   { prefix: 'diamond', ingredient: exact(ItemId.Diamond) },
+  { prefix: 'ruby', ingredient: exact(ItemId.RubyIngot) },
 ] as const;
 
 const hoeMaterials = [
@@ -249,6 +259,7 @@ const armorMaterials = [
   { prefix: 'iron', ingredient: exact(ItemId.IronIngot) },
   { prefix: 'gold', ingredient: exact(ItemId.GoldIngot) },
   { prefix: 'diamond', ingredient: exact(ItemId.Diamond) },
+  { prefix: 'ruby', ingredient: exact(ItemId.RubyIngot) },
 ] as const;
 
 for (const material of armorMaterials) {
@@ -271,6 +282,19 @@ for (const material of armorMaterials) {
       key: { M }, output: { item: `${material.prefix}_boots`, count: 1 }, gridSize: 3,
     },
   );
+}
+
+const titaniumUpgrades = [
+  'helmet', 'chestplate', 'leggings', 'boots',
+  'sword', 'pickaxe', 'axe', 'shovel', 'hoe',
+] as const;
+
+for (const equipment of titaniumUpgrades) {
+  recipes.push({
+    id: `titanium_${equipment}`, type: 'shapeless',
+    ingredients: [exact(`ruby_${equipment}`), exact(ItemId.TitaniumIngot)],
+    output: { item: `titanium_${equipment}`, count: 1 }, gridSize: 2,
+  });
 }
 
 const buildingRecipes = [
@@ -326,6 +350,7 @@ export const RECIPES = CRAFTING_RECIPES;
 const smeltingRecipes: SmeltingRecipe[] = [
   { id: 'iron_ingot', input: exact('iron_ore'), output: { item: ItemId.IronIngot, count: 1 }, cookingTimeTicks: 200 },
   { id: 'gold_ingot', input: exact('gold_ore'), output: { item: ItemId.GoldIngot, count: 1 }, cookingTimeTicks: 200 },
+  { id: 'titanium_ingot', input: exact('titanium_ore'), output: { item: ItemId.TitaniumIngot, count: 1 }, cookingTimeTicks: 200 },
   { id: 'glass', input: exact('sand'), output: { item: 'glass', count: 1 }, cookingTimeTicks: 200 },
   { id: 'charcoal', input: tag('log'), output: { item: ItemId.Charcoal, count: 1 }, cookingTimeTicks: 200 },
   { id: 'cooked_beef', input: exact(ItemId.Beef), output: { item: ItemId.CookedBeef, count: 1 }, cookingTimeTicks: 200 },

@@ -364,8 +364,10 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
       [BlockId.GoldOre, 4, 32, 5, 8],
       [BlockId.RedstoneOre, 3, 18, 5, 10],
       [BlockId.DiamondOre, 3, 16, 4, 1],
+      [BlockId.TitaniumOre, 4, 12, 3, 1],
     ]);
     expect(ORE_RULES.find((rule) => rule.block === BlockId.DiamondOre)?.extraVeinChance).toBeCloseTo(1 / 3);
+    expect(ORE_RULES.find((rule) => rule.block === BlockId.TitaniumOre)?.spawnChance).toBe(0.75);
     const a = new TerrainGenerator('ore-det');
     const b = new TerrainGenerator('ore-det');
     const chunkA = new Chunk(2, -1);
@@ -380,6 +382,7 @@ describe('cave lava ponds, bedrock cap and ore doubling', () => {
       [BlockId.GoldOre, 5],
       [BlockId.RedstoneOre, 5],
       [BlockId.DiamondOre, 4],
+      [BlockId.TitaniumOre, 3],
     ] as const) {
       const components = measureOreComponentSizes(sample, ore);
       expect(Math.max(0, ...components)).toBeLessThan(size * 3);

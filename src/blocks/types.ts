@@ -1,6 +1,6 @@
 export type ToolType = 'pickaxe' | 'axe' | 'shovel' | 'hoe' | 'shears';
 
-export type ToolTier = 'hand' | 'wood' | 'stone' | 'iron' | 'gold' | 'diamond';
+export type ToolTier = 'hand' | 'wood' | 'stone' | 'iron' | 'gold' | 'diamond' | 'ruby' | 'titanium';
 
 export type BlockRenderLayer = 'opaque' | 'cutout' | 'translucent';
 
@@ -287,6 +287,7 @@ export enum BlockId {
   PortalChest = 158,
   GoldBlock = 159,
   IronBlock = 160,
-  TntPowerful = 161,
-  TntDestructive = 162,
+  TitaniumOre = 161,
+  TntPowerful = 162,
+  TntDestructive = 163,
 }
