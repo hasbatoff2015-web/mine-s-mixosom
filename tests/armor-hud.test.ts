@@ -23,7 +23,7 @@ const ARMOR_DEFENSE = {
   iron: { head: 2, chest: 6, legs: 5, feet: 2, total: 15 },
   diamond: { head: 3, chest: 7, legs: 5, feet: 2, total: 17 },
   ruby: { head: 3, chest: 7, legs: 5, feet: 3, total: 18 },
-  titanium: { head: 3, chest: 8, legs: 5, feet: 3, total: 19 },
+  titanium: { head: 3, chest: 8, legs: 6, feet: 3, total: 20 },
 } as const;
 
 function armorId(material: keyof typeof ARMOR_DEFENSE, slot: keyof typeof SLOT_NAMES): string {
@@ -121,6 +121,15 @@ describe('armor HUD icons', () => {
     expect(iconCounts(20)).toEqual({ visible: true, full: 10, half: 0, empty: 0 });
     expect(iconCounts(21)).toEqual({ visible: true, full: 10, half: 0, empty: 0 });
     expect(armorHudIcons(20).icons).toHaveLength(10);
+  });
+
+  it('renders a full Titanium set as ten full armor icons', () => {
+    const inventory = new Inventory();
+    equipSet(inventory, 'titanium');
+    expect(getArmorPoints(inventory)).toBe(20);
+    expect(iconCounts(getArmorPoints(inventory))).toEqual({
+      visible: true, full: 10, half: 0, empty: 0,
+    });
   });
 });
 
