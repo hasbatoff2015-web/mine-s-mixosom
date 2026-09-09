@@ -2,7 +2,7 @@ import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId } from '../blocks';
 import { ItemId } from '../items';
 import type { PlayerAABB } from '../player';
-import type { MobManager } from '../entities';
+import type { MobEntity, MobManager } from '../entities';
 import type { MinecartEntity, MinecartManager } from '../entities/MinecartManager';
 import type { VoxelWorld } from '../world/World';
 import { interpolateVec3 } from '../core/entityInterpolation';
@@ -74,7 +74,7 @@ export class PlayerArrowManager {
       readonly random?: () => number;
       readonly minecarts?: MinecartManager;
       readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
-      readonly onMobHit?: (accepted: boolean, position: Vec3) => void;
+      readonly onMobHit?: (accepted: boolean, position: Vec3, mob?: MobEntity, ownerId?: string) => void;
       readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
       readonly onSpawn?: (id: string) => void;
       readonly onRemove?: (id: string) => void;
@@ -96,7 +96,7 @@ export class PlayerArrowManager {
 
   private readonly minecarts?: MinecartManager;
   private readonly onBlockHit?: (x: number, y: number, z: number, flaming: boolean) => void;
-  private readonly onMobHit?: (accepted: boolean, position: Vec3) => void;
+  private readonly onMobHit?: (accepted: boolean, position: Vec3, mob?: MobEntity, ownerId?: string) => void;
   private readonly onMinecartHit?: (cart: MinecartEntity, flaming: boolean) => void;
   private readonly onSpawn?: (id: string) => void;
   private readonly onRemove?: (id: string) => void;
@@ -294,7 +294,7 @@ export class PlayerArrowManager {
           knockback: arrow.critical ? 4.2 : 2.4,
           ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
         });
-        this.onMobHit?.(accepted, arrow.position);
+        this.onMobHit?.(accepted, arrow.position, mobHit.mob, arrow.ownerId);
         this.remove(index);
         return true;
       }

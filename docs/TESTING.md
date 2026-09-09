@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-10 Economy plugin (Мегакоин)
+
+Report: `reports/2026-09-10_economy-plugin.md`.
+
+```text
+npx vitest run tests/server/economy.test.ts tests/server/economy-plugin.test.ts tests/server/anarchy-plugins.test.ts tests/server/auto-mine.test.ts tests/plugin-boundaries.test.ts --maxWorkers=2
+```
+
+Contracts: new player 100; deposit/withdraw/transfer atomicity; overflow/negative/insufficient rejected; reset 100; persistence of balances+transactions; `/bal` `/pay` `/baltop` `/eco *`; natural Stone/Dirt/Sand/Gravel/Wood/Coal/Diamond reward; placed and TNT no reward; AutoMine diamond uses the same table; peaceful < hostile mob reward; duplicate mob/player death no double pay; PvP floor(10%) and 5-minute same-pair cooldown; offline `/pay`.
+
+Focused run: economy 14/14, economy-plugin 10/10, anarchy-plugins 36/36, auto-mine 3/3, plugin-boundaries 4/4. `test:sim` 12/65. `test:server` 39 files / 386 tests PASS. `typecheck` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-10 Player layer z-fighting + current main integration
 
 Report: `reports/2026-09-10_player-layer-zfighting-main-integration.md`.

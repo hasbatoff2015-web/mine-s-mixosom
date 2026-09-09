@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Economy plugin (Мегакоин) — 2026-09-10
+
+- Builtin `economy` + `EconomyService` на существующем PluginManager. Вторая валюта / второй persistence layer не добавлялись.
+- Валюта: Мегакоин. Старт 100, максимум 999 999 999, только целые. Баланс по `playerId` (UUID).
+- Команды: `/balance` `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco give|take|set|reset|balance|transactions`.
+- Права: `economy.balance` `economy.pay` `economy.baltop` `economy.transactions` `economy.admin` `economy.*`. OP bypass.
+- Добыча: Dirt/Sand/Gravel 1, Stone 2, logs 3, Coal Ore 8, Diamond Ore 25. Поставленные игроком и TNT — 0. AutoMine fill сбрасывает placed-метки и платит той же таблицей.
+- Мобы: peaceful 2–4, hostile 8–15. PvP: `floor(10%)`, кулдаун 5 минут на пару killer→victim.
+- Handoff: `docs/reports/2026-09-10_economy-plugin.md`.
+
 ## Последний проход: player skin z-fighting integrated into current main — 2026-09-10
 
 - `origin/main@4de89948` влит в `codex/fix-player-layer-zfighting@f1ed162f` обычным merge `72bf906`; merge-base `9eaec6ba`. История не переписывалась.
@@ -421,7 +431,7 @@
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
 - Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
-- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, economy, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
 - Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.

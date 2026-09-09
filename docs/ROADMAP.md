@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-10: Economy plugin (Мегакоин)
+
+- [x] Builtin `economy` plugin + `EconomyService` on existing PluginManager / JsonFileStore / PermissionService / EventBus.
+- [x] Player commands `/balance` `/bal` `/pay` `/baltop` `/transactions`; admin `/eco give|take|set|reset|balance|transactions`.
+- [x] Permissions `economy.balance` `economy.pay` `economy.baltop` `economy.transactions` `economy.admin` `economy.*`; OP bypass.
+- [x] Natural/AutoMine block rewards; no pay for player-placed or TNT-destroyed blocks.
+- [x] Mob kill table + PvP `floor(10%)` with 5-minute same-pair anti-farm cooldown.
+- [x] Integer Мегакоин, start 100, max 999 999 999, atomic transfer, persisted transactions.
+- [ ] Owner live Anarchy QA of `/pay` offline, AutoMine diamond, TNT ore, PvP 10%.
+- [ ] Auction House uses EconomyService (this branch); Trader remains later.
+
 ## 2026-09-10: Integrate player layer z-fighting fix into current main
 
 - [x] Record actual refs: main `4de89948`, feature `f1ed162f`, merge-base `9eaec6ba`.
@@ -399,6 +410,7 @@
 - [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
+- [x] Economy (Мегакоин) via EconomyService + builtin plugin. Auction House still later.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
 - [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
 - [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.

@@ -1,4 +1,5 @@
 import type { AutoMineManager } from '../services/autoMine';
+import type { EconomyService } from '../services/economy';
 import type { PermissionService } from '../services/permissions';
 import type { PluginConfigService } from '../services/pluginConfig';
 import type { PlayerSelectionService } from '../services/selection';
@@ -9,6 +10,12 @@ import type { VoxelWorld } from '../../src/world/World';
 import type { HologramNetwork } from '../services/holograms';
 import type { ClaimBoundaryNetwork } from '../services/claimBoundaries';
 
+export interface PlayerIdentity {
+  readonly id: string;
+  readonly name: string;
+  readonly connected: boolean;
+}
+
 export interface BuiltinPluginContext {
   readonly permissions: PermissionService;
   readonly teleports: TeleportService;
@@ -17,6 +24,8 @@ export interface BuiltinPluginContext {
   readonly rtpSessions: RtpSessionManager;
   readonly selection: PlayerSelectionService;
   readonly autoMine: AutoMineManager;
+  readonly economy: EconomyService;
+  readonly lookupPlayer: (idOrName: string) => PlayerIdentity | undefined;
   readonly config: PluginConfigService;
   readonly plugins: PluginManager;
   readonly world: VoxelWorld;
