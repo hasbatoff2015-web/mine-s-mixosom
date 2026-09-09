@@ -25,6 +25,9 @@ import {
   createPlayerAppearance,
   type PlayerAppearance,
 } from '../player/appearance/PlayerAppearance';
+import {
+  humanoidDeathProgress,
+} from '../entities/humanoidDeath';
 
 export { REMOTE_INTERP_DELAY_MS };
 
@@ -48,7 +51,10 @@ export class RemotePlayerView {
   private presentationReceivedAt = 0;
   private swingSeq = 0;
   private hurtSeq = 0;
+  private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  /** -1 = living. Accumulates only after the dead edge so snapshots cannot restart the pose. */
+  private deathSeconds = -1;
 
   constructor(
     info: RemotePlayerInfo,
@@ -70,10 +76,12 @@ export class RemotePlayerView {
 
   reset(info: RemotePlayerInfo, _now = 0): void {
     this.buffer.reset();
+    this.lastRenderedPose = undefined;
     this.spawnYaw = info.yaw;
     this.spawnPitch = info.pitch;
     this.group.position.set(info.x, info.y, info.z);
     this.visual.animator.reset(info.yaw);
+    this.deathSeconds = info.dead === true ? 0 : -1;
     this.presentationTick = -1;
     this.presentation = info.presentation ?? IDLE_PLAYER_PRESENTATION;
     this.presentationReceivedAt = _now;
@@ -98,8 +106,12 @@ export class RemotePlayerView {
     this.presentationReceivedAt = now;
     const dead = 'dead' in snapshot && snapshot.dead === true;
     const next = snapshot.presentation ?? IDLE_PLAYER_PRESENTATION;
-    if (dead) this.visual.animator.reset(snapshot.yaw);
-    else if (next.swingSeq > this.swingSeq) this.visual.swing();
+    if (dead) {
+      if (this.deathSeconds < 0) this.deathSeconds = 0;
+    } else {
+      this.deathSeconds = -1;
+      if (next.swingSeq > this.swingSeq) this.visual.swing();
+    }
     const nextHurt = presentationHurtSeq(next);
     if (nextHurt > this.hurtSeq) this.visual.triggerHurtFlash();
     this.swingSeq = Math.max(this.swingSeq, next.swingSeq);
@@ -132,6 +144,9 @@ export class RemotePlayerView {
       foodUseProgress: actions.foodUseProgress,
     };
     const pose = this.buffer.sample(now);
+    const dying = this.deathSeconds >= 0;
+    if (dying) this.deathSeconds += Math.max(0, deltaSeconds);
+    const deathProgress = dying ? humanoidDeathProgress(this.deathSeconds) : 0;
     if (!pose) {
       this.visual.update(deltaSeconds, {
         viewYaw: this.spawnYaw,
@@ -144,27 +159,35 @@ export class RemotePlayerView {
         ...actionFrame,
         invisible: false,
         hurtFlash: 0,
+        deathProgress,
       });
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
+    this.lastRenderedPose = pose;
     this.visual.update(deltaSeconds, {
       viewYaw: pose.yaw,
       viewPitch: pose.pitch,
-      movementSpeed: Math.hypot(pose.vx, pose.vz),
+      movementSpeed: dying ? 0 : Math.hypot(pose.vx, pose.vz),
       onGround: pose.onGround,
-      sneaking: pose.sneaking,
-      sprinting: pose.sprinting,
-      verticalVelocity: pose.vy,
+      sneaking: dying ? false : pose.sneaking,
+      sprinting: dying ? false : pose.sprinting,
+      verticalVelocity: dying ? 0 : pose.vy,
       ...actionFrame,
       invisible: pose.invisible,
       hurtFlash: 0,
+      deathProgress,
     });
     this.lastInvisible = pose.invisible === true;
     this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);
     maybeLogRemoteTimeline(this.id.slice(0, 8), this.buffer.snapshots(), this.buffer.diagnostics(now), now);
     return pose;
+  }
+
+  /** Read-only timeline of the pose already applied to group.position this frame. */
+  get lastRenderTick(): number | undefined {
+    return this.lastRenderedPose?.renderTick;
   }
 
   updateNameplate(camera: THREE.Camera): void {

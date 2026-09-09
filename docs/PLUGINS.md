@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -111,7 +111,7 @@ Env:
 - `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the live plugin directory
 - `FC_EXAMPLE_PLUGIN=1` — register the bundled example without copying it into `server/plugins/`
 - `FC_OPERATORS` — comma-separated player names treated as OP (seeded into PermissionService, cannot `/deop`)
-- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms pack
+- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine pack
 
 ## Permissions
 
@@ -134,7 +134,8 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
 | claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
-| holograms | `/holograms` | `plugin-data/holograms/holograms.json` |
+| holograms | `/holograms` (`/hologram reset`) | `plugin-data/holograms/holograms.json` (lines + font/size/style + background + billboard/yaw + timer) |
+| automine | `/automine` | `plugin-data/automine/automines.json` (+ `originals/<name>.json`) |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
 

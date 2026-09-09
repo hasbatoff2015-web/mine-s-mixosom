@@ -260,6 +260,7 @@ export class AnarchyServer {
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
       holograms: [...this.world.holograms.list()],
+      serverNow: Date.now(),
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;
@@ -405,7 +406,7 @@ export class AnarchyServer {
         this.world.setView(player, message.cx, message.cz, message.radius);
         return;
       case 'ping':
-        this.world.sendTo(player, { type: 'pong', t: message.t });
+        this.world.sendTo(player, { type: 'pong', t: message.t, serverNow: Date.now() });
         return;
       case 'inventory_action':
         this.world.applyInventoryAction(player, message);
@@ -442,15 +443,14 @@ export class AnarchyServer {
         return;
       }
       case 'bow_release': {
-        const result = this.world.releaseBow(player, message);
-        this.world.sendTo(player, {
-          type: 'action_result',
-          actionSeq: message.actionSeq,
+        this.world.handleSequencedBowRelease(player, {
           kind: 'bow_release',
-          ok: result.ok,
-          ...(result.ok ? {} : { reason: result.reason }),
+          actionSeq: message.actionSeq,
+          commandSeq: message.commandSeq,
+          selectedSlot: message.selectedSlot ?? -1,
           yaw: message.yaw,
           pitch: message.pitch,
+          ...(message.renderTick !== undefined ? { renderTick: message.renderTick } : {}),
         });
         return;
       }
@@ -479,6 +479,15 @@ export class AnarchyServer {
         return;
       case 'appearance':
         this.world.setAppearance(player, message);
+        return;
+      case 'respawn':
+        this.world.respawn(player);
+        return;
+      case 'hologram_interact':
+        this.world.interactHologram(player, message.name);
+        return;
+      case 'hologram_update':
+        this.world.updateHologramAppearance(player, message);
         return;
     }
   }
@@ -520,20 +529,31 @@ export class AnarchyServer {
       if (message.yaw === undefined || message.pitch === undefined) {
         result = { ok: false, reason: 'look' };
       } else {
-        result = this.world.releaseBow(player, {
+        this.world.handleSequencedBowRelease(player, {
+          kind: 'bow_release',
           actionSeq: message.actionSeq,
           commandSeq: message.commandSeq,
+          selectedSlot: message.selectedSlot ?? -1,
           yaw: message.yaw,
           pitch: message.pitch,
+          ...(message.renderTick !== undefined ? { renderTick: message.renderTick } : {}),
         });
+        return;
       }
     } else {
-      if (message.actionSeq !== undefined && !this.world.acceptClientActionSeq(player, message.actionSeq)) {
-        result = { ok: false, reason: 'duplicate' };
-      } else {
-        this.world.attack(player);
-        result = { ok: true };
-      }
+      this.world.handleSequencedAttack(player, {
+        kind: 'attack',
+        actionSeq: message.actionSeq,
+        commandSeq: message.commandSeq,
+        // Sequenced melee must carry the captured slot. The dedicated legacy
+        // attack message remains the current-state compatibility path.
+        selectedSlot: message.selectedSlot ?? -1,
+        ...(message.yaw !== undefined ? { yaw: message.yaw } : {}),
+        ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
+        ...(message.targetId !== undefined ? { targetId: message.targetId } : {}),
+        ...(message.targetRenderTick !== undefined ? { targetRenderTick: message.targetRenderTick } : {}),
+      });
+      return;
     }
     this.world.sendTo(player, {
       type: 'action_result',

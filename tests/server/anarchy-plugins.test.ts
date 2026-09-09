@@ -729,7 +729,7 @@ describe('Anarchy builtin plugins', () => {
   it('does not register claims blockBreak twice after reload or a second enableAll', async () => {
     const world = await boot();
     const before = world.events.listenerCount('blockBreak');
-    expect(before).toBe(1);
+    expect(before).toBe(2);
     const reloaded = await world.plugins.reload('claims');
     expect(reloaded.ok).toBe(true);
     expect(world.events.listenerCount('blockBreak')).toBe(before);
@@ -811,7 +811,7 @@ describe('Anarchy builtin plugins', () => {
       },
     });
     await world.plugins.enableAll();
-    expect(world.events.listenerCount('blockBreak')).toBe(2);
+    expect(world.events.listenerCount('blockBreak')).toBe(3);
     expect(world.tryBreak(ada.player, x, y, z)).toEqual({ ok: false, reason: 'cancelled' });
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.Dirt);
   });
@@ -880,6 +880,8 @@ describe('Anarchy builtin plugins', () => {
     const survivalSpawn = [...op.player.survival.spawnPoint];
     op.player.controller.teleport([8.5, 70, 8.5]);
     chat(world, op, '/kill');
+    expect(op.player.survival.dead).toBe(true);
+    expect(world.respawn(op.player)).toBe(true);
     expect(op.player.survival.dead).toBe(false);
     expect(op.player.survival.health).toBe(20);
     expect(op.player.controller.position.x).toBeCloseTo(32.5, 5);

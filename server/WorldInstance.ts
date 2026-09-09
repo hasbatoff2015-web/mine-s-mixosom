@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -32,12 +32,17 @@ import {
   formatPoseDump,
 } from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
+import {
+  listenerHearsWorldSound,
+  worldSoundMaxDistance,
+} from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   AppliedInputTick,
   AppliedMovementStep,
+  ClientHologramUpdateMessage,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -47,7 +52,7 @@ import type {
   WorldBlockStates,
   WorldModifications,
 } from '../shared/protocol';
-import type { BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
+import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
@@ -72,14 +77,15 @@ import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
+import { AutoMineManager } from './services/autoMine';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
-import { HologramNetwork } from './services/holograms';
+import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
-import { formatGameplayKernelTrace, movementDuringItemUse } from '../src/gameplay';
+import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -89,12 +95,49 @@ import { netDebug, serverLog } from './log';
 import { logBreakAttempt } from './breakDiagnostics';
 import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import {
+  combatPoseForCommand,
+  MAX_PENDING_BOW_ACTIONS,
+  MAX_PENDING_BOW_TICKS,
+  MAX_PENDING_MELEE_ACTIONS,
+  MAX_PENDING_MELEE_TICKS,
+  MAX_PVP_REWIND_TICKS,
+  recordCombatPose,
+  rewindCombatPose,
+  type CombatPoseSample,
+  type RewoundCombatPose,
+} from './combatPoseHistory';
 
 /** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
 const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
 
 export interface ConnectedSink {
   send(payload: unknown): void;
+}
+
+export interface PendingMeleeAttack {
+  readonly action: AttackAction;
+  readonly receivedServerTick: number;
+  readonly target?: {
+    readonly playerId: string;
+    readonly requestedRenderTick: number;
+    readonly pose: RewoundCombatPose;
+  };
+}
+
+export interface PendingBowRelease {
+  readonly action: BowReleaseAction;
+  readonly receivedServerTick: number;
+  readonly validatedRenderTick?: number;
+  readonly receiveRewindTicks?: number;
+  /** Server-owned draw state at action receipt; covers release between input ticks. */
+  readonly receivedBowState?: ReceivedBowReleaseState;
+}
+
+export interface ReceivedBowReleaseState {
+  readonly selectedSlot: number;
+  readonly itemId: string;
+  readonly drawTicks: number;
 }
 
 const IDLE_INPUT: ClientInputMessage = {
@@ -126,6 +169,12 @@ export class ServerPlayer implements GameplayPlayer {
   lastBowReleaseSeq = -1;
   readonly appliedStepsThisLoop: AppliedMovementStep[] = [];
   readonly actionPoseHistory: ActionPoseSample[] = [];
+  readonly combatPoseHistory: CombatPoseSample[] = [];
+  readonly pendingAttacks: PendingMeleeAttack[] = [];
+  readonly pendingBowReleases: PendingBowRelease[] = [];
+  readonly bowReleaseCommandStates = new Map<number, ReceivedBowReleaseState>();
+  bowReleaseBoundaryThisTick?: ReceivedBowReleaseState;
+  appliedCommandBoundaryThisTick = false;
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
   lastServerSimAt: number | undefined;
@@ -160,10 +209,12 @@ export class ServerPlayer implements GameplayPlayer {
   useSelectedSlot: number | undefined;
   useItemId: string | undefined;
   foodUseBoundaryCommandConfirmed: boolean | undefined;
+  bowUseBoundaryCommandConfirmed: boolean | undefined;
   lastUse = false;
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  deathLootDropped = false;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
@@ -319,6 +370,7 @@ export class ServerPlayer implements GameplayPlayer {
       equipment: snap.equipment,
       appearance: toNetworkAppearance(this.appearance),
       health: snap.health,
+      ...(snap.dead ? { dead: true } : {}),
     };
   }
 
@@ -386,6 +438,7 @@ export class WorldInstance {
   readonly pluginConfig: PluginConfigService;
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
+  readonly autoMine: AutoMineManager;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -478,11 +531,13 @@ export class WorldInstance {
           y: player.controller.position.y,
           z: player.controller.position.z,
         }),
-        teleport: (x, y, z) => {
+        teleport: (x, y, z, look) => {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
           player.controller.teleport([x, y, z]);
+          if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
+          if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
           return true;
         },
         sendMessage: (text) => {
@@ -500,6 +555,53 @@ export class WorldInstance {
     this.pluginConfig = new PluginConfigService(this.pluginStore);
     this.rtp = new RtpService(this.world);
     this.rtpSessions = new RtpSessionManager(this.rtp);
+    this.autoMine = new AutoMineManager({
+      world: this.world,
+      worldId: () => this.worldId,
+      now: () => Date.now(),
+      random: () => Math.random(),
+      loadStore: () => this.pluginStore.load('automine/automines', { mines: [] }),
+      saveStore: (store) => this.pluginStore.save('automine/automines', store),
+      loadOriginals: (name) => this.pluginStore.load(`automine/originals/${name}`, undefined),
+      saveOriginals: (name, blocks) => this.pluginStore.save(`automine/originals/${name}`, { blocks }),
+      players: () => this.connectedPlayers().map((player) => ({
+        id: player.id,
+        position: () => ({
+          x: player.controller.position.x,
+          y: player.controller.position.y,
+          z: player.controller.position.z,
+        }),
+        snapshot: () => ({ yaw: player.controller.yaw, pitch: player.controller.pitch }),
+      })),
+      teleport: (playerId, dest) => this.teleports.now(playerId, dest, 'automine', { silent: true }),
+      send: (playerId, text) => {
+        const player = this.players.get(playerId);
+        if (!player) return;
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      notifyAdmins: (text) => {
+        serverLog(`plugin automine ${text}`);
+        for (const player of this.connectedPlayers()) {
+          if (!this.permissions.has(player.name, 'automine.manage') && !this.permissions.isOperator(player.name)) {
+            continue;
+          }
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text,
+            kind: 'system',
+          });
+        }
+      },
+      log: (message) => serverLog(`plugin automine ${message}`),
+    });
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
@@ -574,6 +676,7 @@ export class WorldInstance {
         rtp: this.rtp,
         rtpSessions: this.rtpSessions,
         selection: this.selection,
+        autoMine: this.autoMine,
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -860,6 +963,24 @@ export class WorldInstance {
       netDebug('player input', `duplicate seq ${input.seq} for ${player.id}`);
       return false;
     }
+    if (input.use !== true
+      && player.bowUseTicks > 0
+      && (player.useStartCommandSeq === undefined || input.seq > player.useStartCommandSeq)) {
+      const activeSlot = player.useSelectedSlot ?? input.selectedSlot;
+      const itemId = player.inventory.getSlot(activeSlot)?.itemId;
+      if (itemId === ItemId.Bow) {
+        player.bowReleaseCommandStates.set(input.seq, {
+          selectedSlot: activeSlot,
+          itemId,
+          drawTicks: player.bowUseTicks,
+        });
+        while (player.bowReleaseCommandStates.size > MAX_PENDING_BOW_ACTIONS) {
+          const oldest = player.bowReleaseCommandStates.keys().next().value;
+          if (oldest === undefined) break;
+          player.bowReleaseCommandStates.delete(oldest);
+        }
+      }
+    }
     player.lastInput = input;
     return true;
   }
@@ -995,6 +1116,7 @@ export class WorldInstance {
     clearMiningLock(player);
   }
 
+  /** Legacy direct gameplay helper; network bow releases use handleSequencedBowRelease. */
   releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
     if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
     if (action.actionSeq <= player.lastBowReleaseSeq) return { ok: false, reason: 'duplicate' };
@@ -1003,6 +1125,169 @@ export class WorldInstance {
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     return result;
+  }
+
+  handleSequencedBowRelease(player: ServerPlayer, action: BowReleaseAction): void {
+    const resolution = this.bowReleaseSequenced(player, action);
+    if (resolution.status === 'resolved') this.sendBowActionResult(player, action, resolution.result);
+  }
+
+  bowReleaseSequenced(
+    player: ServerPlayer,
+    action: BowReleaseAction,
+  ): { status: 'pending' } | { status: 'resolved'; result: ActionResult } {
+    const receivedServerTick = this.tickNumber;
+    const activeSlot = player.useSelectedSlot ?? player.selectedSlot;
+    const activeItemId = player.inventory.getSlot(activeSlot)?.itemId;
+    const receivedBowState = action.commandSeq === player.appliedCommandSeq
+      && player.bowUseTicks > 0 && activeItemId === ItemId.Bow
+      ? { selectedSlot: activeSlot, itemId: activeItemId, drawTicks: player.bowUseTicks }
+      : undefined;
+    const base: PendingBowRelease = {
+      action,
+      receivedServerTick,
+      ...(receivedBowState ? { receivedBowState } : {}),
+    };
+    if (!this.acceptActionSeq(player, action.actionSeq) || action.actionSeq <= player.lastBowReleaseSeq) {
+      return { status: 'resolved', result: this.bowFailure(base, 'duplicate', 'duplicate') };
+    }
+    player.lastBowReleaseSeq = action.actionSeq;
+    if (!player.connected || player.survival.dead) {
+      return { status: 'resolved', result: this.bowFailure(base, 'dead', 'dead') };
+    }
+    if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
+      || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
+      || !Number.isFinite(action.yaw) || !Number.isFinite(action.pitch)
+      || (action.renderTick !== undefined && !Number.isFinite(action.renderTick))) {
+      return { status: 'resolved', result: this.bowFailure(base, 'invalid', 'invalid') };
+    }
+    let pending = base;
+    if (action.renderTick !== undefined) {
+      const rewind = receivedServerTick - action.renderTick;
+      if (rewind < 0) return { status: 'resolved', result: this.bowFailure(base, 'invalid', 'future') };
+      if (rewind > MAX_PVP_REWIND_TICKS) {
+        return { status: 'resolved', result: this.bowFailure(base, 'stale', 'too_old') };
+      }
+      pending = { ...base, validatedRenderTick: action.renderTick, receiveRewindTicks: rewind };
+    }
+    const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+    if (pose) return { status: 'resolved', result: this.resolveSequencedBowRelease(player, pending, pose) };
+    if (action.commandSeq > player.appliedCommandSeq) {
+      if (player.pendingBowReleases.length >= MAX_PENDING_BOW_ACTIONS) {
+        return { status: 'resolved', result: this.bowFailure(pending, 'stale', 'pending_full') };
+      }
+      player.pendingBowReleases.push(pending);
+      return { status: 'pending' };
+    }
+    return { status: 'resolved', result: this.bowFailure(pending, 'stale', 'boundary_missing') };
+  }
+
+  private resolveSequencedBowRelease(
+    player: ServerPlayer,
+    pending: PendingBowRelease,
+    pose: CombatPoseSample,
+  ): ActionResult {
+    const { action } = pending;
+    const boundary = pose.bowRelease ?? pending.receivedBowState;
+    if (pose.dead || !boundary || action.selectedSlot !== pose.selectedSlot
+      || boundary.selectedSlot !== pose.selectedSlot || boundary.itemId !== ItemId.Bow) {
+      return this.bowFailure(
+        pending,
+        pose.dead ? 'dead' : action.selectedSlot !== pose.selectedSlot ? 'slot' : 'no-draw',
+        pose.dead ? 'dead' : action.selectedSlot !== pose.selectedSlot ? 'slot' : 'boundary_state',
+        pose,
+      );
+    }
+    const pendingTicks = Math.max(0, this.tickNumber - pending.receivedServerTick);
+    const fired = this.gameplay.releaseBowAtBoundary(
+      player,
+      {
+        eyeX: pose.eyeX,
+        eyeY: pose.eyeY,
+        eyeZ: pose.eyeZ,
+        selectedSlot: pose.selectedSlot,
+        itemId: boundary.itemId,
+        drawTicks: boundary.drawTicks,
+      },
+      action.yaw,
+      action.pitch,
+      [...this.players.values()],
+      pending.validatedRenderTick,
+      pendingTicks,
+      pose.bowRelease === undefined && pending.receivedBowState !== undefined,
+    );
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+    if (!fired.ok) return this.bowFailure(pending, fired.reason, fired.reason, pose);
+    return {
+      ok: true,
+      actionSeq: action.actionSeq,
+      kind: 'bow_release',
+      yaw: action.yaw,
+      pitch: action.pitch,
+      bow: this.bowDiagnostics(pending, pose, {
+        authoritativeDrawTicks: fired.drawTicks,
+        charge: fired.charge,
+        spawned: fired.spawned,
+      }),
+    };
+  }
+
+  private bowFailure(
+    pending: PendingBowRelease,
+    reason: string,
+    rejectReason: string,
+    pose?: CombatPoseSample,
+  ): ActionResult {
+    return {
+      ok: false,
+      actionSeq: pending.action.actionSeq,
+      kind: 'bow_release',
+      reason,
+      yaw: pending.action.yaw,
+      pitch: pending.action.pitch,
+      bow: this.bowDiagnostics(pending, pose, { spawned: false, rejectReason }),
+    };
+  }
+
+  private bowDiagnostics(
+    pending: PendingBowRelease,
+    pose: CombatPoseSample | undefined,
+    outcome: Pick<BowActionDiagnostics, 'spawned'> & Partial<Pick<BowActionDiagnostics, 'authoritativeDrawTicks' | 'charge' | 'rejectReason'>>,
+  ): BowActionDiagnostics {
+    return {
+      receivedServerTick: pending.receivedServerTick,
+      ...(pose ? { boundaryServerTick: pose.serverTick } : {}),
+      pendingTicks: Math.max(0, this.tickNumber - pending.receivedServerTick),
+      ...(pending.action.renderTick !== undefined ? { requestedRenderTick: pending.action.renderTick } : {}),
+      ...(pending.validatedRenderTick !== undefined ? { validatedRenderTick: pending.validatedRenderTick } : {}),
+      ...(pending.receiveRewindTicks !== undefined ? { receiveRewindTicks: pending.receiveRewindTicks } : {}),
+      catchUpTicks: pose ? Math.max(0, this.tickNumber - pending.receivedServerTick) : 0,
+      selectedSlot: pending.action.selectedSlot,
+      capturedYaw: pending.action.yaw,
+      capturedPitch: pending.action.pitch,
+      ...(pose ? {
+        boundaryYaw: pose.yaw,
+        boundaryPitch: pose.pitch,
+        boundaryEyeX: pose.eyeX,
+        boundaryEyeY: pose.eyeY,
+        boundaryEyeZ: pose.eyeZ,
+      } : {}),
+      ...outcome,
+    };
+  }
+
+  private sendBowActionResult(player: ServerPlayer, action: BowReleaseAction, result: ActionResult): void {
+    this.sendTo(player, {
+      type: 'action_result',
+      actionSeq: action.actionSeq,
+      kind: 'bow_release',
+      ok: result.ok,
+      ...(result.reason ? { reason: result.reason } : {}),
+      yaw: action.yaw,
+      pitch: action.pitch,
+      ...(result.bow ? { bow: result.bow } : {}),
+    });
   }
 
   applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
@@ -1017,6 +1302,190 @@ export class WorldInstance {
     this.gameplay.attack(player, [...this.players.values()]);
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+  }
+
+  handleSequencedAttack(player: ServerPlayer, action: AttackAction): void {
+    const resolution = this.attackSequenced(player, action);
+    if (resolution.status === 'resolved') this.sendAttackActionResult(player, action, resolution.result);
+  }
+
+  attackSequenced(
+    player: ServerPlayer,
+    action: AttackAction,
+  ): { status: 'pending' } | { status: 'resolved'; result: ActionResult } {
+    if (!this.acceptActionSeq(player, action.actionSeq)) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'duplicate' } };
+    }
+    if (!player.connected || player.survival.dead) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'dead' } };
+    }
+    if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
+      || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
+      || (action.yaw !== undefined && !Number.isFinite(action.yaw))
+      || (action.pitch !== undefined && !Number.isFinite(action.pitch))
+      || (action.targetId === undefined) !== (action.targetRenderTick === undefined)
+      || (action.targetRenderTick !== undefined && !Number.isFinite(action.targetRenderTick))
+      || action.targetId === player.id) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'invalid' } };
+    }
+    const pending = this.capturePendingMeleeAttack(player, action);
+    if ('ok' in pending) return { status: 'resolved', result: pending };
+    const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+    if (pose) return { status: 'resolved', result: this.resolveSequencedAttack(player, pending, pose) };
+    if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+      if (player.pendingAttacks.length >= MAX_PENDING_MELEE_ACTIONS) {
+        return {
+          status: 'resolved',
+          result: {
+            ok: false,
+            actionSeq: action.actionSeq,
+            kind: 'attack',
+            reason: 'stale',
+            combat: this.combatStatus(pending, 'stale'),
+          },
+        };
+      }
+      player.pendingAttacks.push(pending);
+      return { status: 'pending' };
+    }
+    return {
+      status: 'resolved',
+      result: {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: 'stale',
+        combat: this.combatStatus(pending, 'stale'),
+      },
+    };
+  }
+
+  /** Validate and freeze the server-owned target pose at packet receive time. */
+  private capturePendingMeleeAttack(
+    player: ServerPlayer,
+    action: AttackAction,
+  ): PendingMeleeAttack | ActionResult {
+    const pending: PendingMeleeAttack = {
+      action,
+      receivedServerTick: this.tickNumber,
+    };
+    if (action.targetId === undefined || action.targetRenderTick === undefined) return pending;
+    const target = this.players.get(action.targetId);
+    const pose = target
+      ? rewindCombatPose(target.combatPoseHistory, action.targetRenderTick, pending.receivedServerTick)
+      : undefined;
+    if (!target || target.id === player.id || !target.connected || target.survival.dead
+      || target.gamemode !== 'survival' || !pose || pose.dead) {
+      return {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: 'stale',
+        combat: this.combatStatus(pending, 'stale'),
+      };
+    }
+    return {
+      ...pending,
+      target: {
+        playerId: target.id,
+        requestedRenderTick: action.targetRenderTick,
+        pose,
+      },
+    };
+  }
+
+  private resolveSequencedAttack(
+    player: ServerPlayer,
+    pending: PendingMeleeAttack,
+    attackerPose: CombatPoseSample,
+  ): ActionResult {
+    const { action } = pending;
+    if (attackerPose.dead || action.selectedSlot !== attackerPose.selectedSlot) {
+      return {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: attackerPose.dead ? 'dead' : 'slot',
+        combat: this.combatStatus(pending, 'stale'),
+      };
+    }
+    if (pending.target) {
+      const target = this.players.get(pending.target.playerId);
+      if (!target || target.id === player.id || !target.connected || target.survival.dead
+        || target.gamemode !== 'survival') {
+        return {
+          ok: true,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          combat: this.combatStatus(pending, 'stale'),
+        };
+      }
+      const combat = this.gameplay.attack(player, [...this.players.values()], {
+        attackerPose,
+        target: {
+          player: target,
+          pose: pending.target.pose,
+          requestedRenderTick: pending.target.requestedRenderTick,
+        },
+      });
+      this.flushBlockChanges();
+      this.flushPlayerInventory(player);
+      return {
+        ok: true,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        combat: { ...combat, ...this.combatTiming(pending) },
+      };
+    }
+    const combat = this.gameplay.attack(player, [...this.players.values()], {
+      attackerPose,
+      allowCurrentPlayerTargets: false,
+    });
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+    return {
+      ok: true,
+      actionSeq: action.actionSeq,
+      kind: 'attack',
+      combat: { ...combat, ...this.combatTiming(pending) },
+    };
+  }
+
+  private combatTiming(pending: PendingMeleeAttack) {
+    return {
+      receivedServerTick: pending.receivedServerTick,
+      pendingTicks: Math.max(0, this.tickNumber - pending.receivedServerTick),
+    };
+  }
+
+  private combatStatus(
+    pending: PendingMeleeAttack,
+    result: 'stale' | 'pending_timeout',
+  ) {
+    const { action } = pending;
+    return {
+      result,
+      ...(action.targetId !== undefined ? { targetId: action.targetId } : {}),
+      ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+      ...(pending.target ? {
+        resolvedRenderTick: pending.target.pose.resolvedTick,
+        rewindTicks: pending.target.pose.rewindTicks,
+      } : {}),
+      ...this.combatTiming(pending),
+    };
+  }
+
+  private sendAttackActionResult(player: ServerPlayer, action: AttackAction, result: ActionResult): void {
+    this.sendTo(player, {
+      type: 'action_result',
+      actionSeq: action.actionSeq,
+      kind: 'attack',
+      ok: result.ok,
+      ...(result.reason ? { reason: result.reason } : {}),
+      ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
+      ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
+      ...(result.combat ? { combat: result.combat } : {}),
+    });
   }
 
   interact(
@@ -1053,6 +1522,70 @@ export class WorldInstance {
     else if (message.action === 'steer' && message.forward !== undefined) {
       player.vehicleForward = Math.max(-1, Math.min(1, message.forward));
     }
+  }
+
+  interactHologram(player: ServerPlayer, name: string): void {
+    const hologram = this.holograms.get(name);
+    if (!hologram || !hologram.enabled) return;
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
+    if (!this.canEditHolograms(player)) {
+      this.sendHologramPermissionDenied(player);
+      return;
+    }
+    this.sendTo(player, { type: 'hologram_editor', hologram: toNetworkHologram(hologram) });
+  }
+
+  updateHologramAppearance(player: ServerPlayer, message: ClientHologramUpdateMessage): void {
+    const hologram = this.holograms.get(message.name);
+    if (!hologram || !hologram.enabled) {
+      this.sendTo(player, {
+        type: 'command_result',
+        ok: false,
+        name: 'holograms',
+        lines: [`Hologram '${message.name}' not found.`],
+      });
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: `Hologram '${message.name}' not found.`,
+        kind: 'error',
+      });
+      return;
+    }
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
+    if (!this.canEditHolograms(player)) {
+      this.sendHologramPermissionDenied(player);
+      return;
+    }
+    this.holograms.updateAppearance(message.name, message, {
+      playerYaw: player.controller.yaw,
+      nowMs: Date.now(),
+    });
+  }
+
+  private canEditHolograms(player: ServerPlayer): boolean {
+    return this.isOperator(player)
+      || this.permissions.has(player.id, 'holograms.create')
+      || this.permissions.has(player.name, 'holograms.create');
+  }
+
+  private sendHologramPermissionDenied(player: ServerPlayer): void {
+    this.sendTo(player, {
+      type: 'command_result',
+      ok: false,
+      name: 'holograms',
+      lines: ['You do not have permission.'],
+    });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: 'You do not have permission.',
+      kind: 'error',
+    });
   }
 
   dispatchConsole(raw: string): CommandResult {
@@ -1226,6 +1759,8 @@ export class WorldInstance {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
       player.lastServerSimAt = started;
+      player.appliedCommandBoundaryThisTick = false;
+      player.bowReleaseBoundaryThisTick = undefined;
     }
     if (this.debugTickOrder) this.kernelTrace.length = 0;
     const metrics = this.gameplay.tick([...this.players.values()], dt, {
@@ -1236,8 +1771,12 @@ export class WorldInstance {
       if (!player.connected) continue;
       this.gameplay.updateRiding(player, player.lastInput.sprint);
     }
+    this.recordCombatPoses();
+    this.processPendingBowReleases();
+    this.processPendingAttacks();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
+    this.autoMine.tick();
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {
@@ -1345,6 +1884,20 @@ export class WorldInstance {
     if (entityEvents.length > 0) {
       this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
     }
+    const worldSounds = this.gameplay.consumeWorldSounds();
+    if (worldSounds.length > 0) {
+      for (const player of this.connectedPlayers()) {
+        const listener = player.controller.position;
+        const hearable = worldSounds.filter((sound) => listenerHearsWorldSound(
+          listener,
+          sound,
+          worldSoundMaxDistance(sound.event),
+        ));
+        if (hearable.length > 0) {
+          this.sendTo(player, { type: 'world_sound', sounds: hearable });
+        }
+      }
+    }
     if (this.tickNumber % 20 === 0) {
       this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
     }
@@ -1438,6 +1991,11 @@ export class WorldInstance {
     });
     player.appliedStepsThisLoop.length = 0;
     player.actionPoseHistory.length = 0;
+    player.combatPoseHistory.length = 0;
+    player.pendingAttacks.length = 0;
+    player.pendingBowReleases.length = 0;
+    player.bowReleaseCommandStates.clear();
+    player.bowReleaseBoundaryThisTick = undefined;
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
@@ -1445,6 +2003,7 @@ export class WorldInstance {
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
     player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     player.vehicleForward = 0;
@@ -1460,7 +2019,9 @@ export class WorldInstance {
   private tickConnectedPlayers(dt: number): void {
     for (const player of this.players.values()) {
       if (!player.connected) continue;
+      const queuedCommand = player.commandQueue.peek();
       const command = player.commandQueue.takeForTick();
+      player.appliedCommandBoundaryThisTick = command !== null && command === queuedCommand;
       if (command) {
         player.lastInput = inputFromCommand(command);
         player.appliedCommandSeq = command.commandSeq;
@@ -1469,6 +2030,30 @@ export class WorldInstance {
         player.controller.pitch = command.pitch;
         player.vehicleForward = command.vehicleForward
           ?? (player.ridingCartId ? command.forward : 0);
+        if (command.use !== true) {
+          player.bowReleaseBoundaryThisTick = player.bowReleaseCommandStates.get(command.commandSeq);
+          player.bowReleaseCommandStates.delete(command.commandSeq);
+        }
+      }
+      if (player.survival.dead) {
+        player.controller.velocity.set(0, 0, 0);
+        this.flushHealthIfDeadThenRespawn(player);
+        const position = player.controller.position;
+        player.appliedStepsThisLoop.push({
+          serverTick: this.tickNumber,
+          commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+          x: position.x,
+          y: position.y,
+          z: position.z,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          onGround: player.controller.onGround,
+          flying: player.controller.isFlying,
+          sneaking: player.controller.sneaking,
+          sprinting: false,
+        });
+        continue;
       }
       const input = player.lastInput;
       const jump = input.jump;
@@ -1596,6 +2181,105 @@ export class WorldInstance {
     }
   }
 
+  /** Snapshot combat state only after the complete authoritative physics/gameplay tick. */
+  private recordCombatPoses(): void {
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const eye = player.controller.eyePosition();
+      const aabb = player.controller.aabb;
+      const position = player.controller.position;
+      recordCombatPose(player.combatPoseHistory, {
+        serverTick: this.tickNumber,
+        commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+        commandBoundary: player.appliedCommandBoundaryThisTick,
+        eyeX: eye.x,
+        eyeY: eye.y,
+        eyeZ: eye.z,
+        positionX: position.x,
+        positionY: position.y,
+        positionZ: position.z,
+        yaw: player.controller.yaw,
+        pitch: player.controller.pitch,
+        selectedSlot: player.selectedSlot,
+        ...(player.bowReleaseBoundaryThisTick ? { bowRelease: player.bowReleaseBoundaryThisTick } : {}),
+        aabb: { ...aabb },
+        dead: player.survival.dead,
+        fallDistance: player.controller.fallDistance,
+        onGround: player.controller.onGround,
+        sprinting: player.controller.sprinting,
+        inWater: player.controller.inWater,
+        onLadder: player.controller.onLadder,
+        riding: Boolean(player.ridingCartId),
+      });
+    }
+  }
+
+  private processPendingBowReleases(): void {
+    for (const player of this.players.values()) {
+      if (player.pendingBowReleases.length === 0) continue;
+      const keep: PendingBowRelease[] = [];
+      for (const pending of player.pendingBowReleases) {
+        const { action } = pending;
+        const pendingTicks = this.tickNumber - pending.receivedServerTick;
+        if (pendingTicks > MAX_PENDING_BOW_TICKS) {
+          this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'pending_timeout'));
+          continue;
+        }
+        const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+        if (pose) {
+          this.sendBowActionResult(player, action, this.resolveSequencedBowRelease(player, pending, pose));
+          continue;
+        }
+        if (action.commandSeq > player.appliedCommandSeq) {
+          keep.push(pending);
+          continue;
+        }
+        this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'boundary_missing'));
+      }
+      player.pendingBowReleases.length = 0;
+      player.pendingBowReleases.push(...keep);
+    }
+  }
+
+  private processPendingAttacks(): void {
+    for (const player of this.players.values()) {
+      if (player.pendingAttacks.length === 0) continue;
+      const keep: PendingMeleeAttack[] = [];
+      for (const pending of player.pendingAttacks) {
+        const { action } = pending;
+        const pendingTicks = this.tickNumber - pending.receivedServerTick;
+        if (pendingTicks > MAX_PENDING_MELEE_TICKS) {
+          this.sendAttackActionResult(player, action, {
+            ok: false,
+            actionSeq: action.actionSeq,
+            kind: 'attack',
+            reason: 'stale',
+            combat: this.combatStatus(pending, 'pending_timeout'),
+          });
+          continue;
+        }
+        const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+        if (pose) {
+          this.sendAttackActionResult(player, action, this.resolveSequencedAttack(player, pending, pose));
+          continue;
+        }
+        if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+          keep.push(pending);
+          continue;
+        }
+        this.sendAttackActionResult(player, action, {
+          ok: false,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          reason: 'stale',
+          combat: this.combatStatus(pending, 'stale'),
+        });
+      }
+      player.pendingAttacks.length = 0;
+      player.pendingAttacks.push(...keep);
+    }
+  }
+
   private sweepDisconnected(): void {
     const now = Date.now();
     for (const player of [...this.players.values()]) {
@@ -1657,6 +2341,10 @@ export class WorldInstance {
 
   private flushHealthIfDeadThenRespawn(player: ServerPlayer): void {
     this.gameplay.respawnIfDead(player);
+  }
+
+  respawn(player: ServerPlayer): boolean {
+    return this.gameplay.respawnPlayer(player);
   }
 
   private flushHealth(player: ServerPlayer): void {

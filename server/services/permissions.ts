@@ -42,6 +42,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'rtpportal.*',
     'spawn.*',
     'back.*',
+    'automine.*',
   ],
   vip: [
     'home.multiple',

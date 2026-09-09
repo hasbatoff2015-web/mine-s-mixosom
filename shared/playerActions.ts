@@ -50,12 +50,63 @@ export interface BowReleaseAction extends SequencedAction {
   readonly kind: 'bow_release';
   readonly yaw: number;
   readonly pitch: number;
+  /** Server-tick timeline actually rendered for remote players at release. */
+  readonly renderTick?: number;
+}
+
+export interface BowActionDiagnostics {
+  readonly receivedServerTick: number;
+  readonly boundaryServerTick?: number;
+  readonly pendingTicks: number;
+  readonly requestedRenderTick?: number;
+  readonly validatedRenderTick?: number;
+  readonly receiveRewindTicks?: number;
+  readonly catchUpTicks: number;
+  readonly selectedSlot: number;
+  readonly authoritativeDrawTicks?: number;
+  readonly charge?: number;
+  readonly capturedYaw: number;
+  readonly capturedPitch: number;
+  readonly boundaryYaw?: number;
+  readonly boundaryPitch?: number;
+  readonly boundaryEyeX?: number;
+  readonly boundaryEyeY?: number;
+  readonly boundaryEyeZ?: number;
+  readonly spawned: boolean;
+  readonly rejectReason?: string;
 }
 
 export interface AttackAction extends SequencedAction {
   readonly kind: 'attack';
   readonly yaw?: number;
   readonly pitch?: number;
+  /** Remote player rendered under the crosshair. Hint only; server proves the hit. */
+  readonly targetId?: string;
+  /** Server-tick timeline on which targetId was actually rendered. */
+  readonly targetRenderTick?: number;
+}
+
+export type CombatActionResultKind =
+  | 'hit'
+  | 'miss'
+  | 'immune'
+  | 'blocked'
+  | 'occluded'
+  | 'out_of_reach'
+  | 'stale'
+  | 'pending_timeout';
+
+export interface CombatActionDiagnostics {
+  readonly result: CombatActionResultKind;
+  readonly targetId?: string;
+  readonly requestedRenderTick?: number;
+  readonly resolvedRenderTick?: number;
+  readonly rewindTicks?: number;
+  readonly distance?: number;
+  /** Authoritative server tick on which the attack packet was accepted. */
+  readonly receivedServerTick?: number;
+  /** Server simulation ticks spent waiting for the attacker's command boundary. */
+  readonly pendingTicks?: number;
 }
 
 export type PlayerAction =
@@ -108,6 +159,8 @@ export interface ActionResult {
   readonly faceZ?: number;
   readonly yaw?: number;
   readonly pitch?: number;
+  readonly combat?: CombatActionDiagnostics;
+  readonly bow?: BowActionDiagnostics;
 }
 
 export function isFiniteNumber(value: unknown): value is number {

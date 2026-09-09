@@ -30,6 +30,8 @@ import {
   resetMiningSound,
   shouldPlayExplosion,
   consumableSoundEvent,
+  resolveCatalogEvent,
+  worldSoundPlayOptions,
   type BlockSoundAction,
   type PlaySoundOptions,
   type SoundEventId,
@@ -217,13 +219,18 @@ import {
   captureBlockBreakFinish,
   captureBlockBreakStart,
   captureBlockUse,
+  captureAttack,
   captureBowRelease,
   composeOnlineBreakFinish,
+  resolveBowReleaseCommandSeq,
+  selectBowRenderTick,
 } from '../net/actionIntent';
+import type { BowReleaseBoundaryMode } from '../net/actionIntent';
 import {
   actionMessageFromBreakAbort,
   actionMessageFromBreakFinish,
   actionMessageFromBreakStart,
+  attackMessageFromAttack,
   bowReleaseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
@@ -319,9 +326,11 @@ import {
   clearDoorBlocks,
   daylightFactor,
   dropScatterVelocity,
+  dropScatterOrigin,
   formatGameplayKernelTrace,
   performUseHeld,
   movementDuringItemUse,
+  resolveHologramUseTarget,
   rollDropCount,
   systemRandomFn,
   tickGameplayKernel,
@@ -330,7 +339,7 @@ import {
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
-import type { ContainerKind, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ContainerKind, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -386,6 +395,9 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  /** Wire state of the last input packet actually handed to AnarchyClient. */
+  lastSentInputSeq: number;
+  lastSentUse: boolean;
   actionSeq: number;
   localFoodUse?: { itemId: string; selectedSlot: number; commandSeq: number; actionSeq: number };
   prediction: PredictionBuffer;
@@ -417,6 +429,35 @@ export interface OnlineAnarchySession {
     sent?: boolean;
     result?: string;
     spawned?: boolean;
+    requestedRenderTick?: number;
+    validatedRenderTick?: number;
+    receivedServerTick?: number;
+    boundaryServerTick?: number;
+    pendingTicks?: number;
+    receiveRewindTicks?: number;
+    catchUpTicks?: number;
+    authoritativeDrawTicks?: number;
+    charge?: number;
+    rejectReason?: string;
+    boundaryEyeX?: number;
+    boundaryEyeY?: number;
+    boundaryEyeZ?: number;
+    lastSentInputSeq?: number;
+    lastSentUse?: boolean;
+    chosenReleaseCommandSeq?: number;
+    releaseBoundaryMode?: BowReleaseBoundaryMode;
+  };
+  lastCombatDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    result: string;
+    targetId?: string;
+    requestedRenderTick?: number;
+    resolvedRenderTick?: number;
+    rewindTicks?: number;
+    distance?: number;
+    receivedServerTick?: number;
+    pendingTicks?: number;
   };
   miningLocked?: boolean;
   /**
@@ -472,10 +513,12 @@ function raycastRemotePlayers(
   origin: Vec3Like,
   direction: Vec3Like,
   maxDistance: number,
-): { id: string; distance: number } | undefined {
+): { id: string; distance: number; renderTick: number } | undefined {
   const half = PLAYER_WIDTH * 0.5;
-  let closest: { id: string; distance: number } | undefined;
+  let closest: { id: string; distance: number; renderTick: number } | undefined;
   for (const [id, view] of remotes) {
+    const renderTick = view.lastRenderTick;
+    if (renderTick === undefined) continue;
     const position = view.group.position;
     const hit = rayAabbDistance(origin, direction, {
       minX: position.x - half,
@@ -487,7 +530,7 @@ function raycastRemotePlayers(
     });
     if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
     if (closest && hit.distance >= closest.distance) continue;
-    closest = { id, distance: hit.distance };
+    closest = { id, distance: hit.distance, renderTick };
   }
   return closest;
 }
@@ -582,8 +625,10 @@ export class Game {
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
+  private onlineRespawnPending = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
+  private serverTimeOffsetMs = 0;
   private claimBoundaries?: ClaimBoundaryRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
@@ -933,6 +978,8 @@ export class Game {
         remotes,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        lastSentInputSeq: 0,
+        lastSentUse: false,
         actionSeq: 0,
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
@@ -970,8 +1017,11 @@ export class Game {
       this.spawnRemotePlayer(session, info);
     }
     if (welcome.you.appearance) this.setPlayerAppearance(welcome.you.appearance);
+    if (typeof welcome.serverNow === 'number' && Number.isFinite(welcome.serverNow)) {
+      this.serverTimeOffsetMs = welcome.serverNow - Date.now();
+    }
     this.holograms?.dispose();
-    this.holograms = new HologramRenderer(this.scene, this.camera);
+    this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
     this.claimBoundaries?.dispose();
     this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
@@ -1096,6 +1146,15 @@ export class Game {
       case 'entity_event':
         applyNetworkEntityEvents(session, message.events);
         return;
+      case 'world_sound':
+        for (const sound of message.sounds) {
+          if (!resolveCatalogEvent(sound.event as SoundEventId)) continue;
+          this.playWorld(sound.event as SoundEventId, sound.x, sound.y, sound.z, worldSoundPlayOptions({
+            ...(sound.pitch !== undefined ? { pitch: sound.pitch } : {}),
+            ...(sound.volume !== undefined ? { volume: sound.volume } : {}),
+          }));
+        }
+        return;
       case 'health': {
         const previous = {
           health: session.survival.health,
@@ -1109,6 +1168,8 @@ export class Game {
           airTicks: message.air,
           dead: message.dead,
         });
+        session.survival.syncNetworkFire(message.fire);
+        if (message.dead) this.handleDeath(session.survival.lastDamage?.source);
         if (shouldRestoreGameplayAfterRespawn(previous, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -1214,10 +1275,17 @@ export class Game {
       case 'holograms':
         this.holograms?.sync(message.holograms);
         return;
+      case 'hologram_editor':
+        this.openHologramEditor(message.hologram);
+        return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
         return;
       case 'pong':
+        if (typeof message.serverNow === 'number' && Number.isFinite(message.serverNow)) {
+          this.serverTimeOffsetMs = message.serverNow - Date.now();
+        }
+        return;
       case 'status':
         return;
       default:
@@ -1632,6 +1700,8 @@ export class Game {
           hunger: local.hunger,
           dead: snapshotDead,
         });
+        if (local.onFire !== undefined) session.survival.syncNetworkFire(local.onFire);
+        if (snapshotDead) this.handleDeath(session.survival.lastDamage?.source);
         if (!flags.skipRespawn && shouldRestoreGameplayAfterRespawn(previousLife, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -1809,6 +1879,19 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    if (message.kind === 'attack') {
+      const pending = online.lastCombatDiag;
+      if (pending?.actionSeq === message.actionSeq) {
+        online.lastCombatDiag = {
+          ...pending,
+          result: message.ok
+            ? message.combat?.result ?? 'accepted'
+            : `rejected:${message.reason ?? 'unknown'}`,
+          ...(message.combat ?? {}),
+        };
+      }
+      return;
+    }
     if (message.kind === 'block_use' && !message.ok
       && online.localFoodUse?.actionSeq === message.actionSeq) {
       session.foodUseTicks = 0;
@@ -1821,7 +1904,8 @@ export class Game {
           serverYaw: message.yaw,
           serverPitch: message.pitch,
           result: message.ok ? 'accepted' : `rejected:${message.reason ?? 'unknown'}`,
-          spawned: message.ok,
+          spawned: message.bow?.spawned ?? message.ok,
+          ...(message.bow ?? {}),
         };
       }
       return;
@@ -1984,6 +2068,7 @@ export class Game {
   private sendOnlineUse(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    if (this.tryInteractHologram(session)) return;
     const source = this.onlineActionSource(session);
     const selected = this.selectedStack();
     if (this.selectedStack()?.itemId === ItemId.Bow) {
@@ -2049,6 +2134,52 @@ export class Game {
     });
   }
 
+  private tryInteractHologram(session: GameSession): boolean {
+    if (!session.online || this.ui?.isHologramEditorOpen()) return false;
+    const aim = this.lastLocalAim;
+    if (!aim) return false;
+    const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
+    const target = resolveHologramUseTarget(hologramHit, session.target?.distance);
+    if (target.kind !== 'hologram') return false;
+    session.online.client.send({ type: 'hologram_interact', name: target.name });
+    return true;
+  }
+
+  private openHologramEditor(hologram: NetworkHologram): void {
+    const session = this.session;
+    if (!session?.online || this.lifecycle.state !== 'PLAYING') return;
+    this.ui.closeChat();
+    if (this.ui.isInventoryOpen()) this.ui.closeInventory(false);
+    this.openGameplayModal();
+    this.ui.openHologramEditor(hologram, {
+      nowMs: () => Date.now() + this.serverTimeOffsetMs,
+      save: (update) => {
+        session.online?.client.send({
+          type: 'hologram_update',
+          name: update.name,
+          lines: [...update.lines],
+          font: update.font,
+          size: update.size,
+          style: update.style,
+          kind: update.kind,
+          timerDuration: update.timerDuration,
+          backgroundEnabled: update.backgroundEnabled,
+          backgroundWidth: update.backgroundWidth,
+          backgroundHeight: update.backgroundHeight,
+          billboard: update.billboard,
+        });
+        this.closeHologramEditorAndResumeLook();
+      },
+      cancel: () => this.closeHologramEditorAndResumeLook(),
+    });
+  }
+
+  private closeHologramEditorAndResumeLook(): void {
+    this.ui.closeHologramEditor();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
   private sendOnlineBowRelease(session: GameSession): void {
     const online = session.online;
     if (!online) return;
@@ -2060,13 +2191,36 @@ export class Game {
       return;
     }
     const source = this.onlineActionSource(session);
-    const action = captureBowRelease(source, { yaw: this.input.yaw, pitch: this.input.pitch });
+    const releaseBoundary = resolveBowReleaseCommandSeq({
+      currentInputSeq: online.inputSeq,
+      lastSentInputSeq: online.lastSentInputSeq,
+      lastSentUse: online.lastSentUse,
+    });
+    const aim = this.sampleLocalAim(session);
+    const direct = raycastRemotePlayers(online.remotes, aim.origin, aim.direction, 48);
+    const renderTick = selectBowRenderTick(
+      direct?.renderTick,
+      [...online.remotes.values()]
+        .map((remote) => remote.lastRenderTick)
+        .filter((tick): tick is number => tick !== undefined),
+    );
+    const action = captureBowRelease(
+      source,
+      { yaw: aim.yaw, pitch: aim.pitch },
+      renderTick,
+      releaseBoundary.commandSeq,
+    );
     this.commitOnlineActionSeq(session, source);
     online.lastBowDiag = {
       actionSeq: action.actionSeq,
       commandSeq: action.commandSeq,
       clientYaw: action.yaw,
       clientPitch: action.pitch,
+      ...(action.renderTick !== undefined ? { requestedRenderTick: action.renderTick } : {}),
+      lastSentInputSeq: online.lastSentInputSeq,
+      lastSentUse: online.lastSentUse,
+      chosenReleaseCommandSeq: releaseBoundary.commandSeq,
+      releaseBoundaryMode: releaseBoundary.mode,
       pressCaptured: online.lastBowDiag?.pressCaptured === true,
       drawStarted: online.lastBowDiag?.drawStarted === true,
       releaseCaptured: true,
@@ -2296,6 +2450,8 @@ export class Game {
         }) ? { mining: true } : {}),
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      online.lastSentInputSeq = online.inputSeq;
+      online.lastSentUse = false;
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
@@ -2615,6 +2771,7 @@ export class Game {
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
+    this.onlineRespawnPending = false;
     this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
   }
@@ -3273,6 +3430,7 @@ export class Game {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.ui.closeChat();
+    this.ui.closeHologramEditor();
     this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
@@ -3371,6 +3529,10 @@ export class Game {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
     if (this.ui.isChatOpen()) this.ui.closeChat();
+    if (this.ui.isHologramEditorOpen()) {
+      this.closeHologramEditorAndResumeLook();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3437,6 +3599,10 @@ export class Game {
     if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD') return;
     if (this.ui.isChatOpen()) {
       this.closeChatAndResumeLook();
+      return;
+    }
+    if (this.ui.isHologramEditorOpen()) {
+      this.closeHologramEditorAndResumeLook();
       return;
     }
     if (this.ui.isInventoryOpen()) {
@@ -3734,14 +3900,24 @@ export class Game {
           finishKey: online.miningFinishKey,
           miningLocked: online.miningLocked,
         })),
-        use: gameplayAllowed && this.input.using,
+        use: using,
         vehicleForward: riding ? movementBeforeUse.forward : 0,
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      online.lastSentInputSeq = online.inputSeq;
+      online.lastSentUse = using;
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
+    const prevX = session.player.position.x;
+    const prevZ = session.player.position.z;
     predictLocalMove(session.player, session.world, online.prediction, predicted);
+    if (gameplayAllowed) {
+      this.updateFootsteps(session, Math.hypot(
+        session.player.position.x - prevX,
+        session.player.position.z - prevZ,
+      ));
+    }
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
@@ -3790,6 +3966,12 @@ export class Game {
         online.localFoodUse = undefined;
       } else {
         session.foodUseTicks = Math.min(32, session.foodUseTicks + 1);
+        const eatOrDrink = consumableSoundEvent(item);
+        if (session.foodUseTicks >= 32) {
+          this.playLocal(eatOrDrink);
+        } else if (session.foodUseTicks % 8 === 0) {
+          this.playLocal(eatOrDrink, { volume: 0.55 });
+        }
       }
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
@@ -4001,8 +4183,10 @@ export class Game {
   /** Outline / session.target from live input look. Does not consume clicks or advance mining. */
   private refreshLocalCrosshair(session: GameSession, aim = this.sampleLocalAim(session)): {
     remoteCloser: boolean;
+    remoteTarget?: { id: string; distance: number; renderTick: number };
     attack: ReturnType<typeof resolvePlayerAttackTarget>;
     mobTarget: ReturnType<GameSession['mobs']['raycast']>;
+    aim: LocalAim;
   } {
     const origin = aim.origin;
     const direction = aim.direction;
@@ -4020,17 +4204,31 @@ export class Game {
     );
     const attack = resolvePlayerAttackTarget(session.target, cartHit, mobTarget, session.ridingCartId);
     session.worldRenderer.setTarget(attack?.kind === 'block' ? attack.hit : attack?.kind === 'minecart' ? undefined : session.target);
-    return { remoteCloser, attack, mobTarget };
+    return { remoteCloser, remoteTarget: remoteCloser ? remoteHit : undefined, attack, mobTarget, aim };
   }
 
   private updateTargetAndActions(): void {
     const session = this.session!;
-    const { remoteCloser, attack, mobTarget } = this.refreshLocalCrosshair(session);
+    const { remoteCloser, remoteTarget, attack, mobTarget, aim } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
     if (session.online && attackPresses > 0) {
       for (let click = 0; click < attackPresses; click += 1) {
-        session.online.client.send({ type: 'attack' });
+        const source = this.onlineActionSource(session);
+        const action = captureAttack(
+          source,
+          { yaw: aim.yaw, pitch: aim.pitch },
+          remoteTarget ? { id: remoteTarget.id, renderTick: remoteTarget.renderTick } : undefined,
+        );
+        this.commitOnlineActionSeq(session, source);
+        session.online.lastCombatDiag = {
+          actionSeq: action.actionSeq,
+          commandSeq: action.commandSeq,
+          result: 'pending',
+          ...(action.targetId ? { targetId: action.targetId } : {}),
+          ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+        };
+        session.online.client.send(attackMessageFromAttack(action));
       }
     }
     const targetKey = session.target ? `${session.target.x},${session.target.y},${session.target.z}` : undefined;
@@ -4609,7 +4807,11 @@ export class Game {
   private spawnDroppedStack(stack: ItemStack, position?: Vec3Like): void {
     const session = this.session;
     if (!session || session.online) return;
-    session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
+    const origin = position ?? (() => {
+      const scattered = dropScatterOrigin(session.player.position, this.simRandom);
+      return new THREE.Vector3(scattered[0], scattered[1], scattered[2]);
+    })();
+    session.drops.spawn(stack, origin, {
       velocity: new THREE.Vector3(...dropScatterVelocity(this.simRandom)),
     });
   }
@@ -4689,7 +4891,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -4871,6 +5073,7 @@ export class Game {
     if (!session?.online) return;
     this.lifecycle.beginOnlineRespawnRestore();
     this.deathShown = false;
+    this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
     session.ridingCartId = undefined;
     session.miningProgress = 0;
@@ -4883,6 +5086,7 @@ export class Game {
     const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
     this.ui.closeChat();
+    this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     const plan = planOnlineRespawnInputRestore({
@@ -4905,13 +5109,19 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
-    if (session.online) return;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
+    if (session.online) {
+      this.ui.showDeath(
+        () => this.requestOnlineRespawn(),
+        () => void this.saveAndQuit(),
+      );
+      return;
+    }
     if (session.summary.mode === 'survival') {
       for (const stack of session.inventory.slots) if (stack) this.spawnDroppedStack(stack);
       for (const stack of Object.values(session.inventory.armor)) if (stack) this.spawnDroppedStack(stack);
@@ -4928,6 +5138,13 @@ export class Game {
       },
       () => void this.saveAndQuit(),
     );
+  }
+
+  private requestOnlineRespawn(): void {
+    const session = this.session;
+    if (!session?.online || this.onlineRespawnPending) return;
+    this.onlineRespawnPending = true;
+    session.online.client.send({ type: 'respawn' });
   }
 
   private render(alpha: number): void {
@@ -5203,7 +5420,11 @@ export class Game {
             const ang = bow.serverYaw !== undefined && bow.serverPitch !== undefined
               ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
               : undefined;
-            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} wire=${bow.lastSentInputSeq ?? '—'} use=${bow.lastSentUse === undefined ? '—' : bow.lastSentUse ? 1 : 0} chosen=${bow.chosenReleaseCommandSeq ?? '—'} mode=${bow.releaseBoundaryMode ?? '—'} recv=${bow.receivedServerTick ?? '—'} boundary=${bow.boundaryServerTick ?? '—'} pending=${bow.pendingTicks ?? '—'} req=${bow.requestedRenderTick?.toFixed(2) ?? '—'} valid=${bow.validatedRenderTick?.toFixed(2) ?? '—'} rewind=${bow.receiveRewindTicks?.toFixed(2) ?? '—'} catchup=${bow.catchUpTicks ?? '—'} drawTicks=${bow.authoritativeDrawTicks ?? '—'} charge=${bow.charge?.toFixed(3) ?? '—'} origin=${bow.boundaryEyeX?.toFixed(2) ?? '—'},${bow.boundaryEyeY?.toFixed(2) ?? '—'},${bow.boundaryEyeZ?.toFixed(2) ?? '—'} reject=${bow.rejectReason ?? '—'} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+          }
+          if (session.online.lastCombatDiag) {
+            const combat = session.online.lastCombatDiag;
+            this.cachedDebugText += `\nMelee ${combat.result} a=${combat.actionSeq} c=${combat.commandSeq} target=${combat.targetId?.slice(0, 8) ?? '—'} recv=${combat.receivedServerTick ?? '—'} pending=${combat.pendingTicks ?? '—'} req=${combat.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${combat.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${combat.rewindTicks?.toFixed(2) ?? '—'} dist=${combat.distance?.toFixed(3) ?? '—'}`;
           }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;

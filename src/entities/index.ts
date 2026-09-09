@@ -6,4 +6,5 @@ export * from './MinecartManager';
 export * from './minecartTnt';
 export * from './railPath';
 export * from './EntityHost';
+export * from './humanoidDeath';
 export * from './resolveEntityHost';

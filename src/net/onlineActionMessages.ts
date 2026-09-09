@@ -9,7 +9,22 @@ import type {
   BlockBreakStartAction,
   BlockUseAction,
   BowReleaseAction,
+  AttackAction,
 } from '../../shared/playerActions';
+
+export function attackMessageFromAttack(action: AttackAction): ClientActionMessage {
+  return {
+    type: 'action',
+    kind: 'attack',
+    actionSeq: action.actionSeq,
+    commandSeq: action.commandSeq,
+    selectedSlot: action.selectedSlot,
+    ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
+    ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
+    ...(action.targetId !== undefined ? { targetId: action.targetId } : {}),
+    ...(action.targetRenderTick !== undefined ? { targetRenderTick: action.targetRenderTick } : {}),
+  };
+}
 
 export function interactMessageFromUse(action: BlockUseAction): ClientInteractMessage {
   return {
@@ -91,5 +106,6 @@ export function bowReleaseMessage(action: BowReleaseAction): ClientBowReleaseMes
     yaw: action.yaw,
     pitch: action.pitch,
     selectedSlot: action.selectedSlot,
+    ...(action.renderTick !== undefined ? { renderTick: action.renderTick } : {}),
   };
 }

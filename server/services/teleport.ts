@@ -9,7 +9,8 @@ export type TeleportReason =
   | 'rtp'
   | 'portal'
   | 'back'
-  | 'death';
+  | 'death'
+  | 'automine';
 
 export interface TeleportLocation {
   readonly worldId: string;
@@ -35,6 +36,8 @@ export interface TeleportTarget {
   readonly x: number;
   readonly y: number;
   readonly z: number;
+  readonly yaw?: number;
+  readonly pitch?: number;
 }
 
 interface PendingTeleport {
@@ -51,7 +54,7 @@ interface PendingTeleport {
 export interface TeleportActor {
   readonly id: string;
   position(): TeleportTarget;
-  teleport(x: number, y: number, z: number): boolean;
+  teleport(x: number, y: number, z: number, look?: { readonly yaw?: number; readonly pitch?: number }): boolean;
   sendMessage(text: string): void;
 }
 
@@ -129,7 +132,9 @@ export class TeleportService {
       return { ok: false, error: 'Y is outside the world.' };
     }
     const from = actor.position();
-    if (!actor.teleport(dest.x, dest.y, dest.z)) return { ok: false, error: 'Teleport failed.' };
+    if (!actor.teleport(dest.x, dest.y, dest.z, { yaw: dest.yaw, pitch: dest.pitch })) {
+      return { ok: false, error: 'Teleport failed.' };
+    }
     this.history.record(playerId, { worldId: this.worldId, ...from }, reason);
     this.pending.delete(playerId);
     if (!options.silent) {

@@ -20,7 +20,107 @@
 - Focused player/skin/armor/appearance/preview/network gate: **49/49 PASS**. Все четыре typecheck, alpha scanner, import boundaries и production build PASS; manual WebGL matrix и main-menu/selector preview прошли с пустой warn/error console. Full suite: **1903/1933 tests, 188/201 files PASS**; 30 независимых CPU-budget/timeouts и старый extractor parse failure вне изменённых путей.
 - Handoff: `docs/reports/2026-09-09_player-skin-layer-zfighting.md`.
 
+## Последний проход: bow PvP integrated into current main — 2026-09-10
+
+- `origin/main@27778cf3` влит в `codex/bow-pvp-timeline-v2@fef66776` обычным merge; merge-base `eb82417b`. История feature не переписывалась.
+- Осмысленно объединены конфликты в `server/gameplay.ts` и `src/net/RemotePlayerView.ts`: bow combat history/release boundary/render timeline сохранены вместе с main death lifecycle, nameplates, appearance и spatial sounds.
+- Сохранены `MAX_PVP_REWIND_TICKS=5`, `MAX_PENDING_BOW_TICKS=8`, `COMBAT_HISTORY_TICKS=20`, captured release aim, exact post-physics eye + muzzle `0.35`, stepwise canonical catch-up и исходный Claims/plugins/damage pipeline. Combat tuning не менялся.
+- Main-функции AutoMine, hologram editor/background/timer/text quality, spatial `world_sound`, death scatter/respawn, appearance/skin selector/nameplates и связанные hooks/tests присутствуют. Для sequenced bow path восстановлен authoritative `bow.shoot` world event.
+- Targeted integration gate: **28 files / 259 tests PASS**; shared simulation **65/65 PASS**; четыре typecheck, boundaries, build, size/archive и diff/marker checks PASS. Full suite: **212/216 files, 2016/2033 tests PASS**; failures только в ранее документированных extractor/worldgen/fire-minecart/tick-load baseline-классах и воспроизводятся изолированно.
+- Пользователь до интеграции подтвердил live release/spawn; новая игровая механика или rebalance в merge не добавлялись.
+- Handoff: `docs/reports/2026-09-10_bow-pvp-main-integration.md`.
+
+## Последний проход: bow release actual input boundary — 2026-09-09
+
+- Исправлена FPS-dependent pre-spawn regression: render-frame release больше не привязывается безусловно к `online.inputSeq`, который означает последний уже отправленный input packet и мог всё ещё содержать `use=true`.
+- `OnlineAnarchySession` хранит фактические wire-state `lastSentInputSeq`/`lastSentUse`; они обновляются только после реального `client.send` в обоих input paths (`tickOnline`, `sendOnlineIdle`).
+- Чистый `resolveBowReleaseCommandSeq` выбирает current command, если уже отправлен `use=false`, либо future `current + 1`, если последний wire command ещё `use=true`. Render edge сразу сохраняет yaw/pitch/renderTick и не создаёт искусственный movement input.
+- Обычный release между fixed ticks теперь идёт `bow_release(commandSeq=N+1)` раньше `input N+1 use=false`; существующий bounded server pending path дожидается exact boundary и выпускает ровно одну стрелу с authoritative draw/ammo.
+- F3 bow diagnostics показывают last wire seq/use, chosen release command и boundary mode. Projectile physics, compensation, hitboxes, damage, charge curve и server limits не менялись.
+- Regression: обе ordering-фазы и deterministic 180 FPS phase matrix; server sequencing выпускает 20/20 стрел и расходует по одной arrow.
+- Handoff: `docs/reports/2026-09-09_bow-release-input-boundary.md`.
+
+## Последний проход: bow PvP client timeline — 2026-09-09
+
+- Online release передаёт captured live yaw/pitch и optional `renderTick`: exact `RemotePlayerView.lastRenderTick` под crosshair, иначе median уже отрисованных remote timelines; interpolation buffer повторно не sample'ится.
+- `WorldInstance` валидирует explicit timeline в момент получения (`MAX_PVP_REWIND_TICKS = 5`), затем ждёт exact attacker command boundary не дольше `MAX_PENDING_BOW_TICKS = 8`. Future/too-old не превращаются в валидные из-за FIFO, а receive-valid timeline не стареет повторно.
+- Сервер сохраняет pre-release draw state, exact post-physics eye/slot/Bow identity и выпускает стрелу из boundary eye + прежний muzzle `0.35`; направление остаётся captured intent. Pending не добавляет charge, ammo/projectile защищены общим `actionSeq` dedupe.
+- Compensated arrow получает server-owned `playerTimelineTick`, catch-up проходит тем же whole-segment physics/collision kernel по одному 20 TPS шагу, а player collision читает только authoritative historical AABB. Blocks/mobs/minecarts и весь projectile damage/Claims/HurtResistance pipeline не раздваивались.
+- Storage history увеличена с 12 до 20 samples; разрешённый client rewind остался 5 ticks. Uncompensated bow без render timeline и singleplayer path сохранены.
+- Добавлены bow boundary/backlog/slot/charge/duplicate/timeout/security tests, mathematical historical-vs-current AABB и lead-shot regression. Owner live two-client QA остаётся обязательным ручным gate.
+- Handoff: `docs/reports/2026-09-09_bow-pvp-client-timeline.md`.
+
+## Последний проход: melee PvP receive-time rewind — 2026-09-09
+
+- Live regression подтверждён: valid `targetRenderTick` повторно проверялся только при dequeue sequenced attack, поэтому visual interpolation delay и ожидание attacker `commandSeq` суммировались против `MAX_PVP_REWIND_TICKS = 5`.
+- Сервер теперь при приёме attack создаёт `PendingMeleeAttack`: фиксирует `receivedServerTick`, валидирует target tick именно относительно него и сохраняет server-owned `RewoundCombatPose`. Клиентский AABB не принимается.
+- После появления exact authoritative attacker command-boundary используется сохранённая historical target pose без повторного rewind относительно более позднего world tick. Current target existence/connection/death/survival и attacker validity всё равно перепроверяются перед обычными ray/reach/LOS/claims/damage gates.
+- Security limits не ослаблены: rewind остаётся 5 ticks / 250 ms, hitbox и reach не увеличены. Pending FIFO имеет отдельный `MAX_PENDING_MELEE_TICKS = 8` и отдаёт диагностический `pending_timeout` после превышения.
+- Combat diagnostics дополнены `receivedServerTick` и `pendingTicks`; F3 различает `hit`, `immune`, `miss`, `stale` и `pending_timeout`.
+- Regression tests покрывают stationary/moving target с backlog 4 ticks, stale/future at receive, bounded pending lifetime, duplicate `actionSeq` и hurt-resistance `immune`. Целевой melee/network/prediction/claims аудит: 38 files, 499/499 tests PASS; `test:sim` 42/42 PASS; все четыре typecheck, boundaries и production build PASS.
+- Handoff: `docs/reports/2026-09-09_melee-pvp-receive-time-rewind.md`.
+
+## Последний проход: melee PvP hit registration по client timeline — 2026-09-08
+
+- Root cause: production client посылал bare `{ type: 'attack' }`; сервер считал melee по receipt-time eye/yaw, а remote client уже целился в интерполированную delayed pose (adaptive delay 80–180 ms). FIFO input мог дополнительно применить более новый yaw до обработки атаки.
+- LMB теперь фиксирует live aim, command/slot и `targetId + targetRenderTick` реально отрисованного ближайшего remote player и отправляет sequenced `action(kind=attack)`. Bare attack из production path удалён; legacy protocol path сохранён.
+- Серверная `combatPoseHistory` содержит 20 полных 20 TPS poses с exact command-boundary. Pending attacks bounded до 32; rewind цели ограничен 5 ticks / 250 ms, fractional ticks интерполируют только authoritative AABB.
+- Сервер остаётся владельцем результата: ray/AABB, reach 3, current-world voxel LOS, claims/plugins, armor, blocking, immunity, critical, knockback и durability. Нет hitbox inflation, client damage/distance или fallback на другого player после miss указанной цели.
+- Без player hint сохраняются air swing, mob и minecart melee. F3 получает серверные combat diagnostics через `action_result`.
+- Автотесты покрывают fast flick/queue boundary, moving rewound target, stale/future hints, wall/reach, duplicates, immunity, обе стороны claims, mob/minecart и air swing. Owner live two-client QA остаётся в roadmap.
+- Validation: focused 24/24, adjacent combat/network/action/prediction 309/309, plugin compatibility + melee 27/27, `test:sim` 42/42; все четыре typecheck, boundaries и production build PASS. Full suite достиг 1907/1924 до исправления найденного boolean plugin-контракта; оставшиеся классы — уже документированные 5s worldgen/fire-minecart timeouts, `tick-load-flight` <80 ms gate и reference-extractor parse failure, воспроизводимые изолированно.
+- Handoff: `docs/reports/2026-09-08_melee-pvp-client-timeline.md`.
+
 ## Последний проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
+## Последний проход: AutoMine plugin — 2026-09-09
+
+- Builtin Anarchy plugin `automine` (`/automine`). Кубоидные авто-шахты, weighted random из 12 существующих BlockId, reset через `VoxelWorld.applyBlockBatch` (64 блока/тик), эвакуация через `TeleportService`.
+- Выделение — свой wand (`wooden_axe`), не Claims / не `PlayerSelectionService`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
+- Шансы зашиты в коде (сумма 100%, Obsidian = Coal, Titanium самый редкий). Нет команд изменения composition.
+- TitaniumOre остаётся 161; TNT Powerful/Destructive 162/163 — конфликт ID не возвращался.
+- Handoff: `docs/reports/2026-09-09_automine-plugin.md`.
+
+## Последний проход: hologram close-up text quality — 2026-09-09
+
+- Текст голограммы рисовался на canvas **512×256** и растягивался на world plane; `magFilter` был `NearestFilter` → вблизи пикселизация.
+- Внутреннее разрешение: logical 512×256, physical × `clamp(round(dpr×2), 2, 4)`. World-space size, фон, timer, fixed/billboard, protocol не менялись.
+- Texture: Linear mag, LinearMipmapLinear min, mipmaps on. Timer перерисовывает тот же canvas.
+- Handoff: `docs/reports/2026-09-09_hologram-text-quality.md`. `test:sim` 65/65, `test:server` 324/324.
+
+## Последний проход: hologram background / fixed / timer — 2026-09-09
+
+- Фон — отдельный plane (чёрный 0.35), не часть текстовой canvas-текстуры. Выключение прячет mesh; width/height хранятся отдельно от размера текста. Legacy default = старый sprite (`2.6×0.77` при size=1, 1 линия), фон включён.
+- Ориентация: billboard (копия camera quaternion, как прежний Sprite) или fixed (только сохранённый `yaw`, без lookAt). Переход в fixed фиксирует yaw редактирующего игрока на сервере.
+- Тип `kind`: `normal` | `timer`. Таймер считает remaining на клиенте из `timerDuration` + `timerStartedAt` и `welcome`/`pong` `serverNow`. Нет per-tick countdown-пакетов. `/hologram reset <name>` (alias существующих `/holograms`) сбрасывает цикл всем. Права те же: `holograms.create` / OP.
+- `HologramRenderer` расширен (Group + planes), отдельного Timer/Fixed renderer нет.
+- Handoff: `docs/reports/2026-09-09_hologram-bg-timer.md`. `test:sim` 63/63, `test:server` 324/324.
+
+## Последний проход: hologram in-game editor — 2026-09-09
+
+- ПКМ по существующей голограмме в Anarchy открывает GameUI-редактор **этой** голограммы. Raycast AABB идёт раньше bow/block use. Нет второй hologram-системы.
+- Appearance (`font`, `size`, `style`) — поля той же `HologramRecord`. Клиент шлёт `hologram_update`; сервер проверяет `holograms.create` / OP, валидирует, пишет `plugin-data/holograms/holograms.json`, броадкастит `holograms`.
+- Шрифты: основной UI **Inter** (`--font-ui`, `public/fonts/inter/*.woff2`); дополнительно **Press Start 2P** (`--font-display`) и `sans-serif` (исторический canvas default). CDN нет.
+- Команды `/holograms` без изменений по смыслу. Старые записи без style грузятся как `sans` + `bold` + `size=1`.
+- Handoff: `docs/reports/2026-09-09_hologram-editor.md`. `test:sim` 53/53, `test:server` 320/320.
+
+## Последний проход: death scatter 3× + world_sound spatial — 2026-09-09
+
+- Death drops: `DEATH_DROP_SCATTER_MULTIPLIER = 3` на origin X/Z (±0.75) и горизонтальный velocity (±2.1). `vy` остаётся 2.2. `scatterDeathDrop` / `deathLootDropped` без изменений.
+- `world_sound` больше не `broadcast` всем как local one-shot. Каталог `bow.shoot` / `item.pickup` (`positional: false`) был для SP `playLocal`; рассылка всем давала выстрел/подбор на всю карту. Теперь: клиент всегда `positional: true`; сервер шлёт только слушателям в `maxDistance`.
+- Handoff: `docs/reports/2026-09-09_death-scatter-world-sound.md`.
+
+## Последний проход: Online/Anarchy gameplay polish — 2026-09-08
+
+- Шесть точечных переносов SP → Anarchy без вторых систем: fire overlay, death scatter, player death pose, death screen + `respawn`, `world_sound`, recipe-book ghosts.
+- Fire: клиент применяет уже существующие `health.fire` / `snapshot.onFire` через `SurvivalSystem.syncNetworkFire`. Тот же `FirstPersonRenderer` overlay (`fire.png`, opacity 0.76).
+- Death: сервер больше не респавнит в том же тике. Loot один раз (`deathLootDropped`), scatter origin ~±0.25 xz + velocity `[(r-0.5)*1.4, 2.2, (r-0.5)*1.4]`. Клиент `{ type: 'respawn' }`; повторный запрос rejected. UI — существующий `GameUI.showDeath` («Вы умерли» / «Возродиться»).
+- Death pose: общие числа зомби (`0.7s`, tilt π/2, scale 1→0.75) на каноническом `PlayerVisual` через `RemotePlayerView` dead-edge clock.
+- Sounds: `world_sound` батч каталожных event id. Explosion / bow / combat / arrow / pickup / flint / door / click / splash с сервера; footsteps + eat/drink локально в `tickOnline`. С 2026-09-09 пакет пространственный и не `broadcast` на всю карту.
+- Recipe book: selection ≠ craft. Ghost/missing red на клиенте; сервер по-прежнему отвергает craft без ингредиентов.
+- Skin selector / nameplates PR #74 не трогались.
+- Handoff: `docs/reports/2026-09-08_online-gameplay-polish.md`.
+
+## Предыдущий проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
 
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.
 - Поставленный TNT (`primeTnt`): после поджига падает вниз от Y прайма. Ordinary max 20; powerful и destructive max 30. Пол раньше лимита → взрыв на столкновении; иначе воздух на лимите. Fuse 4s — safety.
@@ -310,7 +410,7 @@
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
 - Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
-- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms. Auction House не делался.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
 - Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.

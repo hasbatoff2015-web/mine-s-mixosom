@@ -37,10 +37,16 @@ import {
   type PlayerArmorResources,
 } from './PlayerArmorVisual';
 import type { PlayerEquipmentState } from '../../../shared/protocol';
+import {
+  humanoidDeathRotationZ,
+  humanoidDeathScale,
+} from '../../entities/humanoidDeath';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly invisible: boolean;
   readonly hurtFlash: number;
+  /** 0 = living pose. 1 = completed humanoid death tilt. */
+  readonly deathProgress?: number;
 }
 
 export const UPPER_BODY_PIVOT_Y = 12 * PLAYER_MODEL_PIXEL;
@@ -224,8 +230,28 @@ export class PlayerVisual {
     const nowMs = typeof performance !== 'undefined' ? performance.now() : 0;
     const timedFlash = this.hurtFlashStartedAt >= 0 ? playerHurtFlashIntensity(nowMs - this.hurtFlashStartedAt) : 0;
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
-    const pose = this.animator.advance(deltaSeconds, state);
+    const dying = (state.deathProgress ?? 0) > 0;
+    const pose = this.animator.advance(deltaSeconds, dying
+      ? {
+        ...state,
+        movementSpeed: 0,
+        sprinting: false,
+        verticalVelocity: 0,
+        mining: false,
+        bowCharge: 0,
+        swordBlocking: false,
+        foodUseProgress: 0,
+      }
+      : state);
     this.applyPose(pose);
+    if (dying) {
+      const progress = Math.min(1, Math.max(0, state.deathProgress ?? 0));
+      this.root.rotation.z = humanoidDeathRotationZ(progress);
+      this.root.scale.setScalar(humanoidDeathScale(progress));
+    } else {
+      this.root.rotation.z = 0;
+      this.root.scale.setScalar(1);
+    }
     this.syncLayerVisibility();
     if (this.heldModel && this.heldItemId && itemRenderProfile(this.heldItemId).category === 'bow') {
       const texturePath = bowPullingTexturePath(state.bowCharge);

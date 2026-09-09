@@ -13,6 +13,103 @@
 - [x] Audit leather/chainmail/gold/iron/diamond/ruby/titanium armor without production changes; add composition/material/order/offset regressions.
 - [x] Pass follow-up focused 50/50, four typechecks, alpha validation, boundaries, production build and browser QA including orbit/close/far translucent motion.
 
+## 2026-09-10: Integrate bow PvP timeline into current main
+
+- [x] Fetch actual refs and record main `27778cf3`, bow `fef66776`, merge-base `eb82417b`.
+- [x] Merge current main into the published bow branch without rebase or force push.
+- [x] Compose bow timeline/sequencing with main AutoMine, holograms, online polish, appearance and diagnostics.
+- [x] Preserve release boundary N/N+1 semantics, receive-time rewind, authoritative boundary eye and canonical stepwise projectile catch-up.
+- [x] Preserve main spatial bow sound, death/respawn, nameplate/appearance and plugin behavior.
+- [x] Pass 259 targeted integration tests, 65 shared-sim tests, four typechecks, boundaries, build and archive checks.
+- [x] Record and isolate pre-existing full-suite timeout/performance/extractor failures without weakening thresholds.
+
+## 2026-09-09: Bow release actual input boundary
+
+- [x] Track last input packet actually sent, including use state, in normal and idle input paths.
+- [x] Bind render-frame release to current sent `use=false` or the next future command after sent `use=true`.
+- [x] Preserve immediate captured aim/renderTick without synthetic input or input-sequence mutation.
+- [x] Cover action-before-input, action-after-input and 20/20 deterministic 180 FPS phases through server spawn/ammo assertions.
+- [x] Add F3 wire seq/use/chosen boundary/mode diagnostics.
+- [ ] Owner/manual 20/20 fully charged browser air-shot gate with real pointer lock and right-button hold.
+
+## 2026-09-09: Bow PvP client-timeline hit registration
+
+- [x] Capture exact already-rendered remote tick under crosshair or median remote timeline for lead shots; omit when unavailable.
+- [x] Validate explicit render timeline once at packet receipt with unchanged five-tick limit.
+- [x] Resolve exact post-physics attacker boundary and server-owned pre-release Bow/slot/draw state; bound wait to eight ticks.
+- [x] Spawn from boundary eye + `0.35` along captured aim and prevent pending charge inflation/duplicate ammo.
+- [x] Add per-arrow historical player timeline and stepwise catch-up through the canonical physics/collision/damage pipeline.
+- [x] Increase history storage to 20 without changing rewind authority, reach, hitboxes or combat tuning.
+- [x] Cover boundary ordering, backlog, security, current-vs-historical collision, lead shot, owner exclusion and retained Claims/arrow suites.
+- [ ] Owner live Anarchy QA with two clients and 0/50/100/150 ms latency scenarios; inspect F3 bow diagnostics.
+
+## 2026-09-09: Melee PvP receive-time rewind regression
+
+- [x] Measure the five-tick target rewind window at server packet receipt, not delayed FIFO execution.
+- [x] Store `receivedServerTick` plus the server-authoritative rewound target pose in a `PendingMeleeAttack` envelope.
+- [x] Resolve attacker only from the exact command boundary while reusing the frozen target pose without a second rewind.
+- [x] Revalidate current attacker/target state and retain server raycast, 3-block reach, current-world LOS, claims and damage authority.
+- [x] Keep `MAX_PVP_REWIND_TICKS = 5`; add an independent eight-tick pending lifetime and `pending_timeout` diagnostics.
+- [x] Cover stationary and moving queue backlog, stale/future-at-receive, pending expiry, duplicate action and hurt immunity.
+- [ ] Owner live Anarchy QA: two stationary clients with repeated LMB, then moving target and artificial input backlog; inspect F3 `recv`/`pending` classification.
+
+## 2026-09-08: Melee PvP client-timeline hit registration
+
+- [x] Replace production bare attack with sequenced attack intent carrying live look and command/slot context.
+- [x] Attach only the actually rendered nearest remote player's `targetId` and render tick.
+- [x] Resolve attacker from an exact authoritative command-boundary; bound pending actions and pose history.
+- [x] Rewind target authoritative AABB by at most 5 ticks / 250 ms; interpolate fractional render ticks.
+- [x] Revalidate reach, current-world voxel LOS, claims/plugins, blocking, immunity, armor and all existing melee effects server-side.
+- [x] Preserve legacy safe fallback plus non-player mob/minecart hits and air swings; no bow changes.
+- [x] Add deterministic diagnostics and automated coverage for lag, flick, stale/future, obstruction, reach, duplicate and protection cases.
+- [ ] Owner live Anarchy QA: two clients under normal and throttled latency; flick-to-hit, moving target, wall rejection, mobile touch attack.
+
+## 2026-09-09: AutoMine plugin
+
+- [x] Builtin `/automine` wand/create/delete/list/info/reset/setinterval/setteleport on PluginManager.
+- [x] Inclusive cuboid selection independent from Claims; wooden-axe wand clicks.
+- [x] Fixed weighted composition (12 BlockId, 100%, Obsidian=Coal, Titanium rarest).
+- [x] Batched `applyBlockBatch` reset, TeleportService evacuation, persist+restart timer.
+- [x] Restore original voxels on delete; no second claims/teleport/network protocol.
+
+## 2026-09-09: Hologram close-up text quality
+
+- [x] Supersample hologram text canvas; keep world-space size.
+- [x] Linear magFilter + mipmaps for close sharpness / far stability.
+- [ ] Owner live QA: walk up to normal/timer/fixed holograms.
+
+## 2026-09-09: Hologram background, fixed orientation, timer
+
+- [x] Background on/off as a separate renderer layer; independent width/height.
+- [x] Fully fixed holograms (no camera-facing); persist world yaw.
+- [x] Timer hologram type with server `timerStartedAt` and client countdown.
+- [x] `/hologram reset <name>` on the existing `/holograms` command (alias `hologram`).
+- [ ] Owner live Anarchy QA: bg off, large/small bg, walk around fixed, two clients on one timer, reset, RMB vs chest/door.
+
+## 2026-09-09: Hologram in-game editor
+
+- [x] RMB on an existing Anarchy hologram opens the GameUI editor for that hologram.
+- [x] Store font/size/style on the existing hologram record; server validates and persists.
+- [x] Extend `HologramRenderer` canvas draw with local Inter / Press Start 2P / sans-serif.
+- [x] Keep `/holograms` commands, IDs, billboards, range cull, and old records.
+- [ ] Owner live Anarchy QA: OP edit, denied player, Save/Cancel, reconnect after style change.
+
+## 2026-09-09: Death scatter 3× + spatial world_sound
+
+- [x] Triple death-drop X/Z origin and horizontal velocity; keep `vy = 2.2`.
+- [x] Stop broadcasting `bow.shoot` / `item.pickup` as global local one-shots.
+- [x] Regression tests for scatter multiplier and false bow/pickup sounds.
+
+## 2026-09-08: Online/Anarchy gameplay polish
+
+- [x] Drive the existing SP first-person fire overlay from authoritative Online fire state.
+- [x] Scatter death item entities around the corpse (server-authoritative, no duplicate loot).
+- [x] Reuse zombie/humanoid death pose on `PlayerVisual` / `RemotePlayerView`; stay dead until `respawn`.
+- [x] Show existing death UI («Вы умерли» / «Возродиться») and one-shot `{ type: 'respawn' }`.
+- [x] Full SP→Online sound catalog audit; add missing authoritative `world_sound` calls.
+- [x] Recipe-book selection without ingredients (ghost/missing red); keep server craft rejection.
+- [ ] Owner live Anarchy QA: fire overlay, death scatter, remote death pose, TNT boom, recipe ghosts.
+
 ## 2026-09-08: Placed TNT fall distance (not minecart)
 
 - [x] Apply 20/30 downward fall only to primed **placed** TNT (`primeTnt` sets `launchOriginY` + `maxFallBlocks`).
@@ -293,7 +390,8 @@
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
-- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
+- [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
+- [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore

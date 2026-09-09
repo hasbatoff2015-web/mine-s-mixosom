@@ -15,7 +15,7 @@ import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArro
 import { systemRandomFn } from '../gameplay/random';
 import { rayAabbDistance } from '../world/collision';
 
-interface PlayerArrow {
+export interface PlayerArrow {
   readonly id: string;
   readonly ownerId?: string;
   readonly position: Vec3;
@@ -28,6 +28,8 @@ interface PlayerArrow {
   embedded?: EmbeddedArrowState;
   flaming: boolean;
   pickupDelay: number;
+  /** Historical player timeline used only for player collision; blocks stay current. */
+  playerTimelineTick?: number;
 }
 
 export interface ArrowPlayerTarget {
@@ -37,6 +39,7 @@ export interface ArrowPlayerTarget {
 
 export interface ArrowTickOptions {
   readonly players?: readonly ArrowPlayerTarget[];
+  readonly resolvePlayerAabb?: (playerId: string, timelineTick: number) => PlayerAABB | undefined;
   readonly onPlayerHit?: (
     playerId: string,
     damage: number,
@@ -116,7 +119,8 @@ export class PlayerArrowManager {
     id?: string,
     ownerId?: string,
     spread?: number,
-  ): void {
+    playerTimelineTick?: number,
+  ): string {
     if (this.arrows.length >= 48) this.remove(0);
     const originVec = new Vec3(origin.x, origin.y, origin.z);
     const velocity = inaccurateArrowDirection(direction, this.random, spread).multiplyScalar(speedBlocksPerTick);
@@ -126,8 +130,9 @@ export class PlayerArrowManager {
       this.host.orientArrow(visual, velocity.x, velocity.y, velocity.z);
       this.host.attach(visual);
     }
+    const arrowId = id ?? `arrow-${this.idCounter += 1}`;
     this.arrows.push({
-      id: id ?? `arrow-${this.idCounter += 1}`,
+      id: arrowId,
       ownerId,
       position: originVec.clone(),
       previousPosition: originVec.clone(),
@@ -138,8 +143,10 @@ export class PlayerArrowManager {
       inGround: false,
       flaming,
       pickupDelay: ARROW_PICKUP_DELAY_SECONDS,
+      ...(playerTimelineTick !== undefined ? { playerTimelineTick } : {}),
     });
-    this.onSpawn?.(this.arrows[this.arrows.length - 1]!.id);
+    this.onSpawn?.(arrowId);
+    return arrowId;
   }
 
   applyNetwork(
@@ -216,96 +223,121 @@ export class PlayerArrowManager {
         arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
         arrow.age = 0;
       }
-      let removed = false;
-      for (let step = 0; step < tickSteps; step += 1) {
-        const movement = arrow.velocity.clone();
-        const distance = movement.length();
-        if (distance <= 1e-8) {
-          applyArrowDragAndGravity(arrow.velocity, this.world.getBlock(
-            Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
-          ) === BlockId.Water);
-          continue;
-        }
-        const direction = movement.clone().multiplyScalar(1 / distance);
-        const blockHit = this.world.raycast(arrow.position, direction, distance, { geometry: 'collision' });
-        const mobHit = this.mobs.raycast(arrow.position, direction, distance);
-        const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
-        const playerHit = this.raycastPlayers(arrow, direction, distance, options.players);
-        const livingDistance = Math.min(
-          mobHit?.distance ?? Infinity,
-          playerHit?.distance ?? Infinity,
-        );
-        const cartCloser = cartHit && livingDistance >= cartHit.distance
-          && (!blockHit || cartHit.distance <= blockHit.distance + CART_BLOCK_SLOP);
-        if (cartCloser && cartHit) {
-          this.onMinecartHit?.(cartHit.cart, arrow.flaming);
-          this.remove(index);
-          removed = true;
-          break;
-        }
-        const playerCloser = playerHit && (!mobHit || playerHit.distance <= mobHit.distance)
-          && (!blockHit || playerHit.distance < blockHit.distance);
-        if (playerCloser && playerHit) {
-          options.onPlayerHit?.(
-            playerHit.id,
-            arrowDamageFromVelocity(arrow.velocity, arrow.critical),
-            arrow.flaming,
-            arrow.position,
-            arrow.ownerId,
-          );
-          this.remove(index);
-          removed = true;
-          break;
-        }
-        if (mobHit && (!blockHit || mobHit.distance < blockHit.distance)) {
-          const accepted = this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
-            source: 'projectile',
-            attackerPosition: arrow.position,
-            knockback: arrow.critical ? 4.2 : 2.4,
-            ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
-          });
-          this.onMobHit?.(accepted, arrow.position);
-          this.remove(index);
-          removed = true;
-          break;
-        }
-        if (blockHit) {
-          arrow.embedded = embedArrow(blockHit, arrow.velocity);
-          arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
-          arrow.inGround = true;
-          arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
-          arrow.age = 0;
-          arrow.velocity.set(0, 0, 0);
-          arrow.previousPosition.copy(arrow.position);
-          this.syncArrowVisual(arrow);
-          this.onBlockHit?.(blockHit.x, blockHit.y, blockHit.z, arrow.flaming);
-          this.applyArrowLight(arrow);
-          break;
-        }
-        arrow.position.add(movement);
-        const cell = this.world.getBlock(
-          Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
-        );
-        if (cell === BlockId.Cobweb) arrow.velocity.multiplyScalar(0.25);
-        applyArrowDragAndGravity(arrow.velocity, cell === BlockId.Water);
-      }
+      const removed = this.advanceFlyingArrow(index, tickSteps, options);
       if (removed || arrow.inGround) continue;
       this.orientArrow(arrow);
       this.applyArrowLight(arrow);
     }
   }
 
+  /** Advances only one newly spawned arrow through the same authoritative physics/collision path. */
+  catchUp(id: string, ticks: number, options: ArrowTickOptions = {}): void {
+    const steps = Math.max(0, Math.floor(ticks));
+    for (let step = 0; step < steps; step += 1) {
+      const index = this.arrows.findIndex((arrow) => arrow.id === id);
+      if (index < 0) return;
+      const arrow = this.arrows[index]!;
+      arrow.previousPosition.copy(arrow.position);
+      arrow.age += 0.05;
+      if (this.advanceFlyingArrow(index, 1, options) || arrow.inGround) return;
+    }
+    const arrow = this.arrows.find((entry) => entry.id === id);
+    if (arrow && !arrow.inGround) {
+      this.orientArrow(arrow);
+      this.applyArrowLight(arrow);
+    }
+  }
+
+  private advanceFlyingArrow(index: number, tickSteps: number, options: ArrowTickOptions): boolean {
+    const arrow = this.arrows[index];
+    if (!arrow) return true;
+    for (let step = 0; step < tickSteps; step += 1) {
+      const movement = arrow.velocity.clone();
+      const distance = movement.length();
+      if (distance <= 1e-8) {
+        applyArrowDragAndGravity(arrow.velocity, this.world.getBlock(
+          Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
+        ) === BlockId.Water);
+        if (arrow.playerTimelineTick !== undefined) arrow.playerTimelineTick += 1;
+        continue;
+      }
+      const direction = movement.clone().multiplyScalar(1 / distance);
+      const blockHit = this.world.raycast(arrow.position, direction, distance, { geometry: 'collision' });
+      const mobHit = this.mobs.raycast(arrow.position, direction, distance);
+      const cartHit = this.minecarts?.raycast(arrow.position, direction, distance);
+      const playerHit = this.raycastPlayers(arrow, direction, distance, options);
+      const livingDistance = Math.min(mobHit?.distance ?? Infinity, playerHit?.distance ?? Infinity);
+      const cartCloser = cartHit && livingDistance >= cartHit.distance
+        && (!blockHit || cartHit.distance <= blockHit.distance + CART_BLOCK_SLOP);
+      if (cartCloser && cartHit) {
+        this.onMinecartHit?.(cartHit.cart, arrow.flaming);
+        this.remove(index);
+        return true;
+      }
+      const playerCloser = playerHit && (!mobHit || playerHit.distance <= mobHit.distance)
+        && (!blockHit || playerHit.distance < blockHit.distance);
+      if (playerCloser && playerHit) {
+        options.onPlayerHit?.(
+          playerHit.id,
+          arrowDamageFromVelocity(arrow.velocity, arrow.critical),
+          arrow.flaming,
+          arrow.position,
+          arrow.ownerId,
+        );
+        this.remove(index);
+        return true;
+      }
+      if (mobHit && (!blockHit || mobHit.distance < blockHit.distance)) {
+        const accepted = this.mobs.damage(mobHit.mob, arrowDamageFromVelocity(arrow.velocity, arrow.critical), {
+          source: 'projectile',
+          attackerPosition: arrow.position,
+          knockback: arrow.critical ? 4.2 : 2.4,
+          ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
+        });
+        this.onMobHit?.(accepted, arrow.position);
+        this.remove(index);
+        return true;
+      }
+      if (blockHit) {
+        arrow.embedded = embedArrow(blockHit, arrow.velocity);
+        arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
+        arrow.inGround = true;
+        arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
+        arrow.age = 0;
+        arrow.velocity.set(0, 0, 0);
+        arrow.previousPosition.copy(arrow.position);
+        this.syncArrowVisual(arrow);
+        this.onBlockHit?.(blockHit.x, blockHit.y, blockHit.z, arrow.flaming);
+        this.applyArrowLight(arrow);
+        return false;
+      }
+      arrow.position.add(movement);
+      const cell = this.world.getBlock(
+        Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
+      );
+      if (cell === BlockId.Cobweb) arrow.velocity.multiplyScalar(0.25);
+      applyArrowDragAndGravity(arrow.velocity, cell === BlockId.Water);
+      if (arrow.playerTimelineTick !== undefined) arrow.playerTimelineTick += 1;
+    }
+    return false;
+  }
+
   private raycastPlayers(
     arrow: PlayerArrow,
     direction: Vec3,
     maxDistance: number,
-    players: readonly ArrowPlayerTarget[] | undefined,
+    options: ArrowTickOptions,
   ): { id: string; distance: number } | undefined {
+    const players = options.players;
     if (!players?.length) return undefined;
     let closest: { id: string; distance: number } | undefined;
     for (const player of players) {
       if (player.id === arrow.ownerId) continue;
-      const hit = rayAabbDistance(arrow.position, direction, player.aabb);
+      const aabb = arrow.playerTimelineTick !== undefined && options.resolvePlayerAabb
+        ? options.resolvePlayerAabb(player.id, arrow.playerTimelineTick)
+        : player.aabb;
+      if (!aabb) continue;
+      const hit = rayAabbDistance(arrow.position, direction, aabb);
       if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
       if (closest && hit.distance >= closest.distance) continue;
       closest = { id: player.id, distance: hit.distance };

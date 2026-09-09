@@ -18,6 +18,19 @@ export interface ActionSeqSource {
   selectedSlot: number;
 }
 
+export type BowReleaseBoundaryMode = 'current-use-false' | 'next-after-use-true';
+
+export interface BowReleaseWireState {
+  readonly currentInputSeq: number;
+  readonly lastSentInputSeq: number;
+  readonly lastSentUse: boolean;
+}
+
+export interface BowReleaseCommandBoundary {
+  readonly commandSeq: number;
+  readonly mode: BowReleaseBoundaryMode;
+}
+
 export function nextActionSeq(source: ActionSeqSource): number {
   source.actionSeq += 1;
   return source.actionSeq;
@@ -113,20 +126,48 @@ export function captureBlockBreakAbort(source: ActionSeqSource): BlockBreakAbort
 export function captureBowRelease(
   source: ActionSeqSource,
   look: { readonly yaw: number; readonly pitch: number },
+  renderTick?: number,
+  boundaryCommandSeq = source.inputSeq,
 ): BowReleaseAction {
   return {
     kind: 'bow_release',
     actionSeq: nextActionSeq(source),
-    commandSeq: source.inputSeq,
+    commandSeq: boundaryCommandSeq,
     selectedSlot: source.selectedSlot,
     yaw: look.yaw,
     pitch: look.pitch,
+    ...(renderTick !== undefined ? { renderTick } : {}),
   };
+}
+
+/**
+ * Resolves the first wire command whose `use=false` represents this render-frame release.
+ * This never increments the input sequence or delays captured release aim.
+ */
+export function resolveBowReleaseCommandSeq(state: BowReleaseWireState): BowReleaseCommandBoundary {
+  if (state.lastSentInputSeq === state.currentInputSeq && !state.lastSentUse) {
+    return { commandSeq: state.currentInputSeq, mode: 'current-use-false' };
+  }
+  return { commandSeq: state.currentInputSeq + 1, mode: 'next-after-use-true' };
+}
+
+/** Selects an already-rendered remote timeline without sampling any interpolation buffer. */
+export function selectBowRenderTick(
+  directRenderTick: number | undefined,
+  activeRenderTicks: readonly number[],
+): number | undefined {
+  if (directRenderTick !== undefined && Number.isFinite(directRenderTick)) return directRenderTick;
+  const sorted = activeRenderTicks.filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return undefined;
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle];
+  return (sorted[middle - 1]! + sorted[middle]!) * 0.5;
 }
 
 export function captureAttack(
   source: ActionSeqSource,
   look?: { readonly yaw: number; readonly pitch: number },
+  target?: { readonly id: string; readonly renderTick: number },
 ): AttackAction {
   return {
     kind: 'attack',
@@ -134,5 +175,6 @@ export function captureAttack(
     commandSeq: source.inputSeq,
     selectedSlot: source.selectedSlot,
     ...(look ? { yaw: look.yaw, pitch: look.pitch } : {}),
+    ...(target ? { targetId: target.id, targetRenderTick: target.renderTick } : {}),
   };
 }
