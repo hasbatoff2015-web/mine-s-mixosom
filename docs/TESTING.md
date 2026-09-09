@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-09 Fully ordered translucent skin parts
+
+Report: `reports/2026-09-09_fully-ordered-translucent-skin-parts.md`.
+
+Focused gate is the same eight player/skin/armor/appearance/preview/network files below, now **50/50 PASS**. Added invariants: Classic, Slim and production-translucent outer each have six unique orders; exact ranks are body `0`, head `1`, right leg `2`, left leg `3`, right arm `4`, left arm `5`; base `0..5`, outer `10..15`; no head/body, right arm/leg or left arm/leg tie. The `max outer < armor base` assertion is explicitly only a numeric namespace invariant because opaque and transparent objects use separate Three.js queues. Depth bias is independently capped at `0/1/2`.
+
+A custom descriptor registered through `MinecraftSkinRegistry.registerValidated(..., 64, 64)` returns `SkinTextureHandle.outerLayerAlpha='translucent'` and makes every world outer material transparent while base stays opaque. This proves runtime registry metadata, not the global built-in map, owns the renderer policy.
+
+Manual Chromium `/?qaPlayer=1`: `5bc8ad7edfb7ee86` covered walk/sprint/jump/sneak/attack/bow, camera orbit `-180..180` in 60° steps, distance `2.0/4.2/8.0`, head yaw ±120°, pitch ±80°, and none/Iron/Diamond/Ruby/Titanium/Leather/mixed armor. `00f6338deb336a6e`, `0f15ad5e5c148f40`, `55264c2ebdb9ed9d` were rotated during walk/attack/bow. Neck, shoulders, hip, pants and boots seams stayed stable; warn/error console empty.
+
 ## 2026-09-09 Player skin layer depth stability
 
 Report: `reports/2026-09-09_player-skin-layer-zfighting.md`.
@@ -16,7 +26,7 @@ npm run build
 git diff --check
 ```
 
-Focused result: **8 files / 49 tests PASS**. Contracts cover entity-owned base/outer materials over one texture, binary/translucent outer policy, exact `0/1/2 < 10/11/12 < 20/21/22 < 30/31/32` order, outer offsets, Classic/Slim, six layer toggles, appearance swap/ref release/material reuse, first-person separation, invisibility, all armor materials and mixed/leather composition. Alpha scanner classifies all 45 production PNGs and fails on metadata drift. Four typechecks, boundaries and production build pass.
+Focused result after the follow-up: **8 files / 50 tests PASS**. Contracts cover entity-owned base/outer materials over one texture, binary/translucent outer policy, unique `0..5` / `10..15` numeric namespaces, separate outer depth bias, Classic/Slim, six layer toggles, appearance swap/ref release/material reuse, first-person separation, invisibility, all armor materials and mixed/leather composition. Alpha scanner classifies all 45 production PNGs and fails on metadata drift. Four typechecks, boundaries and production build pass.
 
 Full `npm test`: **188/201 files, 1903/1933 tests PASS**. The 30 failures are outside player rendering: CPU-heavy worldgen/fluid/fire/minecart/server tests exceeded existing time/performance budgets under the full parallel run, and `minecraft-reference-extractor.test.mjs` retains its independent parse failure. All changed/related suites pass.
 

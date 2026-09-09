@@ -1,10 +1,20 @@
 # Состояние проекта
 
-## Последний проход: deterministic player skin layer depth — 2026-09-09
+## Последний проход: fully ordered translucent skin parts — 2026-09-09
+
+- Residual review risk закрыт: все шесть skin parts теперь имеют unique render rank `body=0`, `head=1`, `rightLeg=2`, `leftLeg=3`, `rightArm=4`, `leftArm=5`. Base namespace `0..5`, outer `10..15`; transparent sorting больше не использует camera-space Z между head/body, arm/leg или left/right pairs.
+- `SKIN_PART_DEPTH_BIAS` отделён от render rank и остаётся малым: body/head `0`, right side `1`, left side `2`, то есть polygon offset только `0`, `-1/-1`, `-2/-2`.
+- Cross-queue model уточнена: opaque skin/armor рисуются в opaque queue, translucent outer — затем в transparent queue независимо от чисел. Armor перекрывает outer через уже записанный depth + outer `depthTest=true`; диапазоны renderOrder — namespace invariant, не глобальный queue order.
+- Runtime alpha metadata приходит из фактически acquired `SkinTextureHandle.outerLayerAlpha`. Custom descriptor через `MinecraftSkinRegistry.registerValidated` покрыт regression и реально включает translucent outer без built-in lookup.
+- Production armor renderer, skin PNG/UV/geometry/inflate/pivots/animation, network/save, invisibility и first-person armor semantics не менялись. DEV harness получил воспроизводимые camera orbit/distance controls только для QA.
+- Focused skin/armor/appearance/preview/network gate: **50/50 PASS**. Alpha scan, все четыре typecheck, boundaries, production build и diff check PASS. WebGL QA: `5bc…` все requested poses, 360°, close/far, look up/down и семь armor configurations; остальные три translucent skins вращались во время движения. Flicker не наблюдался, warn/error console пуст.
+- Handoff: `docs/reports/2026-09-09_fully-ordered-translucent-skin-parts.md`.
+
+## Предыдущий проход: base/outer skin split + alpha classification — 2026-09-09
 
 - Root cause camera-dependent skin flicker: `PlayerVisual` использовал один `transparent=true` material для base и outer, поэтому даже обычная base skin попадала в blended queue; порядок шести пересекающихся частей задавался только как base `0` / outer `1` и зависел от camera-distance sorting.
 - Skin base теперь всегда opaque cutout (`alphaTest=0.01`, `transparent=false`, depth test/write). Outer использует ту же ref-counted texture, но отдельные entity-owned materials: binary skins остаются opaque cutout, а `00f6338deb336a6e`, `0f15ad5e5c148f40`, `55264c2ebdb9ed9d`, `5bc8ad7edfb7ee86` сохраняют реальную outer translucency с depth write.
-- Детерминированный порядок: skin base `0/1/2`, outer `10/11/12`, armor base `20/21/22`, leather overlay `30/31/32`; outer sibling depth bias `0`, `-1/-1`, `-2/-2`. Skin geometry, UV, inflate, pivots и animation rig не менялись.
+- Первоначальный порядок skin base `0/1/2`, outer `10/11/12` оставлял равные transparent ranks для трёх пар частей; это исправлено follow-up выше на unique `0..5` / `10..15`. Depth bias `0/-1/-2` сохранён отдельно.
 - Все 45 production PNG проверяет `npm run assets:validate-player-skins`. 38 полностью binary; ещё три имеют intermediate alpha только в unused atlas pixels. Metadata/PNG mismatch завершает script и test ошибкой.
 - `PlayerArmorVisual` production-код не менялся: leather/chainmail/gold/iron/diamond/ruby/titanium остаются opaque cutout с прежними order/offset. First-person остаётся отдельным skin-material path без armor; invisibility сохраняет armor и held item.
 - Focused player/skin/armor/appearance/preview/network gate: **49/49 PASS**. Все четыре typecheck, alpha scanner, import boundaries и production build PASS; manual WebGL matrix и main-menu/selector preview прошли с пустой warn/error console. Full suite: **1903/1933 tests, 188/201 files PASS**; 30 независимых CPU-budget/timeouts и старый extractor parse failure вне изменённых путей.

@@ -8,7 +8,6 @@ import {
 } from '../../player/appearance/PlayerAppearance';
 import {
   MinecraftSkinRegistry,
-  skinHasTranslucentOuterLayer,
   type SkinTextureHandle,
 } from './MinecraftSkin';
 import { ItemVisualFactory } from '../ItemVisualFactory';
@@ -65,7 +64,15 @@ interface SkinPartMeshes {
 const PARTS: readonly PlayerSkinPart[] = ['head', 'body', 'rightArm', 'leftArm', 'rightLeg', 'leftLeg'];
 export const SKIN_BASE_RENDER_ORDER = 0;
 export const SKIN_OUTER_RENDER_ORDER = 10;
-export const SKIN_PART_RENDER_PRIORITY: Readonly<Record<PlayerSkinPart, number>> = Object.freeze({
+export const SKIN_PART_RENDER_RANK: Readonly<Record<PlayerSkinPart, number>> = Object.freeze({
+  body: 0,
+  head: 1,
+  rightLeg: 2,
+  leftLeg: 3,
+  rightArm: 4,
+  leftArm: 5,
+});
+export const SKIN_PART_DEPTH_BIAS: Readonly<Record<PlayerSkinPart, number>> = Object.freeze({
   head: 0,
   body: 0,
   rightArm: 1,
@@ -120,7 +127,7 @@ export class PlayerVisual {
       depthWrite: true,
     });
     this.baseMaterial.name = 'player-skin-material:base';
-    const translucentOuter = skinHasTranslucentOuterLayer(this.skinHandle.skinId);
+    const translucentOuter = this.skinHandle.outerLayerAlpha === 'translucent';
     this.outerMaterial = this.createOuterMaterial(0, translucentOuter);
     this.outerMaterials.set(0, this.outerMaterial);
     this.outerMaterials.set(1, this.createOuterMaterial(1, translucentOuter));
@@ -290,36 +297,37 @@ export class PlayerVisual {
   }
 
   private createPartMesh(part: PlayerSkinPart, layer: PlayerSkinLayer): THREE.Mesh {
-    const priority = SKIN_PART_RENDER_PRIORITY[part];
+    const renderRank = SKIN_PART_RENDER_RANK[part];
+    const depthBias = SKIN_PART_DEPTH_BIAS[part];
     const mesh = new THREE.Mesh(
       this.geometries.get(part, this.appearanceValue.model, layer),
-      layer === 'base' ? this.baseMaterial : this.outerMaterials.get(priority)!,
+      layer === 'base' ? this.baseMaterial : this.outerMaterials.get(depthBias)!,
     );
     mesh.name = `player:${part}:${layer}`;
-    mesh.renderOrder = (layer === 'outer' ? SKIN_OUTER_RENDER_ORDER : SKIN_BASE_RENDER_ORDER) + priority;
+    mesh.renderOrder = (layer === 'outer' ? SKIN_OUTER_RENDER_ORDER : SKIN_BASE_RENDER_ORDER) + renderRank;
     return mesh;
   }
 
-  private createOuterMaterial(priority: number, transparent: boolean): THREE.MeshBasicMaterial {
-    // Only metadata-flagged skins enter blending; depth writes stay enabled so
-    // opaque armor rendered afterward remains authoritative at covered pixels.
+  private createOuterMaterial(depthBias: number, transparent: boolean): THREE.MeshBasicMaterial {
+    // The small seam bias is independent from the unique transparent painter rank.
+    // Opaque armor writes depth first; later translucent outer pixels must pass depthTest.
     const material = createEntityMaterial({
       map: this.skinHandle.texture,
       alphaTest: 0.01,
       transparent,
       depthWrite: true,
     });
-    material.name = `player-skin-material:outer:priority-${priority}`;
-    material.polygonOffset = priority > 0;
-    material.polygonOffsetFactor = -priority;
-    material.polygonOffsetUnits = -priority;
+    material.name = `player-skin-material:outer:depth-bias-${depthBias}`;
+    material.polygonOffset = depthBias > 0;
+    material.polygonOffsetFactor = -depthBias;
+    material.polygonOffsetUnits = -depthBias;
     return material;
   }
 
   private syncSkinMaterials(handle: SkinTextureHandle): void {
     this.baseMaterial.map = handle.texture;
     this.baseMaterial.needsUpdate = true;
-    const translucentOuter = skinHasTranslucentOuterLayer(handle.skinId);
+    const translucentOuter = handle.outerLayerAlpha === 'translucent';
     for (const material of this.outerMaterials.values()) {
       material.map = handle.texture;
       material.transparent = translucentOuter;

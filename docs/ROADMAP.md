@@ -5,10 +5,13 @@
 - [x] Scan all 45 production 64×64 skins and classify intermediate alpha by base/outer/unused atlas region without changing PNG files.
 - [x] Split the world-player base and outer materials while preserving one shared ref-counted texture and entity-owned light state.
 - [x] Keep base always opaque cutout; blend only the four metadata-flagged skins with real translucent outer pixels and retain depth write.
-- [x] Stabilize skin parts at base `0/1/2`, outer `10/11/12` with outer polygon offsets `0`, `-1/-1`, `-2/-2`; keep armor at `20+` / `30+`.
+- [x] Follow-up: give every skin part a unique rank — body/head/right leg/left leg/right arm/left arm `0..5`, hence base `0..5` and outer `10..15`.
+- [x] Keep depth bias independent and small: body/head `0`, right side `-1/-1`, left side `-2/-2`; keep armor namespaces at `20+` / `30+`.
+- [x] Correct cross-queue documentation: translucent outer is drawn after opaque armor and is occluded by armor's depth writes, not by lower numeric renderOrder.
+- [x] Source runtime alpha policy from the acquired registry handle and cover a custom `registerValidated` translucent descriptor.
 - [x] Preserve geometry, UVs, inflate, pivots, animation, invisibility and separate first-person/no-armor semantics.
 - [x] Audit leather/chainmail/gold/iron/diamond/ruby/titanium armor without production changes; add composition/material/order/offset regressions.
-- [x] Pass focused 49/49, four typechecks, alpha validation, boundaries, production build and browser QA including the real rotating selector preview.
+- [x] Pass follow-up focused 50/50, four typechecks, alpha validation, boundaries, production build and browser QA including orbit/close/far translucent motion.
 
 ## 2026-09-08: Placed TNT fall distance (not minecart)
 

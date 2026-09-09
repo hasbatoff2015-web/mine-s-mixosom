@@ -12,7 +12,7 @@ Remove camera-dependent flicker from player skin base/outer layers, preserve leg
 
 ## Result
 
-The world-player base no longer enters Three.js's transparent queue. Base and outer use separate entity-owned materials over the same ref-counted texture. Binary outer layers use opaque cutout; only four skins with real intermediate alpha in used outer UV islands enable blending. Part ordering and outer seam depth bias are now deterministic and compose below unchanged armor orders.
+The world-player base no longer enters Three.js's transparent queue. Base and outer use separate entity-owned materials over the same ref-counted texture. Binary outer layers use opaque cutout; only four skins with real intermediate alpha in used outer UV islands enable blending. A follow-up on the same branch made all six part ranks unique and clarified the separate opaque/transparent queue model; see `2026-09-09_fully-ordered-translucent-skin-parts.md`.
 
 ## Root cause
 
@@ -37,20 +37,22 @@ After the fix:
 | `depthTest` | true | true | true |
 | `depthWrite` | true | true | true |
 
-The base is always opaque/cutout. Translucent outer keeps depth writes: deterministic part order is retained and opaque armor rendered later remains authoritative at covered pixels.
+The base is always opaque/cutout. Translucent outer keeps depth writes. Opaque armor is drawn first in Three.js's opaque queue and writes depth; the later transparent outer must pass `depthTest`, so covered pixels remain hidden.
 
 ## Exact ordering and depth bias
 
-| Part | Priority | Skin base | Skin outer | Outer polygon offset | Armor base | Armor overlay |
-|---|---:|---:|---:|---|---:|---:|
-| head | 0 | 0 | 10 | disabled, `0/0` | 20 | 30 |
-| body | 0 | 0 | 10 | disabled, `0/0` | 20 | 30 |
-| right arm | 1 | 1 | 11 | enabled, `-1/-1` | 21 | 31 |
-| right leg | 1 | 1 | 11 | enabled, `-1/-1` | 21 | 31 |
-| left arm | 2 | 2 | 12 | enabled, `-2/-2` | 22 | 32 |
-| left leg | 2 | 2 | 12 | enabled, `-2/-2` | 22 | 32 |
+| Part | Render rank | Depth bias | Skin base | Skin outer | Outer polygon offset | Armor base | Armor overlay |
+|---|---:|---:|---:|---:|---|---:|---:|
+| body | 0 | 0 | 0 | 10 | disabled, `0/0` | 20 | 30 |
+| head | 1 | 0 | 1 | 11 | disabled, `0/0` | 20 | 30 |
+| right leg | 2 | 1 | 2 | 12 | enabled, `-1/-1` | 21 | 31 |
+| left leg | 3 | 2 | 3 | 13 | enabled, `-2/-2` | 22 | 32 |
+| right arm | 4 | 1 | 4 | 14 | enabled, `-1/-1` | 21 | 31 |
+| left arm | 5 | 2 | 5 | 15 | enabled, `-2/-2` | 22 | 32 |
 
 Base skin has no polygon offset. No random epsilon, position, scale, inflate, UV, pivot or animation change was made.
+
+The numeric ranges are namespaces. For a translucent skin, opaque armor is drawn before transparent outer despite armor's higher numbers; armor occlusion comes from its depth writes plus outer depth testing.
 
 ## Production skin alpha scan
 
@@ -125,7 +127,7 @@ No production armor code changed. Leather, chainmail, gold, iron, diamond, ruby 
 ## Implemented
 
 - Added optional data-only outer-alpha metadata to built-in skin descriptors.
-- Split `PlayerVisual` into one base and three outer-priority materials over a shared texture.
+- Split `PlayerVisual` into one base and three outer depth-bias materials over a shared texture.
 - Reused those material objects across appearance/model changes and released old handles.
 - Added an exact PNG alpha scanner and fail-fast metadata validation command.
 - Expanded the DEV harness from one all-outer switch to six independent layer controls.
@@ -174,7 +176,7 @@ Shoulders, center pants, boots, jacket/sleeve and helmet/hat seams remained stab
 
 ## Performance
 
-Skin material count changes from one to four per `PlayerVisual` (one base plus three priority variants), but all use one registry texture. Materials are created per entity, reused on appearance changes and disposed with the visual. No per-frame texture/material allocation or new simulation work was added.
+Skin material count changes from one to four per `PlayerVisual` (one base plus three depth-bias variants), but all use one registry texture. Materials are created per entity, reused on appearance changes and disposed with the visual. No per-frame texture/material allocation or new simulation work was added.
 
 ## Known issues
 
@@ -194,4 +196,4 @@ No renderer follow-up is required for this fix. When a production skin is added,
 
 ## Git
 
-Delivery is one commit named `fix: stabilize player skin layer rendering` pushed to `origin/codex/fix-player-layer-zfighting`. No merge is part of this task.
+Initial delivery is commit `14ac1ab` (`fix: stabilize player skin layer rendering`). A second non-amended follow-up, `fix: fully order translucent skin parts`, closes the residual equal-rank and registry-metadata risks. No merge is part of this task.

@@ -26,7 +26,7 @@ import {
   PlayerVisual,
   SKIN_BASE_RENDER_ORDER,
   SKIN_OUTER_RENDER_ORDER,
-  SKIN_PART_RENDER_PRIORITY,
+  SKIN_PART_RENDER_RANK,
 } from '../src/rendering/player/PlayerVisual';
 
 const ARMOR_ASSETS = import.meta.glob('../assets/minecraft/textures/models/armor/*.png');
@@ -225,7 +225,7 @@ describe('PlayerArmorVisual slot visibility', () => {
     fixture.dispose();
   });
 
-  it('keeps skin, mixed armor, and leather overlay in one strict order for classic and slim', () => {
+  it('keeps numeric skin/armor namespaces disjoint without asserting cross-queue draw order', () => {
     const fixture = createVisual();
     for (const model of ['classic', 'slim'] as const) {
       fixture.visual.setAppearance(createPlayerAppearance({
@@ -238,11 +238,11 @@ describe('PlayerArmorVisual slot visibility', () => {
         legs: 'diamond_leggings',
         feet: 'titanium_boots',
       });
-      const skinBase = Object.keys(SKIN_PART_RENDER_PRIORITY).map((part) => (
+      const skinBase = Object.keys(SKIN_PART_RENDER_RANK).map((part) => (
         fixture.visual.rig[part as keyof typeof fixture.visual.rig]
           .getObjectByName(`player:${part}:base`) as THREE.Mesh
       ));
-      const skinOuter = Object.keys(SKIN_PART_RENDER_PRIORITY).map((part) => (
+      const skinOuter = Object.keys(SKIN_PART_RENDER_RANK).map((part) => (
         fixture.visual.rig[part as keyof typeof fixture.visual.rig]
           .getObjectByName(`player:${part}:outer`) as THREE.Mesh
       ));
@@ -252,8 +252,9 @@ describe('PlayerArmorVisual slot visibility', () => {
         .filter((pair) => pair.overlay.visible).map((pair) => pair.overlay);
       expect(Math.min(...skinBase.map((mesh) => mesh.renderOrder))).toBe(SKIN_BASE_RENDER_ORDER);
       expect(Math.max(...skinBase.map((mesh) => mesh.renderOrder)))
-        .toBe(SKIN_BASE_RENDER_ORDER + 2);
+        .toBe(SKIN_BASE_RENDER_ORDER + 5);
       expect(Math.min(...skinOuter.map((mesh) => mesh.renderOrder))).toBe(SKIN_OUTER_RENDER_ORDER);
+      // Namespace invariant only: translucent outer draws after all opaque armor despite lower numbers.
       expect(Math.max(...skinBase.map((mesh) => mesh.renderOrder)))
         .toBeLessThan(Math.min(...skinOuter.map((mesh) => mesh.renderOrder)));
       expect(Math.max(...skinOuter.map((mesh) => mesh.renderOrder)))

@@ -25,11 +25,13 @@ import {
   PlayerVisual,
   SKIN_BASE_RENDER_ORDER,
   SKIN_OUTER_RENDER_ORDER,
-  SKIN_PART_RENDER_PRIORITY,
+  SKIN_PART_DEPTH_BIAS,
+  SKIN_PART_RENDER_RANK,
 } from '../src/rendering/player/PlayerVisual';
+import { ARMOR_BASE_RENDER_ORDER } from '../src/rendering/player/PlayerArmorVisual';
 
 const PLAYER_SKIN_ASSETS = import.meta.glob('../public/textures/**/*.png');
-const SKIN_PARTS = Object.keys(SKIN_PART_RENDER_PRIORITY) as PlayerSkinPart[];
+const SKIN_PARTS = Object.keys(SKIN_PART_RENDER_RANK) as PlayerSkinPart[];
 const PART_LAYER_KEY = {
   head: 'hat',
   body: 'jacket',
@@ -102,6 +104,7 @@ describe('Minecraft-compatible player skins', () => {
     expect(first.texture.magFilter).toBe(THREE.NearestFilter);
     expect(first.texture.minFilter).toBe(THREE.NearestFilter);
     expect(first.texture.generateMipmaps).toBe(false);
+    expect(first.outerLayerAlpha).toBe('binary');
     expect(registry.referenceCount(DEFAULT_PLAYER_APPEARANCE.skinId)).toBe(2);
     first.release();
     expect(registry.cacheSize).toBe(1);
@@ -195,29 +198,83 @@ describe('Minecraft-compatible player skins', () => {
     first.dispose();
   });
 
-  it('keeps deterministic base/outer priorities and outer seam offsets for classic and slim rigs', () => {
+  it('derives translucent outer policy from the acquired custom registry descriptor', () => {
+    const registry = new MinecraftSkinRegistry([]);
+    registry.registerValidated({
+      id: 'custom_translucent',
+      texturePath: 'player/skins/frontier_explorer',
+      defaultModel: 'classic',
+      outerLayerAlpha: 'translucent',
+    }, 64, 64);
+    const handle = registry.acquire('custom_translucent');
+    expect(handle.outerLayerAlpha).toBe('translucent');
+    handle.release();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(registry, geometries, items, createPlayerAppearance({
+      skinId: 'custom_translucent',
+      model: 'classic',
+    }));
+    for (const part of SKIN_PARTS) {
+      expect((skinMesh(visual, part, 'base').material as THREE.MeshBasicMaterial).transparent).toBe(false);
+      expect((skinMesh(visual, part, 'outer').material as THREE.MeshBasicMaterial).transparent).toBe(true);
+    }
+    visual.dispose();
+    geometries.dispose();
+    items.dispose();
+    registry.dispose();
+  });
+
+  it('keeps unique render ranks and a separate small outer seam depth bias', () => {
     const fixture = createVisual();
-    expect(SKIN_PART_RENDER_PRIORITY).toEqual({
+    expect(SKIN_PART_RENDER_RANK).toEqual({
+      body: 0, head: 1, rightLeg: 2, leftLeg: 3, rightArm: 4, leftArm: 5,
+    });
+    expect(SKIN_PART_DEPTH_BIAS).toEqual({
       head: 0, body: 0, rightArm: 1, leftArm: 2, rightLeg: 1, leftLeg: 2,
     });
-    for (const model of ['classic', 'slim'] as const) {
+    expect(Math.max(...Object.values(SKIN_PART_DEPTH_BIAS))).toBe(2);
+    for (const { skinId, model } of [
+      { skinId: DEFAULT_PLAYER_APPEARANCE.skinId, model: 'classic' },
+      { skinId: DEFAULT_PLAYER_APPEARANCE.skinId, model: 'slim' },
+      { skinId: '5bc8ad7edfb7ee86', model: 'slim' },
+    ] as const) {
       fixture.visual.setAppearance(createPlayerAppearance({
-        skinId: DEFAULT_PLAYER_APPEARANCE.skinId,
+        skinId,
         model,
       }));
+      const baseOrders = SKIN_PARTS.map((part) => skinMesh(fixture.visual, part, 'base').renderOrder);
+      const outerOrders = SKIN_PARTS.map((part) => skinMesh(fixture.visual, part, 'outer').renderOrder);
+      expect(new Set(baseOrders), `${skinId}:${model}:base`).toHaveLength(6);
+      expect(new Set(outerOrders), `${skinId}:${model}:outer`).toHaveLength(6);
+      expect(Math.max(...baseOrders)).toBeLessThan(Math.min(...outerOrders));
+      // Numeric namespace invariant only: opaque armor and translucent outer use different render queues.
+      expect(Math.max(...outerOrders)).toBeLessThan(ARMOR_BASE_RENDER_ORDER);
+      expect(skinMesh(fixture.visual, 'head', 'outer').renderOrder)
+        .not.toBe(skinMesh(fixture.visual, 'body', 'outer').renderOrder);
+      expect(skinMesh(fixture.visual, 'rightArm', 'outer').renderOrder)
+        .not.toBe(skinMesh(fixture.visual, 'rightLeg', 'outer').renderOrder);
+      expect(skinMesh(fixture.visual, 'leftArm', 'outer').renderOrder)
+        .not.toBe(skinMesh(fixture.visual, 'leftLeg', 'outer').renderOrder);
       for (const part of SKIN_PARTS) {
-        const priority = SKIN_PART_RENDER_PRIORITY[part];
+        const renderRank = SKIN_PART_RENDER_RANK[part];
+        const depthBias = SKIN_PART_DEPTH_BIAS[part];
         const base = skinMesh(fixture.visual, part, 'base');
         const outer = skinMesh(fixture.visual, part, 'outer');
         const baseMaterial = base.material as THREE.MeshBasicMaterial;
         const outerMaterial = outer.material as THREE.MeshBasicMaterial;
-        expect(base.renderOrder, `${model}:${part}:base`).toBe(SKIN_BASE_RENDER_ORDER + priority);
-        expect(outer.renderOrder, `${model}:${part}:outer`).toBe(SKIN_OUTER_RENDER_ORDER + priority);
+        expect(base.renderOrder, `${model}:${part}:base`).toBe(SKIN_BASE_RENDER_ORDER + renderRank);
+        expect(outer.renderOrder, `${model}:${part}:outer`).toBe(SKIN_OUTER_RENDER_ORDER + renderRank);
         expect(outer.renderOrder).toBeGreaterThan(base.renderOrder);
         expect(baseMaterial.polygonOffset, `${model}:${part}:base:polygonOffset`).toBe(false);
-        expect(outerMaterial.polygonOffset, `${model}:${part}:outer:polygonOffset`).toBe(priority > 0);
-        expect(outerMaterial.polygonOffsetFactor, `${model}:${part}:outer:factor`).toBe(-priority);
-        expect(outerMaterial.polygonOffsetUnits, `${model}:${part}:outer:units`).toBe(-priority);
+        expect(outerMaterial.polygonOffset, `${model}:${part}:outer:polygonOffset`).toBe(depthBias > 0);
+        expect(outerMaterial.polygonOffsetFactor, `${model}:${part}:outer:factor`).toBe(-depthBias);
+        expect(outerMaterial.polygonOffsetUnits, `${model}:${part}:outer:units`).toBe(-depthBias);
+      }
+      if (skinId === '5bc8ad7edfb7ee86') {
+        expect(SKIN_PARTS.every((part) => (
+          skinMesh(fixture.visual, part, 'outer').material as THREE.MeshBasicMaterial
+        ).transparent)).toBe(true);
       }
     }
     fixture.dispose();

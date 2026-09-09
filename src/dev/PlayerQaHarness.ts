@@ -105,6 +105,8 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   let hurt = false;
   let viewYaw = 0;
   let viewPitch = 0;
+  let cameraOrbit = 0;
+  let cameraDistance = 4.2;
   let lastAttack = 0;
   const equipment: { -readonly [K in keyof PlayerEquipmentState]: PlayerEquipmentState[K] } = {
     head: 'iron_helmet',
@@ -127,6 +129,8 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       <label for="qa-armor-feet">boots</label><select id="qa-armor-feet">${armorOptions('feet', equipment.feet)}</select>
       <label for="qa-yaw">head yaw</label><input id="qa-yaw" type="range" min="-120" max="120" value="0">
       <label for="qa-pitch">head pitch</label><input id="qa-pitch" type="range" min="-80" max="80" value="0">
+      <label for="qa-camera-orbit">camera orbit</label><input id="qa-camera-orbit" type="range" min="-180" max="180" value="0">
+      <label for="qa-camera-distance">camera distance</label><input id="qa-camera-distance" type="range" min="2" max="8" step="0.1" value="4.2">
     </div>
     <div style="margin-top:8px"><button data-camera="firstPerson">first</button> <button data-camera="thirdPersonBack">back</button> <button data-camera="thirdPersonFront">front</button> <button data-toggle="hurt">hurt off</button> <button data-toggle="invisible">invis off</button></div>
     <div style="margin-top:6px">${Object.entries(QA_SKIN_LAYER_LABELS).map(([layer, label]) => `<button data-layer="${layer}">${label} on</button>`).join(' ')}</div>
@@ -139,6 +143,8 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   const heldSelect = root.querySelector<HTMLSelectElement>('#qa-held')!;
   const yawInput = root.querySelector<HTMLInputElement>('#qa-yaw')!;
   const pitchInput = root.querySelector<HTMLInputElement>('#qa-pitch')!;
+  const cameraOrbitInput = root.querySelector<HTMLInputElement>('#qa-camera-orbit')!;
+  const cameraDistanceInput = root.querySelector<HTMLInputElement>('#qa-camera-distance')!;
   const armorSelects = (Object.keys(QA_ARMOR_SLOT_NAMES) as ArmorSlot[]).map((slot) => ({
     slot,
     select: root.querySelector<HTMLSelectElement>(`#qa-armor-${slot}`)!,
@@ -178,6 +184,10 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   }
   yawInput.addEventListener('input', () => { viewYaw = THREE.MathUtils.degToRad(Number(yawInput.value)); });
   pitchInput.addEventListener('input', () => { viewPitch = THREE.MathUtils.degToRad(Number(pitchInput.value)); });
+  cameraOrbitInput.addEventListener('input', () => {
+    cameraOrbit = THREE.MathUtils.degToRad(Number(cameraOrbitInput.value));
+  });
+  cameraDistanceInput.addEventListener('input', () => { cameraDistance = Number(cameraDistanceInput.value); });
   const onClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement;
     const cameraMode = target.dataset.camera as CameraPerspective | undefined;
@@ -271,14 +281,18 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     firstPersonState.invisible = playerState.invisible;
     firstPerson.update(delta, firstPersonState);
 
-    if (perspective === 'thirdPersonBack') camera.position.set(0, 1.55, 4.2);
-    else camera.position.set(0, 1.55, -4.2);
+    const cameraAngle = cameraOrbit + (perspective === 'thirdPersonBack' ? 0 : Math.PI);
+    camera.position.set(
+      Math.sin(cameraAngle) * cameraDistance,
+      1.55,
+      Math.cos(cameraAngle) * cameraDistance,
+    );
     camera.lookAt(0, 1.05, 0);
     renderer.info.reset();
     renderer.render(scene, camera);
     firstPerson.render(renderer);
     const enabledLayers = Object.entries(layers).filter(([, enabled]) => enabled).map(([layer]) => layer).join(', ');
-    output.textContent = `${appearance.skinId} · ${appearance.model} · layers ${enabledLayers || 'none'}\n${pose} · ${perspective} · held ${heldItem || 'empty'}\narmor ${equipment.head ?? '-'} | ${equipment.chest ?? '-'} | ${equipment.legs ?? '-'} | ${equipment.feet ?? '-'}\ncache skins ${skins.cacheSize} refs ${skins.referenceCount(appearance.skinId)} · geometry ${geometries.size} · armor ${armorGeometries.size}/${armorMaterials.textureCount}\ndraw ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`;
+    output.textContent = `${appearance.skinId} · ${appearance.model} · layers ${enabledLayers || 'none'}\n${pose} · ${perspective} · orbit ${THREE.MathUtils.radToDeg(cameraOrbit).toFixed(0)}° · distance ${cameraDistance.toFixed(1)} · held ${heldItem || 'empty'}\narmor ${equipment.head ?? '-'} | ${equipment.chest ?? '-'} | ${equipment.legs ?? '-'} | ${equipment.feet ?? '-'}\ncache skins ${skins.cacheSize} refs ${skins.referenceCount(appearance.skinId)} · geometry ${geometries.size} · armor ${armorGeometries.size}/${armorMaterials.textureCount}\ndraw ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`;
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);
