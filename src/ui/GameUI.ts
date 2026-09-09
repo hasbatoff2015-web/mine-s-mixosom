@@ -44,7 +44,36 @@ import {
 } from './containerInteractions';
 import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
-import type { ClientInventoryActionMessage } from '../../shared/protocol';
+import type { ClientInventoryActionMessage, NetworkHologram } from '../../shared/protocol';
+import {
+  HOLOGRAM_BG_HEIGHT_MAX,
+  HOLOGRAM_BG_HEIGHT_MIN,
+  HOLOGRAM_BG_SIZE_STEP,
+  HOLOGRAM_BG_WIDTH_MAX,
+  HOLOGRAM_BG_WIDTH_MIN,
+  HOLOGRAM_FONT_CSS,
+  HOLOGRAM_FONT_LABELS,
+  HOLOGRAM_FONTS,
+  HOLOGRAM_KIND_LABELS,
+  HOLOGRAM_KINDS,
+  HOLOGRAM_SIZE_MAX,
+  HOLOGRAM_SIZE_MIN,
+  HOLOGRAM_SIZE_STEP,
+  HOLOGRAM_TIMER_DURATION_MAX,
+  HOLOGRAM_TIMER_DURATION_MIN,
+  clampHologramBackgroundHeight,
+  clampHologramBackgroundWidth,
+  clampHologramSize,
+  clampHologramTimerDuration,
+  formatHologramCountdown,
+  hologramDisplayLines,
+  hologramStyleFlags,
+  hologramTextFromLines,
+  linesFromHologramText,
+  type HologramFont,
+  type HologramKind,
+  type HologramTextStyle,
+} from '../../shared/hologramStyle';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import { hungerHudIcons, type HungerHudIcon } from './hungerHud';
@@ -78,6 +107,24 @@ export interface SkinSelectorActions {
   confirm(): void;
   cancel(): void;
   onPreviewCanvas?(canvas: HTMLCanvasElement): void;
+}
+
+export interface HologramEditorActions {
+  save(update: {
+    name: string;
+    lines: readonly string[];
+    font: HologramFont;
+    size: number;
+    style: HologramTextStyle;
+    kind: HologramKind;
+    timerDuration: number;
+    backgroundEnabled: boolean;
+    backgroundWidth: number;
+    backgroundHeight: number;
+    billboard: boolean;
+  }): void;
+  cancel(): void;
+  nowMs?(): number;
 }
 
 export interface WorldListActions {
@@ -166,6 +213,8 @@ export class GameUI {
   private chatFocusToken = 0;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
+  private hologramEditor?: HTMLElement;
+  private hologramPreviewTimer?: number;
   private itemTooltip?: ItemTooltipHandle;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
@@ -897,7 +946,11 @@ export class GameUI {
   }
 
   isBlockingOverlay(): boolean {
-    return this.modal !== undefined || this.chatOpen;
+    return this.modal !== undefined || this.chatOpen || this.hologramEditor !== undefined;
+  }
+
+  isHologramEditorOpen(): boolean {
+    return this.hologramEditor !== undefined;
   }
 
   setChatInputHistory(history: readonly string[]): void {
@@ -1020,6 +1073,251 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
+    this.closeHologramEditor();
+    let lines = hologram.lines.slice();
+    let font: HologramFont = hologram.font;
+    let size = hologram.size;
+    let style: HologramTextStyle = hologram.style;
+    let kind: HologramKind = hologram.kind;
+    let timerDuration = hologram.timerDuration;
+    let backgroundEnabled = hologram.backgroundEnabled;
+    let backgroundWidth = hologram.backgroundWidth;
+    let backgroundHeight = hologram.backgroundHeight;
+    let billboard = hologram.billboard;
+    let previewStartedAt = hologram.kind === 'timer' && hologram.timerStartedAt > 0
+      ? hologram.timerStartedAt
+      : Date.now();
+    this.hologramEditor = document.createElement('div');
+    this.hologramEditor.className = 'modal-backdrop hologram-editor-backdrop';
+    this.hologramEditor.innerHTML = `
+      <form class="menu-card hologram-editor" autocomplete="off">
+        <header class="menu-heading"><div><span class="eyebrow">Anarchy</span><h1>Редактор голограммы</h1></div></header>
+        <label class="hologram-editor-field"><span>Тип голограммы</span>
+          <select data-holo="kind">
+            ${HOLOGRAM_KINDS.map((id) => `<option value="${id}"${id === kind ? ' selected' : ''}>${HOLOGRAM_KIND_LABELS[id]}</option>`).join('')}
+          </select>
+        </label>
+        <label class="hologram-editor-field" data-holo="text-wrap"><span>Текст</span>
+          <textarea data-holo="text" rows="4" spellcheck="false">${this.escape(hologramTextFromLines(lines))}</textarea>
+        </label>
+        <label class="hologram-editor-field" data-holo="timer-wrap"><span>Время таймера</span>
+          <div class="hologram-timer-row">
+            <input data-holo="timer" type="number" min="${HOLOGRAM_TIMER_DURATION_MIN}" max="${HOLOGRAM_TIMER_DURATION_MAX}" step="1" value="${timerDuration}" />
+            <span>секунд</span>
+          </div>
+        </label>
+        <div class="hologram-editor-field">
+          <span>Размер</span>
+          <div class="hologram-size-row">
+            <button type="button" class="game-button" data-holo="size-down" aria-label="Уменьшить">−</button>
+            <output data-holo="size-value">${size.toFixed(1)}</output>
+            <button type="button" class="game-button" data-holo="size-up" aria-label="Увеличить">+</button>
+            <input data-holo="size" type="range" min="${HOLOGRAM_SIZE_MIN}" max="${HOLOGRAM_SIZE_MAX}" step="${HOLOGRAM_SIZE_STEP}" value="${size}" />
+          </div>
+        </div>
+        <div class="hologram-editor-field">
+          <span>Стиль</span>
+          <div class="hologram-style-row">
+            <button type="button" class="game-button" data-holo-style="normal">Обычный</button>
+            <button type="button" class="game-button" data-holo-style="bold">Жирный</button>
+            <button type="button" class="game-button" data-holo-style="italic">Курсив</button>
+            <button type="button" class="game-button" data-holo-style="bold-italic">Жирный курсив</button>
+          </div>
+        </div>
+        <label class="hologram-editor-field"><span>Шрифт</span>
+          <select data-holo="font">
+            ${HOLOGRAM_FONTS.map((id) => `<option value="${id}"${id === font ? ' selected' : ''}>${HOLOGRAM_FONT_LABELS[id]}</option>`).join('')}
+          </select>
+        </label>
+        <label class="hologram-editor-check"><input data-holo="bg" type="checkbox"${backgroundEnabled ? ' checked' : ''} /> Фон</label>
+        <div class="hologram-editor-field">
+          <span>Размер фона</span>
+          <div class="hologram-bg-row">
+            <label>Ширина <output data-holo="bgw-value">${backgroundWidth.toFixed(2)}</output>
+              <input data-holo="bgw" type="range" min="${HOLOGRAM_BG_WIDTH_MIN}" max="${HOLOGRAM_BG_WIDTH_MAX}" step="${HOLOGRAM_BG_SIZE_STEP}" value="${backgroundWidth}" />
+            </label>
+            <label>Высота <output data-holo="bgh-value">${backgroundHeight.toFixed(2)}</output>
+              <input data-holo="bgh" type="range" min="${HOLOGRAM_BG_HEIGHT_MIN}" max="${HOLOGRAM_BG_HEIGHT_MAX}" step="${HOLOGRAM_BG_SIZE_STEP}" value="${backgroundHeight}" />
+            </label>
+          </div>
+        </div>
+        <fieldset class="hologram-editor-field hologram-orient">
+          <legend>Ориентация</legend>
+          <label><input data-holo="billboard" type="radio" name="holo-orient"${billboard ? ' checked' : ''} /> Следовать за игроком</label>
+          <label><input data-holo="fixed" type="radio" name="holo-orient"${billboard ? '' : ' checked'} /> Закреплена</label>
+        </fieldset>
+        <div class="hologram-editor-field">
+          <span>Предпросмотр</span>
+          <div class="hologram-editor-preview-stage" data-holo="stage">
+            <div class="hologram-editor-preview-bg" data-holo="preview-bg"></div>
+            <div class="hologram-editor-preview-text" data-holo="preview"></div>
+          </div>
+        </div>
+        <footer class="menu-footer">
+          <button type="button" class="game-button ghost" data-holo="cancel">Отмена</button>
+          <button type="submit" class="game-button primary" data-holo="save">Сохранить</button>
+        </footer>
+      </form>`;
+    const root = this.hologramEditor;
+    const text = root.querySelector<HTMLTextAreaElement>('[data-holo="text"]')!;
+    const textWrap = root.querySelector<HTMLElement>('[data-holo="text-wrap"]')!;
+    const timerWrap = root.querySelector<HTMLElement>('[data-holo="timer-wrap"]')!;
+    const timerInput = root.querySelector<HTMLInputElement>('[data-holo="timer"]')!;
+    const sizeInput = root.querySelector<HTMLInputElement>('[data-holo="size"]')!;
+    const sizeValue = root.querySelector<HTMLElement>('[data-holo="size-value"]')!;
+    const fontSelect = root.querySelector<HTMLSelectElement>('[data-holo="font"]')!;
+    const kindSelect = root.querySelector<HTMLSelectElement>('[data-holo="kind"]')!;
+    const bgInput = root.querySelector<HTMLInputElement>('[data-holo="bg"]')!;
+    const bgwInput = root.querySelector<HTMLInputElement>('[data-holo="bgw"]')!;
+    const bghInput = root.querySelector<HTMLInputElement>('[data-holo="bgh"]')!;
+    const bgwValue = root.querySelector<HTMLElement>('[data-holo="bgw-value"]')!;
+    const bghValue = root.querySelector<HTMLElement>('[data-holo="bgh-value"]')!;
+    const billboardInput = root.querySelector<HTMLInputElement>('[data-holo="billboard"]')!;
+    const fixedInput = root.querySelector<HTMLInputElement>('[data-holo="fixed"]')!;
+    const preview = root.querySelector<HTMLElement>('[data-holo="preview"]')!;
+    const previewBg = root.querySelector<HTMLElement>('[data-holo="preview-bg"]')!;
+    const stage = root.querySelector<HTMLElement>('[data-holo="stage"]')!;
+    const nowMs = (): number => actions.nowMs?.() ?? Date.now();
+    const refresh = (): void => {
+      sizeValue.textContent = size.toFixed(1);
+      sizeInput.value = String(size);
+      bgwValue.textContent = backgroundWidth.toFixed(2);
+      bghValue.textContent = backgroundHeight.toFixed(2);
+      bgwInput.value = String(backgroundWidth);
+      bghInput.value = String(backgroundHeight);
+      timerInput.value = String(timerDuration);
+      kindSelect.value = kind;
+      bgInput.checked = backgroundEnabled;
+      billboardInput.checked = billboard;
+      fixedInput.checked = !billboard;
+      textWrap.hidden = kind === 'timer';
+      timerWrap.hidden = kind !== 'timer';
+      const flags = hologramStyleFlags(style);
+      const display = hologramDisplayLines({
+        kind,
+        lines,
+        timerDuration,
+        timerStartedAt: previewStartedAt,
+      }, nowMs());
+      preview.textContent = hologramTextFromLines(display) || ' ';
+      preview.style.fontFamily = HOLOGRAM_FONT_CSS[font];
+      preview.style.fontWeight = flags.bold ? '700' : '400';
+      preview.style.fontStyle = flags.italic ? 'italic' : 'normal';
+      preview.style.fontSize = `${18 * size}px`;
+      previewBg.hidden = !backgroundEnabled;
+      previewBg.style.width = `${backgroundWidth * 48}px`;
+      previewBg.style.height = `${backgroundHeight * 48}px`;
+      stage.classList.toggle('is-fixed', !billboard);
+      for (const button of root.querySelectorAll<HTMLElement>('[data-holo-style]')) {
+        button.classList.toggle('primary', button.dataset.holoStyle === style);
+      }
+    };
+    const setSize = (value: number): void => {
+      size = clampHologramSize(value);
+      refresh();
+    };
+    const setBackgroundWidth = (value: number): void => {
+      backgroundWidth = clampHologramBackgroundWidth(value);
+      refresh();
+    };
+    const setBackgroundHeight = (value: number): void => {
+      backgroundHeight = clampHologramBackgroundHeight(value);
+      refresh();
+    };
+    text.addEventListener('input', () => {
+      lines = linesFromHologramText(text.value);
+      refresh();
+    });
+    text.addEventListener('pointerdown', (event) => event.stopPropagation());
+    text.addEventListener('keydown', (event) => event.stopPropagation());
+    timerInput.addEventListener('pointerdown', (event) => event.stopPropagation());
+    timerInput.addEventListener('keydown', (event) => event.stopPropagation());
+    timerInput.addEventListener('input', () => {
+      timerDuration = clampHologramTimerDuration(Number(timerInput.value));
+      previewStartedAt = Date.now();
+      refresh();
+    });
+    sizeInput.addEventListener('input', () => setSize(Number(sizeInput.value)));
+    root.querySelector('[data-holo="size-down"]')?.addEventListener('click', () => setSize(size - HOLOGRAM_SIZE_STEP));
+    root.querySelector('[data-holo="size-up"]')?.addEventListener('click', () => setSize(size + HOLOGRAM_SIZE_STEP));
+    bgwInput.addEventListener('input', () => setBackgroundWidth(Number(bgwInput.value)));
+    bghInput.addEventListener('input', () => setBackgroundHeight(Number(bghInput.value)));
+    bgInput.addEventListener('change', () => {
+      backgroundEnabled = bgInput.checked;
+      refresh();
+    });
+    billboardInput.addEventListener('change', () => {
+      if (!billboardInput.checked) return;
+      billboard = true;
+      refresh();
+    });
+    fixedInput.addEventListener('change', () => {
+      if (!fixedInput.checked) return;
+      billboard = false;
+      refresh();
+    });
+    kindSelect.addEventListener('change', () => {
+      kind = kindSelect.value as HologramKind;
+      if (kind === 'timer') previewStartedAt = Date.now();
+      refresh();
+    });
+    fontSelect.addEventListener('change', () => {
+      font = fontSelect.value as HologramFont;
+      refresh();
+    });
+    for (const button of root.querySelectorAll<HTMLButtonElement>('[data-holo-style]')) {
+      button.addEventListener('click', () => {
+        style = (button.dataset.holoStyle as HologramTextStyle) ?? 'normal';
+        refresh();
+      });
+    }
+    root.querySelector('[data-holo="cancel"]')?.addEventListener('click', () => actions.cancel());
+    root.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      actions.cancel();
+    });
+    root.querySelector('form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      actions.save({
+        name: hologram.name,
+        lines,
+        font,
+        size,
+        style,
+        kind,
+        timerDuration,
+        backgroundEnabled,
+        backgroundWidth,
+        backgroundHeight,
+        billboard,
+      });
+    });
+    root.addEventListener('click', (event) => {
+      if (event.target === root) actions.cancel();
+    });
+    refresh();
+    this.hologramPreviewTimer = window.setInterval(refresh, 250);
+    this.root.append(root);
+    this.setControlsSuppressed(true);
+    window.setTimeout(() => {
+      if (kind === 'timer') timerInput.focus();
+      else text.focus();
+    }, 0);
+  }
+
+  closeHologramEditor(): void {
+    if (this.hologramPreviewTimer !== undefined) {
+      window.clearInterval(this.hologramPreviewTimer);
+      this.hologramPreviewTimer = undefined;
+    }
+    this.hologramEditor?.remove();
+    this.hologramEditor = undefined;
+    if (!this.modal && !this.chatOpen) this.setControlsSuppressed(false);
   }
 
   openContainerKind(): InventoryContext['kind'] | undefined {

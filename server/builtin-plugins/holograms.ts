@@ -1,13 +1,17 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
-import type { HologramRecord } from '../services/holograms';
+import {
+  createHologramRecord,
+  normalizeHologramRecord,
+  type HologramRecord,
+} from '../services/holograms';
 import type { BuiltinPluginContext } from './context';
 
 const HELP = {
   name: 'holograms',
   title: 'Holograms',
-  description: 'Named multi-line world text markers. The client renders 3D billboards.',
+  description: 'Named multi-line world text markers. The client renders 3D holograms.',
   commands: [
     { usage: '/holograms help', description: 'Show this help' },
     { usage: '/holograms create <name>', description: 'Create a hologram at your position', permission: 'holograms.create' },
@@ -20,6 +24,8 @@ const HELP = {
     { usage: '/holograms line set <name> <line> <text>', description: 'Replace a line (1-based)', permission: 'holograms.create' },
     { usage: '/holograms line remove <name> <line>', description: 'Remove a line', permission: 'holograms.create' },
     { usage: '/holograms range <name> <distance>', description: 'Set view distance', permission: 'holograms.create' },
+    { usage: '/holograms reset <name>', description: 'Restart a timer hologram for every player', permission: 'holograms.create' },
+    { usage: '/hologram reset <name>', description: 'Alias of /holograms reset', permission: 'holograms.create' },
   ],
 };
 
@@ -30,18 +36,25 @@ interface HologramStore {
 export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
   return {
     name: 'holograms',
-    version: '1.1.0',
+    version: '1.3.0',
     apiVersion: 1,
     onEnable(api) {
       const load = (): HologramStore => {
         const raw = api.loadData<HologramStore>('holograms', { holograms: [] });
-        return { holograms: Array.isArray(raw.holograms) ? raw.holograms : [] };
+        const worldId = api.getWorld().worldId;
+        const holograms = (Array.isArray(raw.holograms) ? raw.holograms : [])
+          .map((entry) => normalizeHologramRecord(entry, worldId))
+          .filter((entry): entry is HologramRecord => entry !== undefined);
+        return { holograms };
       };
       const save = (store: HologramStore) => {
         api.saveData('holograms', store);
         ctx.holograms.replace(store.holograms);
       };
       ctx.holograms.replace(load().holograms);
+      ctx.holograms.setPersist((holograms) => {
+        api.saveData('holograms', { holograms });
+      });
 
       const canEdit = (playerId: string, name: string) => (
         api.hasPermission(playerId, 'holograms.create') || api.isOperator(name)
@@ -71,6 +84,15 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
               `Position: ${hologram.x.toFixed(1)}, ${hologram.y.toFixed(1)}, ${hologram.z.toFixed(1)}`,
               `Range: ${hologram.range}`,
               `Enabled: ${hologram.enabled ? 'yes' : 'no'}`,
+              `Kind: ${hologram.kind}`,
+              `Font: ${hologram.font}`,
+              `Size: ${hologram.size}`,
+              `Style: ${hologram.style}`,
+              `Background: ${hologram.backgroundEnabled ? 'on' : 'off'} ${hologram.backgroundWidth.toFixed(2)}×${hologram.backgroundHeight.toFixed(2)}`,
+              `Orientation: ${hologram.billboard ? 'billboard' : 'fixed'}`,
+              ...(hologram.kind === 'timer'
+                ? [`Timer: ${hologram.timerDuration}s started ${hologram.timerStartedAt}`]
+                : []),
               `Lines (${hologram.lines.length}):`,
               ...hologram.lines.map((line, index) => `  ${index + 1}. ${line}`),
             ]);
@@ -83,7 +105,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (store.holograms.some((entry) => entry.name === name)) return fail(`Hologram '${name}' already exists.`);
             if (!player) return fail('Player not found.');
             const pos = player.position();
-            store.holograms.push({
+            store.holograms.push(createHologramRecord({
               name,
               worldId: api.getWorld().worldId,
               x: pos.x,
@@ -91,8 +113,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
               z: pos.z,
               lines: [name],
               range: 48,
-              enabled: true,
-            });
+            }));
             save(store);
             return ok(`Created hologram '${name}'.`);
           }
@@ -130,6 +151,16 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             hologram.range = Math.max(1, Math.min(128, distance));
             save(store);
             return ok(`Set hologram '${name}' range to ${hologram.range}.`);
+          }
+          if (sub === 'reset') {
+            const name = args[1]?.toLowerCase();
+            if (!name) return usageError('/holograms reset <name>');
+            const hologram = store.holograms.find((entry) => entry.name === name);
+            if (!hologram) return fail(`Hologram '${name}' not found.`);
+            if (hologram.kind !== 'timer') return fail('Эта голограмма не является таймером.');
+            hologram.timerStartedAt = Date.now();
+            save(store);
+            return ok(`Reset timer '${name}'.`);
           }
           if (sub === 'line') {
             const action = args[1]?.toLowerCase();

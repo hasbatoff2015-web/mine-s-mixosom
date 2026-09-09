@@ -7,6 +7,16 @@ import {
   parseNetworkAppearance,
   type PlayerAppearance,
 } from '../src/player/appearance/PlayerAppearance';
+import {
+  HOLOGRAM_MAX_NAME,
+  parseHologramAppearanceLenient,
+  parseHologramAppearanceStrict,
+  parseHologramEditorPatch,
+  type HologramFont,
+  type HologramKind,
+  type HologramTextStyle,
+} from './hologramStyle';
+export type { HologramFont, HologramKind, HologramTextStyle } from './hologramStyle';
 export type { PlayerPresentationState } from './playerPresentation';
 export type { PlayerAppearance };
 
@@ -387,6 +397,26 @@ export interface ClientRespawnMessage {
   readonly type: 'respawn';
 }
 
+export interface ClientHologramInteractMessage {
+  readonly type: 'hologram_interact';
+  readonly name: string;
+}
+
+export interface ClientHologramUpdateMessage {
+  readonly type: 'hologram_update';
+  readonly name: string;
+  readonly lines: readonly string[];
+  readonly font: HologramFont;
+  readonly size: number;
+  readonly style: HologramTextStyle;
+  readonly kind?: HologramKind;
+  readonly timerDuration?: number;
+  readonly backgroundEnabled?: boolean;
+  readonly backgroundWidth?: number;
+  readonly backgroundHeight?: number;
+  readonly billboard?: boolean;
+}
+
 export interface ClientVehicleInputMessage {
   readonly type: 'vehicle_input';
   readonly action: VehicleAction;
@@ -411,6 +441,8 @@ export type ClientMessage =
   | ClientActionMessage
   | ClientPickupMessage
   | ClientRespawnMessage
+  | ClientHologramInteractMessage
+  | ClientHologramUpdateMessage
   | ClientVehicleInputMessage;
 
 export interface ServerWelcomeMessage {
@@ -432,6 +464,8 @@ export interface ServerWelcomeMessage {
   readonly maxPlayers: number;
   readonly serverName: string;
   readonly holograms?: readonly NetworkHologram[];
+  /** Server wall-clock ms for hologram timers; same clock as pong.serverNow. */
+  readonly serverNow?: number;
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -555,6 +589,8 @@ export interface ServerErrorMessage {
 export interface ServerPongMessage {
   readonly type: 'pong';
   readonly t: number;
+  /** Server wall-clock ms. Clients compute remaining hologram countdown from this offset. */
+  readonly serverNow?: number;
 }
 
 export interface ServerStatusMessage {
@@ -642,11 +678,27 @@ export interface NetworkHologram {
   readonly lines: readonly string[];
   readonly range: number;
   readonly enabled: boolean;
+  readonly font: HologramFont;
+  readonly size: number;
+  readonly style: HologramTextStyle;
+  readonly kind: HologramKind;
+  readonly timerDuration: number;
+  readonly timerStartedAt: number;
+  readonly backgroundEnabled: boolean;
+  readonly backgroundWidth: number;
+  readonly backgroundHeight: number;
+  readonly billboard: boolean;
+  readonly yaw: number;
 }
 
 export interface ServerHologramsMessage {
   readonly type: 'holograms';
   readonly holograms: readonly NetworkHologram[];
+}
+
+export interface ServerHologramEditorMessage {
+  readonly type: 'hologram_editor';
+  readonly hologram: NetworkHologram;
 }
 
 /** How long a denied-claim wireframe stays on the client. */
@@ -691,6 +743,7 @@ export type ServerMessage =
   | ServerCommandResultMessage
   | ServerTimeMessage
   | ServerHologramsMessage
+  | ServerHologramEditorMessage
   | ServerClaimBoundaryMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
@@ -710,6 +763,8 @@ export const CLIENT_MESSAGE_TYPES = [
   'action',
   'pickup',
   'respawn',
+  'hologram_interact',
+  'hologram_update',
   'vehicle_input',
 ] as const satisfies readonly ClientMessage['type'][];
 
@@ -738,6 +793,7 @@ export const SERVER_MESSAGE_TYPES = [
   'command_result',
   'time',
   'holograms',
+  'hologram_editor',
   'claim_boundary',
 ] as const satisfies readonly ServerMessage['type'][];
 
@@ -781,6 +837,34 @@ function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined {
+  if (!isRecord(raw) || typeof raw.name !== 'string' || raw.name.length === 0) return undefined;
+  if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !finite(raw.range)) return undefined;
+  const appearance = parseHologramAppearanceLenient(raw);
+  const timerStartedAt = finite(raw.timerStartedAt) ? raw.timerStartedAt : 0;
+  const yaw = finite(raw.yaw) ? raw.yaw : 0;
+  return {
+    name: raw.name.slice(0, HOLOGRAM_MAX_NAME),
+    x: raw.x,
+    y: raw.y,
+    z: raw.z,
+    lines: appearance.lines,
+    range: Math.max(1, Math.min(128, raw.range)),
+    enabled: raw.enabled !== false,
+    font: appearance.font,
+    size: appearance.size,
+    style: appearance.style,
+    kind: appearance.kind,
+    timerDuration: appearance.timerDuration,
+    timerStartedAt,
+    backgroundEnabled: appearance.backgroundEnabled,
+    backgroundWidth: appearance.backgroundWidth,
+    backgroundHeight: appearance.backgroundHeight,
+    billboard: appearance.billboard,
+    yaw,
+  };
 }
 
 const NETWORK_ATTACHMENTS: ReadonlySet<string> = new Set(['floor', 'wall', 'ceiling']);
@@ -1157,6 +1241,34 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
     }
     case 'respawn':
       return { type: 'respawn' };
+    case 'hologram_interact': {
+      const name = optionalString(raw.name, HOLOGRAM_MAX_NAME);
+      if (!name) return { error: 'hologram_interact.name invalid' };
+      return { type: 'hologram_interact', name: name.toLowerCase() };
+    }
+    case 'hologram_update': {
+      const name = optionalString(raw.name, HOLOGRAM_MAX_NAME);
+      if (!name) return { error: 'hologram_update.name invalid' };
+      const appearance = parseHologramAppearanceStrict(raw);
+      if (!appearance.ok) return { error: appearance.error };
+      const patch = parseHologramEditorPatch(raw);
+      if (!patch.ok) return { error: patch.error };
+      const extras = patch.value;
+      return {
+        type: 'hologram_update',
+        name: name.toLowerCase(),
+        lines: appearance.value.lines,
+        font: appearance.value.font,
+        size: appearance.value.size,
+        style: appearance.value.style,
+        ...(extras.kind !== undefined ? { kind: extras.kind } : {}),
+        ...(extras.timerDuration !== undefined ? { timerDuration: extras.timerDuration } : {}),
+        ...(extras.backgroundEnabled !== undefined ? { backgroundEnabled: extras.backgroundEnabled } : {}),
+        ...(extras.backgroundWidth !== undefined ? { backgroundWidth: extras.backgroundWidth } : {}),
+        ...(extras.backgroundHeight !== undefined ? { backgroundHeight: extras.backgroundHeight } : {}),
+        ...(extras.billboard !== undefined ? { billboard: extras.billboard } : {}),
+      };
+    }
     case 'vehicle_input': {
       if (typeof raw.action !== 'string' || !(VEHICLE_ACTIONS as readonly string[]).includes(raw.action)) {
         return { error: 'vehicle_input.action invalid' };
@@ -1314,22 +1426,23 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       if (!Array.isArray(raw.holograms)) return { error: 'holograms invalid' };
       const holograms: NetworkHologram[] = [];
       for (const entry of raw.holograms.slice(0, 64)) {
-        if (!isRecord(entry) || typeof entry.name !== 'string' || entry.name.length === 0) continue;
-        if (!finite(entry.x) || !finite(entry.y) || !finite(entry.z) || !finite(entry.range)) continue;
-        const lines = Array.isArray(entry.lines)
-          ? entry.lines.filter((line): line is string => typeof line === 'string').map((line) => line.slice(0, 80)).slice(0, 8)
-          : [];
-        holograms.push({
-          name: entry.name.slice(0, 32),
-          x: entry.x,
-          y: entry.y,
-          z: entry.z,
-          lines,
-          range: Math.max(1, Math.min(128, entry.range)),
-          enabled: entry.enabled !== false,
-        });
+        const hologram = parseNetworkHologram(entry);
+        if (hologram) holograms.push(hologram);
       }
       return { type: 'holograms', holograms };
+    }
+    case 'hologram_editor': {
+      const hologram = parseNetworkHologram(raw.hologram);
+      if (!hologram) return { error: 'hologram_editor invalid' };
+      return { type: 'hologram_editor', hologram };
+    }
+    case 'pong': {
+      if (!finite(raw.t)) return { error: 'pong.t invalid' };
+      return {
+        type: 'pong',
+        t: raw.t,
+        ...(finite(raw.serverNow) ? { serverNow: raw.serverNow } : {}),
+      };
     }
     case 'claim_boundary': {
       if (typeof raw.claimId !== 'string' || raw.claimId.length === 0) {

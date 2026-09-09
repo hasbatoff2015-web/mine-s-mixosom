@@ -8,6 +8,28 @@
 - [x] Batched `applyBlockBatch` reset, TeleportService evacuation, persist+restart timer.
 - [x] Restore original voxels on delete; no second claims/teleport/network protocol.
 
+## 2026-09-09: Hologram close-up text quality
+
+- [x] Supersample hologram text canvas; keep world-space size.
+- [x] Linear magFilter + mipmaps for close sharpness / far stability.
+- [ ] Owner live QA: walk up to normal/timer/fixed holograms.
+
+## 2026-09-09: Hologram background, fixed orientation, timer
+
+- [x] Background on/off as a separate renderer layer; independent width/height.
+- [x] Fully fixed holograms (no camera-facing); persist world yaw.
+- [x] Timer hologram type with server `timerStartedAt` and client countdown.
+- [x] `/hologram reset <name>` on the existing `/holograms` command (alias `hologram`).
+- [ ] Owner live Anarchy QA: bg off, large/small bg, walk around fixed, two clients on one timer, reset, RMB vs chest/door.
+
+## 2026-09-09: Hologram in-game editor
+
+- [x] RMB on an existing Anarchy hologram opens the GameUI editor for that hologram.
+- [x] Store font/size/style on the existing hologram record; server validates and persists.
+- [x] Extend `HologramRenderer` canvas draw with local Inter / Press Start 2P / sans-serif.
+- [x] Keep `/holograms` commands, IDs, billboards, range cull, and old records.
+- [ ] Owner live Anarchy QA: OP edit, denied player, Save/Cancel, reconnect after style change.
+
 ## 2026-09-09: Death scatter 3× + spatial world_sound
 
 - [x] Triple death-drop X/Z origin and horizontal velocity; keep `vy = 2.2`.
@@ -304,7 +326,8 @@
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
-- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
+- [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
+- [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
