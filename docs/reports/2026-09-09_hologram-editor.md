@@ -48,6 +48,8 @@ Same as `/holograms` mutate commands: `holograms.create` (moderator) or `hologra
 - `tests/hologram-hit.test.ts` — RMB hologram vs world; Online `sendOnlineUse` checks hologram before bow.
 - `tests/server/hologram-editor.test.ts` — successful edit + persist + broadcast, cancel, permission denied, old JSON defaults, malformed packets.
 
+`test:sim` **53/53**. `test:server` **320/320**. Four typechecks + `check:boundaries` PASS.
+
 ## Visual QA
 
 Not run against a live Anarchy client in this cloud pass (no two-player walkthrough). Overlay HTML/CSS follows existing `modal-backdrop` / `menu-card` / `game-button`. Owner should RMB a hologram, edit Inter/italic/size, Save, reconnect, and confirm chests/doors still RMB-use when not aiming at a hologram.
