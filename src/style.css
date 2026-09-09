@@ -965,12 +965,62 @@ button {
   font-weight: 600;
   font-size: 12px;
   line-height: 1.2;
-  white-space: nowrap;
+  white-space: pre-line;
   text-shadow: 1px 1px #3f3f3f;
 }
 
 .mc-item-tooltip.is-visible {
   display: block;
+}
+
+.mc-ah-search {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  color: #404040;
+}
+
+.mc-ah-search input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #373737;
+  background: #8b8b8b;
+  color: #202020;
+  font: inherit;
+  padding: 2px 4px;
+}
+
+.mc-ah-nav,
+.mc-ah-actions,
+.mc-ah-amount {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  margin-top: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-ah-btn {
+  min-width: var(--mc-slot, 18px);
+  padding: 0 calc(4px * var(--mc-ui-scale, 3));
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  color: #404040;
+}
+
+.mc-ah-page,
+.mc-ah-prompt,
+.mc-ah-empty,
+.mc-ah-message,
+.mc-ah-amount span {
+  color: #404040;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  text-align: center;
+}
+
+.mc-ah-center {
+  display: flex;
+  justify-content: center;
+  margin: calc(6px * var(--mc-ui-scale, 3)) 0;
 }
 
 .mc-backdrop {

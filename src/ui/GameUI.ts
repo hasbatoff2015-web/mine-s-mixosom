@@ -1,9 +1,10 @@
 import { matchCraftingRecipe } from '../crafting';
 import {
+  Inventory,
   applySlotClick,
   createItemStack,
-  Inventory,
   isChestWindowKind,
+  parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
 import { getItemDefinition, obtainableItems } from '../items';
@@ -44,7 +45,7 @@ import {
 } from './containerInteractions';
 import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
-import type { ClientInventoryActionMessage, NetworkHologram } from '../../shared/protocol';
+import type { ClientAuctionActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -125,6 +126,11 @@ export interface HologramEditorActions {
   }): void;
   cancel(): void;
   nowMs?(): number;
+}
+
+export interface AuctionGuiActions {
+  send(message: ClientAuctionActionMessage): void;
+  close(): void;
 }
 
 export interface WorldListActions {
@@ -227,6 +233,9 @@ export class GameUI {
   private recipeVariantIndex = 0;
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
+  private auctionState?: ServerAuctionMessage;
+  private auctionActions?: AuctionGuiActions;
+  private auctionSearchTimer?: number;
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -953,6 +962,18 @@ export class GameUI {
     return this.hologramEditor !== undefined;
   }
 
+  isAuctionOpen(): boolean {
+    return this.auctionState !== undefined && this.auctionState.screen !== 'closed';
+  }
+
+  isAuctionTextInputFocused(): boolean {
+    const el = document.activeElement;
+    return el instanceof HTMLInputElement
+      && this.modal !== undefined
+      && this.modal.contains(el)
+      && this.isAuctionOpen();
+  }
+
   setChatInputHistory(history: readonly string[]): void {
     this.chatHistorySource = history;
   }
@@ -1073,6 +1094,41 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  openAuction(state: ServerAuctionMessage, actions: AuctionGuiActions): void {
+    this.auctionActions = actions;
+    if (state.screen === 'closed') {
+      this.closeAuction();
+      return;
+    }
+    this.closeInventory(false);
+    this.auctionState = state;
+    this.renderAuction();
+    this.setControlsSuppressed(true);
+  }
+
+  applyAuction(state: ServerAuctionMessage): void {
+    if (!this.auctionActions) {
+      this.auctionState = state;
+      return;
+    }
+    this.openAuction(state, this.auctionActions);
+  }
+
+  closeAuction(): void {
+    if (this.auctionSearchTimer !== undefined) {
+      window.clearTimeout(this.auctionSearchTimer);
+      this.auctionSearchTimer = undefined;
+    }
+    if (this.auctionState) {
+      this.itemTooltip?.dispose();
+      this.itemTooltip = undefined;
+      this.modal?.remove();
+      this.modal = undefined;
+      this.auctionState = undefined;
+      this.setControlsSuppressed(false);
+    }
   }
 
   openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
@@ -1848,7 +1904,7 @@ export class GameUI {
       </div>`;
   }
 
-  private slotHtml(stack: ItemStack | null, key: string, selected = false): string {
+  private slotHtml(stack: ItemStack | null, key: string, selected = false, tooltip?: string): string {
     const definition = stack ? getItemDefinition(stack.itemId) : undefined;
     const maxDurability = definition && 'durability' in definition ? definition.durability : undefined;
     const durability = stack && maxDurability && stack.durability !== undefined
@@ -1865,7 +1921,10 @@ export class GameUI {
     if (!stack) {
       return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${this.itemHoverAttrs(stack.itemId, definition!.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    const hover = tooltip
+      ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value))
+      : this.itemHoverAttrs(stack.itemId, definition!.name);
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {
@@ -1898,6 +1957,253 @@ export class GameUI {
 
   private closeButtonHtml(): string {
     return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>`;
+  }
+
+  private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const kind = el.hasAttribute('data-ah-search') ? 'search' : el.hasAttribute('data-ah-price') ? 'price' : undefined;
+    if (!kind) return undefined;
+    return {
+      kind,
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreAuctionInputFocus(
+    keep: { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined,
+  ): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'search' ? '[data-ah-search]' : '[data-ah-price]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    input.setSelectionRange(keep.start, keep.end);
+  }
+
+  private auctionStack(value: unknown): ItemStack | null {
+    try {
+      return parseSerializedItemStack(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private renderAuction(): void {
+    const state = this.auctionState;
+    const actions = this.auctionActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureAuctionInputFocus();
+    const logicalHeight = state.screen === 'sell-pick' ? 222 : state.screen === 'browse' || state.screen === 'mine' ? 200 : 186;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+        <div class="mc-panel" data-container-kind="chest">
+          ${this.auctionBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindAuctionChrome(state, actions);
+    this.restoreAuctionInputFocus(keep);
+  }
+
+  private auctionBodyHtml(state: ServerAuctionMessage): string {
+    const message = state.message ? `<div class="mc-ah-message">${this.escape(state.message)}</div>` : '';
+    if (state.screen === 'browse') {
+      const slots = Array.from({ length: 27 }, (_unused, index) => state.listings[index]);
+      const grid = slots.map((listing, index) => {
+        if (!listing) return this.slotHtml(null, `ah-${index}`);
+        const stack = this.auctionStack(listing.item);
+        return `<div data-ah-listing="${this.escape(listing.listingId)}">${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip)}</div>`;
+      }).join('');
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        <label class="mc-ah-search"><input data-ah-search type="text" maxlength="64" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(state.search)}" /></label>
+        <div class="mc-grid mc-grid-9">${grid}</div>
+        <div class="mc-ah-nav">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+          <span class="mc-ah-page">Страница ${state.page} из ${state.totalPages}</span>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+        </div>
+        ${state.totalCount === 0 ? '<div class="mc-ah-empty">На аукционе пока нет товаров.</div>' : ''}
+        ${message}`;
+    }
+    if (state.screen === 'sell-pick') {
+      const slots = state.inventorySlots ?? [];
+      const cell = (index: number) => {
+        const stack = this.auctionStack(slots[index]);
+        return `<div data-ah-slot="${index}">${this.slotHtml(stack, `inv-${index}`)}</div>`;
+      };
+      const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+      const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-grid mc-grid-9">${main}</div>
+        <div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>
+        ${message}`;
+    }
+    const selected = state.selected;
+    const item = this.auctionStack(selected?.item);
+    const itemSlot = `<div class="mc-ah-center">${this.slotHtml(item, 'ah-selected')}</div>`;
+    if (state.screen === 'buy') {
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <p class="mc-ah-prompt">${this.escape(selected?.prompt ?? '')}</p>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="buy">КУПИТЬ</button>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}`;
+    }
+    if (state.screen === 'sell-confirm') {
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <div class="mc-ah-amount">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-delta="-1">−</button>
+          <span>${selected?.amount ?? 1}</span>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-delta="1">+</button>
+        </div>
+        <label class="mc-ah-search">Цена за весь лот
+          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(selected?.priceText ?? '')}" />
+        </label>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="create">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}`;
+    }
+    if (state.screen === 'mine') {
+      const slots = Array.from({ length: 27 }, (_unused, index) => state.listings[index]);
+      const grid = slots.map((listing, index) => {
+        if (!listing) return this.slotHtml(null, `ah-${index}`);
+        const stack = this.auctionStack(listing.item);
+        return `<div data-ah-listing="${this.escape(listing.listingId)}">${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip)}</div>`;
+      }).join('');
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-grid mc-grid-9">${grid}</div>
+        <div class="mc-ah-nav">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+          <span class="mc-ah-page">Страница ${state.page} из ${state.totalPages}</span>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+        </div>
+        ${state.totalCount === 0 ? '<div class="mc-ah-empty">У вас нет лотов.</div>' : ''}
+        ${message}`;
+    }
+    if (state.screen === 'manage') {
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <p class="mc-ah-prompt">${this.escape(selected?.prompt ?? '')}</p>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="cancel">СНЯТЬ С ПРОДАЖИ</button>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="relist">ИЗМЕНИТЬ ЦЕНУ</button>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}`;
+    }
+    if (state.screen === 'relist') {
+      return `<div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <label class="mc-ah-search">Новая цена за весь лот
+          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(selected?.priceText ?? '')}" />
+        </label>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="confirm-relist">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
+          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}`;
+    }
+    return `<div class="mc-label">${this.escape(state.title)}</div>
+      ${itemSlot}
+      <p class="mc-ah-prompt">${this.escape(selected?.prompt ?? '')}</p>
+      <div class="mc-ah-actions">
+        <button type="button" class="mc-slot mc-ah-btn" data-ah-action="claim">ЗАБРАТЬ</button>
+        <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+      </div>
+      ${message}`;
+  }
+
+  private bindAuctionChrome(state: ServerAuctionMessage, actions: AuctionGuiActions): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => actions.close());
+    const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
+    search?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    search?.addEventListener('keydown', (event) => event.stopPropagation());
+    search?.addEventListener('input', () => {
+      window.clearTimeout(this.auctionSearchTimer);
+      this.auctionSearchTimer = window.setTimeout(() => {
+        actions.send({ type: 'auction_action', action: 'search', search: search.value });
+      }, 160);
+    });
+    const price = this.modal!.querySelector<HTMLInputElement>('[data-ah-price]');
+    price?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    price?.addEventListener('keydown', (event) => event.stopPropagation());
+    price?.addEventListener('input', () => {
+      const digits = price.value.replace(/[^\d]/g, '');
+      if (price.value !== digits) price.value = digits;
+      actions.send({ type: 'auction_action', action: 'set_price', price: digits });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const listing = target.closest<HTMLElement>('[data-ah-listing]');
+      if (listing?.dataset.ahListing) {
+        actions.send({ type: 'auction_action', action: 'select', listingId: listing.dataset.ahListing });
+        return;
+      }
+      const slot = target.closest<HTMLElement>('[data-ah-slot]');
+      if (slot?.dataset.ahSlot) {
+        actions.send({ type: 'auction_action', action: 'select_slot', slot: Number(slot.dataset.ahSlot) });
+        return;
+      }
+      const page = target.closest<HTMLElement>('[data-ah-page]');
+      if (page?.dataset.ahPage === 'prev' && state.page > 1) {
+        actions.send({ type: 'auction_action', action: 'page', page: state.page - 1 });
+        return;
+      }
+      if (page?.dataset.ahPage === 'next' && state.page < state.totalPages) {
+        actions.send({ type: 'auction_action', action: 'page', page: state.page + 1 });
+        return;
+      }
+      const delta = target.closest<HTMLElement>('[data-ah-delta]');
+      if (delta?.dataset.ahDelta) {
+        const next = (state.selected?.amount ?? 1) + Number(delta.dataset.ahDelta);
+        actions.send({ type: 'auction_action', action: 'set_amount', amount: next });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-ah-action]');
+      const kind = button?.dataset.ahAction;
+      if (kind === 'buy') actions.send({ type: 'auction_action', action: 'buy', listingId: state.selected?.listingId });
+      else if (kind === 'back') actions.send({ type: 'auction_action', action: 'back' });
+      else if (kind === 'create') {
+        actions.send({
+          type: 'auction_action',
+          action: 'create',
+          slot: state.selected?.slot,
+          amount: state.selected?.amount,
+          price: price?.value ?? state.selected?.priceText,
+        });
+      } else if (kind === 'cancel') {
+        actions.send({ type: 'auction_action', action: 'cancel', listingId: state.selected?.listingId });
+      } else if (kind === 'relist') {
+        actions.send({ type: 'auction_action', action: 'relist', listingId: state.selected?.listingId });
+      } else if (kind === 'confirm-relist') {
+        actions.send({
+          type: 'auction_action',
+          action: 'relist',
+          listingId: state.selected?.listingId,
+          price: price?.value ?? state.selected?.priceText,
+        });
+      } else if (kind === 'claim') {
+        actions.send({ type: 'auction_action', action: 'claim', listingId: state.selected?.listingId });
+      }
+    });
   }
 
   private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {

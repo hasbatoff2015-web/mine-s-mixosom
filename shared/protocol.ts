@@ -432,6 +432,32 @@ export interface ClientVehicleInputMessage {
   readonly forward?: number;
 }
 
+export type AuctionActionKind =
+  | 'close'
+  | 'search'
+  | 'page'
+  | 'select'
+  | 'buy'
+  | 'back'
+  | 'select_slot'
+  | 'set_amount'
+  | 'set_price'
+  | 'create'
+  | 'cancel'
+  | 'relist'
+  | 'claim';
+
+export interface ClientAuctionActionMessage {
+  readonly type: 'auction_action';
+  readonly action: AuctionActionKind;
+  readonly listingId?: string;
+  readonly search?: string;
+  readonly page?: number;
+  readonly slot?: number;
+  readonly amount?: number;
+  readonly price?: string | number;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -451,7 +477,8 @@ export type ClientMessage =
   | ClientRespawnMessage
   | ClientHologramInteractMessage
   | ClientHologramUpdateMessage
-  | ClientVehicleInputMessage;
+  | ClientVehicleInputMessage
+  | ClientAuctionActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -728,6 +755,53 @@ export interface ServerClaimBoundaryMessage {
   readonly durationMs: number;
 }
 
+export type AuctionScreenKind =
+  | 'browse'
+  | 'buy'
+  | 'sell-pick'
+  | 'sell-confirm'
+  | 'mine'
+  | 'manage'
+  | 'claim'
+  | 'relist'
+  | 'closed';
+
+export interface NetworkAuctionListing {
+  readonly listingId: string;
+  readonly sellerName: string;
+  readonly sellerPlayerId: string;
+  readonly price: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly remainingMs: number;
+  readonly status: string;
+  readonly item: unknown;
+  readonly itemName: string;
+  readonly tooltip: string;
+}
+
+export interface ServerAuctionMessage {
+  readonly type: 'auction';
+  readonly screen: AuctionScreenKind;
+  readonly title: string;
+  readonly search: string;
+  readonly page: number;
+  readonly totalPages: number;
+  readonly totalCount: number;
+  readonly listings: readonly NetworkAuctionListing[];
+  readonly inventorySlots?: readonly unknown[];
+  readonly message?: string;
+  readonly selected?: {
+    readonly listingId?: string;
+    readonly slot?: number;
+    readonly amount?: number;
+    readonly maxAmount?: number;
+    readonly priceText?: string;
+    readonly item?: unknown;
+    readonly prompt?: string;
+  };
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -754,7 +828,8 @@ export type ServerMessage =
   | ServerTimeMessage
   | ServerHologramsMessage
   | ServerHologramEditorMessage
-  | ServerClaimBoundaryMessage;
+  | ServerClaimBoundaryMessage
+  | ServerAuctionMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -776,6 +851,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'hologram_interact',
   'hologram_update',
   'vehicle_input',
+  'auction_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -805,6 +881,7 @@ export const SERVER_MESSAGE_TYPES = [
   'holograms',
   'hologram_editor',
   'claim_boundary',
+  'auction',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -813,6 +890,11 @@ const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
   'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
+];
+
+const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
+  'close', 'search', 'page', 'select', 'buy', 'back',
+  'select_slot', 'set_amount', 'set_price', 'create', 'cancel', 'relist', 'claim',
 ];
 
 const VEHICLE_ACTIONS: readonly VehicleAction[] = ['enter', 'exit', 'steer'];
@@ -1319,6 +1401,30 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(forward !== undefined ? { forward } : {}),
       };
     }
+    case 'auction_action': {
+      if (typeof raw.action !== 'string' || !(AUCTION_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'auction_action.action invalid' };
+      }
+      const listingId = optionalString(raw.listingId, 64);
+      const search = typeof raw.search === 'string' ? raw.search.slice(0, 64) : undefined;
+      const page = raw.page === undefined ? undefined : finite(raw.page) ? Math.floor(raw.page) : undefined;
+      if (raw.page !== undefined && page === undefined) return { error: 'auction_action.page invalid' };
+      const slot = raw.slot === undefined ? undefined : finite(raw.slot) ? Math.floor(raw.slot) : undefined;
+      if (raw.slot !== undefined && slot === undefined) return { error: 'auction_action.slot invalid' };
+      const amount = raw.amount === undefined ? undefined : finite(raw.amount) ? Math.floor(raw.amount) : undefined;
+      if (raw.amount !== undefined && amount === undefined) return { error: 'auction_action.amount invalid' };
+      const price = typeof raw.price === 'string' || typeof raw.price === 'number' ? raw.price : undefined;
+      return {
+        type: 'auction_action',
+        action: raw.action as AuctionActionKind,
+        ...(listingId ? { listingId } : {}),
+        ...(search !== undefined ? { search } : {}),
+        ...(page !== undefined ? { page } : {}),
+        ...(slot !== undefined ? { slot } : {}),
+        ...(amount !== undefined ? { amount } : {}),
+        ...(price !== undefined ? { price } : {}),
+      };
+    }
     default:
       return { error: `unknown message type ${raw.type}` };
   }
@@ -1507,6 +1613,14 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         maxZ: raw.maxZ,
         durationMs,
       };
+    }
+    case 'auction': {
+      if (typeof raw.screen !== 'string' || typeof raw.title !== 'string' || !Array.isArray(raw.listings)
+        || !finite(raw.page) || !finite(raw.totalPages) || !finite(raw.totalCount)
+        || typeof raw.search !== 'string') {
+        return { error: 'auction invalid' };
+      }
+      return raw as unknown as ServerAuctionMessage;
     }
     default:
       return raw as unknown as ServerMessage;

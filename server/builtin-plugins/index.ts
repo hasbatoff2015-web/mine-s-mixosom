@@ -1,5 +1,6 @@
 import type { Plugin } from '../PluginManager';
 import type { BuiltinPluginContext } from './context';
+import { createAuctionPlugin } from './auction';
 import { createAutoMinePlugin } from './autoMine';
 import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
@@ -13,12 +14,13 @@ import { createRtpPortalPlugin } from './rtpPortal';
 import { createSpawnPlugin } from './spawn';
 import { createTpaPlugin } from './tpa';
 
-/** Auction House is intentionally not registered. Needs an inventory/GUI market later. */
+/** Trader is intentionally not registered. Auction House is the inventory-style market. */
 export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
   return [
     createPermissionsPlugin(ctx),
     createPluginAdminPlugin(ctx),
     createEconomyPlugin(ctx),
+    createAuctionPlugin(ctx),
     createTpaPlugin(ctx),
     createSpawnPlugin(ctx),
     createHomePlugin(ctx),

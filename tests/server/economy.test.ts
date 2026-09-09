@@ -212,4 +212,24 @@ describe('Economy rewards', () => {
     expect(economy.rewardPlayerKill('killer', 'rich', 'death-6').amount).toBe(cap);
     expect(economy.getBalance('rich')).toBe(ECONOMY_MAX_BALANCE - cap);
   });
+
+  it('settles auction purchase and sale as one atomic pair', async () => {
+    const economy = await service();
+    economy.setBalance('buyer', 500, 'ADMIN_SET');
+    economy.setBalance('seller', 100, 'ADMIN_SET');
+    const moved = economy.settle('buyer', 'seller', 250, 'AUCTION_PURCHASE', 'AUCTION_SALE', 'ah-1');
+    expect(moved.ok).toBe(true);
+    expect(economy.getBalance('buyer')).toBe(250);
+    expect(economy.getBalance('seller')).toBe(350);
+    const buy = economy.getTransactionHistory('buyer')[0]!;
+    const sale = economy.getTransactionHistory('seller')[0]!;
+    expect(buy.reason).toBe('AUCTION_PURCHASE');
+    expect(sale.reason).toBe('AUCTION_SALE');
+    expect(buy.pairId).toBe('ah-1');
+    expect(sale.pairId).toBe('ah-1');
+    const overflow = economy.settle('buyer', 'seller', 999_999_999, 'AUCTION_PURCHASE', 'AUCTION_SALE', 'ah-2');
+    expect(overflow.ok).toBe(false);
+    expect(economy.getBalance('buyer')).toBe(250);
+    expect(economy.getBalance('seller')).toBe(350);
+  });
 });

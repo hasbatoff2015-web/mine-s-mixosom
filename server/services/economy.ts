@@ -248,14 +248,14 @@ export class EconomyService {
     return this.getBalance(playerId) >= value;
   }
 
-  deposit(playerId: string, amount: number, reason: string): EconomyResult {
+  deposit(playerId: string, amount: number, reason: string, relatedPlayerId?: string, pairId?: string): EconomyResult {
     const value = parseIntegerAmount(amount);
     if (value === undefined || value <= 0) return failAmount();
     const player = this.ensurePlayer(playerId);
     if (player.balance + value > ECONOMY_MAX_BALANCE) {
       return { ok: false, error: 'Превышен максимальный баланс.', balance: player.balance };
     }
-    return this.apply(player, 'deposit', value, reason);
+    return this.apply(player, 'deposit', value, reason, relatedPlayerId, pairId);
   }
 
   withdraw(playerId: string, amount: number, reason: string, relatedPlayerId?: string): EconomyResult {
@@ -289,6 +289,45 @@ export class EconomyService {
     const pairId = this.nextPairId();
     const debit = this.apply(from, 'withdraw', value, reason, toPlayerId, pairId, false);
     const credit = this.apply(to, 'deposit', value, reason, fromPlayerId, pairId, false);
+    this.persistBalances();
+    this.persistTransactions();
+    return {
+      ok: true,
+      amount: value,
+      fromBalance: debit.balance,
+      toBalance: credit.balance,
+      transactions: [debit.transaction!, credit.transaction!],
+    };
+  }
+
+  /**
+   * Atomic two-sided move with independent debit/credit reasons (Auction purchase/sale).
+   * `pairId` links both rows; callers typically pass a listing id.
+   */
+  settle(
+    fromPlayerId: string,
+    toPlayerId: string,
+    amount: number,
+    debitReason: string,
+    creditReason: string,
+    pairId?: string,
+  ): EconomyResult {
+    if (fromPlayerId === toPlayerId) {
+      return { ok: false, error: 'Нельзя перевести Мегакоины самому себе.' };
+    }
+    const value = parseIntegerAmount(amount);
+    if (value === undefined || value <= 0) return failAmount();
+    const from = this.ensurePlayer(fromPlayerId);
+    const to = this.ensurePlayer(toPlayerId);
+    if (from.balance < value) {
+      return { ok: false, error: 'Недостаточно Мегакоинов.', balance: from.balance };
+    }
+    if (to.balance + value > ECONOMY_MAX_BALANCE) {
+      return { ok: false, error: 'У получателя недостаточно места для этой суммы.', balance: to.balance };
+    }
+    const link = pairId ?? this.nextPairId();
+    const debit = this.apply(from, 'withdraw', value, debitReason, toPlayerId, link, false);
+    const credit = this.apply(to, 'deposit', value, creditReason, fromPlayerId, link, false);
     this.persistBalances();
     this.persistTransactions();
     return {

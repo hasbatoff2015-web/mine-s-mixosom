@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-09: Auction House
+
+- [x] Builtin `auction` plugin + `AuctionService` on PluginManager / JsonFileStore / EconomyService (no second wallet).
+- [x] Commands `/ah` `/ah sell` `/ah list`; aliases `/auction` `/auctionhouse`.
+- [x] Permissions `auction.use` `auction.sell` `auction.buy` `auction.list` `auction.*`; OP bypass.
+- [x] Inventory-style GUI (chest slots, item icons, tooltips, close ×, E to close).
+- [x] 2-day expiration, 30 ACTIVE listings, price 10…100 000 000, no commission.
+- [x] Manual claim of cancelled/expired items; atomic relist with a fresh timer.
+- [x] Server-authoritative create/buy/cancel/relist/claim; paged `auction` snapshots.
+- [ ] Owner live Anarchy QA of `/ah` browse/sell/buy/list/claim (not run in this pass).
+
 ## 2026-09-10: Economy plugin (Мегакоин)
 
 - [x] Builtin `economy` plugin + `EconomyService` on existing PluginManager / JsonFileStore / PermissionService / EventBus.
@@ -9,7 +20,7 @@
 - [x] Mob kill table + PvP `floor(10%)` with 5-minute same-pair anti-farm cooldown.
 - [x] Integer Мегакоин, start 100, max 999 999 999, atomic transfer, persisted transactions.
 - [ ] Owner live Anarchy QA of `/pay` offline, AutoMine diamond, TNT ore, PvP 10%.
-- [ ] Auction House uses EconomyService (this branch); Trader remains later.
+- [x] Auction House uses EconomyService (this branch); Trader remains later.
 
 ## 2026-09-10: Integrate player layer z-fighting fix into current main
 
@@ -411,10 +422,11 @@
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
 - [x] Economy (Мегакоин) via EconomyService + builtin plugin. Auction House still later.
+- [x] Auction House (fixed-price listings) via builtin `auction` + `AuctionService`.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
 - [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
 - [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
-- [ ] Auction House after inventory/GUI market framework.
+- [x] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
 

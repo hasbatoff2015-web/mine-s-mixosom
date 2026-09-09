@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-09 Auction House
+
+Report: `reports/2026-09-09_auction-house.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/server/economy.test.ts tests/server/economy-plugin.test.ts tests/server/anarchy-plugins.test.ts tests/plugin-boundaries.test.ts --maxWorkers=2
+```
+
+Contracts: listing create/persist/expire/cancel/claim/relist; exact and partial stack extract; metadata preserved; price 10..100000000 integers only; 30 ACTIVE cap; cancelled frees a slot and expired does not count; buy withdraw/deposit via `settle` with `listingId` pairId; self-buy / sold / expired / full inventory / duplicate buy rejected; search case-insensitive; pagination clamps after last-item purchase; restart keeps SOLD listings and seller balance; GUI commands open inventory-style snapshots.
+
+Focused run: auction 18/18, auction-plugin 5/5, economy 15/15, economy-plugin 10/10, anarchy-plugins 36/36, auto-mine 3/3, plugin-boundaries 4/4. `test:sim` 12 files / 65 tests PASS. `test:server` 41 files / 410 tests PASS. `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-10 Economy plugin (Мегакоин)
 
 Report: `reports/2026-09-10_economy-plugin.md`.

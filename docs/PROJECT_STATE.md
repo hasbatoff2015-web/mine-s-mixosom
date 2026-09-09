@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Auction House — 2026-09-09
+
+- Builtin `auction` + `AuctionService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк и второй persistence layer не добавлялись.
+- Команды: `/ah`, `/ah sell`, `/ah list` (алиасы `/auction`, `/auctionhouse`).
+- Права: `auction.use` `auction.sell` `auction.buy` `auction.list` `auction.*`. Default role + OP bypass.
+- GUI в стиле inventory/chest (`mc-panel`, слоты, иконки предметов, tooltip, крестик, E закрывает). Не меню-карточки Frontier Cubes.
+- Лоты 2 дня, лимит 30 ACTIVE, цена 10…100 000 000 за весь listing, комиссии нет. Снятые/истёкшие забираются вручную через `/ah list`.
+- Покупка: `EconomyService.settle(..., AUCTION_PURCHASE, AUCTION_SALE, listingId)`. Сервер — источник истины.
+- Handoff: `docs/reports/2026-09-09_auction-house.md`.
+
 ## Последний проход: Economy plugin (Мегакоин) — 2026-09-10
 
 - Builtin `economy` + `EconomyService` на существующем PluginManager. Вторая валюта / второй persistence layer не добавлялись.
@@ -431,7 +441,7 @@
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
 - Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
-- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, economy, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, economy, auction, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
 - Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.

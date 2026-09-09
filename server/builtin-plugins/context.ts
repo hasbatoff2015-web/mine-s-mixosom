@@ -1,4 +1,5 @@
 import type { AutoMineManager } from '../services/autoMine';
+import type { AuctionService, AuctionView } from '../services/auction';
 import type { EconomyService } from '../services/economy';
 import type { PermissionService } from '../services/permissions';
 import type { PluginConfigService } from '../services/pluginConfig';
@@ -25,6 +26,8 @@ export interface BuiltinPluginContext {
   readonly selection: PlayerSelectionService;
   readonly autoMine: AutoMineManager;
   readonly economy: EconomyService;
+  readonly auction: AuctionService;
+  readonly openAuction: (playerId: string, view: AuctionView) => void;
   readonly lookupPlayer: (idOrName: string) => PlayerIdentity | undefined;
   readonly config: PluginConfigService;
   readonly plugins: PluginManager;

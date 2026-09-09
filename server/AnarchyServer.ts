@@ -489,6 +489,9 @@ export class AnarchyServer {
       case 'hologram_update':
         this.world.updateHologramAppearance(player, message);
         return;
+      case 'auction_action':
+        this.world.handleAuctionAction(player, message);
+        return;
     }
   }
 

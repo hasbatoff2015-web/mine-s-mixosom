@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -137,12 +137,13 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | holograms | `/holograms` (`/hologram reset`) | `plugin-data/holograms/holograms.json` (lines + font/size/style + background + billboard/yaw + timer) |
 | automine | `/automine` | `plugin-data/automine/automines.json` (+ `originals/<name>.json`) |
 | economy | `/balance`, `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco` | `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json` |
+| auction | `/ah`, `/ah sell`, `/ah list` (`/auction`, `/auctionhouse`) | `plugin-data/auction/listings.json` |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
 
 ## Economy (Мегакоин)
 
-`EconomyService` (`server/services/economy.ts`) is the only balance API. Future Trader / Auction plugins must call it (`deposit` / `withdraw` / `transfer` / `hasBalance`); they must not read `balances.json` themselves.
+`EconomyService` (`server/services/economy.ts`) is the only balance API. Trader (later) and Auction House call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
 
 - Currency display name: **Мегакоин** / **Мегакоинов**. Internal plugin name: `economy`.
 - New player: **100**. Maximum: **999 999 999**. Integers only. Negative balances are rejected. Deposit that would exceed the max is rejected (no clamp, no overflow).
@@ -155,6 +156,22 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 - PvP: killer receives `floor(victimBalance * 0.10)`, victim loses that amount, atomic, reason `PLAYER_KILL`. Balance 0 or 1 → 0. Same killer→victim pair has a **5 minute** anti-farm cooldown (PvP itself is unchanged). Duplicate `entityDeath` for the same death does not double-pay.
 - Commands: `/balance` `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco give|take|set|reset|balance|transactions`.
 - Permissions: `economy.balance`, `economy.pay`, `economy.baltop`, `economy.transactions`, `economy.admin`, `economy.*`. Default role gets the player nodes. Admin role gets `economy.*`. OP bypasses via PermissionService.
+
+## Auction House
+
+Builtin plugin `auction` + `AuctionService` (`server/services/auction.ts`). This is a **fixed-price** listing market, not bidding. It does **not** create a second wallet: every purchase is `EconomyService.settle(buyer, seller, price, 'AUCTION_PURCHASE', 'AUCTION_SALE', listingId)`. No fee, no tax.
+
+- Commands: `/ah` (browse others), `/ah sell` (list from inventory), `/ah list` (own active + returnable). Aliases: `/auction`, `/auctionhouse`.
+- Permissions: `auction.use`, `auction.sell`, `auction.buy`, `auction.list`, `auction.*`. Default role gets the four player nodes. Admin gets `auction.*`. OP bypass.
+- GUI is the existing inventory/chest chrome (`mc-backdrop` / `mc-panel` / `mc-slot` / `mc-close`, item icons, `attachItemTooltip`). Not the Frontier Cubes menu cards. Close: top-right ×, Cancel where shown, key **E** (unless a search/price field is focused).
+- Screens: browse (27 slots/page, newest first, search), buy confirm, sell-pick (player inventory + hotbar), sell-confirm (amount ± and integer price), mine, manage (cancel / relist), relist price, claim.
+- Listing lifetime: `expiresAt = createdAt + 2 days`. Server `expireDue` runs on a 1s plugin timer and on every action / load. `ACTIVE` → `EXPIRED` (returnable). Items are **not** auto-returned and are **not** dropped.
+- `/ah list` shows `ACTIVE` first, then `CANCELLED` / `EXPIRED`. Click active → cancel or relist. Click returnable → claim the **entire** stack or `"Недостаточно места в инвентаре."`
+- Relist is atomic: old listing `RELISTED` (not claimable), new `ACTIVE` with a fresh 2-day timer. Cancel on the price screen leaves the old listing `ACTIVE`. The item never re-enters inventory during relist.
+- Limits: 30 `ACTIVE` listings per player; price integer **10 … 100 000 000** Мегакоинов for the whole listing (not per item).
+- Persistence: `plugin-data/auction/listings.json` via existing `JsonFileStore`. Full `ItemStack` clone (id, count, durability, metadata).
+- Protocol: client `auction_action` (intent only), server `auction` (paged snapshot). The client never mutates listings, balances, or inventory locally.
+- Anti-dupe: listing+player locks; re-validate slot/item/amount/price/status/balance/space on the server; item exists in **either** inventory **or** a listing, never both while `ACTIVE`.
 
 ## API version
 
@@ -309,5 +326,5 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a Bukkit/Spigot jar loader
 - Not a second combat / fluid / inventory system
 - Not client mods
-- Not Auction House / kits. Economy (Мегакоин) **is** implemented as a builtin plugin + `EconomyService`.
+- Not Auction House bidding / kits. Auction House (fixed-price listings) **is** implemented as builtin `auction` + `AuctionService` on the existing EconomyService.
 - Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)

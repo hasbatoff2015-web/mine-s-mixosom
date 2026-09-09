@@ -29,6 +29,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'economy.pay',
     'economy.baltop',
     'economy.transactions',
+    'auction.use',
+    'auction.sell',
+    'auction.buy',
+    'auction.list',
   ],
   moderator: [
     'claim.admin',
@@ -48,6 +52,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'back.*',
     'automine.*',
     'economy.*',
+    'auction.*',
   ],
   vip: [
     'home.multiple',
