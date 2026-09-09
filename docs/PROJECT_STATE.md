@@ -8,7 +8,7 @@
 - GUI в стиле inventory/chest (`mc-panel`, слоты, иконки предметов, tooltip, крестик, E закрывает). Не меню-карточки Frontier Cubes.
 - Лоты 2 дня, лимит 30 ACTIVE, цена 10…100 000 000 за весь listing, комиссии нет. Снятые/истёкшие забираются вручную через `/ah list`.
 - Покупка: `EconomyService.settle(..., AUCTION_PURCHASE, AUCTION_SALE, listingId)`. Сервер — источник истины.
-- Handoff: `docs/reports/2026-09-09_auction-house.md`.
+- Handoff: `docs/reports/2026-09-09_auction-house.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82 (`bc6c8f7`).
 
 ## Последний проход: Economy plugin (Мегакоин) — 2026-09-10
 
