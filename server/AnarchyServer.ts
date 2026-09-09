@@ -483,6 +483,12 @@ export class AnarchyServer {
       case 'respawn':
         this.world.respawn(player);
         return;
+      case 'hologram_interact':
+        this.world.interactHologram(player, message.name);
+        return;
+      case 'hologram_update':
+        this.world.updateHologramAppearance(player, message);
+        return;
     }
   }
 

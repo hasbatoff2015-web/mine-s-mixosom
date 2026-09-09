@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-09: Hologram in-game editor
+
+- [x] RMB on an existing Anarchy hologram opens the GameUI editor for that hologram.
+- [x] Store font/size/style on the existing hologram record; server validates and persists.
+- [x] Extend `HologramRenderer` canvas draw with local Inter / Press Start 2P / sans-serif.
+- [x] Keep `/holograms` commands, IDs, billboards, range cull, and old records.
+- [ ] Owner live Anarchy QA: OP edit, denied player, Save/Cancel, reconnect after style change.
+
 ## 2026-09-09: Death scatter 3× + spatial world_sound
 
 - [x] Triple death-drop X/Z origin and horizontal velocity; keep `vy = 2.2`.
@@ -297,6 +305,7 @@
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
 - [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
+- [x] In-game hologram editor (RMB, text/size/style/font) on the existing plugin/renderer.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore

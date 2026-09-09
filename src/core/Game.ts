@@ -325,6 +325,7 @@ import {
   formatGameplayKernelTrace,
   performUseHeld,
   movementDuringItemUse,
+  resolveHologramUseTarget,
   rollDropCount,
   systemRandomFn,
   tickGameplayKernel,
@@ -333,7 +334,7 @@ import {
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
-import type { ContainerKind, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ContainerKind, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -1229,6 +1230,9 @@ export class Game {
       case 'holograms':
         this.holograms?.sync(message.holograms);
         return;
+      case 'hologram_editor':
+        this.openHologramEditor(message.hologram);
+        return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
         return;
@@ -2001,6 +2005,7 @@ export class Game {
   private sendOnlineUse(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    if (this.tryInteractHologram(session)) return;
     const source = this.onlineActionSource(session);
     const selected = this.selectedStack();
     if (this.selectedStack()?.itemId === ItemId.Bow) {
@@ -2064,6 +2069,44 @@ export class Game {
       commandSeq: source.inputSeq,
       selectedSlot: source.selectedSlot,
     });
+  }
+
+  private tryInteractHologram(session: GameSession): boolean {
+    if (!session.online || this.ui.isHologramEditorOpen()) return false;
+    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
+    const target = resolveHologramUseTarget(hologramHit, session.target?.distance);
+    if (target.kind !== 'hologram') return false;
+    session.online.client.send({ type: 'hologram_interact', name: target.name });
+    return true;
+  }
+
+  private openHologramEditor(hologram: NetworkHologram): void {
+    const session = this.session;
+    if (!session?.online || this.lifecycle.state !== 'PLAYING') return;
+    this.ui.closeChat();
+    if (this.ui.isInventoryOpen()) this.ui.closeInventory(false);
+    this.openGameplayModal();
+    this.ui.openHologramEditor(hologram, {
+      save: (update) => {
+        session.online?.client.send({
+          type: 'hologram_update',
+          name: update.name,
+          lines: [...update.lines],
+          font: update.font,
+          size: update.size,
+          style: update.style,
+        });
+        this.closeHologramEditorAndResumeLook();
+      },
+      cancel: () => this.closeHologramEditorAndResumeLook(),
+    });
+  }
+
+  private closeHologramEditorAndResumeLook(): void {
+    this.ui.closeHologramEditor();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
   }
 
   private sendOnlineBowRelease(session: GameSession): void {
@@ -3291,6 +3334,7 @@ export class Game {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.ui.closeChat();
+    this.ui.closeHologramEditor();
     this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
@@ -3389,6 +3433,10 @@ export class Game {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
     if (this.ui.isChatOpen()) this.ui.closeChat();
+    if (this.ui.isHologramEditorOpen()) {
+      this.closeHologramEditorAndResumeLook();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3455,6 +3503,10 @@ export class Game {
     if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD') return;
     if (this.ui.isChatOpen()) {
       this.closeChatAndResumeLook();
+      return;
+    }
+    if (this.ui.isHologramEditorOpen()) {
+      this.closeHologramEditorAndResumeLook();
       return;
     }
     if (this.ui.isInventoryOpen()) {
@@ -4725,7 +4777,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -4920,6 +4972,7 @@ export class Game {
     const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
     this.ui.closeChat();
+    this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     const plan = planOnlineRespawnInputRestore({

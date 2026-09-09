@@ -1,5 +1,20 @@
 # Тестирование
 
+## 2026-09-09 Hologram in-game editor
+
+Report: `reports/2026-09-09_hologram-editor.md`.
+
+```text
+npx vitest run \
+  tests/hologram-style.test.ts \
+  tests/hologram-hit.test.ts \
+  tests/server/hologram-editor.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: old records default to `sans`/`bold`/`size=1`; unknown font and out-of-range size rejected; `hologram_update` drops position/owner/id; RMB hologram AABB wins over a farther block; permission denied uses `You do not have permission.`; Save persists and broadcasts; Cancel does not write.
+
 ## 2026-09-09 Death scatter 3× + spatial world_sound
 
 Report: `reports/2026-09-09_death-scatter-world-sound.md`.

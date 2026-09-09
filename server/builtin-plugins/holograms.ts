@@ -1,7 +1,11 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
-import type { HologramRecord } from '../services/holograms';
+import {
+  createHologramRecord,
+  normalizeHologramRecord,
+  type HologramRecord,
+} from '../services/holograms';
 import type { BuiltinPluginContext } from './context';
 
 const HELP = {
@@ -30,18 +34,25 @@ interface HologramStore {
 export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
   return {
     name: 'holograms',
-    version: '1.1.0',
+    version: '1.2.0',
     apiVersion: 1,
     onEnable(api) {
       const load = (): HologramStore => {
         const raw = api.loadData<HologramStore>('holograms', { holograms: [] });
-        return { holograms: Array.isArray(raw.holograms) ? raw.holograms : [] };
+        const worldId = api.getWorld().worldId;
+        const holograms = (Array.isArray(raw.holograms) ? raw.holograms : [])
+          .map((entry) => normalizeHologramRecord(entry, worldId))
+          .filter((entry): entry is HologramRecord => entry !== undefined);
+        return { holograms };
       };
       const save = (store: HologramStore) => {
         api.saveData('holograms', store);
         ctx.holograms.replace(store.holograms);
       };
       ctx.holograms.replace(load().holograms);
+      ctx.holograms.setPersist((holograms) => {
+        api.saveData('holograms', { holograms });
+      });
 
       const canEdit = (playerId: string, name: string) => (
         api.hasPermission(playerId, 'holograms.create') || api.isOperator(name)
@@ -71,6 +82,9 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
               `Position: ${hologram.x.toFixed(1)}, ${hologram.y.toFixed(1)}, ${hologram.z.toFixed(1)}`,
               `Range: ${hologram.range}`,
               `Enabled: ${hologram.enabled ? 'yes' : 'no'}`,
+              `Font: ${hologram.font}`,
+              `Size: ${hologram.size}`,
+              `Style: ${hologram.style}`,
               `Lines (${hologram.lines.length}):`,
               ...hologram.lines.map((line, index) => `  ${index + 1}. ${line}`),
             ]);
@@ -83,7 +97,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (store.holograms.some((entry) => entry.name === name)) return fail(`Hologram '${name}' already exists.`);
             if (!player) return fail('Player not found.');
             const pos = player.position();
-            store.holograms.push({
+            store.holograms.push(createHologramRecord({
               name,
               worldId: api.getWorld().worldId,
               x: pos.x,
@@ -91,8 +105,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
               z: pos.z,
               lines: [name],
               range: 48,
-              enabled: true,
-            });
+            }));
             save(store);
             return ok(`Created hologram '${name}'.`);
           }

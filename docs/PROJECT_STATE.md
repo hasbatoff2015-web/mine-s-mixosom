@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: hologram in-game editor — 2026-09-09
+
+- ПКМ по существующей голограмме в Anarchy открывает GameUI-редактор **этой** голограммы. Raycast AABB идёт раньше bow/block use. Нет второй hologram-системы.
+- Appearance (`font`, `size`, `style`) — поля той же `HologramRecord`. Клиент шлёт `hologram_update`; сервер проверяет `holograms.create` / OP, валидирует, пишет `plugin-data/holograms/holograms.json`, броадкастит `holograms`.
+- Шрифты: основной UI **Inter** (`--font-ui`, `public/fonts/inter/*.woff2`); дополнительно **Press Start 2P** (`--font-display`) и `sans-serif` (исторический canvas default). CDN нет.
+- Команды `/holograms` без изменений по смыслу. Старые записи без style грузятся как `sans` + `bold` + `size=1`.
+- Handoff: `docs/reports/2026-09-09_hologram-editor.md`.
+
 ## Последний проход: death scatter 3× + world_sound spatial — 2026-09-09
 
 - Death drops: `DEATH_DROP_SCATTER_MULTIPLIER = 3` на origin X/Z (±0.75) и горизонтальный velocity (±2.1). `vy` остаётся 2.2. `scatterDeathDrop` / `deathLootDropped` без изменений.

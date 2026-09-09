@@ -2658,3 +2658,77 @@ button {
   .form-grid,
   .settings-grid { padding: 10px 12px; }
 }
+
+.hologram-editor-backdrop {
+  z-index: 22;
+}
+
+.hologram-editor {
+  width: min(420px, 94vw);
+  display: grid;
+  gap: 12px;
+  padding: 18px 18px 16px;
+}
+
+.hologram-editor-field {
+  display: grid;
+  gap: 6px;
+  color: var(--ui-muted);
+  font: 600 13px/1.2 var(--font-ui);
+}
+
+.hologram-editor-field textarea,
+.hologram-editor-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  color: #f7f2df;
+  background: rgba(8, 17, 24, 0.72);
+  font: 14px/1.35 var(--font-ui);
+  user-select: text;
+}
+
+.hologram-editor-field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.hologram-size-row,
+.hologram-style-row {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+
+.hologram-size-row {
+  grid-template-columns: 44px minmax(36px, auto) 44px minmax(80px, 1fr);
+}
+
+.hologram-size-row .game-button,
+.hologram-style-row .game-button {
+  min-height: 40px;
+  padding: 6px 8px;
+}
+
+.hologram-size-row output {
+  text-align: center;
+  color: #fff9e7;
+  font: 700 15px/1 var(--font-ui);
+}
+
+.hologram-style-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.hologram-editor-preview {
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  color: #fff7c2;
+  background: rgba(0, 0, 0, 0.42);
+  white-space: pre-wrap;
+  overflow: hidden;
+  font-synthesis: weight style;
+}

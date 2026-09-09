@@ -134,7 +134,7 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
 | claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
-| holograms | `/holograms` | `plugin-data/holograms/holograms.json` |
+| holograms | `/holograms` | `plugin-data/holograms/holograms.json` (lines + font/size/style) |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
 

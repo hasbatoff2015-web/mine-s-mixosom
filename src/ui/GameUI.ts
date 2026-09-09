@@ -44,7 +44,20 @@ import {
 } from './containerInteractions';
 import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
-import type { ClientInventoryActionMessage } from '../../shared/protocol';
+import type { ClientInventoryActionMessage, NetworkHologram } from '../../shared/protocol';
+import {
+  HOLOGRAM_FONT_CSS,
+  HOLOGRAM_FONT_LABELS,
+  HOLOGRAM_FONTS,
+  HOLOGRAM_SIZE_MAX,
+  HOLOGRAM_SIZE_MIN,
+  HOLOGRAM_SIZE_STEP,
+  hologramStyleFlags,
+  hologramTextFromLines,
+  linesFromHologramText,
+  type HologramFont,
+  type HologramTextStyle,
+} from '../../shared/hologramStyle';
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import { hungerHudIcons, type HungerHudIcon } from './hungerHud';
@@ -78,6 +91,17 @@ export interface SkinSelectorActions {
   confirm(): void;
   cancel(): void;
   onPreviewCanvas?(canvas: HTMLCanvasElement): void;
+}
+
+export interface HologramEditorActions {
+  save(update: {
+    name: string;
+    lines: readonly string[];
+    font: HologramFont;
+    size: number;
+    style: HologramTextStyle;
+  }): void;
+  cancel(): void;
 }
 
 export interface WorldListActions {
@@ -166,6 +190,7 @@ export class GameUI {
   private chatFocusToken = 0;
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
+  private hologramEditor?: HTMLElement;
   private itemTooltip?: ItemTooltipHandle;
   private cursorStack: ItemStack | null = null;
   private craftSlots: Array<ItemStack | null> = [];
@@ -897,7 +922,11 @@ export class GameUI {
   }
 
   isBlockingOverlay(): boolean {
-    return this.modal !== undefined || this.chatOpen;
+    return this.modal !== undefined || this.chatOpen || this.hologramEditor !== undefined;
+  }
+
+  isHologramEditorOpen(): boolean {
+    return this.hologramEditor !== undefined;
   }
 
   setChatInputHistory(history: readonly string[]): void {
@@ -1020,6 +1049,120 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
+    this.closeHologramEditor();
+    let lines = hologram.lines.slice();
+    let font: HologramFont = hologram.font;
+    let size = hologram.size;
+    let style: HologramTextStyle = hologram.style;
+    this.hologramEditor = document.createElement('div');
+    this.hologramEditor.className = 'modal-backdrop hologram-editor-backdrop';
+    this.hologramEditor.innerHTML = `
+      <form class="menu-card hologram-editor" autocomplete="off">
+        <header class="menu-heading"><div><span class="eyebrow">Anarchy</span><h1>Редактор голограммы</h1></div></header>
+        <label class="hologram-editor-field"><span>Текст</span>
+          <textarea data-holo="text" rows="4" spellcheck="false">${this.escape(hologramTextFromLines(lines))}</textarea>
+        </label>
+        <div class="hologram-editor-field">
+          <span>Размер</span>
+          <div class="hologram-size-row">
+            <button type="button" class="game-button" data-holo="size-down" aria-label="Уменьшить">−</button>
+            <output data-holo="size-value">${size.toFixed(1)}</output>
+            <button type="button" class="game-button" data-holo="size-up" aria-label="Увеличить">+</button>
+            <input data-holo="size" type="range" min="${HOLOGRAM_SIZE_MIN}" max="${HOLOGRAM_SIZE_MAX}" step="${HOLOGRAM_SIZE_STEP}" value="${size}" />
+          </div>
+        </div>
+        <div class="hologram-editor-field">
+          <span>Стиль</span>
+          <div class="hologram-style-row">
+            <button type="button" class="game-button" data-holo-style="normal">Обычный</button>
+            <button type="button" class="game-button" data-holo-style="bold">Жирный</button>
+            <button type="button" class="game-button" data-holo-style="italic">Курсив</button>
+            <button type="button" class="game-button" data-holo-style="bold-italic">Жирный курсив</button>
+          </div>
+        </div>
+        <label class="hologram-editor-field"><span>Шрифт</span>
+          <select data-holo="font">
+            ${HOLOGRAM_FONTS.map((id) => `<option value="${id}"${id === font ? ' selected' : ''}>${HOLOGRAM_FONT_LABELS[id]}</option>`).join('')}
+          </select>
+        </label>
+        <div class="hologram-editor-field">
+          <span>Предпросмотр</span>
+          <div class="hologram-editor-preview" data-holo="preview"></div>
+        </div>
+        <footer class="menu-footer">
+          <button type="button" class="game-button ghost" data-holo="cancel">Отмена</button>
+          <button type="submit" class="game-button primary" data-holo="save">Сохранить</button>
+        </footer>
+      </form>`;
+    const root = this.hologramEditor;
+    const text = root.querySelector<HTMLTextAreaElement>('[data-holo="text"]')!;
+    const sizeInput = root.querySelector<HTMLInputElement>('[data-holo="size"]')!;
+    const sizeValue = root.querySelector<HTMLElement>('[data-holo="size-value"]')!;
+    const fontSelect = root.querySelector<HTMLSelectElement>('[data-holo="font"]')!;
+    const preview = root.querySelector<HTMLElement>('[data-holo="preview"]')!;
+    const refresh = (): void => {
+      sizeValue.textContent = size.toFixed(1);
+      sizeInput.value = String(size);
+      const flags = hologramStyleFlags(style);
+      preview.textContent = hologramTextFromLines(lines) || ' ';
+      preview.style.fontFamily = HOLOGRAM_FONT_CSS[font];
+      preview.style.fontWeight = flags.bold ? '700' : '400';
+      preview.style.fontStyle = flags.italic ? 'italic' : 'normal';
+      preview.style.fontSize = `${18 * size}px`;
+      for (const button of root.querySelectorAll<HTMLElement>('[data-holo-style]')) {
+        button.classList.toggle('primary', button.dataset.holoStyle === style);
+      }
+    };
+    const setSize = (value: number): void => {
+      size = Math.max(HOLOGRAM_SIZE_MIN, Math.min(HOLOGRAM_SIZE_MAX, Number(value.toFixed(1))));
+      refresh();
+    };
+    text.addEventListener('input', () => {
+      lines = linesFromHologramText(text.value);
+      refresh();
+    });
+    text.addEventListener('pointerdown', (event) => event.stopPropagation());
+    text.addEventListener('keydown', (event) => event.stopPropagation());
+    sizeInput.addEventListener('input', () => setSize(Number(sizeInput.value)));
+    root.querySelector('[data-holo="size-down"]')?.addEventListener('click', () => setSize(size - HOLOGRAM_SIZE_STEP));
+    root.querySelector('[data-holo="size-up"]')?.addEventListener('click', () => setSize(size + HOLOGRAM_SIZE_STEP));
+    fontSelect.addEventListener('change', () => {
+      font = fontSelect.value as HologramFont;
+      refresh();
+    });
+    for (const button of root.querySelectorAll<HTMLButtonElement>('[data-holo-style]')) {
+      button.addEventListener('click', () => {
+        style = (button.dataset.holoStyle as HologramTextStyle) ?? 'normal';
+        refresh();
+      });
+    }
+    root.querySelector('[data-holo="cancel"]')?.addEventListener('click', () => actions.cancel());
+    root.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      actions.cancel();
+    });
+    root.querySelector('form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      actions.save({ name: hologram.name, lines, font, size, style });
+    });
+    root.addEventListener('click', (event) => {
+      if (event.target === root) actions.cancel();
+    });
+    refresh();
+    this.root.append(root);
+    this.setControlsSuppressed(true);
+    window.setTimeout(() => text.focus(), 0);
+  }
+
+  closeHologramEditor(): void {
+    this.hologramEditor?.remove();
+    this.hologramEditor = undefined;
+    if (!this.modal && !this.chatOpen) this.setControlsSuppressed(false);
   }
 
   openContainerKind(): InventoryContext['kind'] | undefined {
