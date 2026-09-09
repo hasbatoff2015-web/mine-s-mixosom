@@ -91,3 +91,4 @@ Owner: start `npm run dev:server`, `/bal`, `/pay` to an offline name, mine natur
 - Branch: `cursor/economy-plugin-a8dc`
 - Commit: `e8b0249ba825d79ba99e08d09bc6343e352ecae0`
 - Base: current `main` (`4de8994`)
+- PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/81
