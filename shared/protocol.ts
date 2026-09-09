@@ -11,10 +11,12 @@ import {
   HOLOGRAM_MAX_NAME,
   parseHologramAppearanceLenient,
   parseHologramAppearanceStrict,
+  parseHologramEditorPatch,
   type HologramFont,
+  type HologramKind,
   type HologramTextStyle,
 } from './hologramStyle';
-export type { HologramFont, HologramTextStyle } from './hologramStyle';
+export type { HologramFont, HologramKind, HologramTextStyle } from './hologramStyle';
 export type { PlayerPresentationState } from './playerPresentation';
 export type { PlayerAppearance };
 
@@ -407,6 +409,12 @@ export interface ClientHologramUpdateMessage {
   readonly font: HologramFont;
   readonly size: number;
   readonly style: HologramTextStyle;
+  readonly kind?: HologramKind;
+  readonly timerDuration?: number;
+  readonly backgroundEnabled?: boolean;
+  readonly backgroundWidth?: number;
+  readonly backgroundHeight?: number;
+  readonly billboard?: boolean;
 }
 
 export interface ClientVehicleInputMessage {
@@ -456,6 +464,8 @@ export interface ServerWelcomeMessage {
   readonly maxPlayers: number;
   readonly serverName: string;
   readonly holograms?: readonly NetworkHologram[];
+  /** Server wall-clock ms for hologram timers; same clock as pong.serverNow. */
+  readonly serverNow?: number;
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -579,6 +589,8 @@ export interface ServerErrorMessage {
 export interface ServerPongMessage {
   readonly type: 'pong';
   readonly t: number;
+  /** Server wall-clock ms. Clients compute remaining hologram countdown from this offset. */
+  readonly serverNow?: number;
 }
 
 export interface ServerStatusMessage {
@@ -669,6 +681,14 @@ export interface NetworkHologram {
   readonly font: HologramFont;
   readonly size: number;
   readonly style: HologramTextStyle;
+  readonly kind: HologramKind;
+  readonly timerDuration: number;
+  readonly timerStartedAt: number;
+  readonly backgroundEnabled: boolean;
+  readonly backgroundWidth: number;
+  readonly backgroundHeight: number;
+  readonly billboard: boolean;
+  readonly yaw: number;
 }
 
 export interface ServerHologramsMessage {
@@ -823,6 +843,8 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
   if (!isRecord(raw) || typeof raw.name !== 'string' || raw.name.length === 0) return undefined;
   if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !finite(raw.range)) return undefined;
   const appearance = parseHologramAppearanceLenient(raw);
+  const timerStartedAt = finite(raw.timerStartedAt) ? raw.timerStartedAt : 0;
+  const yaw = finite(raw.yaw) ? raw.yaw : 0;
   return {
     name: raw.name.slice(0, HOLOGRAM_MAX_NAME),
     x: raw.x,
@@ -834,6 +856,14 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     font: appearance.font,
     size: appearance.size,
     style: appearance.style,
+    kind: appearance.kind,
+    timerDuration: appearance.timerDuration,
+    timerStartedAt,
+    backgroundEnabled: appearance.backgroundEnabled,
+    backgroundWidth: appearance.backgroundWidth,
+    backgroundHeight: appearance.backgroundHeight,
+    billboard: appearance.billboard,
+    yaw,
   };
 }
 
@@ -1221,6 +1251,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (!name) return { error: 'hologram_update.name invalid' };
       const appearance = parseHologramAppearanceStrict(raw);
       if (!appearance.ok) return { error: appearance.error };
+      const patch = parseHologramEditorPatch(raw);
+      if (!patch.ok) return { error: patch.error };
+      const extras = patch.value;
       return {
         type: 'hologram_update',
         name: name.toLowerCase(),
@@ -1228,6 +1261,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         font: appearance.value.font,
         size: appearance.value.size,
         style: appearance.value.style,
+        ...(extras.kind !== undefined ? { kind: extras.kind } : {}),
+        ...(extras.timerDuration !== undefined ? { timerDuration: extras.timerDuration } : {}),
+        ...(extras.backgroundEnabled !== undefined ? { backgroundEnabled: extras.backgroundEnabled } : {}),
+        ...(extras.backgroundWidth !== undefined ? { backgroundWidth: extras.backgroundWidth } : {}),
+        ...(extras.backgroundHeight !== undefined ? { backgroundHeight: extras.backgroundHeight } : {}),
+        ...(extras.billboard !== undefined ? { billboard: extras.billboard } : {}),
       };
     }
     case 'vehicle_input': {
@@ -1396,6 +1435,14 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       const hologram = parseNetworkHologram(raw.hologram);
       if (!hologram) return { error: 'hologram_editor invalid' };
       return { type: 'hologram_editor', hologram };
+    }
+    case 'pong': {
+      if (!finite(raw.t)) return { error: 'pong.t invalid' };
+      return {
+        type: 'pong',
+        t: raw.t,
+        ...(finite(raw.serverNow) ? { serverNow: raw.serverNow } : {}),
+      };
     }
     case 'claim_boundary': {
       if (typeof raw.claimId !== 'string' || raw.claimId.length === 0) {

@@ -589,6 +589,7 @@ export class Game {
   private onlineRespawnPending = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
+  private serverTimeOffsetMs = 0;
   private claimBoundaries?: ClaimBoundaryRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
@@ -975,8 +976,11 @@ export class Game {
       this.spawnRemotePlayer(session, info);
     }
     if (welcome.you.appearance) this.setPlayerAppearance(welcome.you.appearance);
+    if (typeof welcome.serverNow === 'number' && Number.isFinite(welcome.serverNow)) {
+      this.serverTimeOffsetMs = welcome.serverNow - Date.now();
+    }
     this.holograms?.dispose();
-    this.holograms = new HologramRenderer(this.scene, this.camera);
+    this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
     this.claimBoundaries?.dispose();
     this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
@@ -1237,6 +1241,10 @@ export class Game {
         this.claimBoundaries?.show(message);
         return;
       case 'pong':
+        if (typeof message.serverNow === 'number' && Number.isFinite(message.serverNow)) {
+          this.serverTimeOffsetMs = message.serverNow - Date.now();
+        }
+        return;
       case 'status':
         return;
       default:
@@ -2089,6 +2097,7 @@ export class Game {
     if (this.ui.isInventoryOpen()) this.ui.closeInventory(false);
     this.openGameplayModal();
     this.ui.openHologramEditor(hologram, {
+      nowMs: () => Date.now() + this.serverTimeOffsetMs,
       save: (update) => {
         session.online?.client.send({
           type: 'hologram_update',
@@ -2097,6 +2106,12 @@ export class Game {
           font: update.font,
           size: update.size,
           style: update.style,
+          kind: update.kind,
+          timerDuration: update.timerDuration,
+          backgroundEnabled: update.backgroundEnabled,
+          backgroundWidth: update.backgroundWidth,
+          backgroundHeight: update.backgroundHeight,
+          billboard: update.billboard,
         });
         this.closeHologramEditorAndResumeLook();
       },

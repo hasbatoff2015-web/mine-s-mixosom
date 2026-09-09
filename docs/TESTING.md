@@ -1,5 +1,21 @@
 # Тестирование
 
+## 2026-09-09 Hologram background, fixed orientation, timer
+
+Report: `reports/2026-09-09_hologram-bg-timer.md`.
+
+```text
+npx vitest run \
+  tests/hologram-style.test.ts \
+  tests/hologram-hit.test.ts \
+  tests/hologram-timer.test.ts \
+  tests/server/hologram-editor.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: legacy background on + billboard + kind=normal; background size independent of text size; disabled background omitted from AABB; fixed yaw persists; timer remaining shared for join-mid-cycle; no hologram packets per tick; `/hologram reset` broadcasts; reset of a normal hologram returns «Эта голограмма не является таймером.»; `hologram_update` still drops yaw/timerStartedAt.
+
 ## 2026-09-09 Hologram in-game editor
 
 Report: `reports/2026-09-09_hologram-editor.md`.

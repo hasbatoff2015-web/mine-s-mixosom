@@ -1,13 +1,16 @@
-import type { NetworkHologram } from '../../shared/protocol';
+import type { ClientHologramUpdateMessage, NetworkHologram } from '../../shared/protocol';
 import {
   HOLOGRAM_FONT_DEFAULT,
+  HOLOGRAM_KIND_DEFAULT,
   HOLOGRAM_MAX_NAME,
   HOLOGRAM_SIZE_DEFAULT,
   HOLOGRAM_STYLE_DEFAULT,
+  HOLOGRAM_TIMER_DURATION_DEFAULT,
+  clampHologramYaw,
   parseHologramAppearanceLenient,
   parseHologramLinesLenient,
-  type HologramAppearance,
   type HologramFont,
+  type HologramKind,
   type HologramTextStyle,
 } from '../../shared/hologramStyle';
 
@@ -23,6 +26,19 @@ export interface HologramRecord {
   font: HologramFont;
   size: number;
   style: HologramTextStyle;
+  kind: HologramKind;
+  timerDuration: number;
+  timerStartedAt: number;
+  backgroundEnabled: boolean;
+  backgroundWidth: number;
+  backgroundHeight: number;
+  billboard: boolean;
+  yaw: number;
+}
+
+export interface HologramEditorContext {
+  readonly playerYaw: number;
+  readonly nowMs: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,6 +54,12 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     font: raw.font,
     size: raw.size,
     style: raw.style,
+    kind: raw.kind,
+    timerDuration: raw.timerDuration,
+    backgroundEnabled: raw.backgroundEnabled,
+    backgroundWidth: raw.backgroundWidth,
+    backgroundHeight: raw.backgroundHeight,
+    billboard: raw.billboard,
   });
   const x = typeof raw.x === 'number' && Number.isFinite(raw.x) ? raw.x : 0;
   const y = typeof raw.y === 'number' && Number.isFinite(raw.y) ? raw.y : 0;
@@ -46,6 +68,10 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     ? Math.max(1, Math.min(128, raw.range))
     : 48;
   const worldId = typeof raw.worldId === 'string' && raw.worldId.length > 0 ? raw.worldId : fallbackWorldId;
+  const timerStartedAt = typeof raw.timerStartedAt === 'number' && Number.isFinite(raw.timerStartedAt)
+    ? raw.timerStartedAt
+    : 0;
+  const yaw = typeof raw.yaw === 'number' && Number.isFinite(raw.yaw) ? clampHologramYaw(raw.yaw) : 0;
   return {
     name,
     worldId,
@@ -58,6 +84,14 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     font: appearance.font,
     size: appearance.size,
     style: appearance.style,
+    kind: appearance.kind,
+    timerDuration: appearance.timerDuration,
+    timerStartedAt,
+    backgroundEnabled: appearance.backgroundEnabled,
+    backgroundWidth: appearance.backgroundWidth,
+    backgroundHeight: appearance.backgroundHeight,
+    billboard: appearance.billboard,
+    yaw,
   };
 }
 
@@ -70,18 +104,32 @@ export function createHologramRecord(input: {
   lines?: readonly string[];
   range?: number;
 }): HologramRecord {
+  const appearance = parseHologramAppearanceLenient({
+    lines: input.lines ?? [input.name],
+    font: HOLOGRAM_FONT_DEFAULT,
+    size: HOLOGRAM_SIZE_DEFAULT,
+    style: HOLOGRAM_STYLE_DEFAULT,
+  });
   return {
     name: input.name.trim().toLowerCase().slice(0, HOLOGRAM_MAX_NAME),
     worldId: input.worldId,
     x: input.x,
     y: input.y,
     z: input.z,
-    lines: parseHologramLinesLenient(input.lines ?? [input.name]),
+    lines: appearance.lines,
     range: Math.max(1, Math.min(128, input.range ?? 48)),
     enabled: true,
-    font: HOLOGRAM_FONT_DEFAULT,
-    size: HOLOGRAM_SIZE_DEFAULT,
-    style: HOLOGRAM_STYLE_DEFAULT,
+    font: appearance.font,
+    size: appearance.size,
+    style: appearance.style,
+    kind: HOLOGRAM_KIND_DEFAULT,
+    timerDuration: HOLOGRAM_TIMER_DURATION_DEFAULT,
+    timerStartedAt: 0,
+    backgroundEnabled: appearance.backgroundEnabled,
+    backgroundWidth: appearance.backgroundWidth,
+    backgroundHeight: appearance.backgroundHeight,
+    billboard: true,
+    yaw: 0,
   };
 }
 
@@ -98,7 +146,45 @@ export function toNetworkHologram(hologram: HologramRecord): NetworkHologram {
     font: appearance.font,
     size: appearance.size,
     style: appearance.style,
+    kind: appearance.kind,
+    timerDuration: appearance.timerDuration,
+    timerStartedAt: hologram.timerStartedAt,
+    backgroundEnabled: appearance.backgroundEnabled,
+    backgroundWidth: appearance.backgroundWidth,
+    backgroundHeight: appearance.backgroundHeight,
+    billboard: appearance.billboard,
+    yaw: hologram.yaw,
   };
+}
+
+function applyEditorUpdate(
+  hologram: HologramRecord,
+  message: ClientHologramUpdateMessage,
+  context: HologramEditorContext,
+): void {
+  hologram.lines = message.lines.slice();
+  hologram.font = message.font;
+  hologram.size = message.size;
+  hologram.style = message.style;
+  if (message.backgroundEnabled !== undefined) hologram.backgroundEnabled = message.backgroundEnabled;
+  if (message.backgroundWidth !== undefined) hologram.backgroundWidth = message.backgroundWidth;
+  if (message.backgroundHeight !== undefined) hologram.backgroundHeight = message.backgroundHeight;
+
+  const nextBillboard = message.billboard ?? hologram.billboard;
+  if (hologram.billboard && !nextBillboard) {
+    hologram.yaw = clampHologramYaw(context.playerYaw);
+  }
+  hologram.billboard = nextBillboard;
+
+  const nextKind = message.kind ?? hologram.kind;
+  const nextDuration = message.timerDuration ?? hologram.timerDuration;
+  const becomingTimer = nextKind === 'timer' && hologram.kind !== 'timer';
+  const durationChanged = nextKind === 'timer' && hologram.kind === 'timer' && nextDuration !== hologram.timerDuration;
+  hologram.kind = nextKind;
+  if (nextKind === 'timer') {
+    hologram.timerDuration = nextDuration;
+    if (becomingTimer || durationChanged) hologram.timerStartedAt = context.nowMs;
+  }
 }
 
 /** Server-owned hologram list. WorldInstance broadcasts; plugins do not send packets. */
@@ -135,16 +221,27 @@ export class HologramNetwork {
     this.emit();
   }
 
-  updateAppearance(name: string, appearance: HologramAppearance): HologramRecord | undefined {
+  updateAppearance(
+    name: string,
+    message: ClientHologramUpdateMessage,
+    context: HologramEditorContext,
+  ): HologramRecord | undefined {
     const hologram = this.get(name);
     if (!hologram) return undefined;
-    hologram.lines = appearance.lines.slice();
-    hologram.font = appearance.font;
-    hologram.size = appearance.size;
-    hologram.style = appearance.style;
+    applyEditorUpdate(hologram, message, context);
     this.emit();
     this.persist?.(this.records);
     return hologram;
+  }
+
+  resetTimer(name: string, nowMs = Date.now()): 'ok' | 'missing' | 'not-timer' {
+    const hologram = this.get(name);
+    if (!hologram) return 'missing';
+    if (hologram.kind !== 'timer') return 'not-timer';
+    hologram.timerStartedAt = nowMs;
+    this.emit();
+    this.persist?.(this.records);
+    return 'ok';
   }
 
   private emit(): void {

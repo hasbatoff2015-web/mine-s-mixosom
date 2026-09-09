@@ -2664,9 +2664,11 @@ button {
 }
 
 .hologram-editor {
-  width: min(420px, 94vw);
+  width: min(440px, 94vw);
+  max-height: min(92vh, 740px);
+  overflow: auto;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   padding: 18px 18px 16px;
 }
 
@@ -2678,7 +2680,8 @@ button {
 }
 
 .hologram-editor-field textarea,
-.hologram-editor-field select {
+.hologram-editor-field select,
+.hologram-editor-field input[type="number"] {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--ui-border);
@@ -2690,8 +2693,50 @@ button {
 }
 
 .hologram-editor-field textarea {
-  min-height: 92px;
+  min-height: 72px;
   resize: vertical;
+}
+
+.hologram-editor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-muted);
+  font: 600 13px/1.2 var(--font-ui);
+}
+
+.hologram-timer-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.hologram-bg-row {
+  display: grid;
+  gap: 8px;
+}
+
+.hologram-bg-row label {
+  display: grid;
+  gap: 4px;
+}
+
+.hologram-orient {
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.hologram-orient legend {
+  padding: 0 4px;
+}
+
+.hologram-orient label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
 }
 
 .hologram-size-row,
@@ -2711,7 +2756,8 @@ button {
   padding: 6px 8px;
 }
 
-.hologram-size-row output {
+.hologram-size-row output,
+.hologram-bg-row output {
   text-align: center;
   color: #fff9e7;
   font: 700 15px/1 var(--font-ui);
@@ -2721,14 +2767,31 @@ button {
   grid-template-columns: 1fr 1fr;
 }
 
-.hologram-editor-preview {
-  min-height: 48px;
-  padding: 10px 12px;
-  border: 1px solid var(--ui-border);
-  border-radius: 10px;
-  color: #fff7c2;
-  background: rgba(0, 0, 0, 0.42);
-  white-space: pre-wrap;
+.hologram-editor-preview-stage {
+  position: relative;
+  min-height: 56px;
+  display: grid;
+  place-items: center;
   overflow: hidden;
+}
+
+.hologram-editor-preview-bg {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.hologram-editor-preview-text {
+  position: relative;
+  z-index: 1;
+  padding: 8px 10px;
+  color: #fff7c2;
+  white-space: pre-wrap;
+  text-align: center;
+  background: transparent;
   font-synthesis: weight style;
+}
+
+.hologram-editor-preview-stage.is-fixed .hologram-editor-preview-text {
+  transform: none;
 }

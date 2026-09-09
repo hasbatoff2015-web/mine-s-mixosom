@@ -64,6 +64,11 @@ describe('hologram style serialization', () => {
       size: HOLOGRAM_SIZE_DEFAULT,
       style: HOLOGRAM_STYLE_DEFAULT,
       lines: ['Old'],
+      kind: 'normal',
+      backgroundEnabled: true,
+      billboard: true,
+      backgroundWidth: 2.6,
+      backgroundHeight: 0.77,
     });
     expect(HOLOGRAM_FONT_DEFAULT).toBe('sans');
     expect(HOLOGRAM_STYLE_DEFAULT).toBe('bold');
@@ -80,6 +85,9 @@ describe('hologram style serialization', () => {
       size: 1,
       style: 'bold',
       lines: ['Old'],
+      kind: 'normal',
+      backgroundEnabled: true,
+      billboard: true,
     });
     expect(parseHologramAppearanceLenient({})).toEqual({
       ...DEFAULT_HOLOGRAM_APPEARANCE,
@@ -156,6 +164,8 @@ describe('hologram style serialization', () => {
       x: 99,
       owner: 'nope',
       id: 'hack',
+      yaw: 1.2,
+      timerStartedAt: 999,
     });
     expect(parsed).toEqual({
       type: 'hologram_update',
@@ -165,7 +175,7 @@ describe('hologram style serialization', () => {
       size: 1.2,
       style: 'bold-italic',
     });
-    expect('x' in parsed || 'owner' in parsed || 'id' in parsed).toBe(false);
+    expect('x' in parsed || 'owner' in parsed || 'id' in parsed || 'yaw' in parsed || 'timerStartedAt' in parsed).toBe(false);
   });
 
   it('parses hologram_editor snapshots with missing style as defaults', () => {
@@ -185,5 +195,77 @@ describe('hologram style serialization', () => {
     expect(hologramCanvasFont('display', 'normal')).toContain('Press Start 2P');
     expect(hologramCanvasFont('sans', 'bold')).toBe('bold 36px sans-serif');
     expect(hologramStyleFlags('bold-italic')).toEqual({ bold: true, italic: true });
+  });
+
+  it('serializes background, orientation, and kind on the network payload', () => {
+    const parsed = parseClientMessage({
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Hi'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 60,
+      backgroundEnabled: false,
+      backgroundWidth: 4,
+      backgroundHeight: 1.5,
+      billboard: false,
+      timerStartedAt: 1,
+      yaw: 3,
+    });
+    expect(parsed).toEqual({
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Hi'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 60,
+      backgroundEnabled: false,
+      backgroundWidth: 4,
+      backgroundHeight: 1.5,
+      billboard: false,
+    });
+    expect(parseClientMessage({
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Hi'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+    })).toEqual({ error: 'hologram timerDuration invalid' });
+    expect(parseClientMessage({
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Hi'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'clock',
+    })).toEqual({ error: 'hologram kind invalid' });
+  });
+
+  it('keeps background size independent from text size', () => {
+    const sized = parseHologramAppearanceLenient({
+      lines: ['A'],
+      size: 2,
+      backgroundWidth: 2.6,
+      backgroundHeight: 0.77,
+    });
+    expect(sized.size).toBe(2);
+    expect(sized.backgroundWidth).toBe(2.6);
+    expect(sized.backgroundHeight).toBe(0.77);
+    const biggerBg = parseHologramAppearanceLenient({
+      lines: ['A'],
+      size: 0.5,
+      backgroundWidth: 5,
+      backgroundHeight: 2,
+    });
+    expect(biggerBg.size).toBe(0.5);
+    expect(biggerBg.backgroundWidth).toBe(5);
+    expect(biggerBg.backgroundHeight).toBe(2);
   });
 });

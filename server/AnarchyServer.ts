@@ -260,6 +260,7 @@ export class AnarchyServer {
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
       holograms: [...this.world.holograms.list()],
+      serverNow: Date.now(),
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;
@@ -405,7 +406,7 @@ export class AnarchyServer {
         this.world.setView(player, message.cx, message.cz, message.radius);
         return;
       case 'ping':
-        this.world.sendTo(player, { type: 'pong', t: message.t });
+        this.world.sendTo(player, { type: 'pong', t: message.t, serverNow: Date.now() });
         return;
       case 'inventory_action':
         this.world.applyInventoryAction(player, message);

@@ -1098,11 +1098,9 @@ export class WorldInstance {
       this.sendHologramPermissionDenied(player);
       return;
     }
-    this.holograms.updateAppearance(message.name, {
-      lines: [...message.lines],
-      font: message.font,
-      size: message.size,
-      style: message.style,
+    this.holograms.updateAppearance(message.name, message, {
+      playerYaw: player.controller.yaw,
+      nowMs: Date.now(),
     });
   }
 

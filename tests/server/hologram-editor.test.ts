@@ -210,6 +210,9 @@ describe('hologram in-game editor', () => {
       size: 1,
       style: 'bold',
       range: 40,
+      kind: 'normal',
+      backgroundEnabled: true,
+      billboard: true,
     });
   });
 
@@ -220,5 +223,162 @@ describe('hologram in-game editor', () => {
       .toEqual({ error: 'hologram_interact.name invalid' });
     expect(parseClientMessage({ type: 'hologram_update', name: 'spawn', lines: 3, font: 'ui', size: 1, style: 'bold' }))
       .toEqual({ error: 'hologram lines invalid' });
+  });
+
+  it('saves background, fixed yaw, and timer state and broadcasts once', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    const observer = join(world, 'Ada');
+    chat(world, op, '/holograms create spawn');
+    op.player.controller.yaw = 1.25;
+    observer.sink.payloads.length = 0;
+    const before = Date.now();
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['spawn'],
+      font: 'sans',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 60,
+      backgroundEnabled: false,
+      backgroundWidth: 4,
+      backgroundHeight: 1.25,
+      billboard: false,
+    });
+    const listed = world.holograms.list().find((entry) => entry.name === 'spawn');
+    expect(listed).toMatchObject({
+      kind: 'timer',
+      timerDuration: 60,
+      backgroundEnabled: false,
+      backgroundWidth: 4,
+      backgroundHeight: 1.25,
+      billboard: false,
+    });
+    expect(listed?.yaw).toBeCloseTo(1.25, 5);
+    expect(listed?.timerStartedAt).toBeGreaterThanOrEqual(before);
+    const broadcasts = hologramPackets(observer.sink).filter((payload) => payload.type === 'holograms');
+    expect(broadcasts).toHaveLength(1);
+    expect(broadcasts[0]?.holograms?.[0]).toMatchObject({
+      kind: 'timer',
+      timerDuration: 60,
+      billboard: false,
+      backgroundEnabled: false,
+    });
+    observer.sink.payloads.length = 0;
+    for (let tick = 0; tick < 40; tick += 1) world.tick();
+    expect(hologramPackets(observer.sink)).toHaveLength(0);
+  });
+
+  it('resets a timer for every player and rejects reset on a normal hologram', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    const observer = join(world, 'Ada');
+    chat(world, op, '/holograms create eventtimer');
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: 'eventtimer',
+      lines: ['eventtimer'],
+      font: 'sans',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 600,
+    });
+    const started = world.holograms.list().find((entry) => entry.name === 'eventtimer')?.timerStartedAt ?? 0;
+    observer.sink.payloads.length = 0;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const resetLines = chat(world, op, '/hologram reset eventtimer');
+    expect(resetLines.some((line) => line.includes("Reset timer 'eventtimer'"))).toBe(true);
+    const after = world.holograms.list().find((entry) => entry.name === 'eventtimer');
+    expect(after?.timerStartedAt).toBeGreaterThan(started);
+    expect(hologramPackets(observer.sink).some((payload) => (
+      payload.type === 'holograms'
+      && payload.holograms?.some((entry) => entry.name === 'eventtimer' && (entry as { timerStartedAt?: number }).timerStartedAt === after?.timerStartedAt)
+    ))).toBe(true);
+    chat(world, op, '/holograms create sign');
+    expect(chat(world, op, '/hologram reset sign').some((line) => line.includes('Эта голограмма не является таймером.'))).toBe(true);
+    expect(chat(world, op, '/hologram reset missing').some((line) => line.includes("Hologram 'missing' not found."))).toBe(true);
+    expect(chat(world, observer, '/hologram reset eventtimer').some((line) => line.includes('You do not have permission.'))).toBe(true);
+  });
+
+  it('starts a fresh timer cycle when switching normal → timer → normal → timer', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    chat(world, op, '/holograms create spawn');
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Keep me'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 10,
+    });
+    const first = world.holograms.list()[0]?.timerStartedAt ?? 0;
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Keep me'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'normal',
+      timerDuration: 10,
+    });
+    expect(world.holograms.list()[0]).toMatchObject({ kind: 'normal', lines: ['Keep me'] });
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['Keep me'],
+      font: 'ui',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 10,
+    });
+    const second = world.holograms.list()[0]?.timerStartedAt ?? 0;
+    expect(world.holograms.list()[0]?.kind).toBe('timer');
+    expect(second).toBeGreaterThanOrEqual(first);
+  });
+
+  it('persists timer and fixed orientation across reconnect', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    chat(world, op, '/holograms create spawn');
+    op.player.controller.yaw = 0.5;
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: 'spawn',
+      lines: ['spawn'],
+      font: 'sans',
+      size: 1,
+      style: 'bold',
+      kind: 'timer',
+      timerDuration: 120,
+      backgroundEnabled: true,
+      backgroundWidth: 3,
+      backgroundHeight: 1,
+      billboard: false,
+    });
+    const original = world.holograms.list()[0]!;
+    const dir = world.config.dataDir;
+    await world.save();
+    await world.stop();
+    worlds.splice(worlds.indexOf(world), 1);
+    const again = await boot(dir);
+    const restored = again.holograms.list()[0];
+    expect(restored).toMatchObject({
+      kind: 'timer',
+      timerDuration: 120,
+      timerStartedAt: original.timerStartedAt,
+      backgroundWidth: 3,
+      backgroundHeight: 1,
+      billboard: false,
+    });
+    expect(restored?.yaw).toBeCloseTo(0.5, 5);
+    expect(again.holograms.list()[0]?.timerStartedAt).toBe(original.timerStartedAt);
   });
 });

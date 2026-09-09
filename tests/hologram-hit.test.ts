@@ -33,11 +33,22 @@ describe('hologram RMB interaction', () => {
     )).toEqual({ kind: 'world' });
   });
 
-  it('checks the hologram ray before bow or block use on the Online RMB path', () => {
-    const from = gameSource.indexOf('private sendOnlineUse');
-    const to = gameSource.indexOf('private sendOnlineBowRelease');
-    const body = gameSource.slice(from, to);
-    expect(body.indexOf('tryInteractHologram')).toBeGreaterThan(0);
-    expect(body.indexOf('tryInteractHologram')).toBeLessThan(body.indexOf('ItemId.Bow'));
+  it('uses the background plane for RMB when it is larger than the text', () => {
+    const wide = {
+      name: 'banner',
+      x: 8,
+      y: 70,
+      z: 8,
+      lines: ['Hi'],
+      size: 0.5,
+      enabled: true,
+      backgroundEnabled: true,
+      backgroundWidth: 4,
+      backgroundHeight: 0.5,
+    };
+    const origin = { x: 9.5, y: 70, z: 5 };
+    const direction = { x: 0, y: 0, z: 1 };
+    expect(pickHologramRayHit([wide], origin, direction, 5)?.name).toBe('banner');
+    expect(pickHologramRayHit([{ ...wide, backgroundEnabled: false }], origin, direction, 5)).toBeUndefined();
   });
 });

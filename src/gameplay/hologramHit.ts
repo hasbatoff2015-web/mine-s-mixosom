@@ -1,9 +1,5 @@
 import { rayAabbDistance, type CollisionBox } from '../world/collision';
-import {
-  HOLOGRAM_SPRITE_DEPTH,
-  hologramSpriteHeight,
-  hologramSpriteWidth,
-} from '../../shared/hologramStyle';
+import { hologramWorldSize, type HologramKind } from '../../shared/hologramStyle';
 
 export interface HologramHitTarget {
   readonly name: string;
@@ -13,6 +9,10 @@ export interface HologramHitTarget {
   readonly lines: readonly string[];
   readonly size?: number;
   readonly enabled?: boolean;
+  readonly kind?: HologramKind;
+  readonly backgroundEnabled?: boolean;
+  readonly backgroundWidth?: number;
+  readonly backgroundHeight?: number;
 }
 
 export interface HologramRayHit {
@@ -21,11 +21,10 @@ export interface HologramRayHit {
 }
 
 export function hologramAabb(hologram: HologramHitTarget): CollisionBox {
-  const size = hologram.size ?? 1;
-  const lineCount = Math.max(1, hologram.lines.length);
-  const halfW = hologramSpriteWidth(size) * 0.5;
-  const halfH = hologramSpriteHeight(lineCount, size) * 0.5;
-  const halfD = Math.max(HOLOGRAM_SPRITE_DEPTH * 0.5, 0.65 * size);
+  const extents = hologramWorldSize(hologram);
+  const halfW = extents.width * 0.5;
+  const halfH = extents.height * 0.5;
+  const halfD = Math.max(extents.depth * 0.5, 0.65 * (hologram.size ?? 1));
   return {
     minX: hologram.x - halfW,
     maxX: hologram.x + halfW,

@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-09: Hologram background, fixed orientation, timer
+
+- [x] Background on/off as a separate renderer layer; independent width/height.
+- [x] Fully fixed holograms (no camera-facing); persist world yaw.
+- [x] Timer hologram type with server `timerStartedAt` and client countdown.
+- [x] `/hologram reset <name>` on the existing `/holograms` command (alias `hologram`).
+- [ ] Owner live Anarchy QA: bg off, large/small bg, walk around fixed, two clients on one timer, reset, RMB vs chest/door.
+
 ## 2026-09-09: Hologram in-game editor
 
 - [x] RMB on an existing Anarchy hologram opens the GameUI editor for that hologram.
@@ -304,8 +312,8 @@
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
-- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
-- [x] In-game hologram editor (RMB, text/size/style/font) on the existing plugin/renderer.
+- [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
+- [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
