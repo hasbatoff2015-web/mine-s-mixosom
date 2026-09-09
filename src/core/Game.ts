@@ -30,6 +30,8 @@ import {
   resetMiningSound,
   shouldPlayExplosion,
   consumableSoundEvent,
+  resolveCatalogEvent,
+  worldSoundPlayOptions,
   type BlockSoundAction,
   type PlaySoundOptions,
   type SoundEventId,
@@ -319,6 +321,7 @@ import {
   clearDoorBlocks,
   daylightFactor,
   dropScatterVelocity,
+  dropScatterOrigin,
   formatGameplayKernelTrace,
   performUseHeld,
   movementDuringItemUse,
@@ -582,6 +585,7 @@ export class Game {
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
+  private onlineRespawnPending = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
   private claimBoundaries?: ClaimBoundaryRenderer;
@@ -1096,6 +1100,15 @@ export class Game {
       case 'entity_event':
         applyNetworkEntityEvents(session, message.events);
         return;
+      case 'world_sound':
+        for (const sound of message.sounds) {
+          if (!resolveCatalogEvent(sound.event as SoundEventId)) continue;
+          this.playWorld(sound.event as SoundEventId, sound.x, sound.y, sound.z, worldSoundPlayOptions({
+            ...(sound.pitch !== undefined ? { pitch: sound.pitch } : {}),
+            ...(sound.volume !== undefined ? { volume: sound.volume } : {}),
+          }));
+        }
+        return;
       case 'health': {
         const previous = {
           health: session.survival.health,
@@ -1109,6 +1122,8 @@ export class Game {
           airTicks: message.air,
           dead: message.dead,
         });
+        session.survival.syncNetworkFire(message.fire);
+        if (message.dead) this.handleDeath(session.survival.lastDamage?.source);
         if (shouldRestoreGameplayAfterRespawn(previous, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -1632,6 +1647,8 @@ export class Game {
           hunger: local.hunger,
           dead: snapshotDead,
         });
+        if (local.onFire !== undefined) session.survival.syncNetworkFire(local.onFire);
+        if (snapshotDead) this.handleDeath(session.survival.lastDamage?.source);
         if (!flags.skipRespawn && shouldRestoreGameplayAfterRespawn(previousLife, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -2615,6 +2632,7 @@ export class Game {
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
+    this.onlineRespawnPending = false;
     this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
   }
@@ -3741,7 +3759,15 @@ export class Game {
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
+    const prevX = session.player.position.x;
+    const prevZ = session.player.position.z;
     predictLocalMove(session.player, session.world, online.prediction, predicted);
+    if (gameplayAllowed) {
+      this.updateFootsteps(session, Math.hypot(
+        session.player.position.x - prevX,
+        session.player.position.z - prevZ,
+      ));
+    }
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
@@ -3790,6 +3816,12 @@ export class Game {
         online.localFoodUse = undefined;
       } else {
         session.foodUseTicks = Math.min(32, session.foodUseTicks + 1);
+        const eatOrDrink = consumableSoundEvent(item);
+        if (session.foodUseTicks >= 32) {
+          this.playLocal(eatOrDrink);
+        } else if (session.foodUseTicks % 8 === 0) {
+          this.playLocal(eatOrDrink, { volume: 0.55 });
+        }
       }
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
@@ -4609,7 +4641,11 @@ export class Game {
   private spawnDroppedStack(stack: ItemStack, position?: Vec3Like): void {
     const session = this.session;
     if (!session || session.online) return;
-    session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
+    const origin = position ?? (() => {
+      const scattered = dropScatterOrigin(session.player.position, this.simRandom);
+      return new THREE.Vector3(scattered[0], scattered[1], scattered[2]);
+    })();
+    session.drops.spawn(stack, origin, {
       velocity: new THREE.Vector3(...dropScatterVelocity(this.simRandom)),
     });
   }
@@ -4871,6 +4907,7 @@ export class Game {
     if (!session?.online) return;
     this.lifecycle.beginOnlineRespawnRestore();
     this.deathShown = false;
+    this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
     session.ridingCartId = undefined;
     session.miningProgress = 0;
@@ -4905,13 +4942,19 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
-    if (session.online) return;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
+    if (session.online) {
+      this.ui.showDeath(
+        () => this.requestOnlineRespawn(),
+        () => void this.saveAndQuit(),
+      );
+      return;
+    }
     if (session.summary.mode === 'survival') {
       for (const stack of session.inventory.slots) if (stack) this.spawnDroppedStack(stack);
       for (const stack of Object.values(session.inventory.armor)) if (stack) this.spawnDroppedStack(stack);
@@ -4928,6 +4971,13 @@ export class Game {
       },
       () => void this.saveAndQuit(),
     );
+  }
+
+  private requestOnlineRespawn(): void {
+    const session = this.session;
+    if (!session?.online || this.onlineRespawnPending) return;
+    this.onlineRespawnPending = true;
+    session.online.client.send({ type: 'respawn' });
   }
 
   private render(alpha: number): void {

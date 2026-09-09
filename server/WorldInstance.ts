@@ -32,6 +32,10 @@ import {
   formatPoseDump,
 } from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
+import {
+  listenerHearsWorldSound,
+  worldSoundMaxDistance,
+} from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
@@ -164,6 +168,7 @@ export class ServerPlayer implements GameplayPlayer {
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  deathLootDropped = false;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
@@ -319,6 +324,7 @@ export class ServerPlayer implements GameplayPlayer {
       equipment: snap.equipment,
       appearance: toNetworkAppearance(this.appearance),
       health: snap.health,
+      ...(snap.dead ? { dead: true } : {}),
     };
   }
 
@@ -1345,6 +1351,20 @@ export class WorldInstance {
     if (entityEvents.length > 0) {
       this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
     }
+    const worldSounds = this.gameplay.consumeWorldSounds();
+    if (worldSounds.length > 0) {
+      for (const player of this.connectedPlayers()) {
+        const listener = player.controller.position;
+        const hearable = worldSounds.filter((sound) => listenerHearsWorldSound(
+          listener,
+          sound,
+          worldSoundMaxDistance(sound.event),
+        ));
+        if (hearable.length > 0) {
+          this.sendTo(player, { type: 'world_sound', sounds: hearable });
+        }
+      }
+    }
     if (this.tickNumber % 20 === 0) {
       this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
     }
@@ -1469,6 +1489,26 @@ export class WorldInstance {
         player.controller.pitch = command.pitch;
         player.vehicleForward = command.vehicleForward
           ?? (player.ridingCartId ? command.forward : 0);
+      }
+      if (player.survival.dead) {
+        player.controller.velocity.set(0, 0, 0);
+        this.flushHealthIfDeadThenRespawn(player);
+        const position = player.controller.position;
+        player.appliedStepsThisLoop.push({
+          serverTick: this.tickNumber,
+          commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+          x: position.x,
+          y: position.y,
+          z: position.z,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          onGround: player.controller.onGround,
+          flying: player.controller.isFlying,
+          sneaking: player.controller.sneaking,
+          sprinting: false,
+        });
+        continue;
       }
       const input = player.lastInput;
       const jump = input.jump;
@@ -1657,6 +1697,10 @@ export class WorldInstance {
 
   private flushHealthIfDeadThenRespawn(player: ServerPlayer): void {
     this.gameplay.respawnIfDead(player);
+  }
+
+  respawn(player: ServerPlayer): boolean {
+    return this.gameplay.respawnPlayer(player);
   }
 
   private flushHealth(player: ServerPlayer): void {

@@ -1,5 +1,35 @@
 # Тестирование
 
+## 2026-09-09 Death scatter 3× + spatial world_sound
+
+Report: `reports/2026-09-09_death-scatter-world-sound.md`.
+
+```text
+npx vitest run \
+  tests/random-source.test.ts \
+  tests/world-sound-events.test.ts \
+  tests/server/world-sound-events.test.ts \
+  tests/server/online-gameplay-polish.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: death origin ±0.75 / horizontal velocity ±2.1 / `vy=2.2`; movement/jump/charge do not emit `bow.shoot`; one successful release emits once; distant clients do not receive `bow.shoot` or `item.pickup`; spawn/teleport/despawn do not emit pickup; confirmed collect emits once.
+
+## 2026-09-08 Online/Anarchy gameplay polish
+
+Report: `reports/2026-09-08_online-gameplay-polish.md`.
+
+```text
+npx vitest run \
+  tests/online-gameplay-polish.test.ts \
+  tests/server/online-gameplay-polish.test.ts \
+  tests/random-source.test.ts \
+  tests/server/anarchy-gameplay.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: `syncNetworkFire` drives `isOnFire`; death loot scatters with unique xz and non-zero horizontal velocity inside ~1.2 blocks, no second drop on a second `respawnIfDead`; explicit `respawn` revives and a second request is rejected; `{ type: 'respawn' }` and `{ type: 'world_sound' }` parse; explosion emit is catalog id only; recipe with zero ingredients ghosts missing cells and server result-click does not grant sticks; recipe with planks still crafts. `test:sim` includes `dropScatterOrigin`.
+
 ## 2026-09-08 Player skin selector, appearance sync, nameplates
 
 Report: `reports/2026-09-08_player-skin-selector-sync.md`.

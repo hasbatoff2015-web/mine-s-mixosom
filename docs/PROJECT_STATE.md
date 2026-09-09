@@ -1,6 +1,23 @@
 # Состояние проекта
 
-## Последний проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
+## Последний проход: death scatter 3× + world_sound spatial — 2026-09-09
+
+- Death drops: `DEATH_DROP_SCATTER_MULTIPLIER = 3` на origin X/Z (±0.75) и горизонтальный velocity (±2.1). `vy` остаётся 2.2. `scatterDeathDrop` / `deathLootDropped` без изменений.
+- `world_sound` больше не `broadcast` всем как local one-shot. Каталог `bow.shoot` / `item.pickup` (`positional: false`) был для SP `playLocal`; рассылка всем давала выстрел/подбор на всю карту. Теперь: клиент всегда `positional: true`; сервер шлёт только слушателям в `maxDistance`.
+- Handoff: `docs/reports/2026-09-09_death-scatter-world-sound.md`.
+
+## Последний проход: Online/Anarchy gameplay polish — 2026-09-08
+
+- Шесть точечных переносов SP → Anarchy без вторых систем: fire overlay, death scatter, player death pose, death screen + `respawn`, `world_sound`, recipe-book ghosts.
+- Fire: клиент применяет уже существующие `health.fire` / `snapshot.onFire` через `SurvivalSystem.syncNetworkFire`. Тот же `FirstPersonRenderer` overlay (`fire.png`, opacity 0.76).
+- Death: сервер больше не респавнит в том же тике. Loot один раз (`deathLootDropped`), scatter origin ~±0.25 xz + velocity `[(r-0.5)*1.4, 2.2, (r-0.5)*1.4]`. Клиент `{ type: 'respawn' }`; повторный запрос rejected. UI — существующий `GameUI.showDeath` («Вы умерли» / «Возродиться»).
+- Death pose: общие числа зомби (`0.7s`, tilt π/2, scale 1→0.75) на каноническом `PlayerVisual` через `RemotePlayerView` dead-edge clock.
+- Sounds: `world_sound` батч каталожных event id. Explosion / bow / combat / arrow / pickup / flint / door / click / splash с сервера; footsteps + eat/drink локально в `tickOnline`. С 2026-09-09 пакет пространственный и не `broadcast` на всю карту.
+- Recipe book: selection ≠ craft. Ghost/missing red на клиенте; сервер по-прежнему отвергает craft без ингредиентов.
+- Skin selector / nameplates PR #74 не трогались.
+- Handoff: `docs/reports/2026-09-08_online-gameplay-polish.md`.
+
+## Предыдущий проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
 
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.
 - Поставленный TNT (`primeTnt`): после поджига падает вниз от Y прайма. Ordinary max 20; powerful и destructive max 30. Пол раньше лимита → взрыв на столкновении; иначе воздух на лимите. Fuse 4s — safety.

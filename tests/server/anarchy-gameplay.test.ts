@@ -421,10 +421,12 @@ describe('Anarchy server gameplay authority', () => {
     player.inventory.clear();
     player.inventory.addItem('diamond', 4);
     world.handleChat(player, '/kill');
-    expect(player.survival.dead).toBe(false);
-    expect(player.survival.health).toBe(20);
+    expect(player.survival.dead).toBe(true);
     expect(player.inventory.has('diamond', 1)).toBe(false);
     expect(world.gameplay.drops.count).toBeGreaterThan(0);
+    expect(world.respawn(player)).toBe(true);
+    expect(player.survival.dead).toBe(false);
+    expect(player.survival.health).toBe(20);
   });
 
   it('consumes golden apple effects on the server', async () => {
@@ -603,6 +605,8 @@ describe('Anarchy server gameplay authority', () => {
     expect(player.controller.position.distanceTo(beforeKill)).toBeGreaterThan(0.01);
 
     world.handleChat(player, '/kill');
+    expect(player.survival.dead).toBe(true);
+    expect(world.respawn(player)).toBe(true);
     expect(player.survival.dead).toBe(false);
     expect(player.survival.health).toBe(20);
     const health = joined.sink.payloads.filter((payload) => (
@@ -629,6 +633,8 @@ describe('Anarchy server gameplay authority', () => {
     if ('error' in a || 'error' in b) throw new Error('join failed');
     world.handleChat(a.player, '/kill');
     world.handleChat(b.player, '/kill');
+    expect(world.respawn(a.player)).toBe(true);
+    expect(world.respawn(b.player)).toBe(true);
     const a0 = a.player.controller.position.clone();
     const b0 = b.player.controller.position.clone();
     world.applyInput(a.player, walkInput(1, 0.2));
@@ -892,13 +898,14 @@ describe('Anarchy server gameplay authority', () => {
 
   function tickUntilCanonicalRespawn(
     world: WorldInstance,
-    player: { survival: { dead: boolean; health: number } },
+    player: ServerPlayer,
     sink: MemorySink,
     fromIndex: number,
     maxTicks = 280,
   ): void {
     for (let tick = 0; tick < maxTicks; tick += 1) {
       world.tick();
+      if (player.survival.dead) world.respawn(player);
       const health = healthPackets(sink).slice(fromIndex);
       if (
         health.some((entry) => entry.dead === true)
@@ -1017,6 +1024,8 @@ describe('Anarchy server gameplay authority', () => {
     for (let i = 0; i < 3; i += 1) {
       const from = healthPackets(joined.sink).length;
       world.handleChat(player, '/kill');
+      expect(player.survival.dead).toBe(true);
+      expect(world.respawn(player)).toBe(true);
       expectCanonicalDeadThenAlive(joined.sink, from);
       expectWalks(world, player, seq += 1);
     }
@@ -1029,10 +1038,14 @@ describe('Anarchy server gameplay authority', () => {
     if ('error' in a || 'error' in b) throw new Error('join failed');
     const fromA = healthPackets(a.sink).length;
     world.handleChat(a.player, '/kill');
+    expect(a.player.survival.dead).toBe(true);
+    expect(world.respawn(a.player)).toBe(true);
     expectCanonicalDeadThenAlive(a.sink, fromA);
     expectWalks(world, a.player, 31);
     const fromB = healthPackets(b.sink).length;
     world.handleChat(b.player, '/kill');
+    expect(b.player.survival.dead).toBe(true);
+    expect(world.respawn(b.player)).toBe(true);
     expectCanonicalDeadThenAlive(b.sink, fromB);
     expectWalks(world, b.player, 32);
     expect(a.player.survival.dead).toBe(false);
@@ -1046,6 +1059,8 @@ describe('Anarchy server gameplay authority', () => {
     const player = joined.player;
     world.setGameMode(player, 'survival');
     world.handleChat(player, '/kill');
+    expect(player.survival.dead).toBe(true);
+    expect(world.respawn(player)).toBe(true);
     expect(player.survival.dead).toBe(false);
     expectWalks(world, player, 50);
     world.disconnect(player.id);
