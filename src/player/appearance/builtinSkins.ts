@@ -2,17 +2,21 @@ import type { PlayerModelVariant } from './PlayerAppearance';
 
 export const QA_PLAYER_SKIN_ID = 'player_uv_test';
 
+export type PlayerSkinOuterAlpha = 'binary' | 'translucent';
+
 export interface MinecraftSkinDescriptor {
   readonly id: string;
   readonly texturePath: string;
   readonly defaultModel: PlayerModelVariant;
+  /** Omitted for the normal opaque-cutout outer layer. */
+  readonly outerLayerAlpha?: PlayerSkinOuterAlpha;
 }
 
 /** Built-in 64×64 skins including the DEV UV QA sheet. Data-only; no textures or Three.js. */
 export const BUILTIN_MINECRAFT_SKINS: readonly MinecraftSkinDescriptor[] = Object.freeze([
-  { id: '00f6338deb336a6e', texturePath: 'player/skins/00f6338deb336a6e', defaultModel: 'slim' },
+  { id: '00f6338deb336a6e', texturePath: 'player/skins/00f6338deb336a6e', defaultModel: 'slim', outerLayerAlpha: 'translucent' },
   { id: '0edde60fa266fac7', texturePath: 'player/skins/0edde60fa266fac7', defaultModel: 'slim' },
-  { id: '0f15ad5e5c148f40', texturePath: 'player/skins/0f15ad5e5c148f40', defaultModel: 'slim' },
+  { id: '0f15ad5e5c148f40', texturePath: 'player/skins/0f15ad5e5c148f40', defaultModel: 'slim', outerLayerAlpha: 'translucent' },
   { id: '134f7844391b9382', texturePath: 'player/skins/134f7844391b9382', defaultModel: 'slim' },
   { id: '1ea0cee32dd870ba', texturePath: 'player/skins/1ea0cee32dd870ba', defaultModel: 'slim' },
   { id: '24f3321d8a6ec3cf', texturePath: 'player/skins/24f3321d8a6ec3cf', defaultModel: 'slim' },
@@ -24,10 +28,10 @@ export const BUILTIN_MINECRAFT_SKINS: readonly MinecraftSkinDescriptor[] = Objec
   { id: '37e10d3fc9798c98', texturePath: 'player/skins/37e10d3fc9798c98', defaultModel: 'classic' },
   { id: '48458b73d1075c60', texturePath: 'player/skins/48458b73d1075c60', defaultModel: 'classic' },
   { id: '4c7afbcaeb250f76', texturePath: 'player/skins/4c7afbcaeb250f76', defaultModel: 'slim' },
-  { id: '55264c2ebdb9ed9d', texturePath: 'player/skins/55264c2ebdb9ed9d', defaultModel: 'slim' },
+  { id: '55264c2ebdb9ed9d', texturePath: 'player/skins/55264c2ebdb9ed9d', defaultModel: 'slim', outerLayerAlpha: 'translucent' },
   { id: '554ec16161f085c0', texturePath: 'player/skins/554ec16161f085c0', defaultModel: 'slim' },
   { id: '5620ef1df645276e', texturePath: 'player/skins/5620ef1df645276e', defaultModel: 'classic' },
-  { id: '5bc8ad7edfb7ee86', texturePath: 'player/skins/5bc8ad7edfb7ee86', defaultModel: 'slim' },
+  { id: '5bc8ad7edfb7ee86', texturePath: 'player/skins/5bc8ad7edfb7ee86', defaultModel: 'slim', outerLayerAlpha: 'translucent' },
   { id: '6119ea42953f535e', texturePath: 'player/skins/6119ea42953f535e', defaultModel: 'slim' },
   { id: '7c6103b44dc95a65', texturePath: 'player/skins/7c6103b44dc95a65', defaultModel: 'classic' },
   { id: '7d729ce6664b4fdc', texturePath: 'player/skins/7d729ce6664b4fdc', defaultModel: 'slim' },
@@ -77,4 +81,8 @@ export function isProductionSkinId(skinId: string): boolean {
 
 export function skinDescriptor(skinId: string): MinecraftSkinDescriptor | undefined {
   return SKINS_BY_ID.get(skinId);
+}
+
+export function skinHasTranslucentOuterLayer(skinId: string): boolean {
+  return SKINS_BY_ID.get(skinId)?.outerLayerAlpha === 'translucent';
 }

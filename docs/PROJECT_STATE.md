@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: deterministic player skin layer depth — 2026-09-09
+
+- Root cause camera-dependent skin flicker: `PlayerVisual` использовал один `transparent=true` material для base и outer, поэтому даже обычная base skin попадала в blended queue; порядок шести пересекающихся частей задавался только как base `0` / outer `1` и зависел от camera-distance sorting.
+- Skin base теперь всегда opaque cutout (`alphaTest=0.01`, `transparent=false`, depth test/write). Outer использует ту же ref-counted texture, но отдельные entity-owned materials: binary skins остаются opaque cutout, а `00f6338deb336a6e`, `0f15ad5e5c148f40`, `55264c2ebdb9ed9d`, `5bc8ad7edfb7ee86` сохраняют реальную outer translucency с depth write.
+- Детерминированный порядок: skin base `0/1/2`, outer `10/11/12`, armor base `20/21/22`, leather overlay `30/31/32`; outer sibling depth bias `0`, `-1/-1`, `-2/-2`. Skin geometry, UV, inflate, pivots и animation rig не менялись.
+- Все 45 production PNG проверяет `npm run assets:validate-player-skins`. 38 полностью binary; ещё три имеют intermediate alpha только в unused atlas pixels. Metadata/PNG mismatch завершает script и test ошибкой.
+- `PlayerArmorVisual` production-код не менялся: leather/chainmail/gold/iron/diamond/ruby/titanium остаются opaque cutout с прежними order/offset. First-person остаётся отдельным skin-material path без armor; invisibility сохраняет armor и held item.
+- Focused player/skin/armor/appearance/preview/network gate: **49/49 PASS**. Все четыре typecheck, alpha scanner, import boundaries и production build PASS; manual WebGL matrix и main-menu/selector preview прошли с пустой warn/error console. Full suite: **1903/1933 tests, 188/201 files PASS**; 30 независимых CPU-budget/timeouts и старый extractor parse failure вне изменённых путей.
+- Handoff: `docs/reports/2026-09-09_player-skin-layer-zfighting.md`.
+
 ## Последний проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
 
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.

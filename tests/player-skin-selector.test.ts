@@ -20,6 +20,7 @@ import {
 } from '../src/net/playerAppearance';
 import gameSource from '../src/core/Game.ts?raw';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
+import previewSource from '../src/rendering/player/PlayerAppearancePreview.ts?raw';
 
 function memoryStorage(initial: Record<string, string> = {}): AppearanceStorage & { data: Record<string, string> } {
   const data = { ...initial };
@@ -121,5 +122,7 @@ describe('player skin selector', () => {
     expect(gameSource).toContain('this.setPlayerAppearance(next)');
     expect(gameSource).toContain('new PlayerAppearancePreview');
     expect(gameSource).toContain('new PlayerVisual(');
+    expect(previewSource).toContain('this.visual = new PlayerVisual(');
+    expect(previewSource).toContain('this.visual.setAppearance(');
   });
 });

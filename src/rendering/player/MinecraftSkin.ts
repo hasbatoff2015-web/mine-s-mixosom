@@ -9,7 +9,9 @@ export {
   BUILTIN_MINECRAFT_SKINS,
   PRODUCTION_PLAYER_SKINS,
   QA_PLAYER_SKIN_ID,
+  skinHasTranslucentOuterLayer,
   type MinecraftSkinDescriptor,
+  type PlayerSkinOuterAlpha,
 } from '../../player/appearance/builtinSkins';
 
 export const MINECRAFT_SKIN_WIDTH = 64;

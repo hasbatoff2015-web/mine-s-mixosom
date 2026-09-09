@@ -1,5 +1,27 @@
 # Тестирование
 
+## 2026-09-09 Player skin layer depth stability
+
+Report: `reports/2026-09-09_player-skin-layer-zfighting.md`.
+
+```text
+npm run assets:validate-player-skins
+npm test -- tests/player-skins.test.ts tests/player-skin-assets.test.mjs tests/player-armor-visual.test.ts tests/player-skin-selector.test.ts tests/player-visual-animation.test.ts tests/player-armor-network.test.ts tests/player-nameplate.test.ts tests/remote-player-view.test.ts
+npm run typecheck
+npm run typecheck:sim
+npm run typecheck:client
+npm run typecheck:server
+npm run check:boundaries
+npm run build
+git diff --check
+```
+
+Focused result: **8 files / 49 tests PASS**. Contracts cover entity-owned base/outer materials over one texture, binary/translucent outer policy, exact `0/1/2 < 10/11/12 < 20/21/22 < 30/31/32` order, outer offsets, Classic/Slim, six layer toggles, appearance swap/ref release/material reuse, first-person separation, invisibility, all armor materials and mixed/leather composition. Alpha scanner classifies all 45 production PNGs and fails on metadata drift. Four typechecks, boundaries and production build pass.
+
+Full `npm test`: **188/201 files, 1903/1933 tests PASS**. The 30 failures are outside player rendering: CPU-heavy worldgen/fluid/fire/minecart/server tests exceeded existing time/performance budgets under the full parallel run, and `minecraft-reference-extractor.test.mjs` retains its independent parse failure. All changed/related suites pass.
+
+Manual in-app Chromium `/?qaPlayer=1`: seven Classic/Slim and binary/translucent skins across no armor, full Iron/Diamond/Ruby/Titanium/Leather and mixed armor; front/back/oblique rotation; idle/walk/sprint/sneak/jump/attack/bow; each of the six outer toggles; invisibility and first person. Main-menu and selector previews sampled continuous 360° rotation, including `5bc8ad7edfb7ee86` with 1488 used outer intermediate-alpha pixels. No camera-dependent flicker observed; warn/error console empty.
+
 ## 2026-09-08 Player skin selector, appearance sync, nameplates
 
 Report: `reports/2026-09-08_player-skin-selector-sync.md`.
