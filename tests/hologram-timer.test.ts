@@ -6,9 +6,17 @@ import pluginSource from '../server/builtin-plugins/holograms.ts?raw';
 import {
   formatHologramCountdown,
   hologramDisplayLines,
+  hologramSpriteHeight,
+  hologramSpriteWidth,
   hologramTimerRemainingSeconds,
+  hologramTextCanvasScale,
+  hologramTextCanvasSize,
   hologramWorldSize,
   parseHologramAppearanceLenient,
+  HOLOGRAM_TEXT_LOGICAL_HEIGHT,
+  HOLOGRAM_TEXT_LOGICAL_WIDTH,
+  HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX,
+  HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN,
 } from '../shared/hologramStyle';
 import { hologramAabb } from '../src/gameplay/hologramHit';
 
@@ -120,6 +128,12 @@ describe('hologram renderer contracts', () => {
     expect(rendererSource).toContain('setFromEuler');
     expect(rendererSource).toContain('background.visible = hologram.backgroundEnabled');
     expect(rendererSource).not.toContain("fillRect");
+    expect(rendererSource).toContain('texture.magFilter = THREE.LinearFilter');
+    expect(rendererSource).toContain('texture.minFilter = THREE.LinearMipmapLinearFilter');
+    expect(rendererSource).toContain('texture.generateMipmaps = true');
+    expect(rendererSource).not.toContain('NearestFilter');
+    expect(rendererSource).toContain('setTransform');
+    expect(rendererSource.split('new THREE.CanvasTexture').length - 1).toBe(1);
   });
 
   it('does not send per-tick timer packets and exposes editor controls', () => {
@@ -134,5 +148,29 @@ describe('hologram renderer contracts', () => {
     expect(uiSource).toContain('data-holo="cancel"');
     expect(uiSource).toContain('data-holo="save"');
     expect(uiSource).toContain('preview-bg');
+  });
+});
+
+describe('hologram text canvas resolution', () => {
+  it('uses a physical canvas larger than the logical size and clamps the scale', () => {
+    const oneX = hologramTextCanvasSize(1);
+    expect(oneX.scale).toBeGreaterThanOrEqual(HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN);
+    expect(oneX.scale).toBeLessThanOrEqual(HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX);
+    expect(oneX.width).toBe(HOLOGRAM_TEXT_LOGICAL_WIDTH * oneX.scale);
+    expect(oneX.height).toBe(HOLOGRAM_TEXT_LOGICAL_HEIGHT * oneX.scale);
+    expect(oneX.width).toBeGreaterThan(HOLOGRAM_TEXT_LOGICAL_WIDTH);
+    expect(oneX.height).toBeGreaterThan(HOLOGRAM_TEXT_LOGICAL_HEIGHT);
+    expect(hologramTextCanvasScale(2)).toBeGreaterThanOrEqual(hologramTextCanvasScale(1));
+    expect(hologramTextCanvasScale(8)).toBe(HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX);
+    expect(hologramTextCanvasScale(0)).toBe(HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN);
+    expect(hologramTextCanvasSize(8).width).toBe(HOLOGRAM_TEXT_LOGICAL_WIDTH * HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX);
+  });
+
+  it('does not change world-space text size when the canvas is supersampled', () => {
+    expect(hologramSpriteWidth(1)).toBe(2.6);
+    expect(hologramSpriteHeight(1, 1)).toBeCloseTo(0.77);
+    expect(rendererSource).toContain('hologramSpriteWidth(hologram.size)');
+    expect(rendererSource).toContain('hologramSpriteHeight(textLines, hologram.size)');
+    expect(rendererSource).toContain('hologram.backgroundWidth, hologram.backgroundHeight');
   });
 });
