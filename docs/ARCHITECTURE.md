@@ -1,5 +1,21 @@
 # Архитектура
 
+## Hologram background, fixed orientation, timer — 2026-09-09
+
+Same plugin + `HologramNetwork` + `HologramRenderer` path as the in-game editor. Records gained `kind`, `timerDuration`, `timerStartedAt`, `backgroundEnabled`, `backgroundWidth`, `backgroundHeight`, `billboard`, `yaw`. Legacy JSON: `kind=normal`, background on, size equal to the old text sprite, `billboard=true`, `yaw=0`.
+
+`HologramRenderer` draws a `THREE.Group` with a black background **plane** and a text **plane** (canvas without baked fill). The text canvas logical size is 512×256; physical pixels are × `clamp(round(devicePixelRatio × 2), 2, 4)` via `setTransform`, so close-up glyphs stay sharp while world-space `text.scale` is unchanged. Texture uses linear magnification and mipmapped minification (not nearest). Billboard copies `camera.quaternion` each frame. Fixed sets quaternion from stored yaw only — not a Sprite, not `lookAt`. Hit AABB uses `hologramWorldSize` (max of text sprite and background when enabled).
+
+Timer remaining is `duration - (floor((now - startedAt)/1000) % (duration+1))` so `00:00` shows for one second, then the cycle restarts. `now` is `Date.now() + offset` from `welcome.serverNow` / `pong.serverNow`. Snapshots carry `timerStartedAt`; the server does not broadcast countdown numbers. `/holograms reset <name>` (also `/hologram reset`) sets `timerStartedAt` to server now, persists, and broadcasts `holograms`. Permission is still `holograms.create` / OP. Client `hologram_update` may send the new editor fields but never `timerStartedAt` or `yaw`.
+
+## Hologram in-game editor — 2026-09-09
+
+Holograms stay on the existing plugin + `HologramNetwork` + `HologramRenderer` path. There is no per-hologram owner field; edit permission is the existing `holograms.create` node (moderator/admin/`holograms.*`) or OP.
+
+Online RMB: `HologramRenderer.raycast` / `pickHologramRayHit` AABB vs the live look ray. If that hit is at least as close as the block under the crosshair, the client sends `{ type: 'hologram_interact', name }` and does **not** send bow/block `interact`. The server re-checks reach (`PLAYER_NET_REACH` to the AABB) and permission, then unicasts `{ type: 'hologram_editor', hologram }`. Save is `{ type: 'hologram_update', name, lines, font, size, style }` plus optional `kind` / `timerDuration` / `background*` / `billboard` — position/owner/id/range/`timerStartedAt`/`yaw` are ignored. `HologramNetwork.updateAppearance` mutates the in-memory records, broadcasts `holograms`, and persists through the plugin `saveData` callback to `plugin-data/holograms/holograms.json`.
+
+Appearance defaults for old JSON: `font=sans`, `style=bold`, `size=1` (historical `bold 36px sans-serif`). Canvas fonts: Inter (`ui`, `--font-ui`), Press Start 2P (`display`, `--font-display`), generic `sans-serif` (`sans`). Inter bold is a real 700 face; italic is canvas synthesis because the bundled Inter/Press Start files are `font-style: normal` only.
+
 ## Spatial `world_sound` vs local catalog profiles — 2026-09-09
 
 `bow.shoot` and `item.pickup` stay `positional: false` in the catalog because Singleplayer plays them with `playLocal` (first-person one-shots). Online `world_sound` is a different path: the server emits a world position. Playing those packets with the catalog flag skipped distance, and `WorldInstance.broadcast` delivered every shot/pickup to every client. The client now forces `worldSoundPlayOptions({ positional: true })`; the server sends the packet only to listeners inside `worldSoundMaxDistance(event)`. Death loot scatter uses `DEATH_DROP_SCATTER_MULTIPLIER = 3` only inside `scatterDeathDrop`.
@@ -174,7 +190,7 @@ Claims store **partial** flags (`flags?: { pvp?: boolean }`). Overlapping claims
 
 Chat scroll lives in `GameUI` `#chat-log` (client-only). `MAX_CHAT_MESSAGES = 200`.
 
-Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws facing Sprite billboards and hides them outside `range`.
+Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws a Group of planes (optional background + text). Billboard copies the camera quaternion; fixed uses stored yaw. RMB on a hologram opens the existing GameUI editor for that record (`hologram_interact` / `hologram_editor` / `hologram_update`); appearance fields live on the same persisted hologram.
 
 ## Nickname and server console — 2026-09-05
 
@@ -202,7 +218,7 @@ disk plugins from server/plugins/
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
 - Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
 - Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`) plus observation `blockPlaced` / `blockBroken` for iron/gold/diamond block-claims. `ServerGameplay.processExplosions` emits `blockBroken` (no `playerId`) for each voxel `ExplosionQueue` actually destroyed, so a TNT-destroyed anchor deletes that claim via the same `Claim.anchor` lookup as player mining. Nearby blast that misses the stored cell does not emit and does not delete. Ordinary TNT never destroys iron/gold/diamond anchor voxels, so it cannot delete those claims; powerful and destructive TNT can. Regular `/claim` volumes are skipped per-voxel via `ExplosionJob.canDestroy` (loaded from ClaimStore, no PluginManager in shared sim) for every TNT profile. Flags are partial; overlapping claims resolve **per flag** by priority. Two block-claims may not overlap each other (priority is ignored for that pair). Block-claim `Claim.volume` is a cube of the same inclusive radius on X, Y and Z (iron ±10, gold ±20, diamond ±30), clamped to world Y. Load migrates stored full-height block-claim volumes back from `Claim.anchor`. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim. Successful iron/gold/diamond place shows that new block-claim's AABB to the placer; an overlap deny shows the **existing** overlapping block-claim(s), not the attempted volume. Same `ClaimBoundaryRenderer` style and 10s duration.
-- Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
+- Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client `HologramRenderer` draws planes (billboard or fixed yaw). Plugins do not send packets. In-game edits use `hologram_interact` / `hologram_update` on the same records.
 
 ## Farming V1 + Networking V2 — 2026-09-04
 

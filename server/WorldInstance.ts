@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -42,6 +42,7 @@ import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   AppliedInputTick,
   AppliedMovementStep,
+  ClientHologramUpdateMessage,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -78,12 +79,12 @@ import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
-import { HologramNetwork } from './services/holograms';
+import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
-import { formatGameplayKernelTrace, movementDuringItemUse } from '../src/gameplay';
+import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -1059,6 +1060,70 @@ export class WorldInstance {
     else if (message.action === 'steer' && message.forward !== undefined) {
       player.vehicleForward = Math.max(-1, Math.min(1, message.forward));
     }
+  }
+
+  interactHologram(player: ServerPlayer, name: string): void {
+    const hologram = this.holograms.get(name);
+    if (!hologram || !hologram.enabled) return;
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
+    if (!this.canEditHolograms(player)) {
+      this.sendHologramPermissionDenied(player);
+      return;
+    }
+    this.sendTo(player, { type: 'hologram_editor', hologram: toNetworkHologram(hologram) });
+  }
+
+  updateHologramAppearance(player: ServerPlayer, message: ClientHologramUpdateMessage): void {
+    const hologram = this.holograms.get(message.name);
+    if (!hologram || !hologram.enabled) {
+      this.sendTo(player, {
+        type: 'command_result',
+        ok: false,
+        name: 'holograms',
+        lines: [`Hologram '${message.name}' not found.`],
+      });
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: `Hologram '${message.name}' not found.`,
+        kind: 'error',
+      });
+      return;
+    }
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
+    if (!this.canEditHolograms(player)) {
+      this.sendHologramPermissionDenied(player);
+      return;
+    }
+    this.holograms.updateAppearance(message.name, message, {
+      playerYaw: player.controller.yaw,
+      nowMs: Date.now(),
+    });
+  }
+
+  private canEditHolograms(player: ServerPlayer): boolean {
+    return this.isOperator(player)
+      || this.permissions.has(player.id, 'holograms.create')
+      || this.permissions.has(player.name, 'holograms.create');
+  }
+
+  private sendHologramPermissionDenied(player: ServerPlayer): void {
+    this.sendTo(player, {
+      type: 'command_result',
+      ok: false,
+      name: 'holograms',
+      lines: ['You do not have permission.'],
+    });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: 'You do not have permission.',
+      kind: 'error',
+    });
   }
 
   dispatchConsole(raw: string): CommandResult {

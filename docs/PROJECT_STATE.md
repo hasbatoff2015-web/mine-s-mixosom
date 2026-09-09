@@ -1,5 +1,28 @@
 # Состояние проекта
 
+## Последний проход: hologram close-up text quality — 2026-09-09
+
+- Текст голограммы рисовался на canvas **512×256** и растягивался на world plane; `magFilter` был `NearestFilter` → вблизи пикселизация.
+- Внутреннее разрешение: logical 512×256, physical × `clamp(round(dpr×2), 2, 4)`. World-space size, фон, timer, fixed/billboard, protocol не менялись.
+- Texture: Linear mag, LinearMipmapLinear min, mipmaps on. Timer перерисовывает тот же canvas.
+- Handoff: `docs/reports/2026-09-09_hologram-text-quality.md`. `test:sim` 65/65, `test:server` 324/324.
+
+## Последний проход: hologram background / fixed / timer — 2026-09-09
+
+- Фон — отдельный plane (чёрный 0.35), не часть текстовой canvas-текстуры. Выключение прячет mesh; width/height хранятся отдельно от размера текста. Legacy default = старый sprite (`2.6×0.77` при size=1, 1 линия), фон включён.
+- Ориентация: billboard (копия camera quaternion, как прежний Sprite) или fixed (только сохранённый `yaw`, без lookAt). Переход в fixed фиксирует yaw редактирующего игрока на сервере.
+- Тип `kind`: `normal` | `timer`. Таймер считает remaining на клиенте из `timerDuration` + `timerStartedAt` и `welcome`/`pong` `serverNow`. Нет per-tick countdown-пакетов. `/hologram reset <name>` (alias существующих `/holograms`) сбрасывает цикл всем. Права те же: `holograms.create` / OP.
+- `HologramRenderer` расширен (Group + planes), отдельного Timer/Fixed renderer нет.
+- Handoff: `docs/reports/2026-09-09_hologram-bg-timer.md`. `test:sim` 63/63, `test:server` 324/324.
+
+## Последний проход: hologram in-game editor — 2026-09-09
+
+- ПКМ по существующей голограмме в Anarchy открывает GameUI-редактор **этой** голограммы. Raycast AABB идёт раньше bow/block use. Нет второй hologram-системы.
+- Appearance (`font`, `size`, `style`) — поля той же `HologramRecord`. Клиент шлёт `hologram_update`; сервер проверяет `holograms.create` / OP, валидирует, пишет `plugin-data/holograms/holograms.json`, броадкастит `holograms`.
+- Шрифты: основной UI **Inter** (`--font-ui`, `public/fonts/inter/*.woff2`); дополнительно **Press Start 2P** (`--font-display`) и `sans-serif` (исторический canvas default). CDN нет.
+- Команды `/holograms` без изменений по смыслу. Старые записи без style грузятся как `sans` + `bold` + `size=1`.
+- Handoff: `docs/reports/2026-09-09_hologram-editor.md`. `test:sim` 53/53, `test:server` 320/320.
+
 ## Последний проход: death scatter 3× + world_sound spatial — 2026-09-09
 
 - Death drops: `DEATH_DROP_SCATTER_MULTIPLIER = 3` на origin X/Z (±0.75) и горизонтальный velocity (±2.1). `vy` остаётся 2.2. `scatterDeathDrop` / `deathLootDropped` без изменений.

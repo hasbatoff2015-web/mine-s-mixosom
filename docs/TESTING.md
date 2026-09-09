@@ -1,5 +1,46 @@
 # Тестирование
 
+## 2026-09-09 Hologram close-up text quality
+
+Report: `reports/2026-09-09_hologram-text-quality.md`.
+
+```text
+npx vitest run tests/hologram-timer.test.ts tests/hologram-style.test.ts tests/hologram-hit.test.ts --maxWorkers=2
+```
+
+Contracts: physical canvas > logical; scale clamped 2–4; world-space sprite size unchanged; one CanvasTexture per hologram; magFilter linear (not nearest); timer still has no tick packets.
+
+## 2026-09-09 Hologram background, fixed orientation, timer
+
+Report: `reports/2026-09-09_hologram-bg-timer.md`.
+
+```text
+npx vitest run \
+  tests/hologram-style.test.ts \
+  tests/hologram-hit.test.ts \
+  tests/hologram-timer.test.ts \
+  tests/server/hologram-editor.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: legacy background on + billboard + kind=normal; background size independent of text size; disabled background omitted from AABB; fixed yaw persists; timer remaining shared for join-mid-cycle; no hologram packets per tick; `/hologram reset` broadcasts; reset of a normal hologram returns «Эта голограмма не является таймером.»; `hologram_update` still drops yaw/timerStartedAt.
+
+## 2026-09-09 Hologram in-game editor
+
+Report: `reports/2026-09-09_hologram-editor.md`.
+
+```text
+npx vitest run \
+  tests/hologram-style.test.ts \
+  tests/hologram-hit.test.ts \
+  tests/server/hologram-editor.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: old records default to `sans`/`bold`/`size=1`; unknown font and out-of-range size rejected; `hologram_update` drops position/owner/id; RMB hologram AABB wins over a farther block; permission denied uses `You do not have permission.`; Save persists and broadcasts; Cancel does not write.
+
 ## 2026-09-09 Death scatter 3× + spatial world_sound
 
 Report: `reports/2026-09-09_death-scatter-world-sound.md`.

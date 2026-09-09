@@ -62,3 +62,13 @@ export {
   movementDuringItemUse,
   slowsMovementWhileUsing,
 } from './useMovement';
+export {
+  closestPointOnAabb,
+  distanceToHologramAabb,
+  hologramAabb,
+  pickHologramRayHit,
+  playerCanReachHologram,
+  resolveHologramUseTarget,
+  type HologramHitTarget,
+  type HologramRayHit,
+} from './hologramHit';
