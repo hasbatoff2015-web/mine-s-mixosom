@@ -2072,8 +2072,9 @@ export class Game {
   }
 
   private tryInteractHologram(session: GameSession): boolean {
-    if (!session.online || this.ui.isHologramEditorOpen()) return false;
-    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    if (!session.online || this.ui?.isHologramEditorOpen()) return false;
+    const aim = this.lastLocalAim;
+    if (!aim) return false;
     const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
     const target = resolveHologramUseTarget(hologramHit, session.target?.distance);
     if (target.kind !== 'hologram') return false;
