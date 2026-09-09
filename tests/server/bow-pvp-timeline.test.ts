@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createItemStack } from '../../src/inventory';
 import { ItemId } from '../../src/items';
 import { viewDirectionFromLook } from '../../src/player/localAim';
+import { captureBowRelease, resolveBowReleaseCommandSeq } from '../../src/net/actionIntent';
 import type { BowReleaseAction } from '../../shared/playerActions';
 import type { ClientInputMessage, ServerActionResultMessage } from '../../shared/protocol';
 import { loadServerConfig } from '../../server/config';
@@ -59,7 +60,7 @@ describe('sequenced bow release timeline', { timeout: 20_000 }, () => {
     world.setGameMode(joined.player, 'survival');
     joined.player.inventory.clear();
     joined.player.inventory.setSlot(0, createItemStack(ItemId.Bow));
-    joined.player.inventory.setSlot(1, createItemStack(ItemId.Arrow, 16));
+    joined.player.inventory.setSlot(1, createItemStack(ItemId.Arrow, 64));
     joined.player.controller.teleport([8.5, 72, 8.5]);
     world.applyInput(joined.player, input(1, { use: true }));
     expect(world.interact(joined.player, undefined, 1, 1, 0)).toEqual({ ok: true });
@@ -119,6 +120,104 @@ describe('sequenced bow release timeline', { timeout: 20_000 }, () => {
       spawned: true,
     });
     expect(world.gameplay.arrows.entities.at(-1)?.playerTimelineTick).toBe(received - 3 + 4);
+  });
+
+  it('spawns once when the render release reaches the server before the next use=false input', async () => {
+    const { world, player, sink } = await boot();
+    const boundary = resolveBowReleaseCommandSeq({
+      currentInputSeq: 1,
+      lastSentInputSeq: 1,
+      lastSentUse: true,
+    });
+    const action = captureBowRelease(
+      { actionSeq: 1, inputSeq: 1, selectedSlot: 0 },
+      { yaw: 0.2, pitch: -0.1 },
+      undefined,
+      boundary.commandSeq,
+    );
+    const arrowsBefore = player.inventory.count(ItemId.Arrow);
+
+    world.handleSequencedBowRelease(player, action);
+    expect(boundary).toEqual({ commandSeq: 2, mode: 'next-after-use-true' });
+    expect(player.pendingBowReleases).toHaveLength(1);
+    expect(result(sink)).toBeUndefined();
+
+    world.applyInput(player, input(2, { use: false }));
+    world.tick();
+
+    expect(result(sink)).toMatchObject({ ok: true, bow: { authoritativeDrawTicks: 20, spawned: true } });
+    expect(world.gameplay.arrows.count).toBe(1);
+    expect(player.inventory.count(ItemId.Arrow)).toBe(arrowsBefore - 1);
+    expect(player.pendingBowReleases).toHaveLength(0);
+  });
+
+  it('spawns once when use=false input was sent before the render edge was consumed', async () => {
+    const { world, player, sink } = await boot();
+    world.applyInput(player, input(2, { use: false }));
+    world.tick();
+    const boundary = resolveBowReleaseCommandSeq({
+      currentInputSeq: 2,
+      lastSentInputSeq: 2,
+      lastSentUse: false,
+    });
+    const action = captureBowRelease(
+      { actionSeq: 1, inputSeq: 2, selectedSlot: 0 },
+      { yaw: 0.2, pitch: -0.1 },
+      undefined,
+      boundary.commandSeq,
+    );
+    const arrowsBefore = player.inventory.count(ItemId.Arrow);
+
+    world.handleSequencedBowRelease(player, action);
+
+    expect(boundary).toEqual({ commandSeq: 2, mode: 'current-use-false' });
+    expect(result(sink)?.ok).toBe(true);
+    expect(world.gameplay.arrows.count).toBe(1);
+    expect(player.inventory.count(ItemId.Arrow)).toBe(arrowsBefore - 1);
+  });
+
+  it('spawns 20/20 releases across deterministic 180 FPS render phases', async () => {
+    const { world, player, sink } = await boot();
+    const phases = Array.from({ length: 20 }, (_, index) => ((index + 0.5) / 180) % 0.05);
+    let drawCommandSeq = 1;
+    let actionSeq = 1;
+    let expectedAmmo = player.inventory.count(ItemId.Arrow);
+
+    for (const [phaseIndex, phase] of phases.entries()) {
+      const boundary = resolveBowReleaseCommandSeq({
+        currentInputSeq: drawCommandSeq,
+        lastSentInputSeq: drawCommandSeq,
+        lastSentUse: true,
+      });
+      const action = captureBowRelease(
+        { actionSeq, inputSeq: drawCommandSeq, selectedSlot: 0 },
+        { yaw: phase, pitch: -0.25 },
+        undefined,
+        boundary.commandSeq,
+      );
+      actionSeq = action.actionSeq;
+      world.handleSequencedBowRelease(player, action);
+      expect(boundary.commandSeq).toBe(drawCommandSeq + 1);
+
+      world.applyInput(player, input(boundary.commandSeq, { use: false }));
+      world.tick();
+      expectedAmmo -= 1;
+
+      expect(result(sink)).toMatchObject({ ok: true, bow: { authoritativeDrawTicks: 20, spawned: true } });
+      expect(world.gameplay.arrows.count).toBe(1);
+      expect(player.inventory.count(ItemId.Arrow)).toBe(expectedAmmo);
+      world.gameplay.arrows.removeById(world.gameplay.arrows.entities[0]!.id);
+      sink.payloads.length = 0;
+
+      if (phaseIndex === phases.length - 1) continue;
+      drawCommandSeq = boundary.commandSeq + 1;
+      world.applyInput(player, input(drawCommandSeq, { use: true }));
+      actionSeq += 1;
+      expect(world.interact(player, undefined, actionSeq, drawCommandSeq, 0)).toEqual({ ok: true });
+      world.tick();
+      player.bowUseTicks = 20;
+      sink.payloads.length = 0;
+    }
   });
 
   it('accepts an action that arrives after its release boundary and survives a later slot switch', async () => {

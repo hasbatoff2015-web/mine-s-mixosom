@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-09 Bow release actual input boundary
+
+Report: `reports/2026-09-09_bow-release-input-boundary.md`.
+
+Обязательные contracts: release после sent `N/use=true` выбирает `N+1` и приходит на server раньше input; pending разрешается после `N+1/use=false` с одним spawn/ammo. Если `N/use=false` уже отправлен, action выбирает N. Deterministic 20-phase simulation для 20 TPS input / 180 FPS render обязана дать 20/20 server spawns с authoritative draw ticks. `captureBowRelease` принимает explicit boundary seq, не мутирует input seq и сохраняет captured aim/renderTick.
+
+Manual browser gate: сначала 20 fully charged air shots, затем 20 коротких releases; только после 20/20 переходить к standing/moving/lead target. F3 обязан показывать `wire`, `use`, `chosen`, `mode`. In-app browser без pointer lock и раздельного right-button down/up не может подтвердить hold/release; такой прогон нельзя записывать как PASS.
+
 ## 2026-09-09 Bow PvP client timeline
 
 Report: `reports/2026-09-09_bow-pvp-client-timeline.md`.

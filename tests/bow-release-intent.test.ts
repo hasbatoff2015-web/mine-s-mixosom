@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { angularError } from '../shared/playerActions';
 import { parseClientMessage } from '../shared/protocol';
-import { captureBowRelease, selectBowRenderTick } from '../src/net/actionIntent';
+import {
+  captureBowRelease,
+  resolveBowReleaseCommandSeq,
+  selectBowRenderTick,
+} from '../src/net/actionIntent';
 import { viewDirectionFromLook } from '../src/player/localAim';
 
 describe('bow release intent contract', () => {
@@ -14,6 +18,50 @@ describe('bow release intent contract', () => {
     expect(released.yaw).not.toBe(laterLook.yaw);
     expect(released.commandSeq).toBe(12);
     expect(released.actionSeq).toBe(1);
+  });
+
+  it('binds a release between fixed ticks to the next use=false command', () => {
+    const boundary = resolveBowReleaseCommandSeq({
+      currentInputSeq: 12,
+      lastSentInputSeq: 12,
+      lastSentUse: true,
+    });
+    const source = { actionSeq: 0, inputSeq: 12, selectedSlot: 0 };
+    const released = captureBowRelease(source, { yaw: 0.4, pitch: -0.2 }, 97, boundary.commandSeq);
+
+    expect(boundary).toEqual({ commandSeq: 13, mode: 'next-after-use-true' });
+    expect(released.commandSeq).toBe(13);
+    expect(source.inputSeq).toBe(12);
+  });
+
+  it('binds a release edge consumed after a fixed tick to its already-sent use=false command', () => {
+    const boundary = resolveBowReleaseCommandSeq({
+      currentInputSeq: 13,
+      lastSentInputSeq: 13,
+      lastSentUse: false,
+    });
+    const released = captureBowRelease(
+      { actionSeq: 0, inputSeq: 13, selectedSlot: 0 },
+      { yaw: 0.4, pitch: -0.2 },
+      undefined,
+      boundary.commandSeq,
+    );
+
+    expect(boundary).toEqual({ commandSeq: 13, mode: 'current-use-false' });
+    expect(released.commandSeq).toBe(13);
+  });
+
+  it('selects the exact first use=false command in every simulated 180 FPS render phase', () => {
+    const drawCommandSeq = 40;
+    const phases = Array.from({ length: 20 }, (_, index) => ((index + 0.5) / 180) % 0.05);
+    const chosen = phases.map(() => resolveBowReleaseCommandSeq({
+      currentInputSeq: drawCommandSeq,
+      lastSentInputSeq: drawCommandSeq,
+      lastSentUse: true,
+    }).commandSeq);
+
+    expect(phases.every((phase) => phase > 0 && phase < 0.05)).toBe(true);
+    expect(chosen).toEqual(Array.from({ length: 20 }, () => drawCommandSeq + 1));
   });
 
   it('duplicate seq is a distinct actionSeq', () => {

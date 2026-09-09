@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: bow release actual input boundary — 2026-09-09
+
+- Исправлена FPS-dependent pre-spawn regression: render-frame release больше не привязывается безусловно к `online.inputSeq`, который означает последний уже отправленный input packet и мог всё ещё содержать `use=true`.
+- `OnlineAnarchySession` хранит фактические wire-state `lastSentInputSeq`/`lastSentUse`; они обновляются только после реального `client.send` в обоих input paths (`tickOnline`, `sendOnlineIdle`).
+- Чистый `resolveBowReleaseCommandSeq` выбирает current command, если уже отправлен `use=false`, либо future `current + 1`, если последний wire command ещё `use=true`. Render edge сразу сохраняет yaw/pitch/renderTick и не создаёт искусственный movement input.
+- Обычный release между fixed ticks теперь идёт `bow_release(commandSeq=N+1)` раньше `input N+1 use=false`; существующий bounded server pending path дожидается exact boundary и выпускает ровно одну стрелу с authoritative draw/ammo.
+- F3 bow diagnostics показывают last wire seq/use, chosen release command и boundary mode. Projectile physics, compensation, hitboxes, damage, charge curve и server limits не менялись.
+- Regression: обе ordering-фазы и deterministic 180 FPS phase matrix; server sequencing выпускает 20/20 стрел и расходует по одной arrow.
+- Handoff: `docs/reports/2026-09-09_bow-release-input-boundary.md`.
+
 ## Последний проход: bow PvP client timeline — 2026-09-09
 
 - Online release передаёт captured live yaw/pitch и optional `renderTick`: exact `RemotePlayerView.lastRenderTick` под crosshair, иначе median уже отрисованных remote timelines; interpolation buffer повторно не sample'ится.

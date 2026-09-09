@@ -1,5 +1,13 @@
 # Архитектура
 
+## Bow release wire boundary correction — 2026-09-09
+
+`online.inputSeq` — sequence последнего сформированного fixed input, а не обещание, что он содержит release edge. Клиент отдельно хранит последний действительно переданный packet: `lastSentInputSeq` и `lastSentUse`. После каждого успешного `AnarchyClient.send(input)` эти поля обновляются и больше нигде не выводятся из render-global `this.input.using`.
+
+На render-frame mouse release чистый `resolveBowReleaseCommandSeq` выбирает точную wire boundary. Если current seq уже реально отправлен с `use=false`, action ссылается на него (`current-use-false`). Если последний packet всё ещё `use=true` или current seq ещё не был отправлен, action сразу уходит с future `commandSeq = currentInputSeq + 1` (`next-after-use-true`). `online.inputSeq` при этом не меняется, synthetic input не создаётся, captured aim/render timeline не откладываются.
+
+Server architecture не менялась: future sequenced action попадает в `pendingBowReleases`; следующий fixed `use=false` input фиксирует pre-release draw state, exact post-physics command pose получает `bowRelease`, и pending action разрешается существующим authoritative spawn path. Limits остаются `MAX_PENDING_BOW_TICKS = 8`, `MAX_PVP_REWIND_TICKS = 5`, `COMBAT_HISTORY_TICKS = 20`.
+
 ## Bow PvP release and projectile timeline — 2026-09-09
 
 Bow следует тому же ownership rule: **client owns intent, server owns result**. На render-frame release клиент фиксирует live yaw/pitch и optional presentation timeline из уже отрисованных `RemotePlayerView`: direct crosshair remote имеет приоритет, иначе используется median активных `lastRenderTick`. Повторного `buffer.sample()` и `targetId` нет, поэтому lead shots остаются возможны. Клиент не сообщает AABB, origin, charge, damage или hit.

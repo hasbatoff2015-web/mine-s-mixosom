@@ -18,6 +18,19 @@ export interface ActionSeqSource {
   selectedSlot: number;
 }
 
+export type BowReleaseBoundaryMode = 'current-use-false' | 'next-after-use-true';
+
+export interface BowReleaseWireState {
+  readonly currentInputSeq: number;
+  readonly lastSentInputSeq: number;
+  readonly lastSentUse: boolean;
+}
+
+export interface BowReleaseCommandBoundary {
+  readonly commandSeq: number;
+  readonly mode: BowReleaseBoundaryMode;
+}
+
 export function nextActionSeq(source: ActionSeqSource): number {
   source.actionSeq += 1;
   return source.actionSeq;
@@ -114,16 +127,28 @@ export function captureBowRelease(
   source: ActionSeqSource,
   look: { readonly yaw: number; readonly pitch: number },
   renderTick?: number,
+  boundaryCommandSeq = source.inputSeq,
 ): BowReleaseAction {
   return {
     kind: 'bow_release',
     actionSeq: nextActionSeq(source),
-    commandSeq: source.inputSeq,
+    commandSeq: boundaryCommandSeq,
     selectedSlot: source.selectedSlot,
     yaw: look.yaw,
     pitch: look.pitch,
     ...(renderTick !== undefined ? { renderTick } : {}),
   };
+}
+
+/**
+ * Resolves the first wire command whose `use=false` represents this render-frame release.
+ * This never increments the input sequence or delays captured release aim.
+ */
+export function resolveBowReleaseCommandSeq(state: BowReleaseWireState): BowReleaseCommandBoundary {
+  if (state.lastSentInputSeq === state.currentInputSeq && !state.lastSentUse) {
+    return { commandSeq: state.currentInputSeq, mode: 'current-use-false' };
+  }
+  return { commandSeq: state.currentInputSeq + 1, mode: 'next-after-use-true' };
 }
 
 /** Selects an already-rendered remote timeline without sampling any interpolation buffer. */

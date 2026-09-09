@@ -214,8 +214,10 @@ import {
   captureAttack,
   captureBowRelease,
   composeOnlineBreakFinish,
+  resolveBowReleaseCommandSeq,
   selectBowRenderTick,
 } from '../net/actionIntent';
+import type { BowReleaseBoundaryMode } from '../net/actionIntent';
 import {
   actionMessageFromBreakAbort,
   actionMessageFromBreakFinish,
@@ -383,6 +385,9 @@ export interface OnlineAnarchySession {
   remotes: Map<string, RemotePlayerView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  /** Wire state of the last input packet actually handed to AnarchyClient. */
+  lastSentInputSeq: number;
+  lastSentUse: boolean;
   actionSeq: number;
   localFoodUse?: { itemId: string; selectedSlot: number; commandSeq: number; actionSeq: number };
   prediction: PredictionBuffer;
@@ -427,6 +432,10 @@ export interface OnlineAnarchySession {
     boundaryEyeX?: number;
     boundaryEyeY?: number;
     boundaryEyeZ?: number;
+    lastSentInputSeq?: number;
+    lastSentUse?: boolean;
+    chosenReleaseCommandSeq?: number;
+    releaseBoundaryMode?: BowReleaseBoundaryMode;
   };
   lastCombatDiag?: {
     actionSeq: number;
@@ -888,6 +897,8 @@ export class Game {
         remotes,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        lastSentInputSeq: 0,
+        lastSentUse: false,
         actionSeq: 0,
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
@@ -2017,6 +2028,11 @@ export class Game {
       return;
     }
     const source = this.onlineActionSource(session);
+    const releaseBoundary = resolveBowReleaseCommandSeq({
+      currentInputSeq: online.inputSeq,
+      lastSentInputSeq: online.lastSentInputSeq,
+      lastSentUse: online.lastSentUse,
+    });
     const aim = this.sampleLocalAim(session);
     const direct = raycastRemotePlayers(online.remotes, aim.origin, aim.direction, 48);
     const renderTick = selectBowRenderTick(
@@ -2025,7 +2041,12 @@ export class Game {
         .map((remote) => remote.lastRenderTick)
         .filter((tick): tick is number => tick !== undefined),
     );
-    const action = captureBowRelease(source, { yaw: aim.yaw, pitch: aim.pitch }, renderTick);
+    const action = captureBowRelease(
+      source,
+      { yaw: aim.yaw, pitch: aim.pitch },
+      renderTick,
+      releaseBoundary.commandSeq,
+    );
     this.commitOnlineActionSeq(session, source);
     online.lastBowDiag = {
       actionSeq: action.actionSeq,
@@ -2033,6 +2054,10 @@ export class Game {
       clientYaw: action.yaw,
       clientPitch: action.pitch,
       ...(action.renderTick !== undefined ? { requestedRenderTick: action.renderTick } : {}),
+      lastSentInputSeq: online.lastSentInputSeq,
+      lastSentUse: online.lastSentUse,
+      chosenReleaseCommandSeq: releaseBoundary.commandSeq,
+      releaseBoundaryMode: releaseBoundary.mode,
       pressCaptured: online.lastBowDiag?.pressCaptured === true,
       drawStarted: online.lastBowDiag?.drawStarted === true,
       releaseCaptured: true,
@@ -2262,6 +2287,8 @@ export class Game {
         }) ? { mining: true } : {}),
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      online.lastSentInputSeq = online.inputSeq;
+      online.lastSentUse = false;
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
@@ -3698,10 +3725,12 @@ export class Game {
           finishKey: online.miningFinishKey,
           miningLocked: online.miningLocked,
         })),
-        use: gameplayAllowed && this.input.using,
+        use: using,
         vehicleForward: riding ? movementBeforeUse.forward : 0,
         ...(clientSentAt !== undefined ? { clientSentAt } : {}),
       });
+      online.lastSentInputSeq = online.inputSeq;
+      online.lastSentUse = using;
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
@@ -5179,7 +5208,7 @@ export class Game {
             const ang = bow.serverYaw !== undefined && bow.serverPitch !== undefined
               ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
               : undefined;
-            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} recv=${bow.receivedServerTick ?? '—'} boundary=${bow.boundaryServerTick ?? '—'} pending=${bow.pendingTicks ?? '—'} req=${bow.requestedRenderTick?.toFixed(2) ?? '—'} valid=${bow.validatedRenderTick?.toFixed(2) ?? '—'} rewind=${bow.receiveRewindTicks?.toFixed(2) ?? '—'} catchup=${bow.catchUpTicks ?? '—'} drawTicks=${bow.authoritativeDrawTicks ?? '—'} charge=${bow.charge?.toFixed(3) ?? '—'} origin=${bow.boundaryEyeX?.toFixed(2) ?? '—'},${bow.boundaryEyeY?.toFixed(2) ?? '—'},${bow.boundaryEyeZ?.toFixed(2) ?? '—'} reject=${bow.rejectReason ?? '—'} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} wire=${bow.lastSentInputSeq ?? '—'} use=${bow.lastSentUse === undefined ? '—' : bow.lastSentUse ? 1 : 0} chosen=${bow.chosenReleaseCommandSeq ?? '—'} mode=${bow.releaseBoundaryMode ?? '—'} recv=${bow.receivedServerTick ?? '—'} boundary=${bow.boundaryServerTick ?? '—'} pending=${bow.pendingTicks ?? '—'} req=${bow.requestedRenderTick?.toFixed(2) ?? '—'} valid=${bow.validatedRenderTick?.toFixed(2) ?? '—'} rewind=${bow.receiveRewindTicks?.toFixed(2) ?? '—'} catchup=${bow.catchUpTicks ?? '—'} drawTicks=${bow.authoritativeDrawTicks ?? '—'} charge=${bow.charge?.toFixed(3) ?? '—'} origin=${bow.boundaryEyeX?.toFixed(2) ?? '—'},${bow.boundaryEyeY?.toFixed(2) ?? '—'},${bow.boundaryEyeZ?.toFixed(2) ?? '—'} reject=${bow.rejectReason ?? '—'} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
           }
           if (session.online.lastCombatDiag) {
             const combat = session.online.lastCombatDiag;

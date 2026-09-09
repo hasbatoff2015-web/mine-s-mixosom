@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-09: Bow release actual input boundary
+
+- [x] Track last input packet actually sent, including use state, in normal and idle input paths.
+- [x] Bind render-frame release to current sent `use=false` or the next future command after sent `use=true`.
+- [x] Preserve immediate captured aim/renderTick without synthetic input or input-sequence mutation.
+- [x] Cover action-before-input, action-after-input and 20/20 deterministic 180 FPS phases through server spawn/ammo assertions.
+- [x] Add F3 wire seq/use/chosen boundary/mode diagnostics.
+- [ ] Owner/manual 20/20 fully charged browser air-shot gate with real pointer lock and right-button hold.
+
 ## 2026-09-09: Bow PvP client-timeline hit registration
 
 - [x] Capture exact already-rendered remote tick under crosshair or median remote timeline for lead shots; omit when unavailable.
