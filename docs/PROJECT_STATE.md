@@ -1,5 +1,36 @@
 # Состояние проекта
 
+## Последний проход: player skin z-fighting integrated into current main — 2026-09-10
+
+- `origin/main@4de89948` влит в `codex/fix-player-layer-zfighting@f1ed162f` обычным merge `72bf906`; merge-base `9eaec6ba`. История не переписывалась.
+- Конфликты были только в `docs/ARCHITECTURE.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`, `docs/TESTING.md`; в каждом сохранены и skin policy/QA, и современный main с bow/melee PvP, AutoMine, holograms и online polish.
+- Base и binary outer остаются opaque cutout; translucent outer включается только из metadata фактически acquired registry handle. Classic/Slim имеют шесть уникальных base/outer ranks, а seam bias остаётся отдельным `0/-1/-2` policy.
+- Production `PlayerSkinGeometry`, `FirstPersonRenderer` и `PlayerArmorVisual` не менялись. Armor остаётся opaque/depth-writing с namespaces `20..22` и `30..32`; invisibility скрывает только skin.
+- Alpha scanner: 45/45 production skins. Skin/armor/appearance/preview gate: **13 files / 75 tests PASS**. New-main regression gate: **30 files / 314 tests PASS**. Shared sim: **65/65 PASS**; четыре typecheck, boundaries, build, size/archive PASS.
+- Full suite: **212/216 files, 2024/2040 tests PASS**. Четыре baseline-файла совпадают с исходным main: extractor parse, два worldgen timeout, load-sensitive fire/minecart timeout и `tick-load-flight` performance threshold. Feature добавила семь проходящих тестов; failing-файлы не изменены.
+- Пользователь уже принял live skin QA; browser QA повторно не заявляется, поскольку renderer auto-merge прошёл без code conflict и geometry/first-person/armor production paths не менялись.
+- Handoff: `docs/reports/2026-09-10_player-layer-zfighting-main-integration.md`.
+
+## Последний проход: fully ordered translucent skin parts — 2026-09-09
+
+- Residual review risk закрыт: все шесть skin parts теперь имеют unique render rank `body=0`, `head=1`, `rightLeg=2`, `leftLeg=3`, `rightArm=4`, `leftArm=5`. Base namespace `0..5`, outer `10..15`; transparent sorting больше не использует camera-space Z между head/body, arm/leg или left/right pairs.
+- `SKIN_PART_DEPTH_BIAS` отделён от render rank и остаётся малым: body/head `0`, right side `1`, left side `2`, то есть polygon offset только `0`, `-1/-1`, `-2/-2`.
+- Cross-queue model уточнена: opaque skin/armor рисуются в opaque queue, translucent outer — затем в transparent queue независимо от чисел. Armor перекрывает outer через уже записанный depth + outer `depthTest=true`; диапазоны renderOrder — namespace invariant, не глобальный queue order.
+- Runtime alpha metadata приходит из фактически acquired `SkinTextureHandle.outerLayerAlpha`. Custom descriptor через `MinecraftSkinRegistry.registerValidated` покрыт regression и реально включает translucent outer без built-in lookup.
+- Production armor renderer, skin PNG/UV/geometry/inflate/pivots/animation, network/save, invisibility и first-person armor semantics не менялись. DEV harness получил воспроизводимые camera orbit/distance controls только для QA.
+- Focused skin/armor/appearance/preview/network gate: **50/50 PASS**. Alpha scan, все четыре typecheck, boundaries, production build и diff check PASS. WebGL QA: `5bc…` все requested poses, 360°, close/far, look up/down и семь armor configurations; остальные три translucent skins вращались во время движения. Flicker не наблюдался, warn/error console пуст.
+- Handoff: `docs/reports/2026-09-09_fully-ordered-translucent-skin-parts.md`.
+
+## Предыдущий проход: base/outer skin split + alpha classification — 2026-09-09
+
+- Root cause camera-dependent skin flicker: `PlayerVisual` использовал один `transparent=true` material для base и outer, поэтому даже обычная base skin попадала в blended queue; порядок шести пересекающихся частей задавался только как base `0` / outer `1` и зависел от camera-distance sorting.
+- Skin base теперь всегда opaque cutout (`alphaTest=0.01`, `transparent=false`, depth test/write). Outer использует ту же ref-counted texture, но отдельные entity-owned materials: binary skins остаются opaque cutout, а `00f6338deb336a6e`, `0f15ad5e5c148f40`, `55264c2ebdb9ed9d`, `5bc8ad7edfb7ee86` сохраняют реальную outer translucency с depth write.
+- Первоначальный порядок skin base `0/1/2`, outer `10/11/12` оставлял равные transparent ranks для трёх пар частей; это исправлено follow-up выше на unique `0..5` / `10..15`. Depth bias `0/-1/-2` сохранён отдельно.
+- Все 45 production PNG проверяет `npm run assets:validate-player-skins`. 38 полностью binary; ещё три имеют intermediate alpha только в unused atlas pixels. Metadata/PNG mismatch завершает script и test ошибкой.
+- `PlayerArmorVisual` production-код не менялся: leather/chainmail/gold/iron/diamond/ruby/titanium остаются opaque cutout с прежними order/offset. First-person остаётся отдельным skin-material path без armor; invisibility сохраняет armor и held item.
+- Focused player/skin/armor/appearance/preview/network gate: **49/49 PASS**. Все четыре typecheck, alpha scanner, import boundaries и production build PASS; manual WebGL matrix и main-menu/selector preview прошли с пустой warn/error console. Full suite: **1903/1933 tests, 188/201 files PASS**; 30 независимых CPU-budget/timeouts и старый extractor parse failure вне изменённых путей.
+- Handoff: `docs/reports/2026-09-09_player-skin-layer-zfighting.md`.
+
 ## Последний проход: bow PvP integrated into current main — 2026-09-10
 
 - `origin/main@27778cf3` влит в `codex/bow-pvp-timeline-v2@fef66776` обычным merge; merge-base `eb82417b`. История feature не переписывалась.

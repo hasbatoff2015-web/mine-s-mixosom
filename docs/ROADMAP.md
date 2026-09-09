@@ -1,5 +1,28 @@
 # Roadmap
 
+## 2026-09-10: Integrate player layer z-fighting fix into current main
+
+- [x] Record actual refs: main `4de89948`, feature `f1ed162f`, merge-base `9eaec6ba`.
+- [x] Merge current main into the published skin feature without rebase or force push.
+- [x] Preserve runtime descriptor alpha policy, six unique Classic/Slim ranks and independent depth bias.
+- [x] Preserve current main bow/melee timelines, networking, AutoMine, holograms, appearance/nameplates and online polish.
+- [x] Keep production skin geometry, first-person and armor renderer unchanged during integration.
+- [x] Pass 45-skin alpha validation, 75 skin/armor tests, 314 newer-main tests, 65 shared-sim tests, four typechecks, boundaries, build and archive checks.
+- [x] Compare the full-suite result to the exact current-main baseline without weakening timeouts or performance thresholds.
+
+## 2026-09-09: Player skin layer z-fighting
+
+- [x] Scan all 45 production 64×64 skins and classify intermediate alpha by base/outer/unused atlas region without changing PNG files.
+- [x] Split the world-player base and outer materials while preserving one shared ref-counted texture and entity-owned light state.
+- [x] Keep base always opaque cutout; blend only the four metadata-flagged skins with real translucent outer pixels and retain depth write.
+- [x] Follow-up: give every skin part a unique rank — body/head/right leg/left leg/right arm/left arm `0..5`, hence base `0..5` and outer `10..15`.
+- [x] Keep depth bias independent and small: body/head `0`, right side `-1/-1`, left side `-2/-2`; keep armor namespaces at `20+` / `30+`.
+- [x] Correct cross-queue documentation: translucent outer is drawn after opaque armor and is occluded by armor's depth writes, not by lower numeric renderOrder.
+- [x] Source runtime alpha policy from the acquired registry handle and cover a custom `registerValidated` translucent descriptor.
+- [x] Preserve geometry, UVs, inflate, pivots, animation, invisibility and separate first-person/no-armor semantics.
+- [x] Audit leather/chainmail/gold/iron/diamond/ruby/titanium armor without production changes; add composition/material/order/offset regressions.
+- [x] Pass follow-up focused 50/50, four typechecks, alpha validation, boundaries, production build and browser QA including orbit/close/far translucent motion.
+
 ## 2026-09-10: Integrate bow PvP timeline into current main
 
 - [x] Fetch actual refs and record main `27778cf3`, bow `fef66776`, merge-base `eb82417b`.

@@ -1,5 +1,49 @@
 # Тестирование
 
+## 2026-09-10 Player layer z-fighting + current main integration
+
+Report: `reports/2026-09-10_player-layer-zfighting-main-integration.md`.
+
+`npm run assets:validate-player-skins` classified all **45 production skins** and accepted the four descriptor-marked translucent outers while keeping intermediate alpha found only in unused atlas pixels from changing the runtime policy.
+
+Focused renderer gate: **13 files / 75 tests PASS**. It covers opaque base, binary outer, runtime custom translucent descriptor, unique Classic/Slim `0..5` and `10..15` ranks, independent `0/-1/-2` polygon bias, layer toggles, appearance/handle lifecycle, invisibility, all armor materials, first-person, selector and previews. New-main regression gate: **30 files / 314 tests PASS**, including bow release/timeline, melee rewind, networking queues, plugins/AutoMine, holograms, world sounds, online death/respawn and appearance sync.
+
+Static/package gates: all four typechecks, `check:boundaries`, production `build`, `check:size`, `check:archive`, conflict-marker scan and `git diff --check` PASS. `test:sim`: **12 files / 65 tests PASS**. Archive remains **4.14 MiB / 353 files**.
+
+Full `npm test -- --maxWorkers=2`: **212/216 files, 2024/2040 tests PASS**, plus one worker RPC timeout. Compared with the exact source-main baseline (**2016/2033**, 17 failures), the feature adds seven passing skin tests and introduces no new failure class. Current failures are the unchanged `minecraft-reference-extractor` parse suite, two `worldgen-terrain` 5 s timeouts, 13 load-sensitive `fire-contact-sunlight-minecart` timeouts and one `tick-load-flight` `<80 ms` miss (samples 118–128 ms). None of those files changed; no timeout or threshold was relaxed.
+
+## 2026-09-09 Fully ordered translucent skin parts
+
+Report: `reports/2026-09-09_fully-ordered-translucent-skin-parts.md`.
+
+Focused gate is the same eight player/skin/armor/appearance/preview/network files below, now **50/50 PASS**. Added invariants: Classic, Slim and production-translucent outer each have six unique orders; exact ranks are body `0`, head `1`, right leg `2`, left leg `3`, right arm `4`, left arm `5`; base `0..5`, outer `10..15`; no head/body, right arm/leg or left arm/leg tie. The `max outer < armor base` assertion is explicitly only a numeric namespace invariant because opaque and transparent objects use separate Three.js queues. Depth bias is independently capped at `0/1/2`.
+
+A custom descriptor registered through `MinecraftSkinRegistry.registerValidated(..., 64, 64)` returns `SkinTextureHandle.outerLayerAlpha='translucent'` and makes every world outer material transparent while base stays opaque. This proves runtime registry metadata, not the global built-in map, owns the renderer policy.
+
+Manual Chromium `/?qaPlayer=1`: `5bc8ad7edfb7ee86` covered walk/sprint/jump/sneak/attack/bow, camera orbit `-180..180` in 60° steps, distance `2.0/4.2/8.0`, head yaw ±120°, pitch ±80°, and none/Iron/Diamond/Ruby/Titanium/Leather/mixed armor. `00f6338deb336a6e`, `0f15ad5e5c148f40`, `55264c2ebdb9ed9d` were rotated during walk/attack/bow. Neck, shoulders, hip, pants and boots seams stayed stable; warn/error console empty.
+
+## 2026-09-09 Player skin layer depth stability
+
+Report: `reports/2026-09-09_player-skin-layer-zfighting.md`.
+
+```text
+npm run assets:validate-player-skins
+npm test -- tests/player-skins.test.ts tests/player-skin-assets.test.mjs tests/player-armor-visual.test.ts tests/player-skin-selector.test.ts tests/player-visual-animation.test.ts tests/player-armor-network.test.ts tests/player-nameplate.test.ts tests/remote-player-view.test.ts
+npm run typecheck
+npm run typecheck:sim
+npm run typecheck:client
+npm run typecheck:server
+npm run check:boundaries
+npm run build
+git diff --check
+```
+
+Focused result after the follow-up: **8 files / 50 tests PASS**. Contracts cover entity-owned base/outer materials over one texture, binary/translucent outer policy, unique `0..5` / `10..15` numeric namespaces, separate outer depth bias, Classic/Slim, six layer toggles, appearance swap/ref release/material reuse, first-person separation, invisibility, all armor materials and mixed/leather composition. Alpha scanner classifies all 45 production PNGs and fails on metadata drift. Four typechecks, boundaries and production build pass.
+
+Full `npm test`: **188/201 files, 1903/1933 tests PASS**. The 30 failures are outside player rendering: CPU-heavy worldgen/fluid/fire/minecart/server tests exceeded existing time/performance budgets under the full parallel run, and `minecraft-reference-extractor.test.mjs` retains its independent parse failure. All changed/related suites pass.
+
+Manual in-app Chromium `/?qaPlayer=1`: seven Classic/Slim and binary/translucent skins across no armor, full Iron/Diamond/Ruby/Titanium/Leather and mixed armor; front/back/oblique rotation; idle/walk/sprint/sneak/jump/attack/bow; each of the six outer toggles; invisibility and first person. Main-menu and selector previews sampled continuous 360° rotation, including `5bc8ad7edfb7ee86` with 1488 used outer intermediate-alpha pixels. No camera-dependent flicker observed; warn/error console empty.
+
 ## 2026-09-10 Bow PvP + current main integration
 
 Report: `reports/2026-09-10_bow-pvp-main-integration.md`.

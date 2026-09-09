@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PlayerEquipmentState } from '../shared/protocol';
 import { FirstPersonRenderer } from '../src/rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
-import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
+import { DEFAULT_PLAYER_APPEARANCE, createPlayerAppearance } from '../src/player/appearance/PlayerAppearance';
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import {
   ARMOR_BASE_RENDER_ORDER,
@@ -22,7 +22,12 @@ import {
   resolveArmorVisual,
 } from '../src/rendering/player/PlayerArmorVisual';
 import { PLAYER_MODEL_PIXEL, PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
-import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
+import {
+  PlayerVisual,
+  SKIN_BASE_RENDER_ORDER,
+  SKIN_OUTER_RENDER_ORDER,
+  SKIN_PART_RENDER_RANK,
+} from '../src/rendering/player/PlayerVisual';
 
 const ARMOR_ASSETS = import.meta.glob('../assets/minecraft/textures/models/armor/*.png');
 const EMPTY: PlayerEquipmentState = { head: null, chest: null, legs: null, feet: null };
@@ -149,24 +154,28 @@ describe('vanilla armor geometry and resources', () => {
   it('shares cached nearest-neighbor cutout textures and templates', () => {
     const cache = new PlayerArmorMaterialCache();
     for (const material of ARMOR_VISUAL_MATERIALS) {
-      const base = cache.template(material, 1);
-      expect(cache.template(material, 1)).toBe(base);
-      expect(base.map?.magFilter, material).toBe(THREE.NearestFilter);
-      expect(base.map?.minFilter, material).toBe(THREE.NearestFilter);
-      expect(base.map?.generateMipmaps, material).toBe(false);
-      expect(base.alphaTest, material).toBeGreaterThan(0);
-      expect(base.transparent, material).toBe(false);
-      expect(base.depthWrite, material).toBe(true);
-      expect(base.depthTest, material).toBe(true);
+      for (const layer of [1, 2] as const) {
+        const base = cache.template(material, layer);
+        expect(cache.template(material, layer)).toBe(base);
+        expect(base.map?.magFilter, `${material}:${layer}`).toBe(THREE.NearestFilter);
+        expect(base.map?.minFilter, `${material}:${layer}`).toBe(THREE.NearestFilter);
+        expect(base.map?.generateMipmaps, `${material}:${layer}`).toBe(false);
+        expect(base.alphaTest, `${material}:${layer}`).toBeGreaterThan(0);
+        expect(base.transparent, `${material}:${layer}`).toBe(false);
+        expect(base.depthWrite, `${material}:${layer}`).toBe(true);
+        expect(base.depthTest, `${material}:${layer}`).toBe(true);
+      }
     }
     const iron = cache.template('iron', 1);
     const chain = cache.template('chainmail', 1);
     expect(chain.map).not.toBe(iron.map);
-    const leatherOverlay = cache.template('leather', 1, 'overlay');
-    expect(leatherOverlay.alphaTest).toBeGreaterThan(0);
-    expect(leatherOverlay.transparent).toBe(false);
-    expect(leatherOverlay.depthWrite).toBe(true);
-    expect(leatherOverlay.depthTest).toBe(true);
+    for (const layer of [1, 2] as const) {
+      const leatherOverlay = cache.template('leather', layer, 'overlay');
+      expect(leatherOverlay.alphaTest).toBeGreaterThan(0);
+      expect(leatherOverlay.transparent).toBe(false);
+      expect(leatherOverlay.depthWrite).toBe(true);
+      expect(leatherOverlay.depthTest).toBe(true);
+    }
     cache.dispose();
   });
 });
@@ -179,7 +188,7 @@ describe('PlayerArmorVisual slot visibility', () => {
       head: 0, body: 0, rightArm: 1, leftArm: 2, rightLeg: 1, leftLeg: 2,
     });
 
-    for (const material of ['iron', 'ruby', 'titanium'] as const) {
+    for (const material of ARMOR_VISUAL_MATERIALS) {
       visual.setArmor({
         head: `${material}_helmet`,
         chest: `${material}_chestplate`,
@@ -213,6 +222,49 @@ describe('PlayerArmorVisual slot visibility', () => {
     expect(legs).toMatchObject({ body: 20, rightLeg: 21, leftLeg: 22 });
     const feet = Object.fromEntries(visual.armor.meshes('feet').map((pair) => [pair.part, pair.base.renderOrder]));
     expect(feet).toEqual({ rightLeg: 21, leftLeg: 22 });
+    fixture.dispose();
+  });
+
+  it('keeps numeric skin/armor namespaces disjoint without asserting cross-queue draw order', () => {
+    const fixture = createVisual();
+    for (const model of ['classic', 'slim'] as const) {
+      fixture.visual.setAppearance(createPlayerAppearance({
+        skinId: '0f15ad5e5c148f40',
+        model,
+      }));
+      fixture.visual.setArmor({
+        head: 'iron_helmet',
+        chest: 'leather_chestplate',
+        legs: 'diamond_leggings',
+        feet: 'titanium_boots',
+      });
+      const skinBase = Object.keys(SKIN_PART_RENDER_RANK).map((part) => (
+        fixture.visual.rig[part as keyof typeof fixture.visual.rig]
+          .getObjectByName(`player:${part}:base`) as THREE.Mesh
+      ));
+      const skinOuter = Object.keys(SKIN_PART_RENDER_RANK).map((part) => (
+        fixture.visual.rig[part as keyof typeof fixture.visual.rig]
+          .getObjectByName(`player:${part}:outer`) as THREE.Mesh
+      ));
+      const armorBase = (['head', 'chest', 'legs', 'feet'] as const)
+        .flatMap((slot) => fixture.visual.armor.meshes(slot).filter((pair) => pair.base.visible).map((pair) => pair.base));
+      const leatherOverlay = fixture.visual.armor.meshes('chest')
+        .filter((pair) => pair.overlay.visible).map((pair) => pair.overlay);
+      expect(Math.min(...skinBase.map((mesh) => mesh.renderOrder))).toBe(SKIN_BASE_RENDER_ORDER);
+      expect(Math.max(...skinBase.map((mesh) => mesh.renderOrder)))
+        .toBe(SKIN_BASE_RENDER_ORDER + 5);
+      expect(Math.min(...skinOuter.map((mesh) => mesh.renderOrder))).toBe(SKIN_OUTER_RENDER_ORDER);
+      // Namespace invariant only: translucent outer draws after all opaque armor despite lower numbers.
+      expect(Math.max(...skinBase.map((mesh) => mesh.renderOrder)))
+        .toBeLessThan(Math.min(...skinOuter.map((mesh) => mesh.renderOrder)));
+      expect(Math.max(...skinOuter.map((mesh) => mesh.renderOrder)))
+        .toBeLessThan(Math.min(...armorBase.map((mesh) => mesh.renderOrder)));
+      expect(Math.max(...armorBase.map((mesh) => mesh.renderOrder)))
+        .toBeLessThan(Math.min(...leatherOverlay.map((mesh) => mesh.renderOrder)));
+      expect(skinOuter.every((mesh) => (mesh.material as THREE.MeshBasicMaterial).depthTest)).toBe(true);
+      expect(skinOuter.every((mesh) => (mesh.material as THREE.MeshBasicMaterial).depthWrite)).toBe(true);
+      expect(armorBase.every((mesh) => !(mesh.material as THREE.MeshBasicMaterial).transparent)).toBe(true);
+    }
     fixture.dispose();
   });
 

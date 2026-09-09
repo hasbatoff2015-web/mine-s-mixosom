@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { FirstPersonRenderer } from '../src/rendering/FirstPersonRenderer';
 import {
   ALL_PLAYER_SKIN_LAYERS,
   DEFAULT_PLAYER_APPEARANCE,
@@ -18,10 +19,50 @@ import {
   playerSkinPartDefinition,
   playerSkinPartSize,
   playerSkinUvRects,
+  type PlayerSkinPart,
 } from '../src/rendering/player/PlayerSkinGeometry';
-import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
+import {
+  PlayerVisual,
+  SKIN_BASE_RENDER_ORDER,
+  SKIN_OUTER_RENDER_ORDER,
+  SKIN_PART_DEPTH_BIAS,
+  SKIN_PART_RENDER_RANK,
+} from '../src/rendering/player/PlayerVisual';
+import { ARMOR_BASE_RENDER_ORDER } from '../src/rendering/player/PlayerArmorVisual';
 
 const PLAYER_SKIN_ASSETS = import.meta.glob('../public/textures/**/*.png');
+const SKIN_PARTS = Object.keys(SKIN_PART_RENDER_RANK) as PlayerSkinPart[];
+const PART_LAYER_KEY = {
+  head: 'hat',
+  body: 'jacket',
+  rightArm: 'rightSleeve',
+  leftArm: 'leftSleeve',
+  rightLeg: 'rightPants',
+  leftLeg: 'leftPants',
+} as const;
+
+function skinMesh(visual: PlayerVisual, part: PlayerSkinPart, layer: 'base' | 'outer'): THREE.Mesh {
+  return visual.rig[part].getObjectByName(`player:${part}:${layer}`) as THREE.Mesh;
+}
+
+function createVisual(appearance = DEFAULT_PLAYER_APPEARANCE) {
+  const registry = new MinecraftSkinRegistry();
+  const geometries = new PlayerSkinGeometryCache();
+  const items = new ItemVisualFactory();
+  const visual = new PlayerVisual(registry, geometries, items, appearance);
+  return {
+    visual,
+    registry,
+    geometries,
+    items,
+    dispose: () => {
+      visual.dispose();
+      geometries.dispose();
+      items.dispose();
+      registry.dispose();
+    },
+  };
+}
 
 describe('Minecraft-compatible player skins', () => {
   it('accepts modern 64x64 and rejects legacy or arbitrary dimensions', () => {
@@ -63,6 +104,7 @@ describe('Minecraft-compatible player skins', () => {
     expect(first.texture.magFilter).toBe(THREE.NearestFilter);
     expect(first.texture.minFilter).toBe(THREE.NearestFilter);
     expect(first.texture.generateMipmaps).toBe(false);
+    expect(first.outerLayerAlpha).toBe('binary');
     expect(registry.referenceCount(DEFAULT_PLAYER_APPEARANCE.skinId)).toBe(2);
     first.release();
     expect(registry.cacheSize).toBe(1);
@@ -94,6 +136,191 @@ describe('Minecraft-compatible player skins', () => {
     ).getSize(new THREE.Vector3()).x;
     expect(armWidth).toBeCloseTo(3 * PLAYER_MODEL_PIXEL);
     visual.dispose();
+    expect(registry.cacheSize).toBe(0);
+    geometries.dispose();
+    items.dispose();
+    registry.dispose();
+  });
+
+  it('uses entity-owned base/outer materials on one shared texture with data-driven alpha semantics', () => {
+    const first = createVisual();
+    const second = new PlayerVisual(first.registry, first.geometries, first.items, DEFAULT_PLAYER_APPEARANCE);
+    const firstBase = skinMesh(first.visual, 'body', 'base').material as THREE.MeshBasicMaterial;
+    const secondBase = skinMesh(second, 'body', 'base').material as THREE.MeshBasicMaterial;
+    expect(firstBase).not.toBe(secondBase);
+
+    const binaryMaterials = SKIN_PARTS.flatMap((part) => [
+      skinMesh(first.visual, part, 'base').material as THREE.MeshBasicMaterial,
+      skinMesh(first.visual, part, 'outer').material as THREE.MeshBasicMaterial,
+    ]);
+    expect(new Set(binaryMaterials.map((material) => material.map))).toEqual(new Set([firstBase.map]));
+    expect(new Set(SKIN_PARTS.map((part) => skinMesh(first.visual, part, 'base').material))).toHaveLength(1);
+    expect(new Set(SKIN_PARTS.map((part) => skinMesh(first.visual, part, 'outer').material))).toHaveLength(3);
+    for (const part of SKIN_PARTS) {
+      const base = skinMesh(first.visual, part, 'base').material as THREE.MeshBasicMaterial;
+      const outer = skinMesh(first.visual, part, 'outer').material as THREE.MeshBasicMaterial;
+      expect(base.alphaTest, `${part}:base:alphaTest`).toBeGreaterThan(0);
+      expect(base.transparent, `${part}:base:transparent`).toBe(false);
+      expect(base.depthTest, `${part}:base:depthTest`).toBe(true);
+      expect(base.depthWrite, `${part}:base:depthWrite`).toBe(true);
+      expect(outer.alphaTest, `${part}:outer:alphaTest`).toBeGreaterThan(0);
+      expect(outer.transparent, `${part}:outer:transparent`).toBe(false);
+      expect(outer.depthTest, `${part}:outer:depthTest`).toBe(true);
+      expect(outer.depthWrite, `${part}:outer:depthWrite`).toBe(true);
+    }
+
+    const materialObjects = new Set(binaryMaterials);
+    const previousTexture = firstBase.map;
+    first.visual.setAppearance(createPlayerAppearance({
+      skinId: '0f15ad5e5c148f40',
+      model: 'slim',
+    }));
+    expect(first.registry.referenceCount(DEFAULT_PLAYER_APPEARANCE.skinId)).toBe(1);
+    expect(first.registry.referenceCount('0f15ad5e5c148f40')).toBe(1);
+    const translucentMaterials = SKIN_PARTS.flatMap((part) => [
+      skinMesh(first.visual, part, 'base').material as THREE.MeshBasicMaterial,
+      skinMesh(first.visual, part, 'outer').material as THREE.MeshBasicMaterial,
+    ]);
+    expect(new Set(translucentMaterials)).toEqual(materialObjects);
+    expect(new Set(translucentMaterials.map((material) => material.map))).toHaveLength(1);
+    expect(translucentMaterials[0]!.map).not.toBe(previousTexture);
+    for (const part of SKIN_PARTS) {
+      expect((skinMesh(first.visual, part, 'base').material as THREE.MeshBasicMaterial).transparent).toBe(false);
+      expect((skinMesh(first.visual, part, 'outer').material as THREE.MeshBasicMaterial).transparent).toBe(true);
+    }
+
+    first.visual.setAppearance(createPlayerAppearance({ skinId: 'e3eb6f99ea1c3fe1', model: 'slim' }));
+    expect(first.registry.referenceCount('0f15ad5e5c148f40')).toBe(0);
+    for (const part of SKIN_PARTS) {
+      expect((skinMesh(first.visual, part, 'outer').material as THREE.MeshBasicMaterial).transparent).toBe(false);
+    }
+    second.dispose();
+    first.dispose();
+  });
+
+  it('derives translucent outer policy from the acquired custom registry descriptor', () => {
+    const registry = new MinecraftSkinRegistry([]);
+    registry.registerValidated({
+      id: 'custom_translucent',
+      texturePath: 'player/skins/frontier_explorer',
+      defaultModel: 'classic',
+      outerLayerAlpha: 'translucent',
+    }, 64, 64);
+    const handle = registry.acquire('custom_translucent');
+    expect(handle.outerLayerAlpha).toBe('translucent');
+    handle.release();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(registry, geometries, items, createPlayerAppearance({
+      skinId: 'custom_translucent',
+      model: 'classic',
+    }));
+    for (const part of SKIN_PARTS) {
+      expect((skinMesh(visual, part, 'base').material as THREE.MeshBasicMaterial).transparent).toBe(false);
+      expect((skinMesh(visual, part, 'outer').material as THREE.MeshBasicMaterial).transparent).toBe(true);
+    }
+    visual.dispose();
+    geometries.dispose();
+    items.dispose();
+    registry.dispose();
+  });
+
+  it('keeps unique render ranks and a separate small outer seam depth bias', () => {
+    const fixture = createVisual();
+    expect(SKIN_PART_RENDER_RANK).toEqual({
+      body: 0, head: 1, rightLeg: 2, leftLeg: 3, rightArm: 4, leftArm: 5,
+    });
+    expect(SKIN_PART_DEPTH_BIAS).toEqual({
+      head: 0, body: 0, rightArm: 1, leftArm: 2, rightLeg: 1, leftLeg: 2,
+    });
+    expect(Math.max(...Object.values(SKIN_PART_DEPTH_BIAS))).toBe(2);
+    for (const { skinId, model } of [
+      { skinId: DEFAULT_PLAYER_APPEARANCE.skinId, model: 'classic' },
+      { skinId: DEFAULT_PLAYER_APPEARANCE.skinId, model: 'slim' },
+      { skinId: '5bc8ad7edfb7ee86', model: 'slim' },
+    ] as const) {
+      fixture.visual.setAppearance(createPlayerAppearance({
+        skinId,
+        model,
+      }));
+      const baseOrders = SKIN_PARTS.map((part) => skinMesh(fixture.visual, part, 'base').renderOrder);
+      const outerOrders = SKIN_PARTS.map((part) => skinMesh(fixture.visual, part, 'outer').renderOrder);
+      expect(new Set(baseOrders), `${skinId}:${model}:base`).toHaveLength(6);
+      expect(new Set(outerOrders), `${skinId}:${model}:outer`).toHaveLength(6);
+      expect(Math.max(...baseOrders)).toBeLessThan(Math.min(...outerOrders));
+      // Numeric namespace invariant only: opaque armor and translucent outer use different render queues.
+      expect(Math.max(...outerOrders)).toBeLessThan(ARMOR_BASE_RENDER_ORDER);
+      expect(skinMesh(fixture.visual, 'head', 'outer').renderOrder)
+        .not.toBe(skinMesh(fixture.visual, 'body', 'outer').renderOrder);
+      expect(skinMesh(fixture.visual, 'rightArm', 'outer').renderOrder)
+        .not.toBe(skinMesh(fixture.visual, 'rightLeg', 'outer').renderOrder);
+      expect(skinMesh(fixture.visual, 'leftArm', 'outer').renderOrder)
+        .not.toBe(skinMesh(fixture.visual, 'leftLeg', 'outer').renderOrder);
+      for (const part of SKIN_PARTS) {
+        const renderRank = SKIN_PART_RENDER_RANK[part];
+        const depthBias = SKIN_PART_DEPTH_BIAS[part];
+        const base = skinMesh(fixture.visual, part, 'base');
+        const outer = skinMesh(fixture.visual, part, 'outer');
+        const baseMaterial = base.material as THREE.MeshBasicMaterial;
+        const outerMaterial = outer.material as THREE.MeshBasicMaterial;
+        expect(base.renderOrder, `${model}:${part}:base`).toBe(SKIN_BASE_RENDER_ORDER + renderRank);
+        expect(outer.renderOrder, `${model}:${part}:outer`).toBe(SKIN_OUTER_RENDER_ORDER + renderRank);
+        expect(outer.renderOrder).toBeGreaterThan(base.renderOrder);
+        expect(baseMaterial.polygonOffset, `${model}:${part}:base:polygonOffset`).toBe(false);
+        expect(outerMaterial.polygonOffset, `${model}:${part}:outer:polygonOffset`).toBe(depthBias > 0);
+        expect(outerMaterial.polygonOffsetFactor, `${model}:${part}:outer:factor`).toBe(-depthBias);
+        expect(outerMaterial.polygonOffsetUnits, `${model}:${part}:outer:units`).toBe(-depthBias);
+      }
+      if (skinId === '5bc8ad7edfb7ee86') {
+        expect(SKIN_PARTS.every((part) => (
+          skinMesh(fixture.visual, part, 'outer').material as THREE.MeshBasicMaterial
+        ).transparent)).toBe(true);
+      }
+    }
+    fixture.dispose();
+  });
+
+  it('honors every independent outer-layer visibility toggle', () => {
+    const fixture = createVisual();
+    for (const disabledLayer of Object.values(PART_LAYER_KEY)) {
+      fixture.visual.setAppearance(createPlayerAppearance({
+        ...DEFAULT_PLAYER_APPEARANCE,
+        layers: { ...ALL_PLAYER_SKIN_LAYERS, [disabledLayer]: false },
+      }));
+      for (const part of SKIN_PARTS) {
+        expect(skinMesh(fixture.visual, part, 'base').visible, `${disabledLayer}:${part}:base`).toBe(true);
+        expect(skinMesh(fixture.visual, part, 'outer').visible, `${disabledLayer}:${part}:outer`)
+          .toBe(PART_LAYER_KEY[part] !== disabledLayer);
+      }
+    }
+    fixture.dispose();
+  });
+
+  it('leaves the separate first-person arm material path stable across appearance changes', () => {
+    const registry = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const renderer = new FirstPersonRenderer(items, {
+      skinRegistry: registry,
+      skinGeometries: geometries,
+      appearance: DEFAULT_PLAYER_APPEARANCE,
+    });
+    const arm = renderer.root.getObjectByName('first-person:right-arm') as THREE.Mesh;
+    const sleeve = renderer.root.getObjectByName('first-person:right-sleeve') as THREE.Mesh;
+    const material = arm.material as THREE.MeshLambertMaterial;
+    const previousMap = material.map;
+    expect(sleeve.material).toBe(material);
+    expect(material.transparent).toBe(true);
+    expect(material.alphaTest).toBeGreaterThan(0);
+    expect(material.depthTest).toBe(true);
+    expect(material.depthWrite).toBe(true);
+    renderer.setAppearance(createPlayerAppearance({ skinId: '0f15ad5e5c148f40', model: 'slim' }));
+    expect(arm.material).toBe(material);
+    expect(sleeve.material).toBe(material);
+    expect(material.map).not.toBe(previousMap);
+    expect(registry.referenceCount(DEFAULT_PLAYER_APPEARANCE.skinId)).toBe(0);
+    expect(registry.referenceCount('0f15ad5e5c148f40')).toBe(1);
+    renderer.dispose();
     expect(registry.cacheSize).toBe(0);
     geometries.dispose();
     items.dispose();

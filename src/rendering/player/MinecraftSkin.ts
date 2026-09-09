@@ -3,13 +3,16 @@ import { TextureAtlas } from '../TextureAtlas';
 import {
   BUILTIN_MINECRAFT_SKINS,
   type MinecraftSkinDescriptor,
+  type PlayerSkinOuterAlpha,
 } from '../../player/appearance/builtinSkins';
 
 export {
   BUILTIN_MINECRAFT_SKINS,
   PRODUCTION_PLAYER_SKINS,
   QA_PLAYER_SKIN_ID,
+  skinHasTranslucentOuterLayer,
   type MinecraftSkinDescriptor,
+  type PlayerSkinOuterAlpha,
 } from '../../player/appearance/builtinSkins';
 
 export const MINECRAFT_SKIN_WIDTH = 64;
@@ -33,6 +36,7 @@ export function validateMinecraftSkinDimensions(width: number, height: number): 
 export interface SkinTextureHandle {
   readonly skinId: string;
   readonly texture: THREE.Texture;
+  readonly outerLayerAlpha: PlayerSkinOuterAlpha;
   release(): void;
 }
 
@@ -78,6 +82,7 @@ export class MinecraftSkinRegistry {
     return {
       skinId: descriptor.id,
       texture: entry.texture,
+      outerLayerAlpha: descriptor.outerLayerAlpha ?? 'binary',
       release: () => {
         if (released) return;
         released = true;
