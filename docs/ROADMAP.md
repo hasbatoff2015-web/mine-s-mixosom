@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-09: AutoMine plugin
+
+- [x] Builtin `/automine` wand/create/delete/list/info/reset/setinterval/setteleport on PluginManager.
+- [x] Inclusive cuboid selection independent from Claims; wooden-axe wand clicks.
+- [x] Fixed weighted composition (12 BlockId, 100%, Obsidian=Coal, Titanium rarest).
+- [x] Batched `applyBlockBatch` reset, TeleportService evacuation, persist+restart timer.
+- [x] Restore original voxels on delete; no second claims/teleport/network protocol.
+
 ## 2026-09-09: Hologram close-up text quality
 
 - [x] Supersample hologram text canvas; keep world-space size.

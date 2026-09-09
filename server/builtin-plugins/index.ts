@@ -1,5 +1,6 @@
 import type { Plugin } from '../PluginManager';
 import type { BuiltinPluginContext } from './context';
+import { createAutoMinePlugin } from './autoMine';
 import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
 import { createHomePlugin } from './home';
@@ -24,5 +25,6 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createRtpPortalPlugin(ctx),
     createClaimsPlugin(ctx),
     createHologramsPlugin(ctx),
+    createAutoMinePlugin(ctx),
   ];
 }

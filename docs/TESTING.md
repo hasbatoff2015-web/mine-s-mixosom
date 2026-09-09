@@ -1,5 +1,20 @@
 # Тестирование
 
+## 2026-09-09 AutoMine plugin
+
+Report: `reports/2026-09-09_automine-plugin.md`.
+
+```text
+npx vitest run \
+  tests/server/auto-mine-core.test.ts \
+  tests/server/auto-mine.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/plugin-boundaries.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: inclusive cuboid from reversed corners; wand first/second click; name validation; 12-type weights sum 100% with Obsidian=Coal and Titanium rarest; deterministic cumulative selector; batched `applyBlockBatch`; reset replaces the volume; inside/edge evacuate with yaw/pitch, outside and other-world skipped; no overlapping reset; overdue restart runs one reset; `/automine` commands + `automine.manage`; delete restores original voxels.
+
 ## 2026-09-09 Hologram close-up text quality
 
 Report: `reports/2026-09-09_hologram-text-quality.md`.
