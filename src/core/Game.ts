@@ -31,6 +31,7 @@ import {
   shouldPlayExplosion,
   consumableSoundEvent,
   resolveCatalogEvent,
+  worldSoundPlayOptions,
   type BlockSoundAction,
   type PlaySoundOptions,
   type SoundEventId,
@@ -1102,10 +1103,10 @@ export class Game {
       case 'world_sound':
         for (const sound of message.sounds) {
           if (!resolveCatalogEvent(sound.event as SoundEventId)) continue;
-          this.playWorld(sound.event as SoundEventId, sound.x, sound.y, sound.z, {
+          this.playWorld(sound.event as SoundEventId, sound.x, sound.y, sound.z, worldSoundPlayOptions({
             ...(sound.pitch !== undefined ? { pitch: sound.pitch } : {}),
             ...(sound.volume !== undefined ? { volume: sound.volume } : {}),
-          });
+          }));
         }
         return;
       case 'health': {

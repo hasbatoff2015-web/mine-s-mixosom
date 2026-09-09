@@ -1,5 +1,9 @@
 # Архитектура
 
+## Spatial `world_sound` vs local catalog profiles — 2026-09-09
+
+`bow.shoot` and `item.pickup` stay `positional: false` in the catalog because Singleplayer plays them with `playLocal` (first-person one-shots). Online `world_sound` is a different path: the server emits a world position. Playing those packets with the catalog flag skipped distance, and `WorldInstance.broadcast` delivered every shot/pickup to every client. The client now forces `worldSoundPlayOptions({ positional: true })`; the server sends the packet only to listeners inside `worldSoundMaxDistance(event)`. Death loot scatter uses `DEATH_DROP_SCATTER_MULTIPLIER = 3` only inside `scatterDeathDrop`.
+
 ## Online death, fire overlay, world sounds, recipe ghosts — 2026-09-08
 
 Anarchy no longer auto-respawns in the death tick. `ServerGameplay.respawnIfDead` drops loot once (`deathLootDropped`), freezes the corpse, and keeps `survival.dead`. The client death screen sends `{ type: 'respawn' }`; `respawnPlayer` is the only revive path and rejects a living player. `PlayerSnapshot.dead` / `RemotePlayerInfo.dead` are therefore visible long enough for the existing humanoid death pose (`HUMANOID_DEATH_ANIMATION_SECONDS = 0.7`, `rotation.z = progress * π/2`, scale `1 - 0.25 * progress`) on canonical `PlayerVisual`. `RemotePlayerView` starts that clock on the dead edge only.

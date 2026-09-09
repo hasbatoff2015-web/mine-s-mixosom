@@ -102,6 +102,7 @@ describe('sound call-site audit', () => {
     expect(gameplaySource).toContain("emitWorldSound('item.pickup'");
     expect(gameplaySource).toContain("emitWorldSound('fire.ignite'");
     expect(gameSource).toContain("case 'world_sound'");
+    expect(gameSource).toContain('worldSoundPlayOptions');
     expect(gameSource).toContain('this.updateFootsteps(session');
     expect(gameSource).toContain('consumableSoundEvent(item)');
   });

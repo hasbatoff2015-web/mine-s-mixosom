@@ -29,6 +29,7 @@ import {
 import {
   clearDoorBlocks,
   daylightFactor,
+  DEATH_DROP_SCATTER_MULTIPLIER,
   dropScatterVelocity,
   dropScatterOrigin,
   performUseHeld,
@@ -485,13 +486,17 @@ export class ServerGameplay {
   }
 
   private scatterDeathDrop(player: GameplayPlayer, stack: ItemStack): void {
-    const origin = dropScatterOrigin(player.controller.position, this.random);
+    const origin = dropScatterOrigin(player.controller.position, this.random, {
+      horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
+    });
     const position = new Vec3(origin[0], origin[1], origin[2]);
     const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, player.id);
     this.events.emit('itemDrop', event);
     if (event.cancelled) return;
     this.drops.spawn(stack, position, {
-      velocity: new Vec3(...dropScatterVelocity(this.random)),
+      velocity: new Vec3(...dropScatterVelocity(this.random, {
+        horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
+      })),
       merge: false,
       pickupDelaySeconds: 1.25,
     });

@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-09: Death scatter 3× + spatial world_sound
+
+- [x] Triple death-drop X/Z origin and horizontal velocity; keep `vy = 2.2`.
+- [x] Stop broadcasting `bow.shoot` / `item.pickup` as global local one-shots.
+- [x] Regression tests for scatter multiplier and false bow/pickup sounds.
+
 ## 2026-09-08: Online/Anarchy gameplay polish
 
 - [x] Drive the existing SP first-person fire overlay from authoritative Online fire state.

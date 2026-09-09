@@ -91,8 +91,11 @@ describe('online gameplay polish — death scatter, respawn, craft, sounds', () 
     const zs = new Set(drops.map((drop) => drop.position.z.toFixed(3)));
     expect(xs.size + zs.size).toBeGreaterThan(2);
     for (const drop of drops) {
-      expect(Math.hypot(drop.position.x - 40.5, drop.position.z - 40.5)).toBeLessThan(1.2);
+      expect(Math.hypot(drop.position.x - 40.5, drop.position.z - 40.5)).toBeLessThan(1.1);
       expect(Math.hypot(drop.velocity.x, drop.velocity.z)).toBeGreaterThan(0);
+      expect(Math.abs(drop.velocity.x)).toBeLessThanOrEqual(2.1 + 1e-9);
+      expect(Math.abs(drop.velocity.z)).toBeLessThanOrEqual(2.1 + 1e-9);
+      expect(drop.velocity.y).toBe(2.2);
     }
     world.gameplay.respawnIfDead(player);
     expect(world.gameplay.drops.count).toBe(drops.length);

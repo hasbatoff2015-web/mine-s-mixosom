@@ -32,6 +32,10 @@ import {
   formatPoseDump,
 } from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
+import {
+  listenerHearsWorldSound,
+  worldSoundMaxDistance,
+} from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
@@ -1349,7 +1353,17 @@ export class WorldInstance {
     }
     const worldSounds = this.gameplay.consumeWorldSounds();
     if (worldSounds.length > 0) {
-      this.broadcast({ type: 'world_sound', sounds: worldSounds });
+      for (const player of this.connectedPlayers()) {
+        const listener = player.controller.position;
+        const hearable = worldSounds.filter((sound) => listenerHearsWorldSound(
+          listener,
+          sound,
+          worldSoundMaxDistance(sound.event),
+        ));
+        if (hearable.length > 0) {
+          this.sendTo(player, { type: 'world_sound', sounds: hearable });
+        }
+      }
     }
     if (this.tickNumber % 20 === 0) {
       this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
