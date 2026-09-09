@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-09: Hologram close-up text quality
+
+- [x] Supersample hologram text canvas; keep world-space size.
+- [x] Linear magFilter + mipmaps for close sharpness / far stability.
+- [ ] Owner live QA: walk up to normal/timer/fixed holograms.
+
 ## 2026-09-09: Hologram background, fixed orientation, timer
 
 - [x] Background on/off as a separate renderer layer; independent width/height.

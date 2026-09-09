@@ -33,6 +33,18 @@ export const HOLOGRAM_SPRITE_BASE_HEIGHT = 0.35;
 /** Billboard depth so yaw-independent AABB clicks still hit. */
 export const HOLOGRAM_SPRITE_DEPTH = 1.2;
 
+/**
+ * Logical text-canvas size. World-space plane scale is independent of this.
+ * Physical pixels = logical × hologramTextCanvasScale(devicePixelRatio).
+ */
+export const HOLOGRAM_TEXT_LOGICAL_WIDTH = 512;
+export const HOLOGRAM_TEXT_LOGICAL_HEIGHT = 256;
+export const HOLOGRAM_TEXT_FONT_PX = 36;
+/** Base supersample; multiplied by devicePixelRatio then clamped. */
+export const HOLOGRAM_TEXT_RESOLUTION_SCALE = 2;
+export const HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN = 2;
+export const HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX = 4;
+
 /** Background plane size in the same world units as the text plane. */
 export const HOLOGRAM_BG_WIDTH_MIN = 0.5;
 export const HOLOGRAM_BG_WIDTH_MAX = Number((HOLOGRAM_SPRITE_WIDTH * HOLOGRAM_SIZE_MAX * 1.25).toFixed(2));
@@ -199,6 +211,29 @@ export function hologramSpriteHeight(lineCount: number, size = HOLOGRAM_SIZE_DEF
 
 export function hologramSpriteWidth(size = HOLOGRAM_SIZE_DEFAULT): number {
   return HOLOGRAM_SPRITE_WIDTH * size;
+}
+
+/** Physical/logical pixel ratio for the text canvas. World-space size is unchanged. */
+export function hologramTextCanvasScale(devicePixelRatio = 1): number {
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const scaled = Math.round(dpr * HOLOGRAM_TEXT_RESOLUTION_SCALE);
+  return Math.max(
+    HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN,
+    Math.min(HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX, scaled),
+  );
+}
+
+export function hologramTextCanvasSize(devicePixelRatio = 1): {
+  readonly width: number;
+  readonly height: number;
+  readonly scale: number;
+} {
+  const scale = hologramTextCanvasScale(devicePixelRatio);
+  return {
+    scale,
+    width: HOLOGRAM_TEXT_LOGICAL_WIDTH * scale,
+    height: HOLOGRAM_TEXT_LOGICAL_HEIGHT * scale,
+  };
 }
 
 export function clampHologramBackgroundWidth(value: number): number {

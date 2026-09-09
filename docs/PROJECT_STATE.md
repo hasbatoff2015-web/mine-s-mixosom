@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: hologram close-up text quality — 2026-09-09
+
+- Текст голограммы рисовался на canvas **512×256** и растягивался на world plane; `magFilter` был `NearestFilter` → вблизи пикселизация.
+- Внутреннее разрешение: logical 512×256, physical × `clamp(round(dpr×2), 2, 4)`. World-space size, фон, timer, fixed/billboard, protocol не менялись.
+- Texture: Linear mag, LinearMipmapLinear min, mipmaps on. Timer перерисовывает тот же canvas.
+- Handoff: `docs/reports/2026-09-09_hologram-text-quality.md`. `test:sim` 65/65, `test:server` 324/324.
+
 ## Последний проход: hologram background / fixed / timer — 2026-09-09
 
 - Фон — отдельный plane (чёрный 0.35), не часть текстовой canvas-текстуры. Выключение прячет mesh; width/height хранятся отдельно от размера текста. Legacy default = старый sprite (`2.6×0.77` при size=1, 1 линия), фон включён.

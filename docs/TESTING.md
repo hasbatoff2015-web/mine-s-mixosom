@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-09 Hologram close-up text quality
+
+Report: `reports/2026-09-09_hologram-text-quality.md`.
+
+```text
+npx vitest run tests/hologram-timer.test.ts tests/hologram-style.test.ts tests/hologram-hit.test.ts --maxWorkers=2
+```
+
+Contracts: physical canvas > logical; scale clamped 2–4; world-space sprite size unchanged; one CanvasTexture per hologram; magFilter linear (not nearest); timer still has no tick packets.
+
 ## 2026-09-09 Hologram background, fixed orientation, timer
 
 Report: `reports/2026-09-09_hologram-bg-timer.md`.
