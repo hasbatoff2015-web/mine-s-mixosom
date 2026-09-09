@@ -1,5 +1,11 @@
 # Архитектура
 
+## Player layer depth policy integrated with current main — 2026-09-10
+
+`origin/main@4de89948` was merged into `codex/fix-player-layer-zfighting@f1ed162f` as merge commit `72bf906`. The resulting `PlayerVisual` composes main's death-pose/appearance/nameplate consumers with the feature's material split and deterministic ordering. Runtime ownership stays unchanged: `MinecraftSkinRegistry.acquire()` returns the resolved descriptor metadata, and `PlayerVisual` uses that handle's `outerLayerAlpha` rather than consulting only the built-in map.
+
+The render namespaces remain queue-local: skin base `0..5`, skin outer `10..15`, armor base `20..22`, leather overlay `30..32`. Base and binary outer are opaque cutouts; only descriptor-marked outer layers enter Three.js's transparent queue. Armor depth writes remain authoritative across the opaque/transparent queue boundary. Geometry, UVs, inflate, pivots, animation, first-person and armor production paths were not changed by the integration.
+
 ## Deterministic player skin depth policy — 2026-09-09
 
 `PlayerVisual` owns separate skin base and outer materials while all of them reference the single texture handle acquired from `MinecraftSkinRegistry`. Base is always an opaque cutout (`alphaTest=0.01`, `transparent=false`, `depthTest=true`, `depthWrite=true`). `SkinTextureHandle.outerLayerAlpha` comes from the descriptor actually resolved by that registry, so built-in and runtime-registered skins use the same policy without consulting a global built-in map. Blending is enabled only when that acquired descriptor says `translucent`; all other outer layers remain opaque cutouts. Appearance changes update maps/transparency on the existing materials and release the previous handle; model changes rebuild meshes against the same material objects.

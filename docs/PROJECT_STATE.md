@@ -1,5 +1,16 @@
 # Состояние проекта
 
+## Последний проход: player skin z-fighting integrated into current main — 2026-09-10
+
+- `origin/main@4de89948` влит в `codex/fix-player-layer-zfighting@f1ed162f` обычным merge `72bf906`; merge-base `9eaec6ba`. История не переписывалась.
+- Конфликты были только в `docs/ARCHITECTURE.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`, `docs/TESTING.md`; в каждом сохранены и skin policy/QA, и современный main с bow/melee PvP, AutoMine, holograms и online polish.
+- Base и binary outer остаются opaque cutout; translucent outer включается только из metadata фактически acquired registry handle. Classic/Slim имеют шесть уникальных base/outer ranks, а seam bias остаётся отдельным `0/-1/-2` policy.
+- Production `PlayerSkinGeometry`, `FirstPersonRenderer` и `PlayerArmorVisual` не менялись. Armor остаётся opaque/depth-writing с namespaces `20..22` и `30..32`; invisibility скрывает только skin.
+- Alpha scanner: 45/45 production skins. Skin/armor/appearance/preview gate: **13 files / 75 tests PASS**. New-main regression gate: **30 files / 314 tests PASS**. Shared sim: **65/65 PASS**; четыре typecheck, boundaries, build, size/archive PASS.
+- Full suite: **212/216 files, 2024/2040 tests PASS**. Четыре baseline-файла совпадают с исходным main: extractor parse, два worldgen timeout, load-sensitive fire/minecart timeout и `tick-load-flight` performance threshold. Feature добавила семь проходящих тестов; failing-файлы не изменены.
+- Пользователь уже принял live skin QA; browser QA повторно не заявляется, поскольку renderer auto-merge прошёл без code conflict и geometry/first-person/armor production paths не менялись.
+- Handoff: `docs/reports/2026-09-10_player-layer-zfighting-main-integration.md`.
+
 ## Последний проход: fully ordered translucent skin parts — 2026-09-09
 
 - Residual review risk закрыт: все шесть skin parts теперь имеют unique render rank `body=0`, `head=1`, `rightLeg=2`, `leftLeg=3`, `rightArm=4`, `leftArm=5`. Base namespace `0..5`, outer `10..15`; transparent sorting больше не использует camera-space Z между head/body, arm/leg или left/right pairs.

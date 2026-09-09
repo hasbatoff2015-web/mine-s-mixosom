@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-10: Integrate player layer z-fighting fix into current main
+
+- [x] Record actual refs: main `4de89948`, feature `f1ed162f`, merge-base `9eaec6ba`.
+- [x] Merge current main into the published skin feature without rebase or force push.
+- [x] Preserve runtime descriptor alpha policy, six unique Classic/Slim ranks and independent depth bias.
+- [x] Preserve current main bow/melee timelines, networking, AutoMine, holograms, appearance/nameplates and online polish.
+- [x] Keep production skin geometry, first-person and armor renderer unchanged during integration.
+- [x] Pass 45-skin alpha validation, 75 skin/armor tests, 314 newer-main tests, 65 shared-sim tests, four typechecks, boundaries, build and archive checks.
+- [x] Compare the full-suite result to the exact current-main baseline without weakening timeouts or performance thresholds.
+
 ## 2026-09-09: Player skin layer z-fighting
 
 - [x] Scan all 45 production 64×64 skins and classify intermediate alpha by base/outer/unused atlas region without changing PNG files.

@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-10 Player layer z-fighting + current main integration
+
+Report: `reports/2026-09-10_player-layer-zfighting-main-integration.md`.
+
+`npm run assets:validate-player-skins` classified all **45 production skins** and accepted the four descriptor-marked translucent outers while keeping intermediate alpha found only in unused atlas pixels from changing the runtime policy.
+
+Focused renderer gate: **13 files / 75 tests PASS**. It covers opaque base, binary outer, runtime custom translucent descriptor, unique Classic/Slim `0..5` and `10..15` ranks, independent `0/-1/-2` polygon bias, layer toggles, appearance/handle lifecycle, invisibility, all armor materials, first-person, selector and previews. New-main regression gate: **30 files / 314 tests PASS**, including bow release/timeline, melee rewind, networking queues, plugins/AutoMine, holograms, world sounds, online death/respawn and appearance sync.
+
+Static/package gates: all four typechecks, `check:boundaries`, production `build`, `check:size`, `check:archive`, conflict-marker scan and `git diff --check` PASS. `test:sim`: **12 files / 65 tests PASS**. Archive remains **4.14 MiB / 353 files**.
+
+Full `npm test -- --maxWorkers=2`: **212/216 files, 2024/2040 tests PASS**, plus one worker RPC timeout. Compared with the exact source-main baseline (**2016/2033**, 17 failures), the feature adds seven passing skin tests and introduces no new failure class. Current failures are the unchanged `minecraft-reference-extractor` parse suite, two `worldgen-terrain` 5 s timeouts, 13 load-sensitive `fire-contact-sunlight-minecart` timeouts and one `tick-load-flight` `<80 ms` miss (samples 118–128 ms). None of those files changed; no timeout or threshold was relaxed.
+
 ## 2026-09-09 Fully ordered translucent skin parts
 
 Report: `reports/2026-09-09_fully-ordered-translucent-skin-parts.md`.
