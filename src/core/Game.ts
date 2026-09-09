@@ -214,6 +214,7 @@ import {
   captureAttack,
   captureBowRelease,
   composeOnlineBreakFinish,
+  selectBowRenderTick,
 } from '../net/actionIntent';
 import {
   actionMessageFromBreakAbort,
@@ -413,6 +414,19 @@ export interface OnlineAnarchySession {
     sent?: boolean;
     result?: string;
     spawned?: boolean;
+    requestedRenderTick?: number;
+    validatedRenderTick?: number;
+    receivedServerTick?: number;
+    boundaryServerTick?: number;
+    pendingTicks?: number;
+    receiveRewindTicks?: number;
+    catchUpTicks?: number;
+    authoritativeDrawTicks?: number;
+    charge?: number;
+    rejectReason?: string;
+    boundaryEyeX?: number;
+    boundaryEyeY?: number;
+    boundaryEyeZ?: number;
   };
   lastCombatDiag?: {
     actionSeq: number;
@@ -1763,7 +1777,8 @@ export class Game {
           serverYaw: message.yaw,
           serverPitch: message.pitch,
           result: message.ok ? 'accepted' : `rejected:${message.reason ?? 'unknown'}`,
-          spawned: message.ok,
+          spawned: message.bow?.spawned ?? message.ok,
+          ...(message.bow ?? {}),
         };
       }
       return;
@@ -2002,13 +2017,22 @@ export class Game {
       return;
     }
     const source = this.onlineActionSource(session);
-    const action = captureBowRelease(source, { yaw: this.input.yaw, pitch: this.input.pitch });
+    const aim = this.sampleLocalAim(session);
+    const direct = raycastRemotePlayers(online.remotes, aim.origin, aim.direction, 48);
+    const renderTick = selectBowRenderTick(
+      direct?.renderTick,
+      [...online.remotes.values()]
+        .map((remote) => remote.lastRenderTick)
+        .filter((tick): tick is number => tick !== undefined),
+    );
+    const action = captureBowRelease(source, { yaw: aim.yaw, pitch: aim.pitch }, renderTick);
     this.commitOnlineActionSeq(session, source);
     online.lastBowDiag = {
       actionSeq: action.actionSeq,
       commandSeq: action.commandSeq,
       clientYaw: action.yaw,
       clientPitch: action.pitch,
+      ...(action.renderTick !== undefined ? { requestedRenderTick: action.renderTick } : {}),
       pressCaptured: online.lastBowDiag?.pressCaptured === true,
       drawStarted: online.lastBowDiag?.drawStarted === true,
       releaseCaptured: true,
@@ -5155,7 +5179,7 @@ export class Game {
             const ang = bow.serverYaw !== undefined && bow.serverPitch !== undefined
               ? angularError(bow.clientYaw, bow.clientPitch, bow.serverYaw, bow.serverPitch)
               : undefined;
-            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
+            this.cachedDebugText += `\nBow press=${bow.pressCaptured ? 1 : 0} draw=${bow.drawStarted ? 1 : 0} rel=${bow.releaseCaptured ? 1 : 0} sent=${bow.sent ? 1 : 0} ${bow.result ?? 'pending'} spawn=${bow.spawned ? 1 : 0} a=${bow.actionSeq} c=${bow.commandSeq} recv=${bow.receivedServerTick ?? '—'} boundary=${bow.boundaryServerTick ?? '—'} pending=${bow.pendingTicks ?? '—'} req=${bow.requestedRenderTick?.toFixed(2) ?? '—'} valid=${bow.validatedRenderTick?.toFixed(2) ?? '—'} rewind=${bow.receiveRewindTicks?.toFixed(2) ?? '—'} catchup=${bow.catchUpTicks ?? '—'} drawTicks=${bow.authoritativeDrawTicks ?? '—'} charge=${bow.charge?.toFixed(3) ?? '—'} origin=${bow.boundaryEyeX?.toFixed(2) ?? '—'},${bow.boundaryEyeY?.toFixed(2) ?? '—'},${bow.boundaryEyeZ?.toFixed(2) ?? '—'} reject=${bow.rejectReason ?? '—'} aim=${bow.clientYaw.toFixed(3)},${bow.clientPitch.toFixed(3)} srv=${bow.serverYaw?.toFixed(3) ?? '—'},${bow.serverPitch?.toFixed(3) ?? '—'} ang=${ang !== undefined ? ang.toFixed(4) : '—'}`;
           }
           if (session.online.lastCombatDiag) {
             const combat = session.online.lastCombatDiag;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { angularError } from '../shared/playerActions';
-import { captureBowRelease } from '../src/net/actionIntent';
+import { parseClientMessage } from '../shared/protocol';
+import { captureBowRelease, selectBowRenderTick } from '../src/net/actionIntent';
 import { viewDirectionFromLook } from '../src/player/localAim';
 
 describe('bow release intent contract', () => {
@@ -33,5 +34,26 @@ describe('bow release intent contract', () => {
 
   it('later yaw is a large angular error versus captured aim', () => {
     expect(angularError(0, 0, 0.5, 0)).toBeGreaterThan(0.4);
+  });
+
+  it('prefers the directly rendered remote tick and otherwise uses the active median', () => {
+    expect(selectBowRenderTick(97.25, [96, 97, 98])).toBe(97.25);
+    expect(selectBowRenderTick(undefined, [99, 96, 98, 97])).toBe(97.5);
+    expect(selectBowRenderTick(undefined, [Number.NaN, 96, 98, 97])).toBe(97);
+    expect(selectBowRenderTick(undefined, [])).toBeUndefined();
+    expect(captureBowRelease({ actionSeq: 0, inputSeq: 4, selectedSlot: 2 }, { yaw: 1, pitch: 0 }, 97))
+      .toMatchObject({ renderTick: 97 });
+  });
+
+  it('parses an additive render tick but rejects non-finite client values', () => {
+    const message = {
+      type: 'bow_release', actionSeq: 2, commandSeq: 7, selectedSlot: 0, yaw: 0.2, pitch: -0.1,
+    } as const;
+    expect(parseClientMessage({ ...message, renderTick: 44.5 })).toMatchObject({ renderTick: 44.5 });
+    expect(parseClientMessage({ ...message, renderTick: Number.NaN })).toHaveProperty('error');
+    expect(parseClientMessage({ ...message, renderTick: Number.POSITIVE_INFINITY })).toHaveProperty('error');
+    const stripped = parseClientMessage({ ...message, aabb: { minX: -999 }, damage: 999 });
+    expect(stripped).not.toHaveProperty('aabb');
+    expect(stripped).not.toHaveProperty('damage');
   });
 });

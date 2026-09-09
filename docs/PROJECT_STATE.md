@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: bow PvP client timeline — 2026-09-09
+
+- Online release передаёт captured live yaw/pitch и optional `renderTick`: exact `RemotePlayerView.lastRenderTick` под crosshair, иначе median уже отрисованных remote timelines; interpolation buffer повторно не sample'ится.
+- `WorldInstance` валидирует explicit timeline в момент получения (`MAX_PVP_REWIND_TICKS = 5`), затем ждёт exact attacker command boundary не дольше `MAX_PENDING_BOW_TICKS = 8`. Future/too-old не превращаются в валидные из-за FIFO, а receive-valid timeline не стареет повторно.
+- Сервер сохраняет pre-release draw state, exact post-physics eye/slot/Bow identity и выпускает стрелу из boundary eye + прежний muzzle `0.35`; направление остаётся captured intent. Pending не добавляет charge, ammo/projectile защищены общим `actionSeq` dedupe.
+- Compensated arrow получает server-owned `playerTimelineTick`, catch-up проходит тем же whole-segment physics/collision kernel по одному 20 TPS шагу, а player collision читает только authoritative historical AABB. Blocks/mobs/minecarts и весь projectile damage/Claims/HurtResistance pipeline не раздваивались.
+- Storage history увеличена с 12 до 20 samples; разрешённый client rewind остался 5 ticks. Uncompensated bow без render timeline и singleplayer path сохранены.
+- Добавлены bow boundary/backlog/slot/charge/duplicate/timeout/security tests, mathematical historical-vs-current AABB и lead-shot regression. Owner live two-client QA остаётся обязательным ручным gate.
+- Handoff: `docs/reports/2026-09-09_bow-pvp-client-timeline.md`.
+
 ## Последний проход: melee PvP receive-time rewind — 2026-09-09
 
 - Live regression подтверждён: valid `targetRenderTick` повторно проверялся только при dequeue sequenced attack, поэтому visual interpolation delay и ожидание attacker `commandSeq` суммировались против `MAX_PVP_REWIND_TICKS = 5`.
@@ -14,7 +24,7 @@
 
 - Root cause: production client посылал bare `{ type: 'attack' }`; сервер считал melee по receipt-time eye/yaw, а remote client уже целился в интерполированную delayed pose (adaptive delay 80–180 ms). FIFO input мог дополнительно применить более новый yaw до обработки атаки.
 - LMB теперь фиксирует live aim, command/slot и `targetId + targetRenderTick` реально отрисованного ближайшего remote player и отправляет sequenced `action(kind=attack)`. Bare attack из production path удалён; legacy protocol path сохранён.
-- Серверная `combatPoseHistory` содержит 12 полных 20 TPS poses с exact command-boundary. Pending attacks bounded до 32; rewind цели ограничен 5 ticks / 250 ms, fractional ticks интерполируют только authoritative AABB.
+- Серверная `combatPoseHistory` содержит 20 полных 20 TPS poses с exact command-boundary. Pending attacks bounded до 32; rewind цели ограничен 5 ticks / 250 ms, fractional ticks интерполируют только authoritative AABB.
 - Сервер остаётся владельцем результата: ray/AABB, reach 3, current-world voxel LOS, claims/plugins, armor, blocking, immunity, critical, knockback и durability. Нет hitbox inflation, client damage/distance или fallback на другого player после miss указанной цели.
 - Без player hint сохраняются air swing, mob и minecart melee. F3 получает серверные combat diagnostics через `action_result`.
 - Автотесты покрывают fast flick/queue boundary, moving rewound target, stale/future hints, wall/reach, duplicates, immunity, обе стороны claims, mob/minecart и air swing. Owner live two-client QA остаётся в roadmap.

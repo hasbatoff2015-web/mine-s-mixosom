@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-09: Bow PvP client-timeline hit registration
+
+- [x] Capture exact already-rendered remote tick under crosshair or median remote timeline for lead shots; omit when unavailable.
+- [x] Validate explicit render timeline once at packet receipt with unchanged five-tick limit.
+- [x] Resolve exact post-physics attacker boundary and server-owned pre-release Bow/slot/draw state; bound wait to eight ticks.
+- [x] Spawn from boundary eye + `0.35` along captured aim and prevent pending charge inflation/duplicate ammo.
+- [x] Add per-arrow historical player timeline and stepwise catch-up through the canonical physics/collision/damage pipeline.
+- [x] Increase history storage to 20 without changing rewind authority, reach, hitboxes or combat tuning.
+- [x] Cover boundary ordering, backlog, security, current-vs-historical collision, lead shot, owner exclusion and retained Claims/arrow suites.
+- [ ] Owner live Anarchy QA with two clients and 0/50/100/150 ms latency scenarios; inspect F3 bow diagnostics.
+
 ## 2026-09-09: Melee PvP receive-time rewind regression
 
 - [x] Measure the five-tick target rewind window at server packet receipt, not delayed FIFO execution.

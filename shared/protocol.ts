@@ -1,13 +1,14 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
-import type { ActionRejectReason, CombatActionDiagnostics, PlayerActionKind } from './playerActions';
+import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, PlayerActionKind } from './playerActions';
 import type { PlayerPresentationState } from './playerPresentation';
 export type { PlayerPresentationState } from './playerPresentation';
 
 export type { AppliedMovementStep } from './playerCommand';
 export type { ActionRejectReason, PlayerActionKind } from './playerActions';
 export type { CombatActionDiagnostics } from './playerActions';
+export type { BowActionDiagnostics } from './playerActions';
 
 export type GameMode = 'survival' | 'creative';
 
@@ -336,6 +337,7 @@ export interface ClientBowReleaseMessage {
   readonly yaw: number;
   readonly pitch: number;
   readonly selectedSlot?: number;
+  readonly renderTick?: number;
 }
 
 export interface ClientActionMessage {
@@ -358,6 +360,7 @@ export interface ClientActionMessage {
   readonly pitch?: number;
   readonly targetId?: string;
   readonly targetRenderTick?: number;
+  readonly renderTick?: number;
   readonly x?: number;
   readonly y?: number;
   readonly z?: number;
@@ -496,6 +499,7 @@ export interface ServerActionResultMessage {
   readonly yaw?: number;
   readonly pitch?: number;
   readonly combat?: CombatActionDiagnostics;
+  readonly bow?: BowActionDiagnostics;
 }
 
 export interface ServerChunkMessage {
@@ -1062,6 +1066,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.selectedSlot !== undefined && selectedSlot === undefined) {
         return { error: 'bow_release.selectedSlot invalid' };
       }
+      if (raw.renderTick !== undefined && !finite(raw.renderTick)) {
+        return { error: 'bow_release.renderTick invalid' };
+      }
       return {
         type: 'bow_release',
         actionSeq,
@@ -1069,6 +1076,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         yaw: raw.yaw,
         pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2),
         ...(selectedSlot !== undefined ? { selectedSlot: clampNumber(selectedSlot, 0, 8) } : {}),
+        ...(finite(raw.renderTick) ? { renderTick: raw.renderTick } : {}),
       };
     }
     case 'action': {
@@ -1091,6 +1099,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.targetRenderTick !== undefined && !finite(raw.targetRenderTick)) {
         return { error: 'action.targetRenderTick invalid' };
       }
+      if (raw.renderTick !== undefined && !finite(raw.renderTick)) {
+        return { error: 'action.renderTick invalid' };
+      }
       return {
         type: 'action',
         actionSeq,
@@ -1104,6 +1115,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(finite(raw.pitch) ? { pitch: clampNumber(raw.pitch, -Math.PI / 2, Math.PI / 2) } : {}),
         ...(targetId ? { targetId } : {}),
         ...(finite(raw.targetRenderTick) ? { targetRenderTick: raw.targetRenderTick } : {}),
+        ...(finite(raw.renderTick) ? { renderTick: raw.renderTick } : {}),
       };
     }
     case 'pickup': {

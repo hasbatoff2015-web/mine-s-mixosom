@@ -1,12 +1,21 @@
 import type { PlayerAABB } from '../src/player/PlayerController';
 
 /** Longer than the accepted rewind so jitter does not evict usable samples. */
-export const COMBAT_HISTORY_TICKS = 12;
+export const COMBAT_HISTORY_TICKS = 20;
 /** 5 ticks at 20 TPS = 250 ms. Requests outside this window are rejected. */
 export const MAX_PVP_REWIND_TICKS = 5;
 export const MAX_PENDING_MELEE_ACTIONS = 32;
 /** Command wait budget; independent from the already-validated target rewind window. */
 export const MAX_PENDING_MELEE_TICKS = 8;
+export const MAX_PENDING_BOW_ACTIONS = 32;
+/** Command wait/catch-up budget; distinct from the accepted PvP rewind window. */
+export const MAX_PENDING_BOW_TICKS = 8;
+
+export interface BowReleaseBoundaryState {
+  readonly selectedSlot: number;
+  readonly itemId: string;
+  readonly drawTicks: number;
+}
 
 export interface CombatPoseSample {
   readonly serverTick: number;
@@ -22,6 +31,7 @@ export interface CombatPoseSample {
   readonly yaw: number;
   readonly pitch: number;
   readonly selectedSlot: number;
+  readonly bowRelease?: BowReleaseBoundaryState;
   readonly aabb: PlayerAABB;
   readonly dead: boolean;
   readonly fallDistance: number;
@@ -73,14 +83,12 @@ function lerpAabb(a: PlayerAABB, b: PlayerAABB, t: number): PlayerAABB {
   };
 }
 
-export function rewindCombatPose(
+/** Samples retained authoritative history without applying a client rewind-age policy. */
+export function combatPoseAtTick(
   history: readonly CombatPoseSample[],
   requestedTick: number,
-  currentTick: number,
-  maxRewind = MAX_PVP_REWIND_TICKS,
-): RewoundCombatPose | undefined {
-  if (!Number.isFinite(requestedTick) || !Number.isFinite(currentTick)) return undefined;
-  if (requestedTick > currentTick || requestedTick < currentTick - maxRewind) return undefined;
+): Omit<RewoundCombatPose, 'rewindTicks'> | undefined {
+  if (!Number.isFinite(requestedTick)) return undefined;
   let before: CombatPoseSample | undefined;
   let after: CombatPoseSample | undefined;
   for (const sample of history) {
@@ -89,18 +97,24 @@ export function rewindCombatPose(
   }
   if (!before || !after) return undefined;
   if (before.serverTick === after.serverTick) {
-    return {
-      aabb: cloneAabb(before.aabb),
-      dead: before.dead,
-      resolvedTick: before.serverTick,
-      rewindTicks: currentTick - before.serverTick,
-    };
+    return { aabb: cloneAabb(before.aabb), dead: before.dead, resolvedTick: before.serverTick };
   }
   const t = (requestedTick - before.serverTick) / (after.serverTick - before.serverTick);
   return {
     aabb: lerpAabb(before.aabb, after.aabb, t),
     dead: before.dead || after.dead,
     resolvedTick: requestedTick,
-    rewindTicks: currentTick - requestedTick,
   };
+}
+
+export function rewindCombatPose(
+  history: readonly CombatPoseSample[],
+  requestedTick: number,
+  currentTick: number,
+  maxRewind = MAX_PVP_REWIND_TICKS,
+): RewoundCombatPose | undefined {
+  if (!Number.isFinite(requestedTick) || !Number.isFinite(currentTick)) return undefined;
+  if (requestedTick > currentTick || requestedTick < currentTick - maxRewind) return undefined;
+  const pose = combatPoseAtTick(history, requestedTick);
+  return pose ? { ...pose, rewindTicks: currentTick - pose.resolvedTick } : undefined;
 }

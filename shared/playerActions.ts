@@ -50,6 +50,30 @@ export interface BowReleaseAction extends SequencedAction {
   readonly kind: 'bow_release';
   readonly yaw: number;
   readonly pitch: number;
+  /** Server-tick timeline actually rendered for remote players at release. */
+  readonly renderTick?: number;
+}
+
+export interface BowActionDiagnostics {
+  readonly receivedServerTick: number;
+  readonly boundaryServerTick?: number;
+  readonly pendingTicks: number;
+  readonly requestedRenderTick?: number;
+  readonly validatedRenderTick?: number;
+  readonly receiveRewindTicks?: number;
+  readonly catchUpTicks: number;
+  readonly selectedSlot: number;
+  readonly authoritativeDrawTicks?: number;
+  readonly charge?: number;
+  readonly capturedYaw: number;
+  readonly capturedPitch: number;
+  readonly boundaryYaw?: number;
+  readonly boundaryPitch?: number;
+  readonly boundaryEyeX?: number;
+  readonly boundaryEyeY?: number;
+  readonly boundaryEyeZ?: number;
+  readonly spawned: boolean;
+  readonly rejectReason?: string;
 }
 
 export interface AttackAction extends SequencedAction {
@@ -136,6 +160,7 @@ export interface ActionResult {
   readonly yaw?: number;
   readonly pitch?: number;
   readonly combat?: CombatActionDiagnostics;
+  readonly bow?: BowActionDiagnostics;
 }
 
 export function isFiniteNumber(value: unknown): value is number {

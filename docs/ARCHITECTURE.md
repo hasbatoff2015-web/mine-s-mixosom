@@ -1,5 +1,15 @@
 # Архитектура
 
+## Bow PvP release and projectile timeline — 2026-09-09
+
+Bow следует тому же ownership rule: **client owns intent, server owns result**. На render-frame release клиент фиксирует live yaw/pitch и optional presentation timeline из уже отрисованных `RemotePlayerView`: direct crosshair remote имеет приоритет, иначе используется median активных `lastRenderTick`. Повторного `buffer.sample()` и `targetId` нет, поэтому lead shots остаются возможны. Клиент не сообщает AABB, origin, charge, damage или hit.
+
+При получении `bow_release` сервер создаёт bounded `PendingBowRelease` и один раз проверяет explicit timeline относительно `receivedServerTick`: future запрещён, allowed rewind остаётся `MAX_PVP_REWIND_TICKS = 5`. Exact `commandSeq` разрешается из `combatPoseHistory`; command wait ограничен `MAX_PENDING_BOW_TICKS = 8`. Release input сохраняет server-owned pre-release draw state до очистки `use=false`; отпускание между input ticks безопасно использует draw state receipt и только текущую exact applied boundary. Origin — exact post-physics boundary eye + прежний muzzle `0.35`, direction — captured yaw/pitch, slot/Bow/charge/ammo — server authoritative.
+
+У compensated arrow есть optional `playerTimelineTick`. После deferred spawn только эта стрела проходит `pendingTicks` через тот же `PlayerArrowManager` step kernel, который обслуживает normal tick: whole-segment block/mob/minecart/player collision, cobweb, water, gravity, drag, embedding, lifetime и owner exclusion не дублируются. На каждом flight step timeline увеличивается на один; player AABB разрешается callback'ом из authoritative `combatPoseHistory`, включая fractional interpolation. Voxel world остаётся current. После player collision прежний `projectileHit -> playerDamage -> Claims/plugins -> armor/blocking/HurtResistance/knockback/fire/death` pipeline получает исходный `attackerId`.
+
+History storage теперь 20 samples, но это не расширяет client authority: max rewind 5, pending max 8, queue cap 32. Без `renderTick` стрелы продолжают использовать current player AABB. `action_result.bow`/F3 показывают receive/boundary/pending/rewind/catch-up/draw/charge/origin/spawn/reject данные и не участвуют в gameplay.
+
 ## Melee PvP receive-time rewind ownership — 2026-09-09
 
 Target timeline validation и attacker command resolution — разные часы. При получении sequenced melee packet `WorldInstance` создаёт server-owned `PendingMeleeAttack`, фиксирует `receivedServerTick` и сразу вызывает `rewindCombatPose` относительно этого tick. Если `targetRenderTick` future, старше `MAX_PVP_REWIND_TICKS = 5`, не имеет authoritative history sample или target уже невалиден, attack отклоняется на receive path. В envelope сохраняется только серверный `RewoundCombatPose` с cloned/interpolated AABB; клиент не передаёт hitbox, distance или damage.
@@ -12,7 +22,7 @@ Target timeline validation и attacker command resolution — разные ча�
 
 Онлайн-melee следует правилу **client owns intent, server owns result**. На нажатии LMB клиент снимает live camera yaw/pitch, текущие `commandSeq`/hotbar slot и, только если ближайшим объектом под прицелом был уже отрисованный remote player, его `targetId` и точный `RemotePlayerView.lastRenderTick`. Сообщение всегда идёт через общий sequenced `action(kind=attack)`; клиент не сообщает damage, distance или результат попадания.
 
-Сервер хранит для каждого игрока bounded `combatPoseHistory` из 12 полных simulation-tick состояний. Запись делается после `ServerGameplay.tick` и riding update и помечает точную границу применённой queued-команды. Attack разрешается только по такой exact command-boundary; пришедший раньше команды intent остаётся в bounded очереди (до 32) и исполняется после применения команды. Sticky/current pose не подставляется вместо отсутствующей boundary.
+Сервер хранит для каждого игрока bounded `combatPoseHistory` из 20 полных simulation-tick состояний. Запись делается после `ServerGameplay.tick` и riding update и помечает точную границу применённой queued-команды. Attack разрешается только по такой exact command-boundary; пришедший раньше команды intent остаётся в bounded очереди (до 32) и исполняется после применения команды. Sticky/current pose не подставляется вместо отсутствующей boundary.
 
 PvP target rewind ограничен `MAX_PVP_REWIND_TICKS = 5` (250 ms при 20 TPS). Для fractional render tick AABB интерполируется между двумя authoritative samples; future, слишком старый или отсутствующий sample даёт безопасный `stale` miss. Attacker eye/look берутся из authoritative command pose с допустимым client live-look intent, target hitbox — только из server history. Сервер заново проверяет ray/AABB, reach 3 блока, текущую voxel line-of-sight, death, blocking, claims/plugins, armor, hurt resistance, critical, knockback и durability. Hitbox inflation и доверия client-reported distance нет.
 

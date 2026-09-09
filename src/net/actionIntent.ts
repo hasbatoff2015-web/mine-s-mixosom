@@ -113,6 +113,7 @@ export function captureBlockBreakAbort(source: ActionSeqSource): BlockBreakAbort
 export function captureBowRelease(
   source: ActionSeqSource,
   look: { readonly yaw: number; readonly pitch: number },
+  renderTick?: number,
 ): BowReleaseAction {
   return {
     kind: 'bow_release',
@@ -121,7 +122,21 @@ export function captureBowRelease(
     selectedSlot: source.selectedSlot,
     yaw: look.yaw,
     pitch: look.pitch,
+    ...(renderTick !== undefined ? { renderTick } : {}),
   };
+}
+
+/** Selects an already-rendered remote timeline without sampling any interpolation buffer. */
+export function selectBowRenderTick(
+  directRenderTick: number | undefined,
+  activeRenderTicks: readonly number[],
+): number | undefined {
+  if (directRenderTick !== undefined && Number.isFinite(directRenderTick)) return directRenderTick;
+  const sorted = activeRenderTicks.filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return undefined;
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle];
+  return (sorted[middle - 1]! + sorted[middle]!) * 0.5;
 }
 
 export function captureAttack(

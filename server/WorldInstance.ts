@@ -40,7 +40,7 @@ import type {
   WorldBlockStates,
   WorldModifications,
 } from '../shared/protocol';
-import type { ActionResult, AttackAction, BlockTargetIntent, BowReleaseAction } from '../shared/playerActions';
+import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
@@ -84,8 +84,11 @@ import { sessionTokenFingerprint } from '../shared/sessionFingerprint';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import {
   combatPoseForCommand,
+  MAX_PENDING_BOW_ACTIONS,
+  MAX_PENDING_BOW_TICKS,
   MAX_PENDING_MELEE_ACTIONS,
   MAX_PENDING_MELEE_TICKS,
+  MAX_PVP_REWIND_TICKS,
   recordCombatPose,
   rewindCombatPose,
   type CombatPoseSample,
@@ -107,6 +110,21 @@ export interface PendingMeleeAttack {
     readonly requestedRenderTick: number;
     readonly pose: RewoundCombatPose;
   };
+}
+
+export interface PendingBowRelease {
+  readonly action: BowReleaseAction;
+  readonly receivedServerTick: number;
+  readonly validatedRenderTick?: number;
+  readonly receiveRewindTicks?: number;
+  /** Server-owned draw state at action receipt; covers release between input ticks. */
+  readonly receivedBowState?: ReceivedBowReleaseState;
+}
+
+export interface ReceivedBowReleaseState {
+  readonly selectedSlot: number;
+  readonly itemId: string;
+  readonly drawTicks: number;
 }
 
 const IDLE_INPUT: ClientInputMessage = {
@@ -140,6 +158,9 @@ export class ServerPlayer implements GameplayPlayer {
   readonly actionPoseHistory: ActionPoseSample[] = [];
   readonly combatPoseHistory: CombatPoseSample[] = [];
   readonly pendingAttacks: PendingMeleeAttack[] = [];
+  readonly pendingBowReleases: PendingBowRelease[] = [];
+  readonly bowReleaseCommandStates = new Map<number, ReceivedBowReleaseState>();
+  bowReleaseBoundaryThisTick?: ReceivedBowReleaseState;
   appliedCommandBoundaryThisTick = false;
   lastClientSentAt: number | undefined;
   lastServerRecvAt: number | undefined;
@@ -175,6 +196,7 @@ export class ServerPlayer implements GameplayPlayer {
   useSelectedSlot: number | undefined;
   useItemId: string | undefined;
   foodUseBoundaryCommandConfirmed: boolean | undefined;
+  bowUseBoundaryCommandConfirmed: boolean | undefined;
   lastUse = false;
   lastSprint = false;
   vehicleForward = 0;
@@ -863,6 +885,24 @@ export class WorldInstance {
       netDebug('player input', `duplicate seq ${input.seq} for ${player.id}`);
       return false;
     }
+    if (input.use !== true
+      && player.bowUseTicks > 0
+      && (player.useStartCommandSeq === undefined || input.seq > player.useStartCommandSeq)) {
+      const activeSlot = player.useSelectedSlot ?? input.selectedSlot;
+      const itemId = player.inventory.getSlot(activeSlot)?.itemId;
+      if (itemId === ItemId.Bow) {
+        player.bowReleaseCommandStates.set(input.seq, {
+          selectedSlot: activeSlot,
+          itemId,
+          drawTicks: player.bowUseTicks,
+        });
+        while (player.bowReleaseCommandStates.size > MAX_PENDING_BOW_ACTIONS) {
+          const oldest = player.bowReleaseCommandStates.keys().next().value;
+          if (oldest === undefined) break;
+          player.bowReleaseCommandStates.delete(oldest);
+        }
+      }
+    }
     player.lastInput = input;
     return true;
   }
@@ -998,6 +1038,7 @@ export class WorldInstance {
     clearMiningLock(player);
   }
 
+  /** Legacy direct gameplay helper; network bow releases use handleSequencedBowRelease. */
   releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
     if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
     if (action.actionSeq <= player.lastBowReleaseSeq) return { ok: false, reason: 'duplicate' };
@@ -1006,6 +1047,169 @@ export class WorldInstance {
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     return result;
+  }
+
+  handleSequencedBowRelease(player: ServerPlayer, action: BowReleaseAction): void {
+    const resolution = this.bowReleaseSequenced(player, action);
+    if (resolution.status === 'resolved') this.sendBowActionResult(player, action, resolution.result);
+  }
+
+  bowReleaseSequenced(
+    player: ServerPlayer,
+    action: BowReleaseAction,
+  ): { status: 'pending' } | { status: 'resolved'; result: ActionResult } {
+    const receivedServerTick = this.tickNumber;
+    const activeSlot = player.useSelectedSlot ?? player.selectedSlot;
+    const activeItemId = player.inventory.getSlot(activeSlot)?.itemId;
+    const receivedBowState = action.commandSeq === player.appliedCommandSeq
+      && player.bowUseTicks > 0 && activeItemId === ItemId.Bow
+      ? { selectedSlot: activeSlot, itemId: activeItemId, drawTicks: player.bowUseTicks }
+      : undefined;
+    const base: PendingBowRelease = {
+      action,
+      receivedServerTick,
+      ...(receivedBowState ? { receivedBowState } : {}),
+    };
+    if (!this.acceptActionSeq(player, action.actionSeq) || action.actionSeq <= player.lastBowReleaseSeq) {
+      return { status: 'resolved', result: this.bowFailure(base, 'duplicate', 'duplicate') };
+    }
+    player.lastBowReleaseSeq = action.actionSeq;
+    if (!player.connected || player.survival.dead) {
+      return { status: 'resolved', result: this.bowFailure(base, 'dead', 'dead') };
+    }
+    if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
+      || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
+      || !Number.isFinite(action.yaw) || !Number.isFinite(action.pitch)
+      || (action.renderTick !== undefined && !Number.isFinite(action.renderTick))) {
+      return { status: 'resolved', result: this.bowFailure(base, 'invalid', 'invalid') };
+    }
+    let pending = base;
+    if (action.renderTick !== undefined) {
+      const rewind = receivedServerTick - action.renderTick;
+      if (rewind < 0) return { status: 'resolved', result: this.bowFailure(base, 'invalid', 'future') };
+      if (rewind > MAX_PVP_REWIND_TICKS) {
+        return { status: 'resolved', result: this.bowFailure(base, 'stale', 'too_old') };
+      }
+      pending = { ...base, validatedRenderTick: action.renderTick, receiveRewindTicks: rewind };
+    }
+    const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+    if (pose) return { status: 'resolved', result: this.resolveSequencedBowRelease(player, pending, pose) };
+    if (action.commandSeq > player.appliedCommandSeq) {
+      if (player.pendingBowReleases.length >= MAX_PENDING_BOW_ACTIONS) {
+        return { status: 'resolved', result: this.bowFailure(pending, 'stale', 'pending_full') };
+      }
+      player.pendingBowReleases.push(pending);
+      return { status: 'pending' };
+    }
+    return { status: 'resolved', result: this.bowFailure(pending, 'stale', 'boundary_missing') };
+  }
+
+  private resolveSequencedBowRelease(
+    player: ServerPlayer,
+    pending: PendingBowRelease,
+    pose: CombatPoseSample,
+  ): ActionResult {
+    const { action } = pending;
+    const boundary = pose.bowRelease ?? pending.receivedBowState;
+    if (pose.dead || !boundary || action.selectedSlot !== pose.selectedSlot
+      || boundary.selectedSlot !== pose.selectedSlot || boundary.itemId !== ItemId.Bow) {
+      return this.bowFailure(
+        pending,
+        pose.dead ? 'dead' : action.selectedSlot !== pose.selectedSlot ? 'slot' : 'no-draw',
+        pose.dead ? 'dead' : action.selectedSlot !== pose.selectedSlot ? 'slot' : 'boundary_state',
+        pose,
+      );
+    }
+    const pendingTicks = Math.max(0, this.tickNumber - pending.receivedServerTick);
+    const fired = this.gameplay.releaseBowAtBoundary(
+      player,
+      {
+        eyeX: pose.eyeX,
+        eyeY: pose.eyeY,
+        eyeZ: pose.eyeZ,
+        selectedSlot: pose.selectedSlot,
+        itemId: boundary.itemId,
+        drawTicks: boundary.drawTicks,
+      },
+      action.yaw,
+      action.pitch,
+      [...this.players.values()],
+      pending.validatedRenderTick,
+      pendingTicks,
+      pose.bowRelease === undefined && pending.receivedBowState !== undefined,
+    );
+    this.flushBlockChanges();
+    this.flushPlayerInventory(player);
+    if (!fired.ok) return this.bowFailure(pending, fired.reason, fired.reason, pose);
+    return {
+      ok: true,
+      actionSeq: action.actionSeq,
+      kind: 'bow_release',
+      yaw: action.yaw,
+      pitch: action.pitch,
+      bow: this.bowDiagnostics(pending, pose, {
+        authoritativeDrawTicks: fired.drawTicks,
+        charge: fired.charge,
+        spawned: fired.spawned,
+      }),
+    };
+  }
+
+  private bowFailure(
+    pending: PendingBowRelease,
+    reason: string,
+    rejectReason: string,
+    pose?: CombatPoseSample,
+  ): ActionResult {
+    return {
+      ok: false,
+      actionSeq: pending.action.actionSeq,
+      kind: 'bow_release',
+      reason,
+      yaw: pending.action.yaw,
+      pitch: pending.action.pitch,
+      bow: this.bowDiagnostics(pending, pose, { spawned: false, rejectReason }),
+    };
+  }
+
+  private bowDiagnostics(
+    pending: PendingBowRelease,
+    pose: CombatPoseSample | undefined,
+    outcome: Pick<BowActionDiagnostics, 'spawned'> & Partial<Pick<BowActionDiagnostics, 'authoritativeDrawTicks' | 'charge' | 'rejectReason'>>,
+  ): BowActionDiagnostics {
+    return {
+      receivedServerTick: pending.receivedServerTick,
+      ...(pose ? { boundaryServerTick: pose.serverTick } : {}),
+      pendingTicks: Math.max(0, this.tickNumber - pending.receivedServerTick),
+      ...(pending.action.renderTick !== undefined ? { requestedRenderTick: pending.action.renderTick } : {}),
+      ...(pending.validatedRenderTick !== undefined ? { validatedRenderTick: pending.validatedRenderTick } : {}),
+      ...(pending.receiveRewindTicks !== undefined ? { receiveRewindTicks: pending.receiveRewindTicks } : {}),
+      catchUpTicks: pose ? Math.max(0, this.tickNumber - pending.receivedServerTick) : 0,
+      selectedSlot: pending.action.selectedSlot,
+      capturedYaw: pending.action.yaw,
+      capturedPitch: pending.action.pitch,
+      ...(pose ? {
+        boundaryYaw: pose.yaw,
+        boundaryPitch: pose.pitch,
+        boundaryEyeX: pose.eyeX,
+        boundaryEyeY: pose.eyeY,
+        boundaryEyeZ: pose.eyeZ,
+      } : {}),
+      ...outcome,
+    };
+  }
+
+  private sendBowActionResult(player: ServerPlayer, action: BowReleaseAction, result: ActionResult): void {
+    this.sendTo(player, {
+      type: 'action_result',
+      actionSeq: action.actionSeq,
+      kind: 'bow_release',
+      ok: result.ok,
+      ...(result.reason ? { reason: result.reason } : {}),
+      yaw: action.yaw,
+      pitch: action.pitch,
+      ...(result.bow ? { bow: result.bow } : {}),
+    });
   }
 
   applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
@@ -1414,6 +1618,7 @@ export class WorldInstance {
       if (!player.connected) continue;
       player.lastServerSimAt = started;
       player.appliedCommandBoundaryThisTick = false;
+      player.bowReleaseBoundaryThisTick = undefined;
     }
     if (this.debugTickOrder) this.kernelTrace.length = 0;
     const metrics = this.gameplay.tick([...this.players.values()], dt, {
@@ -1425,6 +1630,7 @@ export class WorldInstance {
       this.gameplay.updateRiding(player, player.lastInput.sprint);
     }
     this.recordCombatPoses();
+    this.processPendingBowReleases();
     this.processPendingAttacks();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
@@ -1630,6 +1836,9 @@ export class WorldInstance {
     player.actionPoseHistory.length = 0;
     player.combatPoseHistory.length = 0;
     player.pendingAttacks.length = 0;
+    player.pendingBowReleases.length = 0;
+    player.bowReleaseCommandStates.clear();
+    player.bowReleaseBoundaryThisTick = undefined;
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
@@ -1637,6 +1846,7 @@ export class WorldInstance {
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
     player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     player.vehicleForward = 0;
@@ -1663,6 +1873,10 @@ export class WorldInstance {
         player.controller.pitch = command.pitch;
         player.vehicleForward = command.vehicleForward
           ?? (player.ridingCartId ? command.forward : 0);
+        if (command.use !== true) {
+          player.bowReleaseBoundaryThisTick = player.bowReleaseCommandStates.get(command.commandSeq);
+          player.bowReleaseCommandStates.delete(command.commandSeq);
+        }
       }
       const input = player.lastInput;
       const jump = input.jump;
@@ -1810,6 +2024,7 @@ export class WorldInstance {
         yaw: player.controller.yaw,
         pitch: player.controller.pitch,
         selectedSlot: player.selectedSlot,
+        ...(player.bowReleaseBoundaryThisTick ? { bowRelease: player.bowReleaseBoundaryThisTick } : {}),
         aabb: { ...aabb },
         dead: player.survival.dead,
         fallDistance: player.controller.fallDistance,
@@ -1819,6 +2034,33 @@ export class WorldInstance {
         onLadder: player.controller.onLadder,
         riding: Boolean(player.ridingCartId),
       });
+    }
+  }
+
+  private processPendingBowReleases(): void {
+    for (const player of this.players.values()) {
+      if (player.pendingBowReleases.length === 0) continue;
+      const keep: PendingBowRelease[] = [];
+      for (const pending of player.pendingBowReleases) {
+        const { action } = pending;
+        const pendingTicks = this.tickNumber - pending.receivedServerTick;
+        if (pendingTicks > MAX_PENDING_BOW_TICKS) {
+          this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'pending_timeout'));
+          continue;
+        }
+        const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+        if (pose) {
+          this.sendBowActionResult(player, action, this.resolveSequencedBowRelease(player, pending, pose));
+          continue;
+        }
+        if (action.commandSeq > player.appliedCommandSeq) {
+          keep.push(pending);
+          continue;
+        }
+        this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'boundary_missing'));
+      }
+      player.pendingBowReleases.length = 0;
+      player.pendingBowReleases.push(...keep);
     }
   }
 

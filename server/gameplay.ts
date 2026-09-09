@@ -76,7 +76,7 @@ import {
 import type { EventBus } from './events';
 import { bowDebug } from './log';
 import type { WorldSnapshot } from '../src/save/types';
-import type { CombatPoseSample, RewoundCombatPose } from './combatPoseHistory';
+import { combatPoseAtTick, type CombatPoseSample, type RewoundCombatPose } from './combatPoseHistory';
 
 export const ENTITY_INTEREST_RADIUS = 48;
 const INTEREST_SQ = ENTITY_INTEREST_RADIUS * ENTITY_INTEREST_RADIUS;
@@ -129,6 +129,7 @@ export interface GameplayPlayer {
   useSelectedSlot?: number;
   useItemId?: string;
   foodUseBoundaryCommandConfirmed?: boolean;
+  bowUseBoundaryCommandConfirmed?: boolean;
   lastUse: boolean;
   lastSprint: boolean;
   vehicleForward: number;
@@ -136,6 +137,16 @@ export interface GameplayPlayer {
   lastInput?: ClientInputMessage;
   appliedCommandSeq?: number;
   actionPoseHistory?: ActionPoseSample[];
+  combatPoseHistory?: CombatPoseSample[];
+}
+
+export interface BowReleaseBoundary {
+  readonly eyeX: number;
+  readonly eyeY: number;
+  readonly eyeZ: number;
+  readonly selectedSlot: number;
+  readonly itemId: string;
+  readonly drawTicks: number;
 }
 
 export interface GameplayMetrics {
@@ -305,27 +316,7 @@ export class ServerGameplay {
         // Mining/use hold stay next to physics in WorldInstance.tickConnectedPlayers.
       },
       tickProjectiles: () => {
-        this.arrows.tick(dt, {
-          players: connected
-            .filter((player) => player.gamemode === 'survival' && !player.survival.dead)
-            .map((player) => ({ id: player.id, aabb: player.controller.aabb })),
-          onPlayerHit: (playerId, damage, flaming, position, attackerId) => {
-            const victim = connected.find((player) => player.id === playerId);
-            if (!victim) return;
-            this.events.emit('projectileHit', {
-              entityId: 'projectile',
-              x: position.x,
-              y: position.y,
-              z: position.z,
-              playerId,
-            });
-            this.hurtPlayer(victim, damage, 'projectile', position, {
-              knockback: flaming ? 4.2 : 2.4,
-              ignite: flaming,
-              attackerId,
-            });
-          },
-        });
+        this.arrows.tick(dt, this.arrowTickOptions(connected));
       },
       tickVehicles: () => {
         for (const player of connected) {
@@ -711,6 +702,9 @@ export class ServerGameplay {
       player.foodUseBoundaryCommandConfirmed = player.foodUseTicks === 1
         ? boundaryCommandConfirmsUse
         : undefined;
+      player.bowUseBoundaryCommandConfirmed = player.bowUseTicks === 1
+        ? boundaryCommandConfirmsUse
+        : undefined;
     }
     if (player.bowUseTicks > 0 && beforeBow === 0) {
       bowDebug(player.id, 'server_press', `charge=${player.bowUseTicks}`);
@@ -973,10 +967,14 @@ export class ServerGameplay {
       || (player.foodUseTicks > 0
         && commandSeq === player.useStartCommandSeq
         && player.foodUseBoundaryCommandConfirmed !== true)
+      || (player.bowUseTicks > 0
+        && !using
+        && commandSeq === player.useStartCommandSeq
+        && player.bowUseBoundaryCommandConfirmed !== true)
     )) return;
     const wrongSlot = player.useSelectedSlot !== undefined && selectedSlot !== player.useSelectedSlot;
     const wrongItem = player.useItemId !== undefined && stack?.itemId !== player.useItemId;
-    if (wrongSlot || wrongItem || (!using && player.foodUseTicks > 0)) {
+    if (wrongSlot || wrongItem || (!using && (player.foodUseTicks > 0 || player.bowUseTicks > 0))) {
       this.clearUseHold(player);
       return;
     }
@@ -1017,6 +1015,7 @@ export class ServerGameplay {
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
     player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
   }
 
   updateRiding(player: GameplayPlayer, sprint: boolean): void {
@@ -1083,6 +1082,7 @@ export class ServerGameplay {
     player.useSelectedSlot = undefined;
     player.useItemId = undefined;
     player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
     if (player.lastInput) {
@@ -1140,6 +1140,74 @@ export class ServerGameplay {
     player.presentSwing?.();
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
     return { ok: true, yaw, pitch };
+  }
+
+  releaseBowAtBoundary(
+    player: GameplayPlayer,
+    boundary: BowReleaseBoundary,
+    yaw: number,
+    pitch: number,
+    players: readonly GameplayPlayer[],
+    timelineTick?: number,
+    catchUpTicks = 0,
+    clearCurrentUse = false,
+  ): { ok: true; yaw: number; pitch: number; drawTicks: number; charge: number; spawned: boolean }
+    | { ok: false; reason: string } {
+    if (!player.connected || player.survival.dead) return { ok: false, reason: 'dead' };
+    if (boundary.itemId !== ItemId.Bow || player.inventory.getSlot(boundary.selectedSlot)?.itemId !== ItemId.Bow) {
+      return { ok: false, reason: 'item' };
+    }
+    if (boundary.drawTicks <= 0) return { ok: false, reason: 'no-draw' };
+    const charge = player.combat.bowCharge(boundary.drawTicks);
+    if (clearCurrentUse) this.clearUseHold(player);
+    if (!charge.canFire) return { ok: false, reason: 'charge' };
+    let flaming = false;
+    if (player.gamemode === 'survival') {
+      if (player.inventory.remove(ItemId.FireArrow, 1) === 1) flaming = true;
+      else if (player.inventory.remove(ItemId.Arrow, 1) !== 1) return { ok: false, reason: 'ammo' };
+      player.inventoryDirty = true;
+    } else flaming = player.inventory.has(ItemId.FireArrow, 1);
+    const direction = viewDirectionFromLook(yaw, pitch);
+    const origin = new Vec3(boundary.eyeX, boundary.eyeY, boundary.eyeZ).addScaledVector(direction, 0.35);
+    const arrowId = this.arrows.spawn(
+      origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical,
+      flaming, undefined, player.id, 0, timelineTick,
+    );
+    if (catchUpTicks > 0) this.arrows.catchUp(arrowId, catchUpTicks, this.arrowTickOptions(players));
+    player.presentSwing?.();
+    bowDebug(
+      player.id,
+      'arrow_spawn',
+      `arrows=${this.arrows.count} boundaryDraw=${boundary.drawTicks} catchUp=${catchUpTicks}`,
+    );
+    return { ok: true, yaw, pitch, drawTicks: boundary.drawTicks, charge: charge.power, spawned: true };
+  }
+
+  private arrowTickOptions(players: readonly GameplayPlayer[]) {
+    const connected = players.filter((player) => player.connected);
+    return {
+      players: connected
+        .filter((player) => player.gamemode === 'survival' && !player.survival.dead)
+        .map((player) => ({ id: player.id, aabb: player.controller.aabb })),
+      resolvePlayerAabb: (playerId: string, timelineTick: number) => {
+        const target = connected.find((player) => player.id === playerId);
+        if (!target || target.gamemode !== 'survival' || target.survival.dead) return undefined;
+        const pose = combatPoseAtTick(target.combatPoseHistory ?? [], timelineTick);
+        return pose && !pose.dead ? pose.aabb : undefined;
+      },
+      onPlayerHit: (playerId: string, damage: number, flaming: boolean, position: Vec3, attackerId?: string) => {
+        const victim = connected.find((player) => player.id === playerId);
+        if (!victim) return;
+        this.events.emit('projectileHit', {
+          entityId: 'projectile', x: position.x, y: position.y, z: position.z, playerId,
+        });
+        this.hurtPlayer(victim, damage, 'projectile', position, {
+          knockback: flaming ? 4.2 : 2.4,
+          ignite: flaming,
+          attackerId,
+        });
+      },
+    };
   }
 
   private intentEye(

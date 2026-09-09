@@ -435,15 +435,14 @@ export class AnarchyServer {
         return;
       }
       case 'bow_release': {
-        const result = this.world.releaseBow(player, message);
-        this.world.sendTo(player, {
-          type: 'action_result',
-          actionSeq: message.actionSeq,
+        this.world.handleSequencedBowRelease(player, {
           kind: 'bow_release',
-          ok: result.ok,
-          ...(result.ok ? {} : { reason: result.reason }),
+          actionSeq: message.actionSeq,
+          commandSeq: message.commandSeq,
+          selectedSlot: message.selectedSlot ?? -1,
           yaw: message.yaw,
           pitch: message.pitch,
+          ...(message.renderTick !== undefined ? { renderTick: message.renderTick } : {}),
         });
         return;
       }
@@ -510,12 +509,16 @@ export class AnarchyServer {
       if (message.yaw === undefined || message.pitch === undefined) {
         result = { ok: false, reason: 'look' };
       } else {
-        result = this.world.releaseBow(player, {
+        this.world.handleSequencedBowRelease(player, {
+          kind: 'bow_release',
           actionSeq: message.actionSeq,
           commandSeq: message.commandSeq,
+          selectedSlot: message.selectedSlot ?? -1,
           yaw: message.yaw,
           pitch: message.pitch,
+          ...(message.renderTick !== undefined ? { renderTick: message.renderTick } : {}),
         });
+        return;
       }
     } else {
       this.world.handleSequencedAttack(player, {

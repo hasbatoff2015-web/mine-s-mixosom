@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-09 Bow PvP client timeline
+
+Report: `reports/2026-09-09_bow-pvp-client-timeline.md`.
+
+Focused contracts: direct/median rendered timeline selection without re-sampling; finite wire parsing; exact post-physics boundary origin plus captured fast aim; action before/after boundary; render-frame release between input ticks; four-command backlog with frozen draw and step catch-up; slot mismatch/switch; duplicate one-projectile/one-ammo; five-tick receive window; eight-tick pending timeout; owner exclusion. Mathematical projectile tests prove current-AABB miss versus historical-AABB hit and a lead shot whose release ray has no target. Existing arrow block/embed/pickup/FireArrow/mob/minecart/cobweb/water, combat, prediction, networking and Claims projectile PvP suites remain required.
+
+Automated validation for this pass is recorded in the report. Manual two-client QA is not claimed: stationary, strafe/sprint, moving/jumping shooter, lead at 5–10 and 15–25 blocks, direction reversal, wall and FireArrow remain owner acceptance scenarios at 0/50/100/150 ms simulated latency where available.
+
 ## 2026-09-09 Melee PvP receive-time rewind
 
 Report: `reports/2026-09-09_melee-pvp-receive-time-rewind.md`.

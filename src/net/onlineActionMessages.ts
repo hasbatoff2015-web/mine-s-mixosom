@@ -106,5 +106,6 @@ export function bowReleaseMessage(action: BowReleaseAction): ClientBowReleaseMes
     yaw: action.yaw,
     pitch: action.pitch,
     selectedSlot: action.selectedSlot,
+    ...(action.renderTick !== undefined ? { renderTick: action.renderTick } : {}),
   };
 }
