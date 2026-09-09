@@ -29,7 +29,9 @@ import {
 import {
   clearDoorBlocks,
   daylightFactor,
+  DEATH_DROP_SCATTER_MULTIPLIER,
   dropScatterVelocity,
+  dropScatterOrigin,
   performUseHeld,
   placeBlockAt,
   rollBlockDropCount,
@@ -64,7 +66,7 @@ import { volumeContains, type SelectionVolume } from './services/selection';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { rayAabbDistance } from '../src/world/collision';
-import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent } from '../shared/protocol';
+import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent, WorldSoundEvent } from '../shared/protocol';
 import type { BlockTargetIntent, CombatActionDiagnostics } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { resolveActionEye } from '../shared/actionPoseHistory';
@@ -138,6 +140,8 @@ export interface GameplayPlayer {
   appliedCommandSeq?: number;
   actionPoseHistory?: ActionPoseSample[];
   combatPoseHistory?: CombatPoseSample[];
+  /** True after death loot has been emitted for the current death. */
+  deathLootDropped?: boolean;
 }
 
 export interface BowReleaseBoundary {
@@ -189,6 +193,7 @@ export class ServerGameplay {
   private readonly tmpEye = new Vec3();
   private readonly tmpDir = new Vec3();
   private readonly pendingEntityEvents: NetworkEntityEvent[] = [];
+  private readonly pendingWorldSounds: WorldSoundEvent[] = [];
 
   constructor(
     readonly world: VoxelWorld,
@@ -234,6 +239,7 @@ export class ServerGameplay {
       random: this.random,
       onBlockHit: (x, y, z, flaming) => {
         this.events.emit('projectileHit', { entityId: 'projectile', x, y, z });
+        this.emitWorldSound('arrow.hit', x + 0.5, y + 0.5, z + 0.5);
         if (flaming && flamingArrowBlockHit(this.world.getBlock(x, y, z, false)) === 'prime_tnt') {
           this.redstone.primeTnt(x, y, z);
         }
@@ -243,6 +249,9 @@ export class ServerGameplay {
       },
       onSpawn: (id) => this.pushEntityEvent(id, 'projectile_spawn'),
       onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
+      onMobHit: (accepted, position) => {
+        if (accepted) this.emitWorldSound('combat.hit', position.x, position.y + 0.9, position.z);
+      },
     });
     this.redstone = new RedstoneSystem(world);
     this.farming = new FarmingSystem(world, { random: this.random });
@@ -268,6 +277,28 @@ export class ServerGameplay {
   consumeEntityEvents(): NetworkEntityEvent[] {
     const events = this.pendingEntityEvents.splice(0);
     return events;
+  }
+
+  consumeWorldSounds(): WorldSoundEvent[] {
+    return this.pendingWorldSounds.splice(0);
+  }
+
+  emitWorldSound(
+    event: string,
+    x: number,
+    y: number,
+    z: number,
+    options?: { readonly pitch?: number; readonly volume?: number },
+  ): void {
+    if (this.pendingWorldSounds.length >= 32) return;
+    this.pendingWorldSounds.push({
+      event,
+      x,
+      y,
+      z,
+      ...(options?.pitch !== undefined ? { pitch: options.pitch } : {}),
+      ...(options?.volume !== undefined ? { volume: options.volume } : {}),
+    });
   }
 
   private pushEntityEvent(entityId: string, kind: NetworkEntityEvent['kind']): void {
@@ -427,7 +458,10 @@ export class ServerGameplay {
       if (event.cancelled) return 0;
       const remainder = player.inventory.add(stack);
       const accepted = stack.count - (remainder?.count ?? 0);
-      if (accepted > 0) player.inventoryDirty = true;
+      if (accepted > 0) {
+        player.inventoryDirty = true;
+        this.emitWorldSound('item.pickup', entity.position.x, entity.position.y, entity.position.z);
+      }
       return accepted;
     });
   }
@@ -440,12 +474,35 @@ export class ServerGameplay {
     this.drops.drop(stack, origin, player.controller.viewDirection());
   }
 
-  spawnDroppedStack(stack: ItemStack, position: Vec3, playerId?: string): void {
+  spawnDroppedStack(
+    stack: ItemStack,
+    position: Vec3,
+    playerId?: string,
+    options: { readonly merge?: boolean } = {},
+  ): void {
     const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, playerId);
     this.events.emit('itemDrop', event);
     if (event.cancelled) return;
     this.drops.spawn(stack, position, {
       velocity: new Vec3(...dropScatterVelocity(this.random)),
+      ...(options.merge === false ? { merge: false } : {}),
+    });
+  }
+
+  private scatterDeathDrop(player: GameplayPlayer, stack: ItemStack): void {
+    const origin = dropScatterOrigin(player.controller.position, this.random, {
+      horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
+    });
+    const position = new Vec3(origin[0], origin[1], origin[2]);
+    const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, player.id);
+    this.events.emit('itemDrop', event);
+    if (event.cancelled) return;
+    this.drops.spawn(stack, position, {
+      velocity: new Vec3(...dropScatterVelocity(this.random, {
+        horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
+      })),
+      merge: false,
+      pickupDelaySeconds: 1.25,
     });
   }
 
@@ -800,7 +857,14 @@ export class ServerGameplay {
       effects: {
         swing: () => player.presentSwing?.(),
         onBedUsed: () => player.presentSwing?.(),
-        onFlintIgnite: () => player.presentSwing?.(),
+        onFlintIgnite: () => {
+          player.presentSwing?.();
+          const pos = player.controller.position;
+          gameplay.emitWorldSound('fire.ignite', pos.x, pos.y + 1, pos.z);
+        },
+        playWorld: (event, x, y, z, options) => {
+          gameplay.emitWorldSound(event, x, y, z, options);
+        },
         openContainer: (kind, x, y, z) => {
           player.presentSwing?.();
           if (kind === 'crafting-table') {
@@ -913,6 +977,9 @@ export class ServerGameplay {
         this.events.emit('entityDamaged', { entityId: mobHit.mob.id, amount: result.damage, cause: 'melee' });
       }
       completeMeleeAttack(result, accepted, player.controller);
+      if (accepted) {
+        this.emitWorldSound('combat.hit', mobHit.mob.position.x, mobHit.mob.position.y + 0.9, mobHit.mob.position.z);
+      }
       if (accepted && player.gamemode === 'survival') {
         if (stack && result.profile.durabilityCost > 0) {
           player.inventory.setSlot(selectedSlot, damageItem(stack, result.profile.durabilityCost));
@@ -928,6 +995,7 @@ export class ServerGameplay {
     if (attack?.kind === 'minecart') {
       const broken = this.minecarts.breakCart(attack.cart, player.ridingCartId);
       if (!broken) return { result: 'miss', distance: cartHit?.distance };
+      this.emitWorldSound('block.break.stone', broken.position.x, broken.position.y, broken.position.z);
       for (const itemId of dropsForBrokenMinecart(player.gamemode, broken.items)) {
         this.spawnDroppedStack(createItemStack(itemId), broken.position.clone().add(new Vec3(0, 0.2, 0)), player.id);
       }
@@ -1070,8 +1138,17 @@ export class ServerGameplay {
     player.controller.velocity.set(0, 0, 0);
   }
 
+  /**
+   * Authoritative death: flush dead, drop loot once, freeze the corpse.
+   * Does not auto-respawn; the client death screen sends `respawn`.
+   */
   respawnIfDead(player: GameplayPlayer): void {
     if (!player.survival.dead) return;
+    if (player.deathLootDropped) {
+      this.flushPlayerLife?.(player);
+      return;
+    }
+    player.deathLootDropped = true;
     this.flushPlayerLife?.(player);
     if (player.ridingCartId) this.exitVehicle(player);
     player.window = { kind: 'inventory' };
@@ -1085,6 +1162,7 @@ export class ServerGameplay {
     player.bowUseBoundaryCommandConfirmed = undefined;
     player.lastUse = false;
     player.lastSprint = false;
+    player.controller.velocity.set(0, 0, 0);
     if (player.lastInput) {
       player.lastInput = {
         ...player.lastInput,
@@ -1101,18 +1179,26 @@ export class ServerGameplay {
       };
     }
     if (player.gamemode === 'survival') {
-      for (const stack of player.inventory.slots) if (stack) this.dropFromPlayer(player, stack);
-      for (const stack of Object.values(player.inventory.armor)) if (stack) this.dropFromPlayer(player, stack);
-      if (player.inventory.offhand) this.dropFromPlayer(player, player.inventory.offhand);
-      if (player.cursor) this.dropFromPlayer(player, player.cursor);
-      for (const stack of player.craftSlots) if (stack) this.dropFromPlayer(player, stack);
+      for (const stack of player.inventory.slots) if (stack) this.scatterDeathDrop(player, stack);
+      for (const stack of Object.values(player.inventory.armor)) if (stack) this.scatterDeathDrop(player, stack);
+      if (player.inventory.offhand) this.scatterDeathDrop(player, player.inventory.offhand);
+      if (player.cursor) this.scatterDeathDrop(player, player.cursor);
+      for (const stack of player.craftSlots) if (stack) this.scatterDeathDrop(player, stack);
       player.inventory.clear();
       player.cursor = null;
       player.craftSlots = player.craftSlots.map(() => null);
       player.inventoryDirty = true;
     }
+  }
+
+  /** Client-requested respawn. Rejected unless the player is actually dead. */
+  respawnPlayer(player: GameplayPlayer): boolean {
+    if (!player.survival.dead) return false;
+    this.respawnIfDead(player);
     player.survival.respawn(player.controller, this.worldSpawn?.() ?? player.survival.spawnPoint);
+    player.deathLootDropped = false;
     this.flushPlayerLife?.(player);
+    return true;
   }
 
   releaseBowWithAim(
@@ -1137,6 +1223,7 @@ export class ServerGameplay {
     const direction = viewDirectionFromLook(yaw, pitch);
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
     this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0);
+    this.emitWorldSound('bow.shoot', origin.x, origin.y, origin.z);
     player.presentSwing?.();
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
     return { ok: true, yaw, pitch };
@@ -1173,6 +1260,7 @@ export class ServerGameplay {
       origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical,
       flaming, undefined, player.id, 0, timelineTick,
     );
+    this.emitWorldSound('bow.shoot', origin.x, origin.y, origin.z);
     if (catchUpTicks > 0) this.arrows.catchUp(arrowId, catchUpTicks, this.arrowTickOptions(players));
     player.presentSwing?.();
     bowDebug(
@@ -1206,6 +1294,7 @@ export class ServerGameplay {
           ignite: flaming,
           attackerId,
         });
+        this.emitWorldSound('combat.hit', position.x, position.y + 0.9, position.z);
       },
     };
   }
@@ -1342,7 +1431,10 @@ export class ServerGameplay {
       budgetMs: 3.5, maxJobs: 12, maxVoxels: 512,
       remainingPrimedCapacity: this.redstone.primedCapacityRemaining,
       random: this.random,
-      onResolved: (job) => this.applyExplosionDamage(players, job.x, job.y, job.z, job.radius, job.power),
+      onResolved: (job) => {
+        this.emitWorldSound('explosion', job.x, job.y, job.z);
+        this.applyExplosionDamage(players, job.x, job.y, job.z, job.radius, job.power);
+      },
       onContents: (block) => { destroyed.push(block); },
       onChainedTnt: (tnt) => {
         this.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, {
@@ -1459,6 +1551,10 @@ export class ServerGameplay {
     });
     const accepted = damage === 'hit';
     completeMeleeAttack(result, accepted, attacker.controller);
+    if (accepted) {
+      const pos = victim.controller.position;
+      this.emitWorldSound('combat.hit', pos.x, pos.y + 0.9, pos.z);
+    }
     if (accepted && attacker.gamemode === 'survival') {
       if (stack && result.profile.durabilityCost > 0) {
         attacker.inventory.setSlot(selectedSlot, damageItem(stack, result.profile.durabilityCost));

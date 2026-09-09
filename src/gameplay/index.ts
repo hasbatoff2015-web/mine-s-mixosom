@@ -2,7 +2,12 @@ export { daylightFactor } from './daylight';
 export {
   SYSTEM_RANDOM,
   asRandomFn,
+  DEATH_DROP_SCATTER_MULTIPLIER,
+  DROP_SCATTER_HORIZONTAL,
+  DROP_SCATTER_ORIGIN_SPAN,
+  DROP_SCATTER_UP,
   dropScatterVelocity,
+  dropScatterOrigin,
   rollBlockDropCount,
   rollDropCount,
   seededRandomFn,
@@ -57,3 +62,13 @@ export {
   movementDuringItemUse,
   slowsMovementWhileUsing,
 } from './useMovement';
+export {
+  closestPointOnAabb,
+  distanceToHologramAabb,
+  hologramAabb,
+  pickHologramRayHit,
+  playerCanReachHologram,
+  resolveHologramUseTarget,
+  type HologramHitTarget,
+  type HologramRayHit,
+} from './hologramHit';

@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: bow PvP integrated into current main — 2026-09-10
+
+- `origin/main@27778cf3` влит в `codex/bow-pvp-timeline-v2@fef66776` обычным merge; merge-base `eb82417b`. История feature не переписывалась.
+- Осмысленно объединены конфликты в `server/gameplay.ts` и `src/net/RemotePlayerView.ts`: bow combat history/release boundary/render timeline сохранены вместе с main death lifecycle, nameplates, appearance и spatial sounds.
+- Сохранены `MAX_PVP_REWIND_TICKS=5`, `MAX_PENDING_BOW_TICKS=8`, `COMBAT_HISTORY_TICKS=20`, captured release aim, exact post-physics eye + muzzle `0.35`, stepwise canonical catch-up и исходный Claims/plugins/damage pipeline. Combat tuning не менялся.
+- Main-функции AutoMine, hologram editor/background/timer/text quality, spatial `world_sound`, death scatter/respawn, appearance/skin selector/nameplates и связанные hooks/tests присутствуют. Для sequenced bow path восстановлен authoritative `bow.shoot` world event.
+- Targeted integration gate: **28 files / 259 tests PASS**; shared simulation **65/65 PASS**; четыре typecheck, boundaries, build, size/archive и diff/marker checks PASS. Full suite: **212/216 files, 2016/2033 tests PASS**; failures только в ранее документированных extractor/worldgen/fire-minecart/tick-load baseline-классах и воспроизводятся изолированно.
+- Пользователь до интеграции подтвердил live release/spawn; новая игровая механика или rebalance в merge не добавлялись.
+- Handoff: `docs/reports/2026-09-10_bow-pvp-main-integration.md`.
+
 ## Последний проход: bow release actual input boundary — 2026-09-09
 
 - Исправлена FPS-dependent pre-spawn regression: render-frame release больше не привязывается безусловно к `online.inputSeq`, который означает последний уже отправленный input packet и мог всё ещё содержать `use=true`.
@@ -42,6 +52,55 @@
 - Handoff: `docs/reports/2026-09-08_melee-pvp-client-timeline.md`.
 
 ## Последний проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
+## Последний проход: AutoMine plugin — 2026-09-09
+
+- Builtin Anarchy plugin `automine` (`/automine`). Кубоидные авто-шахты, weighted random из 12 существующих BlockId, reset через `VoxelWorld.applyBlockBatch` (64 блока/тик), эвакуация через `TeleportService`.
+- Выделение — свой wand (`wooden_axe`), не Claims / не `PlayerSelectionService`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
+- Шансы зашиты в коде (сумма 100%, Obsidian = Coal, Titanium самый редкий). Нет команд изменения composition.
+- TitaniumOre остаётся 161; TNT Powerful/Destructive 162/163 — конфликт ID не возвращался.
+- Handoff: `docs/reports/2026-09-09_automine-plugin.md`.
+
+## Последний проход: hologram close-up text quality — 2026-09-09
+
+- Текст голограммы рисовался на canvas **512×256** и растягивался на world plane; `magFilter` был `NearestFilter` → вблизи пикселизация.
+- Внутреннее разрешение: logical 512×256, physical × `clamp(round(dpr×2), 2, 4)`. World-space size, фон, timer, fixed/billboard, protocol не менялись.
+- Texture: Linear mag, LinearMipmapLinear min, mipmaps on. Timer перерисовывает тот же canvas.
+- Handoff: `docs/reports/2026-09-09_hologram-text-quality.md`. `test:sim` 65/65, `test:server` 324/324.
+
+## Последний проход: hologram background / fixed / timer — 2026-09-09
+
+- Фон — отдельный plane (чёрный 0.35), не часть текстовой canvas-текстуры. Выключение прячет mesh; width/height хранятся отдельно от размера текста. Legacy default = старый sprite (`2.6×0.77` при size=1, 1 линия), фон включён.
+- Ориентация: billboard (копия camera quaternion, как прежний Sprite) или fixed (только сохранённый `yaw`, без lookAt). Переход в fixed фиксирует yaw редактирующего игрока на сервере.
+- Тип `kind`: `normal` | `timer`. Таймер считает remaining на клиенте из `timerDuration` + `timerStartedAt` и `welcome`/`pong` `serverNow`. Нет per-tick countdown-пакетов. `/hologram reset <name>` (alias существующих `/holograms`) сбрасывает цикл всем. Права те же: `holograms.create` / OP.
+- `HologramRenderer` расширен (Group + planes), отдельного Timer/Fixed renderer нет.
+- Handoff: `docs/reports/2026-09-09_hologram-bg-timer.md`. `test:sim` 63/63, `test:server` 324/324.
+
+## Последний проход: hologram in-game editor — 2026-09-09
+
+- ПКМ по существующей голограмме в Anarchy открывает GameUI-редактор **этой** голограммы. Raycast AABB идёт раньше bow/block use. Нет второй hologram-системы.
+- Appearance (`font`, `size`, `style`) — поля той же `HologramRecord`. Клиент шлёт `hologram_update`; сервер проверяет `holograms.create` / OP, валидирует, пишет `plugin-data/holograms/holograms.json`, броадкастит `holograms`.
+- Шрифты: основной UI **Inter** (`--font-ui`, `public/fonts/inter/*.woff2`); дополнительно **Press Start 2P** (`--font-display`) и `sans-serif` (исторический canvas default). CDN нет.
+- Команды `/holograms` без изменений по смыслу. Старые записи без style грузятся как `sans` + `bold` + `size=1`.
+- Handoff: `docs/reports/2026-09-09_hologram-editor.md`. `test:sim` 53/53, `test:server` 320/320.
+
+## Последний проход: death scatter 3× + world_sound spatial — 2026-09-09
+
+- Death drops: `DEATH_DROP_SCATTER_MULTIPLIER = 3` на origin X/Z (±0.75) и горизонтальный velocity (±2.1). `vy` остаётся 2.2. `scatterDeathDrop` / `deathLootDropped` без изменений.
+- `world_sound` больше не `broadcast` всем как local one-shot. Каталог `bow.shoot` / `item.pickup` (`positional: false`) был для SP `playLocal`; рассылка всем давала выстрел/подбор на всю карту. Теперь: клиент всегда `positional: true`; сервер шлёт только слушателям в `maxDistance`.
+- Handoff: `docs/reports/2026-09-09_death-scatter-world-sound.md`.
+
+## Последний проход: Online/Anarchy gameplay polish — 2026-09-08
+
+- Шесть точечных переносов SP → Anarchy без вторых систем: fire overlay, death scatter, player death pose, death screen + `respawn`, `world_sound`, recipe-book ghosts.
+- Fire: клиент применяет уже существующие `health.fire` / `snapshot.onFire` через `SurvivalSystem.syncNetworkFire`. Тот же `FirstPersonRenderer` overlay (`fire.png`, opacity 0.76).
+- Death: сервер больше не респавнит в том же тике. Loot один раз (`deathLootDropped`), scatter origin ~±0.25 xz + velocity `[(r-0.5)*1.4, 2.2, (r-0.5)*1.4]`. Клиент `{ type: 'respawn' }`; повторный запрос rejected. UI — существующий `GameUI.showDeath` («Вы умерли» / «Возродиться»).
+- Death pose: общие числа зомби (`0.7s`, tilt π/2, scale 1→0.75) на каноническом `PlayerVisual` через `RemotePlayerView` dead-edge clock.
+- Sounds: `world_sound` батч каталожных event id. Explosion / bow / combat / arrow / pickup / flint / door / click / splash с сервера; footsteps + eat/drink локально в `tickOnline`. С 2026-09-09 пакет пространственный и не `broadcast` на всю карту.
+- Recipe book: selection ≠ craft. Ghost/missing red на клиенте; сервер по-прежнему отвергает craft без ингредиентов.
+- Skin selector / nameplates PR #74 не трогались.
+- Handoff: `docs/reports/2026-09-08_online-gameplay-polish.md`.
+
+## Предыдущий проход: placed TNT fall 20/30, minecart TNT без fall cap — 2026-09-08
 
 - Предыдущий pass ошибочно повесил 20/30 падение на TNT **в вагонетке**. Это не ТЗ.
 - Поставленный TNT (`primeTnt`): после поджига падает вниз от Y прайма. Ordinary max 20; powerful и destructive max 30. Пол раньше лимита → взрыв на столкновении; иначе воздух на лимите. Fuse 4s — safety.
@@ -331,7 +390,7 @@
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
 - Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
-- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms. Auction House не делался.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
 - Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.
@@ -593,7 +652,8 @@
 - Существующая ветка Draft PR **#31** `cursor/player-skins-third-person` объединена обычным merge с server-authoritative `origin/main` `57724f6`; PR #28 breaking overlay и весь GameplayKernel/server/shared/tooling stack сохранены.
 - `Game.tickOnline` не запускает client world simulation. Perspective и `PlayerVisual` остаются presentation-only; gameplay targeting/reach по-прежнему строятся из `PlayerController.eyePosition()` / `viewDirection()`.
 - `RemotePlayerView` больше не создаёт временный `BoxGeometry`: bounded snapshot interpolation управляет feet/yaw/pitch/velocity/state, а canonical `PlayerVisual` отвечает за rig, render-frame locomotion, invisibility и shared entity lighting.
-- Protocol не расширялся: remote использует `DEFAULT_PLAYER_APPEARANCE`, empty-hand neutral fallback и не получает PNG/base64/texture payload. `selectedSlot` без authoritative item id не используется для угадывания held item.
+- Protocol несёт appearance metadata только на join/welcome/`player_joined` и редком `player_appearance`; live `player_state` по-прежнему без skin texture/`skinId`. Remote `PlayerVisual` получает `info.appearance`, а не `DEFAULT_PLAYER_APPEARANCE`.
+- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
 - F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
 - `BlockBreakingOverlay` остаётся render-path consumer того же authoritative eye/look target во всех perspectives; mapping/cache/no-remesh contract не менялся.
 - Focused player gate **41/41**, expanded player/server/network/overlay gate **236/236**, shared sim **42/42**, server **73/73**; all typechecks, boundaries, Node smokes, build, size and archive pass. Full comparable run has no new failure class versus exact main; details below.
@@ -604,7 +664,9 @@
 - В production подключены **45 уникальных пользовательских 64×64 RGBA skins** из переданного `skins.zip` (один byte-identical duplicate отброшен): 20 Classic и 25 Slim по каноническим прозрачным arm-зонам. Default — `frontier_explorer` (Classic). Дополнительно есть authored DEV `player_uv_test` с разными цветами граней. Старый `entity/steve.png` не используется новым player pipeline.
 - Канонический контракт — `PlayerAppearance { skinId, model, layers }`. `MinecraftSkinRegistry` держит одну nearest/no-mipmap texture на `skinId`, ref-count освобождает старую texture; `PlayerSkinGeometryCache` делит immutable geometry между экземплярами.
 - `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
-- First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира.
+- First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира. Главное меню показывает блок «Персонаж» с тем же `PlayerVisual`; «Выбрать скин» открывает сетку всех 45 production skins. Confirm вызывает `setPlayerAppearance`; Cancel не сохраняет preview.
+- Клиентский appearance state — `fc.player.appearance` (тот же localStorage подход, что никнейм). Online Anarchy хранит metadata за `playerId` в существующем `players.json`.
+- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует.
 - F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
 - World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
 - DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.

@@ -30,6 +30,8 @@ import {
   resetMiningSound,
   shouldPlayExplosion,
   consumableSoundEvent,
+  resolveCatalogEvent,
+  worldSoundPlayOptions,
   type BlockSoundAction,
   type PlaySoundOptions,
   type SoundEventId,
@@ -123,10 +125,15 @@ import {
 } from '../player/localAim';
 import {
   DEFAULT_PLAYER_APPEARANCE,
+  appearancesEqual,
   createPlayerAppearance,
+  toNetworkAppearance,
   type PlayerAppearance,
+  type PlayerModelVariant,
 } from '../player/appearance/PlayerAppearance';
+import { PlayerSkinSelectorSession } from '../player/appearance/PlayerSkinSelector';
 import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
+import { PlayerAppearancePreview } from '../rendering/player/PlayerAppearancePreview';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -206,6 +213,7 @@ import {
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
+import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
 import {
   captureBlockBreakAbort,
   captureBlockBreakFinish,
@@ -318,9 +326,11 @@ import {
   clearDoorBlocks,
   daylightFactor,
   dropScatterVelocity,
+  dropScatterOrigin,
   formatGameplayKernelTrace,
   performUseHeld,
   movementDuringItemUse,
+  resolveHologramUseTarget,
   rollDropCount,
   systemRandomFn,
   tickGameplayKernel,
@@ -329,7 +339,7 @@ import {
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
-import type { ContainerKind, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ContainerKind, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -576,7 +586,9 @@ export class Game {
   private readonly playerSkinGeometries = new PlayerSkinGeometryCache();
   private readonly playerArmorMaterials = new PlayerArmorMaterialCache();
   private readonly playerArmorGeometries = new PlayerArmorGeometryCache();
-  private playerAppearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  private playerAppearance: PlayerAppearance = loadPlayerAppearance();
+  private characterPreview?: PlayerAppearancePreview;
+  private skinSelector?: PlayerSkinSelectorSession;
   private cameraPerspective: CameraPerspective = 'firstPerson';
   private thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
   private renderDeltaSeconds = 0;
@@ -613,8 +625,10 @@ export class Game {
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
+  private onlineRespawnPending = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
+  private serverTimeOffsetMs = 0;
   private claimBoundaries?: ClaimBoundaryRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
@@ -771,11 +785,20 @@ export class Game {
     return this.cameraPerspective;
   }
 
-  /** Runtime seam for the future character UI and server appearance messages. */
+  /** Runtime seam for the character UI and server appearance messages. */
   setPlayerAppearance(appearance: PlayerAppearance): void {
-    this.playerAppearance = createPlayerAppearance(appearance);
+    const next = createPlayerAppearance(appearance);
+    const changed = !appearancesEqual(this.playerAppearance, next);
+    this.playerAppearance = next;
     this.firstPerson?.setAppearance(this.playerAppearance);
     this.session?.playerVisual?.setAppearance(this.playerAppearance);
+    this.characterPreview?.setAppearance(this.playerAppearance);
+    if (!changed) return;
+    savePlayerAppearance(this.playerAppearance);
+    this.session?.online?.client.send({
+      type: 'appearance',
+      ...toNetworkAppearance(this.playerAppearance),
+    });
   }
 
   setCameraPerspective(perspective: CameraPerspective): void {
@@ -789,6 +812,7 @@ export class Game {
     this.disposeAudioDebug();
     this.disposeSession();
     this.firstPerson?.dispose();
+    this.disposeCharacterPreview();
     this.playerSkinGeometries.dispose();
     this.playerSkins.dispose();
     this.playerArmorMaterials.dispose();
@@ -806,6 +830,8 @@ export class Game {
 
   private showMainMenu(): void {
     this.lifecycle.setState('MENU');
+    this.disposeCharacterPreview();
+    this.skinSelector = undefined;
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
       online: () => void this.showOnlineServerList(),
@@ -814,10 +840,64 @@ export class Game {
         this.screenBeforeSettings = 'main';
         this.showSettings();
       },
+      selectSkin: () => this.showSkinSelector(),
+      onCharacterCanvas: (canvas) => this.attachCharacterPreview(canvas),
     });
   }
 
+  private showSkinSelector(): void {
+    this.disposeCharacterPreview();
+    this.skinSelector = new PlayerSkinSelectorSession(this.playerAppearance);
+    this.ui.showSkinSelector(this.skinSelector.preview, {
+      preview: (skinId) => {
+        const next = this.skinSelector?.selectSkin(skinId);
+        if (!next) return;
+        this.characterPreview?.setAppearance(next);
+        this.ui.markSkinModel(next.model);
+      },
+      setModel: (model: PlayerModelVariant) => {
+        const next = this.skinSelector?.setModel(model);
+        if (!next) return;
+        this.characterPreview?.setAppearance(next);
+      },
+      confirm: () => {
+        const next = this.skinSelector?.confirm();
+        this.skinSelector = undefined;
+        if (next) this.setPlayerAppearance(next);
+        this.showMainMenu();
+      },
+      cancel: () => {
+        this.skinSelector?.cancel();
+        this.skinSelector = undefined;
+        this.showMainMenu();
+      },
+      onPreviewCanvas: (canvas) => this.attachCharacterPreview(canvas, this.skinSelector?.preview),
+    });
+  }
+
+  private attachCharacterPreview(canvas: HTMLCanvasElement, appearance = this.playerAppearance): void {
+    this.disposeCharacterPreview();
+    if (!this.itemVisuals) return;
+    this.characterPreview = new PlayerAppearancePreview({
+      canvas,
+      skins: this.playerSkins,
+      geometries: this.playerSkinGeometries,
+      items: this.itemVisuals,
+      appearance,
+      armorResources: {
+        materials: this.playerArmorMaterials,
+        geometries: this.playerArmorGeometries,
+      },
+    });
+  }
+
+  private disposeCharacterPreview(): void {
+    this.characterPreview?.dispose();
+    this.characterPreview = undefined;
+  }
+
   private showAccount(): void {
+    this.disposeCharacterPreview();
     this.ui.showAccount(loadPlayerNickname(), {
       save: (raw) => {
         const result = savePlayerNickname(raw);
@@ -829,6 +909,7 @@ export class Game {
   }
 
   private async showOnlineServerList(): Promise<void> {
+    this.disposeCharacterPreview();
     const live = await fetchAnarchyStatus();
     this.ui.showOnlineServers({
       back: () => this.showMainMenu(),
@@ -844,7 +925,7 @@ export class Game {
     this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect(undefined, loadPlayerNickname());
+      const welcome = await client.connect(undefined, loadPlayerNickname(), this.playerAppearance);
       await this.startOnlineAnarchy(client, welcome);
     } catch {
       client.disconnect();
@@ -935,8 +1016,12 @@ export class Game {
     for (const info of welcome.players) {
       this.spawnRemotePlayer(session, info);
     }
+    if (welcome.you.appearance) this.setPlayerAppearance(welcome.you.appearance);
+    if (typeof welcome.serverNow === 'number' && Number.isFinite(welcome.serverNow)) {
+      this.serverTimeOffsetMs = welcome.serverNow - Date.now();
+    }
     this.holograms?.dispose();
-    this.holograms = new HologramRenderer(this.scene, this.camera);
+    this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
     this.claimBoundaries?.dispose();
     this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
@@ -960,11 +1045,11 @@ export class Game {
       return;
     }
     const view = new RemotePlayerView(info, {
-      visual: new PlayerVisual(
+        visual: new PlayerVisual(
         this.playerSkins,
         this.playerSkinGeometries,
         this.itemVisuals!,
-        DEFAULT_PLAYER_APPEARANCE,
+        createPlayerAppearance(info.appearance ?? DEFAULT_PLAYER_APPEARANCE),
         {
           armorResources: {
             materials: this.playerArmorMaterials,
@@ -988,6 +1073,14 @@ export class Game {
     session.online?.remotes.delete(playerId);
   }
 
+  private applyOnlineAppearance(session: GameSession, playerId: string, appearance: PlayerAppearance): void {
+    if (playerId === session.online?.playerId) {
+      this.setPlayerAppearance(appearance);
+      return;
+    }
+    session.online?.remotes.get(playerId)?.setAppearance(appearance);
+  }
+
   private handleOnlineMessage(message: ServerMessage): void {
     const session = this.session;
     if (!session?.online) return;
@@ -1000,6 +1093,9 @@ export class Game {
         return;
       case 'player_left':
         this.removeRemotePlayer(session, message.playerId);
+        return;
+      case 'player_appearance':
+        this.applyOnlineAppearance(session, message.playerId, message.appearance);
         return;
       case 'player_state':
         this.applyOnlinePlayerState(session, message);
@@ -1050,6 +1146,15 @@ export class Game {
       case 'entity_event':
         applyNetworkEntityEvents(session, message.events);
         return;
+      case 'world_sound':
+        for (const sound of message.sounds) {
+          if (!resolveCatalogEvent(sound.event as SoundEventId)) continue;
+          this.playWorld(sound.event as SoundEventId, sound.x, sound.y, sound.z, worldSoundPlayOptions({
+            ...(sound.pitch !== undefined ? { pitch: sound.pitch } : {}),
+            ...(sound.volume !== undefined ? { volume: sound.volume } : {}),
+          }));
+        }
+        return;
       case 'health': {
         const previous = {
           health: session.survival.health,
@@ -1063,6 +1168,8 @@ export class Game {
           airTicks: message.air,
           dead: message.dead,
         });
+        session.survival.syncNetworkFire(message.fire);
+        if (message.dead) this.handleDeath(session.survival.lastDamage?.source);
         if (shouldRestoreGameplayAfterRespawn(previous, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -1168,10 +1275,17 @@ export class Game {
       case 'holograms':
         this.holograms?.sync(message.holograms);
         return;
+      case 'hologram_editor':
+        this.openHologramEditor(message.hologram);
+        return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
         return;
       case 'pong':
+        if (typeof message.serverNow === 'number' && Number.isFinite(message.serverNow)) {
+          this.serverTimeOffsetMs = message.serverNow - Date.now();
+        }
+        return;
       case 'status':
         return;
       default:
@@ -1586,6 +1700,8 @@ export class Game {
           hunger: local.hunger,
           dead: snapshotDead,
         });
+        if (local.onFire !== undefined) session.survival.syncNetworkFire(local.onFire);
+        if (snapshotDead) this.handleDeath(session.survival.lastDamage?.source);
         if (!flags.skipRespawn && shouldRestoreGameplayAfterRespawn(previousLife, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -1952,6 +2068,7 @@ export class Game {
   private sendOnlineUse(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    if (this.tryInteractHologram(session)) return;
     const source = this.onlineActionSource(session);
     const selected = this.selectedStack();
     if (this.selectedStack()?.itemId === ItemId.Bow) {
@@ -2015,6 +2132,52 @@ export class Game {
       commandSeq: source.inputSeq,
       selectedSlot: source.selectedSlot,
     });
+  }
+
+  private tryInteractHologram(session: GameSession): boolean {
+    if (!session.online || this.ui?.isHologramEditorOpen()) return false;
+    const aim = this.lastLocalAim;
+    if (!aim) return false;
+    const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
+    const target = resolveHologramUseTarget(hologramHit, session.target?.distance);
+    if (target.kind !== 'hologram') return false;
+    session.online.client.send({ type: 'hologram_interact', name: target.name });
+    return true;
+  }
+
+  private openHologramEditor(hologram: NetworkHologram): void {
+    const session = this.session;
+    if (!session?.online || this.lifecycle.state !== 'PLAYING') return;
+    this.ui.closeChat();
+    if (this.ui.isInventoryOpen()) this.ui.closeInventory(false);
+    this.openGameplayModal();
+    this.ui.openHologramEditor(hologram, {
+      nowMs: () => Date.now() + this.serverTimeOffsetMs,
+      save: (update) => {
+        session.online?.client.send({
+          type: 'hologram_update',
+          name: update.name,
+          lines: [...update.lines],
+          font: update.font,
+          size: update.size,
+          style: update.style,
+          kind: update.kind,
+          timerDuration: update.timerDuration,
+          backgroundEnabled: update.backgroundEnabled,
+          backgroundWidth: update.backgroundWidth,
+          backgroundHeight: update.backgroundHeight,
+          billboard: update.billboard,
+        });
+        this.closeHologramEditorAndResumeLook();
+      },
+      cancel: () => this.closeHologramEditorAndResumeLook(),
+    });
+  }
+
+  private closeHologramEditorAndResumeLook(): void {
+    this.ui.closeHologramEditor();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
   }
 
   private sendOnlineBowRelease(session: GameSession): void {
@@ -2347,6 +2510,7 @@ export class Game {
   }
 
   private async showWorldList(): Promise<void> {
+    this.disposeCharacterPreview();
     const worlds = await this.worldStore.listWorlds();
     this.ui.showWorldList(worlds, {
       load: (id) => void this.loadWorld(id),
@@ -2607,6 +2771,7 @@ export class Game {
     );
     playerVisual.setHeldItem(inventory.getSlot(this.session.selectedSlot)?.itemId);
     this.deathShown = false;
+    this.onlineRespawnPending = false;
     this.syncLocalRenderFromPlayer();
     this.beginWorldLoading(options?.snapSpawn ?? !restored);
   }
@@ -3265,6 +3430,7 @@ export class Game {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeInventory();
     this.ui.closeChat();
+    this.ui.closeHologramEditor();
     this.input.clearHeldKeys();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
@@ -3363,6 +3529,10 @@ export class Game {
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
     if (this.ui.isChatOpen()) this.ui.closeChat();
+    if (this.ui.isHologramEditorOpen()) {
+      this.closeHologramEditorAndResumeLook();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3431,6 +3601,10 @@ export class Game {
       this.closeChatAndResumeLook();
       return;
     }
+    if (this.ui.isHologramEditorOpen()) {
+      this.closeHologramEditorAndResumeLook();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3442,6 +3616,7 @@ export class Game {
   }
 
   private showSettings(): void {
+    this.disposeCharacterPreview();
     this.ui.showSettings((settings) => {
       this.settings = settings;
       this.audio.setVolume(settings.volume);
@@ -3734,7 +3909,15 @@ export class Game {
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
+    const prevX = session.player.position.x;
+    const prevZ = session.player.position.z;
     predictLocalMove(session.player, session.world, online.prediction, predicted);
+    if (gameplayAllowed) {
+      this.updateFootsteps(session, Math.hypot(
+        session.player.position.x - prevX,
+        session.player.position.z - prevZ,
+      ));
+    }
     session.combat.setHeldItem(selected?.itemId);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
@@ -3783,6 +3966,12 @@ export class Game {
         online.localFoodUse = undefined;
       } else {
         session.foodUseTicks = Math.min(32, session.foodUseTicks + 1);
+        const eatOrDrink = consumableSoundEvent(item);
+        if (session.foodUseTicks >= 32) {
+          this.playLocal(eatOrDrink);
+        } else if (session.foodUseTicks % 8 === 0) {
+          this.playLocal(eatOrDrink, { volume: 0.55 });
+        }
       }
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
@@ -4618,7 +4807,11 @@ export class Game {
   private spawnDroppedStack(stack: ItemStack, position?: Vec3Like): void {
     const session = this.session;
     if (!session || session.online) return;
-    session.drops.spawn(stack, position ?? session.player.position.clone().add(new THREE.Vector3(0, 0.35, 0)), {
+    const origin = position ?? (() => {
+      const scattered = dropScatterOrigin(session.player.position, this.simRandom);
+      return new THREE.Vector3(scattered[0], scattered[1], scattered[2]);
+    })();
+    session.drops.spawn(stack, origin, {
       velocity: new THREE.Vector3(...dropScatterVelocity(this.simRandom)),
     });
   }
@@ -4698,7 +4891,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -4880,6 +5073,7 @@ export class Game {
     if (!session?.online) return;
     this.lifecycle.beginOnlineRespawnRestore();
     this.deathShown = false;
+    this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
     session.ridingCartId = undefined;
     session.miningProgress = 0;
@@ -4892,6 +5086,7 @@ export class Game {
     const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
     this.ui.closeChat();
+    this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
     this.ui.enterGame();
     const plan = planOnlineRespawnInputRestore({
@@ -4914,13 +5109,19 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
-    if (session.online) return;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
+    if (session.online) {
+      this.ui.showDeath(
+        () => this.requestOnlineRespawn(),
+        () => void this.saveAndQuit(),
+      );
+      return;
+    }
     if (session.summary.mode === 'survival') {
       for (const stack of session.inventory.slots) if (stack) this.spawnDroppedStack(stack);
       for (const stack of Object.values(session.inventory.armor)) if (stack) this.spawnDroppedStack(stack);
@@ -4937,6 +5138,13 @@ export class Game {
       },
       () => void this.saveAndQuit(),
     );
+  }
+
+  private requestOnlineRespawn(): void {
+    const session = this.session;
+    if (!session?.online || this.onlineRespawnPending) return;
+    this.onlineRespawnPending = true;
+    session.online.client.send({ type: 'respawn' });
   }
 
   private render(alpha: number): void {
@@ -4971,11 +5179,14 @@ export class Game {
         ignoreNetworkSend: Boolean(session.online?.ignoreNetworkSend),
         ignoreNetworkState: Boolean(session.online?.ignoreNetworkState),
       });
-      session.online?.remotes.forEach((remote) => remote.interpolate(
-        now,
-        this.renderDeltaSeconds,
-        daylightFactor(session.world.timeOfDay),
-      ));
+      session.online?.remotes.forEach((remote) => {
+        remote.interpolate(
+          now,
+          this.renderDeltaSeconds,
+          daylightFactor(session.world.timeOfDay),
+        );
+        remote.updateNameplate(this.camera);
+      });
       if (session.online) {
         applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
       } else {
@@ -5005,6 +5216,7 @@ export class Game {
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
+    this.characterPreview?.render(this.renderDeltaSeconds);
   }
 
   private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {

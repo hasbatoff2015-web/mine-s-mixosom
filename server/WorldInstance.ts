@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -18,6 +18,13 @@ import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
+  DEFAULT_PLAYER_APPEARANCE,
+  appearancesEqual,
+  sanitizeRegisteredAppearance,
+  toNetworkAppearance,
+  type PlayerAppearance,
+} from '../src/player/appearance/PlayerAppearance';
+import {
   compareLatestInputCoalesce,
   compareLockstepModes,
   dumpControllerTicks,
@@ -25,12 +32,17 @@ import {
   formatPoseDump,
 } from '../src/player/moveSimCompare';
 import { SurvivalSystem, getArmorPoints } from '../src/survival';
+import {
+  listenerHearsWorldSound,
+  worldSoundMaxDistance,
+} from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
   AppliedInputTick,
   AppliedMovementStep,
+  ClientHologramUpdateMessage,
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientVehicleInputMessage,
@@ -65,14 +77,15 @@ import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
+import { AutoMineManager } from './services/autoMine';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
-import { HologramNetwork } from './services/holograms';
+import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
-import { formatGameplayKernelTrace, movementDuringItemUse } from '../src/gameplay';
+import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -201,9 +214,11 @@ export class ServerPlayer implements GameplayPlayer {
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  deathLootDropped = false;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
+  appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
 
   constructor(
     readonly id: string,
@@ -214,8 +229,10 @@ export class ServerPlayer implements GameplayPlayer {
     public gamemode: GameMode,
     public selectedSlot: number,
     survival?: SurvivalSystem,
+    appearance?: PlayerAppearance,
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
+    this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
     });
@@ -351,6 +368,9 @@ export class ServerPlayer implements GameplayPlayer {
       pitch: snap.pitch,
       presentation: snap.presentation,
       equipment: snap.equipment,
+      appearance: toNetworkAppearance(this.appearance),
+      health: snap.health,
+      ...(snap.dead ? { dead: true } : {}),
     };
   }
 
@@ -418,6 +438,7 @@ export class WorldInstance {
   readonly pluginConfig: PluginConfigService;
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
+  readonly autoMine: AutoMineManager;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -510,11 +531,13 @@ export class WorldInstance {
           y: player.controller.position.y,
           z: player.controller.position.z,
         }),
-        teleport: (x, y, z) => {
+        teleport: (x, y, z, look) => {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
           player.controller.teleport([x, y, z]);
+          if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
+          if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
           return true;
         },
         sendMessage: (text) => {
@@ -532,6 +555,53 @@ export class WorldInstance {
     this.pluginConfig = new PluginConfigService(this.pluginStore);
     this.rtp = new RtpService(this.world);
     this.rtpSessions = new RtpSessionManager(this.rtp);
+    this.autoMine = new AutoMineManager({
+      world: this.world,
+      worldId: () => this.worldId,
+      now: () => Date.now(),
+      random: () => Math.random(),
+      loadStore: () => this.pluginStore.load('automine/automines', { mines: [] }),
+      saveStore: (store) => this.pluginStore.save('automine/automines', store),
+      loadOriginals: (name) => this.pluginStore.load(`automine/originals/${name}`, undefined),
+      saveOriginals: (name, blocks) => this.pluginStore.save(`automine/originals/${name}`, { blocks }),
+      players: () => this.connectedPlayers().map((player) => ({
+        id: player.id,
+        position: () => ({
+          x: player.controller.position.x,
+          y: player.controller.position.y,
+          z: player.controller.position.z,
+        }),
+        snapshot: () => ({ yaw: player.controller.yaw, pitch: player.controller.pitch }),
+      })),
+      teleport: (playerId, dest) => this.teleports.now(playerId, dest, 'automine', { silent: true }),
+      send: (playerId, text) => {
+        const player = this.players.get(playerId);
+        if (!player) return;
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      notifyAdmins: (text) => {
+        serverLog(`plugin automine ${text}`);
+        for (const player of this.connectedPlayers()) {
+          if (!this.permissions.has(player.name, 'automine.manage') && !this.permissions.isOperator(player.name)) {
+            continue;
+          }
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text,
+            kind: 'system',
+          });
+        }
+      },
+      log: (message) => serverLog(`plugin automine ${message}`),
+    });
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
@@ -606,6 +676,7 @@ export class WorldInstance {
         rtp: this.rtp,
         rtpSessions: this.rtpSessions,
         selection: this.selection,
+        autoMine: this.autoMine,
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -751,6 +822,7 @@ export class WorldInstance {
     sink: ConnectedSink;
     name?: string;
     sessionToken?: string;
+    appearance?: PlayerAppearance;
   }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string } {
     if (this.readyState !== 'READY') return { error: 'world not ready' };
     if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
@@ -768,6 +840,8 @@ export class WorldInstance {
         existing.resumeCount += 1;
         existing.lastInputConnectionId = existing.connectionId;
         if (options.name) existing.name = options.name;
+        const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
+        if (joinedAppearance) existing.appearance = joinedAppearance;
         this.resetConnectionInput(existing);
         const fp = sessionTokenFingerprint(existing.sessionToken);
         serverLog(
@@ -781,6 +855,8 @@ export class WorldInstance {
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
       if (stored) {
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name);
+        const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
+        if (joinedAppearance) restored.appearance = joinedAppearance;
         restored.joinCount += 1;
         restored.resumeCount += 1;
         serverLog(
@@ -805,6 +881,8 @@ export class WorldInstance {
       inventory,
       'survival',
       0,
+      undefined,
+      sanitizeRegisteredAppearance(options.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
@@ -1446,6 +1524,70 @@ export class WorldInstance {
     }
   }
 
+  interactHologram(player: ServerPlayer, name: string): void {
+    const hologram = this.holograms.get(name);
+    if (!hologram || !hologram.enabled) return;
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
+    if (!this.canEditHolograms(player)) {
+      this.sendHologramPermissionDenied(player);
+      return;
+    }
+    this.sendTo(player, { type: 'hologram_editor', hologram: toNetworkHologram(hologram) });
+  }
+
+  updateHologramAppearance(player: ServerPlayer, message: ClientHologramUpdateMessage): void {
+    const hologram = this.holograms.get(message.name);
+    if (!hologram || !hologram.enabled) {
+      this.sendTo(player, {
+        type: 'command_result',
+        ok: false,
+        name: 'holograms',
+        lines: [`Hologram '${message.name}' not found.`],
+      });
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: `Hologram '${message.name}' not found.`,
+        kind: 'error',
+      });
+      return;
+    }
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
+    if (!this.canEditHolograms(player)) {
+      this.sendHologramPermissionDenied(player);
+      return;
+    }
+    this.holograms.updateAppearance(message.name, message, {
+      playerYaw: player.controller.yaw,
+      nowMs: Date.now(),
+    });
+  }
+
+  private canEditHolograms(player: ServerPlayer): boolean {
+    return this.isOperator(player)
+      || this.permissions.has(player.id, 'holograms.create')
+      || this.permissions.has(player.name, 'holograms.create');
+  }
+
+  private sendHologramPermissionDenied(player: ServerPlayer): void {
+    this.sendTo(player, {
+      type: 'command_result',
+      ok: false,
+      name: 'holograms',
+      lines: ['You do not have permission.'],
+    });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: 'You do not have permission.',
+      kind: 'error',
+    });
+  }
+
   dispatchConsole(raw: string): CommandResult {
     const command = normalizeConsoleCommand(raw);
     if (!command) return { ok: true, lines: [] };
@@ -1634,6 +1776,7 @@ export class WorldInstance {
     this.processPendingAttacks();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
+    this.autoMine.tick();
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {
@@ -1740,6 +1883,20 @@ export class WorldInstance {
     const entityEvents = this.gameplay.consumeEntityEvents();
     if (entityEvents.length > 0) {
       this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
+    }
+    const worldSounds = this.gameplay.consumeWorldSounds();
+    if (worldSounds.length > 0) {
+      for (const player of this.connectedPlayers()) {
+        const listener = player.controller.position;
+        const hearable = worldSounds.filter((sound) => listenerHearsWorldSound(
+          listener,
+          sound,
+          worldSoundMaxDistance(sound.event),
+        ));
+        if (hearable.length > 0) {
+          this.sendTo(player, { type: 'world_sound', sounds: hearable });
+        }
+      }
     }
     if (this.tickNumber % 20 === 0) {
       this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
@@ -1877,6 +2034,26 @@ export class WorldInstance {
           player.bowReleaseBoundaryThisTick = player.bowReleaseCommandStates.get(command.commandSeq);
           player.bowReleaseCommandStates.delete(command.commandSeq);
         }
+      }
+      if (player.survival.dead) {
+        player.controller.velocity.set(0, 0, 0);
+        this.flushHealthIfDeadThenRespawn(player);
+        const position = player.controller.position;
+        player.appliedStepsThisLoop.push({
+          serverTick: this.tickNumber,
+          commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
+          x: position.x,
+          y: position.y,
+          z: position.z,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          onGround: player.controller.onGround,
+          flying: player.controller.isFlying,
+          sneaking: player.controller.sneaking,
+          sprinting: false,
+        });
+        continue;
       }
       const input = player.lastInput;
       const jump = input.jump;
@@ -2166,6 +2343,10 @@ export class WorldInstance {
     this.gameplay.respawnIfDead(player);
   }
 
+  respawn(player: ServerPlayer): boolean {
+    return this.gameplay.respawnPlayer(player);
+  }
+
   private flushHealth(player: ServerPlayer): void {
     const health = {
       type: 'health' as const,
@@ -2429,6 +2610,7 @@ export class WorldInstance {
       isGameMode(stored.gamemode) ? stored.gamemode : 'survival',
       stored.selectedSlot,
       survival,
+      sanitizeRegisteredAppearance(stored.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
     if (stored.cursor) {
       try {
@@ -2477,7 +2659,34 @@ export class WorldInstance {
       survival: player.survival.serialize(),
       cursor: player.cursor,
       portalChest: player.portalChest.slots,
+      appearance: toNetworkAppearance(player.appearance),
     };
+  }
+
+  setAppearance(
+    player: ServerPlayer,
+    raw: unknown,
+  ): { ok: true; appearance: PlayerAppearance } | { ok: false; reason: 'invalid' } {
+    const allowed = sanitizeRegisteredAppearance(raw);
+    if (!allowed) {
+      this.sendTo(player, {
+        type: 'player_appearance',
+        playerId: player.id,
+        appearance: toNetworkAppearance(player.appearance),
+      });
+      return { ok: false, reason: 'invalid' };
+    }
+    if (!appearancesEqual(player.appearance, allowed)) {
+      player.appearance = allowed;
+      this.storedPlayers[player.id] = this.toStored(player);
+      this.dirty = true;
+    }
+    this.broadcast({
+      type: 'player_appearance',
+      playerId: player.id,
+      appearance: toNetworkAppearance(player.appearance),
+    });
+    return { ok: true, appearance: player.appearance };
   }
 
   private broadcastChat(kind: 'player' | 'system', playerId: string, text: string, from?: string): void {

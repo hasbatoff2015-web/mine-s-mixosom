@@ -24,7 +24,7 @@ export function shouldRestoreGameplayAfterRespawn(
 }
 
 /**
- * Online death never uses the singleplayer DEAD screen. Respawn must return
+ * Online death uses the existing DEAD screen. Respawn must return
  * the same PLAYING + unblocked-input contract as a fresh join — including
  * BACKGROUND (spurious blur while pointer-locked) and leftover DEAD.
  * Pause stays pause: the user opened that overlay on purpose.

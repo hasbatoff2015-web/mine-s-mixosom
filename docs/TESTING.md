@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-10 Bow PvP + current main integration
+
+Report: `reports/2026-09-10_bow-pvp-main-integration.md`.
+
+Targeted semantic gate: **28 files / 259 tests PASS**. It covers release after sent `N/use=true` → future boundary `N+1`, release after sent `N/use=false` → current boundary `N`, deterministic 20-phase 180 FPS simulation, pending wait, one projectile/one ammo, frozen draw, captured aim, receive-time rewind, historical AABB catch-up, melee sequencing, Claims/damage/FireArrow, main spatial sounds, AutoMine, holograms, death/respawn and appearance/nameplates.
+
+Static/package gates: `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, production `build`, `check:size`, `check:archive` and conflict-marker/diff checks PASS. `test:sim`: **12 files / 65 tests PASS**. Archive: **4.14 MiB / 353 files**.
+
+Full `npm test -- --maxWorkers=2`: **212/216 files, 2016/2033 tests PASS**. Four known baseline files remain red: `minecraft-reference-extractor` parse failure; two `worldgen-terrain` 5 s timeouts; load-sensitive `fire-contact-sunlight-minecart` timeouts; `tick-load-flight` max 102–150 ms vs `<80`. The latter three were rerun alone and reproduced. No timeout or performance threshold was changed. All bow/main conflict-zone and newly merged main tests pass.
+
 ## 2026-09-09 Bow release actual input boundary
 
 Report: `reports/2026-09-09_bow-release-input-boundary.md`.
@@ -49,6 +59,111 @@ npx vitest run \
 Contracts: production LMB uses sequenced `action(kind=attack)`; target hint is the exact delayed render sample rather than the newest snapshot; attack waits for an exact authoritative command-boundary; target rewind accepts at most 5 ticks and rejects stale/future data. Server ray/AABB, 3-block reach and current voxel LOS stay authoritative. A missed hinted player never falls through to another player. Duplicate, hurt immunity, attacker/victim claim cancellation, mob, minecart and air-swing behavior are covered.
 
 Results: focused 24/24; adjacent combat/network/action/interpolation/prediction 309/309; `plugin-platform` + server melee rerun 27/27; `test:sim` 42/42; `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, boundaries and production build PASS. The full default-timeout run reached 1907/1924 before its one discovered compatibility failure was fixed and rerun. Remaining unrelated baseline classes were reproduced separately: two `worldgen-terrain` 5s timeouts, `fire-contact-sunlight-minecart` 5s timeouts, `tick-load-flight` max 103–110 ms vs <80 ms, and the unchanged `minecraft-reference-extractor` parse error. No timeout or threshold was relaxed.
+
+## 2026-09-09 AutoMine plugin
+
+Report: `reports/2026-09-09_automine-plugin.md`.
+
+```text
+npx vitest run \
+  tests/server/auto-mine-core.test.ts \
+  tests/server/auto-mine.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  tests/plugin-boundaries.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: inclusive cuboid from reversed corners; wand first/second click; name validation; 12-type weights sum 100% with Obsidian=Coal and Titanium rarest; deterministic cumulative selector; batched `applyBlockBatch`; reset replaces the volume; inside/edge evacuate with yaw/pitch, outside and other-world skipped; no overlapping reset; overdue restart runs one reset; `/automine` commands + `automine.manage`; delete restores original voxels.
+
+## 2026-09-09 Hologram close-up text quality
+
+Report: `reports/2026-09-09_hologram-text-quality.md`.
+
+```text
+npx vitest run tests/hologram-timer.test.ts tests/hologram-style.test.ts tests/hologram-hit.test.ts --maxWorkers=2
+```
+
+Contracts: physical canvas > logical; scale clamped 2–4; world-space sprite size unchanged; one CanvasTexture per hologram; magFilter linear (not nearest); timer still has no tick packets.
+
+## 2026-09-09 Hologram background, fixed orientation, timer
+
+Report: `reports/2026-09-09_hologram-bg-timer.md`.
+
+```text
+npx vitest run \
+  tests/hologram-style.test.ts \
+  tests/hologram-hit.test.ts \
+  tests/hologram-timer.test.ts \
+  tests/server/hologram-editor.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: legacy background on + billboard + kind=normal; background size independent of text size; disabled background omitted from AABB; fixed yaw persists; timer remaining shared for join-mid-cycle; no hologram packets per tick; `/hologram reset` broadcasts; reset of a normal hologram returns «Эта голограмма не является таймером.»; `hologram_update` still drops yaw/timerStartedAt.
+
+## 2026-09-09 Hologram in-game editor
+
+Report: `reports/2026-09-09_hologram-editor.md`.
+
+```text
+npx vitest run \
+  tests/hologram-style.test.ts \
+  tests/hologram-hit.test.ts \
+  tests/server/hologram-editor.test.ts \
+  tests/server/anarchy-plugins.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: old records default to `sans`/`bold`/`size=1`; unknown font and out-of-range size rejected; `hologram_update` drops position/owner/id; RMB hologram AABB wins over a farther block; permission denied uses `You do not have permission.`; Save persists and broadcasts; Cancel does not write.
+
+## 2026-09-09 Death scatter 3× + spatial world_sound
+
+Report: `reports/2026-09-09_death-scatter-world-sound.md`.
+
+```text
+npx vitest run \
+  tests/random-source.test.ts \
+  tests/world-sound-events.test.ts \
+  tests/server/world-sound-events.test.ts \
+  tests/server/online-gameplay-polish.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: death origin ±0.75 / horizontal velocity ±2.1 / `vy=2.2`; movement/jump/charge do not emit `bow.shoot`; one successful release emits once; distant clients do not receive `bow.shoot` or `item.pickup`; spawn/teleport/despawn do not emit pickup; confirmed collect emits once.
+
+## 2026-09-08 Online/Anarchy gameplay polish
+
+Report: `reports/2026-09-08_online-gameplay-polish.md`.
+
+```text
+npx vitest run \
+  tests/online-gameplay-polish.test.ts \
+  tests/server/online-gameplay-polish.test.ts \
+  tests/random-source.test.ts \
+  tests/server/anarchy-gameplay.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: `syncNetworkFire` drives `isOnFire`; death loot scatters with unique xz and non-zero horizontal velocity inside ~1.2 blocks, no second drop on a second `respawnIfDead`; explicit `respawn` revives and a second request is rejected; `{ type: 'respawn' }` and `{ type: 'world_sound' }` parse; explosion emit is catalog id only; recipe with zero ingredients ghosts missing cells and server result-click does not grant sticks; recipe with planks still crafts. `test:sim` includes `dropScatterOrigin`.
+
+## 2026-09-08 Player skin selector, appearance sync, nameplates
+
+Report: `reports/2026-09-08_player-skin-selector-sync.md`.
+
+```text
+npx vitest run \
+  tests/player-skin-selector.test.ts \
+  tests/player-appearance-network.test.ts \
+  tests/player-nameplate.test.ts \
+  tests/player-skins.test.ts \
+  tests/player-skin-assets.test.mjs \
+  tests/remote-player-view.test.ts \
+  tests/ui-main-integration.test.ts \
+  tests/server/player-appearance.test.ts \
+  --maxWorkers=2
+```
+
+Contracts: selector sees 45 production skins; preview/cancel/confirm; `Game.setPlayerAppearance` is the apply path; join/welcome/`player_appearance` carry `{ skinId, model, layers }` only; invalid skinId rejected; PNG/base64 never on the wire; reconnect and server restart restore appearance from `players.json`; remote nameplate shows nickname + ❤ HP from authoritative snapshots; interpolation follows `RemotePlayerView`; local player has no nameplate.
 
 ## 2026-09-08 Placed TNT fall distance (minecart uncapped)
 

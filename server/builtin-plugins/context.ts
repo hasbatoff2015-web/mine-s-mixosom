@@ -1,3 +1,4 @@
+import type { AutoMineManager } from '../services/autoMine';
 import type { PermissionService } from '../services/permissions';
 import type { PluginConfigService } from '../services/pluginConfig';
 import type { PlayerSelectionService } from '../services/selection';
@@ -15,6 +16,7 @@ export interface BuiltinPluginContext {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly selection: PlayerSelectionService;
+  readonly autoMine: AutoMineManager;
   readonly config: PluginConfigService;
   readonly plugins: PluginManager;
   readonly world: VoxelWorld;

@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-10: Integrate bow PvP timeline into current main
+
+- [x] Fetch actual refs and record main `27778cf3`, bow `fef66776`, merge-base `eb82417b`.
+- [x] Merge current main into the published bow branch without rebase or force push.
+- [x] Compose bow timeline/sequencing with main AutoMine, holograms, online polish, appearance and diagnostics.
+- [x] Preserve release boundary N/N+1 semantics, receive-time rewind, authoritative boundary eye and canonical stepwise projectile catch-up.
+- [x] Preserve main spatial bow sound, death/respawn, nameplate/appearance and plugin behavior.
+- [x] Pass 259 targeted integration tests, 65 shared-sim tests, four typechecks, boundaries, build and archive checks.
+- [x] Record and isolate pre-existing full-suite timeout/performance/extractor failures without weakening thresholds.
+
 ## 2026-09-09: Bow release actual input boundary
 
 - [x] Track last input packet actually sent, including use state, in normal and idle input paths.
@@ -40,6 +50,52 @@
 - [x] Preserve legacy safe fallback plus non-player mob/minecart hits and air swings; no bow changes.
 - [x] Add deterministic diagnostics and automated coverage for lag, flick, stale/future, obstruction, reach, duplicate and protection cases.
 - [ ] Owner live Anarchy QA: two clients under normal and throttled latency; flick-to-hit, moving target, wall rejection, mobile touch attack.
+
+## 2026-09-09: AutoMine plugin
+
+- [x] Builtin `/automine` wand/create/delete/list/info/reset/setinterval/setteleport on PluginManager.
+- [x] Inclusive cuboid selection independent from Claims; wooden-axe wand clicks.
+- [x] Fixed weighted composition (12 BlockId, 100%, Obsidian=Coal, Titanium rarest).
+- [x] Batched `applyBlockBatch` reset, TeleportService evacuation, persist+restart timer.
+- [x] Restore original voxels on delete; no second claims/teleport/network protocol.
+
+## 2026-09-09: Hologram close-up text quality
+
+- [x] Supersample hologram text canvas; keep world-space size.
+- [x] Linear magFilter + mipmaps for close sharpness / far stability.
+- [ ] Owner live QA: walk up to normal/timer/fixed holograms.
+
+## 2026-09-09: Hologram background, fixed orientation, timer
+
+- [x] Background on/off as a separate renderer layer; independent width/height.
+- [x] Fully fixed holograms (no camera-facing); persist world yaw.
+- [x] Timer hologram type with server `timerStartedAt` and client countdown.
+- [x] `/hologram reset <name>` on the existing `/holograms` command (alias `hologram`).
+- [ ] Owner live Anarchy QA: bg off, large/small bg, walk around fixed, two clients on one timer, reset, RMB vs chest/door.
+
+## 2026-09-09: Hologram in-game editor
+
+- [x] RMB on an existing Anarchy hologram opens the GameUI editor for that hologram.
+- [x] Store font/size/style on the existing hologram record; server validates and persists.
+- [x] Extend `HologramRenderer` canvas draw with local Inter / Press Start 2P / sans-serif.
+- [x] Keep `/holograms` commands, IDs, billboards, range cull, and old records.
+- [ ] Owner live Anarchy QA: OP edit, denied player, Save/Cancel, reconnect after style change.
+
+## 2026-09-09: Death scatter 3× + spatial world_sound
+
+- [x] Triple death-drop X/Z origin and horizontal velocity; keep `vy = 2.2`.
+- [x] Stop broadcasting `bow.shoot` / `item.pickup` as global local one-shots.
+- [x] Regression tests for scatter multiplier and false bow/pickup sounds.
+
+## 2026-09-08: Online/Anarchy gameplay polish
+
+- [x] Drive the existing SP first-person fire overlay from authoritative Online fire state.
+- [x] Scatter death item entities around the corpse (server-authoritative, no duplicate loot).
+- [x] Reuse zombie/humanoid death pose on `PlayerVisual` / `RemotePlayerView`; stay dead until `respawn`.
+- [x] Show existing death UI («Вы умерли» / «Возродиться») and one-shot `{ type: 'respawn' }`.
+- [x] Full SP→Online sound catalog audit; add missing authoritative `world_sound` calls.
+- [x] Recipe-book selection without ingredients (ghost/missing red); keep server craft rejection.
+- [ ] Owner live Anarchy QA: fire overlay, death scatter, remote death pose, TNT boom, recipe ghosts.
 
 ## 2026-09-08: Placed TNT fall distance (not minecart)
 
@@ -321,7 +377,8 @@
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
-- [x] Client hologram rendering (simple billboard). Click actions / placeholders / pages — later.
+- [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
+- [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
 - [ ] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
@@ -570,6 +627,15 @@
 - [x] Actual-browser 28-case desktop/mobile matrix plus Creative and World Select interaction smoke; zero browser console diagnostics.
 - [ ] Native-device review with actual touch safe-area insets, OS browser chrome and gameplay pointer lock; automated viewport emulation does not close that hardware gate.
 - [ ] Resolve unrelated full-suite CPU timeouts/fingerprint/parser/RPC baseline separately; do not relax them inside a UI task.
+## 2026-09-08: player skin selector, appearance sync, nameplates
+
+- [x] Main-menu «Персонаж» preview uses canonical `PlayerVisual` + `MinecraftSkinRegistry` + `PlayerSkinGeometryCache`.
+- [x] Skin selector lists all 45 production skins; preview/cancel/confirm; confirm goes through `Game.setPlayerAppearance()`.
+- [x] Client stores `{ skinId, model, layers }` in `fc.player.appearance`; Online Anarchy is server-authoritative and persists in `players.json`.
+- [x] Join/welcome/`player_joined` carry appearance metadata; live change uses `appearance` / `player_appearance`; never PNG/base64/texture bytes and never per-tick appearance.
+- [x] Remote nameplates (nickname + ❤ HP) are player presentation, billboard sprites, interpolated with `RemotePlayerView`, hidden in first/third person for the local player, and follow existing invisibility + distance fade.
+- [ ] Owner two-client visual QA of selector, live skin change, nameplate damage/heal, and invisibility.
+
 ## 2026-09-02: integrate PR #31 player presentation with authoritative main
 
 - [x] Modern Java 64×64 skin contract; 45 unique supplied skins + authored UV QA sheet; Classic/Slim metadata and all six outer-layer toggles.
@@ -579,14 +645,14 @@
 - [x] Render-frame locomotion/use/combat poses, third-person held items from `ItemVisualFactory`, entity light/hurt/invisibility.
 - [x] DEV `?qaPlayer=1`, automated skin/asset/animator/camera tests, live WebGL visual QA with clean console.
 - [ ] Before publication, confirm ownership/licensing of every user-supplied skin; recognizable third-party character art is not cleared by code integration.
-- [ ] After UI PR integration: thin character/skin selector + local IndexedDB custom PNG; reuse `Game.setPlayerAppearance`, no settings redesign in this branch.
+- [x] After UI PR integration: character/skin selector in the main menu using canonical `PlayerVisual` + `Game.setPlayerAppearance()`; localStorage appearance; no custom PNG import yet.
+- [x] Later appearance metadata: rare `{ skinId, model, layers }` join/`appearance`/`player_appearance` events; never texture bytes in snapshots.
 - [x] Merge authoritative Online Anarchy / GameplayKernel / EntityHost / tooling main and merged PR #28 without restoring client world simulation.
 - [x] Replace the `RemotePlayerView` box with shared `PlayerVisual`; keep snapshot interpolation ownership and feed only available authoritative movement/state.
 - [x] Keep protocol unchanged for this integration: default remote appearance, neutral empty hand, no guessed item and no raw/per-tick skin payload.
 - [x] Preserve F5/input/pointer-lock/session recovery and authoritative eye/look targeting in all perspectives.
 - [x] Automated acceptance: focused 41/41, expanded player/server/network/overlay 236/236, sim 42/42, server 73/73, typechecks/boundaries/smokes/build/size/archive PASS; exact-main full-suite comparison adds no new failure class.
 - [x] DEV WebGL acceptance for Classic/Slim, outer layers, all poses, held categories, first/back/front and merged breaking-overlay harness.
-- [ ] Later appearance metadata: rare `{ skinId, model, layers? }` join/change event after selector/rights decisions; never texture bytes in snapshots.
 - [ ] Hardware gameplay acceptance: native pointer-lock F5/camera collision against tight caves/stairs/fences, landscape mobile performance and two visible browser clients. Pure collision/server tests and standalone QA harness do not replace this final device pass.
 
 ## 2026-09-02: integrate PR #28 block breaking overlay with authoritative Anarchy main

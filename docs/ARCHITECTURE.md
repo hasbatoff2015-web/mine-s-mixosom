@@ -1,5 +1,13 @@
 # Архитектура
 
+## Bow PvP timeline integrated with current main — 2026-09-10
+
+`origin/main@27778cf3` merged into `codex/bow-pvp-timeline-v2@fef66776` without rewriting either history. The integrated networking rule remains **client owns intent, server owns result**: render-frame release captures yaw/pitch and the already-rendered remote timeline, while the server owns draw state, exact command boundary, post-physics eye, projectile simulation and damage.
+
+The merge composes both lines. `RemotePlayerView` retains `lastRenderedPose/lastRenderTick` for PvP timeline selection alongside main's appearance, nameplate, invisibility and dead-edge animation state. `ServerGameplay` retains `combatPoseHistory`, bow release boundaries and historical arrow AABB resolution alongside main's death-loot state and spatial `world_sound`. Successful sequenced bow spawn emits the same authoritative `bow.shoot` world event as main's direct release path.
+
+Sequencing remains split by purpose: `actionSeq` deduplicates actions; `commandSeq` identifies the authoritative input boundary; `online.inputSeq` is not advanced from render frames; `lastSentInputSeq/lastSentUse` describe actual wire state; `appliedCommandSeq` identifies the server boundary already simulated. A release after sent `N/use=true` references `N+1`; after sent `N/use=false` it references `N`. The normal 20 TPS input stream supplies future boundaries.
+
 ## Bow release wire boundary correction — 2026-09-09
 
 `online.inputSeq` — sequence последнего сформированного fixed input, а не обещание, что он содержит release edge. Клиент отдельно хранит последний действительно переданный packet: `lastSentInputSeq` и `lastSentUse`. После каждого успешного `AnarchyClient.send(input)` эти поля обновляются и больше нигде не выводятся из render-global `this.input.using`.
@@ -35,6 +43,36 @@ Target timeline validation и attacker command resolution — разные ча�
 PvP target rewind ограничен `MAX_PVP_REWIND_TICKS = 5` (250 ms при 20 TPS). Для fractional render tick AABB интерполируется между двумя authoritative samples; future, слишком старый или отсутствующий sample даёт безопасный `stale` miss. Attacker eye/look берутся из authoritative command pose с допустимым client live-look intent, target hitbox — только из server history. Сервер заново проверяет ray/AABB, reach 3 блока, текущую voxel line-of-sight, death, blocking, claims/plugins, armor, hurt resistance, critical, knockback и durability. Hitbox inflation и доверия client-reported distance нет.
 
 Если клиент указал player target, промах по его rewound AABB не переходит на другого игрока. Intent без player hint сохраняет прежние server-owned air swing, mob и minecart interactions, но не выбирает игрока по receipt-time pose. Legacy unsequenced `attack` оставлен как совместимый безопасный current-state fallback; production client его больше не отправляет. `action_result.combat` содержит только bounded diagnostics (`hit/miss/immune/blocked/occluded/out_of_reach/stale/pending_timeout`, receive/pending ticks, rewind и server distance) для F3/тестов.
+
+## Hologram background, fixed orientation, timer — 2026-09-09
+
+Same plugin + `HologramNetwork` + `HologramRenderer` path as the in-game editor. Records gained `kind`, `timerDuration`, `timerStartedAt`, `backgroundEnabled`, `backgroundWidth`, `backgroundHeight`, `billboard`, `yaw`. Legacy JSON: `kind=normal`, background on, size equal to the old text sprite, `billboard=true`, `yaw=0`.
+
+`HologramRenderer` draws a `THREE.Group` with a black background **plane** and a text **plane** (canvas without baked fill). The text canvas logical size is 512×256; physical pixels are × `clamp(round(devicePixelRatio × 2), 2, 4)` via `setTransform`, so close-up glyphs stay sharp while world-space `text.scale` is unchanged. Texture uses linear magnification and mipmapped minification (not nearest). Billboard copies `camera.quaternion` each frame. Fixed sets quaternion from stored yaw only — not a Sprite, not `lookAt`. Hit AABB uses `hologramWorldSize` (max of text sprite and background when enabled).
+
+Timer remaining is `duration - (floor((now - startedAt)/1000) % (duration+1))` so `00:00` shows for one second, then the cycle restarts. `now` is `Date.now() + offset` from `welcome.serverNow` / `pong.serverNow`. Snapshots carry `timerStartedAt`; the server does not broadcast countdown numbers. `/holograms reset <name>` (also `/hologram reset`) sets `timerStartedAt` to server now, persists, and broadcasts `holograms`. Permission is still `holograms.create` / OP. Client `hologram_update` may send the new editor fields but never `timerStartedAt` or `yaw`.
+
+## Hologram in-game editor — 2026-09-09
+
+Holograms stay on the existing plugin + `HologramNetwork` + `HologramRenderer` path. There is no per-hologram owner field; edit permission is the existing `holograms.create` node (moderator/admin/`holograms.*`) or OP.
+
+Online RMB: `HologramRenderer.raycast` / `pickHologramRayHit` AABB vs the live look ray. If that hit is at least as close as the block under the crosshair, the client sends `{ type: 'hologram_interact', name }` and does **not** send bow/block `interact`. The server re-checks reach (`PLAYER_NET_REACH` to the AABB) and permission, then unicasts `{ type: 'hologram_editor', hologram }`. Save is `{ type: 'hologram_update', name, lines, font, size, style }` plus optional `kind` / `timerDuration` / `background*` / `billboard` — position/owner/id/range/`timerStartedAt`/`yaw` are ignored. `HologramNetwork.updateAppearance` mutates the in-memory records, broadcasts `holograms`, and persists through the plugin `saveData` callback to `plugin-data/holograms/holograms.json`.
+
+Appearance defaults for old JSON: `font=sans`, `style=bold`, `size=1` (historical `bold 36px sans-serif`). Canvas fonts: Inter (`ui`, `--font-ui`), Press Start 2P (`display`, `--font-display`), generic `sans-serif` (`sans`). Inter bold is a real 700 face; italic is canvas synthesis because the bundled Inter/Press Start files are `font-style: normal` only.
+
+## Spatial `world_sound` vs local catalog profiles — 2026-09-09
+
+`bow.shoot` and `item.pickup` stay `positional: false` in the catalog because Singleplayer plays them with `playLocal` (first-person one-shots). Online `world_sound` is a different path: the server emits a world position. Playing those packets with the catalog flag skipped distance, and `WorldInstance.broadcast` delivered every shot/pickup to every client. The client now forces `worldSoundPlayOptions({ positional: true })`; the server sends the packet only to listeners inside `worldSoundMaxDistance(event)`. Death loot scatter uses `DEATH_DROP_SCATTER_MULTIPLIER = 3` only inside `scatterDeathDrop`.
+
+## Online death, fire overlay, world sounds, recipe ghosts — 2026-09-08
+
+Anarchy no longer auto-respawns in the death tick. `ServerGameplay.respawnIfDead` drops loot once (`deathLootDropped`), freezes the corpse, and keeps `survival.dead`. The client death screen sends `{ type: 'respawn' }`; `respawnPlayer` is the only revive path and rejects a living player. `PlayerSnapshot.dead` / `RemotePlayerInfo.dead` are therefore visible long enough for the existing humanoid death pose (`HUMANOID_DEATH_ANIMATION_SECONDS = 0.7`, `rotation.z = progress * π/2`, scale `1 - 0.25 * progress`) on canonical `PlayerVisual`. `RemotePlayerView` starts that clock on the dead edge only.
+
+Local fire overlay is still `FirstPersonRenderer` + `SharedFireTexture`. Online does not tick `SurvivalSystem` fire locally; `syncNetworkFire` ORs authoritative `health.fire` / `player_state.onFire` into `isOnFire`.
+
+World SFX share the SP catalog. The server emits `{ type: 'world_sound', sounds: [{ event, x, y, z }] }` (no audio bytes). The client plays through `AudioManager.playAt`. Local Online footsteps and eat/drink cadence stay client-side, matching SP presentation.
+
+Recipe Book Online still sends `inventory_action recipe` so a previous grid returns to inventory, but the client always installs `ghostFromRecipe` so missing ingredients render red. Server `applyRecipe` / result click remain the craft authority.
 
 ## Deterministic armor cutout depth policy — 2026-09-08
 
@@ -196,7 +234,7 @@ Claims store **partial** flags (`flags?: { pvp?: boolean }`). Overlapping claims
 
 Chat scroll lives in `GameUI` `#chat-log` (client-only). `MAX_CHAT_MESSAGES = 200`.
 
-Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws facing Sprite billboards and hides them outside `range`.
+Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws a Group of planes (optional background + text). Billboard copies the camera quaternion; fixed uses stored yaw. RMB on a hologram opens the existing GameUI editor for that record (`hologram_interact` / `hologram_editor` / `hologram_update`); appearance fields live on the same persisted hologram.
 
 ## Nickname and server console — 2026-09-05
 
@@ -217,14 +255,15 @@ WorldInstance
 PluginManager.scopedApi (permissions, teleport, config, data, help)
         │
         ▼
-builtin-plugins (permissions, tpa, spawn, home, back, rtp, rtpportal, claims, holograms)
+builtin-plugins (permissions, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine)
 disk plugins from server/plugins/
 ```
 
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
-- Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
+- Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back`/death/`automine`). RTP search is bounded per tick and shared by `/rtp` and portals. AutoMine reset evacuates through this same service (`reason: 'automine'`), then fills the cuboid with `applyBlockBatch` (64 voxels/tick).
+- AutoMine is a cuboid generator/reset plugin, not a Claim. Wand selection is private to AutoMine. Spawn/claim protection is unchanged; broken AutoMine blocks are not immediately restored.
 - Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`) plus observation `blockPlaced` / `blockBroken` for iron/gold/diamond block-claims. `ServerGameplay.processExplosions` emits `blockBroken` (no `playerId`) for each voxel `ExplosionQueue` actually destroyed, so a TNT-destroyed anchor deletes that claim via the same `Claim.anchor` lookup as player mining. Nearby blast that misses the stored cell does not emit and does not delete. Ordinary TNT never destroys iron/gold/diamond anchor voxels, so it cannot delete those claims; powerful and destructive TNT can. Regular `/claim` volumes are skipped per-voxel via `ExplosionJob.canDestroy` (loaded from ClaimStore, no PluginManager in shared sim) for every TNT profile. Flags are partial; overlapping claims resolve **per flag** by priority. Two block-claims may not overlap each other (priority is ignored for that pair). Block-claim `Claim.volume` is a cube of the same inclusive radius on X, Y and Z (iron ±10, gold ±20, diamond ±30), clamped to world Y. Load migrates stored full-height block-claim volumes back from `Claim.anchor`. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim. Successful iron/gold/diamond place shows that new block-claim's AABB to the placer; an overlap deny shows the **existing** overlapping block-claim(s), not the attempted volume. Same `ClaimBoundaryRenderer` style and 10s duration.
-- Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
+- Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client `HologramRenderer` draws planes (billboard or fixed yaw). Plugins do not send packets. In-game edits use `hologram_interact` / `hologram_update` on the same records.
 
 ## Farming V1 + Networking V2 — 2026-09-04
 
@@ -566,9 +605,11 @@ World Select keeps the existing `WorldListActions` contract. Rows own selection 
 
 Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меняет только presentation state. `THIRD_PERSON_CAMERA_DISTANCE = 4`. `availableThirdPersonDistance` делает 8 offset segment probes радиусом 0.1 через реальный `blockCollisionBoxes`, поэтому full cubes, stairs, slabs, fences, doors/chests/lantern/chain учитываются, non-solid decoration — нет. Retraction immediate, restore exponential; camera position и live look применяются каждый RAF. Front mode ставит camera перед view vector и разворачивает yaw `+π`, pitch меняет знак; input/player facing не инвертируются.
 
-Future UI после интеграции UI PR: отдельная панель «Персонаж / Скин» использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in/model/layers и позже local validated PNG из IndexedDB. Она не должна создавать второй renderer/model contract.
+Future UI: панель «Персонаж / Скин» в главном меню использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in skin/model. Кастомный PNG из IndexedDB по-прежнему deferred.
 
-Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, legacy armor ids, `swingSeq` and `hurtSeq` arrive through additive `presentation`; legacy `presentation.armor` is ignored for armor rendering. Protocol separately carries authoritative exact armor equipment as additive `equipment?`; `RemotePlayerView` applies that server-owned snapshot state to `PlayerArmorVisual`. Appearance (skinId/model/layers) still uses `DEFAULT_PLAYER_APPEARANCE` until a later rare metadata event `{ skinId, model, layers? }`, never PNG/base64 or a per-tick texture payload.
+Online remote players используют тот же `PlayerVisual`, что local third-person. `RemotePlayerView` is a thin Three wrapper around `RemoteInterpolationBuffer` (server-tick timeline, 100 ms delay, bounded 100 ms extrapolation then hold). Interpolated feet/yaw/pitch/velocity plus midpoint discrete sneak/sprint/onGround/invisibility feed the render-frame animator. Temporary player-placeholder `BoxGeometry` удалён. Remote lighting использует тот же `applySampledEntityLight`; server/HeadlessEntityHost не импортируют Three. Held item, legacy armor ids, `swingSeq` and `hurtSeq` arrive through additive `presentation`; legacy `presentation.armor` is ignored for armor rendering. Protocol separately carries authoritative exact armor equipment as additive `equipment?`; `RemotePlayerView` applies that server-owned snapshot state to `PlayerArmorVisual`. Appearance metadata `{ skinId, model, layers }` travels on join/welcome/`player_joined` and the rare `appearance` / `player_appearance` messages — never PNG/base64 and never on `player_state` ticks. Server validates against the data-only production whitelist in `src/player/appearance/builtinSkins.ts` and persists the last allowed appearance on the existing `players.json` row.
+
+`PlayerNameplate` is a small billboard sprite owned by `RemotePlayerView` (not hologram entities / `HologramRenderer`). It shows display nickname + `❤ HP` from authoritative snapshot health, follows interpolated feet, hides with invisibility, fades by camera distance, and is not attached to the local first- or third-person player.
 
 ## Block breaking overlay — integrated 2026-09-02
 
@@ -927,9 +968,9 @@ EventBus  ──►  Plugins (ServerAPI)
 
 `src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
 
-Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
 
-**Not here:** Auction House / economy / kits. Homes, TPA, claims, and holograms **are** the current Anarchy plugin pack.
+**Not here:** Auction House / economy / kits. Homes, TPA, claims, holograms, and AutoMine **are** the current Anarchy plugin pack.
 
 **Tests:** default Vitest environment remains Node (unchanged). Client visual tests import Three and use `setupClientEntityHost.ts`. Shared packs: `npm run test:sim`. Server: `npm run test:server`.
 
