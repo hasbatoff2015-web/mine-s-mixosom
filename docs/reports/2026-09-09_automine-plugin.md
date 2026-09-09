@@ -75,4 +75,6 @@ Owner live Anarchy: wand 15×15×15, interval 30, two players inside, break some
 
 ## Git
 
-Branch `cursor/automine-plugin-1d56`
+- Branch: `cursor/automine-plugin-1d56`
+- Commit: `dec5fdac2289e75b03520f00e1ea9b5ea22f8878`
+- PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/80
