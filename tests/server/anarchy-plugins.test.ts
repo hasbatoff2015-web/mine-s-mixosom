@@ -734,12 +734,12 @@ describe('Anarchy builtin plugins', () => {
     expect(reloaded.ok).toBe(true);
     expect(world.events.listenerCount('blockBreak')).toBe(before);
     expect(world.events.listenerCount('blockPlace')).toBe(1);
-    expect(world.events.listenerCount('blockPlaced')).toBe(1);
-    expect(world.events.listenerCount('blockBroken')).toBe(1);
+    expect(world.events.listenerCount('blockPlaced')).toBe(2);
+    expect(world.events.listenerCount('blockBroken')).toBe(2);
     await world.plugins.enableAll();
     expect(world.events.listenerCount('blockBreak')).toBe(before);
-    expect(world.events.listenerCount('blockPlaced')).toBe(1);
-    expect(world.events.listenerCount('blockBroken')).toBe(1);
+    expect(world.events.listenerCount('blockPlaced')).toBe(2);
+    expect(world.events.listenerCount('blockBroken')).toBe(2);
   });
 
   it('does not leak cancel from one blockBreak event onto the next', async () => {

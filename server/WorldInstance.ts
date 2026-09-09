@@ -78,6 +78,7 @@ import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
+import { EconomyService } from './services/economy';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
@@ -439,6 +440,7 @@ export class WorldInstance {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly autoMine: AutoMineManager;
+  readonly economy: EconomyService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -507,6 +509,7 @@ export class WorldInstance {
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
+    this.economy = new EconomyService(this.pluginStore);
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
       return store.claims
@@ -601,6 +604,7 @@ export class WorldInstance {
         }
       },
       log: (message) => serverLog(`plugin automine ${message}`),
+      onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
     });
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
@@ -648,6 +652,7 @@ export class WorldInstance {
       }
       this.gameplay.restoreEntities(existing);
       this.permissions.load();
+      this.economy.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -656,6 +661,7 @@ export class WorldInstance {
     this.spawn = estimateWorldSpawn(this.world);
     this.createdAt = Date.now();
     this.permissions.load();
+    this.economy.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -677,6 +683,8 @@ export class WorldInstance {
         rtpSessions: this.rtpSessions,
         selection: this.selection,
         autoMine: this.autoMine,
+        economy: this.economy,
+        lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -784,6 +792,7 @@ export class WorldInstance {
       },
     };
     await this.worldStore.save(snapshot);
+    this.economy.persist();
     this.dirty = false;
   }
 
@@ -902,6 +911,25 @@ export class WorldInstance {
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
     this.dirty = true;
     return { player, resumed: false };
+  }
+
+  findPlayerIdentity(idOrName: string): { id: string; name: string; connected: boolean } | undefined {
+    const direct = this.players.get(idOrName);
+    if (direct) return { id: direct.id, name: direct.name, connected: direct.connected };
+    const lower = idOrName.toLowerCase();
+    for (const player of this.players.values()) {
+      if (player.name.toLowerCase() === lower) {
+        return { id: player.id, name: player.name, connected: player.connected };
+      }
+    }
+    const storedDirect = this.storedPlayers[idOrName];
+    if (storedDirect) return { id: storedDirect.id, name: storedDirect.name, connected: false };
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (stored.name.toLowerCase() === lower) {
+        return { id: stored.id, name: stored.name, connected: false };
+      }
+    }
+    return undefined;
   }
 
   disconnect(playerId: string, persist = true, connectionId?: string): void {

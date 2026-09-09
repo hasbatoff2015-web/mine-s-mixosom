@@ -3,6 +3,7 @@ import type { BuiltinPluginContext } from './context';
 import { createAutoMinePlugin } from './autoMine';
 import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
+import { createEconomyPlugin } from './economy';
 import { createHomePlugin } from './home';
 import { createHologramsPlugin } from './holograms';
 import { createPermissionsPlugin } from './permissions';
@@ -17,6 +18,7 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
   return [
     createPermissionsPlugin(ctx),
     createPluginAdminPlugin(ctx),
+    createEconomyPlugin(ctx),
     createTpaPlugin(ctx),
     createSpawnPlugin(ctx),
     createHomePlugin(ctx),

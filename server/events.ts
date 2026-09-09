@@ -119,7 +119,12 @@ export interface EntityDamageEvent extends Cancellable {
 export interface EntityDeathEvent {
   readonly entityId: string;
   readonly cause: string;
+  /** Killer for mob deaths; victim id for player deaths (historical). */
   readonly playerId?: string;
+  /** Attacking player when known (PvP / mob kill). */
+  readonly attackerId?: string;
+  /** Present when the dead entity is a mob. */
+  readonly mobKind?: string;
 }
 
 export interface PlayerDamagedEvent {

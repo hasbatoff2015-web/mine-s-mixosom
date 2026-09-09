@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -111,7 +111,7 @@ Env:
 - `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the live plugin directory
 - `FC_EXAMPLE_PLUGIN=1` — register the bundled example without copying it into `server/plugins/`
 - `FC_OPERATORS` — comma-separated player names treated as OP (seeded into PermissionService, cannot `/deop`)
-- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine pack
+- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine/economy pack
 
 ## Permissions
 
@@ -136,8 +136,25 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
 | holograms | `/holograms` (`/hologram reset`) | `plugin-data/holograms/holograms.json` (lines + font/size/style + background + billboard/yaw + timer) |
 | automine | `/automine` | `plugin-data/automine/automines.json` (+ `originals/<name>.json`) |
+| economy | `/balance`, `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco` | `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json` |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
+
+## Economy (Мегакоин)
+
+`EconomyService` (`server/services/economy.ts`) is the only balance API. Future Trader / Auction plugins must call it (`deposit` / `withdraw` / `transfer` / `hasBalance`); they must not read `balances.json` themselves.
+
+- Currency display name: **Мегакоин** / **Мегакоинов**. Internal plugin name: `economy`.
+- New player: **100**. Maximum: **999 999 999**. Integers only. Negative balances are rejected. Deposit that would exceed the max is rejected (no clamp, no overflow).
+- Identity: `playerId` (UUID). Display names are cached for `/baltop` and `/pay`; they are not the storage key. `/pay` may target an offline stored profile.
+- Persistence: `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json`.
+- Transactions: every balance change writes a row (`transactionId`, `type`, `amount`, `balanceBefore`/`After`, `reason`, `timestamp`, optional `relatedPlayerId` / `pairId`). Transfers write two linked rows and are atomic.
+- Reasons include `BLOCK_BREAK`, `MOB_KILL`, `PLAYER_KILL`, `PLAYER_TRANSFER`, `ADMIN_*`, `TRADER_*`, `AUCTION_*`, `OTHER`.
+- Block rewards (natural / AutoMine-generated only): Dirt/Grass/Sand/Gravel/Clay/Sandstone **1**, Stone **2**, logs **3**, Coal Ore **8**, Diamond Ore **25**. Player-placed copies pay **0**. TNT / explosion `blockBroken` (no `playerId`) pays **0**. AutoMine fill uses `applyBlockBatch` (not `blockPlaced`) and clears placed marks so regenerated ore pays through the same table.
+- Mob rewards: chicken 2, pig/sheep 3, cow 4, spider 8, zombie 10, skeleton 12, creeper 15. Unknown kinds pay 0. One `entityId` cannot be rewarded twice.
+- PvP: killer receives `floor(victimBalance * 0.10)`, victim loses that amount, atomic, reason `PLAYER_KILL`. Balance 0 or 1 → 0. Same killer→victim pair has a **5 minute** anti-farm cooldown (PvP itself is unchanged). Duplicate `entityDeath` for the same death does not double-pay.
+- Commands: `/balance` `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco give|take|set|reset|balance|transactions`.
+- Permissions: `economy.balance`, `economy.pay`, `economy.baltop`, `economy.transactions`, `economy.admin`, `economy.*`. Default role gets the player nodes. Admin role gets `economy.*`. OP bypasses via PermissionService.
 
 ## API version
 
@@ -233,7 +250,7 @@ Not cancellable.
 | `playerJoin` / `playerQuit` | after session connect/disconnect |
 | `blockBroken` / `blockPlaced` | after the voxel write (player mining, or each cell `ExplosionQueue` actually destroyed) |
 | `playerDamaged` / `entityDamaged` | after health applied |
-| `entityDeath` | after a player or mob dies |
+| `entityDeath` | after a player or mob dies (`playerId` is killer for mobs, victim for players; optional `attackerId` / `mobKind`) |
 | `playerCommandExecuted` | after dispatch (`ok` is the result) |
 | `fluidUpdate` | after a committed fluid cell |
 | `projectileHit` | arrow hit with coordinates |
@@ -292,5 +309,5 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a Bukkit/Spigot jar loader
 - Not a second combat / fluid / inventory system
 - Not client mods
-- Not Auction House / economy / kits
+- Not Auction House / kits. Economy (Мегакоин) **is** implemented as a builtin plugin + `EconomyService`.
 - Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)
