@@ -76,6 +76,7 @@ import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
+import { AutoMineManager } from './services/autoMine';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork } from './services/holograms';
@@ -392,6 +393,7 @@ export class WorldInstance {
   readonly pluginConfig: PluginConfigService;
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
+  readonly autoMine: AutoMineManager;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -484,11 +486,13 @@ export class WorldInstance {
           y: player.controller.position.y,
           z: player.controller.position.z,
         }),
-        teleport: (x, y, z) => {
+        teleport: (x, y, z, look) => {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
           player.controller.teleport([x, y, z]);
+          if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
+          if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
           return true;
         },
         sendMessage: (text) => {
@@ -506,6 +510,53 @@ export class WorldInstance {
     this.pluginConfig = new PluginConfigService(this.pluginStore);
     this.rtp = new RtpService(this.world);
     this.rtpSessions = new RtpSessionManager(this.rtp);
+    this.autoMine = new AutoMineManager({
+      world: this.world,
+      worldId: () => this.worldId,
+      now: () => Date.now(),
+      random: () => Math.random(),
+      loadStore: () => this.pluginStore.load('automine/automines', { mines: [] }),
+      saveStore: (store) => this.pluginStore.save('automine/automines', store),
+      loadOriginals: (name) => this.pluginStore.load(`automine/originals/${name}`, undefined),
+      saveOriginals: (name, blocks) => this.pluginStore.save(`automine/originals/${name}`, { blocks }),
+      players: () => this.connectedPlayers().map((player) => ({
+        id: player.id,
+        position: () => ({
+          x: player.controller.position.x,
+          y: player.controller.position.y,
+          z: player.controller.position.z,
+        }),
+        snapshot: () => ({ yaw: player.controller.yaw, pitch: player.controller.pitch }),
+      })),
+      teleport: (playerId, dest) => this.teleports.now(playerId, dest, 'automine', { silent: true }),
+      send: (playerId, text) => {
+        const player = this.players.get(playerId);
+        if (!player) return;
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      notifyAdmins: (text) => {
+        serverLog(`plugin automine ${text}`);
+        for (const player of this.connectedPlayers()) {
+          if (!this.permissions.has(player.name, 'automine.manage') && !this.permissions.isOperator(player.name)) {
+            continue;
+          }
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text,
+            kind: 'system',
+          });
+        }
+      },
+      log: (message) => serverLog(`plugin automine ${message}`),
+    });
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
@@ -580,6 +631,7 @@ export class WorldInstance {
         rtp: this.rtp,
         rtpSessions: this.rtpSessions,
         selection: this.selection,
+        autoMine: this.autoMine,
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -1244,6 +1296,7 @@ export class WorldInstance {
     }
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
+    this.autoMine.tick();
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {

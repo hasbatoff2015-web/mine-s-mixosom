@@ -195,12 +195,13 @@ WorldInstance
 PluginManager.scopedApi (permissions, teleport, config, data, help)
         │
         ▼
-builtin-plugins (permissions, tpa, spawn, home, back, rtp, rtpportal, claims, holograms)
+builtin-plugins (permissions, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine)
 disk plugins from server/plugins/
 ```
 
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
-- Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back` + death). RTP search is bounded per tick and shared by `/rtp` and portals.
+- Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back`/death/`automine`). RTP search is bounded per tick and shared by `/rtp` and portals. AutoMine reset evacuates through this same service (`reason: 'automine'`), then fills the cuboid with `applyBlockBatch` (64 voxels/tick).
+- AutoMine is a cuboid generator/reset plugin, not a Claim. Wand selection is private to AutoMine. Spawn/claim protection is unchanged; broken AutoMine blocks are not immediately restored.
 - Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`) plus observation `blockPlaced` / `blockBroken` for iron/gold/diamond block-claims. `ServerGameplay.processExplosions` emits `blockBroken` (no `playerId`) for each voxel `ExplosionQueue` actually destroyed, so a TNT-destroyed anchor deletes that claim via the same `Claim.anchor` lookup as player mining. Nearby blast that misses the stored cell does not emit and does not delete. Ordinary TNT never destroys iron/gold/diamond anchor voxels, so it cannot delete those claims; powerful and destructive TNT can. Regular `/claim` volumes are skipped per-voxel via `ExplosionJob.canDestroy` (loaded from ClaimStore, no PluginManager in shared sim) for every TNT profile. Flags are partial; overlapping claims resolve **per flag** by priority. Two block-claims may not overlap each other (priority is ignored for that pair). Block-claim `Claim.volume` is a cube of the same inclusive radius on X, Y and Z (iron ±10, gold ±20, diamond ±30), clamped to world Y. Load migrates stored full-height block-claim volumes back from `Claim.anchor`. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim. Successful iron/gold/diamond place shows that new block-claim's AABB to the placer; an overlap deny shows the **existing** overlapping block-claim(s), not the attempted volume. Same `ClaimBoundaryRenderer` style and 10s duration.
 - Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client renders Three.js billboards. Plugins do not send packets.
 
@@ -907,7 +908,7 @@ EventBus  ──►  Plugins (ServerAPI)
 
 `src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
 
-Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
 
 **Not here:** Auction House / economy / kits. Homes, TPA, claims, and holograms **are** the current Anarchy plugin pack.
 

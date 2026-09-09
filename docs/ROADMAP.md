@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-09: AutoMine plugin
+
+- [x] Builtin `/automine` wand/create/delete/list/info/reset/setinterval/setteleport on PluginManager.
+- [x] Inclusive cuboid selection independent from Claims; wooden-axe wand clicks.
+- [x] Fixed weighted composition (12 BlockId, 100%, Obsidian=Coal, Titanium rarest).
+- [x] Batched `applyBlockBatch` reset, TeleportService evacuation, persist+restart timer.
+- [x] Restore original voxels on delete; no second claims/teleport/network protocol.
+
 ## 2026-09-09: Death scatter 3× + spatial world_sound
 
 - [x] Triple death-drop X/Z origin and horizontal velocity; keep `vy = 2.2`.
