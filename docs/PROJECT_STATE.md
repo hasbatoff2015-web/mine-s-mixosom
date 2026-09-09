@@ -6,7 +6,7 @@
 - Appearance (`font`, `size`, `style`) — поля той же `HologramRecord`. Клиент шлёт `hologram_update`; сервер проверяет `holograms.create` / OP, валидирует, пишет `plugin-data/holograms/holograms.json`, броадкастит `holograms`.
 - Шрифты: основной UI **Inter** (`--font-ui`, `public/fonts/inter/*.woff2`); дополнительно **Press Start 2P** (`--font-display`) и `sans-serif` (исторический canvas default). CDN нет.
 - Команды `/holograms` без изменений по смыслу. Старые записи без style грузятся как `sans` + `bold` + `size=1`.
-- Handoff: `docs/reports/2026-09-09_hologram-editor.md`.
+- Handoff: `docs/reports/2026-09-09_hologram-editor.md`. `test:sim` 53/53, `test:server` 320/320.
 
 ## Последний проход: death scatter 3× + world_sound spatial — 2026-09-09
 
