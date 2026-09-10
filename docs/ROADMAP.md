@@ -6,6 +6,7 @@
 - [x] Merge `origin/main` into `cursor/auction-house-a8dc` without rebase/squash/force push.
 - [x] Keep Worldgen V2 snapshot metadata and snowy spawn together with Auction House / Economy.
 - [x] Auction/economy/`test:server`/typecheck/boundaries/build PASS after the Worldgen V2 merge.
+- [x] Merge `--no-ff` `cursor/auction-house-a8dc` into `main` (`d329f1f`) and push `origin/main`.
 
 ## 2026-09-10: Worldgen V2 — snowy plains, mixed forests, cave deposits
 

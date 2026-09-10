@@ -6,7 +6,7 @@ Finish Auction House and merge `cursor/auction-house-a8dc` (PR #82) into `main` 
 
 ## Result
 
-`origin/main` had moved after the Auction branch base. Worldgen V2 (PR #83) was merged into the Auction branch first (`28b63be`). Auction is then merged into `main` with `--no-ff`.
+`origin/main` had moved after the Auction branch base. Worldgen V2 (PR #83) was merged into the Auction branch first (`28b63be`). Auction was then merged into `main` with `--no-ff` (`d329f1f`). `git push origin main` succeeded. PR #82 is MERGED.
 
 ## Teammate commits on main after Auction base
 
@@ -38,7 +38,7 @@ Conflicts after `git merge origin/main` into `cursor/auction-house-a8dc`:
 
 Resolution: keep both Worldgen V2 and Auction House / Economy sections. Code kept snowy spawn + `worldgenVersion` together with Auction/Economy wiring.
 
-## Tests (after merging Worldgen V2 into the Auction branch)
+## Tests (after merging Worldgen V2 into the Auction branch, repeated on main after `--no-ff`)
 
 - auction `tests/server/auction.test.ts`: **24/24 PASS**
 - auction-plugin `tests/server/auction-plugin.test.ts`: **9/9 PASS**
@@ -55,4 +55,6 @@ Live browser Anarchy QA was **not** run.
 ## Git
 
 - Auction merge-in: `28b63be` `Merge origin/main into cursor/auction-house-a8dc`
+- Main merge: `d329f1f` `Merge branch 'cursor/auction-house-a8dc'`
 - History preserved (no rebase, squash, reset --hard, or force push)
+- `origin/main` HEAD: `d329f1f`

@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Auction House merged into main — 2026-09-10
+
+- PR #82 влит в `main` обычным `--no-ff`: merge commit `d329f1f`. История не переписывалась.
+- Перед этим в Auction-ветку влит актуальный `origin/main` (`28b63be`): Worldgen V2 / PR #83 сохранён.
+- Конфликты при merge main → auction были только в docs; код Auction House и snowy spawn / `worldgenVersion` живут вместе.
+- Гейты на `main` после `--no-ff`: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15, `test:server` 41/420, четыре typecheck, boundaries, build PASS.
+- `git push origin main` успешен. `origin/main` = `d329f1f`.
+- Handoff: `docs/reports/2026-09-10_auction-house-main-merge.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82 (MERGED).
+
 ## Последний проход: merge Worldgen V2 into Auction House — 2026-09-10
 
 - После основания Auction-ветки в `origin/main` появился PR #83: snowy plains, mixed forests, cave Gravel/Clay, `WORLDGEN_VERSION = 2`.
