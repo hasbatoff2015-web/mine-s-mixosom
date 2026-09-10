@@ -28,7 +28,7 @@ Sell amount is only the stack count on the item icon. Claimable cells use a mute
 
 ## Tests
 
-Filled in after the gate run.
+Focused: auction **23/23**, auction-plugin **9/9**, auction-gui **5/5**, economy **15/15**. Tooltip suite **24/24**. `npm run test:server` **41 files / 419 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS. Live browser Anarchy QA was **not** run.
 
 ## Visual QA
 
