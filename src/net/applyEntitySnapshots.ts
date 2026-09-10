@@ -33,15 +33,16 @@ function ingestPose(
   snap: EntitySnapshot,
   tick: number,
   now: number,
+  presentationVelocity?: { readonly x: number; readonly y: number; readonly z: number },
 ): void {
   interpolator?.ingest(snap.id, {
     x: snap.x,
     y: snap.y,
     z: snap.z,
     yaw: snap.yaw,
-    vx: snap.vx,
-    vy: snap.vy,
-    vz: snap.vz,
+    vx: presentationVelocity?.x ?? snap.vx,
+    vy: presentationVelocity?.y ?? snap.vy,
+    vz: presentationVelocity?.z ?? snap.vz,
   }, tick, now);
 }
 
@@ -150,13 +151,22 @@ export function applyEntitySnapshots(
         break;
       }
       case 'arrow': {
+        const visualVelocity = {
+          x: snap.visualVx ?? snap.vx ?? 0,
+          y: snap.visualVy ?? snap.vy ?? 0,
+          z: snap.visualVz ?? snap.vz ?? 0,
+        };
         session.arrows.applyNetwork(
           snap.id, snap.x, snap.y, snap.z,
           snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0,
           snap.onFire === true,
-          { snapVisual: false },
+          {
+            snapVisual: false,
+            inGround: snap.inGround,
+            visualVelocity,
+          },
         );
-        ingestPose(interpolator, snap, tick, now);
+        ingestPose(interpolator, snap, tick, now, visualVelocity);
         break;
       }
       case 'falling': {

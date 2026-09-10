@@ -521,6 +521,10 @@ export class ServerGameplay {
         id: arrow.id, kind: 'arrow',
         x: arrow.position.x, y: arrow.position.y, z: arrow.position.z,
         vx: arrow.velocity.x, vy: arrow.velocity.y, vz: arrow.velocity.z,
+        visualVx: arrow.visualVelocity.x,
+        visualVy: arrow.visualVelocity.y,
+        visualVz: arrow.visualVelocity.z,
+        inGround: arrow.inGround,
         onFire: arrow.flaming,
       });
     }
@@ -530,6 +534,10 @@ export class ServerGameplay {
         id: projectile.id, kind: 'arrow',
         x: projectile.x, y: projectile.y, z: projectile.z,
         vx: projectile.vx, vy: projectile.vy, vz: projectile.vz,
+        visualVx: projectile.visualVx,
+        visualVy: projectile.visualVy,
+        visualVz: projectile.visualVz,
+        inGround: projectile.inGround,
       });
     }
     const tnt: EntitySnapshot[] = [];

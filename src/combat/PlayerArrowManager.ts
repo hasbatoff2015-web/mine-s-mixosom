@@ -21,6 +21,8 @@ export interface PlayerArrow {
   readonly position: Vec3;
   readonly previousPosition: Vec3;
   readonly velocity: Vec3;
+  /** Direction of the movement segment currently represented by the rendered pose. */
+  readonly visualVelocity: Vec3;
   readonly visual?: EntityVisual;
   age: number;
   critical: boolean;
@@ -137,6 +139,7 @@ export class PlayerArrowManager {
       position: originVec.clone(),
       previousPosition: originVec.clone(),
       velocity,
+      visualVelocity: velocity.clone(),
       visual,
       age: 0,
       critical,
@@ -158,22 +161,49 @@ export class PlayerArrowManager {
     vy: number,
     vz: number,
     flaming: boolean,
-    options?: { readonly snapVisual?: boolean },
+    options?: {
+      readonly snapVisual?: boolean;
+      readonly inGround?: boolean;
+      readonly visualVelocity?: Vec3Like;
+    },
   ): void {
+    const networkVisualVelocity = options?.visualVelocity;
+    const visualSpeedSq = networkVisualVelocity
+      ? networkVisualVelocity.x * networkVisualVelocity.x
+        + networkVisualVelocity.y * networkVisualVelocity.y
+        + networkVisualVelocity.z * networkVisualVelocity.z
+      : 0;
+    const simulationSpeedSq = vx * vx + vy * vy + vz * vz;
     const existing = this.arrows.find((arrow) => arrow.id === id);
     if (existing) {
       existing.previousPosition.copy(existing.position);
       existing.position.set(x, y, z);
       existing.velocity.set(vx, vy, vz);
+      if (networkVisualVelocity && visualSpeedSq > 1e-8) {
+        existing.visualVelocity.copy(networkVisualVelocity);
+      } else if (simulationSpeedSq > 1e-8) {
+        existing.visualVelocity.set(vx, vy, vz);
+      }
+      if (options?.inGround !== undefined) {
+        existing.inGround = options.inGround;
+        existing.embedded = undefined;
+      }
       existing.flaming = flaming;
       if (options?.snapVisual !== false) this.syncArrowVisual(existing);
       return;
     }
-    const speed = Math.hypot(vx, vy, vz) || 1;
-    this.spawn(new Vec3(x, y, z), new Vec3(vx, vy, vz), speed, 0, false, flaming, id);
+    const initialVisualVelocity = networkVisualVelocity && visualSpeedSq > 1e-8
+      ? networkVisualVelocity
+      : new Vec3(vx, vy, vz);
+    const speed = Math.hypot(initialVisualVelocity.x, initialVisualVelocity.y, initialVisualVelocity.z) || 1;
+    // Authoritative network poses must not receive a second, client-randomized spread pass.
+    this.spawn(new Vec3(x, y, z), initialVisualVelocity, speed, 0, false, flaming, id, undefined, 0);
     const created = this.arrows[this.arrows.length - 1];
     if (created && created.id === id) {
       created.velocity.set(vx, vy, vz);
+      if (visualSpeedSq > 1e-8 && networkVisualVelocity) created.visualVelocity.copy(networkVisualVelocity);
+      else if (simulationSpeedSq > 1e-8) created.visualVelocity.set(vx, vy, vz);
+      if (options?.inGround !== undefined) created.inGround = options.inGround;
       created.position.set(x, y, z);
       created.previousPosition.set(x, y, z);
       this.syncArrowVisual(created);
@@ -184,10 +214,10 @@ export class PlayerArrowManager {
     const arrow = this.arrows.find((entry) => entry.id === id);
     if (!arrow) return;
     const speedSq = vx * vx + vy * vy + vz * vz;
-    if (speedSq > 1e-8) arrow.velocity.set(vx, vy, vz);
+    if (speedSq > 1e-8) arrow.visualVelocity.set(vx, vy, vz);
     if (arrow.visual) {
       this.host.setPosition(arrow.visual, x, y, z);
-      this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+      this.orientArrowFromMovement(arrow);
       this.applyArrowLight(arrow, x, y, z);
     }
   }
@@ -261,6 +291,7 @@ export class PlayerArrowManager {
         if (arrow.playerTimelineTick !== undefined) arrow.playerTimelineTick += 1;
         continue;
       }
+      arrow.visualVelocity.copy(movement);
       const direction = movement.clone().multiplyScalar(1 / distance);
       const blockHit = this.world.raycast(arrow.position, direction, distance, { geometry: 'collision' });
       const mobHit = this.mobs.raycast(arrow.position, direction, distance);
@@ -300,6 +331,7 @@ export class PlayerArrowManager {
       }
       if (blockHit) {
         arrow.embedded = embedArrow(blockHit, arrow.velocity);
+        arrow.visualVelocity.copy(arrow.embedded.impactVelocity);
         arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
         arrow.inGround = true;
         arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
@@ -406,7 +438,17 @@ export class PlayerArrowManager {
 
   private orientArrow(arrow: PlayerArrow): void {
     if (!arrow.visual) return;
-    this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+    this.orientArrowFromMovement(arrow);
+  }
+
+  private orientArrowFromMovement(arrow: PlayerArrow): void {
+    if (!arrow.visual) return;
+    this.host.orientArrow(
+      arrow.visual,
+      arrow.visualVelocity.x,
+      arrow.visualVelocity.y,
+      arrow.visualVelocity.z,
+    );
   }
 
   private applyArrowLight(arrow: PlayerArrow, x?: number, y?: number, z?: number): void {

@@ -22,6 +22,7 @@ import { MinecartManager } from '../src/entities/MinecartManager';
 import { RedstoneSystem } from '../src/redstone';
 import { createThreeEntityHost } from '../src/entities/ThreeEntityHost';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
+import { ARROW_FORWARD } from '../src/rendering/ArrowVisualFactory';
 
 function platform(world: VoxelWorld, y = 40): void {
   world.getChunk(0, 0);
@@ -104,6 +105,52 @@ describe('network visual events', () => {
     }], { interpolator, tick: 1, now: 1_000 });
     expect(session.arrows.entities.some((arrow) => arrow.id === 'arrow-9')).toBe(true);
     expect(interpolator.sample('arrow-9', 1_000)?.x).toBe(6);
+  });
+
+  it('restores an embedded arrow deterministically from explicit server impact direction', () => {
+    const world = new VoxelWorld('net-embedded-arrow');
+    platform(world);
+    const session = sessionOf(world);
+    const interpolator = new EntityInterpolationBuffer();
+    const impact = new THREE.Vector3(-0.4, 0.15, -2.9);
+    applyEntitySnapshots(session, [{
+      id: 'arrow-grounded',
+      kind: 'arrow',
+      x: 6, y: 42, z: 6,
+      vx: 0, vy: 0, vz: 0,
+      visualVx: impact.x, visualVy: impact.y, visualVz: impact.z,
+      inGround: true,
+    }], { interpolator, tick: 1, now: 1_000 });
+    const arrow = session.arrows.entities.find((entry) => entry.id === 'arrow-grounded')!;
+    const pose = interpolator.sample('arrow-grounded', 1_000)!;
+    session.arrows.applyRenderPose(arrow.id, pose.x, pose.y, pose.z, pose.vx, pose.vy, pose.vz);
+    const forward = ARROW_FORWARD.clone().applyQuaternion((arrow.visual as THREE.Object3D).quaternion).normalize();
+
+    expect(arrow.inGround).toBe(true);
+    expect(arrow.velocity.lengthSq()).toBe(0);
+    expect(arrow.visualVelocity.toArray()).toEqual(impact.toArray());
+    expect(forward.dot(impact.clone().normalize())).toBeCloseTo(1, 12);
+  });
+
+  it('publishes server-owned embedded state and impact direction with zero simulation velocity', () => {
+    const world = new VoxelWorld('server-embedded-arrow-snapshot');
+    platform(world);
+    const gameplay = new ServerGameplay(world, new EventBus());
+    gameplay.arrows.spawn(new THREE.Vector3(6, 42, 6), new THREE.Vector3(0, 0, -1), 3, 6, false);
+    const arrow = gameplay.arrows.entities[0]!;
+    arrow.visualVelocity.set(0.25, -0.1, -2.8);
+    arrow.velocity.set(0, 0, 0);
+    arrow.inGround = true;
+
+    const snapshot = gameplay.snapshotsNear(new THREE.Vector3(6, 42, 6))
+      .find((entry) => entry.id === arrow.id)!;
+
+    expect(snapshot).toMatchObject({
+      kind: 'arrow',
+      vx: 0, vy: 0, vz: 0,
+      visualVx: 0.25, visualVy: -0.1, visualVz: -2.8,
+      inGround: true,
+    });
   });
 
   it('arrow despawn removes the render entity without leaving a track to lerp', () => {

@@ -179,6 +179,12 @@ export interface EntitySnapshot {
   readonly vx?: number;
   readonly vy?: number;
   readonly vz?: number;
+  /** Server-owned movement segment used only to orient an arrow visual. */
+  readonly visualVx?: number;
+  readonly visualVy?: number;
+  readonly visualVz?: number;
+  /** Embedded arrows remain stationary while preserving their impact direction. */
+  readonly inGround?: boolean;
   readonly itemId?: string;
   readonly count?: number;
   readonly mobKind?: string;

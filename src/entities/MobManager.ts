@@ -242,6 +242,8 @@ interface MobProjectile {
   readonly position: Vec3;
   readonly previousPosition: Vec3;
   readonly velocity: Vec3;
+  /** Direction of the movement segment currently represented by the rendered pose. */
+  readonly visualVelocity: Vec3;
   ageSeconds: number;
   damage: number;
   inGround: boolean;
@@ -458,6 +460,10 @@ export class MobManager {
     readonly vx: number;
     readonly vy: number;
     readonly vz: number;
+    readonly inGround: boolean;
+    readonly visualVx: number;
+    readonly visualVy: number;
+    readonly visualVz: number;
   }> {
     return [...this.projectiles.values()].map((projectile) => ({
       id: projectile.id,
@@ -467,6 +473,10 @@ export class MobManager {
       vx: projectile.velocity.x,
       vy: projectile.velocity.y,
       vz: projectile.velocity.z,
+      inGround: projectile.inGround,
+      visualVx: projectile.visualVelocity.x,
+      visualVy: projectile.visualVelocity.y,
+      visualVz: projectile.visualVelocity.z,
     }));
   }
 
@@ -1552,6 +1562,7 @@ export class MobManager {
       position,
       previousPosition: position.clone(),
       velocity,
+      visualVelocity: velocity.clone(),
       ageSeconds: 0,
       damage: owner.definition.attackDamage,
       inGround: false,
@@ -1588,6 +1599,7 @@ export class MobManager {
       const previous = projectile.position.clone();
       const movement = projectile.velocity.clone();
       const distance = movement.length();
+      if (distance > 1e-8) projectile.visualVelocity.copy(movement);
       const direction = distance > 0 ? movement.clone().normalize() : undefined;
       const destination = previous.clone().add(movement);
       const blockHit = direction
@@ -1624,25 +1636,11 @@ export class MobManager {
       }
       if (blockHit) {
         projectile.embedded = embedArrow(blockHit, projectile.velocity);
+        projectile.visualVelocity.copy(projectile.embedded.impactVelocity);
         projectile.position.addScaledVector(movement.clone().normalize(), Math.max(0, blockHit.distance - 0.035));
-        if (projectile.visual) {
-          this.host.setPosition(
-            projectile.visual,
-            projectile.position.x,
-            projectile.position.y,
-            projectile.position.z,
-          );
-          this.host.applyLight(
-            projectile.visual,
-            this.world,
-            projectile.position.x,
-            projectile.position.y,
-            projectile.position.z,
-            0.25,
-          );
-        }
         projectile.velocity.set(0, 0, 0);
         projectile.inGround = true;
+        this.syncProjectileVisual(projectile);
         this.options.onArrowBlockHit?.(blockHit.x, blockHit.y, blockHit.z);
         continue;
       }
@@ -1671,12 +1669,12 @@ export class MobManager {
       projectile.position.z,
       0.25,
     );
-    if (projectile.velocity.lengthSq() > 0) {
+    if (projectile.visualVelocity.lengthSq() > 0) {
       this.host.orientArrow(
         projectile.visual,
-        projectile.velocity.x,
-        projectile.velocity.y,
-        projectile.velocity.z,
+        projectile.visualVelocity.x,
+        projectile.visualVelocity.y,
+        projectile.visualVelocity.z,
       );
     }
   }
