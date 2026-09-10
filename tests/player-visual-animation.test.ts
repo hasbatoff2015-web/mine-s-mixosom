@@ -7,6 +7,12 @@ import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual, UPPER_BODY_PIVOT_Y } from '../src/rendering/player/PlayerVisual';
 import { PlayerVisualAnimator } from '../src/rendering/player/PlayerVisualAnimator';
+import {
+  FIRST_PERSON_SPRITE_POSE,
+  classifyThirdPersonItemPose,
+  itemRenderProfile,
+  thirdPersonItemPose,
+} from '../src/items';
 
 const idle = {
   viewYaw: 0,
@@ -56,8 +62,72 @@ describe('player visual animator', () => {
     const eat = animator.advance(1 / 60, { ...idle, foodUseProgress: 0.5 });
     expect(eat.rightArmX).toBeGreaterThan(1);
     const bow = animator.advance(1 / 60, { ...idle, bowCharge: 0.8, viewPitch: 0.2 });
-    expect(bow.rightArmX).toBeCloseTo(Math.PI / 2 - 0.2);
+    expect(bow.rightArmX).toBeCloseTo(Math.PI / 2 + 0.2);
     expect(bow.leftArmX).toBeCloseTo(bow.rightArmX);
+  });
+
+  it('moves both bow arms monotonically with positive-up pitch, including sneaking parent pitch', () => {
+    for (const sneaking of [false, true]) {
+      const down = new PlayerVisualAnimator().advance(0, { ...idle, bowCharge: 0.8, viewPitch: -0.6, sneaking });
+      const level = new PlayerVisualAnimator().advance(0, { ...idle, bowCharge: 0.8, viewPitch: 0, sneaking });
+      const up = new PlayerVisualAnimator().advance(0, { ...idle, bowCharge: 0.8, viewPitch: 0.6, sneaking });
+      expect(down.rightArmX).toBeLessThan(level.rightArmX);
+      expect(level.rightArmX).toBeLessThan(up.rightArmX);
+      expect(down.leftArmX).toBeCloseTo(down.rightArmX);
+      expect(up.leftArmX).toBeCloseTo(up.rightArmX);
+      expect(down.bodyPitch + down.rightArmX).toBeCloseTo(Math.PI / 2 - 0.6, 6);
+      expect(up.bodyPitch + up.rightArmX).toBeCloseTo(Math.PI / 2 + 0.6, 6);
+    }
+  });
+});
+
+describe('third-person held item grip profiles', () => {
+  it('classifies sword/tool/bow/generic/block without changing first-person constants', () => {
+    expect(classifyThirdPersonItemPose('diamond_sword')).toBe('sword');
+    expect(classifyThirdPersonItemPose('iron_pickaxe')).toBe('tool');
+    expect(classifyThirdPersonItemPose('bow')).toBe('bow');
+    expect(classifyThirdPersonItemPose('apple')).toBe('generic');
+    expect(classifyThirdPersonItemPose('stone')).toBe('block');
+    expect(FIRST_PERSON_SPRITE_POSE).toEqual({
+      position: [0.67, -0.29, -0.70], rotationDeg: [1, -90, 34], scale: 0.60,
+    });
+    expect(itemRenderProfile('diamond_sword').transforms.firstPersonRightHand.position)
+      .toEqual(FIRST_PERSON_SPRITE_POSE.position);
+  });
+
+  it('keeps representative items raised at the wrist with bounded category-specific transforms', () => {
+    const categories = ['diamond_sword', 'iron_pickaxe', 'bow', 'apple', 'stone'] as const;
+    const rotations = new Set<number>();
+    for (const itemId of categories) {
+      const pose = thirdPersonItemPose(itemId);
+      expect(pose.position[1], itemId).toBeGreaterThan(0);
+      expect(Math.hypot(...pose.position), itemId).toBeLessThan(0.25);
+      expect(Math.max(...pose.scale), itemId).toBeLessThanOrEqual(0.54);
+      rotations.add(pose.rotation[2]);
+    }
+    expect(rotations.size).toBe(categories.length);
+  });
+
+  it('applies every category profile to the actual model parented at the right wrist', () => {
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+
+    for (const itemId of ['diamond_sword', 'iron_pickaxe', 'bow', 'apple', 'stone']) {
+      visual.setHeldItem(itemId);
+      const model = visual.rig.heldItem.children[0] as THREE.Group;
+      const pose = thirdPersonItemPose(itemId);
+      expect(model.parent, itemId).toBe(visual.rig.heldItem);
+      expect(model.position.toArray(), itemId).toEqual(pose.position);
+      expect(model.rotation.toArray().slice(0, 3), itemId).toEqual(pose.rotation);
+      expect(model.scale.toArray(), itemId).toEqual(pose.scale);
+    }
+
+    visual.dispose();
+    geometries.dispose();
+    items.dispose();
+    skins.dispose();
   });
 });
 

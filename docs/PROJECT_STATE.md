@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: special blocks, mob presentation, skeleton projectile routing — 2026-09-10
+
+- Ветка `codex/entity-special-visual-fixes` создана от `e4d43ff3`; main не менялся и merge/rebase не выполнялись. Четыре implementation commits завершаются SHA `5f86c29`; подробности — `docs/reports/2026-09-10_entity-special-visual-fixes.md`.
+- Torch/redstone torch используют отдельные authored side/top/bottom UV для одного и того же floor/four-wall transform. Lantern получил читаемые standing/hanging body/cap/hanger/chain parts на authored atlas regions без изменения light/placement gameplay.
+- Rail world/held rendering отделён от collision/selection `railLocalBoxes`: десять `RailShape` рисуются одной тонкой double-sided surface, четыре ascending формы реально наклонены, четыре curve формы используют `block/rail_corner`. `railPath` разрешает форму по живым соседям, а не по stale default state.
+- Chicken остаётся двухногим legacy rig: обе ноги имеют отдельные pivots и противоположный gait, а explicit per-face UV remap использует непрозрачные области фактического 128×64 sheet. Skeleton получает один cached `ItemVisualFactory` bow на hand anchor и отдельную ranged pose.
+- Skeleton projectile simulation принимает все living/targetable player foci со stable id, ищет ближайшее swept-segment попадание по каноническому player AABB, сравнивает его с block distance и передаёт точный `targetPlayerId`; серверный nearest-player fallback удалён. Singleplayer использует стабильный `local-player` id.
+- Third-person held item pose отделена от first-person профилей на категории sword/tool/bow/generic/block. Bow arms используют `π/2 + viewPitch` с однократной компенсацией sneak parent, поэтому положительный pitch визуально направляет руки вверх.
+- QA: 116/116 targeted tests; root/sim/client/server typecheck, import boundaries, sim/server smoke, production build, size/archive — green. Full run без известного зависающего `fire-contact-sunlight-minecart.test.ts`: 2014/2029; последовательный retry первоначально упавших файлов: 89/92. Остались прежние два worldgen timeout, `server/tick-load-flight` (117 ms > 80 ms) и parser failure старого `minecraft-reference-extractor.test.mjs`; связанные persistence/TNT-minecart/lighting/fluid tests на retry green.
+
 ## Последний проход: Worldgen V2 — snowy plains, mixed forests, cave deposits — 2026-09-10
 
 - От `origin/main@d1a33d4b` создана `codex/snowy-biome-cave-deposits`; main не менялся и merge в main не выполнялся.

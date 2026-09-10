@@ -97,6 +97,17 @@ export const SHEEP_WOOL_MODEL: LegacyModelDefinition = {
   ],
 };
 
+const CHICKEN_LEG_FOOT_UV = Object.freeze({ u: 32, v: 0, width: 3, height: 3 });
+const CHICKEN_LEG_SHIN_UV = Object.freeze({ u: 36, v: 3, width: 1, height: 5 });
+export const CHICKEN_LEG_FACE_UVS = Object.freeze({
+  top: CHICKEN_LEG_FOOT_UV,
+  bottom: CHICKEN_LEG_FOOT_UV,
+  front: CHICKEN_LEG_SHIN_UV,
+  back: CHICKEN_LEG_SHIN_UV,
+  left: CHICKEN_LEG_SHIN_UV,
+  right: CHICKEN_LEG_SHIN_UV,
+});
+
 export const CHICKEN_MODEL: LegacyModelDefinition = {
   texturePath: 'entity/chicken', logicalTextureSize: [64, 32],
   parts: [
@@ -106,11 +117,19 @@ export const CHICKEN_MODEL: LegacyModelDefinition = {
       box([-1, -2, -3], [2, 2, 2], [14, 4]),
     ]),
     modelPart('body', [0, 16, 0], [box([-3, -4, -3], [6, 8, 6], [0, 9])], [Math.PI / 2, 0, 0]),
-    // 1.8 ModelChicken addBox stays 3×5×3 at pivots 19. This pack's 64×32 sheet
-    // paints the yellow leg/foot at logical ~32,0 — not the vanilla 26,0 island
-    // (that region is transparent here, so legs vanished to alphaTest).
-    modelPart('rightLeg', [-2, 19, 1], [box([-1, 0, -3], [3, 5, 3], [29, 0])]),
-    modelPart('leftLeg', [1, 19, 1], [box([-1, 0, -3], [3, 5, 3], [29, 0], { mirror: true })]),
+    // This authored 2× sheet paints the foot at 32,0 and the narrow shin at
+    // 35,3, leaving the other legacy-cross islands transparent. Reuse those
+    // authored islands per face so the two grounded legs remain visible from
+    // every camera direction without changing their geometry or gait pivots.
+    modelPart('rightLeg', [-2, 19, 1], [box([-1, 0, -3], [3, 5, 3], [26, 0], {
+      physicalSize: [1, 5, 1],
+      faceUvRects: CHICKEN_LEG_FACE_UVS,
+    })]),
+    modelPart('leftLeg', [1, 19, 1], [box([-1, 0, -3], [3, 5, 3], [26, 0], {
+      mirror: true,
+      physicalSize: [1, 5, 1],
+      faceUvRects: CHICKEN_LEG_FACE_UVS,
+    })]),
     modelPart('rightWing', [-4, 13, 0], [box([0, 0, -3], [1, 4, 6], [24, 13])]),
     modelPart('leftWing', [4, 13, 0], [box([-1, 0, -3], [1, 4, 6], [24, 13], { mirror: true })]),
   ],

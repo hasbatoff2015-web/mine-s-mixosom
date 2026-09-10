@@ -96,6 +96,8 @@ export interface BlockTextures {
   readonly stage6?: string;
   readonly stage7?: string;
   readonly attached?: string;
+  /** Alternate texture for a curved rail surface. */
+  readonly corner?: string;
 }
 
 export interface BlockDrop {

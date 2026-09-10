@@ -1,6 +1,6 @@
 import { BlockId, type RailShape } from '../blocks';
 import { CHUNK_SIZE, floorDiv } from '../core/constants';
-import { defaultRailShape } from '../world/blockGeometry';
+import { resolveRailShape } from '../world/blockGeometry';
 import type { VoxelWorld } from '../world/World';
 
 export interface RailCell {
@@ -26,7 +26,7 @@ const QUARTER = Math.PI / 2;
 
 export function railAt(world: VoxelWorld, x: number, y: number, z: number): RailShape | undefined {
   if (world.getBlock(x, y, z, false) !== BlockId.Rail) return undefined;
-  return defaultRailShape(world.getBlockState(x, y, z));
+  return resolveRailShape(world, x, y, z);
 }
 
 export function findRailCell(world: VoxelWorld, x: number, y: number, z: number): RailCell | undefined {

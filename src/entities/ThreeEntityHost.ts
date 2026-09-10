@@ -39,6 +39,13 @@ function asObject3D(visual: EntityVisual): THREE.Object3D {
   return visual as THREE.Object3D;
 }
 
+export const SKELETON_BOW_SCALE = 0.48;
+export const SKELETON_BOW_HAND_Y = -10 / 16;
+export const SKELETON_RANGED_ARM_POSE = Object.freeze({
+  bow: Object.freeze({ x: 1.35, y: -0.10, z: -0.08 }),
+  draw: Object.freeze({ x: 1.10, y: 0.55, z: 0.15 }),
+});
+
 export class ThreeEntityHost implements EntityHost {
   readonly hasVisuals = true;
   private itemVisuals?: ItemVisualFactory;
@@ -109,7 +116,19 @@ export class ThreeEntityHost implements EntityHost {
   }
 
   createMob(kind: MobKind): { visual: EntityVisual; model: MobModel } {
-    const model = createMobModel(this.voxelVisuals ??= new VoxelVisualFactory(), kind);
+    let model = createMobModel(this.voxelVisuals ??= new VoxelVisualFactory(), kind);
+    if (kind === 'skeleton') {
+      const bowArm = asObject3D(model.arms[0]!);
+      const anchor = new THREE.Group();
+      anchor.name = 'mob:skeleton:bow-anchor';
+      anchor.position.set(0, SKELETON_BOW_HAND_Y, 0);
+      const bow = this.items().createItemModel('bow');
+      bow.name = 'mob:skeleton:held-bow';
+      bow.scale.setScalar(SKELETON_BOW_SCALE);
+      anchor.add(bow);
+      bowArm.add(anchor);
+      model = { ...model, heldItemAnchor: anchor, heldItem: bow };
+    }
     return { visual: model.root, model };
   }
 
@@ -272,12 +291,15 @@ export class ThreeEntityHost implements EntityHost {
       });
     } else if (state.kind === 'skeleton') {
       arms.forEach((arm, index) => {
+        const ranged = index === 0 ? SKELETON_RANGED_ARM_POSE.bow : SKELETON_RANGED_ARM_POSE.draw;
         arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) + (state.state === 'attack'
-          ? -1.15
+          ? ranged.x
           : (index % 2 === 0 ? swing : -swing) * 0.5);
-        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
-        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
+        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0) + (state.state === 'attack' ? ranged.y : 0);
+        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0) + (state.state === 'attack' ? ranged.z : 0);
       });
+      const anchor = state.model.heldItemAnchor ? asObject3D(state.model.heldItemAnchor) : undefined;
+      if (anchor) anchor.rotation.set(-arms[0]!.rotation.x, 0, 0);
     }
     if (state.state === 'die') {
       const progress = humanoidDeathProgress(state.deathSeconds);

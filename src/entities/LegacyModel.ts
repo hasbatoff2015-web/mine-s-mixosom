@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { TextureSize } from '../rendering/TexturedCuboid';
+import type { CuboidFace, LogicalUvRect, TextureSize } from '../rendering/TexturedCuboid';
 import type { VoxelVisualFactory } from './voxelVisuals';
 
 export const LEGACY_MODEL_UNITS_PER_BLOCK = 16;
@@ -13,6 +13,9 @@ export interface LegacyModelBox {
   readonly size: LegacyVector;
   readonly textureOffset: readonly [u: number, v: number];
   readonly mirror?: boolean;
+  readonly faceUvRects?: Partial<Readonly<Record<CuboidFace, LogicalUvRect>>>;
+  /** Optional render dimensions in legacy model units; UV layout still uses `size`. */
+  readonly physicalSize?: LegacyVector;
   /** Legacy addBox inflation in model units. */
   readonly inflate?: number;
   readonly texturePath?: string;
@@ -99,7 +102,15 @@ export function buildLegacyModel(
           size: box.size,
           textureOffset: box.textureOffset,
           logicalTextureSize: definition.logicalTextureSize,
+          ...(box.physicalSize === undefined ? {} : {
+            physicalSize: [
+              box.physicalSize[0] / LEGACY_MODEL_UNITS_PER_BLOCK,
+              box.physicalSize[1] / LEGACY_MODEL_UNITS_PER_BLOCK,
+              box.physicalSize[2] / LEGACY_MODEL_UNITS_PER_BLOCK,
+            ] as LegacyVector,
+          }),
           ...(box.mirror === undefined ? {} : { mirror: box.mirror }),
+          ...(box.faceUvRects === undefined ? {} : { faceUvRects: box.faceUvRects }),
           ...(box.inflate === undefined ? {} : { inflate: box.inflate / LEGACY_MODEL_UNITS_PER_BLOCK }),
         }, legacyBoxCenterToLocal(box), box.texturePath ?? definition.texturePath, {
           glow: box.glow === true,

@@ -13,6 +13,7 @@ import type {
   BlockRenderState,
   DoorHinge,
   HorizontalFacing,
+  RailShape,
   StairShape,
 } from '../blocks';
 import { occupiedDoorFacing } from '../blocks';
@@ -35,6 +36,7 @@ import {
   chainSelectionLocalBox,
   leverHandleAngle,
   railLocalBoxes,
+  resolveRailShape,
   resolveStairShape,
   slabLocalBoxes,
   stairLocalBoxes,
@@ -128,8 +130,10 @@ const _scale = new THREE.Matrix4();
 
 /** Flame tilts away from the supporting wall. Positive used to pitch the flame into the wall. */
 export const TORCH_WALL_TILT = -0.40;
-/** Tile UV of the opaque torch pixels in torch.png (32×32, v=0 at image bottom). */
-export const TORCH_TEXTURE_UV = [14 / 32, 0, 18 / 32, 20 / 32] as const;
+/** Authored 2× torch texture regions, in atlas-tile space with v=0 at the image bottom. */
+export const TORCH_SIDE_UV = [14 / 32, 0, 18 / 32, 20 / 32] as const;
+export const TORCH_TOP_UV = [14 / 32, 16 / 32, 18 / 32, 20 / 32] as const;
+export const TORCH_BOTTOM_UV = [14 / 32, 0, 18 / 32, 4 / 32] as const;
 
 export function facingVector(facing: HorizontalFacing, target = new THREE.Vector3()): THREE.Vector3 {
   const v = simFacingVector(facing);
@@ -252,11 +256,15 @@ function lanternMcUv(u0: number, vTop: number, u1: number, vBottom: number): Tex
   return [u0 / 16, 1 - vBottom / 16, u1 / 16, 1 - vTop / 16];
 }
 
-export const LANTERN_BODY_UV = lanternMcUv(0, 9, 6, 15);
-export const LANTERN_BODY_TOP_UV = lanternMcUv(0, 3, 6, 9);
+export const LANTERN_BODY_SIDE_UV = lanternMcUv(0, 2, 6, 9);
+export const LANTERN_BODY_END_UV = lanternMcUv(0, 9, 6, 15);
+/** Backwards-compatible name for consumers that only need the body's U extent. */
+export const LANTERN_BODY_UV = LANTERN_BODY_END_UV;
 export const LANTERN_CAP_SIDE_UV = lanternMcUv(1, 1, 5, 3);
 export const LANTERN_CAP_END_UV = lanternMcUv(1, 10, 5, 14);
-export const LANTERN_HANGER_UV = lanternMcUv(11, 1, 14, 3);
+export const LANTERN_STANDING_HANGER_UV = lanternMcUv(11, 1, 14, 3);
+export const LANTERN_HANGING_HANGER_UV = lanternMcUv(11, 1, 14, 5);
+export const LANTERN_HANGING_CHAIN_UV = lanternMcUv(11, 6, 14, 12);
 export const CHAIN_PLANE_A_UV: TextureUvRect = [0, 0, 3 / 16, 1];
 export const CHAIN_PLANE_B_UV: TextureUvRect = [3 / 16, 0, 6 / 16, 1];
 
@@ -273,26 +281,20 @@ export interface LanternMeshPlane {
 }
 
 /**
- * Minecraft-style lantern: metal cage, inner glow, cap, and a short hanger
- * (standing) or a chain that continues to the ceiling (hanging).
+ * Minecraft-style lantern body and cap. These are deliberately independent
+ * from the smaller collision/selection box in world/blockGeometry.
  */
 export function lanternMeshCuboids(state: BlockRenderState | undefined): readonly LanternMeshCuboid[] {
   const hang = state?.attachment === 'ceiling';
-  const bodyY = hang ? 2 / 16 : 1 / 16;
-  const bodyTop = bodyY + 6 / 16;
+  const bodyY = hang ? 1 / 16 : 0;
+  const bodyTop = bodyY + 7 / 16;
   const capTop = bodyTop + 2 / 16;
   return [
     {
       box: { minX: 5 / 16, minY: bodyY, minZ: 5 / 16, maxX: 11 / 16, maxY: bodyTop, maxZ: 11 / 16 },
-      uvDown: LANTERN_BODY_UV,
-      uvUp: LANTERN_BODY_TOP_UV,
-      uvSide: LANTERN_BODY_UV,
-    },
-    {
-      box: { minX: 6.5 / 16, minY: bodyY + 0.5 / 16, minZ: 6.5 / 16, maxX: 9.5 / 16, maxY: bodyTop - 0.5 / 16, maxZ: 9.5 / 16 },
-      uvDown: LANTERN_BODY_TOP_UV,
-      uvUp: LANTERN_BODY_TOP_UV,
-      uvSide: LANTERN_BODY_TOP_UV,
+      uvDown: LANTERN_BODY_END_UV,
+      uvUp: LANTERN_BODY_END_UV,
+      uvSide: LANTERN_BODY_SIDE_UV,
     },
     {
       box: { minX: 6 / 16, minY: bodyTop, minZ: 6 / 16, maxX: 10 / 16, maxY: capTop, maxZ: 10 / 16 },
@@ -306,30 +308,71 @@ export function lanternMeshCuboids(state: BlockRenderState | undefined): readonl
 /** Crossed hanger / hanging-chain quads in cell-local space. */
 export function lanternHangerPlanes(state: BlockRenderState | undefined): readonly LanternMeshPlane[] {
   const hang = state?.attachment === 'ceiling';
-  const y0 = hang ? 10 / 16 : 9 / 16;
-  const y1 = hang ? 1 : 12 / 16;
   const mid = 8 / 16;
   const half = 1.5 / 16;
+  if (!hang) {
+    const y0 = 9 / 16;
+    const y1 = 11 / 16;
+    return [
+      {
+        corners: [[mid - half, y0, mid], [mid + half, y0, mid], [mid + half, y1, mid], [mid - half, y1, mid]],
+        uv: LANTERN_STANDING_HANGER_UV,
+      },
+      {
+        corners: [[mid, y0, mid - half], [mid, y0, mid + half], [mid, y1, mid + half], [mid, y1, mid - half]],
+        uv: LANTERN_STANDING_HANGER_UV,
+      },
+    ];
+  }
   return [
     {
-      corners: [
-        [mid - half, y0, mid],
-        [mid + half, y0, mid],
-        [mid + half, y1, mid],
-        [mid - half, y1, mid],
-      ],
-      uv: LANTERN_HANGER_UV,
+      corners: [[mid - half, 11 / 16, mid], [mid + half, 11 / 16, mid], [mid + half, 15 / 16, mid], [mid - half, 15 / 16, mid]],
+      uv: LANTERN_HANGING_HANGER_UV,
     },
     {
-      corners: [
-        [mid, y0, mid - half],
-        [mid, y0, mid + half],
-        [mid, y1, mid + half],
-        [mid, y1, mid - half],
-      ],
-      uv: LANTERN_HANGER_UV,
+      corners: [[mid, 10 / 16, mid - half], [mid, 10 / 16, mid + half], [mid, 1, mid + half], [mid, 1, mid - half]],
+      uv: LANTERN_HANGING_CHAIN_UV,
     },
   ];
+}
+
+export const RAIL_SURFACE_EPSILON = 1 / 16;
+
+export interface RailRenderQuad {
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly uv: TextureUvRect;
+  readonly texture: 'straight' | 'corner';
+}
+
+/**
+ * Render-only rail surface. Collision and selection intentionally continue to
+ * use railLocalBoxes; world meshes use one thin, double-sided plane per shape.
+ */
+export function railRenderQuads(shape: RailShape): readonly RailRenderQuad[] {
+  const lo = RAIL_SURFACE_EPSILON;
+  const high = 1 + RAIL_SURFACE_EPSILON;
+  const ns = (southY: number, northY: number, texture: RailRenderQuad['texture'], uv: TextureUvRect): RailRenderQuad => ({
+    corners: [[0, southY, 1], [1, southY, 1], [1, northY, 0], [0, northY, 0]],
+    texture,
+    uv,
+  });
+  const ew = (westY: number, eastY: number): RailRenderQuad => ({
+    corners: [[0, westY, 0], [0, westY, 1], [1, eastY, 1], [1, eastY, 0]],
+    texture: 'straight',
+    uv: [0, 0, 1, 1],
+  });
+  switch (shape) {
+    case 'north_south': return [ns(lo, lo, 'straight', [0, 0, 1, 1])];
+    case 'east_west': return [ew(lo, lo)];
+    case 'ascending_north': return [ns(lo, high, 'straight', [0, 0, 1, 1])];
+    case 'ascending_south': return [ns(high, lo, 'straight', [0, 0, 1, 1])];
+    case 'ascending_east': return [ew(lo, high)];
+    case 'ascending_west': return [ew(high, lo)];
+    case 'north_east': return [ns(lo, lo, 'corner', [0, 0, 1, 1])];
+    case 'north_west': return [ns(lo, lo, 'corner', [1, 0, 0, 1])];
+    case 'south_east': return [ns(lo, lo, 'corner', [0, 1, 1, 0])];
+    case 'south_west': return [ns(lo, lo, 'corner', [1, 1, 0, 0])];
+  }
 }
 
 export interface ChainMeshPlane {
@@ -404,7 +447,10 @@ export function selectionBoxesForBlock(
       return selectionBoxesFromLocal(x, y, z, fenceLocalBoxes(connections, 1));
     }
     case 'rail':
-      return selectionBoxesFromLocal(x, y, z, railLocalBoxes(defaultRailShape(state)));
+      return selectionBoxesFromLocal(
+        x, y, z,
+        railLocalBoxes(world ? resolveRailShape(world, x, y, z) : defaultRailShape(state)),
+      );
     case 'lantern':
       return selectionBoxesFromLocal(x, y, z, [lanternSelectionLocalBox(state)]);
     case 'chain':

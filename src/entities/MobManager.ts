@@ -25,7 +25,15 @@ import {
 } from './mobDefinitions';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
-import { CHUNK_SIZE, FIXED_DT, GRAVITY, clamp, floorDiv } from '../core/constants';
+import {
+  CHUNK_SIZE,
+  FIXED_DT,
+  GRAVITY,
+  PLAYER_HEIGHT,
+  PLAYER_WIDTH,
+  clamp,
+  floorDiv,
+} from '../core/constants';
 import { daylightFactor } from '../gameplay/daylight';
 import { systemRandomFn } from '../gameplay/random';
 import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './EntityHost';
@@ -44,6 +52,10 @@ export const SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5;
 export const CAVE_HOSTILE_DENSITY_RADIUS = 12;
 /** At most one newly spawned cave hostile per chunk in a single spawn event. */
 export const MAX_NEW_CAVE_HOSTILES_PER_CHUNK_EVENT = 1;
+export const LOCAL_PLAYER_FOCUS_ID = 'local-player';
+export const SKELETON_ARROW_MUZZLE_HEIGHT = 1.36;
+export const SKELETON_ARROW_MUZZLE_SIDE = 0.30;
+export const SKELETON_ARROW_MUZZLE_FORWARD = 0.18;
 const HOSTILE_SPAWN_LIGHT_MAX = 7;
 const PASSIVE_SPAWN_LIGHT_MIN = 9;
 const CAVE_SPAWN_SKY_MAX = 7;
@@ -111,6 +123,7 @@ export interface MobDamageOptions {
 }
 
 export interface MobPlayerDamageEvent {
+  readonly targetPlayerId: string;
   readonly amount: number;
   readonly source: 'melee' | 'arrow';
   readonly mobId: string;
@@ -142,6 +155,7 @@ export interface MobProjectileSpawnEvent {
 }
 
 export interface MobPlayerFocus {
+  readonly id: string;
   readonly position: Readonly<Vec3>;
   readonly eyePosition?: Readonly<Vec3>;
   readonly alive?: boolean;
@@ -232,6 +246,48 @@ interface MobProjectile {
   damage: number;
   inGround: boolean;
   embedded?: EmbeddedArrowState;
+}
+
+export interface MobProjectilePlayerHit {
+  readonly focus: MobPlayerFocus;
+  readonly distance: number;
+}
+
+/** Deterministic simulation-space bow hand; visuals consume the same projectile origin. */
+export function skeletonArrowMuzzle(position: Vec3Like, yaw: number): Vec3 {
+  return new Vec3(
+    position.x - Math.cos(yaw) * SKELETON_ARROW_MUZZLE_SIDE - Math.sin(yaw) * SKELETON_ARROW_MUZZLE_FORWARD,
+    position.y + SKELETON_ARROW_MUZZLE_HEIGHT,
+    position.z + Math.sin(yaw) * SKELETON_ARROW_MUZZLE_SIDE - Math.cos(yaw) * SKELETON_ARROW_MUZZLE_FORWARD,
+  );
+}
+
+/** Nearest living/targetable canonical player AABB intersected by one swept segment. */
+export function nearestMobProjectilePlayerHit(
+  from: Vec3Like,
+  to: Vec3Like,
+  foci: readonly MobPlayerFocus[],
+): MobProjectilePlayerHit | undefined {
+  const movement = new Vec3().subVectors(to, from);
+  const span = movement.length();
+  if (span <= 1e-8) return undefined;
+  const direction = movement.normalize();
+  let nearest: MobProjectilePlayerHit | undefined;
+  const halfWidth = PLAYER_WIDTH / 2;
+  for (const focus of foci) {
+    if (focus.alive === false || focus.targetable === false) continue;
+    const hit = rayAabbDistance(from, direction, {
+      minX: focus.position.x - halfWidth,
+      minY: focus.position.y,
+      minZ: focus.position.z - halfWidth,
+      maxX: focus.position.x + halfWidth,
+      maxY: focus.position.y + PLAYER_HEIGHT,
+      maxZ: focus.position.z + halfWidth,
+    });
+    if (!hit || hit.distance < 0 || hit.distance > span) continue;
+    if (!nearest || hit.distance < nearest.distance) nearest = { focus, distance: hit.distance };
+  }
+  return nearest;
 }
 
 export class MobEntity {
@@ -586,15 +642,11 @@ export class MobManager {
 
       const nearestAlive = this.nearestFocus(mob, foci, false);
       const nearestTarget = this.nearestFocus(mob, foci, true);
-      const aiContext: MobUpdateContext = nearestTarget?.eyePosition
-        ? { ...context, playerEyePosition: nearestTarget.eyePosition }
-        : context;
-
       if (mob.hurtSeconds > 0) {
         mob.hurtSeconds = Math.max(0, mob.hurtSeconds - delta);
         if (mob.hurtSeconds === 0 && mob.alive) this.changeState(mob, mob.resumeState);
       } else if (!mob.meleeKnockback) {
-        this.updateAi(mob, delta, nearestTarget?.position, aiContext, daylight);
+        this.updateAi(mob, delta, nearestTarget, context, daylight);
       }
       if (mob.hurtFlashSeconds > 0) {
         mob.hurtFlashSeconds = Math.max(0, mob.hurtFlashSeconds - delta);
@@ -615,8 +667,7 @@ export class MobManager {
       this.applyMobLight(mob);
     }
 
-    const projectileTarget = foci.find((focus) => focus.alive !== false && focus.targetable !== false);
-    this.updateProjectiles(delta, projectileTarget?.position, context);
+    this.updateProjectiles(delta, foci, context);
   }
 
   /**
@@ -903,7 +954,7 @@ export class MobManager {
   private updateAi(
     mob: MobEntity,
     delta: number,
-    playerPosition: Readonly<Vec3> | undefined,
+    target: MobPlayerFocus | undefined,
     context: MobUpdateContext,
     daylight: number,
   ): void {
@@ -911,11 +962,12 @@ export class MobManager {
       this.updatePassiveAi(mob, delta);
       return;
     }
-    if (!playerPosition) {
+    if (!target) {
       this.updateWander(mob, delta, 0.55);
       return;
     }
-    const playerEye = this.playerEye(playerPosition, context);
+    const playerPosition = target.position;
+    const playerEye = this.focusEye(target);
     const horizontal = new Vec3().subVectors(playerPosition, mob.position);
     horizontal.y = 0;
     const distance = mob.eyePosition.distanceTo(playerEye);
@@ -927,11 +979,11 @@ export class MobManager {
     if (horizontal.lengthSq() > 1e-8) mob.facingYaw = Math.atan2(horizontal.x, horizontal.z) + Math.PI;
 
     if (mob.kind === 'creeper') {
-      this.updateCreeper(mob, delta, playerPosition, distance, context);
+      this.updateCreeper(mob, delta, target, distance, context);
       return;
     }
     if (mob.kind === 'skeleton') {
-      this.updateSkeleton(mob, playerPosition, context, distance);
+      this.updateSkeleton(mob, target, context, distance);
       return;
     }
 
@@ -941,7 +993,7 @@ export class MobManager {
       mob.velocity.x *= 0.25;
       mob.velocity.z *= 0.25;
       if (mob.attackCooldownSeconds <= 0) {
-        this.emitPlayerDamage(mob, playerPosition, mob.definition.attackDamage, 'melee', context);
+        this.emitPlayerDamage(mob, target, mob.definition.attackDamage, 'melee', context);
         mob.attackCooldownSeconds = mob.definition.attackCooldownSeconds;
       }
     } else {
@@ -986,11 +1038,12 @@ export class MobManager {
   private updateCreeper(
     mob: MobEntity,
     delta: number,
-    playerPosition: Readonly<Vec3>,
+    target: MobPlayerFocus,
     distance: number,
     context: MobUpdateContext,
   ): void {
-    const lineOfSight = hasVoxelLineOfSight(this.world, mob.eyePosition, this.playerEye(playerPosition, context));
+    const playerPosition = target.position;
+    const lineOfSight = hasVoxelLineOfSight(this.world, mob.eyePosition, this.focusEye(target));
     if (distance <= 3.2 && lineOfSight) {
       this.changeState(mob, 'attack');
       mob.velocity.x *= 0.2;
@@ -1008,11 +1061,12 @@ export class MobManager {
 
   private updateSkeleton(
     mob: MobEntity,
-    playerPosition: Readonly<Vec3>,
+    target: MobPlayerFocus,
     context: MobUpdateContext,
     distance: number,
   ): void {
-    const targetEye = this.playerEye(playerPosition, context);
+    const playerPosition = target.position;
+    const targetEye = this.focusEye(target);
     const lineOfSight = hasVoxelLineOfSight(this.world, mob.eyePosition, targetEye);
     const horizontal = new Vec3().subVectors(playerPosition, mob.position);
     horizontal.y = 0;
@@ -1478,7 +1532,7 @@ export class MobManager {
     }
     this.projectileIdCounter += 1;
     const id = `projectile-${this.projectileIdCounter}`;
-    const position = owner.eyePosition;
+    const position = skeletonArrowMuzzle(owner.position, owner.facingYaw);
     const aim = new Vec3().subVectors(target, position);
     const distance = aim.length();
     if (distance <= 1e-6) return;
@@ -1515,7 +1569,7 @@ export class MobManager {
 
   private updateProjectiles(
     delta: number,
-    playerPosition: Readonly<Vec3> | undefined,
+    playerFoci: readonly MobPlayerFocus[] | undefined,
     context: MobUpdateContext,
   ): void {
     for (const projectile of [...this.projectiles.values()]) {
@@ -1534,9 +1588,40 @@ export class MobManager {
       const previous = projectile.position.clone();
       const movement = projectile.velocity.clone();
       const distance = movement.length();
-      const blockHit = distance > 0
-        ? this.world.raycast(previous, movement.clone().normalize(), distance, { geometry: 'collision' })
+      const direction = distance > 0 ? movement.clone().normalize() : undefined;
+      const destination = previous.clone().add(movement);
+      const blockHit = direction
+        ? this.world.raycast(previous, direction, distance, { geometry: 'collision' })
         : undefined;
+      const playerHit = nearestMobProjectilePlayerHit(previous, destination, playerFoci ?? []);
+      if (playerHit && (!blockHit || playerHit.distance < blockHit.distance)) {
+        projectile.position.copy(previous).addScaledVector(direction!, playerHit.distance);
+        const inWater = this.world.getBlock(
+          Math.floor(projectile.position.x), Math.floor(projectile.position.y), Math.floor(projectile.position.z),
+        ) === BlockId.Water;
+        applyArrowDragAndGravity(projectile.velocity, inWater);
+        this.syncProjectileVisual(projectile);
+        const source = this.mobsById.get(projectile.ownerId);
+        const damage = Math.max(projectile.damage, arrowDamageFromVelocity(projectile.velocity));
+        if (source) this.emitPlayerDamage(source, playerHit.focus, damage, 'arrow', context);
+        else {
+          const knockback = projectile.velocity.clone().setY(0).normalize().multiplyScalar(2.4);
+          const event: MobPlayerDamageEvent = {
+            targetPlayerId: playerHit.focus.id,
+            amount: damage,
+            source: 'arrow',
+            mobId: projectile.ownerId,
+            mobKind: projectile.ownerKind,
+            position: projectile.position.clone(),
+            knockback,
+          };
+          this.pendingPlayerDamage.push(event);
+          context.onPlayerDamage?.(event);
+          this.options.onPlayerDamage?.(event);
+        }
+        this.removeProjectile(projectile.id);
+        continue;
+      }
       if (blockHit) {
         projectile.embedded = embedArrow(blockHit, projectile.velocity);
         projectile.position.addScaledVector(movement.clone().normalize(), Math.max(0, blockHit.distance - 0.035));
@@ -1566,85 +1651,52 @@ export class MobManager {
         Math.floor(projectile.position.x), Math.floor(projectile.position.y), Math.floor(projectile.position.z),
       ) === BlockId.Water;
       applyArrowDragAndGravity(projectile.velocity, inWater);
-      if (projectile.visual) {
-        this.host.setPosition(
-          projectile.visual,
-          projectile.position.x,
-          projectile.position.y,
-          projectile.position.z,
-        );
-        this.host.applyLight(
-          projectile.visual,
-          this.world,
-          projectile.position.x,
-          projectile.position.y,
-          projectile.position.z,
-          0.25,
-        );
-        if (projectile.velocity.lengthSq() > 0) {
-          this.host.orientArrow(
-            projectile.visual,
-            projectile.velocity.x,
-            projectile.velocity.y,
-            projectile.velocity.z,
-          );
-        }
-      }
-      if (playerPosition && this.projectileHitsPlayer(previous, projectile.position, playerPosition)) {
-        const source = this.mobsById.get(projectile.ownerId);
-        const damage = Math.max(projectile.damage, arrowDamageFromVelocity(projectile.velocity));
-        if (source) this.emitPlayerDamage(source, playerPosition, damage, 'arrow', context);
-        else {
-          const knockback = projectile.velocity.clone().setY(0).normalize().multiplyScalar(2.4);
-          const event: MobPlayerDamageEvent = {
-            amount: damage,
-            source: 'arrow',
-            mobId: projectile.ownerId,
-            mobKind: projectile.ownerKind,
-            position: projectile.position.clone(),
-            knockback,
-          };
-          this.pendingPlayerDamage.push(event);
-          context.onPlayerDamage?.(event);
-          this.options.onPlayerDamage?.(event);
-        }
-        this.removeProjectile(projectile.id);
-      }
+      this.syncProjectileVisual(projectile);
     }
   }
 
-  private projectileHitsPlayer(
-    from: Vec3Like,
-    to: Vec3Like,
-    playerPosition: Vec3Like,
-  ): boolean {
-    const movement = new Vec3().subVectors(to, from);
-    const span = movement.length();
-    if (span <= 1e-8) return false;
-    const dir = movement.normalize();
-    const hit = rayAabbDistance(from, dir, {
-      minX: playerPosition.x - 0.32,
-      minY: playerPosition.y,
-      minZ: playerPosition.z - 0.32,
-      maxX: playerPosition.x + 0.32,
-      maxY: playerPosition.y + 1.8,
-      maxZ: playerPosition.z + 0.32,
-    });
-    return hit !== undefined && hit.distance >= 0 && hit.distance <= span;
+  private syncProjectileVisual(projectile: MobProjectile): void {
+    if (!projectile.visual) return;
+    this.host.setPosition(
+      projectile.visual,
+      projectile.position.x,
+      projectile.position.y,
+      projectile.position.z,
+    );
+    this.host.applyLight(
+      projectile.visual,
+      this.world,
+      projectile.position.x,
+      projectile.position.y,
+      projectile.position.z,
+      0.25,
+    );
+    if (projectile.velocity.lengthSq() > 0) {
+      this.host.orientArrow(
+        projectile.visual,
+        projectile.velocity.x,
+        projectile.velocity.y,
+        projectile.velocity.z,
+      );
+    }
   }
 
   private emitPlayerDamage(
     mob: MobEntity,
-    playerPosition: Readonly<Vec3>,
+    target: MobPlayerFocus | Vec3,
     amount: number,
     source: MobPlayerDamageEvent['source'],
     context: MobUpdateContext,
   ): void {
+    const focus: MobPlayerFocus = 'id' in target
+      ? target
+      : { id: LOCAL_PLAYER_FOCUS_ID, position: target };
     // Projectile impulse is deliberately unchanged by the melee migration.
     const knockback = source === 'arrow'
-      ? new Vec3().subVectors(playerPosition, mob.position).setY(0).normalize().multiplyScalar(2.4).setY(0.5)
+      ? new Vec3().subVectors(focus.position, mob.position).setY(0).normalize().multiplyScalar(2.4).setY(0.5)
       : undefined;
     const event: MobPlayerDamageEvent = {
+      targetPlayerId: focus.id,
       amount,
       source,
       mobId: mob.id,
@@ -1754,6 +1806,7 @@ export class MobManager {
     if (context.players && context.players.length > 0) return [...context.players];
     if (!context.playerPosition) return [];
     return [{
+      id: LOCAL_PLAYER_FOCUS_ID,
       position: context.playerPosition,
       eyePosition: context.playerEyePosition,
       alive: context.playerAlive,
@@ -1780,17 +1833,10 @@ export class MobManager {
     return best;
   }
 
-  private playerEye(
-    playerPosition: Readonly<Vec3>,
-    context: MobUpdateContext,
-  ): Vec3 {
-    return context.playerEyePosition
-      ? new Vec3(
-        context.playerEyePosition.x,
-        context.playerEyePosition.y,
-        context.playerEyePosition.z,
-      )
-      : new Vec3(playerPosition.x, playerPosition.y + 1.62, playerPosition.z);
+  private focusEye(focus: MobPlayerFocus): Vec3 {
+    return focus.eyePosition
+      ? new Vec3(focus.eyePosition.x, focus.eyePosition.y, focus.eyePosition.z)
+      : new Vec3(focus.position.x, focus.position.y + 1.62, focus.position.z);
   }
 
   private allocateMobId(requested: string | undefined): string {

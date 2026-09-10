@@ -179,6 +179,7 @@ const optional = {
   'items/flint_and_steel.png': 'item/flint_and_steel.png',
   'blocks/web.png': 'block/cobweb.png',
   'blocks/rail_normal.png': 'block/rail.png',
+  'blocks/rail_normal_turned.png': 'block/rail_corner.png',
   'blocks/fire_layer_0.png': 'block/fire.png',
   'block/glowstone.png': 'block/glowstone.png',
   'blocks/diamond_block.png': 'block/diamond_block.png',
