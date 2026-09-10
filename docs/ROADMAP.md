@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-09-10: special blocks, mob presentation, skeleton hit routing
+
+- [x] Give torch/redstone torch explicit authored side/top/bottom UV while preserving floor/four-wall attachment and light gameplay.
+- [x] Rebuild standing/hanging lantern silhouette from authored body/cap/hanger regions.
+- [x] Separate ten-shape rail render surfaces from simulation collision boxes; add true slopes and authored curved tile.
+- [x] Preserve exactly two grounded chicken legs using measured opaque sheet regions and opposite gait.
+- [x] Attach one shared-factory bow to skeleton hand and add distinct bounded bow/draw arm pose.
+- [x] Sweep skeleton projectiles against every living/targetable canonical player AABB, compare block distance and route exact `targetPlayerId` without nearest fallback.
+- [x] Add independent third-person sword/tool/bow/generic/block grips and correct bow pitch/sneak composition without changing first person.
+- [x] Add focused regressions and production-renderer browser harnesses; pass 116/116 targeted tests, four typechecks, boundaries, smokes, build/size/archive.
+- [ ] Owner manual: two simultaneous Anarchy clients with skeleton fire and visible health attribution.
+- [ ] Owner manual: continuous minecart ride through break/rebuild/high/curve/save-load scenario.
+- [ ] Separate task: repair the pre-existing hanging `fire-contact-sunlight-minecart` runner and unrelated worldgen/tick-load/extractor failures.
+
 ## 2026-09-10: Worldgen V2 — snowy plains, mixed forests, cave deposits
 
 - [x] Add exhaustive `snowy_plains` with biome code 3 and statistically calibrate the cold threshold to 9.104% of sampled land.
