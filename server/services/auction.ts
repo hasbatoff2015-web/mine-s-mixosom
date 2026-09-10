@@ -102,6 +102,10 @@ export function inventoryCanAccept(inventory: Inventory, stack: ItemStack): bool
   return copy.add(cloneStack(stack)!) === null;
 }
 
+export const AUCTION_PRICE_EMPTY_ERROR = 'Укажите цену этого предмета';
+export const AUCTION_PRICE_RANGE_ERROR =
+  'Доступная цена для выставления на продажу - от 10 до 100 000 000 Мегакоинов';
+
 export function parseAuctionPrice(raw: string | number | undefined): number | undefined {
   if (typeof raw === 'number') {
     if (!Number.isInteger(raw) || raw < AUCTION_MIN_PRICE || raw > AUCTION_MAX_PRICE) return undefined;
@@ -113,6 +117,19 @@ export function parseAuctionPrice(raw: string | number | undefined): number | un
   const value = Number(trimmed);
   if (!Number.isInteger(value) || value < AUCTION_MIN_PRICE || value > AUCTION_MAX_PRICE) return undefined;
   return value;
+}
+
+export function isAuctionPriceEmpty(raw: string | number | undefined): boolean {
+  if (raw === undefined) return true;
+  if (typeof raw === 'string') return raw.trim() === '';
+  return false;
+}
+
+/** Authoritative user-facing price rejection. Empty is distinct from out-of-range. */
+export function auctionPriceError(raw: string | number | undefined): string | undefined {
+  if (isAuctionPriceEmpty(raw)) return AUCTION_PRICE_EMPTY_ERROR;
+  if (parseAuctionPrice(raw) !== undefined) return undefined;
+  return AUCTION_PRICE_RANGE_ERROR;
 }
 
 export function itemSearchText(stack: ItemStack): string {
@@ -370,10 +387,9 @@ export class AuctionService {
   ): AuctionResult {
     return this.withPlayerLock(playerId, () => {
       this.expireDue();
-      const parsedPrice = parseAuctionPrice(price);
-      if (parsedPrice === undefined) {
-        return { ok: false, error: 'Цена должна быть целым числом от 10 до 100 000 000 Мегакоинов.' };
-      }
+      const priceError = auctionPriceError(price);
+      if (priceError) return { ok: false, error: priceError };
+      const parsedPrice = parseAuctionPrice(price)!;
       if (!Number.isInteger(slot) || slot < 0 || slot >= Inventory.SLOT_COUNT) {
         return { ok: false, error: 'Предмет больше недоступен для продажи.' };
       }
@@ -486,10 +502,9 @@ export class AuctionService {
   relist(playerId: string, listingId: string, price: number): AuctionResult {
     return this.withLocks(playerId, listingId, () => {
       this.expireDue();
-      const parsedPrice = parseAuctionPrice(price);
-      if (parsedPrice === undefined) {
-        return { ok: false, error: 'Цена должна быть целым числом от 10 до 100 000 000 Мегакоинов.' };
-      }
+      const priceError = auctionPriceError(price);
+      if (priceError) return { ok: false, error: priceError };
+      const parsedPrice = parseAuctionPrice(price)!;
       const old = this.listings.get(listingId);
       if (!old || old.sellerPlayerId !== playerId || old.status !== 'ACTIVE') {
         return { ok: false, error: 'Этот товар уже продан.' };
@@ -656,7 +671,12 @@ export class AuctionService {
           maxAmount,
           priceText: session.priceText,
           ...(current || session.expectedItem
-            ? { item: cloneStack(current ?? session.expectedItem!) }
+            ? {
+              item: {
+                ...cloneStack(current ?? session.expectedItem!)!,
+                count: amount,
+              },
+            }
             : {}),
         },
       };

@@ -15,6 +15,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
+import { auctionIconStack, keepAuctionSearchDraft } from './auctionGui';
 import {
   containerStageSize,
   containerUiScaleWithClose,
@@ -1102,9 +1103,13 @@ export class GameUI {
       this.closeAuction();
       return;
     }
-    this.closeInventory(false);
-    this.auctionState = state;
-    this.renderAuction();
+    const alreadyOpen = this.isAuctionOpen() && this.modal !== undefined;
+    if (!alreadyOpen) this.closeInventory(false);
+    if (alreadyOpen) this.patchAuction(state);
+    else {
+      this.auctionState = state;
+      this.renderAuction();
+    }
     this.setControlsSuppressed(true);
   }
 
@@ -1992,12 +1997,97 @@ export class GameUI {
     }
   }
 
+  private auctionListingCells(state: ServerAuctionMessage): string {
+    return Array.from({ length: 27 }, (_unused, index) => {
+      const listing = state.listings[index];
+      if (!listing) return this.slotHtml(null, `ah-${index}`);
+      const stack = this.auctionStack(listing.item);
+      return `<div data-ah-listing="${this.escape(listing.listingId)}">${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip)}</div>`;
+    }).join('');
+  }
+
+  private auctionSelectedStack(state: ServerAuctionMessage): ItemStack | null {
+    return auctionIconStack(this.auctionStack(state.selected?.item), state.selected?.amount);
+  }
+
+  private auctionMessageHtml(message: string | undefined): string {
+    return `<div class="mc-ah-message" data-ah-message${message ? '' : ' hidden'}>${this.escape(message ?? '')}</div>`;
+  }
+
+  private writeAuctionMessage(message: string | undefined): void {
+    const node = this.modal?.querySelector<HTMLElement>('[data-ah-message]');
+    if (!node) return;
+    node.hidden = !message;
+    node.textContent = message ?? '';
+  }
+
+  private patchAuction(state: ServerAuctionMessage): void {
+    const prev = this.auctionState;
+    const actions = this.auctionActions;
+    if (!actions || !this.modal || !prev || prev.screen !== state.screen) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
+    if (!this.modal.querySelector(`[data-ah-screen="${state.screen}"]`)) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
+    this.auctionState = state;
+    if (state.screen === 'browse' || state.screen === 'mine') {
+      this.patchAuctionList(state);
+      return;
+    }
+    if (state.screen === 'sell-confirm' || state.screen === 'relist') {
+      this.patchAuctionForm(state);
+      return;
+    }
+    this.renderAuction();
+  }
+
+  private patchAuctionList(state: ServerAuctionMessage): void {
+    const listings = this.modal?.querySelector('[data-ah-listings]');
+    const pageLabel = this.modal?.querySelector('[data-ah-page-label]');
+    const prev = this.modal?.querySelector<HTMLButtonElement>('[data-ah-page="prev"]');
+    const next = this.modal?.querySelector<HTMLButtonElement>('[data-ah-page="next"]');
+    const empty = this.modal?.querySelector<HTMLElement>('[data-ah-empty]');
+    if (!listings || !pageLabel || !prev || !next || !empty) {
+      this.renderAuction();
+      return;
+    }
+    listings.innerHTML = this.auctionListingCells(state);
+    pageLabel.textContent = `Страница ${state.page} из ${state.totalPages}`;
+    prev.disabled = state.page <= 1;
+    next.disabled = state.page >= state.totalPages;
+    empty.hidden = state.totalCount !== 0;
+    this.writeAuctionMessage(state.message);
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-ah-search]');
+    if (search && !keepAuctionSearchDraft(document.activeElement, search)) search.value = state.search;
+  }
+
+  private patchAuctionForm(state: ServerAuctionMessage): void {
+    const itemHost = this.modal?.querySelector('[data-ah-selected-item]');
+    const amount = this.modal?.querySelector('[data-ah-amount-value]');
+    if (!itemHost) {
+      this.renderAuction();
+      return;
+    }
+    itemHost.innerHTML = this.slotHtml(this.auctionSelectedStack(state), 'ah-selected');
+    if (amount) amount.textContent = String(state.selected?.amount ?? 1);
+    this.writeAuctionMessage(state.message);
+  }
+
   private renderAuction(): void {
     const state = this.auctionState;
     const actions = this.auctionActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureAuctionInputFocus();
-    const logicalHeight = state.screen === 'sell-pick' ? 222 : state.screen === 'browse' || state.screen === 'mine' ? 200 : 186;
+    const logicalHeight = state.screen === 'sell-pick' ? 222
+      : state.screen === 'browse' ? 216
+        : state.screen === 'mine' ? 200
+          : state.screen === 'manage' ? 236
+            : 218;
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
@@ -2013,29 +2103,28 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.root.append(this.modal);
-    this.bindAuctionChrome(state, actions);
+    this.bindAuctionChrome();
     this.restoreAuctionInputFocus(keep);
   }
 
   private auctionBodyHtml(state: ServerAuctionMessage): string {
-    const message = state.message ? `<div class="mc-ah-message">${this.escape(state.message)}</div>` : '';
+    const message = this.auctionMessageHtml(state.message);
     if (state.screen === 'browse') {
-      const slots = Array.from({ length: 27 }, (_unused, index) => state.listings[index]);
-      const grid = slots.map((listing, index) => {
-        if (!listing) return this.slotHtml(null, `ah-${index}`);
-        const stack = this.auctionStack(listing.item);
-        return `<div data-ah-listing="${this.escape(listing.listingId)}">${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip)}</div>`;
-      }).join('');
-      return `<div class="mc-label">${this.escape(state.title)}</div>
-        <label class="mc-ah-search"><input data-ah-search type="text" maxlength="64" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(state.search)}" /></label>
-        <div class="mc-grid mc-grid-9">${grid}</div>
-        <div class="mc-ah-nav">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
-          <span class="mc-ah-page">Страница ${state.page} из ${state.totalPages}</span>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+      return `<div class="mc-ah-body" data-ah-screen="browse">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-ah-search type="text" maxlength="64" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="ah-search" aria-label="${CONTAINER_STRINGS.search}" /></label>
+          <button type="button" class="mc-ah-btn" data-ah-action="refresh" aria-label="Обновить">Обновить</button>
         </div>
-        ${state.totalCount === 0 ? '<div class="mc-ah-empty">На аукционе пока нет товаров.</div>' : ''}
-        ${message}`;
+        <div class="mc-grid mc-grid-9" data-ah-listings>${this.auctionListingCells(state)}</div>
+        <div class="mc-ah-nav">
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+          <span class="mc-ah-page" data-ah-page-label>Страница ${state.page} из ${state.totalPages}</span>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+        </div>
+        <div class="mc-ah-empty" data-ah-empty${state.totalCount === 0 ? '' : ' hidden'}>На аукционе пока нет товаров.</div>
+        ${message}
+      </div>`;
     }
     if (state.screen === 'sell-pick') {
       const slots = state.inventorySlots ?? [];
@@ -2045,112 +2134,123 @@ export class GameUI {
       };
       const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
       const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
-      return `<div class="mc-label">${this.escape(state.title)}</div>
+      return `<div class="mc-ah-body" data-ah-screen="sell-pick">
+        <div class="mc-label">${this.escape(state.title)}</div>
         <div class="mc-grid mc-grid-9">${main}</div>
         <div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>
-        ${message}`;
+        ${message}
+      </div>`;
     }
-    const selected = state.selected;
-    const item = this.auctionStack(selected?.item);
-    const itemSlot = `<div class="mc-ah-center">${this.slotHtml(item, 'ah-selected')}</div>`;
+    const itemSlot = `<div class="mc-ah-center" data-ah-selected-item>${this.slotHtml(this.auctionSelectedStack(state), 'ah-selected')}</div>`;
     if (state.screen === 'buy') {
-      return `<div class="mc-label">${this.escape(state.title)}</div>
+      return `<div class="mc-ah-body" data-ah-screen="buy">
+        <div class="mc-label">${this.escape(state.title)}</div>
         ${itemSlot}
-        <p class="mc-ah-prompt">${this.escape(selected?.prompt ?? '')}</p>
+        <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="buy">КУПИТЬ</button>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="buy">КУПИТЬ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
-        ${message}`;
+        ${message}
+      </div>`;
     }
     if (state.screen === 'sell-confirm') {
-      return `<div class="mc-label">${this.escape(state.title)}</div>
+      return `<div class="mc-ah-body" data-ah-screen="sell-confirm">
+        <div class="mc-label">${this.escape(state.title)}</div>
         ${itemSlot}
         <div class="mc-ah-amount">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-delta="-1">−</button>
-          <span>${selected?.amount ?? 1}</span>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-delta="1">+</button>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="-1">−</button>
+          <span data-ah-amount-value>${state.selected?.amount ?? 1}</span>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="1">+</button>
         </div>
-        <label class="mc-ah-search">Цена за весь лот
-          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(selected?.priceText ?? '')}" />
+        <label class="mc-ah-field">Цена за весь лот
+          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.selected?.priceText ?? '')}" autocomplete="off" spellcheck="false" name="ah-price" />
         </label>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="create">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="create">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
-        ${message}`;
+        ${message}
+      </div>`;
     }
     if (state.screen === 'mine') {
-      const slots = Array.from({ length: 27 }, (_unused, index) => state.listings[index]);
-      const grid = slots.map((listing, index) => {
-        if (!listing) return this.slotHtml(null, `ah-${index}`);
-        const stack = this.auctionStack(listing.item);
-        return `<div data-ah-listing="${this.escape(listing.listingId)}">${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip)}</div>`;
-      }).join('');
-      return `<div class="mc-label">${this.escape(state.title)}</div>
-        <div class="mc-grid mc-grid-9">${grid}</div>
+      return `<div class="mc-ah-body" data-ah-screen="mine">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-grid mc-grid-9" data-ah-listings>${this.auctionListingCells(state)}</div>
         <div class="mc-ah-nav">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
-          <span class="mc-ah-page">Страница ${state.page} из ${state.totalPages}</span>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+          <span class="mc-ah-page" data-ah-page-label>Страница ${state.page} из ${state.totalPages}</span>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
         </div>
-        ${state.totalCount === 0 ? '<div class="mc-ah-empty">У вас нет лотов.</div>' : ''}
-        ${message}`;
+        <div class="mc-ah-empty" data-ah-empty${state.totalCount === 0 ? '' : ' hidden'}>У вас нет лотов.</div>
+        ${message}
+      </div>`;
     }
     if (state.screen === 'manage') {
-      return `<div class="mc-label">${this.escape(state.title)}</div>
+      return `<div class="mc-ah-body" data-ah-screen="manage">
+        <div class="mc-label">${this.escape(state.title)}</div>
         ${itemSlot}
-        <p class="mc-ah-prompt">${this.escape(selected?.prompt ?? '')}</p>
+        <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="cancel">СНЯТЬ С ПРОДАЖИ</button>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="relist">ИЗМЕНИТЬ ЦЕНУ</button>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="cancel">СНЯТЬ С ПРОДАЖИ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="relist">ИЗМЕНИТЬ ЦЕНУ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
-        ${message}`;
+        ${message}
+      </div>`;
     }
     if (state.screen === 'relist') {
-      return `<div class="mc-label">${this.escape(state.title)}</div>
+      return `<div class="mc-ah-body" data-ah-screen="relist">
+        <div class="mc-label">${this.escape(state.title)}</div>
         ${itemSlot}
-        <label class="mc-ah-search">Новая цена за весь лот
-          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(selected?.priceText ?? '')}" />
+        <label class="mc-ah-field">Новая цена за весь лот
+          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.selected?.priceText ?? '')}" autocomplete="off" spellcheck="false" name="ah-price" />
         </label>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="confirm-relist">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
-          <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="confirm-relist">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
-        ${message}`;
+        ${message}
+      </div>`;
     }
-    return `<div class="mc-label">${this.escape(state.title)}</div>
+    return `<div class="mc-ah-body" data-ah-screen="claim">
+      <div class="mc-label">${this.escape(state.title)}</div>
       ${itemSlot}
-      <p class="mc-ah-prompt">${this.escape(selected?.prompt ?? '')}</p>
+      <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
       <div class="mc-ah-actions">
-        <button type="button" class="mc-slot mc-ah-btn" data-ah-action="claim">ЗАБРАТЬ</button>
-        <button type="button" class="mc-slot mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        <button type="button" class="mc-ah-btn" data-ah-action="claim">ЗАБРАТЬ</button>
+        <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
       </div>
-      ${message}`;
+      ${message}
+    </div>`;
   }
 
-  private bindAuctionChrome(state: ServerAuctionMessage, actions: AuctionGuiActions): void {
+  private bindAuctionChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => actions.close());
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.auctionActions?.close());
     const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
     search?.addEventListener('keydown', (event) => event.stopPropagation());
+    search?.addEventListener('keyup', (event) => event.stopPropagation());
     search?.addEventListener('input', () => {
       window.clearTimeout(this.auctionSearchTimer);
       this.auctionSearchTimer = window.setTimeout(() => {
-        actions.send({ type: 'auction_action', action: 'search', search: search.value });
+        this.auctionActions?.send({ type: 'auction_action', action: 'search', search: search.value });
       }, 160);
     });
     const price = this.modal!.querySelector<HTMLInputElement>('[data-ah-price]');
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
+    price?.addEventListener('keyup', (event) => event.stopPropagation());
     price?.addEventListener('input', () => {
       const digits = price.value.replace(/[^\d]/g, '');
       if (price.value !== digits) price.value = digits;
-      actions.send({ type: 'auction_action', action: 'set_price', price: digits });
+      this.auctionActions?.send({ type: 'auction_action', action: 'set_price', price: digits });
     });
     this.modal!.addEventListener('click', (event) => {
+      const current = this.auctionState;
+      const actions = this.auctionActions;
+      if (!current || !actions) return;
       const target = event.target as HTMLElement;
       const listing = target.closest<HTMLElement>('[data-ah-listing]');
       if (listing?.dataset.ahListing) {
@@ -2163,45 +2263,55 @@ export class GameUI {
         return;
       }
       const page = target.closest<HTMLElement>('[data-ah-page]');
-      if (page?.dataset.ahPage === 'prev' && state.page > 1) {
-        actions.send({ type: 'auction_action', action: 'page', page: state.page - 1 });
+      if (page?.dataset.ahPage === 'prev' && current.page > 1) {
+        actions.send({ type: 'auction_action', action: 'page', page: current.page - 1 });
         return;
       }
-      if (page?.dataset.ahPage === 'next' && state.page < state.totalPages) {
-        actions.send({ type: 'auction_action', action: 'page', page: state.page + 1 });
+      if (page?.dataset.ahPage === 'next' && current.page < current.totalPages) {
+        actions.send({ type: 'auction_action', action: 'page', page: current.page + 1 });
         return;
       }
       const delta = target.closest<HTMLElement>('[data-ah-delta]');
       if (delta?.dataset.ahDelta) {
-        const next = (state.selected?.amount ?? 1) + Number(delta.dataset.ahDelta);
+        const max = current.selected?.maxAmount ?? current.selected?.amount ?? 1;
+        const next = Math.max(1, Math.min((current.selected?.amount ?? 1) + Number(delta.dataset.ahDelta), max));
+        if (current.selected) {
+          const item = auctionIconStack(this.auctionStack(current.selected.item), next);
+          this.auctionState = {
+            ...current,
+            selected: { ...current.selected, amount: next, ...(item ? { item } : {}) },
+          };
+          this.patchAuctionForm(this.auctionState);
+        }
         actions.send({ type: 'auction_action', action: 'set_amount', amount: next });
         return;
       }
       const button = target.closest<HTMLElement>('[data-ah-action]');
       const kind = button?.dataset.ahAction;
-      if (kind === 'buy') actions.send({ type: 'auction_action', action: 'buy', listingId: state.selected?.listingId });
+      if (kind === 'refresh') actions.send({ type: 'auction_action', action: 'refresh' });
+      else if (kind === 'buy') actions.send({ type: 'auction_action', action: 'buy', listingId: current.selected?.listingId });
       else if (kind === 'back') actions.send({ type: 'auction_action', action: 'back' });
       else if (kind === 'create') {
         actions.send({
           type: 'auction_action',
           action: 'create',
-          slot: state.selected?.slot,
-          amount: state.selected?.amount,
-          price: price?.value ?? state.selected?.priceText,
+          slot: current.selected?.slot,
+          amount: current.selected?.amount,
+          price: price?.value ?? current.selected?.priceText,
         });
       } else if (kind === 'cancel') {
-        actions.send({ type: 'auction_action', action: 'cancel', listingId: state.selected?.listingId });
+        actions.send({ type: 'auction_action', action: 'cancel', listingId: current.selected?.listingId });
       } else if (kind === 'relist') {
-        actions.send({ type: 'auction_action', action: 'relist', listingId: state.selected?.listingId });
+        actions.send({ type: 'auction_action', action: 'relist', listingId: current.selected?.listingId });
       } else if (kind === 'confirm-relist') {
         actions.send({
           type: 'auction_action',
           action: 'relist',
-          listingId: state.selected?.listingId,
-          price: price?.value ?? state.selected?.priceText,
+          listingId: current.selected?.listingId,
+          price: price?.value ?? current.selected?.priceText,
         });
       } else if (kind === 'claim') {
-        actions.send({ type: 'auction_action', action: 'claim', listingId: state.selected?.listingId });
+        actions.send({ type: 'auction_action', action: 'claim', listingId: current.selected?.listingId });
       }
     });
   }

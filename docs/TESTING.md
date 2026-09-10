@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-10 Auction House UI polish
+
+Report: `reports/2026-09-10_auction-house-ui.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Contracts added: empty vs range price copy; snapshot `item.count === amount`; `refresh` keeps search and clamps page; successful buy leaves GUI `message` unset; search draft is not overwritten while the input is focused.
+
 ## 2026-09-09 Auction House
 
 Report: `reports/2026-09-09_auction-house.md`.

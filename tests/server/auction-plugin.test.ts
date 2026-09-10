@@ -8,6 +8,11 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerAuctionMessage } from '../../shared/protocol';
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
+import {
+  AUCTION_PAGE_SIZE,
+  AUCTION_PRICE_EMPTY_ERROR,
+  AUCTION_PRICE_RANGE_ERROR,
+} from '../../server/services/auction';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-ah-plugin-'));
@@ -149,6 +154,11 @@ describe('Auction plugin', () => {
     expect(world.economy.getBalance(bob.player.id)).toBe(ECONOMY_INITIAL_BALANCE + 400 - 250);
     expect(world.economy.getBalance(ada.player.id)).toBe(ECONOMY_INITIAL_BALANCE + 250);
     expect(world.auction.getListing(listingId)?.status).toBe('SOLD');
+    const afterBuy = lastAuction(bob.sink)!;
+    expect(afterBuy.screen).toBe('browse');
+    expect(afterBuy.message).toBeUndefined();
+    expect(afterBuy.message ?? '').not.toMatch(/купили/i);
+    expect(afterBuy.listings.some((listing) => listing.listingId === listingId)).toBe(false);
   });
 
   it('pays an offline seller and keeps the listing after restart', async () => {
@@ -252,5 +262,77 @@ describe('Auction plugin', () => {
     expect(mine.listings).toHaveLength(1);
     expect(mine.listings[0]?.price).toBe(60);
     expect(mine.listings[0]?.status).toBe('ACTIVE');
+  });
+
+  it('reports empty price separately from an out-of-range price', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    ada.player.inventory.setSlot(0, createItemStack('stone', 16));
+    chat(world, ada, '/ah sell');
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'select_slot', slot: 0 });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'create', slot: 0, amount: 8, price: '' });
+    expect(lastAuction(ada.sink)?.message).toBe(AUCTION_PRICE_EMPTY_ERROR);
+    expect(ada.player.inventory.getSlot(0)?.count).toBe(16);
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'create', slot: 0, amount: 8, price: '5' });
+    expect(lastAuction(ada.sink)?.message).toBe(AUCTION_PRICE_RANGE_ERROR);
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'create', slot: 0, amount: 8, price: '9' });
+    expect(lastAuction(ada.sink)?.message).toBe(AUCTION_PRICE_RANGE_ERROR);
+    world.handleAuctionAction(ada.player, {
+      type: 'auction_action',
+      action: 'create',
+      slot: 0,
+      amount: 8,
+      price: '100000001',
+    });
+    expect(lastAuction(ada.sink)?.message).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(ada.player.inventory.getSlot(0)?.count).toBe(16);
+  });
+
+  it('keeps search text and clamps the page on refresh', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    world.economy.deposit(bob.player.id, 500, 'ADMIN_GIVE');
+    for (let i = 0; i < AUCTION_PAGE_SIZE + 1; i += 1) {
+      ada.player.inventory.setSlot(0, createItemStack('stone', 1));
+      expect(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 1, 10).ok).toBe(true);
+    }
+    chat(world, bob, '/ah');
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'search', search: 'stone' });
+    expect(lastAuction(bob.sink)?.search).toBe('stone');
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'page', page: 2 });
+    const page2 = lastAuction(bob.sink)!;
+    expect(page2.page).toBe(2);
+    expect(page2.search).toBe('stone');
+    const loneId = page2.listings[0]!.listingId;
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'refresh' });
+    const refreshed = lastAuction(bob.sink)!;
+    expect(refreshed.screen).toBe('browse');
+    expect(refreshed.search).toBe('stone');
+    expect(refreshed.page).toBe(2);
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'buy', listingId: loneId });
+    expect(lastAuction(bob.sink)?.message).toBeUndefined();
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'refresh' });
+    const clamped = lastAuction(bob.sink)!;
+    expect(clamped.search).toBe('stone');
+    expect(clamped.page).toBe(1);
+    expect(clamped.totalPages).toBe(1);
+    expect(clamped.listings.some((listing) => listing.listingId === loneId)).toBe(false);
+  });
+
+  it('mirrors the chosen amount onto the sell snapshot item', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    ada.player.inventory.setSlot(3, createItemStack('stone', 64));
+    chat(world, ada, '/ah sell');
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'select_slot', slot: 3 });
+    expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 64, item: { count: 64 } });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'set_amount', amount: 59 });
+    expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 59, item: { count: 59 } });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'set_amount', amount: 1 });
+    expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 1, item: { count: 1 } });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'set_amount', amount: 64 });
+    expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 64, item: { count: 64 } });
+    expect(ada.player.inventory.getSlot(3)?.count).toBe(64);
   });
 });

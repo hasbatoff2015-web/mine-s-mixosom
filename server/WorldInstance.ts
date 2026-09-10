@@ -79,7 +79,7 @@ import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
-import { AuctionService, parseAuctionPrice, type AuctionView } from './services/auction';
+import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { EconomyService, formatMegacoins } from './services/economy';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
@@ -984,6 +984,11 @@ export class WorldInstance {
       this.flushAuction(player);
       return;
     }
+    if (action === 'refresh') {
+      session.message = undefined;
+      this.flushAuction(player);
+      return;
+    }
     if (action === 'back') {
       if (session.screen === 'buy') this.auction.openBrowse(player.id, session.search);
       else if (session.screen === 'sell-confirm') this.auction.openSell(player.id);
@@ -1037,8 +1042,10 @@ export class WorldInstance {
       }
       player.inventoryDirty = true;
       this.flushPlayerInventory(player);
-      this.auction.openBrowse(player.id, session.search);
-      this.auction.session(player.id).message = `Вы купили предмет за ${result.listing ? formatMegacoins(result.listing.price) : ''}`;
+      const search = session.search;
+      const page = session.page;
+      this.auction.openBrowse(player.id, search);
+      this.auction.session(player.id).page = page;
       const seller = this.players.get(result.listing!.sellerPlayerId);
       if (seller?.connected) {
         this.sendTo(seller, {
@@ -1074,17 +1081,19 @@ export class WorldInstance {
     if (action === 'create') {
       const amount = message.amount ?? session.amount;
       const slot = message.slot ?? session.slot;
-      const parsedPrice = parseAuctionPrice(message.price ?? session.priceText);
+      const priceRaw = message.price ?? session.priceText;
+      const priceError = auctionPriceError(priceRaw);
       if (slot === undefined || amount === undefined) {
         session.message = 'Предмет больше недоступен для продажи.';
         this.flushAuction(player);
         return;
       }
-      if (parsedPrice === undefined) {
-        session.message = 'Цена должна быть целым числом от 10 до 100 000 000 Мегакоинов.';
+      if (priceError) {
+        session.message = priceError;
         this.flushAuction(player);
         return;
       }
+      const parsedPrice = parseAuctionPrice(priceRaw)!;
       const result = this.auction.createListing(
         player.id,
         player.name,
@@ -1131,12 +1140,13 @@ export class WorldInstance {
         this.flushAuction(player);
         return;
       }
-      const parsedPrice = parseAuctionPrice(message.price ?? session.priceText);
-      if (parsedPrice === undefined) {
-        session.message = 'Цена должна быть целым числом от 10 до 100 000 000 Мегакоинов.';
+      const priceError = auctionPriceError(message.price ?? session.priceText);
+      if (priceError) {
+        session.message = priceError;
         this.flushAuction(player);
         return;
       }
+      const parsedPrice = parseAuctionPrice(message.price ?? session.priceText)!;
       const result = this.auction.relist(
         player.id,
         listingId,

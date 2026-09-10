@@ -164,13 +164,14 @@ Builtin plugin `auction` + `AuctionService` (`server/services/auction.ts`). This
 - Commands: `/ah` (browse others), `/ah sell` (list from inventory), `/ah list` (own active + returnable). Aliases: `/auction`, `/auctionhouse`.
 - Permissions: `auction.use`, `auction.sell`, `auction.buy`, `auction.list`, `auction.*`. Default role gets the four player nodes. Admin gets `auction.*`. OP bypass.
 - GUI is the existing inventory/chest chrome (`mc-backdrop` / `mc-panel` / `mc-slot` / `mc-close`, item icons, `attachItemTooltip`). Not the Frontier Cubes menu cards. Close: top-right ×, Cancel where shown, key **E** (unless a search/price field is focused).
-- Screens: browse (27 slots/page, newest first, search), buy confirm, sell-pick (player inventory + hotbar), sell-confirm (amount ± and integer price), mine, manage (cancel / relist), relist price, claim.
+- Screens: browse (27 slots/page, newest first, search, **Обновить**), buy confirm, sell-pick (player inventory + hotbar), sell-confirm (amount ± and integer price), mine, manage (cancel / relist), relist price, claim.
+- Listing lifetime: `expiresAt = createdAt + 2 days`. Server `expireDue` runs on a 1s plugin timer and on every action / load. `ACTIVE` → `EXPIRED` (returnable). Items are **not** auto-returned and are **not** dropped.
 - Listing lifetime: `expiresAt = createdAt + 2 days`. Server `expireDue` runs on a 1s plugin timer and on every action / load. `ACTIVE` → `EXPIRED` (returnable). Items are **not** auto-returned and are **not** dropped.
 - `/ah list` shows `ACTIVE` first, then `CANCELLED` / `EXPIRED`. Click active → cancel or relist. Click returnable → claim the **entire** stack or `"Недостаточно места в инвентаре."`
 - Relist is atomic: old listing `RELISTED` (not claimable), new `ACTIVE` with a fresh 2-day timer. Cancel on the price screen leaves the old listing `ACTIVE`. The item never re-enters inventory during relist.
-- Limits: 30 `ACTIVE` listings per player; price integer **10 … 100 000 000** Мегакоинов for the whole listing (not per item).
+- Limits: 30 `ACTIVE` listings per player; price integer **10 … 100 000 000** Мегакоинов for the whole listing (not per item). Empty price → `Укажите цену этого предмета`. Out of range → `Доступная цена для выставления на продажу - от 10 до 100 000 000 Мегакоинов`.
 - Persistence: `plugin-data/auction/listings.json` via existing `JsonFileStore`. Full `ItemStack` clone (id, count, durability, metadata).
-- Protocol: client `auction_action` (intent only), server `auction` (paged snapshot). The client never mutates listings, balances, or inventory locally.
+- Protocol: client `auction_action` (intent only; includes `refresh`), server `auction` (paged snapshot). Search updates patch the listing grid in place so the search input keeps focus and caret. The client never mutates listings, balances, or inventory locally.
 - Anti-dupe: listing+player locks; re-validate slot/item/amount/price/status/balance/space on the server; item exists in **either** inventory **or** a listing, never both while `ACTIVE`.
 
 ## API version

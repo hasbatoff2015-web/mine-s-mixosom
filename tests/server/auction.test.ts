@@ -12,7 +12,10 @@ import {
   AUCTION_MAX_PRICE,
   AUCTION_MIN_PRICE,
   AUCTION_PAGE_SIZE,
+  AUCTION_PRICE_EMPTY_ERROR,
+  AUCTION_PRICE_RANGE_ERROR,
   AuctionService,
+  auctionPriceError,
   listingMatchesSearch,
   parseAuctionPrice,
 } from '../../server/services/auction';
@@ -32,6 +35,22 @@ describe('Auction price parsing', () => {
     expect(parseAuctionPrice('5,000')).toBeUndefined();
     expect(parseAuctionPrice('abc')).toBeUndefined();
     expect(parseAuctionPrice('')).toBeUndefined();
+  });
+
+  it('separates an empty price from an out-of-range price', () => {
+    expect(auctionPriceError(undefined)).toBe(AUCTION_PRICE_EMPTY_ERROR);
+    expect(auctionPriceError('')).toBe(AUCTION_PRICE_EMPTY_ERROR);
+    expect(auctionPriceError('   ')).toBe(AUCTION_PRICE_EMPTY_ERROR);
+    expect(auctionPriceError('1')).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError('5')).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError('9')).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError(1)).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError(100_000_001)).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError('100000001')).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError('999999999')).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auctionPriceError('10')).toBeUndefined();
+    expect(auctionPriceError(AUCTION_MAX_PRICE)).toBeUndefined();
+    expect(auctionPriceError(String(AUCTION_MAX_PRICE))).toBeUndefined();
   });
 });
 
@@ -322,8 +341,41 @@ describe('AuctionService', () => {
     const inventory = new Inventory();
     fill(inventory, 'stone', 1);
     const created = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
-    expect(auction.relist('seller', created.listing!.listingId, 5).ok).toBe(false);
+    expect(auction.relist('seller', created.listing!.listingId, 5).error).toBe(AUCTION_PRICE_RANGE_ERROR);
     expect(auction.getListing(created.listing!.listingId)?.status).toBe('ACTIVE');
+  });
+
+  it('rejects out-of-range listing prices without extracting the item', async () => {
+    const { auction } = await setup();
+    const inventory = new Inventory();
+    fill(inventory, 'stone', 64);
+    expect(auction.createListing('seller', 'Ada', inventory, 0, 10, 1).error).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auction.createListing('seller', 'Ada', inventory, 0, 10, 5).error).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(auction.createListing('seller', 'Ada', inventory, 0, 10, AUCTION_MAX_PRICE + 1).error)
+      .toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(inventory.getSlot(0)?.count).toBe(64);
+  });
+
+  it('puts the chosen sell amount on the snapshot item count', async () => {
+    const { auction } = await setup();
+    const inventory = new Inventory();
+    fill(inventory, 'stone', 64);
+    auction.openSell('seller');
+    expect(auction.selectSellSlot('seller', inventory, 0).ok).toBe(true);
+    const session = auction.session('seller');
+    session.amount = 59;
+    let snapshot = auction.buildMessage('seller', inventory);
+    expect(snapshot.selected?.amount).toBe(59);
+    expect(snapshot.selected?.item).toMatchObject({ itemId: 'stone', count: 59 });
+    session.amount = 1;
+    snapshot = auction.buildMessage('seller', inventory);
+    expect(snapshot.selected?.amount).toBe(1);
+    expect(snapshot.selected?.item).toMatchObject({ itemId: 'stone', count: 1 });
+    session.amount = 64;
+    snapshot = auction.buildMessage('seller', inventory);
+    expect(snapshot.selected?.amount).toBe(64);
+    expect(snapshot.selected?.item).toMatchObject({ itemId: 'stone', count: 64 });
+    expect(inventory.getSlot(0)?.count).toBe(64);
   });
 
   it('parses auction protocol intents', () => {
@@ -334,6 +386,8 @@ describe('AuctionService', () => {
     });
     expect(parseClientMessage({ type: 'auction_action', action: 'create', slot: 3, amount: 20, price: '5000' }))
       .toMatchObject({ action: 'create', slot: 3, amount: 20, price: '5000' });
+    expect(parseClientMessage({ type: 'auction_action', action: 'refresh' }))
+      .toMatchObject({ type: 'auction_action', action: 'refresh' });
     expect(parseClientMessage({ type: 'auction_action', action: 'explode' }))
       .toEqual({ error: 'auction_action.action invalid' });
   });

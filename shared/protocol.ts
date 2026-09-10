@@ -436,6 +436,7 @@ export type AuctionActionKind =
   | 'close'
   | 'search'
   | 'page'
+  | 'refresh'
   | 'select'
   | 'buy'
   | 'back'
@@ -893,7 +894,7 @@ const CONTAINER_KINDS: readonly ContainerKind[] = [
 ];
 
 const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
-  'close', 'search', 'page', 'select', 'buy', 'back',
+  'close', 'search', 'page', 'refresh', 'select', 'buy', 'back',
   'select_slot', 'set_amount', 'set_price', 'create', 'cancel', 'relist', 'claim',
 ];
 

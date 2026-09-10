@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Auction House UI polish — 2026-09-10
+
+- Inventory-style кнопки подтверждения (купить / выставить / отмена) больше не используют квадратный `mc-slot`; текст `nowrap`, по центру, на всю ширину колонки действий.
+- Поиск `/ah` больше не теряет focus: повторный snapshot патчит сетку лотов на месте и не перезаписывает focused search input.
+- На browse есть кнопка **Обновить** (`auction_action.refresh`); search сохраняется, страница клампится, если стала недоступна.
+- Успешная покупка больше не пишет «Вы купили предмет…» в GUI; ошибки покупки по-прежнему в `message`.
+- Иконка на подтверждении продажи показывает выбранный `amount`, не исходный stack count.
+- Пустая цена и цена вне 10…100 000 000 — разные сообщения. Сервер остаётся authoritative.
+- Handoff: `docs/reports/2026-09-10_auction-house-ui.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
 ## Последний проход: Auction House — 2026-09-09
 
 - Builtin `auction` + `AuctionService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк и второй persistence layer не добавлялись.

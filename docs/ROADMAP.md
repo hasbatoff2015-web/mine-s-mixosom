@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-10: Auction House UI polish
+
+- [x] Inventory-style confirm buttons without text wrap; browse **Обновить**; in-place search patch (keep focus/caret).
+- [x] Empty vs range price messages; sell icon amount follows ±; no GUI success line after buy.
+- [ ] Owner live Anarchy QA of `/ah` browse/sell/buy/list/claim (not run in this pass).
+
 ## 2026-09-09: Auction House
 
 - [x] Builtin `auction` plugin + `AuctionService` on PluginManager / JsonFileStore / EconomyService (no second wallet).
