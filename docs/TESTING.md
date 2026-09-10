@@ -8,7 +8,7 @@ Report: `reports/2026-09-10_auction-house-ui.md`.
 npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
 ```
 
-Contracts added: empty vs range price copy; snapshot `item.count === amount`; `refresh` keeps search and clamps page; successful buy leaves GUI `message` unset; search draft is not overwritten while the input is focused.
+Focused: auction 21/21, auction-plugin 8/8, auction-gui 2/2, economy 15/15. `test:server` 41 files / 416 tests PASS. `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
 
 ## 2026-09-09 Auction House
 

@@ -33,7 +33,7 @@ Same plugin and protocol. Browse snapshots patch the listing grid in place. Conf
 
 ## Tests
 
-See `docs/TESTING.md` 2026-09-10 Auction House UI polish. Live browser Anarchy QA was **not** run.
+Focused: `tests/server/auction.test.ts` **21/21**, `tests/server/auction-plugin.test.ts` **8/8**, `tests/auction-gui.test.ts` **2/2**, `tests/server/economy.test.ts` **15/15**. `npm run test:server` **41 files / 416 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS. Live browser Anarchy QA was **not** run.
 
 ## Visual QA
 
