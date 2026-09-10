@@ -58,4 +58,4 @@ No per-tick clan scan. No per-invitation timers. `/clans` sends one page. `/clan
 
 ## Git
 
-Branch `cursor/clan-system-a8dc` from `origin/main@750a3b7`.
+Branch `cursor/clan-system-a8dc` from `origin/main@750a3b7`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/85

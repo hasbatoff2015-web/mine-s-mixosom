@@ -10,7 +10,7 @@
 - Максимум 20 участников включая owner. Invitations и join requests 24ч без per-item timer. Один игрок — один клан. Один активный request.
 - Persistence: `plugin-data/clans/clans.json`. Protocol: `clan_action` / `clan`.
 - Гейты: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, economy 15/15, `test:server` 43/440, четыре typecheck, boundaries, build PASS.
-- Handoff: `docs/reports/2026-09-10_clan-system.md`.
+- Handoff: `docs/reports/2026-09-10_clan-system.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/85
 
 ## Последний проход: Auction House merged into main — 2026-09-10
 
