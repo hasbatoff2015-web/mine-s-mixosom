@@ -1,7 +1,10 @@
 import * as THREE from 'three';
+import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import type { MobKind } from '../src/entities/mobDefinitions';
 import {
+  CHICKEN_LEG_FACE_UVS,
   CHICKEN_MODEL,
   COW_MODEL,
   createMobModel,
@@ -24,6 +27,71 @@ import {
   logicalUvToNormalized,
 } from '../src/rendering/TexturedCuboid';
 import { ATLAS_GUTTER, ATLAS_TILE_SIZE, calculateAtlasLayout } from '../src/rendering/TextureAtlas';
+
+function decodeIndexedPngAlpha(path: URL): { width: number; height: number; alpha: Uint8Array } {
+  const png = readFileSync(path);
+  let width = 0;
+  let height = 0;
+  let transparency = Buffer.alloc(0);
+  const chunks: Buffer[] = [];
+  for (let offset = 8; offset < png.length;) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString('ascii', offset + 4, offset + 8);
+    const data = png.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      expect(data[8]).toBe(8);
+      expect(data[9]).toBe(3);
+      expect(data[12]).toBe(0);
+    } else if (type === 'IDAT') chunks.push(data);
+    else if (type === 'tRNS') transparency = data;
+    offset += length + 12;
+    if (type === 'IEND') break;
+  }
+  const filtered = inflateSync(Buffer.concat(chunks));
+  const pixels = Buffer.alloc(width * height);
+  for (let y = 0, source = 0; y < height; y += 1) {
+    const filter = filtered[source++]!;
+    for (let x = 0; x < width; x += 1) {
+      const raw = filtered[source++]!;
+      const left = x > 0 ? pixels[y * width + x - 1]! : 0;
+      const above = y > 0 ? pixels[(y - 1) * width + x]! : 0;
+      const upperLeft = x > 0 && y > 0 ? pixels[(y - 1) * width + x - 1]! : 0;
+      const estimate = left + above - upperLeft;
+      const paeth = Math.abs(estimate - left) <= Math.abs(estimate - above)
+        && Math.abs(estimate - left) <= Math.abs(estimate - upperLeft)
+        ? left
+        : Math.abs(estimate - above) <= Math.abs(estimate - upperLeft) ? above : upperLeft;
+      const value = filter === 0 ? raw
+        : filter === 1 ? raw + left
+          : filter === 2 ? raw + above
+            : filter === 3 ? raw + Math.floor((left + above) / 2)
+              : raw + paeth;
+      pixels[y * width + x] = value & 0xff;
+    }
+  }
+  return {
+    width,
+    height,
+    alpha: Uint8Array.from(pixels, (paletteIndex) => transparency[paletteIndex] ?? 255),
+  };
+}
+
+function opaquePixelsInLogicalRect(
+  image: ReturnType<typeof decodeIndexedPngAlpha>,
+  rect: { readonly u: number; readonly v: number; readonly width: number; readonly height: number },
+): number {
+  const scaleX = image.width / 64;
+  const scaleY = image.height / 32;
+  let opaque = 0;
+  for (let y = rect.v * scaleY; y < (rect.v + rect.height) * scaleY; y += 1) {
+    for (let x = rect.u * scaleX; x < (rect.u + rect.width) * scaleX; x += 1) {
+      if (image.alpha[y * image.width + x]! > 0) opaque += 1;
+    }
+  }
+  return opaque;
+}
 
 const MOB_KINDS: readonly MobKind[] = [
   'cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider',
@@ -98,15 +166,46 @@ describe('legacy textured mob models', () => {
     expect(legs[7]?.rotation).toEqual([0, Math.PI / 4, Math.PI / 4]);
   });
 
-  it('keeps chicken 1.8 leg boxes and samples the authored yellow island, not the transparent 26,0 slot', () => {
+  it('keeps exactly two grounded chicken legs with opposite gait phases', () => {
     const rightLeg = CHICKEN_MODEL.parts.find((part) => part.name === 'rightLeg')!;
     const leftLeg = CHICKEN_MODEL.parts.find((part) => part.name === 'leftLeg')!;
     expect(rightLeg.rotationPoint).toEqual([-2, 19, 1]);
     expect(leftLeg.rotationPoint).toEqual([1, 19, 1]);
-    expect(rightLeg.boxes[0]).toMatchObject({ origin: [-1, 0, -3], size: [3, 5, 3], textureOffset: [29, 0] });
-    expect(leftLeg.boxes[0]).toMatchObject({ origin: [-1, 0, -3], size: [3, 5, 3], textureOffset: [29, 0], mirror: true });
-    expect(rightLeg.boxes[0]?.textureOffset).not.toEqual([26, 0]);
+    expect(rightLeg.boxes[0]).toMatchObject({
+      origin: [-1, 0, -3], size: [3, 5, 3], physicalSize: [1, 5, 1],
+      textureOffset: [26, 0], faceUvRects: CHICKEN_LEG_FACE_UVS,
+    });
+    expect(leftLeg.boxes[0]).toMatchObject({
+      origin: [-1, 0, -3], size: [3, 5, 3], physicalSize: [1, 5, 1], textureOffset: [26, 0], mirror: true,
+      faceUvRects: CHICKEN_LEG_FACE_UVS,
+    });
+    const model = createMobModel(new VoxelVisualFactory(), 'chicken');
+    expect(model.legs).toHaveLength(2);
+    expect(model.legSwingSigns).toEqual([1, -1]);
+    const pivotY = legacyRotationPointToWorld(rightLeg.rotationPoint)[1];
+    const localCenterY = legacyBoxCenterToLocal(rightLeg.boxes[0]!)[1];
+    expect(pivotY + localCenterY - rightLeg.boxes[0]!.size[1] / 32).toBeCloseTo(0, 8);
     expect(COW_MODEL.parts.filter((part) => part.name.startsWith('leg'))).toHaveLength(4);
+  });
+
+  it('reuses the authored 128x64 foot/shin islands on every visible leg face', () => {
+    const image = decodeIndexedPngAlpha(new URL('../public/textures/entity/chicken.png', import.meta.url));
+    expect([image.width, image.height]).toEqual([128, 64]);
+    const rawFaces = cuboidUvRects({
+      size: [3, 5, 3], textureOffset: [26, 0], logicalTextureSize: [64, 32],
+    });
+    expect(opaquePixelsInLogicalRect(image, rawFaces.bottom)).toBeGreaterThan(0);
+    expect(opaquePixelsInLogicalRect(image, rawFaces.back)).toBeGreaterThan(0);
+    for (const face of ['top', 'left', 'front', 'right'] as const) {
+      expect(opaquePixelsInLogicalRect(image, rawFaces[face]), face).toBe(0);
+    }
+    const visibleFaces = cuboidUvRects({
+      size: [3, 5, 3], textureOffset: [26, 0], logicalTextureSize: [64, 32],
+      faceUvRects: CHICKEN_LEG_FACE_UVS,
+    });
+    for (const face of ['top', 'bottom', 'left', 'front', 'right', 'back'] as const) {
+      expect(opaquePixelsInLogicalRect(image, visibleFaces[face]), face).toBeGreaterThan(0);
+    }
   });
 
   it('uses classic 64x32 biped UV slots for zombie limbs instead of empty 64x64 player overlays', () => {

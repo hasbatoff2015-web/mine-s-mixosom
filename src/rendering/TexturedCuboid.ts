@@ -11,6 +11,8 @@ export interface TexturedCuboidDefinition {
   /** World-space dimensions. Defaults to `size / 16`. */
   readonly physicalSize?: CuboidSize;
   readonly mirror?: boolean;
+  /** Optional authored face islands for sheets whose visible pixels do not fill the legacy cross. */
+  readonly faceUvRects?: Partial<Readonly<Record<CuboidFace, LogicalUvRect>>>;
   /** Expands each side in world units, used by fur/eyes overlay layers. */
   readonly inflate?: number;
 }
@@ -43,13 +45,21 @@ const FACES: readonly FaceDefinition[] = [
 export function cuboidUvRects(definition: TexturedCuboidDefinition): Readonly<Record<CuboidFace, LogicalUvRect>> {
   const [width, height, depth] = definition.size;
   const [u, v] = definition.textureOffset;
-  return {
+  const legacy: Readonly<Record<CuboidFace, LogicalUvRect>> = {
     top: { u: u + depth, v, width, height: depth },
     bottom: { u: u + depth + width, v, width, height: depth },
     left: { u, v: v + depth, width: depth, height },
     front: { u: u + depth, v: v + depth, width, height },
     right: { u: u + depth + width, v: v + depth, width: depth, height },
     back: { u: u + depth + width + depth, v: v + depth, width, height },
+  };
+  return {
+    top: definition.faceUvRects?.top ?? legacy.top,
+    bottom: definition.faceUvRects?.bottom ?? legacy.bottom,
+    front: definition.faceUvRects?.front ?? legacy.front,
+    back: definition.faceUvRects?.back ?? legacy.back,
+    left: definition.faceUvRects?.left ?? legacy.left,
+    right: definition.faceUvRects?.right ?? legacy.right,
   };
 }
 

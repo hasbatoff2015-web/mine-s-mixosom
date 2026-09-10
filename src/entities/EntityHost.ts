@@ -32,6 +32,8 @@ export interface MobModel {
   readonly legSwingSigns: readonly number[];
   readonly arms: readonly EntityVisual[];
   readonly wings: readonly EntityVisual[];
+  readonly heldItemAnchor?: EntityVisual;
+  readonly heldItem?: EntityVisual;
 }
 
 export interface MobVisualState {
