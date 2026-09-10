@@ -8,6 +8,8 @@ Report: `reports/2026-09-10_auction-house-amount-claim.md`.
 npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
 ```
 
+Focused: auction 23/23, auction-plugin 9/9, auction-gui 5/5, economy 15/15. `test:server` 41 files / 419 tests PASS. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-10 Auction House UI polish
 
 Report: `reports/2026-09-10_auction-house-ui.md`.
