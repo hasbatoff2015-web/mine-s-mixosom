@@ -1,5 +1,19 @@
 # Состояние проекта
 
+## Последний проход: Worldgen V2 — snowy plains, mixed forests, cave deposits — 2026-09-10
+
+- От `origin/main@d1a33d4b` создана `codex/snowy-biome-cave-deposits`; main не менялся и merge в main не выполнялся.
+- Канонический `TerrainGenerator` теперь имеет exhaustive `Biome = 'plains' | 'forest' | 'desert' | 'snowy_plains'`, коды `0/1/2/3` и выбор `desert dryness > 0.24`, `snowy climate < -0.36`, `forest climate < -0.14`, иначе plains. Snowy вырезан из прежнего cold-forest range и сохраняет его `biomeDetail = 1.05`, поэтому base/hills/mountains/caves не перенастраивались.
+- Выборка 8 seeds, область `2048×2048`, step 8: plains **50.255%**, forest **17.726%**, desert **22.916%**, snowy **9.104%** above-sea land. Snowy components: median 8 chunks, p95 112, max 399.
+- Snowy surface: `SnowBlock`, три `Dirt`, затем прежняя геология; у flooded snowy columns только `Y=SEA_LEVEL` становится `Ice`, ниже остаётся `Water`. Snowy не получает grass/flowers/fern и имеет только редкую Spruce: targeted sample **0.1695 tree/interior chunk**.
+- Forest использует deterministic equal thirds Oak/Birch/Spruce с отдельными формами. Sample: Oak 130 / Birch 158 / Spruce 152 (**29.55/35.91/34.55%**), 3.0185 trees на equivalent forest chunk. Decoration policy считается по biome каждой candidate column, а не центра chunk.
+- Pipeline явно закреплён как terrain+caves → lava ponds → неизменённые ores → cave deposits → surface decoration. Gravel/Clay — world-space lattice patches с отдельными hash namespaces, только remaining natural Stone рядом с cave Air; cap/bedrock/surface/ores/fluids не заменяются, gravel имеет solid support. Sample: Gravel 913 blocks / 93 deposits / 102 chunks (median 9, p95/max 18); Clay 496 / 74 / 88 (median 6, p95/max 10).
+- `WORLDGEN_VERSION = 2` добавлен additive metadata без bump `WORLD_SCHEMA_VERSION`; новые SP/server/import snapshots записывают v2, старые snapshots без поля продолжают читаться. Natural chunks всё ещё не сохраняются целиком: старый online world при следующей materialization получает V2 base terrain по прежнему seed, затем поверх применяются его modification deltas.
+- Representative 81-chunk benchmark: **1467.764 → 1544.138 ms (+5.2%)**; финальные averages 21.2–22.8 ms и p95 27.4–36.1 ms, без многократного slowdown. Production build 4.15 MiB.
+- Worldgen V2 + ore digest: **16/16 PASS**; old terrain с extended timeout **14/14 PASS**; related lighting/chunk/fluid/falling/server packs PASS. Full suite: **210/217 files, 2025/2046 tests PASS**; три дополнительные parallel-run timeouts прошли isolated 30/30, оставшиеся классы совпадают с документированными main baseline (extractor parse, worldgen/fire-minecart 5s timeouts, tick-load threshold).
+- Manual WebGL QA: plains/forest/desert/snowy/frozen shore/Gravel/Clay прошли, warn/error console пуст. Fresh authoritative online world `qa-online-fresh-2026-09-10` загрузил 81 spawn chunks; клиент вошёл через UI, сервер держал 20 TPS, observed max tick 12.75 ms.
+- Handoff: `docs/reports/2026-09-10_worldgen-v2-snow-cave-deposits.md`.
+
 ## Последний проход: player skin z-fighting integrated into current main — 2026-09-10
 
 - `origin/main@4de89948` влит в `codex/fix-player-layer-zfighting@f1ed162f` обычным merge `72bf906`; merge-base `9eaec6ba`. История не переписывалась.

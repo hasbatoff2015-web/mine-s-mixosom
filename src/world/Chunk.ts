@@ -12,7 +12,7 @@ export class Chunk {
   readonly skyStoredHeights = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE);
   /** Generation-time terrain column cache reused by meshing and biome tint. */
   readonly surfaceHeights = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-  /** 0 plains, 1 forest, 2 desert. */
+  /** 0 plains, 1 forest, 2 desert, 3 snowy_plains. */
   readonly biomeCodes = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
   /**
    * Highest non-air Y written into this chunk (conservative: never shrinks).

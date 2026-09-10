@@ -51,6 +51,7 @@ import {
     WORLD_JOB_BUDGET_MS,
   WORLD_LOADING_JOB_BUDGET_MS,
   WORLD_LIGHT_BUDGET_MS,
+  WORLDGEN_VERSION,
   WORLD_LOADING_LIGHT_BUDGET_MS,
   TARGET_FRAME_MS,
   SEA_LEVEL,
@@ -2803,7 +2804,8 @@ export class Game {
       if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
       const surface = session.world.surfaceY(x, z);
       const floor = session.world.getBlock(x, surface, z);
-      if (floor !== BlockId.GrassBlock) return false;
+      const expectedFloor = column.biome === 'snowy_plains' ? BlockId.SnowBlock : BlockId.GrassBlock;
+      if (floor !== expectedFloor) return false;
       if (session.world.isSolid(x, surface + 1, z) || session.world.isSolid(x, surface + 2, z)) return false;
       session.player.teleport([x + 0.5, surface + 1.01, z + 0.5]);
       this.syncLocalRenderFromPlayer();
@@ -3646,6 +3648,7 @@ export class Game {
     if (!session || session.online) return;
     const state: SerializedWorldState = {
       schemaVersion: WORLD_SCHEMA_VERSION,
+      worldgenVersion: WORLDGEN_VERSION,
       summary: {
         ...session.summary,
         playTimeSeconds: session.playTicks / TICK_RATE,

@@ -3,6 +3,7 @@ import './style.css';
 import { Game } from './core/Game';
 import type { MobKind } from './entities/mobDefinitions';
 import type { MobQaView } from './dev/MobQaHarness';
+import type { Biome } from './world/Generator';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas');
 const uiRoot = document.querySelector<HTMLElement>('#ui-root');
@@ -18,6 +19,8 @@ if (import.meta.env.DEV) {
   const qaItem = search.get('qaItem');
   const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
   const qaBiome = search.get('qaBiome');
+  const qaWorldgenDeposit = search.get('qaWorldgenDeposit');
+  const qaFrozenWater = search.get('qaFrozenWater') === '1';
   const qaLighting = search.get('qaLighting');
   const qaUi = search.get('qaUi');
   const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list']);
@@ -30,7 +33,12 @@ if (import.meta.env.DEV) {
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
-  if (qaFarming) {
+  if (qaWorldgenDeposit === 'gravel' || qaWorldgenDeposit === 'clay') {
+    runningDevHarness = true;
+    void import('./dev/WorldgenDepositQaHarness').then(async ({ startWorldgenDepositQaHarness }) => {
+      disposeApplication = await startWorldgenDepositQaHarness(canvas, uiRoot, qaWorldgenDeposit);
+    });
+  } else if (qaFarming) {
     runningDevHarness = true;
     void import('./dev/FarmingQaHarness').then(async ({ startFarmingQaHarness }) => {
       disposeApplication = await startFarmingQaHarness(canvas, uiRoot);
@@ -55,15 +63,16 @@ if (import.meta.env.DEV) {
     void import('./dev/BreakingQaHarness').then(async ({ startBreakingQaHarness }) => {
       disposeApplication = await startBreakingQaHarness(canvas, uiRoot);
     });
-  } else if ((qaBiome && ['plains', 'forest', 'desert'].includes(qaBiome)) || (qaLighting && lightingScenes.includes(qaLighting))) {
+  } else if (qaFrozenWater || (qaBiome && ['plains', 'forest', 'desert', 'snowy_plains'].includes(qaBiome)) || (qaLighting && lightingScenes.includes(qaLighting))) {
     runningDevHarness = true;
     void import('./dev/VegetationQaHarness').then(async ({ startVegetationQaHarness }) => {
       disposeApplication = await startVegetationQaHarness(
         canvas,
         uiRoot,
-        (qaBiome ?? 'plains') as 'plains' | 'forest' | 'desert',
+        (qaFrozenWater ? 'snowy_plains' : qaBiome ?? 'plains') as Biome,
         qaTime,
         qaLighting && lightingScenes.includes(qaLighting) ? qaLighting as import('./dev/lightingQaScenes').LightingQaScene : undefined,
+        qaFrozenWater ? { x: 2624, z: -2996 } : undefined,
       );
     });
   } else if (qaItem || qaPoseCompare) {

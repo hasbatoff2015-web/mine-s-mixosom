@@ -13,6 +13,7 @@ export type WorldReadyState = 'UNINITIALIZED' | 'INITIALIZING' | 'READY';
 export interface FsWorldMeta {
   readonly worldId: string;
   readonly seed: string;
+  readonly worldgenVersion?: number;
   readonly spawn: readonly [number, number, number];
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -60,6 +61,7 @@ export function snapshotToFsRecords(snapshot: WorldSnapshot): FsWorldRecords {
     meta: {
       worldId: snapshot.summary.id,
       seed: snapshot.summary.seed,
+      ...(snapshot.worldgenVersion !== undefined ? { worldgenVersion: snapshot.worldgenVersion } : {}),
       spawn,
       createdAt: snapshot.summary.createdAt || now,
       updatedAt: snapshot.summary.updatedAt || now,
@@ -90,6 +92,7 @@ export function fsRecordsToSnapshot(records: FsWorldRecords): WorldSnapshot {
   const worldId = records.meta.worldId;
   return {
     schemaVersion: WORLD_SCHEMA_VERSION,
+    ...(records.meta.worldgenVersion !== undefined ? { worldgenVersion: records.meta.worldgenVersion } : {}),
     summary: {
       id: worldId,
       name: worldId === ANARCHY_WORLD_ID ? 'Анархия' : worldId,
@@ -137,6 +140,9 @@ export function parseFsMeta(raw: unknown): FsWorldMeta {
   return {
     worldId: meta.worldId,
     seed: meta.seed,
+    ...(typeof meta.worldgenVersion === 'number' && Number.isFinite(meta.worldgenVersion) && meta.worldgenVersion >= 1
+      ? { worldgenVersion: Math.floor(meta.worldgenVersion) }
+      : {}),
     spawn,
     createdAt: typeof meta.createdAt === 'number' ? meta.createdAt : Date.now(),
     updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : Date.now(),

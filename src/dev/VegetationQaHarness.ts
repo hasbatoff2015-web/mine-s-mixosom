@@ -16,6 +16,7 @@ export async function startVegetationQaHarness(
   biome: Biome,
   time: VegetationQaTime = 'day',
   lightingScene?: LightingQaScene,
+  centerOverride?: Readonly<{ x: number; z: number }>,
 ): Promise<() => void> {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -33,8 +34,10 @@ export async function startVegetationQaHarness(
   sun.position.set(40, night ? 12 : 70, 25);
   scene.add(sun);
   const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
-  const world = lightingScene ? createLightingQaScene(lightingScene) : new VoxelWorld(`vegetation-qa-${biome}`);
-  const center = lightingScene ? { x: 14, z: 16 } : findBiomeCenter(world, biome);
+  const world = lightingScene
+    ? createLightingQaScene(lightingScene)
+    : new VoxelWorld(centerOverride ? 'alpha' : `vegetation-qa-${biome}`);
+  const center = lightingScene ? { x: 14, z: 16 } : centerOverride ?? findBiomeCenter(world, biome);
   if (!lightingScene) world.ensureChunks(center.x, center.z, 2, 25);
   const surface = lightingScene === 'high' ? 192 : lightingScene ? 39 : world.surfaceY(center.x, center.z);
   if (night && !lightingScene) placeNightTorch(world, center.x, surface, center.z);

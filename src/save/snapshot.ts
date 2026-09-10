@@ -177,6 +177,9 @@ export function parseWorldSnapshot(raw: unknown): WorldSnapshot {
   const players = parsePlayers(raw.players);
   const snapshot: WorldSnapshot = {
     schemaVersion: WORLD_SCHEMA_VERSION,
+    ...(typeof raw.worldgenVersion === 'number' && Number.isFinite(raw.worldgenVersion) && raw.worldgenVersion >= 1
+      ? { worldgenVersion: Math.floor(raw.worldgenVersion) }
+      : {}),
     summary,
     timeOfDay: finiteNumber(raw.timeOfDay, 0),
     weather: 'clear',

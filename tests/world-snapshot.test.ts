@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
+import { WORLDGEN_VERSION } from '../src/core/constants';
 import { Inventory } from '../src/inventory';
 import { PersistenceError } from '../src/save/PersistenceError';
 import { fsRecordsToSnapshot, snapshotToFsRecords } from '../src/save/fsRecords';
@@ -13,6 +14,7 @@ describe('WorldSnapshot', () => {
     const json = JSON.parse(JSON.stringify(original)) as unknown;
     const restored = parseWorldSnapshot(json);
     expect(restored.schemaVersion).toBe(WORLD_SCHEMA_VERSION);
+    expect(restored.worldgenVersion).toBe(WORLDGEN_VERSION);
     expect(restored.summary.seed).toBe('seed-1');
     expect(restored.timeOfDay).toBe(6000);
     expect(restored.player.position).toEqual([8.5, 64, 8.5]);
@@ -97,9 +99,11 @@ describe('WorldSnapshot', () => {
     });
     const records = snapshotToFsRecords(original);
     expect(records.meta.worldId).toBe('anarchy');
+    expect(records.meta.worldgenVersion).toBe(WORLDGEN_VERSION);
     expect(records.meta.spawn).toEqual([8.5, 64, 8.5]);
     const back = parseWorldSnapshot(fsRecordsToSnapshot(records));
     expect(back.summary.id).toBe('anarchy');
+    expect(back.worldgenVersion).toBe(WORLDGEN_VERSION);
     expect(back.summary.seed).toBe('anarchy-spawn-v1');
     expect(back.modifications).toEqual(original.modifications);
     expect(back.blockStates).toEqual(original.blockStates);
@@ -113,6 +117,12 @@ describe('WorldSnapshot', () => {
       ...sampleSnapshot(),
       schemaVersion: 99,
     })).toThrow(PersistenceError);
+  });
+
+  it('accepts old snapshots without generation metadata as an additive field', () => {
+    const old = { ...sampleSnapshot() } as Record<string, unknown>;
+    delete old.worldgenVersion;
+    expect(parseWorldSnapshot(old).worldgenVersion).toBeUndefined();
   });
 
   it('does not persist client-only visual clocks', () => {
