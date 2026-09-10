@@ -23,7 +23,7 @@ Auction listing hover uses structured tooltip rows. Inventory/chest tooltips sta
 
 ## Tests
 
-Filled after the gate run.
+Focused: auction **24/24**, auction-plugin **9/9**, auction-gui **6/6**, economy **15/15**. `npm run test:server` **41 files / 420 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS. Live browser Anarchy QA was **not** run.
 
 ## Visual QA
 
