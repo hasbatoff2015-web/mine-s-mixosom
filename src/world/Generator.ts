@@ -3,7 +3,38 @@ import { CHUNK_SIZE, MAX_GENERATED_SURFACE, SEA_LEVEL, WORLD_HEIGHT } from '../c
 import { Chunk } from './Chunk';
 import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise2D, valueNoise3D } from './noise';
 
-export type Biome = 'plains' | 'forest' | 'desert';
+export type Biome = 'plains' | 'forest' | 'desert' | 'snowy_plains';
+
+export const BIOME_CODES: Readonly<Record<Biome, number>> = {
+  plains: 0,
+  forest: 1,
+  desert: 2,
+  snowy_plains: 3,
+};
+
+export const DESERT_THRESHOLD = 0.24;
+export const FOREST_THRESHOLD = -0.14;
+/** Calibrated over eight 2048×2048 samples: ~9.1% of above-sea land. */
+export const SNOWY_THRESHOLD = -0.36;
+
+export function biomeCode(biome: Biome): number {
+  return BIOME_CODES[biome];
+}
+
+export type TreeKind = 'oak' | 'birch' | 'spruce';
+
+export const TREE_BLOCKS: Readonly<Record<TreeKind, Readonly<{ log: BlockId; leaves: BlockId }>>> = {
+  oak: { log: BlockId.OakLog, leaves: BlockId.OakLeaves },
+  birch: { log: BlockId.BirchLog, leaves: BlockId.BirchLeaves },
+  spruce: { log: BlockId.SpruceLog, leaves: BlockId.SpruceLeaves },
+};
+
+const BIOME_SPAWN_PENALTY: Readonly<Record<Biome, number>> = {
+  plains: 0,
+  forest: 18,
+  snowy_plains: 42,
+  desert: 80,
+};
 
 export interface OreRule {
   readonly block: BlockId;
@@ -47,6 +78,37 @@ export const LAVA_POND_CELL = 16;
 
 /** Skip tiny fragments that would look like the old scatter. */
 const LAVA_POND_MIN_COLUMNS = 4;
+
+/** Cave deposits use a separate world-space lattice and never consume ore RNG. */
+export const CAVE_DEPOSIT_CELL_XZ = 12;
+export const CAVE_DEPOSIT_CELL_Y = 10;
+export const CAVE_DEPOSIT_MIN_Y = 14;
+export const CAVE_DEPOSIT_MAX_Y = 54;
+const CAVE_DEPOSIT_MAX_RADIUS_XZ = 3.9;
+const CAVE_DEPOSIT_MAX_RADIUS_Y = 2.2;
+const CAVE_DEPOSIT_CHANCE = 0.20;
+
+type CaveDepositKind = 'gravel' | 'clay';
+
+interface CaveDepositPlan {
+  readonly cellX: number;
+  readonly cellY: number;
+  readonly cellZ: number;
+  readonly kind: CaveDepositKind;
+  readonly block: BlockId.Gravel | BlockId.Clay;
+  readonly cx: number;
+  readonly cy: number;
+  readonly cz: number;
+  readonly radiusX: number;
+  readonly radiusY: number;
+  readonly radiusZ: number;
+}
+
+interface CaveDepositVoxel {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
 
 const HORIZONTAL_NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -97,8 +159,9 @@ export interface SpawnColumn {
 
 /** Lower is better: plains, low mountains, closer to origin. */
 export function spawnColumnScore(column: SpawnColumn, originX = 0, originZ = 0): number {
-  const biomePenalty = column.biome === 'plains' ? 0 : column.biome === 'forest' ? 18 : 80;
-  return biomePenalty + column.mountain * 3.2 + Math.hypot(column.x - originX, column.z - originZ) * 0.04;
+  return BIOME_SPAWN_PENALTY[column.biome]
+    + column.mountain * 3.2
+    + Math.hypot(column.x - originX, column.z - originZ) * 0.04;
 }
 
 /**
@@ -136,6 +199,8 @@ const MAX_SURFACE = MAX_GENERATED_SURFACE;
 
 export class TerrainGenerator {
   readonly numericSeed: number;
+  private readonly caveDepositCache = new Map<string, readonly CaveDepositVoxel[] | null>();
+  private readonly caveColumnCache = new Map<string, ColumnInfo>();
 
   constructor(readonly seed: string) {
     this.numericSeed = hashCoords(0x51f15e, ...this.seedParts(seed));
@@ -144,10 +209,18 @@ export class TerrainGenerator {
   columnAt(x: number, z: number): ColumnInfo {
     const climate = fbm2D(this.numericSeed + 301, x / 150, z / 150, 3);
     const dryness = fbm2D(this.numericSeed + 733, x / 210, z / 210, 3);
-    const biome: Biome = dryness > 0.24 ? 'desert' : climate < -0.14 ? 'forest' : 'plains';
+    const biome: Biome = dryness > DESERT_THRESHOLD
+      ? 'desert'
+      : climate < SNOWY_THRESHOLD
+        ? 'snowy_plains'
+        : climate < FOREST_THRESHOLD
+          ? 'forest'
+          : 'plains';
     const broad = fbm2D(this.numericSeed + 17, x / 120, z / 120, 4);
     const detail = fbm2D(this.numericSeed + 47, x / 36, z / 36, 3);
-    const biomeDetail = biome === 'desert' ? 0.75 : biome === 'forest' ? 1.05 : 0.9;
+    // Snow is carved out of the former cold forest range, so it deliberately
+    // keeps the exact old forest terrain multiplier.
+    const biomeDetail = biome === 'desert' ? 0.75 : biome === 'forest' || biome === 'snowy_plains' ? 1.05 : 0.9;
     const base = BASE_HEIGHT + broad * 4 + detail * 1.5 * biomeDetail;
     const hillField = fbm2D(this.numericSeed + 91, x / 72, z / 72, 3);
     const hills = Math.max(0, hillField - 0.12) * 8;
@@ -171,7 +244,7 @@ export class TerrainGenerator {
         const column = this.columnAt(worldX + hx - halo, worldZ + hz - halo);
         const index = hz * stride + hx;
         heights[index] = column.height;
-        biomes[index] = column.biome === 'forest' ? 1 : column.biome === 'desert' ? 2 : 0;
+        biomes[index] = biomeCode(column.biome);
       }
     }
 
@@ -182,11 +255,12 @@ export class TerrainGenerator {
         const hx = localX + halo;
         const hz = localZ + halo;
         const height = heights[hz * stride + hx]!;
-        const biomeCode = biomes[hz * stride + hx]!;
-        const desert = biomeCode === 2;
+        const code = biomes[hz * stride + hx]!;
+        const desert = code === BIOME_CODES.desert;
+        const snowy = code === BIOME_CODES.snowy_plains;
         const columnIndex = localZ * CHUNK_SIZE + localX;
         chunk.surfaceHeights[columnIndex] = height;
-        chunk.biomeCodes[columnIndex] = biomeCode;
+        chunk.biomeCodes[columnIndex] = code;
         let roof = height;
         for (let dz = -1; dz <= 1; dz += 1) {
           for (let dx = -1; dx <= 1; dx += 1) {
@@ -203,8 +277,8 @@ export class TerrainGenerator {
           else if (y <= cap) block = BlockId.Stone;
           else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
           else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
-          else if (y === height) block = desert ? BlockId.Sand : BlockId.GrassBlock;
-          else if (y <= SEA_LEVEL) block = BlockId.Water;
+          else if (y === height) block = desert ? BlockId.Sand : snowy ? BlockId.SnowBlock : BlockId.GrassBlock;
+          else if (y <= SEA_LEVEL) block = snowy && y === SEA_LEVEL ? BlockId.Ice : BlockId.Water;
 
           if (y > cap && y <= roof && this.isCave(x, y, z, height)) {
             block = BlockId.Air;
@@ -216,6 +290,7 @@ export class TerrainGenerator {
 
     this.placeLavaLakes(chunk, heights, halo);
     this.generateOres(chunk);
+    this.generateCaveDeposits(chunk);
     this.decorate(chunk);
     chunk.generated = true;
     chunk.dirty = true;
@@ -236,6 +311,34 @@ export class TerrainGenerator {
       if (branch < 0.07) return true;
     }
     return slow > 0.50 && main < 0.18;
+  }
+
+  /** Exact terrain-pass cave Air query, including the local 3×3 roof guard. */
+  isNaturalCaveAir(x: number, y: number, z: number): boolean {
+    if (y < CAVE_DEPOSIT_MIN_Y - 1 || y >= WORLD_HEIGHT) return false;
+    const column = this.caveColumnAt(x, z);
+    let roof = column.height;
+    for (let dz = -1; dz <= 1; dz += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        roof = Math.min(roof, this.caveColumnAt(x + dx, z + dz).height);
+      }
+    }
+    roof -= CAVE_ROOF_DEPTH;
+    const cap = stoneCapY(this.bedrockHeight(x, z));
+    return y > cap && y <= roof && this.isCave(x, y, z, column.height);
+  }
+
+  private caveColumnAt(x: number, z: number): ColumnInfo {
+    const key = `${x},${z}`;
+    const cached = this.caveColumnCache.get(key);
+    if (cached) return cached;
+    const column = this.columnAt(x, z);
+    if (this.caveColumnCache.size >= 8192) {
+      const oldest = this.caveColumnCache.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.caveColumnCache.delete(oldest);
+    }
+    this.caveColumnCache.set(key, column);
+    return column;
   }
 
   isSafeSpawnColumn(x: number, z: number): boolean {
@@ -501,10 +604,225 @@ export class TerrainGenerator {
     }
   }
 
+  private caveDepositPlan(cellX: number, cellY: number, cellZ: number): CaveDepositPlan | undefined {
+    if (random01(this.numericSeed + 12_101, cellX, cellY, cellZ) > CAVE_DEPOSIT_CHANCE) return undefined;
+    const cx = cellX * CAVE_DEPOSIT_CELL_XZ
+      + Math.floor(random01(this.numericSeed + 12_102, cellX, cellY, cellZ) * CAVE_DEPOSIT_CELL_XZ);
+    const cy = cellY * CAVE_DEPOSIT_CELL_Y
+      + Math.floor(random01(this.numericSeed + 12_103, cellX, cellY, cellZ) * CAVE_DEPOSIT_CELL_Y);
+    const cz = cellZ * CAVE_DEPOSIT_CELL_XZ
+      + Math.floor(random01(this.numericSeed + 12_104, cellX, cellY, cellZ) * CAVE_DEPOSIT_CELL_XZ);
+    if (cy < CAVE_DEPOSIT_MIN_Y || cy > CAVE_DEPOSIT_MAX_Y) return undefined;
+    const gravel = random01(this.numericSeed + 12_105, cellX, cellY, cellZ) < 0.64;
+    const size = random01(this.numericSeed + 12_106, cellX, cellY, cellZ);
+    const stretch = random01(this.numericSeed + 12_107, cellX, cellY, cellZ);
+    const baseRadius = gravel ? 2.35 + size * 1.05 : 1.85 + size * 0.85;
+    return {
+      cellX,
+      cellY,
+      cellZ,
+      kind: gravel ? 'gravel' : 'clay',
+      block: gravel ? BlockId.Gravel : BlockId.Clay,
+      cx,
+      cy,
+      cz,
+      radiusX: baseRadius * (0.86 + stretch * 0.26),
+      radiusY: gravel ? 1.25 + size * 0.85 : 1.15 + size * 0.65,
+      radiusZ: baseRadius * (1.12 - stretch * 0.26),
+    };
+  }
+
+  /** Ores run first; this pass can replace only remaining natural Stone. */
+  private generateCaveDeposits(chunk: Chunk): void {
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
+    const minCellX = Math.floor((worldX - CAVE_DEPOSIT_MAX_RADIUS_XZ) / CAVE_DEPOSIT_CELL_XZ);
+    const maxCellX = Math.floor((worldX + CHUNK_SIZE - 1 + CAVE_DEPOSIT_MAX_RADIUS_XZ) / CAVE_DEPOSIT_CELL_XZ);
+    const minCellY = Math.floor((CAVE_DEPOSIT_MIN_Y - CAVE_DEPOSIT_MAX_RADIUS_Y) / CAVE_DEPOSIT_CELL_Y);
+    const maxCellY = Math.floor((CAVE_DEPOSIT_MAX_Y + CAVE_DEPOSIT_MAX_RADIUS_Y) / CAVE_DEPOSIT_CELL_Y);
+    const minCellZ = Math.floor((worldZ - CAVE_DEPOSIT_MAX_RADIUS_XZ) / CAVE_DEPOSIT_CELL_XZ);
+    const maxCellZ = Math.floor((worldZ + CHUNK_SIZE - 1 + CAVE_DEPOSIT_MAX_RADIUS_XZ) / CAVE_DEPOSIT_CELL_XZ);
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+      for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+        for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+          const plan = this.caveDepositPlan(cellX, cellY, cellZ);
+          if (!plan) continue;
+          if (plan.cx + plan.radiusX < worldX || plan.cx - plan.radiusX >= worldX + CHUNK_SIZE) continue;
+          if (plan.cz + plan.radiusZ < worldZ || plan.cz - plan.radiusZ >= worldZ + CHUNK_SIZE) continue;
+          this.placeCaveDeposit(chunk, plan);
+        }
+      }
+    }
+  }
+
+  private placeCaveDeposit(chunk: Chunk, plan: CaveDepositPlan): void {
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
+    const voxels = this.caveDepositVoxels(plan);
+    for (const voxel of voxels) {
+      const localX = voxel.x - worldX;
+      const localZ = voxel.z - worldZ;
+      if (localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) continue;
+      if (chunk.get(localX, voxel.y, localZ) !== BlockId.Stone) continue;
+      if (this.touchesFluidInChunk(chunk, localX, voxel.y, localZ)) continue;
+      if (plan.kind === 'gravel') {
+        const below = chunk.get(localX, voxel.y - 1, localZ) as BlockId;
+        if (!this.solidSupportBlock(below)) continue;
+      }
+      chunk.set(localX, voxel.y, localZ, plan.block);
+    }
+  }
+
+  private caveDepositVoxels(plan: CaveDepositPlan): readonly CaveDepositVoxel[] {
+    const cacheKey = `${plan.cellX},${plan.cellY},${plan.cellZ}`;
+    const cached = this.caveDepositCache.get(cacheKey);
+    if (cached !== undefined) return cached ?? [];
+    const minX = Math.floor(plan.cx - plan.radiusX);
+    const maxX = Math.ceil(plan.cx + plan.radiusX);
+    const minY = Math.max(CAVE_DEPOSIT_MIN_Y, Math.floor(plan.cy - plan.radiusY));
+    const maxY = Math.min(CAVE_DEPOSIT_MAX_Y, Math.ceil(plan.cy + plan.radiusY));
+    const minZ = Math.floor(plan.cz - plan.radiusZ);
+    const maxZ = Math.ceil(plan.cz + plan.radiusZ);
+    const rawColumns = new Map<string, ColumnInfo>();
+    for (let z = minZ - 2; z <= maxZ + 2; z += 1) {
+      for (let x = minX - 2; x <= maxX + 2; x += 1) {
+        rawColumns.set(`${x},${z}`, this.caveColumnAt(x, z));
+      }
+    }
+    const columns = new Map<string, ColumnInfo & { readonly roof: number; readonly cap: number }>();
+    for (let z = minZ - 1; z <= maxZ + 1; z += 1) {
+      for (let x = minX - 1; x <= maxX + 1; x += 1) {
+        const column = rawColumns.get(`${x},${z}`)!;
+        let roof = column.height;
+        for (let dz = -1; dz <= 1; dz += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            roof = Math.min(roof, rawColumns.get(`${x + dx},${z + dz}`)!.height);
+          }
+        }
+        columns.set(`${x},${z}`, {
+          ...column,
+          roof: roof - CAVE_ROOF_DEPTH,
+          cap: stoneCapY(this.bedrockHeight(x, z)),
+        });
+      }
+    }
+    const naturalAir = (x: number, y: number, z: number): boolean => {
+      const column = columns.get(`${x},${z}`);
+      if (!column || y <= column.cap || y > column.roof) return false;
+      return this.isCave(x, y, z, column.height);
+    };
+    const naturalStone = (x: number, y: number, z: number): boolean => {
+      const column = columns.get(`${x},${z}`);
+      if (!column || y <= column.cap) return false;
+      const soilDepth = column.biome === 'desert' ? 4 : 3;
+      return y < column.height - soilDepth && !naturalAir(x, y, z);
+    };
+    const candidates: CaveDepositVoxel[] = [];
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          const dx = (x - plan.cx) / plan.radiusX;
+          const dy = (y - plan.cy) / plan.radiusY;
+          const dz = (z - plan.cz) / plan.radiusZ;
+          const warp = 0.88 + random01(this.numericSeed + 12_108, x, y, z) * 0.24;
+          if (dx * dx + dy * dy + dz * dz > warp || !naturalStone(x, y, z)) continue;
+          const caveSurface = ([
+            [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+          ] as const).some(([ox, oy, oz]) => naturalAir(x + ox, y + oy, z + oz));
+          if (!caveSurface) continue;
+          if (plan.kind === 'gravel' && !naturalStone(x, y - 1, z)) continue;
+          candidates.push({ x, y, z });
+        }
+      }
+    }
+    const largest = this.largestVoxelComponent(candidates);
+    const minimum = plan.kind === 'gravel' ? 6 : 4;
+    const maximum = plan.kind === 'gravel' ? 18 : 10;
+    const result = largest.length < minimum ? [] : this.connectedVoxelSubset(largest, plan, maximum);
+    if (this.caveDepositCache.size >= 512) {
+      const oldest = this.caveDepositCache.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.caveDepositCache.delete(oldest);
+    }
+    this.caveDepositCache.set(cacheKey, result.length > 0 ? result : null);
+    return result;
+  }
+
+  private largestVoxelComponent(voxels: readonly CaveDepositVoxel[]): CaveDepositVoxel[] {
+    const byKey = new Map(voxels.map((voxel) => [`${voxel.x},${voxel.y},${voxel.z}`, voxel]));
+    const seen = new Set<string>();
+    let largest: CaveDepositVoxel[] = [];
+    for (const voxel of voxels) {
+      const start = `${voxel.x},${voxel.y},${voxel.z}`;
+      if (seen.has(start)) continue;
+      const stack = [voxel];
+      const component: CaveDepositVoxel[] = [];
+      seen.add(start);
+      while (stack.length > 0) {
+        const current = stack.pop()!;
+        component.push(current);
+        for (const [dx, dy, dz] of [
+          [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+        ] as const) {
+          const key = `${current.x + dx},${current.y + dy},${current.z + dz}`;
+          if (seen.has(key) || !byKey.has(key)) continue;
+          seen.add(key);
+          stack.push(byKey.get(key)!);
+        }
+      }
+      if (component.length > largest.length) largest = component;
+    }
+    return largest;
+  }
+
+  private connectedVoxelSubset(
+    component: readonly CaveDepositVoxel[],
+    plan: CaveDepositPlan,
+    maximum: number,
+  ): CaveDepositVoxel[] {
+    if (component.length <= maximum) return [...component];
+    const byKey = new Map(component.map((voxel) => [`${voxel.x},${voxel.y},${voxel.z}`, voxel]));
+    const start = [...component].sort((a, b) => {
+      const da = (a.x - plan.cx) ** 2 + (a.y - plan.cy) ** 2 + (a.z - plan.cz) ** 2;
+      const db = (b.x - plan.cx) ** 2 + (b.y - plan.cy) ** 2 + (b.z - plan.cz) ** 2;
+      return da - db || random01(this.numericSeed + 12_109, a.x, a.y, a.z)
+        - random01(this.numericSeed + 12_109, b.x, b.y, b.z);
+    })[0]!;
+    const queue = [start];
+    const selected: CaveDepositVoxel[] = [];
+    const seen = new Set([`${start.x},${start.y},${start.z}`]);
+    while (queue.length > 0 && selected.length < maximum) {
+      const current = queue.shift()!;
+      selected.push(current);
+      const neighbors: CaveDepositVoxel[] = [];
+      for (const [dx, dy, dz] of [
+        [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+      ] as const) {
+        const key = `${current.x + dx},${current.y + dy},${current.z + dz}`;
+        const neighbor = byKey.get(key);
+        if (!neighbor || seen.has(key)) continue;
+        seen.add(key);
+        neighbors.push(neighbor);
+      }
+      neighbors.sort((a, b) => random01(this.numericSeed + 12_110, a.x, a.y, a.z)
+        - random01(this.numericSeed + 12_110, b.x, b.y, b.z));
+      queue.push(...neighbors);
+    }
+    return selected;
+  }
+
+  private touchesFluidInChunk(chunk: Chunk, x: number, y: number, z: number): boolean {
+    for (const [dx, dy, dz] of [
+      [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+    ] as const) {
+      const block = chunk.get(x + dx, y + dy, z + dz);
+      if (block === BlockId.Lava || block === BlockId.Water) return true;
+    }
+    return false;
+  }
+
   private decorate(chunk: Chunk): void {
     const rng = mulberry32(hashCoords(this.numericSeed + 1601, chunk.x, 0, chunk.z));
-    const center = this.columnAt(chunk.x * CHUNK_SIZE + 8, chunk.z * CHUNK_SIZE + 8);
-    const attempts = center.biome === 'forest' ? 10 : center.biome === 'desert' ? 5 : 2;
+    const attempts = 10;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const x = 2 + Math.floor(rng() * (CHUNK_SIZE - 4));
       const z = 2 + Math.floor(rng() * (CHUNK_SIZE - 4));
@@ -514,16 +832,28 @@ export class TerrainGenerator {
       if (column.height <= SEA_LEVEL || column.height >= WORLD_HEIGHT - 8) continue;
       if (chunk.get(x, column.height, z) === BlockId.Air) continue;
       if (column.biome === 'desert') {
-        if (chunk.get(x, column.height, z) !== BlockId.Sand || rng() > 0.09) continue;
+        if (chunk.get(x, column.height, z) !== BlockId.Sand || rng() > 0.05) continue;
         const height = 2 + Math.floor(rng() * 2);
         for (let y = 1; y <= height; y += 1) chunk.set(x, column.height + y, z, BlockId.Cactus);
       } else {
-        if (chunk.get(x, column.height, z) !== BlockId.GrassBlock) continue;
-        if (column.biome === 'forest' && rng() > 0.4) continue;
-        if (column.biome === 'plains' && rng() > 0.48) continue;
+        const expectedSurface = column.biome === 'snowy_plains' ? BlockId.SnowBlock : BlockId.GrassBlock;
+        if (chunk.get(x, column.height, z) !== expectedSurface) continue;
+        if (column.biome === 'forest' && rng() > 0.55) continue;
+        if (column.biome === 'plains' && rng() > 0.10) continue;
+        if (column.biome === 'snowy_plains' && rng() > 0.02) continue;
         const grove = fbm2D(this.numericSeed + 1703, worldX / 42, worldZ / 42, 2);
         if (column.biome === 'forest' && grove < -0.35 && rng() > 0.5) continue;
-        this.placeOak(chunk, x, column.height + 1, z, 4 + Math.floor(rng() * 2));
+        const kind: TreeKind = column.biome === 'snowy_plains'
+          ? 'spruce'
+          : column.biome === 'plains'
+            ? 'oak'
+            : this.forestTreeKind(rng());
+        const height = kind === 'oak'
+          ? 4 + Math.floor(rng() * 2)
+          : kind === 'birch'
+            ? 5 + Math.floor(rng() * 3)
+            : 6 + Math.floor(rng() * 3);
+        this.placeTree(chunk, x, column.height + 1, z, kind, height);
       }
     }
     this.decoratePlants(chunk, rng);
@@ -546,6 +876,7 @@ export class TerrainGenerator {
         }
         continue;
       }
+      if (column.biome === 'snowy_plains') continue;
       if (chunk.get(x, column.height, z) !== BlockId.GrassBlock) continue;
       const density = column.biome === 'forest' ? 0.76 : 0.50;
       if (roll >= density) continue;
@@ -558,18 +889,49 @@ export class TerrainGenerator {
     }
   }
 
-  private placeOak(chunk: Chunk, x: number, y: number, z: number, height: number): void {
-    for (let offset = 0; offset < height; offset += 1) chunk.set(x, y + offset, z, BlockId.OakLog);
-    const top = y + height;
-    for (let dy = -2; dy <= 1; dy += 1) {
-      const radius = dy >= 1 ? 1 : 2;
+  private forestTreeKind(roll: number): TreeKind {
+    return roll < 1 / 3 ? 'oak' : roll < 2 / 3 ? 'birch' : 'spruce';
+  }
+
+  private placeTree(chunk: Chunk, x: number, y: number, z: number, kind: TreeKind, height: number): boolean {
+    const blocks = TREE_BLOCKS[kind];
+    const shape = new Map<string, Readonly<{ x: number; y: number; z: number; block: BlockId }>>();
+    const addLeaves = (dy: number, radius: number, rounded = false): void => {
       for (let dx = -radius; dx <= radius; dx += 1) {
         for (let dz = -radius; dz <= radius; dz += 1) {
-          if (Math.abs(dx) === radius && Math.abs(dz) === radius && dy !== 0) continue;
-          if (chunk.get(x + dx, top + dy, z + dz) === BlockId.Air) chunk.set(x + dx, top + dy, z + dz, BlockId.OakLeaves);
+          if (rounded && radius > 1 && Math.abs(dx) === radius && Math.abs(dz) === radius) continue;
+          const px = x + dx;
+          const py = y + height + dy;
+          const pz = z + dz;
+          shape.set(`${px},${py},${pz}`, { x: px, y: py, z: pz, block: blocks.leaves });
         }
       }
+    };
+    if (kind === 'oak') {
+      for (let dy = -2; dy <= 1; dy += 1) addLeaves(dy, dy >= 1 ? 1 : 2, dy !== 0);
+    } else if (kind === 'birch') {
+      addLeaves(-2, 1);
+      addLeaves(-1, 1);
+      addLeaves(0, 1);
+      addLeaves(1, 0);
+    } else {
+      addLeaves(-5, 1);
+      addLeaves(-4, 2, true);
+      addLeaves(-3, 1);
+      addLeaves(-2, 2, true);
+      addLeaves(-1, 1);
+      addLeaves(0, 0);
     }
+    for (let offset = 0; offset < height; offset += 1) {
+      shape.set(`${x},${y + offset},${z}`, { x, y: y + offset, z, block: blocks.log });
+    }
+    for (const entry of shape.values()) {
+      if (entry.y < 0 || entry.y >= WORLD_HEIGHT) return false;
+      const existing = chunk.get(entry.x, entry.y, entry.z) as BlockId;
+      if (existing !== BlockId.Air && getBlockDefinition(existing).replaceable !== true) return false;
+    }
+    for (const entry of shape.values()) chunk.set(entry.x, entry.y, entry.z, entry.block);
+    return true;
   }
 
   private seedParts(seed: string): [number, number, number] {

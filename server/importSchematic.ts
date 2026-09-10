@@ -14,6 +14,7 @@ import { WORLD_SCHEMA_VERSION, type WorldSnapshot } from '../src/save/types';
 import type { WorldStore } from '../src/save/WorldStore';
 import type { ImportReport } from '../src/world/import/placeStructure';
 import { backupWorldDirectory } from './backupWorldDir';
+import { WORLDGEN_VERSION } from '../src/core/constants';
 
 export interface ImportAnarchySchematicOptions {
   readonly store: WorldStore;
@@ -121,6 +122,7 @@ export async function importAnarchySchematic(
   const preservePlayers = options.preservePlayers !== false;
   const snapshot: WorldSnapshot = {
     schemaVersion: WORLD_SCHEMA_VERSION,
+    worldgenVersion: WORLDGEN_VERSION,
     summary: {
       id: options.worldId,
       name: options.worldId === ANARCHY_WORLD_ID ? 'Анархия' : options.worldId,

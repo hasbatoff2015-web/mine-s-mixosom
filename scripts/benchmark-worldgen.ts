@@ -1,5 +1,5 @@
 import { Chunk } from '../src/world/Chunk';
-import { TerrainGenerator } from '../src/world/Generator';
+import { TerrainGenerator, type Biome } from '../src/world/Generator';
 import { measureWorldgenRegion, WORLDGEN_QA_SEEDS } from '../src/world/worldgenMetrics';
 
 interface SampleStats {
@@ -37,7 +37,7 @@ function generateTimed(seed: string, cx: number, cz: number): number {
   return performance.now() - start;
 }
 
-function biomeSample(biome: 'plains' | 'forest' | 'desert'): SampleStats {
+function biomeSample(biome: Biome): SampleStats {
   const samples: number[] = [];
   for (const seed of WORLDGEN_QA_SEEDS) {
     const generator = new TerrainGenerator(seed);
@@ -55,6 +55,7 @@ function biomeSample(biome: 'plains' | 'forest' | 'desert'): SampleStats {
 const plains = biomeSample('plains');
 const forest = biomeSample('forest');
 const desert = biomeSample('desert');
+const snowy = biomeSample('snowy_plains');
 
 const batchSamples: number[] = [];
 {
@@ -81,6 +82,7 @@ console.log(JSON.stringify({
     plainsChunk: plains,
     forestChunk: forest,
     desertChunk: desert,
+    snowyChunk: snowy,
     batch81ChunksMs: Number(batchSamples[0]!.toFixed(3)),
   },
   sample: {
@@ -103,6 +105,10 @@ console.log(JSON.stringify({
       stats.reduce((sum, row) => sum + row.cactus, 0)
       / Math.max(1, stats.reduce((sum, row) => sum + row.desertChunks, 0))
     ).toFixed(3)),
+    treesPerSnowyChunk: Number((
+      stats.reduce((sum, row) => sum + row.snowyTrees, 0)
+      / Math.max(1, stats.reduce((sum, row) => sum + row.snowyChunks, 0))
+    ).toFixed(3)),
   },
   seeds: stats.map((row) => ({
     seed: row.seed,
@@ -118,5 +124,6 @@ console.log(JSON.stringify({
     cactus: row.cactus,
     forestChunks: row.forestChunks,
     desertChunks: row.desertChunks,
+    snowyChunks: row.snowyChunks,
   })),
 }, null, 2));

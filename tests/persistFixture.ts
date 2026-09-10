@@ -1,4 +1,5 @@
 import { BlockId } from '../src/blocks';
+import { WORLDGEN_VERSION } from '../src/core/constants';
 import { Inventory } from '../src/inventory';
 import { parseWorldSnapshot } from '../src/save/snapshot';
 import { WORLD_SCHEMA_VERSION, type WorldSnapshot } from '../src/save/types';
@@ -13,6 +14,7 @@ export function inventoryWithDiamond(): unknown {
 export function sampleSnapshot(overrides?: Partial<WorldSnapshot>): WorldSnapshot {
   return parseWorldSnapshot({
     schemaVersion: WORLD_SCHEMA_VERSION,
+    worldgenVersion: WORLDGEN_VERSION,
     summary: {
       id: 'sp-test',
       name: 'Тест',

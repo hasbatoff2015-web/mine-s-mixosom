@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-09-10: Worldgen V2 — snowy plains, mixed forests, cave deposits
+
+- [x] Add exhaustive `snowy_plains` with biome code 3 and statistically calibrate the cold threshold to 9.104% of sampled land.
+- [x] Preserve the former cold-forest terrain multiplier and all base/hill/mountain/cave constants.
+- [x] Generate SnowBlock over Dirt and one exposed Ice layer over retained Water.
+- [x] Mix Oak/Birch/Spruce by deterministic equal thirds in forest; keep plains Oak and sparse snowy Spruce only.
+- [x] Make decoration density depend on each candidate column biome, not the chunk center.
+- [x] Add bounded world-space Gravel/Clay cave-surface patches after ores with support, fluid, cap and seam safety.
+- [x] Preserve `ORE_RULES` and ore RNG byte layout; add biome/tree/deposit/order/spawn/persistence regressions.
+- [x] Add `WORLDGEN_VERSION = 2` metadata without a snapshot schema break and document old-world re-materialization.
+- [x] Measure biome/tree/deposit distribution and generation performance; keep the representative batch regression to +5.2%.
+- [x] Complete WebGL QA for four biomes, frozen shore, both deposit types and a fresh authoritative online world.
+- [ ] Future only by explicit task: save-version selection/migration if old natural terrain must remain byte-identical after upgrades.
+
 ## 2026-09-10: Integrate player layer z-fighting fix into current main
 
 - [x] Record actual refs: main `4de89948`, feature `f1ed162f`, merge-base `9eaec6ba`.
