@@ -170,7 +170,6 @@ export function listingTooltip(listing: AuctionListing, now: number): string {
   const remaining = listing.expiresAt - now;
   const lines = [
     name,
-    `Количество: ${listing.item.count}`,
     `Цена: ${formatMegacoins(listing.price)}`,
     `Продавец: ${listing.sellerName}`,
   ];

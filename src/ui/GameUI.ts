@@ -1909,7 +1909,14 @@ export class GameUI {
       </div>`;
   }
 
-  private slotHtml(stack: ItemStack | null, key: string, selected = false, tooltip?: string, hint?: string): string {
+  private slotHtml(
+    stack: ItemStack | null,
+    key: string,
+    selected = false,
+    tooltip?: string,
+    hint?: string,
+    layout?: 'auction',
+  ): string {
     const definition = stack ? getItemDefinition(stack.itemId) : undefined;
     const maxDurability = definition && 'durability' in definition ? definition.durability : undefined;
     const durability = stack && maxDurability && stack.durability !== undefined
@@ -1927,7 +1934,7 @@ export class GameUI {
       return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
     const hover = tooltip
-      ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint)
+      ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint, layout)
       : this.itemHoverAttrs(stack.itemId, definition!.name);
     return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
@@ -2005,7 +2012,7 @@ export class GameUI {
       const extra = auctionClaimableClass(listing.status);
       const hint = auctionClaimHint(listing.status);
       const wrapClass = extra ? ` class="${extra}"` : '';
-      return `<div data-ah-listing="${this.escape(listing.listingId)}"${wrapClass}>${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip, hint)}</div>`;
+      return `<div data-ah-listing="${this.escape(listing.listingId)}"${wrapClass}>${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip, hint, 'auction')}</div>`;
     }).join('');
   }
 

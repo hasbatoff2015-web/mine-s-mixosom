@@ -380,6 +380,31 @@ describe('AuctionService', () => {
     expect(inventory.getSlot(0)?.count).toBe(64);
   });
 
+  it('omits quantity from listing tooltips and keeps name and price first', async () => {
+    const { auction } = await setup(() => 0);
+    const inventory = new Inventory();
+    fill(inventory, 'glass_bottle', 64);
+    const created = auction.createListing('seller', 'Игрок', inventory, 0, 64, 123);
+    const text = listingTooltip(created.listing!, 0);
+    expect(text.startsWith('Стеклянная бутылочка\n')).toBe(true);
+    expect(text).toContain('Цена: 123 Мегакоина');
+    expect(text).toContain('Продавец: Игрок');
+    expect(text).toContain('Осталось:');
+    expect(text).not.toMatch(/Количество/);
+    fill(inventory, 'stone', 1);
+    const short = listingTooltip(auction.createListing('seller', 'Игрок', inventory, 0, 1, 10).listing!, 0);
+    expect(short.startsWith('Камень\n')).toBe(true);
+    expect(short).not.toMatch(/Количество/);
+    fill(inventory, 'potion_invisibility', 1);
+    const expensive = listingTooltip(
+      auction.createListing('seller', 'Игрок', inventory, 0, 1, AUCTION_MAX_PRICE).listing!,
+      0,
+    );
+    expect(expensive).toContain('Зелье невидимости');
+    expect(expensive).toContain('Цена: 100 000 000 Мегакоинов');
+    expect(expensive).not.toMatch(/Количество/);
+  });
+
   it('treats only cancelled and expired listings as returnable', () => {
     expect(isReturnableStatus('CANCELLED')).toBe(true);
     expect(isReturnableStatus('EXPIRED')).toBe(true);
@@ -416,6 +441,8 @@ describe('AuctionService', () => {
     const expiredTip = listingTooltip(auction.getListing(expired.listing!.listingId)!, now);
     expect(cancelledTip).toContain('Товар снят с продажи');
     expect(expiredTip).toContain('Срок истёк');
+    expect(cancelledTip).not.toMatch(/Количество/);
+    expect(expiredTip).not.toMatch(/Количество/);
     expect(cancelledTip).not.toContain('Заберите этот предмет');
     expect(expiredTip).not.toContain('Заберите этот предмет');
     const mine = auction.queryMine('seller');

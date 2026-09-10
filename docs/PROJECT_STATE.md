@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Auction House tooltip type — 2026-09-10
+
+- Tooltip лота в `/ah`: без строки «Количество»; название и цена 18px, продавец/осталось 14px (+17% к прежним 12px). Stack count остаётся на иконке.
+- Фон, рамка, позиция у курсора и clamp к краю экрана не менялись. Inventory tooltip по-прежнему 12px.
+- Handoff: `docs/reports/2026-09-10_auction-house-tooltip-type.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
 ## Последний проход: Auction House amount + claimable lots — 2026-09-10
 
 - Подтверждение продажи: `[ − ] [ предмет со stack count ] [ + ]` на одной оси; отдельная цифра amount убрана.

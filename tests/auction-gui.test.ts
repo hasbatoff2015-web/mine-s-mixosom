@@ -10,7 +10,7 @@ import {
   isAuctionClaimableStatus,
   keepAuctionSearchDraft,
 } from '../src/ui/auctionGui';
-import { itemHoverAttributeString } from '../src/ui/itemTooltip';
+import { itemHoverAttributeString, splitAuctionTooltip } from '../src/ui/itemTooltip';
 
 describe('auction GUI helpers', () => {
   it('keeps the search draft only while that input is focused', () => {
@@ -58,10 +58,28 @@ describe('auction GUI helpers', () => {
   });
 
   it('emits a yellow-hint tooltip attribute for claimable lots', () => {
-    const markup = itemHoverAttributeString('Камень', 'stone', (value) => value, AUCTION_CLAIM_HINT);
+    const markup = itemHoverAttributeString('Камень', 'stone', (value) => value, AUCTION_CLAIM_HINT, 'auction');
     expect(markup).toContain('data-item-tooltip="Камень"');
     expect(markup).toContain(`data-item-tooltip-hint="${AUCTION_CLAIM_HINT}"`);
+    expect(markup).toContain('data-item-tooltip-layout="auction"');
     expect(markup).toContain(`aria-label="Камень. ${AUCTION_CLAIM_HINT}"`);
     expect(itemHoverAttributeString('Камень', 'stone', (value) => value)).not.toContain('data-item-tooltip-hint');
+    expect(itemHoverAttributeString('Камень', 'stone', (value) => value)).not.toContain('data-item-tooltip-layout');
+  });
+
+  it('splits auction tooltip lines into title, price, and meta', () => {
+    const parts = splitAuctionTooltip([
+      'Стеклянная бутылочка',
+      'Цена: 123 Мегакоина',
+      'Продавец: Игрок',
+      'Осталось: 1 д 23 ч',
+    ].join('\n'));
+    expect(parts.name).toBe('Стеклянная бутылочка');
+    expect(parts.price).toBe('Цена: 123 Мегакоина');
+    expect(parts.meta).toEqual(['Продавец: Игрок', 'Осталось: 1 д 23 ч']);
+    expect(parts.meta.join('\n')).not.toMatch(/Количество/);
+    const expensive = splitAuctionTooltip('Зелье невидимости\nЦена: 100 000 000 Мегакоинов\nПродавец: Ada');
+    expect(expensive.name).toBe('Зелье невидимости');
+    expect(expensive.price).toBe('Цена: 100 000 000 Мегакоинов');
   });
 });

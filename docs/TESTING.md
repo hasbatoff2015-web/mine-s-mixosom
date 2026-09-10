@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-10 Auction House tooltip type
+
+Report: `reports/2026-09-10_auction-house-tooltip-type.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
 ## 2026-09-10 Auction House amount + claimable lots
 
 Report: `reports/2026-09-10_auction-house-amount-claim.md`.
