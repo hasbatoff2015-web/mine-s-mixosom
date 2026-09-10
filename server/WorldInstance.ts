@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, PLAYER_NET_REACH, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -773,6 +773,7 @@ export class WorldInstance {
     const entities = this.gameplay.persistEntities();
     const snapshot: WorldSnapshot = {
       schemaVersion: WORLD_SCHEMA_VERSION,
+      worldgenVersion: WORLDGEN_VERSION,
       summary: {
         id: this.worldId,
         name: this.worldId === ANARCHY_WORLD_ID ? 'Анархия' : this.worldId,

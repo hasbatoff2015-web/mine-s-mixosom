@@ -78,6 +78,8 @@ export interface SerializedServerWorld {
  */
 export interface WorldSnapshot {
   schemaVersion: WorldSchemaVersion;
+  /** Natural generator recipe. Missing on pre-Worldgen-V2 saves. */
+  worldgenVersion?: number;
   summary: WorldSummary;
   timeOfDay: number;
   weather: 'clear';

@@ -20,6 +20,8 @@ export const LATERAL_SKY_RADIUS = 14;
 export const ENTITY_SNAP_DISTANCE = 6;
 
 export const CHUNK_SIZE = 16;
+/** Natural terrain recipe. Additive save metadata; independent of save schema/protocol. */
+export const WORLDGEN_VERSION = 2;
 /**
  * Vertical world size in blocks (Y in `0 .. WORLD_HEIGHT-1`).
  * Raised 96 → 256 so imported structures can occupy build space up to Y=255.

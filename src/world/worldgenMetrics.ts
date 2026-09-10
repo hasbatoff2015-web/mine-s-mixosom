@@ -23,9 +23,14 @@ export interface WorldgenRegionStats {
   readonly maxMountain: number;
   readonly elevatedShare: number;
   readonly trees: number;
+  readonly oakTrees: number;
+  readonly birchTrees: number;
+  readonly spruceTrees: number;
+  readonly snowyTrees: number;
   readonly cactus: number;
   readonly forestChunks: number;
   readonly desertChunks: number;
+  readonly snowyChunks: number;
   readonly caveAir: number;
   readonly stone: number;
   readonly caveRatio: number;
@@ -87,9 +92,14 @@ export function measureWorldgenRegion(
   const chunks = generateChunkGrid(generator, radius);
   const heights: number[] = [];
   let trees = 0;
+  let oakTrees = 0;
+  let birchTrees = 0;
+  let spruceTrees = 0;
+  let snowyTrees = 0;
   let cactus = 0;
   let forestChunks = 0;
   let desertChunks = 0;
+  let snowyChunks = 0;
   let caveAir = 0;
   let stone = 0;
   let bedrockBroken = 0;
@@ -102,6 +112,7 @@ export function measureWorldgenRegion(
     const center = generator.columnAt(chunk.x * CHUNK_SIZE + 8, chunk.z * CHUNK_SIZE + 8);
     if (center.biome === 'forest') forestChunks += 1;
     if (center.biome === 'desert') desertChunks += 1;
+    if (center.biome === 'snowy_plains') snowyChunks += 1;
     for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
       for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
         const x = chunk.x * CHUNK_SIZE + lx;
@@ -119,11 +130,16 @@ export function measureWorldgenRegion(
           } else if (y <= generator.bedrockHeight(x, z) && block !== BlockId.Bedrock) {
             bedrockBroken += 1;
           }
-          if (block === BlockId.OakLog && y === h + 1 && column.biome === 'forest') trees += 1;
+          if (y === h + 1 && column.biome === 'forest') {
+            if (block === BlockId.OakLog) { trees += 1; oakTrees += 1; }
+            if (block === BlockId.BirchLog) { trees += 1; birchTrees += 1; }
+            if (block === BlockId.SpruceLog) { trees += 1; spruceTrees += 1; }
+          }
+          if (block === BlockId.SpruceLog && y === h + 1 && column.biome === 'snowy_plains') snowyTrees += 1;
           if (block === BlockId.Cactus && y === h + 1 && column.biome === 'desert') cactus += 1;
           if (block === BlockId.Stone || block === BlockId.CoalOre || block === BlockId.IronOre
             || block === BlockId.GoldOre || block === BlockId.RedstoneOre || block === BlockId.DiamondOre
-            || block === BlockId.TitaniumOre) {
+            || block === BlockId.TitaniumOre || block === BlockId.Gravel || block === BlockId.Clay) {
             stone += 1;
           }
           if (block === BlockId.Air && y > 0 && y < h) {
@@ -150,9 +166,14 @@ export function measureWorldgenRegion(
     maxMountain,
     elevatedShare: elevated / Math.max(1, heights.length),
     trees,
+    oakTrees,
+    birchTrees,
+    spruceTrees,
+    snowyTrees,
     cactus,
     forestChunks,
     desertChunks,
+    snowyChunks,
     caveAir,
     stone,
     caveRatio: caveAir / Math.max(1, caveAir + stone),

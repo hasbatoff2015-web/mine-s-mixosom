@@ -13,6 +13,7 @@ import {
 } from '../blocks';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
+import { biomeCode } from '../world/Generator';
 import type { VoxelWorld } from '../world/World';
 import type { TextureAtlas } from './TextureAtlas';
 import {
@@ -136,6 +137,7 @@ const WHITE_TINT = [1, 1, 1] as const;
 const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
 const FOREST_TINT = [0.42, 0.78, 0.36] as const;
 const DESERT_TINT = [0.74, 0.78, 0.4] as const;
+const SNOWY_TINT = [0.52, 0.72, 0.5] as const;
 
 /** Lighting normal written into vegetation quads so they sample/share the grass-top profile. */
 export const VEGETATION_LIGHTING_NORMAL = [0, 1, 0] as const;
@@ -245,6 +247,7 @@ function ladderFrontCorners(
 export function biomeGrassTint(biome: number): readonly [number, number, number] {
   if (biome === 1) return FOREST_TINT;
   if (biome === 2) return DESERT_TINT;
+  if (biome === 3) return SNOWY_TINT;
   return PLAINS_TINT;
 }
 
@@ -461,7 +464,7 @@ export class ChunkMesher {
     const localZ = z - this.columnOriginZ;
     const biome = localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE
       ? this.columnBiomes[localZ * CHUNK_SIZE + localX]!
-      : this.biomeCode(world.generator.columnAt(x, z).biome);
+      : biomeCode(world.generator.columnAt(x, z).biome);
     const tint = this.tintFor(definition, textureKey, biome);
     const tile = this.atlas.tile(textureKey);
     const base = buffers.positions.length / 3;
@@ -1262,7 +1265,7 @@ export class ChunkMesher {
     const sky = this.packedLight('sky', sampleX, sampleY, sampleZ) / 15;
     const block = this.packedLight('block', sampleX, sampleY, sampleZ) / 15;
     const emission = Math.max(0, Math.min(1, world.blockEmissionAt(x, y, z) / 15));
-    const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : this.biomeCode(column!.biome);
+    const biome = columnIndex >= 0 ? this.columnBiomes[columnIndex]! : biomeCode(column!.biome);
     return {
       tint: this.tintFor(definition, textureKey, biome),
       sky,
@@ -1376,13 +1379,9 @@ export class ChunkMesher {
         const index = z * CHUNK_SIZE + x;
         const column = world.generator.columnAt(this.columnOriginX + x, this.columnOriginZ + z);
         this.columnHeights[index] = column.height;
-        this.columnBiomes[index] = this.biomeCode(column.biome);
+        this.columnBiomes[index] = biomeCode(column.biome);
       }
     }
-  }
-
-  private biomeCode(biome: string): number {
-    return biome === 'forest' ? 1 : biome === 'desert' ? 2 : 0;
   }
 
   private toGeometry(buffers: GeometryBuffers): THREE.BufferGeometry {
