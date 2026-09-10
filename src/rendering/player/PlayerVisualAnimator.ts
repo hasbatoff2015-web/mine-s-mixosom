@@ -93,6 +93,7 @@ export class PlayerVisualAnimator {
     let leftArmY = 0;
     let rightArmZ = 0.04;
     let leftArmZ = -0.04;
+    const bodyPitch = state.sneaking ? -0.48 : 0;
 
     if (!state.onGround) {
       const falling = state.verticalVelocity < -0.05;
@@ -127,7 +128,9 @@ export class PlayerVisualAnimator {
     }
 
     if (state.bowCharge > 0) {
-      const aim = Math.PI / 2 - state.viewPitch;
+      // Positive input pitch looks upward. Compensate the sneaking parent once
+      // so the resulting world-space arms follow the same elevation as the head.
+      const aim = Math.PI / 2 + state.viewPitch - bodyPitch;
       rightArmX = aim;
       leftArmX = aim;
       rightArmY = headYaw - 0.12;
@@ -140,7 +143,7 @@ export class PlayerVisualAnimator {
       bodyYaw: this.bodyYaw,
       headYaw,
       headPitch: state.viewPitch,
-      bodyPitch: state.sneaking ? -0.48 : 0,
+      bodyPitch,
       // Hip stays over the legs; sneak lean is rotation around the waist pivot.
       bodyYOffset: 0,
       bodyZOffset: 0,

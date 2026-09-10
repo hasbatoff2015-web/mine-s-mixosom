@@ -3,6 +3,7 @@ import { getBlockDefinition } from '../blocks';
 import { ItemId, type ItemDefinition } from './types';
 
 export type ItemRenderCategory = 'block' | 'generated' | 'handheld' | 'bow';
+export type ThirdPersonItemPoseCategory = 'sword' | 'tool' | 'bow' | 'generic' | 'block';
 export type ItemRenderContext = 'firstPersonRightHand' | 'ground' | 'gui';
 export type RenderVector = readonly [x: number, y: number, z: number];
 /**
@@ -48,6 +49,15 @@ const profile = (
 });
 
 const UNIFORM_GUI = transform([0, 0, 0], [0, 0, 0], [1, 1, 1]);
+
+/** Third-person grip poses only; first-person transforms below remain independent. */
+export const THIRD_PERSON_ITEM_POSES: Readonly<Record<ThirdPersonItemPoseCategory, ItemViewTransform>> = Object.freeze({
+  sword: transform([0, 0.20, -0.02], [-9, 0, -18], [0.54, 0.54, 0.54]),
+  tool: transform([0, 0.19, -0.02], [-10, 0, -23], [0.52, 0.52, 0.52]),
+  bow: transform([0, 0.20, -0.035], [-6, 0, 4], [0.48, 0.48, 0.48]),
+  generic: transform([0, 0.08, -0.03], [-8, 0, -14], [0.40, 0.40, 0.40]),
+  block: transform([0, 0.08, -0.02], [-24, 28, -10], [0.25, 0.25, 0.25]),
+});
 
 /**
  * Shared first-person pose for `item/generated`, `item/handheld` and bow.
@@ -139,6 +149,21 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
   if (item.kind === 'tool' || (item.kind === 'weapon' && item.weapon === 'sword')) return 'handheld';
   if (item.kind === 'weapon' && item.weapon === 'bow') return 'bow';
   return 'generated';
+}
+
+export function classifyThirdPersonItemPose(
+  itemOrId: string | ItemDefinition,
+): ThirdPersonItemPoseCategory {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  if (item.kind === 'block') return 'block';
+  if (item.kind === 'weapon' && item.weapon === 'sword') return 'sword';
+  if (item.kind === 'weapon' && item.weapon === 'bow') return 'bow';
+  if (item.kind === 'tool') return 'tool';
+  return 'generic';
+}
+
+export function thirdPersonItemPose(itemOrId: string | ItemDefinition): ItemViewTransform {
+  return THIRD_PERSON_ITEM_POSES[classifyThirdPersonItemPose(itemOrId)];
 }
 
 /**
