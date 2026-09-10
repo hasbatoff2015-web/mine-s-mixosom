@@ -459,6 +459,57 @@ export interface ClientAuctionActionMessage {
   readonly price?: string | number;
 }
 
+export type ClanActionKind =
+  | 'close'
+  | 'back'
+  | 'search'
+  | 'refresh'
+  | 'page'
+  | 'select_clan'
+  | 'select_icon'
+  | 'set_name'
+  | 'create'
+  | 'confirm_create'
+  | 'cancel_create'
+  | 'confirm_delete'
+  | 'cancel_delete'
+  | 'select_player'
+  | 'confirm_invite'
+  | 'cancel_invite'
+  | 'select_invitation'
+  | 'confirm_accept'
+  | 'cancel_accept'
+  | 'confirm_leave'
+  | 'cancel_leave'
+  | 'select_member'
+  | 'confirm_makeleader'
+  | 'cancel_makeleader'
+  | 'kick'
+  | 'confirm_kick'
+  | 'cancel_kick'
+  | 'join'
+  | 'confirm_join'
+  | 'cancel_join'
+  | 'confirm_replace_request'
+  | 'cancel_replace_request'
+  | 'open_requests'
+  | 'select_request'
+  | 'confirm_accept_request'
+  | 'cancel_accept_request';
+
+export interface ClientClanActionMessage {
+  readonly type: 'clan_action';
+  readonly action: ClanActionKind;
+  readonly clanId?: string;
+  readonly playerId?: string;
+  readonly invitationId?: string;
+  readonly requestId?: string;
+  readonly search?: string;
+  readonly page?: number;
+  readonly icon?: string;
+  readonly name?: string;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -479,7 +530,8 @@ export type ClientMessage =
   | ClientHologramInteractMessage
   | ClientHologramUpdateMessage
   | ClientVehicleInputMessage
-  | ClientAuctionActionMessage;
+  | ClientAuctionActionMessage
+  | ClientClanActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -803,6 +855,117 @@ export interface ServerAuctionMessage {
   };
 }
 
+export type ClanScreenKind =
+  | 'ranking'
+  | 'card'
+  | 'create'
+  | 'create-confirm'
+  | 'delete-confirm'
+  | 'add'
+  | 'invite-confirm'
+  | 'accept'
+  | 'accept-confirm'
+  | 'leave-confirm'
+  | 'makeleader'
+  | 'makeleader-confirm'
+  | 'kick-confirm'
+  | 'requests'
+  | 'request-confirm'
+  | 'join-confirm'
+  | 'replace-request-confirm'
+  | 'closed';
+
+export interface NetworkClanRow {
+  readonly clanId: string;
+  readonly name: string;
+  readonly icon: string;
+  readonly rank: number;
+  readonly totalBalance: number;
+  readonly totalLabel: string;
+  readonly memberCount: number;
+  readonly createdAt: number;
+}
+
+export interface NetworkClanMember {
+  readonly playerId: string;
+  readonly name: string;
+  readonly balance: number;
+  readonly balanceLabel: string;
+  readonly isOwner: boolean;
+}
+
+export interface NetworkClanPlayerRow {
+  readonly playerId: string;
+  readonly name: string;
+  readonly balance: number;
+  readonly balanceLabel: string;
+  readonly requestId?: string;
+}
+
+export interface NetworkClanInvitation {
+  readonly invitationId: string;
+  readonly clanId: string;
+  readonly clanName: string;
+  readonly icon: string;
+  readonly ownerName: string;
+  readonly expiresAt: number;
+}
+
+export interface ServerClanMessage {
+  readonly type: 'clan';
+  readonly screen: ClanScreenKind;
+  readonly title: string;
+  readonly search: string;
+  readonly page: number;
+  readonly totalPages: number;
+  readonly totalCount: number;
+  readonly clans: readonly NetworkClanRow[];
+  readonly members?: readonly NetworkClanMember[];
+  readonly players?: readonly NetworkClanPlayerRow[];
+  readonly invitations?: readonly NetworkClanInvitation[];
+  readonly requests?: readonly NetworkClanPlayerRow[];
+  readonly card?: {
+    readonly clanId: string;
+    readonly name: string;
+    readonly icon: string;
+    readonly totalBalance: number;
+    readonly totalLabel: string;
+    readonly memberCount: number;
+    readonly ownerId: string;
+    readonly ownerName: string;
+    readonly isOwner: boolean;
+    readonly isMember: boolean;
+    readonly isFull: boolean;
+    readonly joinState: 'none' | 'sent' | 'other-clan' | 'full' | 'own';
+    readonly joinLabel?: string;
+    readonly selectedMemberId?: string;
+    readonly canKickSelected?: boolean;
+  };
+  readonly create?: {
+    readonly nameText: string;
+    readonly icon: string;
+    readonly cost: number;
+    readonly costLabel: string;
+  };
+  readonly selected?: {
+    readonly listingId?: string;
+    readonly playerId?: string;
+    readonly playerName?: string;
+    readonly clanId?: string;
+    readonly clanName?: string;
+    readonly invitationId?: string;
+    readonly requestId?: string;
+    readonly prompt?: string;
+  };
+  readonly viewer?: {
+    readonly clanId?: string;
+    readonly isOwner: boolean;
+    readonly pendingRequestClanId?: string;
+    readonly pendingRequestClanName?: string;
+  };
+  readonly message?: string;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -830,7 +993,8 @@ export type ServerMessage =
   | ServerHologramsMessage
   | ServerHologramEditorMessage
   | ServerClaimBoundaryMessage
-  | ServerAuctionMessage;
+  | ServerAuctionMessage
+  | ServerClanMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -853,6 +1017,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'hologram_update',
   'vehicle_input',
   'auction_action',
+  'clan_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -883,6 +1048,7 @@ export const SERVER_MESSAGE_TYPES = [
   'hologram_editor',
   'claim_boundary',
   'auction',
+  'clan',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -896,6 +1062,21 @@ const CONTAINER_KINDS: readonly ContainerKind[] = [
 const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
   'close', 'search', 'page', 'refresh', 'select', 'buy', 'back',
   'select_slot', 'set_amount', 'set_price', 'create', 'cancel', 'relist', 'claim',
+];
+
+const CLAN_ACTIONS: readonly ClanActionKind[] = [
+  'close', 'back', 'search', 'refresh', 'page',
+  'select_clan', 'select_icon', 'set_name',
+  'create', 'confirm_create', 'cancel_create',
+  'confirm_delete', 'cancel_delete',
+  'select_player', 'confirm_invite', 'cancel_invite',
+  'select_invitation', 'confirm_accept', 'cancel_accept',
+  'confirm_leave', 'cancel_leave',
+  'select_member', 'confirm_makeleader', 'cancel_makeleader',
+  'kick', 'confirm_kick', 'cancel_kick',
+  'join', 'confirm_join', 'cancel_join',
+  'confirm_replace_request', 'cancel_replace_request',
+  'open_requests', 'select_request', 'confirm_accept_request', 'cancel_accept_request',
 ];
 
 const VEHICLE_ACTIONS: readonly VehicleAction[] = ['enter', 'exit', 'steer'];
@@ -1426,6 +1607,32 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(price !== undefined ? { price } : {}),
       };
     }
+    case 'clan_action': {
+      if (typeof raw.action !== 'string' || !(CLAN_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'clan_action.action invalid' };
+      }
+      const clanId = optionalString(raw.clanId, 64);
+      const playerId = optionalString(raw.playerId, 64);
+      const invitationId = optionalString(raw.invitationId, 64);
+      const requestId = optionalString(raw.requestId, 64);
+      const search = typeof raw.search === 'string' ? raw.search.slice(0, 64) : undefined;
+      const page = raw.page === undefined ? undefined : finite(raw.page) ? Math.floor(raw.page) : undefined;
+      if (raw.page !== undefined && page === undefined) return { error: 'clan_action.page invalid' };
+      const icon = typeof raw.icon === 'string' ? raw.icon.slice(0, 32) : undefined;
+      const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
+      return {
+        type: 'clan_action',
+        action: raw.action as ClanActionKind,
+        ...(clanId ? { clanId } : {}),
+        ...(playerId ? { playerId } : {}),
+        ...(invitationId ? { invitationId } : {}),
+        ...(requestId ? { requestId } : {}),
+        ...(search !== undefined ? { search } : {}),
+        ...(page !== undefined ? { page } : {}),
+        ...(icon ? { icon } : {}),
+        ...(name !== undefined ? { name } : {}),
+      };
+    }
     default:
       return { error: `unknown message type ${raw.type}` };
   }
@@ -1622,6 +1829,14 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'auction invalid' };
       }
       return raw as unknown as ServerAuctionMessage;
+    }
+    case 'clan': {
+      if (typeof raw.screen !== 'string' || typeof raw.title !== 'string' || !Array.isArray(raw.clans)
+        || !finite(raw.page) || !finite(raw.totalPages) || !finite(raw.totalCount)
+        || typeof raw.search !== 'string') {
+        return { error: 'clan invalid' };
+      }
+      return raw as unknown as ServerClanMessage;
     }
     default:
       return raw as unknown as ServerMessage;

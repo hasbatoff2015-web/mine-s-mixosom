@@ -1,5 +1,17 @@
 # Состояние проекта
 
+## Последний проход: Clan system — 2026-09-10
+
+- Builtin `clan` + `ClanService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк не добавлялся. «Богатство клана» = сумма текущих балансов участников, считается при `/clans` / refresh / snapshot, не каждый tick.
+- Команды: `/clans`, `/clan create|delete|add|accept|leave|makeleader|kick <ник>`.
+- Права: `clan.use` `clan.create` `clan.delete` `clan.add` `clan.accept` `clan.leave` `clan.makeleader` `clan.kick` `clan.list` `clan.*`. Default role + OP bypass.
+- GUI в стиле Auction House / inventory (`mc-panel`, длинные кнопки, поиск без потери focus, refresh, pagination, back ←, close ×, E закрывает).
+- Создание: 10 000 МК через `EconomyService.withdraw(..., CLAN_CREATE)`, `canCreateClan` hook (сейчас always true; PlaytimeService позже).
+- Максимум 20 участников включая owner. Invitations и join requests 24ч без per-item timer. Один игрок — один клан. Один активный request.
+- Persistence: `plugin-data/clans/clans.json`. Protocol: `clan_action` / `clan`.
+- Гейты: clan 14/14, clan-plugin 4/4, clan-gui 6/6, auction 24/24, economy 15/15, `test:server` 43/438, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-10_clan-system.md`.
+
 ## Последний проход: Auction House merged into main — 2026-09-10
 
 - PR #82 влит в `main` обычным `--no-ff`: merge commit `d329f1f`. История не переписывалась.

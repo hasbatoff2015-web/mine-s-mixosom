@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -143,7 +143,7 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 
 ## Economy (Мегакоин)
 
-`EconomyService` (`server/services/economy.ts`) is the only balance API. Trader (later) and Auction House call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
+`EconomyService` (`server/services/economy.ts`) is the only balance API. Trader (later), Auction House, and Clans call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
 
 - Currency display name: **Мегакоин** / **Мегакоинов**. Internal plugin name: `economy`.
 - New player: **100**. Maximum: **999 999 999**. Integers only. Negative balances are rejected. Deposit that would exceed the max is rejected (no clamp, no overflow).
@@ -173,6 +173,19 @@ Builtin plugin `auction` + `AuctionService` (`server/services/auction.ts`). This
 - Persistence: `plugin-data/auction/listings.json` via existing `JsonFileStore`. Full `ItemStack` clone (id, count, durability, metadata).
 - Protocol: client `auction_action` (intent only; includes `refresh`), server `auction` (paged snapshot). Search updates patch the listing grid in place so the search input keeps focus and caret. The client never mutates listings, balances, or inventory locally.
 - Anti-dupe: listing+player locks; re-validate slot/item/amount/price/status/balance/space on the server; item exists in **either** inventory **or** a listing, never both while `ACTIVE`.
+
+## Clans
+
+Builtin plugin `clan` + `ClanService` (`server/services/clan.ts`). There is **no clan wallet**. Rank wealth is the live sum of member `EconomyService` balances, computed when building a `/clans` snapshot (open / search / refresh / page), never every tick.
+
+- Commands: `/clans` (ranking), `/clan create`, `/clan delete`, `/clan add`, `/clan accept`, `/clan leave`, `/clan makeleader`, `/clan kick <ник>`.
+- Permissions: `clan.use`, `clan.create`, `clan.delete`, `clan.add`, `clan.accept`, `clan.leave`, `clan.makeleader`, `clan.kick`, `clan.list`, `clan.*`. Default role gets the player nodes. Admin gets `clan.*`. OP bypass.
+- GUI reuses Auction House inventory chrome (`mc-backdrop` / `mc-panel` / `mc-ah-btn` / close × / E to close unless a field is focused). Ranking uses long rows `[icon] name`, compact МК, `n/20`, trophies for #1–#3. Clan card has back ← (does not close the GUI).
+- Create costs **10 000** Мегакоинов via `withdraw(..., 'CLAN_CREATE')`. Atomic: no clan if the debit fails. `canCreateClan(playerId)` is the future playtime hook; today it always returns ok. Names 3–16 letters/digits/space/`_`/`-`, unique case-insensitively, not renameable. Icon is one of 10 ids, not changeable later.
+- Max **20** members including owner. One player, one clan. Invitations (online only) and join requests expire after 24h; expiry is checked on load/open/action, not with per-item timers. One active request per player; sending another offers replacement.
+- Persistence: `plugin-data/clans/clans.json` via `JsonFileStore`. Totals are not stored.
+- Protocol: client `clan_action` (intent only), server `clan` (paged snapshot). Search patches the list in place so the input keeps focus and caret.
+- Locks serialize player+clan keys so last-slot joins, duplicate accepts, and invite/request races cannot put a player in two clans or exceed 20.
 
 ## API version
 
@@ -327,5 +340,5 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a Bukkit/Spigot jar loader
 - Not a second combat / fluid / inventory system
 - Not client mods
-- Not Auction House bidding / kits. Auction House (fixed-price listings) **is** implemented as builtin `auction` + `AuctionService` on the existing EconomyService.
+- Not Auction House bidding / kits. Auction House (fixed-price listings) **is** implemented as builtin `auction` + `AuctionService` on the existing EconomyService. Clans **are** implemented as builtin `clan` + `ClanService` on the same EconomyService.
 - Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)

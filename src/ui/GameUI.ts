@@ -17,6 +17,17 @@ import {
 } from './containerStrings';
 import { auctionClaimableClass, auctionClaimHint, auctionIconStack, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
 import {
+  clanBalanceHtml,
+  clanIconHtml,
+  clanIconIds,
+  clanJoinCaption,
+  clanJoinDisabled,
+  clanMembersHtml,
+  clanRankHtml,
+  keepClanSearchDraft,
+  showsClanBack,
+} from './clanGui';
+import {
   containerStageSize,
   containerUiScaleWithClose,
 } from './containerTheme';
@@ -46,7 +57,7 @@ import {
 } from './containerInteractions';
 import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
-import type { ClientAuctionActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage } from '../../shared/protocol';
+import type { ClientAuctionActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage, ServerClanMessage } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -131,6 +142,11 @@ export interface HologramEditorActions {
 
 export interface AuctionGuiActions {
   send(message: ClientAuctionActionMessage): void;
+  close(): void;
+}
+
+export interface ClanGuiActions {
+  send(message: ClientClanActionMessage): void;
   close(): void;
 }
 
@@ -237,6 +253,9 @@ export class GameUI {
   private auctionState?: ServerAuctionMessage;
   private auctionActions?: AuctionGuiActions;
   private auctionSearchTimer?: number;
+  private clanState?: ServerClanMessage;
+  private clanActions?: ClanGuiActions;
+  private clanSearchTimer?: number;
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -967,12 +986,16 @@ export class GameUI {
     return this.auctionState !== undefined && this.auctionState.screen !== 'closed';
   }
 
+  isClanOpen(): boolean {
+    return this.clanState !== undefined && this.clanState.screen !== 'closed';
+  }
+
   isAuctionTextInputFocused(): boolean {
     const el = document.activeElement;
     return el instanceof HTMLInputElement
       && this.modal !== undefined
       && this.modal.contains(el)
-      && this.isAuctionOpen();
+      && (this.isAuctionOpen() || this.isClanOpen());
   }
 
   setChatInputHistory(history: readonly string[]): void {
@@ -1104,7 +1127,10 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isAuctionOpen() && this.modal !== undefined;
-    if (!alreadyOpen) this.closeInventory(false);
+    if (!alreadyOpen) {
+      this.closeClan();
+      this.closeInventory(false);
+    }
     if (alreadyOpen) this.patchAuction(state);
     else {
       this.auctionState = state;
@@ -1132,6 +1158,48 @@ export class GameUI {
       this.modal?.remove();
       this.modal = undefined;
       this.auctionState = undefined;
+      this.setControlsSuppressed(false);
+    }
+  }
+
+  openClan(state: ServerClanMessage, actions: ClanGuiActions): void {
+    this.clanActions = actions;
+    if (state.screen === 'closed') {
+      this.closeClan();
+      return;
+    }
+    const alreadyOpen = this.isClanOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeInventory(false);
+    }
+    if (alreadyOpen) this.patchClan(state);
+    else {
+      this.clanState = state;
+      this.renderClan();
+    }
+    this.setControlsSuppressed(true);
+  }
+
+  applyClan(state: ServerClanMessage): void {
+    if (!this.clanActions) {
+      this.clanState = state;
+      return;
+    }
+    this.openClan(state, this.clanActions);
+  }
+
+  closeClan(): void {
+    if (this.clanSearchTimer !== undefined) {
+      window.clearTimeout(this.clanSearchTimer);
+      this.clanSearchTimer = undefined;
+    }
+    if (this.clanState) {
+      this.itemTooltip?.dispose();
+      this.itemTooltip = undefined;
+      this.modal?.remove();
+      this.modal = undefined;
+      this.clanState = undefined;
       this.setControlsSuppressed(false);
     }
   }
@@ -2329,6 +2397,380 @@ export class GameUI {
       } else if (kind === 'claim') {
         actions.send({ type: 'auction_action', action: 'claim', listingId: current.selected?.listingId });
       }
+    });
+  }
+
+  private patchClan(state: ServerClanMessage): void {
+    const prev = this.clanState;
+    const actions = this.clanActions;
+    if (!actions || !this.modal || !prev || prev.screen !== state.screen) {
+      this.clanState = state;
+      this.renderClan();
+      return;
+    }
+    if (!this.modal.querySelector(`[data-clan-screen="${state.screen}"]`)) {
+      this.clanState = state;
+      this.renderClan();
+      return;
+    }
+    this.clanState = state;
+    if (state.screen === 'ranking' || state.screen === 'add' || state.screen === 'requests') {
+      this.patchClanList(state);
+      return;
+    }
+    this.renderClan();
+  }
+
+  private patchClanList(state: ServerClanMessage): void {
+    const list = this.modal?.querySelector<HTMLElement>('[data-clan-list]');
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-clan-search]');
+    const page = this.modal?.querySelector('[data-clan-page-label]');
+    const empty = this.modal?.querySelector<HTMLElement>('[data-clan-empty]');
+    const prev = this.modal?.querySelector<HTMLButtonElement>('[data-clan-page="prev"]');
+    const next = this.modal?.querySelector<HTMLButtonElement>('[data-clan-page="next"]');
+    if (!list || !page) {
+      this.renderClan();
+      return;
+    }
+    if (search && !keepClanSearchDraft(document.activeElement, search)) search.value = state.search;
+    list.innerHTML = this.clanListHtml(state);
+    page.textContent = `Страница ${state.page} из ${state.totalPages}`;
+    if (prev) prev.disabled = state.page <= 1;
+    if (next) next.disabled = state.page >= state.totalPages;
+    if (empty) empty.hidden = state.totalCount !== 0;
+    this.writeClanMessage(state.message);
+  }
+
+  private writeClanMessage(message: string | undefined): void {
+    const node = this.modal?.querySelector<HTMLElement>('[data-clan-message]');
+    if (!node) return;
+    node.hidden = !message;
+    node.textContent = message ?? '';
+  }
+
+  private renderClan(): void {
+    const state = this.clanState;
+    const actions = this.clanActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureClanInputFocus();
+    const logicalHeight = state.screen === 'create' || state.screen === 'card' ? 248
+      : state.screen === 'ranking' ? 232
+        : 220;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    const back = showsClanBack(state.screen)
+      ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
+      : '';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-clan-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:220">
+        ${back}
+        <div class="mc-panel mc-clan-panel" data-container-kind="clan">
+          ${this.clanBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindClanChrome();
+    this.restoreClanInputFocus(keep);
+  }
+
+  private captureClanInputFocus(): { kind: 'search' | 'name'; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    if (el.hasAttribute('data-clan-search')) {
+      return { kind: 'search', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
+    if (el.hasAttribute('data-clan-name')) {
+      return { kind: 'name', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
+    return undefined;
+  }
+
+  private restoreClanInputFocus(keep: ReturnType<GameUI['captureClanInputFocus']>): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'search' ? '[data-clan-search]' : '[data-clan-name]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    try { input.setSelectionRange(keep.start, keep.end); } catch { /* ignore */ }
+  }
+
+  private clanBodyHtml(state: ServerClanMessage): string {
+    const message = `<div class="mc-ah-message" data-clan-message${state.message ? '' : ' hidden'}>${this.escape(state.message ?? '')}</div>`;
+    if (state.screen === 'ranking') {
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="ranking">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="Поиск клана" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" aria-label="Поиск клана" /></label>
+          <button type="button" class="mc-ah-btn" data-clan-action="refresh">Обновить</button>
+        </div>
+        <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
+        ${this.clanNavHtml(state)}
+        <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>Кланов пока нет.</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'create' || state.screen === 'create-confirm') {
+      const selected = state.create?.icon ?? 'swords';
+      const icons = clanIconIds().map((id) => {
+        const sample = state.create?.nameText?.trim() || 'Название клана';
+        return `<button type="button" class="mc-clan-icon-pick${id === selected ? ' is-selected' : ''}" data-clan-icon="${id}">
+          ${clanIconHtml(id)}<span>${this.escape(sample)}</span>
+        </button>`;
+      }).join('');
+      if (state.screen === 'create-confirm') {
+        return `<div class="mc-ah-body mc-clan-body" data-clan-screen="create-confirm">
+          <div class="mc-label">${this.escape(state.title)}</div>
+          <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
+          <div class="mc-ah-actions">
+            <button type="button" class="mc-ah-btn" data-clan-action="confirm_create">Да</button>
+            <button type="button" class="mc-ah-btn" data-clan-action="cancel_create">Нет</button>
+          </div>
+          ${message}
+        </div>`;
+      }
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="create">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <label class="mc-ah-field">Название клана
+          <input data-clan-name type="text" maxlength="16" value="${this.escape(state.create?.nameText ?? '')}" autocomplete="off" spellcheck="false" name="clan-name" />
+        </label>
+        <div class="mc-clan-icons">${icons}</div>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn mc-clan-btn-2line" data-clan-action="create">
+            <span>Создать клан</span><small>10 000 Мегакоинов</small>
+          </button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (this.clanConfirmScreen(state.screen)) {
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="${state.screen}">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '').replace(/\n/g, '<br>')}</p>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanConfirmAction(state.screen)}">Да</button>
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanCancelAction(state.screen)}">Нет</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'add' || state.screen === 'requests' || state.screen === 'makeleader' || state.screen === 'accept') {
+      const placeholder = state.screen === 'add' ? 'Поиск по нику' : state.screen === 'accept' ? '' : 'Поиск';
+      const search = state.screen === 'accept' ? '' : `<div class="mc-ah-toolbar">
+        <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="${placeholder}" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" /></label>
+      </div>`;
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="${state.screen}">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${search}
+        <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
+        ${state.screen === 'accept' ? '' : this.clanNavHtml(state)}
+        <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>${this.clanEmptyText(state.screen)}</div>
+        ${message}
+      </div>`;
+    }
+    const card = state.card;
+    const joinDisabled = clanJoinDisabled(card);
+    const joinCaption = clanJoinCaption(card);
+    const showJoin = card && !card.isMember;
+    const kick = card?.isOwner && card.canKickSelected
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="kick">Выгнать игрока</button>`
+      : '';
+    const requests = card?.isOwner
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы на вступление в клан</button>`
+      : '';
+    return `<div class="mc-ah-body mc-clan-body" data-clan-screen="card">
+      <div class="mc-label mc-clan-card-title">${clanIconHtml(card?.icon)} ${this.escape(card?.name ?? state.title)}</div>
+      <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
+      <div class="mc-clan-owner">Владелец: ${this.escape(card?.ownerName ?? '')}</div>
+      <div class="mc-clan-list" data-clan-list>${this.clanMemberHtml(state)}</div>
+      <div class="mc-ah-actions">
+        ${showJoin ? `<button type="button" class="mc-ah-btn"${joinDisabled ? ' disabled' : ''} data-clan-action="join">${this.escape(joinCaption)}</button>` : ''}
+        ${kick}
+        ${requests}
+      </div>
+      ${message}
+    </div>`;
+  }
+
+  private clanListHtml(state: ServerClanMessage): string {
+    if (state.screen === 'ranking') {
+      return (state.clans ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-id="${this.escape(row.clanId)}">
+        ${clanRankHtml(row.rank)}
+        <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.name)}</span></span>
+        ${clanBalanceHtml(row.totalLabel)}
+        ${clanMembersHtml(row.memberCount)}
+      </button>`).join('');
+    }
+    if (state.screen === 'accept') {
+      return (state.invitations ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-invitation="${this.escape(row.invitationId)}">
+        <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.clanName)}</span></span>
+        <span class="mc-clan-owner-mini">${this.escape(row.ownerName)}</span>
+      </button>`).join('');
+    }
+    const rows = state.screen === 'requests' ? state.requests : state.screen === 'makeleader' ? state.members : state.players;
+    if (state.screen === 'makeleader') {
+      return (state.members ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-member="${this.escape(row.playerId)}">
+        <span class="mc-clan-row-name">${this.escape(row.name)}</span>
+        ${clanBalanceHtml(row.balanceLabel)}
+      </button>`).join('');
+    }
+    const attr = state.screen === 'requests' ? 'data-clan-request' : 'data-clan-player';
+    return (rows ?? []).map((row) => {
+      const id = 'requestId' in row && row.requestId ? row.requestId : row.playerId;
+      return `<button type="button" class="mc-clan-row" ${attr}="${this.escape(id)}">
+        <span class="mc-clan-row-name">${this.escape(row.name)}</span>
+        ${clanBalanceHtml(row.balanceLabel)}
+      </button>`;
+    }).join('');
+  }
+
+  private clanMemberHtml(state: ServerClanMessage): string {
+    return (state.members ?? []).map((row) => `<button type="button" class="mc-clan-row${row.isOwner ? ' is-owner' : ''}${state.card?.selectedMemberId === row.playerId ? ' is-selected' : ''}" data-clan-member="${this.escape(row.playerId)}" ${row.isOwner ? 'data-clan-owner="1"' : ''}>
+      <span class="mc-clan-row-name">${this.escape(row.name)}</span>
+      ${clanBalanceHtml(row.balanceLabel)}
+    </button>`).join('');
+  }
+
+  private clanNavHtml(state: ServerClanMessage): string {
+    return `<div class="mc-ah-nav">
+      <button type="button" class="mc-slot mc-ah-icon" data-clan-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+      <span class="mc-ah-page" data-clan-page-label>Страница ${state.page} из ${state.totalPages}</span>
+      <button type="button" class="mc-slot mc-ah-icon" data-clan-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+    </div>`;
+  }
+
+  private clanEmptyText(screen: ServerClanMessage['screen']): string {
+    if (screen === 'add') return 'Нет подходящих игроков в сети.';
+    if (screen === 'accept') return 'Нет приглашений.';
+    if (screen === 'requests') return 'Нет заявок.';
+    if (screen === 'makeleader') return 'Нет участников для передачи лидерства.';
+    return 'Пусто.';
+  }
+
+  private clanConfirmScreen(screen: ServerClanMessage['screen']): boolean {
+    return screen === 'delete-confirm'
+      || screen === 'invite-confirm'
+      || screen === 'accept-confirm'
+      || screen === 'leave-confirm'
+      || screen === 'makeleader-confirm'
+      || screen === 'kick-confirm'
+      || screen === 'join-confirm'
+      || screen === 'replace-request-confirm'
+      || screen === 'request-confirm';
+  }
+
+  private clanConfirmAction(screen: ServerClanMessage['screen']): string {
+    if (screen === 'delete-confirm') return 'confirm_delete';
+    if (screen === 'invite-confirm') return 'confirm_invite';
+    if (screen === 'accept-confirm') return 'confirm_accept';
+    if (screen === 'leave-confirm') return 'confirm_leave';
+    if (screen === 'makeleader-confirm') return 'confirm_makeleader';
+    if (screen === 'kick-confirm') return 'confirm_kick';
+    if (screen === 'join-confirm') return 'confirm_join';
+    if (screen === 'replace-request-confirm') return 'confirm_replace_request';
+    return 'confirm_accept_request';
+  }
+
+  private clanCancelAction(screen: ServerClanMessage['screen']): string {
+    if (screen === 'delete-confirm') return 'cancel_delete';
+    if (screen === 'invite-confirm') return 'cancel_invite';
+    if (screen === 'accept-confirm') return 'cancel_accept';
+    if (screen === 'leave-confirm') return 'cancel_leave';
+    if (screen === 'makeleader-confirm') return 'cancel_makeleader';
+    if (screen === 'kick-confirm') return 'cancel_kick';
+    if (screen === 'join-confirm') return 'cancel_join';
+    if (screen === 'replace-request-confirm') return 'cancel_replace_request';
+    return 'cancel_accept_request';
+  }
+
+  private bindClanChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.clanActions?.close());
+    const bindField = (selector: string, action: 'search' | 'set_name') => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => {
+        window.clearTimeout(this.clanSearchTimer);
+        this.clanSearchTimer = window.setTimeout(() => {
+          if (action === 'search') this.clanActions?.send({ type: 'clan_action', action: 'search', search: input.value });
+          else this.clanActions?.send({ type: 'clan_action', action: 'set_name', name: input.value });
+        }, 160);
+      });
+    };
+    bindField('[data-clan-search]', 'search');
+    bindField('[data-clan-name]', 'set_name');
+    this.modal!.addEventListener('click', (event) => {
+      const current = this.clanState;
+      const actions = this.clanActions;
+      if (!current || !actions) return;
+      const target = event.target as HTMLElement;
+      const back = target.closest<HTMLElement>('[data-clan-action="back"]');
+      if (back) {
+        actions.send({ type: 'clan_action', action: 'back' });
+        return;
+      }
+      const clan = target.closest<HTMLElement>('[data-clan-id]');
+      if (clan?.dataset.clanId) {
+        actions.send({ type: 'clan_action', action: 'select_clan', clanId: clan.dataset.clanId });
+        return;
+      }
+      const invitation = target.closest<HTMLElement>('[data-clan-invitation]');
+      if (invitation?.dataset.clanInvitation) {
+        actions.send({ type: 'clan_action', action: 'select_invitation', invitationId: invitation.dataset.clanInvitation });
+        return;
+      }
+      const request = target.closest<HTMLElement>('[data-clan-request]');
+      if (request?.dataset.clanRequest) {
+        actions.send({ type: 'clan_action', action: 'select_request', requestId: request.dataset.clanRequest });
+        return;
+      }
+      const player = target.closest<HTMLElement>('[data-clan-player]');
+      if (player?.dataset.clanPlayer) {
+        actions.send({ type: 'clan_action', action: 'select_player', playerId: player.dataset.clanPlayer });
+        return;
+      }
+      const member = target.closest<HTMLElement>('[data-clan-member]');
+      if (member?.dataset.clanMember) {
+        if (member.dataset.clanOwner === '1') return;
+        actions.send({ type: 'clan_action', action: 'select_member', playerId: member.dataset.clanMember });
+        return;
+      }
+      const icon = target.closest<HTMLElement>('[data-clan-icon]');
+      if (icon?.dataset.clanIcon) {
+        actions.send({ type: 'clan_action', action: 'select_icon', icon: icon.dataset.clanIcon });
+        return;
+      }
+      const page = target.closest<HTMLElement>('[data-clan-page]');
+      if (page?.dataset.clanPage === 'prev' && current.page > 1) {
+        actions.send({ type: 'clan_action', action: 'page', page: current.page - 1 });
+        return;
+      }
+      if (page?.dataset.clanPage === 'next' && current.page < current.totalPages) {
+        actions.send({ type: 'clan_action', action: 'page', page: current.page + 1 });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-clan-action]');
+      const kind = button?.dataset.clanAction;
+      if (!kind || kind === 'back') return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      actions.send({
+        type: 'clan_action',
+        action: kind as ClientClanActionMessage['action'],
+        ...(current.card?.clanId ? { clanId: current.card.clanId } : {}),
+        ...(current.selected?.playerId || current.card?.selectedMemberId
+          ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId }
+          : {}),
+        ...(current.selected?.invitationId ? { invitationId: current.selected.invitationId } : {}),
+        ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
+      });
     });
   }
 

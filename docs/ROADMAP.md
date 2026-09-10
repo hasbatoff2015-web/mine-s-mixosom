@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-10: Clan system
+
+- [x] Builtin `clan` plugin + `ClanService` on PluginManager / JsonFileStore / EconomyService (no clan wallet).
+- [x] Commands `/clans` `/clan create|delete|add|accept|leave|makeleader|kick`.
+- [x] Permissions `clan.use` `clan.create` `clan.delete` `clan.add` `clan.accept` `clan.leave` `clan.makeleader` `clan.kick` `clan.list` `clan.*`; OP bypass.
+- [x] Inventory-style GUI matching Auction House (search/refresh/pagination, clan card, back arrow).
+- [x] 10 000 create cost, 20 members, 24h invites/requests, ranking by live balances.
+- [x] `canCreateClan` hook for future PlaytimeService (currently always true).
+- [ ] Owner live Anarchy QA of clan create/invite/accept/request/leave/kick/delete (not run in this pass).
+
 ## 2026-09-10: Merge Worldgen V2 into Auction House
 
 - [x] Fetch current `origin/main`; confirm teammate PR #83 (snowy plains / cave deposits) landed after the Auction branch base.

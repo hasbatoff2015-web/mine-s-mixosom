@@ -492,6 +492,9 @@ export class AnarchyServer {
       case 'auction_action':
         this.world.handleAuctionAction(player, message);
         return;
+      case 'clan_action':
+        this.world.handleClanAction(player, message);
+        return;
     }
   }
 

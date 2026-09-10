@@ -27,6 +27,7 @@ export type EconomyReason =
   | 'AUCTION'
   | 'AUCTION_PURCHASE'
   | 'AUCTION_SALE'
+  | 'CLAN_CREATE'
   | 'OTHER';
 
 export type EconomyTxType = 'deposit' | 'withdraw' | 'set';
@@ -120,6 +121,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   AUCTION: 'аукцион',
   AUCTION_PURCHASE: 'покупка на аукционе',
   AUCTION_SALE: 'продажа на аукционе',
+  CLAN_CREATE: 'создание клана',
   OTHER: 'другое',
 };
 
