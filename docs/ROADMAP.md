@@ -5,6 +5,7 @@
 - [x] Fetch current `origin/main`; confirm teammate PR #83 (snowy plains / cave deposits) landed after the Auction branch base.
 - [x] Merge `origin/main` into `cursor/auction-house-a8dc` without rebase/squash/force push.
 - [x] Keep Worldgen V2 snapshot metadata and snowy spawn together with Auction House / Economy.
+- [x] Auction/economy/`test:server`/typecheck/boundaries/build PASS after the Worldgen V2 merge.
 
 ## 2026-09-10: Worldgen V2 — snowy plains, mixed forests, cave deposits
 
