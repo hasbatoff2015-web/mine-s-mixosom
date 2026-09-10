@@ -3,8 +3,10 @@
 ## Последний проход: merge Worldgen V2 into Auction House — 2026-09-10
 
 - После основания Auction-ветки в `origin/main` появился PR #83: snowy plains, mixed forests, cave Gravel/Clay, `WORLDGEN_VERSION = 2`.
-- `origin/main` влит в `cursor/auction-house-a8dc` обычным merge. Конфликты были только в `docs/PROJECT_STATE.md` и `docs/ROADMAP.md`; код (`WorldInstance.ts`, `Game.ts`, `ARCHITECTURE.md`) слился автоматически.
+- `origin/main` влит в `cursor/auction-house-a8dc` обычным merge (`28b63be`). Конфликты были только в `docs/PROJECT_STATE.md` и `docs/ROADMAP.md`; код (`WorldInstance.ts`, `Game.ts`, `ARCHITECTURE.md`) слился автоматически.
 - Сохранены и Worldgen V2 (spawn на SnowBlock, snapshot `worldgenVersion`), и Auction House / Economy.
+- Гейты после merge Worldgen V2: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15, `test:server` 41/420, worldgen-v2+snapshot 11/11, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-10_auction-house-main-merge.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
 
 ## Последний проход: Worldgen V2 — snowy plains, mixed forests, cave deposits — 2026-09-10
 
