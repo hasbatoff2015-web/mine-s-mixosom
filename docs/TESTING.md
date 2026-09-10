@@ -8,7 +8,7 @@ Report: `reports/2026-09-10_clan-system.md`.
 npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
 ```
 
-Focused: clan 14/14, clan-plugin 4/4, clan-gui 6/6, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 438 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+Focused: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 440 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
 
 ## 2026-09-10 Auction House tooltip type
 

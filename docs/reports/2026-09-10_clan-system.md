@@ -40,7 +40,7 @@ Builtin `clan` + `ClanService`. Players create/join/leave/rank clans through `/c
 
 ## Tests
 
-Focused: clan 14/14, clan-plugin 4/4, clan-gui 6/6, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 438 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS. Live browser Anarchy QA was **not** run.
+Focused: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 440 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS. Live browser Anarchy QA was **not** run. Extra coverage: ranking tie-break (member count, then createdAt), invalid icon, invite-already-in-clan, and plugin join-request replace/accept.
 
 ## Visual QA
 

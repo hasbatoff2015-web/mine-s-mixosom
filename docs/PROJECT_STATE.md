@@ -9,7 +9,7 @@
 - Создание: 10 000 МК через `EconomyService.withdraw(..., CLAN_CREATE)`, `canCreateClan` hook (сейчас always true; PlaytimeService позже).
 - Максимум 20 участников включая owner. Invitations и join requests 24ч без per-item timer. Один игрок — один клан. Один активный request.
 - Persistence: `plugin-data/clans/clans.json`. Protocol: `clan_action` / `clan`.
-- Гейты: clan 14/14, clan-plugin 4/4, clan-gui 6/6, auction 24/24, economy 15/15, `test:server` 43/438, четыре typecheck, boundaries, build PASS.
+- Гейты: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, economy 15/15, `test:server` 43/440, четыре typecheck, boundaries, build PASS.
 - Handoff: `docs/reports/2026-09-10_clan-system.md`.
 
 ## Последний проход: Auction House merged into main — 2026-09-10

@@ -21,12 +21,14 @@ import {
   CLAN_ALREADY_MEMBER_ERROR,
   CLAN_ALREADY_OTHER_CLAN_ERROR,
   CLAN_FULL_ERROR,
+  CLAN_ICON_ERROR,
   CLAN_INVITE_SELF_ERROR,
   CLAN_KICK_SELF_ERROR,
   CLAN_NAME_TAKEN_ERROR,
   CLAN_OFFLINE_INVITE_ERROR,
   CLAN_OWNER_LEAVE_ERROR,
   CLAN_OWNER_ONLY_ERROR,
+  CLAN_TARGET_IN_CLAN_ERROR,
   ClanService,
   type ClanRuntime,
 } from '../../server/services/clan';
@@ -102,6 +104,7 @@ describe('ClanService', () => {
     economy.deposit('bob', 20_000, 'ADMIN_GIVE');
     expect(clan.createClan('bob', 'warriors', 'crown').error).toBe(CLAN_NAME_TAKEN_ERROR);
     expect(clan.createClan('bob', 'xx', 'crown').error).toBe(CLAN_NAME_LENGTH_ERROR);
+    expect(clan.createClan('bob', 'ValidName', 'not-an-icon').error).toBe(CLAN_ICON_ERROR);
   });
 
   it('uses the playtime hook without requiring playtime today', async () => {
@@ -130,6 +133,32 @@ describe('ClanService', () => {
     expect(clan.ranked()[0]?.clan.clanId).toBe(second.clan?.clanId);
   });
 
+  it('breaks equal totals by member count, then older createdAt', async () => {
+    let now = 1_000;
+    const extra = [{ id: 'dana', name: 'Dana' }];
+    const { clan, economy } = await setup(() => now, extra);
+    economy.setBalance('owner', 20_000, 'ADMIN_SET');
+    economy.setBalance('bob', 20_000, 'ADMIN_SET');
+    economy.setBalance('carl', 20_000, 'ADMIN_SET');
+    economy.setBalance('dana', 1_000, 'ADMIN_SET');
+    const older = clan.createClan('carl', 'Older', 'moon');
+    now = 2_000;
+    const richerMembers = clan.createClan('bob', 'Packed', 'shield');
+    clan.invitePlayer('bob', 'dana');
+    expect(clan.acceptInvitation('dana', clan.invitationsFor('dana')[0]!.invitationId).ok).toBe(true);
+    now = 3_000;
+    const later = clan.createClan('owner', 'Later', 'swords');
+    economy.setBalance('owner', 10_000, 'ADMIN_SET');
+    economy.setBalance('bob', 9_000, 'ADMIN_SET');
+    economy.setBalance('carl', 10_000, 'ADMIN_SET');
+    economy.setBalance('dana', 1_000, 'ADMIN_SET');
+    const ranked = clan.ranked();
+    expect(ranked.map((row) => row.clan.name)).toEqual(['Packed', 'Older', 'Later']);
+    expect(ranked[0]?.clan.clanId).toBe(richerMembers.clan?.clanId);
+    expect(ranked[1]?.clan.clanId).toBe(older.clan?.clanId);
+    expect(ranked[2]?.clan.clanId).toBe(later.clan?.clanId);
+  });
+
   it('invites only online clanless players and accepts with 24h expiry', async () => {
     let now = 1_000;
     const { clan } = await setup(() => now);
@@ -148,6 +177,7 @@ describe('ClanService', () => {
     expect(clan.acceptInvitation('bob', fresh.invitationId).ok).toBe(true);
     expect(clan.playerClan('bob')?.name).toBe('Warriors');
     expect(clan.invitationsFor('bob')).toHaveLength(0);
+    expect(clan.invitePlayer('owner', 'bob').error).toBe(CLAN_TARGET_IN_CLAN_ERROR);
   });
 
   it('drops leftover invitations after joining any clan', async () => {
