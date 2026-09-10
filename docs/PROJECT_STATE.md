@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Auction House amount + claimable lots — 2026-09-10
+
+- Подтверждение продажи: `[ − ] [ предмет со stack count ] [ + ]` на одной оси; отдельная цифра amount убрана.
+- `/ah list`: `CANCELLED` / `EXPIRED` ячейки с приглушённым красным фоном; hover — жёлтая строка «Заберите этот предмет». ACTIVE / SOLD / RELISTED / CLAIMED без этой подсветки. CLAIMED и RELISTED по-прежнему не в списке.
+- Handoff: `docs/reports/2026-09-10_auction-house-amount-claim.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
 ## Последний проход: Auction House UI polish — 2026-09-10
 
 - Inventory-style кнопки подтверждения (купить / выставить / отмена) больше не используют квадратный `mc-slot`; текст `nowrap`, по центру, на всю ширину колонки действий.

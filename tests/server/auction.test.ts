@@ -16,7 +16,9 @@ import {
   AUCTION_PRICE_RANGE_ERROR,
   AuctionService,
   auctionPriceError,
+  isReturnableStatus,
   listingMatchesSearch,
+  listingTooltip,
   parseAuctionPrice,
 } from '../../server/services/auction';
 
@@ -376,6 +378,54 @@ describe('AuctionService', () => {
     expect(snapshot.selected?.amount).toBe(64);
     expect(snapshot.selected?.item).toMatchObject({ itemId: 'stone', count: 64 });
     expect(inventory.getSlot(0)?.count).toBe(64);
+  });
+
+  it('treats only cancelled and expired listings as returnable', () => {
+    expect(isReturnableStatus('CANCELLED')).toBe(true);
+    expect(isReturnableStatus('EXPIRED')).toBe(true);
+    expect(isReturnableStatus('ACTIVE')).toBe(false);
+    expect(isReturnableStatus('SOLD')).toBe(false);
+    expect(isReturnableStatus('RELISTED')).toBe(false);
+    expect(isReturnableStatus('CLAIMED')).toBe(false);
+  });
+
+  it('keeps cancelled and expired lots in /ah list and hides relisted and claimed ones', async () => {
+    let now = 1_000;
+    const { auction } = await setup(() => now);
+    const inventory = new Inventory();
+    fill(inventory, 'stone', 1, 0);
+    const cancelled = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    fill(inventory, 'dirt', 1, 0);
+    const expired = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    fill(inventory, 'sand', 1, 0);
+    const relisted = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    fill(inventory, 'gravel', 1, 0);
+    const claimed = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    expect(auction.cancelListing('seller', cancelled.listing!.listingId).ok).toBe(true);
+    expect(auction.cancelListing('seller', claimed.listing!.listingId).ok).toBe(true);
+    expect(auction.claimListing('seller', new Inventory(), claimed.listing!.listingId).ok).toBe(true);
+    const relist = auction.relist('seller', relisted.listing!.listingId, 20);
+    expect(relist.ok).toBe(true);
+    now += AUCTION_DURATION_MS + 1;
+    auction.expireDue();
+    expect(auction.getListing(cancelled.listing!.listingId)?.status).toBe('CANCELLED');
+    expect(auction.getListing(expired.listing!.listingId)?.status).toBe('EXPIRED');
+    expect(auction.getListing(claimed.listing!.listingId)?.status).toBe('CLAIMED');
+    expect(auction.getListing(relisted.listing!.listingId)?.status).toBe('RELISTED');
+    const cancelledTip = listingTooltip(auction.getListing(cancelled.listing!.listingId)!, now);
+    const expiredTip = listingTooltip(auction.getListing(expired.listing!.listingId)!, now);
+    expect(cancelledTip).toContain('Товар снят с продажи');
+    expect(expiredTip).toContain('Срок истёк');
+    expect(cancelledTip).not.toContain('Заберите этот предмет');
+    expect(expiredTip).not.toContain('Заберите этот предмет');
+    const mine = auction.queryMine('seller');
+    expect(mine.listings.some((listing) => listing.listingId === cancelled.listing!.listingId && listing.status === 'CANCELLED')).toBe(true);
+    expect(mine.listings.some((listing) => listing.listingId === expired.listing!.listingId && listing.status === 'EXPIRED')).toBe(true);
+    expect(mine.listings.some((listing) => listing.listingId === claimed.listing!.listingId)).toBe(false);
+    expect(mine.listings.some((listing) => listing.listingId === relisted.listing!.listingId)).toBe(false);
+    expect(mine.listings.every((listing) => listing.status === 'ACTIVE' || listing.status === 'CANCELLED' || listing.status === 'EXPIRED')).toBe(true);
+    const network = auction.toNetworkListing(auction.getListing(cancelled.listing!.listingId)!);
+    expect(network.status).toBe('CANCELLED');
   });
 
   it('parses auction protocol intents', () => {

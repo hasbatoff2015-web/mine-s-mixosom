@@ -333,6 +333,32 @@ describe('Auction plugin', () => {
     expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 1, item: { count: 1 } });
     world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'set_amount', amount: 64 });
     expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 64, item: { count: 64 } });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'set_amount', amount: 0 });
+    expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 1, item: { count: 1 } });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'set_amount', amount: 99 });
+    expect(lastAuction(ada.sink)?.selected).toMatchObject({ amount: 64, item: { count: 64 } });
     expect(ada.player.inventory.getSlot(3)?.count).toBe(64);
+  });
+
+  it('exposes cancelled lots in /ah list as claimable and opens the claim screen', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    ada.player.inventory.setSlot(0, createItemStack('gold_ingot', 4));
+    const created = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 4, 10);
+    world.handleAuctionAction(ada.player, {
+      type: 'auction_action',
+      action: 'cancel',
+      listingId: created.listing!.listingId,
+    });
+    chat(world, ada, '/ah list');
+    const mine = lastAuction(ada.sink)!;
+    expect(mine.screen).toBe('mine');
+    expect(mine.listings[0]?.status).toBe('CANCELLED');
+    world.handleAuctionAction(ada.player, {
+      type: 'auction_action',
+      action: 'select',
+      listingId: created.listing!.listingId,
+    });
+    expect(lastAuction(ada.sink)?.screen).toBe('claim');
   });
 });

@@ -175,13 +175,9 @@ export function listingTooltip(listing: AuctionListing, now: number): string {
     `Продавец: ${listing.sellerName}`,
   ];
   if (listing.status === 'ACTIVE') lines.push(`Осталось: ${formatRemaining(remaining)}`);
-  else if (listing.status === 'EXPIRED') {
-    lines.push('Срок истёк', 'Можно забрать');
-  } else if (listing.status === 'CANCELLED') {
-    lines.push('Товар снят с продажи', 'Можно забрать');
-  } else {
-    lines.push(`Статус: ${listing.status}`);
-  }
+  else if (listing.status === 'EXPIRED') lines.push('Срок истёк');
+  else if (listing.status === 'CANCELLED') lines.push('Товар снят с продажи');
+  else lines.push(`Статус: ${listing.status}`);
   return lines.join('\n');
 }
 

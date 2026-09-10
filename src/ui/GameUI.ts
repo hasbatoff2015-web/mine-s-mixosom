@@ -15,7 +15,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionIconStack, keepAuctionSearchDraft } from './auctionGui';
+import { auctionClaimableClass, auctionClaimHint, auctionIconStack, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
 import {
   containerStageSize,
   containerUiScaleWithClose,
@@ -1909,7 +1909,7 @@ export class GameUI {
       </div>`;
   }
 
-  private slotHtml(stack: ItemStack | null, key: string, selected = false, tooltip?: string): string {
+  private slotHtml(stack: ItemStack | null, key: string, selected = false, tooltip?: string, hint?: string): string {
     const definition = stack ? getItemDefinition(stack.itemId) : undefined;
     const maxDurability = definition && 'durability' in definition ? definition.durability : undefined;
     const durability = stack && maxDurability && stack.durability !== undefined
@@ -1927,7 +1927,7 @@ export class GameUI {
       return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
     const hover = tooltip
-      ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value))
+      ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint)
       : this.itemHoverAttrs(stack.itemId, definition!.name);
     return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
@@ -2002,7 +2002,10 @@ export class GameUI {
       const listing = state.listings[index];
       if (!listing) return this.slotHtml(null, `ah-${index}`);
       const stack = this.auctionStack(listing.item);
-      return `<div data-ah-listing="${this.escape(listing.listingId)}">${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip)}</div>`;
+      const extra = auctionClaimableClass(listing.status);
+      const hint = auctionClaimHint(listing.status);
+      const wrapClass = extra ? ` class="${extra}"` : '';
+      return `<div data-ah-listing="${this.escape(listing.listingId)}"${wrapClass}>${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip, hint)}</div>`;
     }).join('');
   }
 
@@ -2068,13 +2071,17 @@ export class GameUI {
 
   private patchAuctionForm(state: ServerAuctionMessage): void {
     const itemHost = this.modal?.querySelector('[data-ah-selected-item]');
-    const amount = this.modal?.querySelector('[data-ah-amount-value]');
     if (!itemHost) {
       this.renderAuction();
       return;
     }
     itemHost.innerHTML = this.slotHtml(this.auctionSelectedStack(state), 'ah-selected');
-    if (amount) amount.textContent = String(state.selected?.amount ?? 1);
+    const amount = state.selected?.amount ?? 1;
+    const max = state.selected?.maxAmount ?? amount;
+    const minus = this.modal?.querySelector<HTMLButtonElement>('[data-ah-delta="-1"]');
+    const plus = this.modal?.querySelector<HTMLButtonElement>('[data-ah-delta="1"]');
+    if (minus) minus.disabled = amount <= 1;
+    if (plus) plus.disabled = amount >= max;
     this.writeAuctionMessage(state.message);
   }
 
@@ -2087,7 +2094,8 @@ export class GameUI {
       : state.screen === 'browse' ? 216
         : state.screen === 'mine' ? 200
           : state.screen === 'manage' ? 236
-            : 218;
+            : state.screen === 'sell-confirm' ? 204
+              : 218;
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
@@ -2155,13 +2163,14 @@ export class GameUI {
       </div>`;
     }
     if (state.screen === 'sell-confirm') {
+      const amount = state.selected?.amount ?? 1;
+      const max = state.selected?.maxAmount ?? amount;
       return `<div class="mc-ah-body" data-ah-screen="sell-confirm">
         <div class="mc-label">${this.escape(state.title)}</div>
-        ${itemSlot}
         <div class="mc-ah-amount">
-          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="-1">−</button>
-          <span data-ah-amount-value>${state.selected?.amount ?? 1}</span>
-          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="1">+</button>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="-1"${amount <= 1 ? ' disabled' : ''} aria-label="Меньше">−</button>
+          <div data-ah-selected-item>${this.slotHtml(this.auctionSelectedStack(state), 'ah-selected')}</div>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="1"${amount >= max ? ' disabled' : ''} aria-label="Больше">+</button>
         </div>
         <label class="mc-ah-field">Цена за весь лот
           <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.selected?.priceText ?? '')}" autocomplete="off" spellcheck="false" name="ah-price" />
@@ -2274,7 +2283,7 @@ export class GameUI {
       const delta = target.closest<HTMLElement>('[data-ah-delta]');
       if (delta?.dataset.ahDelta) {
         const max = current.selected?.maxAmount ?? current.selected?.amount ?? 1;
-        const next = Math.max(1, Math.min((current.selected?.amount ?? 1) + Number(delta.dataset.ahDelta), max));
+        const next = clampAuctionAmount((current.selected?.amount ?? 1) + Number(delta.dataset.ahDelta), 1, max);
         if (current.selected) {
           const item = auctionIconStack(this.auctionStack(current.selected.item), next);
           this.auctionState = {

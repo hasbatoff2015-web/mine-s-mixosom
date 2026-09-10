@@ -14,9 +14,17 @@ export interface ItemTooltipHandle {
   dispose(): void;
 }
 
-export function itemHoverAttributeString(name: string, itemId: string, escapeHtml: (value: string) => string): string {
+export function itemHoverAttributeString(
+  name: string,
+  itemId: string,
+  escapeHtml: (value: string) => string,
+  hint?: string,
+): string {
   const label = escapeHtml(name);
-  return ` data-item-tooltip="${label}" data-item-id="${escapeHtml(itemId)}" aria-label="${label}"`;
+  const hintText = hint?.trim() ? escapeHtml(hint.trim()) : '';
+  const hintAttr = hintText ? ` data-item-tooltip-hint="${hintText}"` : '';
+  const aria = hintText ? `${label}. ${hintText}` : label;
+  return ` data-item-tooltip="${label}" data-item-id="${escapeHtml(itemId)}" aria-label="${aria}"${hintAttr}`;
 }
 
 export function clampTooltipPosition(
@@ -50,6 +58,8 @@ export function copyItemHoverAttributes(current: HTMLElement, incoming: HTMLElem
   else delete current.dataset.itemTooltip;
   if (incoming.dataset.itemId) current.dataset.itemId = incoming.dataset.itemId;
   else delete current.dataset.itemId;
+  if (incoming.dataset.itemTooltipHint) current.dataset.itemTooltipHint = incoming.dataset.itemTooltipHint;
+  else delete current.dataset.itemTooltipHint;
   const aria = incoming.getAttribute('aria-label');
   if (aria) current.setAttribute('aria-label', aria);
   else current.removeAttribute('aria-label');
@@ -82,7 +92,18 @@ export function attachItemTooltip(
       hide();
       return;
     }
-    node.textContent = text;
+    const hint = target?.dataset.itemTooltipHint?.trim() ?? '';
+    if (hint) {
+      const body = document.createElement('div');
+      body.className = 'mc-item-tooltip-body';
+      body.textContent = text;
+      const hintNode = document.createElement('div');
+      hintNode.className = 'mc-item-tooltip-hint';
+      hintNode.textContent = hint;
+      node.replaceChildren(body, hintNode);
+    } else {
+      node.textContent = text;
+    }
     node.classList.add('is-visible');
     const rect = node.getBoundingClientRect();
     const holding = options.cursorStackPresent?.() === true;
