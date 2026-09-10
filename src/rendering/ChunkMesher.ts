@@ -31,15 +31,16 @@ import {
   ladderPlaneLocal,
   buttonSelectionBox,
   leverSelectionBoxes,
-  railLocalBoxes,
-  railTextureYaw,
+  railRenderQuads,
   resolveRailShape,
   resolveStairShape,
   slabLocalBoxes,
   stairLocalBoxes,
   TORCH_HEIGHT,
-  TORCH_TEXTURE_UV,
+  TORCH_BOTTOM_UV,
   TORCH_WIDTH,
+  TORCH_SIDE_UV,
+  TORCH_TOP_UV,
   torchLocalMatrix,
   lanternHangerPlanes,
   lanternMeshCuboids,
@@ -660,7 +661,8 @@ export class ChunkMesher {
       .multiply(new THREE.Matrix4().makeTranslation(0, TORCH_HEIGHT * 0.5, 0));
     return this.addCuboid(
       buffers, texture, [TORCH_WIDTH, TORCH_HEIGHT, TORCH_WIDTH], matrix,
-      world, definition, x, y, z, TORCH_TEXTURE_UV,
+      world, definition, x, y, z, undefined,
+      { side: TORCH_SIDE_UV, top: TORCH_TOP_UV, bottom: TORCH_BOTTOM_UV },
     );
   }
 
@@ -942,20 +944,26 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const texture = definition.textures.all ?? 'block/rail';
     const shape = world ? resolveRailShape(world, x, y, z) : defaultRailShape(state);
-    const yaw = railTextureYaw(shape);
-    if (yaw === 0) {
-      const boxes = railLocalBoxes(shape);
-      let faces = 0;
-      for (const box of boxes) faces += this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
-      return faces;
+    let faces = 0;
+    for (const plane of railRenderQuads(shape)) {
+      const texture = plane.texture === 'corner'
+        ? definition.textures.corner ?? 'block/rail_corner'
+        : definition.textures.all ?? 'block/rail';
+      const corners = plane.corners.map((corner) => [
+        x + corner[0], y + corner[1], z + corner[2],
+      ] as [number, number, number]);
+      const normal = this.quadNormal(corners);
+      const lighting = this.lightingFor(world, definition, texture, x, y, z, normal, 1);
+      this.addQuad(buffers, texture, corners, normal, lighting, plane.uv);
+      this.addQuad(
+        buffers, texture,
+        [corners[0]!, corners[3]!, corners[2]!, corners[1]!],
+        [-normal[0], -normal[1], -normal[2]], lighting, plane.uv, true,
+      );
+      faces += 2;
     }
-    const height = shape.startsWith('ascending_') ? 8 / 16 : 2 / 16;
-    const matrix = new THREE.Matrix4()
-      .makeTranslation(x + 0.5, y + height * 0.5, z + 0.5)
-      .multiply(new THREE.Matrix4().makeRotationY(yaw));
-    return this.addCuboid(buffers, texture, [1, height, 1], matrix, world, definition, x, y, z);
+    return faces;
   }
 
   private addFluid(
@@ -1156,6 +1164,7 @@ export class ChunkMesher {
     y: number,
     z: number,
     textureUv?: TextureUvRect,
+    faceTextureUvs?: Readonly<{ side: TextureUvRect; top: TextureUvRect; bottom: TextureUvRect }>,
   ): number {
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
     for (const face of FACES) {
@@ -1172,7 +1181,9 @@ export class ChunkMesher {
         corners,
         normalTuple,
         this.lightingFor(world, definition, texture, x, y, z, normalTuple, face.shade),
-        textureUv,
+        faceTextureUvs
+          ? (face.normal[1] > 0.5 ? faceTextureUvs.top : face.normal[1] < -0.5 ? faceTextureUvs.bottom : faceTextureUvs.side)
+          : textureUv,
       );
     }
     return 6;
