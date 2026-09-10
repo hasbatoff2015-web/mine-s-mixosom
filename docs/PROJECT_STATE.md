@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: merge Worldgen V2 into Auction House — 2026-09-10
+
+- После основания Auction-ветки в `origin/main` появился PR #83: snowy plains, mixed forests, cave Gravel/Clay, `WORLDGEN_VERSION = 2`.
+- `origin/main` влит в `cursor/auction-house-a8dc` обычным merge (`28b63be`). Конфликты были только в `docs/PROJECT_STATE.md` и `docs/ROADMAP.md`; код (`WorldInstance.ts`, `Game.ts`, `ARCHITECTURE.md`) слился автоматически.
+- Сохранены и Worldgen V2 (spawn на SnowBlock, snapshot `worldgenVersion`), и Auction House / Economy.
+- Гейты после merge Worldgen V2: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15, `test:server` 41/420, worldgen-v2+snapshot 11/11, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-10_auction-house-main-merge.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
 ## Последний проход: Worldgen V2 — snowy plains, mixed forests, cave deposits — 2026-09-10
 
 - От `origin/main@d1a33d4b` создана `codex/snowy-biome-cave-deposits`; main не менялся и merge в main не выполнялся.
@@ -13,6 +21,48 @@
 - Worldgen V2 + ore digest: **16/16 PASS**; old terrain с extended timeout **14/14 PASS**; related lighting/chunk/fluid/falling/server packs PASS. Full suite: **210/217 files, 2025/2046 tests PASS**; три дополнительные parallel-run timeouts прошли isolated 30/30, оставшиеся классы совпадают с документированными main baseline (extractor parse, worldgen/fire-minecart 5s timeouts, tick-load threshold).
 - Manual WebGL QA: plains/forest/desert/snowy/frozen shore/Gravel/Clay прошли, warn/error console пуст. Fresh authoritative online world `qa-online-fresh-2026-09-10` загрузил 81 spawn chunks; клиент вошёл через UI, сервер держал 20 TPS, observed max tick 12.75 ms.
 - Handoff: `docs/reports/2026-09-10_worldgen-v2-snow-cave-deposits.md`.
+
+## Последний проход: Auction House tooltip type — 2026-09-10
+
+- Tooltip лота в `/ah`: без строки «Количество»; название и цена 18px, продавец/осталось 14px (+17% к прежним 12px). Stack count остаётся на иконке.
+- Фон, рамка, позиция у курсора и clamp к краю экрана не менялись. Inventory tooltip по-прежнему 12px.
+- Handoff: `docs/reports/2026-09-10_auction-house-tooltip-type.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
+## Последний проход: Auction House amount + claimable lots — 2026-09-10
+
+- Подтверждение продажи: `[ − ] [ предмет со stack count ] [ + ]` на одной оси; отдельная цифра amount убрана.
+- `/ah list`: `CANCELLED` / `EXPIRED` ячейки с приглушённым красным фоном; hover — жёлтая строка «Заберите этот предмет». ACTIVE / SOLD / RELISTED / CLAIMED без этой подсветки. CLAIMED и RELISTED по-прежнему не в списке.
+- Handoff: `docs/reports/2026-09-10_auction-house-amount-claim.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
+## Последний проход: Auction House UI polish — 2026-09-10
+
+- Inventory-style кнопки подтверждения (купить / выставить / отмена) больше не используют квадратный `mc-slot`; текст `nowrap`, по центру, на всю ширину колонки действий.
+- Поиск `/ah` больше не теряет focus: повторный snapshot патчит сетку лотов на месте и не перезаписывает focused search input.
+- На browse есть кнопка **Обновить** (`auction_action.refresh`); search сохраняется, страница клампится, если стала недоступна.
+- Успешная покупка больше не пишет «Вы купили предмет…» в GUI; ошибки покупки по-прежнему в `message`.
+- Иконка на подтверждении продажи показывает выбранный `amount`, не исходный stack count.
+- Пустая цена и цена вне 10…100 000 000 — разные сообщения. Сервер остаётся authoritative.
+- Handoff: `docs/reports/2026-09-10_auction-house-ui.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
+## Последний проход: Auction House — 2026-09-09
+
+- Builtin `auction` + `AuctionService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк и второй persistence layer не добавлялись.
+- Команды: `/ah`, `/ah sell`, `/ah list` (алиасы `/auction`, `/auctionhouse`).
+- Права: `auction.use` `auction.sell` `auction.buy` `auction.list` `auction.*`. Default role + OP bypass.
+- GUI в стиле inventory/chest (`mc-panel`, слоты, иконки предметов, tooltip, крестик, E закрывает). Не меню-карточки Frontier Cubes.
+- Лоты 2 дня, лимит 30 ACTIVE, цена 10…100 000 000 за весь listing, комиссии нет. Снятые/истёкшие забираются вручную через `/ah list`.
+- Покупка: `EconomyService.settle(..., AUCTION_PURCHASE, AUCTION_SALE, listingId)`. Сервер — источник истины.
+- Handoff: `docs/reports/2026-09-09_auction-house.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82 (`bc6c8f7`).
+
+## Последний проход: Economy plugin (Мегакоин) — 2026-09-10
+
+- Builtin `economy` + `EconomyService` на существующем PluginManager. Вторая валюта / второй persistence layer не добавлялись.
+- Валюта: Мегакоин. Старт 100, максимум 999 999 999, только целые. Баланс по `playerId` (UUID).
+- Команды: `/balance` `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco give|take|set|reset|balance|transactions`.
+- Права: `economy.balance` `economy.pay` `economy.baltop` `economy.transactions` `economy.admin` `economy.*`. OP bypass.
+- Добыча: Dirt/Sand/Gravel 1, Stone 2, logs 3, Coal Ore 8, Diamond Ore 25. Поставленные игроком и TNT — 0. AutoMine fill сбрасывает placed-метки и платит той же таблицей.
+- Мобы: peaceful 2–4, hostile 8–15. PvP: `floor(10%)`, кулдаун 5 минут на пару killer→victim.
+- Handoff: `docs/reports/2026-09-10_economy-plugin.md`.
 
 ## Последний проход: player skin z-fighting integrated into current main — 2026-09-10
 
@@ -435,7 +485,7 @@
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
 - Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
-- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, economy, auction, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
 - Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.

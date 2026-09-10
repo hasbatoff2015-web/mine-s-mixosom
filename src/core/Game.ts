@@ -1279,6 +1279,9 @@ export class Game {
       case 'hologram_editor':
         this.openHologramEditor(message.hologram);
         return;
+      case 'auction':
+        this.openAuctionHouse(message);
+        return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
         return;
@@ -2150,8 +2153,10 @@ export class Game {
     const session = this.session;
     if (!session?.online || this.lifecycle.state !== 'PLAYING') return;
     this.ui.closeChat();
-    if (this.ui.isInventoryOpen()) this.ui.closeInventory(false);
-    this.openGameplayModal();
+    if (this.ui.isAuctionOpen()) {
+      session.online.client.send({ type: 'auction_action', action: 'close' });
+      this.ui.closeAuction();
+    }
     this.ui.openHologramEditor(hologram, {
       nowMs: () => Date.now() + this.serverTimeOffsetMs,
       save: (update) => {
@@ -2177,6 +2182,37 @@ export class Game {
 
   private closeHologramEditorAndResumeLook(): void {
     this.ui.closeHologramEditor();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openAuctionHouse(message: Extract<ServerMessage, { type: 'auction' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeAuction();
+      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen()) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isAuctionOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      this.openGameplayModal();
+    }
+    this.ui.openAuction(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeAuctionAndResumeLook(true),
+    });
+  }
+
+  private closeAuctionAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'auction_action', action: 'close' });
+    }
+    this.ui.closeAuction();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -3430,6 +3466,7 @@ export class Game {
 
   private enterPlaying(): void {
     this.session?.worldRenderer.setOpenChest(undefined);
+    this.ui.closeAuction();
     this.ui.closeInventory();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
@@ -3535,6 +3572,11 @@ export class Game {
       this.closeHologramEditorAndResumeLook();
       return;
     }
+    if (this.ui.isAuctionOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeAuctionAndResumeLook(true);
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3605,6 +3647,10 @@ export class Game {
     }
     if (this.ui.isHologramEditorOpen()) {
       this.closeHologramEditorAndResumeLook();
+      return;
+    }
+    if (this.ui.isAuctionOpen()) {
+      this.closeAuctionAndResumeLook(true);
       return;
     }
     if (this.ui.isInventoryOpen()) {
@@ -4894,7 +4940,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -5088,6 +5134,7 @@ export class Game {
     const chatOpen = this.ui.isChatOpen();
     const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
+    this.ui.closeAuction();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
@@ -5115,6 +5162,7 @@ export class Game {
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
+    this.ui.closeAuction();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -5527,6 +5575,7 @@ export class Game {
     this.session = undefined;
     this.chat.clear();
     this.ui.clearChat();
+    this.ui.closeAuction();
     this.inspectFreeze = null;
     this.inspectorHud = '';
     this.overlayCategories.clear();

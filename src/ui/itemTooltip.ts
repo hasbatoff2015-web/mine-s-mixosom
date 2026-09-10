@@ -14,9 +14,72 @@ export interface ItemTooltipHandle {
   dispose(): void;
 }
 
-export function itemHoverAttributeString(name: string, itemId: string, escapeHtml: (value: string) => string): string {
+export function itemHoverAttributeString(
+  name: string,
+  itemId: string,
+  escapeHtml: (value: string) => string,
+  hint?: string,
+  layout?: 'auction',
+): string {
   const label = escapeHtml(name);
-  return ` data-item-tooltip="${label}" data-item-id="${escapeHtml(itemId)}" aria-label="${label}"`;
+  const hintText = hint?.trim() ? escapeHtml(hint.trim()) : '';
+  const hintAttr = hintText ? ` data-item-tooltip-hint="${hintText}"` : '';
+  const layoutAttr = layout === 'auction' ? ' data-item-tooltip-layout="auction"' : '';
+  const aria = hintText ? `${label}. ${hintText}` : label;
+  return ` data-item-tooltip="${label}" data-item-id="${escapeHtml(itemId)}" aria-label="${aria}"${hintAttr}${layoutAttr}`;
+}
+
+export function splitAuctionTooltip(text: string): { name: string; price: string; meta: string[] } {
+  const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  const name = lines[0] ?? '';
+  const priceIndex = lines.findIndex((line) => line.startsWith('Цена:'));
+  const price = priceIndex >= 0 ? lines[priceIndex]! : '';
+  const meta = lines.filter((_line, index) => index !== 0 && index !== priceIndex);
+  return { name, price, meta };
+}
+
+export function fillItemTooltipNode(node: HTMLElement, text: string, hint = '', layout?: string): void {
+  const auction = layout === 'auction';
+  node.classList.toggle('is-auction', auction);
+  if (auction) {
+    const parts = splitAuctionTooltip(text);
+    const children: HTMLElement[] = [];
+    const title = document.createElement('div');
+    title.className = 'mc-item-tooltip-title';
+    title.textContent = parts.name;
+    children.push(title);
+    if (parts.price) {
+      const price = document.createElement('div');
+      price.className = 'mc-item-tooltip-price';
+      price.textContent = parts.price;
+      children.push(price);
+    }
+    if (parts.meta.length > 0) {
+      const meta = document.createElement('div');
+      meta.className = 'mc-item-tooltip-meta';
+      meta.textContent = parts.meta.join('\n');
+      children.push(meta);
+    }
+    if (hint.trim()) {
+      const hintNode = document.createElement('div');
+      hintNode.className = 'mc-item-tooltip-hint';
+      hintNode.textContent = hint.trim();
+      children.push(hintNode);
+    }
+    node.replaceChildren(...children);
+    return;
+  }
+  if (hint.trim()) {
+    const body = document.createElement('div');
+    body.className = 'mc-item-tooltip-body';
+    body.textContent = text;
+    const hintNode = document.createElement('div');
+    hintNode.className = 'mc-item-tooltip-hint';
+    hintNode.textContent = hint.trim();
+    node.replaceChildren(body, hintNode);
+    return;
+  }
+  node.textContent = text;
 }
 
 export function clampTooltipPosition(
@@ -50,6 +113,10 @@ export function copyItemHoverAttributes(current: HTMLElement, incoming: HTMLElem
   else delete current.dataset.itemTooltip;
   if (incoming.dataset.itemId) current.dataset.itemId = incoming.dataset.itemId;
   else delete current.dataset.itemId;
+  if (incoming.dataset.itemTooltipHint) current.dataset.itemTooltipHint = incoming.dataset.itemTooltipHint;
+  else delete current.dataset.itemTooltipHint;
+  if (incoming.dataset.itemTooltipLayout) current.dataset.itemTooltipLayout = incoming.dataset.itemTooltipLayout;
+  else delete current.dataset.itemTooltipLayout;
   const aria = incoming.getAttribute('aria-label');
   if (aria) current.setAttribute('aria-label', aria);
   else current.removeAttribute('aria-label');
@@ -67,7 +134,7 @@ export function attachItemTooltip(
   }
 
   const hide = (): void => {
-    node.classList.remove('is-visible');
+    node.classList.remove('is-visible', 'is-auction');
     node.textContent = '';
   };
 
@@ -82,7 +149,8 @@ export function attachItemTooltip(
       hide();
       return;
     }
-    node.textContent = text;
+    const hint = target?.dataset.itemTooltipHint?.trim() ?? '';
+    fillItemTooltipNode(node, text, hint, target?.dataset.itemTooltipLayout);
     node.classList.add('is-visible');
     const rect = node.getBoundingClientRect();
     const holding = options.cursorStackPresent?.() === true;

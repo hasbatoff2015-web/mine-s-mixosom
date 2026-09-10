@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-10: Merge Worldgen V2 into Auction House
+
+- [x] Fetch current `origin/main`; confirm teammate PR #83 (snowy plains / cave deposits) landed after the Auction branch base.
+- [x] Merge `origin/main` into `cursor/auction-house-a8dc` without rebase/squash/force push.
+- [x] Keep Worldgen V2 snapshot metadata and snowy spawn together with Auction House / Economy.
+- [x] Auction/economy/`test:server`/typecheck/boundaries/build PASS after the Worldgen V2 merge.
+
 ## 2026-09-10: Worldgen V2 — snowy plains, mixed forests, cave deposits
 
 - [x] Add exhaustive `snowy_plains` with biome code 3 and statistically calibrate the cold threshold to 9.104% of sampled land.
@@ -13,6 +20,34 @@
 - [x] Measure biome/tree/deposit distribution and generation performance; keep the representative batch regression to +5.2%.
 - [x] Complete WebGL QA for four biomes, frozen shore, both deposit types and a fresh authoritative online world.
 - [ ] Future only by explicit task: save-version selection/migration if old natural terrain must remain byte-identical after upgrades.
+
+## 2026-09-10: Auction House UI polish
+
+- [x] Inventory-style confirm buttons without text wrap; browse **Обновить**; in-place search patch (keep focus/caret).
+- [x] Empty vs range price messages; sell icon amount follows ±; no GUI success line after buy.
+- [ ] Owner live Anarchy QA of `/ah` browse/sell/buy/list/claim (not run in this pass).
+
+## 2026-09-09: Auction House
+
+- [x] Builtin `auction` plugin + `AuctionService` on PluginManager / JsonFileStore / EconomyService (no second wallet).
+- [x] Commands `/ah` `/ah sell` `/ah list`; aliases `/auction` `/auctionhouse`.
+- [x] Permissions `auction.use` `auction.sell` `auction.buy` `auction.list` `auction.*`; OP bypass.
+- [x] Inventory-style GUI (chest slots, item icons, tooltips, close ×, E to close).
+- [x] 2-day expiration, 30 ACTIVE listings, price 10…100 000 000, no commission.
+- [x] Manual claim of cancelled/expired items; atomic relist with a fresh timer.
+- [x] Server-authoritative create/buy/cancel/relist/claim; paged `auction` snapshots.
+- [ ] Owner live Anarchy QA of `/ah` browse/sell/buy/list/claim (not run in this pass).
+
+## 2026-09-10: Economy plugin (Мегакоин)
+
+- [x] Builtin `economy` plugin + `EconomyService` on existing PluginManager / JsonFileStore / PermissionService / EventBus.
+- [x] Player commands `/balance` `/bal` `/pay` `/baltop` `/transactions`; admin `/eco give|take|set|reset|balance|transactions`.
+- [x] Permissions `economy.balance` `economy.pay` `economy.baltop` `economy.transactions` `economy.admin` `economy.*`; OP bypass.
+- [x] Natural/AutoMine block rewards; no pay for player-placed or TNT-destroyed blocks.
+- [x] Mob kill table + PvP `floor(10%)` with 5-minute same-pair anti-farm cooldown.
+- [x] Integer Мегакоин, start 100, max 999 999 999, atomic transfer, persisted transactions.
+- [ ] Owner live Anarchy QA of `/pay` offline, AutoMine diamond, TNT ore, PvP 10%.
+- [x] Auction House uses EconomyService (this branch); Trader remains later.
 
 ## 2026-09-10: Integrate player layer z-fighting fix into current main
 
@@ -413,10 +448,12 @@
 - [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
+- [x] Economy (Мегакоин) via EconomyService + builtin plugin. Auction House still later.
+- [x] Auction House (fixed-price listings) via builtin `auction` + `AuctionService`.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
 - [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
 - [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
-- [ ] Auction House after inventory/GUI market framework.
+- [x] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
 

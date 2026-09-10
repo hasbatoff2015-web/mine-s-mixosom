@@ -45,6 +45,7 @@ import type {
   ClientHologramUpdateMessage,
   ClientInputMessage,
   ClientInventoryActionMessage,
+  ClientAuctionActionMessage,
   ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
@@ -78,6 +79,8 @@ import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
+import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
+import { EconomyService, formatMegacoins } from './services/economy';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
@@ -439,6 +442,8 @@ export class WorldInstance {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly autoMine: AutoMineManager;
+  readonly economy: EconomyService;
+  readonly auction: AuctionService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -507,6 +512,8 @@ export class WorldInstance {
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
+    this.economy = new EconomyService(this.pluginStore);
+    this.auction = new AuctionService(this.pluginStore, this.economy);
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
       return store.claims
@@ -601,6 +608,7 @@ export class WorldInstance {
         }
       },
       log: (message) => serverLog(`plugin automine ${message}`),
+      onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
     });
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
@@ -648,6 +656,8 @@ export class WorldInstance {
       }
       this.gameplay.restoreEntities(existing);
       this.permissions.load();
+      this.economy.load();
+      this.auction.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -656,6 +666,8 @@ export class WorldInstance {
     this.spawn = estimateWorldSpawn(this.world);
     this.createdAt = Date.now();
     this.permissions.load();
+    this.economy.load();
+    this.auction.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -677,6 +689,10 @@ export class WorldInstance {
         rtpSessions: this.rtpSessions,
         selection: this.selection,
         autoMine: this.autoMine,
+        economy: this.economy,
+        auction: this.auction,
+        openAuction: (playerId, view) => this.openAuction(playerId, view),
+        lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -785,6 +801,8 @@ export class WorldInstance {
       },
     };
     await this.worldStore.save(snapshot);
+    this.economy.persist();
+    this.auction.persist();
     this.dirty = false;
   }
 
@@ -905,6 +923,280 @@ export class WorldInstance {
     return { player, resumed: false };
   }
 
+  findPlayerIdentity(idOrName: string): { id: string; name: string; connected: boolean } | undefined {
+    const direct = this.players.get(idOrName);
+    if (direct) return { id: direct.id, name: direct.name, connected: direct.connected };
+    const lower = idOrName.toLowerCase();
+    for (const player of this.players.values()) {
+      if (player.name.toLowerCase() === lower) {
+        return { id: player.id, name: player.name, connected: player.connected };
+      }
+    }
+    const storedDirect = this.storedPlayers[idOrName];
+    if (storedDirect) return { id: storedDirect.id, name: storedDirect.name, connected: false };
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (stored.name.toLowerCase() === lower) {
+        return { id: stored.id, name: stored.name, connected: false };
+      }
+    }
+    return undefined;
+  }
+
+  openAuction(playerId: string, view: AuctionView): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.connected) return;
+    if (view === 'browse') this.auction.openBrowse(playerId);
+    else if (view === 'sell') this.auction.openSell(playerId);
+    else this.auction.openMine(playerId);
+    this.flushAuction(player);
+  }
+
+  handleAuctionAction(player: ServerPlayer, message: ClientAuctionActionMessage): void {
+    if (!this.hasAuctionPermission(player, message.action)) {
+      this.sendTo(player, {
+        type: 'auction',
+        screen: 'closed',
+        title: '',
+        search: '',
+        page: 1,
+        totalPages: 1,
+        totalCount: 0,
+        listings: [],
+        message: 'You do not have permission.',
+      });
+      return;
+    }
+    this.auction.expireDue();
+    const session = this.auction.session(player.id);
+    session.message = undefined;
+    const action = message.action;
+    if (action === 'close') {
+      this.auction.closeSession(player.id);
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'search') {
+      this.auction.setSearch(player.id, message.search ?? '');
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'page') {
+      this.auction.setPage(player.id, message.page ?? session.page);
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'refresh') {
+      session.message = undefined;
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'back') {
+      if (session.screen === 'buy') this.auction.openBrowse(player.id, session.search);
+      else if (session.screen === 'sell-confirm') this.auction.openSell(player.id);
+      else if (session.screen === 'manage' || session.screen === 'claim' || session.screen === 'relist') {
+        this.auction.openMine(player.id);
+      } else {
+        this.auction.closeSession(player.id);
+      }
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'select' && message.listingId) {
+      const listing = this.auction.getListing(message.listingId);
+      const fromMine = session.screen === 'mine'
+        || session.screen === 'manage'
+        || session.screen === 'claim'
+        || session.screen === 'relist';
+      if (!listing) {
+        if (fromMine) this.auction.openMine(player.id);
+        else this.auction.openBrowse(player.id, session.search);
+        this.auction.session(player.id).message = 'Этот товар уже продан.';
+        this.flushAuction(player);
+        return;
+      }
+      if (fromMine) {
+        session.listingId = listing.listingId;
+        session.screen = listing.status === 'ACTIVE' ? 'manage' : 'claim';
+        session.priceText = String(listing.price);
+      } else if (listing.sellerPlayerId === player.id) {
+        session.message = 'Нельзя купить собственный товар.';
+        this.flushAuction(player);
+        return;
+      } else {
+        session.listingId = listing.listingId;
+        session.screen = 'buy';
+      }
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'buy' && (message.listingId || session.listingId)) {
+      const listingId = message.listingId ?? session.listingId!;
+      const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId);
+      if (!result.ok) {
+        session.message = result.error;
+        if (result.error === 'Этот товар уже продан.' || result.error === 'Срок продажи этого товара истёк.') {
+          session.screen = 'browse';
+          session.listingId = undefined;
+        }
+        this.flushAuction(player);
+        return;
+      }
+      player.inventoryDirty = true;
+      this.flushPlayerInventory(player);
+      const search = session.search;
+      const page = session.page;
+      this.auction.openBrowse(player.id, search);
+      this.auction.session(player.id).page = page;
+      const seller = this.players.get(result.listing!.sellerPlayerId);
+      if (seller?.connected) {
+        this.sendTo(seller, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text: `${player.name} купил ваш лот за ${formatMegacoins(result.listing!.price)}.`,
+          kind: 'system',
+        });
+      }
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'select_slot' && message.slot !== undefined) {
+      const result = this.auction.selectSellSlot(player.id, player.inventory, message.slot);
+      if (!result.ok) this.auction.session(player.id).message = result.error;
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'set_amount' && message.amount !== undefined) {
+      const current = session.slot !== undefined ? player.inventory.getSlot(session.slot) : undefined;
+      const max = current?.count ?? session.expectedItem?.count ?? 1;
+      session.amount = Math.max(1, Math.min(message.amount, max));
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'set_price') {
+      session.priceText = typeof message.price === 'string' || typeof message.price === 'number'
+        ? String(message.price)
+        : '';
+      return;
+    }
+    if (action === 'create') {
+      const amount = message.amount ?? session.amount;
+      const slot = message.slot ?? session.slot;
+      const priceRaw = message.price ?? session.priceText;
+      const priceError = auctionPriceError(priceRaw);
+      if (slot === undefined || amount === undefined) {
+        session.message = 'Предмет больше недоступен для продажи.';
+        this.flushAuction(player);
+        return;
+      }
+      if (priceError) {
+        session.message = priceError;
+        this.flushAuction(player);
+        return;
+      }
+      const parsedPrice = parseAuctionPrice(priceRaw)!;
+      const result = this.auction.createListing(
+        player.id,
+        player.name,
+        player.inventory,
+        slot,
+        amount,
+        parsedPrice,
+        session.expectedItem,
+      );
+      if (!result.ok) {
+        session.message = result.error;
+        this.flushAuction(player);
+        return;
+      }
+      player.inventoryDirty = true;
+      this.flushPlayerInventory(player);
+      this.auction.openSell(player.id);
+      this.auction.session(player.id).message = 'Товар выставлен на аукцион.';
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'cancel' && (message.listingId || session.listingId)) {
+      const result = this.auction.cancelListing(player.id, message.listingId ?? session.listingId!);
+      this.auction.openMine(player.id);
+      this.auction.session(player.id).message = result.ok
+        ? 'Товар снят с продажи. Заберите его в списке лотов.'
+        : result.error;
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'relist' && (message.listingId || session.listingId)) {
+      const listingId = message.listingId ?? session.listingId!;
+      if (session.screen !== 'relist' && !message.price) {
+        const listing = this.auction.getListing(listingId);
+        if (!listing || listing.sellerPlayerId !== player.id || listing.status !== 'ACTIVE') {
+          session.message = 'Этот товар уже продан.';
+          this.auction.openMine(player.id);
+          this.flushAuction(player);
+          return;
+        }
+        session.listingId = listingId;
+        session.screen = 'relist';
+        session.priceText = String(listing.price);
+        this.flushAuction(player);
+        return;
+      }
+      const priceError = auctionPriceError(message.price ?? session.priceText);
+      if (priceError) {
+        session.message = priceError;
+        this.flushAuction(player);
+        return;
+      }
+      const parsedPrice = parseAuctionPrice(message.price ?? session.priceText)!;
+      const result = this.auction.relist(
+        player.id,
+        listingId,
+        parsedPrice,
+      );
+      if (!result.ok) {
+        session.message = result.error;
+        this.flushAuction(player);
+        return;
+      }
+      this.auction.openMine(player.id);
+      this.auction.session(player.id).message = 'Товар выставлен заново.';
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'claim' && (message.listingId || session.listingId)) {
+      const result = this.auction.claimListing(
+        player.id,
+        player.inventory,
+        message.listingId ?? session.listingId!,
+      );
+      if (!result.ok) {
+        session.message = result.error;
+        this.flushAuction(player);
+        return;
+      }
+      player.inventoryDirty = true;
+      this.flushPlayerInventory(player);
+      this.auction.openMine(player.id);
+      this.auction.session(player.id).message = 'Предмет возвращён в инвентарь.';
+      this.flushAuction(player);
+      return;
+    }
+    this.flushAuction(player);
+  }
+
+  private hasAuctionPermission(player: ServerPlayer, action: ClientAuctionActionMessage['action']): boolean {
+    const node = action === 'buy' || action === 'select' ? 'auction.buy'
+      : action === 'select_slot' || action === 'set_amount' || action === 'set_price' || action === 'create'
+        ? 'auction.sell'
+        : action === 'cancel' || action === 'relist' || action === 'claim' ? 'auction.list'
+          : 'auction.use';
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  private flushAuction(player: ServerPlayer): void {
+    this.sendTo(player, this.auction.buildMessage(player.id, player.inventory));
+  }
+
   disconnect(playerId: string, persist = true, connectionId?: string): void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return;
@@ -916,6 +1208,7 @@ export class WorldInstance {
     player.disconnectedAt = Date.now();
     player.sink = null;
     player.activeSocketCount = 0;
+    this.auction.closeSession(player.id);
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });

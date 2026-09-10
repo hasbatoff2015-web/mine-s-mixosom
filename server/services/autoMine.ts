@@ -117,6 +117,8 @@ export interface AutoMineHost {
   send(playerId: string, text: string): void;
   notifyAdmins(text: string): void;
   log(message: string): void;
+  /** Economy uses this to forget player-placed marks when AutoMine overwrites voxels. */
+  onBlocksWritten?(cells: readonly { x: number; y: number; z: number }[]): void;
 }
 
 export interface AutoMinePlayerRef {
@@ -633,6 +635,7 @@ export class AutoMineManager {
         scheduleNeighbors: false,
         updateLighting: true,
       });
+      this.host.onBlocksWritten?.(mutations);
     }
     job.offset = end;
     if (job.offset < job.total) return;

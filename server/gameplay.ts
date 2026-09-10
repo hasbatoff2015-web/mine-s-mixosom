@@ -249,8 +249,17 @@ export class ServerGameplay {
       },
       onSpawn: (id) => this.pushEntityEvent(id, 'projectile_spawn'),
       onRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
-      onMobHit: (accepted, position) => {
+      onMobHit: (accepted, position, mob, ownerId) => {
         if (accepted) this.emitWorldSound('combat.hit', position.x, position.y + 0.9, position.z);
+        if (accepted && mob && !mob.alive && ownerId) {
+          this.events.emit('entityDeath', {
+            entityId: mob.id,
+            cause: 'projectile',
+            playerId: ownerId,
+            attackerId: ownerId,
+            mobKind: mob.kind,
+          });
+        }
       },
     });
     this.redstone = new RedstoneSystem(world);
@@ -988,7 +997,13 @@ export class ServerGameplay {
         player.survival.recordAttack();
       }
       if (!mobHit.mob.alive) {
-        this.events.emit('entityDeath', { entityId: mobHit.mob.id, cause: 'melee', playerId: player.id });
+        this.events.emit('entityDeath', {
+          entityId: mobHit.mob.id,
+          cause: 'melee',
+          playerId: player.id,
+          attackerId: player.id,
+          mobKind: mobHit.mob.kind,
+        });
       }
       return { result: accepted ? 'hit' : 'immune', distance: mobHit.distance };
     }
@@ -1610,7 +1625,12 @@ export class ServerGameplay {
       ...(extras.attackerId ? { attackerId: extras.attackerId } : {}),
     });
     if (victim.survival.dead) {
-      this.events.emit('entityDeath', { entityId: victim.id, cause, playerId: victim.id });
+      this.events.emit('entityDeath', {
+        entityId: victim.id,
+        cause,
+        playerId: victim.id,
+        ...(extras.attackerId ? { attackerId: extras.attackerId } : {}),
+      });
     }
     if (extras.ignite) victim.survival.igniteFromArrow();
     if (result.fullHurt) {

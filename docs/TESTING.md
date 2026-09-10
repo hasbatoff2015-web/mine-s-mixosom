@@ -1,5 +1,59 @@
 # Тестирование
 
+## 2026-09-10 Auction House tooltip type
+
+Report: `reports/2026-09-10_auction-house-tooltip-type.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` 41 files / 420 tests PASS. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Auction House amount + claimable lots
+
+Report: `reports/2026-09-10_auction-house-amount-claim.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: auction 23/23, auction-plugin 9/9, auction-gui 5/5, economy 15/15. `test:server` 41 files / 419 tests PASS. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Auction House UI polish
+
+Report: `reports/2026-09-10_auction-house-ui.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: auction 21/21, auction-plugin 8/8, auction-gui 2/2, economy 15/15. `test:server` 41 files / 416 tests PASS. `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-09 Auction House
+
+Report: `reports/2026-09-09_auction-house.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/server/economy.test.ts tests/server/economy-plugin.test.ts tests/server/anarchy-plugins.test.ts tests/plugin-boundaries.test.ts --maxWorkers=2
+```
+
+Contracts: listing create/persist/expire/cancel/claim/relist; exact and partial stack extract; metadata preserved; price 10..100000000 integers only; 30 ACTIVE cap; cancelled frees a slot and expired does not count; buy withdraw/deposit via `settle` with `listingId` pairId; self-buy / sold / expired / full inventory / duplicate buy rejected; search case-insensitive; pagination clamps after last-item purchase; restart keeps SOLD listings and seller balance; GUI commands open inventory-style snapshots.
+
+Focused run: auction 18/18, auction-plugin 5/5, economy 15/15, economy-plugin 10/10, anarchy-plugins 36/36, auto-mine 3/3, plugin-boundaries 4/4. `test:sim` 12 files / 65 tests PASS. `test:server` 41 files / 410 tests PASS. `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Economy plugin (Мегакоин)
+
+Report: `reports/2026-09-10_economy-plugin.md`.
+
+```text
+npx vitest run tests/server/economy.test.ts tests/server/economy-plugin.test.ts tests/server/anarchy-plugins.test.ts tests/server/auto-mine.test.ts tests/plugin-boundaries.test.ts --maxWorkers=2
+```
+
+Contracts: new player 100; deposit/withdraw/transfer atomicity; overflow/negative/insufficient rejected; reset 100; persistence of balances+transactions; `/bal` `/pay` `/baltop` `/eco *`; natural Stone/Dirt/Sand/Gravel/Wood/Coal/Diamond reward; placed and TNT no reward; AutoMine diamond uses the same table; peaceful < hostile mob reward; duplicate mob/player death no double pay; PvP floor(10%) and 5-minute same-pair cooldown; offline `/pay`.
+
+Focused run: economy 14/14, economy-plugin 10/10, anarchy-plugins 36/36, auto-mine 3/3, plugin-boundaries 4/4. `test:sim` 12/65. `test:server` 39 files / 386 tests PASS. `typecheck` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-10 Player layer z-fighting + current main integration
 
 Report: `reports/2026-09-10_player-layer-zfighting-main-integration.md`.
