@@ -142,6 +142,64 @@ describe('Clan plugin', () => {
     expect(world.clan.playerClan(bob.player.id)?.name).toBe('Foxes');
   });
 
+  it('notifies the invited player in chat and accepts from the clan card', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    world.economy.deposit(ada.player.id, 20_000, 'ADMIN_GIVE');
+    chat(world, ada, '/clan create');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_name', name: 'Foxes' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_icon', icon: 'moon' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_create' });
+    const foxesId = world.clan.playerClan(ada.player.id)!.clanId;
+    chat(world, ada, '/clan add');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_player', playerId: bob.player.id });
+    bob.sink.payloads.length = 0;
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_invite' });
+    expect(resultLines(bob.sink).some((line) => /пригласил вас в клан Foxes/.test(line))).toBe(true);
+    chat(world, bob, '/clans');
+    world.handleClanAction(bob.player, { type: 'clan_action', action: 'select_clan', clanId: foxesId });
+    expect(lastClan(bob.sink)?.card?.joinState).toBe('invited');
+    expect(lastClan(bob.sink)?.card?.joinLabel).toBe('Вступить в клан');
+    world.handleClanAction(bob.player, { type: 'clan_action', action: 'join', clanId: foxesId });
+    expect(lastClan(bob.sink)?.screen).toBe('accept-confirm');
+    world.handleClanAction(bob.player, { type: 'clan_action', action: 'confirm_accept' });
+    expect(world.clan.playerClan(bob.player.id)?.name).toBe('Foxes');
+  });
+
+  it('lets a former owner create a new clan after makeleader and leave', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    world.economy.deposit(ada.player.id, 20_000, 'ADMIN_GIVE');
+    chat(world, ada, '/clan create');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_name', name: 'Foxes' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_icon', icon: 'moon' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_create' });
+    chat(world, ada, '/clan add');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_player', playerId: bob.player.id });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_invite' });
+    chat(world, bob, '/clan accept');
+    const invite = lastClan(bob.sink)?.invitations?.[0];
+    world.handleClanAction(bob.player, { type: 'clan_action', action: 'select_invitation', invitationId: invite!.invitationId });
+    world.handleClanAction(bob.player, { type: 'clan_action', action: 'confirm_accept' });
+    chat(world, ada, '/clan makeleader');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_member', playerId: bob.player.id });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_makeleader' });
+    expect(world.clan.playerClan(ada.player.id)?.ownerId).toBe(bob.player.id);
+    chat(world, ada, '/clan leave');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_leave' });
+    expect(world.clan.playerClan(ada.player.id)).toBeUndefined();
+    world.economy.deposit(ada.player.id, 20_000, 'ADMIN_GIVE');
+    chat(world, ada, '/clan create');
+    expect(lastClan(ada.sink)?.screen).toBe('create');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_name', name: 'NewClan' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_icon', icon: 'flame' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_create' });
+    expect(world.clan.playerClan(ada.player.id)?.name).toBe('NewClan');
+    expect(world.clan.playerClan(bob.player.id)?.name).toBe('Foxes');
+  });
+
   it('keeps search text on refresh and clamps the page', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');

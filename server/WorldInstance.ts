@@ -528,6 +528,17 @@ export class WorldInstance {
         if (stored) return stored.name;
         return this.economy.displayName(playerId);
       },
+      sendMessage: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
     });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));

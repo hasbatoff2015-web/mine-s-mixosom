@@ -936,7 +936,7 @@ export interface ServerClanMessage {
     readonly isOwner: boolean;
     readonly isMember: boolean;
     readonly isFull: boolean;
-    readonly joinState: 'none' | 'sent' | 'other-clan' | 'full' | 'own';
+    readonly joinState: 'none' | 'sent' | 'other-clan' | 'full' | 'own' | 'invited';
     readonly joinLabel?: string;
     readonly selectedMemberId?: string;
     readonly canKickSelected?: boolean;

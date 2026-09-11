@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-11: Clan QA fixes
+
+- [x] Brighter two-line create button; invite chat to target; card «Вступить в клан»; makeleader→leave→create; CSS rank cups + aligned rank column.
+- [ ] Owner live Anarchy re-QA of the 12 scenarios in `docs/reports/2026-09-11_clan-qa-fixes.md`.
+
 ## 2026-09-10: Clan system
 
 - [x] Builtin `clan` plugin + `ClanService` on PluginManager / JsonFileStore / EconomyService (no clan wallet).

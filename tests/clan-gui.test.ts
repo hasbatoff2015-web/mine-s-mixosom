@@ -22,11 +22,17 @@ describe('clan GUI helpers', () => {
   });
 
   it('renders trophy ranks for 1-3 and text after that', () => {
+    expect(clanRankHtml(1)).toContain('mc-clan-rank-col');
     expect(clanRankHtml(1)).toContain('mc-clan-trophy-1');
+    expect(clanRankHtml(1)).toContain('mc-clan-cup');
+    expect(clanRankHtml(1)).not.toContain('🏆');
     expect(clanRankHtml(2)).toContain('mc-clan-trophy-2');
     expect(clanRankHtml(3)).toContain('mc-clan-trophy-3');
-    expect(clanRankHtml(4)).toBe('<span class="mc-clan-rank">#4</span>');
-    expect(clanRankHtml(6)).toContain('#6');
+    expect(clanRankHtml(4)).toContain('mc-clan-rank-col');
+    expect(clanRankHtml(4)).toContain('#4');
+    expect(clanRankHtml(4)).not.toContain('mc-clan-trophy');
+    expect(clanRankHtml(10)).toContain('#10');
+    expect(clanRankHtml(100)).toContain('#100');
   });
 
   it('builds icon+name rows and join disabled states', () => {
@@ -47,6 +53,8 @@ describe('clan GUI helpers', () => {
       joinState: 'none',
     };
     expect(clanJoinDisabled(none)).toBe(false);
+    expect(clanJoinCaption({ ...none, joinState: 'invited' })).toBe('Вступить в клан');
+    expect(clanJoinDisabled({ ...none, joinState: 'invited' })).toBe(false);
     expect(clanJoinCaption({ ...none, joinState: 'sent' })).toBe('Заявка отправлена');
     expect(clanJoinCaption({ ...none, joinState: 'full' })).toBe('Клан заполнен');
     expect(clanJoinDisabled({ ...none, joinState: 'other-clan' })).toBe(true);

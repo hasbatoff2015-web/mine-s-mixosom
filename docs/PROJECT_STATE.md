@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Clan QA fixes — 2026-09-11
+
+- `/clan create`: кнопка «Создать клан / 10 000 Мегакоинов» ярче и жирнее (только `.mc-clan-btn-2line`).
+- Invitation chat: после успешного invite target получает system chat. Повторный invite не дублирует сообщение.
+- Clan card: активное invitation → `joinState: invited` → кнопка «Вступить в клан» → тот же accept-confirm, сервер проверяет invitation заново.
+- makeleader → leave → create: session больше не держит старое имя клана; leave/kick отвязывают игрока от всех кланов, где он не owner. После leave бывший owner может создать новый клан, пока старый жив.
+- `/clans` trophies: CSS-кубки gold/silver/bronze вместо emoji 🏆; rank — фиксированная колонка, имена на одной вертикали; pagination сохраняет глобальный rank.
+- Гейты: clan 19/19, clan-plugin 7/7, clan-gui 6/6. PR #85.
+
 ## Последний проход: Clan system — 2026-09-10
 
 - Builtin `clan` + `ClanService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк не добавлялся. «Богатство клана» = сумма текущих балансов участников, считается при `/clans` / refresh / snapshot, не каждый tick.

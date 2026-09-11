@@ -22,13 +22,16 @@ import {
   CLAN_ALREADY_OTHER_CLAN_ERROR,
   CLAN_FULL_ERROR,
   CLAN_ICON_ERROR,
+  CLAN_INVITE_MISSING_ERROR,
   CLAN_INVITE_SELF_ERROR,
   CLAN_KICK_SELF_ERROR,
   CLAN_NAME_TAKEN_ERROR,
   CLAN_OFFLINE_INVITE_ERROR,
   CLAN_OWNER_LEAVE_ERROR,
   CLAN_OWNER_ONLY_ERROR,
+  CLAN_PAGE_SIZE,
   CLAN_TARGET_IN_CLAN_ERROR,
+  clanInviteChat,
   ClanService,
   type ClanRuntime,
 } from '../../server/services/clan';
@@ -37,13 +40,17 @@ async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-clan-'));
 }
 
-function runtime(online: Array<{ id: string; name: string }> = []): ClanRuntime {
+function runtime(
+  online: Array<{ id: string; name: string }> = [],
+  mail: Array<{ id: string; text: string }> = [],
+): ClanRuntime {
   const names = new Map(online.map((player) => [player.id, player.name]));
   const connected = new Set(online.map((player) => player.id));
   return {
     onlinePlayers: () => online,
     isOnline: (id) => connected.has(id),
     displayName: (id) => names.get(id) ?? id.slice(0, 8),
+    sendMessage: (id, text) => { mail.push({ id, text }); },
   };
 }
 
@@ -306,6 +313,8 @@ describe('ClanService', () => {
     const page2 = clan.buildMessage('viewer');
     expect(page2.page).toBe(2);
     expect(page2.totalPages).toBeGreaterThan(1);
+    expect(page2.clans[0]?.rank).toBe(CLAN_PAGE_SIZE + 1);
+    expect(page2.clans.every((row) => row.rank > 3)).toBe(true);
     clan.handleAction('viewer', { type: 'clan_action', action: 'refresh' });
     expect(clan.buildMessage('viewer').search).toBe('');
   });
@@ -318,5 +327,83 @@ describe('ClanService', () => {
     });
     expect(parseClientMessage({ type: 'clan_action', action: 'explode' }))
       .toEqual({ error: 'clan_action.action invalid' });
+  });
+
+  it('lets a former owner create a new clan after makeleader and leave', async () => {
+    const { clan, economy } = await setup();
+    expect(clan.createClan('owner', 'Warriors', 'swords').ok).toBe(true);
+    expect(clan.invitePlayer('owner', 'bob').ok).toBe(true);
+    expect(clan.acceptInvitation('bob', clan.invitationsFor('bob')[0]!.invitationId).ok).toBe(true);
+    expect(clan.makeLeader('owner', 'bob').ok).toBe(true);
+    expect(clan.playerClan('owner')?.ownerId).toBe('bob');
+    expect(clan.playerClan('owner')?.memberIds).toEqual(expect.arrayContaining(['owner', 'bob']));
+    expect(clan.leaveClan('owner').ok).toBe(true);
+    expect(clan.playerClan('owner')).toBeUndefined();
+    expect(clan.playerClan('bob')?.ownerId).toBe('bob');
+    expect(clan.playerClan('bob')?.memberIds).toEqual(['bob']);
+    expect(clan.openCreate('owner').ok).toBe(true);
+    expect(clan.session('owner').nameText).toBe('');
+    expect(clan.createClan('owner', 'Warriors', 'flame').error).toBe(CLAN_NAME_TAKEN_ERROR);
+    economy.deposit('owner', 20_000, 'ADMIN_GIVE');
+    expect(clan.createClan('owner', 'Foxes', 'moon').ok).toBe(true);
+    expect(clan.playerClan('owner')?.name).toBe('Foxes');
+    expect(clan.playerClan('owner')?.ownerId).toBe('owner');
+    expect(clan.playerClan('bob')?.name).toBe('Warriors');
+  });
+
+  it('persists makeleader then leave so the former owner can create after reload', async () => {
+    const { clan, economy, store } = await setup();
+    clan.createClan('owner', 'Warriors', 'swords');
+    clan.invitePlayer('owner', 'bob');
+    clan.acceptInvitation('bob', clan.invitationsFor('bob')[0]!.invitationId);
+    clan.makeLeader('owner', 'bob');
+    expect(clan.leaveClan('owner').ok).toBe(true);
+    const again = new ClanService(store, economy);
+    again.setRuntime(runtime([{ id: 'owner', name: 'Ada' }, { id: 'bob', name: 'Bob' }]));
+    expect(again.playerClan('owner')).toBeUndefined();
+    expect(again.playerClan('bob')?.ownerId).toBe('bob');
+    economy.deposit('owner', 20_000, 'ADMIN_GIVE');
+    expect(again.createClan('owner', 'Foxes', 'moon').ok).toBe(true);
+    expect(again.playerClan('bob')?.name).toBe('Warriors');
+    expect(again.playerClan('owner')?.name).toBe('Foxes');
+  });
+
+  it('notifies the target once when an invitation is created and exposes card accept', async () => {
+    const mail: Array<{ id: string; text: string }> = [];
+    const { clan } = await setup();
+    clan.setRuntime(runtime(
+      [{ id: 'owner', name: 'Ada' }, { id: 'bob', name: 'Bob' }, { id: 'carl', name: 'Carl' }],
+      mail,
+    ));
+    clan.createClan('owner', 'Warriors', 'swords');
+    expect(clan.invitePlayer('owner', 'bob').ok).toBe(true);
+    expect(mail).toEqual([{
+      id: 'bob',
+      text: clanInviteChat('Ada', 'Warriors'),
+    }]);
+    expect(clan.invitePlayer('owner', 'bob').ok).toBe(true);
+    expect(mail).toHaveLength(1);
+    const clanId = clan.playerClan('owner')!.clanId;
+    clan.handleAction('bob', { type: 'clan_action', action: 'select_clan', clanId });
+    const card = clan.buildMessage('bob');
+    expect(card.card?.joinState).toBe('invited');
+    expect(card.card?.joinLabel).toBe('Вступить в клан');
+    clan.handleAction('bob', { type: 'clan_action', action: 'join', clanId });
+    expect(clan.buildMessage('bob').screen).toBe('accept-confirm');
+    clan.handleAction('bob', { type: 'clan_action', action: 'confirm_accept' });
+    expect(clan.playerClan('bob')?.name).toBe('Warriors');
+    expect(clan.invitationsFor('bob')).toHaveLength(0);
+  });
+
+  it('rejects an expired card accept', async () => {
+    let now = 4_000;
+    const { clan } = await setup(() => now);
+    clan.createClan('owner', 'Warriors', 'swords');
+    clan.invitePlayer('owner', 'bob');
+    const clanId = clan.playerClan('owner')!.clanId;
+    now += CLAN_INVITE_TTL_MS + 1;
+    clan.handleAction('bob', { type: 'clan_action', action: 'join', clanId });
+    expect(clan.buildMessage('bob').message).toBe(CLAN_INVITE_MISSING_ERROR);
+    expect(clan.playerClan('bob')).toBeUndefined();
   });
 });
