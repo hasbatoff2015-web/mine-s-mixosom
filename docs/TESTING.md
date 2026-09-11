@@ -1,5 +1,9 @@
 # Тестирование
 
+## 2026-09-11 Clan system merged into main
+
+Report: `reports/2026-09-11_clan-system-main-merge.md`. Merge `--no-ff` `ae904a3`. Pre-merge gates as below.
+
 ## 2026-09-11 Clan QA fixes
 
 Report: `reports/2026-09-11_clan-qa-fixes.md`.
