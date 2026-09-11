@@ -23,13 +23,13 @@ Fixes:
 - Create button: `.mc-clan-btn-2line` darker/bolder text; disabled still distinct. Other `.mc-ah-btn` unchanged.
 - Invite chat via `ClanRuntime.sendMessage` only when a new invitation is stored.
 - `joinState: invited` from server invitation lookup; card button «Вступить в клан» → accept-confirm; expired invite on click → error + card refresh.
-- Ranking: CSS cups gold/silver/bronze (no 🏆 emoji); `.mc-clan-rank-col` fixed width; page 2 keeps global ranks 7+.
+- Ranking: emoji 🏆 for #1/#2/#3 with gold / grayscale-silver / sepia-bronze filters; `#N` after that. `.mc-clan-rank-col` fixed width; page 2 keeps global ranks. Clan `shield` glyph is `🛡️` (U+1F6E1+FE0F).
 
 ## Tests
 
 Regression: former owner create after makeleader+leave; persist/reload then create; invite chat once; card invited accept; expired card join; rank column / invited caption; plugin makeleader leave create + card accept.
 
-Focused: clan 19/19, clan-plugin 7/7, clan-gui 6/6, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 446 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS.
+Focused: clan 20/20, clan-plugin 7/7, clan-gui 7/7, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 447 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS.
 
 ## Git
 

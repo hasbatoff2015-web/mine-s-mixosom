@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { formatCompactMegacoins } from '../shared/megacoins';
-import { CLAN_ICON_IDS, validateClanName } from '../shared/clans';
+import { CLAN_ICON_GLYPH, CLAN_ICON_IDS, validateClanName } from '../shared/clans';
 import {
   clanIconGlyph,
+  clanIconHtml,
   clanJoinCaption,
   clanJoinDisabled,
   clanRankHtml,
@@ -24,15 +25,30 @@ describe('clan GUI helpers', () => {
   it('renders trophy ranks for 1-3 and text after that', () => {
     expect(clanRankHtml(1)).toContain('mc-clan-rank-col');
     expect(clanRankHtml(1)).toContain('mc-clan-trophy-1');
-    expect(clanRankHtml(1)).toContain('mc-clan-cup');
-    expect(clanRankHtml(1)).not.toContain('🏆');
+    expect(clanRankHtml(1)).toContain('mc-clan-cup-emoji');
+    expect(clanRankHtml(1)).toContain('🏆');
     expect(clanRankHtml(2)).toContain('mc-clan-trophy-2');
+    expect(clanRankHtml(2)).toContain('🏆');
     expect(clanRankHtml(3)).toContain('mc-clan-trophy-3');
+    expect(clanRankHtml(3)).toContain('🏆');
     expect(clanRankHtml(4)).toContain('mc-clan-rank-col');
     expect(clanRankHtml(4)).toContain('#4');
+    expect(clanRankHtml(4)).not.toContain('🏆');
     expect(clanRankHtml(4)).not.toContain('mc-clan-trophy');
     expect(clanRankHtml(10)).toContain('#10');
     expect(clanRankHtml(100)).toContain('#100');
+  });
+
+  it('maps every clan icon id, including the emoji-presentation shield', () => {
+    expect(CLAN_ICON_IDS).toHaveLength(10);
+    expect(CLAN_ICON_GLYPH.shield).toContain('\u{1F6E1}');
+    expect(CLAN_ICON_GLYPH.shield).toContain('\uFE0F');
+    for (const id of CLAN_ICON_IDS) {
+      expect(clanIconGlyph(id).length).toBeGreaterThan(0);
+      expect(clanIconHtml(id)).toContain(`data-clan-icon="${id}"`);
+      expect(clanIconHtml(id)).toContain(clanIconGlyph(id));
+    }
+    expect(clanIconGlyph('shield')).toBe(CLAN_ICON_GLYPH.shield);
   });
 
   it('builds icon+name rows and join disabled states', () => {

@@ -103,6 +103,15 @@ describe('ClanService', () => {
     expect(again.playerClan('owner')?.name).toBe('Warriors');
   });
 
+  it('persists the shield icon id and still loads it after restart', async () => {
+    const { clan, store, economy } = await setup();
+    expect(clan.createClan('owner', 'Aegis', 'shield').ok).toBe(true);
+    expect(clan.playerClan('owner')?.icon).toBe('shield');
+    const again = new ClanService(store, economy);
+    expect(again.playerClan('owner')?.icon).toBe('shield');
+    expect(again.playerClan('owner')?.name).toBe('Aegis');
+  });
+
   it('rejects insufficient funds, duplicate membership, and case-insensitive names', async () => {
     const { clan, economy } = await setup();
     expect(clan.createClan('broke', 'NoCash', 'shield').error).toMatch(/Недостаточно/);

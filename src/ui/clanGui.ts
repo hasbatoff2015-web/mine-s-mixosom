@@ -18,11 +18,11 @@ export function clanIconHtml(icon: string | undefined, extraClass = ''): string 
 
 export function clanRankHtml(rank: number): string {
   const inner = rank === 1
-    ? '<span class="mc-clan-trophy mc-clan-trophy-1" aria-label="#1"><span class="mc-clan-cup"></span><b>1</b></span>'
+    ? '<span class="mc-clan-trophy mc-clan-trophy-1" aria-label="#1"><span class="mc-clan-cup-emoji">🏆</span><b>1</b></span>'
     : rank === 2
-      ? '<span class="mc-clan-trophy mc-clan-trophy-2" aria-label="#2"><span class="mc-clan-cup"></span><b>2</b></span>'
+      ? '<span class="mc-clan-trophy mc-clan-trophy-2" aria-label="#2"><span class="mc-clan-cup-emoji">🏆</span><b>2</b></span>'
       : rank === 3
-        ? '<span class="mc-clan-trophy mc-clan-trophy-3" aria-label="#3"><span class="mc-clan-cup"></span><b>3</b></span>'
+        ? '<span class="mc-clan-trophy mc-clan-trophy-3" aria-label="#3"><span class="mc-clan-cup-emoji">🏆</span><b>3</b></span>'
         : rank > 0
           ? `<span class="mc-clan-rank">#${rank}</span>`
           : '<span class="mc-clan-rank"></span>';

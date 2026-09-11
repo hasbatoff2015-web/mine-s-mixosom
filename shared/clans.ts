@@ -24,7 +24,9 @@ export type ClanIconId = (typeof CLAN_ICON_IDS)[number];
 
 export const CLAN_ICON_GLYPH: Record<ClanIconId, string> = {
   swords: '⚔',
-  shield: '🛡',
+  // U+1F6E1 without VS16 is a text-presentation codepoint and often renders blank
+  // in UI fonts. FE0F forces the color-emoji shield while keeping icon id `shield`.
+  shield: '🛡️',
   flame: '🔥',
   crown: '👑',
   skull: '💀',

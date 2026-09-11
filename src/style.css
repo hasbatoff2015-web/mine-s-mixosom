@@ -1288,7 +1288,10 @@ button {
   width: calc(10px * var(--mc-ui-scale, 3));
   height: calc(10px * var(--mc-ui-scale, 3));
   flex: none;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
   font-size: calc(8px * var(--mc-ui-scale, 3));
+  font-style: normal;
+  font-variant-emoji: emoji;
   line-height: 1;
 }
 
@@ -1370,13 +1373,12 @@ button {
   font-size: calc(8px * var(--mc-ui-scale, 3));
 }
 
-.mc-clan-cup {
-  width: calc(7px * var(--mc-ui-scale, 3));
-  height: calc(7px * var(--mc-ui-scale, 3));
+.mc-clan-cup-emoji {
   flex: none;
-  background: currentColor;
-  clip-path: polygon(12% 10%, 88% 10%, 88% 42%, 64% 42%, 64% 70%, 80% 70%, 80% 88%, 20% 88%, 20% 70%, 36% 70%, 36% 42%, 12% 42%);
-  box-shadow: inset 0 calc(-1px * var(--mc-ui-scale, 3)) 0 rgba(0, 0, 0, 0.25);
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
+  font-style: normal;
+  font-variant-emoji: emoji;
+  line-height: 1;
 }
 
 .mc-clan-trophy b {
@@ -1385,9 +1387,17 @@ button {
   color: #202020;
 }
 
-.mc-clan-trophy-1 { color: #f1c40f; }
-.mc-clan-trophy-2 { color: #c0c7ce; }
-.mc-clan-trophy-3 { color: #c47a3a; }
+.mc-clan-trophy-1 .mc-clan-cup-emoji {
+  filter: none;
+}
+
+.mc-clan-trophy-2 .mc-clan-cup-emoji {
+  filter: grayscale(1) brightness(1.22) contrast(1.05);
+}
+
+.mc-clan-trophy-3 .mc-clan-cup-emoji {
+  filter: sepia(1) saturate(2.6) hue-rotate(-22deg) brightness(0.78);
+}
 
 .mc-clan-coin {
   display: inline-block;
