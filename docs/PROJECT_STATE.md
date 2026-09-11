@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Clan system merged into main — 2026-09-11
+
+- PR #85 влит в `main` обычным `--no-ff`: merge commit `ae904a3`. История не переписывалась.
+- Перед merge `origin/main` был на `750a3b7` (Auction House); новых commit'ов товарища не было, extra merge main → clan не понадобился, конфликтов не было.
+- Сохранены Auction House / Economy, Worldgen V2 (PR #83) и Clan System.
+- Гейты перед merge: clan 20/20, clan-plugin 7/7, clan-gui 7/7, auction 24/24, economy 15/15, `test:server` 43/447, четыре typecheck, boundaries, build PASS. Live Anarchy QA уже прошёл на Clan-ветке.
+- Handoff: `docs/reports/2026-09-11_clan-system-main-merge.md`.
+
 ## Последний проход: Clan QA fixes — 2026-09-11
 
 - `/clan create`: кнопка «Создать клан / 10 000 Мегакоинов» ярче и жирнее (только `.mc-clan-btn-2line`).

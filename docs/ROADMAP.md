@@ -1,9 +1,16 @@
 # Roadmap
 
+## 2026-09-11: Merge Clan System into main
+
+- [x] Fetch current `origin/main`; no teammate commits after Auction House merge `750a3b7`.
+- [x] Merge `--no-ff` `cursor/clan-system-a8dc` into `main` (`ae904a3`) without rebase/squash/force push.
+- [x] Keep Auction House / Economy / Worldgen V2 together with Clan System.
+- [x] Pre-merge gates: clan 20/20, clan-plugin 7/7, clan-gui 7/7, auction 24/24, economy 15/15, `test:server` 43/447, four typechecks, boundaries, build PASS.
+
 ## 2026-09-11: Clan QA fixes
 
 - [x] Brighter two-line create button; invite chat to target; card «Вступить в клан»; makeleader→leave→create; CSS rank cups + aligned rank column.
-- [ ] Owner live Anarchy re-QA of the 12 scenarios in `docs/reports/2026-09-11_clan-qa-fixes.md`.
+- [x] Owner live Anarchy QA of clan create/invite/accept/request/leave/kick/delete (passed before merge).
 
 ## 2026-09-10: Clan system
 
