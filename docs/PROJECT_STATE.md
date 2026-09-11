@@ -7,7 +7,7 @@
 - Clan card: активное invitation → `joinState: invited` → кнопка «Вступить в клан» → тот же accept-confirm, сервер проверяет invitation заново.
 - makeleader → leave → create: session больше не держит старое имя клана; leave/kick отвязывают игрока от всех кланов, где он не owner. После leave бывший owner может создать новый клан, пока старый жив.
 - Ranking: emoji 🏆 for #1/#2/#3 (gold / silver filter / bronze filter), `#N` after that; shield glyph uses VS16 so 🛡️ renders.
-- Гейты: clan 19/19, clan-plugin 7/7, clan-gui 6/6. PR #85.
+- Гейты: clan 20/20, clan-plugin 7/7, clan-gui 7/7. PR #85.
 
 ## Последний проход: Clan system — 2026-09-10
 
