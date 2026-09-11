@@ -4,6 +4,7 @@ import { createAuctionPlugin } from './auction';
 import { createAutoMinePlugin } from './autoMine';
 import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
+import { createClanPlugin } from './clan';
 import { createEconomyPlugin } from './economy';
 import { createHomePlugin } from './home';
 import { createHologramsPlugin } from './holograms';
@@ -21,6 +22,7 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createPluginAdminPlugin(ctx),
     createEconomyPlugin(ctx),
     createAuctionPlugin(ctx),
+    createClanPlugin(ctx),
     createTpaPlugin(ctx),
     createSpawnPlugin(ctx),
     createHomePlugin(ctx),

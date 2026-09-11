@@ -1282,6 +1282,9 @@ export class Game {
       case 'auction':
         this.openAuctionHouse(message);
         return;
+      case 'clan':
+        this.openClanHouse(message);
+        return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
         return;
@@ -2157,6 +2160,10 @@ export class Game {
       session.online.client.send({ type: 'auction_action', action: 'close' });
       this.ui.closeAuction();
     }
+    if (this.ui.isClanOpen()) {
+      session.online.client.send({ type: 'clan_action', action: 'close' });
+      this.ui.closeClan();
+    }
     this.ui.openHologramEditor(hologram, {
       nowMs: () => Date.now() + this.serverTimeOffsetMs,
       save: (update) => {
@@ -2213,6 +2220,38 @@ export class Game {
       this.session.online.client.send({ type: 'auction_action', action: 'close' });
     }
     this.ui.closeAuction();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openClanHouse(message: Extract<ServerMessage, { type: 'clan' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeClan();
+      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen() && !this.ui.isAuctionOpen()) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isClanOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      if (this.ui.isAuctionOpen()) this.ui.closeAuction();
+      this.openGameplayModal();
+    }
+    this.ui.openClan(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeClanAndResumeLook(true),
+    });
+  }
+
+  private closeClanAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'clan_action', action: 'close' });
+    }
+    this.ui.closeClan();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -3467,6 +3506,7 @@ export class Game {
   private enterPlaying(): void {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeAuction();
+    this.ui.closeClan();
     this.ui.closeInventory();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
@@ -3577,6 +3617,11 @@ export class Game {
       this.closeAuctionAndResumeLook(true);
       return;
     }
+    if (this.ui.isClanOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeClanAndResumeLook(true);
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3651,6 +3696,10 @@ export class Game {
     }
     if (this.ui.isAuctionOpen()) {
       this.closeAuctionAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isClanOpen()) {
+      this.closeClanAndResumeLook(true);
       return;
     }
     if (this.ui.isInventoryOpen()) {
@@ -4940,7 +4989,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen() || this.ui.isClanOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -5135,6 +5184,7 @@ export class Game {
     const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
     this.ui.closeAuction();
+    this.ui.closeClan();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
@@ -5163,6 +5213,7 @@ export class Game {
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
     this.ui.closeAuction();
+    this.ui.closeClan();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -5576,6 +5627,7 @@ export class Game {
     this.chat.clear();
     this.ui.clearChat();
     this.ui.closeAuction();
+    this.ui.closeClan();
     this.inspectFreeze = null;
     this.inspectorHud = '';
     this.overlayCategories.clear();

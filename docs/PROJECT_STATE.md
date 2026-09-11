@@ -1,5 +1,26 @@
 # Состояние проекта
 
+## Последний проход: Clan QA fixes — 2026-09-11
+
+- `/clan create`: кнопка «Создать клан / 10 000 Мегакоинов» ярче и жирнее (только `.mc-clan-btn-2line`).
+- Invitation chat: после успешного invite target получает system chat. Повторный invite не дублирует сообщение.
+- Clan card: активное invitation → `joinState: invited` → кнопка «Вступить в клан» → тот же accept-confirm, сервер проверяет invitation заново.
+- makeleader → leave → create: session больше не держит старое имя клана; leave/kick отвязывают игрока от всех кланов, где он не owner. После leave бывший owner может создать новый клан, пока старый жив.
+- Ranking: emoji 🏆 for #1/#2/#3 (gold / silver filter / bronze filter), `#N` after that; shield glyph uses VS16 so 🛡️ renders.
+- Гейты: clan 20/20, clan-plugin 7/7, clan-gui 7/7. PR #85.
+
+## Последний проход: Clan system — 2026-09-10
+
+- Builtin `clan` + `ClanService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк не добавлялся. «Богатство клана» = сумма текущих балансов участников, считается при `/clans` / refresh / snapshot, не каждый tick.
+- Команды: `/clans`, `/clan create|delete|add|accept|leave|makeleader|kick <ник>`.
+- Права: `clan.use` `clan.create` `clan.delete` `clan.add` `clan.accept` `clan.leave` `clan.makeleader` `clan.kick` `clan.list` `clan.*`. Default role + OP bypass.
+- GUI в стиле Auction House / inventory (`mc-panel`, длинные кнопки, поиск без потери focus, refresh, pagination, back ←, close ×, E закрывает).
+- Создание: 10 000 МК через `EconomyService.withdraw(..., CLAN_CREATE)`, `canCreateClan` hook (сейчас always true; PlaytimeService позже).
+- Максимум 20 участников включая owner. Invitations и join requests 24ч без per-item timer. Один игрок — один клан. Один активный request.
+- Persistence: `plugin-data/clans/clans.json`. Protocol: `clan_action` / `clan`.
+- Гейты: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, economy 15/15, `test:server` 43/440, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-10_clan-system.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/85
+
 ## Последний проход: Auction House merged into main — 2026-09-10
 
 - PR #82 влит в `main` обычным `--no-ff`: merge commit `d329f1f`. История не переписывалась.

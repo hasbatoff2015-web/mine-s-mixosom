@@ -1215,6 +1215,256 @@ button {
   margin: calc(8px * var(--mc-ui-scale, 3)) 0 calc(5px * var(--mc-ui-scale, 3));
 }
 
+.mc-back {
+  margin: 0 0 0 max(0px, env(safe-area-inset-left, 0px));
+}
+
+.mc-clan-stage .mc-clan-panel,
+.mc-panel.mc-clan-panel,
+.mc-panel[data-container-kind="clan"] {
+  width: calc(220px * var(--mc-ui-scale, 3));
+}
+
+.mc-clan-body {
+  gap: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-clan-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  min-height: calc(78px * var(--mc-ui-scale, 3));
+  max-height: calc(108px * var(--mc-ui-scale, 3));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.mc-clan-row {
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  width: 100%;
+  min-height: calc(18px * var(--mc-ui-scale, 3));
+  margin: 0;
+  padding: 0 calc(4px * var(--mc-ui-scale, 3));
+  border: 0;
+  border-radius: 0;
+  background: #8b8b8b;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #373737,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #ffffff;
+  color: #f4f4f4;
+  font-family: var(--font-ui);
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mc-clan-row.is-owner .mc-clan-row-name {
+  color: #ffe566;
+}
+
+.mc-clan-row.is-selected {
+  outline: calc(1px * var(--mc-ui-scale, 3)) solid #ffff55;
+}
+
+.mc-clan-row-name {
+  display: flex;
+  align-items: center;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-clan-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(10px * var(--mc-ui-scale, 3));
+  height: calc(10px * var(--mc-ui-scale, 3));
+  flex: none;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
+  font-size: calc(8px * var(--mc-ui-scale, 3));
+  font-style: normal;
+  font-variant-emoji: emoji;
+  line-height: 1;
+}
+
+.mc-clan-icons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  margin: calc(4px * var(--mc-ui-scale, 3)) 0;
+  max-height: calc(92px * var(--mc-ui-scale, 3));
+  overflow-y: auto;
+}
+
+.mc-clan-icon-pick {
+  display: flex;
+  align-items: center;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  min-width: 0;
+  margin: 0;
+  padding: 0 calc(3px * var(--mc-ui-scale, 3));
+  height: calc(16px * var(--mc-ui-scale, 3));
+  border: 0;
+  background: #8b8b8b;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #373737,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #ffffff;
+  color: #202020;
+  font: inherit;
+  font-size: calc(5.5px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.mc-clan-icon-pick.is-selected {
+  outline: calc(1px * var(--mc-ui-scale, 3)) solid #ffff55;
+  color: #111;
+}
+
+.mc-clan-rank-col {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(26px * var(--mc-ui-scale, 3));
+  min-width: calc(26px * var(--mc-ui-scale, 3));
+}
+
+.mc-clan-balance,
+.mc-clan-count,
+.mc-clan-rank,
+.mc-clan-trophy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(2px * var(--mc-ui-scale, 3));
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-clan-balance {
+  color: #ffe566;
+}
+
+.mc-clan-count,
+.mc-clan-rank {
+  color: #202020;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.mc-clan-count {
+  min-width: calc(22px * var(--mc-ui-scale, 3));
+  justify-content: flex-end;
+}
+
+.mc-clan-trophy {
+  min-width: 0;
+  font-size: calc(8px * var(--mc-ui-scale, 3));
+}
+
+.mc-clan-cup-emoji {
+  flex: none;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
+  font-style: normal;
+  font-variant-emoji: emoji;
+  line-height: 1;
+}
+
+.mc-clan-trophy b {
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 800;
+  color: #202020;
+}
+
+.mc-clan-trophy-1 .mc-clan-cup-emoji {
+  filter: none;
+}
+
+.mc-clan-trophy-2 .mc-clan-cup-emoji {
+  filter: grayscale(1) brightness(1.22) contrast(1.05);
+}
+
+.mc-clan-trophy-3 .mc-clan-cup-emoji {
+  filter: sepia(1) saturate(2.6) hue-rotate(-22deg) brightness(0.78);
+}
+
+.mc-clan-coin {
+  display: inline-block;
+  width: calc(6px * var(--mc-ui-scale, 3));
+  height: calc(6px * var(--mc-ui-scale, 3));
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff3a0, #f0c000 45%, #b8860b 100%);
+  box-shadow: inset 0 0 0 calc(0.6px * var(--mc-ui-scale, 3)) #7a5a00;
+  flex: none;
+}
+
+.mc-clan-card-title {
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  height: auto;
+}
+
+.mc-clan-card-meta,
+.mc-clan-owner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  color: #404040;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  white-space: nowrap;
+}
+
+.mc-clan-btn-2line {
+  height: calc(28px * var(--mc-ui-scale, 3));
+  flex-direction: column;
+  gap: calc(1px * var(--mc-ui-scale, 3));
+  white-space: nowrap;
+  line-height: 1.15;
+  color: #1a1a1a;
+  font-weight: 800;
+}
+
+.mc-clan-btn-2line small {
+  font-size: 0.85em;
+  font-weight: 700;
+  opacity: 1;
+  color: #2b2b2b;
+}
+
+.mc-clan-btn-2line:disabled,
+.mc-ah-actions .mc-clan-btn-2line:disabled {
+  color: #5a5a5a;
+  font-weight: 700;
+}
+
+.mc-clan-btn-2line:disabled small,
+.mc-ah-actions .mc-clan-btn-2line:disabled small {
+  color: #6a6a6a;
+}
+
+.mc-ah-actions .mc-ah-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mc-clan-owner-mini {
+  color: #404040;
+  font-size: calc(5px * var(--mc-ui-scale, 3));
+}
+
 .mc-backdrop {
   align-items: center;
   justify-content: center;

@@ -46,6 +46,7 @@ import type {
   ClientInputMessage,
   ClientInventoryActionMessage,
   ClientAuctionActionMessage,
+  ClientClanActionMessage,
   ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
@@ -80,6 +81,7 @@ import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
+import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { EconomyService, formatMegacoins } from './services/economy';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
@@ -444,6 +446,7 @@ export class WorldInstance {
   readonly autoMine: AutoMineManager;
   readonly economy: EconomyService;
   readonly auction: AuctionService;
+  readonly clan: ClanService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -514,6 +517,29 @@ export class WorldInstance {
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
     this.economy = new EconomyService(this.pluginStore);
     this.auction = new AuctionService(this.pluginStore, this.economy);
+    this.clan = new ClanService(this.pluginStore, this.economy);
+    this.clan.setRuntime({
+      onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
+      isOnline: (playerId) => this.players.get(playerId)?.connected === true,
+      displayName: (playerId) => {
+        const live = this.players.get(playerId);
+        if (live) return live.name;
+        const stored = this.storedPlayers[playerId];
+        if (stored) return stored.name;
+        return this.economy.displayName(playerId);
+      },
+      sendMessage: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+    });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
       return store.claims
@@ -658,6 +684,7 @@ export class WorldInstance {
       this.permissions.load();
       this.economy.load();
       this.auction.load();
+      this.clan.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -668,6 +695,7 @@ export class WorldInstance {
     this.permissions.load();
     this.economy.load();
     this.auction.load();
+    this.clan.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -691,7 +719,9 @@ export class WorldInstance {
         autoMine: this.autoMine,
         economy: this.economy,
         auction: this.auction,
+        clan: this.clan,
         openAuction: (playerId, view) => this.openAuction(playerId, view),
+        openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
         lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
         config: this.pluginConfig,
         plugins: this.plugins,
@@ -803,6 +833,7 @@ export class WorldInstance {
     await this.worldStore.save(snapshot);
     this.economy.persist();
     this.auction.persist();
+    this.clan.persist();
     this.dirty = false;
   }
 
@@ -1197,6 +1228,70 @@ export class WorldInstance {
     this.sendTo(player, this.auction.buildMessage(player.id, player.inventory));
   }
 
+  openClan(playerId: string, view: ClanView, extra?: string): ClanResult | void {
+    const player = this.players.get(playerId);
+    if (!player || !player.connected) return { ok: false, error: 'Игрок не в сети.' };
+    this.economy.rememberName(player.id, player.name);
+    this.clan.purgeExpired();
+    let result: ClanResult = { ok: true };
+    if (view === 'ranking') this.clan.openRanking(playerId);
+    else if (view === 'create') result = this.clan.openCreate(playerId);
+    else if (view === 'delete') result = this.clan.openDelete(playerId);
+    else if (view === 'add') result = this.clan.openAdd(playerId);
+    else if (view === 'accept') result = this.clan.openAccept(playerId);
+    else if (view === 'leave') result = this.clan.openLeave(playerId);
+    else if (view === 'makeleader') result = this.clan.openMakeLeader(playerId);
+    else result = this.clan.openKick(playerId, extra ?? '');
+    if (!result.ok) return result;
+    this.flushClan(player);
+    return result;
+  }
+
+  handleClanAction(player: ServerPlayer, message: ClientClanActionMessage): void {
+    if (!this.hasClanPermission(player, message.action)) {
+      this.sendTo(player, {
+        type: 'clan',
+        screen: 'closed',
+        title: '',
+        search: '',
+        page: 1,
+        totalPages: 1,
+        totalCount: 0,
+        clans: [],
+        message: 'You do not have permission.',
+      });
+      return;
+    }
+    this.economy.rememberName(player.id, player.name);
+    this.clan.handleAction(player.id, message);
+    this.flushClan(player);
+  }
+
+  private hasClanPermission(player: ServerPlayer, action: ClientClanActionMessage['action']): boolean {
+    const node = action === 'confirm_create' || action === 'create' || action === 'select_icon' || action === 'set_name' || action === 'cancel_create'
+      ? 'clan.create'
+      : action === 'confirm_delete' || action === 'cancel_delete'
+        ? 'clan.delete'
+        : action === 'select_player' || action === 'confirm_invite' || action === 'cancel_invite'
+          ? 'clan.add'
+          : action === 'select_invitation' || action === 'confirm_accept' || action === 'cancel_accept'
+            ? 'clan.accept'
+            : action === 'confirm_leave' || action === 'cancel_leave'
+              ? 'clan.leave'
+              : action === 'select_member' || action === 'confirm_makeleader' || action === 'cancel_makeleader'
+                ? 'clan.makeleader'
+                : action === 'kick' || action === 'confirm_kick' || action === 'cancel_kick'
+                  ? 'clan.kick'
+                  : action === 'open_requests' || action === 'select_request' || action === 'confirm_accept_request' || action === 'cancel_accept_request'
+                    ? 'clan.add'
+                    : 'clan.use';
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  private flushClan(player: ServerPlayer): void {
+    this.sendTo(player, this.clan.buildMessage(player.id));
+  }
+
   disconnect(playerId: string, persist = true, connectionId?: string): void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return;
@@ -1209,6 +1304,7 @@ export class WorldInstance {
     player.sink = null;
     player.activeSocketCount = 0;
     this.auction.closeSession(player.id);
+    this.clan.closeSession(player.id);
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });

@@ -33,6 +33,15 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'auction.sell',
     'auction.buy',
     'auction.list',
+    'clan.use',
+    'clan.create',
+    'clan.delete',
+    'clan.add',
+    'clan.accept',
+    'clan.leave',
+    'clan.makeleader',
+    'clan.kick',
+    'clan.list',
   ],
   moderator: [
     'claim.admin',
@@ -53,6 +62,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'automine.*',
     'economy.*',
     'auction.*',
+    'clan.*',
   ],
   vip: [
     'home.multiple',
