@@ -16,7 +16,7 @@ function pngDimensions(path) {
 
 describe('bundled player skin assets', () => {
   it('keeps all 45 unique supplied skins plus the QA sheet at exact Java 64x64 dimensions', () => {
-    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(46);
+    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(47);
     for (const skin of BUILTIN_MINECRAFT_SKINS) {
       const path = resolve('public', 'textures', `${skin.texturePath}.png`);
       expect(pngDimensions(path), skin.id).toEqual([64, 64]);

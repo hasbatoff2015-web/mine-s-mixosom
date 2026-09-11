@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -111,7 +111,7 @@ Env:
 - `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the live plugin directory
 - `FC_EXAMPLE_PLUGIN=1` — register the bundled example without copying it into `server/plugins/`
 - `FC_OPERATORS` — comma-separated player names treated as OP (seeded into PermissionService, cannot `/deop`)
-- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine/economy pack
+- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine/economy/auction/clan/buyer pack
 
 ## Permissions
 
@@ -138,12 +138,14 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | automine | `/automine` | `plugin-data/automine/automines.json` (+ `originals/<name>.json`) |
 | economy | `/balance`, `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco` | `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json` |
 | auction | `/ah`, `/ah sell`, `/ah list` (`/auction`, `/auctionhouse`) | `plugin-data/auction/listings.json` |
+| clan | `/clans`, `/clan create|delete|add|accept|leave|makeleader|kick` | `plugin-data/clans/clans.json` |
+| buyer | `/buyer create|move|delete|list` (`/buyers`, `/скупщик`) | `plugin-data/buyers/buyers.json` |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
 
 ## Economy (Мегакоин)
 
-`EconomyService` (`server/services/economy.ts`) is the only balance API. Trader (later), Auction House, and Clans call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
+`EconomyService` (`server/services/economy.ts`) is the only balance API. Buyer NPCs, Auction House, and Clans call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
 
 - Currency display name: **Мегакоин** / **Мегакоинов**. Internal plugin name: `economy`.
 - New player: **100**. Maximum: **999 999 999**. Integers only. Negative balances are rejected. Deposit that would exceed the max is rejected (no clamp, no overflow).
@@ -188,6 +190,20 @@ Builtin plugin `clan` + `ClanService` (`server/services/clan.ts`). There is **no
 - Persistence: `plugin-data/clans/clans.json` via `JsonFileStore`. Totals are not stored.
 - Protocol: client `clan_action` (intent only), server `clan` (paged snapshot). Search patches the list in place so the input keeps focus and caret.
 - Locks serialize player+clan keys so last-slot joins, duplicate accepts, and invite/request races cannot put a player in two clans or exceed 20.
+
+## Buyers (скупщики)
+
+Builtin plugin `buyer` + `BuyerService` (`server/services/buyer.ts`). There is **no NPC wallet**. Payout is `EconomyService.deposit(playerId, quantity × pricePerItem, 'TRADER_SELL')`. Holograms reuse `HologramNetwork`; names are `buyer-<id>` and are blocked from `/holograms` create/delete/move/line/range/reset.
+
+- Commands: `/buyer create <name>`, `/buyer move <name>`, `/buyer delete <name>`, `/buyer list`. Aliases: `/buyers`, `/скупщик`. Create uses the admin's current position + yaw/pitch and opens the admin GUI.
+- Permissions: `buyer.use`, `buyer.create`, `buyer.delete`, `buyer.move`, `buyer.list`, `buyer.edit`, `buyer.*`. Default role gets `buyer.use`. Admin gets `buyer.*`. OP bypass via PermissionService.
+- One NPC buys exactly one known Item ID. Pumpkin/melon means whole blocks (`pumpkin`, `melon`), not seeds or slices. Price is an integer **1…999 999 999** MK per item. Unconfigured NPCs cannot sell.
+- RMB: server checks reach + permissions. `buyer.edit` (admin/OP) opens admin GUI; `buyer.use` opens the single-item trade GUI. Client cannot choose which menu.
+- GUI reuses Auction House inventory chrome (`mc-panel`, `mc-grid`, `mc-slot`, close ×, E). Admin: name, item picker from inventory, price, hologram text, save, delete, optional «Открыть торговлю». Player: item, price/each, trade slot, quantity, total, **ПРОДАТЬ**. Wrong items are rejected, not destroyed. Close/E/disconnect returns the trade slot (overflow goes to `returns` in `buyers.json` and is restored on join).
+- Client visual: `BuyerNpcView` on existing `PlayerVisual` + skin `buyer_merchant` (not in `PRODUCTION_PLAYER_SKINS`). No HP nameplate; text is the bound hologram only. NPC is not a mob: no physics, knockback, fire, drown, damage, or death.
+- Protocol: client `buyer_interact` / `buyer_action` (intent only). Server `buyers` snapshot + `buyer` GUI snapshot. Price/item/quantity on sell are ignored; the server uses the NPC record and the session trade slot.
+- Persistence: `plugin-data/buyers/buyers.json` via JsonFileStore. Restart restores pose, item, price, hologram text. `ensureHolograms()` upserts bound holograms and removes orphan `buyer-*` records.
+- Anti-dupe: player+NPC locks on sell; items leave inventory into the session slot before payout; failed deposit restores the slot; a second sell sees an empty slot.
 
 ## API version
 
@@ -342,5 +358,5 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a Bukkit/Spigot jar loader
 - Not a second combat / fluid / inventory system
 - Not client mods
-- Not Auction House bidding / kits. Auction House (fixed-price listings) **is** implemented as builtin `auction` + `AuctionService` on the existing EconomyService. Clans **are** implemented as builtin `clan` + `ClanService` on the same EconomyService.
+- Not Auction House bidding / kits. Auction House (fixed-price listings) **is** implemented as builtin `auction` + `AuctionService` on the existing EconomyService. Clans **are** implemented as builtin `clan` + `ClanService` on the same EconomyService. Buyer NPCs **are** implemented as builtin `buyer` + `BuyerService` on EconomyService + HologramNetwork.
 - Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)

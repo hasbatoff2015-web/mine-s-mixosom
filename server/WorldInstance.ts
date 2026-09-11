@@ -47,6 +47,7 @@ import type {
   ClientInventoryActionMessage,
   ClientAuctionActionMessage,
   ClientClanActionMessage,
+  ClientBuyerActionMessage,
   ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
@@ -82,6 +83,7 @@ import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
+import { BuyerService } from './services/buyer';
 import { EconomyService, formatMegacoins } from './services/economy';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
@@ -91,6 +93,7 @@ import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
+import { playerCanReachBuyer } from '../shared/buyers';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -447,6 +450,7 @@ export class WorldInstance {
   readonly economy: EconomyService;
   readonly auction: AuctionService;
   readonly clan: ClanService;
+  readonly buyer: BuyerService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -639,6 +643,7 @@ export class WorldInstance {
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
       if (player) this.sendTo(player, message);
@@ -685,6 +690,7 @@ export class WorldInstance {
       this.economy.load();
       this.auction.load();
       this.clan.load();
+      this.buyer.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -696,6 +702,7 @@ export class WorldInstance {
     this.economy.load();
     this.auction.load();
     this.clan.load();
+    this.buyer.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -720,8 +727,11 @@ export class WorldInstance {
         economy: this.economy,
         auction: this.auction,
         clan: this.clan,
+        buyer: this.buyer,
         openAuction: (playerId, view) => this.openAuction(playerId, view),
         openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
+        openBuyerAdmin: (playerId, buyerId) => this.openBuyerAdmin(playerId, buyerId),
+        broadcastBuyers: () => this.broadcastBuyers(),
         lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
         config: this.pluginConfig,
         plugins: this.plugins,
@@ -834,6 +844,7 @@ export class WorldInstance {
     this.economy.persist();
     this.auction.persist();
     this.clan.persist();
+    this.buyer.persist();
     this.dirty = false;
   }
 
@@ -900,6 +911,7 @@ export class WorldInstance {
           + `resumeCount=${existing.resumeCount}`,
         );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
+        this.buyer.restoreOverflow(existing.id, existing.inventory);
         return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
@@ -914,6 +926,7 @@ export class WorldInstance {
           + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
         );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
+        this.buyer.restoreOverflow(restored.id, restored.inventory);
         return { player: restored, resumed: true };
       }
     }
@@ -950,6 +963,7 @@ export class WorldInstance {
       + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
     );
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
+    this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
     return { player, resumed: false };
   }
@@ -1292,6 +1306,102 @@ export class WorldInstance {
     this.sendTo(player, this.clan.buildMessage(player.id));
   }
 
+  broadcastBuyers(): void {
+    this.broadcast({ type: 'buyers', buyers: this.buyer.networkBuyers() });
+    this.flushAffectedBuyers();
+  }
+
+  private flushAffectedBuyers(): void {
+    for (const playerId of this.buyer.takeAffectedPlayers()) {
+      const player = this.players.get(playerId);
+      if (!player?.connected) continue;
+      this.buyer.restoreOverflow(player.id, player.inventory);
+      this.flushPlayerInventory(player);
+      this.flushBuyer(player);
+    }
+  }
+
+  openBuyerAdmin(playerId: string, buyerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.connected) return;
+    if (!this.hasBuyerPermission(player, 'buyer.edit')) return;
+    this.buyer.openAdmin(playerId, buyerId, player.inventory);
+    this.flushBuyer(player);
+  }
+
+  interactBuyer(player: ServerPlayer, buyerId: string): void {
+    const buyer = this.buyer.get(buyerId) ?? this.buyer.findByHologram(buyerId);
+    if (!buyer) return;
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachBuyer(eye, buyer, PLAYER_NET_REACH)) return;
+    const canEdit = this.hasBuyerPermission(player, 'buyer.edit');
+    const canUse = this.hasBuyerPermission(player, 'buyer.use');
+    if (canEdit) {
+      this.buyer.openAdmin(player.id, buyer.id, player.inventory);
+      this.flushBuyer(player);
+      return;
+    }
+    if (!canUse) {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: 'You do not have permission.',
+        kind: 'error',
+      });
+      return;
+    }
+    this.buyer.openTrade(player.id, buyer.id, player.inventory);
+    this.flushBuyer(player);
+  }
+
+  handleBuyerAction(player: ServerPlayer, message: ClientBuyerActionMessage): void {
+    const can = {
+      edit: this.hasBuyerPermission(player, 'buyer.edit'),
+      delete: this.hasBuyerPermission(player, 'buyer.delete'),
+      use: this.hasBuyerPermission(player, 'buyer.use'),
+    };
+    if (message.action !== 'close' && !can.use && !can.edit) {
+      this.sendTo(player, {
+        type: 'buyer',
+        screen: 'closed',
+        title: '',
+        buyerId: '',
+        name: '',
+        hologramText: '',
+        priceText: '',
+        quantity: 0,
+        maxQuantity: 0,
+        total: 0,
+        totalLabel: '',
+        configured: false,
+        message: 'You do not have permission.',
+      });
+      return;
+    }
+    const result = this.buyer.handleAction(player.id, player.inventory, message, can);
+    if (result.inventoryDirty) this.flushPlayerInventory(player);
+    if (result.broadcast) this.broadcastBuyers();
+    if (result.chat) {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: result.chat,
+        kind: 'system',
+      });
+    }
+    this.flushBuyer(player);
+  }
+
+  private hasBuyerPermission(player: ServerPlayer, node: string): boolean {
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  private flushBuyer(player: ServerPlayer): void {
+    this.sendTo(player, this.buyer.buildMessage(player.id, player.inventory));
+  }
+
   disconnect(playerId: string, persist = true, connectionId?: string): void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return;
@@ -1305,6 +1415,8 @@ export class WorldInstance {
     player.activeSocketCount = 0;
     this.auction.closeSession(player.id);
     this.clan.closeSession(player.id);
+    this.buyer.closeSession(player.id, player.inventory);
+    this.flushPlayerInventory(player);
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
@@ -1917,6 +2029,11 @@ export class WorldInstance {
   interactHologram(player: ServerPlayer, name: string): void {
     const hologram = this.holograms.get(name);
     if (!hologram || !hologram.enabled) return;
+    const owned = this.buyer.findByHologram(name);
+    if (owned) {
+      this.interactBuyer(player, owned.id);
+      return;
+    }
     const eye = player.controller.eyePosition();
     if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
     if (!this.canEditHolograms(player)) {
@@ -1927,6 +2044,16 @@ export class WorldInstance {
   }
 
   updateHologramAppearance(player: ServerPlayer, message: ClientHologramUpdateMessage): void {
+    if (this.buyer.findByHologram(message.name)) {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: 'Текст скупщика задаётся в меню скупщика.',
+        kind: 'error',
+      });
+      return;
+    }
     const hologram = this.holograms.get(message.name);
     if (!hologram || !hologram.enabled) {
       this.sendTo(player, {

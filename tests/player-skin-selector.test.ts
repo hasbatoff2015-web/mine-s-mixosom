@@ -47,7 +47,7 @@ describe('player skin selector', () => {
     expect(classic + slim).toBe(45);
     expect(classic).toBeGreaterThan(0);
     expect(slim).toBeGreaterThan(0);
-    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(46);
+    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(47);
   });
 
   it('changes only the temporary preview until confirm', () => {

@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-11: Buyer NPC system
+
+- [x] Builtin `buyer` plugin + `BuyerService` on PluginManager / JsonFileStore / EconomyService / HologramNetwork (no second wallet, no second hologram renderer).
+- [x] Commands `/buyer create|move|delete|list`; aliases `/buyers` `/скупщик`.
+- [x] Permissions `buyer.use` `buyer.create` `buyer.delete` `buyer.move` `buyer.list` `buyer.edit` `buyer.*`; OP bypass.
+- [x] Static NPC: player model + `buyer_merchant` skin; no physics, damage, look-at, or HP nameplate.
+- [x] Inventory-style admin + trade GUIs; 1 NPC = 1 item; atomic sell; close/E returns the trade slot.
+- [x] Bound hologram `buyer-<id>`; move/delete with the NPC; hologram plugin cannot orphan or edit it.
+- [ ] Owner live Anarchy QA of create/trade/move/restart/delete (checklist in the report).
+
 ## 2026-09-11: Merge Clan System into main
 
 - [x] Fetch current `origin/main`; no teammate commits after Auction House merge `750a3b7`.
@@ -70,7 +80,7 @@
 - [x] Mob kill table + PvP `floor(10%)` with 5-minute same-pair anti-farm cooldown.
 - [x] Integer Мегакоин, start 100, max 999 999 999, atomic transfer, persisted transactions.
 - [ ] Owner live Anarchy QA of `/pay` offline, AutoMine diamond, TNT ore, PvP 10%.
-- [x] Auction House uses EconomyService (this branch); Trader remains later.
+- [x] Auction House uses EconomyService (this branch); Buyer NPCs use `deposit(..., 'TRADER_SELL')`.
 
 ## 2026-09-10: Integrate player layer z-fighting fix into current main
 

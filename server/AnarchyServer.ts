@@ -260,6 +260,7 @@ export class AnarchyServer {
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
       holograms: [...this.world.holograms.list()],
+      buyers: this.world.buyer.networkBuyers(),
       serverNow: Date.now(),
     };
     const encoded = encodeMessage(welcome);
@@ -274,6 +275,7 @@ export class AnarchyServer {
     }
     if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
     this.send(socket, { type: 'holograms', holograms: [...this.world.holograms.list()] });
+    this.send(socket, { type: 'buyers', buyers: this.world.buyer.networkBuyers() });
     if (!resumed) {
       this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
     } else {
@@ -494,6 +496,12 @@ export class AnarchyServer {
         return;
       case 'clan_action':
         this.world.handleClanAction(player, message);
+        return;
+      case 'buyer_interact':
+        this.world.interactBuyer(player, message.buyerId);
+        return;
+      case 'buyer_action':
+        this.world.handleBuyerAction(player, message);
         return;
     }
   }

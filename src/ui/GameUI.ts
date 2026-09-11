@@ -57,7 +57,17 @@ import {
 } from './containerInteractions';
 import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
-import type { ClientAuctionActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage, ServerClanMessage } from '../../shared/protocol';
+import {
+  BUYER_DELETE_LABEL,
+  BUYER_PICK_LABEL,
+  BUYER_SAVE_LABEL,
+  BUYER_SELL_LABEL,
+  BUYER_TRADE_LABEL,
+  buyerPriceEachLabel,
+  clampBuyerAmount,
+  keepBuyerDraft,
+} from './buyerGui';
+import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -147,6 +157,11 @@ export interface AuctionGuiActions {
 
 export interface ClanGuiActions {
   send(message: ClientClanActionMessage): void;
+  close(): void;
+}
+
+export interface BuyerGuiActions {
+  send(message: ClientBuyerActionMessage): void;
   close(): void;
 }
 
@@ -256,6 +271,8 @@ export class GameUI {
   private clanState?: ServerClanMessage;
   private clanActions?: ClanGuiActions;
   private clanSearchTimer?: number;
+  private buyerState?: ServerBuyerMessage;
+  private buyerActions?: BuyerGuiActions;
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -990,12 +1007,16 @@ export class GameUI {
     return this.clanState !== undefined && this.clanState.screen !== 'closed';
   }
 
+  isBuyerOpen(): boolean {
+    return this.buyerState !== undefined && this.buyerState.screen !== 'closed';
+  }
+
   isAuctionTextInputFocused(): boolean {
     const el = document.activeElement;
     return el instanceof HTMLInputElement
       && this.modal !== undefined
       && this.modal.contains(el)
-      && (this.isAuctionOpen() || this.isClanOpen());
+      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen());
   }
 
   setChatInputHistory(history: readonly string[]): void {
@@ -1129,6 +1150,7 @@ export class GameUI {
     const alreadyOpen = this.isAuctionOpen() && this.modal !== undefined;
     if (!alreadyOpen) {
       this.closeClan();
+      this.closeBuyer();
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchAuction(state);
@@ -1171,6 +1193,7 @@ export class GameUI {
     const alreadyOpen = this.isClanOpen() && this.modal !== undefined;
     if (!alreadyOpen) {
       this.closeAuction();
+      this.closeBuyer();
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchClan(state);
@@ -1200,6 +1223,45 @@ export class GameUI {
       this.modal?.remove();
       this.modal = undefined;
       this.clanState = undefined;
+      this.setControlsSuppressed(false);
+    }
+  }
+
+  openBuyer(state: ServerBuyerMessage, actions: BuyerGuiActions): void {
+    this.buyerActions = actions;
+    if (state.screen === 'closed') {
+      this.closeBuyer();
+      return;
+    }
+    const alreadyOpen = this.isBuyerOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeInventory(false);
+    }
+    if (alreadyOpen) this.patchBuyer(state);
+    else {
+      this.buyerState = state;
+      this.renderBuyer();
+    }
+    this.setControlsSuppressed(true);
+  }
+
+  applyBuyer(state: ServerBuyerMessage): void {
+    if (!this.buyerActions) {
+      this.buyerState = state;
+      return;
+    }
+    this.openBuyer(state, this.buyerActions);
+  }
+
+  closeBuyer(): void {
+    if (this.buyerState) {
+      this.itemTooltip?.dispose();
+      this.itemTooltip = undefined;
+      this.modal?.remove();
+      this.modal = undefined;
+      this.buyerState = undefined;
       this.setControlsSuppressed(false);
     }
   }
@@ -2772,6 +2834,240 @@ export class GameUI {
         ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
       });
     });
+  }
+
+  private buyerStack(value: unknown): ItemStack | null {
+    try {
+      return parseSerializedItemStack(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private buyerInventoryCells(state: ServerBuyerMessage): string {
+    const slots = state.inventorySlots ?? [];
+    const cell = (index: number) => {
+      const stack = this.buyerStack(slots[index]);
+      return `<div data-buyer-slot="${index}">${this.slotHtml(stack, `buyer-inv-${index}`)}</div>`;
+    };
+    const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+    const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+    return `<div class="mc-grid mc-grid-9">${main}</div><div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>`;
+  }
+
+  private buyerMessageHtml(message: string | undefined): string {
+    return message ? `<div class="mc-ah-message" data-buyer-message>${this.escape(message)}</div>` : '<div class="mc-ah-message" data-buyer-message hidden></div>';
+  }
+
+  private patchBuyer(state: ServerBuyerMessage): void {
+    const prev = this.buyerState;
+    if (!this.modal || !prev || prev.screen !== state.screen) {
+      this.buyerState = state;
+      this.renderBuyer();
+      return;
+    }
+    this.buyerState = state;
+    const name = this.modal.querySelector<HTMLInputElement>('[data-buyer-name]');
+    if (name && !keepBuyerDraft(document.activeElement, name)) name.value = state.name;
+    const price = this.modal.querySelector<HTMLInputElement>('[data-buyer-price]');
+    if (price && !keepBuyerDraft(document.activeElement, price)) price.value = state.priceText;
+    const holo = this.modal.querySelector<HTMLInputElement>('[data-buyer-holo]');
+    if (holo && !keepBuyerDraft(document.activeElement, holo)) holo.value = state.hologramText;
+    const itemHost = this.modal.querySelector('[data-buyer-item]');
+    if (itemHost) itemHost.innerHTML = this.slotHtml(this.buyerStack(state.item), 'buyer-item');
+    const tradeHost = this.modal.querySelector('[data-buyer-trade]');
+    if (tradeHost) tradeHost.innerHTML = this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade');
+    const qty = this.modal.querySelector('[data-buyer-qty]');
+    if (qty) qty.textContent = String(state.quantity);
+    const total = this.modal.querySelector('[data-buyer-total]');
+    if (total) total.textContent = state.totalLabel;
+    const priceLine = this.modal.querySelector('[data-buyer-price-line]');
+    if (priceLine) priceLine.textContent = buyerPriceEachLabel(state.pricePerItem);
+    const minus = this.modal.querySelector<HTMLButtonElement>('[data-buyer-delta="-1"]');
+    const plus = this.modal.querySelector<HTMLButtonElement>('[data-buyer-delta="1"]');
+    if (minus) minus.disabled = state.quantity <= 1;
+    if (plus) plus.disabled = state.quantity >= state.maxQuantity;
+    const message = this.modal.querySelector<HTMLElement>('[data-buyer-message]');
+    if (message) {
+      message.hidden = !state.message;
+      message.textContent = state.message ?? '';
+    }
+  }
+
+  private renderBuyer(): void {
+    const state = this.buyerState;
+    const actions = this.buyerActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureBuyerInputFocus();
+    const logicalHeight = state.screen === 'pick-item' ? 222
+      : state.screen === 'trade' ? 248
+        : 236;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+        <div class="mc-panel" data-container-kind="chest">
+          ${this.buyerBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindBuyerChrome();
+    this.restoreBuyerInputFocus(keep);
+  }
+
+  private buyerBodyHtml(state: ServerBuyerMessage): string {
+    const message = this.buyerMessageHtml(state.message);
+    if (state.screen === 'pick-item') {
+      return `<div class="mc-ah-body" data-buyer-screen="pick-item">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <p class="mc-ah-prompt">Выберите предмет из инвентаря</p>
+        ${this.buyerInventoryCells(state)}
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-buyer-action="back">НАЗАД</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'trade') {
+      const amount = Math.max(0, state.quantity);
+      const max = Math.max(amount, state.maxQuantity);
+      const sellDisabled = !state.configured || amount < 1 ? ' disabled' : '';
+      return `<div class="mc-ah-body" data-buyer-screen="trade">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-center" data-buyer-item>${this.slotHtml(this.buyerStack(state.item), 'buyer-item')}</div>
+        <p class="mc-ah-prompt" data-buyer-price-line>${this.escape(buyerPriceEachLabel(state.pricePerItem))}</p>
+        <div class="mc-ah-amount">
+          <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="-1"${amount <= 1 ? ' disabled' : ''} aria-label="Меньше">−</button>
+          <div data-buyer-trade>${this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade')}</div>
+          <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="1"${amount >= max ? ' disabled' : ''} aria-label="Больше">+</button>
+        </div>
+        <p class="mc-ah-prompt">Количество: <span data-buyer-qty>${amount}</span></p>
+        <p class="mc-ah-prompt">Вы получите: <span data-buyer-total>${this.escape(state.totalLabel)}</span></p>
+        ${this.buyerInventoryCells(state)}
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-buyer-action="sell"${sellDisabled}>${BUYER_SELL_LABEL}</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    return `<div class="mc-ah-body" data-buyer-screen="admin">
+      <div class="mc-label">${this.escape(state.title)}</div>
+      <label class="mc-ah-field">Имя
+        <input data-buyer-name type="text" maxlength="32" value="${this.escape(state.name)}" autocomplete="off" spellcheck="false" name="buyer-name" />
+      </label>
+      <div class="mc-ah-center" data-buyer-item>${this.slotHtml(this.buyerStack(state.item), 'buyer-item')}</div>
+      <p class="mc-ah-prompt">${this.escape(state.itemName ?? 'Товар не выбран')}</p>
+      <label class="mc-ah-field">Цена за 1 шт.
+        <input data-buyer-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.priceText)}" autocomplete="off" spellcheck="false" name="buyer-price" />
+      </label>
+      <label class="mc-ah-field">Голограмма
+        <input data-buyer-holo type="text" maxlength="80" value="${this.escape(state.hologramText)}" autocomplete="off" spellcheck="false" name="buyer-holo" />
+      </label>
+      <div class="mc-ah-actions">
+        <button type="button" class="mc-ah-btn" data-buyer-action="pick_item">${BUYER_PICK_LABEL}</button>
+        <button type="button" class="mc-ah-btn" data-buyer-action="save">${BUYER_SAVE_LABEL}</button>
+        <button type="button" class="mc-ah-btn" data-buyer-action="open_trade">${BUYER_TRADE_LABEL}</button>
+        <button type="button" class="mc-ah-btn" data-buyer-action="delete">${BUYER_DELETE_LABEL}</button>
+      </div>
+      ${message}
+    </div>`;
+  }
+
+  private bindBuyerChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.buyerActions?.close());
+    const bindDraft = (selector: string, send: (value: string) => void) => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => send(input.value));
+    };
+    bindDraft('[data-buyer-name]', (name) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_name', name }));
+    bindDraft('[data-buyer-holo]', (hologramText) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_hologram_text', hologramText }));
+    const price = this.modal!.querySelector<HTMLInputElement>('[data-buyer-price]');
+    price?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    price?.addEventListener('keydown', (event) => event.stopPropagation());
+    price?.addEventListener('keyup', (event) => event.stopPropagation());
+    price?.addEventListener('input', () => {
+      const digits = price.value.replace(/[^\d]/g, '');
+      if (price.value !== digits) price.value = digits;
+      this.buyerActions?.send({ type: 'buyer_action', action: 'set_price', price: digits });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const current = this.buyerState;
+      const actions = this.buyerActions;
+      if (!current || !actions) return;
+      const target = event.target as HTMLElement;
+      const slot = target.closest<HTMLElement>('[data-buyer-slot]');
+      if (slot?.dataset.buyerSlot) {
+        actions.send({ type: 'buyer_action', action: 'select_slot', slot: Number(slot.dataset.buyerSlot) });
+        return;
+      }
+      const trade = target.closest<HTMLElement>('[data-buyer-trade]');
+      if (trade) {
+        actions.send({ type: 'buyer_action', action: 'select_slot', slot: -1 });
+        return;
+      }
+      const delta = target.closest<HTMLElement>('[data-buyer-delta]');
+      if (delta?.dataset.buyerDelta) {
+        const next = clampBuyerAmount(
+          (current.quantity ?? 0) + Number(delta.dataset.buyerDelta),
+          0,
+          current.maxQuantity,
+        );
+        actions.send({ type: 'buyer_action', action: 'set_amount', amount: next });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-buyer-action]');
+      const kind = button?.dataset.buyerAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      if (kind === 'save') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-buyer-name]')?.value ?? current.name;
+        const hologramText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-holo]')?.value ?? current.hologramText;
+        const priceText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-price]')?.value ?? current.priceText;
+        actions.send({ type: 'buyer_action', action: 'save', name, hologramText, price: priceText });
+        return;
+      }
+      actions.send({ type: 'buyer_action', action: kind as ClientBuyerActionMessage['action'] });
+    });
+  }
+
+  private captureBuyerInputFocus(): { kind: 'name' | 'price' | 'holo'; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const kind = el.hasAttribute('data-buyer-name') ? 'name'
+      : el.hasAttribute('data-buyer-price') ? 'price'
+        : el.hasAttribute('data-buyer-holo') ? 'holo'
+          : undefined;
+    if (!kind) return undefined;
+    return {
+      kind,
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreBuyerInputFocus(
+    keep: { kind: 'name' | 'price' | 'holo'; value: string; start: number; end: number } | undefined,
+  ): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'name' ? '[data-buyer-name]'
+      : keep.kind === 'price' ? '[data-buyer-price]'
+        : '[data-buyer-holo]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    input.setSelectionRange(keep.start, keep.end);
   }
 
   private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {

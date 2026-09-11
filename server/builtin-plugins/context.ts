@@ -1,5 +1,6 @@
 import type { AutoMineManager } from '../services/autoMine';
 import type { AuctionService, AuctionView } from '../services/auction';
+import type { BuyerService } from '../services/buyer';
 import type { ClanService, ClanView, ClanResult } from '../services/clan';
 import type { EconomyService } from '../services/economy';
 import type { PermissionService } from '../services/permissions';
@@ -29,8 +30,11 @@ export interface BuiltinPluginContext {
   readonly economy: EconomyService;
   readonly auction: AuctionService;
   readonly clan: ClanService;
+  readonly buyer: BuyerService;
   readonly openAuction: (playerId: string, view: AuctionView) => void;
   readonly openClan: (playerId: string, view: ClanView, extra?: string) => ClanResult | void;
+  readonly openBuyerAdmin: (playerId: string, buyerId: string) => void;
+  readonly broadcastBuyers: () => void;
   readonly lookupPlayer: (idOrName: string) => PlayerIdentity | undefined;
   readonly config: PluginConfigService;
   readonly plugins: PluginManager;

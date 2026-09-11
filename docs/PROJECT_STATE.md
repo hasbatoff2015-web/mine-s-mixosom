@@ -1,5 +1,17 @@
 # Состояние проекта
 
+## Последний проход: Buyer NPC system — 2026-09-11
+
+- Builtin `buyer` + `BuyerService` на существующем PluginManager / JsonFileStore / EconomyService / HologramNetwork. Второго кошелька и второй hologram-системы нет.
+- 1 скупщик = 1 Item ID. Цена целое 1…999 999 999 МК / шт. Выплата `quantity × pricePerItem` через `EconomyService.deposit(..., 'TRADER_SELL')`.
+- Статичный NPC на player model + skin `buyer_merchant` (не в production selector). Villager 3D-моделей в runtime нет; PNG жителей в texture pack не подключены.
+- Команды: `/buyer create|move|delete|list` (aliases `/buyers`, `/скупщик`). Persistence: `plugin-data/buyers/buyers.json`.
+- Права: `buyer.use` (default), `buyer.create|delete|move|list|edit`, `buyer.*` (admin), OP bypass.
+- Inventory-style GUI как Auction House. ПКМ: admin/OP → admin GUI, игрок → trade GUI. Сервер решает по permissions.
+- Голограмма `buyer-<id>` через HologramNetwork, без HP; `/holograms` не даёт orphan/edit. `/buyer move` двигает NPC+hologram.
+- Handoff: `docs/reports/2026-09-11_buyer-system.md`.
+- Гейты: buyer 15/15, buyer-plugin 5/5, buyer-gui 5/5, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/467, четыре typecheck, boundaries, build PASS. Live Anarchy QA не запускался.
+
 ## Последний проход: Clan system merged into main — 2026-09-11
 
 - PR #85 влит в `main` обычным `--no-ff`: merge commit `ae904a3`. История не переписывалась.

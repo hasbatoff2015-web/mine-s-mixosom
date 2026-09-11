@@ -146,7 +146,7 @@ function productionDescriptors(projectRoot) {
     texturePath: match[2],
     defaultModel: match[3],
     outerLayerAlpha: match[4] ?? 'binary',
-  })).filter((skin) => skin.texturePath.startsWith('player/skins/'));
+  })).filter((skin) => skin.texturePath.startsWith('player/skins/') && skin.id !== 'buyer_merchant');
 }
 
 export function scanProductionPlayerSkins(projectRoot = process.cwd()) {

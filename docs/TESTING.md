@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-11 Buyer NPC system
+
+Report: `reports/2026-09-11_buyer-system.md`.
+
+```text
+npx vitest run tests/server/buyer.test.ts tests/server/buyer-plugin.test.ts tests/buyer-gui.test.ts tests/server/permissions.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: buyer 15/15, buyer-plugin 5/5, buyer-gui 5/5, permissions 5/5, auction 24/24, auction-plugin 9/9, auction-gui 6/6, clan 20/20, clan-plugin 7/7, clan-gui 7/7, economy 15/15. `test:server` **45 files / 467 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-11 Clan system merged into main
 
 Report: `reports/2026-09-11_clan-system-main-merge.md`. Merge `--no-ff` `ae904a3`. Pre-merge gates as below.

@@ -6,6 +6,7 @@ import {
   normalizeHologramRecord,
   type HologramRecord,
 } from '../services/holograms';
+import { isBuyerHologramName } from '../../shared/buyers';
 import type { BuiltinPluginContext } from './context';
 
 const HELP = {
@@ -98,10 +99,12 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             ]);
           }
           if (!canEdit(sender.playerId, sender.name)) return fail('You do not have permission.');
+          const buyerOwned = (name: string | undefined) => name && isBuyerHologramName(name);
           const player = api.getPlayer(sender.playerId);
           if (sub === 'create') {
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/holograms create <name>');
+            if (buyerOwned(name)) return fail('Имя зарезервировано системой скупщиков.');
             if (store.holograms.some((entry) => entry.name === name)) return fail(`Hologram '${name}' already exists.`);
             if (!player) return fail('Player not found.');
             const pos = player.position();
@@ -120,6 +123,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
           if (sub === 'delete') {
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/holograms delete <name>');
+            if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику. Используйте /buyer delete.');
             const next = store.holograms.filter((entry) => entry.name !== name);
             if (next.length === store.holograms.length) return fail(`Hologram '${name}' not found.`);
             store.holograms = next;
@@ -129,6 +133,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
           if (sub === 'move' || sub === 'movehere') {
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/holograms move <name>');
+            if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику. Используйте /buyer move.');
             const hologram = store.holograms.find((entry) => entry.name === name);
             if (!hologram) return fail(`Hologram '${name}' not found.`);
             if (!player) return fail('Player not found.');
@@ -146,6 +151,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (!name || !Number.isFinite(distance)) {
               return usageError('/holograms range <name> <distance>');
             }
+            if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику.');
             const hologram = store.holograms.find((entry) => entry.name === name);
             if (!hologram) return fail(`Hologram '${name}' not found.`);
             hologram.range = Math.max(1, Math.min(128, distance));
@@ -155,6 +161,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
           if (sub === 'reset') {
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/holograms reset <name>');
+            if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику.');
             const hologram = store.holograms.find((entry) => entry.name === name);
             if (!hologram) return fail(`Hologram '${name}' not found.`);
             if (hologram.kind !== 'timer') return fail('Эта голограмма не является таймером.');
@@ -167,6 +174,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             const name = args[2]?.toLowerCase();
             const hologram = name ? store.holograms.find((entry) => entry.name === name) : undefined;
             if (!hologram) return fail(name ? `Hologram '${name}' not found.` : 'Usage: /holograms line add|set|remove ...');
+            if (buyerOwned(name)) return fail('Текст скупщика задаётся в меню скупщика.');
             if (action === 'add') {
               const text = args.slice(3).join(' ').trim();
               if (!text) return usageError('/holograms line add <name> <text>');
