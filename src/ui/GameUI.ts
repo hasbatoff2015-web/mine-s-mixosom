@@ -58,12 +58,8 @@ import {
 import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
 import type { PotionHudEntry } from './effectHud';
 import {
-  BUYER_DELETE_LABEL,
-  BUYER_PICK_LABEL,
-  BUYER_SAVE_LABEL,
-  BUYER_SELL_LABEL,
-  BUYER_TRADE_LABEL,
   buyerPriceEachLabel,
+  buyerScreenHtml,
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
@@ -2887,6 +2883,10 @@ export class GameUI {
     const plus = this.modal.querySelector<HTMLButtonElement>('[data-buyer-delta="1"]');
     if (minus) minus.disabled = state.quantity <= 1;
     if (plus) plus.disabled = state.quantity >= state.maxQuantity;
+    const sell = this.modal.querySelector<HTMLButtonElement>('[data-buyer-action="sell"]');
+    if (sell) sell.disabled = !state.configured || state.quantity < 1;
+    const inventory = this.modal.querySelector('[data-buyer-inventory]');
+    if (inventory) inventory.innerHTML = this.buyerInventoryCells(state);
     const message = this.modal.querySelector<HTMLElement>('[data-buyer-message]');
     if (message) {
       message.hidden = !state.message;
@@ -2922,61 +2922,23 @@ export class GameUI {
   }
 
   private buyerBodyHtml(state: ServerBuyerMessage): string {
-    const message = this.buyerMessageHtml(state.message);
-    if (state.screen === 'pick-item') {
-      return `<div class="mc-ah-body" data-buyer-screen="pick-item">
-        <div class="mc-label">${this.escape(state.title)}</div>
-        <p class="mc-ah-prompt">Выберите предмет из инвентаря</p>
-        ${this.buyerInventoryCells(state)}
-        <div class="mc-ah-actions">
-          <button type="button" class="mc-ah-btn" data-buyer-action="back">НАЗАД</button>
-        </div>
-        ${message}
-      </div>`;
-    }
-    if (state.screen === 'trade') {
-      const amount = Math.max(0, state.quantity);
-      const max = Math.max(amount, state.maxQuantity);
-      const sellDisabled = !state.configured || amount < 1 ? ' disabled' : '';
-      return `<div class="mc-ah-body" data-buyer-screen="trade">
-        <div class="mc-label">${this.escape(state.title)}</div>
-        <div class="mc-ah-center" data-buyer-item>${this.slotHtml(this.buyerStack(state.item), 'buyer-item')}</div>
-        <p class="mc-ah-prompt" data-buyer-price-line>${this.escape(buyerPriceEachLabel(state.pricePerItem))}</p>
-        <div class="mc-ah-amount">
-          <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="-1"${amount <= 1 ? ' disabled' : ''} aria-label="Меньше">−</button>
-          <div data-buyer-trade>${this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade')}</div>
-          <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="1"${amount >= max ? ' disabled' : ''} aria-label="Больше">+</button>
-        </div>
-        <p class="mc-ah-prompt">Количество: <span data-buyer-qty>${amount}</span></p>
-        <p class="mc-ah-prompt">Вы получите: <span data-buyer-total>${this.escape(state.totalLabel)}</span></p>
-        ${this.buyerInventoryCells(state)}
-        <div class="mc-ah-actions">
-          <button type="button" class="mc-ah-btn" data-buyer-action="sell"${sellDisabled}>${BUYER_SELL_LABEL}</button>
-        </div>
-        ${message}
-      </div>`;
-    }
-    return `<div class="mc-ah-body" data-buyer-screen="admin">
-      <div class="mc-label">${this.escape(state.title)}</div>
-      <label class="mc-ah-field">Имя
-        <input data-buyer-name type="text" maxlength="32" value="${this.escape(state.name)}" autocomplete="off" spellcheck="false" name="buyer-name" />
-      </label>
-      <div class="mc-ah-center" data-buyer-item>${this.slotHtml(this.buyerStack(state.item), 'buyer-item')}</div>
-      <p class="mc-ah-prompt">${this.escape(state.itemName ?? 'Товар не выбран')}</p>
-      <label class="mc-ah-field">Цена за 1 шт.
-        <input data-buyer-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.priceText)}" autocomplete="off" spellcheck="false" name="buyer-price" />
-      </label>
-      <label class="mc-ah-field">Голограмма
-        <input data-buyer-holo type="text" maxlength="80" value="${this.escape(state.hologramText)}" autocomplete="off" spellcheck="false" name="buyer-holo" />
-      </label>
-      <div class="mc-ah-actions">
-        <button type="button" class="mc-ah-btn" data-buyer-action="pick_item">${BUYER_PICK_LABEL}</button>
-        <button type="button" class="mc-ah-btn" data-buyer-action="save">${BUYER_SAVE_LABEL}</button>
-        <button type="button" class="mc-ah-btn" data-buyer-action="open_trade">${BUYER_TRADE_LABEL}</button>
-        <button type="button" class="mc-ah-btn" data-buyer-action="delete">${BUYER_DELETE_LABEL}</button>
-      </div>
-      ${message}
-    </div>`;
+    return buyerScreenHtml({
+      screen: state.screen,
+      title: state.title,
+      name: state.name,
+      itemName: state.itemName,
+      hologramText: state.hologramText,
+      priceText: state.priceText,
+      priceLine: buyerPriceEachLabel(state.pricePerItem),
+      quantity: state.quantity,
+      maxQuantity: state.maxQuantity,
+      totalLabel: state.totalLabel,
+      configured: state.configured,
+      messageHtml: this.buyerMessageHtml(state.message),
+      itemSlotHtml: this.slotHtml(this.buyerStack(state.item), 'buyer-item'),
+      tradeSlotHtml: this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade'),
+      inventoryHtml: this.buyerInventoryCells(state),
+    });
   }
 
   private bindBuyerChrome(): void {

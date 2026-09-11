@@ -8,7 +8,7 @@
 - [x] Static NPC: player model + `buyer_merchant` skin; no physics, damage, look-at, or HP nameplate.
 - [x] Inventory-style admin + trade GUIs; 1 NPC = 1 item; atomic sell; close/E returns the trade slot.
 - [x] Bound hologram `buyer-<id>`; move/delete with the NPC; hologram plugin cannot orphan or edit it.
-- [ ] Owner live Anarchy QA of create/trade/move/restart/delete (checklist in the report).
+- [x] Live Anarchy QA of create Farmer / admin GUI / Pumpkin 50 / sell 32 for 1600 (move/restart/two-NPC still on owner checklist).
 
 ## 2026-09-11: Merge Clan System into main
 

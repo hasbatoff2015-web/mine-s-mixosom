@@ -44,13 +44,21 @@ Builtin `buyer` + `BuyerService`. Admins create/move/delete/configure NPCs with 
 
 ## Tests
 
-Focused: buyer 15/15, buyer-plugin 5/5, buyer-gui 5/5, permissions 5/5, auction 24/24, auction-plugin 9/9, auction-gui 6/6, clan 20/20, clan-plugin 7/7, clan-gui 7/7, economy 15/15.
+Focused: buyer 15/15, buyer-plugin 5/5, buyer-gui 6/6, permissions 5/5, auction 24/24, auction-plugin 9/9, auction-gui 6/6, clan 20/20, clan-plugin 7/7, clan-gui 7/7, economy 15/15.
 
-`test:server` **45 files / 467 tests PASS**. Four typechecks (`typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim`), `check:boundaries`, and `build` PASS. Live browser Anarchy QA was **not** run.
+`test:server` **45 files / 467 tests PASS**. Four typechecks (`typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim`), `check:boundaries`, and `build` PASS.
 
 ## Visual QA
 
-Live browser Anarchy QA was **not** run in this environment. Manual checklist is in the agent final message / Next work.
+Live Anarchy in Chrome (`Op` on local `npm run dev:server`):
+
+- `/buyer create Farmer` opens inventory-style admin GUI (name, empty item, price, hologram, choose/save/trade/delete, close ×).
+- Item picker from inventory sets whole Pumpkin; price 50; save persists.
+- Trade GUI: 32 pumpkins, 50 МК / шт., «Вы получите: 1 600 Мегакоинов», ПРОДАТЬ.
+- After a patch, placing the stack empties the GUI inventory grid and enables ПРОДАТЬ (previously the in-place snapshot left sell disabled and a stale grid).
+- Sell chat: «Вы продали 32 × Тыква за 1 600 Мегакоинов.» Hotbar empty. NPC uses `buyer_merchant` skin; hologram «Farmer» has no HP.
+
+Not live-tested here: `/buyer move`, server restart restore, two adjacent buyers, a non-OP second client. Those remain on the owner checklist.
 
 ## Performance
 

@@ -10,7 +10,7 @@
 - Inventory-style GUI как Auction House. ПКМ: admin/OP → admin GUI, игрок → trade GUI. Сервер решает по permissions.
 - Голограмма `buyer-<id>` через HologramNetwork, без HP; `/holograms` не даёт orphan/edit. `/buyer move` двигает NPC+hologram.
 - Handoff: `docs/reports/2026-09-11_buyer-system.md`.
-- Гейты: buyer 15/15, buyer-plugin 5/5, buyer-gui 5/5, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/467, четыре typecheck, boundaries, build PASS. Live Anarchy QA не запускался.
+- Гейты: buyer 15/15, buyer-plugin 5/5, buyer-gui 6/6, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/467, четыре typecheck, boundaries, build PASS. Live Anarchy QA: create Farmer, admin/trade GUI, Pumpkin 50, sell 32 за 1 600 МК, hologram без HP.
 
 ## Последний проход: Clan system merged into main — 2026-09-11
 
