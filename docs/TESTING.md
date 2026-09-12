@@ -1,5 +1,9 @@
 # Тестирование
 
+## 2026-09-12 Buyer System merged into main
+
+Report: `reports/2026-09-12_buyer-system-main-merge.md`. Merge `--no-ff` `c4d0ca6`. Pre-merge gates: four typechecks, `test:server` 45/470, boundaries, build PASS.
+
 ## 2026-09-12 Buyer hologram editor
 
 Report: `reports/2026-09-11_buyer-system.md`.

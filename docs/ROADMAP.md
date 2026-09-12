@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-12: Merge Buyer System into main
+
+- [x] Fetch current `origin/main`; no teammate commits after Clan merge `5492846`.
+- [x] Merge `--no-ff` `cursor/buyer-system-a8dc` into `main` (`c4d0ca6`) without rebase/squash/force push.
+- [x] Keep Auction House / Economy / Worldgen V2 / Clan together with Buyer NPCs.
+- [x] Pre-merge gates: `test:server` 45/470, four typechecks, boundaries, build PASS.
+
 ## 2026-09-12: Buyer merchant skin cache-bust
 
 - [x] Diagnose buyer_merchant load chain; do not replace the current public PNG.

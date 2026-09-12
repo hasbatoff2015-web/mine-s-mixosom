@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Buyer System merged into main — 2026-09-12
+
+- PR #86 влит в `main` обычным `--no-ff`: merge commit `c4d0ca6`. История не переписывалась.
+- Перед merge `origin/main` был на `5492846` (Clan System); новых commit'ов товарища не было, extra merge main → buyer не понадобился, конфликтов не было.
+- Сохранены Auction House / Economy, Worldgen V2, Clan System и Buyer NPCs (hologram editor, новый `buyer_merchant` PNG). Live visual QA нового скина отложена.
+- Гейты перед merge: `test:server` 45/470, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-12_buyer-system-main-merge.md`.
+
 ## Последний проход: Buyer merchant skin cache-bust — 2026-09-12
 
 - Ручной тест показывал старого зелёно-чёрного скупщика после замены `public/textures/player/skins/buyer_merchant.png`. Файл в `public` уже был новым (64×64 indexed PNG, sha256 `69f4018a…`). Второго asset path не было.
