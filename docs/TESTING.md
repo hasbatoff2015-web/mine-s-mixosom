@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-12 Chat fullscreen transparent
+
+Report: `reports/2026-09-12_chat-fullscreen.md`.
+
+```text
+npx vitest run tests/chat-layout.test.ts tests/chat-channels.test.ts tests/chat-commands.test.ts tests/server/chat-channels.test.ts tests/server/chat-scroll.test.ts tests/ui-main-integration.test.ts --maxWorkers=2
+```
+
+Focused: chat-layout 10/10, chat-channels 6/6, chat-commands 10/10, server chat-channels 8/8, chat-scroll 3/3, ui-main-integration 5/5. `test:server` **46 files / 478 tests PASS**. Four typechecks, boundaries, and `build` PASS. Full `npm test`: 231/232 files, 2208/2213 tests PASS; 5 failures are known 5s timeouts in `tests/fire-contact-sunlight-minecart.test.ts` (not from chat).
+
 ## 2026-09-12 Chat layout top-left
 
 Report: `reports/2026-09-12_chat-layout.md`.

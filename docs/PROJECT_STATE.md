@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Chat fullscreen transparent — 2026-09-12
+
+- Открытый чат растягивается на всю ширину HUD (`top/left/right: 0` equivalent): input слева, ENTER / X / CHAT ON-OFF у правого края.
+- Фон message area **transparent**; сами строки без изменений. Glyph **X** красный (`#ff3b3b`), подпись TAB белая.
+- Закрытое состояние по-прежнему top-left и `width: fit-content`, без полноэкранной пустой рамки.
+- Серверные каналы не менялись.
+- Handoff: `docs/reports/2026-09-12_chat-fullscreen.md`.
+
 ## Последний проход: Chat layout top-left — 2026-09-12
 
 - Чат закреплён в **левом верхнем углу** (open и closed). Нижняя привязка к hotbar убрана.

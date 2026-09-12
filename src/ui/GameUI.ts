@@ -327,7 +327,7 @@ export class GameUI {
         <div id="selected-item"></div>
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
-        <div id="chat" data-chat-anchor="top-left">
+        <div id="chat" data-chat-anchor="top-left" data-chat-open-width="viewport">
           <div id="chat-main">
             <div id="chat-compose">
               <form id="chat-form" autocomplete="off">
@@ -356,7 +356,7 @@ export class GameUI {
               <span class="chat-btn-hotkey">ENTER</span>
             </button>
             <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат (Tab)">
-              <span class="chat-btn-glyph" aria-hidden="true">X</span>
+              <span class="chat-btn-glyph chat-close-x" aria-hidden="true">X</span>
               <span class="chat-btn-hotkey">TAB</span>
             </button>
             <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">

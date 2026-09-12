@@ -28,9 +28,11 @@ describe('chat layout and controls', () => {
   it('anchors the chat container top-left in both open and closed CSS', () => {
     const chat = cssRule('#chat');
     expect(GAME_UI).toContain('data-chat-anchor="top-left"');
-    expect(chat).toContain('top: max(10px, env(safe-area-inset-top));');
-    expect(chat).toContain('left: max(10px, env(safe-area-inset-left));');
+    expect(chat).toContain('top: 0;');
+    expect(chat).toContain('left: 0;');
+    expect(chat).toContain('right: auto;');
     expect(chat).toContain('bottom: auto;');
+    expect(chat).toContain('width: fit-content;');
     expect(chat).toContain('align-items: flex-start;');
     expect(chat).toContain('justify-content: flex-start;');
     expect(chat).not.toContain('bottom: calc(');
@@ -38,6 +40,25 @@ describe('chat layout and controls', () => {
     expect(GAME_UI).not.toContain('this.chat.style.top');
     expect(GAME_UI).not.toContain('this.chat.style.bottom');
     expect(GAME_UI).not.toContain('this.chat.style.left');
+    expect(GAME_UI).not.toContain('this.chat.style.right');
+  });
+
+  it('stretches open chat across the available viewport width', () => {
+    expect(GAME_UI).toContain('data-chat-open-width="viewport"');
+    const open = cssRule('#chat.open');
+    expect(open).toContain('right: 0;');
+    expect(open).toContain('width: auto;');
+    expect(open).toContain('max-width: none;');
+    expect(open).toContain('overflow-x: hidden;');
+    expect(STYLE).not.toContain('--chat-open-width');
+    expect(STYLE).not.toContain('min(70vw, 72rem)');
+    expect(STYLE).not.toContain('min(92vw, 40rem)');
+    expect(cssRule('#chat.open #chat-side')).toContain('margin-left: auto;');
+    expect(cssRule('#chat.open #chat-compose')).toContain('width: 100%;');
+    expect(cssRule('#chat-form')).toContain('width: 100%;');
+    expect(cssRule('#chat-input')).toContain('width: 100%;');
+    expect(cssRule('#chat-input')).toContain('flex: 1 1 auto;');
+    expect(cssRule('#chat-input')).toContain('min-width: 0;');
   });
 
   it('hides compose and side controls when closed without an empty open-sized frame', () => {
@@ -45,6 +66,9 @@ describe('chat layout and controls', () => {
     expect(cssRule('#chat.open #chat-compose')).toContain('display: flex;');
     expect(cssRule('#chat-side')).toContain('display: none;');
     expect(cssRule('#chat.open #chat-side')).toContain('display: flex;');
+    const closed = cssRule('#chat');
+    expect(closed).toContain('width: fit-content;');
+    expect(closed).not.toContain('right: 0;');
     const closedLog = cssRule('#chat-log');
     expect(closedLog).toContain('height: auto;');
     expect(closedLog).toContain('max-height: min(28vh, 240px);');
@@ -53,16 +77,25 @@ describe('chat layout and controls', () => {
 
   it('uses a large open chat window with a fixed message area', () => {
     const chat = cssRule('#chat');
-    expect(chat).toContain('--chat-open-width: min(70vw, 72rem);');
     expect(chat).toContain('--chat-open-log-height: min(72vh, calc(100dvh - 12rem));');
-    expect(cssRule('#chat.open')).toContain('width: var(--chat-open-width);');
     const openLog = cssRule('#chat.open #chat-log');
     expect(openLog).toContain('height: var(--chat-open-log-height);');
     expect(openLog).toContain('min-height: var(--chat-open-log-height);');
     expect(openLog).toContain('max-height: var(--chat-open-log-height);');
     expect(STYLE).toContain('@media (max-height: 540px), (max-width: 900px)');
-    expect(STYLE).toContain('--chat-open-width: min(92vw, 40rem);');
     expect(STYLE).toContain('--hud-scale');
+  });
+
+  it('keeps the message area transparent so the world shows through', () => {
+    expect(cssRule('#chat')).toContain('background: transparent;');
+    expect(cssRule('#chat-main')).toContain('background: transparent;');
+    expect(cssRule('#chat-log')).toContain('background: transparent;');
+    expect(cssRule('#chat.open #chat-log')).toContain('background: transparent;');
+    expect(cssRule('#chat.open #chat-log')).not.toContain('rgba(0, 0, 0');
+    expect(STYLE).not.toContain('background: rgba(0, 0, 0, 0.18);');
+    expect(cssRule('.chat-line')).toContain('background: rgba(0, 0, 0, 0.5);');
+    expect(STYLE).toContain('.chat-line.channel-nearby::before {\n  background: #f0c400;\n}');
+    expect(STYLE).toContain('.chat-line.channel-clan::before {\n  background: #b56bff;\n}');
   });
 
   it('does not move chrome when message counts or tabs change', () => {
@@ -100,10 +133,13 @@ describe('chat layout and controls', () => {
     expect(STYLE).toContain('.chat-btn-hotkey');
   });
 
-  it('uses a large close button with X glyph and Tab hotkey label', () => {
+  it('uses a large close button with a red X glyph and Tab hotkey label', () => {
     expect(GAME_UI).toContain('id="chat-close"');
+    expect(GAME_UI).toContain('class="chat-btn-glyph chat-close-x"');
     expect(GAME_UI).toContain('>X</span>');
     expect(GAME_UI).toContain('>TAB</span>');
+    expect(cssRule('#chat-close .chat-close-x')).toContain('color: #ff3b3b;');
+    expect(cssRule('#chat-close .chat-btn-hotkey')).toContain('color: #fff;');
     expect(GAME_UI).toContain("this.chatCloseEl.addEventListener('click', () => this.onChatCancel?.())");
     expect(GAME_UI).toContain("event.key === 'Tab'");
     expect(GAME_UI).toContain('this.onChatCancel?.()');

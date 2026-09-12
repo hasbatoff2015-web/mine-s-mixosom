@@ -716,21 +716,22 @@ button {
 @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } }
 
 #chat {
-  --chat-open-width: min(70vw, 72rem);
   --chat-open-log-height: min(72vh, calc(100dvh - 12rem));
   position: absolute;
-  top: max(10px, env(safe-area-inset-top));
-  left: max(10px, env(safe-area-inset-left));
+  top: 0;
+  left: 0;
+  right: auto;
   bottom: auto;
   z-index: 6;
   display: flex;
-  width: min(36rem, calc(100vw - 20px));
-  max-width: calc(100vw - 20px);
+  width: fit-content;
+  max-width: 100%;
   flex-direction: row;
   align-items: flex-start;
   justify-content: flex-start;
   gap: calc(10px * var(--hud-scale));
   pointer-events: none;
+  background: transparent;
 }
 
 #chat-main {
@@ -741,6 +742,7 @@ button {
   align-items: stretch;
   justify-content: flex-start;
   gap: calc(8px * var(--hud-scale));
+  background: transparent;
 }
 
 #chat-compose {
@@ -751,6 +753,7 @@ button {
 
 #chat.open #chat-compose {
   display: flex;
+  width: 100%;
   pointer-events: auto;
 }
 
@@ -764,6 +767,8 @@ button {
 
 #chat.open #chat-side {
   display: flex;
+  margin-left: auto;
+  align-self: flex-start;
   pointer-events: auto;
 }
 
@@ -779,6 +784,7 @@ button {
   pointer-events: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  background: transparent;
 }
 
 #chat-log::-webkit-scrollbar {
@@ -802,8 +808,10 @@ button {
 }
 
 #chat.open {
-  width: var(--chat-open-width);
-  max-width: calc(100vw - 20px);
+  right: 0;
+  width: auto;
+  max-width: none;
+  overflow-x: hidden;
   pointer-events: auto;
 }
 
@@ -813,7 +821,7 @@ button {
   max-height: var(--chat-open-log-height);
   padding: calc(6px * var(--hud-scale)) 0;
   pointer-events: auto;
-  background: rgba(0, 0, 0, 0.18);
+  background: transparent;
 }
 
 #chat.display-off #chat-log,
@@ -905,12 +913,15 @@ button {
 
 #chat-form {
   display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: stretch;
 }
 
 #chat-input {
   box-sizing: border-box;
   width: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: calc(52px * var(--hud-scale));
   padding: calc(12px * var(--hud-scale)) calc(14px * var(--hud-scale));
@@ -976,6 +987,14 @@ button {
   color: #ffe9a8;
 }
 
+#chat-close .chat-close-x {
+  color: #ff3b3b;
+}
+
+#chat-close .chat-btn-hotkey {
+  color: #fff;
+}
+
 #chat-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1020,9 +1039,7 @@ button {
 
 @media (max-height: 540px), (max-width: 900px) {
   #chat {
-    --chat-open-width: min(92vw, 40rem);
     --chat-open-log-height: min(58vh, calc(100dvh - 7.5rem));
-    width: min(24rem, calc(100vw - 16px));
   }
 
   #chat-send,

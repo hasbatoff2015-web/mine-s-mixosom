@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-12: Chat fullscreen transparent
+
+- [x] Open `#chat` spans available HUD width; side buttons sit on the right edge.
+- [x] Transparent message-area background; red close X; closed state stays compact top-left.
+- [x] Do not change Global / Nearby / Clan server routing.
+
 ## 2026-09-12: Chat layout top-left
 
 - [x] Anchor `#chat` top-left; fixed open message-area height; hide native scrollbar.

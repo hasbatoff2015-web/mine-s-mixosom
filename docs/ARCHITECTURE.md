@@ -12,7 +12,7 @@ Routing is `WorldInstance.handleChat`:
 
 Each recipient gets one network event (`messageId`). The General tab shows every received player line plus system/command/error/death. Nearby and Clan tabs filter by `channel`. Markers: none for global, yellow `::before` for nearby, purple for clan. Format is `player: text` (no `<>`). History is client-side from connection, about 40 lines per tab (`CHAT_TAB_HISTORY_LIMIT`), store cap still `MAX_CHAT_MESSAGES = 200`. Display can be toggled without dropping the log or blocking send.
 
-`#chat` is **top-left** (`top`/`left` + `bottom: auto`). Open log height is the CSS variable `--chat-open-log-height` (same value for `height`/`min-height`/`max-height`), so 5 vs 40 lines and tab switches do not move input/tabs. Closed log is content-sized, still top-left, without an empty frame. Native scrollbar is hidden (`scrollbar-width: none`); wheel and `touch-action: pan-y` still scroll. Side column: large ENTER / TAB / CHAT ON|OFF buttons.
+`#chat` is **top-left** (`top: 0` / `left: 0` + `bottom: auto`). Open chat stretches **full HUD width** (`right: 0`, `width: auto`, no `--chat-open-width` cap); closed stays `width: fit-content` so it is not a full-screen empty frame. Open log height is `--chat-open-log-height` (same value for `height`/`min-height`/`max-height`). Message area background is **transparent**; line chips keep their own fill. Native scrollbar is hidden (`scrollbar-width: none`); wheel and `touch-action: pan-y` still scroll. Side column sits on the right edge: large ENTER / red X + TAB / CHAT ON|OFF.
 
 **T** / **`/`** still open chat and release pointer lock. Enter keeps the overlay open. Tab and the X button call the existing `onChatCancel` close path.
 
