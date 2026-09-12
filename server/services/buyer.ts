@@ -61,6 +61,7 @@ export interface BuyerResult {
   readonly inventoryDirty?: boolean;
   readonly broadcast?: boolean;
   readonly affectedPlayerIds?: readonly string[];
+  readonly openHologramEditor?: boolean;
 }
 
 interface BuyerSession {
@@ -93,8 +94,9 @@ function compactMk(amount: number): string {
 }
 
 function hologramLines(text: string, fallback: string): string[] {
-  const line = text.trim() || fallback;
-  return [line.slice(0, BUYER_HOLOGRAM_TEXT_MAX)];
+  const source = (text.trim() || fallback).slice(0, BUYER_HOLOGRAM_TEXT_MAX);
+  const lines = source.split('\n').map((line) => line.slice(0, BUYER_HOLOGRAM_TEXT_MAX)).filter((line) => line.length > 0);
+  return lines.length > 0 ? lines.slice(0, 8) : [fallback.slice(0, BUYER_HOLOGRAM_TEXT_MAX)];
 }
 
 export function isBuyerConfigured(buyer: BuyerRecord): buyer is BuyerRecord & { itemId: string; pricePerItem: number } {
@@ -254,13 +256,6 @@ export class BuyerService {
     buyer.z = pose.z;
     buyer.yaw = pose.yaw;
     buyer.pitch = pose.pitch;
-    this.holograms.setPosition(
-      buyer.hologramName,
-      pose.x,
-      pose.y + BUYER_HOLOGRAM_Y_OFFSET,
-      pose.z,
-      pose.worldId,
-    );
     this.syncHologram(buyer);
     this.persist();
     return { ok: true, buyer, broadcast: true };
@@ -311,6 +306,7 @@ export class BuyerService {
     if (patch.hologramText !== undefined) {
       const text = patch.hologramText.trim().slice(0, BUYER_HOLOGRAM_TEXT_MAX);
       buyer.hologramText = text.length > 0 ? text : buyer.name;
+      this.holograms.setLines(buyer.hologramName, hologramLines(buyer.hologramText, buyer.name));
     }
     this.syncHologram(buyer);
     this.persist();
@@ -392,10 +388,16 @@ export class BuyerService {
     }
     if (message.action === 'set_hologram_text') {
       if (!can.edit) return { ok: false, error: 'You do not have permission.' };
-      session.hologramText = typeof message.hologramText === 'string'
-        ? message.hologramText.slice(0, BUYER_HOLOGRAM_TEXT_MAX)
-        : '';
       return { ok: true };
+    }
+    if (message.action === 'edit_hologram') {
+      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (session.screen !== 'admin') return { ok: true };
+      this.syncHologram(buyer);
+      if (!this.holograms.get(buyer.hologramName)) {
+        return { ok: false, error: 'Голограмма скупщика не найдена.' };
+      }
+      return { ok: true, buyer, openHologramEditor: true };
     }
     if (message.action === 'pick_item') {
       if (!can.edit) return { ok: false, error: 'You do not have permission.' };
@@ -540,9 +542,19 @@ export class BuyerService {
     this.persist();
   }
 
+  captureHologramText(buyerId: string): void {
+    const buyer = this.buyers.get(buyerId);
+    if (!buyer) return;
+    const hologram = this.holograms.get(buyer.hologramName);
+    if (!hologram) return;
+    const text = hologram.lines.map((line) => line.trim()).filter((line) => line.length > 0).join('\n').trim();
+    buyer.hologramText = (text || buyer.name).slice(0, BUYER_HOLOGRAM_TEXT_MAX);
+    this.persist();
+    this.refreshSessions(buyer);
+  }
+
   private syncHologram(buyer: BuyerRecord): void {
     const existing = this.holograms.get(buyer.hologramName);
-    const lines = hologramLines(buyer.hologramText, buyer.name);
     if (!existing) {
       this.holograms.upsert(createHologramRecord({
         name: buyer.hologramName,
@@ -550,7 +562,7 @@ export class BuyerService {
         x: buyer.x,
         y: buyer.y + BUYER_HOLOGRAM_Y_OFFSET,
         z: buyer.z,
-        lines,
+        lines: hologramLines(buyer.hologramText, buyer.name),
         range: 48,
       }));
       return;
@@ -562,7 +574,6 @@ export class BuyerService {
       buyer.z,
       buyer.worldId,
     );
-    this.holograms.setLines(buyer.hologramName, lines);
   }
 
   private pickFromInventory(session: BuyerSession, inventory: Inventory, slot: number): BuyerResult {
@@ -664,7 +675,6 @@ export class BuyerService {
 
   private saveAdmin(session: BuyerSession, message: ClientBuyerActionMessage): BuyerResult {
     const name = message.name ?? session.nameText;
-    const hologramText = message.hologramText ?? session.hologramText;
     const priceRaw = message.price ?? session.priceText;
     const itemId = session.draftItemId;
     if (!itemId || !isKnownItemId(itemId)) {
@@ -680,7 +690,6 @@ export class BuyerService {
       name,
       itemId,
       pricePerItem: parseBuyerPrice(priceRaw),
-      hologramText,
     });
     if (!result.ok) {
       session.message = result.error;

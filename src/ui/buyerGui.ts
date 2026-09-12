@@ -6,6 +6,7 @@ export const BUYER_SAVE_LABEL = 'Сохранить';
 export const BUYER_DELETE_LABEL = 'Удалить скупщика';
 export const BUYER_PICK_LABEL = 'Выбрать товар';
 export const BUYER_TRADE_LABEL = 'Открыть торговлю';
+export const BUYER_HOLOGRAM_LABEL = 'Настроить голограмму';
 export const BUYER_ADMIN_TITLE = 'Настройка скупщика';
 export const BUYER_PICK_PROMPT = 'Выберите предмет из инвентаря';
 export const BUYER_UNSELECTED_ITEM = 'Товар не выбран';
@@ -114,10 +115,11 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
       <label class="mc-ah-field">Цена за 1 шт.
         <input data-buyer-price type="text" inputmode="numeric" maxlength="9" value="${escapeHtml(view.priceText)}" autocomplete="off" spellcheck="false" name="buyer-price" />
       </label>
-      <label class="mc-ah-field">Голограмма
-        <input data-buyer-holo type="text" maxlength="80" value="${escapeHtml(view.hologramText)}" autocomplete="off" spellcheck="false" name="buyer-holo" />
-      </label>
       <div class="mc-ah-actions">
+        <button type="button" class="mc-ah-btn mc-ah-btn-2line" data-buyer-action="edit_hologram" aria-label="${BUYER_HOLOGRAM_LABEL}">
+          Настроить
+          <small>голограмму</small>
+        </button>
         <button type="button" class="mc-ah-btn" data-buyer-action="pick_item">${BUYER_PICK_LABEL}</button>
         <button type="button" class="mc-ah-btn" data-buyer-action="save">${BUYER_SAVE_LABEL}</button>
         <button type="button" class="mc-ah-btn" data-buyer-action="open_trade">${BUYER_TRADE_LABEL}</button>

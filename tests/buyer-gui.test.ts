@@ -4,6 +4,7 @@ import { formatCompactMegacoins } from '../shared/megacoins';
 import {
   BUYER_ADMIN_TITLE,
   BUYER_DELETE_LABEL,
+  BUYER_HOLOGRAM_LABEL,
   BUYER_PICK_LABEL,
   BUYER_PICK_PROMPT,
   BUYER_SAVE_LABEL,
@@ -68,6 +69,7 @@ describe('buyer GUI helpers', () => {
     expect(BUYER_PICK_LABEL).toBe('Выбрать товар');
     expect(BUYER_DELETE_LABEL).toBe('Удалить скупщика');
     expect(BUYER_TRADE_LABEL).toBe('Открыть торговлю');
+    expect(BUYER_HOLOGRAM_LABEL).toBe('Настроить голограмму');
     expect(buyerPriceEachLabel(undefined)).toBe('Цена не задана');
     expect(buyerShowsAdminFields('pick-item')).toBe(false);
     expect(buyerShowsInventoryGrid('admin')).toBe(false);
@@ -95,7 +97,11 @@ describe('buyer GUI helpers', () => {
     expect(admin).toContain('Имя');
     expect(admin).toContain(BUYER_UNSELECTED_ITEM);
     expect(admin).toContain('Цена за 1 шт.');
-    expect(admin).toContain('Голограмма');
+    expect(admin).toContain(BUYER_HOLOGRAM_LABEL);
+    expect(admin).toContain('data-buyer-action="edit_hologram"');
+    expect(admin).toContain('mc-ah-btn-2line');
+    expect(admin).not.toContain('data-buyer-holo');
+    expect(admin).not.toContain('Голограмма');
     expect(admin).toContain(BUYER_PICK_LABEL);
     expect(admin).toContain(BUYER_SAVE_LABEL);
     expect(admin).toContain(BUYER_DELETE_LABEL);

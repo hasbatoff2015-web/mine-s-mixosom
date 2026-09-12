@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Buyer hologram editor — 2026-09-12
+
+- Кнопка «Настроить голограмму» в admin GUI скупщика открывает **существующий** hologram editor (`hologram_editor` / `hologram_update`). Второй editor, renderer и store не добавлялись.
+- Appearance (текст/font/style/size/фон/billboard/yaw/timer) живёт в `HologramNetwork` / `plugin-data/holograms/holograms.json`. `/buyer move`, смена товара/цены и restart её не сбрасывают. Yaw NPC и yaw hologram разделены.
+- Редактор buyer hologram только у OP / `buyer.edit` / `buyer.*`. `holograms.create` и `/holograms` по-прежнему не могут править `buyer-<id>`.
+- Handoff: `docs/reports/2026-09-11_buyer-system.md`.
+- Гейты: см. конец этого прохода / TESTING.md.
+
 ## Последний проход: Buyer NPC system — 2026-09-11
 
 - Builtin `buyer` + `BuyerService` на существующем PluginManager / JsonFileStore / EconomyService / HologramNetwork. Второго кошелька и второй hologram-системы нет.
@@ -8,7 +16,7 @@
 - Команды: `/buyer create|move|delete|list` (aliases `/buyers`, `/скупщик`). Persistence: `plugin-data/buyers/buyers.json`.
 - Права: `buyer.use` (default), `buyer.create|delete|move|list|edit`, `buyer.*` (admin), OP bypass.
 - Inventory-style GUI как Auction House. ПКМ: admin/OP → admin GUI, игрок → trade GUI. Сервер решает по permissions.
-- Голограмма `buyer-<id>` через HologramNetwork, без HP; `/holograms` не даёт orphan/edit. `/buyer move` двигает NPC+hologram.
+- Голограмма `buyer-<id>` через HologramNetwork, без HP; `/holograms` не даёт orphan/edit. `/buyer move` двигает NPC+hologram. Настройка appearance — общий hologram editor из admin GUI.
 - Handoff: `docs/reports/2026-09-11_buyer-system.md`.
 - Гейты: buyer 15/15, buyer-plugin 5/5, buyer-gui 6/6, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/467, четыре typecheck, boundaries, build PASS. Live Anarchy QA: create Farmer, admin/trade GUI, Pumpkin 50, sell 32 за 1 600 МК, hologram без HP.
 

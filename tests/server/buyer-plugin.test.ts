@@ -62,6 +62,25 @@ function lastBuyer(sink: MemorySink): ServerBuyerMessage | undefined {
   return undefined;
 }
 
+function hologramPackets(sink: MemorySink) {
+  return sink.payloads.filter((payload) => {
+    const record = payload as { type?: string };
+    return record.type === 'holograms' || record.type === 'hologram_editor';
+  }) as Array<{
+    type: string;
+    hologram?: {
+      name: string;
+      lines: string[];
+      font?: string;
+      size?: number;
+      style?: string;
+      billboard?: boolean;
+      yaw?: number;
+    };
+    holograms?: Array<{ name: string; lines: string[]; font?: string; size?: number; style?: string }>;
+  }>;
+}
+
 describe('Buyer plugin', () => {
   const dirs: string[] = [];
   const worlds: WorldInstance[] = [];
@@ -198,6 +217,141 @@ describe('Buyer plugin', () => {
     expect(chat(world, op, '/buyer delete Farmer').some((line) => line.includes('удалён'))).toBe(true);
     expect(ada.player.inventory.count('pumpkin')).toBe(8);
     expect(lastBuyer(ada.sink)?.screen).toBe('closed');
+  });
+
+  it('opens the shared hologram editor for buyer.edit and persists appearance', async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = await boot(dir);
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    const observer = join(world, 'Bea');
+    chat(world, op, '/buyer create Farmer');
+    const npc = world.buyer.findByName('Farmer')!;
+    world.buyer.configure(npc.id, { itemId: 'pumpkin', pricePerItem: 50 });
+    const hologramName = npc.hologramName;
+    const hologramIdBefore = hologramName;
+    world.interactBuyer(op.player, npc.id);
+    op.sink.payloads.length = 0;
+    world.handleBuyerAction(op.player, { type: 'buyer_action', action: 'edit_hologram', buyerId: 'forged-id' });
+    const opened = hologramPackets(op.sink).find((payload) => payload.type === 'hologram_editor');
+    expect(opened?.hologram).toMatchObject({
+      name: hologramName,
+      lines: ['Farmer'],
+      font: 'sans',
+      size: 1,
+      style: 'bold',
+    });
+    expect(world.buyer.get(npc.id)?.id).toBe(npc.id);
+    expect(world.holograms.get(hologramName)?.name).toBe(hologramIdBefore);
+
+    ada.sink.payloads.length = 0;
+    world.handleBuyerAction(ada.player, { type: 'buyer_action', action: 'edit_hologram', buyerId: npc.id });
+    expect(hologramPackets(ada.sink).some((payload) => payload.type === 'hologram_editor')).toBe(false);
+    expect(world.holograms.get(hologramName)?.lines).toEqual(['Farmer']);
+
+    world.permissions.grant('ada', 'holograms.create');
+    ada.sink.payloads.length = 0;
+    world.interactHologram(ada.player, hologramName);
+    expect(hologramPackets(ada.sink).some((payload) => payload.type === 'hologram_editor')).toBe(false);
+    expect(lastBuyer(ada.sink)?.screen).toBe('trade');
+    ada.sink.payloads.length = 0;
+    world.updateHologramAppearance(ada.player, {
+      type: 'hologram_update',
+      name: hologramName,
+      lines: ['stolen'],
+      font: 'ui',
+      size: 2,
+      style: 'italic',
+      backgroundEnabled: false,
+      billboard: false,
+    });
+    expect(resultLines(ada.sink).some((line) => /скупщик/i.test(line))).toBe(true);
+    expect(world.holograms.get(hologramName)?.lines).toEqual(['Farmer']);
+    expect(world.holograms.get(hologramName)?.font).toBe('sans');
+
+    op.player.controller.yaw = 0.8;
+    observer.sink.payloads.length = 0;
+    world.updateHologramAppearance(op.player, {
+      type: 'hologram_update',
+      name: hologramName,
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'display',
+      size: 1.4,
+      style: 'bold-italic',
+      kind: 'timer',
+      timerDuration: 45,
+      backgroundEnabled: true,
+      backgroundWidth: 3.5,
+      backgroundHeight: 1.2,
+      billboard: false,
+    });
+    const listed = world.holograms.get(hologramName);
+    expect(listed).toMatchObject({
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'display',
+      size: 1.4,
+      style: 'bold-italic',
+      kind: 'timer',
+      timerDuration: 45,
+      backgroundEnabled: true,
+      backgroundWidth: 3.5,
+      backgroundHeight: 1.2,
+      billboard: false,
+    });
+    expect(listed?.yaw).toBeCloseTo(0.8);
+    expect(hologramPackets(observer.sink).some((payload) => (
+      payload.type === 'holograms'
+      && payload.holograms?.some((entry) => entry.name === hologramName && entry.font === 'display')
+    ))).toBe(true);
+
+    expect(chat(world, op, `/holograms line set ${hologramName} 1 hacked`).some((line) => /скупщик/i.test(line))).toBe(true);
+    expect(world.holograms.get(hologramName)?.lines[0]).toBe('СКУПЩИК');
+    op.player.controller.teleport([12, 70, -4]);
+    op.player.controller.yaw = 1.5;
+    expect(chat(world, op, '/buyer move Farmer').some((line) => line.includes('перемещён'))).toBe(true);
+    const moved = world.holograms.get(hologramName);
+    expect(moved?.x).toBeCloseTo(12);
+    expect(moved?.yaw).toBeCloseTo(0.8);
+    expect(moved?.font).toBe('display');
+    expect(moved?.style).toBe('bold-italic');
+    expect(moved?.billboard).toBe(false);
+    expect(world.buyer.findByName('Farmer')?.yaw).toBeCloseTo(1.5);
+
+    const far = join(world, 'Far');
+    far.player.controller.teleport([80, 70, 80]);
+    world.permissions.grant(far.player.id, 'buyer.edit');
+    far.sink.payloads.length = 0;
+    world.updateHologramAppearance(far.player, {
+      type: 'hologram_update',
+      name: hologramName,
+      lines: ['remote'],
+      font: 'ui',
+      size: 2,
+      style: 'normal',
+    });
+    expect(world.holograms.get(hologramName)?.lines).toEqual(['СКУПЩИК', 'ТЫКВА — 50 МК']);
+
+    await world.save();
+    await world.stop();
+    worlds.pop();
+    const again = await boot(dir);
+    const restored = again.holograms.get(hologramName);
+    expect(again.buyer.findByName('Farmer')?.itemId).toBe('pumpkin');
+    expect(again.buyer.findByName('Farmer')?.pricePerItem).toBe(50);
+    expect(restored).toMatchObject({
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'display',
+      size: 1.4,
+      style: 'bold-italic',
+      kind: 'timer',
+      timerDuration: 45,
+      backgroundEnabled: true,
+      backgroundWidth: 3.5,
+      backgroundHeight: 1.2,
+      billboard: false,
+    });
+    expect(restored?.yaw).toBeCloseTo(0.8);
   });
 });
 

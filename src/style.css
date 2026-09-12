@@ -1427,7 +1427,8 @@ button {
   white-space: nowrap;
 }
 
-.mc-clan-btn-2line {
+.mc-clan-btn-2line,
+.mc-ah-btn-2line {
   height: calc(28px * var(--mc-ui-scale, 3));
   flex-direction: column;
   gap: calc(1px * var(--mc-ui-scale, 3));
@@ -1437,7 +1438,8 @@ button {
   font-weight: 800;
 }
 
-.mc-clan-btn-2line small {
+.mc-clan-btn-2line small,
+.mc-ah-btn-2line small {
   font-size: 0.85em;
   font-weight: 700;
   opacity: 1;
@@ -1445,13 +1447,17 @@ button {
 }
 
 .mc-clan-btn-2line:disabled,
-.mc-ah-actions .mc-clan-btn-2line:disabled {
+.mc-ah-btn-2line:disabled,
+.mc-ah-actions .mc-clan-btn-2line:disabled,
+.mc-ah-actions .mc-ah-btn-2line:disabled {
   color: #5a5a5a;
   font-weight: 700;
 }
 
 .mc-clan-btn-2line:disabled small,
-.mc-ah-actions .mc-clan-btn-2line:disabled small {
+.mc-ah-btn-2line:disabled small,
+.mc-ah-actions .mc-clan-btn-2line:disabled small,
+.mc-ah-actions .mc-ah-btn-2line:disabled small {
   color: #6a6a6a;
 }
 

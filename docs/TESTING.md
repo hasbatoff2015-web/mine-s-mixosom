@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-12 Buyer hologram editor
+
+Report: `reports/2026-09-11_buyer-system.md`.
+
+Buyer hologram settings use the shared hologram editor (`hologram_editor` / `hologram_update`). `holograms.create` does not grant edit on `buyer-<id>`.
+
+```text
+npx vitest run tests/server/buyer.test.ts tests/server/buyer-plugin.test.ts tests/buyer-gui.test.ts tests/server/hologram-editor.test.ts tests/hologram-style.test.ts tests/hologram-timer.test.ts tests/server/permissions.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
 ## 2026-09-11 Buyer NPC system
 
 Report: `reports/2026-09-11_buyer-system.md`.

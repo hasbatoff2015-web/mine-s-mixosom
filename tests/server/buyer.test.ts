@@ -95,6 +95,14 @@ describe('BuyerService', () => {
     const hologram = holograms.get(buyerHologramName('aabbccdd'));
     expect(hologram?.lines[0]).toBe('Фермер');
     expect(hologram?.y).toBeCloseTo(64 + BUYER_HOLOGRAM_Y_OFFSET);
+    expect(hologram).toMatchObject({
+      font: 'sans',
+      size: 1,
+      style: 'bold',
+      billboard: true,
+      backgroundEnabled: true,
+      kind: 'normal',
+    });
     const dup = buyer.create({
       name: 'фермер',
       worldId: 'anarchy',
@@ -266,10 +274,14 @@ describe('BuyerService', () => {
     });
     expect(parseClientMessage({ type: 'buyer_action', action: 'explode' }))
       .toEqual({ error: 'buyer_action.action invalid' });
+    expect(parseClientMessage({ type: 'buyer_action', action: 'edit_hologram' })).toMatchObject({
+      type: 'buyer_action',
+      action: 'edit_hologram',
+    });
   });
 
   it('picks an item from inventory, saves admin config, and ignores spoofed quantity', async () => {
-    const { buyer } = await setup();
+    const { buyer, holograms } = await setup();
     buyer.create({ name: 'Фермер', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
     const inventory = new Inventory();
     fill(inventory, 'pumpkin', 17);
@@ -285,7 +297,8 @@ describe('BuyerService', () => {
     }, { edit: true, delete: true, use: true }).ok).toBe(true);
     expect(buyer.get('aabbccdd')?.itemId).toBe('pumpkin');
     expect(buyer.get('aabbccdd')?.pricePerItem).toBe(50);
-    expect(buyer.get('aabbccdd')?.hologramText).toBe('ПРИЁМ ТЫКВ');
+    expect(buyer.get('aabbccdd')?.hologramText).toBe('Фермер');
+    expect(holograms.get(buyerHologramName('aabbccdd'))?.lines).toEqual(['Фермер']);
     buyer.openTrade('p1', 'aabbccdd', inventory);
     expect(buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'select_slot', slot: 0 }, {
       edit: false, delete: false, use: true,
@@ -355,6 +368,112 @@ describe('BuyerService', () => {
     }).ok).toBe(true);
     expect(pumpkinInv.count('pumpkin')).toBe(0);
     expect(melonInv.count('melon')).toBe(0);
+  });
+
+  it('keeps full hologram appearance across move, item/price change, and reload', async () => {
+    const { store, economy, holograms, buyer } = await setup();
+    buyer.create({ name: 'Фермер', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0.4, pitch: 0 });
+    const name = buyerHologramName('aabbccdd');
+    const updated = holograms.updateAppearance(name, {
+      type: 'hologram_update',
+      name,
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'ui',
+      size: 1.6,
+      style: 'italic',
+      kind: 'timer',
+      timerDuration: 90,
+      backgroundEnabled: false,
+      backgroundWidth: 3.25,
+      backgroundHeight: 1.1,
+      billboard: false,
+    }, { playerYaw: 0.75, nowMs: 5_000 });
+    expect(updated).toMatchObject({
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'ui',
+      size: 1.6,
+      style: 'italic',
+      kind: 'timer',
+      timerDuration: 90,
+      backgroundEnabled: false,
+      backgroundWidth: 3.25,
+      backgroundHeight: 1.1,
+      billboard: false,
+    });
+    expect(updated?.yaw).toBeCloseTo(0.75);
+    expect(updated?.timerStartedAt).toBe(5_000);
+    buyer.captureHologramText('aabbccdd');
+    expect(buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 50 }).ok).toBe(true);
+    const moved = buyer.move('Фермер', { worldId: 'anarchy', x: 8, y: 71, z: 4, yaw: 2, pitch: 0.1 });
+    expect(moved.ok).toBe(true);
+    expect(moved.buyer?.yaw).toBe(2);
+    const afterMove = holograms.get(name);
+    expect(afterMove).toMatchObject({
+      x: 8,
+      z: 4,
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'ui',
+      size: 1.6,
+      style: 'italic',
+      kind: 'timer',
+      timerDuration: 90,
+      timerStartedAt: 5_000,
+      backgroundEnabled: false,
+      backgroundWidth: 3.25,
+      backgroundHeight: 1.1,
+      billboard: false,
+    });
+    expect(afterMove?.y).toBeCloseTo(71 + BUYER_HOLOGRAM_Y_OFFSET);
+    expect(afterMove?.yaw).toBeCloseTo(0.75);
+    const again = new BuyerService(store, economy, holograms, () => 'anarchy');
+    again.load();
+    again.ensureHolograms();
+    const restored = holograms.get(name);
+    expect(again.get('aabbccdd')?.itemId).toBe('pumpkin');
+    expect(again.get('aabbccdd')?.pricePerItem).toBe(50);
+    expect(again.get('aabbccdd')?.yaw).toBe(2);
+    expect(restored).toMatchObject({
+      lines: ['СКУПЩИК', 'ТЫКВА — 50 МК'],
+      font: 'ui',
+      size: 1.6,
+      style: 'italic',
+      kind: 'timer',
+      billboard: false,
+      backgroundEnabled: false,
+    });
+    expect(restored?.yaw).toBeCloseTo(0.75);
+    holograms.remove(name);
+    again.ensureHolograms();
+    const migrated = holograms.get(name);
+    expect(migrated?.lines[0]).toContain('СКУПЩИК');
+    expect(migrated?.font).toBe('sans');
+    expect(migrated?.billboard).toBe(true);
+  });
+
+  it('opens the bound hologram editor only for buyer.edit and does not recreate the hologram', async () => {
+    const { buyer, holograms } = await setup();
+    buyer.create({ name: 'Фермер', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    const before = holograms.get(buyerHologramName('aabbccdd'));
+    const inventory = new Inventory();
+    expect(buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'edit_hologram' }, {
+      edit: true, delete: true, use: true,
+    }).error).toBe(BUYER_STALE_ERROR);
+    expect(buyer.openAdmin('op', 'aabbccdd', inventory).ok).toBe(true);
+    expect(buyer.openTrade('p1', 'aabbccdd', inventory).ok).toBe(true);
+    const denied = buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'edit_hologram' }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toMatch(/permission/i);
+    expect(denied.openHologramEditor).toBeUndefined();
+    const opened = buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'edit_hologram' }, {
+      edit: true, delete: true, use: true,
+    });
+    expect(opened.ok).toBe(true);
+    expect(opened.openHologramEditor).toBe(true);
+    expect(opened.buyer?.id).toBe('aabbccdd');
+    expect(opened.buyer?.hologramName).toBe(buyerHologramName('aabbccdd'));
+    expect(holograms.get(buyerHologramName('aabbccdd'))).toBe(before);
   });
 });
 

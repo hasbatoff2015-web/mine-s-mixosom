@@ -174,7 +174,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             const name = args[2]?.toLowerCase();
             const hologram = name ? store.holograms.find((entry) => entry.name === name) : undefined;
             if (!hologram) return fail(name ? `Hologram '${name}' not found.` : 'Usage: /holograms line add|set|remove ...');
-            if (buyerOwned(name)) return fail('Текст скупщика задаётся в меню скупщика.');
+            if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику.');
             if (action === 'add') {
               const text = args.slice(3).join(' ').trim();
               if (!text) return usageError('/holograms line add <name> <text>');

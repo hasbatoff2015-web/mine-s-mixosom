@@ -2867,8 +2867,6 @@ export class GameUI {
     if (name && !keepBuyerDraft(document.activeElement, name)) name.value = state.name;
     const price = this.modal.querySelector<HTMLInputElement>('[data-buyer-price]');
     if (price && !keepBuyerDraft(document.activeElement, price)) price.value = state.priceText;
-    const holo = this.modal.querySelector<HTMLInputElement>('[data-buyer-holo]');
-    if (holo && !keepBuyerDraft(document.activeElement, holo)) holo.value = state.hologramText;
     const itemHost = this.modal.querySelector('[data-buyer-item]');
     if (itemHost) itemHost.innerHTML = this.slotHtml(this.buyerStack(state.item), 'buyer-item');
     const tradeHost = this.modal.querySelector('[data-buyer-trade]');
@@ -2901,7 +2899,7 @@ export class GameUI {
     const keep = this.captureBuyerInputFocus();
     const logicalHeight = state.screen === 'pick-item' ? 222
       : state.screen === 'trade' ? 248
-        : 236;
+        : 248;
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
@@ -2952,7 +2950,6 @@ export class GameUI {
       input?.addEventListener('input', () => send(input.value));
     };
     bindDraft('[data-buyer-name]', (name) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_name', name }));
-    bindDraft('[data-buyer-holo]', (hologramText) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_hologram_text', hologramText }));
     const price = this.modal!.querySelector<HTMLInputElement>('[data-buyer-price]');
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
@@ -2993,22 +2990,20 @@ export class GameUI {
       if (button instanceof HTMLButtonElement && button.disabled) return;
       if (kind === 'save') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-buyer-name]')?.value ?? current.name;
-        const hologramText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-holo]')?.value ?? current.hologramText;
         const priceText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-price]')?.value ?? current.priceText;
-        actions.send({ type: 'buyer_action', action: 'save', name, hologramText, price: priceText });
+        actions.send({ type: 'buyer_action', action: 'save', name, price: priceText });
         return;
       }
       actions.send({ type: 'buyer_action', action: kind as ClientBuyerActionMessage['action'] });
     });
   }
 
-  private captureBuyerInputFocus(): { kind: 'name' | 'price' | 'holo'; value: string; start: number; end: number } | undefined {
+  private captureBuyerInputFocus(): { kind: 'name' | 'price'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
     const kind = el.hasAttribute('data-buyer-name') ? 'name'
       : el.hasAttribute('data-buyer-price') ? 'price'
-        : el.hasAttribute('data-buyer-holo') ? 'holo'
-          : undefined;
+        : undefined;
     if (!kind) return undefined;
     return {
       kind,
@@ -3019,12 +3014,11 @@ export class GameUI {
   }
 
   private restoreBuyerInputFocus(
-    keep: { kind: 'name' | 'price' | 'holo'; value: string; start: number; end: number } | undefined,
+    keep: { kind: 'name' | 'price'; value: string; start: number; end: number } | undefined,
   ): void {
     if (!keep || !this.modal) return;
     const selector = keep.kind === 'name' ? '[data-buyer-name]'
-      : keep.kind === 'price' ? '[data-buyer-price]'
-        : '[data-buyer-holo]';
+      : '[data-buyer-price]';
     const input = this.modal.querySelector<HTMLInputElement>(selector);
     if (!input) return;
     input.value = keep.value;

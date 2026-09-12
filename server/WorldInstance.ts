@@ -83,7 +83,7 @@ import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
-import { BuyerService } from './services/buyer';
+import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoins } from './services/economy';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
@@ -93,7 +93,7 @@ import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
-import { playerCanReachBuyer } from '../shared/buyers';
+import { isBuyerHologramName, playerCanReachBuyer } from '../shared/buyers';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -1391,7 +1391,26 @@ export class WorldInstance {
         kind: 'system',
       });
     }
+    if (result.openHologramEditor && result.buyer) {
+      this.openBuyerHologramEditor(player, result.buyer.hologramName);
+      return;
+    }
     this.flushBuyer(player);
+  }
+
+  private openBuyerHologramEditor(player: ServerPlayer, hologramName: string): void {
+    const hologram = this.holograms.get(hologramName);
+    const owner = this.buyer.findByHologram(hologramName);
+    if (!hologram || !hologram.enabled || !owner) {
+      this.flushBuyer(player);
+      return;
+    }
+    if (!this.hasBuyerPermission(player, 'buyer.edit')) {
+      this.sendHologramPermissionDenied(player);
+      this.flushBuyer(player);
+      return;
+    }
+    this.sendTo(player, { type: 'hologram_editor', hologram: toNetworkHologram(hologram) });
   }
 
   private hasBuyerPermission(player: ServerPlayer, node: string): boolean {
@@ -2044,14 +2063,9 @@ export class WorldInstance {
   }
 
   updateHologramAppearance(player: ServerPlayer, message: ClientHologramUpdateMessage): void {
-    if (this.buyer.findByHologram(message.name)) {
-      this.sendTo(player, {
-        type: 'chat',
-        from: 'server',
-        playerId: 'server',
-        text: 'Текст скупщика задаётся в меню скупщика.',
-        kind: 'error',
-      });
+    const owner = this.buyer.findByHologram(message.name);
+    if (owner || isBuyerHologramName(message.name)) {
+      this.updateBuyerHologramAppearance(player, message, owner);
       return;
     }
     const hologram = this.holograms.get(message.name);
@@ -2080,6 +2094,49 @@ export class WorldInstance {
     this.holograms.updateAppearance(message.name, message, {
       playerYaw: player.controller.yaw,
       nowMs: Date.now(),
+    });
+  }
+
+  private updateBuyerHologramAppearance(
+    player: ServerPlayer,
+    message: ClientHologramUpdateMessage,
+    owner: BuyerRecord | undefined,
+  ): void {
+    if (!owner || owner.hologramName !== message.name.trim().toLowerCase()) {
+      this.sendBuyerHologramDenied(player);
+      return;
+    }
+    if (!this.hasBuyerPermission(player, 'buyer.edit')) {
+      this.sendBuyerHologramDenied(player);
+      return;
+    }
+    const hologram = this.holograms.get(owner.hologramName);
+    if (!hologram || !hologram.enabled) {
+      this.sendBuyerHologramDenied(player);
+      return;
+    }
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachBuyer(eye, owner, PLAYER_NET_REACH)) return;
+    this.holograms.updateAppearance(owner.hologramName, message, {
+      playerYaw: player.controller.yaw,
+      nowMs: Date.now(),
+    });
+    this.buyer.captureHologramText(owner.id);
+  }
+
+  private sendBuyerHologramDenied(player: ServerPlayer): void {
+    this.sendTo(player, {
+      type: 'command_result',
+      ok: false,
+      name: 'holograms',
+      lines: ['Эта голограмма принадлежит скупщику.'],
+    });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: 'Эта голограмма принадлежит скупщику.',
+      kind: 'error',
     });
   }
 

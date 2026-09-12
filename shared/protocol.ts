@@ -517,6 +517,7 @@ export type BuyerActionKind =
   | 'set_price'
   | 'set_name'
   | 'set_hologram_text'
+  | 'edit_hologram'
   | 'pick_item'
   | 'save'
   | 'delete'
@@ -1147,7 +1148,7 @@ const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
 
 const BUYER_ACTIONS: readonly BuyerActionKind[] = [
   'close', 'select_slot', 'set_amount', 'set_price', 'set_name', 'set_hologram_text',
-  'pick_item', 'save', 'delete', 'sell', 'open_trade', 'back',
+  'edit_hologram', 'pick_item', 'save', 'delete', 'sell', 'open_trade', 'back',
 ];
 
 const CLAN_ACTIONS: readonly ClanActionKind[] = [

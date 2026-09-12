@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-12: Buyer hologram editor
+
+- [x] Admin GUI button «Настроить голограмму» opens the existing hologram editor (no second hologram system).
+- [x] Buyer hologram `buyer-<id>` keeps full appearance across move/item-price/restart; NPC yaw ≠ hologram yaw.
+- [x] Only `buyer.edit` / `buyer.*` / OP can edit the bound hologram; `/holograms` and `holograms.create` cannot.
+
 ## 2026-09-11: Buyer NPC system
 
 - [x] Builtin `buyer` plugin + `BuyerService` on PluginManager / JsonFileStore / EconomyService / HologramNetwork (no second wallet, no second hologram renderer).
@@ -7,7 +13,7 @@
 - [x] Permissions `buyer.use` `buyer.create` `buyer.delete` `buyer.move` `buyer.list` `buyer.edit` `buyer.*`; OP bypass.
 - [x] Static NPC: player model + `buyer_merchant` skin; no physics, damage, look-at, or HP nameplate.
 - [x] Inventory-style admin + trade GUIs; 1 NPC = 1 item; atomic sell; close/E returns the trade slot.
-- [x] Bound hologram `buyer-<id>`; move/delete with the NPC; hologram plugin cannot orphan or edit it.
+- [x] Bound hologram `buyer-<id>`; move/delete with the NPC; hologram plugin cannot orphan or edit it. Appearance uses the shared hologram editor.
 - [x] Live Anarchy QA of create Farmer / admin GUI / Pumpkin 50 / sell 32 for 1600 (move/restart/two-NPC still on owner checklist).
 
 ## 2026-09-11: Merge Clan System into main
