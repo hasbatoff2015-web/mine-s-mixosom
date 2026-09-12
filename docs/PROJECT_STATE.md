@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Chat channels (Global / Nearby / Clan) — 2026-09-12
+
+- Существующий чат расширен, второй ChatLog / протокол / ClanService не добавлялись.
+- **T** открывает чат на вкладке «Общий» и фокусирует ввод. **Enter** отправляет и оставляет чат открытым. **Tab** и **X** закрывают чат и отбрасывают неотправленный текст.
+- Три канала: Global (все подключённые), Nearby (сервер, 3D `distance <= 20`), Clan (`ClanService.playerClan` в момент отправки).
+- Вкладка «Общий» агрегирует полученные Global + Nearby + Clan без дублей одного `messageId`. Nearby — жёлтая полоска, Clan — фиолетовая.
+- Лимит 128 символов на сервере (reject, не silent truncate). История с момента подключения, до ~40 сообщений на вкладку, без persist между рестартами.
+- Handoff: `docs/reports/2026-09-12_chat-channels.md`.
+
 ## Последний проход: Buyer System merged into main — 2026-09-12
 
 - PR #86 влит в `main` обычным `--no-ff`: merge commit `c4d0ca6`. История не переписывалась.
@@ -1254,7 +1263,7 @@
 - Armor использует classic fixed reduction `(25-clamp(points,0,20))/25`, без damage-dependent curve/toughness. Piece values сохранены (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.
 - Food use требует удержания, consumable проверяет hunger cap.
 - Death выбрасывает survival inventory/equipment, показывает экран смерти и возвращает игрока в spawn point. Death messages идут в локальный чат (`deathMessage(source)`).
-- Локальный чат (без сети): T открывает поле, `/` открывает с префиксом `/`, Enter отправляет, Esc закрывает, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
+- Локальный чат (без сети): T открывает поле на вкладке «Общий», `/` открывает с префиксом `/`, Enter отправляет и оставляет чат открытым, Tab/X/Esc закрывают, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
 - Creative не расходует blocks/arrows/durability и не получает survival/environment/mob/explosion damage.
 
 ### Alpha approximation

@@ -1,4 +1,6 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
+import { isChatChannel, type ChatChannel } from './chat';
+export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, PlayerActionKind } from './playerActions';
@@ -309,6 +311,8 @@ export interface ClientPlaceBlockMessage extends ClientBlockIntentFields {
 export interface ClientChatMessage {
   readonly type: 'chat';
   readonly text: string;
+  /** Client intent only. Server ignores forged sender/recipients/coords/clan. */
+  readonly channel?: ChatChannel;
 }
 
 export interface ClientViewMessage {
@@ -588,6 +592,8 @@ export interface ServerWelcomeMessage {
   readonly buyers?: readonly NetworkBuyerNpc[];
   /** Server wall-clock ms for hologram timers; same clock as pong.serverNow. */
   readonly serverNow?: number;
+  /** Live ClanService membership at join. Not a chat-owned copy. */
+  readonly inClan?: boolean;
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -702,6 +708,8 @@ export interface ServerChatMessage {
   readonly playerId: string;
   readonly text: string;
   readonly kind: 'player' | 'system' | 'command' | 'error';
+  readonly channel?: ChatChannel;
+  readonly messageId?: string;
 }
 
 export interface ServerErrorMessage {
@@ -1447,9 +1455,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
     }
     case 'chat': {
       if (typeof raw.text !== 'string') return { error: 'chat.text required' };
-      const text = raw.text.replace(/\s+$/g, '').slice(0, MAX_CHAT_LENGTH);
+      const text = raw.text.replace(/\s+$/g, '');
       if (!text) return { error: 'chat.text empty' };
-      return { type: 'chat', text };
+      if (text.length > MAX_CHAT_LENGTH) return { error: 'chat.text too long' };
+      const channel = raw.channel === undefined ? 'global' : raw.channel;
+      if (!isChatChannel(channel)) return { error: 'chat.channel invalid' };
+      return { type: 'chat', text, channel };
     }
     case 'view': {
       if (!Number.isInteger(raw.cx) || !Number.isInteger(raw.cz) || !Number.isInteger(raw.radius)) {

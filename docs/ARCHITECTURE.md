@@ -1,5 +1,19 @@
 # Архитектура
 
+## Chat channels — 2026-09-12
+
+Player chat stays on the existing `ClientChatMessage` / `ServerChatMessage` / `ChatLog` / `GameUI` `#chat` path. The client sends only intent `{ type: 'chat', text, channel?: 'global'|'nearby'|'clan' }`. Parse strips forged `from` / `playerId` / recipients / coords / `clanId`. Sender is the authenticated player. `MAX_CHAT_LENGTH` is **128**; over-length is rejected (not sliced).
+
+Routing is `WorldInstance.handleChat`:
+
+- **global** — every connected player.
+- **nearby** — inclusive 3D radius `NEARBY_CHAT_RADIUS = 20` from `sender.controller.position` (`dx²+dy²+dz² <= 400`). The sender always receives the line. No error if nobody else is in range.
+- **clan** — `this.clan.playerClan(sender.id)` at send time. Same-clan connected members only. No clan → error chat `Вы не состоите в клане.` There is no chat-owned membership map.
+
+Each recipient gets one network event (`messageId`). The General tab shows every received player line plus system/command/error/death. Nearby and Clan tabs filter by `channel`. Markers: none for global, yellow `::before` for nearby, purple for clan. Format is `player: text` (no `<>`). History is client-side from connection, about 40 lines per tab (`CHAT_TAB_HISTORY_LIMIT`), store cap still `MAX_CHAT_MESSAGES = 200`. Display can be toggled without dropping the log or blocking send.
+
+**T** / **`/`** still open chat and release pointer lock. Enter keeps the overlay open. Tab and the X button call the existing `onChatCancel` close path.
+
 ## Player layer depth policy integrated with current main — 2026-09-10
 
 `origin/main@4de89948` was merged into `codex/fix-player-layer-zfighting@f1ed162f` as merge commit `72bf906`. The resulting `PlayerVisual` composes main's death-pose/appearance/nameplate consumers with the feature's material split and deterministic ordering. Runtime ownership stays unchanged: `MinecraftSkinRegistry.acquire()` returns the resolved descriptor metadata, and `PlayerVisual` uses that handle's `outerLayerAlpha` rather than consulting only the built-in map.
@@ -248,7 +262,7 @@ Claims store **partial** flags (`flags?: { pvp?: boolean }`). Overlapping claims
 
 `mob-spawn` is enforced on the spawn path only: `MobManager.allowSpawn` → cancellable `mobSpawn`. `force` restore/debug bypasses. Existing mobs are not removed when the flag changes.
 
-Chat scroll lives in `GameUI` `#chat-log` (client-only). `MAX_CHAT_MESSAGES = 200`.
+Chat scroll lives in `GameUI` `#chat-log` (client-only). Combined store cap `MAX_CHAT_MESSAGES = 200`; each tab shows about the last 40. Channels Global / Nearby / Clan are filtered in that same log, not a second ChatLog.
 
 Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plugins still cannot send raw packets. The client `HologramRenderer` draws a Group of planes (optional background + text). Billboard copies the camera quaternion; fixed uses stored yaw. RMB on a free hologram opens the existing GameUI editor (`hologram_interact` / `hologram_editor` / `hologram_update`). Buyer holograms `buyer-<id>` use that same editor, opened from the buyer admin GUI (`edit_hologram`); RMB on them opens the buyer GUI. Appearance fields live on the same persisted hologram.
 
@@ -1264,7 +1278,7 @@ Chest world: `ChunkMesher` не эмитит cube faces (`renderShape: 'chest'`)
 
 HUD получает фактический attack strength. Shield state/pose удалены из `FirstPersonRenderer`; DOM остаётся для интерфейса, не для руки или held item. Armor bar — `#status-bars .armor` над hearts: 10 pixel-art chestplate icons (`gui/armor_{empty,half,full}.png`), full=2 points, half=1; скрыт при `getArmorPoints() === 0`. Health — 10 pixel-art hearts (`gui/heart_{empty,half,full}.png`) with the same `--hud-status-icon-size` and gap as armor so the rows match in width. Активные invisibility/regeneration — `#effect-hud` справа снизу: иконка зелья, имя («Невидимость» / «Регенерация»), countdown `M:SS` из оставшихся ticks (`effectHud.ts`). Чип только пока ticks > 0; два эффекта стакаются вертикально.
 
-`InputManager` владеет Pointer Lock: request/release, `pointerlockchange`/`pointerlockerror`, last unlock reason (`escape` / `programmatic` / `focus-lost` / `unknown`). `tryRequestPointerLock()` сообщает success через lock-change и failure через Promise rejection / `pointerlockerror` (без `void`-глотания). Esc пока locked игнорируется (браузер сам unlock); `pointerlockchange` с reason `escape` открывает pause **без** повторного `exitPointerLock`, если нет inventory/chat overlay. Continue / закрытие inventory / закрытие чата — один request. Overlay «Нажмите, чтобы продолжить» рисует только `GameUI` и только после фактического failure. Auto-retry нет. **T** / **`/`** открывают локальный чат (`GameUI` bottom-left). Чат — blocking overlay как inventory: world tick идёт, WASD/LMB нет. Команды — `src/chat` registry (`dispatchChatLine`).
+`InputManager` владеет Pointer Lock: request/release, `pointerlockchange`/`pointerlockerror`, last unlock reason (`escape` / `programmatic` / `focus-lost` / `unknown`). `tryRequestPointerLock()` сообщает success через lock-change и failure через Promise rejection / `pointerlockerror` (без `void`-глотания). Esc пока locked игнорируется (браузер сам unlock); `pointerlockchange` с reason `escape` открывает pause **без** повторного `exitPointerLock`, если нет inventory/chat overlay. Continue / закрытие inventory / закрытие чата — один request. Overlay «Нажмите, чтобы продолжить» рисует только `GameUI` и только после фактического failure. Auto-retry нет. **T** / **`/`** открывают локальный чат (`GameUI` bottom-left, вкладка «Общий»). Enter отправляет и оставляет чат открытым; Tab и X закрывают и возвращают pointer lock. Чат — blocking overlay как inventory: world tick идёт, WASD/LMB нет. Команды — `src/chat` registry (`dispatchChatLine`). Онлайн-каналы (global / nearby 20 / clan через `ClanService`) режет сервер.
 
 Открытие container modal снимает pointer lock и подавляет WASD / look / attack / use / flight, но **не** вызывает `setState('PAUSED')`. Recipe Book — панель внутри уже открытого экрана и не меняет lifecycle. Pause menu по-прежнему единственный gameplay путь в `PAUSED`.
 

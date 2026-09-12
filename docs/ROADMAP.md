@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-12: Chat channels (Global / Nearby / Clan)
+
+- [x] Extend existing chat (no second ChatLog / protocol / ClanService).
+- [x] T opens on General; Enter sends and keeps open; Tab/X close and discard draft.
+- [x] Server-authoritative Global, Nearby ≤20 3D blocks, Clan via `ClanService.playerClan`.
+- [x] General aggregation with yellow/purple markers; 128-char server reject; ~40 history per tab.
+
 ## 2026-09-12: Merge Buyer System into main
 
 - [x] Fetch current `origin/main`; no teammate commits after Clan merge `5492846`.

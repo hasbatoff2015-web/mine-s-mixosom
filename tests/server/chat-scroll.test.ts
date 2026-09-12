@@ -42,5 +42,7 @@ describe('chat history cap and scroll helpers', () => {
     expect(GAME_UI).toContain('queueMicrotask(run)');
     expect(GAME_UI).toContain('requestAnimationFrame');
     expect(GAME_UI).not.toContain('if (this.chatPinnedToBottom) this.scrollChatToBottom()');
+    expect(GAME_UI).toContain('data-chat-tab="global"');
+    expect(GAME_UI).toContain('id="chat-visibility"');
   });
 });

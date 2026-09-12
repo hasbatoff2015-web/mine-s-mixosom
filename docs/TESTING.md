@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-12 Chat channels
+
+Report: `reports/2026-09-12_chat-channels.md`.
+
+```text
+npx vitest run tests/chat-channels.test.ts tests/chat-commands.test.ts tests/server/chat-channels.test.ts tests/server/chat-scroll.test.ts tests/server/clan-plugin.test.ts tests/ui-main-integration.test.ts --maxWorkers=2
+```
+
+Focused: chat-channels 6/6, chat-commands 10/10, server chat-channels 8/8, chat-scroll 3/3, ui-main-integration 5/5, clan-plugin 7/7. `test:server` **46 files / 478 tests PASS**. Four typechecks, boundaries, and `build` PASS. Full `npm test`: 230/231 files, 2198/2203 tests PASS; 5 failures are known 5s timeouts in `tests/fire-contact-sunlight-minecart.test.ts` (not from chat).
+
 ## 2026-09-12 Buyer System merged into main
 
 Report: `reports/2026-09-12_buyer-system-main-merge.md`. Merge `--no-ff` `c4d0ca6`. Pre-merge gates: four typechecks, `test:server` 45/470, boundaries, build PASS.
@@ -1242,7 +1252,9 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/fire-contact-sunlight-minecart.test.ts` | 39 | Fire AABB contact vs leave, Fire vs Lava cadence, armor reduces Fire/Lava (no bypass), independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert of stored type, Flint does not prime cart cargo, Fire Arrow ejects primed TNT vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
 | `tests/hostile-spawn-balance.test.ts` | 8 | Surface night hostiles ≈ ×0.5, passive day rate independent of the night factor, cave hostiles in dark air not lava/water, min distance / floor / headroom, max 1 new cave hostile per chunk/event, density, respawn after death, global cap |
 | `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |
-| `tests/chat-commands.test.ts` | 9 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
+| `tests/chat-commands.test.ts` | 10 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
+| `tests/chat-channels.test.ts` | 6 | Nearby 3D radius; `player: text` format; 128 limit; clan tab empty; parse strips forged fields; ChatLog tab history/dedup; T/Tab/X/Enter/visibility source contracts |
+| `tests/server/chat-channels.test.ts` | 8 | Global/nearby/clan routing, inclusive 3D radius 20, sender-only nearby, ClanService live membership, no replay, 128 reject, forged fields stripped |
 | `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
 | `tests/lava-bedrock-ore-pass.test.ts` | 10 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/enclosed waterline=0, Coal/Iron/Gold/Redstone ×2, Diamond ≈0.33× current, chunk-border determinism + generator-space neighbor walls, boundary-only enqueue + shore-break + cross-chunk 15/16, idle enclosed pond, ore Y/vein size |
 

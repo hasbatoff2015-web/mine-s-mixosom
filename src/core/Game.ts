@@ -16,6 +16,7 @@ import {
   chatLineOpacity,
   deathMessage,
   dispatchChatLine,
+  outgoingChatText,
   type CommandContext,
 } from '../chat';
 import { AudioManager } from './AudioManager';
@@ -342,6 +343,7 @@ import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -1029,6 +1031,7 @@ export class Game {
     this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
     this.syncBuyers(session, welcome.buyers ?? []);
+    this.ui.setPlayerInClan(Boolean(welcome.inClan));
     this.claimBoundaries?.dispose();
     this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
     client.onMessage((message) => {
@@ -1234,8 +1237,17 @@ export class Game {
         }
         return;
       case 'chat':
-        if (message.kind === 'player') this.pushChat('player', `<${message.from}> ${message.text}`);
-        else this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+        if (message.kind === 'player') {
+          if (message.channel === 'clan') this.ui.setPlayerInClan(true);
+          this.pushChat('player', message.text, {
+            from: message.from,
+            channel: message.channel ?? 'global',
+            id: message.messageId,
+          });
+        } else {
+          if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
+          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+        }
         return;
       case 'inventory':
         try {
@@ -2269,6 +2281,7 @@ export class Game {
   private openClanHouse(message: Extract<ServerMessage, { type: 'clan' }>): void {
     const session = this.session;
     if (!session?.online) return;
+    this.ui.setPlayerInClan(Boolean(message.viewer?.clanId));
     if (message.screen === 'closed') {
       this.ui.closeClan();
       if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen() && !this.ui.isAuctionOpen()) {
@@ -5129,21 +5142,25 @@ export class Game {
   private submitChat(raw: string): void {
     const session = this.session;
     if (!session) return;
-    const trimmed = raw.replace(/\s+$/g, '');
-    if (!trimmed) {
-      this.closeChatAndResumeLook();
+    const parsed = outgoingChatText(raw);
+    if (parsed.kind === 'empty') return;
+    if (parsed.kind === 'too-long') {
+      this.pushChat('error', CHAT_TOO_LONG_ERROR);
       return;
     }
+    const channel = this.ui.getChatChannel();
+    if (channel === 'clan' && !this.ui.isPlayerInClan()) return;
+    const trimmed = parsed.text;
     this.chat.rememberInput(trimmed);
     this.ui.setChatInputHistory(this.chat.history);
+    this.ui.clearChatDraft();
     if (session.online) {
-      session.online.client.send({ type: 'chat', text: trimmed });
-      this.closeChatAndResumeLook();
+      session.online.client.send({ type: 'chat', text: trimmed, channel });
       return;
     }
     const dispatched = dispatchChatLine(trimmed, this.commandContext());
     if (dispatched.parsed.kind === 'say') {
-      this.pushChat('player', `<${PLAYER_CHAT_NAME}> ${dispatched.parsed.text}`);
+      this.pushChat('player', dispatched.parsed.text, { from: PLAYER_CHAT_NAME, channel });
     } else if (dispatched.parsed.kind === 'command') {
       this.pushChat('command', trimmed);
       const kind = dispatched.result?.ok ? 'system' : 'error';
@@ -5151,12 +5168,15 @@ export class Game {
         if (line) this.pushChat(kind, line);
       }
     }
-    this.closeChatAndResumeLook();
   }
 
-  private pushChat(kind: 'system' | 'player' | 'command' | 'death' | 'error', text: string): void {
-    const message = this.chat.push(kind, text);
-    this.ui.appendChat(message.kind, message.text, message.createdAtMs);
+  private pushChat(
+    kind: 'system' | 'player' | 'command' | 'death' | 'error',
+    text: string,
+    extra: { from?: string; channel?: ChatChannel; id?: string } = {},
+  ): void {
+    const message = this.chat.push(kind, text, performance.now(), extra);
+    this.ui.appendChat(message);
   }
 
   private commandContext(): CommandContext {
@@ -5758,6 +5778,7 @@ export class Game {
     this.session = undefined;
     this.chat.clear();
     this.ui.clearChat();
+    this.ui.setPlayerInClan(false);
     this.ui.closeAuction();
     this.ui.closeClan();
     this.ui.closeBuyer();

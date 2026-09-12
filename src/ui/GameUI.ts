@@ -55,7 +55,23 @@ import {
   takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
-import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
+import {
+  MAX_CHAT_MESSAGES,
+  chatScrollTopOnOpen,
+  isChatStuckToBottom,
+  restoreChatScrollTop,
+  stepTypedHistoryIndex,
+  tabHistory,
+  canSendChatOnTab,
+  shouldShowClanEmptyHint,
+  type ChatMessage,
+} from '../chat';
+import { MAX_CHAT_LENGTH } from '../../shared/config';
+import {
+  CHAT_NO_CLAN_HINT,
+  formatPlayerChatLine,
+  type ChatChannel,
+} from '../../shared/chat';
 import type { PotionHudEntry } from './effectHud';
 import {
   buyerPriceEachLabel,
@@ -244,7 +260,16 @@ export class GameUI {
   private chatPinnedToBottom = true;
   private chatForm: HTMLFormElement;
   private chatInput: HTMLInputElement;
+  private chatSendEl: HTMLButtonElement;
+  private chatCloseEl: HTMLButtonElement;
+  private chatVisibilityEl: HTMLButtonElement;
+  private chatClanEmptyEl: HTMLElement;
+  private chatTabButtons: NodeListOf<HTMLButtonElement>;
   private chatFocusToken = 0;
+  private chatTab: ChatChannel = 'global';
+  private chatDisplayEnabled = true;
+  private playerInClan = false;
+  private chatLines: ChatMessage[] = [];
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private hologramEditor?: HTMLElement;
@@ -303,13 +328,40 @@ export class GameUI {
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
         <div id="chat">
+          <div id="chat-compose">
+            <form id="chat-form" autocomplete="off">
+              <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
+              <button type="submit" id="chat-send" aria-label="Отправить сообщение">Enter</button>
+            </form>
+            <div id="chat-toolbar">
+              <div id="chat-tabs" role="tablist" aria-label="Каналы чата">
+                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active">Общий</button>
+                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false">Рядом</button>
+                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false">Клан</button>
+              </div>
+              <div id="chat-tools">
+                <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
+                  <span class="chat-vis-on" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                      <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
+                    </svg>
+                  </span>
+                  <span class="chat-vis-off" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                      <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
+                      <path d="M5 19 L19 5" stroke-width="2.4"/>
+                    </svg>
+                  </span>
+                </button>
+                <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат">×</button>
+              </div>
+            </div>
+          </div>
           <div id="chat-log" aria-live="polite">
+            <div id="chat-clan-empty" hidden>${CHAT_NO_CLAN_HINT}</div>
             <div id="chat-log-inner"></div>
           </div>
           <button type="button" id="chat-new" hidden>↓ Новые сообщения</button>
-          <form id="chat-form" autocomplete="off">
-            <input id="chat-input" type="text" maxlength="256" spellcheck="false" autocomplete="off" aria-label="Chat" />
-          </form>
         </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
@@ -334,6 +386,11 @@ export class GameUI {
     this.chatNewEl = this.root.querySelector('#chat-new')!;
     this.chatForm = this.root.querySelector('#chat-form')!;
     this.chatInput = this.root.querySelector('#chat-input')!;
+    this.chatSendEl = this.root.querySelector('#chat-send')!;
+    this.chatCloseEl = this.root.querySelector('#chat-close')!;
+    this.chatVisibilityEl = this.root.querySelector('#chat-visibility')!;
+    this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
+    this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
@@ -344,6 +401,7 @@ export class GameUI {
     });
     this.chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
+      if (!canSendChatOnTab(this.chatTab, this.playerInClan)) return;
       const value = this.chatInput.value;
       this.onChatSubmit?.(value);
     });
@@ -351,8 +409,22 @@ export class GameUI {
     this.chatLogEl.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
     this.chatLogEl.addEventListener('touchmove', (event) => event.stopPropagation(), { passive: true });
     this.chatNewEl.addEventListener('click', () => this.scrollChatToBottom());
+    this.chatCloseEl.addEventListener('click', () => this.onChatCancel?.());
+    this.chatVisibilityEl.addEventListener('click', () => this.toggleChatDisplay());
+    for (const button of this.chatTabButtons) {
+      button.addEventListener('click', () => {
+        const tab = button.dataset.chatTab;
+        if (tab === 'global' || tab === 'nearby' || tab === 'clan') this.selectChatTab(tab);
+      });
+    }
     this.chatInput.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.onChatCancel?.();
+        return;
+      }
+      if (event.key === 'Tab') {
         event.preventDefault();
         event.stopPropagation();
         this.onChatCancel?.();
@@ -368,6 +440,12 @@ export class GameUI {
         this.stepChatHistory(1);
       }
     });
+    window.addEventListener('keydown', (event) => {
+      if (!this.chatOpen || event.key !== 'Tab') return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onChatCancel?.();
+    }, { capture: true });
     window.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !this.onScreenEscape || !this.screen) return;
       event.preventDefault();
@@ -919,19 +997,15 @@ export class GameUI {
     window.setTimeout(() => toast.remove(), timeout);
   }
 
-  appendChat(kind: string, text: string, createdAtMs: number): void {
+  appendChat(message: ChatMessage): void {
+    if (this.chatLines.some((entry) => entry.id === message.id)) return;
+    this.chatLines.push(message);
+    while (this.chatLines.length > MAX_CHAT_MESSAGES) this.chatLines.shift();
     const log = this.chatLogEl;
     const previousTop = log.scrollTop;
     const previousHeight = log.scrollHeight;
     const stuck = this.chatPinnedToBottom || isChatStuckToBottom(previousTop, previousHeight, log.clientHeight);
-    const line = document.createElement('div');
-    line.className = `chat-line kind-${kind}`;
-    line.dataset.at = String(createdAtMs);
-    line.textContent = text;
-    this.chatLogInner.append(line);
-    while (this.chatLogInner.childElementCount > MAX_CHAT_MESSAGES) {
-      this.chatLogInner.firstElementChild?.remove();
-    }
+    this.renderChatLog();
     if (stuck) {
       this.scrollChatToBottom();
       return;
@@ -941,6 +1015,7 @@ export class GameUI {
   }
 
   clearChat(): void {
+    this.chatLines = [];
     this.chatLogInner.replaceChildren();
     this.scrollChatToBottom();
     this.closeChat();
@@ -952,15 +1027,18 @@ export class GameUI {
     this.chatOpen = true;
     this.chatHistoryIndex = -1;
     this.chatDraft = '';
+    this.selectChatTab('global');
     this.chat.classList.add('open');
     this.chatInput.value = prefix;
     this.setControlsSuppressed(true);
+    this.syncChatComposer();
     this.revealChatLines();
     this.chatPinnedToBottom = true;
     this.scrollChatToBottom();
     this.scheduleScrollChatToBottom(token);
     window.setTimeout(() => {
       if (token !== this.chatFocusToken || !this.chatOpen) return;
+      if (this.chatInput.disabled) return;
       this.chatInput.focus();
       const caret = this.chatInput.value.length;
       this.chatInput.setSelectionRange(caret, caret);
@@ -981,6 +1059,34 @@ export class GameUI {
     this.chatHistoryIndex = -1;
     this.chatDraft = '';
     if (!this.inventoryContext) this.setControlsSuppressed(false);
+  }
+
+  clearChatDraft(): void {
+    this.chatInput.value = '';
+    this.chatHistoryIndex = -1;
+    this.chatDraft = '';
+  }
+
+  getChatChannel(): ChatChannel {
+    return this.chatTab;
+  }
+
+  isPlayerInClan(): boolean {
+    return this.playerInClan;
+  }
+
+  setPlayerInClan(inClan: boolean): void {
+    if (this.playerInClan === inClan) {
+      this.syncChatComposer();
+      return;
+    }
+    this.playerInClan = inClan;
+    this.syncChatComposer();
+    this.renderChatLog();
+  }
+
+  isChatDisplayEnabled(): boolean {
+    return this.chatDisplayEnabled;
   }
 
   isChatOpen(): boolean {
@@ -1020,6 +1126,7 @@ export class GameUI {
   }
 
   fadeChatLines(nowMs: number, opacityOf: (ageMs: number) => number): void {
+    if (!this.chatDisplayEnabled) return;
     if (this.chatOpen) {
       this.revealChatLines();
       return;
@@ -1068,7 +1175,84 @@ export class GameUI {
   }
 
   private setChatNewVisible(visible: boolean): void {
-    this.chatNewEl.hidden = !visible;
+    this.chatNewEl.hidden = !visible || !this.chatDisplayEnabled;
+  }
+
+  private selectChatTab(tab: ChatChannel): void {
+    this.chatTab = tab;
+    for (const button of this.chatTabButtons) {
+      const active = button.dataset.chatTab === tab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    }
+    this.syncChatComposer();
+    this.chatPinnedToBottom = true;
+    this.renderChatLog();
+    this.scrollChatToBottom();
+  }
+
+  private toggleChatDisplay(): void {
+    this.chatDisplayEnabled = !this.chatDisplayEnabled;
+    this.syncChatDisplayButton();
+    this.chat.classList.toggle('display-off', !this.chatDisplayEnabled);
+    if (this.chatDisplayEnabled) {
+      this.renderChatLog();
+      if (this.chatPinnedToBottom) {
+        this.scrollChatToBottom();
+      }
+    } else {
+      this.setChatNewVisible(false);
+    }
+  }
+
+  private syncChatDisplayButton(): void {
+    const on = this.chatDisplayEnabled;
+    this.chatVisibilityEl.setAttribute('aria-pressed', String(on));
+    this.chatVisibilityEl.setAttribute('aria-label', on ? 'Чат включён' : 'Чат выключен');
+    this.chatVisibilityEl.title = on ? 'Скрыть сообщения чата' : 'Показать сообщения чата';
+    this.chatVisibilityEl.classList.toggle('is-off', !on);
+  }
+
+  private syncChatComposer(): void {
+    const canSend = canSendChatOnTab(this.chatTab, this.playerInClan);
+    this.chatInput.disabled = !canSend;
+    this.chatSendEl.disabled = !canSend;
+    this.chatForm.classList.toggle('chat-send-disabled', !canSend);
+    this.chatClanEmptyEl.hidden = !shouldShowClanEmptyHint(this.chatTab, this.playerInClan);
+    if (!canSend && this.chatOpen) this.chatInput.blur();
+  }
+
+  private renderChatLog(): void {
+    const visible = tabHistory(this.chatLines, this.chatTab);
+    this.chatLogInner.replaceChildren(...visible.map((message) => this.chatLineElement(message)));
+    this.chatClanEmptyEl.hidden = !shouldShowClanEmptyHint(this.chatTab, this.playerInClan);
+  }
+
+  private chatLineElement(message: ChatMessage): HTMLElement {
+    const line = document.createElement('div');
+    line.className = `chat-line kind-${message.kind}`;
+    if (message.channel === 'nearby') line.classList.add('channel-nearby');
+    if (message.channel === 'clan') line.classList.add('channel-clan');
+    line.dataset.at = String(message.createdAtMs);
+    line.dataset.id = message.id;
+    if (message.channel) line.dataset.channel = message.channel;
+    if (message.kind === 'player' && message.from) {
+      const name = document.createElement('span');
+      name.className = 'chat-line-name';
+      name.textContent = message.from;
+      const sep = document.createElement('span');
+      sep.className = 'chat-line-sep';
+      sep.textContent = ': ';
+      const body = document.createElement('span');
+      body.className = 'chat-line-text';
+      body.textContent = message.text;
+      line.append(name, sep, body);
+    } else {
+      line.textContent = message.kind === 'player' && message.from
+        ? formatPlayerChatLine(message.from, message.text)
+        : message.text;
+    }
+    return line;
   }
 
   private chatHistorySource: readonly string[] = [];
