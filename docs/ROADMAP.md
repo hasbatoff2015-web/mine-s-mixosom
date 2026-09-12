@@ -1,5 +1,24 @@
 # Roadmap
 
+## 2026-09-12: Chat fullscreen transparent
+
+- [x] Open `#chat` spans available HUD width; side buttons sit on the right edge.
+- [x] Transparent message-area background; red close X; closed state stays compact top-left.
+- [x] Do not change Global / Nearby / Clan server routing.
+
+## 2026-09-12: Chat layout top-left
+
+- [x] Anchor `#chat` top-left; fixed open message-area height; hide native scrollbar.
+- [x] Larger input, ENTER/TAB hotkey buttons, CHAT ON/OFF toggle.
+- [x] Do not change Global / Nearby / Clan server routing.
+
+## 2026-09-12: Chat channels (Global / Nearby / Clan)
+
+- [x] Extend existing chat (no second ChatLog / protocol / ClanService).
+- [x] T opens on General; Enter sends and keeps open; Tab/X close and discard draft.
+- [x] Server-authoritative Global, Nearby ≤20 3D blocks, Clan via `ClanService.playerClan`.
+- [x] General aggregation with yellow/purple markers; 128-char server reject; ~40 history per tab.
+
 ## 2026-09-12: Merge Buyer System into main
 
 - [x] Fetch current `origin/main`; no teammate commits after Clan merge `5492846`.

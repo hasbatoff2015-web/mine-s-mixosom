@@ -226,7 +226,7 @@ Plugins receive a frozen `ServerAPI` scoped to that plugin:
 | `getStatus()` | world id, seed, tick rate, tick number, player count |
 | `getWorld()` | seed, spawn, time, `getBlock` / `setBlock` / `breakBlock`, entity id lookup |
 | `getPlayers()` / `getPlayer(id or name)` | online players |
-| `broadcast(text)` | system chat |
+| `broadcast(text)` | system chat to every connected player (not player Global/Nearby/Clan channels) |
 | `registerCommand(handler)` | existing `CommandRegistry`; returns unregister |
 | `registerEvent(name, handler)` | EventBus; returns unsubscribe |
 | `scheduleOnce(ms, fn)` / `scheduleRepeating(ms, fn)` | Node timers; cancelled on disable |

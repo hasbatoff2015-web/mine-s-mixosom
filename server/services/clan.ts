@@ -1036,6 +1036,7 @@ export class ClanService {
     this.purgeExpired();
     const session = this.session(playerId);
     if (session.screen === 'closed') {
+      const viewerClan = this.playerClan(playerId);
       return {
         type: 'clan',
         screen: 'closed',
@@ -1045,6 +1046,10 @@ export class ClanService {
         totalPages: 1,
         totalCount: 0,
         clans: [],
+        viewer: {
+          ...(viewerClan ? { clanId: viewerClan.clanId } : {}),
+          isOwner: viewerClan?.ownerId === playerId,
+        },
       };
     }
     const viewerClan = this.playerClan(playerId);

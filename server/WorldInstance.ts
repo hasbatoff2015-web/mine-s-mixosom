@@ -54,7 +54,15 @@ import type {
   RemotePlayerInfo,
   WorldBlockStates,
   WorldModifications,
+  ServerChatMessage,
 } from '../shared/protocol';
+import { MAX_CHAT_LENGTH } from '../shared/config';
+import {
+  CHAT_NO_CLAN_HINT,
+  CHAT_TOO_LONG_ERROR,
+  isWithinNearbyChatRange,
+  type ChatChannel,
+} from '../shared/chat';
 import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
@@ -1277,8 +1285,14 @@ export class WorldInstance {
       return;
     }
     this.economy.rememberName(player.id, player.name);
+    const beforeIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     this.clan.handleAction(player.id, message);
-    this.flushClan(player);
+    const afterIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
+    const notify = new Set<string>([...beforeIds, ...afterIds, player.id]);
+    for (const playerId of notify) {
+      const other = this.players.get(playerId);
+      if (other?.connected) this.flushClan(other);
+    }
   }
 
   private hasClanPermission(player: ServerPlayer, action: ClientClanActionMessage['action']): boolean {
@@ -2175,7 +2189,7 @@ export class WorldInstance {
     }
   }
 
-  handleChat(player: ServerPlayer, text: string): void {
+  handleChat(player: ServerPlayer, text: string, channel: ChatChannel = 'global'): void {
     if (text.startsWith('/')) {
       const commandEvent = this.events.createPlayerCommand(player.id, text);
       this.events.emit('playerCommand', commandEvent);
@@ -2220,7 +2234,70 @@ export class WorldInstance {
       this.flushBlockChanges();
       return;
     }
-    this.broadcastChat('player', player.id, text, player.name);
+    const trimmed = text.replace(/\s+$/g, '');
+    if (!trimmed) return;
+    if (trimmed.length > MAX_CHAT_LENGTH) {
+      this.sendChatError(player, CHAT_TOO_LONG_ERROR);
+      return;
+    }
+    const recipients = this.chatRecipients(player, channel);
+    if (!recipients) return;
+    this.deliverPlayerChat(player, trimmed, channel, recipients);
+  }
+
+  sendChatError(player: ServerPlayer, text: string): void {
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text,
+      kind: 'error',
+    });
+  }
+
+  private chatRecipients(sender: ServerPlayer, channel: ChatChannel): ServerPlayer[] | undefined {
+    if (channel === 'global') return this.connectedPlayers();
+    if (channel === 'nearby') {
+      const origin = sender.controller.position;
+      return this.connectedPlayers().filter((other) => isWithinNearbyChatRange(
+        origin.x,
+        origin.y,
+        origin.z,
+        other.controller.position.x,
+        other.controller.position.y,
+        other.controller.position.z,
+      ));
+    }
+    const clan = this.clan.playerClan(sender.id);
+    if (!clan) {
+      this.sendChatError(sender, CHAT_NO_CLAN_HINT);
+      return undefined;
+    }
+    const members = new Set(clan.memberIds);
+    return this.connectedPlayers().filter((other) => members.has(other.id));
+  }
+
+  private deliverPlayerChat(
+    sender: ServerPlayer,
+    text: string,
+    channel: ChatChannel,
+    recipients: ServerPlayer[],
+  ): void {
+    const payload: ServerChatMessage = {
+      type: 'chat',
+      messageId: crypto.randomUUID(),
+      from: sender.name,
+      playerId: sender.id,
+      text,
+      kind: 'player',
+      channel,
+    };
+    const seen = new Set<string>();
+    for (const target of recipients) {
+      if (seen.has(target.id)) continue;
+      seen.add(target.id);
+      this.sendTo(target, payload);
+    }
   }
 
   setView(player: ServerPlayer, cx: number, cz: number, radius: number): void {

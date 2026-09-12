@@ -1,5 +1,35 @@
 # Состояние проекта
 
+## Последний проход: Chat log text size — 2026-09-12
+
+- Текст строк `.chat-line` — `23px` × `--hud-scale` (между прежними 18px и 27px). Input, вкладки и кнопки не менялись.
+- Формат `player: сообщение`, Nearby/Clan полоски и серверные каналы без изменений.
+
+## Последний проход: Chat fullscreen transparent — 2026-09-12
+
+- Открытый чат растягивается на всю ширину HUD (`top/left/right: 0` equivalent): input слева, ENTER / X / CHAT ON-OFF у правого края.
+- Фон message area **transparent**; сами строки без изменений. Glyph **X** красный (`#ff3b3b`), подпись TAB белая.
+- Закрытое состояние по-прежнему top-left и `width: fit-content`, без полноэкранной пустой рамки.
+- Серверные каналы не менялись.
+- Handoff: `docs/reports/2026-09-12_chat-fullscreen.md`.
+
+## Последний проход: Chat layout top-left — 2026-09-12
+
+- Чат закреплён в **левом верхнем углу** (open и closed). Нижняя привязка к hotbar убрана.
+- Открытый message log имеет фиксированную высоту `--chat-open-log-height`; 5 vs 40 сообщений и смена вкладок не двигают input/tabs.
+- Крупные кнопки ENTER / TAB / CHAT ON|OFF справа. Native scrollbar скрыт, wheel и touch pan-y сохранены.
+- Серверные каналы Global / Nearby / Clan не менялись.
+- Handoff: `docs/reports/2026-09-12_chat-layout.md`.
+
+## Последний проход: Chat channels (Global / Nearby / Clan) — 2026-09-12
+
+- Существующий чат расширен, второй ChatLog / протокол / ClanService не добавлялись.
+- **T** открывает чат на вкладке «Общий» и фокусирует ввод. **Enter** отправляет и оставляет чат открытым. **Tab** и **X** закрывают чат и отбрасывают неотправленный текст.
+- Три канала: Global (все подключённые), Nearby (сервер, 3D `distance <= 20`), Clan (`ClanService.playerClan` в момент отправки).
+- Вкладка «Общий» агрегирует полученные Global + Nearby + Clan без дублей одного `messageId`. Nearby — жёлтая полоска, Clan — фиолетовая.
+- Лимит 128 символов на сервере (reject, не silent truncate). История с момента подключения, до ~40 сообщений на вкладку, без persist между рестартами.
+- Handoff: `docs/reports/2026-09-12_chat-channels.md`.
+
 ## Последний проход: Buyer System merged into main — 2026-09-12
 
 - PR #86 влит в `main` обычным `--no-ff`: merge commit `c4d0ca6`. История не переписывалась.
@@ -1254,7 +1284,7 @@
 - Armor использует classic fixed reduction `(25-clamp(points,0,20))/25`, без damage-dependent curve/toughness. Piece values сохранены (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.
 - Food use требует удержания, consumable проверяет hunger cap.
 - Death выбрасывает survival inventory/equipment, показывает экран смерти и возвращает игрока в spawn point. Death messages идут в локальный чат (`deathMessage(source)`).
-- Локальный чат (без сети): T открывает поле, `/` открывает с префиксом `/`, Enter отправляет, Esc закрывает, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
+- Локальный чат (без сети): T открывает поле на вкладке «Общий», `/` открывает с префиксом `/`, Enter отправляет и оставляет чат открытым, Tab/X/Esc закрывают, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
 - Creative не расходует blocks/arrows/durability и не получает survival/environment/mob/explosion damage.
 
 ### Alpha approximation

@@ -4,6 +4,7 @@ import {
   MAX_CLIENT_MESSAGE_BYTES,
   PROTOCOL_VERSION,
 } from '../shared/config';
+import { CHAT_TOO_LONG_ERROR } from '../shared/chat';
 import {
   decodeJson,
   encodeMessage,
@@ -192,6 +193,18 @@ export class AnarchyServer {
     }
     const message = parseClientMessage(parsedJson);
     if ('error' in message) {
+      if (joined && (message.error === 'chat.text too long' || message.error === 'chat.channel invalid')) {
+        const binding = this.sockets.get(socket);
+        const player = binding ? this.world.players.get(binding.playerId) : undefined;
+        if (player?.connected && player.connectionId === binding?.connectionId) {
+          this.world.sendChatError(
+            player,
+            message.error === 'chat.text too long' ? CHAT_TOO_LONG_ERROR : 'Некорректный канал чата.',
+          );
+          return;
+        }
+      }
+      if (joined && message.error === 'chat.text empty') return;
       this.send(socket, { type: 'error', code: 'invalid', message: message.error });
       return;
     }
@@ -262,6 +275,7 @@ export class AnarchyServer {
       holograms: [...this.world.holograms.list()],
       buyers: this.world.buyer.networkBuyers(),
       serverNow: Date.now(),
+      inClan: Boolean(this.world.clan.playerClan(player.id)),
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;
@@ -402,7 +416,7 @@ export class AnarchyServer {
         return;
       }
       case 'chat':
-        this.world.handleChat(player, message.text);
+        this.world.handleChat(player, message.text, message.channel ?? 'global');
         return;
       case 'view':
         this.world.setView(player, message.cx, message.cz, message.radius);
