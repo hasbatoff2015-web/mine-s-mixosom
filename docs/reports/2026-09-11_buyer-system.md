@@ -49,7 +49,7 @@ Buyer hologram `buyer-<id>` is a normal `HologramRecord`. Admin GUI button «Н�
 
 ## Tests
 
-Focused: buyer, buyer-plugin, buyer-gui, hologram-editor, hologram-style/timer, permissions, auction, clan, economy. See TESTING.md for the last gate counts after this pass.
+Focused: buyer 17/17, buyer-plugin 6/6, buyer-gui 6/6, hologram-editor 9/9, hologram-style 8/8, hologram-hit 3/3, hologram-timer 10/10, auction 24/24, auction-plugin 9/9, auction-gui 6/6, clan 20/20, clan-plugin 7/7, clan-gui 7/7, economy 15/15. `test:server` **45 files / 470 tests PASS**. Four typechecks, `check:boundaries`, and `build` PASS.
 
 Contracts covered in this follow-up:
 

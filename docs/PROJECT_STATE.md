@@ -6,7 +6,7 @@
 - Appearance (текст/font/style/size/фон/billboard/yaw/timer) живёт в `HologramNetwork` / `plugin-data/holograms/holograms.json`. `/buyer move`, смена товара/цены и restart её не сбрасывают. Yaw NPC и yaw hologram разделены.
 - Редактор buyer hologram только у OP / `buyer.edit` / `buyer.*`. `holograms.create` и `/holograms` по-прежнему не могут править `buyer-<id>`.
 - Handoff: `docs/reports/2026-09-11_buyer-system.md`.
-- Гейты: см. конец этого прохода / TESTING.md.
+- Гейты: buyer 17/17, buyer-plugin 6/6, buyer-gui 6/6, hologram-editor 9/9, hologram-style 8/8, hologram-hit 3/3, hologram-timer 10/10, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/470, четыре typecheck, boundaries, build PASS.
 
 ## Последний проход: Buyer NPC system — 2026-09-11
 
