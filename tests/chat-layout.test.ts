@@ -99,7 +99,7 @@ describe('chat layout and controls', () => {
   });
 
   it('enlarges chat log message text without changing input, tabs, or side buttons', () => {
-    expect(cssRule('.chat-line')).toContain('font: calc(27px * var(--hud-scale))/1.35 var(--font-ui);');
+    expect(cssRule('.chat-line')).toContain('font: calc(23px * var(--hud-scale))/1.35 var(--font-ui);');
     expect(cssRule('.chat-line')).toContain('word-break: break-word;');
     expect(cssRule('#chat-input')).toContain('font: calc(18px * var(--hud-scale))/1.3 var(--font-ui);');
     expect(STYLE).toContain('#chat-tabs button {\n  padding: calc(8px * var(--hud-scale)) calc(14px * var(--hud-scale));\n  border-radius: 6px;\n  font: 700 calc(16px * var(--hud-scale))/1 var(--font-ui);\n}');

@@ -869,7 +869,7 @@ button {
   padding-left: calc(14px * var(--hud-scale));
   color: #f3f3f3;
   background: rgba(0, 0, 0, 0.5);
-  font: calc(27px * var(--hud-scale))/1.35 var(--font-ui);
+  font: calc(23px * var(--hud-scale))/1.35 var(--font-ui);
   text-shadow: 1px 1px 0 #000;
   word-break: break-word;
 }
