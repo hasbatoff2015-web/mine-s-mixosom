@@ -510,6 +510,37 @@ export interface ClientClanActionMessage {
   readonly name?: string;
 }
 
+export type BuyerActionKind =
+  | 'close'
+  | 'select_slot'
+  | 'set_amount'
+  | 'set_price'
+  | 'set_name'
+  | 'set_hologram_text'
+  | 'edit_hologram'
+  | 'pick_item'
+  | 'save'
+  | 'delete'
+  | 'sell'
+  | 'open_trade'
+  | 'back';
+
+export interface ClientBuyerInteractMessage {
+  readonly type: 'buyer_interact';
+  readonly buyerId: string;
+}
+
+export interface ClientBuyerActionMessage {
+  readonly type: 'buyer_action';
+  readonly action: BuyerActionKind;
+  readonly buyerId?: string;
+  readonly slot?: number;
+  readonly amount?: number;
+  readonly price?: string | number;
+  readonly name?: string;
+  readonly hologramText?: string;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -531,7 +562,9 @@ export type ClientMessage =
   | ClientHologramUpdateMessage
   | ClientVehicleInputMessage
   | ClientAuctionActionMessage
-  | ClientClanActionMessage;
+  | ClientClanActionMessage
+  | ClientBuyerInteractMessage
+  | ClientBuyerActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -552,6 +585,7 @@ export interface ServerWelcomeMessage {
   readonly maxPlayers: number;
   readonly serverName: string;
   readonly holograms?: readonly NetworkHologram[];
+  readonly buyers?: readonly NetworkBuyerNpc[];
   /** Server wall-clock ms for hologram timers; same clock as pong.serverNow. */
   readonly serverNow?: number;
 }
@@ -966,6 +1000,48 @@ export interface ServerClanMessage {
   readonly message?: string;
 }
 
+export type BuyerScreenKind = 'admin' | 'pick-item' | 'trade' | 'closed';
+
+export interface NetworkBuyerNpc {
+  readonly id: string;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly itemId?: string;
+  readonly hologramName: string;
+}
+
+export interface ServerBuyersMessage {
+  readonly type: 'buyers';
+  readonly buyers: readonly NetworkBuyerNpc[];
+}
+
+export interface ServerBuyerMessage {
+  readonly type: 'buyer';
+  readonly screen: BuyerScreenKind;
+  readonly title: string;
+  readonly buyerId: string;
+  readonly name: string;
+  readonly hologramText: string;
+  readonly itemId?: string;
+  readonly itemName?: string;
+  readonly pricePerItem?: number;
+  readonly priceText: string;
+  readonly priceLabel?: string;
+  readonly quantity: number;
+  readonly maxQuantity: number;
+  readonly total: number;
+  readonly totalLabel: string;
+  readonly configured: boolean;
+  readonly inventorySlots?: readonly unknown[];
+  readonly tradeSlot?: unknown;
+  readonly item?: unknown;
+  readonly message?: string;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -994,7 +1070,9 @@ export type ServerMessage =
   | ServerHologramEditorMessage
   | ServerClaimBoundaryMessage
   | ServerAuctionMessage
-  | ServerClanMessage;
+  | ServerClanMessage
+  | ServerBuyersMessage
+  | ServerBuyerMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1017,6 +1095,8 @@ export const CLIENT_MESSAGE_TYPES = [
   'hologram_update',
   'vehicle_input',
   'auction_action',
+  'buyer_interact',
+  'buyer_action',
   'clan_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
@@ -1049,6 +1129,8 @@ export const SERVER_MESSAGE_TYPES = [
   'claim_boundary',
   'auction',
   'clan',
+  'buyers',
+  'buyer',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1062,6 +1144,11 @@ const CONTAINER_KINDS: readonly ContainerKind[] = [
 const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
   'close', 'search', 'page', 'refresh', 'select', 'buy', 'back',
   'select_slot', 'set_amount', 'set_price', 'create', 'cancel', 'relist', 'claim',
+];
+
+const BUYER_ACTIONS: readonly BuyerActionKind[] = [
+  'close', 'select_slot', 'set_amount', 'set_price', 'set_name', 'set_hologram_text',
+  'edit_hologram', 'pick_item', 'save', 'delete', 'sell', 'open_trade', 'back',
 ];
 
 const CLAN_ACTIONS: readonly ClanActionKind[] = [
@@ -1633,6 +1720,34 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(name !== undefined ? { name } : {}),
       };
     }
+    case 'buyer_interact': {
+      const buyerId = optionalString(raw.buyerId, 64);
+      if (!buyerId) return { error: 'buyer_interact.buyerId invalid' };
+      return { type: 'buyer_interact', buyerId };
+    }
+    case 'buyer_action': {
+      if (typeof raw.action !== 'string' || !(BUYER_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'buyer_action.action invalid' };
+      }
+      const buyerId = optionalString(raw.buyerId, 64);
+      const slot = raw.slot === undefined ? undefined : finite(raw.slot) ? Math.floor(raw.slot) : undefined;
+      if (raw.slot !== undefined && slot === undefined) return { error: 'buyer_action.slot invalid' };
+      const amount = raw.amount === undefined ? undefined : finite(raw.amount) ? Math.floor(raw.amount) : undefined;
+      if (raw.amount !== undefined && amount === undefined) return { error: 'buyer_action.amount invalid' };
+      const price = typeof raw.price === 'string' || typeof raw.price === 'number' ? raw.price : undefined;
+      const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
+      const hologramText = typeof raw.hologramText === 'string' ? raw.hologramText.slice(0, 80) : undefined;
+      return {
+        type: 'buyer_action',
+        action: raw.action as BuyerActionKind,
+        ...(buyerId ? { buyerId } : {}),
+        ...(slot !== undefined ? { slot } : {}),
+        ...(amount !== undefined ? { amount } : {}),
+        ...(price !== undefined ? { price } : {}),
+        ...(name !== undefined ? { name } : {}),
+        ...(hologramText !== undefined ? { hologramText } : {}),
+      };
+    }
     default:
       return { error: `unknown message type ${raw.type}` };
   }
@@ -1837,6 +1952,16 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'clan invalid' };
       }
       return raw as unknown as ServerClanMessage;
+    }
+    case 'buyers': {
+      if (!Array.isArray(raw.buyers)) return { error: 'buyers invalid' };
+      return raw as unknown as ServerBuyersMessage;
+    }
+    case 'buyer': {
+      if (typeof raw.screen !== 'string' || typeof raw.title !== 'string' || typeof raw.buyerId !== 'string') {
+        return { error: 'buyer invalid' };
+      }
+      return raw as unknown as ServerBuyerMessage;
     }
     default:
       return raw as unknown as ServerMessage;

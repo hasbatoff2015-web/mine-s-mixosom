@@ -1,5 +1,33 @@
 # Состояние проекта
 
+## Последний проход: Buyer merchant skin cache-bust — 2026-09-12
+
+- Ручной тест показывал старого зелёно-чёрного скупщика после замены `public/textures/player/skins/buyer_merchant.png`. Файл в `public` уже был новым (64×64 indexed PNG, sha256 `69f4018a…`). Второго asset path не было.
+- Причина: `TextureAtlas.url` отдавал стабильный `./textures/player/skins/buyer_merchant.png` без content hash. Браузер/CDN могли держать старые байты; `MinecraftSkinRegistry` кэширует decoded texture по skin id на жизнь страницы.
+- Исправление: Vite plugin virtual module `virtual:player-skin-content-hashes` (не `define` global — в DEV он не попадал в `TextureAtlas.ts`). `TextureAtlas.url` добавляет `?v=<16 hex>` для `player/skins/*`. Registry перезагружает texture, если URL сменился. DEV console логирует skinId/URL/cache/sha256. Сам PNG не перезаписывался.
+- Handoff: `docs/reports/2026-09-12_buyer-merchant-skin-cache.md`.
+- Гейты: см. `docs/reports/2026-09-12_buyer-merchant-skin-cache.md`. Production JS содержит `"player/skins/buyer_merchant":"69f4018a158b79b5"`; `dist` PNG = public PNG.
+
+## Последний проход: Buyer hologram editor — 2026-09-12
+
+- Кнопка «Настроить голограмму» в admin GUI скупщика открывает **существующий** hologram editor (`hologram_editor` / `hologram_update`). Второй editor, renderer и store не добавлялись.
+- Appearance (текст/font/style/size/фон/billboard/yaw/timer) живёт в `HologramNetwork` / `plugin-data/holograms/holograms.json`. `/buyer move`, смена товара/цены и restart её не сбрасывают. Yaw NPC и yaw hologram разделены.
+- Редактор buyer hologram только у OP / `buyer.edit` / `buyer.*`. `holograms.create` и `/holograms` по-прежнему не могут править `buyer-<id>`.
+- Handoff: `docs/reports/2026-09-11_buyer-system.md`.
+- Гейты: buyer 17/17, buyer-plugin 6/6, buyer-gui 6/6, hologram-editor 9/9, hologram-style 8/8, hologram-hit 3/3, hologram-timer 10/10, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/470, четыре typecheck, boundaries, build PASS.
+
+## Последний проход: Buyer NPC system — 2026-09-11
+
+- Builtin `buyer` + `BuyerService` на существующем PluginManager / JsonFileStore / EconomyService / HologramNetwork. Второго кошелька и второй hologram-системы нет.
+- 1 скупщик = 1 Item ID. Цена целое 1…999 999 999 МК / шт. Выплата `quantity × pricePerItem` через `EconomyService.deposit(..., 'TRADER_SELL')`.
+- Статичный NPC на player model + skin `buyer_merchant` (не в production selector). Villager 3D-моделей в runtime нет; PNG жителей в texture pack не подключены.
+- Команды: `/buyer create|move|delete|list` (aliases `/buyers`, `/скупщик`). Persistence: `plugin-data/buyers/buyers.json`.
+- Права: `buyer.use` (default), `buyer.create|delete|move|list|edit`, `buyer.*` (admin), OP bypass.
+- Inventory-style GUI как Auction House. ПКМ: admin/OP → admin GUI, игрок → trade GUI. Сервер решает по permissions.
+- Голограмма `buyer-<id>` через HologramNetwork, без HP; `/holograms` не даёт orphan/edit. `/buyer move` двигает NPC+hologram. Настройка appearance — общий hologram editor из admin GUI.
+- Handoff: `docs/reports/2026-09-11_buyer-system.md`.
+- Гейты: buyer 15/15, buyer-plugin 5/5, buyer-gui 6/6, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/467, четыре typecheck, boundaries, build PASS. Live Anarchy QA: create Farmer, admin/trade GUI, Pumpkin 50, sell 32 за 1 600 МК, hologram без HP.
+
 ## Последний проход: Clan system merged into main — 2026-09-11
 
 - PR #85 влит в `main` обычным `--no-ff`: merge commit `ae904a3`. История не переписывалась.

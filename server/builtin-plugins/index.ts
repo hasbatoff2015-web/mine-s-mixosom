@@ -1,6 +1,7 @@
 import type { Plugin } from '../PluginManager';
 import type { BuiltinPluginContext } from './context';
 import { createAuctionPlugin } from './auction';
+import { createBuyerPlugin } from './buyer';
 import { createAutoMinePlugin } from './autoMine';
 import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
@@ -15,7 +16,7 @@ import { createRtpPortalPlugin } from './rtpPortal';
 import { createSpawnPlugin } from './spawn';
 import { createTpaPlugin } from './tpa';
 
-/** Trader is intentionally not registered. Auction House is the inventory-style market. */
+/** Auction House is the player market. Buyers are static NPC vendors that buy one item each for Megacoins. */
 export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
   return [
     createPermissionsPlugin(ctx),
@@ -31,6 +32,7 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createRtpPortalPlugin(ctx),
     createClaimsPlugin(ctx),
     createHologramsPlugin(ctx),
+    createBuyerPlugin(ctx),
     createAutoMinePlugin(ctx),
   ];
 }

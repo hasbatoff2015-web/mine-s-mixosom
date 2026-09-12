@@ -23,6 +23,8 @@ describe('PermissionService', () => {
   it('denies unknown nodes for a default player', async () => {
     const permissions = await service();
     expect(permissions.has('steve', 'home.use')).toBe(true);
+    expect(permissions.has('steve', 'buyer.use')).toBe(true);
+    expect(permissions.has('steve', 'buyer.create')).toBe(false);
     expect(permissions.has('steve', 'server.admin')).toBe(false);
     expect(permissions.isOperator('steve')).toBe(false);
   });
@@ -35,6 +37,8 @@ describe('PermissionService', () => {
     expect(permissionMatches('home.use', 'home.sethome')).toBe(false);
     permissions.assignRole('alex', 'admin');
     expect(permissions.has('alex', 'claim.admin')).toBe(true);
+    expect(permissions.has('alex', 'buyer.create')).toBe(true);
+    expect(permissions.has('alex', 'buyer.edit')).toBe(true);
     expect(permissions.has('alex', 'plugins.manage')).toBe(true);
   });
 

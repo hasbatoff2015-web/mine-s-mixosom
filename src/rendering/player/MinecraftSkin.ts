@@ -42,7 +42,52 @@ export interface SkinTextureHandle {
 
 interface SkinCacheEntry {
   readonly texture: THREE.Texture;
+  url: string;
   references: number;
+}
+
+function isBrowserDev(): boolean {
+  return import.meta.env.DEV === true
+    && typeof document !== 'undefined'
+    && typeof location !== 'undefined'
+    && /^https?:/.test(location.protocol);
+}
+
+function hexSha256(buffer: ArrayBuffer): string {
+  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function logSkinAcquire(info: {
+  requestedSkinId: string;
+  skinId: string;
+  texturePath: string;
+  url: string;
+  cache: 'HIT' | 'MISS' | 'RELOAD';
+  fallback: boolean;
+}): void {
+  if (!isBrowserDev()) return;
+  const lines = [
+    `[player-skin] ${info.requestedSkinId}`,
+    `  resolved: ${info.skinId}`,
+    `  path: ${info.texturePath}`,
+    `  URL: ${info.url}`,
+    `  cache: ${info.cache}`,
+  ];
+  if (info.fallback) lines.push(`  FALLBACK: descriptor missing, using ${info.skinId}`);
+  console.info(lines.join('\n'));
+}
+
+function logSkinImage(descriptor: MinecraftSkinDescriptor, url: string, loaded: THREE.Texture): void {
+  if (!isBrowserDev()) return;
+  const image = loaded.image as { src?: string; width?: number; height?: number } | undefined;
+  console.info(`[player-skin] ${descriptor.id} loaded: ${image?.width ?? 0}x${image?.height ?? 0} image.src=${image?.src ?? ''}`);
+  if (typeof fetch !== 'function' || typeof crypto === 'undefined' || !crypto.subtle) return;
+  void fetch(url, { cache: 'no-store' }).then(async (response) => {
+    const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+    console.info(`[player-skin] ${descriptor.id} sha256=${hexSha256(digest)}`);
+  }).catch((error: unknown) => {
+    console.warn(`[player-skin] ${descriptor.id} byte probe failed`, error);
+  });
 }
 
 /** One decoded texture per skin id, shared by local/remote visuals and the first-person arm. */
@@ -69,14 +114,29 @@ export class MinecraftSkinRegistry {
 
   acquire(requestedSkinId: string): SkinTextureHandle {
     if (this.disposed) throw new Error('MinecraftSkinRegistry is disposed.');
-    const descriptor = this.descriptors.get(requestedSkinId)
-      ?? this.descriptors.get('frontier_explorer');
+    const exact = this.descriptors.get(requestedSkinId);
+    const descriptor = exact ?? this.descriptors.get('frontier_explorer');
     if (!descriptor) throw new Error(`Unknown skin '${requestedSkinId}' and no default skin is registered.`);
+    const url = TextureAtlas.url(descriptor.texturePath);
     let entry = this.cache.get(descriptor.id);
+    let cache: 'HIT' | 'MISS' | 'RELOAD' = 'HIT';
     if (!entry) {
-      entry = { texture: this.createTexture(descriptor), references: 0 };
+      entry = { texture: this.createTexture(descriptor, url), url, references: 0 };
       this.cache.set(descriptor.id, entry);
+      cache = 'MISS';
+    } else if (entry.url !== url) {
+      this.loadTexture(entry.texture, descriptor, url);
+      entry.url = url;
+      cache = 'RELOAD';
     }
+    logSkinAcquire({
+      requestedSkinId,
+      skinId: descriptor.id,
+      texturePath: descriptor.texturePath,
+      url,
+      cache,
+      fallback: !exact,
+    });
     entry.references += 1;
     let released = false;
     return {
@@ -115,14 +175,10 @@ export class MinecraftSkinRegistry {
     this.cache.delete(skinId);
   }
 
-  private createTexture(descriptor: MinecraftSkinDescriptor): THREE.Texture {
+  private createTexture(descriptor: MinecraftSkinDescriptor, url: string): THREE.Texture {
     const texture = typeof document === 'undefined'
       ? new THREE.Texture()
-      : new THREE.TextureLoader().load(TextureAtlas.url(descriptor.texturePath), (loaded) => {
-        const image = loaded.image as { width?: number; height?: number } | undefined;
-        const validation = validateMinecraftSkinDimensions(image?.width ?? 0, image?.height ?? 0);
-        if (!validation.ok) console.error(`[player-skin] ${descriptor.id}: ${validation.reason}`);
-      });
+      : this.loadTexture(new THREE.Texture(), descriptor, url);
     texture.name = `player-skin:${descriptor.id}`;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.magFilter = THREE.NearestFilter;
@@ -130,6 +186,22 @@ export class MinecraftSkinRegistry {
     texture.generateMipmaps = false;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  }
+
+  private loadTexture(
+    texture: THREE.Texture,
+    descriptor: MinecraftSkinDescriptor,
+    url: string,
+  ): THREE.Texture {
+    new THREE.TextureLoader().load(url, (loaded) => {
+      texture.image = loaded.image;
+      texture.needsUpdate = true;
+      const image = loaded.image as { width?: number; height?: number } | undefined;
+      const validation = validateMinecraftSkinDimensions(image?.width ?? 0, image?.height ?? 0);
+      if (!validation.ok) console.error(`[player-skin] ${descriptor.id}: ${validation.reason}`);
+      logSkinImage(descriptor, url, loaded);
+    });
     return texture;
   }
 }

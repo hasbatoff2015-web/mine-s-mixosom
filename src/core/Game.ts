@@ -213,6 +213,7 @@ import {
   resolveAnarchyStartup,
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import { BuyerNpcView } from '../net/BuyerNpcView';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
 import {
@@ -340,7 +341,7 @@ import {
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
-import type { ContainerKind, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -394,6 +395,7 @@ export interface OnlineAnarchySession {
   client: AnarchyClient;
   playerId: string;
   remotes: Map<string, RemotePlayerView>;
+  buyers: Map<string, BuyerNpcView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
   /** Wire state of the last input packet actually handed to AnarchyClient. */
@@ -969,6 +971,7 @@ export class Game {
       mode: welcome.you.gamemode,
     };
     const remotes = new Map<string, RemotePlayerView>();
+    const buyers = new Map<string, BuyerNpcView>();
     await this.startSession(summary, world, inventory, undefined, {
       spawn: [welcome.you.x, welcome.you.y, welcome.you.z],
       snapSpawn: false,
@@ -977,6 +980,7 @@ export class Game {
         client,
         playerId: welcome.playerId,
         remotes,
+        buyers,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
         lastSentInputSeq: 0,
@@ -1024,6 +1028,7 @@ export class Game {
     this.holograms?.dispose();
     this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
+    this.syncBuyers(session, welcome.buyers ?? []);
     this.claimBoundaries?.dispose();
     this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
     client.onMessage((message) => {
@@ -1275,6 +1280,12 @@ export class Game {
         return;
       case 'holograms':
         this.holograms?.sync(message.holograms);
+        return;
+      case 'buyers':
+        if (this.session) this.syncBuyers(this.session, message.buyers);
+        return;
+      case 'buyer':
+        this.openBuyerHouse(message);
         return;
       case 'hologram_editor':
         this.openHologramEditor(message.hologram);
@@ -2075,6 +2086,7 @@ export class Game {
   private sendOnlineUse(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    if (this.tryInteractBuyer(session)) return;
     if (this.tryInteractHologram(session)) return;
     const source = this.onlineActionSource(session);
     const selected = this.selectedStack();
@@ -2141,6 +2153,32 @@ export class Game {
     });
   }
 
+  private tryInteractBuyer(session: GameSession): boolean {
+    if (!session.online || this.ui?.isHologramEditorOpen()) return false;
+    const aim = this.lastLocalAim;
+    if (!aim) return false;
+    let closest: { id: string; distance: number } | undefined;
+    for (const view of session.online.buyers.values()) {
+      const distance = view.raycast(aim.origin, aim.direction, PLAYER_REACH);
+      if (distance === undefined) continue;
+      if (closest && distance >= closest.distance) continue;
+      closest = { id: view.id, distance };
+    }
+    const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
+    if (hologramHit) {
+      for (const view of session.online.buyers.values()) {
+        if (view.hologramName !== hologramHit.name) continue;
+        if (!closest || hologramHit.distance <= closest.distance + 0.05) {
+          closest = { id: view.id, distance: hologramHit.distance };
+        }
+      }
+    }
+    if (!closest) return false;
+    if (session.target && session.target.distance < closest.distance) return false;
+    session.online.client.send({ type: 'buyer_interact', buyerId: closest.id });
+    return true;
+  }
+
   private tryInteractHologram(session: GameSession): boolean {
     if (!session.online || this.ui?.isHologramEditorOpen()) return false;
     const aim = this.lastLocalAim;
@@ -2163,6 +2201,10 @@ export class Game {
     if (this.ui.isClanOpen()) {
       session.online.client.send({ type: 'clan_action', action: 'close' });
       this.ui.closeClan();
+    }
+    if (this.ui.isBuyerOpen()) {
+      session.online.client.send({ type: 'buyer_action', action: 'close' });
+      this.ui.closeBuyer();
     }
     this.ui.openHologramEditor(hologram, {
       nowMs: () => Date.now() + this.serverTimeOffsetMs,
@@ -2252,6 +2294,76 @@ export class Game {
       this.session.online.client.send({ type: 'clan_action', action: 'close' });
     }
     this.ui.closeClan();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private syncBuyers(session: GameSession, buyers: readonly NetworkBuyerNpc[]): void {
+    const online = session.online;
+    if (!online || !this.itemVisuals) return;
+    const next = new Set(buyers.map((entry) => entry.id));
+    for (const [id, view] of online.buyers) {
+      if (next.has(id)) continue;
+      this.scene.remove(view.group);
+      view.dispose();
+      online.buyers.delete(id);
+    }
+    const daylight = daylightFactor(session.world.timeOfDay);
+    for (const info of buyers) {
+      const existing = online.buyers.get(info.id);
+      if (existing) {
+        existing.apply(info, 0, daylight);
+        continue;
+      }
+      const view = new BuyerNpcView(info, {
+        visual: new PlayerVisual(
+          this.playerSkins,
+          this.playerSkinGeometries,
+          this.itemVisuals,
+          createPlayerAppearance({ skinId: 'buyer_merchant', model: 'classic' }),
+          {
+            armorResources: {
+              materials: this.playerArmorMaterials,
+              geometries: this.playerArmorGeometries,
+            },
+          },
+        ),
+        world: session.world,
+      });
+      online.buyers.set(info.id, view);
+      this.scene.add(view.group);
+    }
+  }
+
+  private openBuyerHouse(message: Extract<ServerMessage, { type: 'buyer' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeBuyer();
+      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen()) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isBuyerOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      if (this.ui.isAuctionOpen()) this.ui.closeAuction();
+      if (this.ui.isClanOpen()) this.ui.closeClan();
+      this.openGameplayModal();
+    }
+    this.ui.openBuyer(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeBuyerAndResumeLook(true),
+    });
+  }
+
+  private closeBuyerAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'buyer_action', action: 'close' });
+    }
+    this.ui.closeBuyer();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -3507,6 +3619,7 @@ export class Game {
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeAuction();
     this.ui.closeClan();
+    this.ui.closeBuyer();
     this.ui.closeInventory();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
@@ -3622,6 +3735,11 @@ export class Game {
       this.closeClanAndResumeLook(true);
       return;
     }
+    if (this.ui.isBuyerOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeBuyerAndResumeLook(true);
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3700,6 +3818,10 @@ export class Game {
     }
     if (this.ui.isClanOpen()) {
       this.closeClanAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isBuyerOpen()) {
+      this.closeBuyerAndResumeLook(true);
       return;
     }
     if (this.ui.isInventoryOpen()) {
@@ -5185,6 +5307,7 @@ export class Game {
     this.ui.closeInventory(false);
     this.ui.closeAuction();
     this.ui.closeClan();
+    this.ui.closeBuyer();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
@@ -5214,6 +5337,7 @@ export class Game {
     this.ui.closeChat();
     this.ui.closeAuction();
     this.ui.closeClan();
+    this.ui.closeBuyer();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -5288,6 +5412,9 @@ export class Game {
           daylightFactor(session.world.timeOfDay),
         );
         remote.updateNameplate(this.camera);
+      });
+      session.online?.buyers.forEach((buyer) => {
+        buyer.update(this.renderDeltaSeconds, daylightFactor(session.world.timeOfDay));
       });
       if (session.online) {
         applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
@@ -5600,6 +5727,11 @@ export class Game {
         view.dispose();
       }
       this.session.online.remotes.clear();
+      for (const view of this.session.online.buyers.values()) {
+        this.scene.remove(view.group);
+        view.dispose();
+      }
+      this.session.online.buyers.clear();
       this.session.online.client.disconnect();
     }
     this.holograms?.dispose();
@@ -5628,6 +5760,7 @@ export class Game {
     this.ui.clearChat();
     this.ui.closeAuction();
     this.ui.closeClan();
+    this.ui.closeBuyer();
     this.inspectFreeze = null;
     this.inspectorHud = '';
     this.overlayCategories.clear();

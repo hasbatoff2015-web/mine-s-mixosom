@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BLOCKS } from '../blocks';
+import playerSkinContentHashes from 'virtual:player-skin-content-hashes';
 
 export interface AtlasTile {
   u0: number;
@@ -9,6 +10,14 @@ export interface AtlasTile {
 }
 
 const FALLBACK_KEY = 'block/missing';
+const PLAYER_SKIN_TEXTURE_PREFIX = 'player/skins/';
+
+function playerSkinCacheQuery(textureKey: string): string {
+  if (!textureKey.startsWith(PLAYER_SKIN_TEXTURE_PREFIX)) return '';
+  const hash = playerSkinContentHashes[textureKey];
+  return hash ? `?v=${hash}` : '';
+}
+
 export const ATLAS_TILE_SIZE = 32;
 export const ATLAS_GUTTER = 4;
 export const ATLAS_COLUMNS = 8;
@@ -108,7 +117,7 @@ export class TextureAtlas {
   }
 
   static url(textureKey: string): string {
-    return `${import.meta.env.BASE_URL}textures/${textureKey}.png`;
+    return `${import.meta.env.BASE_URL}textures/${textureKey}.png${playerSkinCacheQuery(textureKey)}`;
   }
 
   private static loadImage(url: string): Promise<HTMLImageElement> {
