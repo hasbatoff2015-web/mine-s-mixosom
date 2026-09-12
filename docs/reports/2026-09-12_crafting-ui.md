@@ -72,5 +72,7 @@ Do not start the next feature until this branch is reviewed. Owner should pull `
 ## Git
 
 - Branch: `cursor/crafting-ui-a8dc`
+- Commit: `28dd2d20546a4acb19cdee17c13e53ccc6819523`
+- PR: [#88](https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/88)
 - Base: `origin/main` (`1c802ab`)
 - Conflicts: none
