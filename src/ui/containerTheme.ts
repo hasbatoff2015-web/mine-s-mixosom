@@ -20,6 +20,8 @@ export const MC_MAX_UI_SCALE = 4;
 export const MC_MIN_UI_SCALE = 0.5;
 /** Logical px reserved so the close control sits outside the panel, not over tabs. */
 export const MC_CLOSE_GUTTER = 20;
+export const MC_CRAFT_MENU_WIDTH = 256;
+export const MC_CRAFT_MENU_HEIGHT = 166;
 /** Minimum touch target for the outside close control. */
 export const MC_CLOSE_HIT_MIN_PX = 44;
 export const MC_CLOSE_LOGICAL_SIZE = 14;
@@ -57,10 +59,11 @@ export function containerUiScale(
 }
 
 export function containerStageSize(
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'creative',
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'creative' | 'craft',
   recipeBookOpen: boolean,
 ): { width: number; height: number } {
   if (kind === 'creative') return { width: MC_CREATIVE_WIDTH, height: MC_CREATIVE_HEIGHT };
+  if (kind === 'craft') return { width: MC_CRAFT_MENU_WIDTH, height: MC_CRAFT_MENU_HEIGHT };
   const height = kind === 'chest' || kind === 'portal-chest' ? MC_CHEST_HEIGHT
     : kind === 'furnace' || kind === 'crafting-table' ? MC_FURNACE_HEIGHT
       : MC_INVENTORY_HEIGHT;

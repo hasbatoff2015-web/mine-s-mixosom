@@ -53,6 +53,7 @@ describe('container layout', () => {
     expect(withBook.width).toBeGreaterThan(176);
     expect(containerStageSize('creative', false).width).toBe(195);
     expect(containerStageSize('creative', false).height).toBe(166);
+    expect(containerStageSize('craft', false)).toEqual({ width: 256, height: 166 });
     expect(MC_BOOK_BUTTON_IN_CRAFT_ROW).toBe(true);
     const creativeInner = 195 - 14;
     expect(9 * 18).toBeLessThanOrEqual(creativeInner);
@@ -174,7 +175,7 @@ describe('recipe book', () => {
       .toEqual([...SMELTING_RECIPES].map((recipe) => recipe.id).sort());
     expect(hasRecipeBook('crafting-table')).toBe(true);
     expect(hasRecipeBook('furnace')).toBe(false);
-    expect(hasRecipeBook('inventory')).toBe(true);
+    expect(hasRecipeBook('inventory')).toBe(false);
     expect(hasRecipeBook('chest')).toBe(false);
   });
 

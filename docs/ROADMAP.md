@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-12: Crafting UI overhaul
+
+- [x] Remove Survival 2×2 grid and recipe book from ordinary inventory; replace with CRAFT button (crafting-table icon).
+- [x] Inventory-style craft menu: all obtainable items, name search, no category tabs, green availability, one craft per click.
+- [x] Server-authoritative `craft_recipe` + `recipeId` only; atomic full-inventory reject; keep crafting-table 3×3 `recipe` + result click.
+- [x] Unified close control: red × with E caption on inventory-style UIs; clan back arrow unchanged.
+- [x] Tests: catalog/once/UI/server craft_recipe; `test:server` 47/481; four typechecks; boundaries; build.
+
 ## 2026-09-12: Chat fullscreen transparent
 
 - [x] Open `#chat` spans available HUD width; side buttons sit on the right edge.
@@ -1285,7 +1293,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Главное меню и связанные screens: оригинальный voxel background, крупный Frontier Cubes logo treatment, одиночная игра с выбранным миром, offline online-server mock, settings и read-only controls; mouse/Esc/back navigation без отдельной второй menu system.
 
 - [ ] Settings persistence, fullscreen toggle, remappable controls и touch-layout presets.
-- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival 2×2 inventory; Recipe Book слева на crafting/Survival (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter).
+- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival inventory (CRAFT-кнопка вместо 2×2) + отдельное меню крафта всех предметов; Recipe Book слева только на верстаке (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter); close × with E caption.
 - [x] Chest entity model + opposite-of-look facing + lid-up hinge; furnace facing + lit front + torch-equivalent block light from burn state.
 - [x] Creative double-Space flight (7 ticks, collision, landing, Ctrl sprint, Shift descend, ladder override).
 - [ ] Полный inventory drag UX, tooltips с характеристиками и vanilla advancement recipe unlocks.
