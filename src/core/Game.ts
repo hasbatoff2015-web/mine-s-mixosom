@@ -2154,7 +2154,7 @@ export class Game {
   }
 
   private tryInteractBuyer(session: GameSession): boolean {
-    if (!session.online || this.ui.isHologramEditorOpen()) return false;
+    if (!session.online || this.ui?.isHologramEditorOpen()) return false;
     const aim = this.lastLocalAim;
     if (!aim) return false;
     let closest: { id: string; distance: number } | undefined;

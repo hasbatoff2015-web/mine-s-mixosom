@@ -16,7 +16,7 @@ Buyer hologram `buyer-<id>` is a normal `HologramRecord`. Admin GUI button «Н�
 
 - 1 buyer = 1 known Item ID. Whole pumpkin/melon blocks (`pumpkin`, `melon`), not seeds/slices. Price integer 1…999 999 999 MK / item.
 - Payout `quantity × pricePerItem` via `EconomyService.deposit(..., 'TRADER_SELL')`. Failed deposit restores the trade slot.
-- Static NPC: `BuyerNpcView` on existing `PlayerVisual` + skin `buyer_merchant` (emerald-tinted explorer; not in `PRODUCTION_PLAYER_SKINS`). Not a mob: no walk, look-at, physics, knockback, fire, drown, damage, death, TNT.
+- Static NPC: `BuyerNpcView` on existing `PlayerVisual` + skin `buyer_merchant` (not in `PRODUCTION_PLAYER_SKINS`). Not a mob: no walk, look-at, physics, knockback, fire, drown, damage, death, TNT.
 - Commands: `/buyer create|move|delete|list` (aliases `/buyers`, `/скупщик`). Create at admin pose (position + yaw/pitch) and opens admin GUI.
 - Permissions: `buyer.use` (default), `buyer.create`, `buyer.delete`, `buyer.move`, `buyer.list`, `buyer.edit`, `buyer.*` (admin). OP bypass through PermissionService.
 - RMB: server reach + permission check. Admin/OP → admin GUI. Player with `buyer.use` → trade GUI. Spoofed client menu choice is ignored. RMB on the bound hologram also opens the buyer GUI, not the hologram editor.

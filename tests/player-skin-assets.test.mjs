@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -22,6 +23,12 @@ describe('bundled player skin assets', () => {
       expect(pngDimensions(path), skin.id).toEqual([64, 64]);
       expect(skin.texturePath).not.toMatch(/[\s\\]/);
     }
+  });
+
+  it('rejects the retired green-black buyer_merchant PNG even if a 64x64 file exists', () => {
+    const bytes = readFileSync(resolve('public/textures/player/skins/buyer_merchant.png'));
+    expect(createHash('sha256').update(bytes).digest('hex'))
+      .not.toBe('81a1c375498a9a33ad0f43cf8a1e7626d70b94f391058c64cfc9dad23e197f65');
   });
 
   it('classifies production alpha and keeps the runtime outer-material policy in sync', () => {

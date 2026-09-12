@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-12: Buyer merchant skin cache-bust
+
+- [x] Diagnose buyer_merchant load chain; do not replace the current public PNG.
+- [x] Content-hash query on existing `TextureAtlas.url` for `player/skins/*` (Buyer + player skins).
+- [x] Use a Vite virtual hash module (DEV `define` did not reach TextureLoader).
+- [x] Test that TextureLoader URL for buyer_merchant matches current file hash and is not frontier_explorer.
+
 ## 2026-09-12: Buyer hologram editor
 
 - [x] Admin GUI button «Настроить голограмму» opens the existing hologram editor (no second hologram system).

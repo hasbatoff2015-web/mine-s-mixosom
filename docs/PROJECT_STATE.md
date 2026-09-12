@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Buyer merchant skin cache-bust — 2026-09-12
+
+- Ручной тест показывал старого зелёно-чёрного скупщика после замены `public/textures/player/skins/buyer_merchant.png`. Файл в `public` уже был новым (64×64 indexed PNG, sha256 `69f4018a…`). Второго asset path не было.
+- Причина: `TextureAtlas.url` отдавал стабильный `./textures/player/skins/buyer_merchant.png` без content hash. Браузер/CDN могли держать старые байты; `MinecraftSkinRegistry` кэширует decoded texture по skin id на жизнь страницы.
+- Исправление: Vite plugin virtual module `virtual:player-skin-content-hashes` (не `define` global — в DEV он не попадал в `TextureAtlas.ts`). `TextureAtlas.url` добавляет `?v=<16 hex>` для `player/skins/*`. Registry перезагружает texture, если URL сменился. DEV console логирует skinId/URL/cache/sha256. Сам PNG не перезаписывался.
+- Handoff: `docs/reports/2026-09-12_buyer-merchant-skin-cache.md`.
+- Гейты: см. `docs/reports/2026-09-12_buyer-merchant-skin-cache.md`. Production JS содержит `"player/skins/buyer_merchant":"69f4018a158b79b5"`; `dist` PNG = public PNG.
+
 ## Последний проход: Buyer hologram editor — 2026-09-12
 
 - Кнопка «Настроить голограмму» в admin GUI скупщика открывает **существующий** hologram editor (`hologram_editor` / `hologram_update`). Второй editor, renderer и store не добавлялись.

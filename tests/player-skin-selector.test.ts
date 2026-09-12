@@ -11,7 +11,9 @@ import {
   PRODUCTION_PLAYER_SKINS,
   QA_PLAYER_SKIN_ID,
   BUILTIN_MINECRAFT_SKINS,
+  skinDescriptor,
 } from '../src/player/appearance/builtinSkins';
+import { BUYER_NPC_SKIN_ID } from '../shared/buyers';
 import {
   PLAYER_APPEARANCE_STORAGE_KEY,
   loadPlayerAppearance,
@@ -21,6 +23,7 @@ import {
 import gameSource from '../src/core/Game.ts?raw';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
 import previewSource from '../src/rendering/player/PlayerAppearancePreview.ts?raw';
+import buyerNpcSource from '../src/net/BuyerNpcView.ts?raw';
 
 function memoryStorage(initial: Record<string, string> = {}): AppearanceStorage & { data: Record<string, string> } {
   const data = { ...initial };
@@ -37,6 +40,7 @@ describe('player skin selector', () => {
     expect(PRODUCTION_PLAYER_SKINS).toHaveLength(45);
     expect(new Set(PRODUCTION_PLAYER_SKINS.map((skin) => skin.id)).size).toBe(45);
     expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === QA_PLAYER_SKIN_ID)).toBe(false);
+    expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === BUYER_NPC_SKIN_ID)).toBe(false);
     expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === DEFAULT_PLAYER_APPEARANCE.skinId)).toBe(true);
     for (const skin of PRODUCTION_PLAYER_SKINS) {
       expect(skin.defaultModel === 'classic' || skin.defaultModel === 'slim').toBe(true);
@@ -109,6 +113,21 @@ describe('player skin selector', () => {
     const raw = storage.data[PLAYER_APPEARANCE_STORAGE_KEY];
     expect(raw).not.toMatch(/png|base64|data:image/i);
     expect(loadPlayerAppearance(storage).skinId).toBe('e3eb6f99ea1c3fe1');
+  });
+
+  it('keeps the buyer NPC on builtin buyer_merchant outside the player selector', () => {
+    expect(BUYER_NPC_SKIN_ID).toBe('buyer_merchant');
+    expect(skinDescriptor(BUYER_NPC_SKIN_ID)).toMatchObject({
+      id: 'buyer_merchant',
+      texturePath: 'player/skins/buyer_merchant',
+      defaultModel: 'classic',
+    });
+    expect(BUILTIN_MINECRAFT_SKINS.some((skin) => skin.id === BUYER_NPC_SKIN_ID)).toBe(true);
+    expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === BUYER_NPC_SKIN_ID)).toBe(false);
+    expect(buyerNpcSource).toContain('skinId: BUYER_NPC_SKIN_ID');
+    expect(gameSource).toContain("skinId: 'buyer_merchant'");
+    expect(gameSource).toContain('new BuyerNpcView(');
+    expect(gameSource).toContain('createPlayerAppearance({ skinId: \'buyer_merchant\', model: \'classic\' })');
   });
 
   it('wires the character panel and selector through Game.setPlayerAppearance', () => {
