@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Chat layout top-left — 2026-09-12
+
+- Чат закреплён в **левом верхнем углу** (open и closed). Нижняя привязка к hotbar убрана.
+- Открытый message log имеет фиксированную высоту `--chat-open-log-height`; 5 vs 40 сообщений и смена вкладок не двигают input/tabs.
+- Крупные кнопки ENTER / TAB / CHAT ON|OFF справа. Native scrollbar скрыт, wheel и touch pan-y сохранены.
+- Серверные каналы Global / Nearby / Clan не менялись.
+- Handoff: `docs/reports/2026-09-12_chat-layout.md`.
+
 ## Последний проход: Chat channels (Global / Nearby / Clan) — 2026-09-12
 
 - Существующий чат расширен, второй ChatLog / протокол / ClanService не добавлялись.

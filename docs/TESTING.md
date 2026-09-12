@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-12 Chat layout top-left
+
+Report: `reports/2026-09-12_chat-layout.md`.
+
+```text
+npx vitest run tests/chat-layout.test.ts tests/chat-channels.test.ts tests/chat-commands.test.ts tests/server/chat-channels.test.ts tests/server/chat-scroll.test.ts tests/ui-main-integration.test.ts --maxWorkers=2
+```
+
+Focused: chat-layout 8/8, chat-channels 6/6, chat-commands 10/10, server chat-channels 8/8, chat-scroll 3/3, ui-main-integration 5/5. `test:server` **46 files / 478 tests PASS**. Four typechecks, boundaries, and `build` PASS. Full `npm test`: 231/232 files, 2202/2207 tests PASS; 5 failures are known 5s timeouts in `tests/fire-contact-sunlight-minecart.test.ts` (not from chat).
+
 ## 2026-09-12 Chat channels
 
 Report: `reports/2026-09-12_chat-channels.md`.
@@ -1253,7 +1263,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/hostile-spawn-balance.test.ts` | 8 | Surface night hostiles ≈ ×0.5, passive day rate independent of the night factor, cave hostiles in dark air not lava/water, min distance / floor / headroom, max 1 new cave hostile per chunk/event, density, respawn after death, global cap |
 | `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |
 | `tests/chat-commands.test.ts` | 10 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
-| `tests/chat-channels.test.ts` | 6 | Nearby 3D radius; `player: text` format; 128 limit; clan tab empty; parse strips forged fields; ChatLog tab history/dedup; T/Tab/X/Enter/visibility source contracts |
+| `tests/chat-layout.test.ts` | 4 | Top-left anchor; fixed open log height; ENTER/TAB/CHAT ON labels; hidden native scrollbar with wheel/touch pan-y |
 | `tests/server/chat-channels.test.ts` | 8 | Global/nearby/clan routing, inclusive 3D radius 20, sender-only nearby, ClanService live membership, no replay, 128 reject, forged fields stripped |
 | `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
 | `tests/lava-bedrock-ore-pass.test.ts` | 10 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/enclosed waterline=0, Coal/Iron/Gold/Redstone ×2, Diamond ≈0.33× current, chunk-border determinism + generator-space neighbor walls, boundary-only enqueue + shore-break + cross-chunk 15/16, idle enclosed pond, ore Y/vein size |

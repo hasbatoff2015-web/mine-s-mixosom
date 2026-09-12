@@ -22,3 +22,7 @@ export function outgoingChatText(raw: string, maxLength = MAX_CHAT_LENGTH):
 export function defaultChatTabOnOpen(): ChatChannel {
   return 'global';
 }
+
+export function chatVisibilityCaption(enabled: boolean): 'CHAT ON' | 'CHAT OFF' {
+  return enabled ? 'CHAT ON' : 'CHAT OFF';
+}

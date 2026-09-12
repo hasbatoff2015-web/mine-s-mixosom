@@ -124,6 +124,11 @@ describe('chat UI source contracts', () => {
     expect(GAME_UI).toContain('id="chat-send"');
     expect(GAME_UI).toContain('id="chat-close"');
     expect(GAME_UI).toContain('id="chat-visibility"');
+    expect(GAME_UI).toContain('data-chat-anchor="top-left"');
+    expect(GAME_UI).toContain('>ENTER</span>');
+    expect(GAME_UI).toContain('>TAB</span>');
+    expect(GAME_UI).toContain('CHAT ON');
+    expect(GAME_UI).toContain('CHAT OFF');
     expect(GAME_UI).toContain(`maxlength="\${MAX_CHAT_LENGTH}"`);
     expect(GAME_UI).toContain('event.key === \'Tab\'');
     expect(GAME_UI).toContain('this.onChatCancel?.()');

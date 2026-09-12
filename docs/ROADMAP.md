@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-12: Chat layout top-left
+
+- [x] Anchor `#chat` top-left; fixed open message-area height; hide native scrollbar.
+- [x] Larger input, ENTER/TAB hotkey buttons, CHAT ON/OFF toggle.
+- [x] Do not change Global / Nearby / Clan server routing.
+
 ## 2026-09-12: Chat channels (Global / Nearby / Clan)
 
 - [x] Extend existing chat (no second ChatLog / protocol / ClanService).

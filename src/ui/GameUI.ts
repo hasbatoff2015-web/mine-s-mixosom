@@ -327,41 +327,54 @@ export class GameUI {
         <div id="selected-item"></div>
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
-        <div id="chat">
-          <div id="chat-compose">
-            <form id="chat-form" autocomplete="off">
-              <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
-              <button type="submit" id="chat-send" aria-label="Отправить сообщение">Enter</button>
-            </form>
-            <div id="chat-toolbar">
+        <div id="chat" data-chat-anchor="top-left">
+          <div id="chat-main">
+            <div id="chat-compose">
+              <form id="chat-form" autocomplete="off">
+                <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
+              </form>
               <div id="chat-tabs" role="tablist" aria-label="Каналы чата">
                 <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active">Общий</button>
                 <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false">Рядом</button>
                 <button type="button" role="tab" data-chat-tab="clan" aria-selected="false">Клан</button>
               </div>
-              <div id="chat-tools">
-                <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
-                  <span class="chat-vis-on" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                      <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                    </svg>
-                  </span>
-                  <span class="chat-vis-off" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                      <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                      <path d="M5 19 L19 5" stroke-width="2.4"/>
-                    </svg>
-                  </span>
-                </button>
-                <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат">×</button>
-              </div>
             </div>
+            <div id="chat-log" aria-live="polite">
+              <div id="chat-clan-empty" hidden>${CHAT_NO_CLAN_HINT}</div>
+              <div id="chat-log-inner"></div>
+            </div>
+            <button type="button" id="chat-new" hidden>↓ Новые сообщения</button>
           </div>
-          <div id="chat-log" aria-live="polite">
-            <div id="chat-clan-empty" hidden>${CHAT_NO_CLAN_HINT}</div>
-            <div id="chat-log-inner"></div>
-          </div>
-          <button type="button" id="chat-new" hidden>↓ Новые сообщения</button>
+          <aside id="chat-side" aria-label="Действия чата">
+            <button type="submit" form="chat-form" id="chat-send" aria-label="Отправить сообщение">
+              <span class="chat-btn-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14"/>
+                  <path d="M13 6l6 6-6 6"/>
+                </svg>
+              </span>
+              <span class="chat-btn-hotkey">ENTER</span>
+            </button>
+            <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат (Tab)">
+              <span class="chat-btn-glyph" aria-hidden="true">X</span>
+              <span class="chat-btn-hotkey">TAB</span>
+            </button>
+            <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
+              <span class="chat-vis-on" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
+                </svg>
+              </span>
+              <span class="chat-vis-off" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
+                  <path d="M5 19 L19 5" stroke-width="2.4"/>
+                </svg>
+              </span>
+              <span class="chat-btn-hotkey chat-vis-caption-on">CHAT ON</span>
+              <span class="chat-btn-hotkey chat-vis-caption-off">CHAT OFF</span>
+            </button>
+          </aside>
         </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
@@ -1210,6 +1223,7 @@ export class GameUI {
     this.chatVisibilityEl.setAttribute('aria-pressed', String(on));
     this.chatVisibilityEl.setAttribute('aria-label', on ? 'Чат включён' : 'Чат выключен');
     this.chatVisibilityEl.title = on ? 'Скрыть сообщения чата' : 'Показать сообщения чата';
+    this.chatVisibilityEl.dataset.chatDisplay = on ? 'on' : 'off';
     this.chatVisibilityEl.classList.toggle('is-off', !on);
   }
 
