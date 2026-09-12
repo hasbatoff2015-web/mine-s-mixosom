@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: Chat log text size — 2026-09-12
+
+- Текст строк `.chat-line` увеличен с `18px` до `27px` × `--hud-scale` (~1.5×). Input, вкладки и кнопки не менялись.
+- Формат `player: сообщение`, Nearby/Clan полоски и серверные каналы без изменений.
+
 ## Последний проход: Chat fullscreen transparent — 2026-09-12
 
 - Открытый чат растягивается на всю ширину HUD (`top/left/right: 0` equivalent): input слева, ENTER / X / CHAT ON-OFF у правого края.
