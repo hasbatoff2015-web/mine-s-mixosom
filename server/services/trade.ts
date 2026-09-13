@@ -276,7 +276,9 @@ export class TradeService {
     if (!inventory) return { ok: false, error: TRADE_OFFLINE_ERROR };
     return this.mutateOffer(session, playerId, (offer) => {
       const current = offer.slots[slot] ?? null;
-      if (current) {
+      const selected = offer.selectedSlot;
+      const incoming = selected !== undefined ? inventory.getSlot(selected) : null;
+      if (current && (!incoming || !canStacksMerge(current, incoming))) {
         const leftover = inventory.add(current);
         if (leftover) {
           offer.slots[slot] = leftover;
@@ -286,27 +288,19 @@ export class TradeService {
         this.runtime.flushInventory(playerId);
         return { ok: true, session };
       }
-      const selected = offer.selectedSlot;
-      if (selected === undefined) return { ok: false, error: TRADE_ITEM_ERROR };
-      const stack = inventory.getSlot(selected);
-      if (!stack) return { ok: false, error: TRADE_ITEM_ERROR };
-      const { taken, remainder } = splitItemStack(stack, stack.count);
+      if (selected === undefined || !incoming) return { ok: false, error: TRADE_ITEM_ERROR };
+      const cap = getItemDefinition(incoming.itemId).maxStack;
+      const already = current?.count ?? 0;
+      const room = cap - already;
+      if (room <= 0) {
+        return { ok: false, error: TRADE_STACK_ERROR };
+      }
+      const { taken, remainder } = splitItemStack(incoming, Math.min(incoming.count, room));
+      if (!taken) return { ok: false, error: TRADE_ITEM_ERROR };
       inventory.setSlot(selected, remainder);
-      const target = offer.slots[slot];
-      if (target && !canStacksMerge(target, taken)) {
-        inventory.setSlot(selected, stack);
-        return { ok: false, error: TRADE_ITEM_ERROR };
-      }
-      if (target) {
-        const cap = getItemDefinition(taken.itemId).maxStack;
-        if (target.count + taken.count > cap) {
-          inventory.setSlot(selected, stack);
-          return { ok: false, error: TRADE_STACK_ERROR };
-        }
-        offer.slots[slot] = { ...target, count: target.count + taken.count };
-      } else {
-        offer.slots[slot] = taken;
-      }
+      offer.slots[slot] = current
+        ? { ...current, count: current.count + taken.count }
+        : taken;
       this.runtime.flushInventory(playerId);
       return { ok: true, session };
     });

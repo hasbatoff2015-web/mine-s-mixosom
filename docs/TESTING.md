@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-13 Unified in-game menu + Friends + Trade
+
+Report: `reports/2026-09-13_main-menu-social.md`.
+
+```text
+npx vitest run tests/server/friends.test.ts tests/server/trade.test.ts tests/server/homes.test.ts tests/server/menu.test.ts tests/menu-gui.test.ts tests/clan-gui.test.ts tests/crafting-ui.test.ts tests/server/claim-anchor-blocks.test.ts --maxWorkers=2
+```
+
+Focused: friends 4/4, trade 9/9, homes 3/3, menu 5/5, menu-gui 4/4, clan-gui 7/7, crafting-ui 7/7, claim-anchor 8/8. `test:server` 50/51 files (tick-load-flight flake under load; isolated retry 3/3 PASS). Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-13 Crafting UI merged into main
 
 Report: `reports/2026-09-13_crafting-ui-main-merge.md`. Merge commit `7e8b928`. No extra test run on the merge commit itself; feature-branch gates are in the crafting UI reports.

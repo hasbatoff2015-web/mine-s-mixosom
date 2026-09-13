@@ -599,8 +599,9 @@ export class MenuService {
       return { ok: false, error: CLAIM_RENAME_ERROR };
     }
     const store = this.loadClaims();
-    const live = store.claims.find((claim) => claim.id === id && claim.owner === this.runtime.ownerKey(playerId));
-    if (!live) return { ok: false, error: CLAIM_MISSING_ERROR };
+    const index = store.claims.findIndex((claim) => claim.id === id && claim.owner === this.runtime.ownerKey(playerId));
+    if (index < 0) return { ok: false, error: CLAIM_MISSING_ERROR };
+    const live = store.claims[index]!;
     const taken = store.claims.some((claim) => (
       claim.owner === live.owner && claim.id !== live.id && claim.name.toLowerCase() === name.toLowerCase()
     ));
@@ -608,7 +609,7 @@ export class MenuService {
       session.message = CLAIM_NAME_TAKEN_ERROR;
       return { ok: false, error: CLAIM_NAME_TAKEN_ERROR };
     }
-    live.name = name;
+    store.claims[index] = { ...live, name };
     this.saveClaims(store);
     session.claimNameText = name;
     session.screen = 'claim-detail';

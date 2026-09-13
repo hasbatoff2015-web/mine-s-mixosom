@@ -1,5 +1,34 @@
 # Архитектура
 
+## In-game menu, friends, trade — 2026-09-13
+
+The in-game menu is a **UI shell**, not a second home/clan/claim/auction/spawn system. Client `menu_action` carries only intent (`action`, optional name/slot/money). Server `MenuService` validates and talks to existing services.
+
+```text
+GameUI / InputManager (M, HUD Menu)
+        │  menu_action
+        ▼
+WorldInstance.handleMenuAction  (menu.use)
+        │
+        ▼
+MenuService
+  ├─ spawn     → CommandRegistry /spawn
+  ├─ homes     → HomeService (plugin-data/home/homes.json)
+  ├─ friends   → FriendService (plugin-data/friends/friends.json)
+  ├─ clans     → ClanService (existing clan / clan_action; returnTo menu-clans)
+  ├─ claims    → ClaimStore (plugin-data/claims/claims.json)
+  ├─ trade     → TradeService (plugin-data/trade/sessions.json)
+  └─ auction   → AuctionService (existing auction / auction_action)
+```
+
+HUD `#hud-quick` is a vertical Pause/Chat/Menu stack (`pointer-events: auto`). Tab still pause; T still chat; M opens `menu_action: open`. Singleplayer does not fake a menu. Close X/E uses the shared `closeButtonHtml()`. Nested screens use `showsMenuBack` (not on `main` / `closed` / `trade-session`). Trade X/E is cancel, never accept.
+
+Friends: cap 50, bidirectional records, incoming requests, `teleportAllowed` checked on the server together with online + friendship + live position. Teleport goes through `TeleportService.now(..., 'command')`.
+
+Trade: 6 escrow slots (2×3), integer Мегакоины via `EconomyService` (`TRADE_SEND` / `TRADE_RECEIVE`). Offers live in the session; inventory stacks are removed into escrow. Any offer mutation clears **both** Ready/Accept flags. Final accept is a second step after both Ready. Commit is one lock: fingerprints, stacks, money, and **full** destination space, or nothing moves. Disconnect / cancel / X/E returns escrow. Missing partner inventory → `pendingReturns` on join. While a session is open, `inventory_action` other than `close` is ignored.
+
+Ordinary home cap is **4** (`HomeService` + home plugin). Claim create cap is **4** (`CLAIM_MAX_OWNED`) for both `/claim create` and the menu list.
+
 ## Chat channels — 2026-09-12
 
 Player chat stays on the existing `ClientChatMessage` / `ServerChatMessage` / `ChatLog` / `GameUI` `#chat` path. The client sends only intent `{ type: 'chat', text, channel?: 'global'|'nearby'|'clan' }`. Parse strips forged `from` / `playerId` / recipients / coords / `clanId`. Sender is the authenticated player. `MAX_CHAT_LENGTH` is **128**; over-length is rejected (not sliced).
@@ -280,7 +309,7 @@ Builtin Anarchy plugins run **only** on the server. They extend Phase 8 `PluginM
 
 ```text
 WorldInstance
-  PermissionService / TeleportService / EconomyService / AuctionService / ClanService / BuyerService / RtpSessionManager / PluginConfigService
+  PermissionService / TeleportService / EconomyService / AuctionService / ClanService / BuyerService / HomeService / FriendService / TradeService / MenuService / RtpSessionManager / PluginConfigService
   JsonFileStore  →  <worldDir>/plugin-data/
         │
         ▼
@@ -294,7 +323,7 @@ disk plugins from server/plugins/
 - Permissions: default/moderator/admin/vip/premium role catalog. VIP/Premium are **not** assigned as donate roles. OP (`/op`, `FC_OPERATORS`) short-circuits every node. Wildcards: `server.*`, `claim.*`.
 - Teleport: one `TeleportService` (warmup/cooldown/cancel on move/damage) and `TeleportHistoryService` (`/back`/death/`automine`). RTP search is bounded per tick and shared by `/rtp` and portals. AutoMine reset evacuates through this same service (`reason: 'automine'`), then fills the cuboid with `applyBlockBatch` (64 voxels/tick).
 - AutoMine is a cuboid generator/reset plugin, not a Claim. Wand selection is private to AutoMine. Spawn/claim protection is unchanged; broken AutoMine blocks are not immediately restored.
-- Economy is `EconomyService` + builtin `economy` plugin. All Мегакоин mutations go through the service (`plugin-data/economy/`). AutoMine fill notifies `onBlocksWritten` so regenerated voxels are not treated as player-placed. Auction House is `AuctionService` + builtin `auction`; purchases call `EconomyService.settle` with `AUCTION_PURCHASE` / `AUCTION_SALE` and `pairId = listingId`. Listings persist in `plugin-data/auction/listings.json`. GUI uses the inventory/chest chrome over `auction` / `auction_action` protocol messages (including `refresh`). Browse search patches the listing grid in place so the search field is not remounted. Clans are `ClanService` + builtin `clan`; create fee is `EconomyService.withdraw(..., 'CLAN_CREATE')`. Ranking sums live member balances at snapshot time. Persistence is `plugin-data/clans/clans.json`. GUI reuses the same inventory chrome over `clan` / `clan_action`. A successful invite notifies the target once via existing system chat; clan-card `joinState: invited` uses the same accept flow. Buyers are `BuyerService` + builtin `buyer`; each static NPC buys one Item ID for Megacoins via `EconomyService.deposit(..., 'TRADER_SELL')`. Persistence is `plugin-data/buyers/buyers.json`. Bound holograms use existing `HologramNetwork` names `buyer-<id>` (no HP). Appearance is the shared hologram editor, not a second system: admin `edit_hologram` unicasts `hologram_editor`, save is `hologram_update` gated by `buyer.edit`. Client `BuyerNpcView` reuses `PlayerVisual` + skin `buyer_merchant`. Protocol: `buyer_interact` / `buyer_action` / `buyers` / `buyer`.
+- Economy is `EconomyService` + builtin `economy` plugin. All Мегакоин mutations go through the service (`plugin-data/economy/`). AutoMine fill notifies `onBlocksWritten` so regenerated voxels are not treated as player-placed. Auction House is `AuctionService` + builtin `auction`; purchases call `EconomyService.settle` with `AUCTION_PURCHASE` / `AUCTION_SALE` and `pairId = listingId`. Listings persist in `plugin-data/auction/listings.json`. GUI uses the inventory/chest chrome over `auction` / `auction_action` protocol messages (including `refresh`). Browse search patches the listing grid in place so the search field is not remounted. Clans are `ClanService` + builtin `clan`; create fee is `EconomyService.withdraw(..., 'CLAN_CREATE')`. Ranking sums live member balances at snapshot time. Persistence is `plugin-data/clans/clans.json`. GUI reuses the same inventory chrome over `clan` / `clan_action`. A successful invite notifies the target once via existing system chat; clan-card `joinState: invited` uses the same accept flow. Buyers are `BuyerService` + builtin `buyer`; each static NPC buys one Item ID for Megacoins via `EconomyService.deposit(..., 'TRADER_SELL')`. Persistence is `plugin-data/buyers/buyers.json`. Bound holograms use existing `HologramNetwork` names `buyer-<id>` (no HP). Appearance is the shared hologram editor, not a second system: admin `edit_hologram` unicasts `hologram_editor`, save is `hologram_update` gated by `buyer.edit`. Client `BuyerNpcView` reuses `PlayerVisual` + skin `buyer_merchant`. Protocol: `buyer_interact` / `buyer_action` / `buyers` / `buyer`. Homes are `HomeService` + builtin `home` (max 4 for ordinary players, same JSON). Friends and player trade are WorldInstance services (`FriendService`, `TradeService`) plus the in-game `MenuService` shell (`menu` / `menu_action`). Default role gets `menu.use` / `friend.use` / `trade.use`. Trade money uses `TRADE_SEND` / `TRADE_RECEIVE`.
 - Claims listen to existing cancellable events (`blockBreak`, `blockPlace`, `playerDamage`, `explosion`, `itemDrop`, `itemPickup`, `mobSpawn`) plus observation `blockPlaced` / `blockBroken` for iron/gold/diamond block-claims. `ServerGameplay.processExplosions` emits `blockBroken` (no `playerId`) for each voxel `ExplosionQueue` actually destroyed, so a TNT-destroyed anchor deletes that claim via the same `Claim.anchor` lookup as player mining. Nearby blast that misses the stored cell does not emit and does not delete. Ordinary TNT never destroys iron/gold/diamond anchor voxels, so it cannot delete those claims; powerful and destructive TNT can. Regular `/claim` volumes are skipped per-voxel via `ExplosionJob.canDestroy` (loaded from ClaimStore, no PluginManager in shared sim) for every TNT profile. Flags are partial; overlapping claims resolve **per flag** by priority. Two block-claims may not overlap each other (priority is ignored for that pair). Block-claim `Claim.volume` is a cube of the same inclusive radius on X, Y and Z (iron ±10, gold ±20, diamond ±30), clamped to world Y. Load migrates stored full-height block-claim volumes back from `Claim.anchor`. A denied break/place also sends one-player `claim_boundary` packets via `ClaimBoundaryNetwork` for every related overlapping claim. Successful iron/gold/diamond place shows that new block-claim's AABB to the placer; an overlap deny shows the **existing** overlapping block-claim(s), not the attempted volume. Same `ClaimBoundaryRenderer` style and 10s duration.
 - Holograms persist server-side. `HologramNetwork` broadcasts a `holograms` protocol snapshot; the client `HologramRenderer` draws planes (billboard or fixed yaw). Plugins do not send packets. In-game edits use `hologram_interact` / `hologram_update` on the same records.
 

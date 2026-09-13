@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Friends, player trade, and the in-game menu are WorldInstance services on the same `JsonFileStore`, not extra command plugins.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -129,7 +129,7 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | plugin-admin | `/plugins` | — |
 | tpa | `/tpa`, `/tpahere`, `/tpaccept`, `/tpdeny` | config |
 | spawn | `/spawn`, `/setspawn` | world spawn + config |
-| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` |
+| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` (max 4 ordinary homes via `HomeService`) |
 | back | `/back` | memory (teleport history) |
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
@@ -140,19 +140,21 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | auction | `/ah`, `/ah sell`, `/ah list` (`/auction`, `/auctionhouse`) | `plugin-data/auction/listings.json` |
 | clan | `/clans`, `/clan create|delete|add|accept|leave|makeleader|kick` | `plugin-data/clans/clans.json` |
 | buyer | `/buyer create|move|delete|list` (`/buyers`, `/скупщик`) | `plugin-data/buyers/buyers.json` |
+| (service) friends | in-game menu Друзья | `plugin-data/friends/friends.json` |
+| (service) trade | in-game menu Обмен | `plugin-data/trade/sessions.json` |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
 
 ## Economy (Мегакоин)
 
-`EconomyService` (`server/services/economy.ts`) is the only balance API. Buyer NPCs, Auction House, and Clans call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
+`EconomyService` (`server/services/economy.ts`) is the only balance API. Buyer NPCs, Auction House, Clans, and player Trade call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
 
 - Currency display name: **Мегакоин** / **Мегакоинов**. Internal plugin name: `economy`.
 - New player: **100**. Maximum: **999 999 999**. Integers only. Negative balances are rejected. Deposit that would exceed the max is rejected (no clamp, no overflow).
 - Identity: `playerId` (UUID). Display names are cached for `/baltop` and `/pay`; they are not the storage key. `/pay` may target an offline stored profile.
 - Persistence: `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json`.
 - Transactions: every balance change writes a row (`transactionId`, `type`, `amount`, `balanceBefore`/`After`, `reason`, `timestamp`, optional `relatedPlayerId` / `pairId`). Transfers write two linked rows and are atomic.
-- Reasons include `BLOCK_BREAK`, `MOB_KILL`, `PLAYER_KILL`, `PLAYER_TRANSFER`, `ADMIN_*`, `TRADER_*`, `AUCTION_*`, `OTHER`.
+- Reasons include `BLOCK_BREAK`, `MOB_KILL`, `PLAYER_KILL`, `PLAYER_TRANSFER`, `ADMIN_*`, `TRADER_*`, `AUCTION_*`, `TRADE_SEND`, `TRADE_RECEIVE`, `OTHER`.
 - Block rewards (natural / AutoMine-generated only): Dirt/Grass/Sand/Gravel/Clay/Sandstone **1**, Stone **2**, logs **3**, Coal Ore **8**, Diamond Ore **25**. Player-placed copies pay **0**. TNT / explosion `blockBroken` (no `playerId`) pays **0**. AutoMine fill uses `applyBlockBatch` (not `blockPlaced`) and clears placed marks so regenerated ore pays through the same table.
 - Mob rewards: chicken 2, pig/sheep 3, cow 4, spider 8, zombie 10, skeleton 12, creeper 15. Unknown kinds pay 0. One `entityId` cannot be rewarded twice.
 - PvP: killer receives `floor(victimBalance * 0.10)`, victim loses that amount, atomic, reason `PLAYER_KILL`. Balance 0 or 1 → 0. Same killer→victim pair has a **5 minute** anti-farm cooldown (PvP itself is unchanged). Duplicate `entityDeath` for the same death does not double-pay.
@@ -190,6 +192,15 @@ Builtin plugin `clan` + `ClanService` (`server/services/clan.ts`). There is **no
 - Persistence: `plugin-data/clans/clans.json` via `JsonFileStore`. Totals are not stored.
 - Protocol: client `clan_action` (intent only), server `clan` (paged snapshot). Search patches the list in place so the input keeps focus and caret.
 - Locks serialize player+clan keys so last-slot joins, duplicate accepts, and invite/request races cannot put a player in two clans or exceed 20.
+- In-game menu Кланы opens this same GUI (`open_my_clan` / `open_clan_list` / `open_create_clan`). Ranking/card ← with `returnTo: 'menu-clans'` returns to the menu Clans hub instead of closing everything.
+
+## Friends and Trade (in-game menu)
+
+Not builtin command plugins. `FriendService` and `TradeService` persist beside plugin data. The client never decides friendship, online, teleport permission, offer stacks, money, Ready, or Accept.
+
+- Friends: max **50**; requests/accept/reject/remove; teleport only if the server says the friend is online and `teleportAllowed`. Permission `friend.use` (default role).
+- Trade: 6 escrow slots, integer Мегакоины, Ready then Accept, both flags reset on offer change, atomic commit or nothing. Cancel / X / E / disconnect returns items. Permission `trade.use`. Money reasons `TRADE_SEND` / `TRADE_RECEIVE`.
+- Menu shell permission `menu.use`. Protocol: `menu_action` / `menu`.
 
 ## Buyers (скупщики)
 

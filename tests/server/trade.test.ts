@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Inventory, createItemStack } from '../../src/inventory';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService } from '../../server/services/economy';
-import { TradeService, parseTradeMoney } from '../../server/services/trade';
+import { TradeService, parseTradeMoney, type TradeOfferState, type TradeSession } from '../../server/services/trade';
 import {
   TRADE_BUSY_ERROR,
   TRADE_MONEY_BALANCE_ERROR,
@@ -75,11 +75,17 @@ describe('TradeService', () => {
     return accepted.session!;
   }
 
+  function offerOf(session: TradeSession, playerId: string): TradeOfferState {
+    const offer = session.offers[playerId];
+    if (!offer) throw new Error(`missing trade offer for ${playerId}`);
+    return offer;
+  }
+
   it('rejects self trades and forged money', async () => {
     const { trades } = await setup();
     expect(trades.request('ada', 'Ada').error).toBe(TRADE_SELF_ERROR);
     const session = open(trades);
-    expect(session.offers.ada.slots).toHaveLength(6);
+    expect(offerOf(session, 'ada').slots).toHaveLength(6);
     expect(trades.setMoney('ada', -4).error).toBe(TRADE_MONEY_ERROR);
     expect(trades.setMoney('ada', 10_000).error).toBe(TRADE_MONEY_BALANCE_ERROR);
   });
@@ -90,7 +96,7 @@ describe('TradeService', () => {
     trades.selectInventory('ada', 0);
     expect(trades.clickOfferSlot('ada', 0).ok).toBe(true);
     expect(inventories.get('ada')!.getSlot(0)).toBeNull();
-    expect(trades.sessionFor('ada')!.offers.ada.slots[0]?.count).toBe(32);
+    expect(offerOf(trades.sessionFor('ada')!, 'ada').slots[0]?.count).toBe(32);
     expect(trades.cancel('ada').ok).toBe(true);
     expect(inventories.get('ada')!.getSlot(0)?.itemId).toBe('stone');
     expect(inventories.get('ada')!.getSlot(0)?.count).toBe(32);
@@ -104,10 +110,10 @@ describe('TradeService', () => {
     trades.selectInventory('ada', 0);
     trades.clickOfferSlot('ada', 0);
     const session = trades.sessionFor('ada')!;
-    expect(session.offers.ada.ready).toBe(false);
-    expect(session.offers.bob.ready).toBe(false);
-    expect(session.offers.ada.accepted).toBe(false);
-    expect(session.offers.bob.accepted).toBe(false);
+    expect(offerOf(session, 'ada').ready).toBe(false);
+    expect(offerOf(session, 'bob').ready).toBe(false);
+    expect(offerOf(session, 'ada').accepted).toBe(false);
+    expect(offerOf(session, 'bob').accepted).toBe(false);
   });
 
   it('requires double ready then double accept and swaps atomically', async () => {
@@ -122,8 +128,8 @@ describe('TradeService', () => {
     expect(trades.ready('ada').ok).toBe(true);
     expect(trades.ready('bob').ok).toBe(true);
     expect(trades.accept('ada').ok).toBe(true);
-    expect(trades.sessionFor('ada')!.offers.ada.accepted).toBe(true);
-    expect(trades.sessionFor('bob')!.offers.bob.accepted).toBe(false);
+    expect(offerOf(trades.sessionFor('ada')!, 'ada').accepted).toBe(true);
+    expect(offerOf(trades.sessionFor('bob')!, 'bob').accepted).toBe(false);
     const done = trades.accept('bob');
     expect(done.ok).toBe(true);
     expect(done.completed).toBe(true);
@@ -186,6 +192,11 @@ describe('TradeService', () => {
     trades.selectInventory('ada', 0);
     trades.clickOfferSlot('ada', 0);
     trades.selectInventory('ada', 2);
+    expect(trades.clickOfferSlot('ada', 0).ok).toBe(true);
+    expect(offerOf(trades.sessionFor('ada')!, 'ada').slots[0]?.count).toBe(64);
+    expect(inventories.get('ada')!.getSlot(2)?.count).toBe(8);
+    inventories.get('ada')!.setSlot(3, createItemStack('stone', 1));
+    trades.selectInventory('ada', 3);
     expect(trades.clickOfferSlot('ada', 0).error).toBe(TRADE_STACK_ERROR);
   });
 });
