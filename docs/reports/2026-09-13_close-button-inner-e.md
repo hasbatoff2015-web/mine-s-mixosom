@@ -23,7 +23,11 @@ UI-only patch on `cursor/crafting-ui-a8dc`. Craft recipes, `craft_recipe`, and c
 
 ## Tests
 
-See `TESTING.md`. Clan back and chat close assertions remain: no E caption.
+Focused: crafting-ui 7/7, container-ui 22/22, gameplay-ui-entity-polish 27/27 PASS.
+
+`npm run test:server` — **46/47 files, 480/481 tests PASS**; the only failure is the known timing flake `tick-load-flight` (`meanMs` 51–54 vs `< 50` under load). Isolated retry: **3/3 PASS**.
+
+`typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` PASS. `check:boundaries` PASS. `build` PASS.
 
 ## Visual QA
 

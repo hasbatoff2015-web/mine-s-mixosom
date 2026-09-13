@@ -8,6 +8,8 @@ Report: `reports/2026-09-13_close-button-inner-e.md`.
 npx vitest run tests/crafting-ui.test.ts tests/container-ui.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
 ```
 
+Focused: crafting-ui 7/7, container-ui 22/22, gameplay-ui-entity-polish 27/27. `test:server` 46/47 files (tick-load-flight flake under load; isolated retry 3/3 PASS). Four typechecks, boundaries, and `build` PASS.
+
 ## 2026-09-13 Crafting UI UX patch
 
 Report: `reports/2026-09-13_crafting-ui-ux.md`.
