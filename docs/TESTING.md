@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-13 Close X inner E
+
+Report: `reports/2026-09-13_close-button-inner-e.md`.
+
+```text
+npx vitest run tests/crafting-ui.test.ts tests/container-ui.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
 ## 2026-09-13 Crafting UI UX patch
 
 Report: `reports/2026-09-13_crafting-ui-ux.md`.

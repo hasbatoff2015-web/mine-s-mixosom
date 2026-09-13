@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { keepCraftSearchDraft, CRAFT_BUTTON_LABEL } from '../src/ui/craftGui';
 import { CONTAINER_STRINGS } from '../src/ui/containerStrings';
 import { hasRecipeBook } from '../src/ui/containerInteractions';
+import { MC_CLOSE_LOGICAL_SIZE } from '../src/ui/containerTheme';
 
 const gameUi = readFileSync(new URL('../src/ui/GameUI.ts', import.meta.url), 'utf8');
 const gameSource = readFileSync(new URL('../src/core/Game.ts', import.meta.url), 'utf8');
@@ -76,17 +77,23 @@ describe('craft menu chrome', () => {
 });
 
 describe('close button E caption', () => {
-  it('renders a square red X with an E hotkey under it', () => {
-    expect(gameUi).toContain('class="mc-close-wrap"');
-    expect(gameUi).toContain('class="mc-close-x"');
-    expect(gameUi).toContain('class="mc-close-hotkey"');
-    expect(gameUi).toContain('CONTAINER_STRINGS.closeHotkey');
+  it('renders a larger square red X with a small white E inside the button', () => {
+    const closeHtml = sourceSection(gameUi, 'private closeButtonHtml(): string {', 'private captureAuctionInputFocus');
+    expect(closeHtml).not.toContain('mc-close-wrap');
+    expect(closeHtml).toContain('class="mc-close-x"');
+    expect(closeHtml).toContain('class="mc-close-hotkey"');
+    expect(closeHtml).toContain('CONTAINER_STRINGS.closeHotkey');
+    expect(closeHtml.indexOf('mc-close-x')).toBeLessThan(closeHtml.indexOf('mc-close-hotkey'));
+    expect(closeHtml.indexOf('mc-close-hotkey')).toBeLessThan(closeHtml.indexOf('</button>'));
     expect(CONTAINER_STRINGS.closeHotkey).toBe('E');
-    expect(css).toContain('.mc-close-wrap');
+    expect(MC_CLOSE_LOGICAL_SIZE).toBe(20);
+    expect(css).not.toContain('.mc-close-wrap');
     expect(css).toContain('.mc-close-hotkey');
     expect(css).toContain('.mc-close-x');
     expect(css).toContain('aspect-ratio: 1');
-    expect(css).not.toContain('height: max(var(--touch-target), calc(20px * var(--mc-ui-scale)))');
+    expect(css).toMatch(/\.mc-close \{[\s\S]*?width: max\(var\(--touch-target\), calc\(20px \* var\(--mc-ui-scale\)\)\)/);
+    expect(css).toMatch(/\.mc-close-x \{[\s\S]*?color: #d32f2f;[\s\S]*?font-size: calc\(15px \* var\(--mc-ui-scale\)\)/);
+    expect(css).toMatch(/\.mc-close-hotkey \{[\s\S]*?position: absolute;[\s\S]*?right:[\s\S]*?bottom:[\s\S]*?color: #fff;/);
     expect(css).toContain('.mc-panel.mc-craft-panel');
     expect(css).toMatch(/\.mc-craft-open \{[\s\S]*?width: calc\(32px \* var\(--mc-ui-scale\)\)/);
   });

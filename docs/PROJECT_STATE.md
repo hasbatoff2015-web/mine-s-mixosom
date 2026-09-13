@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: Close X inner E — 2026-09-13
+
+- Кнопка закрытия inventory-style UI чуть крупнее (20 logical px), квадратная.
+- Крупный красный × и небольшая белая **E** в правом нижнем углу **внутри** кнопки. Снаружи текста E нет.
+- Тот же `closeButtonHtml()` на inventory / craft / auction / buyer / clan. Clan ← и chat X без E.
+- Handoff: `docs/reports/2026-09-13_close-button-inner-e.md`.
+
 ## Последний проход: Crafting list bands + search contrast — 2026-09-13
 
 - Список крафта: доступные → есть рецепт, но не хватает ресурсов → предметы без рецепта в самом конце. Внутри групп прежний порядок. Пересортировка после крафта.
@@ -8,7 +15,7 @@
 
 ## Последний проход: Crafting UI UX patch — 2026-09-13
 
-- Кнопка закрытия квадратная: красный × внутри кнопки, подпись **E** снаружи под ней (не растягивает кнопку).
+- Кнопка закрытия квадратная: красный × и белая E внутри кнопки (см. поздний патч inner E).
 - Список крафта: сначала доступные рецепты, затем остальные; внутри групп прежний порядок. Пересортировка после каждого крафта.
 - Кнопка «Крафт» в инвентаре ~в 2 раза меньше (32 logical px). Подпись русская: «Крафт».
 - Панель меню крафта реально 256 logical px (раньше CSS оставлял 176) — последняя колонка больше не обрезается. Scrollbar скрыт, wheel и touch pan-y работают.
@@ -1212,7 +1219,7 @@
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, **staged block-breaking crack overlay**, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
-| Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, Survival CRAFT-кнопка → отдельное меню всех предметов, 3×3 Recipe Book на верстаке, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Creative Catalog/Inventory tabs, close × with E caption outside panel |
+| Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, Survival CRAFT-кнопка → отдельное меню всех предметов, 3×3 Recipe Book на верстаке, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Creative Catalog/Inventory tabs, close × with small white E inside the button |
 | Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI; **portal chest** uses the same model with a personal 27-slot player store; furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT with TNT texture + fuse tint pulse, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |

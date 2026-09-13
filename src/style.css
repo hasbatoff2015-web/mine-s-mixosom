@@ -2119,28 +2119,21 @@ button {
   pointer-events: none;
 }
 
-.mc-close-wrap {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: center;
-  align-self: flex-start;
-  gap: calc(1px * var(--mc-ui-scale));
-  z-index: 2;
-}
-
 .mc-close {
   position: relative;
   flex: none;
+  align-self: flex-start;
+  z-index: 2;
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  width: max(var(--touch-target), calc(14px * var(--mc-ui-scale)));
-  height: max(var(--touch-target), calc(14px * var(--mc-ui-scale)));
+  width: max(var(--touch-target), calc(20px * var(--mc-ui-scale)));
+  height: max(var(--touch-target), calc(20px * var(--mc-ui-scale)));
   aspect-ratio: 1;
   margin: 0 max(0px, env(safe-area-inset-right, 0px)) 0 0;
   padding: 0;
   border: 0;
+  overflow: hidden;
   color: #373737;
   background: #c6c6c6;
   box-shadow:
@@ -2156,17 +2149,24 @@ button {
 
 .mc-close-x {
   color: #d32f2f;
-  font-size: calc(10px * var(--mc-ui-scale));
+  font-size: calc(15px * var(--mc-ui-scale));
+  font-weight: 900;
   line-height: 1;
+  pointer-events: none;
 }
 
 .mc-close-hotkey {
-  color: #373737;
+  position: absolute;
+  right: calc(2px * var(--mc-ui-scale));
+  bottom: calc(1px * var(--mc-ui-scale));
+  color: #fff;
   font-size: calc(5px * var(--mc-ui-scale));
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 800;
+  letter-spacing: 0;
   line-height: 1;
+  text-shadow: 0 0 calc(1px * var(--mc-ui-scale)) #000, calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #000;
   pointer-events: none;
+  user-select: none;
 }
 
 .mc-close:hover,

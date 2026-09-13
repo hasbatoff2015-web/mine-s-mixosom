@@ -2478,12 +2478,10 @@ export class GameUI {
   }
 
   private closeButtonHtml(): string {
-    return `<div class="mc-close-wrap">`
-      + `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
+    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
       + `<span class="mc-close-x" aria-hidden="true">×</span>`
-      + `</button>`
       + `<span class="mc-close-hotkey">${CONTAINER_STRINGS.closeHotkey}</span>`
-      + `</div>`;
+      + `</button>`;
   }
 
   private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {

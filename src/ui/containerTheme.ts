@@ -42,7 +42,7 @@ export function craftListFitsColumns(
 
 /** Minimum touch target for the outside close control. */
 export const MC_CLOSE_HIT_MIN_PX = 44;
-export const MC_CLOSE_LOGICAL_SIZE = 14;
+export const MC_CLOSE_LOGICAL_SIZE = 20;
 export const MC_STAGE_GAP = 4;
 
 export function containerUiScaleWithClose(
