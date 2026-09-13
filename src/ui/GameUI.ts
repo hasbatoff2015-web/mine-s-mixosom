@@ -244,6 +244,7 @@ export class GameUI {
   private screen?: HTMLElement;
   private hud: HTMLElement;
   private hotbar: HTMLElement;
+  private offhandHud: HTMLElement;
   private selectedItem: HTMLElement;
   private hearts: HTMLElement;
   private hunger: HTMLElement;
@@ -301,6 +302,7 @@ export class GameUI {
   private chatHistoryIndex = -1;
   private chatDraft = '';
   private hotbarHtml = '';
+  private offhandHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
   private hungerHtml = '';
@@ -318,7 +320,7 @@ export class GameUI {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
         <div id="hurt-flash" aria-hidden="true"></div>
-        <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" /></div>
+        <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" />${Array.from({ length: 12 }, (_, i) => `<span style="--spark-angle:${i * 30}deg"></span>`).join('')}</div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="status-bars">
@@ -330,6 +332,7 @@ export class GameUI {
         </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="offhand-hud" aria-label="Вторая рука"></div>
         <div id="effect-hud" class="hidden"></div>
         <div id="chat" data-chat-anchor="top-left" data-chat-open-width="viewport">
           <div id="chat-main">
@@ -388,6 +391,7 @@ export class GameUI {
       </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
+    this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.hunger = this.root.querySelector('.hunger')!;
@@ -929,6 +933,11 @@ export class GameUI {
   }
 
   updateHud(state: HudState): void {
+    const offhandHtml = this.slotHtml(state.inventory.offhand, 'offhand-hud');
+    if (offhandHtml !== this.offhandHtml) {
+      this.offhandHtml = offhandHtml;
+      this.offhandHud.innerHTML = offhandHtml;
+    }
     const slots = state.inventory.slots.slice(0, Inventory.HOTBAR_SIZE);
     const hotbarHtml = slots.map((stack, index) => this.slotHtml(stack, `hotbar-${index}`, index === state.selectedSlot)).join('');
     if (hotbarHtml !== this.hotbarHtml) {
@@ -1349,7 +1358,7 @@ export class GameUI {
     this.totemFlashTimer = window.setTimeout(() => {
       this.totemFlash.classList.remove('active');
       this.totemFlashTimer = undefined;
-    }, 1300);
+    }, 1700);
     this.toast('Тотем бессмертия спас вас!', 2200);
   }
 
@@ -2070,7 +2079,7 @@ export class GameUI {
   }
 
   private equipmentColumnHtml(context: InventoryContext): string {
-    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}</div>`;
+    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}${this.slotHtml(context.inventory.offhand, 'offhand')}</div>`;
   }
 
   private craftSlotHtml(stack: ItemStack | null, index: number): string {
@@ -2358,13 +2367,14 @@ export class GameUI {
     });
     const armor = armorSlotKind(key);
     const armorAttr = armor ? ` data-armor="${armor}"` : '';
+    const offhandAttr = key === 'offhand' || key === 'offhand-hud' ? ' aria-label="Вторая рука" title="Вторая рука"' : '';
     if (!stack) {
-      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
+      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
     const hover = tooltip
       ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint, layout)
       : this.itemHoverAttrs(stack.itemId, definition!.name);
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {

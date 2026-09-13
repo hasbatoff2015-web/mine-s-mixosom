@@ -1,4 +1,5 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
+import type { VoxelWorld } from '../world/World';
 
 export type FireworkFlight = 1 | 2 | 3;
 
@@ -26,6 +27,8 @@ export class FireworkManager {
   private nextId = 0;
   readonly cap = 32;
 
+  constructor(private readonly world?: VoxelWorld) {}
+
   get entities(): readonly FireworkEntity[] { return this.active; }
 
   spawn(position: Vec3Like, flight: FireworkFlight): FireworkEntity {
@@ -48,7 +51,17 @@ export class FireworkManager {
       const rocket = this.active[index]!;
       if (rocket.exploded) { this.active.splice(index, 1); continue; }
       rocket.ageTicks += 1;
-      rocket.position.add(rocket.velocity);
+      const movement = rocket.velocity.clone();
+      const distance = movement.length();
+      const hit = distance > 1e-8
+        ? this.world?.raycast(rocket.position, movement, distance, { geometry: 'collision' })
+        : undefined;
+      if (hit) {
+        rocket.position.copy(hit.point).addScaledVector(hit.normal, 0.035);
+        rocket.exploded = true;
+        continue;
+      }
+      rocket.position.add(movement);
       rocket.velocity.y = Math.min(0.33, rocket.velocity.y + 0.004);
       if (rocket.ageTicks >= rocket.fuseTicks) rocket.exploded = true;
     }

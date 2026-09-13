@@ -1464,7 +1464,7 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
-    this.gameplay.vhMarks.clearPlayer(player.id);
+    this.gameplay.whMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
     player.sink = null;
     player.activeSocketCount = 0;
@@ -2589,16 +2589,16 @@ export class WorldInstance {
     this.resetInputPacketCounters();
     for (const player of this.players.values()) {
       if (player.totemActivated) {
-        this.gameplay.vhMarks.clearTarget(player.id);
+        this.gameplay.whMarks.clearTarget(player.id);
         if (player.connected) this.sendTo(player, { type: 'totem_activate' });
         player.totemActivated = false;
       }
-      if (!player.connected || player.survival.dead) this.gameplay.vhMarks.clearPlayer(player.id);
+      if (!player.connected || player.survival.dead) this.gameplay.whMarks.clearPlayer(player.id);
     }
     for (const player of this.connectedPlayers()) {
       this.sendTo(player, {
-        type: 'vh_marks',
-        targetIds: this.gameplay.vhMarks.forViewer(player.id, this.world.tickNumber)
+        type: 'wh_marks',
+        targetIds: this.gameplay.whMarks.forViewer(player.id, this.world.tickNumber)
           .filter((id) => {
             const target = this.players.get(id);
             return target?.connected && !target.survival.dead;

@@ -1,10 +1,17 @@
 # Состояние проекта
 
+## Последний проход: Utility Items live QA fixes — 2026-09-14
+
+- В `codex/utility-items-v1` исправлены обнаруженные причины проблем: Firework столкновение и плавное отображение между 20 TPS снапшотами, крупный многоцветный burst; одиночный WH-контур только по base skin с пересборкой при Classic/Slim; точное направление застрявшей сетевой стрелы.
+- Публичное имя стрелы унифицировано как WH в item id, протоколе, ресурсах, коде и тестах. Alias для прежнего имени не введён. Bed получил отдельную head/foot геометрию с поворотом и sheet UV; генерация Cane выбирает настоящий водный берег и ограничена одной стойкой на береговой chunk.
+- Существующий offhand показан слева от hotbar и в inventory; Totem получил увеличенную анимацию с искрами и собственный процедурный звук. 20 TPS, authoritativeness Anarchy и skin depth policy сохранены.
+- Проверки, причины, ручной QA checklist и ограничения: `docs/reports/2026-09-14_utility-items-live-qa-fixes.md`.
+
 ## Последний проход: Utility Items V1 — 2026-09-13
 
-- Ветка `codex/utility-items-v1` от `main@1c802ab`: Paper/Sugar Cane, редактируемая Book, Oak Sign, декоративная двухблочная White Bed, Milk Bucket, Firework Rocket Flight 1–3, приватная VH Arrow и Totem of Undying.
+- Ветка `codex/utility-items-v1` от `main@1c802ab`: Paper/Sugar Cane, редактируемая Book, Oak Sign, декоративная двухблочная White Bed, Milk Bucket, Firework Rocket Flight 1–3, приватная WH Arrow и Totem of Undying.
 - Shared simulation остаётся Node-safe. Bed ставится/ломается как две части с одним дропом; использование **не меняет spawnPoint/home и не пропускает время**. Sign text — `VoxelWorld.signs` в world save, book pages — `ItemStack.metadata.book` в обычном inventory/save/auction path.
-- Firework — временная серверная сущность 20 TPS, без урона и permanent save; VH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `VhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
+- Firework — временная серверная сущность 20 TPS, без урона и permanent save; WH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `WhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
 - Totem доступен через Creative/admin/test. Покупка у trader отложена: полноценной trader-системы в текущем коде нет; Buyer NPC — это скупщик, не продавец.
 - Focused tests: `tests/utility-items.test.ts` и `tests/server/utility-items-authority.test.ts`. Полная проверка и ограничения описаны в `docs/reports/2026-09-13_utility-items-v1.md`.
 

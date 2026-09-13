@@ -1152,11 +1152,11 @@ export class Game {
         return;
       }
       case 'entity_snapshot':
-        applyEntitySnapshots(session, message.entities, {
+        if (!applyEntitySnapshots(session, message.entities, {
           interpolator: session.online.interpolator,
           tick: message.tick,
           now: performance.now(),
-        });
+        })) return;
         session.fireworkVisuals.sync(message.entities.filter((entity) => entity.kind === 'firework'));
         return;
       case 'entity_event':
@@ -1249,9 +1249,9 @@ export class Game {
           motionProbe.note('world:volume');
         }
         return;
-      case 'vh_marks': {
+      case 'wh_marks': {
         const marked = new Set(message.targetIds);
-        for (const [id, view] of session.online.remotes) view.setVhMarked(marked.has(id));
+        for (const [id, view] of session.online.remotes) view.setWhMarked(marked.has(id));
         return;
       }
       case 'totem_activate':
@@ -2966,7 +2966,7 @@ export class Game {
         igniteMinecartTntFromFireArrow(session.minecarts, session.redstone, cart);
       },
     });
-    const fireworks = new FireworkManager();
+    const fireworks = new FireworkManager(world);
     const fireworkVisuals = new FireworkVisuals();
     this.scene.add(fireworkVisuals.group);
     const playerVisual = new PlayerVisual(
@@ -4032,7 +4032,12 @@ export class Game {
     }
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
-      this.session.fireworkVisuals.update(rawElapsed);
+      this.session.fireworkVisuals.update(
+        rawElapsed,
+        interpolationAlpha(this.accumulator, FIXED_DT),
+        this.session.online?.interpolator,
+        performance.now(),
+      );
       updateSharedFireAnimation(rawElapsed);
       this.session.mobs.advanceDeathVisuals(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
@@ -4947,14 +4952,14 @@ export class Game {
     }
     if (session.summary.mode !== 'survival') {
       this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow
-        : session.inventory.has(ItemId.VHArrow, 1) ? ItemId.VHArrow : ItemId.Arrow;
+        : session.inventory.has(ItemId.WHArrow, 1) ? ItemId.WHArrow : ItemId.Arrow;
     }
     const aim = this.sampleLocalAim(session);
     const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
     session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical,
       flaming, undefined, undefined, undefined, undefined,
-      this.lastConsumedArrow === ItemId.VHArrow ? 'vh' : flaming ? 'fire' : 'normal');
+      this.lastConsumedArrow === ItemId.WHArrow ? 'wh' : flaming ? 'fire' : 'normal');
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
@@ -5182,8 +5187,8 @@ export class Game {
       this.lastConsumedArrow = ItemId.FireArrow;
       return true;
     }
-    if (session.inventory.remove(ItemId.VHArrow, 1) === 1) {
-      this.lastConsumedArrow = ItemId.VHArrow;
+    if (session.inventory.remove(ItemId.WHArrow, 1) === 1) {
+      this.lastConsumedArrow = ItemId.WHArrow;
       return true;
     }
     if (session.inventory.remove(ItemId.Arrow, 1) === 1) {

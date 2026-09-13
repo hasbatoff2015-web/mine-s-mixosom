@@ -42,10 +42,10 @@ export class ArrowVisualFactory {
     });
   }
 
-  create(kindOrFlaming: 'normal' | 'fire' | 'vh' | boolean = 'normal'): THREE.Mesh {
+  create(kindOrFlaming: 'normal' | 'fire' | 'wh' | boolean = 'normal'): THREE.Mesh {
     const kind = typeof kindOrFlaming === 'boolean' ? (kindOrFlaming ? 'fire' : 'normal') : kindOrFlaming;
     const mesh = new THREE.Mesh(this.geometry,
-      kind === 'vh' ? this.spectralMaterial : kind === 'fire' ? this.flamingMaterial : this.material);
+      kind === 'wh' ? this.spectralMaterial : kind === 'fire' ? this.flamingMaterial : this.material);
     mesh.name = kind === 'normal' ? 'arrow-projectile' : `${kind}-arrow-projectile`;
     bindEntityLightReceiver(mesh);
     return mesh;

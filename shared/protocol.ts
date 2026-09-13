@@ -181,6 +181,10 @@ export interface EntitySnapshot {
   readonly vx?: number;
   readonly vy?: number;
   readonly vz?: number;
+  /** Retained trajectory for an arrow whose live velocity is zero in a block. */
+  readonly impactVx?: number;
+  readonly impactVy?: number;
+  readonly impactVz?: number;
   readonly itemId?: string;
   readonly count?: number;
   readonly mobKind?: string;
@@ -801,8 +805,8 @@ export interface ServerEffectsMessage {
 }
 
 /** Sent per viewer; marks must never be embedded in the broadcast player state. */
-export interface ServerVhMarksMessage {
-  readonly type: 'vh_marks';
+export interface ServerWhMarksMessage {
+  readonly type: 'wh_marks';
   readonly targetIds: readonly string[];
 }
 
@@ -1117,7 +1121,7 @@ export type ServerMessage =
   | ServerInventoryMessage
   | ServerHealthMessage
   | ServerEffectsMessage
-  | ServerVhMarksMessage
+  | ServerWhMarksMessage
   | ServerTotemActivateMessage
   | ServerEntitySnapshotMessage
   | ServerEntityEventMessage
@@ -1182,7 +1186,7 @@ export const SERVER_MESSAGE_TYPES = [
   'health',
   'effects',
   'entity_snapshot',
-  'vh_marks',
+  'wh_marks',
   'totem_activate',
   'entity_event',
   'world_sound',
@@ -1924,12 +1928,12 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       }
       return raw as unknown as ServerEntitySnapshotMessage;
     }
-    case 'vh_marks': {
+    case 'wh_marks': {
       if (!Array.isArray(raw.targetIds) || raw.targetIds.length > 64
         || raw.targetIds.some((id) => typeof id !== 'string' || id.length > 128)) {
-        return { error: 'vh_marks invalid' };
+        return { error: 'wh_marks invalid' };
       }
-      return { type: 'vh_marks', targetIds: raw.targetIds as string[] };
+      return { type: 'wh_marks', targetIds: raw.targetIds as string[] };
     }
     case 'totem_activate': return { type: 'totem_activate' };
     case 'entity_event': {

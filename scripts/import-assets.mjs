@@ -131,7 +131,7 @@ const items = {
   redstone_dust: 'redstone_dust.png', flint: 'flint.png', clay_ball: 'clay_ball.png',
   brick: 'brick.png', string: 'string.png', feather: 'feather.png', leather: 'leather.png',
   gunpowder: 'gunpowder.png', book: 'book_normal.png', paper: 'paper.png',
-  firework_rocket: 'fireworks.png', arrow: 'arrow.png', vh_arrow: 'spectral_arrow.png',
+  firework_rocket: 'fireworks.png', arrow: 'arrow.png', wh_arrow: 'spectral_arrow.png',
   totem_of_undying: 'totem.png', milk_bucket: 'bucket_milk.png',
   sugar_cane: 'reeds.png', oak_sign: 'sign.png',
   apple: 'apple.png', bread: 'bread.png', beef: 'beef_raw.png', cooked_beef: 'beef_cooked.png',

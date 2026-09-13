@@ -39,19 +39,20 @@ import { AudioManager } from '../src/core/AudioManager';
 import { ItemId } from '../src/items';
 
 describe('sound catalog', () => {
-  it('stays within the ~20–25 source-file budget (26 with optional splash)', () => {
+  it('stays within the bounded source-file budget including the Totem cue', () => {
     const files = catalogFiles();
     expect(files.length).toBe(PRODUCTION_SFX_FILE_BUDGET);
-    expect(files.length).toBeLessThanOrEqual(26);
+    expect(files.length).toBeLessThanOrEqual(27);
     expect(files.length).toBeGreaterThanOrEqual(20);
     expect(new Set(files).size).toBe(files.length);
   });
 
-  it('lists the production MP3 pack without duplicate filenames', () => {
+  it('lists the production audio pack without duplicate filenames', () => {
     const files = catalogFiles();
     expect(files).toEqual(expect.arrayContaining([
       'stone_1.mp3', 'wood_1.mp3', 'dirt_1.mp3', 'sand_1.mp3', 'wool_1.mp3', 'glass_1.mp3',
       'explosion.mp3', 'bow_shoot.mp3', 'arrow_hit.mp3', 'item_pickup.mp3', 'water_splash.mp3',
+      'totem_activate.wav',
     ]));
   });
 

@@ -893,17 +893,18 @@ export class TerrainGenerator {
   /** Separate deterministic namespace: old ore, tree, and flower RNG streams are unchanged. */
   private decorateSugarCane(chunk: Chunk): void {
     const rng = mulberry32(hashCoords(this.numericSeed + 26183, chunk.x, 0, chunk.z));
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      if (rng() > 0.12) continue;
-      const x = 1 + Math.floor(rng() * (CHUNK_SIZE - 2));
-      const z = 1 + Math.floor(rng() * (CHUNK_SIZE - 2));
-      const wx = chunk.x * CHUNK_SIZE + x, wz = chunk.z * CHUNK_SIZE + z;
-      const column = this.columnAt(wx, wz);
-      if (column.height !== SEA_LEVEL) continue;
-      if (chunk.get(x, SEA_LEVEL, z) !== BlockId.GrassBlock
-        && chunk.get(x, SEA_LEVEL, z) !== BlockId.Sand) continue;
+    const shore: Array<readonly [number, number]> = [];
+    for (let z = 1; z < CHUNK_SIZE - 1; z += 1) for (let x = 1; x < CHUNK_SIZE - 1; x += 1) {
+      const soil = chunk.get(x, SEA_LEVEL, z);
+      if (soil !== BlockId.GrassBlock && soil !== BlockId.Sand) continue;
+      if (chunk.get(x, SEA_LEVEL + 1, z) !== BlockId.Air) continue;
       if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
-        this.columnAt(wx + dx!, wz + dz!).height < SEA_LEVEL)) continue;
+        chunk.get(x + dx!, SEA_LEVEL, z + dz!) === BlockId.Water)) continue;
+      shore.push([x, z]);
+    }
+    // At most one small stand per shoreline chunk, without depending on other decorator RNG streams.
+    if (shore.length > 0 && rng() < 0.55) {
+      const [x, z] = shore[Math.floor(rng() * shore.length)]!;
       const height = 1 + Math.floor(rng() * 3);
       for (let segment = 1; segment <= height; segment += 1) {
         if (chunk.get(x, SEA_LEVEL + segment, z) !== BlockId.Air) break;

@@ -7,6 +7,35 @@
  */
 
 import * as THREE from 'three';
+
+/** Canonical north-facing half. The frame and mattress meet exactly at the cell seam. */
+export function bedVisualParts(part: 'head' | 'foot'): ReadonlyArray<{
+  texture: string;
+  center: readonly [number, number, number];
+  size: readonly [number, number, number];
+  uv?: readonly [number, number, number, number];
+}> {
+  const pieces: Array<{
+    texture: string; center: readonly [number, number, number];
+    size: readonly [number, number, number]; uv?: readonly [number, number, number, number];
+  }> = [
+    { texture: 'block/oak_planks', center: [0, 0.29, 0], size: [0.875, 0.12, 1] },
+    { texture: 'entity/bed/white', center: [0, 0.4275, 0], size: [0.82, 0.155, 1],
+      uv: part === 'head' ? [0, 0.5, 0.5, 1] : [0, 0, 0.5, 0.5] },
+  ];
+  for (const x of [-0.375, 0.375]) {
+    pieces.push({ texture: 'block/oak_planks', center: [x, 0.125, part === 'head' ? -0.405 : 0.405],
+      size: [0.125, 0.25, 0.125] });
+  }
+  if (part === 'head') {
+    pieces.push(
+      { texture: 'entity/bed/white', center: [0, 0.53, -0.24], size: [0.67, 0.06, 0.28],
+        uv: [0, 0.5, 0.5, 1] },
+      { texture: 'block/oak_planks', center: [0, 0.4025, -0.455], size: [0.875, 0.32, 0.09] },
+    );
+  }
+  return pieces;
+}
 import type {
   BlockAttachment,
   BlockDefinition,

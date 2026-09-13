@@ -1,5 +1,5 @@
 /** Viewer-private, ephemeral combat marks. Never serialize or broadcast this store. */
-export class VhMarks {
+export class WhMarks {
   private readonly marks = new Map<string, Map<string, number>>();
 
   mark(viewerId: string, targetId: string, nowTick: number): void {

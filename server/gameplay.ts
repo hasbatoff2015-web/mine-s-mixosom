@@ -53,7 +53,7 @@ import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChes
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { ItemId, tryGetItemDefinition } from '../src/items';
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
-import { VhMarks } from '../src/combat/VhMarks';
+import { WhMarks } from '../src/combat/WhMarks';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
 import type { ArrowKind } from '../src/combat/PlayerArrowManager';
 import { FarmingSystem, farmingDropsForBlock } from '../src/farming';
@@ -188,8 +188,8 @@ export class ServerGameplay {
   readonly mobs: MobManager;
   readonly minecarts: MinecartManager;
   readonly arrows: PlayerArrowManager;
-  readonly fireworks = new FireworkManager();
-  readonly vhMarks = new VhMarks();
+  readonly fireworks: FireworkManager;
+  readonly whMarks = new WhMarks();
   readonly redstone: RedstoneSystem;
   readonly farming: FarmingSystem;
   readonly explosions = new ExplosionQueue();
@@ -212,6 +212,7 @@ export class ServerGameplay {
     private readonly worldSpawn?: () => readonly [number, number, number],
     private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
   ) {
+    this.fireworks = new FireworkManager(world);
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
       for (const change of changes) {
@@ -540,6 +541,12 @@ export class ServerGameplay {
         id: arrow.id, kind: 'arrow',
         x: arrow.position.x, y: arrow.position.y, z: arrow.position.z,
         vx: arrow.velocity.x, vy: arrow.velocity.y, vz: arrow.velocity.z,
+        state: arrow.inGround ? 'embedded' : 'flight',
+        ...(arrow.embedded ? {
+          impactVx: arrow.embedded.impactVelocity.x,
+          impactVy: arrow.embedded.impactVelocity.y,
+          impactVz: arrow.embedded.impactVelocity.z,
+        } : {}),
         onFire: arrow.flaming,
         variant: arrow.kind,
       });
@@ -1140,7 +1147,7 @@ export class ServerGameplay {
           }
         }
         player.inventoryDirty = true;
-        if (item.id === ItemId.MilkBucket) this.vhMarks.clearTarget(player.id);
+        if (item.id === ItemId.MilkBucket) this.whMarks.clearTarget(player.id);
       }
       this.clearUseHold(player);
     }
@@ -1358,16 +1365,16 @@ export class ServerGameplay {
           ignite: flaming,
           attackerId,
         });
-        if (accepted && kind === 'vh' && attackerId) this.vhMarks.mark(attackerId, playerId, this.world.tickNumber);
+        if (accepted && kind === 'wh' && attackerId) this.whMarks.mark(attackerId, playerId, this.world.tickNumber);
         this.emitWorldSound('combat.hit', position.x, position.y + 0.9, position.z);
       },
     };
   }
 
-  /** Existing deterministic priority: fire, then VH, then normal. */
+  /** Existing deterministic priority: fire, then WH, then normal. */
   private consumeBowAmmo(player: GameplayPlayer): ArrowKind | undefined {
     const priorities: readonly [string, ArrowKind][] = [
-      [ItemId.FireArrow, 'fire'], [ItemId.VHArrow, 'vh'], [ItemId.Arrow, 'normal'],
+      [ItemId.FireArrow, 'fire'], [ItemId.WHArrow, 'wh'], [ItemId.Arrow, 'normal'],
     ];
     if (player.gamemode !== 'survival') {
       return priorities.find(([id]) => player.inventory.has(id, 1))?.[1] ?? 'normal';

@@ -31,6 +31,7 @@ import {
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { VoxelWorld } from '../src/world/World';
 import { CHUNK_SIZE, floorDiv, positiveMod } from '../src/core/constants';
+import { bedHeadCell } from '../src/world/bed';
 
 const atlasStub = {
   tile: () => ({ u0: 0, v0: 0, u1: 1, v1: 1 }),
@@ -132,6 +133,26 @@ describe('placed lever', () => {
     expect(getBlockDefinition(BlockId.Lever).renderShape).toBe('lever');
     const boxes = selectionBoxesForBlock({ renderShape: 'lever' }, { attachment: 'floor', facing: 'north' });
     expect(boxes).toHaveLength(2);
+    disposeMeshed(meshed);
+  });
+});
+
+describe('two-cell bed mesh', () => {
+  it.each(['north', 'east', 'south', 'west'] as const)('rotates connected head and foot geometry %s', (facing) => {
+    const { world, chunk } = emptyChunkWorld(`bed-mesh-${facing}`);
+    const foot = { x: 7, y: 40, z: 7 };
+    const head = bedHeadCell(foot.x, foot.y, foot.z, facing);
+    writeBlock(world, foot.x, foot.y, foot.z, BlockId.WhiteBed);
+    writeBlock(world, head.x, head.y, head.z, BlockId.WhiteBed);
+    world.setBlockState(foot.x, foot.y, foot.z, { facing, bedPart: 'foot' });
+    world.setBlockState(head.x, head.y, head.z, { facing, bedPart: 'head' });
+    const meshed = new ChunkMesher(atlasStub, (x, y, z) => world.getBlockState(x, y, z)).build(chunk!, world);
+    const box = geometryBounds(meshed.opaque);
+    expect(meshed.opaque.getAttribute('position').count).toBe(240);
+    expect(box.max.y).toBeCloseTo(40 + 9 / 16, 5);
+    const length = facing === 'east' || facing === 'west'
+      ? box.max.x - box.min.x : box.max.z - box.min.z;
+    expect(length).toBeCloseTo(2, 5);
     disposeMeshed(meshed);
   });
 });

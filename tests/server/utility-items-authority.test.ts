@@ -45,27 +45,27 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     return { world, add };
   }
 
-  it('sends VH marks only to the shooter, even when the target is invisible', async () => {
+  it('sends WH marks only to the shooter, even when the target is invisible', async () => {
     const { world, add } = await boot();
     const a = add('Shooter');
     const b = add('Target');
     const c = add('Observer');
     b.player.survival.applyEffect({ id: 'invisibility', amplifier: 0, durationTicks: 200 });
-    world.gameplay.vhMarks.mark(a.player.id, b.player.id, world.tickNumber);
+    world.gameplay.whMarks.mark(a.player.id, b.player.id, world.tickNumber);
     world.tick();
-    expect(a.sink.last('vh_marks')?.targetIds).toEqual([b.player.id]);
-    expect(b.sink.last('vh_marks')?.targetIds).toEqual([]);
-    expect(c.sink.last('vh_marks')?.targetIds).toEqual([]);
+    expect(a.sink.last('wh_marks')?.targetIds).toEqual([b.player.id]);
+    expect(b.sink.last('wh_marks')?.targetIds).toEqual([]);
+    expect(c.sink.last('wh_marks')?.targetIds).toEqual([]);
     const state = c.sink.last('player_state') as { players?: Array<{ id: string; invisible?: boolean }> } | undefined;
     expect(state?.players?.find((player) => player.id === b.player.id)?.invisible).toBe(true);
-    world.gameplay.vhMarks.mark(c.player.id, b.player.id, world.tickNumber);
-    world.gameplay.vhMarks.clearTarget(b.player.id); // Milk and Totem use this exact clearing path.
+    world.gameplay.whMarks.mark(c.player.id, b.player.id, world.tickNumber);
+    world.gameplay.whMarks.clearTarget(b.player.id); // Milk and Totem use this exact clearing path.
     world.tick();
-    expect(a.sink.last('vh_marks')?.targetIds).toEqual([]);
-    expect(c.sink.last('vh_marks')?.targetIds).toEqual([]);
-    world.gameplay.vhMarks.mark(a.player.id, b.player.id, world.tickNumber);
+    expect(a.sink.last('wh_marks')?.targetIds).toEqual([]);
+    expect(c.sink.last('wh_marks')?.targetIds).toEqual([]);
+    world.gameplay.whMarks.mark(a.player.id, b.player.id, world.tickNumber);
     world.disconnect(a.player.id);
-    expect(world.gameplay.vhMarks.forViewer(a.player.id, world.tickNumber)).toEqual([]);
+    expect(world.gameplay.whMarks.forViewer(a.player.id, world.tickNumber)).toEqual([]);
   });
 
   it('accepts only bounded book edits for the selected book and keeps its metadata in the player save', async () => {
@@ -124,20 +124,20 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(world.gameplay.persistEntities()).not.toHaveProperty('fireworks');
   });
 
-  it('fires VH ammo through the ordinary bow and preserves its projectile variant', async () => {
+  it('fires WH ammo through the ordinary bow and preserves its projectile variant', async () => {
     const { world, add } = await boot();
     const a = add('Archer');
     a.player.inventory.clear();
     a.player.inventory.setSlot(0, createItemStack(ItemId.Bow));
-    a.player.inventory.setSlot(1, createItemStack(ItemId.VHArrow, 2));
+    a.player.inventory.setSlot(1, createItemStack(ItemId.WHArrow, 2));
     a.player.selectedSlot = 0;
     a.player.bowUseTicks = 20;
     expect(world.gameplay.releaseBowWithAim(a.player, Math.PI, 0)).toMatchObject({ ok: true });
-    expect(world.gameplay.arrows.entities.at(-1)?.kind).toBe('vh');
-    expect(a.player.inventory.count(ItemId.VHArrow)).toBe(1);
+    expect(world.gameplay.arrows.entities.at(-1)?.kind).toBe('wh');
+    expect(a.player.inventory.count(ItemId.WHArrow)).toBe(1);
   });
 
-  it('marks only after an accepted VH projectile hit, not a cancelled PvP hit', async () => {
+  it('marks only after an accepted WH projectile hit, not a cancelled PvP hit', async () => {
     const { world, add } = await boot();
     const a = add('Attacker');
     const b = add('Victim');
@@ -145,20 +145,20 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     b.player.controller.teleport([70.5, 100, 72.5]);
     a.player.inventory.clear();
     a.player.inventory.setSlot(0, createItemStack(ItemId.Bow));
-    a.player.inventory.setSlot(1, createItemStack(ItemId.VHArrow, 2));
+    a.player.inventory.setSlot(1, createItemStack(ItemId.WHArrow, 2));
     a.player.selectedSlot = 0;
     const pitch = Math.atan2(-0.72, 2);
     const cancel = world.events.on('playerDamage', (event) => event.cancel());
     a.player.bowUseTicks = 20;
     expect(world.gameplay.releaseBowWithAim(a.player, Math.PI, pitch)).toMatchObject({ ok: true });
     world.tick();
-    expect(world.gameplay.vhMarks.forViewer(a.player.id, world.tickNumber)).toEqual([]);
+    expect(world.gameplay.whMarks.forViewer(a.player.id, world.tickNumber)).toEqual([]);
     cancel();
     a.player.bowUseTicks = 20;
     expect(world.gameplay.releaseBowWithAim(a.player, Math.PI, pitch)).toMatchObject({ ok: true });
     world.tick();
     expect(b.player.survival.health).toBeLessThan(20);
-    expect(world.gameplay.vhMarks.forViewer(a.player.id, world.tickNumber)).toEqual([b.player.id]);
+    expect(world.gameplay.whMarks.forViewer(a.player.id, world.tickNumber)).toEqual([b.player.id]);
   });
 
   it('drinks milk through the 32-tick server use and clears every viewer mark', async () => {
@@ -171,8 +171,8 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     a.player.selectedSlot = 0;
     a.player.survival.applyEffect({ id: 'invisibility', amplifier: 0, durationTicks: 200 });
     a.player.survival.applyEffect({ id: 'absorption', amplifier: 0, durationTicks: 200 });
-    world.gameplay.vhMarks.mark(b.player.id, a.player.id, world.tickNumber);
-    world.gameplay.vhMarks.mark(c.player.id, a.player.id, world.tickNumber);
+    world.gameplay.whMarks.mark(b.player.id, a.player.id, world.tickNumber);
+    world.gameplay.whMarks.mark(c.player.id, a.player.id, world.tickNumber);
     world.applyInput(a.player, {
       type: 'input', seq: 1, forward: 0, right: 0, jump: false, sneak: false, sprint: false,
       descend: false, flySprint: false, yaw: 0, pitch: 0, selectedSlot: 0, use: true, mining: false,
@@ -183,11 +183,11 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(a.player.inventory.count(ItemId.Bucket)).toBe(1);
     expect(a.player.survival.activeEffects()).toEqual([]);
     expect(a.player.survival.absorption).toBe(0);
-    expect(world.gameplay.vhMarks.forViewer(b.player.id, world.tickNumber)).toEqual([]);
-    expect(world.gameplay.vhMarks.forViewer(c.player.id, world.tickNumber)).toEqual([]);
+    expect(world.gameplay.whMarks.forViewer(b.player.id, world.tickNumber)).toEqual([]);
+    expect(world.gameplay.whMarks.forViewer(c.player.id, world.tickNumber)).toEqual([]);
   });
 
-  it('consumes selected mainhand Totem before offhand and clears VH without a death', async () => {
+  it('consumes selected mainhand Totem before offhand and clears WH without a death', async () => {
     const { world, add } = await boot();
     const a = add('Protected');
     const b = add('Viewer');
@@ -195,7 +195,7 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     a.player.inventory.setSlot(0, createItemStack(ItemId.TotemOfUndying));
     a.player.inventory.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
     a.player.selectedSlot = 0;
-    world.gameplay.vhMarks.mark(b.player.id, a.player.id, world.tickNumber);
+    world.gameplay.whMarks.mark(b.player.id, a.player.id, world.tickNumber);
     const deaths: string[] = [];
     world.events.on('entityDeath', (event) => deaths.push(event.entityId));
     expect(a.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
@@ -205,7 +205,7 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(a.player.survival.dead).toBe(false);
     world.tick();
     expect(a.sink.last('totem_activate')).toEqual({ type: 'totem_activate' });
-    expect(world.gameplay.vhMarks.forViewer(b.player.id, world.tickNumber)).toEqual([]);
+    expect(world.gameplay.whMarks.forViewer(b.player.id, world.tickNumber)).toEqual([]);
     expect(deaths).toEqual([]);
   });
 

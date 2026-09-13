@@ -68,8 +68,8 @@ const NAMED: readonly SoundEventProfile[] = [
     volume: 0.4, pitchMin: 0.96, pitchMax: 1.08, positional: false,
     maxDistance: 12, bus: 'ui', maxConcurrent: 3, priority: 5,
   }),
-  named('totem.activate', ['item_pickup.mp3'], {
-    volume: 0.85, pitchMin: 0.78, pitchMax: 0.82, positional: false,
+  named('totem.activate', ['totem_activate.wav'], {
+    volume: 0.9, pitchMin: 0.98, pitchMax: 1.02, positional: false,
     maxDistance: 16, bus: 'ui', maxConcurrent: 1, priority: 9,
   }),
   named('food.eat', ['food_eat.mp3'], {
@@ -183,4 +183,4 @@ export function resolveCatalogEvent(event: SoundEventId): SoundEventProfile | un
 }
 
 /** Production source-file budget: material variants plus named one-shots. */
-export const PRODUCTION_SFX_FILE_BUDGET = 26;
+export const PRODUCTION_SFX_FILE_BUDGET = 27;

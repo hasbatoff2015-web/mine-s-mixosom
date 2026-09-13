@@ -148,12 +148,12 @@ const recipes: Recipe[] = [
     gridSize: 2,
   },
   {
-    id: 'vh_arrow', type: 'shapeless', gridSize: 3,
+    id: 'wh_arrow', type: 'shapeless', gridSize: 3,
     ingredients: [
       exact(ItemId.Arrow), exact(ItemId.Arrow), exact(ItemId.Arrow), exact(ItemId.Arrow),
       exact('glowstone'), exact(ItemId.Diamond), exact(ItemId.RedstoneDust), exact(ItemId.RedstoneDust),
     ],
-    output: { item: ItemId.VHArrow, count: 4 },
+    output: { item: ItemId.WHArrow, count: 4 },
   },
   ...([1, 2, 3] as const).map((flight) => ({
     id: `firework_rocket_flight_${flight}`,

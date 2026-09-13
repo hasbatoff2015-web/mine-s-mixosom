@@ -143,7 +143,7 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   firework_rocket: 'Фейерверк',
   arrow: 'Стрела',
   fire_arrow: 'Горящая стрела',
-  vh_arrow: 'VH-стрела',
+  wh_arrow: 'WH-стрела',
   totem_of_undying: 'Тотем бессмертия',
   flint_and_steel: 'Огниво',
   glass_bottle: 'Стеклянная бутылочка',

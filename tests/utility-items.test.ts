@@ -9,13 +9,16 @@ import { readBookContent, sanitizeBookDraft, writeBookInSlot } from '../src/item
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
 import { FarmingSystem } from '../src/farming';
-import { VhMarks } from '../src/combat/VhMarks';
+import { WhMarks } from '../src/combat/WhMarks';
 import { SurvivalSystem } from '../src/survival/SurvivalSystem';
 import { clearBedBlocks, bedHeadCell } from '../src/world/bed';
 import { canSugarCaneStandAt } from '../src/world/placement';
 import { sanitizeSignLines } from '../src/world/sign';
 import { VoxelWorld } from '../src/world/World';
 import { Chunk } from '../src/world/Chunk';
+import { TerrainGenerator } from '../src/world/Generator';
+import { SEA_LEVEL } from '../src/core/constants';
+import { bedVisualParts } from '../src/rendering/specialBlockGeometry';
 
 function placement(block: BlockId, yaw = 0) {
   const world = new VoxelWorld('utility-placement');
@@ -52,10 +55,10 @@ describe('utility recipes and metadata', () => {
       metadata: { firework: { flight } } });
   });
 
-  it('crafts four VH arrows with the expensive recipe', () => {
+  it('crafts four WH arrows with the expensive recipe', () => {
     const grid = [ItemId.Arrow, ItemId.Arrow, ItemId.Arrow, ItemId.Arrow,
       'glowstone', ItemId.Diamond, ItemId.RedstoneDust, ItemId.RedstoneDust, null];
-    expect(getCraftingResult(grid)).toEqual({ itemId: ItemId.VHArrow, count: 4 });
+    expect(getCraftingResult(grid)).toEqual({ itemId: ItemId.WHArrow, count: 4 });
   });
 
   it('keeps different rocket flights in different inventory stacks', () => {
@@ -107,6 +110,18 @@ describe('book and sign text', () => {
 });
 
 describe('decorative blocks', () => {
+  it('defines connected bed halves with a distinct headboard, pillow and sheet UVs', () => {
+    const foot = bedVisualParts('foot');
+    const head = bedVisualParts('head');
+    expect(foot.filter((piece) => piece.texture === 'entity/bed/white')).toHaveLength(1);
+    expect(head.filter((piece) => piece.texture === 'entity/bed/white')).toHaveLength(2);
+    expect(head.some((piece) => piece.center[2] < -0.4 && piece.size[1] > 0.3)).toBe(true);
+    expect(head[1]?.uv).toEqual([0, 0.5, 0.5, 1]);
+    expect(foot[1]?.uv).toEqual([0, 0, 0.5, 0.5]);
+    expect(head[1]!.size[2]).toBe(1);
+    expect(foot[1]!.size[2]).toBe(1);
+  });
+
   it.each([0, Math.PI / 2, Math.PI, -Math.PI / 2])('places and removes both bed halves at yaw %f', (yaw) => {
     const { world, inventory, ctx } = placement(BlockId.WhiteBed, yaw);
     const x = 5, y = 90, z = 5;
@@ -211,9 +226,45 @@ describe('decorative blocks', () => {
     expect(world.getBlock(5, 93, 5, false)).toBe(BlockId.Air);
     farming.dispose();
   });
+
+  it('generates small deterministic sugar cane only on actual water shores', () => {
+    const generator = new TerrainGenerator('cane-shore-regression');
+    let stands = 0;
+    let firstStand: Chunk | undefined;
+    const checked = new Set<string>();
+    outer: for (let wz = -768; wz <= 768; wz += 8) for (let wx = -768; wx <= 768; wx += 8) {
+      const column = generator.columnAt(wx, wz);
+      if (column.height !== SEA_LEVEL || column.biome === 'snowy_plains') continue;
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
+        generator.columnAt(wx + dx!, wz + dz!).height < SEA_LEVEL)) continue;
+      const cx = Math.floor(wx / 16), cz = Math.floor(wz / 16);
+      const key = `${cx},${cz}`;
+      if (checked.has(key)) continue;
+      checked.add(key);
+      const chunk = new Chunk(cx, cz);
+      generator.generate(chunk);
+      let chunkStands = 0;
+      for (let z = 1; z < 15; z += 1) for (let x = 1; x < 15; x += 1) {
+        if (chunk.get(x, SEA_LEVEL + 1, z) !== BlockId.SugarCane) continue;
+        chunkStands += 1;
+        expect([BlockId.Sand, BlockId.GrassBlock]).toContain(chunk.get(x, SEA_LEVEL, z));
+        expect([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
+          chunk.get(x + dx!, SEA_LEVEL, z + dz!) === BlockId.Water)).toBe(true);
+        expect(chunk.get(x, SEA_LEVEL + 4, z)).not.toBe(BlockId.SugarCane);
+      }
+      expect(chunkStands).toBeLessThanOrEqual(1);
+      if (chunkStands > 0 && !firstStand) firstStand = chunk;
+      stands += chunkStands;
+      if (stands >= 3) break outer;
+    }
+    expect(stands).toBeGreaterThan(0);
+    const repeated = new Chunk(firstStand!.x, firstStand!.z);
+    generator.generate(repeated);
+    expect(repeated.blocks).toEqual(firstStand!.blocks);
+  });
 });
 
-describe('milk, rockets, VH marks and totem', () => {
+describe('milk, rockets, WH marks and totem', () => {
   it('fills a bucket and clears every active status effect on drinking', () => {
     const inventory = new Inventory();
     inventory.setSlot(0, createItemStack(ItemId.Bucket));
@@ -247,8 +298,22 @@ describe('milk, rockets, VH marks and totem', () => {
     expect(manager.entities.length).toBeLessThanOrEqual(manager.cap);
   });
 
+  it('bursts a rising rocket on the underside of a solid ceiling', () => {
+    const world = new VoxelWorld('rocket-ceiling');
+    world.setBlock(5, 101, 5, BlockId.Stone);
+    const manager = new FireworkManager(world);
+    const rocket = manager.spawn({ x: 5.5, y: 100.8, z: 5.5 }, 3);
+    for (let tick = 0; tick < 5 && !rocket.exploded; tick += 1) manager.tick();
+    expect(rocket.exploded).toBe(true);
+    expect(rocket.position.y).toBeLessThan(101);
+    expect(rocket.position.y).toBeGreaterThan(100.8);
+    expect(world.getBlock(5, 101, 5)).toBe(BlockId.Stone);
+    manager.tick();
+    expect(manager.entities).not.toContain(rocket);
+  });
+
   it('isolates marks per shooter, refreshes and expires at exactly 200 ticks', () => {
-    const marks = new VhMarks();
+    const marks = new WhMarks();
     marks.mark('A', 'B', 10);
     expect(marks.forViewer('C', 10)).toEqual([]);
     expect(marks.forViewer('A', 209)).toEqual(['B']);

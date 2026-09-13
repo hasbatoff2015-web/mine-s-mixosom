@@ -235,7 +235,7 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.FireworkRocket),
   resource(ItemId.Arrow, { tags: ['arrow'] }),
   resource(ItemId.FireArrow, { tags: ['arrow'] }),
-  resource(ItemId.VHArrow, { tags: ['arrow'] }),
+  resource(ItemId.WHArrow, { tags: ['arrow'] }),
   resource(ItemId.TotemOfUndying, { maxStack: 1 }),
   resource(ItemId.FlintAndSteel, { durability: 64 }),
   resource(ItemId.GlassBottle),

@@ -47,6 +47,7 @@ import {
   type DoorFaceRole,
   type LocalBox,
   type TextureUvRect,
+  bedVisualParts,
 } from './specialBlockGeometry';
 import { fluidCellGeometry } from '../world/fluidSurface';
 import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
@@ -845,7 +846,7 @@ export class ChunkMesher {
     return faces.length;
   }
 
-  /** Two low furniture halves. The head uses the source bed sheet for its pillow. */
+  /** Connected two-cell bed with north-facing source geometry rotated to block state. */
   private addBed(
     buffers: GeometryBuffers,
     definition: BlockDefinition,
@@ -855,32 +856,18 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const add = (texture: string, box: LocalBox, uv?: TextureUvRect): number => {
-      if (!uv) return this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
-      const size: [number, number, number] = [box.maxX - box.minX, box.maxY - box.minY, box.maxZ - box.minZ];
-      const matrix = new THREE.Matrix4().makeTranslation(
-        x + (box.minX + box.maxX) / 2,
-        y + (box.minY + box.maxY) / 2,
-        z + (box.minZ + box.maxZ) / 2,
-      );
-      return this.addCuboid(buffers, texture, size, matrix, world, definition, x, y, z, uv);
-    };
+    const facing = state?.facing ?? 'north';
+    const angle = facing === 'east' ? -Math.PI / 2
+      : facing === 'south' ? Math.PI : facing === 'west' ? Math.PI / 2 : 0;
+    const rotation = new THREE.Matrix4().makeRotationY(angle);
     let faces = 0;
-    faces += add('block/oak_planks', { minX: 0.0625, minY: 0.25, minZ: 0.0625, maxX: 0.9375, maxY: 0.375, maxZ: 0.9375 });
-    for (const lx of [0.0625, 0.8125]) for (const lz of [0.0625, 0.8125]) {
-      faces += add('block/oak_planks', { minX: lx, minY: 0, minZ: lz, maxX: lx + 0.125, maxY: 0.25, maxZ: lz + 0.125 });
-    }
-    faces += add('block/white_bed', { minX: 0.09, minY: 0.375, minZ: 0.09, maxX: 0.91, maxY: 0.51, maxZ: 0.91 });
-    if (state?.bedPart === 'head') {
-      const facing = state.facing ?? 'north';
-      const pillow: LocalBox = facing === 'north'
-        ? { minX: 0.18, minY: 0.51, minZ: 0.12, maxX: 0.82, maxY: 0.555, maxZ: 0.43 }
-        : facing === 'south'
-          ? { minX: 0.18, minY: 0.51, minZ: 0.57, maxX: 0.82, maxY: 0.555, maxZ: 0.88 }
-          : facing === 'east'
-            ? { minX: 0.57, minY: 0.51, minZ: 0.18, maxX: 0.88, maxY: 0.555, maxZ: 0.82 }
-            : { minX: 0.12, minY: 0.51, minZ: 0.18, maxX: 0.43, maxY: 0.555, maxZ: 0.82 };
-      faces += add('entity/bed/white', pillow, [0, 0, 0.5, 0.25]);
+    for (const piece of bedVisualParts(state?.bedPart === 'head' ? 'head' : 'foot')) {
+      const offset = new THREE.Vector3(piece.center[0], 0, piece.center[2]).applyMatrix4(rotation);
+      const matrix = new THREE.Matrix4().makeTranslation(
+        x + 0.5 + offset.x, y + piece.center[1], z + 0.5 + offset.z,
+      ).multiply(rotation);
+      faces += this.addCuboid(buffers, piece.texture, piece.size, matrix,
+        world, definition, x, y, z, piece.uv);
     }
     return faces;
   }

@@ -116,7 +116,7 @@ export const ItemId = Object.freeze({
   FireworkRocket: 'firework_rocket',
   Arrow: 'arrow',
   FireArrow: 'fire_arrow',
-  VHArrow: 'vh_arrow',
+  WHArrow: 'wh_arrow',
   TotemOfUndying: 'totem_of_undying',
   FlintAndSteel: 'flint_and_steel',
   GoldenApple: 'golden_apple',
