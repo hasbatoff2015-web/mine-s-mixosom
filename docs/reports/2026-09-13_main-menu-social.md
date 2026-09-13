@@ -116,5 +116,5 @@ Do not start the next task from this report. Owner: live Anarchy QA, then merge 
 - Branch: `cursor/main-menu-social-a8dc`
 - Base: `main` @ `70e2afe`
 - Feature commit: `4a74f91` (`feat: unified in-game menu with friends and trade`)
-- Follow-up commit SHA: recorded after push
+- Follow-up: `4334e23` (`fix: trade stack merge, claim cap, typecheck, and docs`)
 - PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/89
