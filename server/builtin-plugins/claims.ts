@@ -13,6 +13,7 @@ import {
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
+  CLAIM_MAX_OWNED,
   clampClaimPriority,
   claimsAt,
   effectiveFlag,
@@ -262,7 +263,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             const volume = ctx.selection.volume(sender.playerId);
             if (!volume) return fail('Set /claim pos1 and pos2 first.');
             const store = load();
-            if (store.claims.some((claim) => claim.owner === ownerKey && claim.name === name)) {
+            if (store.claims.filter((claim) => claim.owner === ownerKey).length >= CLAIM_MAX_OWNED
+              && !bypass(sender.playerId, sender.name)) {
+              return fail('You can only create 4 claims.');
+            }
+            if (store.claims.some((claim) => claim.owner === ownerKey && claim.name.toLowerCase() === name.toLowerCase())) {
               return fail(`You already have a claim named '${name}'.`);
             }
             store.claims.push({

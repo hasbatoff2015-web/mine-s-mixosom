@@ -2,6 +2,7 @@ import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel } from './chat';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
+import { isMenuAction, type MenuActionKind, type MenuScreenKind } from './menu';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, PlayerActionKind } from './playerActions';
 import type { PlayerPresentationState } from './playerPresentation';
@@ -546,6 +547,20 @@ export interface ClientBuyerActionMessage {
   readonly hologramText?: string;
 }
 
+export type ClientMenuActionMessage = {
+  readonly type: 'menu_action';
+  readonly action: MenuActionKind;
+  readonly name?: string;
+  readonly playerId?: string;
+  readonly homeName?: string;
+  readonly claimId?: string;
+  readonly slot?: number;
+  readonly amount?: number;
+  readonly money?: string | number;
+  readonly allowed?: boolean;
+  readonly pvp?: boolean;
+};
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -569,7 +584,8 @@ export type ClientMessage =
   | ClientAuctionActionMessage
   | ClientClanActionMessage
   | ClientBuyerInteractMessage
-  | ClientBuyerActionMessage;
+  | ClientBuyerActionMessage
+  | ClientMenuActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -1007,6 +1023,7 @@ export interface ServerClanMessage {
     readonly pendingRequestClanName?: string;
   };
   readonly message?: string;
+  readonly returnTo?: 'menu-clans';
 }
 
 export type BuyerScreenKind = 'admin' | 'pick-item' | 'trade' | 'closed';
@@ -1051,6 +1068,75 @@ export interface ServerBuyerMessage {
   readonly message?: string;
 }
 
+export interface NetworkMenuHome {
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface NetworkMenuFriend {
+  readonly playerId: string;
+  readonly name: string;
+  readonly online: boolean;
+  readonly teleportAllowed: boolean;
+}
+
+export interface NetworkMenuClaim {
+  readonly id: string;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly pvp: boolean;
+  readonly members: readonly string[];
+}
+
+export interface NetworkMenuPlayerRow {
+  readonly playerId: string;
+  readonly name: string;
+}
+
+export interface NetworkTradeOffer {
+  readonly slots: readonly unknown[];
+  readonly money: number;
+  readonly ready: boolean;
+  readonly accepted: boolean;
+}
+
+export interface ServerMenuMessage {
+  readonly type: 'menu';
+  readonly screen: MenuScreenKind;
+  readonly title: string;
+  readonly message?: string;
+  readonly balance?: number;
+  readonly balanceLabel?: string;
+  readonly clanNotice?: string;
+  readonly inClan?: boolean;
+  readonly homeNameText?: string;
+  readonly homes?: readonly NetworkMenuHome[];
+  readonly homeMax?: number;
+  readonly confirmName?: string;
+  readonly teleportAllowed?: boolean;
+  readonly friendNameText?: string;
+  readonly friendRequests?: readonly NetworkMenuPlayerRow[];
+  readonly friends?: readonly NetworkMenuFriend[];
+  readonly friendMax?: number;
+  readonly claims?: readonly NetworkMenuClaim[];
+  readonly claimMax?: number;
+  readonly claim?: NetworkMenuClaim;
+  readonly claimNameText?: string;
+  readonly claimMemberText?: string;
+  readonly tradeNameText?: string;
+  readonly incomingTrades?: readonly NetworkMenuPlayerRow[];
+  readonly outgoingTrades?: readonly NetworkMenuPlayerRow[];
+  readonly tradePartnerName?: string;
+  readonly tradeSelf?: NetworkTradeOffer;
+  readonly tradePartner?: NetworkTradeOffer;
+  readonly inventorySlots?: readonly unknown[];
+  readonly selectedSlot?: number;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -1081,7 +1167,8 @@ export type ServerMessage =
   | ServerAuctionMessage
   | ServerClanMessage
   | ServerBuyersMessage
-  | ServerBuyerMessage;
+  | ServerBuyerMessage
+  | ServerMenuMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1107,6 +1194,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'buyer_interact',
   'buyer_action',
   'clan_action',
+  'menu_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -1140,6 +1228,7 @@ export const SERVER_MESSAGE_TYPES = [
   'clan',
   'buyers',
   'buyer',
+  'menu',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1765,6 +1854,35 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(hologramText !== undefined ? { hologramText } : {}),
       };
     }
+    case 'menu_action': {
+      if (typeof raw.action !== 'string' || !isMenuAction(raw.action)) {
+        return { error: 'menu_action.action invalid' };
+      }
+      const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
+      const playerId = optionalString(raw.playerId, 64);
+      const homeName = typeof raw.homeName === 'string' ? raw.homeName.slice(0, 32) : undefined;
+      const claimId = optionalString(raw.claimId, 80);
+      const slot = raw.slot === undefined ? undefined : finite(raw.slot) ? Math.floor(raw.slot) : undefined;
+      if (raw.slot !== undefined && slot === undefined) return { error: 'menu_action.slot invalid' };
+      const amount = raw.amount === undefined ? undefined : finite(raw.amount) ? Math.floor(raw.amount) : undefined;
+      if (raw.amount !== undefined && amount === undefined) return { error: 'menu_action.amount invalid' };
+      const money = typeof raw.money === 'string' || typeof raw.money === 'number' ? raw.money : undefined;
+      const allowed = typeof raw.allowed === 'boolean' ? raw.allowed : undefined;
+      const pvp = typeof raw.pvp === 'boolean' ? raw.pvp : undefined;
+      return {
+        type: 'menu_action',
+        action: raw.action,
+        ...(name !== undefined ? { name } : {}),
+        ...(playerId ? { playerId } : {}),
+        ...(homeName !== undefined ? { homeName } : {}),
+        ...(claimId ? { claimId } : {}),
+        ...(slot !== undefined ? { slot } : {}),
+        ...(amount !== undefined ? { amount } : {}),
+        ...(money !== undefined ? { money } : {}),
+        ...(allowed !== undefined ? { allowed } : {}),
+        ...(pvp !== undefined ? { pvp } : {}),
+      };
+    }
     default:
       return { error: `unknown message type ${raw.type}` };
   }
@@ -1979,6 +2097,12 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'buyer invalid' };
       }
       return raw as unknown as ServerBuyerMessage;
+    }
+    case 'menu': {
+      if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {
+        return { error: 'menu invalid' };
+      }
+      return raw as unknown as ServerMenuMessage;
     }
     default:
       return raw as unknown as ServerMessage;

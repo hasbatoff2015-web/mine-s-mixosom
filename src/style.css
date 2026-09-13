@@ -63,6 +63,7 @@ button {
 #ui-root {
   position: absolute;
   inset: 0;
+  z-index: 10;
   pointer-events: none;
   padding:
     max(10px, env(safe-area-inset-top))
@@ -397,6 +398,79 @@ button {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+#hud-quick {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(10px * var(--hud-scale));
+  padding: calc(4px * var(--hud-scale));
+  pointer-events: auto;
+}
+
+#chat.open ~ #hud-quick {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.hud-quick-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(4px * var(--hud-scale));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f4f4f4;
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+
+.hud-quick-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(52px * var(--hud-scale));
+  height: calc(52px * var(--hud-scale));
+  border-radius: calc(4px * var(--hud-scale));
+  background: #4b4b4b;
+  box-shadow:
+    inset calc(2px * var(--hud-scale)) calc(2px * var(--hud-scale)) 0 #7a7a7a,
+    inset calc(-2px * var(--hud-scale)) calc(-2px * var(--hud-scale)) 0 #1f1f1f;
+}
+
+.hud-quick-icon {
+  font-size: calc(22px * var(--hud-scale));
+  line-height: 1;
+  color: #f7f7f7;
+  text-shadow: 0 calc(1px * var(--hud-scale)) #000;
+}
+
+.hud-quick-hotkey {
+  position: absolute;
+  right: calc(4px * var(--hud-scale));
+  bottom: calc(3px * var(--hud-scale));
+  left: calc(4px * var(--hud-scale));
+  color: #fff;
+  font-size: calc(8px * var(--hud-scale));
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 calc(1px * var(--hud-scale)) #000;
+}
+
+.hud-quick-label {
+  font-size: calc(11px * var(--hud-scale));
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 calc(1px * var(--hud-scale)) #000;
 }
 
 #hurt-flash {
@@ -1470,6 +1544,186 @@ button {
   max-height: calc(108px * var(--mc-ui-scale, 3));
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+.mc-menu-stage .mc-menu-panel,
+.mc-panel.mc-menu-panel {
+  width: calc(var(--mc-logical-width, 220) * 1px * var(--mc-ui-scale, 3));
+}
+
+.mc-menu-body {
+  gap: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-menu-notice {
+  margin: 0 0 calc(4px * var(--mc-ui-scale, 3));
+  color: #ffe566;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
+.mc-menu-balance,
+.mc-menu-count,
+.mc-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  margin: calc(3px * var(--mc-ui-scale, 3)) 0;
+  color: #404040;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
+.mc-menu-icons {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  margin-top: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-menu-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(2px * var(--mc-ui-scale, 3));
+  min-width: 0;
+  margin: 0;
+  padding: calc(3px * var(--mc-ui-scale, 3)) 0;
+  border: 0;
+  background: #8b8b8b;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #373737,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #ffffff;
+  color: #f4f4f4;
+  cursor: pointer;
+}
+
+.mc-menu-glyph {
+  font-size: calc(12px * var(--mc-ui-scale, 3));
+  line-height: 1;
+}
+
+.mc-menu-icon-label {
+  font-size: calc(5px * var(--mc-ui-scale, 3));
+  font-weight: 800;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.mc-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  min-height: calc(48px * var(--mc-ui-scale, 3));
+  max-height: calc(96px * var(--mc-ui-scale, 3));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mc-menu-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.mc-menu-row {
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  width: 100%;
+  min-height: calc(18px * var(--mc-ui-scale, 3));
+  margin: 0;
+  padding: 0 calc(4px * var(--mc-ui-scale, 3));
+  border: 0;
+  background: #8b8b8b;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #373737,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #ffffff;
+  color: #f4f4f4;
+  font-family: var(--font-ui);
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  text-align: left;
+}
+
+.mc-menu-row-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  margin: 0;
+  padding: calc(3px * var(--mc-ui-scale, 3)) 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.mc-menu-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-menu-row-title.is-online {
+  color: #55ff55;
+}
+
+.mc-menu-row-title.is-offline {
+  color: #a0a0a0;
+}
+
+.mc-menu-row-meta {
+  color: #d0d0d0;
+  font-size: calc(5px * var(--mc-ui-scale, 3));
+}
+
+.mc-menu-x {
+  min-width: calc(18px * var(--mc-ui-scale, 3));
+  width: calc(18px * var(--mc-ui-scale, 3));
+  padding: 0;
+}
+
+.mc-trade-top {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  align-items: start;
+}
+
+.mc-trade-grid {
+  display: grid;
+  grid-template-columns: repeat(3, var(--mc-slot, 18px));
+  grid-template-rows: repeat(2, var(--mc-slot, 18px));
+  gap: calc(2px * var(--mc-ui-scale, 3));
+}
+
+.mc-trade-swap {
+  align-self: center;
+  color: #404040;
+  font-size: calc(10px * var(--mc-ui-scale, 3));
+}
+
+.mc-trade-ready {
+  margin-top: calc(4px * var(--mc-ui-scale, 3));
+  color: #404040;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
+.mc-trade-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
 }
 
 .mc-clan-row {

@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Unified in-game menu + Friends + Trade — 2026-09-13
+
+- Ветвка `cursor/main-menu-social-a8dc`, PR #89. Не влито в `main`.
+- Одно inventory-style игровое меню (M / кнопка «Меню») — оболочка над `/spawn`, Home, Clans, Claims, Auction. Друзья и обмен — новые server-authoritative сервисы.
+- HUD справа сверху: Пауза TAB / Чат T / Меню M, одинаковые квадратные кнопки, touch. TAB/T не ломались.
+- Close везде через `closeButtonHtml()`: красный × и белая E внутри квадрата. Вложенные страницы — ←.
+- Homes max 4 в `HomeService` (`plugin-data/home/homes.json`), имя дома уникально в пределах игрока при создании через меню (`/sethome` не менялся). Friends max 50. Claims max 4 (тот же cap, что `/claim create`), rename отклоняет дубликат. Trade: 6 слотов, Ready → Accept, atomic, anti-dupe.
+- Handoff: `docs/reports/2026-09-13_main-menu-social.md`.
+- Гейты: focused 59/59; `test:server` 50/51 файлов, 511/512 тестов; единственный fail — `tick-load-flight` (~54 ms vs `< 50`), он же падает на базовом `main` `70e2afe`, то есть это лимит VM, не регрессия. Четыре typecheck, boundaries, build PASS. Live browser Anarchy QA не запускался.
+
 ## Последний проход: Crafting UI merged into main — 2026-09-13
 
 - PR #88 влит в `main` обычным `--no-ff`: merge commit `7e8b928`. История не переписывалась.

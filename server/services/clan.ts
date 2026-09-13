@@ -55,7 +55,8 @@ export type ClanView =
   | 'accept'
   | 'leave'
   | 'makeleader'
-  | 'kick';
+  | 'kick'
+  | 'mine';
 
 export type ClanScreen =
   | 'ranking'
@@ -130,6 +131,7 @@ export interface ClanSession {
   selectedMemberId?: string;
   acceptFromCard?: boolean;
   message?: string;
+  returnTo?: 'menu-clans';
 }
 
 interface ClanFile {
@@ -222,6 +224,7 @@ export class ClanService {
   private nextRequestId = 1;
   private readonly sessions = new Map<string, ClanSession>();
   private readonly locks = new Set<string>();
+  private readonly menuReturns = new Set<string>();
   private runtime: ClanRuntime = emptyRuntime();
 
   constructor(
@@ -383,6 +386,14 @@ export class ClanService {
     return [...this.requests.values()].filter((request) => request.clanId === clanId);
   }
 
+  menuNotice(playerId: string): string | undefined {
+    const clan = this.playerClan(playerId);
+    if (!clan || clan.ownerId !== playerId) return undefined;
+    const request = this.requestsForClan(clan.clanId)[0];
+    if (!request) return undefined;
+    return `${this.runtime.displayName(request.playerId)} хочет вступить в клан`;
+  }
+
   ranked(search = ''): Array<{ clan: ClanRecord; total: number; rank: number }> {
     this.purgeExpired();
     const needle = search.trim().toLowerCase();
@@ -397,14 +408,39 @@ export class ClanService {
     return rows.map((row, index) => ({ ...row, rank: index + 1 }));
   }
 
-  openRanking(playerId: string, search?: string): void {
+  takeMenuReturn(playerId: string): boolean {
+    const had = this.menuReturns.has(playerId);
+    this.menuReturns.delete(playerId);
+    return had;
+  }
+
+  markReturnToMenu(playerId: string, returnTo?: 'menu-clans'): void {
+    if (!returnTo) return;
+    this.session(playerId).returnTo = returnTo;
+  }
+
+  openRanking(playerId: string, search?: string, returnTo?: 'menu-clans'): void {
     this.purgeExpired();
     const session = this.session(playerId);
     session.screen = 'ranking';
     if (search !== undefined) session.search = search;
+    if (returnTo) session.returnTo = returnTo;
     session.selectedClanId = undefined;
     session.selectedMemberId = undefined;
     session.page = this.clampPage(session.page, this.ranked(session.search).length);
+  }
+
+  openMine(playerId: string, returnTo?: 'menu-clans'): ClanResult {
+    this.purgeExpired();
+    const clan = this.playerClan(playerId);
+    if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+    const session = this.session(playerId);
+    session.screen = 'card';
+    session.selectedClanId = clan.clanId;
+    session.selectedMemberId = undefined;
+    if (returnTo) session.returnTo = returnTo;
+    session.message = undefined;
+    return { ok: true, clan };
   }
 
   openCreate(playerId: string): ClanResult {
@@ -1065,6 +1101,7 @@ export class ClanService {
         ...(pendingClan ? { pendingRequestClanId: pendingClan.clanId, pendingRequestClanName: pendingClan.name } : {}),
       },
       ...(session.message ? { message: session.message } : {}),
+      ...(session.returnTo ? { returnTo: session.returnTo } : {}),
     };
 
     if (session.screen === 'ranking') {
@@ -1281,7 +1318,18 @@ export class ClanService {
 
   private goBack(playerId: string): void {
     const session = this.session(playerId);
+    const toMenu = (): void => {
+      this.closeSession(playerId);
+      this.menuReturns.add(playerId);
+    };
     switch (session.screen) {
+      case 'ranking':
+        if (session.returnTo === 'menu-clans') {
+          toMenu();
+          return;
+        }
+        this.closeSession(playerId);
+        return;
       case 'card':
       case 'create':
       case 'delete-confirm':
@@ -1290,7 +1338,15 @@ export class ClanService {
       case 'leave-confirm':
       case 'makeleader':
         if (session.screen === 'card') {
+          if (session.returnTo === 'menu-clans') {
+            toMenu();
+            return;
+          }
           this.openRanking(playerId);
+          return;
+        }
+        if (session.returnTo === 'menu-clans') {
+          toMenu();
           return;
         }
         this.closeSession(playerId);

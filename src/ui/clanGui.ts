@@ -55,7 +55,8 @@ export function clanJoinCaption(state: ServerClanMessage['card']): string {
   return 'Отправить запрос на вступление в клан';
 }
 
-export function showsClanBack(screen: ServerClanMessage['screen']): boolean {
+export function showsClanBack(screen: ServerClanMessage['screen'], returnTo?: ServerClanMessage['returnTo']): boolean {
+  if (returnTo === 'menu-clans' && (screen === 'ranking' || screen === 'create' || screen === 'card')) return true;
   return screen === 'card'
     || screen === 'create-confirm'
     || screen === 'invite-confirm'

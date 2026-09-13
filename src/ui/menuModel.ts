@@ -59,11 +59,12 @@ export const DESKTOP_CONTROL_SECTIONS: readonly ControlSection[] = [
       { action: 'Атаковать / разрушить', key: 'ЛКМ' },
       { action: 'Использовать / установить', key: 'ПКМ' },
       { action: 'Инвентарь', key: 'E' },
+      { action: 'Меню', key: 'M' },
       { action: 'Чат', key: 'T' },
       { action: 'Команда', key: '/' },
       { action: 'Выбросить предмет', key: 'Q' },
       { action: 'Выбрать слот', key: '1–9 / колесо' },
-      { action: 'Пауза / назад', key: 'Esc' },
+      { action: 'Пауза / назад', key: 'Tab / Esc' },
     ],
   },
   {

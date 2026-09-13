@@ -80,7 +80,21 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage } from '../../shared/protocol';
+import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage } from '../../shared/protocol';
+import {
+  formatMenuCoords,
+  keepMenuDraft,
+  menuConfirmPrompt,
+  menuFriendStatusClass,
+  menuFriendStatusLabel,
+  menuFriendTeleportVisible,
+  menuIconButton,
+  MENU_PAGE_ICONS,
+  MENU_SPAWN_LABEL,
+  menuShowsBack,
+  tradeAcceptEnabled,
+  tradeReadyLabel,
+} from './menuGui';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -175,6 +189,11 @@ export interface ClanGuiActions {
 
 export interface BuyerGuiActions {
   send(message: ClientBuyerActionMessage): void;
+  close(): void;
+}
+
+export interface MenuGuiActions {
+  send(message: ClientMenuActionMessage): void;
   close(): void;
 }
 
@@ -298,6 +317,12 @@ export class GameUI {
   private clanSearchTimer?: number;
   private buyerState?: ServerBuyerMessage;
   private buyerActions?: BuyerGuiActions;
+  private menuState?: ServerMenuMessage;
+  private menuActions?: MenuGuiActions;
+  private menuSearchTimer?: number;
+  onHudPause?: () => void;
+  onHudChat?: () => void;
+  onHudMenu?: () => void;
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -380,6 +405,29 @@ export class GameUI {
             </button>
           </aside>
         </div>
+        <div id="hud-quick" aria-label="Быстрые действия">
+          <button type="button" class="hud-quick-item" data-hud-quick="pause" aria-label="Пауза">
+            <span class="hud-quick-btn">
+              <span class="hud-quick-icon" aria-hidden="true">⏸</span>
+              <span class="hud-quick-hotkey">TAB</span>
+            </span>
+            <span class="hud-quick-label">Пауза</span>
+          </button>
+          <button type="button" class="hud-quick-item" data-hud-quick="chat" aria-label="Чат">
+            <span class="hud-quick-btn">
+              <span class="hud-quick-icon" aria-hidden="true">💬</span>
+              <span class="hud-quick-hotkey">T</span>
+            </span>
+            <span class="hud-quick-label">Чат</span>
+          </button>
+          <button type="button" class="hud-quick-item" data-hud-quick="menu" aria-label="Меню">
+            <span class="hud-quick-btn">
+              <span class="hud-quick-icon" aria-hidden="true">▦</span>
+              <span class="hud-quick-hotkey">M</span>
+            </span>
+            <span class="hud-quick-label">Меню</span>
+          </button>
+        </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>
@@ -409,6 +457,15 @@ export class GameUI {
     this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
     this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-hud-quick]')) {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        const action = button.dataset.hudQuick;
+        if (action === 'pause') this.onHudPause?.();
+        else if (action === 'chat') this.onHudChat?.();
+        else if (action === 'menu') this.onHudMenu?.();
+      });
+    }
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -1075,7 +1132,15 @@ export class GameUI {
     this.chatInput.value = '';
     this.chatHistoryIndex = -1;
     this.chatDraft = '';
-    if (!this.inventoryContext) this.setControlsSuppressed(false);
+    if (
+      !this.inventoryContext
+      && !this.isMenuOpen()
+      && !this.isAuctionOpen()
+      && !this.isClanOpen()
+      && !this.isBuyerOpen()
+    ) {
+      this.setControlsSuppressed(false);
+    }
   }
 
   clearChatDraft(): void {
@@ -1130,12 +1195,16 @@ export class GameUI {
     return this.buyerState !== undefined && this.buyerState.screen !== 'closed';
   }
 
+  isMenuOpen(): boolean {
+    return this.menuState !== undefined && this.menuState.screen !== 'closed';
+  }
+
   isAuctionTextInputFocused(): boolean {
     const el = document.activeElement;
     return el instanceof HTMLInputElement
       && this.modal !== undefined
       && this.modal.contains(el)
-      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen() || this.craftMenuOpen);
+      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen() || this.isMenuOpen() || this.craftMenuOpen);
   }
 
   isCraftMenuOpen(): boolean {
@@ -1305,6 +1374,7 @@ export class GameUI {
   }
 
   openInventory(context: InventoryContext): void {
+    this.closeMenu(false);
     this.closeInventory(false);
     this.inventoryContext = context;
     this.cursorStack = null;
@@ -1359,6 +1429,7 @@ export class GameUI {
     if (!alreadyOpen) {
       this.closeClan();
       this.closeBuyer();
+      this.closeMenu(false);
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchAuction(state);
@@ -1402,6 +1473,7 @@ export class GameUI {
     if (!alreadyOpen) {
       this.closeAuction();
       this.closeBuyer();
+      this.closeMenu(false);
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchClan(state);
@@ -1445,6 +1517,7 @@ export class GameUI {
     if (!alreadyOpen) {
       this.closeAuction();
       this.closeClan();
+      this.closeMenu(false);
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchBuyer(state);
@@ -1472,6 +1545,46 @@ export class GameUI {
       this.buyerState = undefined;
       this.setControlsSuppressed(false);
     }
+  }
+
+  openMenu(state: ServerMenuMessage, actions: MenuGuiActions): void {
+    this.menuActions = actions;
+    if (state.screen === 'closed') {
+      this.closeMenu(false);
+      return;
+    }
+    const alreadyOpen = this.isMenuOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeBuyer();
+      this.closeInventory(false);
+    }
+    this.menuState = state;
+    this.renderMenu();
+    this.setControlsSuppressed(true);
+  }
+
+  applyMenu(state: ServerMenuMessage): void {
+    if (!this.menuActions) {
+      this.menuState = state;
+      return;
+    }
+    this.openMenu(state, this.menuActions);
+  }
+
+  closeMenu(_notify = true): void {
+    if (this.menuSearchTimer !== undefined) {
+      window.clearTimeout(this.menuSearchTimer);
+      this.menuSearchTimer = undefined;
+    }
+    if (!this.menuState) return;
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = undefined;
+    this.menuState = undefined;
+    this.setControlsSuppressed(false);
   }
 
   openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
@@ -2477,6 +2590,407 @@ export class GameUI {
     return `<img class="hunger-icon" src="${import.meta.env.BASE_URL}textures/gui/hunger_${icon}.svg" alt="" draggable="false" />`;
   }
 
+  private renderMenu(): void {
+    const state = this.menuState;
+    const actions = this.menuActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureMenuInputFocus();
+    const wide = state.screen === 'main' || state.screen === 'friends' || state.screen === 'trade-session'
+      || state.screen === 'homes' || state.screen === 'claims' || state.screen === 'claim-detail';
+    const logicalWidth = state.screen === 'trade-session' ? 176 : wide ? 220 : 176;
+    const logicalHeight = state.screen === 'trade-session' ? 248
+      : state.screen === 'main' ? 168
+        : state.screen === 'friends' ? 248
+          : 220;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    const back = menuShowsBack(state.screen)
+      ? `<button type="button" class="mc-close mc-back" data-menu-action="back" aria-label="Назад">←</button>`
+      : '';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}">
+        ${back}
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest">
+          ${this.menuBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindMenuChrome();
+    this.restoreMenuInputFocus(keep);
+  }
+
+  private menuBodyHtml(state: ServerMenuMessage): string {
+    const message = state.message
+      ? `<div class="mc-ah-message" data-menu-message>${this.escape(state.message)}</div>`
+      : '<div class="mc-ah-message" data-menu-message hidden></div>';
+    if (state.screen === 'main') {
+      const notice = state.clanNotice
+        ? `<p class="mc-menu-notice">${this.escape(state.clanNotice)}</p>`
+        : '';
+      const icons = MENU_PAGE_ICONS.map((icon) => menuIconButton(icon.action, icon.label, icon.glyph)).join('');
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="main">
+        <div class="mc-label">${this.escape(state.title || 'Меню')}</div>
+        ${notice}
+        <p class="mc-menu-balance">${this.escape(state.balanceLabel ?? '')}</p>
+        <button type="button" class="mc-ah-btn" data-menu-action="spawn">${this.escape(MENU_SPAWN_LABEL)}</button>
+        <div class="mc-menu-icons">${icons}</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'homes' || state.screen === 'home-delete-confirm') {
+      if (state.screen === 'home-delete-confirm') {
+        return this.menuConfirmHtml(state, menuConfirmPrompt('home', state.confirmName ?? ''), 'confirm_delete_home', 'cancel_delete_home');
+      }
+      const homes = state.homes ?? [];
+      const rows = homes.map((home) => `
+        <div class="mc-menu-row">
+          <button type="button" class="mc-menu-row-main" data-menu-action="teleport_home" data-home-name="${this.escape(home.name)}">
+            <span class="mc-menu-row-title">${this.escape(home.name)}</span>
+            <span class="mc-menu-row-meta">${this.escape(formatMenuCoords(home.x, home.y, home.z))}</span>
+          </button>
+          <button type="button" class="mc-ah-btn mc-menu-x" data-menu-action="delete_home" data-home-name="${this.escape(home.name)}" aria-label="Удалить">X</button>
+        </div>`).join('');
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="homes">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-menu-home-name type="text" maxlength="24" placeholder="Название дома" value="${this.escape(state.homeNameText ?? '')}" autocomplete="off" spellcheck="false" /></label>
+          <button type="button" class="mc-ah-btn" data-menu-action="create_home">Добавить</button>
+        </div>
+        <div class="mc-menu-count">Мои дома (${homes.length}/${state.homeMax ?? 4}):</div>
+        <div class="mc-menu-list">${rows || '<div class="mc-ah-empty">Нет домов.</div>'}</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'friends' || state.screen === 'friend-delete-confirm') {
+      if (state.screen === 'friend-delete-confirm') {
+        return this.menuConfirmHtml(state, menuConfirmPrompt('friend', state.confirmName ?? ''), 'confirm_remove_friend', 'cancel_remove_friend');
+      }
+      const allowed = state.teleportAllowed === true;
+      const requests = (state.friendRequests ?? []).map((row) => `
+        <div class="mc-menu-row">
+          <span class="mc-menu-row-title">${this.escape(row.name)}</span>
+          <button type="button" class="mc-ah-btn" data-menu-action="accept_friend" data-player-id="${this.escape(row.playerId)}">Добавить</button>
+          <button type="button" class="mc-ah-btn" data-menu-action="reject_friend" data-player-id="${this.escape(row.playerId)}">Отклонить</button>
+        </div>`).join('');
+      const friends = (state.friends ?? []).map((row) => {
+        const tp = menuFriendTeleportVisible(row)
+          ? `<button type="button" class="mc-ah-btn" data-menu-action="teleport_friend" data-player-id="${this.escape(row.playerId)}">Телепортироваться</button>`
+          : '';
+        return `<div class="mc-menu-row">
+          <span class="mc-menu-row-title ${menuFriendStatusClass(row.online)}">${this.escape(row.name)} — ${menuFriendStatusLabel(row.online)}</span>
+          ${tp}
+          <button type="button" class="mc-ah-btn mc-menu-x" data-menu-action="remove_friend" data-player-id="${this.escape(row.playerId)}" aria-label="Удалить">X</button>
+        </div>`;
+      }).join('');
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="friends">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-menu-toggle">
+          <span>Телепортация друзей ко мне: ${allowed ? 'Разрешена' : 'Запрещена'}</span>
+          <button type="button" class="mc-ah-btn" data-menu-action="set_teleport_allowed" data-allowed="${allowed ? '0' : '1'}">${allowed ? 'Выключить' : 'Включить'}</button>
+        </div>
+        <div class="mc-menu-count">Заявки в друзья</div>
+        <div class="mc-menu-list">${requests || '<div class="mc-ah-empty">Нет заявок.</div>'}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-menu-friend-name type="text" maxlength="24" placeholder="Ник игрока" value="${this.escape(state.friendNameText ?? '')}" autocomplete="off" spellcheck="false" /></label>
+          <button type="button" class="mc-ah-btn" data-menu-action="send_friend_request">Отправить</button>
+        </div>
+        <div class="mc-menu-count">Мои друзья (${(state.friends ?? []).length}/${state.friendMax ?? 50}):</div>
+        <div class="mc-menu-list">${friends || '<div class="mc-ah-empty">Нет друзей.</div>'}</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'clans') {
+      const mineDisabled = state.inClan ? '' : ' disabled';
+      const create = state.inClan ? '' : '<button type="button" class="mc-ah-btn" data-menu-action="open_create_clan">Создать клан</button>';
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="clans">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn"${mineDisabled} data-menu-action="open_my_clan">Мой клан</button>
+          <button type="button" class="mc-ah-btn" data-menu-action="open_clan_list">Список кланов</button>
+          ${create}
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'claims') {
+      const claims = state.claims ?? [];
+      const rows = claims.map((claim) => `
+        <button type="button" class="mc-menu-row" data-menu-action="open_claim" data-claim-id="${this.escape(claim.id)}">
+          <span class="mc-menu-row-title">${this.escape(claim.name)}</span>
+          <span class="mc-menu-row-meta">${this.escape(formatMenuCoords(claim.x, claim.y, claim.z))}</span>
+        </button>`).join('');
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="claims">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-menu-count">Ваши приваты (${claims.length}/${state.claimMax ?? 4}):</div>
+        <div class="mc-menu-list">${rows || '<div class="mc-ah-empty">Нет приватов.</div>'}</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'claim-detail' || state.screen === 'claim-delete-confirm') {
+      if (state.screen === 'claim-delete-confirm') {
+        return this.menuConfirmHtml(state, menuConfirmPrompt('claim', state.confirmName ?? state.claim?.name ?? ''), 'confirm_delete_claim', 'cancel_delete_claim');
+      }
+      const claim = state.claim;
+      const pvp = claim?.pvp === true;
+      const members = (claim?.members ?? []).map((name) => `
+        <div class="mc-menu-row">
+          <span class="mc-menu-row-title">${this.escape(name)}</span>
+          <button type="button" class="mc-ah-btn mc-menu-x" data-menu-action="remove_claim_member" data-member-name="${this.escape(name)}" aria-label="Удалить">X</button>
+        </div>`).join('');
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="claim-detail">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-menu-claim-name type="text" maxlength="32" placeholder="Название привата" value="${this.escape(state.claimNameText ?? claim?.name ?? '')}" autocomplete="off" spellcheck="false" /></label>
+          <button type="button" class="mc-ah-btn" data-menu-action="save_claim_name">Сохранить</button>
+        </div>
+        <div class="mc-menu-toggle">
+          <span>PVP в привате: ${pvp ? 'Включено' : 'Выключено'}</span>
+          <button type="button" class="mc-ah-btn" data-menu-action="set_claim_pvp" data-pvp="${pvp ? '0' : '1'}">${pvp ? 'Выключить' : 'Включить'}</button>
+        </div>
+        <div class="mc-menu-count">Игроки в привате:</div>
+        <div class="mc-menu-list">${members || '<div class="mc-ah-empty">Нет игроков.</div>'}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-menu-claim-member type="text" maxlength="24" placeholder="Ник игрока" value="${this.escape(state.claimMemberText ?? '')}" autocomplete="off" spellcheck="false" /></label>
+          <button type="button" class="mc-ah-btn" data-menu-action="add_claim_member">Добавить</button>
+        </div>
+        <button type="button" class="mc-ah-btn" data-menu-action="delete_claim">Удалить приват</button>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'trade') {
+      const incoming = (state.incomingTrades ?? []).map((row) => `
+        <div class="mc-menu-row">
+          <span class="mc-menu-row-title">${this.escape(row.name)}</span>
+          <button type="button" class="mc-ah-btn" data-menu-action="accept_trade_invite" data-player-id="${this.escape(row.playerId)}">Принять</button>
+          <button type="button" class="mc-ah-btn" data-menu-action="reject_trade_invite" data-player-id="${this.escape(row.playerId)}">Отклонить</button>
+        </div>`).join('');
+      const outgoing = (state.outgoingTrades ?? []).map((row) => `
+        <div class="mc-menu-row"><span class="mc-menu-row-title">${this.escape(row.name)}</span></div>`).join('');
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="trade">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-menu-count">Вам предлагают обмен:</div>
+        <div class="mc-menu-list">${incoming || '<div class="mc-ah-empty">Нет входящих предложений.</div>'}</div>
+        <div class="mc-menu-count">Запросы на обмен:</div>
+        <div class="mc-menu-list">${outgoing || '<div class="mc-ah-empty">Нет исходящих запросов.</div>'}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-menu-trade-name type="text" maxlength="24" placeholder="Ник игрока" value="${this.escape(state.tradeNameText ?? '')}" autocomplete="off" spellcheck="false" /></label>
+          <button type="button" class="mc-ah-btn" data-menu-action="send_trade">Обмен</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'trade-session') {
+      return this.tradeSessionHtml(state, message);
+    }
+    if (state.screen === 'auction') {
+      return `<div class="mc-ah-body mc-menu-body" data-menu-screen="auction">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-menu-action="open_auction_browse">Открыть аукцион</button>
+          <button type="button" class="mc-ah-btn" data-menu-action="open_auction_list">Мои предметы на аукционе</button>
+          <button type="button" class="mc-ah-btn" data-menu-action="open_auction_sell">Выставить предметы на аукцион</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    return `<div class="mc-ah-body mc-menu-body" data-menu-screen="${this.escape(state.screen)}">
+      <div class="mc-label">${this.escape(state.title)}</div>
+      ${message}
+    </div>`;
+  }
+
+  private menuConfirmHtml(state: ServerMenuMessage, prompt: string, ok: string, cancel: string): string {
+    return `<div class="mc-ah-body mc-menu-body" data-menu-screen="${this.escape(state.screen)}">
+      <div class="mc-label">${this.escape(state.title)}</div>
+      <p class="mc-ah-prompt">${this.escape(prompt)}</p>
+      <div class="mc-ah-actions">
+        <button type="button" class="mc-ah-btn" data-menu-action="${ok}">Удалить</button>
+        <button type="button" class="mc-ah-btn" data-menu-action="${cancel}">Отмена</button>
+      </div>
+    </div>`;
+  }
+
+  private tradeSessionHtml(state: ServerMenuMessage, message: string): string {
+    const self = state.tradeSelf;
+    const partner = state.tradePartner;
+    const labels = tradeReadyLabel(self?.ready === true, self?.accepted === true, partner?.ready === true, partner?.accepted === true);
+    const acceptOn = tradeAcceptEnabled(self?.ready === true, partner?.ready === true);
+    const selfSlots = this.tradeOfferGrid(self?.slots, 'self');
+    const partnerSlots = this.tradeOfferGrid(partner?.slots, 'partner');
+    const selected = state.selectedSlot;
+    const slots = state.inventorySlots ?? [];
+    const cell = (index: number) => {
+      const stack = this.auctionStack(slots[index]);
+      return `<div data-menu-inv-slot="${index}">${this.slotHtml(stack, `trade-inv-${index}`, selected === index)}</div>`;
+    };
+    const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+    const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+    return `<div class="mc-ah-body mc-menu-body mc-trade-body" data-menu-screen="trade-session">
+      <div class="mc-trade-top">
+        <div class="mc-trade-side">
+          <div class="mc-label">Вы отдаёте</div>
+          <div class="mc-trade-grid">${selfSlots}</div>
+          <label class="mc-ah-field">Монет
+            <input data-menu-trade-money type="text" inputmode="numeric" maxlength="9" value="${self?.money ?? 0}" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="mc-menu-balance">Баланс: ${this.escape(state.balanceLabel ?? '')}</div>
+          <div class="mc-trade-ready">${this.escape(labels.self)}</div>
+        </div>
+        <div class="mc-trade-swap" aria-hidden="true">⇄</div>
+        <div class="mc-trade-side">
+          <div class="mc-label">${this.escape(state.tradePartnerName ?? '')}</div>
+          <div class="mc-trade-grid">${partnerSlots}</div>
+          <div class="mc-menu-balance">Монет: ${partner?.money ?? 0}</div>
+          <div class="mc-trade-ready">${this.escape(labels.partner)}</div>
+        </div>
+      </div>
+      <div class="mc-ah-actions mc-trade-actions">
+        <button type="button" class="mc-ah-btn" data-menu-action="ready_trade">Готов</button>
+        <button type="button" class="mc-ah-btn" data-menu-action="accept_trade"${acceptOn ? '' : ' disabled'}>Принять обмен</button>
+        <button type="button" class="mc-ah-btn" data-menu-action="cancel_trade">Отклонить</button>
+      </div>
+      <div class="mc-grid mc-grid-9">${main}</div>
+      <div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>
+      ${message}
+    </div>`;
+  }
+
+  private tradeOfferGrid(slots: readonly unknown[] | undefined, side: 'self' | 'partner'): string {
+    return Array.from({ length: 6 }, (_unused, index) => {
+      const stack = this.auctionStack(slots?.[index]);
+      const attr = side === 'self' ? ` data-trade-offer-slot="${index}"` : ' data-trade-partner-slot';
+      return `<div${attr}>${this.slotHtml(stack, `trade-${side}-${index}`)}</div>`;
+    }).join('');
+  }
+
+  private bindMenuChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.menuActions?.close());
+    this.modal!.querySelectorAll('.mc-menu-list').forEach((list) => {
+      list.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
+    });
+    const bindText = (selector: string, action: ClientMenuActionMessage['action'], extra: (value: string) => Partial<ClientMenuActionMessage> = (name) => ({ name })) => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => {
+        window.clearTimeout(this.menuSearchTimer);
+        this.menuSearchTimer = window.setTimeout(() => {
+          this.menuActions?.send({ type: 'menu_action', action, ...extra(input.value) });
+        }, 160);
+      });
+    };
+    bindText('[data-menu-home-name]', 'set_home_name');
+    bindText('[data-menu-friend-name]', 'set_friend_name');
+    bindText('[data-menu-claim-name]', 'set_claim_name');
+    bindText('[data-menu-claim-member]', 'set_claim_member_name');
+    bindText('[data-menu-trade-name]', 'set_trade_name');
+    const claimName = this.modal!.querySelector<HTMLInputElement>('[data-menu-claim-name]');
+    claimName?.addEventListener('change', () => {
+      this.menuActions?.send({ type: 'menu_action', action: 'save_claim_name', name: claimName.value });
+    });
+    const money = this.modal!.querySelector<HTMLInputElement>('[data-menu-trade-money]');
+    money?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    money?.addEventListener('keydown', (event) => event.stopPropagation());
+    money?.addEventListener('keyup', (event) => event.stopPropagation());
+    money?.addEventListener('change', () => {
+      const digits = money.value.replace(/[^\d]/g, '');
+      if (money.value !== digits) money.value = digits;
+      this.menuActions?.send({ type: 'menu_action', action: 'set_trade_money', money: digits });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const current = this.menuState;
+      const actions = this.menuActions;
+      if (!current || !actions) return;
+      const target = event.target as HTMLElement;
+      const inv = target.closest<HTMLElement>('[data-menu-inv-slot]');
+      if (inv?.dataset.menuInvSlot !== undefined) {
+        actions.send({ type: 'menu_action', action: 'select_inventory_slot', slot: Number(inv.dataset.menuInvSlot) });
+        return;
+      }
+      const offer = target.closest<HTMLElement>('[data-trade-offer-slot]');
+      if (offer?.dataset.tradeOfferSlot !== undefined) {
+        actions.send({ type: 'menu_action', action: 'click_offer_slot', slot: Number(offer.dataset.tradeOfferSlot) });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-menu-action]');
+      const kind = button?.dataset.menuAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      if (kind === 'create_home') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-home-name]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'create_home', name });
+        return;
+      }
+      if (kind === 'save_claim_name') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-claim-name]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'save_claim_name', name });
+        return;
+      }
+      if (kind === 'add_claim_member') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-claim-member]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'add_claim_member', name });
+        return;
+      }
+      if (kind === 'send_friend_request') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-friend-name]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'send_friend_request', name });
+        return;
+      }
+      if (kind === 'send_trade') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-trade-name]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'send_trade', name });
+        return;
+      }
+      actions.send({
+        type: 'menu_action',
+        action: kind as ClientMenuActionMessage['action'],
+        ...(button?.dataset.homeName ? { homeName: button.dataset.homeName, name: button.dataset.homeName } : {}),
+        ...(button?.dataset.playerId ? { playerId: button.dataset.playerId } : {}),
+        ...(button?.dataset.claimId ? { claimId: button.dataset.claimId } : {}),
+        ...(button?.dataset.memberName ? { name: button.dataset.memberName } : {}),
+        ...(button?.dataset.allowed !== undefined ? { allowed: button.dataset.allowed === '1' } : {}),
+        ...(button?.dataset.pvp !== undefined ? { pvp: button.dataset.pvp === '1' } : {}),
+      });
+    });
+  }
+
+  private captureMenuInputFocus(): { kind: string; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const kind = el.hasAttribute('data-menu-home-name') ? 'home'
+      : el.hasAttribute('data-menu-friend-name') ? 'friend'
+        : el.hasAttribute('data-menu-claim-name') ? 'claim'
+          : el.hasAttribute('data-menu-claim-member') ? 'member'
+            : el.hasAttribute('data-menu-trade-name') ? 'trade'
+              : el.hasAttribute('data-menu-trade-money') ? 'money'
+                : undefined;
+    if (!kind) return undefined;
+    return { kind, value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+  }
+
+  private restoreMenuInputFocus(keep: ReturnType<GameUI['captureMenuInputFocus']>): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'home' ? '[data-menu-home-name]'
+      : keep.kind === 'friend' ? '[data-menu-friend-name]'
+        : keep.kind === 'claim' ? '[data-menu-claim-name]'
+          : keep.kind === 'member' ? '[data-menu-claim-member]'
+            : keep.kind === 'trade' ? '[data-menu-trade-name]'
+              : '[data-menu-trade-money]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    if (!keepMenuDraft(document.activeElement, input)) input.value = keep.value;
+    input.focus();
+    input.setSelectionRange(keep.start, keep.end);
+  }
+
   private closeButtonHtml(): string {
     return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
       + `<span class="mc-close-x" aria-hidden="true">×</span>`
@@ -2907,7 +3421,7 @@ export class GameUI {
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
-    const back = showsClanBack(state.screen)
+    const back = showsClanBack(state.screen, state.returnTo)
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
     this.modal.innerHTML = `

@@ -21,6 +21,7 @@ export type ClaimFlagMap = Partial<Record<ClaimFlag, boolean>>;
 export const CLAIM_PRIORITY_MIN = -1_000_000;
 export const CLAIM_PRIORITY_MAX = 1_000_000;
 export const CLAIM_PRIORITY_DEFAULT = 0;
+export { CLAIM_MAX_OWNED } from '../../shared/menu';
 
 export const DEFAULT_CLAIM_FLAGS: Record<ClaimFlag, boolean> = {
   pvp: false,
