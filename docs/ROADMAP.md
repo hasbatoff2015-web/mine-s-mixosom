@@ -3,7 +3,8 @@
 ## 2026-09-13: Crafting UI UX patch
 
 - [x] Square close X with E caption under the button, not inside it.
-- [x] Craftable-now items sort first; list re-sorts after inventory changes.
+- [x] Craftable-now items first, then locked recipes, then items with no recipe; list re-sorts after inventory changes.
+- [x] Lighter craft-menu search field (`#8b8b8b`) with readable text/placeholder.
 - [x] Compact inventory «Крафт» button; craft panel width 256 so the last column fits; hidden scrollbar with wheel/touch scrolling.
 
 ## 2026-09-12: Crafting UI overhaul

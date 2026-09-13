@@ -1233,7 +1233,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
 | `tests/crafting.test.ts` | 12 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
-| `tests/crafting-catalog.test.ts` | 6 | All obtainable items, uncraftable present, plank/tool/armor/TNT order, craftable-first sort after inventory changes, name search, availability and ingredient have/need |
+| `tests/crafting-catalog.test.ts` | 6 | All obtainable items, uncraftable last, plank/tool/armor/TNT order, available/missing/no-recipe bands after inventory changes, name search, availability and ingredient have/need |
 | `tests/crafting-once.test.ts` | 8 | One-craft output count, repeat crafts, missing/unknown no-op, full-inventory atomicity, remainders, `craft_recipe` ignores forged count |
 | `tests/crafting-ui.test.ts` | 7 | Survival CRAFT button, no 2×2/book, craft menu chrome, search focus helper, X/E close, E under X, clan back and chat X unchanged |
 | `tests/server/craft-recipe.test.ts` | 3 | Protocol recipeId-only, server one-craft + availability, full inventory does not consume |

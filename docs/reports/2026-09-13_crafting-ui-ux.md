@@ -13,6 +13,7 @@ UI-only patch on `cursor/crafting-ui-a8dc`. Recipes, `craft_recipe`, and invento
 - Close control is a wrap: square `.mc-close` (red ×) + `.mc-close-hotkey` **E** under it. The caption no longer stretches the button. Clan ← still has no E.
 - `craftCatalogEntries` sorts **available → has recipe but missing ingredients → no recipe**. Uncraftable items stay at the absolute end. Recomputed on every menu render/craft.
 - Inventory CRAFT button is 32×32 logical (was 64). Label `Крафт` (no language switcher in GameUI; item i18n is display names only).
+- Craft search field uses slot-gray `#8b8b8b` with dark text and a readable placeholder (was `#2c2c2c`).
 - `.mc-panel.mc-craft-panel` is 256 logical px to match `MC_CRAFT_MENU_WIDTH`. Six 18px columns (108) fit in the list inner width (148).
 - List scrollbar hidden (`scrollbar-width: none` / webkit none); `overflow-y: auto`, `touch-action: pan-y`, wheel `stopPropagation`.
 
