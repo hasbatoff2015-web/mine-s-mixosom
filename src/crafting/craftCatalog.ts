@@ -59,9 +59,20 @@ export function compareCraftCatalogItems(a: ItemDefinition, b: ItemDefinition): 
   return a.name.localeCompare(b.name, 'ru') || a.id.localeCompare(b.id);
 }
 
-/** Craftable-now items first; within each band keep the logical group order. */
+export type CraftCatalogBand = 'available' | 'missing' | 'uncraftable';
+
+export function craftCatalogBand(entry: CraftCatalogEntry): CraftCatalogBand {
+  if (entry.craftable) return 'available';
+  if (entry.recipeId) return 'missing';
+  return 'uncraftable';
+}
+
+const BAND_ORDER: readonly CraftCatalogBand[] = ['available', 'missing', 'uncraftable'];
+
+/** Available → has recipe but missing ingredients → no recipe. Groups stay inside each band. */
 export function compareCraftCatalogEntries(a: CraftCatalogEntry, b: CraftCatalogEntry): number {
-  if (a.craftable !== b.craftable) return a.craftable ? -1 : 1;
+  const band = BAND_ORDER.indexOf(craftCatalogBand(a)) - BAND_ORDER.indexOf(craftCatalogBand(b));
+  if (band !== 0) return band;
   return compareCraftCatalogItems(getItemDefinition(a.itemId), getItemDefinition(b.itemId));
 }
 

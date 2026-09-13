@@ -3,6 +3,7 @@ import {
   CRAFTING_RECIPES,
   CRAFT_UNCRAFTABLE_HINT,
   compareCraftCatalogItems,
+  craftCatalogBand,
   craftCatalogEntries,
   craftCatalogGroup,
   craftIngredientLines,
@@ -50,31 +51,47 @@ describe('craft catalog', () => {
     expect(items.some((item) => item.id === 'iron_chestplate' && craftCatalogGroup(item) === 'armor')).toBe(true);
   });
 
-  it('puts currently craftable items first and re-sorts after inventory changes', () => {
+  it('puts currently craftable items first, locked recipes next, and items without a recipe last', () => {
     const inventory = new Inventory();
     inventory.addItem('oak_log', 1);
     inventory.addItem('cobblestone', 3);
     inventory.addItem('stick', 2);
     const first = craftCatalogEntries(inventory);
-    const craftable = first.filter((entry) => entry.craftable);
-    const rest = first.filter((entry) => !entry.craftable);
-    expect(craftable.length).toBeGreaterThan(0);
-    expect(first.slice(0, craftable.length).every((entry) => entry.craftable)).toBe(true);
-    expect(first.slice(craftable.length).every((entry) => !entry.craftable)).toBe(true);
-    expect(craftable.some((entry) => entry.itemId === 'oak_planks')).toBe(true);
-    expect(craftable.some((entry) => entry.itemId === 'stone_pickaxe')).toBe(true);
-    expect(rest.some((entry) => entry.itemId === 'iron_pickaxe')).toBe(true);
-    expect(rest.some((entry) => entry.itemId === 'tnt')).toBe(true);
-    const craftableRanks = craftable.map((entry) => GROUP_ORDER.indexOf(craftCatalogGroup(getItemDefinition(entry.itemId))));
-    for (let index = 1; index < craftableRanks.length; index += 1) {
-      expect(craftableRanks[index]!).toBeGreaterThanOrEqual(craftableRanks[index - 1]!);
+    const available = first.filter((entry) => craftCatalogBand(entry) === 'available');
+    const missing = first.filter((entry) => craftCatalogBand(entry) === 'missing');
+    const uncraftable = first.filter((entry) => craftCatalogBand(entry) === 'uncraftable');
+    expect(available.length).toBeGreaterThan(0);
+    expect(missing.length).toBeGreaterThan(0);
+    expect(uncraftable.length).toBeGreaterThan(0);
+    expect(first.slice(0, available.length).every((entry) => craftCatalogBand(entry) === 'available')).toBe(true);
+    expect(first.slice(available.length, available.length + missing.length)
+      .every((entry) => craftCatalogBand(entry) === 'missing')).toBe(true);
+    expect(first.slice(available.length + missing.length)
+      .every((entry) => craftCatalogBand(entry) === 'uncraftable')).toBe(true);
+    expect(available.some((entry) => entry.itemId === 'oak_planks')).toBe(true);
+    expect(available.some((entry) => entry.itemId === 'stone_pickaxe')).toBe(true);
+    expect(missing.some((entry) => entry.itemId === 'iron_pickaxe')).toBe(true);
+    expect(missing.some((entry) => entry.itemId === 'tnt')).toBe(true);
+    expect(uncraftable.some((entry) => entry.itemId === 'dirt')).toBe(true);
+    expect(first.findIndex((entry) => entry.itemId === 'dirt'))
+      .toBeGreaterThan(first.findIndex((entry) => entry.itemId === 'iron_pickaxe'));
+    const availableRanks = available.map((entry) => GROUP_ORDER.indexOf(craftCatalogGroup(getItemDefinition(entry.itemId))));
+    for (let index = 1; index < availableRanks.length; index += 1) {
+      expect(availableRanks[index]!).toBeGreaterThanOrEqual(availableRanks[index - 1]!);
     }
     expect(craftOnceByRecipeId(inventory, 'oak_planks_from_log').ok).toBe(true);
     const after = craftCatalogEntries(inventory);
     expect(after.find((entry) => entry.itemId === 'oak_planks')?.craftable).toBe(false);
-    const afterCraftable = after.filter((entry) => entry.craftable);
-    expect(after.slice(0, afterCraftable.length).every((entry) => entry.craftable)).toBe(true);
-    expect(after.findIndex((entry) => entry.itemId === 'oak_planks')).toBeGreaterThanOrEqual(afterCraftable.length);
+    expect(craftCatalogBand(after.find((entry) => entry.itemId === 'oak_planks')!)).toBe('missing');
+    const afterAvailable = after.filter((entry) => craftCatalogBand(entry) === 'available');
+    const afterMissingStart = afterAvailable.length;
+    const afterUncraftableStart = afterMissingStart
+      + after.filter((entry) => craftCatalogBand(entry) === 'missing').length;
+    const oakIndex = after.findIndex((entry) => entry.itemId === 'oak_planks');
+    const dirtIndex = after.findIndex((entry) => entry.itemId === 'dirt');
+    expect(oakIndex).toBeGreaterThanOrEqual(afterMissingStart);
+    expect(oakIndex).toBeLessThan(afterUncraftableStart);
+    expect(dirtIndex).toBeGreaterThanOrEqual(afterUncraftableStart);
   });
 
   it('keeps the same relative order for equal groups by Russian name', () => {
