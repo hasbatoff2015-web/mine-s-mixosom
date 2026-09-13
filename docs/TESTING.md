@@ -1,5 +1,9 @@
 # Тестирование
 
+## 2026-09-13 Crafting UI merged into main
+
+Report: `reports/2026-09-13_crafting-ui-main-merge.md`. Merge commit `7e8b928`. No extra test run on the merge commit itself; feature-branch gates are in the crafting UI reports.
+
 ## 2026-09-13 Close X inner E
 
 Report: `reports/2026-09-13_close-button-inner-e.md`.

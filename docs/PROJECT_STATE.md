@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: Crafting UI merged into main — 2026-09-13
+
+- PR #88 влит в `main` обычным `--no-ff`: merge commit `7e8b928`. История не переписывалась.
+- Перед merge `origin/main` был на `1c802ab` (Chat channels); новых commit'ов товарища не было, extra merge main → feature не понадобился, конфликтов не было.
+- Сохранены Chat / Buyer / Auction House / Economy / Worldgen V2 / Clan вместе с dedicated craft menu.
+- Handoff: `docs/reports/2026-09-13_crafting-ui-main-merge.md`.
+
 ## Последний проход: Close X inner E — 2026-09-13
 
 - Кнопка закрытия inventory-style UI чуть крупнее (20 logical px), квадратная.

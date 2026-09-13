@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-13: Merge Crafting UI into main
+
+- [x] Fetch current `origin/main`; no teammate commits after Chat merge `1c802ab`.
+- [x] Merge `--no-ff` `cursor/crafting-ui-a8dc` into `main` (`7e8b928`) without rebase/squash/force push.
+- [x] Keep Chat / Buyer / Auction House / Economy / Worldgen V2 / Clan together with the dedicated craft menu.
+
 ## 2026-09-13: Close X inner E
 
 - [x] Inventory-style close is a slightly larger square: large red ×, small white E in the bottom-right **inside** the button.
