@@ -1062,6 +1062,53 @@ button {
   backdrop-filter: blur(3px);
 }
 
+.book-backdrop { z-index: 23; }
+.book-panel {
+  width: min(440px, 94vw);
+  max-height: min(90vh, 680px);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  overflow: auto;
+  border: 2px solid #8d744b;
+  border-radius: 12px;
+  background: #e8dfbc;
+  color: #392b20;
+  box-shadow: 0 18px 55px #0009;
+  font: 16px/1.4 var(--font-ui);
+}
+.book-panel h2 { margin: 0; text-align: center; }
+.book-panel label { display: grid; gap: 4px; }
+.book-panel input, .book-panel textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #8d744b;
+  background: #fff8df;
+  color: #292018;
+  font: inherit;
+  user-select: text;
+}
+.book-page { min-height: 220px; resize: vertical; white-space: pre-wrap; }
+.book-navigation, .book-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.book-panel button { min-height: 36px; padding: 6px 12px; cursor: pointer; }
+.sign-backdrop { z-index: 23; }
+.sign-panel {
+  width: min(400px, 94vw);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 2px solid #654321;
+  border-radius: 9px;
+  background: #b8874c;
+  color: #201309;
+  font: 16px var(--font-ui);
+}
+.sign-panel h2 { margin: 0; text-align: center; }
+.sign-lines { display: grid; gap: 5px; }
+.sign-lines input { box-sizing: border-box; width: 100%; padding: 7px; text-align: center; font: inherit; }
+.sign-panel button { min-height: 36px; padding: 6px 12px; cursor: pointer; }
+
 .inventory-window {
   position: relative;
   width: min(760px, 95vw);

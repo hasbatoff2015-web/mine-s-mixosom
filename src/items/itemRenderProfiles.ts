@@ -159,6 +159,8 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'fire':
     case 'wire':
     case 'farmland':
+    case 'bed':
+    case 'sign':
       return 'generated';
     case 'button':
     case 'pressure_plate':

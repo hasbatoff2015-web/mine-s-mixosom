@@ -413,6 +413,15 @@ export function selectionBoxesForBlock(
       return selectionBoxesFromLocal(x, y, z, [{
         minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 15 / 16, maxZ: 1,
       }]);
+    case 'bed':
+      return selectionBoxesFromLocal(x, y, z, [{
+        minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1,
+      }]);
+    case 'sign':
+      return selectionBoxesFromLocal(x, y, z, [{
+        minX: 0.05, minY: state?.attachment === 'wall' ? 0.28 : 0,
+        minZ: 0.05, maxX: 0.95, maxY: 0.92, maxZ: 0.95,
+      }]);
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }

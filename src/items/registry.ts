@@ -66,13 +66,13 @@ function food(
   id: string,
   nutrition: number,
   saturation: number,
-  extra: { alwaysEdible?: boolean; returnsItem?: string; effects?: FoodItemDefinition['food']['effects'] } = {},
+  extra: { alwaysEdible?: boolean; returnsItem?: string; effects?: FoodItemDefinition['food']['effects']; clearsEffects?: boolean; maxStack?: number } = {},
 ): FoodItemDefinition {
   return Object.freeze({
     id,
     name: requiredDisplayName(id),
     kind: 'food',
-    maxStack: 64,
+    maxStack: extra.maxStack ?? 64,
     texture: `item/${id}`,
     food: Object.freeze({
       nutrition,
@@ -80,6 +80,7 @@ function food(
       ...(extra.alwaysEdible ? { alwaysEdible: true } : {}),
       ...(extra.returnsItem ? { returnsItem: extra.returnsItem } : {}),
       ...(extra.effects ? { effects: extra.effects } : {}),
+      ...(extra.clearsEffects ? { clearsEffects: true } : {}),
     }),
   });
 }
@@ -230,9 +231,12 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.RedstoneDust, { placesBlockId: BlockId.RedstoneWire }),
   resource(ItemId.Flint), resource(ItemId.ClayBall), resource(ItemId.Brick),
   resource(ItemId.String), resource(ItemId.Feather), resource(ItemId.Leather),
-  resource(ItemId.Gunpowder), resource(ItemId.Book),
+  resource(ItemId.Gunpowder), resource(ItemId.Book), resource(ItemId.Paper),
+  resource(ItemId.FireworkRocket),
   resource(ItemId.Arrow, { tags: ['arrow'] }),
   resource(ItemId.FireArrow, { tags: ['arrow'] }),
+  resource(ItemId.VHArrow, { tags: ['arrow'] }),
+  resource(ItemId.TotemOfUndying, { maxStack: 1 }),
   resource(ItemId.FlintAndSteel, { durability: 64 }),
   resource(ItemId.GlassBottle),
   resource(ItemId.Bucket, { maxStack: 16 }),
@@ -245,6 +249,7 @@ const resources: readonly ItemDefinition[] = [
 ];
 
 const foods: readonly ItemDefinition[] = [
+  food(ItemId.MilkBucket, 0, 0, { maxStack: 1, alwaysEdible: true, returnsItem: ItemId.Bucket, clearsEffects: true }),
   food(ItemId.Apple, 4, 2.4),
   food(ItemId.Bread, 5, 6),
   food(ItemId.Carrot, 3, 3.6),

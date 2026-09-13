@@ -67,6 +67,8 @@ const blocks = {
   torch: 'torch_on.png',
   ladder: 'ladder.png',
   white_bed: 'wool_colored_white.png',
+  sugar_cane: 'reeds.png',
+  oak_sign: 'planks_oak.png',
   cactus: 'cactus_side.png',
   cactus_top: 'cactus_top.png',
   oak_door: 'door_wood_lower.png',
@@ -128,7 +130,10 @@ const items = {
   iron_ingot: 'iron_ingot.png', gold_ingot: 'gold_ingot.png', diamond: 'diamond.png',
   redstone_dust: 'redstone_dust.png', flint: 'flint.png', clay_ball: 'clay_ball.png',
   brick: 'brick.png', string: 'string.png', feather: 'feather.png', leather: 'leather.png',
-  gunpowder: 'gunpowder.png', book: 'book_normal.png', arrow: 'arrow.png',
+  gunpowder: 'gunpowder.png', book: 'book_normal.png', paper: 'paper.png',
+  firework_rocket: 'fireworks.png', arrow: 'arrow.png', vh_arrow: 'spectral_arrow.png',
+  totem_of_undying: 'totem.png', milk_bucket: 'bucket_milk.png',
+  sugar_cane: 'reeds.png', oak_sign: 'sign.png',
   apple: 'apple.png', bread: 'bread.png', beef: 'beef_raw.png', cooked_beef: 'beef_cooked.png',
   porkchop: 'porkchop_raw.png', cooked_porkchop: 'porkchop_cooked.png',
   chicken: 'chicken_raw.png', cooked_chicken: 'chicken_cooked.png', golden_apple: 'apple_golden.png',
@@ -170,6 +175,8 @@ for (const [target, source] of Object.entries(blocks)) copies.push([join('blocks
 for (const [target, source] of Object.entries(items)) copies.push([join('items', source), join('item', `${target}.png`)]);
 for (const [target, source] of Object.entries(entities)) copies.push([join('entity', source), join('entity', `${target}.png`)]);
 copies.push([join('entity', 'chest', 'normal.png'), join('entity', 'chest', 'normal.png')]);
+copies.push([join('entity', 'bed', 'white.png'), join('entity', 'bed', 'white.png')]);
+copies.push([join('entity', 'sign.png'), join('entity', 'sign.png')]);
 // Portal chest uses an authored Frontier texture (`entity/chest/portal.png`), not a Minecraft Ender Chest sheet.
 copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);

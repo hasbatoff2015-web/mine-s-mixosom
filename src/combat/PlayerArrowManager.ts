@@ -27,10 +27,13 @@ export interface PlayerArrow {
   inGround: boolean;
   embedded?: EmbeddedArrowState;
   flaming: boolean;
+  kind: ArrowKind;
   pickupDelay: number;
   /** Historical player timeline used only for player collision; blocks stay current. */
   playerTimelineTick?: number;
 }
+
+export type ArrowKind = 'normal' | 'fire' | 'vh';
 
 export interface ArrowPlayerTarget {
   readonly id: string;
@@ -46,6 +49,7 @@ export interface ArrowTickOptions {
     flaming: boolean,
     position: Vec3,
     attackerId?: string,
+    kind?: ArrowKind,
   ) => void;
 }
 
@@ -120,6 +124,7 @@ export class PlayerArrowManager {
     ownerId?: string,
     spread?: number,
     playerTimelineTick?: number,
+    kind: ArrowKind = flaming ? 'fire' : 'normal',
   ): string {
     if (this.arrows.length >= 48) this.remove(0);
     const originVec = new Vec3(origin.x, origin.y, origin.z);
@@ -142,6 +147,7 @@ export class PlayerArrowManager {
       critical,
       inGround: false,
       flaming,
+      kind,
       pickupDelay: ARROW_PICKUP_DELAY_SECONDS,
       ...(playerTimelineTick !== undefined ? { playerTimelineTick } : {}),
     });
@@ -158,7 +164,7 @@ export class PlayerArrowManager {
     vy: number,
     vz: number,
     flaming: boolean,
-    options?: { readonly snapVisual?: boolean },
+    options?: { readonly snapVisual?: boolean; readonly kind?: ArrowKind },
   ): void {
     const existing = this.arrows.find((arrow) => arrow.id === id);
     if (existing) {
@@ -166,11 +172,12 @@ export class PlayerArrowManager {
       existing.position.set(x, y, z);
       existing.velocity.set(vx, vy, vz);
       existing.flaming = flaming;
+      existing.kind = options?.kind ?? (flaming ? 'fire' : 'normal');
       if (options?.snapVisual !== false) this.syncArrowVisual(existing);
       return;
     }
     const speed = Math.hypot(vx, vy, vz) || 1;
-    this.spawn(new Vec3(x, y, z), new Vec3(vx, vy, vz), speed, 0, false, flaming, id);
+    this.spawn(new Vec3(x, y, z), new Vec3(vx, vy, vz), speed, 0, false, flaming, id, undefined, undefined, undefined, options?.kind);
     const created = this.arrows[this.arrows.length - 1];
     if (created && created.id === id) {
       created.velocity.set(vx, vy, vz);
@@ -283,6 +290,7 @@ export class PlayerArrowManager {
           arrow.flaming,
           arrow.position,
           arrow.ownerId,
+          arrow.kind,
         );
         this.remove(index);
         return true;
@@ -384,7 +392,7 @@ export class PlayerArrowManager {
         collected += 1;
         continue;
       }
-      const pickupItemId = arrow.flaming ? ItemId.FireArrow : ItemId.Arrow;
+      const pickupItemId = arrow.kind === 'vh' ? ItemId.VHArrow : arrow.kind === 'fire' ? ItemId.FireArrow : ItemId.Arrow;
       if (options.addItem(pickupItemId, 1) !== 0) continue;
       this.remove(index);
       collected += 1;

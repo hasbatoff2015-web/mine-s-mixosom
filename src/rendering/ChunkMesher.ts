@@ -516,6 +516,8 @@ export class ChunkMesher {
       case 'lantern': return this.addLantern(buffers, definition, state, world, x, y, z);
       case 'chain': return this.addChain(buffers, definition, world, x, y, z);
       case 'farmland': return this.addFarmland(buffers, definition, state, world, x, y, z);
+      case 'bed': return this.addBed(buffers, definition, state, world, x, y, z);
+      case 'sign': return this.addSign(buffers, definition, state, world, x, y, z);
       case 'chest': return 0;
       case 'cube': return 0;
     }
@@ -841,6 +843,75 @@ export class ChunkMesher {
       this.addQuad(buffers, texture, face.corners, face.normal, lighting, uv);
     }
     return faces.length;
+  }
+
+  /** Two low furniture halves. The head uses the source bed sheet for its pillow. */
+  private addBed(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const add = (texture: string, box: LocalBox, uv?: TextureUvRect): number => {
+      if (!uv) return this.addLocalCuboid(buffers, texture, box, world, definition, x, y, z);
+      const size: [number, number, number] = [box.maxX - box.minX, box.maxY - box.minY, box.maxZ - box.minZ];
+      const matrix = new THREE.Matrix4().makeTranslation(
+        x + (box.minX + box.maxX) / 2,
+        y + (box.minY + box.maxY) / 2,
+        z + (box.minZ + box.maxZ) / 2,
+      );
+      return this.addCuboid(buffers, texture, size, matrix, world, definition, x, y, z, uv);
+    };
+    let faces = 0;
+    faces += add('block/oak_planks', { minX: 0.0625, minY: 0.25, minZ: 0.0625, maxX: 0.9375, maxY: 0.375, maxZ: 0.9375 });
+    for (const lx of [0.0625, 0.8125]) for (const lz of [0.0625, 0.8125]) {
+      faces += add('block/oak_planks', { minX: lx, minY: 0, minZ: lz, maxX: lx + 0.125, maxY: 0.25, maxZ: lz + 0.125 });
+    }
+    faces += add('block/white_bed', { minX: 0.09, minY: 0.375, minZ: 0.09, maxX: 0.91, maxY: 0.51, maxZ: 0.91 });
+    if (state?.bedPart === 'head') {
+      const facing = state.facing ?? 'north';
+      const pillow: LocalBox = facing === 'north'
+        ? { minX: 0.18, minY: 0.51, minZ: 0.12, maxX: 0.82, maxY: 0.555, maxZ: 0.43 }
+        : facing === 'south'
+          ? { minX: 0.18, minY: 0.51, minZ: 0.57, maxX: 0.82, maxY: 0.555, maxZ: 0.88 }
+          : facing === 'east'
+            ? { minX: 0.57, minY: 0.51, minZ: 0.18, maxX: 0.88, maxY: 0.555, maxZ: 0.82 }
+            : { minX: 0.12, minY: 0.51, minZ: 0.18, maxX: 0.43, maxY: 0.555, maxZ: 0.82 };
+      faces += add('entity/bed/white', pillow, [0, 0, 0.5, 0.25]);
+    }
+    return faces;
+  }
+
+  private addSign(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const facing = state?.facing ?? 'south';
+    const angle = state?.attachment === 'floor' && state.signRotation !== undefined
+      ? state.signRotation * Math.PI / 8
+      : facing === 'north' ? Math.PI : facing === 'east' ? Math.PI / 2 : facing === 'west' ? -Math.PI / 2 : 0;
+    const rotation = new THREE.Matrix4().makeRotationY(angle);
+    const boardCenter = new THREE.Vector3(0, state?.attachment === 'wall' ? 0.5 : 0.68,
+      state?.attachment === 'wall' ? 0.24 : 0).applyMatrix4(rotation);
+    const boardMatrix = new THREE.Matrix4().makeTranslation(
+      x + 0.5 + boardCenter.x, y + boardCenter.y, z + 0.5 + boardCenter.z,
+    ).multiply(rotation);
+    let faces = this.addCuboid(buffers, 'entity/sign', [0.9, 0.42, 0.08], boardMatrix,
+      world, definition, x, y, z, [0, 0, 0.5, 0.5]);
+    if (state?.attachment !== 'wall') {
+      const post = new THREE.Matrix4().makeTranslation(x + 0.5, y + 0.25, z + 0.5);
+      faces += this.addCuboid(buffers, 'block/oak_planks', [0.1, 0.5, 0.1], post,
+        world, definition, x, y, z);
+    }
+    return faces;
   }
 
   private addLadder(

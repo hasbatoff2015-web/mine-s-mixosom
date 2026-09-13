@@ -7,9 +7,10 @@ import {
   parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
-import { getItemDefinition, obtainableItems } from '../items';
+import { getItemDefinition, obtainableItems, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
+import { EMPTY_SIGN_LINES, sanitizeSignLines, type SignLines } from '../world/sign';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchRecipeGridHost, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature, armorSlotKind } from './inventoryLayout';
 import {
@@ -1333,6 +1334,92 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  openBook(stack: ItemStack, onSave: (content: BookContent) => void, onClose: () => void): void {
+    this.closeInventory(false);
+    const content = readBookContent(stack);
+    const locked = content?.locked === true;
+    const pages = [...(content?.pages ?? [''])];
+    if (pages.length === 0) pages.push('');
+    let page = 0;
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop book-backdrop';
+    modal.innerHTML = `<section class="book-panel" role="dialog" aria-modal="true" aria-label="Книга">
+      <h2>Книга</h2>
+      <label>Название <input class="book-title" maxlength="64" type="text"></label>
+      <textarea class="book-page" maxlength="1024" aria-label="Текст страницы"></textarea>
+      <div class="book-navigation"><button type="button" data-book="previous">←</button><span class="book-count"></span><button type="button" data-book="next">→</button></div>
+      <div class="book-actions"><button type="button" data-book="close">Закрыть</button><button type="button" data-book="save">Готово / Сохранить</button></div>
+    </section>`;
+    const title = modal.querySelector<HTMLInputElement>('.book-title')!;
+    const text = modal.querySelector<HTMLTextAreaElement>('.book-page')!;
+    const counter = modal.querySelector<HTMLElement>('.book-count')!;
+    title.value = content?.title ?? '';
+    title.readOnly = locked;
+    text.readOnly = locked;
+    modal.querySelector<HTMLButtonElement>('[data-book="save"]')!.hidden = locked;
+    const paint = (): void => {
+      text.value = pages[page] ?? '';
+      counter.textContent = `${page + 1} / ${pages.length}`;
+      modal.querySelector<HTMLButtonElement>('[data-book="previous"]')!.disabled = page === 0;
+      modal.querySelector<HTMLButtonElement>('[data-book="next"]')!.disabled = locked
+        ? page >= pages.length - 1 : page >= pages.length - 1 && pages.length >= MAX_BOOK_PAGES;
+    };
+    const capture = (): void => { if (!locked) pages[page] = text.value; };
+    const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.querySelector('[data-book="previous"]')!.addEventListener('click', () => {
+      capture(); page -= 1; paint();
+    });
+    modal.querySelector('[data-book="next"]')!.addEventListener('click', () => {
+      capture(); if (page === pages.length - 1 && !locked && pages.length < MAX_BOOK_PAGES) pages.push('');
+      page += 1; paint();
+    });
+    modal.querySelector('[data-book="close"]')!.addEventListener('click', close);
+    modal.querySelector('[data-book="save"]')!.addEventListener('click', () => {
+      capture();
+      const draft = sanitizeBookDraft({ pages, title: title.value });
+      if (!draft) { this.toast('Книга слишком длинная'); return; }
+      onSave(draft);
+      close();
+    });
+    this.modal = modal;
+    this.root.append(modal);
+    this.setControlsSuppressed(true);
+    paint();
+    (locked ? modal.querySelector<HTMLButtonElement>('[data-book="close"]') : text)?.focus();
+  }
+
+  openSign(lines: readonly string[] | undefined, onSave: (lines: SignLines) => void, onClose: () => void): void {
+    this.closeInventory(false);
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop sign-backdrop';
+    modal.innerHTML = `<section class="sign-panel" role="dialog" aria-modal="true" aria-label="Табличка">
+      <h2>Табличка</h2>
+      <div class="sign-lines"></div>
+      <div class="book-actions"><button type="button" data-sign="close">Закрыть</button><button type="button" data-sign="save">Готово / Сохранить</button></div>
+    </section>`;
+    const inputs = Array.from({ length: 4 }, (_, index) => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 32;
+      input.setAttribute('aria-label', `Строка ${index + 1}`);
+      input.value = lines?.[index] ?? EMPTY_SIGN_LINES[index] ?? '';
+      modal.querySelector('.sign-lines')!.append(input);
+      return input;
+    });
+    const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.querySelector('[data-sign="close"]')!.addEventListener('click', close);
+    modal.querySelector('[data-sign="save"]')!.addEventListener('click', () => {
+      const sanitized = sanitizeSignLines(inputs.map((input) => input.value));
+      if (!sanitized) { this.toast('Строки таблички слишком длинные'); return; }
+      onSave(sanitized);
+      close();
+    });
+    this.modal = modal;
+    this.root.append(modal);
+    this.setControlsSuppressed(true);
+    inputs[0]?.focus();
   }
 
   openAuction(state: ServerAuctionMessage, actions: AuctionGuiActions): void {

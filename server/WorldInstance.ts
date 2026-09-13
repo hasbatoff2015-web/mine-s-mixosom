@@ -14,7 +14,7 @@ import {
   type PortalChestInventory,
 } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
+import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
@@ -37,6 +37,7 @@ import {
   worldSoundMaxDistance,
 } from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
+import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
@@ -48,6 +49,8 @@ import type {
   ClientAuctionActionMessage,
   ClientClanActionMessage,
   ClientBuyerActionMessage,
+  ClientBookUpdateMessage,
+  ClientSignUpdateMessage,
   ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
@@ -230,6 +233,8 @@ export class ServerPlayer implements GameplayPlayer {
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  totemActivated = false;
+  pendingSignEdit?: { x: number; y: number; z: number };
   deathLootDropped = false;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
@@ -248,6 +253,20 @@ export class ServerPlayer implements GameplayPlayer {
     appearance?: PlayerAppearance,
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
+    this.survival.setDeathProtection(() => {
+      const main = this.inventory.getSlot(this.selectedSlot);
+      const slot = main?.itemId === ItemId.TotemOfUndying
+        ? this.selectedSlot
+        : this.inventory.getSlot({ section: 'offhand' })?.itemId === ItemId.TotemOfUndying
+          ? { section: 'offhand' as const }
+          : undefined;
+      if (slot === undefined) return false;
+      const stack = this.inventory.getSlot(slot)!;
+      this.inventory.setSlot(slot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+      this.inventoryDirty = true;
+      this.totemActivated = true;
+      return true;
+    });
     this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
@@ -685,6 +704,7 @@ export class WorldInstance {
         modifications: existing.modifications,
         chests: (existing.chests ?? {}) as never,
         furnaces: (existing.furnaces ?? {}) as never,
+        signs: existing.signs,
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
@@ -1443,6 +1463,7 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    this.gameplay.vhMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
     player.sink = null;
     player.activeSocketCount = 0;
@@ -2043,7 +2064,50 @@ export class WorldInstance {
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    if (player.pendingSignEdit) {
+      const { x, y, z } = player.pendingSignEdit;
+      player.pendingSignEdit = undefined;
+      if (this.world.getBlock(x, y, z, false) === BlockId.OakSign) {
+        this.sendTo(player, { type: 'sign_editor', x, y, z, lines: this.world.signText(x, y, z) ?? EMPTY_SIGN_LINES });
+      }
+    }
     return result;
+  }
+
+  updateBook(player: ServerPlayer, message: ClientBookUpdateMessage): void {
+    const draft = sanitizeBookDraft(message);
+    const selected = player.inventory.getSlot(message.slot);
+    if (!player.connected || player.survival.dead || player.selectedSlot !== message.slot
+      || selected?.itemId !== ItemId.Book || readBookContent(selected)?.locked || !draft) {
+      this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
+      return;
+    }
+    const overflow = writeBookInSlot(player.inventory, message.slot, draft);
+    if (overflow === undefined) return;
+    if (overflow) this.gameplay.dropFromPlayer(player, overflow);
+    player.inventoryDirty = true;
+    this.dirty = true;
+    this.flushPlayerInventory(player);
+  }
+
+  updateSign(player: ServerPlayer, message: ClientSignUpdateMessage): void {
+    const { x, y, z } = message;
+    const lines = sanitizeSignLines(message.lines);
+    const eye = player.controller.eyePosition();
+    const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
+    if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
+      || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
+      this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
+      return;
+    }
+    const use = this.events.createPlayerInteract(player.id, x, y, z, BlockId.OakSign);
+    this.events.emit('playerInteract', use);
+    if (use.cancelled || !this.world.setSignText(x, y, z, lines)) return;
+    this.dirty = true;
+    const key = chunkKey(floorDiv(x, 16), floorDiv(z, 16));
+    for (const viewer of this.connectedPlayers()) if (viewer.knownChunks.has(key)) {
+      this.sendTo(viewer, { type: 'sign_data', x, y, z, lines });
+    }
   }
 
   pickup(player: ServerPlayer): void {
@@ -2522,7 +2586,22 @@ export class WorldInstance {
       this.snapshotsSent += 1;
     }
     this.resetInputPacketCounters();
+    for (const player of this.players.values()) {
+      if (player.totemActivated) {
+        this.gameplay.vhMarks.clearTarget(player.id);
+        player.totemActivated = false;
+      }
+      if (!player.connected || player.survival.dead) this.gameplay.vhMarks.clearPlayer(player.id);
+    }
     for (const player of this.connectedPlayers()) {
+      this.sendTo(player, {
+        type: 'vh_marks',
+        targetIds: this.gameplay.vhMarks.forViewer(player.id, this.world.tickNumber)
+          .filter((id) => {
+            const target = this.players.get(id);
+            return target?.connected && !target.survival.dead;
+          }),
+      });
       this.sendTo(player, {
         type: 'entity_snapshot',
         tick: this.tickNumber,
@@ -3076,7 +3155,7 @@ export class WorldInstance {
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
           const mods = this.world.serializeChunkModifications(x, z);
-          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods });
+          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
           this.lastChunkSends += 1;
         }
       }

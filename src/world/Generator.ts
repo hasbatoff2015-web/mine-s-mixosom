@@ -292,6 +292,7 @@ export class TerrainGenerator {
     this.generateOres(chunk);
     this.generateCaveDeposits(chunk);
     this.decorate(chunk);
+    this.decorateSugarCane(chunk);
     chunk.generated = true;
     chunk.dirty = true;
   }
@@ -886,6 +887,28 @@ export class TerrainGenerator {
       else if (kind < 0.89) chunk.set(x, plantY, z, BlockId.Dandelion);
       else if (kind < 0.96) chunk.set(x, plantY, z, BlockId.Poppy);
       else chunk.set(x, plantY, z, BlockId.OxeyeDaisy);
+    }
+  }
+
+  /** Separate deterministic namespace: old ore, tree, and flower RNG streams are unchanged. */
+  private decorateSugarCane(chunk: Chunk): void {
+    const rng = mulberry32(hashCoords(this.numericSeed + 26183, chunk.x, 0, chunk.z));
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (rng() > 0.12) continue;
+      const x = 1 + Math.floor(rng() * (CHUNK_SIZE - 2));
+      const z = 1 + Math.floor(rng() * (CHUNK_SIZE - 2));
+      const wx = chunk.x * CHUNK_SIZE + x, wz = chunk.z * CHUNK_SIZE + z;
+      const column = this.columnAt(wx, wz);
+      if (column.height !== SEA_LEVEL) continue;
+      if (chunk.get(x, SEA_LEVEL, z) !== BlockId.GrassBlock
+        && chunk.get(x, SEA_LEVEL, z) !== BlockId.Sand) continue;
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
+        this.columnAt(wx + dx!, wz + dz!).height < SEA_LEVEL)) continue;
+      const height = 1 + Math.floor(rng() * 3);
+      for (let segment = 1; segment <= height; segment += 1) {
+        if (chunk.get(x, SEA_LEVEL + segment, z) !== BlockId.Air) break;
+        chunk.set(x, SEA_LEVEL + segment, z, BlockId.SugarCane);
+      }
     }
   }
 

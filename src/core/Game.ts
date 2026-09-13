@@ -115,7 +115,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
+import { ItemId, getItemDefinition, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -340,6 +340,8 @@ import {
   type UseSimulationContext,
 } from '../gameplay';
 import { isUseTargetBlock } from '../world/blockInteraction';
+import { clearBedBlocks } from '../world/bed';
+import { fillBucketWithMilk } from '../items/bucketInteraction';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
@@ -1223,6 +1225,12 @@ export class Game {
         return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
+        for (const [key, lines] of Object.entries(message.signs ?? {})) {
+          const [x, y, z] = key.split(',').map(Number);
+          if (Number.isInteger(x) && Number.isInteger(y) && Number.isInteger(z) && lines.length === 4) {
+            session.world.setSignText(x!, y!, z!, lines as [string, string, string, string]);
+          }
+        }
         motionProbe.noteChunkUpdate();
         if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
           localNetTrace.noteWorld({
@@ -1235,6 +1243,18 @@ export class Game {
           });
           motionProbe.note('world:volume');
         }
+        return;
+      case 'vh_marks': {
+        const marked = new Set(message.targetIds);
+        for (const [id, view] of session.online.remotes) view.setVhMarked(marked.has(id));
+        return;
+      }
+      case 'sign_data':
+        session.world.setSignText(message.x, message.y, message.z,
+          message.lines as [string, string, string, string]);
+        return;
+      case 'sign_editor':
+        this.openSignEditor(message.x, message.y, message.z, message.lines);
         return;
       case 'chat':
         if (message.kind === 'player') {
@@ -2885,6 +2905,20 @@ export class Game {
     }
 
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
+    survival.setDeathProtection(() => {
+      if (summary.mode !== 'survival') return false;
+      const main = inventory.getSlot(selectedSlot);
+      const slot = main?.itemId === ItemId.TotemOfUndying
+        ? selectedSlot
+        : inventory.getSlot({ section: 'offhand' })?.itemId === ItemId.TotemOfUndying
+          ? { section: 'offhand' as const }
+          : undefined;
+      if (slot === undefined) return false;
+      const stack = inventory.getSlot(slot)!;
+      inventory.setSlot(slot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+      this.ui.toast('Тотем бессмертия спас вас!');
+      return true;
+    });
     const mobs = new MobManager(entityHost, world, {
       maxMobs: isCoarsePointer() ? 24 : 40,
       passiveCap: isCoarsePointer() ? 10 : 16,
@@ -3904,6 +3938,7 @@ export class Game {
       modifications: session.world.serializeModifications(),
       chests: Object.fromEntries(session.world.chests),
       furnaces: Object.fromEntries(session.world.furnaces),
+      signs: session.world.serializeSigns(),
       droppedItems: session.drops.serialize(),
       fallingBlocks: session.falling.serialize(),
       minecarts: session.minecarts.serialize(),
@@ -4626,6 +4661,7 @@ export class Game {
     const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
     const harvestable = canHarvestBlock(definition, miningToolFromItemId(toolStack?.itemId));
     if (hit.block === BlockId.OakDoor) this.removeDoor(hit.x, hit.y, hit.z);
+    else if (hit.block === BlockId.WhiteBed) clearBedBlocks(session.world, hit.x, hit.y, hit.z);
     else {
       session.world.applyBlockBatch([{ x: hit.x, y: hit.y, z: hit.z, block: BlockId.Air }], {
         deferLighting: true,
@@ -4696,11 +4732,60 @@ export class Game {
 
   private useTargetOrItem(): void {
     const session = this.session!;
+    const held = session.inventory.getSlot(session.selectedSlot);
+    if (!session.online && held?.itemId === ItemId.Bucket) {
+      const eye = session.player.eyePosition();
+      const direction = viewDirectionFromLook(this.input.yaw, this.input.pitch);
+      const cow = session.mobs.raycast(eye, direction, Math.min(3, PLAYER_REACH));
+      if (cow?.mob.kind === 'cow' && (!session.target || cow.distance <= session.target.distance)) {
+        if (fillBucketWithMilk({
+          inventory: session.inventory, selectedSlot: session.selectedSlot, mode: session.summary.mode,
+          onDrop: (stack) => this.spawnDroppedStack(stack),
+        })) {
+          this.ui.toast('Получено ведро молока');
+          this.refreshHud();
+          return;
+        }
+      }
+    }
+    if (held?.itemId === ItemId.Book) {
+      const slot = session.selectedSlot;
+      this.openGameplayModal();
+      this.ui.openBook(held, (content) => {
+        if (this.session !== session || session.selectedSlot !== slot) return;
+        if (session.online) {
+          session.online.client.send({ type: 'book_update', slot, pages: content.pages, title: content.title });
+        } else {
+          const overflow = writeBookInSlot(session.inventory, slot, content);
+          if (overflow) this.spawnDroppedStack(overflow);
+          this.refreshHud();
+          void this.saveSession();
+        }
+      }, () => {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      });
+      return;
+    }
     if (session.online) {
       this.sendOnlineUse(session);
       return;
     }
     performUseHeld(this.singleplayerUseContext());
+  }
+
+  private openSignEditor(x: number, y: number, z: number, lines?: readonly string[]): void {
+    const session = this.session;
+    if (!session || session.world.getBlock(x, y, z, false) !== BlockId.OakSign) return;
+    this.openGameplayModal();
+    this.ui.openSign(lines ?? session.world.signText(x, y, z), (edited) => {
+      if (this.session !== session) return;
+      if (session.online) session.online.client.send({ type: 'sign_update', x, y, z, lines: edited });
+      else if (session.world.setSignText(x, y, z, edited)) void this.saveSession();
+    }, () => {
+      this.enterPlaying();
+      this.input.tryRequestPointerLock();
+    });
   }
 
   private singleplayerUseContext(): UseSimulationContext {
@@ -4736,7 +4821,6 @@ export class Game {
       minecarts: session.minecarts,
       redstone: session.redstone,
       random: this.simRandom,
-      setSpawnPoint: (position) => session.survival?.setSpawnPoint(position),
       enterVehicle: (cartId) => {
         game.mountMinecart(cartId);
         return session.ridingCartId === cartId;
@@ -4759,12 +4843,8 @@ export class Game {
             };
           game.openBlockInventory(kind, hit);
         },
-        onBedUsed: (skippedNight) => {
-          game.ui.toast(skippedNight
-            ? 'Ночь пропущена. Точка возрождения установлена.'
-            : 'Точка возрождения установлена');
-          void game.saveSession();
-        },
+        onBedUsed: () => game.ui.toast('Кровать — декоративный предмет'),
+        onSignUsed: (x, y, z) => game.openSignEditor(x, y, z),
         onFlintIgnite: () => {
           game.playWorld(
             'fire.ignite',
@@ -4776,6 +4856,9 @@ export class Game {
         },
         onFlintAlreadyPrimed: () => { game.firstPerson?.swing(); },
         dropOverflow: (stack) => game.spawnDroppedStack(stack),
+        onPlaced: (x, y, z, blockId) => {
+          if (blockId === BlockId.OakSign) game.openSignEditor(x, y, z);
+        },
       },
     };
   }
@@ -4826,12 +4909,15 @@ export class Game {
       return;
     }
     if (session.summary.mode !== 'survival') {
-      this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow : ItemId.Arrow;
+      this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow
+        : session.inventory.has(ItemId.VHArrow, 1) ? ItemId.VHArrow : ItemId.Arrow;
     }
     const aim = this.sampleLocalAim(session);
     const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
-    session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
+    session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical,
+      flaming, undefined, undefined, undefined, undefined,
+      this.lastConsumedArrow === ItemId.VHArrow ? 'vh' : flaming ? 'fire' : 'normal');
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
@@ -5057,6 +5143,10 @@ export class Game {
     }
     if (session.inventory.remove(ItemId.FireArrow, 1) === 1) {
       this.lastConsumedArrow = ItemId.FireArrow;
+      return true;
+    }
+    if (session.inventory.remove(ItemId.VHArrow, 1) === 1) {
+      this.lastConsumedArrow = ItemId.VHArrow;
       return true;
     }
     if (session.inventory.remove(ItemId.Arrow, 1) === 1) {

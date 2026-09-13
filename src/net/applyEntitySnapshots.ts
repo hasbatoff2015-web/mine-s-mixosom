@@ -154,7 +154,7 @@ export function applyEntitySnapshots(
           snap.id, snap.x, snap.y, snap.z,
           snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0,
           snap.onFire === true,
-          { snapVisual: false },
+          { snapVisual: false, kind: snap.variant === 'vh' ? 'vh' : snap.onFire ? 'fire' : 'normal' },
         );
         ingestPose(interpolator, snap, tick, now);
         break;

@@ -89,6 +89,7 @@ export interface WorldSnapshot {
   modifications: Record<string, Record<string, number>>;
   chests: Record<string, unknown>;
   furnaces: Record<string, unknown>;
+  signs?: Record<string, readonly string[]>;
   droppedItems: unknown[];
   mobs?: unknown[];
   redstone?: unknown;

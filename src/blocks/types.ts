@@ -28,7 +28,9 @@ export type BlockRenderShape =
   | 'rail'
   | 'lantern'
   | 'chain'
-  | 'farmland';
+  | 'farmland'
+  | 'bed'
+  | 'sign';
 
 export type RailShape =
   | 'north_south'
@@ -76,6 +78,9 @@ export interface BlockRenderState {
   /** Farming V1 state. Missing values preserve old saves as dry / age zero. */
   readonly hydrated?: boolean;
   readonly age?: number;
+  /** Decorative two-cell bed geometry; text and spawn state never live here. */
+  readonly bedPart?: 'foot' | 'head';
+  readonly signRotation?: number;
 }
 
 export interface BlockTextures {
@@ -290,4 +295,6 @@ export enum BlockId {
   TitaniumOre = 161,
   TntPowerful = 162,
   TntDestructive = 163,
+  SugarCane = 164,
+  OakSign = 165,
 }

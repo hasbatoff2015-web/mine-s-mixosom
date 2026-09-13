@@ -53,6 +53,11 @@ export class RemotePlayerView {
   private hurtSeq = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  private readonly vhOutline: THREE.LineSegments[] = [];
+  private readonly vhOutlineGeometries: THREE.EdgesGeometry[] = [];
+  private readonly vhOutlineMaterial = new THREE.LineBasicMaterial({
+    color: 0xfff49a, depthTest: false, depthWrite: false, transparent: true, opacity: 0.95,
+  });
   /** -1 = living. Accumulates only after the dead edge so snapshots cannot restart the pose. */
   private deathSeconds = -1;
 
@@ -67,6 +72,23 @@ export class RemotePlayerView {
     this.visual = options.visual;
     this.group.name = `remote-player:${info.id}`;
     this.group.add(this.visual.root);
+    const skinMeshes: THREE.Mesh[] = [];
+    this.visual.root.traverse((part) => {
+      if (part instanceof THREE.Mesh && part.name.startsWith('player:')) skinMeshes.push(part);
+    });
+    for (const mesh of skinMeshes) {
+      if (!mesh.geometry) continue;
+      const geometry = new THREE.EdgesGeometry(mesh.geometry, 30);
+      this.vhOutlineGeometries.push(geometry);
+      const lines = new THREE.LineSegments(geometry, this.vhOutlineMaterial);
+      lines.position.copy(mesh.position);
+      lines.rotation.copy(mesh.rotation);
+      lines.scale.copy(mesh.scale).multiplyScalar(1.035);
+      lines.renderOrder = 1000;
+      mesh.parent?.add(lines);
+      this.vhOutline.push(lines);
+    }
+    this.setVhMarked(false);
     this.visual.root.position.set(0, 0, 0);
     this.nameplate = new PlayerNameplate(info.name, info.health ?? 20);
     this.group.add(this.nameplate.sprite);
@@ -96,6 +118,10 @@ export class RemotePlayerView {
 
   setAppearance(appearance: PlayerAppearance): void {
     this.visual.setAppearance(createPlayerAppearance(appearance ?? DEFAULT_PLAYER_APPEARANCE));
+  }
+
+  setVhMarked(marked: boolean): void {
+    for (const line of this.vhOutline) line.visible = marked;
   }
 
   applySnapshot(snapshot: PlayerSnapshot | RemotePlayerInfo, now = 0, tick?: number): void {
@@ -203,6 +229,9 @@ export class RemotePlayerView {
     this.options.onRemove?.(this.id);
     this.buffer.reset();
     this.nameplate.dispose();
+    for (const line of this.vhOutline) line.removeFromParent();
+    for (const geometry of this.vhOutlineGeometries) geometry.dispose();
+    this.vhOutlineMaterial.dispose();
     this.visual.dispose();
     this.group.removeFromParent();
   }

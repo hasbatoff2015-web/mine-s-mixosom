@@ -52,6 +52,10 @@ import {
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { ItemId, tryGetItemDefinition } from '../src/items';
+import { fillBucketWithMilk } from '../src/items/bucketInteraction';
+import { VhMarks } from '../src/combat/VhMarks';
+import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
+import type { ArrowKind } from '../src/combat/PlayerArrowManager';
 import { FarmingSystem, farmingDropsForBlock } from '../src/farming';
 import { PlayerController } from '../src/player';
 import { RedstoneSystem } from '../src/redstone';
@@ -65,6 +69,7 @@ import { getTntProfile } from '../src/world/tnt';
 import { volumeContains, type SelectionVolume } from './services/selection';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
+import { clearBedBlocks } from '../src/world/bed';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent, WorldSoundEvent } from '../shared/protocol';
 import type { BlockTargetIntent, CombatActionDiagnostics } from '../shared/playerActions';
@@ -87,6 +92,7 @@ export const ENTITY_SNAPSHOT_CAP = 96;
 export function packEntitySnapshots(
   groups: {
     readonly arrows?: readonly EntitySnapshot[];
+    readonly fireworks?: readonly EntitySnapshot[];
     readonly tnt?: readonly EntitySnapshot[];
     readonly falling?: readonly EntitySnapshot[];
     readonly minecarts?: readonly EntitySnapshot[];
@@ -97,6 +103,7 @@ export function packEntitySnapshots(
 ): EntitySnapshot[] {
   return [
     ...(groups.arrows ?? []),
+    ...(groups.fireworks ?? []),
     ...(groups.tnt ?? []),
     ...(groups.falling ?? []),
     ...(groups.minecarts ?? []),
@@ -142,6 +149,7 @@ export interface GameplayPlayer {
   combatPoseHistory?: CombatPoseSample[];
   /** True after death loot has been emitted for the current death. */
   deathLootDropped?: boolean;
+  pendingSignEdit?: { x: number; y: number; z: number };
 }
 
 export interface BowReleaseBoundary {
@@ -180,6 +188,8 @@ export class ServerGameplay {
   readonly mobs: MobManager;
   readonly minecarts: MinecartManager;
   readonly arrows: PlayerArrowManager;
+  readonly fireworks = new FireworkManager();
+  readonly vhMarks = new VhMarks();
   readonly redstone: RedstoneSystem;
   readonly farming: FarmingSystem;
   readonly explosions = new ExplosionQueue();
@@ -357,6 +367,7 @@ export class ServerGameplay {
       },
       tickProjectiles: () => {
         this.arrows.tick(dt, this.arrowTickOptions(connected));
+        this.fireworks.tick();
       },
       tickVehicles: () => {
         for (const player of connected) {
@@ -530,6 +541,7 @@ export class ServerGameplay {
         x: arrow.position.x, y: arrow.position.y, z: arrow.position.z,
         vx: arrow.velocity.x, vy: arrow.velocity.y, vz: arrow.velocity.z,
         onFire: arrow.flaming,
+        variant: arrow.kind,
       });
     }
     for (const projectile of this.mobs.networkProjectiles()) {
@@ -540,6 +552,14 @@ export class ServerGameplay {
         vx: projectile.vx, vy: projectile.vy, vz: projectile.vz,
       });
     }
+    const fireworks: EntitySnapshot[] = this.fireworks.entities
+      .filter((rocket) => inRange(rocket.position.x, rocket.position.y, rocket.position.z))
+      .map((rocket) => ({
+        id: rocket.id, kind: 'firework',
+        x: rocket.position.x, y: rocket.position.y, z: rocket.position.z,
+        vx: rocket.velocity.x, vy: rocket.velocity.y, vz: rocket.velocity.z,
+        variant: String(rocket.flight), state: rocket.exploded ? 'burst' : 'flight',
+      }));
     const tnt: EntitySnapshot[] = [];
     for (const primed of this.redstone.primedTnt) {
       if (!inRange(primed.position.x, primed.position.y, primed.position.z)) continue;
@@ -597,12 +617,12 @@ export class ServerGameplay {
         itemId: item.stack.itemId, count: item.stack.count,
       });
     }
-    return packEntitySnapshots({ arrows, tnt, falling, minecarts, mobs, items });
+    return packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
   }
 
   persistEntities(): Pick<
     WorldSnapshot,
-    'droppedItems' | 'mobs' | 'minecarts' | 'fallingBlocks' | 'redstone' | 'chests' | 'furnaces'
+    'droppedItems' | 'mobs' | 'minecarts' | 'fallingBlocks' | 'redstone' | 'chests' | 'furnaces' | 'signs'
   > {
     return {
       droppedItems: this.drops.serialize(),
@@ -612,6 +632,7 @@ export class ServerGameplay {
       redstone: this.redstone.serialize(),
       chests: Object.fromEntries(this.world.chests),
       furnaces: Object.fromEntries(this.world.furnaces),
+      signs: this.world.serializeSigns(),
     };
   }
 
@@ -678,6 +699,7 @@ export class ServerGameplay {
       || canHarvestBlock(definition, miningToolFromItemId(player.inventory.getSlot(player.selectedSlot)?.itemId));
     this.releaseContents(player, x, y, z, block);
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
+    else if (block === BlockId.WhiteBed) clearBedBlocks(this.world, x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
     this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
     if (player.gamemode === 'survival' && harvestable) {
@@ -754,6 +776,37 @@ export class ServerGameplay {
     const beforeBow = player.bowUseTicks;
     const beforeFood = player.foodUseTicks;
     const heldItemId = player.inventory.getSlot(selectedSlot)?.itemId;
+    if (heldItemId === ItemId.FireworkRocket) {
+      if (hit) {
+        const event = this.events.createPlayerInteract(player.id, hit.x, hit.y, hit.z, hit.block);
+        this.events.emit('playerInteract', event);
+        if (event.cancelled) return { ok: false, reason: 'protected' };
+      }
+      const stack = player.inventory.getSlot(selectedSlot)!;
+      const origin = hit
+        ? hit.point.clone().addScaledVector(hit.normal, 0.2)
+        : player.controller.eyePosition().addScaledVector(player.controller.viewDirection(), 0.7);
+      origin.y += 0.15;
+      this.fireworks.spawn(origin, fireworkFlight(stack.metadata));
+      if (player.gamemode === 'survival') {
+        player.inventory.setSlot(selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+        player.inventoryDirty = true;
+      }
+      player.presentSwing?.();
+      return { ok: true };
+    }
+    if (heldItemId === ItemId.Bucket) {
+      const eye = player.controller.eyePosition(this.tmpEye);
+      const direction = player.controller.viewDirection(this.tmpDir);
+      const cow = this.mobs.raycast(eye, direction, Math.min(3, PLAYER_REACH));
+      if (cow?.mob.kind === 'cow' && (!hit || cow.distance <= hit.distance)) {
+        const filled = fillBucketWithMilk({
+          inventory: player.inventory, selectedSlot, mode: player.gamemode,
+          onDrop: (stack) => this.dropFromPlayer(player, stack),
+        });
+        if (filled) { player.inventoryDirty = true; player.presentSwing?.(); return { ok: true }; }
+      }
+    }
     performUseHeld(this.useContext(player, hit, selectedSlot));
     if ((player.bowUseTicks === 1 && beforeBow !== 1) || (player.foodUseTicks === 1 && beforeFood !== 1)) {
       if (player.bowUseTicks === 1) player.foodUseTicks = 0;
@@ -851,7 +904,6 @@ export class ServerGameplay {
       minecarts: this.minecarts,
       redstone: this.redstone,
       random: this.random,
-      setSpawnPoint: (position) => player.survival.setSpawnPoint(position),
       allowInteract: (x, y, z, block) => {
         const event = gameplay.events.createPlayerInteract(player.id, x, y, z, block);
         gameplay.events.emit('playerInteract', event);
@@ -866,6 +918,7 @@ export class ServerGameplay {
       effects: {
         swing: () => player.presentSwing?.(),
         onBedUsed: () => player.presentSwing?.(),
+        onSignUsed: (x, y, z) => { player.pendingSignEdit = { x, y, z }; },
         onFlintIgnite: () => {
           player.presentSwing?.();
           const pos = player.controller.position;
@@ -891,6 +944,7 @@ export class ServerGameplay {
         onInventoryChanged: () => { player.inventoryDirty = true; },
         dropOverflow: (stack) => gameplay.dropFromPlayer(player, stack),
         onPlaced: (x, y, z, blockId) => {
+          if (blockId === BlockId.OakSign) player.pendingSignEdit = { x, y, z };
           gameplay.events.emit('blockPlaced', { playerId: player.id, x, y, z, blockId });
         },
       },
@@ -1086,6 +1140,7 @@ export class ServerGameplay {
           }
         }
         player.inventoryDirty = true;
+        if (item.id === ItemId.MilkBucket) this.vhMarks.clearTarget(player.id);
       }
       this.clearUseHold(player);
     }
@@ -1229,15 +1284,12 @@ export class ServerGameplay {
     bowDebug(player.id, 'server_fire', `charge=${player.bowUseTicks} canFire=${charge.canFire} yaw=${yaw.toFixed(4)} pitch=${pitch.toFixed(4)}`);
     this.clearUseHold(player);
     if (!charge.canFire) return { ok: false, reason: 'charge' };
-    let flaming = false;
-    if (player.gamemode === 'survival') {
-      if (player.inventory.remove(ItemId.FireArrow, 1) === 1) flaming = true;
-      else if (player.inventory.remove(ItemId.Arrow, 1) !== 1) return { ok: false, reason: 'ammo' };
-      player.inventoryDirty = true;
-    } else flaming = player.inventory.has(ItemId.FireArrow, 1);
+    const kind = this.consumeBowAmmo(player);
+    if (!kind) return { ok: false, reason: 'ammo' };
+    const flaming = kind === 'fire';
     const direction = viewDirectionFromLook(yaw, pitch);
     const origin = player.controller.eyePosition().addScaledVector(direction, 0.35);
-    this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0);
+    this.arrows.spawn(origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming, undefined, player.id, 0, undefined, kind);
     this.emitWorldSound('bow.shoot', origin.x, origin.y, origin.z);
     player.presentSwing?.();
     bowDebug(player.id, 'arrow_spawn', `arrows=${this.arrows.count}`);
@@ -1263,17 +1315,14 @@ export class ServerGameplay {
     const charge = player.combat.bowCharge(boundary.drawTicks);
     if (clearCurrentUse) this.clearUseHold(player);
     if (!charge.canFire) return { ok: false, reason: 'charge' };
-    let flaming = false;
-    if (player.gamemode === 'survival') {
-      if (player.inventory.remove(ItemId.FireArrow, 1) === 1) flaming = true;
-      else if (player.inventory.remove(ItemId.Arrow, 1) !== 1) return { ok: false, reason: 'ammo' };
-      player.inventoryDirty = true;
-    } else flaming = player.inventory.has(ItemId.FireArrow, 1);
+    const kind = this.consumeBowAmmo(player);
+    if (!kind) return { ok: false, reason: 'ammo' };
+    const flaming = kind === 'fire';
     const direction = viewDirectionFromLook(yaw, pitch);
     const origin = new Vec3(boundary.eyeX, boundary.eyeY, boundary.eyeZ).addScaledVector(direction, 0.35);
     const arrowId = this.arrows.spawn(
       origin, direction, charge.launchSpeed, charge.baseDamage, charge.critical,
-      flaming, undefined, player.id, 0, timelineTick,
+      flaming, undefined, player.id, 0, timelineTick, kind,
     );
     this.emitWorldSound('bow.shoot', origin.x, origin.y, origin.z);
     if (catchUpTicks > 0) this.arrows.catchUp(arrowId, catchUpTicks, this.arrowTickOptions(players));
@@ -1298,20 +1347,37 @@ export class ServerGameplay {
         const pose = combatPoseAtTick(target.combatPoseHistory ?? [], timelineTick);
         return pose && !pose.dead ? pose.aabb : undefined;
       },
-      onPlayerHit: (playerId: string, damage: number, flaming: boolean, position: Vec3, attackerId?: string) => {
+      onPlayerHit: (playerId: string, damage: number, flaming: boolean, position: Vec3, attackerId?: string, kind?: ArrowKind) => {
         const victim = connected.find((player) => player.id === playerId);
         if (!victim) return;
         this.events.emit('projectileHit', {
           entityId: 'projectile', x: position.x, y: position.y, z: position.z, playerId,
         });
-        this.hurtPlayer(victim, damage, 'projectile', position, {
+        const accepted = this.hurtPlayer(victim, damage, 'projectile', position, {
           knockback: flaming ? 4.2 : 2.4,
           ignite: flaming,
           attackerId,
         });
+        if (accepted && kind === 'vh' && attackerId) this.vhMarks.mark(attackerId, playerId, this.world.tickNumber);
         this.emitWorldSound('combat.hit', position.x, position.y + 0.9, position.z);
       },
     };
+  }
+
+  /** Existing deterministic priority: fire, then VH, then normal. */
+  private consumeBowAmmo(player: GameplayPlayer): ArrowKind | undefined {
+    const priorities: readonly [string, ArrowKind][] = [
+      [ItemId.FireArrow, 'fire'], [ItemId.VHArrow, 'vh'], [ItemId.Arrow, 'normal'],
+    ];
+    if (player.gamemode !== 'survival') {
+      return priorities.find(([id]) => player.inventory.has(id, 1))?.[1] ?? 'normal';
+    }
+    for (const [id, kind] of priorities) {
+      if (player.inventory.remove(id, 1) !== 1) continue;
+      player.inventoryDirty = true;
+      return kind;
+    }
+    return undefined;
   }
 
   private intentEye(
