@@ -11,6 +11,7 @@ import {
   menuShowsBack,
   tradeAcceptEnabled,
   tradeReadyLabel,
+  TRADE_SLOT_COUNT,
 } from '../src/ui/menuGui';
 import { CONTAINER_STRINGS } from '../src/ui/containerStrings';
 
@@ -70,9 +71,17 @@ describe('in-game menu GUI', () => {
       self: 'Вы не готовы',
       partner: 'Партнёр не готов',
     });
+    expect(tradeReadyLabel(true, false, true, false)).toEqual({
+      self: 'Вы готовы',
+      partner: 'Партнёр готов',
+    });
     expect(tradeReadyLabel(true, true, true, false)).toEqual({
       self: 'Вы приняли',
-      partner: 'Партнёр готов',
+      partner: 'Партнёр ещё не принял',
+    });
+    expect(tradeReadyLabel(true, true, true, true)).toEqual({
+      self: 'Вы приняли',
+      partner: 'Партнёр принял',
     });
     expect(tradeAcceptEnabled(true, true)).toBe(true);
     expect(tradeAcceptEnabled(true, false)).toBe(false);
@@ -84,5 +93,27 @@ describe('in-game menu GUI', () => {
     expect(gameUi).toContain('ready_trade');
     expect(gameUi).toContain('accept_trade');
     expect(gameUi).toContain('cancel_trade');
+  });
+
+  it('lays the trade window out as two 2x3 grids over the real inventory', () => {
+    expect(TRADE_SLOT_COUNT).toBe(6);
+    expect(css).toMatch(/\.mc-trade-grid \{[\s\S]*?grid-template-columns: repeat\(3,[\s\S]*?grid-template-rows: repeat\(2,/);
+    expect(gameUi).toContain('data-trade-partner-slot');
+    expect(gameUi).toContain('data-menu-inv-slot');
+    expect(gameUi).toContain('length: 27 }');
+    expect(gameUi).toContain('data-menu-trade-money');
+    expect(gameUi).toContain('Баланс:');
+  });
+
+  it('keeps every menu page reachable and editable on touch devices', () => {
+    expect(css).toMatch(/\.mc-menu-list \{[\s\S]*?overflow-y: auto;[\s\S]*?touch-action: pan-y;[\s\S]*?scrollbar-width: none;/);
+    expect(css).toMatch(/#hud-quick \{[\s\S]*?pointer-events: auto;/);
+    expect(gameUi).toContain('data-menu-home-name');
+    expect(gameUi).toContain('data-menu-friend-name');
+    expect(gameUi).toContain('data-menu-trade-name');
+    expect(gameUi).toContain('data-menu-claim-member');
+    expect(gameUi).toContain('data-menu-action="save_claim_name"');
+    expect(gameUi).toContain('data-menu-action="set_claim_pvp"');
+    expect(gameUi).toContain('data-menu-action="set_teleport_allowed"');
   });
 });

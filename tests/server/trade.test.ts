@@ -8,6 +8,7 @@ import { EconomyService } from '../../server/services/economy';
 import { TradeService, parseTradeMoney, type TradeOfferState, type TradeSession } from '../../server/services/trade';
 import {
   TRADE_BUSY_ERROR,
+  TRADE_ITEM_ERROR,
   TRADE_MONEY_BALANCE_ERROR,
   TRADE_MONEY_ERROR,
   TRADE_NOT_READY_ERROR,
@@ -183,6 +184,48 @@ describe('TradeService', () => {
     busy.add(session.leftId);
     expect(trades.accept('bob').error).toBe(TRADE_BUSY_ERROR);
     busy.delete(session.leftId);
+  });
+
+  it('ignores a repeated ready and clears own accept when ready is pressed again', async () => {
+    const { trades } = await setup();
+    open(trades);
+    expect(trades.ready('ada').ok).toBe(true);
+    expect(trades.ready('ada').ok).toBe(true);
+    expect(offerOf(trades.sessionFor('ada')!, 'ada').ready).toBe(true);
+    expect(trades.ready('bob').ok).toBe(true);
+    expect(trades.accept('ada').ok).toBe(true);
+    expect(offerOf(trades.sessionFor('ada')!, 'ada').accepted).toBe(true);
+    expect(trades.ready('ada').ok).toBe(true);
+    expect(offerOf(trades.sessionFor('ada')!, 'ada').accepted).toBe(false);
+    expect(trades.sessionFor('ada')).toBeDefined();
+  });
+
+  it('rejects forged slot indexes and a second request while trading', async () => {
+    const { trades, inventories } = await setup();
+    open(trades);
+    expect(trades.clickOfferSlot('ada', 6).error).toBe(TRADE_ITEM_ERROR);
+    expect(trades.clickOfferSlot('ada', -1).error).toBe(TRADE_ITEM_ERROR);
+    expect(trades.clickOfferSlot('ada', 1.5).error).toBe(TRADE_ITEM_ERROR);
+    expect(trades.selectInventory('ada', 999).ok).toBe(false);
+    expect(trades.request('ada', 'Bob').error).toBe(TRADE_BUSY_ERROR);
+    expect(inventories.get('ada')!.getSlot(0)?.count).toBe(32);
+  });
+
+  it('does not move money when an offer changes after accept', async () => {
+    const { trades, economy } = await setup();
+    open(trades);
+    trades.setMoney('ada', 40);
+    trades.ready('ada');
+    trades.ready('bob');
+    expect(trades.accept('ada').ok).toBe(true);
+    trades.setMoney('ada', 60);
+    const session = trades.sessionFor('ada')!;
+    expect(offerOf(session, 'ada').ready).toBe(false);
+    expect(offerOf(session, 'ada').accepted).toBe(false);
+    expect(offerOf(session, 'bob').ready).toBe(false);
+    expect(trades.accept('bob').error).toBe(TRADE_NOT_READY_ERROR);
+    expect(economy.getBalance('ada')).toBe(300);
+    expect(economy.getBalance('bob')).toBe(150);
   });
 
   it('rejects overfill beyond the item stack cap', async () => {

@@ -2,9 +2,15 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Inventory } from '../../src/inventory';
+import { Inventory, createItemStack } from '../../src/inventory';
 import { parseClientMessage } from '../../shared/protocol';
-import { CLAIM_MAX_OWNED, showsMenuBack } from '../../shared/menu';
+import {
+  CLAIM_MAX_OWNED,
+  CLAIM_MEMBER_SELF_ERROR,
+  CLAIM_NAME_TAKEN_ERROR,
+  showsMenuBack,
+} from '../../shared/menu';
+import { HOME_LIMIT_ERROR, HOME_NAME_TAKEN_ERROR } from '../../shared/homes';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService } from '../../server/services/economy';
 import { FriendService } from '../../server/services/friends';
@@ -38,7 +44,7 @@ describe('MenuService', () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  async function setup() {
+  async function setup(extraClaims: readonly Partial<Claim>[] = []) {
     const dir = await mkdtemp(join(tmpdir(), 'fc-menu-'));
     dirs.push(dir);
     const store = new JsonFileStore(dir);
@@ -48,16 +54,25 @@ describe('MenuService', () => {
     const trades = new TradeService(store, economy);
     const menu = new MenuService(store, economy, homes, friends, trades);
     const inventories = new Map<string, Inventory>([['ada', new Inventory()]]);
+    const displayName = (id: string) => (id === 'ada' ? 'Ada' : id === 'bob' ? 'Bob' : id);
+    const lookupPlayer = (raw: string) => {
+      const key = raw.trim().toLowerCase();
+      if (key === 'ada') return { id: 'ada', name: 'Ada' };
+      if (key === 'bob') return { id: 'bob', name: 'Bob' };
+      return undefined;
+    };
+    trades.setRuntime({
+      isOnline: () => true,
+      displayName,
+      lookupPlayer,
+      inventory: (id) => inventories.get(id),
+      flushInventory: () => undefined,
+    });
     menu.setRuntime({
-      displayName: (id) => (id === 'ada' ? 'Ada' : id === 'bob' ? 'Bob' : id),
+      displayName,
       ownerKey: (id) => (id === 'ada' ? 'ada' : id),
       isOnline: () => true,
-      lookupPlayer: (raw) => {
-        const key = raw.trim().toLowerCase();
-        if (key === 'ada' || key === 'ada') return { id: 'ada', name: 'Ada' };
-        if (key === 'bob') return { id: 'bob', name: 'Bob' };
-        return undefined;
-      },
+      lookupPlayer,
       position: () => ({ x: 12, y: 64, z: -8 }),
       worldId: () => 'anarchy',
       inventory: (id) => inventories.get(id),
@@ -77,8 +92,15 @@ describe('MenuService', () => {
       priority: CLAIM_PRIORITY_DEFAULT,
       flags: { pvp: false },
     };
-    store.save('claims/claims', { claims: [claim] });
-    return { menu, homes };
+    const claims = [claim, ...extraClaims.map((extra, index): Claim => ({
+      ...claim,
+      id: `claim-${index + 2}`,
+      name: `Приват ${index + 2}`,
+      members: [],
+      ...extra,
+    }))];
+    store.save('claims/claims', { claims });
+    return { menu, homes, trades, inventories };
   }
 
   it('opens the main shell, spawn-closes, and pages homes/friends/claims/auction', async () => {
@@ -119,6 +141,72 @@ describe('MenuService', () => {
     expect(menu.buildMessage('ada').claims).toHaveLength(0);
   });
 
+  it('keeps home names unique per player and stops at four homes', async () => {
+    const { menu, homes } = await setup();
+    menu.handleAction('ada', { type: 'menu_action', action: 'open_homes' });
+    expect(menu.handleAction('ada', { type: 'menu_action', action: 'create_home', name: 'Дом' }).ok).toBe(true);
+    const duplicate = menu.handleAction('ada', { type: 'menu_action', action: 'create_home', name: 'дом' });
+    expect(duplicate.ok).toBe(false);
+    expect(duplicate.error).toBe(HOME_NAME_TAKEN_ERROR);
+    expect(menu.buildMessage('ada').homes).toHaveLength(1);
+    expect(homes.find('ada', 'Дом')?.x).toBe(12);
+
+    for (const name of ['Шахта', 'Ферма', 'База']) {
+      expect(menu.handleAction('ada', { type: 'menu_action', action: 'create_home', name }).ok).toBe(true);
+    }
+    const full = menu.handleAction('ada', { type: 'menu_action', action: 'create_home', name: 'Лишний' });
+    expect(full.error).toBe(HOME_LIMIT_ERROR);
+    const list = menu.buildMessage('ada');
+    expect(list.homes).toHaveLength(4);
+    expect(list.homeMax).toBe(4);
+    expect(list.message).toBe(HOME_LIMIT_ERROR);
+
+    const teleport = menu.handleAction('ada', { type: 'menu_action', action: 'teleport_home', homeName: 'Шахта' });
+    expect(teleport.close).toBe(true);
+    expect(menu.handleAction('ada', { type: 'menu_action', action: 'teleport_home', homeName: 'Нет' }).ok).toBe(false);
+  });
+
+  it('rejects a duplicate claim name and refuses the owner as a member', async () => {
+    const { menu } = await setup([{ name: 'Каменный приват' }]);
+    menu.handleAction('ada', { type: 'menu_action', action: 'open_claims' });
+    expect(menu.buildMessage('ada').claims).toHaveLength(2);
+    menu.handleAction('ada', { type: 'menu_action', action: 'open_claim', claimId: 'claim-1' });
+    const taken = menu.handleAction('ada', { type: 'menu_action', action: 'save_claim_name', name: 'каменный приват' });
+    expect(taken.error).toBe(CLAIM_NAME_TAKEN_ERROR);
+    expect(menu.buildMessage('ada').claim?.name).toBe('Алмазный приват');
+    const own = menu.handleAction('ada', { type: 'menu_action', action: 'add_claim_member', name: 'Ada' });
+    expect(own.error).toBe(CLAIM_MEMBER_SELF_ERROR);
+    expect(menu.buildMessage('ada').claim?.members).toEqual(['bob']);
+  });
+
+  it('cancels an open trade when the menu itself is closed with X or E', async () => {
+    const { menu, trades, inventories } = await setup();
+    inventories.set('bob', new Inventory());
+    inventories.get('ada')!.setSlot(0, createItemStack('stone', 32));
+    expect(trades.request('ada', 'Bob').ok).toBe(true);
+    expect(trades.acceptRequest('bob', 'ada').ok).toBe(true);
+    menu.handleAction('ada', { type: 'menu_action', action: 'select_inventory_slot', slot: 0 });
+    menu.handleAction('ada', { type: 'menu_action', action: 'click_offer_slot', slot: 0 });
+    expect(menu.buildMessage('ada').screen).toBe('trade-session');
+    expect(inventories.get('ada')!.getSlot(0)).toBeNull();
+
+    const closed = menu.handleAction('ada', { type: 'menu_action', action: 'close' });
+    expect(closed.close).toBe(true);
+    expect(trades.sessionFor('ada')).toBeUndefined();
+    expect(trades.sessionFor('bob')).toBeUndefined();
+    expect(inventories.get('ada')!.getSlot(0)?.count).toBe(32);
+  });
+
+  it('gates my-clan on membership and offers clan create instead', async () => {
+    const { menu } = await setup();
+    menu.handleAction('ada', { type: 'menu_action', action: 'open_clans' });
+    const hub = menu.buildMessage('ada');
+    expect(hub.screen).toBe('clans');
+    expect(hub.inClan).toBe(false);
+    expect(menu.handleAction('ada', { type: 'menu_action', action: 'open_my_clan' }).ok).toBe(false);
+    expect(menu.handleAction('ada', { type: 'menu_action', action: 'open_create_clan' }).openClan).toBe('create');
+  });
+
   it('returns nested pages with back instead of closing the shell', async () => {
     const { menu } = await setup();
     menu.handleAction('ada', { type: 'menu_action', action: 'open' });
@@ -129,5 +217,17 @@ describe('MenuService', () => {
     menu.handleAction('ada', { type: 'menu_action', action: 'open_claim', claimId: 'claim-1' });
     menu.handleAction('ada', { type: 'menu_action', action: 'back' });
     expect(menu.buildMessage('ada').screen).toBe('claims');
+
+    menu.handleAction('ada', { type: 'menu_action', action: 'open_claim', claimId: 'claim-1' });
+    menu.handleAction('ada', { type: 'menu_action', action: 'delete_claim' });
+    menu.handleAction('ada', { type: 'menu_action', action: 'back' });
+    expect(menu.buildMessage('ada').screen).toBe('claim-detail');
+
+    menu.handleAction('ada', { type: 'menu_action', action: 'open_homes' });
+    menu.handleAction('ada', { type: 'menu_action', action: 'create_home', name: 'Дом' });
+    menu.handleAction('ada', { type: 'menu_action', action: 'delete_home', homeName: 'Дом' });
+    menu.handleAction('ada', { type: 'menu_action', action: 'back' });
+    expect(menu.buildMessage('ada').screen).toBe('homes');
+    expect(menu.buildMessage('ada').homes).toHaveLength(1);
   });
 });

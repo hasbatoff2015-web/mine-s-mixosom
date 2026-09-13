@@ -30,9 +30,14 @@ export function tradeReadyLabel(selfReady: boolean, selfAccepted: boolean, partn
   readonly self: string;
   readonly partner: string;
 } {
+  const partner = partnerAccepted
+    ? 'Партнёр принял'
+    : selfAccepted
+      ? 'Партнёр ещё не принял'
+      : partnerReady ? 'Партнёр готов' : 'Партнёр не готов';
   return {
     self: selfAccepted ? 'Вы приняли' : selfReady ? 'Вы готовы' : 'Вы не готовы',
-    partner: partnerAccepted ? 'Партнёр принял' : partnerReady ? 'Партнёр готов' : 'Партнёр не готов',
+    partner,
   };
 }
 

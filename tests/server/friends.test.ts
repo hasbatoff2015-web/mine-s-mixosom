@@ -9,7 +9,10 @@ import {
   FRIEND_LIMIT_ERROR,
   FRIEND_MAX,
   FRIEND_MISSING_PLAYER_ERROR,
+  FRIEND_NOT_FRIEND_ERROR,
+  FRIEND_OFFLINE_ERROR,
   FRIEND_REQUEST_EXISTS_ERROR,
+  FRIEND_REQUEST_MISSING_ERROR,
   FRIEND_SELF_ERROR,
   FRIEND_TARGET_LIMIT_ERROR,
   FRIEND_TELEPORT_DENIED_ERROR,
@@ -92,6 +95,37 @@ describe('FriendService', () => {
       { online: false, name: 'Cara' },
     ]);
     expect(rows.map((row) => row.name)).toEqual(['Ada', 'Bob', 'Cara', 'Zed']);
+  });
+
+  it('refuses teleport to a stranger and to a disconnected friend', async () => {
+    const { friends, teleports, online } = await setup();
+    expect(friends.teleport('ada', 'bob').error).toBe(FRIEND_NOT_FRIEND_ERROR);
+    friends.request('ada', 'Bob');
+    friends.accept('bob', 'ada');
+    friends.setTeleportAllowed('bob', true);
+    online.delete('bob');
+    expect(friends.teleport('ada', 'bob').error).toBe(FRIEND_OFFLINE_ERROR);
+    expect(teleports).toEqual([]);
+    const offline = friends.list('ada');
+    expect(offline[0]).toMatchObject({ playerId: 'bob', online: false, teleportAllowed: true });
+  });
+
+  it('reports the friend own permission, not a client claim, in the snapshot', async () => {
+    const { friends } = await setup();
+    friends.request('ada', 'Bob');
+    friends.accept('bob', 'ada');
+    expect(friends.list('ada')[0]?.teleportAllowed).toBe(false);
+    friends.setTeleportAllowed('ada', true);
+    expect(friends.list('ada')[0]?.teleportAllowed).toBe(false);
+    friends.setTeleportAllowed('bob', true);
+    expect(friends.list('ada')[0]?.teleportAllowed).toBe(true);
+  });
+
+  it('rejects an unknown friend request and a removal of a stranger', async () => {
+    const { friends } = await setup();
+    expect(friends.reject('bob', 'ada').error).toBe(FRIEND_REQUEST_MISSING_ERROR);
+    expect(friends.accept('bob', 'ada').error).toBe(FRIEND_REQUEST_MISSING_ERROR);
+    expect(friends.remove('ada', 'bob').error).toBe(FRIEND_NOT_FRIEND_ERROR);
   });
 
   it('validates teleport permission on the server', async () => {

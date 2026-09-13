@@ -8,7 +8,9 @@ Report: `reports/2026-09-13_main-menu-social.md`.
 npx vitest run tests/server/friends.test.ts tests/server/trade.test.ts tests/server/homes.test.ts tests/server/menu.test.ts tests/menu-gui.test.ts tests/clan-gui.test.ts tests/crafting-ui.test.ts tests/server/claim-anchor-blocks.test.ts --maxWorkers=2
 ```
 
-Focused: friends 4/4, trade 9/9, homes 3/3, menu 5/5, menu-gui 4/4, clan-gui 7/7, crafting-ui 7/7, claim-anchor 8/8. `test:server` 50/51 files (tick-load-flight flake under load; isolated retry 3/3 PASS). Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+Focused: friends 7/7, trade 12/12, homes 3/3, menu 9/9, menu-gui 6/6, clan-gui 7/7, crafting-ui 7/7, claim-anchor 8/8 — **59/59 PASS**. `test:server` **50/51 files, 511/512 tests PASS**; the single failure is `tick-load-flight` `meanMs < 50` (~54 ms), which reproduces on base `main` `70e2afe` in a clean worktree, so it is a VM perf limit, not a regression. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
+Contracts: friends teleport needs friendship + online + the friend's own permission; home names are unique per player in the menu path; claim rename rejects a duplicate and the owner cannot be a claim member; trade rejects forged slot indexes, resets both Ready flags on any offer change, needs double Accept, and returns escrow on cancel / X / E / disconnect.
 
 ## 2026-09-13 Crafting UI merged into main
 

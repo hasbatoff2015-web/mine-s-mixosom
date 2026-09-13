@@ -10,7 +10,13 @@ import {
   type MenuScreenKind,
 } from '../../shared/menu';
 import { FRIEND_MAX } from '../../shared/friends';
-import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR, HOME_NAME_LENGTH_ERROR, validateHomeName } from '../../shared/homes';
+import {
+  HOME_MAX_DEFAULT,
+  HOME_MISSING_ERROR,
+  HOME_NAME_LENGTH_ERROR,
+  HOME_NAME_TAKEN_ERROR,
+  validateHomeName,
+} from '../../shared/homes';
 import { TRADE_CANCELLED_MESSAGE, TRADE_SLOT_COUNT } from '../../shared/trade';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import type {
@@ -191,8 +197,14 @@ export class MenuService {
       }
       const pos = this.runtime.position(playerId);
       if (!pos) return { ok: false, error: 'Игрок не найден.' };
+      const owner = this.runtime.ownerKey(playerId);
+      if (this.homes.find(owner, parsed.name)) {
+        session.message = HOME_NAME_TAKEN_ERROR;
+        session.screen = 'homes';
+        return { ok: false, error: HOME_NAME_TAKEN_ERROR };
+      }
       const result = this.homes.set(
-        this.runtime.ownerKey(playerId),
+        owner,
         parsed.name,
         { worldId: this.runtime.worldId(), ...pos },
         this.runtime.maxHomes(playerId),

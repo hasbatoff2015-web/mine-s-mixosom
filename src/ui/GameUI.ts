@@ -2745,9 +2745,10 @@ export class GameUI {
         </div>`).join('');
       return `<div class="mc-ah-body mc-menu-body" data-menu-screen="claim-detail">
         <div class="mc-label">${this.escape(state.title)}</div>
-        <label class="mc-ah-field">Название привата
-          <input data-menu-claim-name type="text" maxlength="32" value="${this.escape(state.claimNameText ?? claim?.name ?? '')}" autocomplete="off" spellcheck="false" />
-        </label>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-menu-claim-name type="text" maxlength="32" placeholder="Название привата" value="${this.escape(state.claimNameText ?? claim?.name ?? '')}" autocomplete="off" spellcheck="false" /></label>
+          <button type="button" class="mc-ah-btn" data-menu-action="save_claim_name">Сохранить</button>
+        </div>
         <div class="mc-menu-toggle">
           <span>PVP в привате: ${pvp ? 'Включено' : 'Выключено'}</span>
           <button type="button" class="mc-ah-btn" data-menu-action="set_claim_pvp" data-pvp="${pvp ? '0' : '1'}">${pvp ? 'Выключить' : 'Включить'}</button>

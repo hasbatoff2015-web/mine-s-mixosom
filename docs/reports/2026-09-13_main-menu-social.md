@@ -27,7 +27,8 @@ Landed on `cursor/main-menu-social-a8dc`. Client sends `menu_action` intent only
 ### Homes
 
 - `HomeService` is the only store (`plugin-data/home/homes.json`). Builtin home plugin commands call it.
-- Default cap **4** (`HOME_MAX_DEFAULT`). Same name key updates that home (like `/sethome`); a fifth distinct name is `HOME_LIMIT_ERROR`.
+- Default cap **4** (`HOME_MAX_DEFAULT`). A fifth distinct name is `HOME_LIMIT_ERROR`.
+- Menu «Добавить» requires a **unique** name per player: an existing name key returns `HOME_NAME_TAKEN_ERROR` instead of moving that home. `/sethome <name>` keeps its old overwrite behaviour, so commands are unchanged.
 - UI: name field + Добавить; list with coords; row click teleports; X → confirm delete.
 
 ### Friends
@@ -39,7 +40,7 @@ Landed on `cursor/main-menu-social-a8dc`. Client sends `menu_action` intent only
 ### Clans / Claims / Auction
 
 - Clans hub: Мой клан (disabled if none) / Список кланов / Создать клан → existing Clan UI. Ranking ← with `returnTo: 'menu-clans'` returns to the Clans hub, not a full close.
-- Claims: list owned claims (max 4, same cap as `/claim create`). Detail: rename (replace in ClaimStore; `Claim.name` stays readonly), PvP flag, members, delete confirm. ← back to the list.
+- Claims: list owned claims (max 4, same cap as `/claim create`). Detail: rename via field + «Сохранить» (replace in ClaimStore; `Claim.name` stays readonly; duplicate name is `CLAIM_NAME_TAKEN_ERROR`), PvP flag, members (owner cannot be added), delete confirm. ← back to the list.
 - Auction: Open / Mine / Sell → existing `/ah`, `/ah list`, `/ah sell`. Auction House not rewritten.
 
 ### Trade
@@ -48,6 +49,7 @@ Landed on `cursor/main-menu-social-a8dc`. Client sends `menu_action` intent only
 - Client: select inventory slot / click offer slot / set money / ready / accept / cancel. No forged stacks.
 - Clicking an occupied offer slot merges the same item up to `maxStack`; a full stack returns `TRADE_STACK_ERROR`; a different item withdraws the offer back to inventory.
 - Ready resets **both** players on any offer change. Accept is enabled only after both Ready. Commit is atomic: both online, fingerprints unchanged, items and money still valid, **full** receive space or `У <ник> недостаточно места в инвентаре для обмена`. No partial swap.
+- Status copy follows the two stages: «Вы готовы / Вы приняли» and «Партнёр не готов / Партнёр готов / Партнёр ещё не принял / Партнёр принял».
 - Cancel, X, E, and disconnect return escrow, do not debit money, close both UIs. Offline partner with no inventory → `pendingReturns`, delivered on join.
 - Player+session locks. `inventory_action` other than `close` is ignored while a trade session is open.
 
@@ -79,9 +81,17 @@ Focused:
 npx vitest run tests/server/friends.test.ts tests/server/trade.test.ts tests/server/homes.test.ts tests/server/menu.test.ts tests/menu-gui.test.ts tests/clan-gui.test.ts tests/crafting-ui.test.ts tests/server/claim-anchor-blocks.test.ts --maxWorkers=2
 ```
 
-**8 files / 47 tests PASS** (friends 4, trade 9, homes 3, menu 5, menu-gui 4, clan-gui 7, crafting-ui 7, claim-anchor 8).
+**8 files / 59 tests PASS** (friends 7, trade 12, homes 3, menu 9, menu-gui 6, clan-gui 7, crafting-ui 7, claim-anchor 8).
 
-`npm run test:server`: **50 files / 501 tests PASS**, 1 fail — `tick-load-flight` `setView ... meanMs < 50` (~55 ms) under suite load. Isolated retry: **3/3 PASS** (one internal vitest retry). Threshold not loosened.
+Covered per the task checklist:
+
+- Friends — send / accept / reject / remove, 50 cap on both sides, duplicate request, self request, online-first sorting, teleport permission, teleport to a stranger, teleport to a disconnected friend, snapshot reports the friend's own permission (not a client claim), unknown request.
+- Homes — create, unique name per player, max 4 with the limit message, delete confirm, teleport, teleport to a missing home.
+- Claims — list with the 4 cap, rename, duplicate rename, PvP toggle, add/remove member, owner rejected as member, delete confirm.
+- Trade — 6 slots, stack cap, inventory validation, forged slot index, money validation (negative / fractional / over balance), self trade, busy player, Ready, Ready reset on both sides, repeated Ready, Accept, double Accept lock, offer change after Accept, insufficient space (no partial commit), cancel, X/E close through the menu, disconnect escrow.
+- UI — HUD stack + M/Tab/T bindings, main menu buttons without Top, nested Back vs X+E, shared close X with inner E, trade 2×3 grids over the real inventory, touch scrolling and input fields.
+
+`npm run test:server`: **50 files / 511 tests PASS**, 1 fail — `tick-load-flight` `setView ... meanMs < 50` (~54 ms). The same test fails on base `main` `70e2afe` in a clean worktree on this VM, so it is a pre-existing perf/VM limit, not a regression. Threshold not loosened.
 
 `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` PASS. `check:boundaries` PASS. `build` PASS.
 
@@ -95,8 +105,8 @@ No new per-frame simulation. Menu/HUD are overlay DOM. Trade locks are per-playe
 
 ## Known issues
 
-- `tick-load-flight` can miss `< 50 ms` when the full server suite is loaded on this VM; isolated it passes. Unrelated to menu/friends/trade.
-- Same home name key via Добавить / `/sethome` overwrites coordinates instead of `HOME_NAME_TAKEN_ERROR` (one home per name).
+- `tick-load-flight` misses `< 50 ms` on this VM (~54 ms) both on this branch and on base `main` `70e2afe`. Pre-existing, unrelated to menu/friends/trade.
+- `/sethome <name>` still overwrites an existing home of that name (unchanged command behaviour). Only the menu «Добавить» path requires a unique name.
 - Premium `home.limit.premium` still allows 5 homes; ordinary players stay at 4.
 - Menu is online-only.
 - Live browser QA of HUD/menu/trade is still on the owner.
