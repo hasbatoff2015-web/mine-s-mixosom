@@ -1,4 +1,4 @@
-import { matchCraftingRecipe } from '../crafting';
+import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
 import {
   Inventory,
   applySlotClick,
@@ -43,6 +43,7 @@ import {
   recipeBookTabUsesText,
   type RecipeBookCategory,
 } from './recipeBook';
+import { CRAFT_BUTTON_LABEL, keepCraftSearchDraft } from './craftGui';
 import {
   clickFurnaceSlot,
   furnaceAccepts,
@@ -284,6 +285,9 @@ export class GameUI {
   private recipeBookCraftableOnly = false;
   private recipeBookPage = 0;
   private recipeVariantIndex = 0;
+  private craftMenuOpen = false;
+  private craftSearch = '';
+  private craftSelectedId = '';
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
   private auctionState?: ServerAuctionMessage;
@@ -1131,7 +1135,11 @@ export class GameUI {
     return el instanceof HTMLInputElement
       && this.modal !== undefined
       && this.modal.contains(el)
-      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen());
+      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen() || this.craftMenuOpen);
+  }
+
+  isCraftMenuOpen(): boolean {
+    return this.craftMenuOpen;
   }
 
   setChatInputHistory(history: readonly string[]): void {
@@ -1305,6 +1313,9 @@ export class GameUI {
     this.recipeBookCategory = 'all';
     this.recipeBookPage = 0;
     this.creativeTab = CREATIVE_DEFAULT_TAB;
+    this.craftMenuOpen = false;
+    this.craftSearch = '';
+    this.craftSelectedId = '';
     this.craftSlots = Array.from({ length: context.kind === 'crafting-table' ? 9 : 4 }, () => null);
     this.renderInventory();
     this.setControlsSuppressed(true);
@@ -1325,6 +1336,9 @@ export class GameUI {
     this.modal?.remove();
     this.modal = undefined;
     this.inventoryContext = undefined;
+    this.craftMenuOpen = false;
+    this.craftSearch = '';
+    this.craftSelectedId = '';
     this.cursorStack = null;
     this.craftSlots = [];
     this.ghostCraft = undefined;
@@ -1718,11 +1732,156 @@ export class GameUI {
   private renderInventory(): void {
     const context = this.inventoryContext;
     if (!context) return;
+    if (this.craftMenuOpen && context.kind === 'inventory' && context.mode !== 'creative') {
+      this.renderCraftMenu(context);
+      return;
+    }
     if (showsCreativeCatalog(context.kind, context.mode)) {
       this.renderCreativeInventory(context);
       return;
     }
     this.renderContainerScreen(context);
+  }
+
+  private openCraftMenu(): void {
+    const context = this.inventoryContext;
+    if (!context || context.kind !== 'inventory' || context.mode === 'creative') return;
+    this.craftMenuOpen = true;
+    if (!this.craftSelectedId) {
+      this.craftSelectedId = craftCatalogEntries(context.inventory)[0]?.itemId ?? '';
+    }
+    this.renderInventory();
+  }
+
+  closeCraftMenu(): void {
+    if (!this.craftMenuOpen) return;
+    this.craftMenuOpen = false;
+    this.renderInventory();
+  }
+
+  private handleCraftOnce(): void {
+    const context = this.inventoryContext;
+    if (!context) return;
+    const recipe = findPrimaryRecipeForItem(this.craftSelectedId);
+    if (!recipe) return;
+    const check = canCraftOnce(context.inventory, recipe.id);
+    if (check === 'full') {
+      this.toast(CRAFT_INVENTORY_FULL_MESSAGE);
+      return;
+    }
+    if (check !== true) return;
+    if (context.submitAction) {
+      context.submitAction({ type: 'inventory_action', action: 'craft_recipe', recipeId: recipe.id });
+      return;
+    }
+    const result = craftOnceByRecipeId(context.inventory, recipe.id);
+    if (!result.ok) {
+      if (result.reason === 'full') this.toast(CRAFT_INVENTORY_FULL_MESSAGE);
+      return;
+    }
+    context.onChanged();
+    this.renderInventory();
+  }
+
+  private renderCraftMenu(context: InventoryContext): void {
+    const entries = craftCatalogEntries(context.inventory, this.craftSearch);
+    if (this.craftSelectedId && !entries.some((entry) => entry.itemId === this.craftSelectedId)) {
+      /* keep selection even if filtered out */
+    } else if (!this.craftSelectedId) {
+      this.craftSelectedId = entries[0]?.itemId ?? '';
+    }
+    const list = this.craftListHtml(context);
+    const detail = this.craftDetailHtml(context);
+    const existing = this.modal?.querySelector('[data-craft-screen]');
+    if (existing) {
+      const search = this.modal?.querySelector<HTMLInputElement>('[data-craft-search]');
+      if (search && !keepCraftSearchDraft(document.activeElement, search)) search.value = this.craftSearch;
+      const listHost = this.modal?.querySelector('[data-craft-list]');
+      const detailHost = this.modal?.querySelector('[data-craft-detail]');
+      if (listHost instanceof HTMLElement) {
+        const scrollTop = listHost.scrollTop;
+        listHost.innerHTML = list;
+        listHost.scrollTop = scrollTop;
+      }
+      if (detailHost) detailHost.innerHTML = detail;
+      return;
+    }
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    const stage = containerStageSize('craft', false);
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+        <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
+          <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
+          <div class="mc-craft-layout">
+            <div class="mc-craft-left">
+              <input data-craft-search type="search" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(this.craftSearch)}" />
+              <div class="mc-craft-list mc-grid mc-grid-6" data-craft-list>${list}</div>
+            </div>
+            <div class="mc-craft-detail" data-craft-detail>${detail}</div>
+          </div>
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindContainerChrome(context);
+    this.bindCraftSearch();
+  }
+
+  private bindCraftSearch(): void {
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-craft-search]');
+    search?.addEventListener('input', () => {
+      this.craftSearch = search.value;
+      const context = this.inventoryContext;
+      if (!context) return;
+      const listHost = this.modal?.querySelector('[data-craft-list]');
+      if (listHost) listHost.innerHTML = this.craftListHtml(context);
+    });
+    search?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    search?.addEventListener('keydown', (event) => event.stopPropagation());
+    search?.addEventListener('keyup', (event) => event.stopPropagation());
+    this.modal?.querySelector('[data-craft-list]')?.addEventListener('wheel', (event) => {
+      event.stopPropagation();
+    }, { passive: true });
+  }
+
+  private craftListHtml(context: InventoryContext): string {
+    return craftCatalogEntries(context.inventory, this.craftSearch).map((entry) => {
+      const available = entry.craftable ? ' mc-craft-available' : '';
+      const selected = entry.itemId === this.craftSelectedId ? ' selected' : '';
+      return `<button type="button" class="slot mc-slot${available}${selected}" data-craft-item="${this.escape(entry.itemId)}"${this.itemHoverAttrs(entry.itemId, entry.name)}><img src="${this.itemIcon(entry.itemId)}" alt="" /></button>`;
+    }).join('');
+  }
+
+  private craftDetailHtml(context: InventoryContext): string {
+    const itemId = this.craftSelectedId;
+    if (!itemId) {
+      return `<div class="mc-craft-empty">${this.escape(CRAFT_UNCRAFTABLE_HINT)}</div>`;
+    }
+    const definition = getItemDefinition(itemId);
+    const recipe = findPrimaryRecipeForItem(itemId);
+    const count = recipe && recipe.output.count > 1 ? `<span class="mc-craft-count">×${recipe.output.count}</span>` : '';
+    const icon = `<div class="mc-craft-result"><img src="${this.itemIcon(itemId)}" alt="" />${count}</div>`;
+    const title = `<div class="mc-craft-name">${this.escape(definition.name)}</div>`;
+    if (!recipe) {
+      return `${icon}${title}<p class="mc-craft-uncraftable">${this.escape(CRAFT_UNCRAFTABLE_HINT)}</p>`;
+    }
+    const check = canCraftOnce(context.inventory, recipe.id);
+    const disabled = check !== true ? ' disabled' : '';
+    const lines = craftIngredientLines(recipe, context.inventory).map((line) => (
+      `<div class="mc-craft-need${line.enough ? '' : ' missing'}">`
+      + `<span>${this.escape(line.name)}</span>`
+      + `<span>${line.have}/${line.need}</span>`
+      + `</div>`
+    )).join('');
+    return `${icon}${title}`
+      + `<button type="button" class="mc-craft-do"${disabled} data-craft-once>${CRAFT_BUTTON_LABEL}</button>`
+      + `<div class="mc-craft-needs">${lines}</div>`;
   }
 
   private renderCreativeInventory(context: InventoryContext): void {
@@ -1830,7 +1989,10 @@ export class GameUI {
     this.itemTooltip = attachItemTooltip(this.modal!, {
       cursorStackPresent: () => this.cursorStack !== null,
     });
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => context.onClose());
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => {
+      if (this.craftMenuOpen) this.closeCraftMenu();
+      else context.onClose();
+    });
     this.modal!.addEventListener('pointerdown', (event) => {
       const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-creative-tab]');
       if (tab?.dataset.creativeTab === 'catalog' || tab?.dataset.creativeTab === 'inventory') {
@@ -1838,6 +2000,25 @@ export class GameUI {
         this.creativeTab = tab.dataset.creativeTab;
         this.itemTooltip?.hide();
         this.renderInventory();
+        return;
+      }
+      const craftMenu = (event.target as HTMLElement).closest('[data-craft-menu]');
+      if (craftMenu) {
+        event.preventDefault();
+        this.openCraftMenu();
+        return;
+      }
+      const craftItem = (event.target as HTMLElement).closest<HTMLElement>('[data-craft-item]');
+      if (craftItem?.dataset.craftItem) {
+        event.preventDefault();
+        this.craftSelectedId = craftItem.dataset.craftItem;
+        this.renderInventory();
+        return;
+      }
+      const craftOnce = (event.target as HTMLElement).closest('[data-craft-once]');
+      if (craftOnce) {
+        event.preventDefault();
+        this.handleCraftOnce();
         return;
       }
       const toggle = (event.target as HTMLElement).closest('[data-recipe-toggle]');
@@ -1944,16 +2125,21 @@ export class GameUI {
   }
 
   private craftingHtml(context: InventoryContext): string {
-    const size = context.kind === 'crafting-table' ? 3 : 2;
-    const match = matchCraftingRecipe(this.craftSlots, size, size);
-    const label = context.kind === 'crafting-table' ? CONTAINER_STRINGS.crafting : CONTAINER_STRINGS.inventory;
-    const armor = context.kind === 'inventory'
-      ? this.equipmentColumnHtml(context)
-      : '';
-    const book = this.showsRecipeBook(context) ? this.recipeBookToggleHtml() : '';
-    return `<div class="mc-label">${label}</div>
+    if (context.kind === 'inventory') {
+      return `<div class="mc-label">${CONTAINER_STRINGS.inventory}</div>
       <div class="mc-craft-row">
-        ${armor}
+        ${this.equipmentColumnHtml(context)}
+        <button type="button" class="mc-craft-open" data-craft-menu>
+          <img src="${this.itemIcon('crafting_table')}" alt="" />
+          <span>${CONTAINER_STRINGS.craft}</span>
+        </button>
+      </div>`;
+    }
+    const size = 3;
+    const match = matchCraftingRecipe(this.craftSlots, size, size);
+    const book = this.showsRecipeBook(context) ? this.recipeBookToggleHtml() : '';
+    return `<div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
+      <div class="mc-craft-row">
         ${book}
         <div class="mc-grid mc-grid-${size}">${this.craftSlots.map((slot, index) => this.craftSlotHtml(slot, index)).join('')}</div>
         <div class="mc-arrow" aria-hidden="true"></div>
@@ -2292,7 +2478,10 @@ export class GameUI {
   }
 
   private closeButtonHtml(): string {
-    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>`;
+    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
+      + `<span class="mc-close-x" aria-hidden="true">×</span>`
+      + `<span class="mc-close-hotkey">${CONTAINER_STRINGS.closeHotkey}</span>`
+      + `</button>`;
   }
 
   private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {

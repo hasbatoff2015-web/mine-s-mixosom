@@ -3753,6 +3753,11 @@ export class Game {
       this.closeBuyerAndResumeLook(true);
       return;
     }
+    if (this.ui.isCraftMenuOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.ui.closeCraftMenu();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;

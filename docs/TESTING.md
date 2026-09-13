@@ -1,5 +1,35 @@
 # Тестирование
 
+## 2026-09-13 Close X inner E
+
+Report: `reports/2026-09-13_close-button-inner-e.md`.
+
+```text
+npx vitest run tests/crafting-ui.test.ts tests/container-ui.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused: crafting-ui 7/7, container-ui 22/22, gameplay-ui-entity-polish 27/27. `test:server` 46/47 files (tick-load-flight flake under load; isolated retry 3/3 PASS). Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-13 Crafting UI UX patch
+
+Report: `reports/2026-09-13_crafting-ui-ux.md`.
+
+```text
+npx vitest run tests/crafting-catalog.test.ts tests/crafting-once.test.ts tests/crafting-ui.test.ts tests/crafting.test.ts tests/container-ui.test.ts tests/ui-main-integration.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused: catalog 6/6 (craftable-first sort), once 8/8, ui 7/7, crafting 12/12, container-ui 22/22 (list geometry), ui-main-integration 5/5, gameplay-ui-entity-polish 27/27. `test:server` **47 files / 481 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-12 Crafting UI overhaul
+
+Report: `reports/2026-09-12_crafting-ui.md`.
+
+```text
+npx vitest run tests/crafting-catalog.test.ts tests/crafting-once.test.ts tests/crafting-ui.test.ts tests/crafting.test.ts tests/container-ui.test.ts tests/ui-main-integration.test.ts tests/server/craft-recipe.test.ts --maxWorkers=2
+```
+
+Focused: crafting-catalog 5/5, crafting-once 8/8, crafting-ui 7/7, crafting 12/12, container-ui 22/22, ui-main-integration 5/5, server craft-recipe 3/3. `test:server` **47 files / 481 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
 ## 2026-09-12 Chat fullscreen transparent
 
 Report: `reports/2026-09-12_chat-fullscreen.md`.
@@ -1212,7 +1242,11 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/bucket-interaction.test.ts` | 31 | Same-DDA liquid hits vs ordinary targeting, source/flow/falling/occlusion/reach, source removal/save delta/mesh, inventory modes/full fallback, source placement and promotion delay, drain, deferred Lava light removal, legacy player bucket stacks |
 | `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
-| `tests/crafting.test.ts` | 9 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
+| `tests/crafting.test.ts` | 12 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
+| `tests/crafting-catalog.test.ts` | 6 | All obtainable items, uncraftable last, plank/tool/armor/TNT order, available/missing/no-recipe bands after inventory changes, name search, availability and ingredient have/need |
+| `tests/crafting-once.test.ts` | 8 | One-craft output count, repeat crafts, missing/unknown no-op, full-inventory atomicity, remainders, `craft_recipe` ignores forged count |
+| `tests/crafting-ui.test.ts` | 7 | Survival CRAFT button, no 2×2/book, craft menu chrome, search focus helper, X/E close, E under X, clan back and chat X unchanged |
+| `tests/server/craft-recipe.test.ts` | 3 | Protocol recipeId-only, server one-craft + availability, full inventory does not consume |
 | `tests/combat.test.ts` | 47 | Classic total damage, shared hurt resistance, crit+sprint, canonical KB, armor, sword blocking, legacy migration, bow/survival |
 | `tests/player-physics.test.ts` | 5 | Floor/wall sliding, fall damage, slab collision/step-up, stair generic step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
@@ -1232,7 +1266,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, lid interior `down` face, coplanar seam, held special_model, 27-slot persist, Creative catalog gate (chest **and** portal-chest), shift transfer, single open target |
 | `tests/portal-chest.test.ts` | 7 | Distinct block id/texture, recipe, 27 personal slots, not shared, snapshot parse, meshing/collision |
 | `tests/server/portal-chest.test.ts` | 8 | Open, second block same store, two players, break/replace, persist/restart, playerInteract cancel, claims place/break, ordinary chest still shared |
-| `tests/container-ui.test.ts` | 21 | Logical 176×166 scale, book button in craft row (no extra closed width), no furnace Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
+| `tests/container-ui.test.ts` | 22 | Logical 176×166 scale, craft menu 256×166, book button in craft row (no extra closed width), no furnace Recipe Book, no Survival inventory Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
 | `tests/creative-flight.test.ts` | 8 | 7-tick edge double-tap, Survival never flies, toggle on/off, hover/ascend/descend/Ctrl sprint, collision/landing/ladder override, mode switch, GUI input block while world ticks |
 | `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules; `LOADING_WORLD` is not simulating |
 | `tests/furnace-orientation-lit.test.ts` | 5 | N/S/E/W front, lit/unlit texture, GUI icon uses furnace_front not side, torch emission, LightEngine on/off, save/load burning |

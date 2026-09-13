@@ -1,4 +1,4 @@
-import { matchCraftingRecipe } from '../crafting';
+import { craftOnceByRecipeId, matchCraftingRecipe } from '../crafting';
 import { Inventory } from './inventory';
 import { applySlotClick, createItemStack } from './stack';
 import type { ItemStack } from './types';
@@ -123,11 +123,29 @@ export function applyInventoryUiAction(
     }
     case 'recipe':
       return applyRecipe(state, action);
+    case 'craft_recipe':
+      return applyCraftRecipe(state, action);
     case 'click':
       return applyClick(state, action);
     default:
       return emptyResult(false);
   }
+}
+
+function applyCraftRecipe(state: InventoryUiState, action: ClientInventoryActionMessage): InventoryUiResult {
+  if (!action.recipeId) return emptyResult(false);
+  const crafted = craftOnceByRecipeId(state.inventory, action.recipeId);
+  if (!crafted.ok) return emptyResult(false);
+  /* Client may only send recipeId. Count, result, and inventory are ignored. */
+  return {
+    ok: true,
+    dropped: [],
+    crafted: {
+      itemId: crafted.output.item,
+      count: crafted.output.count,
+      recipeId: crafted.recipeId,
+    },
+  };
 }
 
 function applyRecipe(state: InventoryUiState, action: ClientInventoryActionMessage): InventoryUiResult {

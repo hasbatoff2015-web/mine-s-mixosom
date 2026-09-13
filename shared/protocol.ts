@@ -42,7 +42,8 @@ export type InventoryActionKind =
   | 'select'
   | 'open'
   | 'close'
-  | 'recipe';
+  | 'recipe'
+  | 'craft_recipe';
 
 export type EntityKind = 'item' | 'mob' | 'minecart' | 'tnt' | 'arrow' | 'falling';
 
@@ -1142,7 +1143,7 @@ export const SERVER_MESSAGE_TYPES = [
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
-  'click', 'drop_selected', 'drop_cursor', 'select', 'open', 'close', 'recipe',
+  'click', 'drop_selected', 'drop_cursor', 'select', 'open', 'close', 'recipe', 'craft_recipe',
 ];
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
@@ -1483,6 +1484,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
     case 'inventory_action': {
       if (typeof raw.action !== 'string' || !(INVENTORY_ACTIONS as readonly string[]).includes(raw.action)) {
         return { error: 'inventory_action.action invalid' };
+      }
+      if (raw.action === 'craft_recipe') {
+        const recipeId = optionalString(raw.recipeId, 64);
+        if (!recipeId) return { error: 'inventory_action.recipeId invalid' };
+        return { type: 'inventory_action', action: 'craft_recipe', recipeId };
       }
       if (raw.button !== undefined && raw.button !== 'left' && raw.button !== 'right') {
         return { error: 'inventory_action.button invalid' };

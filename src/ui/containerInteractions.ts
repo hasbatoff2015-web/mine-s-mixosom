@@ -272,7 +272,7 @@ export function showsCreativeCatalog(kind: ContainerKind, mode: 'survival' | 'cr
 }
 
 export function hasRecipeBook(kind: ContainerKind): boolean {
-  return kind === 'crafting-table' || kind === 'inventory';
+  return kind === 'crafting-table';
 }
 
 export { ingredientItemIds };
