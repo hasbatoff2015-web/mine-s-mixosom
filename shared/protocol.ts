@@ -806,6 +806,10 @@ export interface ServerVhMarksMessage {
   readonly targetIds: readonly string[];
 }
 
+export interface ServerTotemActivateMessage {
+  readonly type: 'totem_activate';
+}
+
 export interface ServerEntitySnapshotMessage {
   readonly type: 'entity_snapshot';
   readonly tick: number;
@@ -1114,6 +1118,7 @@ export type ServerMessage =
   | ServerHealthMessage
   | ServerEffectsMessage
   | ServerVhMarksMessage
+  | ServerTotemActivateMessage
   | ServerEntitySnapshotMessage
   | ServerEntityEventMessage
   | ServerWorldSoundMessage
@@ -1178,6 +1183,7 @@ export const SERVER_MESSAGE_TYPES = [
   'effects',
   'entity_snapshot',
   'vh_marks',
+  'totem_activate',
   'entity_event',
   'world_sound',
   'command_result',
@@ -1925,6 +1931,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       }
       return { type: 'vh_marks', targetIds: raw.targetIds as string[] };
     }
+    case 'totem_activate': return { type: 'totem_activate' };
     case 'entity_event': {
       if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.events)) {
         return { error: 'entity_event invalid' };

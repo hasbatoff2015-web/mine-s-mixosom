@@ -47,9 +47,11 @@ export function readBookContent(stack: ItemStack): BookContent | undefined {
 export function writeBookInSlot(inventory: Inventory, slot: number, content: BookContent): ItemStack | null | undefined {
   const stack = inventory.getSlot(slot);
   if (stack?.itemId !== ItemId.Book || readBookContent(stack)?.locked) return undefined;
+  const draft = sanitizeBookDraft(content);
+  if (!draft) return undefined;
   const metadata: ItemMetadata = { ...stack.metadata, book: {
-    pages: [...content.pages],
-    ...(content.title ? { title: content.title } : {}),
+    pages: [...draft.pages],
+    ...(draft.title ? { title: draft.title } : {}),
     ...(readBookContent(stack)?.author ? { author: readBookContent(stack)!.author! } : {}),
   } };
   const edited = createItemStack(ItemId.Book, 1, { metadata });

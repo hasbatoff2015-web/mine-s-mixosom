@@ -3582,3 +3582,42 @@ button {
 .hologram-editor-preview-stage.is-fixed .hologram-editor-preview-text {
   transform: none;
 }
+#totem-flash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(32vw, 180px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 35;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.25) rotate(-12deg);
+}
+
+#totem-flash::before {
+  content: '';
+  position: absolute;
+  inset: -32%;
+  background: repeating-conic-gradient(from 0deg, #ffe58b 0deg 3deg, transparent 4deg 30deg);
+  mask: radial-gradient(transparent 0 25%, #000 44% 48%, transparent 70%);
+  opacity: 0.8;
+}
+
+#totem-flash img {
+  width: 74%;
+  height: 74%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 18px #fff0a0);
+}
+
+#totem-flash.active { animation: totem-activate 1.3s ease-out both; }
+
+@keyframes totem-activate {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.25) rotate(-12deg); }
+  20% { opacity: 1; transform: translate(-50%, -50%) scale(1.2) rotate(5deg); }
+  55% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.82) rotate(8deg); }
+}

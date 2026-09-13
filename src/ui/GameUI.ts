@@ -253,6 +253,8 @@ export class GameUI {
   private effectHud: HTMLElement;
   private toasts: HTMLElement;
   private hurtFlash: HTMLElement;
+  private totemFlash: HTMLElement;
+  private totemFlashTimer?: number;
   private hurtFlashAlpha = -1;
   private chat: HTMLElement;
   private chatLogEl: HTMLElement;
@@ -316,6 +318,7 @@ export class GameUI {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
         <div id="hurt-flash" aria-hidden="true"></div>
+        <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" /></div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="status-bars">
@@ -394,6 +397,7 @@ export class GameUI {
     this.effectHud = this.root.querySelector('#effect-hud')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
     this.hurtFlash = this.root.querySelector('#hurt-flash')!;
+    this.totemFlash = this.root.querySelector('#totem-flash')!;
     this.chat = this.root.querySelector('#chat')!;
     this.chatLogEl = this.root.querySelector('#chat-log')!;
     this.chatLogInner = this.root.querySelector('#chat-log-inner')!;
@@ -1334,6 +1338,19 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  playTotemActivation(): void {
+    if (this.totemFlashTimer !== undefined) window.clearTimeout(this.totemFlashTimer);
+    this.totemFlash.classList.remove('active');
+    // Reuse the same HUD element; restarting the class restarts the short animation.
+    void this.totemFlash.offsetWidth;
+    this.totemFlash.classList.add('active');
+    this.totemFlashTimer = window.setTimeout(() => {
+      this.totemFlash.classList.remove('active');
+      this.totemFlashTimer = undefined;
+    }, 1300);
+    this.toast('Тотем бессмертия спас вас!', 2200);
   }
 
   openBook(stack: ItemStack, onSave: (content: BookContent) => void, onClose: () => void): void {

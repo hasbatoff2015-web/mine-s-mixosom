@@ -272,12 +272,12 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.WhiteBed, 'white_bed', {
     category: 'utility', hardness: 0.2, opaque: false, occludesFaces: false,
     renderShape: 'bed', tool: 'axe', tier: 'hand', flammable: true,
-    textures: { all: 'block/white_bed', front: 'entity/bed/white' },
+    textures: { all: 'block/white_bed' },
   }),
   block(BlockId.OakSign, 'oak_sign', {
     category: 'utility', hardness: 1, solid: false, opaque: false, occludesFaces: false,
     renderLayer: 'cutout', renderShape: 'sign', tool: 'axe', tier: 'hand', flammable: true,
-    textures: { all: 'block/oak_sign', front: 'entity/sign' },
+    textures: { all: 'block/oak_sign' },
   }),
   block(BlockId.OakDoor, 'oak_door', {
     category: 'utility', hardness: 3, opaque: false, tool: 'axe', tier: 'hand',

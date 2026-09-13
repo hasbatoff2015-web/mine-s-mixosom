@@ -168,6 +168,7 @@ const entities = {
   spider_eyes: 'spider_eyes.png',
   steve: 'steve.png',
   arrow: join('projectiles', 'arrow.png'),
+  spectral_arrow: join('projectiles', 'spectral_arrow.png'),
 };
 
 const copies = [];

@@ -113,8 +113,8 @@ export class ThreeEntityHost implements EntityHost {
     return { visual: model.root, model };
   }
 
-  createArrow(flaming = false): EntityVisual {
-    return this.arrows().create(flaming);
+  createArrow(flaming = false, kind: 'normal' | 'fire' | 'vh' = flaming ? 'fire' : 'normal'): EntityVisual {
+    return this.arrows().create(kind);
   }
 
   createPrimedTnt(id: string, textureKey = PRIMED_TNT_TEXTURE_KEY): EntityVisual {

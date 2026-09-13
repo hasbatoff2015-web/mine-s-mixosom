@@ -8,6 +8,7 @@ import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, MAX_GENERATED_SUR
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
 import { sanitizeSignLines, type SignLines } from './sign';
+import { bedOtherCell, isMatchingBedHalf } from './bed';
 import { getItemDefinition } from '../items';
 import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
@@ -469,10 +470,12 @@ export class VoxelWorld {
     budget = Math.min(budget, this.supportQueue.size);
     let processed = 0;
     const removals: Array<{ x: number; y: number; z: number; block: BlockId }> = [];
+    const removedBedKeys = new Set<string>();
     for (const [key, [x, y, z]] of this.supportQueue) {
       if (processed >= budget) break;
       this.supportQueue.delete(key);
       processed++;
+      if (removedBedKeys.has(key)) continue;
       const block = this.getBlock(x, y, z, false);
       const support = supportCellForBlock(block, this.getBlockState(x, y, z), x, y, z);
       if (!support) continue;
@@ -482,6 +485,18 @@ export class VoxelWorld {
         continue;
       }
       if (!isBlockStillSupported(this, x, y, z)) {
+        if (block === BlockId.WhiteBed) {
+          const state = this.getBlockState(x, y, z);
+          const other = state && isMatchingBedHalf(this, x, y, z, state)
+            ? bedOtherCell(x, y, z, state)
+            : undefined;
+          if (other) {
+            const otherKey = blockKey(other.x, other.y, other.z);
+            removedBedKeys.add(otherKey);
+            removals.push({ ...other, block: BlockId.Air });
+          }
+          removedBedKeys.add(key);
+        }
         removals.push({ x, y, z, block: BlockId.Air });
         this.detachedBlocks.push({ x, y, z, block, state: this.getBlockState(x, y, z), reason: 'support' });
       }

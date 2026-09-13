@@ -342,6 +342,8 @@ import {
 import { isUseTargetBlock } from '../world/blockInteraction';
 import { clearBedBlocks } from '../world/bed';
 import { fillBucketWithMilk } from '../items/bucketInteraction';
+import { FireworkManager, fireworkFlight } from '../entities/FireworkManager';
+import { FireworkVisuals } from '../rendering/FireworkVisuals';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
@@ -377,6 +379,8 @@ export interface GameSession {
   falling: FallingBlockManager;
   mobs: MobManager;
   arrows: PlayerArrowManager;
+  fireworks: FireworkManager;
+  fireworkVisuals: FireworkVisuals;
   minecarts: MinecartManager;
   entityHost: ThreeEntityHost;
   ridingCartId?: string;
@@ -1153,6 +1157,7 @@ export class Game {
           tick: message.tick,
           now: performance.now(),
         });
+        session.fireworkVisuals.sync(message.entities.filter((entity) => entity.kind === 'firework'));
         return;
       case 'entity_event':
         applyNetworkEntityEvents(session, message.events);
@@ -1249,6 +1254,10 @@ export class Game {
         for (const [id, view] of session.online.remotes) view.setVhMarked(marked.has(id));
         return;
       }
+      case 'totem_activate':
+        this.ui.playTotemActivation();
+        this.playLocal('totem.activate');
+        return;
       case 'sign_data':
         session.world.setSignText(message.x, message.y, message.z,
           message.lines as [string, string, string, string]);
@@ -2907,16 +2916,18 @@ export class Game {
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
     survival.setDeathProtection(() => {
       if (summary.mode !== 'survival') return false;
-      const main = inventory.getSlot(selectedSlot);
+      const activeSlot = this.session?.selectedSlot ?? selectedSlot;
+      const main = inventory.getSlot(activeSlot);
       const slot = main?.itemId === ItemId.TotemOfUndying
-        ? selectedSlot
+        ? activeSlot
         : inventory.getSlot({ section: 'offhand' })?.itemId === ItemId.TotemOfUndying
           ? { section: 'offhand' as const }
           : undefined;
       if (slot === undefined) return false;
       const stack = inventory.getSlot(slot)!;
       inventory.setSlot(slot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
-      this.ui.toast('Тотем бессмертия спас вас!');
+      this.ui.playTotemActivation();
+      this.playLocal('totem.activate');
       return true;
     });
     const mobs = new MobManager(entityHost, world, {
@@ -2955,6 +2966,9 @@ export class Game {
         igniteMinecartTntFromFireArrow(session.minecarts, session.redstone, cart);
       },
     });
+    const fireworks = new FireworkManager();
+    const fireworkVisuals = new FireworkVisuals();
+    this.scene.add(fireworkVisuals.group);
     const playerVisual = new PlayerVisual(
       this.playerSkins,
       this.playerSkinGeometries,
@@ -2986,6 +3000,8 @@ export class Game {
       falling,
       mobs,
       arrows,
+      fireworks,
+      fireworkVisuals,
       minecarts,
       entityHost,
       redstone,
@@ -4016,6 +4032,7 @@ export class Game {
     }
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
+      this.session.fireworkVisuals.update(rawElapsed);
       updateSharedFireAnimation(rawElapsed);
       this.session.mobs.advanceDeathVisuals(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
@@ -4349,6 +4366,13 @@ export class Game {
       tickProjectiles: () => {
         entityStart = performance.now();
         session.arrows.tick(FIXED_DT);
+        if (!session.online) {
+          session.fireworks.tick();
+          session.fireworkVisuals.sync(session.fireworks.entities.map((rocket) => ({
+            id: rocket.id, x: rocket.position.x, y: rocket.position.y, z: rocket.position.z,
+            state: rocket.exploded ? 'burst' : 'flight',
+          })));
+        }
         const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
           mode: session.summary.mode,
           addItem: (itemId, count) => session.inventory.addItem(itemId, count),
@@ -4733,6 +4757,19 @@ export class Game {
   private useTargetOrItem(): void {
     const session = this.session!;
     const held = session.inventory.getSlot(session.selectedSlot);
+    if (!session.online && held?.itemId === ItemId.FireworkRocket) {
+      const origin = session.target
+        ? session.target.point.clone().addScaledVector(session.target.normal, 0.2)
+        : session.player.eyePosition().addScaledVector(viewDirectionFromLook(this.input.yaw, this.input.pitch), 0.7);
+      origin.y += 0.15;
+      session.fireworks.spawn(origin, fireworkFlight(held.metadata));
+      if (session.summary.mode === 'survival') {
+        session.inventory.setSlot(session.selectedSlot, held.count <= 1 ? null : { ...held, count: held.count - 1 });
+      }
+      this.firstPerson?.swing();
+      this.refreshHud();
+      return;
+    }
     if (!session.online && held?.itemId === ItemId.Bucket) {
       const eye = session.player.eyePosition();
       const direction = viewDirectionFromLook(this.input.yaw, this.input.pitch);
@@ -5852,6 +5889,8 @@ export class Game {
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();
     this.session.arrows.dispose();
+    this.session.fireworkVisuals.dispose();
+    this.session.fireworks.clear();
     this.session.minecarts.dispose();
     this.session.mobs.dispose();
     this.session.redstone.dispose();

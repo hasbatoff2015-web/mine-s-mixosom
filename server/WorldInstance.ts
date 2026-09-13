@@ -254,6 +254,7 @@ export class ServerPlayer implements GameplayPlayer {
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
     this.survival.setDeathProtection(() => {
+      if (this.gamemode !== 'survival') return false;
       const main = this.inventory.getSlot(this.selectedSlot);
       const slot = main?.itemId === ItemId.TotemOfUndying
         ? this.selectedSlot
@@ -2589,6 +2590,7 @@ export class WorldInstance {
     for (const player of this.players.values()) {
       if (player.totemActivated) {
         this.gameplay.vhMarks.clearTarget(player.id);
+        if (player.connected) this.sendTo(player, { type: 'totem_activate' });
         player.totemActivated = false;
       }
       if (!player.connected || player.survival.dead) this.gameplay.vhMarks.clearPlayer(player.id);

@@ -9,6 +9,7 @@ export type NamedSoundEventId =
   | 'combat.hit'
   | 'player.hurt'
   | 'item.pickup'
+  | 'totem.activate'
   | 'food.eat'
   | 'potion.drink'
   | 'door.open'
