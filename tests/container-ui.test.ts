@@ -29,7 +29,7 @@ import {
   RECIPE_BOOK_TAB_ICONS,
   visibleRecipeBookTabs,
 } from '../src/ui/recipeBook';
-import { containerStageSize, containerUiScale, containerUiScaleWithClose, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CLOSE_GUTTER, MC_CLOSE_HIT_MIN_PX, MC_CREATIVE_SCROLL_GUTTER } from '../src/ui/containerTheme';
+import { containerStageSize, containerUiScale, containerUiScaleWithClose, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CLOSE_GUTTER, MC_CLOSE_HIT_MIN_PX, MC_CRAFT_DETAIL_WIDTH, MC_CRAFT_LAYOUT_GAP, MC_CRAFT_LIST_COLUMNS, MC_CRAFT_MENU_WIDTH, MC_CRAFT_PANEL_PAD_X, MC_CREATIVE_SCROLL_GUTTER, MC_SLOT_PITCH, craftListFitsColumns, craftListInnerWidth } from '../src/ui/containerTheme';
 import {
   applySlotSnapshots,
   armorSlotKind,
@@ -54,6 +54,12 @@ describe('container layout', () => {
     expect(containerStageSize('creative', false).width).toBe(195);
     expect(containerStageSize('creative', false).height).toBe(166);
     expect(containerStageSize('craft', false)).toEqual({ width: 256, height: 166 });
+    expect(MC_CRAFT_MENU_WIDTH).toBe(256);
+    expect(MC_CRAFT_LIST_COLUMNS * MC_SLOT_PITCH).toBeLessThanOrEqual(craftListInnerWidth());
+    expect(craftListFitsColumns()).toBe(true);
+    expect(craftListInnerWidth()).toBe(
+      MC_CRAFT_MENU_WIDTH - MC_CRAFT_PANEL_PAD_X * 2 - MC_CRAFT_LAYOUT_GAP - MC_CRAFT_DETAIL_WIDTH,
+    );
     expect(MC_BOOK_BUTTON_IN_CRAFT_ROW).toBe(true);
     const creativeInner = 195 - 14;
     expect(9 * 18).toBeLessThanOrEqual(creativeInner);

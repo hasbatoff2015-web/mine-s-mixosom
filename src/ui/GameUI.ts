@@ -1798,7 +1798,11 @@ export class GameUI {
       if (search && !keepCraftSearchDraft(document.activeElement, search)) search.value = this.craftSearch;
       const listHost = this.modal?.querySelector('[data-craft-list]');
       const detailHost = this.modal?.querySelector('[data-craft-detail]');
-      if (listHost) listHost.innerHTML = list;
+      if (listHost instanceof HTMLElement) {
+        const scrollTop = listHost.scrollTop;
+        listHost.innerHTML = list;
+        listHost.scrollTop = scrollTop;
+      }
       if (detailHost) detailHost.innerHTML = detail;
       return;
     }
@@ -1841,6 +1845,9 @@ export class GameUI {
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
     search?.addEventListener('keydown', (event) => event.stopPropagation());
     search?.addEventListener('keyup', (event) => event.stopPropagation());
+    this.modal?.querySelector('[data-craft-list]')?.addEventListener('wheel', (event) => {
+      event.stopPropagation();
+    }, { passive: true });
   }
 
   private craftListHtml(context: InventoryContext): string {
@@ -2471,10 +2478,12 @@ export class GameUI {
   }
 
   private closeButtonHtml(): string {
-    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
+    return `<div class="mc-close-wrap">`
+      + `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
       + `<span class="mc-close-x" aria-hidden="true">×</span>`
+      + `</button>`
       + `<span class="mc-close-hotkey">${CONTAINER_STRINGS.closeHotkey}</span>`
-      + `</button>`;
+      + `</div>`;
   }
 
   private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {

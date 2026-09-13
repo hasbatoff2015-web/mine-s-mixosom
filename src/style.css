@@ -1744,6 +1744,10 @@ button {
   width: calc(195px * var(--mc-ui-scale));
 }
 
+.mc-panel.mc-craft-panel {
+  width: calc(256px * var(--mc-ui-scale));
+}
+
 .mc-label {
   height: calc(11px * var(--mc-ui-scale));
   margin: 0 0 calc(3px * var(--mc-ui-scale));
@@ -1856,23 +1860,23 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(4px * var(--mc-ui-scale));
-  width: calc(64px * var(--mc-ui-scale));
-  height: calc(64px * var(--mc-ui-scale));
-  padding: calc(4px * var(--mc-ui-scale));
+  gap: calc(1px * var(--mc-ui-scale));
+  width: calc(32px * var(--mc-ui-scale));
+  height: calc(32px * var(--mc-ui-scale));
+  padding: calc(2px * var(--mc-ui-scale));
   border: 0;
   color: #404040;
   background: #8b8b8b;
   box-shadow:
     inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #ffffff,
     inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #373737;
-  font: 700 calc(7px * var(--mc-ui-scale))/1 var(--font-ui);
+  font: 700 calc(5px * var(--mc-ui-scale))/1 var(--font-ui);
   cursor: pointer;
 }
 
 .mc-craft-open img {
-  width: calc(32px * var(--mc-ui-scale));
-  height: calc(32px * var(--mc-ui-scale));
+  width: calc(16px * var(--mc-ui-scale));
+  height: calc(16px * var(--mc-ui-scale));
   image-rendering: pixelated;
   pointer-events: none;
 }
@@ -1907,10 +1911,21 @@ button {
   overflow-x: hidden;
   overflow-y: auto;
   flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
   max-height: calc(118px * var(--mc-ui-scale));
-  padding-right: calc(2px * var(--mc-ui-scale));
-  scrollbar-width: thin;
+  justify-content: start;
   align-content: flex-start;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mc-craft-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .mc-craft-list .mc-craft-available {
@@ -2099,19 +2114,25 @@ button {
   pointer-events: none;
 }
 
+.mc-close-wrap {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  align-self: flex-start;
+  gap: calc(1px * var(--mc-ui-scale));
+  z-index: 2;
+}
+
 .mc-close {
   position: relative;
   flex: none;
-  align-self: flex-start;
-  z-index: 2;
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: calc(1px * var(--mc-ui-scale));
+  display: grid;
+  place-items: center;
   width: max(var(--touch-target), calc(14px * var(--mc-ui-scale)));
-  height: max(var(--touch-target), calc(20px * var(--mc-ui-scale)));
+  height: max(var(--touch-target), calc(14px * var(--mc-ui-scale)));
+  aspect-ratio: 1;
   margin: 0 max(0px, env(safe-area-inset-right, 0px)) 0 0;
   padding: 0;
   border: 0;
@@ -2140,6 +2161,7 @@ button {
   font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1;
+  pointer-events: none;
 }
 
 .mc-close:hover,
@@ -2159,9 +2181,8 @@ button {
 }
 
 .mc-close.mc-back {
-  flex-direction: row;
-  gap: 0;
-  height: max(var(--touch-target), calc(14px * var(--mc-ui-scale)));
+  align-self: flex-start;
+  z-index: 2;
 }
 
 .mc-recipe-book {

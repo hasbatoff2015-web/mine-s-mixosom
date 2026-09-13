@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { keepCraftSearchDraft } from '../src/ui/craftGui';
+import { keepCraftSearchDraft, CRAFT_BUTTON_LABEL } from '../src/ui/craftGui';
 import { CONTAINER_STRINGS } from '../src/ui/containerStrings';
 import { hasRecipeBook } from '../src/ui/containerInteractions';
 
@@ -25,6 +25,8 @@ describe('survival inventory CRAFT button', () => {
     );
     expect(inventoryCraft).toContain('data-craft-menu');
     expect(inventoryCraft).toContain("itemIcon('crafting_table')");
+    expect(CONTAINER_STRINGS.craft).toBe('Крафт');
+    expect(CRAFT_BUTTON_LABEL).toBe('Крафт');
     expect(inventoryCraft).toContain('CONTAINER_STRINGS.craft');
     expect(inventoryCraft).not.toContain('mc-grid-2');
     expect(inventoryCraft).not.toContain('data-recipe-toggle');
@@ -50,6 +52,10 @@ describe('craft menu chrome', () => {
     expect(gameUi).toContain('CRAFT_INVENTORY_FULL_MESSAGE');
     expect(css).toContain('.mc-craft-available');
     expect(css).toContain('.mc-craft-need.missing');
+    expect(css).toContain('scrollbar-width: none');
+    expect(css).toContain('touch-action: pan-y');
+    expect(css).toContain('.mc-craft-list::-webkit-scrollbar');
+    expect(gameUi).toContain("addEventListener('wheel'");
   });
 
   it('keeps the live search draft when the input still has focus', () => {
@@ -68,13 +74,19 @@ describe('craft menu chrome', () => {
 });
 
 describe('close button E caption', () => {
-  it('renders a red X with an E hotkey on inventory-style close controls', () => {
+  it('renders a square red X with an E hotkey under it', () => {
+    expect(gameUi).toContain('class="mc-close-wrap"');
     expect(gameUi).toContain('class="mc-close-x"');
     expect(gameUi).toContain('class="mc-close-hotkey"');
     expect(gameUi).toContain('CONTAINER_STRINGS.closeHotkey');
     expect(CONTAINER_STRINGS.closeHotkey).toBe('E');
+    expect(css).toContain('.mc-close-wrap');
     expect(css).toContain('.mc-close-hotkey');
     expect(css).toContain('.mc-close-x');
+    expect(css).toContain('aspect-ratio: 1');
+    expect(css).not.toContain('height: max(var(--touch-target), calc(20px * var(--mc-ui-scale)))');
+    expect(css).toContain('.mc-panel.mc-craft-panel');
+    expect(css).toMatch(/\.mc-craft-open \{[\s\S]*?width: calc\(32px \* var\(--mc-ui-scale\)\)/);
   });
 
   it('does not put an E caption on the clan back arrow', () => {

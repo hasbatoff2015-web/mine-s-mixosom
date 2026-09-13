@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-13: Crafting UI UX patch
+
+- [x] Square close X with E caption under the button, not inside it.
+- [x] Craftable-now items sort first; list re-sorts after inventory changes.
+- [x] Compact inventory «Крафт» button; craft panel width 256 so the last column fits; hidden scrollbar with wheel/touch scrolling.
+
 ## 2026-09-12: Crafting UI overhaul
 
 - [x] Remove Survival 2×2 grid and recipe book from ordinary inventory; replace with CRAFT button (crafting-table icon).

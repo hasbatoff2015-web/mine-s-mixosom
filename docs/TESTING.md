@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-13 Crafting UI UX patch
+
+Report: `reports/2026-09-13_crafting-ui-ux.md`.
+
+```text
+npx vitest run tests/crafting-catalog.test.ts tests/crafting-once.test.ts tests/crafting-ui.test.ts tests/crafting.test.ts tests/container-ui.test.ts tests/ui-main-integration.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused: catalog 6/6 (craftable-first sort), once 8/8, ui 7/7, crafting 12/12, container-ui 22/22 (list geometry), ui-main-integration 5/5, gameplay-ui-entity-polish 27/27. `test:server` **47 files / 481 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
 ## 2026-09-12 Crafting UI overhaul
 
 Report: `reports/2026-09-12_crafting-ui.md`.
@@ -1223,7 +1233,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
 | `tests/crafting.test.ts` | 12 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
-| `tests/crafting-catalog.test.ts` | 5 | All obtainable items, uncraftable present, plank/tool/armor/TNT order, name search, availability and ingredient have/need |
+| `tests/crafting-catalog.test.ts` | 6 | All obtainable items, uncraftable present, plank/tool/armor/TNT order, craftable-first sort after inventory changes, name search, availability and ingredient have/need |
 | `tests/crafting-once.test.ts` | 8 | One-craft output count, repeat crafts, missing/unknown no-op, full-inventory atomicity, remainders, `craft_recipe` ignores forged count |
 | `tests/crafting-ui.test.ts` | 7 | Survival CRAFT button, no 2×2/book, craft menu chrome, search focus helper, X/E close, E under X, clan back and chat X unchanged |
 | `tests/server/craft-recipe.test.ts` | 3 | Protocol recipeId-only, server one-craft + availability, full inventory does not consume |

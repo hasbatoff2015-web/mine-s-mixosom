@@ -59,6 +59,12 @@ export function compareCraftCatalogItems(a: ItemDefinition, b: ItemDefinition): 
   return a.name.localeCompare(b.name, 'ru') || a.id.localeCompare(b.id);
 }
 
+/** Craftable-now items first; within each band keep the logical group order. */
+export function compareCraftCatalogEntries(a: CraftCatalogEntry, b: CraftCatalogEntry): number {
+  if (a.craftable !== b.craftable) return a.craftable ? -1 : 1;
+  return compareCraftCatalogItems(getItemDefinition(a.itemId), getItemDefinition(b.itemId));
+}
+
 export function sortedCraftCatalogItems(): readonly ItemDefinition[] {
   return [...obtainableItems()].sort(compareCraftCatalogItems);
 }
@@ -89,7 +95,8 @@ export function craftCatalogEntries(
         resultCount: recipe?.output.count ?? 0,
         craftable: recipe !== undefined && isCraftingRecipeCraftable(recipe, counts),
       };
-    });
+    })
+    .sort(compareCraftCatalogEntries);
 }
 
 export function craftIngredientLines(recipe: Recipe, inventory: Inventory): readonly CraftIngredientLine[] {

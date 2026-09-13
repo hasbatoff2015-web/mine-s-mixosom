@@ -50,6 +50,33 @@ describe('craft catalog', () => {
     expect(items.some((item) => item.id === 'iron_chestplate' && craftCatalogGroup(item) === 'armor')).toBe(true);
   });
 
+  it('puts currently craftable items first and re-sorts after inventory changes', () => {
+    const inventory = new Inventory();
+    inventory.addItem('oak_log', 1);
+    inventory.addItem('cobblestone', 3);
+    inventory.addItem('stick', 2);
+    const first = craftCatalogEntries(inventory);
+    const craftable = first.filter((entry) => entry.craftable);
+    const rest = first.filter((entry) => !entry.craftable);
+    expect(craftable.length).toBeGreaterThan(0);
+    expect(first.slice(0, craftable.length).every((entry) => entry.craftable)).toBe(true);
+    expect(first.slice(craftable.length).every((entry) => !entry.craftable)).toBe(true);
+    expect(craftable.some((entry) => entry.itemId === 'oak_planks')).toBe(true);
+    expect(craftable.some((entry) => entry.itemId === 'stone_pickaxe')).toBe(true);
+    expect(rest.some((entry) => entry.itemId === 'iron_pickaxe')).toBe(true);
+    expect(rest.some((entry) => entry.itemId === 'tnt')).toBe(true);
+    const craftableRanks = craftable.map((entry) => GROUP_ORDER.indexOf(craftCatalogGroup(getItemDefinition(entry.itemId))));
+    for (let index = 1; index < craftableRanks.length; index += 1) {
+      expect(craftableRanks[index]!).toBeGreaterThanOrEqual(craftableRanks[index - 1]!);
+    }
+    expect(craftOnceByRecipeId(inventory, 'oak_planks_from_log').ok).toBe(true);
+    const after = craftCatalogEntries(inventory);
+    expect(after.find((entry) => entry.itemId === 'oak_planks')?.craftable).toBe(false);
+    const afterCraftable = after.filter((entry) => entry.craftable);
+    expect(after.slice(0, afterCraftable.length).every((entry) => entry.craftable)).toBe(true);
+    expect(after.findIndex((entry) => entry.itemId === 'oak_planks')).toBeGreaterThanOrEqual(afterCraftable.length);
+  });
+
   it('keeps the same relative order for equal groups by Russian name', () => {
     const oak = getItemDefinition('oak_planks');
     const birch = getItemDefinition('birch_planks');

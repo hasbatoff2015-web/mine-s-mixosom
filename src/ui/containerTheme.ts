@@ -22,6 +22,24 @@ export const MC_MIN_UI_SCALE = 0.5;
 export const MC_CLOSE_GUTTER = 20;
 export const MC_CRAFT_MENU_WIDTH = 256;
 export const MC_CRAFT_MENU_HEIGHT = 166;
+/** Matches `.mc-panel` horizontal padding. */
+export const MC_CRAFT_PANEL_PAD_X = 7;
+export const MC_CRAFT_DETAIL_WIDTH = 88;
+export const MC_CRAFT_LAYOUT_GAP = 6;
+export const MC_CRAFT_LIST_COLUMNS = 6;
+
+export function craftListInnerWidth(panelWidth = MC_CRAFT_MENU_WIDTH): number {
+  return panelWidth - MC_CRAFT_PANEL_PAD_X * 2 - MC_CRAFT_LAYOUT_GAP - MC_CRAFT_DETAIL_WIDTH;
+}
+
+export function craftListFitsColumns(
+  columns = MC_CRAFT_LIST_COLUMNS,
+  slot = MC_SLOT_PITCH,
+  panelWidth = MC_CRAFT_MENU_WIDTH,
+): boolean {
+  return columns * slot <= craftListInnerWidth(panelWidth);
+}
+
 /** Minimum touch target for the outside close control. */
 export const MC_CLOSE_HIT_MIN_PX = 44;
 export const MC_CLOSE_LOGICAL_SIZE = 14;

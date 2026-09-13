@@ -12,7 +12,7 @@ export const CONTAINER_STRINGS = Object.freeze({
   showAll: 'Все',
   showCraftable: 'Можно создать',
   recipeBook: 'Книга рецептов',
-  craft: 'CRAFT',
+  craft: 'Крафт',
   uncraftable: 'Данный предмет невозможно скрафтить.',
   all: 'Все',
   equipment: 'Снаряжение',
