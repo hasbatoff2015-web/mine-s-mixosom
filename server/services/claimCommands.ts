@@ -52,10 +52,27 @@ export function findClaimByName(
   preferredOwner?: string,
 ): Claim | undefined {
   const key = name.toLowerCase();
-  const matches = claims.filter((claim) => claim.name === key);
+  const matches = claims.filter((claim) => claim.name.toLowerCase() === key);
   if (preferredOwner) {
     const own = matches.find((claim) => claim.owner === preferredOwner.toLowerCase());
     if (own) return own;
   }
   return matches[0];
+}
+
+export function ownedClaims(claims: readonly Claim[], ownerKey: string): Claim[] {
+  return claims.filter((claim) => claim.owner === ownerKey.toLowerCase());
+}
+
+export function claimCoords(claim: Claim): { readonly x: number; readonly y: number; readonly z: number } {
+  if (claim.anchor) return { x: claim.anchor.x, y: claim.anchor.y, z: claim.anchor.z };
+  return {
+    x: Math.floor((claim.volume.minX + claim.volume.maxX) / 2),
+    y: Math.floor((claim.volume.minY + claim.volume.maxY) / 2),
+    z: Math.floor((claim.volume.minZ + claim.volume.maxZ) / 2),
+  };
+}
+
+export function claimPvpEnabled(claim: Claim): boolean {
+  return claim.flags.pvp === true;
 }

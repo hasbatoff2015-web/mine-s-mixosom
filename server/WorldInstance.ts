@@ -49,6 +49,7 @@ import type {
   ClientClanActionMessage,
   ClientBuyerActionMessage,
   ClientVehicleInputMessage,
+  ClientMenuActionMessage,
   GameMode,
   PlayerSnapshot,
   RemotePlayerInfo,
@@ -93,6 +94,11 @@ import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView 
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoins } from './services/economy';
+import { FriendService } from './services/friends';
+import { HomeService } from './services/home';
+import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP } from '../shared/homes';
+import { MenuService } from './services/menu';
+import { TradeService } from './services/trade';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
@@ -459,6 +465,10 @@ export class WorldInstance {
   readonly auction: AuctionService;
   readonly clan: ClanService;
   readonly buyer: BuyerService;
+  readonly homes: HomeService;
+  readonly friends: FriendService;
+  readonly trades: TradeService;
+  readonly menu: MenuService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -530,6 +540,10 @@ export class WorldInstance {
     this.economy = new EconomyService(this.pluginStore);
     this.auction = new AuctionService(this.pluginStore, this.economy);
     this.clan = new ClanService(this.pluginStore, this.economy);
+    this.homes = new HomeService(this.pluginStore);
+    this.friends = new FriendService(this.pluginStore);
+    this.trades = new TradeService(this.pluginStore, this.economy);
+    this.menu = new MenuService(this.pluginStore, this.economy, this.homes, this.friends, this.trades);
     this.clan.setRuntime({
       onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -652,6 +666,7 @@ export class WorldInstance {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
     this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
+    this.bindSocialRuntimes();
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
       if (player) this.sendTo(player, message);
@@ -699,6 +714,9 @@ export class WorldInstance {
       this.auction.load();
       this.clan.load();
       this.buyer.load();
+      this.homes.load();
+      this.friends.load();
+      this.trades.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -711,6 +729,9 @@ export class WorldInstance {
     this.auction.load();
     this.clan.load();
     this.buyer.load();
+    this.homes.load();
+    this.friends.load();
+    this.trades.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -736,6 +757,10 @@ export class WorldInstance {
         auction: this.auction,
         clan: this.clan,
         buyer: this.buyer,
+        homes: this.homes,
+        friends: this.friends,
+        trades: this.trades,
+        menu: this.menu,
         openAuction: (playerId, view) => this.openAuction(playerId, view),
         openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
         openBuyerAdmin: (playerId, buyerId) => this.openBuyerAdmin(playerId, buyerId),
@@ -853,6 +878,9 @@ export class WorldInstance {
     this.auction.persist();
     this.clan.persist();
     this.buyer.persist();
+    this.homes.persist();
+    this.friends.persist();
+    this.trades.persist();
     this.dirty = false;
   }
 
@@ -920,6 +948,7 @@ export class WorldInstance {
         );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
         this.buyer.restoreOverflow(existing.id, existing.inventory);
+        this.finishSocialJoin(existing);
         return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
@@ -935,6 +964,7 @@ export class WorldInstance {
         );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
         this.buyer.restoreOverflow(restored.id, restored.inventory);
+        this.finishSocialJoin(restored);
         return { player: restored, resumed: true };
       }
     }
@@ -972,6 +1002,7 @@ export class WorldInstance {
     );
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
     this.buyer.restoreOverflow(player.id, player.inventory);
+    this.finishSocialJoin(player);
     this.dirty = true;
     return { player, resumed: false };
   }
@@ -1255,10 +1286,14 @@ export class WorldInstance {
     if (!player || !player.connected) return { ok: false, error: 'Игрок не в сети.' };
     this.economy.rememberName(player.id, player.name);
     this.clan.purgeExpired();
+    const fromMenu = extra === 'menu-clans' ? 'menu-clans' as const : undefined;
     let result: ClanResult = { ok: true };
-    if (view === 'ranking') this.clan.openRanking(playerId);
-    else if (view === 'create') result = this.clan.openCreate(playerId);
-    else if (view === 'delete') result = this.clan.openDelete(playerId);
+    if (view === 'ranking') this.clan.openRanking(playerId, undefined, fromMenu);
+    else if (view === 'mine') result = this.clan.openMine(playerId, fromMenu);
+    else if (view === 'create') {
+      result = this.clan.openCreate(playerId);
+      if (result.ok && fromMenu) this.clan.markReturnToMenu(playerId, fromMenu);
+    } else if (view === 'delete') result = this.clan.openDelete(playerId);
     else if (view === 'add') result = this.clan.openAdd(playerId);
     else if (view === 'accept') result = this.clan.openAccept(playerId);
     else if (view === 'leave') result = this.clan.openLeave(playerId);
@@ -1287,6 +1322,11 @@ export class WorldInstance {
     this.economy.rememberName(player.id, player.name);
     const beforeIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     this.clan.handleAction(player.id, message);
+    if (this.clan.takeMenuReturn(player.id)) {
+      this.menu.open(player.id, 'clans');
+      this.flushMenu(player);
+      return;
+    }
     const afterIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     const notify = new Set<string>([...beforeIds, ...afterIds, player.id]);
     for (const playerId of notify) {
@@ -1318,6 +1358,151 @@ export class WorldInstance {
 
   private flushClan(player: ServerPlayer): void {
     this.sendTo(player, this.clan.buildMessage(player.id));
+  }
+
+  private finishSocialJoin(player: ServerPlayer): void {
+    this.economy.rememberName(player.id, player.name);
+    this.trades.deliverPending(player.id);
+    const trade = this.trades.disconnect(player.id);
+    this.flushPlayerInventory(player);
+    for (const id of trade.notify ?? []) {
+      const other = this.players.get(id);
+      if (!other?.connected || other.id === player.id) continue;
+      this.menu.syncTradeScreen(other.id);
+      this.flushMenu(other);
+      this.flushPlayerInventory(other);
+    }
+  }
+
+  handleMenuAction(player: ServerPlayer, message: ClientMenuActionMessage): void {
+    if (!this.permissions.has(player.id, 'menu.use') && !this.permissions.has(player.name, 'menu.use')) {
+      this.sendTo(player, { type: 'menu', screen: 'closed', title: '', message: 'You do not have permission.' });
+      return;
+    }
+    this.economy.rememberName(player.id, player.name);
+    const result = this.menu.handleAction(player.id, message);
+    if (result.openClan) {
+      this.menu.session(player.id).screen = 'clans';
+      const opened = this.openClan(player.id, result.openClan, result.openClanExtra);
+      if (opened && !opened.ok) {
+        this.menu.session(player.id).message = opened.error;
+        this.flushMenu(player);
+      }
+      return;
+    }
+    if (result.openAuction) {
+      this.menu.closeSession(player.id);
+      this.openAuction(player.id, result.openAuction);
+      return;
+    }
+    const notify = new Set(result.notify ?? [player.id]);
+    notify.add(player.id);
+    for (const id of notify) {
+      const other = this.players.get(id);
+      if (!other?.connected) continue;
+      this.menu.syncTradeScreen(other.id);
+      if (id === player.id && result.close) this.menu.closeSession(other.id);
+      this.flushMenu(other);
+      this.flushPlayerInventory(other);
+    }
+  }
+
+  private flushMenu(player: ServerPlayer): void {
+    this.sendTo(player, this.menu.buildMessage(player.id, player.inventory));
+  }
+
+  private bindSocialRuntimes(): void {
+    const displayName = (playerId: string): string => {
+      const live = this.players.get(playerId);
+      if (live) return live.name;
+      const stored = this.storedPlayers[playerId];
+      if (stored) return stored.name;
+      return this.economy.displayName(playerId);
+    };
+    const isOnline = (playerId: string): boolean => this.players.get(playerId)?.connected === true;
+    const lookupPlayer = (idOrName: string) => {
+      const found = this.findPlayerIdentity(idOrName);
+      return found ? { id: found.id, name: found.name } : undefined;
+    };
+    this.friends.setRuntime({
+      isOnline,
+      displayName,
+      lookupPlayer,
+      position: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player?.connected) return undefined;
+        const pos = player.controller.position;
+        return { x: pos.x, y: pos.y, z: pos.z };
+      },
+      teleport: (playerId, x, y, z) => {
+        const moved = this.teleports.now(playerId, { x, y, z }, 'command', { silent: true });
+        return moved.ok ? { ok: true } : { ok: false, error: moved.error ?? 'Teleport failed.' };
+      },
+    });
+    this.trades.setRuntime({
+      isOnline,
+      displayName,
+      lookupPlayer,
+      inventory: (playerId) => this.players.get(playerId)?.inventory,
+      flushInventory: (playerId) => {
+        const player = this.players.get(playerId);
+        if (player) this.flushPlayerInventory(player);
+      },
+    });
+    this.menu.setRuntime({
+      displayName,
+      ownerKey: (playerId) => (this.players.get(playerId)?.name ?? displayName(playerId)).toLowerCase(),
+      isOnline,
+      lookupPlayer,
+      position: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player) return undefined;
+        const pos = player.controller.position;
+        return { x: pos.x, y: pos.y, z: pos.z };
+      },
+      worldId: () => this.worldId,
+      inventory: (playerId) => this.players.get(playerId)?.inventory,
+      inClan: (playerId) => Boolean(this.clan.playerClan(playerId)),
+      clanNotice: (playerId) => this.clan.menuNotice(playerId),
+      maxHomes: (playerId) => this.maxHomesForPlayer(playerId),
+      teleportHome: (playerId, name) => {
+        const player = this.players.get(playerId);
+        if (!player) return { ok: false, error: 'Игрок не найден.' };
+        const dest = this.homes.find(player.name, name);
+        if (!dest) return { ok: false, error: 'Дом не найден.' };
+        const moved = this.teleports.now(playerId, dest, 'home', { silent: true });
+        return moved.ok ? { ok: true } : { ok: false, error: moved.error ?? 'Teleport failed.' };
+      },
+      runSpawn: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player) return { ok: false, error: 'Игрок не найден.' };
+        const dispatched = this.commands.dispatch('/spawn', {
+          ...player.commandSender(),
+          operator: this.permissions.isOperator(player.name) || this.permissions.isOperator(player.id),
+        });
+        if (!dispatched.result?.ok) {
+          return { ok: false, error: dispatched.result?.lines[0] ?? 'Teleport failed.' };
+        }
+        return { ok: true };
+      },
+    });
+  }
+
+  private maxHomesForPlayer(playerId: string): number {
+    const def = Number(this.pluginConfig.get('home', 'maxHomesDefault', HOME_MAX_DEFAULT));
+    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', HOME_MAX_VIP));
+    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', HOME_MAX_PREMIUM));
+    const player = this.players.get(playerId);
+    const name = player?.name ?? playerId;
+    if (this.permissions.isOperator(name) || this.permissions.has(playerId, 'home.*') || this.permissions.has(name, 'home.*')) {
+      return Math.max(premium, vip, def);
+    }
+    let max = def;
+    if (this.permissions.has(playerId, 'home.multiple') || this.permissions.has(name, 'home.multiple')) max = Math.max(max, vip);
+    if (this.permissions.has(playerId, 'home.limit.premium') || this.permissions.has(name, 'home.limit.premium')) {
+      max = Math.max(max, premium);
+    }
+    return max;
   }
 
   broadcastBuyers(): void {
@@ -1449,7 +1634,20 @@ export class WorldInstance {
     this.auction.closeSession(player.id);
     this.clan.closeSession(player.id);
     this.buyer.closeSession(player.id, player.inventory);
+    const tradeNotify = this.trades.disconnect(player.id);
+    this.menu.closeSession(player.id);
     this.flushPlayerInventory(player);
+    if (tradeNotify.notify) {
+      for (const id of tradeNotify.notify) {
+        if (id === player.id) continue;
+        const other = this.players.get(id);
+        if (other?.connected) {
+          this.menu.syncTradeScreen(other.id);
+          this.flushMenu(other);
+          this.flushPlayerInventory(other);
+        }
+      }
+    }
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
@@ -1826,6 +2024,7 @@ export class WorldInstance {
   }
 
   applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
+    if (this.trades.sessionFor(player.id) && action.action !== 'close') return;
     this.gameplay.applyInventory(player, action);
     this.dirty = true;
     this.flushBlockChanges();

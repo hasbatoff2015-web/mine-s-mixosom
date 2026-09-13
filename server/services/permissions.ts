@@ -43,6 +43,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'clan.kick',
     'clan.list',
     'buyer.use',
+    'friend.use',
+    'trade.use',
+    'menu.use',
   ],
   moderator: [
     'claim.admin',

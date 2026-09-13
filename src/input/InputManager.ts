@@ -30,6 +30,7 @@ export interface InputCallbacks {
   toggleInventory(): void;
   togglePause(): void;
   openChat(prefix?: string): void;
+  openMenu?(): void;
   dropItem(): void;
   selectHotbar(index: number): void;
   cyclePerspective?(): void;
@@ -253,6 +254,12 @@ export class InputManager {
         this.callbacks.toggleInventory();
         return;
       }
+      if (event.code === 'Tab' && !event.repeat) {
+        if (typing) return;
+        event.preventDefault();
+        this.callbacks.togglePause();
+        return;
+      }
       if (event.code === 'Escape' && !event.repeat) {
         if (this.isPointerLocked()) this.escapePressed = true;
         if (!shouldTogglePauseOnEscapeKeydown(typing, this.isPointerLocked(), this.swallowEscapeKeyup)) return;
@@ -273,6 +280,11 @@ export class InputManager {
       if ((event.code === 'KeyT' || event.key === '/') && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         this.callbacks.openChat(event.key === '/' ? '/' : '');
+        return;
+      }
+      if (event.code === 'KeyM' && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        this.callbacks.openMenu?.();
         return;
       }
       if (event.code === 'KeyQ' && !event.repeat) {

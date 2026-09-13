@@ -697,6 +697,9 @@ export class Game {
     this.debugTickOrder = typeof location !== 'undefined'
       && new URLSearchParams(location.search).get('debugTick') === '1';
     this.ui = new GameUI(uiRoot);
+    this.ui.onHudPause = () => this.togglePause();
+    this.ui.onHudChat = () => this.openChat();
+    this.ui.onHudMenu = () => this.openGameMenu();
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Two render passes share one frame; reset once so F3 counts world + viewmodel.
@@ -716,6 +719,7 @@ export class Game {
       toggleInventory: () => this.toggleInventory(),
       togglePause: () => this.togglePause(),
       openChat: (prefix) => this.openChat(prefix),
+      openMenu: () => this.openGameMenu(),
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
       cyclePerspective: () => this.cycleCameraPerspective(),
@@ -1307,6 +1311,9 @@ export class Game {
         return;
       case 'clan':
         this.openClanHouse(message);
+        return;
+      case 'menu':
+        this.openMenuHouse(message);
         return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
@@ -2214,6 +2221,10 @@ export class Game {
       session.online.client.send({ type: 'clan_action', action: 'close' });
       this.ui.closeClan();
     }
+    if (this.ui.isMenuOpen()) {
+      session.online.client.send({ type: 'menu_action', action: 'close' });
+      this.ui.closeMenu(false);
+    }
     if (this.ui.isBuyerOpen()) {
       session.online.client.send({ type: 'buyer_action', action: 'close' });
       this.ui.closeBuyer();
@@ -2309,6 +2320,62 @@ export class Game {
     this.ui.closeClan();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
+  }
+
+  private openMenuHouse(message: Extract<ServerMessage, { type: 'menu' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeMenu(false);
+      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen() && !this.ui.isAuctionOpen() && !this.ui.isClanOpen() && !this.ui.isBuyerOpen()) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isMenuOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      if (this.ui.isAuctionOpen()) this.ui.closeAuction();
+      if (this.ui.isClanOpen()) this.ui.closeClan();
+      if (this.ui.isBuyerOpen()) this.ui.closeBuyer();
+      this.openGameplayModal();
+    }
+    this.ui.openMenu(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeMenuAndResumeLook(true),
+    });
+  }
+
+  private closeMenuAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'menu_action', action: 'close' });
+    }
+    this.ui.closeMenu(false);
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openGameMenu(): void {
+    const session = this.session;
+    if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
+    if (this.ui.isChatOpen()) this.ui.closeChat();
+    if (this.ui.isMenuOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeMenuAndResumeLook(true);
+      return;
+    }
+    if (!session.online) {
+      this.ui.toast('Меню доступно в онлайн-игре');
+      return;
+    }
+    if (this.ui.isHologramEditorOpen()) this.closeHologramEditorAndResumeLook();
+    if (this.ui.isAuctionOpen()) this.closeAuctionAndResumeLook(true);
+    if (this.ui.isClanOpen()) this.closeClanAndResumeLook(true);
+    if (this.ui.isBuyerOpen()) this.closeBuyerAndResumeLook(true);
+    if (this.ui.isInventoryOpen()) this.closeInventoryAndResumeLook();
+    this.openGameplayModal();
+    session.online.client.send({ type: 'menu_action', action: 'open' });
   }
 
   private syncBuyers(session: GameSession, buyers: readonly NetworkBuyerNpc[]): void {
@@ -3753,6 +3820,11 @@ export class Game {
       this.closeBuyerAndResumeLook(true);
       return;
     }
+    if (this.ui.isMenuOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeMenuAndResumeLook(true);
+      return;
+    }
     if (this.ui.isCraftMenuOpen()) {
       if (this.ui.isAuctionTextInputFocused()) return;
       this.ui.closeCraftMenu();
@@ -3840,6 +3912,10 @@ export class Game {
     }
     if (this.ui.isBuyerOpen()) {
       this.closeBuyerAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isMenuOpen()) {
+      this.closeMenuAndResumeLook(true);
       return;
     }
     if (this.ui.isInventoryOpen()) {
@@ -5129,7 +5205,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen() || this.ui.isClanOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen() || this.ui.isClanOpen() || this.ui.isBuyerOpen() || this.ui.isMenuOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);

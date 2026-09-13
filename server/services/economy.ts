@@ -28,6 +28,8 @@ export type EconomyReason =
   | 'AUCTION_PURCHASE'
   | 'AUCTION_SALE'
   | 'CLAN_CREATE'
+  | 'TRADE_SEND'
+  | 'TRADE_RECEIVE'
   | 'OTHER';
 
 export type EconomyTxType = 'deposit' | 'withdraw' | 'set';

@@ -511,6 +511,9 @@ export class AnarchyServer {
       case 'clan_action':
         this.world.handleClanAction(player, message);
         return;
+      case 'menu_action':
+        this.world.handleMenuAction(player, message);
+        return;
       case 'buyer_interact':
         this.world.interactBuyer(player, message.buyerId);
         return;

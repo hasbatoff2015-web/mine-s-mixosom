@@ -1,5 +1,6 @@
 import type { Plugin, ServerAPI } from '../PluginManager';
 import { fail, ok } from '../commands';
+import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP } from '../../shared/homes';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
 
@@ -17,18 +18,6 @@ const HELP = {
   ],
 };
 
-interface HomeLocation {
-  readonly name: string;
-  readonly worldId: string;
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-}
-
-interface HomeStore {
-  players: Record<string, HomeLocation[]>;
-}
-
 const SCHEMA = {
   cooldownSeconds: { type: 'number' as const, description: 'Cooldown between teleports' },
   warmupSeconds: { type: 'number' as const, description: 'Warmup before teleport' },
@@ -39,10 +28,10 @@ const SCHEMA = {
   cancelOnDamage: { type: 'boolean' as const, description: 'Cancel on damage' },
 };
 
-function maxHomesFor(api: ServerAPI, playerId: string): number {
-  const def = Number(api.getConfig('maxHomesDefault', 1));
-  const vip = Number(api.getConfig('maxHomesVip', 3));
-  const premium = Number(api.getConfig('maxHomesPremium', 5));
+export function maxHomesFor(api: ServerAPI, playerId: string): number {
+  const def = Number(api.getConfig('maxHomesDefault', HOME_MAX_DEFAULT));
+  const vip = Number(api.getConfig('maxHomesVip', HOME_MAX_VIP));
+  const premium = Number(api.getConfig('maxHomesPremium', HOME_MAX_PREMIUM));
   if (api.isOperator(playerId) || api.hasPermission(playerId, 'home.*')) {
     return Math.max(premium, vip, def);
   }
@@ -55,21 +44,19 @@ function maxHomesFor(api: ServerAPI, playerId: string): number {
 export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
   return {
     name: 'home',
-    version: '1.0.0',
+    version: '1.1.0',
     apiVersion: 1,
     onEnable(api) {
+      ctx.homes.load();
       const config = api.loadConfig({
         cooldownSeconds: 5,
         warmupSeconds: 0,
-        maxHomesDefault: 1,
-        maxHomesVip: 3,
-        maxHomesPremium: 5,
+        maxHomesDefault: HOME_MAX_DEFAULT,
+        maxHomesVip: HOME_MAX_VIP,
+        maxHomesPremium: HOME_MAX_PREMIUM,
         cancelOnMove: true,
         cancelOnDamage: true,
       });
-      const load = (): HomeStore => api.loadData<HomeStore>('homes', { players: {} });
-      const save = (store: HomeStore) => api.saveData('homes', store);
-      const listFor = (playerKey: string): HomeLocation[] => load().players[playerKey] ?? [];
 
       api.registerCommand({
         name: 'home',
@@ -89,9 +76,8 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
             }
             return ok(Object.entries(api.loadConfig(config)).map(([key, value]) => `${key}=${value}`));
           }
-          const homes = listFor(sender.name.toLowerCase());
-          const name = (args[0] ?? 'home').toLowerCase();
-          const dest = homes.find((home) => home.name === name);
+          const name = args[0] ?? 'home';
+          const dest = ctx.homes.find(sender.name, name);
           if (!dest) return fail(`Home '${name}' not found.`);
           const result = api.teleport(sender.playerId, dest.x, dest.y, dest.z, 'home', {
             warmupMs: Number(api.getConfig('warmupSeconds', config.warmupSeconds)) * 1000,
@@ -111,23 +97,14 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const player = api.getPlayer(sender.playerId);
           if (!player) return fail('Player not found.');
-          const name = (args[0] ?? 'home').toLowerCase();
-          if (!/^[a-z0-9_]{1,16}$/.test(name)) return fail('Home name must be 1-16 letters, numbers, or underscores.');
-          const store = load();
-          const owner = sender.name.toLowerCase();
-          const homes = [...(store.players[owner] ?? [])];
-          const existing = homes.findIndex((home) => home.name === name);
-          const max = maxHomesFor(api, sender.playerId);
-          if (existing < 0 && homes.length >= max) {
-            return fail(`You can only set ${max} home(s).`);
-          }
           const pos = player.position();
-          const next: HomeLocation = { name, worldId: api.getWorld().worldId, x: pos.x, y: pos.y, z: pos.z };
-          if (existing >= 0) homes[existing] = next;
-          else homes.push(next);
-          store.players[owner] = homes;
-          save(store);
-          return ok(`Home '${name}' set.`);
+          const result = ctx.homes.set(
+            sender.name,
+            args[0] ?? 'home',
+            { worldId: api.getWorld().worldId, x: pos.x, y: pos.y, z: pos.z },
+            maxHomesFor(api, sender.playerId),
+          );
+          return result.ok ? ok(`Home '${result.home?.name ?? args[0] ?? 'home'}' set.`) : fail(result.error ?? 'Could not set home.');
         },
       });
       api.registerCommand({
@@ -136,7 +113,7 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
         description: 'List your homes',
         permission: 'home.use',
         execute: (_args, sender) => {
-          const homes = listFor(sender.name.toLowerCase());
+          const homes = ctx.homes.list(sender.name);
           if (homes.length === 0) return ok('You have no homes. Use /sethome.');
           return ok(`Homes: ${homes.map((home) => home.name).join(', ')}`);
         },
@@ -148,18 +125,15 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
         permission: 'home.sethome',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
-          const name = args[0]?.toLowerCase();
+          const name = args[0];
           if (!name) return usageError('/delhome <name>');
-          const store = load();
-          const owner = sender.name.toLowerCase();
-          const homes = [...(store.players[owner] ?? [])];
-          const next = homes.filter((home) => home.name !== name);
-          if (next.length === homes.length) return fail(`Home '${name}' not found.`);
-          store.players[owner] = next;
-          save(store);
-          return ok(`Deleted home '${name}'.`);
+          const result = ctx.homes.remove(sender.name, name);
+          return result.ok ? ok(`Deleted home '${name}'.`) : fail(result.error ?? `Home '${name}' not found.`);
         },
       });
+    },
+    onDisable() {
+      ctx.homes.persist();
     },
   };
 }
