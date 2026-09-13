@@ -1,5 +1,11 @@
 # Тестирование
 
+## 2026-09-13 Utility Items V1
+
+Focused: `npx vitest run tests/entities.test.ts tests/utility-items.test.ts tests/server/utility-items-authority.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent` — 71/71 passed (26 utility, 9 server authority, 27 item rendering, 9 entity regressions). Server cases include three-player VH privacy, invisible target, cancelled versus accepted PvP hit, book validation, sign permission checks, rocket visibility, Milk clearing all viewers, and Totem hand priority. Four typechecks, `check:boundaries`, `build`, `check:size` and `check:archive` passed; production build is 4.27 MiB / 366 files.
+
+Unbounded parallel `npm test` on this Windows host produced 37 failures / 2234 tests, dominated by worldgen/streaming/minecart timing thresholds and worker timeouts. The `tick-load-flight` max-80ms assertion also failed on isolated archived `main@1c802ab` (110–121ms), so that particular failure is host baseline. A second full run with two workers was stopped as impractical after a single 39-case minecart/fire suite took 282 seconds and timed out 17 cases. That run exposed an arrow mesh-name regression; it was fixed and `tests/entities.test.ts` now passes 9/9. White Bed/Oak Sign texture registry keys were also corrected and item-rendering passes 27/27. `tests/chat-layout.test.ts` compares LF literals with a CRLF checkout; the separate reference-extractor Vitest failure remains unclassified. See the report for exact QA limits.
+
 ## 2026-09-12 Chat fullscreen transparent
 
 Report: `reports/2026-09-12_chat-fullscreen.md`.

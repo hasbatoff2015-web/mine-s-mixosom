@@ -1,5 +1,19 @@
 # Архитектура
 
+## Utility Items V1 — 2026-09-13
+
+`ItemStack.metadata` remains the single per-item extension point. Firework flight is `{ firework: { flight: 1|2|3 } }`; a drafted Book is `{ book: { pages: string[], title?, author?, locked? } }`. Crafting outputs preserve metadata, inventory merging compares metadata, and ordinary inventory/container/drop/auction saves carry it unchanged. Book text is plain Unicode, bounded to 32 pages × 1024 chars and a 64-char title; the server validates the selected slot and sanitizes on `book_update` before changing inventory. A blank stack splits into one edited Book plus blank remainder. `GameUI` inserts text through element values.
+
+`VoxelWorld.signs` holds four sanitized 32-char lines keyed by block coordinate; optional `signs` is persisted in world records and sent per chunk. `sign_update` revalidates reach, block identity and `playerInteract` (Claims/plugin cancellation) on the server, then sends `sign_data` to viewers with that chunk. `SignRenderer` refreshes CanvasTexture only on sign/version/visibility changes. Sign block mutation removes its text. Bed uses `bedPart` + `facing` state in the existing block-state network/save path. Placement validates both cells, support, player collision and both claim checks before one batch mutation. Breaking either half or losing support removes both; one detached drop event is emitted. `use-bed` is decorative only; no `spawnPoint`, home or time mutation.
+
+Sugar Cane uses a separate deterministic generation RNG namespace after old ore/tree decoration and a bounded growth pulse in `FarmingSystem`. The base requires wet grass/dirt/sand, upper segments require the lower segment, and height is capped at three. This adds no second world or farming scheduler.
+
+`FireworkManager` is a bounded 20 TPS ephemeral entity store. The server validates/consumes one selected Rocket, uses its flight metadata, and snapshots a `firework` entity to nearby clients. A one-tick `burst` state drives `FireworkVisuals`; rockets and particles have hard caps of 32 and 256. No TNT/arrow explosion, damage or permanent entity save is involved.
+
+`PlayerArrowManager` carries `ArrowKind` (`normal|fire|vh`) through the existing projectile physics, embedded state and pickup. Bow ammo priority is Fire Arrow → VH Arrow → normal Arrow, deterministic in Singleplayer and server release paths. VH uses the same captured release boundary, historical AABB, Claims/playerDamage and HurtResistance flow. Only an accepted player hit creates a 200-tick `VhMarks` entry for `(shooter,target)`. `WorldInstance` unicasts `vh_marks` to each viewer; no global player field or persisted mark exists. The remote renderer adds reusable edge geometry under the animated rig with depth testing disabled, independently of skin visibility, so the shooter sees an invisible marked target through blocks. Death, disconnect, Milk, Totem and expiry clear marks.
+
+`SurvivalSystem.damage` invokes one pre-death hook after damage calculation and before setting `dead` or calling death observers. A held mainhand Totem wins over offhand; unselected inventory is ignored. Non-void lethal damage consumes one, clears old effects, leaves 1 HP, then grants Regeneration II 900 ticks, Fire Resistance I 800 ticks and Absorption II 100 ticks. Milk uses the same `clearEffects` API without clearing physical fire timers and returns an empty Bucket after the existing 32-tick food-use timeline. The server unicasts `totem_activate` to the saved player; `GameUI` reuses one animated HUD element.
+
 ## Chat channels — 2026-09-12
 
 Player chat stays on the existing `ClientChatMessage` / `ServerChatMessage` / `ChatLog` / `GameUI` `#chat` path. The client sends only intent `{ type: 'chat', text, channel?: 'global'|'nearby'|'clan' }`. Parse strips forged `from` / `playerId` / recipients / coords / `clanId`. Sender is the authenticated player. `MAX_CHAT_LENGTH` is **128**; over-length is rejected (not sliced).

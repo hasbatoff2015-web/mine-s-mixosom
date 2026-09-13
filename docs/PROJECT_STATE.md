@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Utility Items V1 — 2026-09-13
+
+- Ветка `codex/utility-items-v1` от `main@1c802ab`: Paper/Sugar Cane, редактируемая Book, Oak Sign, декоративная двухблочная White Bed, Milk Bucket, Firework Rocket Flight 1–3, приватная VH Arrow и Totem of Undying.
+- Shared simulation остаётся Node-safe. Bed ставится/ломается как две части с одним дропом; использование **не меняет spawnPoint/home и не пропускает время**. Sign text — `VoxelWorld.signs` в world save, book pages — `ItemStack.metadata.book` в обычном inventory/save/auction path.
+- Firework — временная серверная сущность 20 TPS, без урона и permanent save; VH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `VhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
+- Totem доступен через Creative/admin/test. Покупка у trader отложена: полноценной trader-системы в текущем коде нет; Buyer NPC — это скупщик, не продавец.
+- Focused tests: `tests/utility-items.test.ts` и `tests/server/utility-items-authority.test.ts`. Полная проверка и ограничения описаны в `docs/reports/2026-09-13_utility-items-v1.md`.
+
 ## Последний проход: Chat log text size — 2026-09-12
 
 - Текст строк `.chat-line` — `23px` × `--hud-scale` (между прежними 18px и 27px). Input, вкладки и кнопки не менялись.

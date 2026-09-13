@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-13: Utility Items V1
+
+- [x] Paper recipe, wet-shore Sugar Cane generation/growth/placement; Book draft metadata, sign text and world persistence.
+- [x] Decorative two-cell bed placement/break/support integrity; no spawn/home/time side effects.
+- [x] Cow milk and 32-tick drink, effect clearing, fire resistance and central Totem death interception.
+- [x] Decorative Flight 1–3 fireworks with bounded client particles and server entity snapshots.
+- [x] VH Arrow through the existing bow/arrow authority, viewer-only 200-tick marks, wall-visible outline and invisibility compatibility.
+- [x] Focused authority tests, typechecks, boundaries, build and archive size check.
+- [ ] Three interactive clients visual QA for VH outline, fireworks, sign and book flows.
+- [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
+
 ## 2026-09-12: Chat fullscreen transparent
 
 - [x] Open `#chat` spans available HUD width; side buttons sit on the right edge.
