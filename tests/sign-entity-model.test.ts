@@ -23,7 +23,7 @@ function signMesh(state: { attachment: 'floor' | 'wall'; facing?: 'north' | 'eas
 }
 
 describe('sign entity model', () => {
-  it('maps distinct board faces and the whole standing post to ModelSign source texels', () => {
+  it('maps distinct board faces and the visible standing post to ModelSign source texels', () => {
     const standing = signVisualParts('floor');
     const wall = signVisualParts('wall');
     expect(standing).toHaveLength(2);
@@ -35,14 +35,15 @@ describe('sign entity model', () => {
     expect(board.faces.north?.uv).toEqual([28 / 64, 1 - 14 / 32, 52 / 64, 1 - 2 / 32]);
     expect(board.faces.up?.uv).toEqual([2 / 64, 1 - 2 / 32, 26 / 64, 1]);
     expect(board.faces.west?.uv).not.toEqual(board.faces.east?.uv);
-    expect(standing[1]!.faces.south?.uv).toEqual([2 / 64, 1 - 30 / 32, 4 / 64, 1 - 16 / 32]);
+    expect(standing[1]!.faces.south?.uv).toEqual([2 / 64, 1 - 30 / 32, 4 / 64, 1 - 22.4 / 32]);
     expect(standing[1]!.faces.west?.uv).not.toEqual(board.faces.west?.uv);
     expect(board.size[0] / board.size[1]).toBeCloseTo(24 / 12);
-    expect(standing[1]!.size[1] / board.size[1]).toBeCloseTo(14 / 12);
+    expect(standing[1]!.center[1] + standing[1]!.size[1] / 2).toBeCloseTo(board.center[1] - board.size[1] / 2);
+    expect(standing[1]!.size[2]).toBeLessThan(board.size[2]);
   });
 
   it('meshes board + post for floor, but board only for wall', () => {
-    expect(signMesh({ attachment: 'floor', signRotation: 0 }).vertices).toBe(48);
+    expect(signMesh({ attachment: 'floor', signRotation: 0 }).vertices).toBe(40);
     expect(signMesh({ attachment: 'wall', facing: 'south' }).vertices).toBe(24);
   });
 

@@ -1362,7 +1362,7 @@ export class GameUI {
     this.toast('Тотем бессмертия спас вас!', 2200);
   }
 
-  openBook(stack: ItemStack, onSave: (content: BookContent) => void, onClose: () => void): void {
+  openBook(stack: ItemStack, onSave: (content: BookContent, sign: boolean) => void, onClose: () => void): void {
     this.closeInventory(false);
     const content = readBookContent(stack);
     const locked = content?.locked === true;
@@ -1373,27 +1373,43 @@ export class GameUI {
     modal.className = 'modal-backdrop book-backdrop';
     modal.innerHTML = `<section class="book-panel" role="dialog" aria-modal="true" aria-label="Книга">
       <h2>Книга</h2>
-      <label>Название <input class="book-title" maxlength="64" type="text"></label>
-      <textarea class="book-page" maxlength="1024" aria-label="Текст страницы"></textarea>
-      <div class="book-navigation"><button type="button" data-book="previous">←</button><span class="book-count"></span><button type="button" data-book="next">→</button></div>
-      <div class="book-actions"><button type="button" data-book="close">Закрыть</button><button type="button" data-book="save">Готово / Сохранить</button></div>
+      <div class="book-signed-info" hidden><strong class="book-signed-title"></strong><span class="book-author"></span></div>
+      <div class="book-editor">
+        <textarea class="book-page" maxlength="1024" aria-label="Текст страницы"></textarea>
+        <div class="book-navigation"><button type="button" data-book="previous">←</button><span class="book-count"></span><button type="button" data-book="next">→</button></div>
+        <div class="book-actions"><button type="button" data-book="close">${locked ? 'Готово' : 'Закрыть'}</button><button type="button" data-book="save">Готово</button><button type="button" data-book="sign">Подписать</button></div>
+      </div>
+      <div class="book-signing" hidden>
+        <label>Название книги <input class="book-title" maxlength="64" type="text"></label>
+        <p>После подписания книгу нельзя изменить.</p>
+        <div class="book-actions"><button type="button" data-book="cancel-sign">Назад</button><button type="button" data-book="confirm-sign">Подписать и закрыть</button></div>
+      </div>
     </section>`;
     const title = modal.querySelector<HTMLInputElement>('.book-title')!;
     const text = modal.querySelector<HTMLTextAreaElement>('.book-page')!;
     const counter = modal.querySelector<HTMLElement>('.book-count')!;
     title.value = content?.title ?? '';
-    title.readOnly = locked;
     text.readOnly = locked;
     modal.querySelector<HTMLButtonElement>('[data-book="save"]')!.hidden = locked;
+    modal.querySelector<HTMLButtonElement>('[data-book="sign"]')!.hidden = locked;
+    modal.querySelector<HTMLElement>('.book-signed-info')!.hidden = !locked;
+    modal.querySelector<HTMLElement>('.book-signed-title')!.textContent = content?.title ?? '';
+    modal.querySelector<HTMLElement>('.book-author')!.textContent = content?.author ? `Автор: ${content.author}` : '';
     const paint = (): void => {
       text.value = pages[page] ?? '';
-      counter.textContent = `${page + 1} / ${pages.length}`;
+      counter.textContent = `Страница ${page + 1} из ${pages.length}`;
       modal.querySelector<HTMLButtonElement>('[data-book="previous"]')!.disabled = page === 0;
       modal.querySelector<HTMLButtonElement>('[data-book="next"]')!.disabled = locked
         ? page >= pages.length - 1 : page >= pages.length - 1 && pages.length >= MAX_BOOK_PAGES;
     };
     const capture = (): void => { if (!locked) pages[page] = text.value; };
     const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    });
     modal.querySelector('[data-book="previous"]')!.addEventListener('click', () => {
       capture(); page -= 1; paint();
     });
@@ -1404,9 +1420,27 @@ export class GameUI {
     modal.querySelector('[data-book="close"]')!.addEventListener('click', close);
     modal.querySelector('[data-book="save"]')!.addEventListener('click', () => {
       capture();
-      const draft = sanitizeBookDraft({ pages, title: title.value });
+      const draft = sanitizeBookDraft({ pages, title: content?.title });
       if (!draft) { this.toast('Книга слишком длинная'); return; }
-      onSave(draft);
+      onSave(draft, false);
+      close();
+    });
+    modal.querySelector('[data-book="sign"]')!.addEventListener('click', () => {
+      capture();
+      modal.querySelector<HTMLElement>('.book-editor')!.hidden = true;
+      modal.querySelector<HTMLElement>('.book-signing')!.hidden = false;
+      title.focus();
+    });
+    modal.querySelector('[data-book="cancel-sign"]')!.addEventListener('click', () => {
+      modal.querySelector<HTMLElement>('.book-signing')!.hidden = true;
+      modal.querySelector<HTMLElement>('.book-editor')!.hidden = false;
+      text.focus();
+    });
+    modal.querySelector('[data-book="confirm-sign"]')!.addEventListener('click', () => {
+      capture();
+      const draft = sanitizeBookDraft({ pages, title: title.value });
+      if (!draft?.title) { this.toast('Введите название книги'); title.focus(); return; }
+      onSave(draft, true);
       close();
     });
     this.modal = modal;

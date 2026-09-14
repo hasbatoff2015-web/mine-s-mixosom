@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-14: Utility Items bed rest / Sign post / SFX race / Book
+
+- [x] RMB по foot/head валидной кровати → горизонтальная pose и камера у подушки в SP и Anarchy; Space выходит через применённую команду, server presentation передаёт rest, local prediction стоит на месте.
+- [x] Очищать rest при сломанной половине, смерти, respawn, teleport, disconnect и закрытии мира; время и spawnPoint не менять.
+- [x] Укоротить стойку напольной Sign до нижней поверхности доски, убрать перекрывающиеся cap faces и сохранить wall/text.
+- [x] Не терять первый звук до preload/fetch/decode; дедуплицировать файл, ограничить ожидающие one-shots, перепроверять admission на старте.
+- [x] Book: приоритет интерактивного блока, единый SP/online editor, draft Done, title+confirmation Sign, server-owned author/lock, read-only signed pages.
+- [ ] Реальный двухклиентный слуховой тест Anarchy и multiplayer/mобильный visual QA оставлены на ручной проход перед merge review.
+
 ## 2026-09-14: Utility Items pillow/sign/Totem/firework follow-up
 
 - [x] Исправить только ориентацию pillow UV у bed head; сохранить соединение половин и проверить четыре facing.
@@ -28,7 +37,7 @@
 ## 2026-09-13: Utility Items V1
 
 - [x] Paper recipe, wet-shore Sugar Cane generation/growth/placement; Book draft metadata, sign text and world persistence.
-- [x] Decorative two-cell bed placement/break/support integrity; no spawn/home/time side effects.
+- [x] Two-cell bed placement/break/support integrity; no spawn/home/time side effects. Rest interaction added in the 2026-09-14 follow-up above.
 - [x] Cow milk and 32-tick drink, effect clearing, fire resistance and central Totem death interception.
 - [x] Decorative Flight 1–3 fireworks with bounded client particles and server entity snapshots.
 - [x] WH Arrow through the existing bow/arrow authority, viewer-only 200-tick marks, wall-visible outline and invisibility compatibility.

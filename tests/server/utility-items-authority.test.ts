@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createItemStack } from '../../src/inventory';
 import { ItemId, readBookContent } from '../../src/items';
 import { BlockId } from '../../src/blocks';
+import { bedRestPosition, isBedRestValid, resolveBedRest } from '../../src/world/bed';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
@@ -84,6 +85,78 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     a.player.selectedSlot = 1;
     world.updateBook(a.player, { type: 'book_update', slot: 0, pages: ['forged'] });
     expect(readBookContent(a.player.inventory.getSlot(0)!)?.pages).toEqual(['First page', 'Second page']);
+    a.player.selectedSlot = 0;
+    world.updateBook(a.player, { type: 'book_update', slot: 0, pages: ['Final'], title: '', sign: true });
+    expect(a.sink.last('error')?.code).toBe('book_invalid');
+    world.updateBook(a.player, { type: 'book_update', slot: 0, pages: ['Final'], title: 'Guide', sign: true });
+    expect(readBookContent(a.player.inventory.getSlot(0)!)).toMatchObject({
+      pages: ['Final'], title: 'Guide', author: 'Author', locked: true,
+    });
+    world.updateBook(a.player, { type: 'book_update', slot: 0, pages: ['After signing'] });
+    expect(a.sink.last('error')?.code).toBe('book_invalid');
+    expect(readBookContent(a.player.inventory.getSlot(0)!)?.pages).toEqual(['Final']);
+  });
+
+  it('rests on a valid bed, replicates the pose, holds movement and exits on an applied jump command', async () => {
+    const { world, add } = await boot();
+    const a = add('Sleeper');
+    const observer = add('Observer');
+    for (let x = 7; x <= 9; x += 1) for (let z = 7; z <= 11; z += 1) {
+      world.world.setBlock(x, 89, z, BlockId.Stone);
+      for (let y = 90; y <= 93; y += 1) world.world.setBlock(x, y, z, BlockId.Air);
+    }
+    world.world.setBlock(8, 90, 9, BlockId.WhiteBed);
+    world.world.setBlockState(8, 90, 9, { bedPart: 'foot', facing: 'north' });
+    world.world.setBlock(8, 90, 8, BlockId.WhiteBed);
+    world.world.setBlockState(8, 90, 8, { bedPart: 'head', facing: 'north' });
+    a.player.controller.teleport([8.5, 90.01, 11.5]);
+    a.player.controller.yaw = 0;
+    a.player.controller.pitch = -0.5;
+    expect(world.interact(a.player)).toEqual({ ok: true });
+    expect(a.player.restingBed).toMatchObject({ x: 8, y: 90, z: 8, facing: 'north' });
+    expect(isBedRestValid(world.world, a.player.restingBed!)).toBe(true);
+    const held = a.player.controller.position.clone();
+    world.tick();
+    expect(a.player.controller.position.distanceTo(held)).toBe(0);
+    const state = observer.sink.last('player_state') as { players?: Array<{ id: string; presentation?: { bedRest?: unknown } }> };
+    expect(state.players?.find((player) => player.id === a.player.id)?.presentation?.bedRest).toMatchObject({ x: 8, z: 8 });
+    world.applyInput(a.player, {
+      type: 'input', seq: 1, forward: 1, right: 0, jump: true, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: -0.5, selectedSlot: 0,
+    });
+    world.applyInput(a.player, {
+      type: 'input', seq: 2, forward: 1, right: 0, jump: false, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: -0.5, selectedSlot: 0,
+    });
+    world.tick();
+    expect(a.player.appliedCommandSeq).toBe(1);
+    expect(a.player.restingBed).toBeUndefined();
+    expect(a.player.controller.position.x).not.toBeCloseTo(held.x);
+    expect(a.player.controller.velocity.y).toBeLessThanOrEqual(0);
+    const exited = a.player.controller.position.clone();
+    world.tick();
+    expect(a.player.appliedCommandSeq).toBe(2);
+    expect(a.player.controller.position.distanceTo(exited)).toBeGreaterThan(0);
+  });
+
+  it.each(['head', 'foot'] as const)('invalidates rest when the %s half is broken', async (broken) => {
+    const { world, add } = await boot();
+    const a = add('Sleeper');
+    for (let x = 7; x <= 9; x += 1) for (let z = 7; z <= 10; z += 1) {
+      world.world.setBlock(x, 89, z, BlockId.Stone);
+      for (let y = 90; y <= 93; y += 1) world.world.setBlock(x, y, z, BlockId.Air);
+    }
+    world.world.setBlock(8, 90, 9, BlockId.WhiteBed);
+    world.world.setBlockState(8, 90, 9, { bedPart: 'foot', facing: 'north' });
+    world.world.setBlock(8, 90, 8, BlockId.WhiteBed);
+    world.world.setBlockState(8, 90, 8, { bedPart: 'head', facing: 'north' });
+    const rest = resolveBedRest(world.world, 8, 90, 9)!;
+    a.player.restingBed = rest;
+    a.player.controller.teleport(bedRestPosition(rest));
+    world.world.setBlock(8, 90, broken === 'head' ? 8 : 9, BlockId.Air);
+    world.tick();
+    expect(a.player.restingBed).toBeUndefined();
+    expect(a.player.controller.position.x).not.toBeCloseTo(bedRestPosition(rest)[0]);
   });
 
   it('applies sign text only after the playerInteract permission check', async () => {

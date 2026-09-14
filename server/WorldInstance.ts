@@ -37,6 +37,7 @@ import {
   worldSoundMaxDistance,
 } from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
+import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
@@ -218,6 +219,7 @@ export class ServerPlayer implements GameplayPlayer {
   craftSlots: Array<ItemStack | null> = [null, null, null, null];
   window: InventoryWindow = { kind: 'inventory' };
   ridingCartId?: string;
+  restingBed?: BedRestState;
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
   private presentationSwingSeq = 0;
   private presentationHurtSeq = 0;
@@ -264,6 +266,7 @@ export class ServerPlayer implements GameplayPlayer {
     this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
+      if (this.survival.dead) this.restingBed = undefined;
     });
   }
 
@@ -296,6 +299,7 @@ export class ServerPlayer implements GameplayPlayer {
       foodUseProgress: alive && heldItemId && tryGetItemDefinition(heldItemId)?.kind === 'food'
         ? Math.min(1, Math.max(0, this.foodUseTicks / 32)) : 0,
       swordBlocking: alive && this.combat.swordBlocking,
+      bedRest: alive ? this.restingBed ?? null : null,
       swingSeq: this.presentationSwingSeq,
       armor: equippedArmorFromInventory(this.inventory),
       hurtSeq: this.presentationHurtSeq,
@@ -594,6 +598,7 @@ export class WorldInstance {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
+          player.restingBed = undefined;
           player.controller.teleport([x, y, z]);
           if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
           if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
@@ -1458,6 +1463,7 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    player.restingBed = undefined;
     this.gameplay.whMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
     player.sink = null;
@@ -2077,8 +2083,11 @@ export class WorldInstance {
       this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
       return;
     }
-    const overflow = writeBookInSlot(player.inventory, message.slot, draft);
-    if (overflow === undefined) return;
+    const overflow = writeBookInSlot(player.inventory, message.slot, draft, message.sign ? player.name : undefined);
+    if (overflow === undefined) {
+      this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
+      return;
+    }
     if (overflow) this.gameplay.dropFromPlayer(player, overflow);
     player.inventoryDirty = true;
     this.dirty = true;
@@ -2764,6 +2773,7 @@ export class WorldInstance {
         }
       }
       if (player.survival.dead) {
+        player.restingBed = undefined;
         player.controller.velocity.set(0, 0, 0);
         this.flushHealthIfDeadThenRespawn(player);
         const position = player.controller.position;
@@ -2784,7 +2794,19 @@ export class WorldInstance {
         continue;
       }
       const input = player.lastInput;
-      const jump = input.jump;
+      let exitedRest = false;
+      if (player.restingBed) {
+        const rest = player.restingBed;
+        if (!isBedRestValid(this.world, rest) || command?.jump === true) {
+          player.restingBed = undefined;
+          player.controller.teleport(bedExitPosition(this.world, rest));
+          exitedRest = true;
+          player.lastInput = { ...player.lastInput, jump: false };
+        } else {
+          player.controller.velocity.set(0, 0, 0);
+        }
+      }
+      const jump = input.jump && !exitedRest;
       const using = input.use === true;
       const heldItemId = player.inventory.getSlot(player.selectedSlot)?.itemId;
       const movement = movementDuringItemUse({
@@ -2799,7 +2821,7 @@ export class WorldInstance {
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
-      player.controller.tick(this.world, {
+      if (!player.restingBed) player.controller.tick(this.world, {
         yaw: input.yaw,
         pitch: input.pitch,
         locomotion: !riding,
@@ -2859,9 +2881,9 @@ export class WorldInstance {
       this.gameplay.advanceUseHold(player, using, player.appliedCommandSeq, player.selectedSlot);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
-        forward: riding ? 0 : input.forward,
-        right: riding ? 0 : input.right,
-        jump: riding ? false : jump,
+        forward: riding || player.restingBed ? 0 : input.forward,
+        right: riding || player.restingBed ? 0 : input.right,
+        jump: riding || player.restingBed ? false : jump,
         sneak: input.sneak,
         descend: input.descend === true,
         flySprint: input.flySprint === true,
@@ -3072,7 +3094,9 @@ export class WorldInstance {
   }
 
   respawn(player: ServerPlayer): boolean {
-    return this.gameplay.respawnPlayer(player);
+    const respawned = this.gameplay.respawnPlayer(player);
+    if (respawned) player.restingBed = undefined;
+    return respawned;
   }
 
   private flushHealth(player: ServerPlayer): void {
@@ -3227,6 +3251,7 @@ export class WorldInstance {
       snapshot: () => player.snapshot(),
       teleport: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        player.restingBed = undefined;
         player.controller.teleport([x, y, z]);
         return true;
       },

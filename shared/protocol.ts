@@ -416,6 +416,8 @@ export interface ClientBookUpdateMessage {
   readonly slot: number;
   readonly pages: readonly string[];
   readonly title?: string;
+  /** Finalize using the authenticated server player as author. */
+  readonly sign?: boolean;
 }
 
 export interface ClientSignUpdateMessage {
@@ -1703,12 +1705,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (!Number.isInteger(raw.slot) || (raw.slot as number) < 0 || (raw.slot as number) > 8
         || !Array.isArray(raw.pages) || raw.pages.length > 32
         || raw.pages.some((page: unknown) => typeof page !== 'string' || page.length > 1024)
-        || (raw.title !== undefined && (typeof raw.title !== 'string' || raw.title.length > 64))) {
+        || (raw.title !== undefined && (typeof raw.title !== 'string' || raw.title.length > 64))
+        || (raw.sign !== undefined && typeof raw.sign !== 'boolean')) {
         return { error: 'book_update invalid' };
       }
       return {
         type: 'book_update', slot: raw.slot as number, pages: raw.pages as string[],
         ...(raw.title === undefined ? {} : { title: raw.title as string }),
+        ...(raw.sign === undefined ? {} : { sign: raw.sign as boolean }),
       };
     }
     case 'sign_update': {

@@ -175,6 +175,7 @@ export class RemotePlayerView {
     const actions = active ? this.presentation : IDLE_PLAYER_PRESENTATION;
     const mining = actions.mining;
     const actionFrame = {
+      bedRest: this.presentation.bedRest ?? null,
       mining: mining !== null && this.options.world.getBlock(mining.x, mining.y, mining.z, false) === mining.blockId,
       bowCharge: actions.bowCharge,
       swordBlocking: actions.swordBlocking,
@@ -205,7 +206,7 @@ export class RemotePlayerView {
     this.visual.update(deltaSeconds, {
       viewYaw: pose.yaw,
       viewPitch: pose.pitch,
-      movementSpeed: dying ? 0 : Math.hypot(pose.vx, pose.vz),
+      movementSpeed: dying || actionFrame.bedRest ? 0 : Math.hypot(pose.vx, pose.vz),
       onGround: pose.onGround,
       sneaking: dying ? false : pose.sneaking,
       sprinting: dying ? false : pose.sprinting,

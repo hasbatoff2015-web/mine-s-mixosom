@@ -37,12 +37,14 @@ import {
   type PlayerArmorResources,
 } from './PlayerArmorVisual';
 import type { PlayerEquipmentState } from '../../../shared/protocol';
+import type { BedRestState } from '../../world/bed';
 import {
   humanoidDeathRotationZ,
   humanoidDeathScale,
 } from '../../entities/humanoidDeath';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
+  readonly bedRest?: BedRestState | null;
   readonly invisible: boolean;
   readonly hurtFlash: number;
   /** 0 = living pose. 1 = completed humanoid death tilt. */
@@ -103,6 +105,7 @@ export class PlayerVisual {
   readonly animator = new PlayerVisualAnimator();
   readonly armor: PlayerArmorVisual;
   private readonly bodyYawRoot = new THREE.Group();
+  private readonly restPoseRoot = new THREE.Group();
   private readonly baseMaterial: THREE.MeshBasicMaterial;
   private readonly outerMaterial: THREE.MeshBasicMaterial;
   private readonly outerMaterials = new Map<number, THREE.MeshBasicMaterial>();
@@ -142,6 +145,7 @@ export class PlayerVisual {
     this.outerMaterials.set(1, this.createOuterMaterial(1, translucentOuter));
     this.outerMaterials.set(2, this.createOuterMaterial(2, translucentOuter));
     this.root.name = 'player-visual';
+    this.restPoseRoot.name = 'player-visual:rest-pose';
     this.bodyYawRoot.name = 'player-visual:yaw';
     const upperBody = new THREE.Group();
     const head = new THREE.Group();
@@ -162,7 +166,8 @@ export class PlayerVisual {
     heldItem.name = 'player:right-hand-item';
     offhandItem.name = 'player:left-hand-item';
     this.rig = { upperBody, head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem, offhandItem };
-    this.root.add(this.bodyYawRoot);
+    this.root.add(this.restPoseRoot);
+    this.restPoseRoot.add(this.bodyYawRoot);
     this.bodyYawRoot.add(upperBody, rightLeg, leftLeg);
     upperBody.add(head, body, rightArm, leftArm);
     rightArm.add(heldItem);
@@ -255,7 +260,8 @@ export class PlayerVisual {
     const timedFlash = this.hurtFlashStartedAt >= 0 ? playerHurtFlashIntensity(nowMs - this.hurtFlashStartedAt) : 0;
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
     const dying = (state.deathProgress ?? 0) > 0;
-    const pose = this.animator.advance(deltaSeconds, dying
+    const resting = !dying && Boolean(state.bedRest);
+    const pose = this.animator.advance(deltaSeconds, dying || resting
       ? {
         ...state,
         movementSpeed: 0,
@@ -267,7 +273,15 @@ export class PlayerVisual {
         foodUseProgress: 0,
       }
       : state);
-    this.applyPose(pose);
+    this.applyPose(resting ? {
+      ...pose, bodyYaw: 0, headYaw: 0, headPitch: 0, bodyPitch: 0, bodyYOffset: 0, bodyZOffset: 0,
+      rightArmX: 0, rightArmY: 0, rightArmZ: 0, leftArmX: 0, leftArmY: 0, leftArmZ: 0,
+      rightLegX: 0, leftLegX: 0, swingProgress: 0,
+    } : pose);
+    const restYaw = state.bedRest?.facing === 'east' ? -Math.PI / 2
+      : state.bedRest?.facing === 'south' ? Math.PI
+        : state.bedRest?.facing === 'west' ? Math.PI / 2 : 0;
+    this.restPoseRoot.rotation.set(resting ? -Math.PI / 2 : 0, resting ? restYaw : 0, 0, 'YXZ');
     if (dying) {
       const progress = Math.min(1, Math.max(0, state.deathProgress ?? 0));
       this.root.rotation.z = humanoidDeathRotationZ(progress);

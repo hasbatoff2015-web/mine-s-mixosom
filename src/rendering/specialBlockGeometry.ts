@@ -94,12 +94,10 @@ const SIGN_BOARD: SignVisualPart['faces'] = {
   down: signFace(26, 0, 50, 2),
 };
 const SIGN_POST: SignVisualPart['faces'] = {
-  south: signFace(2, 16, 4, 30),
-  north: signFace(6, 16, 8, 30),
-  west: signFace(0, 16, 2, 30),
-  east: signFace(4, 16, 6, 30),
-  up: signFace(2, 14, 4, 16),
-  down: signFace(4, 14, 6, 16),
+  south: signFace(2, 22.4, 4, 30),
+  north: signFace(6, 22.4, 8, 30),
+  west: signFace(0, 22.4, 2, 30),
+  east: signFace(4, 22.4, 6, 30),
 };
 
 /** ModelSign proportions scaled to fit the current cell-height sign placement. */
@@ -112,8 +110,8 @@ export function signVisualParts(attachment: 'floor' | 'wall'): readonly SignVisu
   };
   return attachment === 'wall' ? [board] : [board, {
     texture: SIGN_SHEET_KEY,
-    center: [0, 0.35, 0],
-    size: [0.1, 0.7, 0.1],
+    center: [0, 0.19, 0],
+    size: [0.08, 0.38, 0.08],
     faces: SIGN_POST,
   }];
 }

@@ -69,7 +69,7 @@ import { getTntProfile } from '../src/world/tnt';
 import { volumeContains, type SelectionVolume } from './services/selection';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
-import { clearBedBlocks } from '../src/world/bed';
+import { bedRestPosition, clearBedBlocks, resolveBedRest, type BedRestState } from '../src/world/bed';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent, WorldSoundEvent } from '../shared/protocol';
 import type { BlockTargetIntent, CombatActionDiagnostics } from '../shared/playerActions';
@@ -115,6 +115,7 @@ export function packEntitySnapshots(
 export { daylightFactor, rollBlockDropCount } from '../src/gameplay';
 
 export interface GameplayPlayer {
+  restingBed?: BedRestState;
   readonly id: string;
   connected: boolean;
   readonly controller: PlayerController;
@@ -924,7 +925,13 @@ export class ServerGameplay {
       enterVehicle: (cartId) => gameplay.enterVehicle(player, cartId),
       effects: {
         swing: () => player.presentSwing?.(),
-        onBedUsed: () => player.presentSwing?.(),
+        onBedUsed: (x, y, z) => {
+          const rest = resolveBedRest(gameplay.world, x, y, z);
+          if (!rest || player.survival.dead || player.ridingCartId) return;
+          player.restingBed = rest;
+          player.controller.teleport(bedRestPosition(rest));
+          player.presentSwing?.();
+        },
         onSignUsed: (x, y, z) => { player.pendingSignEdit = { x, y, z }; },
         onFlintIgnite: () => {
           player.presentSwing?.();

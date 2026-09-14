@@ -1,5 +1,6 @@
 import type { BlockId } from '../src/blocks';
 import type { ItemStack } from '../src/inventory';
+import type { BedRestState } from '../src/world/bed';
 
 export interface EquippedArmorPresentation {
   readonly head: ItemStack['itemId'] | null;
@@ -31,6 +32,8 @@ export interface PlayerPresentationState {
   readonly bowCharge: number;
   readonly foodUseProgress: number;
   readonly swordBlocking: boolean;
+  /** Server-owned bed rest; head cell and orientation identify the pose. */
+  readonly bedRest?: BedRestState | null;
   /** Server-owned swing counter. A join establishes a baseline, never replays history. */
   readonly swingSeq: number;
   /** Worn armor item ids. Missing on old snapshots means unequipped. */
@@ -77,6 +80,7 @@ export const IDLE_PLAYER_PRESENTATION: PlayerPresentationState = Object.freeze({
   bowCharge: 0,
   foodUseProgress: 0,
   swordBlocking: false,
+  bedRest: null,
   swingSeq: 0,
   armor: EMPTY_EQUIPPED_ARMOR,
   hurtSeq: 0,

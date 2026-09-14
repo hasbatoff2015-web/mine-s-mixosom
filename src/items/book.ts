@@ -1,5 +1,7 @@
 import { createItemStack, type Inventory, type ItemMetadata, type ItemStack } from '../inventory';
 import { ItemId } from './types';
+import type { BlockId } from '../blocks';
+import { isUseTargetBlock } from '../world/blockInteraction';
 
 export const MAX_BOOK_PAGES = 32;
 export const MAX_BOOK_PAGE_CHARS = 1024;
@@ -10,6 +12,11 @@ export interface BookContent {
   readonly title?: string;
   readonly author?: string;
   readonly locked?: boolean;
+}
+
+/** Existing block interactions take priority over opening the held book. */
+export function shouldOpenBookOnUse(itemId: string | undefined, targetBlock?: BlockId): boolean {
+  return itemId === ItemId.Book && (targetBlock === undefined || !isUseTargetBlock(targetBlock));
 }
 
 /** Plain Unicode text only. Remove controls and unpaired UTF-16 surrogates. */
@@ -44,15 +51,17 @@ export function readBookContent(stack: ItemStack): BookContent | undefined {
 }
 
 /** Replaces the selected book; blank remainder is returned if inventory is full. */
-export function writeBookInSlot(inventory: Inventory, slot: number, content: BookContent): ItemStack | null | undefined {
+export function writeBookInSlot(inventory: Inventory, slot: number, content: BookContent, signer?: string): ItemStack | null | undefined {
   const stack = inventory.getSlot(slot);
   if (stack?.itemId !== ItemId.Book || readBookContent(stack)?.locked) return undefined;
   const draft = sanitizeBookDraft(content);
-  if (!draft) return undefined;
+  if (!draft || (signer !== undefined && (!draft.title || !plainText(signer).trim()))) return undefined;
+  const author = signer === undefined ? undefined : plainText(signer).trim().slice(0, MAX_BOOK_TITLE_CHARS);
   const metadata: ItemMetadata = { ...stack.metadata, book: {
     pages: [...draft.pages],
     ...(draft.title ? { title: draft.title } : {}),
-    ...(readBookContent(stack)?.author ? { author: readBookContent(stack)!.author! } : {}),
+    ...(author ? { author } : {}),
+    ...(signer !== undefined ? { locked: true } : {}),
   } };
   const edited = createItemStack(ItemId.Book, 1, { metadata });
   inventory.setSlot(slot, edited);

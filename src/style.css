@@ -1092,6 +1092,10 @@ button {
   font: 16px/1.4 var(--font-ui);
 }
 .book-panel h2 { margin: 0; text-align: center; }
+.book-editor, .book-signing, .book-signed-info { display: grid; gap: 12px; }
+.book-editor[hidden], .book-signing[hidden], .book-signed-info[hidden], .book-actions button[hidden] { display: none; }
+.book-signed-info { text-align: center; }
+.book-signing p { margin: 0; }
 .book-panel label { display: grid; gap: 4px; }
 .book-panel input, .book-panel textarea {
   box-sizing: border-box;

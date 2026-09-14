@@ -116,7 +116,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, getItemDefinition, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { ItemId, getItemDefinition, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -341,7 +341,7 @@ import {
   type UseSimulationContext,
 } from '../gameplay';
 import { isUseTargetBlock } from '../world/blockInteraction';
-import { clearBedBlocks } from '../world/bed';
+import { bedExitPosition, bedRestCameraPosition, bedRestPosition, clearBedBlocks, isBedRestValid, resolveBedRest, type BedRestState } from '../world/bed';
 import { fillBucketWithMilk } from '../items/bucketInteraction';
 import { FireworkManager, fireworkFlight } from '../entities/FireworkManager';
 import { FireworkVisuals } from '../rendering/FireworkVisuals';
@@ -385,6 +385,7 @@ export interface GameSession {
   minecarts: MinecartManager;
   entityHost: ThreeEntityHost;
   ridingCartId?: string;
+  restingBed?: BedRestState;
   redstone: RedstoneSystem;
   farming: FarmingSystem;
   activePressurePlates: Set<string>;
@@ -2129,8 +2130,12 @@ export class Game {
     if (!online) return;
     if (this.tryInteractBuyer(session)) return;
     if (this.tryInteractHologram(session)) return;
-    const source = this.onlineActionSource(session);
     const selected = this.selectedStack();
+    if (shouldOpenBookOnUse(selected?.itemId, session.target?.block)) {
+      this.openSelectedBook(session);
+      return;
+    }
+    const source = this.onlineActionSource(session);
     if (this.selectedStack()?.itemId === ItemId.Bow) {
       source.actionSeq += 1;
       this.commitOnlineActionSeq(session, source);
@@ -2655,7 +2660,7 @@ export class Game {
       online.inputSeq,
       { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
       { yaw: this.input.yaw, pitch: this.input.pitch },
-      !session.ridingCartId,
+      !session.ridingCartId && !session.restingBed,
     );
     if (!online.ignoreNetworkSend) {
       const clientSentAt = isDevRuntime() ? performance.now() : undefined;
@@ -2685,7 +2690,8 @@ export class Game {
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
-    predictLocalMove(session.player, session.world, online.prediction, predicted);
+    predictLocalMove(session.player, session.world, online.prediction,
+      session.restingBed ? { ...predicted, resting: true } : predicted);
     this.visibilityProbe.noteTick();
     this.localRender.pushAfterTick({
       x: session.player.position.x,
@@ -4158,7 +4164,7 @@ export class Game {
       online.inputSeq,
       movement,
       { yaw: this.input.yaw, pitch: this.input.pitch },
-      !riding,
+      !riding && !session.restingBed,
     );
     if (!online.ignoreNetworkSend) {
       const clientSentAt = isDevRuntime() ? performance.now() : undefined;
@@ -4192,7 +4198,8 @@ export class Game {
     }
     const prevX = session.player.position.x;
     const prevZ = session.player.position.z;
-    predictLocalMove(session.player, session.world, online.prediction, predicted);
+    predictLocalMove(session.player, session.world, online.prediction,
+      session.restingBed ? { ...predicted, resting: true } : predicted);
     if (gameplayAllowed) {
       this.updateFootsteps(session, Math.hypot(
         session.player.position.x - prevX,
@@ -4292,6 +4299,15 @@ export class Game {
         simMark = this.addSimPart('world', simMark);
       },
       tickPlayers: () => {
+        let exitedRest = false;
+        if (session.restingBed && (!isBedRestValid(session.world, session.restingBed)
+          || (gameplayAllowed && movementBefore.jump))) {
+          const rest = session.restingBed;
+          session.restingBed = undefined;
+          session.player.teleport(bedExitPosition(session.world, rest));
+          this.syncLocalRenderFromPlayer();
+          exitedRest = true;
+        }
         const selected = this.selectedStack();
         session.combat.setHeldItem(selected?.itemId);
         session.combat.setOffhand(session.inventory.offhand?.itemId);
@@ -4314,14 +4330,15 @@ export class Game {
             ...movement,
             forward: riding ? 0 : movement.forward,
             right: riding ? 0 : movement.right,
-            jump: riding ? false : movement.jump,
+            jump: riding || exitedRest ? false : movement.jump,
             sprint: !riding && movement.sprint
               && (session.summary.mode === 'creative' || session.survival.hunger > 6),
             descend: movement.descend === true,
             flySprint: movement.flySprint === true,
           }),
         };
-        const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
+        const playerResult = session.restingBed ? { horizontalDistance: 0, jumped: false }
+          : session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
           if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
         });
         motionProbe.notePredictionTick();
@@ -4781,23 +4798,8 @@ export class Game {
         }
       }
     }
-    if (held?.itemId === ItemId.Book) {
-      const slot = session.selectedSlot;
-      this.openGameplayModal();
-      this.ui.openBook(held, (content) => {
-        if (this.session !== session || session.selectedSlot !== slot) return;
-        if (session.online) {
-          session.online.client.send({ type: 'book_update', slot, pages: content.pages, title: content.title });
-        } else {
-          const overflow = writeBookInSlot(session.inventory, slot, content);
-          if (overflow) this.spawnDroppedStack(overflow);
-          this.refreshHud();
-          void this.saveSession();
-        }
-      }, () => {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      });
+    if (shouldOpenBookOnUse(held?.itemId, session.target?.block)) {
+      this.openSelectedBook(session);
       return;
     }
     if (session.online) {
@@ -4805,6 +4807,27 @@ export class Game {
       return;
     }
     performUseHeld(this.singleplayerUseContext());
+  }
+
+  private openSelectedBook(session: GameSession): void {
+    const slot = session.selectedSlot;
+    const held = session.inventory.getSlot(slot);
+    if (held?.itemId !== ItemId.Book) return;
+    this.openGameplayModal();
+    this.ui.openBook(held, (content, sign) => {
+      if (this.session !== session || session.selectedSlot !== slot) return;
+      if (session.online) {
+        session.online.client.send({ type: 'book_update', slot, pages: content.pages, title: content.title, sign });
+      } else {
+        const overflow = writeBookInSlot(session.inventory, slot, content, sign ? PLAYER_CHAT_NAME : undefined);
+        if (overflow) this.spawnDroppedStack(overflow);
+        this.refreshHud();
+        void this.saveSession();
+      }
+    }, () => {
+      this.enterPlaying();
+      this.input.tryRequestPointerLock();
+    });
   }
 
   private openSignEditor(x: number, y: number, z: number, lines?: readonly string[]): void {
@@ -4876,7 +4899,13 @@ export class Game {
             };
           game.openBlockInventory(kind, hit);
         },
-        onBedUsed: () => game.ui.toast('Кровать — декоративный предмет'),
+        onBedUsed: (x, y, z) => {
+          const rest = resolveBedRest(session.world, x, y, z);
+          if (!rest || session.survival.dead || session.ridingCartId) return;
+          session.restingBed = rest;
+          session.player.teleport(bedRestPosition(rest));
+          game.syncLocalRenderFromPlayer();
+        },
         onSignUsed: (x, y, z) => game.openSignEditor(x, y, z),
         onFlintIgnite: () => {
           game.playWorld(
@@ -5366,6 +5395,7 @@ export class Game {
   private teleportPlayer(x: number, y: number, z: number): void {
     const session = this.session!;
     session.ridingCartId = undefined;
+    session.restingBed = undefined;
     const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
     session.player.teleport(destination);
     this.syncLocalRenderFromPlayer();
@@ -5475,6 +5505,7 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
+    session.restingBed = undefined;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
@@ -5603,6 +5634,7 @@ export class Game {
       && !this.ui.isInventoryOpen(),
     );
     session.playerVisual.update(this.renderDeltaSeconds, {
+      bedRest: session.restingBed,
       viewYaw: this.input.yaw,
       viewPitch: this.input.pitch,
       movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
@@ -5625,7 +5657,10 @@ export class Game {
       daylightFactor(session.world.timeOfDay),
     );
 
-    this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
+    if (session.restingBed) {
+      const [x, y, z] = bedRestCameraPosition(session.restingBed);
+      this.cameraPivot.set(x, y, z);
+    } else this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
     const roll = this.hurt.cameraRoll(now);
     if (!thirdPerson) {
       this.camera.position.copy(this.cameraPivot);
@@ -5670,6 +5705,7 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    session.restingBed = presentation?.bedRest ?? undefined;
     const nextHurt = presentationHurtSeq(presentation ?? IDLE_PLAYER_PRESENTATION);
     if (online.ownHurtSeq !== undefined && nextHurt > online.ownHurtSeq) {
       session.playerVisual.triggerHurtFlash();
@@ -5865,6 +5901,7 @@ export class Game {
     this.polishQaDispose?.();
     this.polishQaDispose = undefined;
     if (!this.session) return;
+    this.session.restingBed = undefined;
     if (this.session.online) {
       for (const view of this.session.online.remotes.values()) {
         this.scene.remove(view.group);

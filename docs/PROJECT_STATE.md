@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Utility Items bed rest / Sign post / SFX race / Book — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: RMB по любой половине корректной White Bed укладывает игрока вдоль кровати, с головой у подушки; Space выводит на свободную клетку сбоку. Сон не меняет время, spawnPoint/home и не открывает отдельный экран. Singleplayer и серверный Anarchy используют общий `src/world/bed.ts`; сервер хранит `ServerPlayer.restingBed`, посылает `presentation.bedRest`, а клиент останавливает локальное предсказание перемещения до авторитетного выхода. Смерть, разрыв кровати, телепорт, respawn, disconnect и закрытие мира снимают rest.
+- У напольной Oak Sign стойка доходит только до нижней грани доски; боковой UV обрезан по фактической высоте, внутренние торцевые грани удалены. Wall Sign и текст не менялись. `/?qaSign=1` проверен в браузере в прямом и повёрнутом виде.
+- `AudioManager` теперь дедуплицирует fetch/decode каждого файла и откладывает только конкретный one-shot до готовности буфера; перед стартом заново проверяет mute/pause/volume, дистанцию и лимит голосов. Первый звук до `preload()` больше не теряется. Авторитетная доставка `world_sound` и HUD-only `totem_activate` не менялись.
+- Book открывается в Singleplayer и Anarchy при RMB, если цель не интерактивный блок. В редакторе есть страницы, Done для черновика и отдельное подтверждение Sign; подписанная книга показывает title/author и только чтение. `book_update.sign` — намерение клиента; автором и блокировкой управляет сервер из authenticated player name. Лимиты 32×1024/64 и выбранный слот сохранены.
+- Проверки, ручной QA и ограничения: `docs/reports/2026-09-14_utility-items-bed-rest-sign-audio-book.md`. `main` не менялся.
+
 ## Последний проход: Utility Items bed/sign/Totem/firework follow-up — 2026-09-14
 
 - Ветка `codex/utility-items-v1`: поворот UV верхней грани head-half исправлен; подушка теперь у внешнего края изголовья при всех четырёх направлениях, без изменений bed placement/collision/drop. Dev-сцена `/?qaBed=1` проверена в браузере.
@@ -27,7 +35,7 @@
 ## Последний проход: Utility Items V1 — 2026-09-13
 
 - Ветка `codex/utility-items-v1` от `main@1c802ab`: Paper/Sugar Cane, редактируемая Book, Oak Sign, декоративная двухблочная White Bed, Milk Bucket, Firework Rocket Flight 1–3, приватная WH Arrow и Totem of Undying.
-- Shared simulation остаётся Node-safe. Bed ставится/ломается как две части с одним дропом; использование **не меняет spawnPoint/home и не пропускает время**. Sign text — `VoxelWorld.signs` в world save, book pages — `ItemStack.metadata.book` в обычном inventory/save/auction path.
+- Shared simulation остаётся Node-safe. Bed ставится/ломается как две части с одним дропом; использование **не меняет spawnPoint/home и не пропускает время** и теперь позволяет только лежать до Space/инвалидации. Sign text — `VoxelWorld.signs` в world save, book pages — `ItemStack.metadata.book` в обычном inventory/save/auction path.
 - Firework — временная серверная сущность 20 TPS, без урона и permanent save; WH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `WhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
 - Totem доступен через Creative/admin/test. Покупка у trader отложена: полноценной trader-системы в текущем коде нет; Buyer NPC — это скупщик, не продавец.
 - Focused tests: `tests/utility-items.test.ts` и `tests/server/utility-items-authority.test.ts`. Полная проверка и ограничения описаны в `docs/reports/2026-09-13_utility-items-v1.md`.

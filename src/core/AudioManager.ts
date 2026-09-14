@@ -54,6 +54,7 @@ export interface AudioDebugSnapshot {
 }
 
 const RECENT_PLAY_CAP = 24;
+const PENDING_START_CAP = 64;
 
 export interface AudioManagerOptions {
   readonly fetch?: typeof fetch;
@@ -75,6 +76,7 @@ export class AudioManager {
   private masterGain?: GainNode;
   private paused = false;
   private readonly raw = new Map<string, ArrayBuffer>();
+  private readonly fetching = new Map<string, Promise<ArrayBuffer | undefined>>();
   private readonly buffers = new Map<string, AudioBuffer>();
   private readonly decoding = new Map<string, Promise<AudioBuffer | undefined>>();
   private readonly missingFiles = new Set<string>();
@@ -91,6 +93,7 @@ export class AudioManager {
     world: 0,
   };
   private preloadTask?: Promise<void>;
+  private pendingStarts = 0;
   private readonly recentPlays: AudioPlayRecord[] = [];
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string;
@@ -232,41 +235,60 @@ export class AudioManager {
       if (linearAttenuation(distance, profile.refDistance, profile.maxDistance) <= 0.008) return;
     }
 
-    const lowest = this.voices.reduce((min, voice) => Math.min(min, voice.priority), 100);
-    const admission = canStartVoice({
-      globalActive: this.voices.length,
-      busActive: this.busActive[profile.bus],
-      busLimit: profile.maxConcurrent,
-      priority: profile.priority,
-      lowestActivePriority: lowest,
-    });
-    if (!admission.play) return;
-    if (admission.steal) this.stealVoice(profile.bus, profile.priority);
-
     const context = this.ensureContext();
     if (!context) {
       if (this.isDev) this.playTone(320, 0.04, 0.02);
       return;
     }
-    void context.resume();
+    const resumeTask = context.state === 'running'
+      ? undefined : context.resume().catch(() => { /* gesture may not yet be available */ });
 
     const file = profile.files[chooseVariantIndex(profile.files.length, this.random)];
     if (!file) {
       this.warnMissingEvent(event);
       return;
     }
+    const position = worldPosition && { ...worldPosition };
+    const listenerPose = listener && { ...listener };
+    const playOptions = options && { ...options };
+    const startReady = (buffer: AudioBuffer): void => {
+      if (this.muted || this.paused || this.masterVolume <= 0 || context.state !== 'running') return;
+      if (positional && position && listenerPose) {
+        const distance = distanceBetween(position, listenerPose);
+        if (shouldSkipDistant(distance, profile.maxDistance)
+          || linearAttenuation(distance, profile.refDistance, profile.maxDistance) <= 0.008) return;
+      }
+      const lowest = this.voices.reduce((min, voice) => Math.min(min, voice.priority), 100);
+      const admission = canStartVoice({
+        globalActive: this.voices.length,
+        busActive: this.busActive[profile.bus],
+        busLimit: profile.maxConcurrent,
+        priority: profile.priority,
+        lowestActivePriority: lowest,
+      });
+      if (!admission.play) return;
+      if (admission.steal) this.stealVoice(profile.bus, profile.priority);
+      try {
+        this.startBuffer(context, buffer, file, profile, position, listenerPose, playOptions, positional);
+      } catch (error) {
+        this.warn('SFX playback failed.', error);
+      }
+    };
     const buffer = this.buffers.get(file);
-    if (!buffer) {
-      void this.decodeFile(file);
-      if (this.isDev && this.raw.has(file) === false) this.warnMissingEvent(event);
+    if (buffer) {
+      if (resumeTask) void resumeTask.then(() => startReady(buffer));
+      else startReady(buffer);
       return;
     }
-
-    try {
-      this.startBuffer(context, buffer, file, profile, worldPosition, listener, options, positional);
-    } catch (error) {
-      this.warn('SFX playback failed.', error);
-    }
+    if (this.pendingStarts >= PENDING_START_CAP || this.missingFiles.has(file)) return;
+    this.pendingStarts += 1;
+    void this.ensureFileReady(file).then(async (decoded) => {
+      if (!decoded) return;
+      if (resumeTask) await resumeTask;
+      startReady(decoded);
+    })
+      .catch((error) => this.warn('SFX loading failed.', error))
+      .finally(() => { this.pendingStarts -= 1; });
   }
 
   private startBuffer(
@@ -423,17 +445,38 @@ export class AudioManager {
 
   private async loadCatalog(): Promise<void> {
     const files = catalogFiles();
-    await Promise.all(files.map(async (file) => {
-      if (this.raw.has(file) || this.buffers.has(file)) return;
+    await Promise.all(files.map((file) => this.fetchFile(file)));
+    await this.decodePending();
+  }
+
+  private fetchFile(file: string): Promise<ArrayBuffer | undefined> {
+    const cached = this.raw.get(file);
+    if (cached) return Promise.resolve(cached);
+    if (this.missingFiles.has(file)) return Promise.resolve(undefined);
+    const inflight = this.fetching.get(file);
+    if (inflight) return inflight;
+    const task = (async () => {
       try {
         const response = await this.fetchImpl(this.assetUrl(file));
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        this.raw.set(file, await response.arrayBuffer());
+        const data = await response.arrayBuffer();
+        this.raw.set(file, data);
+        return data;
       } catch (error) {
         this.warnMissingFile(file, error);
+        return undefined;
+      } finally {
+        this.fetching.delete(file);
       }
-    }));
-    await this.decodePending();
+    })();
+    this.fetching.set(file, task);
+    return task;
+  }
+
+  private async ensureFileReady(file: string): Promise<AudioBuffer | undefined> {
+    if (this.missingFiles.has(file)) return undefined;
+    if (!this.raw.has(file) && !await this.fetchFile(file)) return undefined;
+    return this.decodeFile(file);
   }
 
   private async decodePending(): Promise<void> {
@@ -445,6 +488,7 @@ export class AudioManager {
   private decodeFile(file: string): Promise<AudioBuffer | undefined> {
     const existing = this.buffers.get(file);
     if (existing) return Promise.resolve(existing);
+    if (this.missingFiles.has(file)) return Promise.resolve(undefined);
     const inflight = this.decoding.get(file);
     if (inflight) return inflight;
     const task = this.decodeFileNow(file);

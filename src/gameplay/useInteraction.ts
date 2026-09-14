@@ -122,7 +122,7 @@ export interface UseHostEffects {
   playWorld?(event: string, x: number, y: number, z: number, options?: { pitch?: number }): void;
   playBlock?(action: 'place', block: BlockId, x: number, y: number, z: number): void;
   openContainer?(kind: 'crafting-table' | 'chest' | 'furnace' | 'portal-chest', x: number, y: number, z: number): void;
-  onBedUsed?(): void;
+  onBedUsed?(x: number, y: number, z: number): void;
   onSignUsed?(x: number, y: number, z: number): void;
   onInventoryChanged?(): void;
   onFlintIgnite?(): void;
@@ -298,7 +298,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
       return;
     }
     if (hit.block === BlockId.WhiteBed) {
-      ctx.effects?.onBedUsed?.();
+      ctx.effects?.onBedUsed?.(hit.x, hit.y, hit.z);
       return;
     }
     if (hit.block === BlockId.OakSign) {

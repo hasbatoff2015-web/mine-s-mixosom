@@ -6,13 +6,13 @@ import { placeBlockAt, performUseHeld, type UseSimulationContext } from '../src/
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { Inventory, createItemStack } from '../src/inventory';
 import { ItemId, getItemDefinition } from '../src/items';
-import { readBookContent, sanitizeBookDraft, writeBookInSlot } from '../src/items/book';
+import { readBookContent, sanitizeBookDraft, shouldOpenBookOnUse, writeBookInSlot } from '../src/items/book';
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
 import { FarmingSystem } from '../src/farming';
 import { WhMarks } from '../src/combat/WhMarks';
 import { SurvivalSystem } from '../src/survival/SurvivalSystem';
-import { clearBedBlocks, bedHeadCell } from '../src/world/bed';
+import { bedExitPosition, bedHeadCell, bedRestCameraPosition, bedRestPosition, clearBedBlocks, isBedRestValid, resolveBedRest } from '../src/world/bed';
 import { canSugarCaneStandAt } from '../src/world/placement';
 import { sanitizeSignLines } from '../src/world/sign';
 import { VoxelWorld } from '../src/world/World';
@@ -20,6 +20,7 @@ import { Chunk } from '../src/world/Chunk';
 import { TerrainGenerator } from '../src/world/Generator';
 import { SEA_LEVEL } from '../src/core/constants';
 import { bedVisualParts } from '../src/rendering/specialBlockGeometry';
+import { parseClientMessage } from '../shared/protocol';
 
 function placement(block: BlockId, yaw = 0) {
   const world = new VoxelWorld('utility-placement');
@@ -71,6 +72,20 @@ describe('utility recipes and metadata', () => {
 });
 
 describe('book and sign text', () => {
+  it('opens a held book only when no interactive block owns the use action', () => {
+    expect(shouldOpenBookOnUse(ItemId.Book)).toBe(true);
+    expect(shouldOpenBookOnUse(ItemId.Book, BlockId.Stone)).toBe(true);
+    for (const block of [BlockId.Chest, BlockId.Furnace, BlockId.CraftingTable, BlockId.WhiteBed, BlockId.OakSign]) {
+      expect(shouldOpenBookOnUse(ItemId.Book, block)).toBe(false);
+    }
+    expect(shouldOpenBookOnUse(ItemId.Bow, BlockId.Stone)).toBe(false);
+  });
+
+  it('accepts only the signing flag on the wire and strips forged author/lock fields', () => {
+    expect(parseClientMessage({ type: 'book_update', slot: 0, pages: ['A'], title: 'T', sign: true,
+      author: 'Forged', locked: true })).toEqual({ type: 'book_update', slot: 0, pages: ['A'], title: 'T', sign: true });
+    expect(parseClientMessage({ type: 'book_update', slot: 0, pages: ['A'], sign: 'true' })).toHaveProperty('error');
+  });
   it('splits one edited book from a blank stack and survives inventory serialization', () => {
     const inventory = new Inventory();
     inventory.setSlot(0, createItemStack(ItemId.Book, 4));
@@ -96,6 +111,16 @@ describe('book and sign text', () => {
     expect(readBookContent(inventory.getSlot(0)!)?.pages).toEqual(['locked']);
   });
 
+  it('signs one selected book with a fixed author and rejects later edits', () => {
+    const inventory = new Inventory();
+    inventory.setSlot(0, createItemStack(ItemId.Book, 2));
+    expect(writeBookInSlot(inventory, 0, { pages: ['Text'] }, 'Alice')).toBeUndefined();
+    expect(writeBookInSlot(inventory, 0, { pages: ['Text'], title: 'Field Notes', author: 'Forged' }, 'Alice')).toBeNull();
+    expect(readBookContent(inventory.getSlot(0)!)).toEqual({ pages: ['Text'], title: 'Field Notes', author: 'Alice', locked: true });
+    expect(inventory.count(ItemId.Book)).toBe(2);
+    expect(writeBookInSlot(inventory, 0, { pages: ['Changed'] })).toBeUndefined();
+  });
+
   it('persists sign text and deletes it when the sign block breaks', () => {
     const world = new VoxelWorld('sign-save');
     world.setBlock(5, 90, 5, BlockId.OakSign);
@@ -111,6 +136,27 @@ describe('book and sign text', () => {
 });
 
 describe('decorative blocks', () => {
+  it.each(['north', 'south', 'east', 'west'] as const)('canonicalizes both bed halves and finds a side exit facing %s', (facing) => {
+    const world = new VoxelWorld(`rest-${facing}`);
+    const foot = { x: 6, y: 90, z: 6 };
+    const head = bedHeadCell(foot.x, foot.y, foot.z, facing);
+    for (let x = 4; x <= 8; x += 1) for (let z = 4; z <= 8; z += 1) world.setBlock(x, 89, z, BlockId.Stone);
+    world.setBlock(foot.x, foot.y, foot.z, BlockId.WhiteBed);
+    world.setBlockState(foot.x, foot.y, foot.z, { bedPart: 'foot', facing });
+    world.setBlock(head.x, head.y, head.z, BlockId.WhiteBed);
+    world.setBlockState(head.x, head.y, head.z, { bedPart: 'head', facing });
+    const rest = resolveBedRest(world, foot.x, foot.y, foot.z)!;
+    expect(resolveBedRest(world, head.x, head.y, head.z)).toEqual(rest);
+    expect(isBedRestValid(world, rest)).toBe(true);
+    expect(bedRestPosition(rest)[1]).toBeGreaterThan(90 + 9 / 16);
+    expect(bedRestCameraPosition(rest)[1]).toBeGreaterThan(bedRestPosition(rest)[1]);
+    const [exitX, exitY, exitZ] = bedExitPosition(world, rest);
+    expect(world.getBlock(Math.floor(exitX), Math.floor(exitY), Math.floor(exitZ), false)).toBe(BlockId.Air);
+    world.setBlock(Math.floor(exitX), Math.floor(exitY), Math.floor(exitZ), BlockId.Stone);
+    expect(bedExitPosition(world, rest)).not.toEqual([exitX, exitY, exitZ]);
+    world.setBlock(head.x, head.y, head.z, BlockId.Air);
+    expect(isBedRestValid(world, rest)).toBe(false);
+  });
   it('unwraps connected bed halves, end caps, underside, and four sheet-textured legs', () => {
     const foot = bedVisualParts('foot');
     const head = bedVisualParts('head');

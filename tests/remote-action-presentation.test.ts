@@ -25,6 +25,16 @@ function harness(presentation?: PlayerPresentationState) {
 }
 
 describe('authoritative remote action presentation', () => {
+  it('passes server bed rest to the existing visual and clears it on exit', () => {
+    const bedRest = { x: 8, y: 70, z: 8, facing: 'north' as const };
+    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, bedRest });
+    view.interpolate(100, 0.016);
+    expect(visual.update).toHaveBeenLastCalledWith(0.016, expect.objectContaining({ bedRest, movementSpeed: 0 }));
+    view.applySnapshot({ ...info, presentation: IDLE_PLAYER_PRESENTATION }, 150, 1);
+    view.interpolate(150, 0.016);
+    expect(visual.update).toHaveBeenLastCalledWith(0.016, expect.objectContaining({ bedRest: null }));
+    view.dispose();
+  });
   it('exposes the tick of the pose already rendered, without sampling twice', () => {
     const { view } = harness();
     expect(view.lastRenderTick).toBeUndefined();

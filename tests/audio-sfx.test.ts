@@ -305,6 +305,80 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     return { context: context as unknown as AudioContext, created, panners };
   }
 
+  it('plays the first event after an in-flight fetch exactly once per request and reuses the decoded sample', async () => {
+    const { context, created } = mockContext();
+    let finishFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => { finishFetch = resolve; }));
+    const audio = new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
+      audioContextFactory: () => context, isDev: false, random: () => 0 });
+    const source = { x: 1, y: 70, z: 1 };
+    const listener = { x: 2, y: 70, z: 1 };
+    audio.playAt('totem.activate', source, listener);
+    audio.playAt('totem.activate', source, listener);
+    expect(created).toHaveLength(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    finishFetch({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) } as Response);
+    await vi.waitFor(() => expect(created).toHaveLength(2));
+    expect(context.decodeAudioData).toHaveBeenCalledTimes(1);
+    expect(created.every((source) => source.start.mock.calls.length === 1)).toBe(true);
+    created[0]!.onended?.();
+    audio.playAt('totem.activate', source, listener);
+    expect(created).toHaveLength(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops delayed events if muted or paused and does not retry failed files forever', async () => {
+    const { context, created } = mockContext();
+    let finishDecode!: (buffer: AudioBuffer) => void;
+    (context.decodeAudioData as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<AudioBuffer>((resolve) => { finishDecode = resolve; }),
+    );
+    const fetchImpl = vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) } as Response));
+    const audio = new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
+      audioContextFactory: () => context, isDev: false, random: () => 0 });
+    audio.play('item.pickup');
+    await vi.waitFor(() => expect(context.decodeAudioData).toHaveBeenCalledTimes(1));
+    audio.setMuted(true);
+    finishDecode({ duration: 0.2 } as AudioBuffer);
+    await vi.waitFor(() => expect(audio.debugSnapshot().bufferCount).toBe(1));
+    expect(created).toHaveLength(0);
+    audio.setMuted(false);
+    audio.play('item.pickup');
+    expect(created).toHaveLength(1);
+
+    const pausedContext = mockContext();
+    let finishPausedDecode!: (buffer: AudioBuffer) => void;
+    (pausedContext.context.decodeAudioData as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<AudioBuffer>((resolve) => { finishPausedDecode = resolve; }),
+    );
+    const pausedAudio = new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
+      audioContextFactory: () => pausedContext.context, isDev: false, random: () => 0 });
+    pausedAudio.play('item.pickup');
+    await vi.waitFor(() => expect(pausedContext.context.decodeAudioData).toHaveBeenCalledTimes(1));
+    pausedAudio.pause();
+    finishPausedDecode({ duration: 0.2 } as AudioBuffer);
+    await vi.waitFor(() => expect(pausedAudio.debugSnapshot().bufferCount).toBe(1));
+    expect(pausedContext.created).toHaveLength(0);
+
+    const failingFetch = vi.fn(async () => ({ ok: false, status: 404 } as Response));
+    const broken = new AudioManager({ fetch: failingFetch as unknown as typeof fetch,
+      audioContextFactory: () => mockContext().context, isDev: false, random: () => 0 });
+    broken.play('item.pickup');
+    await vi.waitFor(() => expect(broken.debugSnapshot().missingFiles).toContain('item_pickup.mp3'));
+    broken.play('item.pickup');
+    expect(failingFetch).toHaveBeenCalledTimes(1);
+
+    const failedDecode = mockContext();
+    (failedDecode.context.decodeAudioData as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('bad mp3'));
+    const decodeBroken = new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
+      audioContextFactory: () => failedDecode.context, isDev: false, random: () => 0 });
+    decodeBroken.play('item.pickup');
+    await vi.waitFor(() => expect(decodeBroken.debugSnapshot().missingFiles).toContain('item_pickup.mp3'));
+    decodeBroken.play('item.pickup');
+    expect(failedDecode.context.decodeAudioData).toHaveBeenCalledTimes(1);
+    expect(failedDecode.created).toHaveLength(0);
+  });
+
   it('decodes once, reuses buffers, and never throws on missing samples', async () => {
     const { context, created } = mockContext();
     const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
