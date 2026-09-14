@@ -6058,12 +6058,16 @@ export class Game {
     const snap = this.audio.debugSnapshot();
     const recent = snap.recentPlays.slice(-12).map((play) =>
       `${play.event} ${play.file} p${play.pitch.toFixed(2)} v${play.volume.toFixed(2)}${play.positional ? ' 3d' : ''}`).join('\n');
+    const drops = snap.recentDrops.slice(-6).map((drop) =>
+      `${drop.event}: ${drop.reason} (${drop.bus} ${drop.busActive}/${drop.busLimit}, p${drop.priority}, low ${drop.lowestBusPriority ?? '—'})`).join('\n');
     this.audioDebug.textContent = [
       `SFX ${snap.bufferCount}/${snap.catalogFiles} decoded · voices ${snap.voiceCount} · ctx ${snap.contextState}`,
       `vol ${snap.masterVolume.toFixed(2)}${snap.muted ? ' muted' : ''}${snap.paused ? ' paused' : ''}`,
-      snap.missingFiles.length ? `missing files: ${snap.missingFiles.join(', ')}` : 'files ok',
+      snap.permanentMissingFiles.length ? `permanent files: ${snap.permanentMissingFiles.join(', ')}` : 'files ok',
+      snap.transientFailures.length ? `transient: ${snap.transientFailures.map((item) => `${item.file} #${item.failureCount} retry ${item.nextRetryAt}`).join(', ')}` : 'transient ok',
       snap.missingEvents.length ? `missing events: ${snap.missingEvents.join(', ')}` : 'events ok',
       recent || '(no plays yet)',
+      drops ? `drops:\n${drops}` : 'drops: none',
     ].join('\n');
   }
 

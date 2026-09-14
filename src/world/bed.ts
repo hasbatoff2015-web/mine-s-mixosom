@@ -4,6 +4,7 @@ import { blockCollisionBoxes } from './collision';
 
 export interface BedCell { readonly x: number; readonly y: number; readonly z: number }
 export interface BedRestState extends BedCell { readonly facing: HorizontalFacing }
+export const BED_REST_ANCHOR_HEIGHT = 0.81;
 
 export function bedOtherCell(x: number, y: number, z: number, state: BlockRenderState): BedCell | undefined {
   if (!state.bedPart || !state.facing) return undefined;
@@ -51,7 +52,7 @@ export function isBedRestValid(world: VoxelWorld, rest: BedRestState): boolean {
 
 export function bedRestPosition(rest: BedRestState): readonly [number, number, number] {
   const [dx, , dz] = horizontalFacingNormal(rest.facing);
-  return [rest.x - dx * 1.5 + 0.5, rest.y + 0.81, rest.z - dz * 1.5 + 0.5];
+  return [rest.x - dx * 1.5 + 0.5, rest.y + BED_REST_ANCHOR_HEIGHT, rest.z - dz * 1.5 + 0.5];
 }
 
 export function bedRestCameraPosition(rest: BedRestState): readonly [number, number, number] {

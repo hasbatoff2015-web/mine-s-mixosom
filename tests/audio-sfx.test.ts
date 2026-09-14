@@ -152,13 +152,19 @@ describe('variant / pitch / volume / distance', () => {
 
   it('caps concurrent voices without globally muting explosions', () => {
     expect(canStartVoice({
-      globalActive: 4, busActive: 4, busLimit: 4, priority: 3, lowestActivePriority: 2,
+      globalActive: 4, busActive: 4, busLimit: 4, priority: 3,
+      lowestActivePriority: 2, lowestBusPriority: 3,
     }).play).toBe(false);
     const explosion = canStartVoice({
-      globalActive: GLOBAL_MAX_SOURCES, busActive: 2, busLimit: 2, priority: 10, lowestActivePriority: 2,
+      globalActive: GLOBAL_MAX_SOURCES, busActive: 2, busLimit: 2, priority: 10,
+      lowestActivePriority: 2, lowestBusPriority: 8,
     });
     expect(explosion.play).toBe(true);
-    expect(explosion.steal).toBe(true);
+    expect(explosion.stealScope).toBe('bus');
+    expect(canStartVoice({
+      globalActive: GLOBAL_MAX_SOURCES, busActive: 1, busLimit: 2, priority: 9,
+      lowestActivePriority: 2, lowestBusPriority: 8,
+    }).stealScope).toBe('global');
   });
 });
 
@@ -251,7 +257,8 @@ describe('AudioManager samples, pause, mute, missing files', () => {
   afterEach(() => vi.restoreAllMocks());
 
   function mockContext() {
-    const created: Array<{ start: ReturnType<typeof vi.fn>; playbackRate: { value: number }; onended: (() => void) | null }> = [];
+    const created: Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>;
+      playbackRate: { value: number }; onended: (() => void) | null }> = [];
     const panners: unknown[] = [];
     const context = {
       currentTime: 0,
@@ -316,7 +323,7 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     audio.playAt('totem.activate', source, listener);
     audio.playAt('totem.activate', source, listener);
     expect(created).toHaveLength(0);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
     finishFetch({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) } as Response);
     await vi.waitFor(() => expect(created).toHaveLength(2));
     expect(context.decodeAudioData).toHaveBeenCalledTimes(1);
@@ -325,6 +332,110 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     audio.playAt('totem.activate', source, listener);
     expect(created).toHaveLength(3);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the owner Totem steal the lowest combat voice but keeps the nearby cue once', async () => {
+    const { context, created } = mockContext();
+    const fetchImpl = vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) } as Response));
+    const makeAudio = (audioContext: AudioContext) => new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
+      audioContextFactory: () => audioContext, isDev: false, random: () => 0 });
+    const audio = makeAudio(context);
+    await audio.preload();
+    const source = { x: 1, y: 70, z: 1 };
+    const listener = { x: 2, y: 70, z: 1 };
+
+    audio.play('player.hurt');
+    audio.playAt('combat.hit', source, listener);
+    expect(audio.debugSnapshot().voiceCount).toBe(2);
+    audio.playAt('totem.activate', source, listener);
+    expect(created).toHaveLength(3);
+    expect(created[0]!.stop).not.toHaveBeenCalled();
+    expect(created[1]!.stop).toHaveBeenCalledTimes(1);
+    expect(created[2]!.start).toHaveBeenCalledTimes(1);
+    expect(audio.debugSnapshot().voiceCount).toBe(2);
+    expect(audio.debugSnapshot().recentPlays.filter((play) => play.event === 'totem.activate')).toHaveLength(1);
+    expect(audio.debugSnapshot().recentDrops.some((drop) => drop.event === 'totem.activate')).toBe(false);
+
+    const nearbyContext = mockContext();
+    const nearby = makeAudio(nearbyContext.context);
+    await nearby.preload();
+    nearby.playAt('combat.hit', source, listener);
+    nearby.playAt('totem.activate', source, listener);
+    expect(nearbyContext.created).toHaveLength(2);
+    expect(nearbyContext.created[1]!.start).toHaveBeenCalledTimes(1);
+    expect(nearby.debugSnapshot().recentPlays.filter((play) => play.event === 'totem.activate')).toHaveLength(1);
+  });
+
+  it('rejects a lower-priority combat cue and records the bus admission decision', async () => {
+    const { context, created } = mockContext();
+    const audio = new AudioManager({
+      fetch: (async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })) as unknown as typeof fetch,
+      audioContextFactory: () => context, isDev: false, random: () => 0,
+    });
+    await audio.preload();
+    const source = { x: 1, y: 70, z: 1 };
+    const listener = { x: 2, y: 70, z: 1 };
+    audio.playAt('totem.activate', source, listener);
+    audio.playAt('totem.activate', source, listener);
+    audio.play('player.hurt');
+    expect(created).toHaveLength(2);
+    expect(created.every((voice) => voice.stop.mock.calls.length === 0)).toBe(true);
+    expect(audio.debugSnapshot().recentDrops.at(-1)).toMatchObject({
+      event: 'player.hurt', reason: 'bus_saturated', bus: 'combat',
+      busActive: 2, busLimit: 2, priority: 8, lowestBusPriority: 9,
+    });
+  });
+
+  it('retries a transient Totem fetch after backoff and caches the successful sample', async () => {
+    const { context, created } = mockContext();
+    let now = 1000;
+    let totemFetches = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/totem-sound.mp3')) {
+        totemFetches += 1;
+        if (totemFetches === 1) return { ok: false, status: 503 } as Response;
+      }
+      return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) } as Response;
+    });
+    const audio = new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
+      audioContextFactory: () => context, isDev: false, random: () => 0, now: () => now });
+    const source = { x: 1, y: 70, z: 1 };
+    const listener = { x: 2, y: 70, z: 1 };
+    await audio.preload();
+    expect(audio.debugSnapshot().transientFailures).toHaveLength(1);
+    const decodedBeforeRetry = (context.decodeAudioData as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(audio.debugSnapshot().permanentMissingFiles).toEqual([]);
+    expect(audio.debugSnapshot().transientFailures[0]).toMatchObject({
+      file: 'totem-sound.mp3', failureCount: 1, lastFailureAt: 1000, nextRetryAt: 1250,
+    });
+    audio.playAt('totem.activate', source, listener);
+    expect(totemFetches).toBe(1);
+    expect(audio.debugSnapshot().recentDrops.at(-1)?.reason).toBe('asset_transient_failure');
+    now = 1250;
+    audio.playAt('totem.activate', source, listener);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
+    expect(created[0]!.start).toHaveBeenCalledTimes(1);
+    expect(totemFetches).toBe(2);
+    expect(context.decodeAudioData).toHaveBeenCalledTimes(decodedBeforeRetry + 1);
+    expect(audio.debugSnapshot().transientFailures).toEqual([]);
+    audio.playAt('totem.activate', source, listener);
+    expect(created).toHaveLength(2);
+    expect(totemFetches).toBe(2);
+  });
+
+  it('records a suspended AudioContext instead of silently losing a decoded one-shot', async () => {
+    const { context, created } = mockContext();
+    Object.assign(context, { state: 'suspended' });
+    const audio = new AudioManager({
+      fetch: (async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })) as unknown as typeof fetch,
+      audioContextFactory: () => context, isDev: false, random: () => 0,
+    });
+    audio.playAt('totem.activate', { x: 1, y: 70, z: 1 }, { x: 1, y: 70, z: 1 });
+    await vi.waitFor(() => expect(audio.debugSnapshot().recentDrops.at(-1)?.reason).toBe('context_not_running'));
+    expect(audio.debugSnapshot().recentDrops.at(-1)).toMatchObject({
+      event: 'totem.activate', file: 'totem-sound.mp3', contextState: 'suspended', bus: 'combat',
+    });
+    expect(created).toHaveLength(0);
   });
 
   it('drops delayed events if muted or paused and does not retry failed files forever', async () => {
@@ -361,15 +472,20 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     expect(pausedContext.created).toHaveLength(0);
 
     const failingFetch = vi.fn(async () => ({ ok: false, status: 404 } as Response));
+    let missingNow = 1000;
     const broken = new AudioManager({ fetch: failingFetch as unknown as typeof fetch,
-      audioContextFactory: () => mockContext().context, isDev: false, random: () => 0 });
+      audioContextFactory: () => mockContext().context, isDev: false, random: () => 0,
+      now: () => missingNow });
     broken.play('item.pickup');
     await vi.waitFor(() => expect(broken.debugSnapshot().missingFiles).toContain('item_pickup.mp3'));
+    missingNow += 60_000;
     broken.play('item.pickup');
     expect(failingFetch).toHaveBeenCalledTimes(1);
+    expect(broken.debugSnapshot().permanentMissingFiles).toContain('item_pickup.mp3');
 
     const failedDecode = mockContext();
-    (failedDecode.context.decodeAudioData as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('bad mp3'));
+    (failedDecode.context.decodeAudioData as ReturnType<typeof vi.fn>)
+      .mockRejectedValue(new DOMException('bad mp3', 'EncodingError'));
     const decodeBroken = new AudioManager({ fetch: fetchImpl as unknown as typeof fetch,
       audioContextFactory: () => failedDecode.context, isDev: false, random: () => 0 });
     decodeBroken.play('item.pickup');

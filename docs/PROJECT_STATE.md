@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Utility Items bed pose / Totem audio admission — 2026-09-15
+
+- В `codex/utility-items-v1` rest-поза `PlayerVisual` развёрнута лицом вверх: канонический front `-Z` теперь смотрит в `+Y` для north/east/south/west, поворот yaw сохраняет голову у подушки. `restPoseRoot` смещён вниз только визуально на `0.125` блока для контакта торса с матрасом; gameplay anchor `bedRestPosition = y + 0.81` и протокол не менялись. При выходе rotation и position rest-root обнуляются. Браузерный `/?qaBed=1&pose=1&facing=north|east|south|west` проверен; Slim с бронёй, mainhand и offhand тоже показан.
+- `AudioManager` допускает вытеснение голоса внутри насыщенного bus, только если новый event строго приоритетнее самого слабого голоса этого bus. Это пропускает Totem priority 9 после `player.hurt` 8 и `combat.hit` 7 при лимите combat 2 без второго `world_sound`. HTTP 404/410 и явно испорченный decode остаются permanent; network/5xx и временный decode сбой получают ограниченный backoff и повторную попытку при следующем play. `recentDrops` показывает admission/context/asset причину; `missingFiles` теперь содержит только permanent ошибки.
+- Regression owner/nearby, bed contact/reset, Classic/Slim, typechecks, boundaries, build, size/archive и smoke пройдены. Full Vitest: **233/238 files, 2275/2293 tests**, известные extractor/CRLF/timing/load failures; не green. Реальная двухклиентная серия 10+5 Totem со слуховым подтверждением **не выполнена**; до неё аудио нельзя считать принятым. Подробности: `docs/reports/2026-09-15_utility-bed-pose-totem-audio.md`.
+
 ## Последний проход: Utility Items bed rest / Sign post / SFX race / Book — 2026-09-14
 
 - Ветка `codex/utility-items-v1`: RMB по любой половине корректной White Bed укладывает игрока вдоль кровати, с головой у подушки; Space выводит на свободную клетку сбоку. Сон не меняет время, spawnPoint/home и не открывает отдельный экран. Singleplayer и серверный Anarchy используют общий `src/world/bed.ts`; сервер хранит `ServerPlayer.restingBed`, посылает `presentation.bedRest`, а клиент останавливает локальное предсказание перемещения до авторитетного выхода. Смерть, разрыв кровати, телепорт, respawn, disconnect и закрытие мира снимают rest.

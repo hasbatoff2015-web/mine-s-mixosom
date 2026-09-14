@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-15: Utility Items bed pose / Totem audio admission
+
+- [x] Исправить ошибочный front/back bed test и развернуть rest-позу лицом вверх во всех четырёх направлениях, сохранив голову у подушки.
+- [x] Опустить только визуальный rest rig до контакта торса с матрасом; authoritative `y + 0.81` оставить прежним и полностью сбрасывать transform после выхода.
+- [x] При насыщении combat bus дать Totem priority 9 вытеснять более слабый combat voice; проверить точную owner-последовательность и nearby event без двойного старта.
+- [x] Разделить permanent missing sample и transient fetch/decode failure с bounded backoff; показывать причины отброса в audio debug.
+- [ ] Провести в живом Anarchy 10 owner+nearby активаций Totem и ещё 5 после рестарта owner с проверкой, что оба клиента слышат ровно один звук на каждую активацию. При пропуске снять `recentDrops`/`recentPlays`/`transientFailures` и повторно диагностировать. Проверить bed rest/Space глазами второго игрока.
+
 ## 2026-09-14: Utility Items bed rest / Sign post / SFX race / Book
 
 - [x] RMB по foot/head валидной кровати → горизонтальная pose и камера у подушки в SP и Anarchy; Space выходит через применённую команду, server presentation передаёт rest, local prediction стоит на месте.
