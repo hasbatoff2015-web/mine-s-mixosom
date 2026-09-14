@@ -209,6 +209,36 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(deaths).toEqual([]);
   });
 
+  it('replicates offhand Totem and delivers one positional activation cue to nearby players', async () => {
+    const { world, add } = await boot();
+    const protectedPlayer = add('Protected');
+    const observer = add('Nearby');
+    const distant = add('Distant');
+    distant.player.controller.teleport([70.5, 100, 70.5]);
+    protectedPlayer.player.inventory.clear();
+    protectedPlayer.player.inventory.setSlot(0, createItemStack(ItemId.DiamondSword));
+    protectedPlayer.player.inventory.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
+    protectedPlayer.player.selectedSlot = 0;
+    world.tick();
+    const playerState = observer.sink.last('player_state') as {
+      players?: Array<{ id: string; presentation?: { heldItemId: string | null; offhandItemId?: string | null } }>;
+    };
+    expect(playerState.players?.find((player) => player.id === protectedPlayer.player.id)?.presentation)
+      .toMatchObject({ heldItemId: ItemId.DiamondSword, offhandItemId: ItemId.TotemOfUndying });
+
+    expect(protectedPlayer.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
+    world.tick();
+    const totemCues = (sink: MemorySink) => sink.payloads.flatMap((payload) =>
+      payload.type === 'world_sound' && Array.isArray(payload.sounds)
+        ? payload.sounds.filter((sound) => (sound as { event?: string }).event === 'totem.activate')
+        : []);
+    expect(totemCues(protectedPlayer.sink)).toHaveLength(1);
+    expect(totemCues(observer.sink)).toHaveLength(1);
+    expect(totemCues(distant.sink)).toHaveLength(0);
+    expect(protectedPlayer.sink.payloads.filter((payload) => payload.type === 'totem_activate')).toHaveLength(1);
+    expect(protectedPlayer.player.presentation().offhandItemId).toBeNull();
+  });
+
   it('uses an offhand Totem but never one in an unselected inventory slot', async () => {
     const { add } = await boot();
     const a = add('Offhand');

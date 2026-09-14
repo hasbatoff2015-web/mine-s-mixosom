@@ -297,6 +297,7 @@ export class ServerPlayer implements GameplayPlayer {
         ? { ...target, blockId: target.blockId, progress: Math.max(0, this.miningProgress) }
         : null,
       heldItemId,
+      offhandItemId: this.inventory.offhand?.itemId ?? null,
       bowCharge: alive && heldItemId === ItemId.Bow && this.bowUseTicks > 0
         ? this.combat.bowCharge(this.bowUseTicks).power : 0,
       foodUseProgress: alive && heldItemId && tryGetItemDefinition(heldItemId)?.kind === 'food'
@@ -2590,6 +2591,8 @@ export class WorldInstance {
     for (const player of this.players.values()) {
       if (player.totemActivated) {
         this.gameplay.whMarks.clearTarget(player.id);
+        const position = player.controller.position;
+        this.gameplay.emitWorldSound('totem.activate', position.x, position.y + 1, position.z);
         if (player.connected) this.sendTo(player, { type: 'totem_activate' });
         player.totemActivated = false;
       }

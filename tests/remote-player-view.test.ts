@@ -10,6 +10,7 @@ import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
 import { VoxelWorld } from '../src/world/World';
+import { ItemId } from '../src/items';
 
 const remoteInfo: RemotePlayerInfo = {
   id: 'remote', name: 'Remote', x: 0, y: 70, z: 0, yaw: 0, pitch: 0,
@@ -26,6 +27,35 @@ function snapshot(overrides: Partial<PlayerSnapshot> = {}): PlayerSnapshot {
 }
 
 describe('remote player view presentation', () => {
+  it('shows the authoritative Totem on the left arm while keeping the selected item on the right', () => {
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+    const view = new RemotePlayerView(remoteInfo, { visual, world: new VoxelWorld('remote-totem') });
+    view.applySnapshot(snapshot({ invisible: false, presentation: {
+      ...IDLE_PLAYER_PRESENTATION, heldItemId: ItemId.DiamondSword, offhandItemId: ItemId.TotemOfUndying,
+    } }), 50, 1);
+    view.interpolate(50, 1 / 60);
+    expect(visual.heldItem).toBe(ItemId.DiamondSword);
+    expect(visual.offhandItem).toBe(ItemId.TotemOfUndying);
+    expect(visual.rig.heldItem.parent).toBe(visual.rig.rightArm);
+    expect(visual.rig.offhandItem.parent).toBe(visual.rig.leftArm);
+    expect(visual.rig.offhandItem.children).toHaveLength(1);
+    expect(visual.rig.offhandItem.position.x).toBeGreaterThan(0);
+    visual.setAppearance({ ...DEFAULT_PLAYER_APPEARANCE, model: 'slim' });
+    expect(visual.rig.offhandItem.position.x).toBeGreaterThan(0);
+    view.applySnapshot(snapshot({ presentation: {
+      ...IDLE_PLAYER_PRESENTATION, heldItemId: ItemId.Bow, offhandItemId: null,
+    } }), 100, 2);
+    view.interpolate(100, 1 / 60);
+    expect(visual.heldItem).toBe(ItemId.Bow);
+    expect(visual.offhandItem).toBeUndefined();
+    expect(visual.rig.offhandItem.children).toHaveLength(0);
+    view.dispose();
+    geometries.dispose(); items.dispose(); skins.dispose();
+  });
+
   it('holds the spawn pose until a serverTick timeline exists', () => {
     const skins = new MinecraftSkinRegistry();
     const geometries = new PlayerSkinGeometryCache();

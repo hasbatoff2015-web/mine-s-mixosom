@@ -95,6 +95,7 @@ export class RemotePlayerView {
     this.swingSeq = this.presentation.swingSeq;
     this.hurtSeq = presentationHurtSeq(this.presentation);
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
     if (info.appearance) this.setAppearance(info.appearance);
@@ -159,6 +160,7 @@ export class RemotePlayerView {
       }
       : next;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     if ('health' in snapshot && typeof snapshot.health === 'number') {
       this.nameplate.setIdentity(snapshot.name, snapshot.health);

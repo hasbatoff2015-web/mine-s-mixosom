@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-14: Utility Items bed/offhand/SFX follow-up
+
+- [x] Зарегистрировать полный White Bed entity sheet в runtime atlas; развернуть head/foot, верх, боковины, торцы, низ и ножки по исходным UV. Проверить через `/?qaBed=1` и regression tests.
+- [x] Один насыщенный цвет на Firework burst при прежних 20 TPS, лимитах и общем particle material.
+- [x] Серверный offhand Totem в remote/third-person левой руке; mainhand и bow не затронуты, Totem не рисуется в first-person hand.
+- [x] Пользовательский `totem-sound.mp3` через существующий positional `world_sound` для владельца и соседей без дубля.
+- [ ] Трёхклиентный интерактивный PvP QA в браузере с реальным звуком и снятием Totem, а также мобильный landscape QA; unit/server проверки есть.
+
 ## 2026-09-14: Utility Items live QA fixes
 
 - [x] Firework: блокирующий raycast на fixed tick, интерполяция локально и по сетевым снапшотам, крупный многоцветный burst.

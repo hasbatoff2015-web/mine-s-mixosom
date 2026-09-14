@@ -1,5 +1,15 @@
 # Архитектура
 
+## Utility Items bed/offhand/SFX follow-up — 2026-09-14
+
+`TextureAtlas.create` по-прежнему собирает обычные block tiles по 32px с 4px extrusion. Дополнительный `entity/bed/white` выделен одним непрерывным `128×128` прямоугольником после строк обычных tiles в том же CanvasTexture. Это сохраняет точные UV через границы 32px и не добавляет второй material/render pass. `bedVisualParts` хранит face-level UV и четвертьобороты для двух тел 16×16×6 и четырёх ножек 3×3×3. `ChunkMesher.addBed` использует те же `addQuad`, vertex lighting и `bedPart`/`facing`; на внутреннем шве и скрытом верху ножек faces нет. Цветная/белая ткань, дерево торцов/рамы и ножек берутся из одного entity sheet. Placement/collision/drop и bed item icon не менялись. `/?qaBed=1` — dev-only сцена с настоящими atlas и mesher.
+
+`FireworkVisuals` выбирает один насыщенный цвет при создании burst и передаёт его всем 88 частицам. Один общий `PointsMaterial` использует normal blending, чтобы пересечения не вымывали цвет до белого; cap 512 частиц/32 ракеты и 20 TPS `FireworkManager` не меняются.
+
+`PlayerPresentationState.offhandItemId` — минимальное дополнительное authoritative поле существующего snapshot, вычисленное из `Inventory.offhand` в `GameplayPlayer.presentation()`. `RemotePlayerView` задаёт его каноническому `PlayerVisual`, который держит только Totem на `leftArm`; empty/new snapshot снимает модель. Classic/Slim repositioning использует текущие pivots. Mainhand по-прежнему отдельно на `rightArm`; Totem не рисуется в mainhand и first-person hand, тогда как HUD-активация остаётся прежней.
+
+`WorldInstance` после server-side death-protection шлёт владельцу `totem_activate` только для анимации и вызывает существующий `ServerGameplay.emitWorldSound('totem.activate', position)` ровно один раз. `worldSoundMaxDistance` ограничивает доставку 32 блоками; клиентский `world_sound` проходит через `AudioManager.playAt` с позиционным затуханием. Каталог содержит предоставленный `totem-sound.mp3`; Singleplayer использует свой локальный one-shot. Процедурный WAV и его generator entry удалены. FIFO команд, ack/replay, local aim, интерполяция и PvP authority не затронуты.
+
 ## Utility Items live QA fixes — 2026-09-14
 
 `FireworkManager` проверяет каждый fixed-tick шаг через collision raycast существующего `VoxelWorld`; контакт переводит ракету в однократный `burst` до удаления на следующем тике. `FireworkVisuals` хранит две локальные позиции для render-alpha, а в Anarchy читает тот же `EntityInterpolationBuffer`, что и другие сущности. Бюджет: 32 ракеты, 512 частиц; burst состоит из 88 разноцветных частиц. Ни gameplay, ни урон не привязаны к FPS.

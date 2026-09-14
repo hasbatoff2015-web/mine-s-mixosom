@@ -110,16 +110,29 @@ describe('book and sign text', () => {
 });
 
 describe('decorative blocks', () => {
-  it('defines connected bed halves with a distinct headboard, pillow and sheet UVs', () => {
+  it('unwraps connected bed halves, end caps, underside, and four sheet-textured legs', () => {
     const foot = bedVisualParts('foot');
     const head = bedVisualParts('head');
-    expect(foot.filter((piece) => piece.texture === 'entity/bed/white')).toHaveLength(1);
-    expect(head.filter((piece) => piece.texture === 'entity/bed/white')).toHaveLength(2);
-    expect(head.some((piece) => piece.center[2] < -0.4 && piece.size[1] > 0.3)).toBe(true);
-    expect(head[1]?.uv).toEqual([0, 0.5, 0.5, 1]);
-    expect(foot[1]?.uv).toEqual([0, 0, 0.5, 0.5]);
-    expect(head[1]!.size[2]).toBe(1);
-    expect(foot[1]!.size[2]).toBe(1);
+    expect(foot).toHaveLength(3);
+    expect(head).toHaveLength(3);
+    expect([...foot, ...head].every((piece) => piece.texture === 'entity/bed/white')).toBe(true);
+    expect(head[0]!.size).toEqual([1, 6 / 16, 1]);
+    expect(foot[0]!.size).toEqual([1, 6 / 16, 1]);
+    expect(head[0]!.faces.up?.uv).toEqual([1.5 / 16, 1 - 5.5 / 16, 5.5 / 16, 1 - 1.5 / 16]);
+    expect(foot[0]!.faces.up?.uv).toEqual([1.5 / 16, 1 - 11 / 16, 5.5 / 16, 1 - 7 / 16]);
+    expect(head[0]!.faces.north?.uv).toEqual([1.5 / 16, 1 - 1.5 / 16, 5.5 / 16, 1]);
+    expect(foot[0]!.faces.south?.uv).toEqual([5.5 / 16, 1 - 7 / 16, 9.5 / 16, 1 - 5.5 / 16]);
+    expect(head[0]!.faces.south).toBeUndefined();
+    expect(foot[0]!.faces.north).toBeUndefined();
+    expect(head[0]!.faces.down).toBeDefined();
+    expect(foot[0]!.faces.down).toBeDefined();
+    for (const leg of [...head.slice(1), ...foot.slice(1)]) {
+      expect(leg.size).toEqual([3 / 16, 3 / 16, 3 / 16]);
+      expect(leg.faces.down).toBeDefined();
+      expect(leg.faces.up).toBeUndefined();
+    }
+    expect(head[1]!.center[2]).toBe(-13 / 32);
+    expect(foot[1]!.center[2]).toBe(13 / 32);
   });
 
   it.each([0, Math.PI / 2, Math.PI, -Math.PI / 2])('places and removes both bed halves at yaw %f', (yaw) => {

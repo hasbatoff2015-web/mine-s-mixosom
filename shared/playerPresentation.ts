@@ -26,6 +26,8 @@ export interface PlayerPresentationState {
     readonly progress: number;
   } | null;
   readonly heldItemId: ItemStack['itemId'] | null;
+  /** Authoritative second-hand item; currently rendered only for the Totem. */
+  readonly offhandItemId?: ItemStack['itemId'] | null;
   readonly bowCharge: number;
   readonly foodUseProgress: number;
   readonly swordBlocking: boolean;
@@ -71,6 +73,7 @@ export const REMOTE_ACTION_STALE_MS = 1500;
 export const IDLE_PLAYER_PRESENTATION: PlayerPresentationState = Object.freeze({
   mining: null,
   heldItemId: null,
+  offhandItemId: null,
   bowCharge: 0,
   foodUseProgress: 0,
   swordBlocking: false,

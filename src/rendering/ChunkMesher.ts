@@ -48,6 +48,7 @@ import {
   type LocalBox,
   type TextureUvRect,
   bedVisualParts,
+  type BedFaceDirection,
 } from './specialBlockGeometry';
 import { fluidCellGeometry } from '../world/fluidSurface';
 import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
@@ -72,6 +73,7 @@ const FACES: readonly Face[] = [
   { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], shade: 0.88, texture: 'side' },
   { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], shade: 0.76, texture: 'front' },
 ];
+const BED_FACE_DIRECTIONS: readonly BedFaceDirection[] = ['east', 'west', 'up', 'down', 'south', 'north'];
 
 function localFaceUv(face: Face, box: LocalBox): TextureUvRect {
   const nx = face.normal[0];
@@ -866,8 +868,23 @@ export class ChunkMesher {
       const matrix = new THREE.Matrix4().makeTranslation(
         x + 0.5 + offset.x, y + piece.center[1], z + 0.5 + offset.z,
       ).multiply(rotation);
-      faces += this.addCuboid(buffers, piece.texture, piece.size, matrix,
-        world, definition, x, y, z, piece.uv);
+      const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+      for (let index = 0; index < FACES.length; index += 1) {
+        const face = FACES[index]!;
+        const surface = piece.faces[BED_FACE_DIRECTIONS[index]!];
+        if (!surface) continue; // Inner seam and buried leg tops are not visible.
+        const corners = face.corners.map((corner) => new THREE.Vector3(
+          (corner[0] - 0.5) * piece.size[0],
+          (corner[1] - 0.5) * piece.size[1],
+          (corner[2] - 0.5) * piece.size[2],
+        ).applyMatrix4(matrix).toArray() as [number, number, number]);
+        const normal = new THREE.Vector3(...face.normal).applyMatrix3(normalMatrix).normalize()
+          .toArray() as [number, number, number];
+        this.addQuad(buffers, piece.texture, corners, normal,
+          this.lightingFor(world, definition, piece.texture, x, y, z, normal, face.shade),
+          surface.uv, false, surface.rotation);
+        faces += 1;
+      }
     }
     return faces;
   }
@@ -1244,6 +1261,7 @@ export class ChunkMesher {
     lighting: VertexLighting,
     textureUv: TextureUvRect = [0, 0, 1, 1],
     backFace = false,
+    uvRotation: 0 | 90 | 180 | 270 = 0,
   ): void {
     const base = buffers.positions.length / 3;
     const tile = this.atlas.tile(textureKey);
@@ -1251,9 +1269,11 @@ export class ChunkMesher {
     const v0 = THREE.MathUtils.lerp(tile.v0, tile.v1, textureUv[1]);
     const u1 = THREE.MathUtils.lerp(tile.u0, tile.u1, textureUv[2]);
     const v1 = THREE.MathUtils.lerp(tile.v0, tile.v1, textureUv[3]);
-    const uv = backFace
+    const baseUv = backFace
       ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
       : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
+    const uv = uvRotation === 0 ? baseUv : baseUv.map((_, index) =>
+      baseUv[(index + uvRotation / 90) % 4]!);
     for (let index = 0; index < 4; index += 1) {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);

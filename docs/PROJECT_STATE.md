@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Utility Items texture, offhand, SFX QA — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: White Bed использует реальный `128×128` entity sheet в `TextureAtlas` без обрезки до `32×32`. `bedVisualParts` задаёт UV каждого видимого face для head/foot body и четырёх ножек; деревянная рама и торцы берутся из sheet, а не из отдельного `oak_planks` cuboid. Dev-сцена `/?qaBed=1` показала цельную белую кровать без magenta fallback.
+- Каждый burst фейерверка выбирает один насыщенный цвет из шести; 88 частиц используют общую окраску и один `PointsMaterial` без additive washout. 20 TPS столкновения/тайминг и лимиты 32/512 не менялись.
+- Серверный `PlayerPresentationState.offhandItemId` отражает `Inventory.offhand`. `RemotePlayerView` отображает Totem на левой руке канонического `PlayerVisual`; главный предмет/лук остаются справа, Totem намеренно не появляется в first-person hand. Очистка при снятии и Classic/Slim pivot покрыты тестом.
+- При серверном срабатывании Totem `WorldInstance` отправляет одно `world_sound` из позиции игрока всем слушателям в 32 блоках, включая владельца; отдельный `totem_activate` оставлен только для HUD-анимации. Каталог использует предоставленный `totem-sound.mp3`, старый процедурный WAV удалён; Singleplayer играет новый звук локально один раз.
+- Проверки и ограничения: `docs/reports/2026-09-14_utility-items-bed-offhand-sfx.md`. `main` не менялся.
+
 ## Последний проход: Utility Items live QA fixes — 2026-09-14
 
 - В `codex/utility-items-v1` исправлены обнаруженные причины проблем: Firework столкновение и плавное отображение между 20 TPS снапшотами, крупный многоцветный burst; одиночный WH-контур только по base skin с пересборкой при Classic/Slim; точное направление застрявшей сетевой стрелы.

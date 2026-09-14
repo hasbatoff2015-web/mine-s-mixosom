@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bowPullingTexturePath, itemRenderProfile, tryGetItemDefinition, type ItemRenderCategory } from '../items';
+import { ItemId, bowPullingTexturePath, itemRenderProfile, tryGetItemDefinition, type ItemRenderCategory } from '../items';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
@@ -165,6 +165,7 @@ export class FirstPersonRenderer {
   }
 
   setHeldItems(mainItemId?: string): void {
+    if (mainItemId === ItemId.TotemOfUndying) mainItemId = undefined;
     if (mainItemId !== this.mainItem) {
       this.mainModel?.removeFromParent();
       this.mainModel = mainItemId ? this.visuals.createItemModel(mainItemId) : undefined;

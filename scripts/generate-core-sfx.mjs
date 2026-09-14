@@ -197,14 +197,6 @@ const SYNTH = {
     const b = env(t - 0.04, 0.002, 0.08) * tone(t, 1320) * (t > 0.04 ? 1 : 0);
     return a * 0.55 + b * 0.5;
   }),
-  totem_activate: (rng) => render(1.05, (t) => {
-    const swell = Math.min(1, t / 0.09) * Math.exp(-2.5 * Math.max(0, t - 0.23));
-    const chord = [523.25, 659.25, 783.99, 1046.5]
-      .reduce((sum, frequency, i) => sum + tone(t, frequency, i * 0.35) * (0.26 - i * 0.025), 0);
-    const shimmer = noise(rng) * env(t, 0.004, 0.42) * 0.16;
-    const chime = env(t - 0.18, 0.003, 0.55) * tone(t, 1567.98) * 0.2;
-    return swell * chord + shimmer + chime;
-  }),
   food_eat: (rng) => render(0.18, (t) => {
     const lp = makeLowpass();
     const crunch = lp(noise(rng) * (noise(rng) > 0.15 ? 1 : 0.2), 0.28) * env(t, 0.004, 0.12);

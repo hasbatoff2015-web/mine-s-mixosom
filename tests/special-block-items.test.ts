@@ -148,11 +148,25 @@ describe('two-cell bed mesh', () => {
     world.setBlockState(head.x, head.y, head.z, { facing, bedPart: 'head' });
     const meshed = new ChunkMesher(atlasStub, (x, y, z) => world.getBlockState(x, y, z)).build(chunk!, world);
     const box = geometryBounds(meshed.opaque);
-    expect(meshed.opaque.getAttribute('position').count).toBe(240);
+    expect(meshed.opaque.getAttribute('position').count).toBe(120);
     expect(box.max.y).toBeCloseTo(40 + 9 / 16, 5);
     const length = facing === 'east' || facing === 'west'
       ? box.max.x - box.min.x : box.max.z - box.min.z;
     expect(length).toBeCloseTo(2, 5);
+    const uv = meshed.opaque.getAttribute('uv');
+    const rectangles: number[][] = [];
+    for (let vertex = 0; vertex < uv.count; vertex += 4) {
+      const values = Array.from({ length: 4 }, (_, index) =>
+        [uv.getX(vertex + index), uv.getY(vertex + index)]);
+      rectangles.push([
+        Math.min(...values.map((value) => value[0]!)), Math.min(...values.map((value) => value[1]!)),
+        Math.max(...values.map((value) => value[0]!)), Math.max(...values.map((value) => value[1]!)),
+      ]);
+    }
+    const includesRect = (expected: number[]) => rectangles.some((actual) =>
+      actual.every((value, index) => Math.abs(value - expected[index]!) < 1e-6));
+    expect(includesRect([1.5 / 16, 1 - 5.5 / 16, 5.5 / 16, 1 - 1.5 / 16])).toBe(true);
+    expect(includesRect([1.5 / 16, 1 - 11 / 16, 5.5 / 16, 1 - 7 / 16])).toBe(true);
     disposeMeshed(meshed);
   });
 });

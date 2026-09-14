@@ -11,6 +11,9 @@ export interface AtlasTile {
 
 const FALLBACK_KEY = 'block/missing';
 const PLAYER_SKIN_TEXTURE_PREFIX = 'player/skins/';
+/** Entity sheets need uninterrupted UV space; a 32px block tile would crop them. */
+export const BED_SHEET_KEY = 'entity/bed/white';
+export const BED_SHEET_SIZE = 128;
 
 function playerSkinCacheQuery(textureKey: string): string {
   if (!textureKey.startsWith(PLAYER_SKIN_TEXTURE_PREFIX)) return '';
@@ -34,7 +37,7 @@ export interface AtlasLayout {
 
 const nextPowerOfTwo = (value: number): number => 2 ** Math.ceil(Math.log2(Math.max(1, value)));
 
-export function calculateAtlasLayout(tileCount: number): AtlasLayout {
+export function calculateAtlasLayout(tileCount: number, includeBedSheet = false): AtlasLayout {
   const rows = Math.max(1, Math.ceil(tileCount / ATLAS_COLUMNS));
   const cellSize = ATLAS_TILE_SIZE + ATLAS_GUTTER * 2;
   return {
@@ -44,7 +47,7 @@ export function calculateAtlasLayout(tileCount: number): AtlasLayout {
     columns: ATLAS_COLUMNS,
     rows,
     width: nextPowerOfTwo(ATLAS_COLUMNS * cellSize),
-    height: nextPowerOfTwo(rows * cellSize),
+    height: nextPowerOfTwo(rows * cellSize + (includeBedSheet ? BED_SHEET_SIZE + ATLAS_GUTTER * 2 : 0)),
   };
 }
 
@@ -70,7 +73,7 @@ export class TextureAtlas {
       for (const texture of Object.values(block.textures)) if (texture) keys.add(texture);
     }
     const ordered = [...keys].sort();
-    const layout = calculateAtlasLayout(ordered.length);
+    const layout = calculateAtlasLayout(ordered.length, true);
     const canvas = document.createElement('canvas');
     canvas.width = layout.width;
     canvas.height = layout.height;
@@ -104,6 +107,24 @@ export class TextureAtlas {
         v1: 1 - y / canvas.height,
       });
     }
+    const bedY = layout.rows * layout.cellSize + layout.gutter;
+    const bedX = layout.gutter;
+    try {
+      const image = await TextureAtlas.loadImage(TextureAtlas.url(BED_SHEET_KEY));
+      if (image.naturalWidth !== BED_SHEET_SIZE || image.naturalHeight !== BED_SHEET_SIZE) {
+        throw new Error(`Bed sheet must be ${BED_SHEET_SIZE}x${BED_SHEET_SIZE}`);
+      }
+      context.drawImage(image, bedX, bedY);
+    } catch {
+      TextureAtlas.drawPlaceholder(context, bedX, bedY, BED_SHEET_SIZE, false);
+    }
+    TextureAtlas.extrudeTile(context, bedX, bedY, BED_SHEET_SIZE, layout.gutter);
+    atlas.tiles.set(BED_SHEET_KEY, {
+      u0: bedX / canvas.width,
+      u1: (bedX + BED_SHEET_SIZE) / canvas.width,
+      v0: 1 - (bedY + BED_SHEET_SIZE) / canvas.height,
+      v1: 1 - bedY / canvas.height,
+    });
     atlas.texture.needsUpdate = true;
     return atlas;
   }

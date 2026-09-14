@@ -7,34 +7,67 @@
  */
 
 import * as THREE from 'three';
+import { BED_SHEET_KEY } from './TextureAtlas';
 
-/** Canonical north-facing half. The frame and mattress meet exactly at the cell seam. */
-export function bedVisualParts(part: 'head' | 'foot'): ReadonlyArray<{
-  texture: string;
-  center: readonly [number, number, number];
-  size: readonly [number, number, number];
-  uv?: readonly [number, number, number, number];
-}> {
-  const pieces: Array<{
-    texture: string; center: readonly [number, number, number];
-    size: readonly [number, number, number]; uv?: readonly [number, number, number, number];
-  }> = [
-    { texture: 'block/oak_planks', center: [0, 0.29, 0], size: [0.875, 0.12, 1] },
-    { texture: 'entity/bed/white', center: [0, 0.4275, 0], size: [0.82, 0.155, 1],
-      uv: part === 'head' ? [0, 0.5, 0.5, 1] : [0, 0, 0.5, 0.5] },
+export type BedFaceDirection = 'east' | 'west' | 'up' | 'down' | 'south' | 'north';
+export interface BedFaceTexture {
+  readonly uv: readonly [number, number, number, number];
+  readonly rotation: 0 | 90 | 180 | 270;
+}
+export interface BedVisualPart {
+  readonly texture: typeof BED_SHEET_KEY;
+  readonly center: readonly [number, number, number];
+  readonly size: readonly [number, number, number];
+  readonly faces: Partial<Record<BedFaceDirection, BedFaceTexture>>;
+}
+
+// Original entity sheet is 64x64 logical texels (128x128 in this pack).
+// These rectangles are the bed head/foot and leg nets, in 0..16 sheet units.
+function bedFace(u0: number, v0: number, u1: number, v1: number, rotation: BedFaceTexture['rotation'] = 0): BedFaceTexture {
+  return { uv: [u0 / 16, 1 - v1 / 16, u1 / 16, 1 - v0 / 16], rotation };
+}
+
+const FOOT_BODY: BedVisualPart['faces'] = {
+  east: bedFace(5.5, 7, 7, 11, 90),
+  west: bedFace(0, 7, 1.5, 11, 270),
+  up: bedFace(1.5, 7, 5.5, 11, 180),
+  down: bedFace(7, 7, 11, 11),
+  south: bedFace(5.5, 5.5, 9.5, 7, 180),
+};
+const HEAD_BODY: BedVisualPart['faces'] = {
+  east: bedFace(5.5, 1.5, 7, 5.5, 90),
+  west: bedFace(0, 1.5, 1.5, 5.5, 270),
+  up: bedFace(1.5, 1.5, 5.5, 5.5, 180),
+  down: bedFace(7, 1.5, 11, 5.5),
+  north: bedFace(1.5, 0, 5.5, 1.5, 180),
+};
+const FOOT_LEGS: readonly BedVisualPart['faces'][] = [
+  { north: bedFace(14, 5.25, 14.75, 6), east: bedFace(13.25, 5.25, 14, 6),
+    south: bedFace(12.5, 5.25, 13.25, 6), west: bedFace(14.75, 5.25, 15.5, 6),
+    down: bedFace(14, 4.5, 14.75, 5.25) },
+  { north: bedFace(14.75, 3.75, 15.5, 4.5), east: bedFace(14, 3.75, 14.75, 4.5),
+    south: bedFace(14, 3.75, 13.25, 4.5), west: bedFace(12.5, 3.75, 13.25, 4.5),
+    down: bedFace(14, 3, 14.75, 3.75) },
+];
+const HEAD_LEGS: readonly BedVisualPart['faces'][] = [
+  { north: bedFace(13.25, 0.75, 14, 1.5), east: bedFace(12.5, 0.75, 13.25, 1.5),
+    south: bedFace(14.75, 0.75, 15.5, 1.5), west: bedFace(14, 0.75, 14.75, 1.5),
+    down: bedFace(14, 0, 14.75, 0.75) },
+  { north: bedFace(12.5, 2.25, 13.25, 3), east: bedFace(14.75, 2.25, 15.5, 3),
+    south: bedFace(14, 2.25, 14.75, 3), west: bedFace(13.25, 2.25, 14, 3),
+    down: bedFace(14, 1.5, 14.75, 2.25) },
+];
+
+/** North-facing connected halves. The colored top, wooden frame/end caps, and legs all come from the sheet. */
+export function bedVisualParts(part: 'head' | 'foot'): readonly BedVisualPart[] {
+  const legs = part === 'head' ? HEAD_LEGS : FOOT_LEGS;
+  const legZ = part === 'head' ? -13 / 32 : 13 / 32;
+  return [
+    { texture: BED_SHEET_KEY, center: [0, 6 / 16, 0], size: [1, 6 / 16, 1],
+      faces: part === 'head' ? HEAD_BODY : FOOT_BODY },
+    { texture: BED_SHEET_KEY, center: [-13 / 32, 3 / 32, legZ], size: [3 / 16, 3 / 16, 3 / 16], faces: legs[0]! },
+    { texture: BED_SHEET_KEY, center: [13 / 32, 3 / 32, legZ], size: [3 / 16, 3 / 16, 3 / 16], faces: legs[1]! },
   ];
-  for (const x of [-0.375, 0.375]) {
-    pieces.push({ texture: 'block/oak_planks', center: [x, 0.125, part === 'head' ? -0.405 : 0.405],
-      size: [0.125, 0.25, 0.125] });
-  }
-  if (part === 'head') {
-    pieces.push(
-      { texture: 'entity/bed/white', center: [0, 0.53, -0.24], size: [0.67, 0.06, 0.28],
-        uv: [0, 0.5, 0.5, 1] },
-      { texture: 'block/oak_planks', center: [0, 0.4025, -0.455], size: [0.875, 0.32, 0.09] },
-    );
-  }
-  return pieces;
 }
 import type {
   BlockAttachment,

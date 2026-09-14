@@ -1256,7 +1256,6 @@ export class Game {
       }
       case 'totem_activate':
         this.ui.playTotemActivation();
-        this.playLocal('totem.activate');
         return;
       case 'sign_data':
         session.world.setSignText(message.x, message.y, message.z,
@@ -5604,6 +5603,7 @@ export class Game {
     const thirdPerson = this.cameraPerspective !== 'firstPerson';
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
+    session.playerVisual.setOffhandItem(session.inventory.offhand?.itemId);
     session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson

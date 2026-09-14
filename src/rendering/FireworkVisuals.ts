@@ -4,7 +4,12 @@ import type { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolati
 
 const PARTICLE_CAP = 512;
 const ROCKET_CAP = 32;
-const BURST_COLORS = [0xffe97a, 0xff655c, 0x65dfff, 0x9dff79, 0xd78cff, 0xffffff];
+export const FIREWORK_BURST_COLORS = [0xf62935, 0x2167fa, 0x9a32ed, 0x1ac653, 0xf5c400, 0x00bfdf] as const;
+
+export function chooseFireworkBurstColor(random = Math.random): number {
+  return FIREWORK_BURST_COLORS[Math.min(FIREWORK_BURST_COLORS.length - 1,
+    Math.floor(Math.max(0, random()) * FIREWORK_BURST_COLORS.length))]!;
+}
 
 interface Particle {
   x: number; y: number; z: number;
@@ -28,7 +33,7 @@ export class FireworkVisuals {
   private readonly geometry = new THREE.BufferGeometry();
   private readonly particleMaterial = new THREE.PointsMaterial({
     vertexColors: true, size: 0.2, transparent: true, opacity: 0.94,
-    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true,
   });
 
   constructor() {
@@ -112,6 +117,7 @@ export class FireworkVisuals {
   }
 
   private burst(x: number, y: number, z: number): void {
+    const color = chooseFireworkBurstColor();
     for (let i = 0; i < 88; i += 1) {
       const angle = i * Math.PI * (3 - Math.sqrt(5));
       const elevation = 1 - 2 * (i + 0.5) / 88;
@@ -119,7 +125,7 @@ export class FireworkVisuals {
       const speed = 2.6 + (i % 4) * 0.18;
       this.addParticle(x, y, z, Math.cos(angle) * horizontal * speed,
         elevation * speed, Math.sin(angle) * horizontal * speed, 1.1 + (i % 3) * 0.13,
-        BURST_COLORS[i % BURST_COLORS.length]!);
+        color);
     }
   }
 

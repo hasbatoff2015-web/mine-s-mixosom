@@ -52,7 +52,7 @@ describe('sound catalog', () => {
     expect(files).toEqual(expect.arrayContaining([
       'stone_1.mp3', 'wood_1.mp3', 'dirt_1.mp3', 'sand_1.mp3', 'wool_1.mp3', 'glass_1.mp3',
       'explosion.mp3', 'bow_shoot.mp3', 'arrow_hit.mp3', 'item_pickup.mp3', 'water_splash.mp3',
-      'totem_activate.wav',
+      'totem-sound.mp3',
     ]));
   });
 
@@ -68,6 +68,8 @@ describe('sound catalog', () => {
     expect(getSoundProfile('item.pickup')?.positional).toBe(false);
     expect(getSoundProfile('food.eat')?.positional).toBe(false);
     expect(getSoundProfile('player.hurt')?.positional).toBe(false);
+    expect(getSoundProfile('totem.activate')?.positional).toBe(true);
+    expect(resolveCatalogEvent('totem.activate')?.files).toEqual(['totem-sound.mp3']);
     expect(resolveCatalogEvent('glass.break')?.files).toEqual(['glass_1.mp3']);
     expect(SFX_BASE_PATH).toBe('audio/sfx/');
   });

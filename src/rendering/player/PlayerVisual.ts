@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
+import { ItemId, bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
 import type { VoxelWorld } from '../../world/World';
 import {
   createPlayerAppearance,
@@ -60,6 +60,7 @@ export interface PlayerVisualRig {
   readonly rightLeg: THREE.Group;
   readonly leftLeg: THREE.Group;
   readonly heldItem: THREE.Group;
+  readonly offhandItem: THREE.Group;
 }
 
 interface SkinPartMeshes {
@@ -110,6 +111,8 @@ export class PlayerVisual {
   private skinHandle: SkinTextureHandle;
   private heldModel?: THREE.Group;
   private heldItemId?: string;
+  private offhandModel?: THREE.Group;
+  private offhandItemId?: string;
   private bowTexturePath = 'item/bow';
   private invisible = false;
   private hurtFlash = 0;
@@ -148,6 +151,7 @@ export class PlayerVisual {
     const rightLeg = new THREE.Group();
     const leftLeg = new THREE.Group();
     const heldItem = new THREE.Group();
+    const offhandItem = new THREE.Group();
     upperBody.name = 'player:upper-body';
     head.name = 'player:head-pivot';
     body.name = 'player:body-pivot';
@@ -156,11 +160,13 @@ export class PlayerVisual {
     rightLeg.name = 'player:right-leg-pivot';
     leftLeg.name = 'player:left-leg-pivot';
     heldItem.name = 'player:right-hand-item';
-    this.rig = { upperBody, head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem };
+    offhandItem.name = 'player:left-hand-item';
+    this.rig = { upperBody, head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem, offhandItem };
     this.root.add(this.bodyYawRoot);
     this.bodyYawRoot.add(upperBody, rightLeg, leftLeg);
     upperBody.add(head, body, rightArm, leftArm);
     rightArm.add(heldItem);
+    leftArm.add(offhandItem);
     this.configurePivots();
     const armorResources = options.armorResources ?? {
       materials: new PlayerArmorMaterialCache(),
@@ -179,6 +185,10 @@ export class PlayerVisual {
 
   get heldItem(): string | undefined {
     return this.heldItemId;
+  }
+
+  get offhandItem(): string | undefined {
+    return this.offhandItemId;
   }
 
   setAppearance(appearance: PlayerAppearance): void {
@@ -201,6 +211,7 @@ export class PlayerVisual {
 
   setHeldItem(itemId?: string): void {
     this.assertActive();
+    if (itemId === ItemId.TotemOfUndying) itemId = undefined;
     if (itemId === this.heldItemId) return;
     this.heldModel?.removeFromParent();
     this.heldItemId = itemId;
@@ -209,6 +220,20 @@ export class PlayerVisual {
     if (!this.heldModel || !itemId) return;
     this.rig.heldItem.add(this.heldModel);
     this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
+  }
+
+  setOffhandItem(itemId?: string): void {
+    this.assertActive();
+    const visibleItem = itemId === ItemId.TotemOfUndying ? itemId : undefined;
+    if (visibleItem === this.offhandItemId) return;
+    this.offhandModel?.removeFromParent();
+    this.offhandItemId = visibleItem;
+    this.offhandModel = visibleItem ? this.itemVisuals.createItemModel(visibleItem) : undefined;
+    if (!this.offhandModel) return;
+    this.rig.offhandItem.add(this.offhandModel);
+    this.offhandModel.position.set(0, -0.04, -0.06);
+    this.offhandModel.rotation.set(-0.16, 0, 0.72);
+    this.offhandModel.scale.setScalar(0.4);
   }
 
   setArmor(equipment: PlayerEquipmentState): void {
@@ -277,6 +302,7 @@ export class PlayerVisual {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
+    this.offhandModel?.removeFromParent();
     this.armor.dispose();
     this.baseMaterial.dispose();
     for (const material of this.outerMaterials.values()) material.dispose();
@@ -303,6 +329,7 @@ export class PlayerVisual {
     this.rig.leftArm.position.set(5 * pixel, shoulderY, 0);
     const armCenterX = (slim ? 0.5 : 1) * pixel;
     this.rig.heldItem.position.set(-armCenterX, -10 * pixel, -1.5 * pixel);
+    this.rig.offhandItem.position.set(armCenterX, -10 * pixel, -1.5 * pixel);
   }
 
   private rebuildMeshes(): void {
@@ -382,6 +409,7 @@ export class PlayerVisual {
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
     this.rig.heldItem.visible = this.heldModel !== undefined;
+    this.rig.offhandItem.visible = this.offhandModel !== undefined;
   }
 
   private applyPose(pose: PlayerVisualPose): void {
