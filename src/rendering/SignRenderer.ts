@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
 import type { VoxelWorld } from '../world/World';
+import { signVisualParts } from './specialBlockGeometry';
 
 interface SignVisual {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -12,7 +13,7 @@ interface SignVisual {
 /** Text is rebuilt only on sign data/state or chunk visibility changes. */
 export class SignRenderer {
   readonly group = new THREE.Group();
-  private readonly geometry = new THREE.PlaneGeometry(0.82, 0.32);
+  private readonly geometry = new THREE.PlaneGeometry(1.08, 0.48);
   private readonly visuals = new Map<string, SignVisual>();
   private lastVersion = -1;
   private visibilityDirty = true;
@@ -60,8 +61,9 @@ export class SignRenderer {
         ? state.signRotation * Math.PI / 8
         : facing === 'north' ? Math.PI : facing === 'east' ? Math.PI / 2 : facing === 'west' ? -Math.PI / 2 : 0;
       mesh.rotation.y = angle;
-      const local = new THREE.Vector3(0, state?.attachment === 'wall' ? 0.5 : 0.68,
-        state?.attachment === 'wall' ? 0.285 : 0.045).applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      const board = signVisualParts(state?.attachment === 'wall' ? 'wall' : 'floor')[0]!;
+      const local = new THREE.Vector3(board.center[0], board.center[1], board.center[2] + board.size[2] / 2 + 0.006)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
       mesh.position.set(x! + 0.5 + local.x, y! + local.y, z! + 0.5 + local.z);
       mesh.renderOrder = 2;
       this.group.add(mesh);

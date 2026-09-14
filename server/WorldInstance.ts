@@ -38,6 +38,7 @@ import {
 } from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
+import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
@@ -255,15 +256,7 @@ export class ServerPlayer implements GameplayPlayer {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
     this.survival.setDeathProtection(() => {
       if (this.gamemode !== 'survival') return false;
-      const main = this.inventory.getSlot(this.selectedSlot);
-      const slot = main?.itemId === ItemId.TotemOfUndying
-        ? this.selectedSlot
-        : this.inventory.getSlot({ section: 'offhand' })?.itemId === ItemId.TotemOfUndying
-          ? { section: 'offhand' as const }
-          : undefined;
-      if (slot === undefined) return false;
-      const stack = this.inventory.getSlot(slot)!;
-      this.inventory.setSlot(slot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+      if (!consumeOffhandTotem(this.inventory)) return false;
       this.inventoryDirty = true;
       this.totemActivated = true;
       return true;

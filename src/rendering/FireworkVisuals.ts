@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { EntitySnapshot } from '../../shared/protocol';
 import type { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
+import { TextureAtlas } from './TextureAtlas';
 
 const PARTICLE_CAP = 512;
 const ROCKET_CAP = 32;
@@ -21,7 +22,7 @@ interface Particle {
 /** Bounded, decorative firework presentation shared by local and network rockets. */
 export class FireworkVisuals {
   readonly group = new THREE.Group();
-  private readonly texture = new THREE.TextureLoader().load('/textures/item/firework_rocket.png');
+  private readonly texture = new THREE.TextureLoader().load(TextureAtlas.url('item/firework_rocket'));
   private readonly rocketMaterial = new THREE.SpriteMaterial({ map: this.texture, transparent: true, depthWrite: false });
   private readonly rocketSprites = new Map<string, THREE.Sprite>();
   private readonly trailTimers = new Map<string, number>();
@@ -117,7 +118,7 @@ export class FireworkVisuals {
   }
 
   private burst(x: number, y: number, z: number): void {
-    const color = chooseFireworkBurstColor();
+    const accent = chooseFireworkBurstColor();
     for (let i = 0; i < 88; i += 1) {
       const angle = i * Math.PI * (3 - Math.sqrt(5));
       const elevation = 1 - 2 * (i + 0.5) / 88;
@@ -125,7 +126,7 @@ export class FireworkVisuals {
       const speed = 2.6 + (i % 4) * 0.18;
       this.addParticle(x, y, z, Math.cos(angle) * horizontal * speed,
         elevation * speed, Math.sin(angle) * horizontal * speed, 1.1 + (i % 3) * 0.13,
-        color);
+        i % 5 === 0 ? accent : 0xffffff);
     }
   }
 

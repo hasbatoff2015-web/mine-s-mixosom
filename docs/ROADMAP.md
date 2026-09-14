@@ -1,10 +1,19 @@
 # Roadmap
 
+## 2026-09-14: Utility Items pillow/sign/Totem/firework follow-up
+
+- [x] Исправить только ориентацию pillow UV у bed head; сохранить соединение половин и проверить четыре facing.
+- [x] Подключить полный sign entity sheet и face-specific UV для доски/стойки; standing/wall и текст проверены в dev-сцене `/?qaSign=1`.
+- [x] Показывать Totem в main hand, активировать защиту только из offhand в Singleplayer и Anarchy; оба слота покрыты тестами.
+- [x] Проверить MP3 через браузерный decode и parsed `world_sound` playback; привести SFX URL к Vite `BASE_URL`; подтвердить серверную доставку owner/nearby/distant.
+- [x] Смешивать 70 белых и 18 частиц одного насыщенного акцента на burst; использовать canonical rocket asset URL.
+- [ ] Провести реальный двухклиентный слуховой тест в Anarchy и мобильный landscape QA перед merge review.
+
 ## 2026-09-14: Utility Items bed/offhand/SFX follow-up
 
 - [x] Зарегистрировать полный White Bed entity sheet в runtime atlas; развернуть head/foot, верх, боковины, торцы, низ и ножки по исходным UV. Проверить через `/?qaBed=1` и regression tests.
-- [x] Один насыщенный цвет на Firework burst при прежних 20 TPS, лимитах и общем particle material.
-- [x] Серверный offhand Totem в remote/third-person левой руке; mainhand и bow не затронуты, Totem не рисуется в first-person hand.
+- [x] Один насыщенный акцент на Firework burst при прежних 20 TPS, лимитах и общем particle material; текущая пропорция 70 white / 18 accent.
+- [x] Серверный offhand Totem в remote/third-person левой руке; выбранный mainhand Totem также рисуется в first-person и third-person.
 - [x] Пользовательский `totem-sound.mp3` через существующий positional `world_sound` для владельца и соседей без дубля.
 - [ ] Трёхклиентный интерактивный PvP QA в браузере с реальным звуком и снятием Totem, а также мобильный landscape QA; unit/server проверки есть.
 

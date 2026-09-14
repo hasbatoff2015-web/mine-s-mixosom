@@ -187,7 +187,7 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(world.gameplay.whMarks.forViewer(c.player.id, world.tickNumber)).toEqual([]);
   });
 
-  it('consumes selected mainhand Totem before offhand and clears WH without a death', async () => {
+  it('consumes only the offhand Totem when both hands hold one and clears WH without a death', async () => {
     const { world, add } = await boot();
     const a = add('Protected');
     const b = add('Viewer');
@@ -199,8 +199,8 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     const deaths: string[] = [];
     world.events.on('entityDeath', (event) => deaths.push(event.entityId));
     expect(a.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
-    expect(a.player.inventory.getSlot(0)).toBeNull();
-    expect(a.player.inventory.offhand?.itemId).toBe(ItemId.TotemOfUndying);
+    expect(a.player.inventory.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
+    expect(a.player.inventory.offhand).toBeNull();
     expect(a.player.survival.health).toBe(1);
     expect(a.player.survival.dead).toBe(false);
     world.tick();
@@ -239,7 +239,7 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(protectedPlayer.player.presentation().offhandItemId).toBeNull();
   });
 
-  it('uses an offhand Totem but never one in an unselected inventory slot', async () => {
+  it('uses an offhand Totem but never one selected in the main hand', async () => {
     const { add } = await boot();
     const a = add('Offhand');
     a.player.inventory.clear();
@@ -247,10 +247,10 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     a.player.selectedSlot = 0;
     expect(a.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
     expect(a.player.inventory.offhand).toBeNull();
-    const b = add('Unselected');
+    const b = add('MainhandOnly');
     b.player.inventory.clear();
     b.player.inventory.setSlot(1, createItemStack(ItemId.TotemOfUndying));
-    b.player.selectedSlot = 0;
+    b.player.selectedSlot = 1;
     expect(b.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).killed).toBe(true);
     expect(b.player.inventory.getSlot(1)?.itemId).toBe(ItemId.TotemOfUndying);
   });

@@ -531,13 +531,13 @@ describe('ItemVisualFactory', () => {
 });
 
 describe('FirstPersonRenderer', () => {
-  it('keeps the Totem out of the first-person hand model', () => {
+  it('shows the selected Totem in the first-person hand model', () => {
     const factory = new ItemVisualFactory();
     const viewmodel = new FirstPersonRenderer(factory);
     viewmodel.setHeldItems('totem_of_undying');
     viewmodel.update(0.016, frameState());
-    expect(viewmodel.heldItemId).toBeUndefined();
-    expect(viewmodel.scene.getObjectByName('item-model:totem_of_undying')).toBeUndefined();
+    expect(viewmodel.heldItemId).toBe('totem_of_undying');
+    expect(viewmodel.scene.getObjectByName('item-model:totem_of_undying')).toBeDefined();
     viewmodel.dispose();
     factory.dispose();
   });

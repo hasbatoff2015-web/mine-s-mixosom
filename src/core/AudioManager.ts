@@ -1,8 +1,8 @@
 import { getBlockDefinition, type BlockId } from '../blocks';
 import {
-  SFX_BASE_PATH,
   catalogFiles,
   resolveCatalogEvent,
+  sfxAssetBaseUrl,
 } from '../audio/soundCatalog';
 import {
   GLOBAL_MAX_SOURCES,
@@ -100,7 +100,7 @@ export class AudioManager {
 
   constructor(options: AudioManagerOptions = {}) {
     this.fetchImpl = options.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
-    this.baseUrl = options.baseUrl ?? SFX_BASE_PATH;
+    this.baseUrl = options.baseUrl ?? sfxAssetBaseUrl(import.meta.env.BASE_URL);
     this.random = options.random ?? Math.random;
     this.isDev = options.isDev ?? (typeof import.meta !== 'undefined' && import.meta.env?.DEV === true);
     this.contextFactory = options.audioContextFactory;

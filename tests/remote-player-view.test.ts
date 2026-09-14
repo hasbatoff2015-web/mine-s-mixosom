@@ -27,7 +27,7 @@ function snapshot(overrides: Partial<PlayerSnapshot> = {}): PlayerSnapshot {
 }
 
 describe('remote player view presentation', () => {
-  it('shows the authoritative Totem on the left arm while keeping the selected item on the right', () => {
+  it('shows authoritative Totems in either hand without hiding the selected item', () => {
     const skins = new MinecraftSkinRegistry();
     const geometries = new PlayerSkinGeometryCache();
     const items = new ItemVisualFactory();
@@ -45,10 +45,23 @@ describe('remote player view presentation', () => {
     expect(visual.rig.offhandItem.position.x).toBeGreaterThan(0);
     visual.setAppearance({ ...DEFAULT_PLAYER_APPEARANCE, model: 'slim' });
     expect(visual.rig.offhandItem.position.x).toBeGreaterThan(0);
-    view.applySnapshot(snapshot({ presentation: {
-      ...IDLE_PLAYER_PRESENTATION, heldItemId: ItemId.Bow, offhandItemId: null,
+    view.applySnapshot(snapshot({ invisible: false, presentation: {
+      ...IDLE_PLAYER_PRESENTATION, heldItemId: ItemId.TotemOfUndying, offhandItemId: null,
     } }), 100, 2);
     view.interpolate(100, 1 / 60);
+    expect(visual.heldItem).toBe(ItemId.TotemOfUndying);
+    expect(visual.offhandItem).toBeUndefined();
+    expect(visual.rig.heldItem.children).toHaveLength(1);
+    view.applySnapshot(snapshot({ invisible: false, presentation: {
+      ...IDLE_PLAYER_PRESENTATION, heldItemId: ItemId.TotemOfUndying, offhandItemId: ItemId.TotemOfUndying,
+    } }), 150, 3);
+    view.interpolate(150, 1 / 60);
+    expect(visual.rig.heldItem.children).toHaveLength(1);
+    expect(visual.rig.offhandItem.children).toHaveLength(1);
+    view.applySnapshot(snapshot({ presentation: {
+      ...IDLE_PLAYER_PRESENTATION, heldItemId: ItemId.Bow, offhandItemId: null,
+    } }), 200, 4);
+    view.interpolate(200, 1 / 60);
     expect(visual.heldItem).toBe(ItemId.Bow);
     expect(visual.offhandItem).toBeUndefined();
     expect(visual.rig.offhandItem.children).toHaveLength(0);

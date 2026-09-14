@@ -1,10 +1,19 @@
 # Состояние проекта
 
+## Последний проход: Utility Items bed/sign/Totem/firework follow-up — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: поворот UV верхней грани head-half исправлен; подушка теперь у внешнего края изголовья при всех четырёх направлениях, без изменений bed placement/collision/drop. Dev-сцена `/?qaBed=1` проверена в браузере.
+- Полный `128×64` `entity/sign.png` зарегистрирован в mip-safe `TextureAtlas`. `ChunkMesher` использует отдельные UV доски (front/back/top/bottom/edges) и стойки из sign sheet; wall sign без стойки. `SignRenderer` выравнивает текст по новой передней грани. Dev-сцена `/?qaSign=1` проверена на standing/wall и поворотах, без magenta fallback.
+- Totem отображается в выбранной основной руке локально и у других игроков; защита от смерти потребляет **только** `Inventory.offhand` в Singleplayer и на сервере. Когда Totem в обеих руках, основной остаётся. HUD-анимация и server-authoritative `world_sound` сохранены.
+- Визуальный burst Firework содержит 70 белых и 18 равномерно размещённых частиц одного случайного насыщенного акцента. URL rocket image берётся из `TextureAtlas.url`.
+- Браузерный `/?qaAudio=1` подтвердил HTTP 200, декодирование MP3, 27/27 буферов, отсутствие missing files/events и `AudioBufferSource` после разбора тестового `world_sound` пакета (`contextState: running`, `recentPlays: totem.activate`). Серверный тест подтверждает доставку одному владельцу и одному соседу, но реальный двухклиентный слуховой тест остаётся открытым; причину жалобы в живой сессии локально воспроизвести не удалось. URL SFX теперь явно учитывает Vite `BASE_URL`.
+- Подробности и checklist: `docs/reports/2026-09-14_utility-items-sign-pillow-totem-firework.md`. `main` не менялся.
+
 ## Последний проход: Utility Items texture, offhand, SFX QA — 2026-09-14
 
 - Ветка `codex/utility-items-v1`: White Bed использует реальный `128×128` entity sheet в `TextureAtlas` без обрезки до `32×32`. `bedVisualParts` задаёт UV каждого видимого face для head/foot body и четырёх ножек; деревянная рама и торцы берутся из sheet, а не из отдельного `oak_planks` cuboid. Dev-сцена `/?qaBed=1` показала цельную белую кровать без magenta fallback.
-- Каждый burst фейерверка выбирает один насыщенный цвет из шести; 88 частиц используют общую окраску и один `PointsMaterial` без additive washout. 20 TPS столкновения/тайминг и лимиты 32/512 не менялись.
-- Серверный `PlayerPresentationState.offhandItemId` отражает `Inventory.offhand`. `RemotePlayerView` отображает Totem на левой руке канонического `PlayerVisual`; главный предмет/лук остаются справа, Totem намеренно не появляется в first-person hand. Очистка при снятии и Classic/Slim pivot покрыты тестом.
+- Каждый burst фейерверка выбирает один насыщенный акцент из шести; 70 частиц белые, 18 окрашены в выбранный акцент, общий `PointsMaterial` без additive washout. 20 TPS столкновения/тайминг и лимиты 32/512 не менялись.
+- Серверный `PlayerPresentationState.offhandItemId` отражает `Inventory.offhand`. `RemotePlayerView` отображает Totem на левой руке канонического `PlayerVisual`; выбранный Totem также виден в основной руке и first-person. Очистка при снятии и Classic/Slim pivot покрыты тестом.
 - При серверном срабатывании Totem `WorldInstance` отправляет одно `world_sound` из позиции игрока всем слушателям в 32 блоках, включая владельца; отдельный `totem_activate` оставлен только для HUD-анимации. Каталог использует предоставленный `totem-sound.mp3`, старый процедурный WAV удалён; Singleplayer играет новый звук локально один раз.
 - Проверки и ограничения: `docs/reports/2026-09-14_utility-items-bed-offhand-sfx.md`. `main` не менялся.
 

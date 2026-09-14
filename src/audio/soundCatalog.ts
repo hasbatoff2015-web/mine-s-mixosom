@@ -165,6 +165,11 @@ export const SOUND_CATALOG: ReadonlyMap<SoundEventId, SoundEventProfile> = new M
 
 export const SFX_BASE_PATH = 'audio/sfx/';
 
+/** Resolve public samples under the same Vite deployment base as textures. */
+export function sfxAssetBaseUrl(viteBaseUrl: string): string {
+  return `${viteBaseUrl.endsWith('/') ? viteBaseUrl : `${viteBaseUrl}/`}${SFX_BASE_PATH}`;
+}
+
 export function getSoundProfile(event: SoundEventId): SoundEventProfile | undefined {
   return SOUND_CATALOG.get(event);
 }

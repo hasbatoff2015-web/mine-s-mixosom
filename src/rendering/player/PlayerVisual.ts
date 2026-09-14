@@ -211,7 +211,6 @@ export class PlayerVisual {
 
   setHeldItem(itemId?: string): void {
     this.assertActive();
-    if (itemId === ItemId.TotemOfUndying) itemId = undefined;
     if (itemId === this.heldItemId) return;
     this.heldModel?.removeFromParent();
     this.heldItemId = itemId;

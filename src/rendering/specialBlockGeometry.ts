@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three';
-import { BED_SHEET_KEY } from './TextureAtlas';
+import { BED_SHEET_KEY, SIGN_SHEET_KEY } from './TextureAtlas';
 
 export type BedFaceDirection = 'east' | 'west' | 'up' | 'down' | 'south' | 'north';
 export interface BedFaceTexture {
@@ -37,7 +37,9 @@ const FOOT_BODY: BedVisualPart['faces'] = {
 const HEAD_BODY: BedVisualPart['faces'] = {
   east: bedFace(5.5, 1.5, 7, 5.5, 90),
   west: bedFace(0, 1.5, 1.5, 5.5, 270),
-  up: bedFace(1.5, 1.5, 5.5, 5.5, 180),
+  // The source's pillow occupies the low-V half. Our north-facing top quad
+  // already maps low V to the north (head) edge; 180° put it by the seam.
+  up: bedFace(1.5, 1.5, 5.5, 5.5),
   down: bedFace(7, 1.5, 11, 5.5),
   north: bedFace(1.5, 0, 5.5, 1.5, 180),
 };
@@ -68,6 +70,52 @@ export function bedVisualParts(part: 'head' | 'foot'): readonly BedVisualPart[] 
     { texture: BED_SHEET_KEY, center: [-13 / 32, 3 / 32, legZ], size: [3 / 16, 3 / 16, 3 / 16], faces: legs[0]! },
     { texture: BED_SHEET_KEY, center: [13 / 32, 3 / 32, legZ], size: [3 / 16, 3 / 16, 3 / 16], faces: legs[1]! },
   ];
+}
+
+export interface SignVisualPart {
+  readonly texture: typeof SIGN_SHEET_KEY;
+  readonly center: readonly [number, number, number];
+  readonly size: readonly [number, number, number];
+  readonly faces: Partial<Record<BedFaceDirection, BedFaceTexture>>;
+}
+
+// sign.png is 128x64, a 2x pack of the 64x32 ModelSign texture. Vanilla's
+// board is a 24x12x2 box at (0,0); the 2x14x2 post starts at (0,14).
+function signFace(u0: number, v0: number, u1: number, v1: number): BedFaceTexture {
+  return { uv: [u0 / 64, 1 - v1 / 32, u1 / 64, 1 - v0 / 32], rotation: 0 };
+}
+
+const SIGN_BOARD: SignVisualPart['faces'] = {
+  south: signFace(2, 2, 26, 14), // front, same +Z face as SignRenderer text
+  north: signFace(28, 2, 52, 14),
+  west: signFace(0, 2, 2, 14),
+  east: signFace(26, 2, 28, 14),
+  up: signFace(2, 0, 26, 2),
+  down: signFace(26, 0, 50, 2),
+};
+const SIGN_POST: SignVisualPart['faces'] = {
+  south: signFace(2, 16, 4, 30),
+  north: signFace(6, 16, 8, 30),
+  west: signFace(0, 16, 2, 30),
+  east: signFace(4, 16, 6, 30),
+  up: signFace(2, 14, 4, 16),
+  down: signFace(4, 14, 6, 16),
+};
+
+/** ModelSign proportions scaled to fit the current cell-height sign placement. */
+export function signVisualParts(attachment: 'floor' | 'wall'): readonly SignVisualPart[] {
+  const board: SignVisualPart = {
+    texture: SIGN_SHEET_KEY,
+    center: [0, attachment === 'wall' ? 0.5 : 0.68, attachment === 'wall' ? 0.24 : 0],
+    size: [1.2, 0.6, 0.1],
+    faces: SIGN_BOARD,
+  };
+  return attachment === 'wall' ? [board] : [board, {
+    texture: SIGN_SHEET_KEY,
+    center: [0, 0.35, 0],
+    size: [0.1, 0.7, 0.1],
+    faces: SIGN_POST,
+  }];
 }
 import type {
   BlockAttachment,

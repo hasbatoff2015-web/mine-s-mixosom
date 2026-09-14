@@ -14,6 +14,9 @@ const PLAYER_SKIN_TEXTURE_PREFIX = 'player/skins/';
 /** Entity sheets need uninterrupted UV space; a 32px block tile would crop them. */
 export const BED_SHEET_KEY = 'entity/bed/white';
 export const BED_SHEET_SIZE = 128;
+export const SIGN_SHEET_KEY = 'entity/sign';
+export const SIGN_SHEET_WIDTH = 128;
+export const SIGN_SHEET_HEIGHT = 64;
 
 function playerSkinCacheQuery(textureKey: string): string {
   if (!textureKey.startsWith(PLAYER_SKIN_TEXTURE_PREFIX)) return '';
@@ -37,7 +40,12 @@ export interface AtlasLayout {
 
 const nextPowerOfTwo = (value: number): number => 2 ** Math.ceil(Math.log2(Math.max(1, value)));
 
-export function calculateAtlasLayout(tileCount: number, includeBedSheet = false): AtlasLayout {
+const ENTITY_SHEETS = [
+  { key: BED_SHEET_KEY, width: BED_SHEET_SIZE, height: BED_SHEET_SIZE },
+  { key: SIGN_SHEET_KEY, width: SIGN_SHEET_WIDTH, height: SIGN_SHEET_HEIGHT },
+] as const;
+
+export function calculateAtlasLayout(tileCount: number, includeEntitySheets = false): AtlasLayout {
   const rows = Math.max(1, Math.ceil(tileCount / ATLAS_COLUMNS));
   const cellSize = ATLAS_TILE_SIZE + ATLAS_GUTTER * 2;
   return {
@@ -47,7 +55,9 @@ export function calculateAtlasLayout(tileCount: number, includeBedSheet = false)
     columns: ATLAS_COLUMNS,
     rows,
     width: nextPowerOfTwo(ATLAS_COLUMNS * cellSize),
-    height: nextPowerOfTwo(rows * cellSize + (includeBedSheet ? BED_SHEET_SIZE + ATLAS_GUTTER * 2 : 0)),
+    height: nextPowerOfTwo(rows * cellSize + (includeEntitySheets
+      ? ENTITY_SHEETS.reduce((height, sheet) => height + sheet.height + ATLAS_GUTTER * 2, 0)
+      : 0)),
   };
 }
 
@@ -107,24 +117,27 @@ export class TextureAtlas {
         v1: 1 - y / canvas.height,
       });
     }
-    const bedY = layout.rows * layout.cellSize + layout.gutter;
-    const bedX = layout.gutter;
-    try {
-      const image = await TextureAtlas.loadImage(TextureAtlas.url(BED_SHEET_KEY));
-      if (image.naturalWidth !== BED_SHEET_SIZE || image.naturalHeight !== BED_SHEET_SIZE) {
-        throw new Error(`Bed sheet must be ${BED_SHEET_SIZE}x${BED_SHEET_SIZE}`);
+    let sheetY = layout.rows * layout.cellSize + layout.gutter;
+    for (const sheet of ENTITY_SHEETS) {
+      const sheetX = layout.gutter;
+      try {
+        const image = await TextureAtlas.loadImage(TextureAtlas.url(sheet.key));
+        if (image.naturalWidth !== sheet.width || image.naturalHeight !== sheet.height) {
+          throw new Error(`${sheet.key} sheet must be ${sheet.width}x${sheet.height}`);
+        }
+        context.drawImage(image, sheetX, sheetY);
+      } catch {
+        TextureAtlas.drawPlaceholder(context, sheetX, sheetY, sheet.width, false, sheet.height);
       }
-      context.drawImage(image, bedX, bedY);
-    } catch {
-      TextureAtlas.drawPlaceholder(context, bedX, bedY, BED_SHEET_SIZE, false);
+      TextureAtlas.extrudeTile(context, sheetX, sheetY, sheet.width, layout.gutter, sheet.height);
+      atlas.tiles.set(sheet.key, {
+        u0: sheetX / canvas.width,
+        u1: (sheetX + sheet.width) / canvas.width,
+        v0: 1 - (sheetY + sheet.height) / canvas.height,
+        v1: 1 - sheetY / canvas.height,
+      });
+      sheetY += sheet.height + layout.gutter * 2;
     }
-    TextureAtlas.extrudeTile(context, bedX, bedY, BED_SHEET_SIZE, layout.gutter);
-    atlas.tiles.set(BED_SHEET_KEY, {
-      u0: bedX / canvas.width,
-      u1: (bedX + BED_SHEET_SIZE) / canvas.width,
-      v0: 1 - (bedY + BED_SHEET_SIZE) / canvas.height,
-      v1: 1 - bedY / canvas.height,
-    });
     atlas.texture.needsUpdate = true;
     return atlas;
   }
@@ -151,33 +164,34 @@ export class TextureAtlas {
     });
   }
 
-  private static drawPlaceholder(context: CanvasRenderingContext2D, x: number, y: number, size: number, transparent: boolean): void {
+  private static drawPlaceholder(context: CanvasRenderingContext2D, x: number, y: number, width: number, transparent: boolean, height = width): void {
     if (transparent) {
-      context.clearRect(x, y, size, size);
+      context.clearRect(x, y, width, height);
       return;
     }
     context.fillStyle = '#d332ce';
-    context.fillRect(x, y, size, size);
+    context.fillRect(x, y, width, height);
     context.fillStyle = '#161419';
-    context.fillRect(x, y, size / 2, size / 2);
-    context.fillRect(x + size / 2, y + size / 2, size / 2, size / 2);
+    context.fillRect(x, y, width / 2, height / 2);
+    context.fillRect(x + width / 2, y + height / 2, width / 2, height / 2);
   }
 
   private static extrudeTile(
     context: CanvasRenderingContext2D,
     x: number,
     y: number,
-    size: number,
+    width: number,
     gutter: number,
+    height = width,
   ): void {
     if (gutter <= 0) return;
-    context.drawImage(context.canvas, x, y, size, 1, x, y - gutter, size, gutter);
-    context.drawImage(context.canvas, x, y + size - 1, size, 1, x, y + size, size, gutter);
-    context.drawImage(context.canvas, x, y, 1, size, x - gutter, y, gutter, size);
-    context.drawImage(context.canvas, x + size - 1, y, 1, size, x + size, y, gutter, size);
+    context.drawImage(context.canvas, x, y, width, 1, x, y - gutter, width, gutter);
+    context.drawImage(context.canvas, x, y + height - 1, width, 1, x, y + height, width, gutter);
+    context.drawImage(context.canvas, x, y, 1, height, x - gutter, y, gutter, height);
+    context.drawImage(context.canvas, x + width - 1, y, 1, height, x + width, y, gutter, height);
     context.drawImage(context.canvas, x, y, 1, 1, x - gutter, y - gutter, gutter, gutter);
-    context.drawImage(context.canvas, x + size - 1, y, 1, 1, x + size, y - gutter, gutter, gutter);
-    context.drawImage(context.canvas, x, y + size - 1, 1, 1, x - gutter, y + size, gutter, gutter);
-    context.drawImage(context.canvas, x + size - 1, y + size - 1, 1, 1, x + size, y + size, gutter, gutter);
+    context.drawImage(context.canvas, x + width - 1, y, 1, 1, x + width, y - gutter, gutter, gutter);
+    context.drawImage(context.canvas, x, y + height - 1, 1, 1, x - gutter, y + height, gutter, gutter);
+    context.drawImage(context.canvas, x + width - 1, y + height - 1, 1, 1, x + width, y + height, gutter, gutter);
   }
 }

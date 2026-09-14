@@ -20,6 +20,7 @@ import {
   type CommandContext,
 } from '../chat';
 import { AudioManager } from './AudioManager';
+import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
 import {
   advanceFootsteps,
   blockUnderFeet,
@@ -2915,16 +2916,7 @@ export class Game {
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
     survival.setDeathProtection(() => {
       if (summary.mode !== 'survival') return false;
-      const activeSlot = this.session?.selectedSlot ?? selectedSlot;
-      const main = inventory.getSlot(activeSlot);
-      const slot = main?.itemId === ItemId.TotemOfUndying
-        ? activeSlot
-        : inventory.getSlot({ section: 'offhand' })?.itemId === ItemId.TotemOfUndying
-          ? { section: 'offhand' as const }
-          : undefined;
-      if (slot === undefined) return false;
-      const stack = inventory.getSlot(slot)!;
-      inventory.setSlot(slot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+      if (!consumeOffhandTotem(inventory)) return false;
       this.ui.playTotemActivation();
       this.playLocal('totem.activate');
       return true;

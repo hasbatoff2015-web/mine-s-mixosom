@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
 import { getCraftingResult } from '../src/crafting';
 import { placeBlockAt, performUseHeld, type UseSimulationContext } from '../src/gameplay';
+import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { Inventory, createItemStack } from '../src/inventory';
 import { ItemId, getItemDefinition } from '../src/items';
 import { readBookContent, sanitizeBookDraft, writeBookInSlot } from '../src/items/book';
@@ -342,10 +343,10 @@ describe('milk, rockets, WH marks and totem', () => {
 
   it('intercepts ordinary lethal damage before death and grants exact Totem effects', () => {
     const inventory = new Inventory();
-    inventory.setSlot(0, createItemStack(ItemId.TotemOfUndying));
+    inventory.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
     const survival = new SurvivalSystem();
     survival.applyEffect({ id: 'invisibility', amplifier: 0, durationTicks: 100 });
-    survival.setDeathProtection(() => inventory.remove(ItemId.TotemOfUndying, 1) === 1);
+    survival.setDeathProtection(() => consumeOffhandTotem(inventory));
     const damage = survival.damage(40, 'explosion', { ignoreInvulnerability: true });
     expect(damage.deathProtected).toBe(true);
     expect(damage.killed).toBe(false);
@@ -361,6 +362,24 @@ describe('milk, rockets, WH marks and totem', () => {
     const restored = new SurvivalSystem();
     restored.restore(survival.serialize());
     expect(restored.hasEffect('fire_resistance')).toBe(true);
+  });
+
+  it('uses only offhand eligibility for both singleplayer and server death protection', () => {
+    const mainOnly = new Inventory();
+    mainOnly.setSlot(0, createItemStack(ItemId.TotemOfUndying));
+    const lethal = new SurvivalSystem();
+    lethal.setDeathProtection(() => consumeOffhandTotem(mainOnly));
+    expect(lethal.damage(40, 'fall', { ignoreInvulnerability: true }).killed).toBe(true);
+    expect(mainOnly.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
+
+    const both = new Inventory();
+    both.setSlot(0, createItemStack(ItemId.TotemOfUndying));
+    both.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
+    const protectedPlayer = new SurvivalSystem();
+    protectedPlayer.setDeathProtection(() => consumeOffhandTotem(both));
+    expect(protectedPlayer.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
+    expect(both.offhand).toBeNull();
+    expect(both.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
   });
 
   it('keeps fire resistance through serialization and resumes fire damage after expiry', () => {

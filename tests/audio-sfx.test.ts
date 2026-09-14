@@ -6,6 +6,7 @@ import {
   catalogFiles,
   getSoundProfile,
   resolveCatalogEvent,
+  sfxAssetBaseUrl,
 } from '../src/audio/soundCatalog';
 import {
   GLOBAL_MAX_SOURCES,
@@ -72,6 +73,8 @@ describe('sound catalog', () => {
     expect(resolveCatalogEvent('totem.activate')?.files).toEqual(['totem-sound.mp3']);
     expect(resolveCatalogEvent('glass.break')?.files).toEqual(['glass_1.mp3']);
     expect(SFX_BASE_PATH).toBe('audio/sfx/');
+    expect(sfxAssetBaseUrl('./')).toBe('./audio/sfx/');
+    expect(sfxAssetBaseUrl('/games/frontier/')).toBe('/games/frontier/audio/sfx/');
   });
 
   it('uses quieter/lower-pitch hit than break, and quieter steps than place', () => {

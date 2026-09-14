@@ -23,6 +23,7 @@ import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import {
   DOOR_THICKNESS,
   LADDER_DEPTH,
+  bedVisualParts,
   doorFaceTextureUv,
   doorHalfTexture,
   ladderPlaneLocal,
@@ -138,6 +139,12 @@ describe('placed lever', () => {
 });
 
 describe('two-cell bed mesh', () => {
+  it('uses the exact head-top source rectangle with the pillow at its north edge', () => {
+    expect(bedVisualParts('head')[0]!.faces.up).toEqual({
+      uv: [1.5 / 16, 1 - 5.5 / 16, 5.5 / 16, 1 - 1.5 / 16], rotation: 0,
+    });
+  });
+
   it.each(['north', 'east', 'south', 'west'] as const)('rotates connected head and foot geometry %s', (facing) => {
     const { world, chunk } = emptyChunkWorld(`bed-mesh-${facing}`);
     const foot = { x: 7, y: 40, z: 7 };
@@ -167,6 +174,22 @@ describe('two-cell bed mesh', () => {
       actual.every((value, index) => Math.abs(value - expected[index]!) < 1e-6));
     expect(includesRect([1.5 / 16, 1 - 5.5 / 16, 5.5 / 16, 1 - 1.5 / 16])).toBe(true);
     expect(includesRect([1.5 / 16, 1 - 11 / 16, 5.5 / 16, 1 - 7 / 16])).toBe(true);
+    const normals = meshed.opaque.getAttribute('normal');
+    const positions = meshed.opaque.getAttribute('position');
+    const headTop = bedVisualParts('head')[0]!.faces.up!.uv;
+    const topQuad = rectangles.findIndex((rect, index) =>
+      normals.getY(index * 4) > 0.99
+      && rect.every((value, coordinate) => Math.abs(value - headTop[coordinate]!) < 1e-6));
+    expect(topQuad).toBeGreaterThanOrEqual(0);
+    const sourceNorthVertices = Array.from({ length: 4 }, (_, index) => topQuad * 4 + index)
+      .filter((vertex) => Math.abs(uv.getY(vertex) - headTop[3]) < 1e-6);
+    expect(sourceNorthVertices).toHaveLength(2);
+    const outerEdge = facing === 'north' ? head.z : facing === 'south' ? head.z + 1
+      : facing === 'east' ? head.x + 1 : head.x;
+    for (const vertex of sourceNorthVertices) {
+      const axis = facing === 'north' || facing === 'south' ? positions.getZ(vertex) : positions.getX(vertex);
+      expect(axis, facing).toBeCloseTo(outerEdge, 6);
+    }
     disposeMeshed(meshed);
   });
 });
