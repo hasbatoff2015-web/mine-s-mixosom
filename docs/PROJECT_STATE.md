@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Utility Items final polish — 2026-09-15
+
+- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая F5-перспектива не переписывается, F5 в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
+- Только `totem.activate`: catalog volume `0.9 → 0.45`; optional `startOffsetSeconds = 0.7` передаётся через `named()` в `AudioBufferSourceNode.start(0, 0.7)`, чтобы сразу начать после тишины внутри MP3. Остальные события используют `start(0)`; короткий/невалидный buffer тоже безопасно использует `start(0)`. Combat voice policy, retry и один authoritative `world_sound` не менялись.
+- HUD offhand отделён от центрированного hotbar: CSS gap `8 → 20px` (сдвиг влево на 12 CSS px). Браузерные измерения при 1280×720, 1920×1080, 2560×1440, 960×600 подтвердили центр hotbar и 20px gap. Browser Audio QA: 27/27 decoded, volume 0.45, один `recentPlays`, без drops. Relevant tests 123/123, sim 66/66, typechecks/build/checks PASS; full Vitest 234/238 files, 2289/2297 tests и один worker timeout — не green (известные extractor/CRLF/fire timeout/tick-load failures). Интерактивный bed/PvP QA в in-app browser ограничен недоступным pointer lock; 10 двухклиентных активаций со слуховой проверкой не выполнены. Детали: `docs/reports/2026-09-15_utility-items-final-polish.md`.
+
 ## Последний проход: Utility Items bed pose / Totem audio admission — 2026-09-15
 
 - В `codex/utility-items-v1` rest-поза `PlayerVisual` развёрнута лицом вверх: канонический front `-Z` теперь смотрит в `+Y` для north/east/south/west, поворот yaw сохраняет голову у подушки. `restPoseRoot` смещён вниз только визуально на `0.125` блока для контакта торса с матрасом; gameplay anchor `bedRestPosition = y + 0.81` и протокол не менялись. При выходе rotation и position rest-root обнуляются. Браузерный `/?qaBed=1&pose=1&facing=north|east|south|west` проверен; Slim с бронёй, mainhand и offhand тоже показан.

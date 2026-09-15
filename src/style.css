@@ -512,7 +512,7 @@ button {
 #offhand-hud {
   position: absolute;
   bottom: max(10px, env(safe-area-inset-bottom));
-  right: calc(50% + var(--hud-hotbar-half-width) + 8px);
+  right: calc(50% + var(--hud-hotbar-half-width) + 20px);
   pointer-events: none;
 }
 

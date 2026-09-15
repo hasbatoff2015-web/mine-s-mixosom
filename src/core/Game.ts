@@ -161,6 +161,7 @@ import {
   THIRD_PERSON_CAMERA_DISTANCE,
   availableThirdPersonDistance,
   nextCameraPerspective,
+  effectiveCameraPerspective,
   smoothThirdPersonDistance,
   worldCameraCollisionSource,
   type CameraCollisionSource,
@@ -5623,7 +5624,8 @@ export class Game {
   }
 
   private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
-    const thirdPerson = this.cameraPerspective !== 'firstPerson';
+    const perspective = effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed));
+    const thirdPerson = perspective !== 'firstPerson';
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
     session.playerVisual.setOffhandItem(session.inventory.offhand?.itemId);
@@ -5675,7 +5677,7 @@ export class Game {
       Math.sin(this.input.pitch),
       -Math.cos(this.input.yaw) * cosPitch,
     );
-    if (this.cameraPerspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
+    if (perspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
     const available = availableThirdPersonDistance(
       this.cameraPivot,
       this.cameraTravelDirection,
@@ -5691,7 +5693,7 @@ export class Game {
       this.cameraTravelDirection,
       this.thirdPersonCameraDistance,
     );
-    if (this.cameraPerspective === 'thirdPersonFront') {
+    if (perspective === 'thirdPersonFront') {
       this.frontCameraLook.yaw = this.input.yaw + Math.PI;
       this.frontCameraLook.pitch = -this.input.pitch;
       applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
@@ -5721,7 +5723,7 @@ export class Game {
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
       && !this.ui.isInventoryOpen()
-      && this.cameraPerspective === 'firstPerson';
+      && effectiveCameraPerspective(this.cameraPerspective, Boolean(session?.restingBed)) === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
       state.onGround = session.player.onGround;
@@ -5856,7 +5858,8 @@ export class Game {
 
   private formatLocalAimDebug(session: GameSession): string {
     const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
-    const camera = this.cameraPerspective === 'thirdPersonFront' ? this.frontCameraLook : this.input;
+    const camera = effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed)) === 'thirdPersonFront'
+      ? this.frontCameraLook : this.input;
     const hit = session.target;
     return formatLocalAimHud({
       cameraYaw: camera.yaw,
@@ -6008,6 +6011,7 @@ export class Game {
   }
 
   private cycleCameraPerspective(): void {
+    if (this.session?.restingBed) return;
     this.setCameraPerspective(nextCameraPerspective(this.cameraPerspective));
   }
 

@@ -47,6 +47,8 @@ export interface SoundEventProfile {
   readonly bus: SoundBus;
   readonly maxConcurrent: number;
   readonly priority: number;
+  /** Start playback immediately from this time inside the decoded sample. */
+  readonly startOffsetSeconds?: number;
 }
 
 export interface AudioVec3 {

@@ -405,7 +405,12 @@ export class AudioManager {
     this.voices.push(voice);
     this.busActive[profile.bus] += 1;
     source.onended = () => this.releaseVoice(voice);
-    try { source.start(0); }
+    const requestedOffset = profile.startOffsetSeconds;
+    // This skips silence inside the sample; scheduling at currentTime + offset would delay the cue.
+    const validOffset = requestedOffset !== undefined
+      && Number.isFinite(requestedOffset) && requestedOffset > 0
+      && Number.isFinite(buffer.duration) && buffer.duration > requestedOffset + 0.001;
+    try { if (validOffset) source.start(0, requestedOffset); else source.start(0); }
     catch (error) { this.releaseVoice(voice); throw error; }
     this.recentPlays.push({
       event: profile.event,

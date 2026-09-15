@@ -1,5 +1,11 @@
 # Архитектура
 
+## Utility Items final polish — 2026-09-15
+
+`effectiveCameraPerspective(preferred, resting)` в `ThirdPersonCamera` вычисляет только текущий render mode. `Game.updateFirstPerson` до `render()` и `Game.updatePlayerPresentation` внутри `render()` читают тот же `session.restingBed`: при rest hands/viewmodel выключены, local `PlayerVisual` включён, camera travel использует `thirdPersonBack`. `Game.cycleCameraPerspective` игнорирует F5 при rest, поэтому stored `cameraPerspective` остаётся прежним и сразу возвращается после выхода. `formatLocalAimDebug` также показывает эффективный вид. Bed anchor, pose rig, prediction, server state и camera pivot не меняются.
+
+`SoundEventProfile.startOffsetSeconds?` — optional смещение внутри decoded sample. `named()` сохраняет его лишь для заданного события; только `totem.activate` задаёт `0.7` и catalog volume `0.45`. `AudioManager.startBuffer` вызывает `source.start(0, 0.7)` только если offset и duration конечны и sample длиннее offset с запасом, иначе `source.start(0)`. Это не schedule delay: audio play начинается сейчас. Existing voice admission, retries, buses и server sound routing не затронуты. `#offhand-hud` остаётся привязан к half-width centered hotbar, но его gap увеличен с 8 до 20 CSS px; размер ячейки и inventory offhand не меняются.
+
 ## Utility Items bed pose / Totem audio admission — 2026-09-15
 
 `src/world/bed.ts` по-прежнему возвращает authoritative rest anchor `rest.y + BED_REST_ANCHOR_HEIGHT` (`0.81`). Канонический `PlayerVisual.restPoseRoot` разворачивает front модели `-Z` в world `+Y` через `rotation.x = +π/2`; `restYaw + π` удерживает локальную ось головы у head/pillow для всех четырёх facing. На том же visual-only root Y = `9/16 + 2*PLAYER_MODEL_PIXEL + 0.01 - 0.81 = -0.125`; матрас имеет верх `9/16`, а половина глубины торса равна `2*PLAYER_MODEL_PIXEL`. После выхода rest-root имеет нулевые rotation и position. Так меняется только рендер, без изменения физики, камеры, prediction или сетевого состояния. Dev `/?qaBed=1&pose=1&facing=...` показывает реальную bed mesh и `PlayerVisual`.

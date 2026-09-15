@@ -69,7 +69,7 @@ const NAMED: readonly SoundEventProfile[] = [
     maxDistance: 12, bus: 'ui', maxConcurrent: 3, priority: 5,
   }),
   named('totem.activate', ['totem-sound.mp3'], {
-    volume: 0.9, pitchMin: 0.98, pitchMax: 1.02, positional: true,
+    volume: 0.45, pitchMin: 0.98, pitchMax: 1.02, positional: true, startOffsetSeconds: 0.7,
     maxDistance: 32, refDistance: 4, bus: 'combat', maxConcurrent: 2, priority: 9,
   }),
   named('food.eat', ['food_eat.mp3'], {
@@ -131,6 +131,7 @@ function named(
     bus: rest.bus,
     maxConcurrent: rest.maxConcurrent,
     priority: rest.priority,
+    ...(rest.startOffsetSeconds === undefined ? {} : { startOffsetSeconds: rest.startOffsetSeconds }),
   };
 }
 

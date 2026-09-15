@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-15: Utility Items final polish
+
+- [x] Временно показывать `thirdPersonBack` на каждом resting frame, скрыть first-person руки и показать world-модель, сохранив preference и игнорируя F5 во время сна.
+- [x] Totem: `volume 0.9 → 0.45`, проигрывание сразу с `sample time 0.7s` без перекодирования и без таймера; остальные звуки/короткие буферы сохраняют безопасный старт.
+- [x] Сдвинуть только HUD offhand на 12 CSS px влево через существующий gap; hotbar остаётся центрированным на четырёх проверенных размерах окна.
+- [ ] Проверить в игровом клиенте интерактивный bed enter/Space exit с F5 и 10 Totem activations у owner+nearby слушателя. In-app browser не получил pointer lock; code-level frame test и браузерный single-event audio probe пройдены.
+
 ## 2026-09-15: Utility Items bed pose / Totem audio admission
 
 - [x] Исправить ошибочный front/back bed test и развернуть rest-позу лицом вверх во всех четырёх направлениях, сохранив голову у подушки.

@@ -71,6 +71,8 @@ describe('sound catalog', () => {
     expect(getSoundProfile('player.hurt')?.positional).toBe(false);
     expect(getSoundProfile('totem.activate')?.positional).toBe(true);
     expect(resolveCatalogEvent('totem.activate')?.files).toEqual(['totem-sound.mp3']);
+    expect(resolveCatalogEvent('totem.activate')).toMatchObject({ volume: 0.45, startOffsetSeconds: 0.7 });
+    expect(resolveCatalogEvent('player.hurt')?.startOffsetSeconds).toBeUndefined();
     expect(resolveCatalogEvent('glass.break')?.files).toEqual(['glass_1.mp3']);
     expect(SFX_BASE_PATH).toBe('audio/sfx/');
     expect(sfxAssetBaseUrl('./')).toBe('./audio/sfx/');
@@ -311,6 +313,31 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     };
     return { context: context as unknown as AudioContext, created, panners };
   }
+
+  it('starts Totem immediately at sample time 0.7 with half gain and leaves other samples untrimmed', async () => {
+    const { context, created } = mockContext();
+    (context.decodeAudioData as ReturnType<typeof vi.fn>).mockResolvedValue({ duration: 2 } as AudioBuffer);
+    const audio = new AudioManager({
+      fetch: (async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })) as unknown as typeof fetch,
+      audioContextFactory: () => context, isDev: false, random: () => 0,
+    });
+    await audio.preload();
+    audio.playAt('totem.activate', { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    expect(created[0]!.start.mock.calls).toEqual([[0, 0.7]]);
+    expect(audio.debugSnapshot().recentPlays.at(-1)).toMatchObject({ event: 'totem.activate', volume: 0.45 });
+    audio.play('player.hurt');
+    expect(created[1]!.start.mock.calls).toEqual([[0]]);
+
+    const short = mockContext();
+    const shortAudio = new AudioManager({
+      fetch: (async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })) as unknown as typeof fetch,
+      audioContextFactory: () => short.context, isDev: false, random: () => 0,
+    });
+    await shortAudio.preload(); // The mock's 0.2-second buffer is shorter than the requested offset.
+    shortAudio.playAt('totem.activate', { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    expect(short.created[0]!.start.mock.calls).toEqual([[0]]);
+    expect(shortAudio.debugSnapshot().recentDrops).toEqual([]);
+  });
 
   it('plays the first event after an in-flight fetch exactly once per request and reuses the decoded sample', async () => {
     const { context, created } = mockContext();
