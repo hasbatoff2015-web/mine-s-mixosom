@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-16 Unknown block load compat
+
+Report: `reports/2026-09-16_unknown-block-load-compat.md`.
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts --maxWorkers=2
+```
+
 ## 2026-09-16 Main Menu + Friends + Trade
 
 Report: `reports/2026-09-16_main-menu-friends-trade.md`.

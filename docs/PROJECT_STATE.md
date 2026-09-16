@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Unknown block load compat — 2026-09-16
+
+- Сохранённый voxel ID, которого нет в `BLOCK_REGISTRY` (например 165 с другой ветки), больше не роняет загрузку через `RangeError: Unknown block id`.
+- ID остаётся в `modifications` / `Uint16` чанка. Placeholder только для runtime (solid cube, текстура камня, unbreakable) и **не** регистрируется как настоящий блок.
+- Handoff: `docs/reports/2026-09-16_unknown-block-load-compat.md`.
+
 ## Последний проход: Main Menu + Friends + Trade — 2026-09-16
 
 - HUD справа сверху: Пауза (TAB), Чат (T), Меню (M). Существующие Pause/Chat не дублировались.

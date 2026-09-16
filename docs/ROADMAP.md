@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-16: Unknown block load compat
+
+- [x] World load keeps unregistered voxel IDs instead of throwing `Unknown block id`.
+- [x] Placeholder is runtime-only; save/chunk data is not rewritten to a known BlockId.
+
 ## 2026-09-16: Main Menu + Friends + Trade
 
 - [x] HUD Pause/Chat/Menu (TAB / T / M) without replacing existing Pause or Chat.

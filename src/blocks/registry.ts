@@ -513,10 +513,56 @@ const BLOCK_DEFINITIONS_BY_ID: readonly (BlockDefinition | undefined)[] = (() =>
   return definitions;
 })();
 
-export function getBlockDefinition(id: BlockId): BlockDefinition {
-  const definition = BLOCK_DEFINITIONS_BY_ID[id];
-  if (definition === undefined) throw new RangeError(`Unknown block id: ${id}`);
+const UNKNOWN_BLOCK_MAX_ID = 0xffff;
+const unknownBlockDefinitions = new Map<number, BlockDefinition>();
+const warnedUnknownBlockIds = new Set<number>();
+
+function isStorableBlockId(id: number): boolean {
+  return Number.isInteger(id) && id >= 0 && id <= UNKNOWN_BLOCK_MAX_ID;
+}
+
+/**
+ * Runtime-only stand-in for a numeric ID that this build has not registered.
+ * The voxel keeps the original ID in chunk/save data; this object is not added
+ * to BLOCK_REGISTRY, so a later build that registers the same ID wins.
+ */
+function unknownBlockDefinition(id: number): BlockDefinition {
+  const cached = unknownBlockDefinitions.get(id);
+  if (cached) return cached;
+  if (!warnedUnknownBlockIds.has(id)) {
+    warnedUnknownBlockIds.add(id);
+    console.warn(`[blocks] keeping unregistered block id ${id} (dev compat; voxel ID is unchanged)`);
+  }
+  const definition: BlockDefinition = Object.freeze({
+    id: id as BlockId,
+    key: `unknown_${id}`,
+    name: `Unknown (${id})`,
+    category: 'building',
+    hardness: -1,
+    solid: true,
+    opaque: true,
+    occludesFaces: true,
+    renderLayer: 'opaque',
+    renderShape: 'cube',
+    textures: Object.freeze({ all: 'block/stone' }),
+    breakable: false,
+    hasItem: false,
+    hiddenFromGameplay: true,
+    soundGroup: 'stone',
+  });
+  unknownBlockDefinitions.set(id, definition);
   return definition;
+}
+
+export function tryGetBlockDefinition(id: number): BlockDefinition | undefined {
+  return isStorableBlockId(id) ? BLOCK_DEFINITIONS_BY_ID[id] : undefined;
+}
+
+export function getBlockDefinition(id: BlockId): BlockDefinition {
+  const known = BLOCK_DEFINITIONS_BY_ID[id];
+  if (known !== undefined) return known;
+  if (isStorableBlockId(id)) return unknownBlockDefinition(id);
+  throw new RangeError(`Invalid block id: ${id}`);
 }
 
 export function getBlockByKey(key: string): BlockDefinition | undefined {
