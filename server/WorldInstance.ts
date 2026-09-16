@@ -944,6 +944,27 @@ export class WorldInstance {
     return [...this.players.values()].filter((player) => player.connected);
   }
 
+  private listTradeNearby(player: ServerPlayer): Array<{ playerId: string; name: string; distance: number }> {
+    const origin = player.controller.position;
+    return this.connectedPlayers()
+      .filter((other) => other.id !== player.id)
+      .map((other) => {
+        const pos = other.controller.position;
+        const dx = origin.x - pos.x;
+        const dy = origin.y - pos.y;
+        const dz = origin.z - pos.z;
+        return {
+          playerId: other.id,
+          name: other.name,
+          distance: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)),
+          inRange: isWithinNearbyChatRange(origin.x, origin.y, origin.z, pos.x, pos.y, pos.z),
+        };
+      })
+      .filter((row) => row.inRange)
+      .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name, 'ru'))
+      .map(({ playerId, name, distance }) => ({ playerId, name, distance }));
+  }
+
   private maxInputGapMs(now = performance.now()): number {
     let maxGap = 0;
     for (const player of this.connectedPlayers()) {
@@ -1869,6 +1890,7 @@ export class WorldInstance {
       return {
         ...base,
         tradeNameText: session.tradeNameText,
+        tradeNearby: this.listTradeNearby(player),
         tradeIncoming: this.trade.incomingRequests(player.id).map((request) => ({
           playerId: request.fromPlayerId,
           name: this.players.get(request.fromPlayerId)?.name

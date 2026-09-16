@@ -86,12 +86,11 @@ describe('chat layout and controls', () => {
     expect(STYLE).toContain('--hud-scale');
   });
 
-  it('keeps the message area transparent so the world shows through', () => {
+  it('keeps closed chat overlay transparent and uses graphite chrome when open', () => {
     expect(cssRule('#chat')).toContain('background: transparent;');
     expect(cssRule('#chat-main')).toContain('background: transparent;');
     expect(cssRule('#chat-log')).toContain('background: transparent;');
-    expect(cssRule('#chat.open #chat-log')).toContain('background: transparent;');
-    expect(cssRule('#chat.open #chat-log')).not.toContain('rgba(0, 0, 0');
+    expect(cssRule('#chat.open #chat-log')).toContain('background: linear-gradient');
     expect(STYLE).not.toContain('background: rgba(0, 0, 0, 0.18);');
     expect(cssRule('.chat-line')).toContain('background: rgba(0, 0, 0, 0.5);');
     expect(STYLE).toContain('.chat-line.channel-nearby::before {\n  background: #f0c400;\n}');
@@ -102,7 +101,7 @@ describe('chat layout and controls', () => {
     expect(cssRule('.chat-line')).toContain('font: calc(23px * var(--hud-scale))/1.35 var(--font-ui);');
     expect(cssRule('.chat-line')).toContain('word-break: break-word;');
     expect(cssRule('#chat-input')).toContain('font: calc(18px * var(--hud-scale))/1.3 var(--font-ui);');
-    expect(STYLE).toContain('#chat-tabs button {\n  padding: calc(8px * var(--hud-scale)) calc(14px * var(--hud-scale));\n  border-radius: 6px;\n  font: 700 calc(16px * var(--hud-scale))/1 var(--font-ui);\n}');
+    expect(STYLE).toContain('#chat-tabs button {\n  padding: calc(8px * var(--hud-scale)) calc(14px * var(--hud-scale));\n  border-radius: 2px;\n  font: 700 calc(16px * var(--hud-scale))/1 var(--font-ui);\n}');
     expect(STYLE).toContain('min-height: calc(72px * var(--hud-scale));');
     expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('min-width: calc(88px * var(--hud-scale));');
     expect(GAME_UI).toContain('chat-line-name');

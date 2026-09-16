@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-16: Unified in-game UI chrome
+
+- [x] Shared graphite panel/button/input/list/close chrome for every existing overlay.
+- [x] Friends and Trade lobby match the attached reference without new social systems.
+- [x] Inventory, craft, chat, auction, clan, buyer, pause, settings restyled; functionality kept.
+
 ## 2026-09-16: Merge unknown-block compat into menu visual
 
 - [x] Merge `--no-ff` `cursor/unknown-block-compat-31b4` into `cursor/main-menu-visual-31b4` without dropping menu chrome.

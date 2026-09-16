@@ -83,7 +83,7 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import { hudChromeStyle, menuBackHtml, menuBodyHtml, menuChromeStyle } from './gameMenuGui';
+import { hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
@@ -876,12 +876,12 @@ export class GameUI {
 
   showPause(actions: PauseActions): void {
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="brand"><div class="brand-mark"></div><h2>Пауза</h2><p>мир остановлен и сохранён</p></div>
-        <div class="menu-stack">
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window pause-window">
+        <header class="menu-heading"><div><span class="eyebrow">Игра на паузе</span><h1>Пауза</h1></div></header>
+        <div class="menu-stack pause-actions">
           <button class="game-button primary" data-action="resume">Продолжить</button>
           <button class="game-button" data-action="settings">Настройки</button>
-          <button class="game-button ghost" data-action="quit">Сохранить и выйти</button>
+          <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
         </div>
       </div></section>`);
     this.bindAction('resume', actions.resume);
@@ -1946,7 +1946,7 @@ export class GameUI {
     const stage = containerStageSize('craft', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
           <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
           <div class="mc-craft-layout">
@@ -2037,7 +2037,7 @@ export class GameUI {
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
             <button type="button" role="tab" aria-selected="${this.creativeTab === 'catalog'}" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
@@ -2094,7 +2094,7 @@ export class GameUI {
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.dataset.bookUi = layoutKey;
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
           <div data-container-body>${body}</div>
@@ -2758,7 +2758,7 @@ export class GameUI {
       ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
       : '';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         ${back}
         <div class="mc-panel" data-container-kind="chest">
           ${this.auctionBodyHtml(state)}
@@ -3047,7 +3047,7 @@ export class GameUI {
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-clan-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:220">
+      <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
           ${this.clanBodyHtml(state)}
@@ -3430,7 +3430,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
           ${this.buyerBodyHtml(state)}
         </div>
@@ -3563,7 +3563,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}; ${menuChromeStyle()}">
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         ${menuBackHtml(state.screen)}
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${menuBodyHtml(state, (value) => this.escape(value))}
@@ -3689,6 +3689,11 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'claim_set_pvp', enabled: claimPvp.dataset.menuClaimPvp === 'on' });
         return;
       }
+      const tradeNearby = target.closest<HTMLElement>('[data-menu-trade-nearby]');
+      if (tradeNearby?.dataset.menuTradeNearby) {
+        actions.send({ type: 'menu_action', action: 'trade_request', name: tradeNearby.dataset.menuTradeNearby });
+        return;
+      }
       const tradeAccept = target.closest<HTMLElement>('[data-menu-trade-accept]');
       if (tradeAccept?.dataset.menuTradeAccept) {
         actions.send({ type: 'menu_action', action: 'trade_accept', requestId: tradeAccept.dataset.menuTradeAccept });
@@ -3744,7 +3749,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${MC_MENU_WIDTH}; ${menuChromeStyle()}">
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${tradeWindowChrome(state, (value) => this.escape(value), {
             self: this.tradeSlotCells(state.selfSlots, 'self'),

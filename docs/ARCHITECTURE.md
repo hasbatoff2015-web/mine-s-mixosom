@@ -1,5 +1,9 @@
 # Архитектура
 
+## Unified in-game UI chrome — 2026-09-16
+
+All `.mc-stage` overlays share `overlayStageStyle()` (scale + close/back sprite URLs from `public/ui/menu/`). Panel/button/input/list tokens live in `src/uiTokens.css` (`--mc-text`, `--mc-btn-face`, `--mc-online`, …) and `src/style.css`. `closeButtonHtml()` is unchanged; sprites are CSS faces. Friends/Trade HTML is still `gameMenuGui` + `menu_action`. Trade lobby nearby list is a snapshot field `tradeNearby` (3D radius = `NEARBY_CHAT_RADIUS` / 20); `trade_request` by name is unchanged.
+
 ## Main Menu visual chrome — 2026-09-16
 
 In-game social menu stays on `ServerMenuMessage` / `menu_action` / `gameMenuGui`. The visual pass adds `balance` + `balanceLabel` to the existing snapshot (`WorldInstance.buildMenuMessage` reads `EconomyService.getBalance`). Client chrome is `.mc-menu-stage` + `.mc-menu-panel` with a content-sized dark panel, 4+3 `.mc-menu-tile` grid, and PNG faces from `public/ui/menu/`. Close HTML is still `closeButtonHtml()`; menu-stage CSS swaps the face to the close/back sprites. HUD `#hud-corner` uses the same sheet. Auction House and Clan overlays are unchanged systems.

@@ -163,6 +163,8 @@ describe('game menu plugin', () => {
     const bob = join(world, 'Bob');
     ada.player.inventory.setSlot(0, createItemStack('stone', 8));
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'trade' });
+    const nearbyLobby = lastOf<ServerMenuMessage>(ada.sink, 'menu');
+    expect(nearbyLobby?.tradeNearby?.some((row) => row.name === 'Bob')).toBe(true);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'trade_request', name: 'Bob' });
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'open', screen: 'trade' });
     const incoming = lastOf<ServerMenuMessage>(bob.sink, 'menu')?.tradeIncoming?.[0]?.requestId;

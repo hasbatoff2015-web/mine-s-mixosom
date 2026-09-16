@@ -41,8 +41,8 @@ export function tradeWindowChrome(state: ServerTradeMessage, escape: (value: str
     <p class="mc-trade-ready">${tradeReadyLabel(state.selfReady, state.partnerReady)}</p>
     <div class="mc-ah-actions">
       <button type="button" class="mc-ah-btn" data-trade-action="ready">Готов</button>
-      <button type="button" class="mc-ah-btn" data-trade-action="accept"${acceptDisabled}>Принять обмен</button>
-      <button type="button" class="mc-ah-btn" data-trade-action="cancel">Отклонить</button>
+      <button type="button" class="mc-ah-btn mc-btn-positive" data-trade-action="accept"${acceptDisabled}>Принять обмен</button>
+      <button type="button" class="mc-ah-btn mc-btn-danger" data-trade-action="cancel">Отклонить</button>
     </div>
     ${slots.inventory}
     <div class="mc-ah-message" data-trade-message${state.message ? '' : ' hidden'}>${escape(state.message ?? '')}</div>

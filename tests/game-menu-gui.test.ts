@@ -78,7 +78,7 @@ describe('main menu HUD and chrome', () => {
     expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
     expect(gameUi).toContain('this.closeButtonHtml()');
     expect(gameUi).toContain('mc-menu-stage');
-    expect(gameUi).toContain('menuChromeStyle()');
+    expect(gameUi).toContain('overlayStageStyle(');
     expect(MC_MENU_WIDTH).toBe(248);
     expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, 176)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('Баланс: 100 монет');
@@ -112,7 +112,11 @@ describe('main menu HUD and chrome', () => {
       homeMax: 4,
     }), (value) => value);
     expect(homes).toContain('Мои дома (1/4)');
-    expect(homes).toContain('(123, 64, -245)');
+    expect(homes).toContain('X: 123');
+    expect(homes).toContain('Y: 64');
+    expect(homes).toContain('Z: -245');
+    expect(homes).toContain('Телепорт');
+    expect(homes).toContain('Удалить');
     expect(homes).toContain('data-menu-action="home_create"');
 
     const friends = menuBodyHtml(menu({
@@ -123,8 +127,21 @@ describe('main menu HUD and chrome', () => {
       friendMax: 50,
     }), (value) => value);
     expect(friends).toContain('Разрешена');
-    expect(friends).toContain('Телепортироваться');
+    expect(friends).toContain('Телепорт');
+    expect(friends).toContain('Удалить');
+    expect(friends).toContain('mc-status-dot');
+    expect(friends).toContain('mc-toggle is-on');
+    expect(friends).toContain('data-menu-friend-tp');
     expect(friends).toContain('Мои друзья (1/50)');
+
+    const offline = menuBodyHtml(menu({
+      screen: 'friends',
+      allowFriendTeleport: false,
+      friends: [{ playerId: 'b', name: 'Bob', online: false, canTeleport: false }],
+    }), (value) => value);
+    expect(offline).toContain('Запрещена');
+    expect(offline).not.toContain('data-menu-friend-tp');
+    expect(offline).toContain('Оффлайн');
 
     const claims = menuBodyHtml(menu({
       screen: 'claims',
@@ -139,5 +156,18 @@ describe('main menu HUD and chrome', () => {
     expect(auction).toContain('auction_open');
     expect(auction).toContain('auction_list');
     expect(auction).toContain('auction_sell');
+
+    const trade = menuBodyHtml(menu({
+      screen: 'trade',
+      tradeNearby: [{ playerId: 'p1', name: 'PlayerOne', distance: 5 }],
+    }), (value) => value);
+    expect(trade).toContain('Рядом');
+    expect(trade).toContain('trade_refresh');
+    expect(trade).toContain('5 бл.');
+    expect(trade).toContain('data-menu-trade-nearby="PlayerOne"');
+    expect(trade).toContain('Обмен');
+
+    const tradeEmpty = menuBodyHtml(menu({ screen: 'trade' }), (value) => value);
+    expect(tradeEmpty).toContain('Обмениваться можно только с игроками, которые находятся рядом с вами (до 20 блоков).');
   });
 });

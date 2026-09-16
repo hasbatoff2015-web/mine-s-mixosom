@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Unified in-game UI chrome — 2026-09-16
+
+- Все inventory-style окна (меню, инвентарь, крафт, аукцион, клан, скупщик, обмен) используют один graphite chrome: тёмная панель, bevel-кнопки, `closeButtonHtml()` + close/back sprites, общие состояния online/offline/danger/positive.
+- Friends/Trade layout ближе к референсу (статус-точки, toggle, Телепорт только при `canTeleport`, nearby 20 блоков).
+- Handoff: `docs/reports/2026-09-16_ui-redesign.md`.
+
 ## Последний проход: Merge unknown-block compat into menu visual — 2026-09-16
 
 - Обычный merge `cursor/unknown-block-compat-31b4` (PR #90) в `cursor/main-menu-visual-31b4` (`d3801a1`). Визуал Main Menu сохранён.
