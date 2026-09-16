@@ -46,7 +46,15 @@ Plus typecheck / boundaries / build (recorded after gates).
 
 ## Visual QA
 
-Static HTML preview of root + nested chrome (desktop and portrait). Live Anarchy join was not required for this visual pass.
+Static preview of the real `gameMenuGui` HTML + `style.css` (Vite):
+
+- Desktop 1280×720 root: compact dark panel, 4+3 icon grid, live balance, close X+E inside the button.
+- Nested Homes / Friends / Auction: same dark chrome, back sprite, graphite actions.
+- Landscape 667×375: full second row visible after `menuUiScale` (preview JS mirrors production).
+- Portrait 390×844: 2-column grid, auction tile centered, no overflow.
+- HUD sprites (Pause TAB / Chat T / Menu M) after fixing `#hud-corner button` specificity so background-image is not stuck at `none`.
+
+Live Anarchy join was not run; overlay HTML matches production `renderGameMenu`.
 
 ## Performance
 

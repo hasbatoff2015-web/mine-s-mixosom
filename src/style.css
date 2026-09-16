@@ -717,7 +717,6 @@ button {
 }
 
 #hud-corner button {
-  --hud-sprite: none;
   box-sizing: border-box;
   position: relative;
   display: block;
@@ -727,8 +726,7 @@ button {
   padding: 0;
   border: 0;
   color: transparent;
-  background-color: transparent;
-  background-image: var(--hud-sprite);
+  background-color: #2a2d33;
   background-position: center;
   background-repeat: no-repeat;
   background-size: 100% 100%;
@@ -738,20 +736,20 @@ button {
   cursor: pointer;
 }
 
-#hud-pause { --hud-sprite: var(--hud-pause-img); }
-#hud-chat { --hud-sprite: var(--hud-chat-img); }
-#hud-menu { --hud-sprite: var(--hud-menu-img); }
+#hud-pause { background-image: var(--hud-pause-img); }
+#hud-chat { background-image: var(--hud-chat-img); }
+#hud-menu { background-image: var(--hud-menu-img); }
 
 #hud-pause:hover,
-#hud-pause:focus-visible { --hud-sprite: var(--hud-pause-hover-img); }
+#hud-pause:focus-visible { background-image: var(--hud-pause-hover-img); }
 #hud-chat:hover,
-#hud-chat:focus-visible { --hud-sprite: var(--hud-chat-hover-img); }
+#hud-chat:focus-visible { background-image: var(--hud-chat-hover-img); }
 #hud-menu:hover,
-#hud-menu:focus-visible { --hud-sprite: var(--hud-menu-hover-img); }
+#hud-menu:focus-visible { background-image: var(--hud-menu-hover-img); }
 
-#hud-pause:active { --hud-sprite: var(--hud-pause-pressed-img); }
-#hud-chat:active { --hud-sprite: var(--hud-chat-pressed-img); }
-#hud-menu:active { --hud-sprite: var(--hud-menu-pressed-img); }
+#hud-pause:active { background-image: var(--hud-pause-pressed-img); }
+#hud-chat:active { background-image: var(--hud-chat-pressed-img); }
+#hud-menu:active { background-image: var(--hud-menu-pressed-img); }
 
 .hud-corner-icon,
 .hud-corner-key,
@@ -1763,7 +1761,9 @@ button {
   width: calc(248px * var(--mc-ui-scale, 3));
   max-width: min(calc(248px * var(--mc-ui-scale, 3)), calc(100vw - 28px));
   height: auto;
+  max-height: calc(100dvh - 24px);
   overflow-x: hidden;
+  overflow-y: auto;
   padding: calc(10px * var(--mc-ui-scale, 3)) calc(10px * var(--mc-ui-scale, 3)) calc(9px * var(--mc-ui-scale, 3));
   color: #ececec;
   background:
