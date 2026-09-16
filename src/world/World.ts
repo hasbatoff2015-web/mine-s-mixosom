@@ -30,6 +30,7 @@ import {
   restartLightingAfterImport,
   skyOcclusionClass,
   lightingInvalidation,
+  adoptUnknownBlockLight,
   LIGHT_FLOOD_ADD_EMITTER,
   LIGHT_FLOOD_REGION,
   MAX_LIGHT_COLUMNS_PER_SLICE,
@@ -256,7 +257,11 @@ export class VoxelWorld {
     this.timeOfDay = state.timeOfDay;
     for (const [key, entries] of Object.entries(state.modifications)) {
       const delta = new Map<number, BlockId>();
-      for (const [index, block] of Object.entries(entries)) delta.set(Number(index), block as BlockId);
+      for (const [index, block] of Object.entries(entries)) {
+        const id = Number(block);
+        adoptUnknownBlockLight(id);
+        delta.set(Number(index), id as BlockId);
+      }
       this.modifications.set(key, delta);
     }
     for (const [key, value] of Object.entries(state.chests)) {
@@ -282,7 +287,12 @@ export class VoxelWorld {
       chunk = new Chunk(chunkX, chunkZ);
       this.generator.generate(chunk);
       const delta = this.modifications.get(key);
-      if (delta) for (const [index, block] of delta) chunk.writeIndex(index, block);
+      if (delta) {
+        for (const [index, block] of delta) {
+          adoptUnknownBlockLight(block);
+          chunk.writeIndex(index, block);
+        }
+      }
       this.chunks.set(key, chunk);
       activateGeneratedFluidBoundaries(this, chunk);
       const generationMilliseconds = performance.now() - generationStart;
@@ -642,6 +652,8 @@ export class VoxelWorld {
     const chunk = this.getChunk(chunkX, chunkZ)!;
     const previous = chunk.get(localX, y, localZ) as BlockId;
     if (previous === block) return undefined;
+    adoptUnknownBlockLight(previous);
+    adoptUnknownBlockLight(block);
     const previousState = this.getBlockState(x, y, z);
     // A new material/lifetime must not inherit an old pending (or in-flight) deadline.
     this.cancelFluidTick(x, y, z);

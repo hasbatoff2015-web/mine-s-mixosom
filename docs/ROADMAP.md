@@ -1,10 +1,19 @@
 # Roadmap
 
+## 2026-09-16: Merge unknown-block compat into menu visual
+
+- [x] Merge `--no-ff` `cursor/unknown-block-compat-31b4` into `cursor/main-menu-visual-31b4` without dropping menu chrome.
+
 ## 2026-09-16: Main Menu visual restyle
 
 - [x] Dark compact Main Menu panel with live Megacoin balance and 4+3 icon grid.
 - [x] Reuse `closeButtonHtml()`, nested ←, and existing social systems (visual chrome only).
 - [x] HUD Pause/Chat/Menu sprites from the provided button sheet.
+
+## 2026-09-16: Unknown block load compat
+
+- [x] World load keeps unregistered voxel IDs instead of throwing `Unknown block id`.
+- [x] Placeholder is runtime-only; save/chunk data is not rewritten to a known BlockId.
 
 ## 2026-09-16: Main Menu + Friends + Trade
 

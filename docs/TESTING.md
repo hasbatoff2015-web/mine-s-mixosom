@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-16 Merge unknown-block into menu visual
+
+Report: `reports/2026-09-16_merge-unknown-block-into-menu-visual.md`.
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/game-menu-gui.test.ts --maxWorkers=2
+```
+
 ## 2026-09-16 Main Menu visual restyle
 
 Report: `reports/2026-09-16_main-menu-visual.md`.
@@ -9,6 +17,16 @@ npx vitest run tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/server/
 ```
 
 Contracts: root HTML is a 4+3 icon grid with live `Баланс: … монет`; `closeButtonHtml()` remains the close control; server `menu` snapshots include `balance` / `balanceLabel` from `EconomyService`; inventory close CSS (X+E) is unchanged.
+
+## 2026-09-16 Unknown block load compat
+
+Report: `reports/2026-09-16_unknown-block-load-compat.md`.
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts --maxWorkers=2
+```
+
+Focused: block-registry 16/16, unknown-block-load 2/2. Related world/lighting 55/55. `test:server` **51 files / 497 PASS**. Four typechecks, boundaries, and `build` PASS.
 
 ## 2026-09-16 Main Menu + Friends + Trade
 

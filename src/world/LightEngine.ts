@@ -1,4 +1,4 @@
-import { BLOCKS, BlockId, getBlockDefinition, type BlockDefinition } from '../blocks';
+import { BLOCKS, BlockId, getBlockDefinition, isKnownBlockId, type BlockDefinition } from '../blocks';
 import { CHUNK_SIZE, LATERAL_SKY_RADIUS, WORLD_HEIGHT, chunkKey, floorDiv, positiveMod } from '../core/constants';
 import { Chunk } from './Chunk';
 import type { VoxelWorld } from './World';
@@ -56,6 +56,15 @@ for (const definition of BLOCKS) {
   EMISSION[definition.id] = definition.emission ?? 0;
   OCCLUDES[definition.id] = Number(definition.occludesFaces);
 }
+
+/** Opaque cube lighting for IDs this build has not registered. Does not change stored voxels. */
+export function adoptUnknownBlockLight(id: number): void {
+  if (!Number.isInteger(id) || id < 1 || id > 65535 || isKnownBlockId(id)) return;
+  FILTER[id] = 16;
+  OCCLUDES[id] = 1;
+  EMISSION[id] = 0;
+}
+
 export type LightingInvalidation = 'none' | 'addEmitter' | 'region';
 export function lightingInvalidation(previous: BlockId, next: BlockId): LightingInvalidation {
   if (FILTER[previous] !== FILTER[next] || OCCLUDES[previous] !== OCCLUDES[next]) return 'region';

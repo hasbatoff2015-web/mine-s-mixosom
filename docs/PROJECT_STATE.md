@@ -1,11 +1,22 @@
 # Состояние проекта
 
+## Последний проход: Merge unknown-block compat into menu visual — 2026-09-16
+
+- Обычный merge `cursor/unknown-block-compat-31b4` (PR #90) в `cursor/main-menu-visual-31b4`. Визуал Main Menu сохранён.
+- Незарегистрированный voxel ID (например 165) больше не роняет загрузку. Handoff: `docs/reports/2026-09-16_merge-unknown-block-into-menu-visual.md`.
+
 ## Последний проход: Main Menu visual restyle — 2026-09-16
 
 - In-game Main Menu is a compact dark inventory-style panel (not fullscreen): «Меню», live `EconomyService` balance, 4+3 icon tiles, graphite buttons, pixel-art assets in `public/ui/menu/`.
 - Nested menu tabs (homes/friends/clans/claims/trade/auction) and the trade session overlay share the same dark chrome. `closeButtonHtml()`, back, and server Friends/Trade/Homes/Claims/Clan/Auction logic are unchanged.
 - HUD Pause/Chat/Menu use the provided sprite sheets (TAB / T / M stay in the DOM).
 - Handoff: `docs/reports/2026-09-16_main-menu-visual.md`.
+
+## Последний проход: Unknown block load compat — 2026-09-16
+
+- Сохранённый voxel ID, которого нет в `BLOCK_REGISTRY` (например 165 с другой ветки), больше не роняет загрузку через `RangeError: Unknown block id`.
+- ID остаётся в `modifications` / `Uint16` чанка. Placeholder только для runtime (solid cube, текстура камня, unbreakable) и **не** регистрируется как настоящий блок.
+- Handoff: `docs/reports/2026-09-16_unknown-block-load-compat.md`.
 
 ## Последний проход: Main Menu + Friends + Trade — 2026-09-16
 
