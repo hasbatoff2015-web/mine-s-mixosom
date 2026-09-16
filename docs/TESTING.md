@@ -8,6 +8,10 @@ Report: `reports/2026-09-16_main-menu-friends-trade.md`.
 npx vitest run tests/server/friends.test.ts tests/server/trade.test.ts tests/server/homes.test.ts tests/server/game-menu.test.ts tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/clan-gui.test.ts tests/menu-model.test.ts --maxWorkers=2
 ```
 
+Focused: friends 3/3, trade 5/5, homes 3/3, game-menu, game-menu-gui 5/5, trade-gui 2/2, clan-gui 7/7, menu-model 3/3, claim-anchor 8/8. `test:server` **51 files / 497 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run in this cloud pass.
+
+Contracts: friends teleport needs friendship + online + the friend's own permission; home names are unique per player in the menu path (`/sethome` still overwrites); claim rename rejects a duplicate and `/claim create` shares the cap of 4; trade rejects forged slot indexes, resets both Ready flags on any offer change, needs double Accept, and returns escrow on cancel / X / E / disconnect.
+
 Canonical modules are `shared/gameMenu.ts`, `server/services/gameMenu.ts`, `src/ui/gameMenuGui.ts`. A parallel `shared/menu.ts` / `MenuService` / `menuGui.ts` from the same branch was dropped during merge so there is only one menu system.
 
 ## 2026-09-13 Crafting UI merged into main

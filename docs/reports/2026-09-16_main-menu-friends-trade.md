@@ -37,7 +37,7 @@ Touched: protocol (`menu` / `menu_action` / `trade` / `trade_action`), `WorldIns
 - Home limit assertion in `anarchy-plugins` updated for default 4.
 - `/claim create` cap 4 via `CLAIM_MAX_OWNED` from `shared/gameMenu.ts`.
 - Parallel remote files `shared/menu.ts` / `MenuService` / `menuGui.ts` were dropped on merge so only `gameMenu` remains.
-- Gates: re-run after merge (see Git).
+- Gates after merge cleanup: `test:server` **51 files / 497 PASS**; `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` PASS; `check:boundaries` PASS; `build` PASS.
 
 ## Visual QA
 
