@@ -39,7 +39,8 @@ Load no longer throws. The numeric ID stays in chunk `Uint16Array` and `modifica
 ## Tests
 
 - Registry: 165 is unknown, definition is placeholder, registry size unchanged.
-- Restore + lighting + serialize keeps 165; adjacent Stone write does not clobber it.
+- Restore + lighting + serialize keeps 165; adjacent Glass write does not clobber it.
+- Gates: focused 18/18; related world/lighting 55/55; `test:server` 51/497; four typechecks, boundaries, build PASS.
 
 ## Visual QA
 

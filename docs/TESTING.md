@@ -8,6 +8,8 @@ Report: `reports/2026-09-16_unknown-block-load-compat.md`.
 npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts --maxWorkers=2
 ```
 
+Focused: block-registry 16/16, unknown-block-load 2/2. Related world/lighting 55/55. `test:server` **51 files / 497 PASS**. Four typechecks, boundaries, and `build` PASS.
+
 ## 2026-09-16 Main Menu + Friends + Trade
 
 Report: `reports/2026-09-16_main-menu-friends-trade.md`.
