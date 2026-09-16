@@ -32,10 +32,12 @@ Touched: protocol (`menu` / `menu_action` / `trade` / `trade_action`), `WorldIns
 
 ## Tests
 
-- `tests/game-menu-gui.test.ts`, `tests/trade-gui.test.ts`
+- `tests/game-menu-gui.test.ts`, `tests/trade-gui.test.ts`, `tests/server/homes.test.ts`
 - `tests/server/{friends,trade,game-menu}.test.ts`
 - Home limit assertion in `anarchy-plugins` updated for default 4.
-- Gates: `test:server` 50 files / 494 PASS; `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` PASS; `check:boundaries` PASS; `build` PASS.
+- `/claim create` cap 4 via `CLAIM_MAX_OWNED` from `shared/gameMenu.ts`.
+- Parallel remote files `shared/menu.ts` / `MenuService` / `menuGui.ts` were dropped on merge so only `gameMenu` remains.
+- Gates: re-run after merge (see Git).
 
 ## Visual QA
 
@@ -48,7 +50,7 @@ No extra per-frame work beyond existing overlay rendering. Menu/trade snapshots 
 ## Known issues
 
 - Live visual QA of HUD vs open-chat overlap is CSS-hidden (`#chat.open ~ #hud-corner`) but not screenshot-verified.
-- Claim create/limit is still the existing block-claim system; the menu only lists/edits owned claims (shows 4 as the normal-player cap).
+- Claim create/limit is the existing claims plugin; `/claim create` now shares `CLAIM_MAX_OWNED` (4) with the menu list.
 
 ## Deferred
 
@@ -61,4 +63,4 @@ Playtest HUD + nested Clan/Auction back on desktop and landscape mobile.
 
 ## Git
 
-Branch: `cursor/main-menu-social-a8dc` from `origin/main` @ `70e2afe` (Crafting UI merge). No rebase/force push.
+Branch: `cursor/main-menu-social-a8dc` from `origin/main` @ `70e2afe` (Crafting UI merge). Merged existing remote commits on the same branch (`ce9f076`) without rebase/force push, then kept a single menu implementation.

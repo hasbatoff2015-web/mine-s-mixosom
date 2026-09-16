@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-16 Main Menu + Friends + Trade
+
+Report: `reports/2026-09-16_main-menu-friends-trade.md`.
+
+```text
+npx vitest run tests/server/friends.test.ts tests/server/trade.test.ts tests/server/homes.test.ts tests/server/game-menu.test.ts tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/clan-gui.test.ts tests/menu-model.test.ts --maxWorkers=2
+```
+
+Canonical modules are `shared/gameMenu.ts`, `server/services/gameMenu.ts`, `src/ui/gameMenuGui.ts`. A parallel `shared/menu.ts` / `MenuService` / `menuGui.ts` from the same branch was dropped during merge so there is only one menu system.
+
 ## 2026-09-13 Crafting UI merged into main
 
 Report: `reports/2026-09-13_crafting-ui-main-merge.md`. Merge commit `7e8b928`. No extra test run on the merge commit itself; feature-branch gates are in the crafting UI reports.

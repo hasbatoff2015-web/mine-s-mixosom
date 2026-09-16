@@ -1,9 +1,13 @@
 import type { Claim } from './claims';
-import type { HomeLocation } from '../../shared/homes';
-import { GAME_MENU_MAX_CLAIMS, claimAnchorTitle, type GameMenuScreen } from '../../shared/gameMenu';
+import { claimCoords } from './claimCommands';
+import {
+  CLAIM_MAX_OWNED,
+  GAME_MENU_MAX_CLAIMS,
+  claimAnchorTitle,
+  type GameMenuScreen,
+} from '../../shared/gameMenu';
 import { FRIENDS_MAX } from '../../shared/friends';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
-import type { FriendsService } from './friends';
 import type { TradeService } from './trade';
 import type {
   ServerMenuMessage,
@@ -46,14 +50,7 @@ export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
   return 'root';
 }
 
-export function claimCoords(claim: Claim): { x: number; y: number; z: number } {
-  if (claim.anchor) return { x: claim.anchor.x, y: claim.anchor.y, z: claim.anchor.z };
-  return {
-    x: Math.floor((claim.volume.minX + claim.volume.maxX) / 2),
-    y: Math.floor((claim.volume.minY + claim.volume.maxY) / 2),
-    z: Math.floor((claim.volume.minZ + claim.volume.maxZ) / 2),
-  };
-}
+export { claimCoords };
 
 export function toMenuClaim(claim: Claim): {
   claimId: string;
@@ -120,4 +117,4 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   return 'Меню';
 }
 
-export { GAME_MENU_MAX_CLAIMS, FRIENDS_MAX, HOME_MAX_DEFAULT };
+export { CLAIM_MAX_OWNED, GAME_MENU_MAX_CLAIMS, FRIENDS_MAX, HOME_MAX_DEFAULT };

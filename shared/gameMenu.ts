@@ -1,4 +1,5 @@
 export const GAME_MENU_MAX_CLAIMS = 4;
+export const CLAIM_MAX_OWNED = GAME_MENU_MAX_CLAIMS;
 
 export const GAME_MENU_BUTTONS = [
   { id: 'spawn', label: 'Спавн' },

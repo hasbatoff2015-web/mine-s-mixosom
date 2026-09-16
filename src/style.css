@@ -63,6 +63,7 @@ button {
 #ui-root {
   position: absolute;
   inset: 0;
+  z-index: 10;
   pointer-events: none;
   padding:
     max(10px, env(safe-area-inset-top))
@@ -1584,8 +1585,10 @@ button {
   max-height: calc(92px * var(--mc-ui-scale, 3));
   overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-width: none;
+  overscroll-behavior: contain;
   touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .mc-menu-list::-webkit-scrollbar {
@@ -1658,6 +1661,7 @@ button {
 .mc-trade-grid {
   display: grid;
   grid-template-columns: repeat(3, calc(18px * var(--mc-ui-scale, 3)));
+  grid-template-rows: repeat(2, calc(18px * var(--mc-ui-scale, 3)));
   gap: calc(2px * var(--mc-ui-scale, 3));
 }
 
