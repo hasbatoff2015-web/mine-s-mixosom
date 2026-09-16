@@ -2,11 +2,13 @@
 
 ## 2026-09-16 Merge unknown-block into menu visual
 
-Report: `reports/2026-09-16_merge-unknown-block-into-menu-visual.md`.
+Report: `reports/2026-09-16_merge-unknown-block-into-menu-visual.md`. Merge `d3801a1`.
 
 ```text
-npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/game-menu-gui.test.ts --maxWorkers=2
+npm test -- tests/unknown-block-load.test.ts tests/block-registry.test.ts tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/server/game-menu.test.ts
 ```
+
+Focused: **31/31 PASS** (unknown-block-load 2/2, block-registry 16/16, game-menu-gui 6/6, trade-gui 2/2, server/game-menu 5/5). Four typechecks, boundaries, and `build` PASS.
 
 ## 2026-09-16 Main Menu visual restyle
 

@@ -2,7 +2,7 @@
 
 ## Последний проход: Merge unknown-block compat into menu visual — 2026-09-16
 
-- Обычный merge `cursor/unknown-block-compat-31b4` (PR #90) в `cursor/main-menu-visual-31b4`. Визуал Main Menu сохранён.
+- Обычный merge `cursor/unknown-block-compat-31b4` (PR #90) в `cursor/main-menu-visual-31b4` (`d3801a1`). Визуал Main Menu сохранён.
 - Незарегистрированный voxel ID (например 165) больше не роняет загрузку. Handoff: `docs/reports/2026-09-16_merge-unknown-block-into-menu-visual.md`.
 
 ## Последний проход: Main Menu visual restyle — 2026-09-16
