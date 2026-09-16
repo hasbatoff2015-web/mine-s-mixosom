@@ -1,6 +1,9 @@
 import { BlockId, getBlockDefinition } from '../../src/blocks';
 import type { MobKind } from '../../src/entities/mobDefinitions';
+import { formatMegacoinAmount } from '../../shared/megacoins';
 import type { JsonFileStore } from './jsonStore';
+
+export { formatMegacoinAmount };
 
 export const ECONOMY_PLUGIN_NAME = 'economy';
 export const ECONOMY_CURRENCY_NAME = 'Мегакоин';
@@ -142,14 +145,6 @@ interface PlacedFile {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function formatMegacoinAmount(amount: number): string {
-  const n = Math.trunc(amount);
-  const sign = n < 0 ? '-' : '';
-  const digits = String(Math.abs(n));
-  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return `${sign}${grouped}`;
 }
 
 /** 1 Мегакоин, 2 Мегакоина, 5 Мегакоинов. 11–14 always Мегакоинов. */

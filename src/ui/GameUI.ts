@@ -30,6 +30,9 @@ import {
 import {
   containerStageSize,
   containerUiScaleWithClose,
+  MC_MENU_WIDTH,
+  menuLogicalHeight,
+  menuUiScale,
 } from './containerTheme';
 import {
   allCraftingBookEntries,
@@ -80,7 +83,7 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import { menuBackHtml, menuBodyHtml } from './gameMenuGui';
+import { hudChromeStyle, menuBackHtml, menuBodyHtml, menuChromeStyle } from './gameMenuGui';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
@@ -399,7 +402,7 @@ export class GameUI {
             </button>
           </aside>
         </div>
-        <div id="hud-corner">
+        <div id="hud-corner" style="${hudChromeStyle()}">
           <button type="button" id="hud-pause" data-hud="pause" aria-label="Пауза">
             <span class="hud-corner-icon" aria-hidden="true">Ⅱ</span>
             <span class="hud-corner-key">TAB</span>
@@ -3551,22 +3554,18 @@ export class GameUI {
     const actions = this.menuActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureMenuInputFocus();
-    const logicalWidth = 196;
-    const logicalHeight = state.screen === 'root' ? 188
-      : state.screen === 'friends' || state.screen === 'friend-delete-confirm' ? 248
-        : state.screen === 'claims' || state.screen === 'claim-settings' || state.screen === 'claim-delete-confirm' ? 236
-          : state.screen === 'trade' ? 220
-            : 208;
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
+    const logicalWidth = MC_MENU_WIDTH;
+    const logicalHeight = menuLogicalHeight(state.screen);
+    const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}">
+      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}; ${menuChromeStyle()}">
         ${menuBackHtml(state.screen)}
-        <div class="mc-panel" data-container-kind="chest">
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${menuBodyHtml(state, (value) => this.escape(value))}
         </div>
         ${this.closeButtonHtml()}
@@ -3738,15 +3737,15 @@ export class GameUI {
     const actions = this.tradeActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureTradeInputFocus();
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, 248);
+    const scale = menuUiScale(window.innerWidth, window.innerHeight, MC_MENU_WIDTH, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:220">
-        <div class="mc-panel" data-container-kind="chest">
+      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${MC_MENU_WIDTH}; ${menuChromeStyle()}">
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${tradeWindowChrome(state, (value) => this.escape(value), {
             self: this.tradeSlotCells(state.selfSlots, 'self'),
             partner: this.tradeSlotCells(state.partnerSlots, 'partner'),

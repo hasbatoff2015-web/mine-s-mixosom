@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
-import { menuBackHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
+import { formatMegacoinAmount } from '../shared/megacoins';
+import { menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
+import { MC_MENU_MAX_SCALE, MC_MENU_WIDTH, menuUiScale } from '../src/ui/containerTheme';
 import type { ServerMenuMessage } from '../shared/protocol';
 
 const gameUi = readFileSync(new URL('../src/ui/GameUI.ts', import.meta.url), 'utf8');
@@ -50,7 +52,7 @@ describe('main menu HUD and chrome', () => {
     expect(GAME_MENU_BUTTONS.map((button) => button.label)).toEqual([
       'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион',
     ]);
-    const html = menuRootHtml();
+    const html = menuRootHtml({ balance: 5645, balanceLabel: formatMegacoinAmount(5645) });
     expect(html).toContain('Спавн');
     expect(html).toContain('Дома');
     expect(html).toContain('Друзья');
@@ -59,6 +61,34 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('Обмен');
     expect(html).toContain('Аукцион');
     expect(html).not.toContain('Топ');
+    expect(html).toContain('mc-menu-grid-row-4');
+    expect(html).toContain('mc-menu-grid-row-3');
+    expect(html).toContain('icon_spawn.png');
+    expect(html).toContain('icon_auction.png');
+    expect(html).toContain('Баланс: 5 645 монет');
+    expect(html.indexOf('mc-menu-grid-row-4')).toBeLessThan(html.indexOf('mc-menu-grid-row-3'));
+    expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
+  });
+
+  it('keeps a compact dark menu panel and ships pixel-art chrome assets', () => {
+    expect(css).toContain('.mc-menu-panel');
+    expect(css).toContain('.mc-menu-tile');
+    expect(css).toContain('.mc-menu-grid-row-4');
+    expect(css).toContain('.mc-menu-grid-row-3');
+    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(gameUi).toContain('this.closeButtonHtml()');
+    expect(gameUi).toContain('mc-menu-stage');
+    expect(gameUi).toContain('menuChromeStyle()');
+    expect(MC_MENU_WIDTH).toBe(248);
+    expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, 176)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
+    expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('Баланс: 100 монет');
+    for (const file of [
+      'icon_spawn.png', 'icon_homes.png', 'icon_friends.png', 'icon_clans.png',
+      'icon_claims.png', 'icon_trade.png', 'icon_auction.png', 'icon_coin.png',
+      'close.png', 'close_hover.png', 'pause.png', 'chat.png', 'menu.png', 'back.png',
+    ]) {
+      expect(existsSync(new URL(`../public/ui/menu/${file}`, import.meta.url))).toBe(true);
+    }
   });
 
   it('shows a back arrow on nested pages and a square X+E close on the menu', () => {

@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-16 Main Menu visual restyle
+
+Report: `reports/2026-09-16_main-menu-visual.md`.
+
+```text
+npx vitest run tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/server/game-menu.test.ts tests/server/friends.test.ts tests/server/trade.test.ts tests/crafting-ui.test.ts tests/container-ui.test.ts --maxWorkers=2
+```
+
+Contracts: root HTML is a 4+3 icon grid with live `Баланс: … монет`; `closeButtonHtml()` remains the close control; server `menu` snapshots include `balance` / `balanceLabel` from `EconomyService`; inventory close CSS (X+E) is unchanged.
+
 ## 2026-09-16 Main Menu + Friends + Trade
 
 Report: `reports/2026-09-16_main-menu-friends-trade.md`.

@@ -7,6 +7,7 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import { HOME_NAME_TAKEN_ERROR } from '../../shared/homes';
+import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
 import { GAME_MENU_BUTTONS } from '../../shared/gameMenu';
 import { createItemStack } from '../../src/inventory';
 
@@ -85,6 +86,8 @@ describe('game menu plugin', () => {
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'root' });
     const root = lastOf<ServerMenuMessage>(ada.sink, 'menu');
     expect(root?.screen).toBe('root');
+    expect(root?.balance).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(root?.balanceLabel).toBe('100');
     expect(GAME_MENU_BUTTONS).toHaveLength(7);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'homes' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('homes');

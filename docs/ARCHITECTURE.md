@@ -1,5 +1,9 @@
 # Архитектура
 
+## Main Menu visual chrome — 2026-09-16
+
+In-game social menu stays on `ServerMenuMessage` / `menu_action` / `gameMenuGui`. The visual pass adds `balance` + `balanceLabel` to the existing snapshot (`WorldInstance.buildMenuMessage` reads `EconomyService.getBalance`). Client chrome is `.mc-menu-stage` + `.mc-menu-panel` with a content-sized dark panel, 4+3 `.mc-menu-tile` grid, and PNG faces from `public/ui/menu/`. Close HTML is still `closeButtonHtml()`; menu-stage CSS swaps the face to the close/back sprites. HUD `#hud-corner` uses the same sheet. Auction House and Clan overlays are unchanged systems.
+
 ## Chat channels — 2026-09-12
 
 Player chat stays on the existing `ClientChatMessage` / `ServerChatMessage` / `ChatLog` / `GameUI` `#chat` path. The client sends only intent `{ type: 'chat', text, channel?: 'global'|'nearby'|'clan' }`. Parse strips forged `from` / `playerId` / recipients / coords / `clanId`. Sender is the authenticated player. `MAX_CHAT_LENGTH` is **128**; over-length is rejected (not sliced).

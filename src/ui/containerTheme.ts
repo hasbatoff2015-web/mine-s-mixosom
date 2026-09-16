@@ -76,6 +76,33 @@ export function containerUiScale(
   return Math.min(MC_MAX_UI_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
 }
 
+/** In-game social menu: compact dark panel, not a fullscreen overlay. */
+export const MC_MENU_WIDTH = 248;
+export const MC_MENU_ROOT_HEIGHT = 176;
+export const MC_MENU_MAX_SCALE = 3;
+
+export function menuLogicalHeight(screen: string): number {
+  if (screen === 'root') return MC_MENU_ROOT_HEIGHT;
+  if (screen === 'friends' || screen === 'friend-delete-confirm') return 248;
+  if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 236;
+  if (screen === 'trade') return 220;
+  return 208;
+}
+
+export function menuUiScale(
+  viewportWidth: number,
+  viewportHeight: number,
+  logicalWidth: number,
+  logicalHeight: number,
+): number {
+  const pad = 24;
+  const availableW = Math.max(160, viewportWidth - pad);
+  const availableH = Math.max(140, viewportHeight - pad);
+  const raw = Math.min(availableW / logicalWidth, availableH / logicalHeight, MC_MENU_MAX_SCALE);
+  const quantized = Math.max(MC_MIN_UI_SCALE, Math.floor(raw * 2) / 2);
+  return Math.min(MC_MENU_MAX_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
+}
+
 export function containerStageSize(
   kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'creative' | 'craft',
   recipeBookOpen: boolean,

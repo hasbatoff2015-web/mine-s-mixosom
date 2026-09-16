@@ -95,7 +95,7 @@ import { AutoMineManager } from './services/autoMine';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
-import { EconomyService, formatMegacoins } from './services/economy';
+import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { TradeService } from './services/trade';
@@ -1799,10 +1799,13 @@ export class WorldInstance {
     const session = this.menuSessions.get(player.id);
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
+    const balance = this.economy.getBalance(player.id);
     const base = {
       type: 'menu' as const,
       screen: session.screen as GameMenuScreenKind,
       title: menuTitle(session.screen as GameMenuScreenKind),
+      balance,
+      balanceLabel: formatMegacoinAmount(balance),
       inClan,
       ...(session.message ? { message: session.message } : {}),
     };

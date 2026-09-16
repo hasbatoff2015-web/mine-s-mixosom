@@ -1177,6 +1177,8 @@ export interface ServerMenuMessage {
   readonly screen: GameMenuScreenKind;
   readonly title: string;
   readonly message?: string;
+  readonly balance?: number;
+  readonly balanceLabel?: string;
   readonly inClan?: boolean;
   readonly homeNameText?: string;
   readonly homes?: readonly NetworkMenuHome[];

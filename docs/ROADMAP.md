@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-16: Main Menu visual restyle
+
+- [x] Dark compact Main Menu panel with live Megacoin balance and 4+3 icon grid.
+- [x] Reuse `closeButtonHtml()`, nested ←, and existing social systems (visual chrome only).
+- [x] HUD Pause/Chat/Menu sprites from the provided button sheet.
+
 ## 2026-09-16: Main Menu + Friends + Trade
 
 - [x] HUD Pause/Chat/Menu (TAB / T / M) without replacing existing Pause or Chat.

@@ -22,7 +22,8 @@ export function tradeWindowChrome(state: ServerTradeMessage, escape: (value: str
 }): string {
   const acceptDisabled = tradeAcceptEnabled(state) ? '' : ' disabled';
   return `<div class="mc-menu-body mc-trade-body" data-trade-screen="session">
-    <div class="mc-label">Обмен с ${escape(state.partnerName ?? 'игроком')}</div>
+    <div class="mc-menu-heading">Обмен с ${escape(state.partnerName ?? 'игроком')}</div>
+    <div class="mc-menu-rule" aria-hidden="true"></div>
     <div class="mc-trade-boards">
       <div>
         <div class="mc-menu-count">Вы отдаёте</div>

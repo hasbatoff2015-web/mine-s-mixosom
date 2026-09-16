@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: Main Menu visual restyle — 2026-09-16
+
+- In-game Main Menu is a compact dark inventory-style panel (not fullscreen): «Меню», live `EconomyService` balance, 4+3 icon tiles, graphite buttons, pixel-art assets in `public/ui/menu/`.
+- Nested menu tabs (homes/friends/clans/claims/trade/auction) and the trade session overlay share the same dark chrome. `closeButtonHtml()`, back, and server Friends/Trade/Homes/Claims/Clan/Auction logic are unchanged.
+- HUD Pause/Chat/Menu use the provided sprite sheets (TAB / T / M stay in the DOM).
+- Handoff: `docs/reports/2026-09-16_main-menu-visual.md`.
+
 ## Последний проход: Main Menu + Friends + Trade — 2026-09-16
 
 - HUD справа сверху: Пауза (TAB), Чат (T), Меню (M). Существующие Pause/Chat не дублировались.
