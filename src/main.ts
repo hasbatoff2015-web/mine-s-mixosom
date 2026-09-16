@@ -23,7 +23,7 @@ if (import.meta.env.DEV) {
   const qaFrozenWater = search.get('qaFrozenWater') === '1';
   const qaLighting = search.get('qaLighting');
   const qaUi = search.get('qaUi');
-  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list']);
+  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list', 'menu-root', 'menu-friends', 'menu-trade', 'pause']);
   const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';

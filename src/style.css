@@ -1903,6 +1903,18 @@ button {
   background: #22252a;
 }
 
+.mc-menu-panel .mc-ah-btn.mc-btn-positive,
+.mc-menu-panel .mc-ah-btn.mc-btn-positive:hover,
+.mc-menu-panel .mc-ah-btn.mc-btn-positive:focus-visible {
+  background: var(--mc-btn-positive);
+}
+
+.mc-menu-panel .mc-ah-btn.mc-btn-danger,
+.mc-menu-panel .mc-ah-btn.mc-btn-danger:hover,
+.mc-menu-panel .mc-ah-btn.mc-btn-danger:focus-visible {
+  background: var(--mc-btn-danger);
+}
+
 .mc-menu-panel .mc-ah-btn::after {
   box-shadow: inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(255, 255, 255, 0.28);
 }
@@ -4555,4 +4567,35 @@ button {
 .mc-recipe-book {
   background: var(--ui-mc-panel);
   box-shadow: var(--mc-panel-inset);
+}
+
+.submenu-screen .game-button {
+  border: 0;
+  border-radius: 2px;
+  color: #fff;
+  background: var(--mc-btn-face);
+  box-shadow: var(--mc-btn-edge);
+  text-shadow: none;
+}
+
+.submenu-screen .game-button:hover,
+.submenu-screen .game-button:focus-visible {
+  border-color: transparent;
+  outline: 1px solid rgba(232, 234, 238, 0.35);
+  background: var(--mc-btn-hover);
+  filter: none;
+}
+
+.submenu-screen .game-button.primary,
+.submenu-screen .game-button.primary:hover,
+.submenu-screen .game-button.primary:focus-visible {
+  color: #fff;
+  border-color: transparent;
+  background: var(--mc-btn-positive);
+  text-shadow: none;
+}
+
+.submenu-screen .game-button.danger,
+.submenu-screen .game-button.danger:hover {
+  background: var(--mc-btn-danger);
 }

@@ -1,8 +1,19 @@
 import { createItemStack, Inventory } from '../inventory';
 import type { WorldSummary } from '../save/types';
 import { GameUI } from '../ui/GameUI';
+import type { ServerMenuMessage } from '../../shared/protocol';
 
-export type UiQaScene = 'loading' | 'hud-full' | 'hud-low' | 'hud-absorption' | 'creative' | 'world-list';
+export type UiQaScene =
+  | 'loading'
+  | 'hud-full'
+  | 'hud-low'
+  | 'hud-absorption'
+  | 'creative'
+  | 'world-list'
+  | 'menu-root'
+  | 'menu-friends'
+  | 'menu-trade'
+  | 'pause';
 
 const HUD_ITEMS = [
   ['tnt', 64],
@@ -54,6 +65,12 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
     });
   };
 
+  const menuActions = { send: () => {}, close: () => {} };
+  const openMenu = (state: ServerMenuMessage): void => {
+    showHud(20, 20);
+    ui.openGameMenu(state, menuActions);
+  };
+
   if (scene === 'loading') {
     ui.showLoading('Расчёт освещения', 79, 'Подготавливаем чанки…');
   } else if (scene === 'hud-full') {
@@ -74,6 +91,47 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
       },
       onDrop: () => {},
       onChanged: () => {},
+    });
+  } else if (scene === 'menu-root') {
+    openMenu({
+      type: 'menu',
+      screen: 'root',
+      title: 'Меню',
+      balance: 5645,
+      balanceLabel: '5 645',
+    });
+  } else if (scene === 'menu-friends') {
+    openMenu({
+      type: 'menu',
+      screen: 'friends',
+      title: 'Друзья',
+      allowFriendTeleport: true,
+      friendCount: 4,
+      friendMax: 50,
+      friends: [
+        { playerId: '1', name: 'ViBeMiXoS1K', online: true, canTeleport: true },
+        { playerId: '2', name: 'PlayerOne', online: true, canTeleport: true },
+        { playerId: '3', name: 'BestFriend', online: false, canTeleport: false },
+        { playerId: '4', name: 'AnotherPlayer', online: false, canTeleport: false },
+      ],
+    });
+  } else if (scene === 'menu-trade') {
+    openMenu({
+      type: 'menu',
+      screen: 'trade',
+      title: 'Обмен',
+      tradeNearby: [
+        { playerId: '1', name: 'PlayerOne', distance: 5 },
+        { playerId: '2', name: 'NotchFan', distance: 12 },
+        { playerId: '3', name: 'Steve123', distance: 18 },
+      ],
+    });
+  } else if (scene === 'pause') {
+    showHud(20, 20);
+    ui.showPause({
+      resume: () => undefined,
+      settings: () => undefined,
+      saveAndQuit: () => undefined,
     });
   } else {
     let worlds = fixtureWorlds();
