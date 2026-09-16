@@ -100,7 +100,7 @@ describe('close button E caption', () => {
 
   it('does not put an E caption on the clan back arrow', () => {
     expect(gameUi).toContain('class="mc-close mc-back"');
-    const back = sourceSection(gameUi, 'showsClanBack(state.screen)', 'this.closeButtonHtml()');
+    const back = sourceSection(gameUi, 'showsClanBack(state.screen, state.source)', 'this.closeButtonHtml()');
     expect(back).toContain('data-clan-action="back"');
     expect(back).not.toContain('mc-close-hotkey');
     expect(back).not.toContain('CONTAINER_STRINGS.closeHotkey');

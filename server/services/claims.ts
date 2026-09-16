@@ -45,7 +45,7 @@ export interface ClaimAnchor {
 
 export interface Claim {
   readonly id: string;
-  readonly name: string;
+  name: string;
   readonly owner: string;
   readonly worldId: string;
   readonly volume: SelectionVolume;

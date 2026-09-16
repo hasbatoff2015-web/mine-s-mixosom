@@ -55,7 +55,8 @@ export type ClanView =
   | 'accept'
   | 'leave'
   | 'makeleader'
-  | 'kick';
+  | 'kick'
+  | 'mine';
 
 export type ClanScreen =
   | 'ranking'
@@ -122,6 +123,7 @@ export interface ClanSession {
   search: string;
   page: number;
   selectedClanId?: string;
+  openedFromMenu?: boolean;
   selectedIcon: ClanIconId;
   nameText: string;
   selectedPlayerId?: string;
@@ -319,6 +321,7 @@ export class ClanService {
     session.selectedInvitationId = undefined;
     session.selectedRequestId = undefined;
     session.selectedMemberId = undefined;
+    session.openedFromMenu = undefined;
   }
 
   getClan(clanId: string | undefined): ClanRecord | undefined {
@@ -405,6 +408,21 @@ export class ClanService {
     session.selectedClanId = undefined;
     session.selectedMemberId = undefined;
     session.page = this.clampPage(session.page, this.ranked(session.search).length);
+  }
+
+  openMyClan(playerId: string): ClanResult {
+    const clan = this.playerClan(playerId);
+    if (!clan) return { ok: false, error: 'Вы не состоите в клане.' };
+    const session = this.session(playerId);
+    session.selectedClanId = clan.clanId;
+    session.selectedMemberId = undefined;
+    session.screen = 'card';
+    session.message = undefined;
+    return { ok: true, clan };
+  }
+
+  markOpenedFromMenu(playerId: string): void {
+    this.session(playerId).openedFromMenu = true;
   }
 
   openCreate(playerId: string): ClanResult {
@@ -1059,6 +1077,7 @@ export class ClanService {
       type: 'clan' as const,
       search: session.search,
       page: session.page,
+      ...(session.openedFromMenu ? { source: 'menu' as const } : {}),
       viewer: {
         ...(viewerClan ? { clanId: viewerClan.clanId } : {}),
         isOwner: viewerClan?.ownerId === playerId,
@@ -1290,10 +1309,20 @@ export class ClanService {
       case 'leave-confirm':
       case 'makeleader':
         if (session.screen === 'card') {
+          if (session.openedFromMenu) {
+            this.closeSession(playerId);
+            return;
+          }
           this.openRanking(playerId);
           return;
         }
         this.closeSession(playerId);
+        return;
+      case 'ranking':
+        if (session.openedFromMenu) {
+          this.closeSession(playerId);
+          return;
+        }
         return;
       case 'create-confirm':
         session.screen = 'create';

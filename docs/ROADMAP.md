@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-16: Main Menu + Friends + Trade
+
+- [x] HUD Pause/Chat/Menu (TAB / T / M) without replacing existing Pause or Chat.
+- [x] Inventory-style main menu: Spawn, Homes, Friends, Clans, Claims, Trade, Auction. No "Топ".
+- [x] Friends plugin (mutual, 50, teleport permission) and server-authoritative P2P Trade.
+- [x] Reuse Home / Clan / Claims / Auction; nested ← returns to the previous menu page.
+
 ## 2026-09-13: Merge Crafting UI into main
 
 - [x] Fetch current `origin/main`; no teammate commits after Chat merge `1c802ab`.

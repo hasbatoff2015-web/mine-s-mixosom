@@ -546,6 +546,89 @@ export interface ClientBuyerActionMessage {
   readonly hologramText?: string;
 }
 
+export type MenuActionKind =
+  | 'open'
+  | 'close'
+  | 'back'
+  | 'spawn'
+  | 'home_create'
+  | 'home_teleport'
+  | 'home_delete'
+  | 'home_confirm_delete'
+  | 'home_cancel_delete'
+  | 'set_home_name'
+  | 'friends_set_tp'
+  | 'friends_request'
+  | 'friends_accept'
+  | 'friends_reject'
+  | 'friends_teleport'
+  | 'friends_delete'
+  | 'friends_confirm_delete'
+  | 'friends_cancel_delete'
+  | 'set_friend_name'
+  | 'clans_mine'
+  | 'clans_list'
+  | 'clans_create'
+  | 'claim_open'
+  | 'claim_rename'
+  | 'claim_set_pvp'
+  | 'claim_add_member'
+  | 'claim_remove_member'
+  | 'claim_delete'
+  | 'claim_confirm_delete'
+  | 'claim_cancel_delete'
+  | 'set_claim_name'
+  | 'set_claim_member'
+  | 'trade_request'
+  | 'trade_accept'
+  | 'trade_reject'
+  | 'set_trade_name'
+  | 'auction_open'
+  | 'auction_list'
+  | 'auction_sell';
+
+export type GameMenuScreenKind =
+  | 'root'
+  | 'homes'
+  | 'home-delete-confirm'
+  | 'friends'
+  | 'friend-delete-confirm'
+  | 'clans'
+  | 'claims'
+  | 'claim-settings'
+  | 'claim-delete-confirm'
+  | 'trade'
+  | 'auction'
+  | 'closed';
+
+export interface ClientMenuActionMessage {
+  readonly type: 'menu_action';
+  readonly action: MenuActionKind;
+  readonly screen?: GameMenuScreenKind;
+  readonly name?: string;
+  readonly playerId?: string;
+  readonly requestId?: string;
+  readonly claimId?: string;
+  readonly enabled?: boolean;
+}
+
+export type TradeActionKind =
+  | 'close'
+  | 'cancel'
+  | 'put_item'
+  | 'return_item'
+  | 'set_money'
+  | 'ready'
+  | 'accept';
+
+export interface ClientTradeActionMessage {
+  readonly type: 'trade_action';
+  readonly action: TradeActionKind;
+  readonly slot?: number;
+  readonly tradeSlot?: number;
+  readonly money?: string | number;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -569,7 +652,9 @@ export type ClientMessage =
   | ClientAuctionActionMessage
   | ClientClanActionMessage
   | ClientBuyerInteractMessage
-  | ClientBuyerActionMessage;
+  | ClientBuyerActionMessage
+  | ClientMenuActionMessage
+  | ClientTradeActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -879,6 +964,7 @@ export interface NetworkAuctionListing {
 export interface ServerAuctionMessage {
   readonly type: 'auction';
   readonly screen: AuctionScreenKind;
+  readonly source?: 'menu';
   readonly title: string;
   readonly search: string;
   readonly page: number;
@@ -957,6 +1043,7 @@ export interface NetworkClanInvitation {
 export interface ServerClanMessage {
   readonly type: 'clan';
   readonly screen: ClanScreenKind;
+  readonly source?: 'menu';
   readonly title: string;
   readonly search: string;
   readonly page: number;
@@ -1051,6 +1138,94 @@ export interface ServerBuyerMessage {
   readonly message?: string;
 }
 
+export interface NetworkMenuHome {
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface NetworkMenuFriend {
+  readonly playerId: string;
+  readonly name: string;
+  readonly online: boolean;
+  readonly canTeleport: boolean;
+  readonly requestId?: string;
+}
+
+export interface NetworkMenuClaim {
+  readonly claimId: string;
+  readonly name: string;
+  readonly title: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface NetworkMenuClaimMember {
+  readonly name: string;
+}
+
+export interface NetworkMenuTradeOffer {
+  readonly playerId: string;
+  readonly name: string;
+  readonly requestId?: string;
+}
+
+export interface ServerMenuMessage {
+  readonly type: 'menu';
+  readonly screen: GameMenuScreenKind;
+  readonly title: string;
+  readonly message?: string;
+  readonly inClan?: boolean;
+  readonly homeNameText?: string;
+  readonly homes?: readonly NetworkMenuHome[];
+  readonly homeCount?: number;
+  readonly homeMax?: number;
+  readonly pendingHomeName?: string;
+  readonly allowFriendTeleport?: boolean;
+  readonly friendNameText?: string;
+  readonly friendRequests?: readonly NetworkMenuFriend[];
+  readonly friends?: readonly NetworkMenuFriend[];
+  readonly friendCount?: number;
+  readonly friendMax?: number;
+  readonly pendingFriendId?: string;
+  readonly pendingFriendName?: string;
+  readonly claims?: readonly NetworkMenuClaim[];
+  readonly claimCount?: number;
+  readonly claimMax?: number;
+  readonly claimId?: string;
+  readonly claimNameText?: string;
+  readonly claimPvp?: boolean;
+  readonly claimMembers?: readonly NetworkMenuClaimMember[];
+  readonly claimMemberText?: string;
+  readonly pendingClaimName?: string;
+  readonly tradeNameText?: string;
+  readonly tradeIncoming?: readonly NetworkMenuTradeOffer[];
+  readonly tradeOutgoing?: readonly NetworkMenuTradeOffer[];
+}
+
+export interface ServerTradeMessage {
+  readonly type: 'trade';
+  readonly screen: 'session' | 'closed';
+  readonly title: string;
+  readonly tradeId?: string;
+  readonly partnerId?: string;
+  readonly partnerName?: string;
+  readonly selfReady?: boolean;
+  readonly partnerReady?: boolean;
+  readonly selfAccepted?: boolean;
+  readonly partnerAccepted?: boolean;
+  readonly bothReady?: boolean;
+  readonly moneyText?: string;
+  readonly money?: number;
+  readonly balance?: number;
+  readonly selfSlots?: readonly unknown[];
+  readonly partnerSlots?: readonly unknown[];
+  readonly inventorySlots?: readonly unknown[];
+  readonly message?: string;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerPlayerJoinedMessage
@@ -1081,7 +1256,9 @@ export type ServerMessage =
   | ServerAuctionMessage
   | ServerClanMessage
   | ServerBuyersMessage
-  | ServerBuyerMessage;
+  | ServerBuyerMessage
+  | ServerMenuMessage
+  | ServerTradeMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1107,6 +1284,8 @@ export const CLIENT_MESSAGE_TYPES = [
   'buyer_interact',
   'buyer_action',
   'clan_action',
+  'menu_action',
+  'trade_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -1140,6 +1319,8 @@ export const SERVER_MESSAGE_TYPES = [
   'clan',
   'buyers',
   'buyer',
+  'menu',
+  'trade',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1173,6 +1354,27 @@ const CLAN_ACTIONS: readonly ClanActionKind[] = [
   'join', 'confirm_join', 'cancel_join',
   'confirm_replace_request', 'cancel_replace_request',
   'open_requests', 'select_request', 'confirm_accept_request', 'cancel_accept_request',
+];
+
+const MENU_ACTIONS: readonly MenuActionKind[] = [
+  'open', 'close', 'back', 'spawn',
+  'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
+  'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
+  'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'set_friend_name',
+  'clans_mine', 'clans_list', 'clans_create',
+  'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
+  'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
+  'trade_request', 'trade_accept', 'trade_reject', 'set_trade_name',
+  'auction_open', 'auction_list', 'auction_sell',
+];
+
+const MENU_SCREENS: readonly GameMenuScreenKind[] = [
+  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'closed',
+];
+
+const TRADE_ACTIONS: readonly TradeActionKind[] = [
+  'close', 'cancel', 'put_item', 'return_item', 'set_money', 'ready', 'accept',
 ];
 
 const VEHICLE_ACTIONS: readonly VehicleAction[] = ['enter', 'exit', 'steer'];
@@ -1765,6 +1967,46 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(hologramText !== undefined ? { hologramText } : {}),
       };
     }
+    case 'menu_action': {
+      if (typeof raw.action !== 'string' || !(MENU_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'menu_action.action invalid' };
+      }
+      const screen = typeof raw.screen === 'string' && (MENU_SCREENS as readonly string[]).includes(raw.screen)
+        ? raw.screen as GameMenuScreenKind
+        : undefined;
+      const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
+      const playerId = optionalString(raw.playerId, 64);
+      const requestId = optionalString(raw.requestId, 64);
+      const claimId = optionalString(raw.claimId, 96);
+      const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : undefined;
+      return {
+        type: 'menu_action',
+        action: raw.action as MenuActionKind,
+        ...(screen ? { screen } : {}),
+        ...(name !== undefined ? { name } : {}),
+        ...(playerId ? { playerId } : {}),
+        ...(requestId ? { requestId } : {}),
+        ...(claimId ? { claimId } : {}),
+        ...(enabled !== undefined ? { enabled } : {}),
+      };
+    }
+    case 'trade_action': {
+      if (typeof raw.action !== 'string' || !(TRADE_ACTIONS as readonly string[]).includes(raw.action)) {
+        return { error: 'trade_action.action invalid' };
+      }
+      const slot = raw.slot === undefined ? undefined : finite(raw.slot) ? Math.floor(raw.slot) : undefined;
+      if (raw.slot !== undefined && slot === undefined) return { error: 'trade_action.slot invalid' };
+      const tradeSlot = raw.tradeSlot === undefined ? undefined : finite(raw.tradeSlot) ? Math.floor(raw.tradeSlot) : undefined;
+      if (raw.tradeSlot !== undefined && tradeSlot === undefined) return { error: 'trade_action.tradeSlot invalid' };
+      const money = typeof raw.money === 'string' || typeof raw.money === 'number' ? raw.money : undefined;
+      return {
+        type: 'trade_action',
+        action: raw.action as TradeActionKind,
+        ...(slot !== undefined ? { slot } : {}),
+        ...(tradeSlot !== undefined ? { tradeSlot } : {}),
+        ...(money !== undefined ? { money } : {}),
+      };
+    }
     default:
       return { error: `unknown message type ${raw.type}` };
   }
@@ -1979,6 +2221,18 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'buyer invalid' };
       }
       return raw as unknown as ServerBuyerMessage;
+    }
+    case 'menu': {
+      if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {
+        return { error: 'menu invalid' };
+      }
+      return raw as unknown as ServerMenuMessage;
+    }
+    case 'trade': {
+      if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {
+        return { error: 'trade invalid' };
+      }
+      return raw as unknown as ServerTradeMessage;
     }
     default:
       return raw as unknown as ServerMessage;
