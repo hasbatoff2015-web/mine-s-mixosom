@@ -95,7 +95,7 @@ import { AutoMineManager } from './services/autoMine';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
-import { EconomyService, formatMegacoins } from './services/economy';
+import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { TradeService } from './services/trade';
@@ -108,7 +108,7 @@ import {
   type GameMenuSession,
 } from './services/gameMenu';
 import { FRIENDS_MAX } from '../shared/friends';
-import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR } from '../shared/homes';
+import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
 import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
 import {
   applyGameMenuAction,
@@ -944,6 +944,27 @@ export class WorldInstance {
     return [...this.players.values()].filter((player) => player.connected);
   }
 
+  private listTradeNearby(player: ServerPlayer): Array<{ playerId: string; name: string; distance: number }> {
+    const origin = player.controller.position;
+    return this.connectedPlayers()
+      .filter((other) => other.id !== player.id)
+      .map((other) => {
+        const pos = other.controller.position;
+        const dx = origin.x - pos.x;
+        const dy = origin.y - pos.y;
+        const dz = origin.z - pos.z;
+        return {
+          playerId: other.id,
+          name: other.name,
+          distance: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)),
+          inRange: isWithinNearbyChatRange(origin.x, origin.y, origin.z, pos.x, pos.y, pos.z),
+        };
+      })
+      .filter((row) => row.inRange)
+      .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name, 'ru'))
+      .map(({ playerId, name, distance }) => ({ playerId, name, distance }));
+  }
+
   private maxInputGapMs(now = performance.now()): number {
     let maxGap = 0;
     for (const player of this.connectedPlayers()) {
@@ -1714,8 +1735,8 @@ export class WorldInstance {
 
   private maxHomesFor(player: ServerPlayer): number {
     const def = Number(this.pluginConfig.get('home', 'maxHomesDefault', HOME_MAX_DEFAULT));
-    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', 4));
-    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', 5));
+    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', HOME_MAX_VIP));
+    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', HOME_MAX_PREMIUM));
     if (this.permissions.isOperator(player.id) || this.permissions.has(player.id, 'home.*')) {
       return Math.max(premium, vip, def);
     }
@@ -1799,10 +1820,13 @@ export class WorldInstance {
     const session = this.menuSessions.get(player.id);
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
+    const balance = this.economy.getBalance(player.id);
     const base = {
       type: 'menu' as const,
       screen: session.screen as GameMenuScreenKind,
       title: menuTitle(session.screen as GameMenuScreenKind),
+      balance,
+      balanceLabel: formatMegacoinAmount(balance),
       inClan,
       ...(session.message ? { message: session.message } : {}),
     };
@@ -1866,6 +1890,7 @@ export class WorldInstance {
       return {
         ...base,
         tradeNameText: session.tradeNameText,
+        tradeNearby: this.listTradeNearby(player),
         tradeIncoming: this.trade.incomingRequests(player.id).map((request) => ({
           playerId: request.fromPlayerId,
           name: this.players.get(request.fromPlayerId)?.name

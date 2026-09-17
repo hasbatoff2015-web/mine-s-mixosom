@@ -1,13 +1,24 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
-import { menuBackHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
+import { HOME_MAX_DEFAULT } from '../shared/homes';
+import { formatMegacoinAmount } from '../shared/megacoins';
+import { menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
+import { MC_MENU_MAX_SCALE, MC_MENU_WIDTH, menuUiScale } from '../src/ui/containerTheme';
 import type { ServerMenuMessage } from '../shared/protocol';
 
 const gameUi = readFileSync(new URL('../src/ui/GameUI.ts', import.meta.url), 'utf8');
 const gameSource = readFileSync(new URL('../src/core/Game.ts', import.meta.url), 'utf8');
 const inputSource = readFileSync(new URL('../src/input/InputManager.ts', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
+
+function cssRule(selector: string): string {
+  const start = css.indexOf(`${selector} {`);
+  expect(start, selector).toBeGreaterThanOrEqual(0);
+  const end = css.indexOf('\n}', start);
+  expect(end, `${selector} end`).toBeGreaterThan(start);
+  return css.slice(start, end + 2);
+}
 
 function menu(partial: Partial<ServerMenuMessage> = {}): ServerMenuMessage {
   return { type: 'menu', screen: 'root', title: 'Меню', ...partial };
@@ -27,6 +38,10 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('hud-corner-label">Меню');
     expect(css).toContain('#hud-corner');
     expect(css).toContain('flex-direction: column');
+    expect(cssRule('#hud-corner button')).toContain('width: calc(76px * var(--hud-scale));');
+    expect(cssRule('#hud-corner button')).toContain('height: calc(76px * var(--hud-scale));');
+    expect(cssRule('#hud-corner button')).toContain('background-size: contain;');
+    expect(cssRule('#hud-corner button')).toContain('aspect-ratio: 1;');
     expect(css).toContain('#chat.open ~ #hud-corner');
   });
 
@@ -50,7 +65,7 @@ describe('main menu HUD and chrome', () => {
     expect(GAME_MENU_BUTTONS.map((button) => button.label)).toEqual([
       'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион',
     ]);
-    const html = menuRootHtml();
+    const html = menuRootHtml({ balance: 5645, balanceLabel: formatMegacoinAmount(5645) });
     expect(html).toContain('Спавн');
     expect(html).toContain('Дома');
     expect(html).toContain('Друзья');
@@ -59,6 +74,44 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('Обмен');
     expect(html).toContain('Аукцион');
     expect(html).not.toContain('Топ');
+    expect(html).toContain('mc-menu-grid-row-4');
+    expect(html).toContain('mc-menu-grid-row-3');
+    expect(html).toContain('icon_spawn.png');
+    expect(html).toContain('icon_auction.png');
+    expect(html).toContain('Баланс: 5 645 монет');
+    expect(html.indexOf('mc-menu-grid-row-4')).toBeLessThan(html.indexOf('mc-menu-grid-row-3'));
+    expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
+  });
+
+  it('keeps a compact dark menu panel and ships pixel-art chrome assets', () => {
+    expect(css).toContain('.mc-menu-panel');
+    expect(css).toContain('.mc-menu-tile');
+    expect(css).toContain('.mc-menu-grid-row-4');
+    expect(css).toContain('.mc-menu-grid-row-3');
+    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(gameUi).toContain('this.closeButtonHtml()');
+    expect(gameUi).toContain('mc-menu-stage');
+    expect(gameUi).toContain('overlayStageStyle(');
+    expect(MC_MENU_WIDTH).toBe(248);
+    expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, 176)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
+    expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('Баланс: 100 монет');
+    expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin');
+    expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin-wrap');
+    expect(cssRule('.mc-menu-coin')).toContain('object-fit: contain;');
+    expect(cssRule('.mc-menu-coin')).toContain('image-rendering: auto;');
+    expect(cssRule('.mc-menu-coin-wrap')).toContain('width: calc(16px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-coin-wrap')).toContain('height: calc(16px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-coin-wrap')).toContain('flex-shrink: 0;');
+    expect(cssRule('.mc-menu-coin')).toContain('max-width: 100%;');
+    expect(cssRule('.mc-menu-balance')).toContain('align-items: center;');
+    expect(cssRule('.mc-menu-balance')).toContain('overflow: visible;');
+    for (const file of [
+      'icon_spawn.png', 'icon_homes.png', 'icon_friends.png', 'icon_clans.png',
+      'icon_claims.png', 'icon_trade.png', 'icon_auction.png', 'icon_coin.png',
+      'close.png', 'close_hover.png', 'pause.png', 'chat.png', 'menu.png', 'back.png',
+    ]) {
+      expect(existsSync(new URL(`../public/ui/menu/${file}`, import.meta.url))).toBe(true);
+    }
   });
 
   it('shows a back arrow on nested pages and a square X+E close on the menu', () => {
@@ -79,10 +132,16 @@ describe('main menu HUD and chrome', () => {
       screen: 'homes',
       homes: [{ name: 'Дом', x: 123, y: 64, z: -245 }],
       homeCount: 1,
-      homeMax: 4,
+      homeMax: HOME_MAX_DEFAULT,
     }), (value) => value);
-    expect(homes).toContain('Мои дома (1/4)');
-    expect(homes).toContain('(123, 64, -245)');
+    expect(HOME_MAX_DEFAULT).toBe(3);
+    expect(homes).toContain('Мои дома (1/3)');
+    expect(menuBodyHtml(menu({ screen: 'homes', homeCount: 2 }), (value) => value)).toContain('Мои дома (2/3)');
+    expect(homes).toContain('X: 123');
+    expect(homes).toContain('Y: 64');
+    expect(homes).toContain('Z: -245');
+    expect(homes).toContain('Телепорт');
+    expect(homes).toContain('Удалить');
     expect(homes).toContain('data-menu-action="home_create"');
 
     const friends = menuBodyHtml(menu({
@@ -93,8 +152,21 @@ describe('main menu HUD and chrome', () => {
       friendMax: 50,
     }), (value) => value);
     expect(friends).toContain('Разрешена');
-    expect(friends).toContain('Телепортироваться');
+    expect(friends).toContain('Телепорт');
+    expect(friends).toContain('Удалить');
+    expect(friends).toContain('mc-status-dot');
+    expect(friends).toContain('mc-toggle is-on');
+    expect(friends).toContain('data-menu-friend-tp');
     expect(friends).toContain('Мои друзья (1/50)');
+
+    const offline = menuBodyHtml(menu({
+      screen: 'friends',
+      allowFriendTeleport: false,
+      friends: [{ playerId: 'b', name: 'Bob', online: false, canTeleport: false }],
+    }), (value) => value);
+    expect(offline).toContain('Запрещена');
+    expect(offline).not.toContain('data-menu-friend-tp');
+    expect(offline).toContain('Оффлайн');
 
     const claims = menuBodyHtml(menu({
       screen: 'claims',
@@ -109,5 +181,18 @@ describe('main menu HUD and chrome', () => {
     expect(auction).toContain('auction_open');
     expect(auction).toContain('auction_list');
     expect(auction).toContain('auction_sell');
+
+    const trade = menuBodyHtml(menu({
+      screen: 'trade',
+      tradeNearby: [{ playerId: 'p1', name: 'PlayerOne', distance: 5 }],
+    }), (value) => value);
+    expect(trade).toContain('Рядом');
+    expect(trade).toContain('trade_refresh');
+    expect(trade).toContain('5 бл.');
+    expect(trade).toContain('data-menu-trade-nearby="PlayerOne"');
+    expect(trade).toContain('Обмен');
+
+    const tradeEmpty = menuBodyHtml(menu({ screen: 'trade' }), (value) => value);
+    expect(tradeEmpty).toContain('Обмениваться можно только с игроками, которые находятся рядом с вами (до 20 блоков).');
   });
 });

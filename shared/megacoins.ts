@@ -1,3 +1,12 @@
+/** Space-grouped integer, e.g. `5 645`. Shared by EconomyService and menu chrome. */
+export function formatMegacoinAmount(amount: number): string {
+  const n = Math.trunc(amount);
+  const sign = n < 0 ? '-' : '';
+  const digits = String(Math.abs(n));
+  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${sign}${grouped}`;
+}
+
 /** Compact Мегакоин labels for dense inventory-style rows (not chat copy). */
 
 function oneDecimal(value: number): string {

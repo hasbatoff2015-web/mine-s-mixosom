@@ -582,6 +582,7 @@ export type MenuActionKind =
   | 'trade_request'
   | 'trade_accept'
   | 'trade_reject'
+  | 'trade_refresh'
   | 'set_trade_name'
   | 'auction_open'
   | 'auction_list'
@@ -1172,11 +1173,19 @@ export interface NetworkMenuTradeOffer {
   readonly requestId?: string;
 }
 
+export interface NetworkMenuNearbyPlayer {
+  readonly playerId: string;
+  readonly name: string;
+  readonly distance: number;
+}
+
 export interface ServerMenuMessage {
   readonly type: 'menu';
   readonly screen: GameMenuScreenKind;
   readonly title: string;
   readonly message?: string;
+  readonly balance?: number;
+  readonly balanceLabel?: string;
   readonly inClan?: boolean;
   readonly homeNameText?: string;
   readonly homes?: readonly NetworkMenuHome[];
@@ -1203,6 +1212,7 @@ export interface ServerMenuMessage {
   readonly tradeNameText?: string;
   readonly tradeIncoming?: readonly NetworkMenuTradeOffer[];
   readonly tradeOutgoing?: readonly NetworkMenuTradeOffer[];
+  readonly tradeNearby?: readonly NetworkMenuNearbyPlayer[];
 }
 
 export interface ServerTradeMessage {
@@ -1219,6 +1229,8 @@ export interface ServerTradeMessage {
   readonly bothReady?: boolean;
   readonly moneyText?: string;
   readonly money?: number;
+  readonly partnerMoneyText?: string;
+  readonly partnerMoney?: number;
   readonly balance?: number;
   readonly selfSlots?: readonly unknown[];
   readonly partnerSlots?: readonly unknown[];
@@ -1364,7 +1376,7 @@ const MENU_ACTIONS: readonly MenuActionKind[] = [
   'clans_mine', 'clans_list', 'clans_create',
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
-  'trade_request', 'trade_accept', 'trade_reject', 'set_trade_name',
+  'trade_request', 'trade_accept', 'trade_reject', 'trade_refresh', 'set_trade_name',
   'auction_open', 'auction_list', 'auction_sell',
 ];
 

@@ -1,5 +1,7 @@
 export const HOME_PLUGIN_NAME = 'home';
-export const HOME_MAX_DEFAULT = 4;
+export const HOME_MAX_DEFAULT = 3;
+export const HOME_MAX_VIP = 4;
+export const HOME_MAX_PREMIUM = 5;
 export const HOME_NAME_MAX = 24;
 export const HOME_NAME_EMPTY_ERROR = 'Введите название дома.';
 export const HOME_NAME_LENGTH_ERROR = `Название дома не длиннее ${HOME_NAME_MAX} символов.`;

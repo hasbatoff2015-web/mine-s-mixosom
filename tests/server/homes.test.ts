@@ -32,20 +32,21 @@ describe('HomeService', () => {
     return new HomeService(new JsonFileStore(dir));
   }
 
-  it('creates, teleports lookup, enforces unique names and the max of 4', async () => {
+  it('creates, teleports lookup, enforces unique names and the max of 3', async () => {
     const homes = await setup();
     const pos = { worldId: 'anarchy', x: 1, y: 64, z: 2 };
+    expect(HOME_MAX_DEFAULT).toBe(3);
     expect(homes.set('ada', 'Дом', pos, HOME_MAX_DEFAULT).ok).toBe(true);
     expect(homes.set('ada', 'дом', { ...pos, x: 8 }, HOME_MAX_DEFAULT).ok).toBe(true);
     expect(homes.get('ada', 'Дом')?.x).toBe(8);
     expect(homes.set('ada', 'Шахта', pos, HOME_MAX_DEFAULT).ok).toBe(true);
     expect(homes.set('ada', 'Ферма', pos, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.set('ada', 'База', pos, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.set('ada', 'База', pos, HOME_MAX_DEFAULT).error).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
     expect(homes.set('ada', 'Лишняя', pos, HOME_MAX_DEFAULT).error).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
     expect(homes.set('ada', 'Шахта', pos, HOME_MAX_DEFAULT).error).toBeUndefined();
     expect(homes.set('bob', 'Шахта', pos, HOME_MAX_DEFAULT).ok).toBe(true);
     expect(homes.remove('ada', 'Ферма').ok).toBe(true);
-    expect(homes.list('ada')).toHaveLength(3);
+    expect(homes.list('ada')).toHaveLength(2);
     expect(homes.set('ada', 'Шахта', { ...pos, x: 99 }, HOME_MAX_DEFAULT).ok).toBe(true);
     expect(homes.get('ada', 'шахта')?.x).toBe(99);
   });

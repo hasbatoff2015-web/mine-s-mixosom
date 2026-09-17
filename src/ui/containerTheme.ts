@@ -9,7 +9,8 @@ export const MC_INVENTORY_HEIGHT = 166;
 export const MC_CREATIVE_WIDTH = 195;
 /** Compact tabs + six-row catalog + controlled hotbar gap; not a forced panel height. */
 export const MC_CREATIVE_HEIGHT = 166;
-export const MC_CREATIVE_SCROLL_GUTTER = 8;
+/** Native catalog scrollbar is hidden; 9 slots must fit without a reserved track. */
+export const MC_CREATIVE_SCROLL_GUTTER = 0;
 export const MC_RECIPE_BOOK_WIDTH = 147;
 export const MC_RECIPE_BOOK_GAP = 4;
 /** Book toggle lives inside the craft row, not as extra stage width. */
@@ -74,6 +75,34 @@ export function containerUiScale(
   const raw = Math.min(availableW / logicalWidth, availableH / logicalHeight, MC_MAX_UI_SCALE);
   const quantized = Math.max(MC_MIN_UI_SCALE, Math.floor(raw * 2) / 2);
   return Math.min(MC_MAX_UI_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
+}
+
+/** In-game social menu: compact dark panel, not a fullscreen overlay. */
+export const MC_MENU_WIDTH = 248;
+export const MC_MENU_ROOT_HEIGHT = 176;
+export const MC_MENU_MAX_SCALE = 3;
+
+export function menuLogicalHeight(screen: string): number {
+  if (screen === 'root') return MC_MENU_ROOT_HEIGHT;
+  if (screen === 'friends' || screen === 'friend-delete-confirm') return 268;
+  if (screen === 'homes' || screen === 'home-delete-confirm') return 236;
+  if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 248;
+  if (screen === 'trade') return 268;
+  return 216;
+}
+
+export function menuUiScale(
+  viewportWidth: number,
+  viewportHeight: number,
+  logicalWidth: number,
+  logicalHeight: number,
+): number {
+  const pad = 24;
+  const availableW = Math.max(160, viewportWidth - pad);
+  const availableH = Math.max(140, viewportHeight - pad);
+  const raw = Math.min(availableW / logicalWidth, availableH / logicalHeight, MC_MENU_MAX_SCALE);
+  const quantized = Math.max(MC_MIN_UI_SCALE, Math.floor(raw * 2) / 2);
+  return Math.min(MC_MENU_MAX_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
 }
 
 export function containerStageSize(

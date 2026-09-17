@@ -6,7 +6,8 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
-import { HOME_NAME_TAKEN_ERROR } from '../../shared/homes';
+import { HOME_LIMIT_ERROR, HOME_MAX_DEFAULT, HOME_NAME_TAKEN_ERROR } from '../../shared/homes';
+import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
 import { GAME_MENU_BUTTONS } from '../../shared/gameMenu';
 import { createItemStack } from '../../src/inventory';
 
@@ -85,6 +86,8 @@ describe('game menu plugin', () => {
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'root' });
     const root = lastOf<ServerMenuMessage>(ada.sink, 'menu');
     expect(root?.screen).toBe('root');
+    expect(root?.balance).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(root?.balanceLabel).toBe('100');
     expect(GAME_MENU_BUTTONS).toHaveLength(7);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'homes' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('homes');
@@ -94,13 +97,14 @@ describe('game menu plugin', () => {
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('closed');
   });
 
-  it('creates unique homes up to 4, teleports, and deletes after confirm', async () => {
+  it('creates unique homes up to 3, teleports, and deletes after confirm', async () => {
     const world = await boot();
     const op = join(world, 'Op');
     const ada = join(world, 'Ada');
     world.handleChat(op.player, '/home config set cooldownSeconds 0');
     ada.player.controller.teleport([12, 70, -4]);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'homes' });
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.homeMax).toBe(HOME_MAX_DEFAULT);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_create', name: 'Дом' });
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_create', name: 'Дом' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.message).toBe(HOME_NAME_TAKEN_ERROR);
@@ -109,8 +113,9 @@ describe('game menu plugin', () => {
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_create', name: 'Ферма' });
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_create', name: 'Лишняя' });
     const full = lastOf<ServerMenuMessage>(ada.sink, 'menu');
-    expect(full?.homeCount).toBe(4);
-    expect(full?.message).toContain('4');
+    expect(full?.homeCount).toBe(HOME_MAX_DEFAULT);
+    expect(full?.homeMax).toBe(HOME_MAX_DEFAULT);
+    expect(full?.message).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
     ada.player.controller.teleport([40, 70, 40]);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_teleport', name: 'Дом' });
     expect(ada.player.controller.position.x).toBeCloseTo(12, 1);
@@ -118,7 +123,7 @@ describe('game menu plugin', () => {
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_delete', name: 'Шахта' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('home-delete-confirm');
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'home_confirm_delete' });
-    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.homeCount).toBe(3);
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.homeCount).toBe(2);
   });
 
   it('sends a friend request, accepts it, and respects teleport permission', async () => {
@@ -160,6 +165,8 @@ describe('game menu plugin', () => {
     const bob = join(world, 'Bob');
     ada.player.inventory.setSlot(0, createItemStack('stone', 8));
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'trade' });
+    const nearbyLobby = lastOf<ServerMenuMessage>(ada.sink, 'menu');
+    expect(nearbyLobby?.tradeNearby?.some((row) => row.name === 'Bob')).toBe(true);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'trade_request', name: 'Bob' });
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'open', screen: 'trade' });
     const incoming = lastOf<ServerMenuMessage>(bob.sink, 'menu')?.tradeIncoming?.[0]?.requestId;
@@ -174,5 +181,36 @@ describe('game menu plugin', () => {
     world.handleTradeAction(bob.player, { type: 'trade_action', action: 'close' });
     expect(lastOf<ServerTradeMessage>(ada.sink, 'trade')?.screen).toBe('closed');
     expect(ada.player.inventory.getSlot(0)?.itemId).toBe('stone');
+  });
+
+  it('sends both players their own and partner coin offers from the server snapshot', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'trade' });
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'trade_request', name: 'Bob' });
+    world.handleMenuAction(bob.player, { type: 'menu_action', action: 'open', screen: 'trade' });
+    const incoming = lastOf<ServerMenuMessage>(bob.sink, 'menu')?.tradeIncoming?.[0]?.requestId;
+    expect(incoming).toBeTruthy();
+    world.handleMenuAction(bob.player, { type: 'menu_action', action: 'trade_accept', requestId: incoming });
+    world.handleTradeAction(ada.player, { type: 'trade_action', action: 'ready' });
+    world.handleTradeAction(bob.player, { type: 'trade_action', action: 'ready' });
+    expect(lastOf<ServerTradeMessage>(ada.sink, 'trade')?.bothReady).toBe(true);
+    world.handleTradeAction(ada.player, { type: 'trade_action', action: 'set_money', money: 40 });
+    world.handleTradeAction(bob.player, { type: 'trade_action', action: 'set_money', money: 70 });
+    const adaTrade = lastOf<ServerTradeMessage>(ada.sink, 'trade');
+    const bobTrade = lastOf<ServerTradeMessage>(bob.sink, 'trade');
+    expect(adaTrade?.money).toBe(40);
+    expect(adaTrade?.moneyText).toBe('40');
+    expect(adaTrade?.partnerMoney).toBe(70);
+    expect(adaTrade?.partnerMoneyText).toBe('70');
+    expect(bobTrade?.money).toBe(70);
+    expect(bobTrade?.moneyText).toBe('70');
+    expect(bobTrade?.partnerMoney).toBe(40);
+    expect(bobTrade?.partnerMoneyText).toBe('40');
+    expect(adaTrade?.selfReady).toBe(false);
+    expect(adaTrade?.partnerReady).toBe(false);
+    expect(bobTrade?.selfReady).toBe(false);
+    expect(bobTrade?.bothReady).toBe(false);
   });
 });

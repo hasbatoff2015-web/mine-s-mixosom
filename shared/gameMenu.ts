@@ -2,13 +2,13 @@ export const GAME_MENU_MAX_CLAIMS = 4;
 export const CLAIM_MAX_OWNED = GAME_MENU_MAX_CLAIMS;
 
 export const GAME_MENU_BUTTONS = [
-  { id: 'spawn', label: 'Спавн' },
-  { id: 'homes', label: 'Дома' },
-  { id: 'friends', label: 'Друзья' },
-  { id: 'clans', label: 'Кланы' },
-  { id: 'claims', label: 'Приваты' },
-  { id: 'trade', label: 'Обмен' },
-  { id: 'auction', label: 'Аукцион' },
+  { id: 'spawn', label: 'Спавн', icon: 'icon_spawn.png' },
+  { id: 'homes', label: 'Дома', icon: 'icon_homes.png' },
+  { id: 'friends', label: 'Друзья', icon: 'icon_friends.png' },
+  { id: 'clans', label: 'Кланы', icon: 'icon_clans.png' },
+  { id: 'claims', label: 'Приваты', icon: 'icon_claims.png' },
+  { id: 'trade', label: 'Обмен', icon: 'icon_trade.png' },
+  { id: 'auction', label: 'Аукцион', icon: 'icon_auction.png' },
 ] as const;
 
 export type GameMenuButtonId = (typeof GAME_MENU_BUTTONS)[number]['id'];
