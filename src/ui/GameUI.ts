@@ -83,7 +83,7 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import { hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
+import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
@@ -353,16 +353,16 @@ export class GameUI {
         <div id="selected-item"></div>
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
-        <div id="chat" data-chat-anchor="top-left" data-chat-open-width="viewport">
+        <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
           <div id="chat-main">
             <div id="chat-compose">
               <form id="chat-form" autocomplete="off">
                 <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
               </form>
               <div id="chat-tabs" role="tablist" aria-label="Каналы чата">
-                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active">Общий</button>
-                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false">Рядом</button>
-                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false">Клан</button>
+                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active"><span class="chat-sr">Общий</span></button>
+                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false"><span class="chat-sr">Рядом</span></button>
+                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false"><span class="chat-sr">Клан</span></button>
               </div>
             </div>
             <div id="chat-log" aria-live="polite">
@@ -373,32 +373,15 @@ export class GameUI {
           </div>
           <aside id="chat-side" aria-label="Действия чата">
             <button type="submit" form="chat-form" id="chat-send" aria-label="Отправить сообщение">
-              <span class="chat-btn-glyph" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M5 12h14"/>
-                  <path d="M13 6l6 6-6 6"/>
-                </svg>
-              </span>
-              <span class="chat-btn-hotkey">ENTER</span>
+              <span class="chat-sr">ENTER</span>
             </button>
             <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат (Tab)">
-              <span class="chat-btn-glyph chat-close-x" aria-hidden="true">X</span>
-              <span class="chat-btn-hotkey">TAB</span>
+              <span class="chat-sr chat-close-x">X</span>
+              <span class="chat-sr">TAB</span>
             </button>
             <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
-              <span class="chat-vis-on" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                </svg>
-              </span>
-              <span class="chat-vis-off" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                  <path d="M5 19 L19 5" stroke-width="2.4"/>
-                </svg>
-              </span>
-              <span class="chat-btn-hotkey chat-vis-caption-on">CHAT ON</span>
-              <span class="chat-btn-hotkey chat-vis-caption-off">CHAT OFF</span>
+              <span class="chat-sr chat-vis-on chat-vis-caption-on">CHAT ON</span>
+              <span class="chat-sr chat-vis-off chat-vis-caption-off">CHAT OFF</span>
             </button>
           </aside>
         </div>

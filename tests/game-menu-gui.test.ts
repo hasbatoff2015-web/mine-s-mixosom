@@ -92,9 +92,13 @@ describe('main menu HUD and chrome', () => {
     expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, 176)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('Баланс: 100 монет');
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin');
+    expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin-wrap');
     expect(cssRule('.mc-menu-coin')).toContain('object-fit: contain;');
-    expect(cssRule('.mc-menu-coin')).toContain('width: calc(12px * var(--mc-ui-scale, 3));');
-    expect(cssRule('.mc-menu-coin')).toContain('height: calc(12px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-coin')).toContain('image-rendering: auto;');
+    expect(cssRule('.mc-menu-coin-wrap')).toContain('width: calc(16px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-coin-wrap')).toContain('height: calc(16px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-coin-wrap')).toContain('flex-shrink: 0;');
+    expect(cssRule('.mc-menu-coin')).toContain('max-width: 100%;');
     expect(cssRule('.mc-menu-balance')).toContain('align-items: center;');
     expect(cssRule('.mc-menu-balance')).toContain('overflow: visible;');
     for (const file of [

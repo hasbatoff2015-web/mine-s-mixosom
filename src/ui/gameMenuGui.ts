@@ -25,19 +25,34 @@ const HUD_SPRITE_FILES = {
   '--hud-menu-pressed-img': 'menu_pressed.png',
 } as const;
 
+const CHAT_SPRITE_FILES = {
+  '--chat-tab-global': 'tab_global.png',
+  '--chat-tab-nearby': 'tab_nearby.png',
+  '--chat-tab-clan': 'tab_clan.png',
+  '--chat-close-img': 'close.png',
+  '--chat-enter-img': 'enter.png',
+  '--chat-on-img': 'on.png',
+  '--chat-off-img': 'off.png',
+} as const;
+
 export function menuAssetUrl(file: string): string {
   const base = import.meta.env.BASE_URL ?? './';
   return `${base}ui/menu/${file}`;
 }
 
-function spriteStyle(files: Record<string, string>): string {
+export function chatAssetUrl(file: string): string {
+  const base = import.meta.env.BASE_URL ?? './';
+  return `${base}ui/chat/${file}`;
+}
+
+function spriteStyle(files: Record<string, string>, urlFor: (file: string) => string): string {
   return Object.entries(files)
-    .map(([name, file]) => `${name}:url('${menuAssetUrl(file)}')`)
+    .map(([name, file]) => `${name}:url('${urlFor(file)}')`)
     .join(';');
 }
 
 export function menuChromeStyle(): string {
-  return spriteStyle(MENU_SPRITE_FILES);
+  return spriteStyle(MENU_SPRITE_FILES, menuAssetUrl);
 }
 
 export function overlayStageStyle(scale: number, logicalWidth: number): string {
@@ -45,7 +60,11 @@ export function overlayStageStyle(scale: number, logicalWidth: number): string {
 }
 
 export function hudChromeStyle(): string {
-  return spriteStyle(HUD_SPRITE_FILES);
+  return spriteStyle(HUD_SPRITE_FILES, menuAssetUrl);
+}
+
+export function chatChromeStyle(): string {
+  return spriteStyle(CHAT_SPRITE_FILES, chatAssetUrl);
 }
 
 export function menuBackHtml(screen: ServerMenuMessage['screen']): string {
@@ -56,7 +75,9 @@ export function menuBackHtml(screen: ServerMenuMessage['screen']): string {
 export function menuBalanceHtml(state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel'>): string {
   const amount = state?.balanceLabel ?? formatMegacoinAmount(state?.balance ?? 0);
   return `<div class="mc-menu-balance">
-    <img class="mc-menu-coin" src="${menuAssetUrl('icon_coin.png')}" alt="" draggable="false" />
+    <span class="mc-menu-coin-wrap">
+      <img class="mc-menu-coin" src="${menuAssetUrl('icon_coin.png')}" alt="" draggable="false" />
+    </span>
     <span>Баланс: ${escapeMenu(amount)} монет</span>
   </div>`;
 }

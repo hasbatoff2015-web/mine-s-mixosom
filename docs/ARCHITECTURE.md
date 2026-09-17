@@ -1,10 +1,14 @@
 # Архитектура
 
+## Menu coin asset + chat PNG sprites — 2026-09-17
+
+Main Menu coin is the attached disc at `public/ui/menu/icon_coin.png`, shown in `.mc-menu-coin-wrap` with `object-fit: contain` (balance copy unchanged). Open-chat tabs and side controls are PNG faces from `public/ui/chat/` via `chatChromeStyle()`; IDs, channels, and `handleChat` are unchanged. Inactive tabs are dimmed; `.active` is full brightness.
+
 ## Trade coins / chat chrome / homes 3 — 2026-09-17
 
 `buildTradeMessage` still reads `session.offers[playerId]` and `session.offers[partnerId]` on the server. The snapshot now includes partner `partnerMoney` / `partnerMoneyText` from that offer (never from the client). `set_money` is unchanged: integer, ≥0, ≤ live `EconomyService` balance, and `mutateOffer` still clears Ready. Trade GUI renders a self input plus a read-only partner caption `Монет: N`.
 
-Ordinary home cap is `HOME_MAX_DEFAULT` in `shared/homes.ts` (3). The home plugin `loadConfig`, `maxHomesFor`, `WorldInstance.maxHomesFor`, and the homes GUI fallback all read that constant (VIP/premium stay `HOME_MAX_VIP` / `HOME_MAX_PREMIUM`). Open `#chat-log` stays `background: transparent`; `.chat-line` chips keep their fill. Chat Enter/close/visibility buttons use `--mc-btn-hover` / `--mc-btn-pressed`.
+Ordinary home cap is `HOME_MAX_DEFAULT` in `shared/homes.ts` (3). The home plugin `loadConfig`, `maxHomesFor`, `WorldInstance.maxHomesFor`, and the homes GUI fallback all read that constant (VIP/premium stay `HOME_MAX_VIP` / `HOME_MAX_PREMIUM`). Open `#chat-log` stays `background: transparent`; `.chat-line` chips keep their fill. Chat tabs and side controls are PNG faces from `public/ui/chat/` wired by `chatChromeStyle()` (`background-size: contain`, native `aspect-ratio`). Inactive tabs use `filter: brightness(0.72)`; `.active` is unfiltered. Main Menu coin is `public/ui/menu/icon_coin.png` inside `.mc-menu-coin-wrap` with `object-fit: contain`.
 
 ## Unified in-game UI chrome — 2026-09-16
 
@@ -26,7 +30,7 @@ Routing is `WorldInstance.handleChat`:
 
 Each recipient gets one network event (`messageId`). The General tab shows every received player line plus system/command/error/death. Nearby and Clan tabs filter by `channel`. Markers: none for global, yellow `::before` for nearby, purple for clan. Format is `player: text` (no `<>`). History is client-side from connection, about 40 lines per tab (`CHAT_TAB_HISTORY_LIMIT`), store cap still `MAX_CHAT_MESSAGES = 200`. Display can be toggled without dropping the log or blocking send.
 
-`#chat` is **top-left** (`top: 0` / `left: 0` + `bottom: auto`). Open chat stretches **full HUD width** (`right: 0`, `width: auto`, no `--chat-open-width` cap); closed stays `width: fit-content` so it is not a full-screen empty frame. Open log height is `--chat-open-log-height` (same value for `height`/`min-height`/`max-height`). Message area background is **transparent**; line chips keep their own fill. Native scrollbar is hidden (`scrollbar-width: none`); wheel and `touch-action: pan-y` still scroll. Side column sits on the right edge: large ENTER / red X + TAB / CHAT ON|OFF.
+`#chat` is **top-left** (`top: 0` / `left: 0` + `bottom: auto`). Open chat stretches **full HUD width** (`right: 0`, `width: auto`, no `--chat-open-width` cap); closed stays `width: fit-content` so it is not a full-screen empty frame. Open log height is `--chat-open-log-height` (same value for `height`/`min-height`/`max-height`). Message area background is **transparent**; line chips keep their own fill. Native scrollbar is hidden (`scrollbar-width: none`); wheel and `touch-action: pan-y` still scroll. Side column sits on the right edge with authored PNG faces: Enter / close (X+E) / Chat ON|OFF. Channel tabs Общий / Рядом / Клан are the same sprite sheet. Visible labels stay in `.chat-sr` for a11y; hotkeys T / Enter / TAB / X are unchanged.
 
 **T** / **`/`** still open chat and release pointer lock. Enter keeps the overlay open. Tab and the X button call the existing `onChatCancel` close path.
 
