@@ -814,6 +814,10 @@ export interface ServerWhMarksMessage {
 
 export interface ServerTotemActivateMessage {
   readonly type: 'totem_activate';
+  readonly playerId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
 }
 
 export interface ServerEntitySnapshotMessage {
@@ -1939,7 +1943,19 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       }
       return { type: 'wh_marks', targetIds: raw.targetIds as string[] };
     }
-    case 'totem_activate': return { type: 'totem_activate' };
+    case 'totem_activate': {
+      if (typeof raw.playerId !== 'string' || raw.playerId.length === 0 || raw.playerId.length > 128
+        || !finite(raw.x) || !finite(raw.y) || !finite(raw.z)) {
+        return { error: 'totem_activate invalid' };
+      }
+      return {
+        type: 'totem_activate',
+        playerId: raw.playerId,
+        x: raw.x,
+        y: raw.y,
+        z: raw.z,
+      };
+    }
     case 'entity_event': {
       if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.events)) {
         return { error: 'entity_event invalid' };

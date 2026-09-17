@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-18 Bed occupancy / Totem particles / utility icons
+
+Focused:
+
+```text
+npx vitest run tests/totem-burst.test.ts tests/item-icon-utility.test.ts tests/server/utility-items-authority.test.ts tests/utility-items.test.ts tests/special-block-items.test.ts tests/special-preview-contract.test.ts --maxWorkers=2 --silent
+```
+
+**6 files / 81 tests PASS** (`totem-burst` 3, `item-icon-utility` 5, `utility-items-authority` 18 включая occupancy A–E и nearby `totem_activate`, `utility-items` 39, `special-block-items` 12, `special-preview-contract` 4). `npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.39 MiB / 368 files**. Full `npm test` на этой ветке ранее имел известные host baseline failures (timeouts, CRLF chat-layout, tick-load-flight); полный suite в этом проходе не запускался и не считается green. Live two-client occupancy/Totem/icon QA не выполнялся. Подробности: `docs/reports/2026-09-18_utility-bed-occupancy-totem-particles-icons.md`.
+
 ## 2026-09-14 Utility Items live QA fixes
 
 Профильный прогон: `npx vitest run tests/utility-items.test.ts tests/server/utility-items-authority.test.ts tests/player-nameplate.test.ts tests/network-entity-visual-events.test.ts tests/special-block-items.test.ts tests/world-generation.test.ts tests/item-rendering.test.ts tests/entities.test.ts --maxWorkers=2 --silent` — **8 files / 106 tests PASS**. Отдельно `tests/audio-sfx.test.ts` — **20/20 PASS**. Проверены четыре направления Bed mesh, реальный детерминированный берег Cane, collision Firework, 6 WH-линий после Classic/Slim, impact direction сетевой стрелы, Firework interpolation buffer.

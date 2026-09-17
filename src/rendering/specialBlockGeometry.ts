@@ -72,6 +72,20 @@ export function bedVisualParts(part: 'head' | 'foot'): readonly BedVisualPart[] 
   ];
 }
 
+/** Full two-cell bed for inventory/held preview, centered on the origin. */
+export function bedItemVisualParts(): readonly BedVisualPart[] {
+  return [
+    ...bedVisualParts('head').map((part) => ({
+      ...part,
+      center: [part.center[0], part.center[1], part.center[2] - 0.5] as const,
+    })),
+    ...bedVisualParts('foot').map((part) => ({
+      ...part,
+      center: [part.center[0], part.center[1], part.center[2] + 0.5] as const,
+    })),
+  ];
+}
+
 export interface SignVisualPart {
   readonly texture: typeof SIGN_SHEET_KEY;
   readonly center: readonly [number, number, number];
@@ -158,6 +172,7 @@ export {
   CROSS_BOX,
   COBWEB_BOX,
   DOOR_THICKNESS,
+  FARMLAND_BOX,
   FIRE_BOX,
   FULL_BLOCK,
   LADDER_DEPTH,

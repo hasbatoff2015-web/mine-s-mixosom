@@ -40,6 +40,7 @@ import { VoxelWorld } from '../src/world/World';
 import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
+import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
@@ -541,6 +542,7 @@ export class WorldInstance {
         if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
       }
     });
+    this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
@@ -2594,8 +2596,16 @@ export class WorldInstance {
       if (player.totemActivated) {
         this.gameplay.whMarks.clearTarget(player.id);
         const position = player.controller.position;
-        this.gameplay.emitWorldSound('totem.activate', position.x, position.y + 1, position.z);
-        if (player.connected) this.sendTo(player, { type: 'totem_activate' });
+        const x = position.x;
+        const y = position.y + 1;
+        const z = position.z;
+        this.gameplay.emitWorldSound('totem.activate', x, y, z);
+        const packet = { type: 'totem_activate' as const, playerId: player.id, x, y, z };
+        for (const listener of this.connectedPlayers()) {
+          if (listenerHearsWorldSound(listener.controller.position, packet, TOTEM_PRESENTATION_DISTANCE)) {
+            this.sendTo(listener, packet);
+          }
+        }
         player.totemActivated = false;
       }
       if (!player.connected || player.survival.dead) this.gameplay.whMarks.clearPlayer(player.id);

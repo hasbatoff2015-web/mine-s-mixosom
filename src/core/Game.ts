@@ -346,6 +346,7 @@ import { bedExitPosition, bedRestCameraPosition, bedRestPosition, clearBedBlocks
 import { fillBucketWithMilk } from '../items/bucketInteraction';
 import { FireworkManager, fireworkFlight } from '../entities/FireworkManager';
 import { FireworkVisuals } from '../rendering/FireworkVisuals';
+import { TotemParticles } from '../rendering/TotemParticles';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
@@ -383,6 +384,7 @@ export interface GameSession {
   arrows: PlayerArrowManager;
   fireworks: FireworkManager;
   fireworkVisuals: FireworkVisuals;
+  totemParticles: TotemParticles;
   minecarts: MinecartManager;
   entityHost: ThreeEntityHost;
   ridingCartId?: string;
@@ -1257,9 +1259,12 @@ export class Game {
         for (const [id, view] of session.online.remotes) view.setWhMarked(marked.has(id));
         return;
       }
-      case 'totem_activate':
-        this.ui.playTotemActivation();
+      case 'totem_activate': {
+        const local = session.online?.playerId === message.playerId;
+        session.totemParticles.burst(message.x, message.y, message.z, { firstPerson: local });
+        if (local) this.ui.playTotemActivation();
         return;
+      }
       case 'sign_data':
         session.world.setSignText(message.x, message.y, message.z,
           message.lines as [string, string, string, string]);
@@ -1952,6 +1957,9 @@ export class Game {
         };
       }
       return;
+    }
+    if (message.kind === 'block_use' && !message.ok && message.reason === 'occupied') {
+      this.ui.toast('Кровать занята');
     }
     if (message.kind === 'block_use' && !message.ok
       && online.localFoodUse?.actionSeq === message.actionSeq) {
@@ -2926,6 +2934,15 @@ export class Game {
       if (!consumeOffhandTotem(inventory)) return false;
       this.ui.playTotemActivation();
       this.playLocal('totem.activate');
+      const actor = this.session?.player;
+      if (actor) {
+        this.session?.totemParticles.burst(
+          actor.position.x,
+          actor.position.y + 1,
+          actor.position.z,
+          { firstPerson: true },
+        );
+      }
       return true;
     });
     const mobs = new MobManager(entityHost, world, {
@@ -2967,6 +2984,8 @@ export class Game {
     const fireworks = new FireworkManager(world);
     const fireworkVisuals = new FireworkVisuals();
     this.scene.add(fireworkVisuals.group);
+    const totemParticles = new TotemParticles();
+    this.scene.add(totemParticles.group);
     const playerVisual = new PlayerVisual(
       this.playerSkins,
       this.playerSkinGeometries,
@@ -3000,6 +3019,7 @@ export class Game {
       arrows,
       fireworks,
       fireworkVisuals,
+      totemParticles,
       minecarts,
       entityHost,
       redstone,
@@ -4036,6 +4056,7 @@ export class Game {
         this.session.online?.interpolator,
         performance.now(),
       );
+      this.session.totemParticles.update(rawElapsed);
       updateSharedFireAnimation(rawElapsed);
       this.session.mobs.advanceDeathVisuals(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
@@ -5927,6 +5948,7 @@ export class Game {
     this.session.playerVisual?.dispose();
     this.session.arrows.dispose();
     this.session.fireworkVisuals.dispose();
+    this.session.totemParticles.dispose();
     this.session.fireworks.clear();
     this.session.minecarts.dispose();
     this.session.mobs.dispose();

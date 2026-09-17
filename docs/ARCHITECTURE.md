@@ -1,5 +1,13 @@
 # Архитектура
 
+## Bed occupancy / Totem particles / utility icons — 2026-09-18
+
+Occupancy кровати не хранится отдельным `Map`. `resolveBedRest` по-прежнему сводит HEAD+FOOT к одной `BedRestState`. Перед записью `player.restingBed` сервер смотрит `listPlayers()` и `findBedOccupant` (другой connected/alive player с тем же HEAD xyz). Intents обрабатываются последовательно, поэтому второй use в том же tick видит occupancy первого. Reject идёт через существующий `useHeld` → `action_result` `occupied`; клиент не включает resting prediction. Ghost occupancy нет: disconnect сразу чистит `restingBed`, death/respawn/broken bed/teleport уже чистили.
+
+`totem_activate` — presentation event с `playerId,x,y,z`. После consume offhand Totem `WorldInstance` шлёт его nearby клиентам в `TOTEM_PRESENTATION_DISTANCE` (32), отдельно от `world_sound`. Owner играет HUD, все получатели вызывают `TotemParticles.burst` из позиции события. Симуляция частиц Node-safe в `src/gameplay/totemBurst.ts`; рендер — один `Points` + vertexColors, cap 4 burst. Не зависит от AudioManager и FireworkVisuals.
+
+Иконки остаются per-item descriptor: bed/farmland → `special_preview` через `createItemModel`; door/sugar_cane → item sprite `item/oak_door` и `item/sugar_cane`. Глобальный UV hack не добавлялся.
+
 ## Utility Items final polish — 2026-09-15
 
 `effectiveCameraPerspective(preferred, resting)` в `ThirdPersonCamera` вычисляет только текущий render mode. `Game.updateFirstPerson` до `render()` и `Game.updatePlayerPresentation` внутри `render()` читают тот же `session.restingBed`: при rest hands/viewmodel выключены, local `PlayerVisual` включён, camera travel использует `thirdPersonBack`. `Game.cycleCameraPerspective` игнорирует F5 при rest, поэтому stored `cameraPerspective` остаётся прежним и сразу возвращается после выхода. `formatLocalAimDebug` также показывает эффективный вид. Bed anchor, pose rig, prediction, server state и camera pivot не меняются.

@@ -8,7 +8,7 @@ import { BlockId } from '../../src/blocks';
 import { bedRestPosition, isBedRestValid, resolveBedRest } from '../../src/world/bed';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
-import { WorldInstance } from '../../server/WorldInstance';
+import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
 
 class MemorySink {
   readonly payloads: Array<{ type?: string; [key: string]: unknown }> = [];
@@ -137,6 +137,95 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     world.tick();
     expect(a.player.appliedCommandSeq).toBe(2);
     expect(a.player.controller.position.distanceTo(exited)).toBeGreaterThan(0);
+  });
+
+  function placeBed(world: WorldInstance, headX: number, headZ: number, footZ = headZ + 1) {
+    for (let x = headX - 1; x <= headX + 1; x += 1) for (let z = Math.min(headZ, footZ) - 1; z <= Math.max(headZ, footZ) + 2; z += 1) {
+      world.world.setBlock(x, 89, z, BlockId.Stone);
+      for (let y = 90; y <= 93; y += 1) world.world.setBlock(x, y, z, BlockId.Air);
+    }
+    world.world.setBlock(headX, 90, footZ, BlockId.WhiteBed);
+    world.world.setBlockState(headX, 90, footZ, { bedPart: 'foot', facing: 'north' });
+    world.world.setBlock(headX, 90, headZ, BlockId.WhiteBed);
+    world.world.setBlockState(headX, 90, headZ, { bedPart: 'head', facing: 'north' });
+  }
+
+  function useBedCell(world: WorldInstance, player: ServerPlayer, x: number, z: number) {
+    const part = world.world.getBlockState(x, 90, z)?.bedPart;
+    if (part === 'head') {
+      player.controller.teleport([x + 0.5, 90.01, z - 2.5]);
+      player.controller.yaw = Math.PI;
+    } else {
+      player.controller.teleport([x + 0.5, 90.01, z + 2.5]);
+      player.controller.yaw = 0;
+    }
+    player.controller.pitch = -0.5;
+    return world.interact(player);
+  }
+
+  it('rejects a second player on the same canonical bed whether they click head or foot', async () => {
+    const { world, add } = await boot();
+    const a = add('A');
+    const b = add('B');
+    placeBed(world, 8, 8, 9);
+    expect(useBedCell(world, a.player, 8, 8)).toEqual({ ok: true });
+    expect(a.player.restingBed).toMatchObject({ x: 8, y: 90, z: 8 });
+    expect(useBedCell(world, b.player, 8, 9)).toEqual({ ok: false, reason: 'occupied' });
+    expect(b.player.restingBed).toBeUndefined();
+    expect(useBedCell(world, b.player, 8, 8)).toEqual({ ok: false, reason: 'occupied' });
+    expect(b.player.restingBed).toBeUndefined();
+    expect(a.player.restingBed).toMatchObject({ x: 8, z: 8 });
+  });
+
+  it('lets the second player rest after the occupant exits', async () => {
+    const { world, add } = await boot();
+    const a = add('A');
+    const b = add('B');
+    placeBed(world, 8, 8, 9);
+    expect(useBedCell(world, a.player, 8, 8)).toEqual({ ok: true });
+    world.applyInput(a.player, {
+      type: 'input', seq: 1, forward: 0, right: 0, jump: true, sneak: false, sprint: false,
+      descend: false, flySprint: false, yaw: 0, pitch: -0.5, selectedSlot: 0,
+    });
+    world.tick();
+    expect(a.player.restingBed).toBeUndefined();
+    expect(useBedCell(world, b.player, 8, 9)).toEqual({ ok: true });
+    expect(b.player.restingBed).toMatchObject({ x: 8, y: 90, z: 8 });
+  });
+
+  it('frees the bed when the occupant disconnects', async () => {
+    const { world, add } = await boot();
+    const a = add('A');
+    const b = add('B');
+    placeBed(world, 8, 8, 9);
+    expect(useBedCell(world, a.player, 8, 8)).toEqual({ ok: true });
+    world.disconnect(a.player.id);
+    expect(a.player.restingBed).toBeUndefined();
+    expect(useBedCell(world, b.player, 8, 8)).toEqual({ ok: true });
+    expect(b.player.restingBed).toMatchObject({ x: 8, z: 8 });
+  });
+
+  it('occupies the same bed when A uses the foot and B uses the head', async () => {
+    const { world, add } = await boot();
+    const a = add('A');
+    const b = add('B');
+    placeBed(world, 8, 8, 9);
+    expect(useBedCell(world, a.player, 8, 9)).toEqual({ ok: true });
+    expect(a.player.restingBed).toMatchObject({ x: 8, z: 8 });
+    expect(useBedCell(world, b.player, 8, 8)).toEqual({ ok: false, reason: 'occupied' });
+    expect(b.player.restingBed).toBeUndefined();
+  });
+
+  it('allows two players to rest on two different beds', async () => {
+    const { world, add } = await boot();
+    const a = add('A');
+    const b = add('B');
+    placeBed(world, 8, 8, 9);
+    placeBed(world, 12, 8, 9);
+    expect(useBedCell(world, a.player, 8, 8)).toEqual({ ok: true });
+    expect(useBedCell(world, b.player, 12, 8)).toEqual({ ok: true });
+    expect(a.player.restingBed).toMatchObject({ x: 8, z: 8 });
+    expect(b.player.restingBed).toMatchObject({ x: 12, z: 8 });
   });
 
   it.each(['head', 'foot'] as const)('invalidates rest when the %s half is broken', async (broken) => {
@@ -277,7 +366,13 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(a.player.survival.health).toBe(1);
     expect(a.player.survival.dead).toBe(false);
     world.tick();
-    expect(a.sink.last('totem_activate')).toEqual({ type: 'totem_activate' });
+    expect(a.sink.last('totem_activate')).toMatchObject({
+      type: 'totem_activate',
+      playerId: a.player.id,
+      x: a.player.controller.position.x,
+      y: a.player.controller.position.y + 1,
+      z: a.player.controller.position.z,
+    });
     expect(world.gameplay.whMarks.forViewer(b.player.id, world.tickNumber)).toEqual([]);
     expect(deaths).toEqual([]);
   });
@@ -308,12 +403,21 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(totemCues(protectedPlayer.sink)).toHaveLength(1);
     expect(totemCues(observer.sink)).toHaveLength(1);
     expect(totemCues(distant.sink)).toHaveLength(0);
-    expect(protectedPlayer.sink.payloads.filter((payload) => payload.type === 'totem_activate')).toHaveLength(1);
+    const activation = {
+      type: 'totem_activate',
+      playerId: protectedPlayer.player.id,
+      x: protectedPlayer.player.controller.position.x,
+      y: protectedPlayer.player.controller.position.y + 1,
+      z: protectedPlayer.player.controller.position.z,
+    };
+    expect(protectedPlayer.sink.payloads.filter((payload) => payload.type === 'totem_activate')).toEqual([activation]);
+    expect(observer.sink.payloads.filter((payload) => payload.type === 'totem_activate')).toEqual([activation]);
+    expect(distant.sink.payloads.filter((payload) => payload.type === 'totem_activate')).toEqual([]);
     expect(protectedPlayer.player.presentation().offhandItemId).toBeNull();
   });
 
   it('uses an offhand Totem but never one selected in the main hand', async () => {
-    const { add } = await boot();
+    const { world, add } = await boot();
     const a = add('Offhand');
     a.player.inventory.clear();
     a.player.inventory.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
@@ -326,5 +430,9 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     b.player.selectedSlot = 1;
     expect(b.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).killed).toBe(true);
     expect(b.player.inventory.getSlot(1)?.itemId).toBe(ItemId.TotemOfUndying);
+    world.tick();
+    expect(b.sink.payloads.filter((payload) => (
+      payload.type === 'totem_activate' && payload.playerId === b.player.id
+    ))).toHaveLength(0);
   });
 });

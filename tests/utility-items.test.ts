@@ -12,7 +12,7 @@ import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager
 import { FarmingSystem } from '../src/farming';
 import { WhMarks } from '../src/combat/WhMarks';
 import { SurvivalSystem } from '../src/survival/SurvivalSystem';
-import { bedExitPosition, bedHeadCell, bedRestCameraPosition, bedRestPosition, clearBedBlocks, isBedRestValid, resolveBedRest } from '../src/world/bed';
+import { bedExitPosition, bedHeadCell, bedRestCameraPosition, bedRestPosition, clearBedBlocks, findBedOccupant, isBedRestValid, isSameBed, resolveBedRest } from '../src/world/bed';
 import { canSugarCaneStandAt } from '../src/world/placement';
 import { sanitizeSignLines } from '../src/world/sign';
 import { VoxelWorld } from '../src/world/World';
@@ -20,7 +20,7 @@ import { Chunk } from '../src/world/Chunk';
 import { TerrainGenerator } from '../src/world/Generator';
 import { SEA_LEVEL } from '../src/core/constants';
 import { bedVisualParts } from '../src/rendering/specialBlockGeometry';
-import { parseClientMessage } from '../shared/protocol';
+import { parseClientMessage, parseServerMessage } from '../shared/protocol';
 
 function placement(block: BlockId, yaw = 0) {
   const world = new VoxelWorld('utility-placement');
@@ -156,6 +156,24 @@ describe('decorative blocks', () => {
     expect(bedExitPosition(world, rest)).not.toEqual([exitX, exitY, exitZ]);
     world.setBlock(head.x, head.y, head.z, BlockId.Air);
     expect(isBedRestValid(world, rest)).toBe(false);
+  });
+
+  it('treats head and foot of one bed as the same occupancy identity', () => {
+    const world = new VoxelWorld('bed-same');
+    world.setBlock(8, 90, 9, BlockId.WhiteBed);
+    world.setBlockState(8, 90, 9, { bedPart: 'foot', facing: 'north' });
+    world.setBlock(8, 90, 8, BlockId.WhiteBed);
+    world.setBlockState(8, 90, 8, { bedPart: 'head', facing: 'north' });
+    const fromFoot = resolveBedRest(world, 8, 90, 9)!;
+    const fromHead = resolveBedRest(world, 8, 90, 8)!;
+    expect(fromFoot).toEqual(fromHead);
+    expect(isSameBed(fromFoot, fromHead)).toBe(true);
+    expect(isSameBed(fromFoot, { x: 12, y: 90, z: 8 })).toBe(false);
+    const occupant = { id: 'a', connected: true, restingBed: fromHead };
+    expect(findBedOccupant([occupant], fromFoot, 'b')?.id).toBe('a');
+    expect(findBedOccupant([occupant], fromFoot, 'a')).toBeUndefined();
+    expect(findBedOccupant([{ ...occupant, connected: false }], fromFoot, 'b')).toBeUndefined();
+    expect(findBedOccupant([{ ...occupant, survival: { dead: true } }], fromFoot, 'b')).toBeUndefined();
   });
   it('unwraps connected bed halves, end caps, underside, and four sheet-textured legs', () => {
     const foot = bedVisualParts('foot');
@@ -426,6 +444,13 @@ describe('milk, rockets, WH marks and totem', () => {
     expect(protectedPlayer.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
     expect(both.offhand).toBeNull();
     expect(both.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
+  });
+
+  it('parses authoritative Totem presentation with player id and position', () => {
+    expect(parseServerMessage({
+      type: 'totem_activate', playerId: 'p1', x: 1.5, y: 71, z: 2.5,
+    })).toEqual({ type: 'totem_activate', playerId: 'p1', x: 1.5, y: 71, z: 2.5 });
+    expect(parseServerMessage({ type: 'totem_activate' })).toEqual({ error: 'totem_activate invalid' });
   });
 
   it('keeps fire resistance through serialization and resumes fire damage after expiry', () => {

@@ -69,7 +69,7 @@ import { getTntProfile } from '../src/world/tnt';
 import { volumeContains, type SelectionVolume } from './services/selection';
 import { isFluidBlock } from '../src/world/fluids';
 import type { VoxelHit, VoxelWorld } from '../src/world/World';
-import { bedRestPosition, clearBedBlocks, resolveBedRest, type BedRestState } from '../src/world/bed';
+import { bedRestPosition, clearBedBlocks, findBedOccupant, resolveBedRest, type BedRestState } from '../src/world/bed';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent, WorldSoundEvent } from '../shared/protocol';
 import type { BlockTargetIntent, CombatActionDiagnostics } from '../shared/playerActions';
@@ -197,7 +197,10 @@ export class ServerGameplay {
   readonly random = systemRandomFn;
   /** Regular /claim volumes; block-claims are filtered by TNT profile instead. */
   loadRegularClaimVolumes?: () => readonly SelectionVolume[];
+  /** Live authoritative players; occupancy is derived from `restingBed`. */
+  listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
+  private pendingUseReject: string | undefined;
   maxTickMs = 0;
   private readonly blockDelta = new Map<string, { x: number; y: number; z: number; blockId: number }>();
   private activePressurePlates = new Set<string>();
@@ -770,6 +773,7 @@ export class ServerGameplay {
     selectedSlot = player.selectedSlot,
     boundaryCommandConfirmsUse = false,
   ): { ok: true } | { ok: false; reason: string } {
+    this.pendingUseReject = undefined;
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     let hit: VoxelHit | undefined;
     if (intent) {
@@ -835,6 +839,11 @@ export class ServerGameplay {
     }
     if (player.bowUseTicks > 0 && beforeBow === 0) {
       bowDebug(player.id, 'server_press', `charge=${player.bowUseTicks}`);
+    }
+    if (this.pendingUseReject) {
+      const reason = this.pendingUseReject;
+      this.pendingUseReject = undefined;
+      return { ok: false, reason };
     }
     return { ok: true };
   }
@@ -928,6 +937,10 @@ export class ServerGameplay {
         onBedUsed: (x, y, z) => {
           const rest = resolveBedRest(gameplay.world, x, y, z);
           if (!rest || player.survival.dead || player.ridingCartId) return;
+          if (findBedOccupant(gameplay.listPlayers?.() ?? [], rest, player.id)) {
+            gameplay.pendingUseReject = 'occupied';
+            return;
+          }
           player.restingBed = rest;
           player.controller.teleport(bedRestPosition(rest));
           player.presentSwing?.();

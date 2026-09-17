@@ -46,6 +46,35 @@ export function resolveBedRest(world: VoxelWorld, x: number, y: number, z: numbe
   return { ...head, facing: state.facing };
 }
 
+/** Canonical identity is the HEAD cell from `resolveBedRest` / `BedRestState`. */
+export function isSameBed(
+  a: Pick<BedRestState, 'x' | 'y' | 'z'>,
+  b: Pick<BedRestState, 'x' | 'y' | 'z'>,
+): boolean {
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
+export interface BedOccupantCandidate {
+  readonly id: string;
+  readonly connected?: boolean;
+  readonly restingBed?: BedRestState;
+  readonly survival?: { readonly dead: boolean };
+}
+
+/** Occupancy is derived from live players' `restingBed`; no second map. */
+export function findBedOccupant<T extends BedOccupantCandidate>(
+  players: Iterable<T>,
+  rest: BedRestState,
+  requesterId: string,
+): T | undefined {
+  for (const player of players) {
+    if (player.id === requesterId || player.connected === false || player.survival?.dead) continue;
+    const occupied = player.restingBed;
+    if (occupied && isSameBed(occupied, rest)) return player;
+  }
+  return undefined;
+}
+
 export function isBedRestValid(world: VoxelWorld, rest: BedRestState): boolean {
   return resolveBedRest(world, rest.x, rest.y, rest.z)?.facing === rest.facing;
 }

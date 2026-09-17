@@ -83,7 +83,7 @@ describe('special item held routing', () => {
     expect(itemHeldMeshKind('stone')).toBe('block_cube');
     expect(itemHeldMeshKind('stone_button')).toBe('special_model');
     expect(itemHeldMeshKind('oak_pressure_plate')).toBe('special_model');
-    expect(generatedHeldTexturePath('oak_door')).toBe('generated/oak_door_item');
+    expect(generatedHeldTexturePath('oak_door')).toBe('item/oak_door');
     expect(generatedHeldTexturePath('lever')).toBe('block/lever');
     expect(generatedHeldTexturePath('ladder')).toBe('block/ladder');
 

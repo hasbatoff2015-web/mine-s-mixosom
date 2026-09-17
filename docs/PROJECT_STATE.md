@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: Bed occupancy / Totem particles / utility icons — 2026-09-18
+
+- Ветка `codex/utility-items-v1` (без merge/rebase `main`): одна физическая кровать занимает не больше одного игрока. Occupancy выводится из `ServerPlayer.restingBed` и канонической HEAD-клетки (`isSameBed` / `findBedOccupant`); отдельной occupancy map нет. Занятая кровать даёт authoritative `action_result` `occupied` и toast «Кровать занята». Disconnect/death/respawn/exit/broken bed по-прежнему снимают `restingBed`.
+- После реальной authoritative Totem activation `totem_activate` несёт `playerId` и позицию и рассылается nearby клиентам (радиус 32, независимо от audio). Owner включает HUD, все получатели спавнят короткий `TotemParticles` burst (~28, 0.55–0.9 с, lime/green/gold). FireworkVisuals и AudioManager не менялись; клиент не предсказывает particles от HP.
+- Иконки: White Bed — 3D `special_preview` из `entity/bed/white`; Oak Door и Sugar Cane — flat `item/oak_door` / `item/sugar_cane` с `preserveAspect`; Farmland — низкий 3D block, top ≠ side, высота 15/16.
+- Гейты: focused occupancy/totem/icon **6 files / 81 tests PASS**; четыре typecheck, boundaries, build, size/archive PASS (**4.39 MiB / 368 files**). Full Vitest на этой ветке не green (известные host timeouts/CRLF/tick-load). Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_utility-bed-occupancy-totem-particles-icons.md`. `main` не менялся.
+
 ## Последний проход: Utility Items final polish — 2026-09-15
 
 - Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая F5-перспектива не переписывается, F5 в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.

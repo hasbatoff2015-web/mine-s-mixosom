@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-18: Bed occupancy / Totem particles / utility icons
+
+- [x] Authoritative one-player-per-bed occupancy from `ServerPlayer.restingBed` and canonical HEAD identity; reject occupied HEAD/FOOT clicks without a second occupancy map.
+- [x] Minecraft-like Totem world particle burst after authoritative activation; broadcast `totem_activate` with playerId/position to owner and nearby clients.
+- [x] Targeted inventory icons: White Bed 3D sheet preview, Oak Door and Sugar Cane item sprites with preserved aspect, Farmland shallow 3D block.
+- [ ] Live two-client QA: occupancy, 10 Totem activations, hotbar/inventory/creative icons.
+
 ## 2026-09-15: Utility Items final polish
 
 - [x] Временно показывать `thirdPersonBack` на каждом resting frame, скрыть first-person руки и показать world-модель, сохранив preference и игнорируя F5 во время сна.

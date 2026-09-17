@@ -134,6 +134,7 @@ const items = {
   firework_rocket: 'fireworks.png', arrow: 'arrow.png', wh_arrow: 'spectral_arrow.png',
   totem_of_undying: 'totem.png', milk_bucket: 'bucket_milk.png',
   sugar_cane: 'reeds.png', oak_sign: 'sign.png',
+  oak_door: 'door_wood.png',
   apple: 'apple.png', bread: 'bread.png', beef: 'beef_raw.png', cooked_beef: 'beef_cooked.png',
   porkchop: 'porkchop_raw.png', cooked_porkchop: 'porkchop_cooked.png',
   chicken: 'chicken_raw.png', cooked_chicken: 'chicken_cooked.png', golden_apple: 'apple_golden.png',
