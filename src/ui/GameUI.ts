@@ -859,22 +859,25 @@ export class GameUI {
 
   showPause(actions: PauseActions): void {
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window pause-window">
-        <header class="menu-heading"><div><span class="eyebrow">Игра на паузе</span><h1>Пауза</h1></div></header>
-        <div class="menu-stack pause-actions">
-          <button class="game-button primary" data-action="resume">Продолжить</button>
-          <button class="game-button" data-action="settings">Настройки</button>
-          <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
+      <section class="screen pause-overlay" data-pause-overlay="world">
+        <div class="menu-card pause-window">
+          <header class="menu-heading"><div><span class="eyebrow">Игра на паузе</span><h1>Пауза</h1></div></header>
+          <div class="menu-stack pause-actions">
+            <button class="game-button primary" data-action="resume">Продолжить</button>
+            <button class="game-button" data-action="settings">Настройки</button>
+            <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
+          </div>
         </div>
-      </div></section>`);
+      </section>`);
     this.bindAction('resume', actions.resume);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
   }
 
-  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void): void {
+  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void, overlayWorld = false): void {
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window settings-window" id="settings-form">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><form class="menu-card menu-window settings-window" id="settings-form">
         <header class="menu-heading"><div><span class="eyebrow">Параметры игры</span><h1>Настройки</h1></div></header>
         <div class="settings-grid">
           ${this.settingRange('Громкость', 'volume', 0, 1, 0.05, this.settings.volume)}
@@ -907,13 +910,14 @@ export class GameUI {
     });
   }
 
-  showControls(onBack: () => void): void {
+  showControls(onBack: () => void, overlayWorld = false): void {
     const sections = DESKTOP_CONTROL_SECTIONS.map((section) => `
       <section class="control-section"><h2>${section.title}</h2><div class="control-list">
         ${section.bindings.map((binding) => `<div class="control-row"><span><strong>${binding.action}</strong>${binding.note ? `<small>${binding.note}</small>` : ''}</span><kbd>${binding.key}</kbd></div>`).join('')}
       </div></section>`).join('');
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window controls-window">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
         <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>

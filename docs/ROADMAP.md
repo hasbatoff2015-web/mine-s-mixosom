@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-17: Pause overlay + larger HUD/chat/pause buttons
+
+- [x] In-game TAB Pause overlays the live world canvas; it does not switch to the Main Menu photo.
+- [x] Chat tab/side sprites, HUD Pause/Chat/Menu, and pause actions are ~2× larger with preserved aspect ratios.
+
 ## 2026-09-17: Menu coin asset + chat PNG sprites
 
 - [x] Main Menu balance coin uses the attached padded PNG and is fully visible next to unchanged «Баланс» copy.

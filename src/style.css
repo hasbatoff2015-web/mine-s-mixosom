@@ -711,7 +711,7 @@ button {
   z-index: 7;
   display: flex;
   flex-direction: column;
-  gap: calc(6px * var(--hud-scale));
+  gap: calc(8px * var(--hud-scale));
   pointer-events: auto;
 }
 
@@ -719,8 +719,9 @@ button {
   box-sizing: border-box;
   position: relative;
   display: block;
-  width: calc(58px * var(--hud-scale));
-  height: calc(58px * var(--hud-scale));
+  width: calc(116px * var(--hud-scale));
+  height: calc(116px * var(--hud-scale));
+  aspect-ratio: 1;
   margin: 0;
   padding: 0;
   border: 0;
@@ -728,7 +729,7 @@ button {
   background-color: #2a2d33;
   background-position: center;
   background-repeat: no-repeat;
-  background-size: 100% 100%;
+  background-size: contain;
   box-shadow: none;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
@@ -1029,7 +1030,7 @@ button {
   image-rendering: auto;
   display: block;
   width: auto;
-  height: calc(52px * var(--hud-scale));
+  height: calc(104px * var(--hud-scale));
 }
 
 #chat-send {
@@ -1101,7 +1102,7 @@ button {
   flex: none;
   flex-shrink: 0;
   width: auto;
-  height: calc(30px * var(--hud-scale));
+  height: calc(60px * var(--hud-scale));
   aspect-ratio: 185 / 64;
   margin: 0;
   padding: 0;
@@ -1158,11 +1159,11 @@ button {
   #chat-send,
   #chat-close,
   #chat-visibility {
-    height: calc(44px * var(--hud-scale));
+    height: calc(88px * var(--hud-scale));
   }
 
   #chat-tabs button {
-    height: calc(26px * var(--hud-scale));
+    height: calc(52px * var(--hud-scale));
   }
 }
 
@@ -4605,13 +4606,48 @@ button {
   transform: none;
 }
 
-.pause-window {
-  width: min(420px, 92vw);
+.screen.pause-overlay {
+  background: rgba(4, 7, 10, 0.42);
+  backdrop-filter: none;
+  place-items: center;
+}
+
+.pause-overlay .menu-window {
   min-height: 0;
 }
 
+.pause-window {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  min-height: 0;
+  max-height: min(90vh, 820px);
+  overflow: visible;
+}
+
+.pause-window .menu-heading {
+  flex: none;
+  min-height: 0;
+  margin: 0;
+  padding: 18px 24px 14px;
+}
+
+.pause-window .menu-heading h1 {
+  font-size: clamp(28px, 4.2vw, 40px);
+}
+
 .pause-actions {
-  padding: 18px 20px 22px;
+  display: grid;
+  gap: 14px;
+  padding: 18px 22px 24px;
+}
+
+.pause-overlay .pause-actions .game-button {
+  min-height: clamp(64px, 13vh, 96px);
+  padding: 16px 28px;
+  font-size: clamp(20px, 3.8vh, 28px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
 .mc-clan-row,

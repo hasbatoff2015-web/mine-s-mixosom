@@ -106,7 +106,7 @@ describe('chat layout and controls', () => {
     expect(cssRule('.chat-line')).toContain('font: calc(23px * var(--hud-scale))/1.35 var(--font-ui);');
     expect(cssRule('.chat-line')).toContain('word-break: break-word;');
     expect(cssRule('#chat-input')).toContain('font: calc(18px * var(--hud-scale))/1.3 var(--font-ui);');
-    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('height: calc(52px * var(--hud-scale));');
+    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('height: calc(104px * var(--hud-scale));');
     expect(GAME_UI).toContain('chat-line-name');
     expect(GAME_UI).toContain("sep.textContent = ': '");
     expect(STYLE).toContain('.chat-line.channel-nearby::before {\n  background: #f0c400;\n}');
@@ -145,6 +145,8 @@ describe('chat layout and controls', () => {
     expect(GAME_UI).not.toContain('<svg');
     expect(cssRule('#chat-input')).toContain('min-height: calc(52px * var(--hud-scale));');
     expect(STYLE).toContain('#chat-send,\n#chat-close,\n#chat-visibility {');
+    expect(cssRule('#chat-tabs button')).toContain('height: calc(60px * var(--hud-scale));');
+    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('height: calc(104px * var(--hud-scale));');
     expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('background-size: contain;');
     expect(cssRule('#chat-tabs button')).toContain('background-size: contain;');
     expect(cssRule('#chat-send')).toContain('aspect-ratio: 198 / 96;');

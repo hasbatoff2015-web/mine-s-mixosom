@@ -53,7 +53,9 @@ function fixtureWorlds(now = Date.UTC(2026, 7, 30)): WorldSummary[] {
 
 export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement, scene: UiQaScene): () => void {
   const previousCanvasStyle = canvas.getAttribute('style');
-  canvas.style.background = `linear-gradient(rgba(4, 11, 10, 0.28), rgba(4, 11, 10, 0.48)), url('${import.meta.env.BASE_URL}ui/frontier-menu-background.png') center / cover`;
+  canvas.style.background = scene === 'pause'
+    ? 'linear-gradient(180deg, #6eb7ff 0 42%, #7bc15a 42% 58%, #4a8a3a 58% 78%, #2f5c28 78% 100%)'
+    : `linear-gradient(rgba(4, 11, 10, 0.28), rgba(4, 11, 10, 0.48)), url('${import.meta.env.BASE_URL}ui/frontier-menu-background.png') center / cover`;
   const ui = new GameUI(uiRoot);
   const inventory = fixtureInventory();
 

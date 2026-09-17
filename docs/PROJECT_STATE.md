@@ -1,6 +1,12 @@
 # Состояние проекта
 
-## Последний проход: Menu coin asset + chat PNG sprites — 2026-09-17
+## Последний проход: Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
+
+- TAB Pause — overlay поверх живого `#game-canvas`, без `frontier-menu-background.png` и без `menu-screen`/`submenu-screen`. Симуляция по-прежнему `PAUSED`. Resume возвращает тот же мир.
+- Chat PNG (вкладки, Enter, X, ON/OFF) и HUD Pause/Chat/Menu увеличены ~2× с `aspect-ratio` / `contain`. Кнопки паузы крупнее, graphite сохранён.
+- Handoff: `docs/reports/2026-09-17_pause-overlay-larger-buttons.md`.
+
+## Предыдущий проход: Menu coin asset + chat PNG sprites — 2026-09-17
 
 - Main Menu: `public/ui/menu/icon_coin.png` заменён на приложенный ассет (padded 128×128). `.mc-menu-coin-wrap` 16 logical px, `object-fit: contain`, без pixelated, без обрезки; текст «Баланс: … монет» не менялся.
 - Чат: кнопки Общий / Рядом / Клан, X+E, Chat ON/OFF, Enter — PNG из `public/ui/chat/` через `chatChromeStyle()`. Не CSS-bevel. Active-вкладка полная яркость, остальные `brightness(0.72)`. Пропорции через `aspect-ratio` + `background-size: contain`.

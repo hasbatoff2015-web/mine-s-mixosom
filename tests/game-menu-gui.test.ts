@@ -38,6 +38,10 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('hud-corner-label">Меню');
     expect(css).toContain('#hud-corner');
     expect(css).toContain('flex-direction: column');
+    expect(cssRule('#hud-corner button')).toContain('width: calc(116px * var(--hud-scale));');
+    expect(cssRule('#hud-corner button')).toContain('height: calc(116px * var(--hud-scale));');
+    expect(cssRule('#hud-corner button')).toContain('background-size: contain;');
+    expect(cssRule('#hud-corner button')).toContain('aspect-ratio: 1;');
     expect(css).toContain('#chat.open ~ #hud-corner');
   });
 
