@@ -22,7 +22,7 @@ export function heartHudIcons(health: number): HeartHudState {
   const icons: HeartHudIcon[] = [];
   for (let index = 0; index < HEART_HUD_ICON_COUNT; index += 1) {
     const remaining = points - index * 2;
-    icons.push(remaining >= 2 ? 'full' : remaining === 1 ? 'half' : 'empty');
+    icons.push(remaining >= 2 ? 'full' : remaining > 0 ? 'half' : 'empty');
   }
   return { health: points, icons };
 }

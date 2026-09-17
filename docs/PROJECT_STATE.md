@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Bugfix/performance gameplay pass — 2026-09-17
+
+- AutoMine reset: top-down incremental fill (≤64 voxels/tick), lighting deferred until the next tick after writes. No whole-mine `setBlock` in one tick.
+- Hotbar 1–9 then instant LMB/RMB: selection is committed into the command stream; inventory echo cannot roll back a newer local slot.
+- Remote players show authoritative `onFire` via `PlayerVisual` fire overlay (discrete, not interpolated).
+- Resume after disconnect re-broadcasts `player_joined` with `remoteInfo().appearance`; pending appearance covers appearance-before-spawn.
+- RTP retries independent columns; chunk-generate budget is per search step, not a lifetime of 1 generate.
+- `health === 0` ⇒ dead. HUD half-heart is any remaining HP `> 0` (armor leftovers no longer look like 0 hearts).
+- Handoff: `docs/reports/2026-09-17_bugfix-performance-gameplay-pass.md`.
+
 ## Последний проход: Pause heading off + Creative graphite tabs — 2026-09-17
 
 - Pause overlay больше не показывает «ИГРА НА ПАУЗЕ» / «Пауза». Остаются только Продолжить / Настройки / Сохранить и выйти; отступы карточки сжаты, кнопки по центру по вертикали. Живой мир под overlay и graphite-кнопки без изменений.

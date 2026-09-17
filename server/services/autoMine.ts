@@ -1,5 +1,5 @@
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../../src/blocks';
-import { isValidWorldY } from '../../src/core/constants';
+import { isValidWorldY, LATERAL_SKY_RADIUS } from '../../src/core/constants';
 import { ItemId } from '../../src/items';
 import type { VoxelWorld } from '../../src/world/World';
 import { volumeContains, volumeFromCorners, type BlockPos, type SelectionVolume } from './selection';
@@ -94,12 +94,25 @@ export interface AutoMineSelection {
   pos2?: BlockPos;
 }
 
+export type AutoMineJobPhase = 'generating' | 'lighting';
+
+export interface AutoMineResetMetrics {
+  name: string;
+  ticks: number;
+  blocksWritten: number;
+  maxBatch: number;
+  maxRelightMs: number;
+  lightingTicks: number;
+}
+
 export interface AutoMineJob {
   readonly name: string;
   readonly kind: 'fill' | 'restore';
   readonly volume: SelectionVolume;
   readonly total: number;
   offset: number;
+  phase: AutoMineJobPhase;
+  lightingTicks: number;
   readonly originals?: readonly number[];
 }
 
@@ -215,6 +228,19 @@ export function voxelAt(volume: SelectionVolume, index: number): BlockPos {
   const layer = size.width * size.depth;
   const y = volume.minY + Math.floor(index / layer);
   const rem = index % layer;
+  const z = volume.minZ + Math.floor(rem / width);
+  const x = volume.minX + (rem % width);
+  return { x, y, z };
+}
+
+/** Fill/reset walk: top Y layer first, then the next layer down. Storage index stays `voxelIndex`. */
+export function fillVoxelAt(volume: SelectionVolume, fillIndex: number): BlockPos {
+  const size = cuboidSize(volume);
+  const width = size.width;
+  const layer = size.width * size.depth;
+  const fromTop = Math.floor(fillIndex / layer);
+  const y = volume.maxY - fromTop;
+  const rem = fillIndex % layer;
   const z = volume.minZ + Math.floor(rem / width);
   const x = volume.minX + (rem % width);
   return { x, y, z };
@@ -364,10 +390,12 @@ export function snapshotVolume(world: VoxelWorld, volume: SelectionVolume): numb
 export class AutoMineManager {
   enabled = false;
   blocksPerTick = AUTOMINE_BLOCKS_PER_TICK;
+  lastResetMetrics: AutoMineResetMetrics | undefined;
   private readonly selections = new Map<string, AutoMineSelection>();
   private mines: AutoMineRecord[] = [];
   private readonly jobs = new Map<string, AutoMineJob>();
   private readonly originals = new Map<string, number[]>();
+  private readonly jobMetrics = new Map<string, AutoMineResetMetrics>();
 
   constructor(private readonly host: AutoMineHost) {}
 
@@ -577,7 +605,17 @@ export class AutoMineManager {
       volume,
       total: cuboidSize(volume).blocks,
       offset: 0,
+      phase: 'generating',
+      lightingTicks: 0,
       originals,
+    });
+    this.jobMetrics.set(mine.name, {
+      name: mine.name,
+      ticks: 0,
+      blocksWritten: 0,
+      maxBatch: 0,
+      maxRelightMs: 0,
+      lightingTicks: 0,
     });
     return { ok: true };
   }
@@ -601,13 +639,17 @@ export class AutoMineManager {
   }
 
   private processJobs(): void {
-    const budget = Math.max(1, Math.floor(this.blocksPerTick));
+    let remaining = Math.max(1, Math.floor(this.blocksPerTick));
     for (const job of [...this.jobs.values()]) {
       try {
-        this.stepJob(job, budget);
+        remaining = this.stepJob(job, remaining);
+        if (remaining <= 0 && job.phase === 'generating') {
+          /* other jobs wait for the next tick so one reset cannot monopolize TPS */
+        }
       } catch (error) {
         const message = error instanceof Error ? error.stack ?? error.message : String(error);
         this.jobs.delete(job.name);
+        this.jobMetrics.delete(job.name);
         const mine = this.get(job.name);
         if (mine?.intervalSeconds && mine.teleport) {
           mine.nextResetAt = this.host.now() + mine.intervalSeconds * 1000;
@@ -619,27 +661,78 @@ export class AutoMineManager {
     }
   }
 
-  private stepJob(job: AutoMineJob, budget: number): void {
+  private stepJob(job: AutoMineJob, budget: number): number {
+    const metrics = this.jobMetrics.get(job.name);
+    if (metrics) metrics.ticks += 1;
+    if (job.phase === 'lighting') {
+      this.stepLighting(job);
+      return budget;
+    }
     const mutations = [];
-    const end = Math.min(job.total, job.offset + budget);
+    const end = Math.min(job.total, job.offset + Math.max(0, budget));
     for (let index = job.offset; index < end; index += 1) {
-      const pos = voxelAt(job.volume, index);
+      const pos = fillVoxelAt(job.volume, index);
+      const stored = voxelIndex(job.volume, pos.x, pos.y, pos.z);
       const block = job.kind === 'restore'
-        ? (job.originals?.[index] ?? BlockId.Air)
+        ? (job.originals?.[stored] ?? BlockId.Air)
         : selectAutoMineBlock(this.host.random());
       mutations.push({ x: pos.x, y: pos.y, z: pos.z, block });
     }
     if (mutations.length > 0) {
-      this.host.world.applyBlockBatch(mutations, {
+      const stats = this.host.world.applyBlockBatch(mutations, {
         skipSupport: true,
         scheduleNeighbors: false,
         updateLighting: true,
+        deferLighting: true,
       });
       this.host.onBlocksWritten?.(mutations);
+      if (metrics) {
+        metrics.blocksWritten += mutations.length;
+        metrics.maxBatch = Math.max(metrics.maxBatch, mutations.length);
+        metrics.maxRelightMs = Math.max(metrics.maxRelightMs, stats.relightMs);
+      }
     }
     job.offset = end;
-    if (job.offset < job.total) return;
+    if (job.offset < job.total) return Math.max(0, budget - mutations.length);
+    job.phase = 'lighting';
+    this.queueJobLighting(job);
+    return 0;
+  }
+
+  private queueJobLighting(job: AutoMineJob): void {
+    const volume = job.volume;
+    this.host.world.queueLight({
+      minX: volume.minX - LATERAL_SKY_RADIUS,
+      minY: volume.minY,
+      minZ: volume.minZ - LATERAL_SKY_RADIUS,
+      maxX: volume.maxX + LATERAL_SKY_RADIUS,
+      maxY: volume.maxY,
+      maxZ: volume.maxZ + LATERAL_SKY_RADIUS,
+    }, true, true, 'edit');
+  }
+
+  private stepLighting(job: AutoMineJob): void {
+    job.lightingTicks += 1;
+    const metrics = this.jobMetrics.get(job.name);
+    if (metrics) metrics.lightingTicks = job.lightingTicks;
+    const started = performance.now();
+    this.host.world.flushLighting();
+    if (metrics) metrics.maxRelightMs = Math.max(metrics.maxRelightMs, performance.now() - started);
+    this.finishJob(job);
+  }
+
+  private finishJob(job: AutoMineJob): void {
     this.jobs.delete(job.name);
+    const metrics = this.jobMetrics.get(job.name);
+    if (metrics) {
+      this.lastResetMetrics = metrics;
+      this.jobMetrics.delete(job.name);
+      this.host.log(
+        `automine reset '${job.name}' ticks=${metrics.ticks} blocks=${metrics.blocksWritten}`
+        + ` maxBatch=${metrics.maxBatch} relightMs=${metrics.maxRelightMs.toFixed(1)}`
+        + ` lightingTicks=${metrics.lightingTicks}`,
+      );
+    }
     if (job.kind === 'restore') {
       this.removeMine(job.name);
       this.host.log(`restored and deleted '${job.name}'`);

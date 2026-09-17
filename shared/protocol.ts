@@ -153,6 +153,7 @@ export interface RemotePlayerInfo {
   readonly appearance?: PlayerAppearance;
   readonly health?: number;
   readonly dead?: boolean;
+  readonly onFire?: boolean;
   readonly id: string;
   readonly name: string;
   readonly x: number;

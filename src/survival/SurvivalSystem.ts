@@ -267,6 +267,7 @@ export class SurvivalSystem {
     this.absorption -= absorbed;
     const dealt = Math.max(0, afterArmor - absorbed);
     this.health = Math.max(0, this.health - dealt);
+    this.enforceLifeInvariant();
     const killed = this.health <= 0;
     if (killed) this.dead = true;
     const result: DamageResult = {
@@ -461,6 +462,14 @@ export class SurvivalSystem {
       }
     }
     this.dead = state.dead ?? this.health <= 0;
+    this.enforceLifeInvariant();
+  }
+
+  /** Living players always have health > 0. health === 0 means dead. */
+  private enforceLifeInvariant(): void {
+    if (this.health > 0) return;
+    this.health = 0;
+    this.dead = true;
   }
 
   private tickOnce(context: SurvivalTickContext, events: DamageResult[]): void {

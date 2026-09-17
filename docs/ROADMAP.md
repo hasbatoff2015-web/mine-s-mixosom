@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-17: Bugfix/performance gameplay pass
+
+- [x] AutoMine incremental top-down reset with deferred lighting (no 2–3s frame freeze from a full-cuboid write).
+- [x] Hotbar select + immediate use/click without selected-slot rollback.
+- [x] Remote player fire overlay from authoritative `PlayerSnapshot.onFire`.
+- [x] Selected skin on first remote spawn / resume without requiring reconnect.
+- [x] RTP keeps searching until a valid column or a real attempt budget.
+- [x] Health 0 is always death; HUD matches living HP above 0.
+
 ## 2026-09-17: Pause heading off + Creative graphite tabs
 
 - [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.

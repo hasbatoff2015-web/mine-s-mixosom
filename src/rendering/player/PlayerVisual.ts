@@ -41,12 +41,15 @@ import {
   humanoidDeathRotationZ,
   humanoidDeathScale,
 } from '../../entities/humanoidDeath';
+import { SharedFireTexture } from '../fireTexture';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly invisible: boolean;
   readonly hurtFlash: number;
   /** 0 = living pose. 1 = completed humanoid death tilt. */
   readonly deathProgress?: number;
+  /** Authoritative burning flag. Discrete; not interpolated. */
+  readonly onFire?: boolean;
 }
 
 export const UPPER_BODY_PIVOT_Y = 12 * PLAYER_MODEL_PIXEL;
@@ -115,6 +118,7 @@ export class PlayerVisual {
   private hurtFlash = 0;
   private hurtFlashStartedAt = -1;
   private disposed = false;
+  private fireOverlay?: THREE.Mesh;
   private readonly ownedArmorResources?: PlayerArmorResources;
 
   constructor(
@@ -244,6 +248,7 @@ export class PlayerVisual {
       }
       : state);
     this.applyPose(pose);
+    this.syncFireOverlay(state.onFire === true);
     if (dying) {
       const progress = Math.min(1, Math.max(0, state.deathProgress ?? 0));
       this.root.rotation.z = humanoidDeathRotationZ(progress);
@@ -273,10 +278,17 @@ export class PlayerVisual {
     this.root.visible = visible;
   }
 
+  get fireOverlayVisible(): boolean {
+    return this.fireOverlay?.visible === true;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
+    this.fireOverlay?.removeFromParent();
+    this.fireOverlay?.geometry.dispose();
+    this.fireOverlay = undefined;
     this.armor.dispose();
     this.baseMaterial.dispose();
     for (const material of this.outerMaterials.values()) material.dispose();
@@ -382,6 +394,20 @@ export class PlayerVisual {
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
     this.rig.heldItem.visible = this.heldModel !== undefined;
+  }
+
+  private syncFireOverlay(onFire: boolean): void {
+    if (onFire) {
+      if (!this.fireOverlay) {
+        const overlay = SharedFireTexture.instance().createScaledOverlay(0.7, 1.85);
+        overlay.position.y = 0.15;
+        this.root.add(overlay);
+        this.fireOverlay = overlay;
+      }
+      this.fireOverlay.visible = true;
+      return;
+    }
+    if (this.fireOverlay) this.fireOverlay.visible = false;
   }
 
   private applyPose(pose: PlayerVisualPose): void {

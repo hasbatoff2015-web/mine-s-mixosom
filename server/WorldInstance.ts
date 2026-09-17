@@ -257,6 +257,11 @@ export class ServerPlayer implements GameplayPlayer {
   healthSignature = '';
   effectSignature = '';
   appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  /**
+   * Interact/use can advertise a newer hotbar slot than the command snapshot
+   * captured before the 1–9 key. Keep that slot when the matching command applies.
+   */
+  actionSelectedSlot?: { commandSeq: number; slot: number };
 
   constructor(
     readonly id: string,
@@ -408,6 +413,7 @@ export class ServerPlayer implements GameplayPlayer {
       equipment: snap.equipment,
       appearance: toNetworkAppearance(this.appearance),
       health: snap.health,
+      onFire: snap.onFire === true,
       ...(snap.dead ? { dead: true } : {}),
     };
   }
@@ -2519,6 +2525,7 @@ export class WorldInstance {
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
     const slot = this.resolveActionSlot(player, commandSeq, selectedSlot);
     if (!slot.ok) return slot;
+    this.commitActionSelectedSlot(player, slot.value, commandSeq);
     const result = this.gameplay.useHeld(
       player,
       intent,
@@ -3106,7 +3113,10 @@ export class WorldInstance {
       return { ok: false, reason: 'stale' };
     }
     const slotChangedAfterBoundary = commandState.selectedSlot !== selectedSlot;
-    if (slotChangedAfterBoundary && commandSeq !== player.lastInputSeq) {
+    // Reject only truly stale packets: an older command after a newer input
+    // already applied. A 1–9 press after the last sent input uses the same
+    // commandSeq with a newer selectedSlot and must still succeed.
+    if (slotChangedAfterBoundary && commandSeq < player.lastInputSeq) {
       return { ok: false, reason: 'slot' };
     }
     return {
@@ -3114,6 +3124,16 @@ export class WorldInstance {
       value: selectedSlot,
       boundaryCommandConfirmsUse: command?.use === true && !slotChangedAfterBoundary,
     };
+  }
+
+  private commitActionSelectedSlot(
+    player: ServerPlayer,
+    slot: number,
+    commandSeq: number | undefined,
+  ): void {
+    player.selectedSlot = slot;
+    if (commandSeq === undefined || !Number.isInteger(commandSeq)) return;
+    player.actionSelectedSlot = { commandSeq, slot };
   }
 
   private resetConnectionInput(player: ServerPlayer): void {
@@ -3144,6 +3164,7 @@ export class WorldInstance {
     player.lastUse = false;
     player.lastSprint = false;
     player.vehicleForward = 0;
+    player.actionSelectedSlot = undefined;
     player.lastInput = {
       ...IDLE_INPUT,
       yaw: player.controller.yaw,
@@ -3162,7 +3183,13 @@ export class WorldInstance {
       if (command) {
         player.lastInput = inputFromCommand(command);
         player.appliedCommandSeq = command.commandSeq;
-        player.selectedSlot = command.selectedSlot;
+        const override = player.actionSelectedSlot;
+        if (override && command.commandSeq <= override.commandSeq) {
+          player.selectedSlot = override.slot;
+        } else {
+          player.selectedSlot = command.selectedSlot;
+          player.actionSelectedSlot = undefined;
+        }
         player.controller.yaw = command.yaw;
         player.controller.pitch = command.pitch;
         player.vehicleForward = command.vehicleForward

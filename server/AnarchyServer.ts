@@ -290,15 +290,10 @@ export class AnarchyServer {
     if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
     this.send(socket, { type: 'holograms', holograms: [...this.world.holograms.list()] });
     this.send(socket, { type: 'buyers', buyers: this.world.buyer.networkBuyers() });
-    if (!resumed) {
-      this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
-    } else {
-      this.world.broadcast({
-        type: 'player_appearance',
-        playerId: player.id,
-        appearance: player.appearance,
-      }, player.id);
-    }
+    // Resume after disconnect still needs a full remoteInfo (appearance, fire,
+    // pose). `player_appearance` alone no-ops on clients that already ran
+    // player_left and would then spawn from player_state with the default skin.
+    this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
     this.world.broadcast({
       type: 'status',
       online: this.world.onlineCount(),

@@ -229,4 +229,32 @@ describe('authoritative player appearance', () => {
       }
     }
   });
+
+  it('re-broadcasts player_joined with the selected skin after disconnect, not only player_appearance', async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const server = new AnarchyServer(testConfig(dir));
+    servers.push(server);
+    await server.start();
+    const url = `ws://127.0.0.1:${server.port}`;
+    const alice = new TestClient();
+    const bob = new TestClient();
+    clients.push(alice, bob);
+    await alice.connect(url, { name: 'Alice' });
+    const welcomeB = await bob.connect(url, { name: 'Bob', appearance: slim });
+    await alice.waitFor('player_joined');
+    bob.close();
+    await alice.waitFor('player_left');
+    const before = alice.messages.length;
+    const bob2 = new TestClient();
+    clients.push(bob2);
+    await bob2.connect(url, { name: 'Bob', sessionToken: welcomeB.sessionToken, appearance: slim });
+    const resumedJoin = alice.messages.slice(before).find((message) => message.type === 'player_joined');
+    expect(resumedJoin).toMatchObject({
+      type: 'player_joined',
+      player: { name: 'Bob', appearance: slim },
+    });
+    const appearanceOnly = alice.messages.slice(before).filter((message) => message.type === 'player_appearance');
+    expect(appearanceOnly).toHaveLength(0);
+  });
 });
