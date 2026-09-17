@@ -874,7 +874,8 @@ button {
   right: 0;
   width: auto;
   max-width: none;
-  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
   pointer-events: auto;
 }
 

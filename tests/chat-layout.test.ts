@@ -50,7 +50,8 @@ describe('chat layout and controls', () => {
     expect(open).toContain('right: 0;');
     expect(open).toContain('width: auto;');
     expect(open).toContain('max-width: none;');
-    expect(open).toContain('overflow-x: hidden;');
+    expect(open).toContain('overflow-x: clip;');
+    expect(open).toContain('overflow-y: visible;');
     expect(STYLE).not.toContain('--chat-open-width');
     expect(STYLE).not.toContain('min(70vw, 72rem)');
     expect(STYLE).not.toContain('min(92vw, 40rem)');

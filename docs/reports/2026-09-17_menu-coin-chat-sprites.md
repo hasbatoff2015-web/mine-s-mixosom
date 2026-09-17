@@ -41,7 +41,12 @@ Done. The menu coin is the attached high-res disc in a padded square with `objec
 
 ## Visual QA
 
-DEV fixtures `?qaUi=menu-root` and `?qaUi=chat-open` (real `GameUI`, no world tick), desktop / landscape / portrait.
+DEV fixtures `?qaUi=menu-root` and `?qaUi=chat-open` (real `GameUI`, no world tick):
+
+- Desktop 1280×720: coin is a full round disc, vertically centered with unchanged `Баланс: 5 645 монет`. Wrap measured 48×48 CSS px (`16 * --mc-ui-scale`).
+- Landscape 844×390: same uncropped coin; chat Enter / X+E / Chat ON all visible with native aspect; Общий full brightness, Рядом/Клан `brightness(0.72)`.
+- Portrait: rotate overlay as designed (`Игра рассчитана на альбомную ориентацию`).
+- Open `#chat-log` stays transparent over the world; PNG faces are not CSS bevels.
 
 ## Performance
 
