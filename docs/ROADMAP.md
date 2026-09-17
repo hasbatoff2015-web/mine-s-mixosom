@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-18: Totem particle spread / quieter sound
+
+- [x] Увеличить разлёт Totem burst примерно в 2 раза через initial speed, count 48, меньший point size, слегка сильнее вверх; volume `0.45 → 0.225`.
+- [ ] Live two-client visual/audio QA: 10 activations, spread/size/volume.
+
 ## 2026-09-18: Bed occupancy / Totem particles / utility icons
 
 - [x] Authoritative one-player-per-bed occupancy from `ServerPlayer.restingBed` and canonical HEAD identity; reject occupied HEAD/FOOT clicks without a second occupancy map.

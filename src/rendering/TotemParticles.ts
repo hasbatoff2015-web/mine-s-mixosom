@@ -7,6 +7,7 @@ import {
   type TotemBurstState,
 } from '../gameplay/totemBurst';
 
+export const TOTEM_PARTICLE_SIZE = 0.05;
 const PARTICLE_CAP = TOTEM_BURST_COUNT * TOTEM_BURST_MAX_EFFECTS;
 
 /**
@@ -21,7 +22,7 @@ export class TotemParticles {
   private readonly geometry = new THREE.BufferGeometry();
   private readonly material = new THREE.PointsMaterial({
     vertexColors: true,
-    size: 0.08,
+    size: TOTEM_PARTICLE_SIZE,
     transparent: true,
     opacity: 0.92,
     depthWrite: false,
@@ -49,6 +50,10 @@ export class TotemParticles {
       for (const particle of burst.particles) if (particle.life > 0) count += 1;
     }
     return count;
+  }
+
+  get pointSize(): number {
+    return this.material.size;
   }
 
   burst(

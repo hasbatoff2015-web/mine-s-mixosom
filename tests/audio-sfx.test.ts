@@ -71,7 +71,7 @@ describe('sound catalog', () => {
     expect(getSoundProfile('player.hurt')?.positional).toBe(false);
     expect(getSoundProfile('totem.activate')?.positional).toBe(true);
     expect(resolveCatalogEvent('totem.activate')?.files).toEqual(['totem-sound.mp3']);
-    expect(resolveCatalogEvent('totem.activate')).toMatchObject({ volume: 0.45, startOffsetSeconds: 0.7 });
+    expect(resolveCatalogEvent('totem.activate')).toMatchObject({ volume: 0.225, startOffsetSeconds: 0.7 });
     expect(resolveCatalogEvent('player.hurt')?.startOffsetSeconds).toBeUndefined();
     expect(resolveCatalogEvent('glass.break')?.files).toEqual(['glass_1.mp3']);
     expect(SFX_BASE_PATH).toBe('audio/sfx/');
@@ -324,7 +324,7 @@ describe('AudioManager samples, pause, mute, missing files', () => {
     await audio.preload();
     audio.playAt('totem.activate', { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
     expect(created[0]!.start.mock.calls).toEqual([[0, 0.7]]);
-    expect(audio.debugSnapshot().recentPlays.at(-1)).toMatchObject({ event: 'totem.activate', volume: 0.45 });
+    expect(audio.debugSnapshot().recentPlays.at(-1)).toMatchObject({ event: 'totem.activate', volume: 0.225 });
     audio.play('player.hurt');
     expect(created[1]!.start.mock.calls).toEqual([[0]]);
 

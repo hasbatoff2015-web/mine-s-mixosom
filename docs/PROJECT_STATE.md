@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Totem particle spread / quieter sound — 2026-09-18
+
+- Ветка `codex/utility-items-v1`: burst Totem остаётся authoritative presentation. Count `28 → 48`, Points size `0.08 → 0.05`, spawn radius без изменений, скорость `1.15/1.55 → 2.3/3.1` (~×2 разлёт), чуть сильнее upward impulse. Lifetime 0.55–0.9 с и palette без изменений.
+- `totem.activate` catalog volume `0.45 → 0.225`; `startOffsetSeconds = 0.7` сохранён. AudioManager, HUD, occupancy, icons не менялись.
+- Гейты: focused **3 files / 50 tests PASS**; `typecheck` / client / server, boundaries, build, size/archive PASS (**4.39 MiB / 368 files**). Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_totem-particle-spread-volume.md`. `main` не менялся.
+
 ## Последний проход: Bed occupancy / Totem particles / utility icons — 2026-09-18
 
 - Ветка `codex/utility-items-v1` (без merge/rebase `main`): одна физическая кровать занимает не больше одного игрока. Occupancy выводится из `ServerPlayer.restingBed` и канонической HEAD-клетки (`isSameBed` / `findBedOccupant`); отдельной occupancy map нет. Занятая кровать даёт authoritative `action_result` `occupied` и toast «Кровать занята». Disconnect/death/respawn/exit/broken bed по-прежнему снимают `restingBed`.

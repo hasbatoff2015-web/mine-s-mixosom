@@ -1,5 +1,9 @@
 # Архитектура
 
+## Totem particle spread / quieter sound — 2026-09-18
+
+`createTotemBurst` по-прежнему рождает частицы у тела (`0.16` / `0.26`). Разлёт задаёт скорость `2.3` / `3.1` (~×2 к c319752). Pitch min `0.18 → 0.26`, extra Y `0.45–1.00 → 0.72–1.42`. Count 48, cap 4 burst / 192 points, `PointsMaterial.size = 0.05`. Catalog `totem.activate` volume `0.225`, offset `0.7`. Протокол, HUD и FireworkVisuals без изменений.
+
 ## Bed occupancy / Totem particles / utility icons — 2026-09-18
 
 Occupancy кровати не хранится отдельным `Map`. `resolveBedRest` по-прежнему сводит HEAD+FOOT к одной `BedRestState`. Перед записью `player.restingBed` сервер смотрит `listPlayers()` и `findBedOccupant` (другой connected/alive player с тем же HEAD xyz). Intents обрабатываются последовательно, поэтому второй use в том же tick видит occupancy первого. Reject идёт через существующий `useHeld` → `action_result` `occupied`; клиент не включает resting prediction. Ghost occupancy нет: disconnect сразу чистит `restingBed`, death/respawn/broken bed/teleport уже чистили.

@@ -1,10 +1,16 @@
 /** Nearby clients receive Totem HUD/particles. Independent of the sound catalog. */
 export const TOTEM_PRESENTATION_DISTANCE = 32;
 
-export const TOTEM_BURST_COUNT = 28;
+export const TOTEM_BURST_COUNT = 48;
 export const TOTEM_BURST_LIFE_MIN = 0.55;
 export const TOTEM_BURST_LIFE_MAX = 0.9;
 export const TOTEM_BURST_MAX_EFFECTS = 4;
+/** Spawn stays tight on the body; spread comes from velocity, not radius. */
+export const TOTEM_BURST_SPAWN_RADIUS_FIRST_PERSON = 0.16;
+export const TOTEM_BURST_SPAWN_RADIUS_THIRD_PERSON = 0.26;
+/** About 2× the c319752 speeds so particles travel roughly twice as far. */
+export const TOTEM_BURST_SPEED_FIRST_PERSON = 2.3;
+export const TOTEM_BURST_SPEED_THIRD_PERSON = 3.1;
 
 /** Lime, darker green, gold, pale yellow — Minecraft Totem palette, not fireworks. */
 export const TOTEM_BURST_COLORS = [0xb5ff4a, 0x3dcc22, 0xf0c92a, 0xfff3a0] as const;
@@ -45,12 +51,16 @@ export function createTotemBurst(
 ): TotemBurstState {
   const random = options?.random ?? Math.random;
   const firstPerson = options?.firstPerson === true;
-  const radius = firstPerson ? 0.16 : 0.26;
-  const speed = firstPerson ? 1.15 : 1.55;
+  const radius = firstPerson
+    ? TOTEM_BURST_SPAWN_RADIUS_FIRST_PERSON
+    : TOTEM_BURST_SPAWN_RADIUS_THIRD_PERSON;
+  const speed = firstPerson
+    ? TOTEM_BURST_SPEED_FIRST_PERSON
+    : TOTEM_BURST_SPEED_THIRD_PERSON;
   const particles: TotemBurstParticle[] = [];
   for (let index = 0; index < TOTEM_BURST_COUNT; index += 1) {
     const yaw = random() * Math.PI * 2;
-    const pitch = random() * 0.85 + 0.18;
+    const pitch = random() * 0.80 + 0.26;
     const outward = speed * (0.72 + random() * 0.55);
     const horizontal = Math.cos(pitch) * outward;
     const life = TOTEM_BURST_LIFE_MIN
@@ -60,7 +70,7 @@ export function createTotemBurst(
       y: y + (random() - 0.35) * 0.38,
       z: z + (random() - 0.5) * radius * 2,
       vx: Math.cos(yaw) * horizontal,
-      vy: Math.sin(pitch) * outward + 0.45 + random() * 0.55,
+      vy: Math.sin(pitch) * outward + 0.72 + random() * 0.70,
       vz: Math.sin(yaw) * horizontal,
       life,
       maxLife: life,

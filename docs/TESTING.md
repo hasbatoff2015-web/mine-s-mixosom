@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-18 Totem particle spread / quieter sound
+
+```text
+npx vitest run tests/totem-burst.test.ts tests/audio-sfx.test.ts tests/server/utility-items-authority.test.ts --maxWorkers=2 --silent
+```
+
+**3 files / 50 tests PASS** (`totem-burst` 5, `audio-sfx` 27, `utility-items-authority` 18). `typecheck`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.39 MiB / 368 files**. `startOffsetSeconds` Totem остаётся `0.7`, volume `0.225`. Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_totem-particle-spread-volume.md`.
+
 ## 2026-09-18 Bed occupancy / Totem particles / utility icons
 
 Focused:
