@@ -7,6 +7,8 @@ import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from '.
 import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, MAX_GENERATED_SURFACE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
+import { sanitizeSignLines, type SignLines } from './sign';
+import { bedOtherCell, isMatchingBedHalf } from './bed';
 import { getItemDefinition } from '../items';
 import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
@@ -177,6 +179,8 @@ export class VoxelWorld {
   readonly modifications = new Map<string, Map<number, BlockId>>();
   readonly chests = new Map<string, ChestState>();
   readonly furnaces = new Map<string, FurnaceState>();
+  readonly signs = new Map<string, SignLines>();
+  signVersion = 0;
   readonly blockStates = new Map<string, BlockRenderState>();
   readonly generator: TerrainGenerator;
   timeOfDay = 1_000;
@@ -253,7 +257,7 @@ export class VoxelWorld {
     return () => this.committedBlockObservers.delete(observer);
   }
 
-  restore(state: Pick<SerializedWorldState, 'timeOfDay' | 'modifications' | 'chests' | 'furnaces' | 'blockStates'>): void {
+  restore(state: Pick<SerializedWorldState, 'timeOfDay' | 'modifications' | 'chests' | 'furnaces' | 'blockStates' | 'signs'>): void {
     this.timeOfDay = state.timeOfDay;
     for (const [key, entries] of Object.entries(state.modifications)) {
       const delta = new Map<number, BlockId>();
@@ -279,6 +283,36 @@ export class VoxelWorld {
         this.blockStates.set(key, value as BlockRenderState);
       }
     }
+    this.signs.clear();
+    for (const [key, raw] of Object.entries(state.signs ?? {})) {
+      const lines = sanitizeSignLines(raw);
+      if (lines) this.signs.set(key, lines);
+    }
+    this.signVersion += 1;
+  }
+
+  setSignText(x: number, y: number, z: number, lines: SignLines): boolean {
+    if (this.getBlock(x, y, z, false) !== BlockId.OakSign) return false;
+    this.signs.set(blockKey(x, y, z), [...lines] as unknown as SignLines);
+    this.signVersion += 1;
+    return true;
+  }
+
+  signText(x: number, y: number, z: number): SignLines | undefined {
+    return this.signs.get(blockKey(x, y, z));
+  }
+
+  serializeSigns(): Record<string, SignLines> {
+    return Object.fromEntries(this.signs);
+  }
+
+  signsForChunk(cx: number, cz: number): Record<string, SignLines> {
+    const entries: Array<[string, SignLines]> = [];
+    for (const [key, lines] of this.signs) {
+      const [x, , z] = key.split(',').map(Number);
+      if (floorDiv(x!, CHUNK_SIZE) === cx && floorDiv(z!, CHUNK_SIZE) === cz) entries.push([key, lines]);
+    }
+    return Object.fromEntries(entries);
   }
 
   getChunk(chunkX: number, chunkZ: number, generate = true): Chunk | undefined {
@@ -448,10 +482,12 @@ export class VoxelWorld {
     budget = Math.min(budget, this.supportQueue.size);
     let processed = 0;
     const removals: Array<{ x: number; y: number; z: number; block: BlockId }> = [];
+    const removedBedKeys = new Set<string>();
     for (const [key, [x, y, z]] of this.supportQueue) {
       if (processed >= budget) break;
       this.supportQueue.delete(key);
       processed++;
+      if (removedBedKeys.has(key)) continue;
       const block = this.getBlock(x, y, z, false);
       const support = supportCellForBlock(block, this.getBlockState(x, y, z), x, y, z);
       if (!support) continue;
@@ -461,6 +497,18 @@ export class VoxelWorld {
         continue;
       }
       if (!isBlockStillSupported(this, x, y, z)) {
+        if (block === BlockId.WhiteBed) {
+          const state = this.getBlockState(x, y, z);
+          const other = state && isMatchingBedHalf(this, x, y, z, state)
+            ? bedOtherCell(x, y, z, state)
+            : undefined;
+          if (other) {
+            const otherKey = blockKey(other.x, other.y, other.z);
+            removedBedKeys.add(otherKey);
+            removals.push({ ...other, block: BlockId.Air });
+          }
+          removedBedKeys.add(key);
+        }
         removals.push({ x, y, z, block: BlockId.Air });
         this.detachedBlocks.push({ x, y, z, block, state: this.getBlockState(x, y, z), reason: 'support' });
       }
@@ -663,6 +711,8 @@ export class VoxelWorld {
     const previousEmission = previous === BlockId.Furnace ? this.blockEmissionAt(x, y, z) : previousDefinition.emission ?? 0;
     chunk.set(localX, y, localZ, block);
     this.blockStates.delete(blockKey(x, y, z));
+    if (previous === BlockId.OakSign && block !== BlockId.OakSign
+      && this.signs.delete(blockKey(x, y, z))) this.signVersion += 1;
     if (!skipSupport) this.queueSupportAround(x, y, z);
     if ((block === BlockId.Water || block === BlockId.Lava)
       && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid

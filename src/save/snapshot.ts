@@ -187,6 +187,7 @@ export function parseWorldSnapshot(raw: unknown): WorldSnapshot {
     modifications: isRecord(raw.modifications) ? raw.modifications as WorldSnapshot['modifications'] : {},
     chests: asRecord(raw.chests),
     furnaces: asRecord(raw.furnaces),
+    signs: asRecord(raw.signs) as WorldSnapshot['signs'],
     droppedItems: asArray(raw.droppedItems),
     mobs: asArray(raw.mobs),
     minecarts: asArray(raw.minecarts),

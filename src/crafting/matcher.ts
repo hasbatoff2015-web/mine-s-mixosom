@@ -161,7 +161,7 @@ export function matchCraftingRecipe(
     if (consumption !== undefined) {
       return {
         recipe,
-        output: createItemStack(recipe.output.item, recipe.output.count),
+        output: createItemStack(recipe.output.item, recipe.output.count, { metadata: recipe.output.metadata }),
         consumption,
       };
     }

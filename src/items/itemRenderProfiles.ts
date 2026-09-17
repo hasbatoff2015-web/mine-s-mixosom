@@ -11,8 +11,8 @@ export type RenderVector = readonly [x: number, y: number, z: number];
  */
 export type ItemHeldMeshKind = 'block_cube' | 'generated' | 'special_model';
 
-/** Runtime-composited full-door sprite; Faithful pack has no `item/oak_door.png`. */
-export const OAK_DOOR_HELD_TEXTURE = 'generated/oak_door_item';
+/** Canonical oak door item sprite (`assets/minecraft/textures/items/door_wood.png`). */
+export const OAK_DOOR_HELD_TEXTURE = 'item/oak_door';
 
 export interface ItemViewTransform {
   readonly position: RenderVector;
@@ -127,7 +127,6 @@ export function classifyItemForRendering(itemOrId: string | ItemDefinition): Ite
       || shape === 'cross'
       || shape === 'fire'
       || shape === 'wire'
-      || shape === 'farmland'
     ) {
       return 'generated';
     }
@@ -158,7 +157,7 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'cross':
     case 'fire':
     case 'wire':
-    case 'farmland':
+    case 'sign':
       return 'generated';
     case 'button':
     case 'pressure_plate':
@@ -169,6 +168,8 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'rail':
     case 'lantern':
     case 'chain':
+    case 'farmland':
+    case 'bed':
       return 'special_model';
     case 'cube':
       return 'block_cube';

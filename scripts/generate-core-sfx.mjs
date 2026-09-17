@@ -278,7 +278,7 @@ function encodeMp3(wavPath, mp3Path) {
   });
 }
 
-export async function generateCoreSfx({ outDir = OUT_DIR, preferMp3 = true } = {}) {
+export async function generateCoreSfx({ outDir = OUT_DIR, preferMp3 = true, stems = SFX_STEMS } = {}) {
   await mkdir(outDir, { recursive: true });
   const hasFfmpeg = preferMp3 && await ffmpegAvailable();
   const written = [];
@@ -286,6 +286,7 @@ export async function generateCoreSfx({ outDir = OUT_DIR, preferMp3 = true } = {
   for (const stem of SFX_STEMS) {
     const rng = mulberry32(seed);
     seed += 97;
+    if (!stems.includes(stem)) continue;
     const samples = SYNTH[stem](rng);
     const wavPath = join(outDir, `${stem}.wav`);
     const mp3Path = join(outDir, `${stem}.mp3`);

@@ -9,5 +9,6 @@ export function isUseTargetBlock(block: BlockId): boolean {
     || block === BlockId.Lever
     || block === BlockId.StoneButton
     || block === BlockId.OakDoor
-    || block === BlockId.WhiteBed;
+    || block === BlockId.WhiteBed
+    || block === BlockId.OakSign;
 }

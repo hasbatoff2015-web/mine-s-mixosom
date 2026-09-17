@@ -7,9 +7,10 @@ import {
   parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
-import { getItemDefinition, obtainableItems } from '../items';
+import { getItemDefinition, obtainableItems, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
+import { EMPTY_SIGN_LINES, sanitizeSignLines, type SignLines } from '../world/sign';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchRecipeGridHost, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature, armorSlotKind } from './inventoryLayout';
 import {
@@ -259,6 +260,7 @@ export class GameUI {
   private screen?: HTMLElement;
   private hud: HTMLElement;
   private hotbar: HTMLElement;
+  private offhandHud: HTMLElement;
   private selectedItem: HTMLElement;
   private hearts: HTMLElement;
   private hunger: HTMLElement;
@@ -268,6 +270,8 @@ export class GameUI {
   private effectHud: HTMLElement;
   private toasts: HTMLElement;
   private hurtFlash: HTMLElement;
+  private totemFlash: HTMLElement;
+  private totemFlashTimer?: number;
   private hurtFlashAlpha = -1;
   private chat: HTMLElement;
   private chatLogEl: HTMLElement;
@@ -324,6 +328,7 @@ export class GameUI {
   private chatHistoryIndex = -1;
   private chatDraft = '';
   private hotbarHtml = '';
+  private offhandHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
   private hungerHtml = '';
@@ -341,6 +346,7 @@ export class GameUI {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
         <div id="hurt-flash" aria-hidden="true"></div>
+        <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" />${Array.from({ length: 12 }, (_, i) => `<span style="--spark-angle:${i * 30}deg"></span>`).join('')}</div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="status-bars">
@@ -352,6 +358,7 @@ export class GameUI {
         </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="offhand-hud" aria-label="Вторая рука"></div>
         <div id="effect-hud" class="hidden"></div>
         <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
           <div id="chat-main">
@@ -410,6 +417,7 @@ export class GameUI {
       </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
+    this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.hunger = this.root.querySelector('.hunger')!;
@@ -419,6 +427,7 @@ export class GameUI {
     this.effectHud = this.root.querySelector('#effect-hud')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
     this.hurtFlash = this.root.querySelector('#hurt-flash')!;
+    this.totemFlash = this.root.querySelector('#totem-flash')!;
     this.chat = this.root.querySelector('#chat')!;
     this.chatLogEl = this.root.querySelector('#chat-log')!;
     this.chatLogInner = this.root.querySelector('#chat-log-inner')!;
@@ -956,6 +965,11 @@ export class GameUI {
   }
 
   updateHud(state: HudState): void {
+    const offhandHtml = this.slotHtml(state.inventory.offhand, 'offhand-hud');
+    if (offhandHtml !== this.offhandHtml) {
+      this.offhandHtml = offhandHtml;
+      this.offhandHud.innerHTML = offhandHtml;
+    }
     const slots = state.inventory.slots.slice(0, Inventory.HOTBAR_SIZE);
     const hotbarHtml = slots.map((stack, index) => this.slotHtml(stack, `hotbar-${index}`, index === state.selectedSlot)).join('');
     if (hotbarHtml !== this.hotbarHtml) {
@@ -1385,6 +1399,139 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  playTotemActivation(): void {
+    if (this.totemFlashTimer !== undefined) window.clearTimeout(this.totemFlashTimer);
+    this.totemFlash.classList.remove('active');
+    // Reuse the same HUD element; restarting the class restarts the short animation.
+    void this.totemFlash.offsetWidth;
+    this.totemFlash.classList.add('active');
+    this.totemFlashTimer = window.setTimeout(() => {
+      this.totemFlash.classList.remove('active');
+      this.totemFlashTimer = undefined;
+    }, 1700);
+    this.toast('Тотем бессмертия спас вас!', 2200);
+  }
+
+  openBook(stack: ItemStack, onSave: (content: BookContent, sign: boolean) => void, onClose: () => void): void {
+    this.closeInventory(false);
+    const content = readBookContent(stack);
+    const locked = content?.locked === true;
+    const pages = [...(content?.pages ?? [''])];
+    if (pages.length === 0) pages.push('');
+    let page = 0;
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop book-backdrop';
+    modal.innerHTML = `<section class="book-panel" role="dialog" aria-modal="true" aria-label="Книга">
+      <h2>Книга</h2>
+      <div class="book-signed-info" hidden><strong class="book-signed-title"></strong><span class="book-author"></span></div>
+      <div class="book-editor">
+        <textarea class="book-page" maxlength="1024" aria-label="Текст страницы"></textarea>
+        <div class="book-navigation"><button type="button" data-book="previous">←</button><span class="book-count"></span><button type="button" data-book="next">→</button></div>
+        <div class="book-actions"><button type="button" data-book="close">${locked ? 'Готово' : 'Закрыть'}</button><button type="button" data-book="save">Готово</button><button type="button" data-book="sign">Подписать</button></div>
+      </div>
+      <div class="book-signing" hidden>
+        <label>Название книги <input class="book-title" maxlength="64" type="text"></label>
+        <p>После подписания книгу нельзя изменить.</p>
+        <div class="book-actions"><button type="button" data-book="cancel-sign">Назад</button><button type="button" data-book="confirm-sign">Подписать и закрыть</button></div>
+      </div>
+    </section>`;
+    const title = modal.querySelector<HTMLInputElement>('.book-title')!;
+    const text = modal.querySelector<HTMLTextAreaElement>('.book-page')!;
+    const counter = modal.querySelector<HTMLElement>('.book-count')!;
+    title.value = content?.title ?? '';
+    text.readOnly = locked;
+    modal.querySelector<HTMLButtonElement>('[data-book="save"]')!.hidden = locked;
+    modal.querySelector<HTMLButtonElement>('[data-book="sign"]')!.hidden = locked;
+    modal.querySelector<HTMLElement>('.book-signed-info')!.hidden = !locked;
+    modal.querySelector<HTMLElement>('.book-signed-title')!.textContent = content?.title ?? '';
+    modal.querySelector<HTMLElement>('.book-author')!.textContent = content?.author ? `Автор: ${content.author}` : '';
+    const paint = (): void => {
+      text.value = pages[page] ?? '';
+      counter.textContent = `Страница ${page + 1} из ${pages.length}`;
+      modal.querySelector<HTMLButtonElement>('[data-book="previous"]')!.disabled = page === 0;
+      modal.querySelector<HTMLButtonElement>('[data-book="next"]')!.disabled = locked
+        ? page >= pages.length - 1 : page >= pages.length - 1 && pages.length >= MAX_BOOK_PAGES;
+    };
+    const capture = (): void => { if (!locked) pages[page] = text.value; };
+    const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    });
+    modal.querySelector('[data-book="previous"]')!.addEventListener('click', () => {
+      capture(); page -= 1; paint();
+    });
+    modal.querySelector('[data-book="next"]')!.addEventListener('click', () => {
+      capture(); if (page === pages.length - 1 && !locked && pages.length < MAX_BOOK_PAGES) pages.push('');
+      page += 1; paint();
+    });
+    modal.querySelector('[data-book="close"]')!.addEventListener('click', close);
+    modal.querySelector('[data-book="save"]')!.addEventListener('click', () => {
+      capture();
+      const draft = sanitizeBookDraft({ pages, title: content?.title });
+      if (!draft) { this.toast('Книга слишком длинная'); return; }
+      onSave(draft, false);
+      close();
+    });
+    modal.querySelector('[data-book="sign"]')!.addEventListener('click', () => {
+      capture();
+      modal.querySelector<HTMLElement>('.book-editor')!.hidden = true;
+      modal.querySelector<HTMLElement>('.book-signing')!.hidden = false;
+      title.focus();
+    });
+    modal.querySelector('[data-book="cancel-sign"]')!.addEventListener('click', () => {
+      modal.querySelector<HTMLElement>('.book-signing')!.hidden = true;
+      modal.querySelector<HTMLElement>('.book-editor')!.hidden = false;
+      text.focus();
+    });
+    modal.querySelector('[data-book="confirm-sign"]')!.addEventListener('click', () => {
+      capture();
+      const draft = sanitizeBookDraft({ pages, title: title.value });
+      if (!draft?.title) { this.toast('Введите название книги'); title.focus(); return; }
+      onSave(draft, true);
+      close();
+    });
+    this.modal = modal;
+    this.root.append(modal);
+    this.setControlsSuppressed(true);
+    paint();
+    (locked ? modal.querySelector<HTMLButtonElement>('[data-book="close"]') : text)?.focus();
+  }
+
+  openSign(lines: readonly string[] | undefined, onSave: (lines: SignLines) => void, onClose: () => void): void {
+    this.closeInventory(false);
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop sign-backdrop';
+    modal.innerHTML = `<section class="sign-panel" role="dialog" aria-modal="true" aria-label="Табличка">
+      <h2>Табличка</h2>
+      <div class="sign-lines"></div>
+      <div class="book-actions"><button type="button" data-sign="close">Закрыть</button><button type="button" data-sign="save">Готово / Сохранить</button></div>
+    </section>`;
+    const inputs = Array.from({ length: 4 }, (_, index) => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 32;
+      input.setAttribute('aria-label', `Строка ${index + 1}`);
+      input.value = lines?.[index] ?? EMPTY_SIGN_LINES[index] ?? '';
+      modal.querySelector('.sign-lines')!.append(input);
+      return input;
+    });
+    const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.querySelector('[data-sign="close"]')!.addEventListener('click', close);
+    modal.querySelector('[data-sign="save"]')!.addEventListener('click', () => {
+      const sanitized = sanitizeSignLines(inputs.map((input) => input.value));
+      if (!sanitized) { this.toast('Строки таблички слишком длинные'); return; }
+      onSave(sanitized);
+      close();
+    });
+    this.modal = modal;
+    this.root.append(modal);
+    this.setControlsSuppressed(true);
+    inputs[0]?.focus();
   }
 
   openAuction(state: ServerAuctionMessage, actions: AuctionGuiActions): void {
@@ -2270,7 +2417,7 @@ export class GameUI {
   }
 
   private equipmentColumnHtml(context: InventoryContext): string {
-    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}</div>`;
+    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}${this.slotHtml(context.inventory.offhand, 'offhand')}</div>`;
   }
 
   private craftSlotHtml(stack: ItemStack | null, index: number): string {
@@ -2558,13 +2705,14 @@ export class GameUI {
     });
     const armor = armorSlotKind(key);
     const armorAttr = armor ? ` data-armor="${armor}"` : '';
+    const offhandAttr = key === 'offhand' || key === 'offhand-hud' ? ' aria-label="Вторая рука" title="Вторая рука"' : '';
     if (!stack) {
-      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
+      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
     const hover = tooltip
       ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint, layout)
       : this.itemHoverAttrs(stack.itemId, definition!.name);
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {

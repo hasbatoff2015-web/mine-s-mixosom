@@ -55,6 +55,7 @@ export interface PredictedMove {
   readonly yaw: number;
   readonly pitch: number;
   readonly locomotion: boolean;
+  readonly resting?: boolean;
 }
 
 export interface PredictionHistoryEntry {
@@ -455,6 +456,13 @@ export function applyPredictedTick(
   move: PredictedMove,
   dt = FIXED_DT,
 ): void {
+  if (move.resting) {
+    player.yaw = move.yaw;
+    player.pitch = move.pitch;
+    player.velocity.set(0, 0, 0);
+    player.previousPosition.copy(player.position);
+    return;
+  }
   player.tick(world, predictedPlayerInput(move), dt);
 }
 

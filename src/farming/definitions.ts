@@ -13,6 +13,7 @@ export const FARMING_BLOCKS: ReadonlySet<BlockId> = new Set([
   BlockId.PotatoCrop,
   BlockId.MelonStem,
   BlockId.PumpkinStem,
+  BlockId.SugarCane,
 ]);
 
 export const CROP_BLOCKS: ReadonlySet<BlockId> = new Set([

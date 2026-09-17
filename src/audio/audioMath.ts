@@ -77,15 +77,20 @@ export function canStartVoice(args: {
   globalLimit?: number;
   priority: number;
   lowestActivePriority: number;
-}): { play: boolean; steal: boolean } {
+  lowestBusPriority: number;
+}): {
+  play: boolean;
+  stealScope: 'bus' | 'global' | null;
+  rejectReason: 'bus_saturated' | 'global_saturated' | null;
+} {
   const globalLimit = args.globalLimit ?? GLOBAL_MAX_SOURCES;
   if (args.busActive >= args.busLimit) {
-    if (args.priority >= 10 && args.busActive > 0) return { play: true, steal: true };
-    return { play: false, steal: false };
+    if (args.priority > args.lowestBusPriority) return { play: true, stealScope: 'bus', rejectReason: null };
+    return { play: false, stealScope: null, rejectReason: 'bus_saturated' };
   }
   if (args.globalActive >= globalLimit) {
-    if (args.priority > args.lowestActivePriority) return { play: true, steal: true };
-    return { play: false, steal: false };
+    if (args.priority > args.lowestActivePriority) return { play: true, stealScope: 'global', rejectReason: null };
+    return { play: false, stealScope: null, rejectReason: 'global_saturated' };
   }
-  return { play: true, steal: false };
+  return { play: true, stealScope: null, rejectReason: null };
 }

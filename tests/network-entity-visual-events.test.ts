@@ -22,6 +22,8 @@ import { MinecartManager } from '../src/entities/MinecartManager';
 import { RedstoneSystem } from '../src/redstone';
 import { createThreeEntityHost } from '../src/entities/ThreeEntityHost';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
+import { Vec3 } from '../src/math/vec3';
+import { embedArrow } from '../src/combat/ArrowPhysics';
 
 function platform(world: VoxelWorld, y = 40): void {
   world.getChunk(0, 0);
@@ -104,6 +106,51 @@ describe('network visual events', () => {
     }], { interpolator, tick: 1, now: 1_000 });
     expect(session.arrows.entities.some((arrow) => arrow.id === 'arrow-9')).toBe(true);
     expect(interpolator.sample('arrow-9', 1_000)?.x).toBe(6);
+  });
+
+  it('keeps an embedded network arrow aligned to its impact instead of random spread', () => {
+    const world = new VoxelWorld('net-embedded-arrow');
+    platform(world);
+    const session = sessionOf(world);
+    const interpolator = new EntityInterpolationBuffer();
+    applyEntitySnapshots(session, [{
+      id: 'arrow-embedded', kind: 'arrow', x: 6, y: 42, z: 6,
+      vx: 0, vy: 0, vz: 0, state: 'embedded',
+      impactVx: 0.8, impactVy: -0.2, impactVz: 0.1,
+    }], { interpolator, tick: 1, now: 1_000 });
+    const arrow = session.arrows.entities[0]!;
+    expect(arrow.inGround).toBe(true);
+    expect(arrow.visualDirection.toArray()).toEqual([0.8, -0.2, 0.1]);
+    session.arrows.applyRenderPose(arrow.id, 6, 42, 6, 0, 0, 0);
+    expect(arrow.visualDirection.toArray()).toEqual([0.8, -0.2, 0.1]);
+  });
+
+  it('sends the retained impact trajectory when a server arrow embeds', () => {
+    const world = new VoxelWorld('server-embedded-arrow');
+    platform(world);
+    world.setBlock(6, 42, 7, BlockId.Stone);
+    const gameplay = new ServerGameplay(world, new EventBus());
+    const hit = world.raycast(new Vec3(6.5, 42.5, 6.5), new Vec3(0, 0, 1), 2)!;
+    gameplay.arrows.spawn(new Vec3(6.5, 42.5, 6.5), new Vec3(0, 0, 1), 1, 0, false);
+    const arrow = gameplay.arrows.entities[0]!;
+    arrow.embedded = embedArrow(hit, new Vec3(0.1, -0.2, 0.9));
+    arrow.inGround = true;
+    arrow.velocity.set(0, 0, 0);
+    expect(gameplay.snapshotsNear(new Vec3(6.5, 42.5, 6.5)).find((snapshot) => snapshot.id === arrow.id))
+      .toMatchObject({ state: 'embedded', vx: 0, vy: 0, vz: 0,
+        impactVx: 0.1, impactVy: -0.2, impactVz: 0.9 });
+  });
+
+  it('buffers authoritative firework positions for render-frame interpolation', () => {
+    const world = new VoxelWorld('net-firework-interp');
+    const session = sessionOf(world);
+    const interpolator = new EntityInterpolationBuffer();
+    applyEntitySnapshots(session, [{ id: 'firework-1', kind: 'firework', x: 1, y: 70, z: 1 }],
+      { interpolator, tick: 1, now: 1_000 });
+    applyEntitySnapshots(session, [{ id: 'firework-1', kind: 'firework', x: 1, y: 71, z: 1 }],
+      { interpolator, tick: 2, now: 1_050 });
+    expect(interpolator.sample('firework-1', 1_100)?.y).toBeGreaterThan(70);
+    expect(interpolator.sample('firework-1', 1_100)?.y).toBeLessThan(71);
   });
 
   it('arrow despawn removes the render entity without leaving a track to lerp', () => {

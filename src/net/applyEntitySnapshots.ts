@@ -58,12 +58,12 @@ export function applyEntitySnapshots(
     readonly tick?: number;
     readonly now?: number;
   },
-): void {
+): boolean {
   const interpolator = options?.interpolator;
   const tick = options?.tick ?? 0;
   const now = options?.now ?? 0;
   if (interpolator && options?.tick !== undefined && !interpolator.acceptPacketTick(tick)) {
-    return;
+    return false;
   }
 
   const seen = new Set<string>();
@@ -154,11 +154,20 @@ export function applyEntitySnapshots(
           snap.id, snap.x, snap.y, snap.z,
           snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0,
           snap.onFire === true,
-          { snapVisual: false },
+          {
+            snapVisual: false,
+            kind: snap.variant === 'wh' ? 'wh' : snap.onFire ? 'fire' : 'normal',
+            impactVelocity: snap.state === 'embedded'
+              ? { x: snap.impactVx ?? 0, y: snap.impactVy ?? 0, z: snap.impactVz ?? 0 }
+              : undefined,
+          },
         );
         ingestPose(interpolator, snap, tick, now);
         break;
       }
+      case 'firework':
+        ingestPose(interpolator, snap, tick, now);
+        break;
       case 'falling': {
         if (snap.blockId === undefined || !isKnownBlockId(snap.blockId)) break;
         let entity = session.falling.get(snap.id);
@@ -200,6 +209,7 @@ export function applyEntitySnapshots(
   for (const falling of [...session.falling.list]) {
     if (!seen.has(falling.id)) session.falling.remove(falling.id);
   }
+  return true;
 }
 
 export function applyNetworkEntityEvents(

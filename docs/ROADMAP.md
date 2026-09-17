@@ -1,5 +1,81 @@
 # Roadmap
 
+## 2026-09-18: Merge Utility Items V1 into current main
+
+- [x] Semantic merge feature `codex/utility-items-v1@475acc6` into current main without shifting OakSign off 165 or dropping unknown-block compatibility.
+- [ ] Live smoke: save with 165 as OakSign, bed occupancy, Totem, menu/friends/trade.
+
+## 2026-09-18: Totem particle spread / quieter sound
+
+- [x] Увеличить разлёт Totem burst примерно в 2 раза через initial speed, count 48, меньший point size, слегка сильнее вверх; volume `0.45 → 0.225`.
+- [ ] Live two-client visual/audio QA: 10 activations, spread/size/volume.
+
+## 2026-09-18: Bed occupancy / Totem particles / utility icons
+
+- [x] Authoritative one-player-per-bed occupancy from `ServerPlayer.restingBed` and canonical HEAD identity; reject occupied HEAD/FOOT clicks without a second occupancy map.
+- [x] Minecraft-like Totem world particle burst after authoritative activation; broadcast `totem_activate` with playerId/position to owner and nearby clients.
+- [x] Targeted inventory icons: White Bed 3D sheet preview, Oak Door and Sugar Cane item sprites with preserved aspect, Farmland shallow 3D block.
+- [ ] Live two-client QA: occupancy, 10 Totem activations, hotbar/inventory/creative icons.
+
+## 2026-09-15: Utility Items final polish
+
+- [x] Временно показывать `thirdPersonBack` на каждом resting frame, скрыть first-person руки и показать world-модель, сохранив preference и игнорируя F5 во время сна.
+- [x] Totem: `volume 0.9 → 0.45`, проигрывание сразу с `sample time 0.7s` без перекодирования и без таймера; остальные звуки/короткие буферы сохраняют безопасный старт.
+- [x] Сдвинуть только HUD offhand на 12 CSS px влево через существующий gap; hotbar остаётся центрированным на четырёх проверенных размерах окна.
+- [ ] Проверить в игровом клиенте интерактивный bed enter/Space exit с F5 и 10 Totem activations у owner+nearby слушателя. In-app browser не получил pointer lock; code-level frame test и браузерный single-event audio probe пройдены.
+
+## 2026-09-15: Utility Items bed pose / Totem audio admission
+
+- [x] Исправить ошибочный front/back bed test и развернуть rest-позу лицом вверх во всех четырёх направлениях, сохранив голову у подушки.
+- [x] Опустить только визуальный rest rig до контакта торса с матрасом; authoritative `y + 0.81` оставить прежним и полностью сбрасывать transform после выхода.
+- [x] При насыщении combat bus дать Totem priority 9 вытеснять более слабый combat voice; проверить точную owner-последовательность и nearby event без двойного старта.
+- [x] Разделить permanent missing sample и transient fetch/decode failure с bounded backoff; показывать причины отброса в audio debug.
+- [ ] Провести в живом Anarchy 10 owner+nearby активаций Totem и ещё 5 после рестарта owner с проверкой, что оба клиента слышат ровно один звук на каждую активацию. При пропуске снять `recentDrops`/`recentPlays`/`transientFailures` и повторно диагностировать. Проверить bed rest/Space глазами второго игрока.
+
+## 2026-09-14: Utility Items bed rest / Sign post / SFX race / Book
+
+- [x] RMB по foot/head валидной кровати → горизонтальная pose и камера у подушки в SP и Anarchy; Space выходит через применённую команду, server presentation передаёт rest, local prediction стоит на месте.
+- [x] Очищать rest при сломанной половине, смерти, respawn, teleport, disconnect и закрытии мира; время и spawnPoint не менять.
+- [x] Укоротить стойку напольной Sign до нижней поверхности доски, убрать перекрывающиеся cap faces и сохранить wall/text.
+- [x] Не терять первый звук до preload/fetch/decode; дедуплицировать файл, ограничить ожидающие one-shots, перепроверять admission на старте.
+- [x] Book: приоритет интерактивного блока, единый SP/online editor, draft Done, title+confirmation Sign, server-owned author/lock, read-only signed pages.
+- [ ] Реальный двухклиентный слуховой тест Anarchy и multiplayer/mобильный visual QA оставлены на ручной проход перед merge review.
+
+## 2026-09-14: Utility Items pillow/sign/Totem/firework follow-up
+
+- [x] Исправить только ориентацию pillow UV у bed head; сохранить соединение половин и проверить четыре facing.
+- [x] Подключить полный sign entity sheet и face-specific UV для доски/стойки; standing/wall и текст проверены в dev-сцене `/?qaSign=1`.
+- [x] Показывать Totem в main hand, активировать защиту только из offhand в Singleplayer и Anarchy; оба слота покрыты тестами.
+- [x] Проверить MP3 через браузерный decode и parsed `world_sound` playback; привести SFX URL к Vite `BASE_URL`; подтвердить серверную доставку owner/nearby/distant.
+- [x] Смешивать 70 белых и 18 частиц одного насыщенного акцента на burst; использовать canonical rocket asset URL.
+- [ ] Провести реальный двухклиентный слуховой тест в Anarchy и мобильный landscape QA перед merge review.
+
+## 2026-09-14: Utility Items bed/offhand/SFX follow-up
+
+- [x] Зарегистрировать полный White Bed entity sheet в runtime atlas; развернуть head/foot, верх, боковины, торцы, низ и ножки по исходным UV. Проверить через `/?qaBed=1` и regression tests.
+- [x] Один насыщенный акцент на Firework burst при прежних 20 TPS, лимитах и общем particle material; текущая пропорция 70 white / 18 accent.
+- [x] Серверный offhand Totem в remote/third-person левой руке; выбранный mainhand Totem также рисуется в first-person и third-person.
+- [x] Пользовательский `totem-sound.mp3` через существующий positional `world_sound` для владельца и соседей без дубля.
+- [ ] Трёхклиентный интерактивный PvP QA в браузере с реальным звуком и снятием Totem, а также мобильный landscape QA; unit/server проверки есть.
+
+## 2026-09-14: Utility Items live QA fixes
+
+- [x] Firework: блокирующий raycast на fixed tick, интерполяция локально и по сетевым снапшотам, крупный многоцветный burst.
+- [x] WH: единое имя в item/protocol/assets/docs; один контур base skin с пересборкой на Classic/Slim; застрявшая сетевая стрела без случайного разворота.
+- [x] Bed: отдельная соединённая head/foot геометрия и правильные UV; Sugar Cane: только настоящий водный берег, не лёд.
+- [x] Offhand HUD и inventory; заметная анимация Totem с отдельным звуком.
+- [ ] Ручной визуальный QA по checklist из `docs/reports/2026-09-14_utility-items-live-qa-fixes.md` в браузере с pointer lock и тремя клиентами.
+
+## 2026-09-13: Utility Items V1
+
+- [x] Paper recipe, wet-shore Sugar Cane generation/growth/placement; Book draft metadata, sign text and world persistence.
+- [x] Two-cell bed placement/break/support integrity; no spawn/home/time side effects. Rest interaction added in the 2026-09-14 follow-up above.
+- [x] Cow milk and 32-tick drink, effect clearing, fire resistance and central Totem death interception.
+- [x] Decorative Flight 1–3 fireworks with bounded client particles and server entity snapshots.
+- [x] WH Arrow through the existing bow/arrow authority, viewer-only 200-tick marks, wall-visible outline and invisibility compatibility.
+- [x] Focused authority tests, typechecks, boundaries, build and archive size check.
+- [ ] Three interactive clients visual QA for WH outline, fireworks, sign and book flows.
+- [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
 ## 2026-09-17: Pause heading off + Creative graphite tabs
 
 - [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.

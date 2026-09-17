@@ -23,6 +23,7 @@ import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import {
   DOOR_THICKNESS,
   LADDER_DEPTH,
+  bedVisualParts,
   doorFaceTextureUv,
   doorHalfTexture,
   ladderPlaneLocal,
@@ -31,6 +32,7 @@ import {
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { VoxelWorld } from '../src/world/World';
 import { CHUNK_SIZE, floorDiv, positiveMod } from '../src/core/constants';
+import { bedHeadCell } from '../src/world/bed';
 
 const atlasStub = {
   tile: () => ({ u0: 0, v0: 0, u1: 1, v1: 1 }),
@@ -81,7 +83,7 @@ describe('special item held routing', () => {
     expect(itemHeldMeshKind('stone')).toBe('block_cube');
     expect(itemHeldMeshKind('stone_button')).toBe('special_model');
     expect(itemHeldMeshKind('oak_pressure_plate')).toBe('special_model');
-    expect(generatedHeldTexturePath('oak_door')).toBe('generated/oak_door_item');
+    expect(generatedHeldTexturePath('oak_door')).toBe('item/oak_door');
     expect(generatedHeldTexturePath('lever')).toBe('block/lever');
     expect(generatedHeldTexturePath('ladder')).toBe('block/ladder');
 
@@ -132,6 +134,62 @@ describe('placed lever', () => {
     expect(getBlockDefinition(BlockId.Lever).renderShape).toBe('lever');
     const boxes = selectionBoxesForBlock({ renderShape: 'lever' }, { attachment: 'floor', facing: 'north' });
     expect(boxes).toHaveLength(2);
+    disposeMeshed(meshed);
+  });
+});
+
+describe('two-cell bed mesh', () => {
+  it('uses the exact head-top source rectangle with the pillow at its north edge', () => {
+    expect(bedVisualParts('head')[0]!.faces.up).toEqual({
+      uv: [1.5 / 16, 1 - 5.5 / 16, 5.5 / 16, 1 - 1.5 / 16], rotation: 0,
+    });
+  });
+
+  it.each(['north', 'east', 'south', 'west'] as const)('rotates connected head and foot geometry %s', (facing) => {
+    const { world, chunk } = emptyChunkWorld(`bed-mesh-${facing}`);
+    const foot = { x: 7, y: 40, z: 7 };
+    const head = bedHeadCell(foot.x, foot.y, foot.z, facing);
+    writeBlock(world, foot.x, foot.y, foot.z, BlockId.WhiteBed);
+    writeBlock(world, head.x, head.y, head.z, BlockId.WhiteBed);
+    world.setBlockState(foot.x, foot.y, foot.z, { facing, bedPart: 'foot' });
+    world.setBlockState(head.x, head.y, head.z, { facing, bedPart: 'head' });
+    const meshed = new ChunkMesher(atlasStub, (x, y, z) => world.getBlockState(x, y, z)).build(chunk!, world);
+    const box = geometryBounds(meshed.opaque);
+    expect(meshed.opaque.getAttribute('position').count).toBe(120);
+    expect(box.max.y).toBeCloseTo(40 + 9 / 16, 5);
+    const length = facing === 'east' || facing === 'west'
+      ? box.max.x - box.min.x : box.max.z - box.min.z;
+    expect(length).toBeCloseTo(2, 5);
+    const uv = meshed.opaque.getAttribute('uv');
+    const rectangles: number[][] = [];
+    for (let vertex = 0; vertex < uv.count; vertex += 4) {
+      const values = Array.from({ length: 4 }, (_, index) =>
+        [uv.getX(vertex + index), uv.getY(vertex + index)]);
+      rectangles.push([
+        Math.min(...values.map((value) => value[0]!)), Math.min(...values.map((value) => value[1]!)),
+        Math.max(...values.map((value) => value[0]!)), Math.max(...values.map((value) => value[1]!)),
+      ]);
+    }
+    const includesRect = (expected: number[]) => rectangles.some((actual) =>
+      actual.every((value, index) => Math.abs(value - expected[index]!) < 1e-6));
+    expect(includesRect([1.5 / 16, 1 - 5.5 / 16, 5.5 / 16, 1 - 1.5 / 16])).toBe(true);
+    expect(includesRect([1.5 / 16, 1 - 11 / 16, 5.5 / 16, 1 - 7 / 16])).toBe(true);
+    const normals = meshed.opaque.getAttribute('normal');
+    const positions = meshed.opaque.getAttribute('position');
+    const headTop = bedVisualParts('head')[0]!.faces.up!.uv;
+    const topQuad = rectangles.findIndex((rect, index) =>
+      normals.getY(index * 4) > 0.99
+      && rect.every((value, coordinate) => Math.abs(value - headTop[coordinate]!) < 1e-6));
+    expect(topQuad).toBeGreaterThanOrEqual(0);
+    const sourceNorthVertices = Array.from({ length: 4 }, (_, index) => topQuad * 4 + index)
+      .filter((vertex) => Math.abs(uv.getY(vertex) - headTop[3]) < 1e-6);
+    expect(sourceNorthVertices).toHaveLength(2);
+    const outerEdge = facing === 'north' ? head.z : facing === 'south' ? head.z + 1
+      : facing === 'east' ? head.x + 1 : head.x;
+    for (const vertex of sourceNorthVertices) {
+      const axis = facing === 'north' || facing === 'south' ? positions.getZ(vertex) : positions.getX(vertex);
+      expect(axis, facing).toBeCloseTo(outerEdge, 6);
+    }
     disposeMeshed(meshed);
   });
 });

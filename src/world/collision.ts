@@ -101,6 +101,9 @@ export function blockCollisionBoxes(
   if (block === BlockId.OakDoor) {
     return [doorCollisionBox(x, y, z, state)];
   }
+  if (block === BlockId.WhiteBed) {
+    return [{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 9 / 16, maxZ: z + 1 }];
+  }
   if (block === BlockId.Chest || block === BlockId.PortalChest) {
     return offsetLocalBoxes(x, y, z, [CHEST_BOX]);
   }

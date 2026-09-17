@@ -30,6 +30,9 @@ if (import.meta.env.DEV) {
   const qaArrow = search.has('qaArrow');
   const qaPlayer = search.get('qaPlayer') === '1';
   const qaFarming = search.get('qaFarming') === '1' || search.get('qaFarming') === 'true';
+  const qaBed = search.get('qaBed') === '1';
+  const qaSign = search.get('qaSign') === '1';
+  const qaAudio = search.get('qaAudio') === '1';
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
@@ -42,6 +45,21 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     void import('./dev/FarmingQaHarness').then(async ({ startFarmingQaHarness }) => {
       disposeApplication = await startFarmingQaHarness(canvas, uiRoot);
+    });
+  } else if (qaBed) {
+    runningDevHarness = true;
+    void import('./dev/BedQaHarness').then(async ({ startBedQaHarness }) => {
+      disposeApplication = await startBedQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSign) {
+    runningDevHarness = true;
+    void import('./dev/SignQaHarness').then(async ({ startSignQaHarness }) => {
+      disposeApplication = await startSignQaHarness(canvas, uiRoot);
+    });
+  } else if (qaAudio) {
+    runningDevHarness = true;
+    void import('./dev/AudioQaHarness').then(async ({ startAudioQaHarness }) => {
+      disposeApplication = await startAudioQaHarness(uiRoot);
     });
   } else if (qaUi && uiScenes.has(qaUi)) {
     runningDevHarness = true;

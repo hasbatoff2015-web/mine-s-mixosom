@@ -490,6 +490,12 @@ export class AnarchyServer {
       case 'pickup':
         this.world.pickup(player);
         return;
+      case 'book_update':
+        this.world.updateBook(player, message);
+        return;
+      case 'sign_update':
+        this.world.updateSign(player, message);
+        return;
       case 'vehicle_input':
         this.world.vehicleInput(player, message);
         return;

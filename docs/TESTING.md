@@ -1,5 +1,44 @@
 # Тестирование
 
+## 2026-09-18 Merge Utility Items V1 into current main
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/fs-world-store.test.ts --maxWorkers=1
+```
+
+**165 / unknown:** block-registry 17/17, unknown-block-load 4/4, fs-world-store 8/8 (serial). OakSign=165 known; generic unknown uses 65534.
+
+Utility + menu focused (23 files): **22 files / 219 tests PASS**; `chat-layout` 4 failures are the existing CRLF vs LF `style.css` host issue (selectors present). `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.74 MiB / 403 files**. Full `npx vitest run --maxWorkers=2`: **245/252 files, 2358/2381**; isolated `lighting-scheduler` 19/19 and `import-schematic` 5/5 PASS. Remaining classes: extractor parse, chat CRLF, fire/worldgen 5s, tick-load-flight. See `docs/reports/2026-09-18_merge-utility-items-v1.md`.
+
+## 2026-09-18 Totem particle spread / quieter sound
+
+```text
+npx vitest run tests/totem-burst.test.ts tests/audio-sfx.test.ts tests/server/utility-items-authority.test.ts --maxWorkers=2 --silent
+```
+
+**3 files / 50 tests PASS** (`totem-burst` 5, `audio-sfx` 27, `utility-items-authority` 18). `typecheck`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.39 MiB / 368 files**. `startOffsetSeconds` Totem остаётся `0.7`, volume `0.225`. Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_totem-particle-spread-volume.md`.
+
+## 2026-09-18 Bed occupancy / Totem particles / utility icons
+
+Focused:
+
+```text
+npx vitest run tests/totem-burst.test.ts tests/item-icon-utility.test.ts tests/server/utility-items-authority.test.ts tests/utility-items.test.ts tests/special-block-items.test.ts tests/special-preview-contract.test.ts --maxWorkers=2 --silent
+```
+
+**6 files / 81 tests PASS** (`totem-burst` 3, `item-icon-utility` 5, `utility-items-authority` 18 включая occupancy A–E и nearby `totem_activate`, `utility-items` 39, `special-block-items` 12, `special-preview-contract` 4). `npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.39 MiB / 368 files**. Full `npm test` на этой ветке ранее имел известные host baseline failures (timeouts, CRLF chat-layout, tick-load-flight); полный suite в этом проходе не запускался и не считается green. Live two-client occupancy/Totem/icon QA не выполнялся. Подробности: `docs/reports/2026-09-18_utility-bed-occupancy-totem-particles-icons.md`.
+
+## 2026-09-14 Utility Items live QA fixes
+
+Профильный прогон: `npx vitest run tests/utility-items.test.ts tests/server/utility-items-authority.test.ts tests/player-nameplate.test.ts tests/network-entity-visual-events.test.ts tests/special-block-items.test.ts tests/world-generation.test.ts tests/item-rendering.test.ts tests/entities.test.ts --maxWorkers=2 --silent` — **8 files / 106 tests PASS**. Отдельно `tests/audio-sfx.test.ts` — **20/20 PASS**. Проверены четыре направления Bed mesh, реальный детерминированный берег Cane, collision Firework, 6 WH-линий после Classic/Slim, impact direction сетевой стрелы, Firework interpolation buffer.
+
+`npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Build 4.32 MiB / 367 files. Полный `npm test` в этом проходе не запускался: предыдущий проход документировал host-sensitive timeouts/CRLF failures; требуемый ручной visual QA ещё открыт. Подробности: `docs/reports/2026-09-14_utility-items-live-qa-fixes.md`.
+
+## 2026-09-13 Utility Items V1
+
+Focused: `npx vitest run tests/entities.test.ts tests/utility-items.test.ts tests/server/utility-items-authority.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent` — 71/71 passed (26 utility, 9 server authority, 27 item rendering, 9 entity regressions). Server cases include three-player WH privacy, invisible target, cancelled versus accepted PvP hit, book validation, sign permission checks, rocket visibility, Milk clearing all viewers, and Totem hand priority. Four typechecks, `check:boundaries`, `build`, `check:size` and `check:archive` passed; production build is 4.27 MiB / 366 files.
+
+Unbounded parallel `npm test` on this Windows host produced 37 failures / 2234 tests, dominated by worldgen/streaming/minecart timing thresholds and worker timeouts. The `tick-load-flight` max-80ms assertion also failed on isolated archived `main@1c802ab` (110–121ms), so that particular failure is host baseline. A second full run with two workers was stopped as impractical after a single 39-case minecart/fire suite took 282 seconds and timed out 17 cases. That run exposed an arrow mesh-name regression; it was fixed and `tests/entities.test.ts` now passes 9/9. White Bed/Oak Sign texture registry keys were also corrected and item-rendering passes 27/27. `tests/chat-layout.test.ts` compares LF literals with a CRLF checkout; the separate reference-extractor Vitest failure remains unclassified. See the report for exact QA limits.
 ## 2026-09-17 Unknown-block save load compat
 
 Report: `reports/2026-09-17_unknown-block-save-load.md`.

@@ -1,6 +1,7 @@
 import { BlockId, getBlockDefinition, type BlockRenderShape, type BlockRenderState } from '../blocks';
 import { attachmentNormal, type BlockNeighborView } from './blockGeometry';
 import { blockCollisionBoxes } from './collision';
+import { bedOtherCell } from './bed';
 
 export interface PlacementFace { readonly x: number; readonly y: number; readonly z: number }
 
@@ -15,6 +16,7 @@ const SUPPORT_RULES: Partial<Record<BlockRenderShape, { attachment: 'floor' | 'w
   wire: { attachment: 'floor', facing: 'north' },
   pressure_plate: { attachment: 'floor', facing: 'north' },
   rail: { attachment: 'floor', facing: 'north' },
+  sign: { attachment: 'floor', facing: 'north', oriented: true },
 };
 
 const GRASS_PLANT_SUBSTRATES: ReadonlySet<BlockId> = new Set([BlockId.GrassBlock, BlockId.Dirt]);
@@ -57,6 +59,8 @@ export function vegetationSubstrates(block: BlockId): ReadonlySet<BlockId> | und
 
 export function needsBlockSupport(block: BlockId): boolean {
   return SUPPORT_RULES[getBlockDefinition(block).renderShape] !== undefined
+    || block === BlockId.SugarCane
+    || block === BlockId.WhiteBed
     || isVegetationBlock(block)
     || isLanternBlock(block)
     || isChainBlock(block);
@@ -81,6 +85,8 @@ export function canSupportHanger(
 }
 
 export function supportCellForBlock(block: BlockId, state: BlockRenderState | undefined, x: number, y: number, z: number) {
+  if (block === BlockId.SugarCane) return { x, y: y - 1, z, normal: UP };
+  if (block === BlockId.WhiteBed) return { x, y: y - 1, z, normal: UP };
   if (isVegetationBlock(block)) return { x, y: y - 1, z, normal: UP };
   if (isLanternBlock(block) || isChainBlock(block)) {
     return state?.attachment === 'ceiling'
@@ -96,6 +102,18 @@ export function supportCellForBlock(block: BlockId, state: BlockRenderState | un
 
 export function isBlockStillSupported(world: BlockNeighborView, x: number, y: number, z: number): boolean {
   const block = world.getBlock(x, y, z, false);
+  if (block === BlockId.SugarCane) return canSugarCaneStandAt(world, x, y, z);
+  if (block === BlockId.WhiteBed) {
+    const state = world.getBlockState?.(x, y, z);
+    if (!canAttachToFace(world, x, y - 1, z, UP)) return false;
+    // A legacy one-cell bed without geometry state stays valid until broken.
+    if (!state?.bedPart || !state.facing) return true;
+    const other = bedOtherCell(x, y, z, state);
+    if (!other || world.getBlock(other.x, other.y, other.z, false) !== BlockId.WhiteBed) return false;
+    const otherState = world.getBlockState?.(other.x, other.y, other.z);
+    return otherState?.facing === state.facing
+      && otherState.bedPart === (state.bedPart === 'foot' ? 'head' : 'foot');
+  }
   const substrates = vegetationSubstrates(block);
   if (substrates) return substrates.has(world.getBlock(x, y - 1, z, false));
   if (isLanternBlock(block) || isChainBlock(block)) {
@@ -106,6 +124,15 @@ export function isBlockStillSupported(world: BlockNeighborView, x: number, y: nu
   }
   const support = supportCellForBlock(block, world.getBlockState?.(x, y, z), x, y, z);
   return !support || canAttachToFace(world, support.x, support.y, support.z, support.normal);
+}
+
+/** Bottom cane needs wet soil; upper cane is supported by a valid lower segment. */
+export function canSugarCaneStandAt(world: BlockNeighborView, x: number, y: number, z: number): boolean {
+  const below = world.getBlock(x, y - 1, z, false);
+  if (below === BlockId.SugarCane) return canSugarCaneStandAt(world, x, y - 1, z);
+  if (below !== BlockId.GrassBlock && below !== BlockId.Dirt && below !== BlockId.Sand) return false;
+  return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
+    world.getBlock(x + dx!, y - 1, z + dz!, false) === BlockId.Water);
 }
 
 /** A clicked solid shape may anchor a neighboring block, even if not full-cube.
