@@ -52,7 +52,24 @@ describe('in-game pause overlay', () => {
     expect(cssRule('.pause-overlay .pause-actions .game-button')).toContain('min-height: clamp(64px, 13vh, 96px);');
     expect(cssRule('.pause-window')).toContain('width: min(560px, 92vw);');
     expect(cssRule('.pause-window')).toContain('overflow: auto;');
+    expect(cssRule('.pause-window')).toContain('padding: 0;');
     expect(STYLE).toContain('min-height: 52px;');
+  });
+
+  it('shows only Continue, Settings and Quit without a pause heading', () => {
+    const pauseFn = GAME_UI.slice(GAME_UI.indexOf('showPause('), GAME_UI.indexOf('showSettings('));
+    expect(pauseFn).toContain('data-action="resume"');
+    expect(pauseFn).toContain('data-action="settings"');
+    expect(pauseFn).toContain('data-action="quit"');
+    expect(pauseFn).toContain('Продолжить');
+    expect(pauseFn).toContain('Настройки');
+    expect(pauseFn).toContain('Сохранить и выйти');
+    expect(pauseFn).not.toContain('menu-heading');
+    expect(pauseFn).not.toContain('Игра на паузе');
+    expect(pauseFn).not.toContain('<h1>Пауза</h1>');
+    expect(pauseFn).not.toContain('eyebrow');
+    expect(STYLE).not.toContain('.pause-window .menu-heading');
+    expect(cssRule('.pause-actions')).toContain('padding: 22px;');
   });
 
   it('uses a non-menu canvas stand-in for the pause QA fixture', () => {

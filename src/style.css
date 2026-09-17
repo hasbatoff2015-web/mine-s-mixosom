@@ -3279,27 +3279,32 @@ button {
   white-space: nowrap;
   min-height: calc(14px * var(--mc-ui-scale));
   border: 0;
-  background: #8b8b8b;
-  color: #202020;
+  border-radius: 2px;
+  background: var(--mc-btn-pressed);
+  color: var(--mc-text-muted);
   font-family: var(--font-display);
   font-size: calc(5px * var(--mc-ui-scale));
+  font-weight: 400;
   line-height: 1.2;
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #ffffff,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #555;
+  box-shadow: var(--mc-btn-edge);
+  cursor: pointer;
 }
 
 .mc-creative-tabs button.active {
-  color: #f7f7f7;
-  background: #686f7c;
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #42464f,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #d6d9df;
+  color: var(--mc-text-title);
+  background: var(--mc-btn-face);
 }
 
+.mc-creative-tabs button:hover,
 .mc-creative-tabs button:focus-visible {
-  outline: calc(1px * var(--mc-ui-scale)) solid #ffffff;
+  background: var(--mc-btn-hover);
+  color: var(--mc-text-title);
+  outline: calc(1px * var(--mc-ui-scale)) solid rgba(232, 234, 238, 0.35);
   outline-offset: calc(1px * var(--mc-ui-scale));
+}
+
+.mc-creative-tabs button:active {
+  background: var(--mc-btn-pressed);
 }
 
 .mc-creative-catalog {
@@ -3309,10 +3314,21 @@ button {
   justify-content: start;
   overflow-x: hidden;
   overflow-y: auto;
-  width: calc(9 * var(--mc-slot) + max(16px, calc(8px * var(--mc-ui-scale))));
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  width: 100%;
   max-width: 100%;
-  padding-right: max(16px, calc(8px * var(--mc-ui-scale)));
+  padding-right: 0;
   max-height: calc(108px * var(--mc-ui-scale));
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scrollbar-gutter: auto;
+}
+
+.mc-creative-catalog::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .mc-creative-catalog .mc-slot {
@@ -4623,23 +4639,13 @@ button {
   min-height: 0;
   max-height: min(90vh, 820px);
   overflow: auto;
-}
-
-.pause-window .menu-heading {
-  flex: none;
-  min-height: 0;
-  margin: 0;
-  padding: 18px 24px 14px;
-}
-
-.pause-window .menu-heading h1 {
-  font-size: clamp(28px, 4.2vw, 40px);
+  padding: 0;
 }
 
 .pause-actions {
   display: grid;
   gap: 14px;
-  padding: 18px 22px 24px;
+  padding: 22px;
 }
 
 .pause-overlay .pause-actions .game-button {
@@ -4651,17 +4657,9 @@ button {
 }
 
 @media (max-height: 540px), (max-width: 900px) {
-  .pause-window .menu-heading {
-    padding: 8px 16px 4px;
-  }
-
-  .pause-window .menu-heading h1 {
-    font-size: 22px;
-  }
-
   .pause-actions {
     gap: 8px;
-    padding: 8px 14px 12px;
+    padding: 12px 14px;
   }
 
   .pause-overlay .pause-actions .game-button {

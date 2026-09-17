@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Pause heading off + Creative graphite tabs — 2026-09-17
+
+- Pause overlay больше не показывает «ИГРА НА ПАУЗЕ» / «Пауза». Остаются только Продолжить / Настройки / Сохранить и выйти; отступы карточки сжаты, кнопки по центру по вертикали. Живой мир под overlay и graphite-кнопки без изменений.
+- Creative: вкладки «Каталог» / «Инвентарь» в graphite (`--mc-btn-face` / `--mc-btn-pressed`). Native scrollbar каталога скрыт; 9 колонок слотов, wheel и `touch-action: pan-y` сохранены.
+- Handoff: `docs/reports/2026-09-17_pause-heading-creative-tabs.md`.
+
 ## Последний проход: Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
 
 - TAB Pause — overlay поверх живого `#game-canvas`, без `frontier-menu-background.png` и без `menu-screen`/`submenu-screen`. Симуляция по-прежнему `PAUSED`. Resume возвращает тот же мир.

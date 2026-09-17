@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-17: Pause heading off + Creative graphite tabs
+
+- [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.
+- [x] Creative Catalog/Inventory tabs use graphite chrome; catalog scrollbar is hidden while wheel and touch pan still scroll all 9 columns.
+
 ## 2026-09-17: Pause overlay + larger HUD/chat/pause buttons
 
 - [x] In-game TAB Pause overlays the live world canvas; it does not switch to the Main Menu photo.

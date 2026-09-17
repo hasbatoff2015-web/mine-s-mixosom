@@ -1,5 +1,9 @@
 # Архитектура
 
+## Pause heading off + Creative graphite tabs — 2026-09-17
+
+`GameUI.showPause` still uses `.screen.pause-overlay` over the live canvas. The pause card no longer has a `.menu-heading`; only `.pause-actions` remain, with equal padding around the three existing graphite `.game-button`s. Settings/Controls from pause keep `overlayWorld`. Creative Catalog/Inventory stay `data-creative-tab` buttons; CSS faces use `--mc-btn-*` instead of light Minecraft gray. `.mc-creative-catalog` keeps `overflow-y: auto` and 9×`--mc-slot` columns, hides the native scrollbar (`scrollbar-width: none` / webkit `display: none`), and does not reserve a right track (`MC_CREATIVE_SCROLL_GUTTER = 0`, `width: 100%`).
+
 ## Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
 
 In-game Pause (`GameUI.showPause`) is a `.screen.pause-overlay` over the live WebGL canvas. It no longer uses `menu-screen` / `submenu-screen`, so it does not paint `frontier-menu-background.png`. Settings/Controls opened from pause pass `overlayWorld` and keep the same overlay. Simulation still goes `PAUSED` via `openingPauseMenuPausesSimulation()`; `resumeFromPause` → `enterPlaying`. Chat side/tab faces are height×2 with native `aspect-ratio` + `contain`; HUD corner sprites are 76 logical px squares.

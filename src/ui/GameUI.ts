@@ -861,7 +861,6 @@ export class GameUI {
     this.setScreen(`
       <section class="screen pause-overlay" data-pause-overlay="world">
         <div class="menu-card pause-window">
-          <header class="menu-heading"><div><span class="eyebrow">Игра на паузе</span><h1>Пауза</h1></div></header>
           <div class="menu-stack pause-actions">
             <button class="game-button primary" data-action="resume">Продолжить</button>
             <button class="game-button" data-action="settings">Настройки</button>

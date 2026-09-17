@@ -9,7 +9,8 @@ export const MC_INVENTORY_HEIGHT = 166;
 export const MC_CREATIVE_WIDTH = 195;
 /** Compact tabs + six-row catalog + controlled hotbar gap; not a forced panel height. */
 export const MC_CREATIVE_HEIGHT = 166;
-export const MC_CREATIVE_SCROLL_GUTTER = 8;
+/** Native catalog scrollbar is hidden; 9 slots must fit without a reserved track. */
+export const MC_CREATIVE_SCROLL_GUTTER = 0;
 export const MC_RECIPE_BOOK_WIDTH = 147;
 export const MC_RECIPE_BOOK_GAP = 4;
 /** Book toggle lives inside the craft row, not as extra stage width. */
