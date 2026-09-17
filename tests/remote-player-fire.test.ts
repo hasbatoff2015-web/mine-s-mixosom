@@ -10,7 +10,7 @@ import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppear
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
-import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
+import { PlayerVisual, PLAYER_FIRE_OVERLAY_SCALE_Y } from '../src/rendering/player/PlayerVisual';
 import { VoxelWorld } from '../src/world/World';
 
 function snapshot(overrides: Partial<PlayerSnapshot> = {}): PlayerSnapshot {
@@ -61,6 +61,7 @@ describe('remote player fire visual', () => {
     view.applySnapshot(snapshot({ onFire: true }), now, 20);
     view.interpolate(now + REMOTE_INTERP_DELAY_MS, 0.05);
     expect(visual.fireOverlayVisible).toBe(true);
+    expect(visual.fireOverlayScaleY).toBe(0.5);
     view.applySnapshot(snapshot({ onFire: false }), now + 2 * REMOTE_TICK_MS, 22);
     view.applySnapshot(snapshot({ onFire: false }), now + 3 * REMOTE_TICK_MS, 23);
     view.interpolate(now + 3 * REMOTE_TICK_MS + REMOTE_INTERP_DELAY_MS, 0.05);
@@ -70,5 +71,20 @@ describe('remote player fire visual', () => {
 
   it('does not replace mob entity fire with a damage-based hack', () => {
     expect(remoteSampleFromSnapshot(snapshot(), 1, 0).onFire).toBe(false);
+  });
+
+  it('squashes only the player fire overlay on Y without changing width', () => {
+    expect(PLAYER_FIRE_OVERLAY_SCALE_Y).toBe(0.5);
+    const { view, visual, dispose } = makeView();
+    const now = 20 * REMOTE_TICK_MS + REMOTE_INTERP_DELAY_MS;
+    view.applySnapshot(snapshot({ onFire: true }), now - REMOTE_TICK_MS, 18);
+    view.applySnapshot(snapshot({ onFire: true }), now, 20);
+    view.interpolate(now + REMOTE_INTERP_DELAY_MS, 0.05);
+    expect(visual.fireOverlayVisible).toBe(true);
+    expect(visual.fireOverlayScaleY).toBe(PLAYER_FIRE_OVERLAY_SCALE_Y);
+    const overlay = visual.root.children.find((child) => child.name === 'fire-overlay');
+    expect(overlay?.scale.x).toBe(1);
+    expect(overlay?.scale.z).toBe(1);
+    dispose();
   });
 });

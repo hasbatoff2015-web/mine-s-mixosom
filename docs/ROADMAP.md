@@ -3,6 +3,8 @@
 ## 2026-09-17: Bugfix/performance gameplay pass
 
 - [x] AutoMine incremental top-down reset with deferred lighting (no 2–3s frame freeze from a full-cuboid write).
+- [x] AutoMine reset no longer remeshes the full 16×256×16 column per batch; lighting is time-sliced and held during voxel bursts.
+- [x] Burning-player fire overlay height halved via `scale.y` (width unchanged).
 - [x] Hotbar select + immediate use/click without selected-slot rollback.
 - [x] Remote player fire overlay from authoritative `PlayerSnapshot.onFire`.
 - [x] Selected skin on first remote spawn / resume without requiring reconnect.

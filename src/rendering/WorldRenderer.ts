@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { getBlockDefinition } from '../blocks';
 import type { HorizontalFacing } from '../blocks';
-import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
+import { CHUNK_SIZE, MESH_SECTION_HEIGHT, chunkKey, floorDiv } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import type { VoxelHit, VoxelWorld } from '../world/World';
 import { lightContextReady } from '../world/worldJobs';
@@ -23,6 +23,7 @@ import { SharedFireTexture } from './fireTexture';
 
 interface ChunkVisual {
   group: THREE.Group;
+  sections: Map<number, THREE.Group>;
   faces: number;
   chests: Array<{ x: number; y: number; z: number }>;
 }
@@ -46,6 +47,7 @@ export class WorldRenderer {
   meshSamples = 0;
   meshTotalMs = 0;
   meshMaximumMs = 0;
+  lastRebuildSections = 0;
 
   constructor(
     private readonly world: VoxelWorld,
@@ -204,39 +206,42 @@ export class WorldRenderer {
   rebuild(chunk: Chunk): void {
     const meshStart = performance.now();
     const key = chunkKey(chunk.x, chunk.z);
-    this.removeChunk(key);
-    const meshed = this.mesher.build(chunk, this.world);
-    const group = new THREE.Group();
-    group.name = `chunk-${key}`;
-    if (meshed.opaque.getAttribute('position').count > 0) group.add(new THREE.Mesh(meshed.opaque, this.opaqueMaterial));
-    else meshed.opaque.dispose();
-    if (meshed.cutout.getAttribute('position').count > 0) {
-      const mesh = new THREE.Mesh(meshed.cutout, this.cutoutMaterial);
-      mesh.renderOrder = 1;
-      group.add(mesh);
-    } else meshed.cutout.dispose();
-    if (meshed.vegetation.getAttribute('position').count > 0) {
-      const mesh = new THREE.Mesh(meshed.vegetation, this.vegetationMaterial);
-      mesh.renderOrder = 1;
-      group.add(mesh);
-    } else meshed.vegetation.dispose();
-    if (meshed.translucent.getAttribute('position').count > 0) {
-      const mesh = new THREE.Mesh(meshed.translucent, this.glassMaterial);
-      mesh.renderOrder = 2;
-      group.add(mesh);
-    } else meshed.translucent.dispose();
-    if (meshed.water.getAttribute('position').count > 0) {
-      const mesh = new THREE.Mesh(meshed.water, this.waterMaterial);
-      mesh.renderOrder = 3;
-      group.add(mesh);
-    } else meshed.water.dispose();
-    if (meshed.fire.getAttribute('position').count > 0) {
-      const mesh = new THREE.Mesh(meshed.fire, SharedFireTexture.instance().material);
-      mesh.renderOrder = 4;
-      group.add(mesh);
-    } else meshed.fire.dispose();
-    this.group.add(group);
-    this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
+    let visual = this.chunks.get(key);
+    if (!visual) {
+      visual = {
+        group: new THREE.Group(),
+        sections: new Map(),
+        faces: 0,
+        chests: [],
+      };
+      visual.group.name = `chunk-${key}`;
+      this.group.add(visual.group);
+      this.chunks.set(key, visual);
+    }
+    const maxY = chunk.scanMaxY();
+    const lightRebake = chunk.lightMeshStale && !chunk.dirty;
+    const range = lightRebake || !visual.sections.size
+      ? { minSection: 0, maxSection: Math.floor(Math.max(0, maxY) / MESH_SECTION_HEIGHT), partial: false }
+      : chunk.meshSectionRange(maxY);
+    this.lastRebuildSections = 0;
+    for (let section = range.minSection; section <= range.maxSection; section += 1) {
+      this.rebuildSection(chunk, visual, section);
+      this.lastRebuildSections += 1;
+    }
+    if (!range.partial) {
+      for (const [section, group] of [...visual.sections.entries()]) {
+        if (section < range.minSection || section > range.maxSection) {
+          this.disposeSection(visual, section, group);
+        }
+      }
+    }
+    visual.faces = 0;
+    visual.chests = [];
+    for (const group of visual.sections.values()) {
+      visual.faces += (group.userData.faces as number) ?? 0;
+      const chests = group.userData.chests as Array<{ x: number; y: number; z: number }> | undefined;
+      if (chests) visual.chests.push(...chests);
+    }
     chunk.dirty = false;
     chunk.meshedLightVersion = chunk.lightVersion;
     this.world.acknowledgeMeshed(chunk);
@@ -326,6 +331,10 @@ export class WorldRenderer {
     return this.meshTotalMs / Math.max(1, this.meshSamples);
   }
 
+  sectionCount(key: string): number {
+    return this.chunks.get(key)?.sections.size ?? 0;
+  }
+
   dispose(): void {
     for (const key of [...this.chunks.keys()]) this.removeChunk(key);
     this.group.remove(this.selection);
@@ -347,7 +356,55 @@ export class WorldRenderer {
     const existing = this.chunks.get(key);
     if (!existing) return;
     this.group.remove(existing.group);
-    for (const child of existing.group.children) if (child instanceof THREE.Mesh) child.geometry.dispose();
+    for (const section of existing.sections.values()) this.disposeObject3D(section);
+    this.disposeObject3D(existing.group);
     this.chunks.delete(key);
+  }
+
+  private rebuildSection(chunk: Chunk, visual: ChunkVisual, section: number): void {
+    const minY = section * MESH_SECTION_HEIGHT;
+    const maxY = minY + MESH_SECTION_HEIGHT - 1;
+    const existing = visual.sections.get(section);
+    if (existing) this.disposeSection(visual, section, existing);
+    const meshed = this.mesher.build(chunk, this.world, { minY, maxY });
+    const group = new THREE.Group();
+    group.name = `chunk-section-${chunk.x},${chunk.z}:${section}`;
+    this.attachLayer(group, meshed.opaque, this.opaqueMaterial, 0);
+    this.attachLayer(group, meshed.cutout, this.cutoutMaterial, 1);
+    this.attachLayer(group, meshed.vegetation, this.vegetationMaterial, 1);
+    this.attachLayer(group, meshed.translucent, this.glassMaterial, 2);
+    this.attachLayer(group, meshed.water, this.waterMaterial, 3);
+    this.attachLayer(group, meshed.fire, SharedFireTexture.instance().material, 4);
+    group.userData.faces = meshed.faces;
+    group.userData.chests = meshed.chests;
+    visual.group.add(group);
+    visual.sections.set(section, group);
+  }
+
+  private attachLayer(
+    group: THREE.Group,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    renderOrder: number,
+  ): void {
+    if (geometry.getAttribute('position').count > 0) {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = renderOrder;
+      group.add(mesh);
+      return;
+    }
+    geometry.dispose();
+  }
+
+  private disposeSection(visual: ChunkVisual, section: number, group: THREE.Group): void {
+    visual.group.remove(group);
+    this.disposeObject3D(group);
+    visual.sections.delete(section);
+  }
+
+  private disposeObject3D(root: THREE.Object3D): void {
+    root.traverse((child) => {
+      if (child instanceof THREE.Mesh) child.geometry.dispose();
+    });
   }
 }

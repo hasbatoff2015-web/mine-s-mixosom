@@ -1,6 +1,12 @@
 # Состояние проекта
 
-## Последний проход: Bugfix/performance gameplay pass — 2026-09-17
+## Последний проход: Player fire height + AutoMine reset pipeline — 2026-09-17
+
+- Burning-player fire overlay: `PlayerVisual` keeps overlay width and `position.y = 0.15`, then `scale.y = 0.5`. Mob / first-person fire paths unchanged.
+- AutoMine lag root cause was repeated full-column remesh + restarted lighting floods, not 64 writes/tick. Fill uses `updateLighting: false`; lighting is budgeted `processLighting`. Client remeshes dirty Y sections (`MESH_SECTION_HEIGHT = 16`). Edit-region floods wait until a voxel burst pauses.
+- Handoff: `docs/reports/2026-09-17_automine-fire-pipeline.md`.
+
+## Предыдущий проход: Bugfix/performance gameplay pass — 2026-09-17
 
 - AutoMine reset: top-down incremental fill (≤64 voxels/tick), lighting deferred until the next tick after writes. No whole-mine `setBlock` in one tick.
 - Hotbar 1–9 then instant LMB/RMB: selection is committed into the command stream; inventory echo cannot roll back a newer local slot.

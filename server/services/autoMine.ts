@@ -12,6 +12,8 @@ export const AUTOMINE_MAX_INTERVAL_SECONDS = 86_400;
 export const AUTOMINE_MAX_EDGE = 32;
 export const AUTOMINE_MAX_VOLUME = 32 * 32 * 32;
 export const AUTOMINE_BLOCKS_PER_TICK = 64;
+/** Time-sliced cuboid lighting after fill. Must stay well under a 50 ms tick. */
+export const AUTOMINE_LIGHT_BUDGET_MS = 8;
 export const AUTOMINE_NAME_MAX = 24;
 export const AUTOMINE_WEIGHT_TOTAL = 10_000;
 
@@ -102,7 +104,9 @@ export interface AutoMineResetMetrics {
   blocksWritten: number;
   maxBatch: number;
   maxRelightMs: number;
+  maxWriteMs: number;
   lightingTicks: number;
+  maxTickMs: number;
 }
 
 export interface AutoMineJob {
@@ -390,6 +394,7 @@ export function snapshotVolume(world: VoxelWorld, volume: SelectionVolume): numb
 export class AutoMineManager {
   enabled = false;
   blocksPerTick = AUTOMINE_BLOCKS_PER_TICK;
+  lightBudgetMs = AUTOMINE_LIGHT_BUDGET_MS;
   lastResetMetrics: AutoMineResetMetrics | undefined;
   private readonly selections = new Map<string, AutoMineSelection>();
   private mines: AutoMineRecord[] = [];
@@ -615,7 +620,9 @@ export class AutoMineManager {
       blocksWritten: 0,
       maxBatch: 0,
       maxRelightMs: 0,
+      maxWriteMs: 0,
       lightingTicks: 0,
+      maxTickMs: 0,
     });
     return { ok: true };
   }
@@ -663,9 +670,11 @@ export class AutoMineManager {
 
   private stepJob(job: AutoMineJob, budget: number): number {
     const metrics = this.jobMetrics.get(job.name);
+    const tickStart = performance.now();
     if (metrics) metrics.ticks += 1;
     if (job.phase === 'lighting') {
       this.stepLighting(job);
+      if (metrics) metrics.maxTickMs = Math.max(metrics.maxTickMs, performance.now() - tickStart);
       return budget;
     }
     const mutations = [];
@@ -682,20 +691,25 @@ export class AutoMineManager {
       const stats = this.host.world.applyBlockBatch(mutations, {
         skipSupport: true,
         scheduleNeighbors: false,
-        updateLighting: true,
+        updateLighting: false,
         deferLighting: true,
       });
       this.host.onBlocksWritten?.(mutations);
       if (metrics) {
         metrics.blocksWritten += mutations.length;
         metrics.maxBatch = Math.max(metrics.maxBatch, mutations.length);
+        metrics.maxWriteMs = Math.max(metrics.maxWriteMs, stats.mutationMs);
         metrics.maxRelightMs = Math.max(metrics.maxRelightMs, stats.relightMs);
       }
     }
     job.offset = end;
-    if (job.offset < job.total) return Math.max(0, budget - mutations.length);
+    if (job.offset < job.total) {
+      if (metrics) metrics.maxTickMs = Math.max(metrics.maxTickMs, performance.now() - tickStart);
+      return Math.max(0, budget - mutations.length);
+    }
     job.phase = 'lighting';
     this.queueJobLighting(job);
+    if (metrics) metrics.maxTickMs = Math.max(metrics.maxTickMs, performance.now() - tickStart);
     return 0;
   }
 
@@ -715,9 +729,13 @@ export class AutoMineManager {
     job.lightingTicks += 1;
     const metrics = this.jobMetrics.get(job.name);
     if (metrics) metrics.lightingTicks = job.lightingTicks;
+    const volume = job.volume;
+    const originX = (volume.minX + volume.maxX) * 0.5;
+    const originZ = (volume.minZ + volume.maxZ) * 0.5;
     const started = performance.now();
-    this.host.world.flushLighting();
+    this.host.world.processLighting(Math.max(1, this.lightBudgetMs), originX, originZ);
     if (metrics) metrics.maxRelightMs = Math.max(metrics.maxRelightMs, performance.now() - started);
+    if (this.host.world.hasQueuedRegionLight) return;
     this.finishJob(job);
   }
 
@@ -729,7 +747,8 @@ export class AutoMineManager {
       this.jobMetrics.delete(job.name);
       this.host.log(
         `automine reset '${job.name}' ticks=${metrics.ticks} blocks=${metrics.blocksWritten}`
-        + ` maxBatch=${metrics.maxBatch} relightMs=${metrics.maxRelightMs.toFixed(1)}`
+        + ` maxBatch=${metrics.maxBatch} writeMs=${metrics.maxWriteMs.toFixed(1)}`
+        + ` relightMs=${metrics.maxRelightMs.toFixed(1)} tickMs=${metrics.maxTickMs.toFixed(1)}`
         + ` lightingTicks=${metrics.lightingTicks}`,
       );
     }

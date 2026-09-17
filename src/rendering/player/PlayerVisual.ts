@@ -53,6 +53,11 @@ export interface PlayerVisualFrameState extends PlayerAnimationState {
 }
 
 export const UPPER_BODY_PIVOT_Y = 12 * PLAYER_MODEL_PIXEL;
+/**
+ * Squash only the burning-player overlay on Y. Width stays 1; geometry and
+ * PlayerVisual body scale are unchanged. Mobs use ThreeEntityHost.
+ */
+export const PLAYER_FIRE_OVERLAY_SCALE_Y = 0.5;
 
 export interface PlayerVisualRig {
   readonly upperBody: THREE.Group;
@@ -282,6 +287,10 @@ export class PlayerVisual {
     return this.fireOverlay?.visible === true;
   }
 
+  get fireOverlayScaleY(): number | undefined {
+    return this.fireOverlay?.scale.y;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.root.removeFromParent();
@@ -401,6 +410,7 @@ export class PlayerVisual {
       if (!this.fireOverlay) {
         const overlay = SharedFireTexture.instance().createScaledOverlay(0.7, 1.85);
         overlay.position.y = 0.15;
+        overlay.scale.y = PLAYER_FIRE_OVERLAY_SCALE_Y;
         this.root.add(overlay);
         this.fireOverlay = overlay;
       }
