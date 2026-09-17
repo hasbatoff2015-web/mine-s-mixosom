@@ -48,7 +48,12 @@ Done. Server still owns trade money, ready-reset, double Accept, atomic swap, an
 
 ## Visual QA
 
-Browser check of Main Menu coin (desktop + mobile viewport) and open chat (no log panel, graphite controls). Trade two-amount layout is covered by HTML/CSS tests; live two-player trade needs Anarchy.
+DEV fixtures `?qaUi=menu-root|menu-homes|trade-session|chat-open` (real `GameUI`, no world tick):
+
+- Main Menu coin is a full round disc next to unchanged `Баланс: 5 645 монет` on desktop 1280×720 and landscape 844×390.
+- Open chat: message chips over the world, no log-area gradient panel; Enter / X / CHAT ON are graphite beveled buttons.
+- Trade session: `Монет:` input 100 on the left and `Монет: 500` on the right.
+- Homes: `Мои дома (2/3):`.
 
 ## Performance
 

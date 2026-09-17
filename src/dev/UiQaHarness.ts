@@ -1,7 +1,9 @@
 import { createItemStack, Inventory } from '../inventory';
 import type { WorldSummary } from '../save/types';
 import { GameUI } from '../ui/GameUI';
-import type { ServerMenuMessage } from '../../shared/protocol';
+import type { ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import { HOME_MAX_DEFAULT } from '../../shared/homes';
+import { TRADE_SLOT_COUNT } from '../../shared/trade';
 
 export type UiQaScene =
   | 'loading'
@@ -11,8 +13,11 @@ export type UiQaScene =
   | 'creative'
   | 'world-list'
   | 'menu-root'
+  | 'menu-homes'
   | 'menu-friends'
   | 'menu-trade'
+  | 'trade-session'
+  | 'chat-open'
   | 'pause';
 
 const HUD_ITEMS = [
@@ -100,6 +105,18 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
       balance: 5645,
       balanceLabel: '5 645',
     });
+  } else if (scene === 'menu-homes') {
+    openMenu({
+      type: 'menu',
+      screen: 'homes',
+      title: 'Дома',
+      homeCount: 2,
+      homeMax: HOME_MAX_DEFAULT,
+      homes: [
+        { name: 'Дом', x: 12, y: 70, z: -4 },
+        { name: 'Шахта', x: 40, y: 64, z: 18 },
+      ],
+    });
   } else if (scene === 'menu-friends') {
     openMenu({
       type: 'menu',
@@ -126,6 +143,32 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
         { playerId: '3', name: 'Steve123', distance: 18 },
       ],
     });
+  } else if (scene === 'trade-session') {
+    showHud(20, 20);
+    const emptySlots = Array.from({ length: TRADE_SLOT_COUNT }, () => null);
+    const trade: ServerTradeMessage = {
+      type: 'trade',
+      screen: 'session',
+      title: 'Обмен',
+      partnerName: 'Bob',
+      selfReady: false,
+      partnerReady: false,
+      bothReady: false,
+      money: 100,
+      moneyText: '100',
+      partnerMoney: 500,
+      partnerMoneyText: '500',
+      selfSlots: emptySlots,
+      partnerSlots: emptySlots,
+      inventorySlots: Array.from({ length: 36 }, () => null),
+    };
+    ui.openTrade(trade, { send: () => {}, close: () => {} });
+  } else if (scene === 'chat-open') {
+    showHud(20, 20);
+    ui.appendChat({ id: '1', kind: 'player', text: 'Привет, как дела?', createdAtMs: Date.now(), channel: 'global', from: 'Ada' });
+    ui.appendChat({ id: '2', kind: 'player', text: 'Рядом есть железо', createdAtMs: Date.now(), channel: 'nearby', from: 'Bob' });
+    ui.appendChat({ id: '3', kind: 'system', text: 'Добро пожаловать на сервер.', createdAtMs: Date.now() });
+    ui.openChat();
   } else if (scene === 'pause') {
     showHud(20, 20);
     ui.showPause({
