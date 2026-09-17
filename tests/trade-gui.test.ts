@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { TRADE_SLOT_COUNT, tradeInventoryFullError } from '../shared/trade';
-import { tradeAcceptEnabled, tradeReadyLabel, tradeSlotCount, tradeWindowChrome } from '../src/ui/tradeGui';
+import { tradeAcceptEnabled, tradeMoneyCaption, tradeReadyLabel, tradeSlotCount, tradeWindowChrome } from '../src/ui/tradeGui';
+
+const STYLE = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
 
 describe('trade GUI helpers', () => {
   it('uses six trade slots and two-stage confirmation copy', () => {
@@ -24,7 +27,10 @@ describe('trade GUI helpers', () => {
       selfReady: false,
       partnerReady: false,
       bothReady: false,
-      moneyText: '1000',
+      moneyText: '100',
+      money: 100,
+      partnerMoney: 500,
+      partnerMoneyText: '500',
     }, (value) => value, {
       self: '[self]',
       partner: '[partner]',
@@ -32,9 +38,12 @@ describe('trade GUI helpers', () => {
     });
     expect(html).toContain('Вы отдаёте');
     expect(html).toContain('Bob');
-    expect(html).toContain('Монет');
+    expect(html).toContain('Монет:');
     expect(html).toContain('data-trade-money');
-    expect(html).toContain('value="1000"');
+    expect(html).toContain('value="100"');
+    expect(html).toContain('data-trade-partner-money');
+    expect(html).toContain(tradeMoneyCaption('500'));
+    expect(html.indexOf('data-trade-money')).toBeLessThan(html.indexOf('data-trade-partner-money'));
     expect(html).toContain('data-trade-action="ready"');
     expect(html).toContain('data-trade-action="accept"');
     expect(html).toContain('data-trade-action="cancel"');
@@ -43,6 +52,9 @@ describe('trade GUI helpers', () => {
     expect(html).toContain('[self]');
     expect(html).toContain('[partner]');
     expect(html).toContain('[inv]');
+    expect(tradeMoneyCaption(undefined)).toBe('Монет: 0');
+    expect(STYLE).toContain('.mc-trade-money-partner');
+    expect(STYLE).toContain('.mc-trade-side');
     expect(tradeInventoryFullError('Ada')).toBe('У Ada недостаточно места в инвентаре для обмена');
   });
 });

@@ -1,5 +1,6 @@
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../../shared/gameMenu';
 import { FRIENDS_MAX } from '../../shared/friends';
+import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import { formatMegacoinAmount } from '../../shared/megacoins';
 import type { ServerMenuMessage } from '../../shared/protocol';
 
@@ -113,7 +114,7 @@ export function menuHomesHtml(state: ServerMenuMessage, escape: (value: string) 
       <input data-menu-home-name type="text" maxlength="24" value="${escape(state.homeNameText ?? '')}" placeholder="Название дома" autocomplete="off" spellcheck="false" />
       <button type="button" class="mc-ah-btn" data-menu-action="home_create">Добавить</button>
     </div>
-    <div class="mc-menu-count">Мои дома (${state.homeCount ?? 0}/${state.homeMax ?? 4}):</div>
+    <div class="mc-menu-count">Мои дома (${state.homeCount ?? 0}/${state.homeMax ?? HOME_MAX_DEFAULT}):</div>
     <div class="mc-menu-list">${homes || '<p class="mc-menu-empty">Нет домов.</p>'}</div>
     ${menuMessage(state.message, escape)}
   </div>`;

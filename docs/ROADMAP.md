@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-17: Trade partner coins, chat chrome, home limit 3, menu coin
+
+- [x] Trade snapshot + GUI show both players' coin offers; server remains source of truth.
+- [x] Open chat log has no message-area panel fill; Enter/X/Chat ON-OFF use graphite hover/pressed.
+- [x] Ordinary home cap is `HOME_MAX_DEFAULT = 3` for commands and UI.
+- [x] Main Menu coin icon is uncropped and vertically aligned with «Баланс».
+
 ## 2026-09-17: Unknown-block save load compat
 
 - [x] Runtime placeholder for any unregistered storable voxel ID, including JSON string `"165"`.

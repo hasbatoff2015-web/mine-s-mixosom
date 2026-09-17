@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
+import { HOME_MAX_DEFAULT } from '../shared/homes';
 import { formatMegacoinAmount } from '../shared/megacoins';
 import { menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
 import { MC_MENU_MAX_SCALE, MC_MENU_WIDTH, menuUiScale } from '../src/ui/containerTheme';
@@ -10,6 +11,14 @@ const gameUi = readFileSync(new URL('../src/ui/GameUI.ts', import.meta.url), 'ut
 const gameSource = readFileSync(new URL('../src/core/Game.ts', import.meta.url), 'utf8');
 const inputSource = readFileSync(new URL('../src/input/InputManager.ts', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
+
+function cssRule(selector: string): string {
+  const start = css.indexOf(`${selector} {`);
+  expect(start, selector).toBeGreaterThanOrEqual(0);
+  const end = css.indexOf('\n}', start);
+  expect(end, `${selector} end`).toBeGreaterThan(start);
+  return css.slice(start, end + 2);
+}
 
 function menu(partial: Partial<ServerMenuMessage> = {}): ServerMenuMessage {
   return { type: 'menu', screen: 'root', title: 'Меню', ...partial };
@@ -82,6 +91,12 @@ describe('main menu HUD and chrome', () => {
     expect(MC_MENU_WIDTH).toBe(248);
     expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, 176)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('Баланс: 100 монет');
+    expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin');
+    expect(cssRule('.mc-menu-coin')).toContain('object-fit: contain;');
+    expect(cssRule('.mc-menu-coin')).toContain('width: calc(12px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-coin')).toContain('height: calc(12px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-balance')).toContain('align-items: center;');
+    expect(cssRule('.mc-menu-balance')).toContain('overflow: visible;');
     for (const file of [
       'icon_spawn.png', 'icon_homes.png', 'icon_friends.png', 'icon_clans.png',
       'icon_claims.png', 'icon_trade.png', 'icon_auction.png', 'icon_coin.png',
@@ -109,9 +124,11 @@ describe('main menu HUD and chrome', () => {
       screen: 'homes',
       homes: [{ name: 'Дом', x: 123, y: 64, z: -245 }],
       homeCount: 1,
-      homeMax: 4,
+      homeMax: HOME_MAX_DEFAULT,
     }), (value) => value);
-    expect(homes).toContain('Мои дома (1/4)');
+    expect(HOME_MAX_DEFAULT).toBe(3);
+    expect(homes).toContain('Мои дома (1/3)');
+    expect(menuBodyHtml(menu({ screen: 'homes', homeCount: 2 }), (value) => value)).toContain('Мои дома (2/3)');
     expect(homes).toContain('X: 123');
     expect(homes).toContain('Y: 64');
     expect(homes).toContain('Z: -245');

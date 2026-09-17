@@ -100,6 +100,8 @@ export function buildTradeMessage(
     bothReady: self.ready && partner.ready,
     money: self.money,
     moneyText: String(self.money),
+    partnerMoney: partner.money,
+    partnerMoneyText: String(partner.money),
     selfSlots: self.slots,
     partnerSlots: partner.slots,
     inventorySlots,

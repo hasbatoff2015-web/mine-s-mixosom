@@ -883,10 +883,8 @@ button {
   max-height: var(--chat-open-log-height);
   padding: calc(8px * var(--hud-scale));
   pointer-events: auto;
-  background: linear-gradient(180deg, rgba(28, 31, 36, 0.94), rgba(16, 18, 22, 0.94));
-  box-shadow:
-    inset 0 0 0 1px rgba(220, 224, 230, 0.2),
-    inset 0 0 0 2px rgba(0, 0, 0, 0.55);
+  background: transparent;
+  box-shadow: none;
 }
 
 #chat.display-off #chat-log,
@@ -1022,6 +1020,7 @@ button {
 #chat-send,
 #chat-close,
 #chat-visibility {
+  position: relative;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -1033,6 +1032,68 @@ button {
   border-radius: 2px;
 }
 
+#chat-send::after,
+#chat-close::after,
+#chat-visibility::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  opacity: 0;
+}
+
+#chat-close:hover,
+#chat-visibility:hover,
+#chat-close:focus-visible,
+#chat-visibility:focus-visible {
+  background: var(--mc-btn-hover);
+  outline: 1px solid rgba(232, 234, 238, 0.35);
+  outline-offset: 1px;
+}
+
+#chat-send:hover:not(:disabled),
+#chat-close:hover,
+#chat-visibility:hover,
+#chat-send:focus-visible:not(:disabled),
+#chat-close:focus-visible,
+#chat-visibility:focus-visible {
+  outline: 1px solid rgba(232, 234, 238, 0.35);
+  outline-offset: 1px;
+}
+
+#chat-send:hover:not(:disabled)::after,
+#chat-close:hover::after,
+#chat-visibility:hover::after,
+#chat-send:focus-visible:not(:disabled)::after,
+#chat-close:focus-visible::after,
+#chat-visibility:focus-visible::after {
+  opacity: 1;
+}
+
+#chat-send:hover:not(:disabled),
+#chat-send:focus-visible:not(:disabled) {
+  background: var(--mc-btn-positive);
+  filter: brightness(1.12);
+}
+
+#chat-send:active:not(:disabled),
+#chat-close:active,
+#chat-visibility:active {
+  background: var(--mc-btn-pressed);
+  filter: none;
+}
+
+#chat-send:active:not(:disabled) {
+  background: var(--mc-btn-positive);
+  filter: brightness(0.88);
+}
+
+#chat-visibility.is-off:hover,
+#chat-visibility.is-off:focus-visible {
+  background: var(--mc-btn-danger);
+}
+
 #chat-send {
   background: var(--mc-btn-positive);
 }
@@ -1040,6 +1101,7 @@ button {
 #chat-send:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  filter: none;
 }
 
 .chat-btn-glyph {
@@ -1573,6 +1635,8 @@ button {
   align-items: center;
   justify-content: center;
   gap: calc(4px * var(--mc-ui-scale, 3));
+  overflow: visible;
+  min-height: calc(12px * var(--mc-ui-scale, 3));
   color: #d7d7d7;
   font-size: calc(7px * var(--mc-ui-scale, 3));
   font-weight: 600;
@@ -1580,8 +1644,14 @@ button {
 }
 
 .mc-menu-coin {
-  width: calc(10px * var(--mc-ui-scale, 3));
-  height: calc(10px * var(--mc-ui-scale, 3));
+  display: block;
+  flex: none;
+  box-sizing: content-box;
+  width: calc(12px * var(--mc-ui-scale, 3));
+  height: calc(12px * var(--mc-ui-scale, 3));
+  object-fit: contain;
+  object-position: center;
+  overflow: visible;
   image-rendering: pixelated;
   pointer-events: none;
 }
@@ -2201,8 +2271,26 @@ button {
 .mc-trade-boards {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
-  align-items: center;
+  align-items: start;
   gap: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-trade-side {
+  min-width: 0;
+}
+
+.mc-trade-money {
+  margin: calc(4px * var(--mc-ui-scale, 3)) 0 0;
+  color: #d8d8d8;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mc-trade-money-partner {
+  display: flex;
+  align-items: center;
+  min-height: calc(18px * var(--mc-ui-scale, 3));
 }
 
 .mc-trade-grid {

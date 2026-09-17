@@ -90,7 +90,10 @@ describe('chat layout and controls', () => {
     expect(cssRule('#chat')).toContain('background: transparent;');
     expect(cssRule('#chat-main')).toContain('background: transparent;');
     expect(cssRule('#chat-log')).toContain('background: transparent;');
-    expect(cssRule('#chat.open #chat-log')).toContain('background: linear-gradient');
+    expect(cssRule('#chat.open #chat-log')).toContain('background: transparent;');
+    expect(cssRule('#chat.open #chat-log')).not.toContain('linear-gradient');
+    expect(cssRule('#chat.open #chat-log')).toContain('box-shadow: none;');
+    expect(STYLE).not.toContain('rgba(28, 31, 36, 0.94)');
     expect(STYLE).not.toContain('background: rgba(0, 0, 0, 0.18);');
     expect(cssRule('.chat-line')).toContain('background: rgba(0, 0, 0, 0.5);');
     expect(STYLE).toContain('.chat-line.channel-nearby::before {\n  background: #f0c400;\n}');
@@ -143,6 +146,12 @@ describe('chat layout and controls', () => {
     expect(STYLE).toContain('min-height: calc(72px * var(--hud-scale));');
     expect(STYLE).toContain('min-width: calc(88px * var(--hud-scale));');
     expect(STYLE).toContain('.chat-btn-hotkey');
+    expect(cssRule('#chat-close:hover,\n#chat-visibility:hover,\n#chat-close:focus-visible,\n#chat-visibility:focus-visible'))
+      .toContain('background: var(--mc-btn-hover);');
+    expect(cssRule('#chat-send:active:not(:disabled),\n#chat-close:active,\n#chat-visibility:active'))
+      .toContain('background: var(--mc-btn-pressed);');
+    expect(cssRule('#chat-send:hover:not(:disabled),\n#chat-send:focus-visible:not(:disabled)'))
+      .toContain('background: var(--mc-btn-positive);');
   });
 
   it('uses a large close button with a red X glyph and Tab hotkey label', () => {

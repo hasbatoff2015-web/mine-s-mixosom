@@ -198,9 +198,8 @@ describe('Anarchy builtin plugins', () => {
     expect(chat(world, ada, '/home unknown').some((line) => line.includes("Home 'unknown' not found."))).toBe(true);
     chat(world, ada, '/sethome base');
     chat(world, ada, '/sethome mine');
-    chat(world, ada, '/sethome extra');
-    expect(chat(world, ada, '/sethome overflow').some((line) => line.includes('You can only set 4 home'))).toBe(true);
-    chat(world, ada, '/delhome extra');
+    expect(chat(world, ada, '/sethome extra').some((line) => line.includes('You can only set 3 home'))).toBe(true);
+    expect(chat(world, ada, '/sethome overflow').some((line) => line.includes('You can only set 3 home'))).toBe(true);
     ada.player.controller.teleport([50, 70, 50]);
     chat(world, ada, '/home');
     expect(chat(world, ada, '/back').some((line) => line.includes('previous'))).toBe(true);

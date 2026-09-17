@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Trade coins, chat chrome, homes 3, menu coin — 2026-09-17
+
+- Trade snapshot отдаёт **обе** суммы: `money`/`moneyText` (свои) и `partnerMoney`/`partnerMoneyText` (партнёр, только с сервера). GUI показывает «Монет:» у каждой доски. Ready по-прежнему сбрасывается при `set_money`.
+- Открытый чат: у `#chat.open #chat-log` нет панельного фона; строки `.chat-line` сохраняют читаемость. Кнопки Enter / X / Chat ON-OFF — graphite hover/pressed.
+- Обычный игрок: `HOME_MAX_DEFAULT = 3` — единый лимит для `/sethome`, меню и GUI `Мои дома (n/3)`.
+- Иконка монеты в Main Menu: `object-fit: contain`, без обрезки, вертикально с «Баланс».
+- Handoff: `docs/reports/2026-09-17_trade-chat-homes-menu.md`.
+
 ## Последний проход: Unknown-block save load compat — 2026-09-17
 
 - Загрузка мира с незарегистрированным voxel ID (включая **165**) больше не падает. Placeholder по-прежнему runtime-only: ID в save/chunk не переписывается, в `BLOCK_REGISTRY` не добавляется.
@@ -34,7 +42,7 @@
 
 - HUD справа сверху: Пауза (TAB), Чат (T), Меню (M). Существующие Pause/Chat не дублировались.
 - Главное меню inventory-style: Спавн, Дома, Друзья, Кланы, Приваты, Обмен, Аукцион. Закрытие — общий `closeButtonHtml()` (красный X + E внутри). ← возвращает на предыдущую страницу.
-- Дома: `HomeService` (max 4, уникальные имена, yaw/pitch). Команды `/home` `/sethome` `/homes` `/delhome` сохранены.
+- Дома: `HomeService` (max 3 для обычного игрока, уникальные имена, yaw/pitch). Команды `/home` `/sethome` `/homes` `/delhome` сохранены.
 - Друзья: новый `FriendsService` (взаимные, 50, заявки, `allowFriendTeleport` по умолчанию выкл.).
 - Обмен: серверный `TradeService` (6 слотов, предметы снимаются из инвентаря, Ready сбрасывается при изменении оффера, двойной Accept, атомарно, lock, отмена/X/E/disconnect возвращает вещи).
 - Кланы/аукцион из меню открывают существующие GUI с `source: 'menu'` и ← назад в хаб.

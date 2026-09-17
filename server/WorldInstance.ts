@@ -108,7 +108,7 @@ import {
   type GameMenuSession,
 } from './services/gameMenu';
 import { FRIENDS_MAX } from '../shared/friends';
-import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR } from '../shared/homes';
+import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
 import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
 import {
   applyGameMenuAction,
@@ -1735,8 +1735,8 @@ export class WorldInstance {
 
   private maxHomesFor(player: ServerPlayer): number {
     const def = Number(this.pluginConfig.get('home', 'maxHomesDefault', HOME_MAX_DEFAULT));
-    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', 4));
-    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', 5));
+    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', HOME_MAX_VIP));
+    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', HOME_MAX_PREMIUM));
     if (this.permissions.isOperator(player.id) || this.permissions.has(player.id, 'home.*')) {
       return Math.max(premium, vip, def);
     }

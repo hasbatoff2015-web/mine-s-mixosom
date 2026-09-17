@@ -129,7 +129,7 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | plugin-admin | `/plugins` | — |
 | tpa | `/tpa`, `/tpahere`, `/tpaccept`, `/tpdeny` | config |
 | spawn | `/spawn`, `/setspawn` | world spawn + config |
-| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` (max 4 ordinary homes via `HomeService`) |
+| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` (max 3 ordinary homes via `HomeService` / `HOME_MAX_DEFAULT`) |
 | back | `/back` | memory (teleport history) |
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |

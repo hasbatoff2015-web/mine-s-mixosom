@@ -1229,6 +1229,8 @@ export interface ServerTradeMessage {
   readonly bothReady?: boolean;
   readonly moneyText?: string;
   readonly money?: number;
+  readonly partnerMoneyText?: string;
+  readonly partnerMoney?: number;
   readonly balance?: number;
   readonly selfSlots?: readonly unknown[];
   readonly partnerSlots?: readonly unknown[];
