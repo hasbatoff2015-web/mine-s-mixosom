@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { chatChromeStyle } from '../src/ui/gameMenuGui';
 import {
   CHAT_TAB_HISTORY_LIMIT,
   ChatLog,
@@ -49,7 +50,8 @@ describe('chat layout and controls', () => {
     expect(open).toContain('right: 0;');
     expect(open).toContain('width: auto;');
     expect(open).toContain('max-width: none;');
-    expect(open).toContain('overflow-x: hidden;');
+    expect(open).toContain('overflow-x: clip;');
+    expect(open).toContain('overflow-y: visible;');
     expect(STYLE).not.toContain('--chat-open-width');
     expect(STYLE).not.toContain('min(70vw, 72rem)');
     expect(STYLE).not.toContain('min(92vw, 40rem)');
@@ -86,12 +88,14 @@ describe('chat layout and controls', () => {
     expect(STYLE).toContain('--hud-scale');
   });
 
-  it('keeps the message area transparent so the world shows through', () => {
+  it('keeps closed chat overlay transparent and uses graphite chrome when open', () => {
     expect(cssRule('#chat')).toContain('background: transparent;');
     expect(cssRule('#chat-main')).toContain('background: transparent;');
     expect(cssRule('#chat-log')).toContain('background: transparent;');
     expect(cssRule('#chat.open #chat-log')).toContain('background: transparent;');
-    expect(cssRule('#chat.open #chat-log')).not.toContain('rgba(0, 0, 0');
+    expect(cssRule('#chat.open #chat-log')).not.toContain('linear-gradient');
+    expect(cssRule('#chat.open #chat-log')).toContain('box-shadow: none;');
+    expect(STYLE).not.toContain('rgba(28, 31, 36, 0.94)');
     expect(STYLE).not.toContain('background: rgba(0, 0, 0, 0.18);');
     expect(cssRule('.chat-line')).toContain('background: rgba(0, 0, 0, 0.5);');
     expect(STYLE).toContain('.chat-line.channel-nearby::before {\n  background: #f0c400;\n}');
@@ -102,9 +106,7 @@ describe('chat layout and controls', () => {
     expect(cssRule('.chat-line')).toContain('font: calc(23px * var(--hud-scale))/1.35 var(--font-ui);');
     expect(cssRule('.chat-line')).toContain('word-break: break-word;');
     expect(cssRule('#chat-input')).toContain('font: calc(18px * var(--hud-scale))/1.3 var(--font-ui);');
-    expect(STYLE).toContain('#chat-tabs button {\n  padding: calc(8px * var(--hud-scale)) calc(14px * var(--hud-scale));\n  border-radius: 6px;\n  font: 700 calc(16px * var(--hud-scale))/1 var(--font-ui);\n}');
-    expect(STYLE).toContain('min-height: calc(72px * var(--hud-scale));');
-    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('min-width: calc(88px * var(--hud-scale));');
+    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('height: calc(104px * var(--hud-scale));');
     expect(GAME_UI).toContain('chat-line-name');
     expect(GAME_UI).toContain("sep.textContent = ': '");
     expect(STYLE).toContain('.chat-line.channel-nearby::before {\n  background: #f0c400;\n}');
@@ -133,26 +135,55 @@ describe('chat layout and controls', () => {
     expect(tabHistory(log.entries, 'clan')).toHaveLength(0);
   });
 
-  it('uses a large input, Enter send button, and Enter hotkey label', () => {
+  it('uses authored PNG faces for Enter, close, Chat ON/OFF, and channel tabs', () => {
     expect(GAME_UI).toContain('id="chat-input"');
     expect(GAME_UI).toContain('id="chat-send"');
     expect(GAME_UI).toContain('form="chat-form"');
     expect(GAME_UI).toContain('type="submit"');
     expect(GAME_UI).toContain('>ENTER</span>');
+    expect(GAME_UI).toContain('chatChromeStyle()');
+    expect(GAME_UI).not.toContain('<svg');
     expect(cssRule('#chat-input')).toContain('min-height: calc(52px * var(--hud-scale));');
     expect(STYLE).toContain('#chat-send,\n#chat-close,\n#chat-visibility {');
-    expect(STYLE).toContain('min-height: calc(72px * var(--hud-scale));');
-    expect(STYLE).toContain('min-width: calc(88px * var(--hud-scale));');
-    expect(STYLE).toContain('.chat-btn-hotkey');
+    expect(cssRule('#chat-tabs button')).toContain('height: calc(60px * var(--hud-scale));');
+    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('height: calc(104px * var(--hud-scale));');
+    expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('background-size: contain;');
+    expect(cssRule('#chat-tabs button')).toContain('background-size: contain;');
+    expect(cssRule('#chat-send')).toContain('aspect-ratio: 198 / 96;');
+    expect(cssRule('#chat-close')).toContain('aspect-ratio: 102 / 96;');
+    expect(STYLE).toContain('aspect-ratio: 106 / 96;');
+    expect(STYLE).toContain('aspect-ratio: 104 / 96;');
+    expect(cssRule('#chat-send')).toContain('background-image: var(--chat-enter-img);');
+    expect(cssRule('#chat-close')).toContain('background-image: var(--chat-close-img);');
+    expect(STYLE).toContain('background-image: var(--chat-on-img);');
+    expect(cssRule('#chat-visibility.is-off')).toContain('background-image: var(--chat-off-img);');
+    expect(cssRule('#chat-tabs button[data-chat-tab="global"]')).toContain('background-image: var(--chat-tab-global);');
+    expect(cssRule('#chat-tabs button[data-chat-tab="nearby"]')).toContain('background-image: var(--chat-tab-nearby);');
+    expect(cssRule('#chat-tabs button[data-chat-tab="clan"]')).toContain('background-image: var(--chat-tab-clan);');
+    expect(cssRule('#chat-tabs button')).toContain('filter: brightness(0.72);');
+    expect(cssRule('#chat-tabs button.active')).toContain('filter: none;');
+    expect(cssRule('#chat-send:hover:not(:disabled),\n#chat-close:hover,\n#chat-visibility:hover,\n#chat-tabs button:hover,\n#chat-send:focus-visible:not(:disabled),\n#chat-close:focus-visible,\n#chat-visibility:focus-visible,\n#chat-tabs button:focus-visible'))
+      .toContain('filter: brightness(1.1);');
+    expect(cssRule('#chat-send:active:not(:disabled),\n#chat-close:active,\n#chat-visibility:active,\n#chat-tabs button:active'))
+      .toContain('filter: brightness(0.86);');
+    const chrome = chatChromeStyle();
+    expect(chrome).toContain('ui/chat/tab_global.png');
+    expect(chrome).toContain('ui/chat/enter.png');
+    expect(chrome).toContain('ui/chat/off.png');
+    for (const file of [
+      'tab_global.png', 'tab_nearby.png', 'tab_clan.png',
+      'close.png', 'on.png', 'enter.png', 'off.png',
+    ]) {
+      expect(existsSync(join(root, '../public/ui/chat', file)), file).toBe(true);
+    }
   });
 
-  it('uses a large close button with a red X glyph and Tab hotkey label', () => {
+  it('uses a close sprite with a hidden X and Tab hotkey label', () => {
     expect(GAME_UI).toContain('id="chat-close"');
-    expect(GAME_UI).toContain('class="chat-btn-glyph chat-close-x"');
+    expect(GAME_UI).toContain('chat-close-x');
     expect(GAME_UI).toContain('>X</span>');
     expect(GAME_UI).toContain('>TAB</span>');
-    expect(cssRule('#chat-close .chat-close-x')).toContain('color: #ff3b3b;');
-    expect(cssRule('#chat-close .chat-btn-hotkey')).toContain('color: #fff;');
+    expect(GAME_UI).toContain('class="chat-sr"');
     expect(GAME_UI).toContain("this.chatCloseEl.addEventListener('click', () => this.onChatCancel?.())");
     expect(GAME_UI).toContain("event.key === 'Tab'");
     expect(GAME_UI).toContain('this.onChatCancel?.()');
@@ -164,7 +195,7 @@ describe('chat layout and controls', () => {
     expect(GAME_UI).toContain('CHAT OFF');
     expect(GAME_UI).toContain('chat-vis-on');
     expect(GAME_UI).toContain('chat-vis-off');
-    expect(GAME_UI).toContain('M5 19 L19 5');
+    expect(GAME_UI).not.toContain('M5 19 L19 5');
     expect(GAME_UI).toContain("dataset.chatDisplay = on ? 'on' : 'off'");
     expect(GAME_UI).toContain("this.chatVisibilityEl.classList.toggle('is-off', !on)");
     expect(cssRule('#chat-visibility.is-off .chat-vis-on,\n#chat-visibility.is-off .chat-vis-caption-on'))

@@ -1,5 +1,25 @@
 # Тестирование
 
+## 2026-09-17 Unknown-block save load compat
+
+Report: `reports/2026-09-17_unknown-block-save-load.md`.
+
+```text
+npx vitest run tests/unknown-block-load.test.ts tests/block-registry.test.ts tests/fs-world-store.test.ts --maxWorkers=2
+```
+
+Focused unknown-block + persist tests PASS (unknown-block-load 3/3, block-registry 16/16, fs-world-store 7/7). `test:server` 50/51 files / 497/498 (`tick-load-flight` timing flake under load; isolated 3/3 PASS). Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-16 Unified in-game UI chrome
+
+Report: `reports/2026-09-16_ui-redesign.md`.
+
+```text
+npm test -- tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/crafting-ui.test.ts tests/chat-layout.test.ts tests/ui-visual-contract.test.mjs tests/clan-gui.test.ts tests/auction-gui.test.ts tests/buyer-gui.test.ts tests/container-ui.test.ts tests/ui-visual-system.test.ts tests/server/game-menu.test.ts tests/server/friends.test.ts tests/server/trade.test.ts tests/chat-channels.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused UI + related server: **123 PASS**. Four typechecks, boundaries, and `build` PASS.
+
 ## 2026-09-16 Merge unknown-block into menu visual
 
 Report: `reports/2026-09-16_merge-unknown-block-into-menu-visual.md`. Merge `d3801a1`.

@@ -1,5 +1,10 @@
+import { NEARBY_CHAT_RADIUS } from './chat';
+
 export const TRADE_PLUGIN_NAME = 'trade';
 export const TRADE_SLOT_COUNT = 6;
+/** Inclusive 3D radius for the trade lobby nearby list. Same as Nearby chat. */
+export const TRADE_NEARBY_RADIUS = NEARBY_CHAT_RADIUS;
+export const TRADE_NEARBY_EMPTY = 'Обмениваться можно только с игроками, которые находятся рядом с вами (до 20 блоков).';
 export const TRADE_SELF_ERROR = 'Нельзя обмениваться с самим собой.';
 export const TRADE_UNKNOWN_ERROR = 'Игрок с таким ником не найден.';
 export const TRADE_OFFLINE_ERROR = 'Игрок не в сети.';

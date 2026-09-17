@@ -4032,7 +4032,7 @@ export class Game {
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
       if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
-    }, () => this.ui.showControls(() => this.showSettings()), () => {
+    }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
           resume: () => this.resumeFromPause(),
@@ -4040,7 +4040,7 @@ export class Game {
           saveAndQuit: () => void this.saveAndQuit(),
         });
       } else this.showMainMenu();
-    });
+    }, this.screenBeforeSettings === 'pause');
   }
 
   private async saveAndQuit(): Promise<void> {

@@ -1,5 +1,43 @@
 # Состояние проекта
 
+## Последний проход: Pause heading off + Creative graphite tabs — 2026-09-17
+
+- Pause overlay больше не показывает «ИГРА НА ПАУЗЕ» / «Пауза». Остаются только Продолжить / Настройки / Сохранить и выйти; отступы карточки сжаты, кнопки по центру по вертикали. Живой мир под overlay и graphite-кнопки без изменений.
+- Creative: вкладки «Каталог» / «Инвентарь» в graphite (`--mc-btn-face` / `--mc-btn-pressed`). Native scrollbar каталога скрыт; 9 колонок слотов, wheel и `touch-action: pan-y` сохранены.
+- Handoff: `docs/reports/2026-09-17_pause-heading-creative-tabs.md`.
+
+## Последний проход: Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
+
+- TAB Pause — overlay поверх живого `#game-canvas`, без `frontier-menu-background.png` и без `menu-screen`/`submenu-screen`. Симуляция по-прежнему `PAUSED`. Resume возвращает тот же мир.
+- Chat PNG (вкладки, Enter, X, ON/OFF) увеличены ~2×. HUD Pause/Chat/Menu — 76 logical px (на ~35% меньше промежуточных 116). Кнопки паузы крупнее, graphite сохранён.
+- Handoff: `docs/reports/2026-09-17_pause-overlay-larger-buttons.md`.
+
+## Предыдущий проход: Menu coin asset + chat PNG sprites — 2026-09-17
+
+- Main Menu: `public/ui/menu/icon_coin.png` заменён на приложенный ассет (padded 128×128). `.mc-menu-coin-wrap` 16 logical px, `object-fit: contain`, без pixelated, без обрезки; текст «Баланс: … монет» не менялся.
+- Чат: кнопки Общий / Рядом / Клан, X+E, Chat ON/OFF, Enter — PNG из `public/ui/chat/` через `chatChromeStyle()`. Не CSS-bevel. Active-вкладка полная яркость, остальные `brightness(0.72)`. Пропорции через `aspect-ratio` + `background-size: contain`.
+- Серверная логика Chat / Trade / Homes не трогалась.
+- Handoff: `docs/reports/2026-09-17_menu-coin-chat-sprites.md`.
+
+## Предыдущий проход: Trade coins, chat chrome, homes 3, menu coin — 2026-09-17
+
+- Trade snapshot отдаёт **обе** суммы: `money`/`moneyText` (свои) и `partnerMoney`/`partnerMoneyText` (партнёр, только с сервера). GUI показывает «Монет:» у каждой доски. Ready по-прежнему сбрасывается при `set_money`.
+- Открытый чат: у `#chat.open #chat-log` нет панельного фона; строки `.chat-line` сохраняют читаемость.
+- Обычный игрок: `HOME_MAX_DEFAULT = 3` — единый лимит для `/sethome`, меню и GUI `Мои дома (n/3)`.
+- Handoff: `docs/reports/2026-09-17_trade-chat-homes-menu.md`.
+
+## Последний проход: Unknown-block save load compat — 2026-09-17
+
+- Загрузка мира с незарегистрированным voxel ID (включая **165**) больше не падает. Placeholder по-прежнему runtime-only: ID в save/chunk не переписывается, в `BLOCK_REGISTRY` не добавляется.
+- Предыдущий compat не срабатывал на JSON-строке `"165"` (`Number.isInteger("165") === false` → `RangeError`). `getBlockDefinition` / restore теперь нормализуют storable Uint16.
+- Регрессия: `IdbWorldStore` + `FsWorldStore`/`WorldInstance.initialize` с ID 165. Handoff: `docs/reports/2026-09-17_unknown-block-save-load.md`.
+
+## Последний проход: Unified in-game UI chrome — 2026-09-16
+
+- Все inventory-style окна (меню, инвентарь, крафт, аукцион, клан, скупщик, обмен) используют один graphite chrome: тёмная панель, bevel-кнопки, `closeButtonHtml()` + close/back sprites, общие состояния online/offline/danger/positive.
+- Friends/Trade layout ближе к референсу (статус-точки, toggle, Телепорт только при `canTeleport`, nearby 20 блоков).
+- Handoff: `docs/reports/2026-09-16_ui-redesign.md`.
+
 ## Последний проход: Merge unknown-block compat into menu visual — 2026-09-16
 
 - Обычный merge `cursor/unknown-block-compat-31b4` (PR #90) в `cursor/main-menu-visual-31b4` (`d3801a1`). Визуал Main Menu сохранён.
@@ -22,7 +60,7 @@
 
 - HUD справа сверху: Пауза (TAB), Чат (T), Меню (M). Существующие Pause/Chat не дублировались.
 - Главное меню inventory-style: Спавн, Дома, Друзья, Кланы, Приваты, Обмен, Аукцион. Закрытие — общий `closeButtonHtml()` (красный X + E внутри). ← возвращает на предыдущую страницу.
-- Дома: `HomeService` (max 4, уникальные имена, yaw/pitch). Команды `/home` `/sethome` `/homes` `/delhome` сохранены.
+- Дома: `HomeService` (max 3 для обычного игрока, уникальные имена, yaw/pitch). Команды `/home` `/sethome` `/homes` `/delhome` сохранены.
 - Друзья: новый `FriendsService` (взаимные, 50, заявки, `allowFriendTeleport` по умолчанию выкл.).
 - Обмен: серверный `TradeService` (6 слотов, предметы снимаются из инвентаря, Ready сбрасывается при изменении оффера, двойной Accept, атомарно, lock, отмена/X/E/disconnect возвращает вещи).
 - Кланы/аукцион из меню открывают существующие GUI с `source: 'menu'` и ← назад в хаб.

@@ -97,9 +97,9 @@ button {
   overflow: auto;
   padding: clamp(20px, 4vw, 38px);
   border: 1px solid var(--line);
-  border-radius: 22px;
-  background: linear-gradient(155deg, rgba(28, 49, 54, 0.98), rgba(9, 19, 25, 0.97));
-  box-shadow: var(--shadow), inset 0 1px rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(36, 39, 45, 0.96), rgba(16, 18, 22, 0.97));
+  box-shadow: var(--ui-shadow), inset 0 0 0 1px rgba(220, 224, 230, 0.16), inset 0 0 0 2px rgba(0, 0, 0, 0.5);
 }
 
 .brand {
@@ -148,39 +148,38 @@ button {
   min-height: 50px;
   padding: 12px 18px;
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 12px;
+  border: 0;
+  border-radius: 2px;
   color: #fff9e7;
-  background: linear-gradient(#365c52, #294740);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.12), 0 5px 12px rgba(0, 0, 0, 0.22);
+  background: var(--mc-btn-face);
+  box-shadow: var(--mc-btn-edge);
   font-weight: 750;
   letter-spacing: 0.02em;
-  transition: transform 120ms ease, filter 120ms ease;
 }
 
 .game-button:hover,
 .game-button:focus-visible {
-  filter: brightness(1.16);
-  outline: 2px solid rgba(112, 199, 163, 0.7);
-  outline-offset: 2px;
+  background: var(--mc-btn-hover);
+  outline: 1px solid rgba(232, 234, 238, 0.35);
+  outline-offset: 1px;
 }
 
 .game-button:active {
-  transform: translateY(2px);
+  background: var(--mc-btn-pressed);
 }
 
 .game-button.primary {
-  color: #1f180b;
-  border-color: #ffd07b;
-  background: linear-gradient(#f4be59, #cf842b);
+  color: #fff9dc;
+  border-color: transparent;
+  background: linear-gradient(180deg, #3f6f48 0%, #2d5234 100%);
 }
 
 .game-button.danger {
-  background: linear-gradient(#a54949, #7e3030);
+  background: var(--mc-btn-danger);
 }
 
 .game-button.ghost {
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--mc-btn-face);
 }
 
 .menu-heading {
@@ -720,8 +719,9 @@ button {
   box-sizing: border-box;
   position: relative;
   display: block;
-  width: calc(44px * var(--hud-scale));
-  height: calc(44px * var(--hud-scale));
+  width: calc(76px * var(--hud-scale));
+  height: calc(76px * var(--hud-scale));
+  aspect-ratio: 1;
   margin: 0;
   padding: 0;
   border: 0;
@@ -729,7 +729,7 @@ button {
   background-color: #2a2d33;
   background-position: center;
   background-repeat: no-repeat;
-  background-size: 100% 100%;
+  background-size: contain;
   box-shadow: none;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
@@ -832,6 +832,7 @@ button {
   display: flex;
   margin-left: auto;
   align-self: flex-start;
+  align-items: flex-end;
   pointer-events: auto;
 }
 
@@ -874,7 +875,8 @@ button {
   right: 0;
   width: auto;
   max-width: none;
-  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
   pointer-events: auto;
 }
 
@@ -882,9 +884,10 @@ button {
   height: var(--chat-open-log-height);
   min-height: var(--chat-open-log-height);
   max-height: var(--chat-open-log-height);
-  padding: calc(6px * var(--hud-scale)) 0;
+  padding: calc(8px * var(--hud-scale));
   pointer-events: auto;
   background: transparent;
+  box-shadow: none;
 }
 
 #chat.display-off #chat-log,
@@ -972,7 +975,7 @@ button {
 .chat-line.kind-error { color: #ff8d8d; }
 .chat-line.kind-command { color: #d0d0d0; }
 .chat-line.kind-death { color: #ffb0b0; }
-.chat-line.kind-system { color: #ffe9a8; }
+.chat-line.kind-system { color: #c8c8c8; }
 
 #chat-form {
   display: flex;
@@ -988,9 +991,12 @@ button {
   min-width: 0;
   min-height: calc(52px * var(--hud-scale));
   padding: calc(12px * var(--hud-scale)) calc(14px * var(--hud-scale));
-  border: 0;
+  border: 1px solid #111214;
   color: #fff;
-  background: rgba(0, 0, 0, 0.66);
+  background: var(--mc-input-face);
+  box-shadow:
+    inset 1px 1px 0 #0a0a0c,
+    inset -1px -1px 0 #3a3d44;
   font: calc(18px * var(--hud-scale))/1.3 var(--font-ui);
   outline: none;
   caret-color: #fff;
@@ -1004,86 +1010,135 @@ button {
 
 #chat-send,
 #chat-close,
-#chat-visibility,
-#chat-tabs button {
-  border: 1px solid var(--line);
-  color: #f7f2df;
-  background: rgba(6, 15, 19, 0.9);
-  font: 700 calc(15px * var(--hud-scale))/1 var(--font-ui);
-  cursor: pointer;
-}
-
-#chat-send,
-#chat-close,
 #chat-visibility {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: calc(4px * var(--hud-scale));
-  min-width: calc(88px * var(--hud-scale));
-  min-height: calc(72px * var(--hud-scale));
-  padding: calc(8px * var(--hud-scale)) calc(10px * var(--hud-scale));
-  border-radius: 8px;
+  box-sizing: border-box;
+  position: relative;
+  flex: none;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: transparent;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  box-shadow: none;
+  overflow: visible;
+  cursor: pointer;
+  image-rendering: auto;
+  display: block;
+  width: auto;
+  height: calc(104px * var(--hud-scale));
 }
 
 #chat-send {
-  background: rgba(18, 42, 38, 0.95);
+  aspect-ratio: 198 / 96;
+  background-image: var(--chat-enter-img);
+}
+
+#chat-close {
+  aspect-ratio: 102 / 96;
+  background-image: var(--chat-close-img);
+}
+
+#chat-visibility {
+  aspect-ratio: 106 / 96;
+  background-image: var(--chat-on-img);
+}
+
+#chat-visibility.is-off {
+  aspect-ratio: 104 / 96;
+  background-image: var(--chat-off-img);
+}
+
+#chat-send:hover:not(:disabled),
+#chat-close:hover,
+#chat-visibility:hover,
+#chat-tabs button:hover,
+#chat-send:focus-visible:not(:disabled),
+#chat-close:focus-visible,
+#chat-visibility:focus-visible,
+#chat-tabs button:focus-visible {
+  filter: brightness(1.1);
+  outline: none;
+}
+
+#chat-send:active:not(:disabled),
+#chat-close:active,
+#chat-visibility:active,
+#chat-tabs button:active {
+  filter: brightness(0.86);
 }
 
 #chat-send:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  filter: none;
 }
 
-.chat-btn-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(28px * var(--hud-scale));
-  line-height: 1;
-}
-
-.chat-btn-hotkey {
-  font: 700 calc(11px * var(--hud-scale))/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  color: #ffe9a8;
-}
-
-#chat-close .chat-close-x {
-  color: #ff3b3b;
-}
-
-#chat-close .chat-btn-hotkey {
-  color: #fff;
+.chat-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 #chat-tabs {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: calc(6px * var(--hud-scale));
 }
 
 #chat-tabs button {
-  padding: calc(8px * var(--hud-scale)) calc(14px * var(--hud-scale));
-  border-radius: 6px;
-  font: 700 calc(16px * var(--hud-scale))/1 var(--font-ui);
+  box-sizing: border-box;
+  position: relative;
+  display: block;
+  flex: none;
+  flex-shrink: 0;
+  width: auto;
+  height: calc(60px * var(--hud-scale));
+  aspect-ratio: 185 / 64;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: transparent;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  box-shadow: none;
+  overflow: visible;
+  cursor: pointer;
+  image-rendering: auto;
+  filter: brightness(0.72);
 }
 
+#chat-tabs button[data-chat-tab="global"] { background-image: var(--chat-tab-global); }
+#chat-tabs button[data-chat-tab="nearby"] {
+  aspect-ratio: 187 / 64;
+  background-image: var(--chat-tab-nearby);
+}
+#chat-tabs button[data-chat-tab="clan"] { background-image: var(--chat-tab-clan); }
+
 #chat-tabs button.active {
-  color: #142018;
-  background: var(--accent);
-  border-color: var(--accent);
+  filter: none;
+}
+
+#chat-tabs button.active:hover,
+#chat-tabs button.active:focus-visible {
+  filter: brightness(1.08);
 }
 
 #chat-visibility .chat-vis-off,
 #chat-visibility .chat-vis-caption-off {
   display: none;
-}
-
-#chat-visibility.is-off {
-  color: #ffb0b0;
-  border-color: #ff8d8d;
 }
 
 #chat-visibility.is-off .chat-vis-on,
@@ -1093,11 +1148,7 @@ button {
 
 #chat-visibility.is-off .chat-vis-off,
 #chat-visibility.is-off .chat-vis-caption-off {
-  display: inline-flex;
-}
-
-#chat-visibility .chat-vis-caption-off {
-  color: #ffb0b0;
+  display: inline;
 }
 
 @media (max-height: 540px), (max-width: 900px) {
@@ -1108,8 +1159,11 @@ button {
   #chat-send,
   #chat-close,
   #chat-visibility {
-    min-width: calc(72px * var(--hud-scale));
-    min-height: calc(60px * var(--hud-scale));
+    height: calc(88px * var(--hud-scale));
+  }
+
+  #chat-tabs button {
+    height: calc(52px * var(--hud-scale));
   }
 }
 
@@ -1251,18 +1305,18 @@ button {
   display: none;
   pointer-events: none;
   max-width: min(280px, calc(100vw - 16px));
-  padding: 3px 6px;
-  color: #ffffff;
-  background: rgba(16, 0, 16, 0.94);
-  border: 2px solid #21004a;
-  box-shadow: inset 0 0 0 1px #5000b4;
-  border-radius: 0;
+  padding: 6px 8px;
+  color: var(--mc-text);
+  background: linear-gradient(180deg, rgba(28, 31, 36, 0.96), rgba(16, 18, 22, 0.96));
+  border: 1px solid rgba(220, 224, 230, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55), 0 8px 18px rgba(0, 0, 0, 0.45);
+  border-radius: 2px;
   font-family: var(--font-ui);
   font-weight: 600;
-  font-size: 12px;
-  line-height: 1.2;
+  font-size: 13px;
+  line-height: 1.3;
   white-space: pre-line;
-  text-shadow: 1px 1px #3f3f3f;
+  text-shadow: 1px 1px #000;
 }
 
 .mc-item-tooltip.is-visible {
@@ -1434,15 +1488,13 @@ button {
   height: calc(20px * var(--mc-ui-scale, 3));
   padding: 0 calc(8px * var(--mc-ui-scale, 3));
   border: 0;
-  border-radius: 0;
-  background: #8b8b8b;
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #373737,
-    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #ffffff;
-  color: #404040;
+  border-radius: 2px;
+  background: var(--mc-btn-face);
+  box-shadow: var(--mc-btn-edge);
+  color: var(--mc-text-title);
   font-family: var(--font-ui);
-  font-size: calc(5.5px * var(--mc-ui-scale, 3));
-  font-weight: 600;
+  font-size: calc(6.5px * var(--mc-ui-scale, 3));
+  font-weight: 800;
   line-height: 1;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -1456,12 +1508,36 @@ button {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  box-shadow: inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) #ffffff;
+  box-shadow: inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(255, 255, 255, 0.28);
   opacity: 0;
 }
 
-.mc-ah-btn:hover::after {
+.mc-ah-btn:hover,
+.mc-ah-btn:focus-visible {
+  background: var(--mc-btn-hover);
+  outline: none;
+}
+
+.mc-ah-btn:hover::after,
+.mc-ah-btn:focus-visible::after {
   opacity: 1;
+}
+
+.mc-ah-btn:active {
+  background: var(--mc-btn-pressed);
+}
+
+.mc-ah-btn.mc-btn-positive {
+  background: var(--mc-btn-positive);
+}
+
+.mc-ah-btn.mc-btn-danger {
+  background: var(--mc-btn-danger);
+}
+
+.mc-ah-btn.mc-btn-refresh {
+  min-width: calc(56px * var(--mc-ui-scale, 3));
+  gap: calc(3px * var(--mc-ui-scale, 3));
 }
 
 .mc-ah-actions .mc-ah-btn {
@@ -1480,7 +1556,7 @@ button {
 .mc-ah-prompt,
 .mc-ah-empty,
 .mc-ah-message {
-  color: #404040;
+  color: var(--mc-text-secondary);
   font-size: calc(6px * var(--mc-ui-scale, 3));
   line-height: 1.3;
   text-align: center;
@@ -1544,17 +1620,41 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: calc(4px * var(--mc-ui-scale, 3));
+  gap: calc(5px * var(--mc-ui-scale, 3));
+  overflow: visible;
+  min-height: calc(16px * var(--mc-ui-scale, 3));
   color: #d7d7d7;
   font-size: calc(7px * var(--mc-ui-scale, 3));
   font-weight: 600;
   line-height: 1;
 }
 
+.mc-menu-coin-wrap {
+  display: flex;
+  flex: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  box-sizing: content-box;
+  width: calc(16px * var(--mc-ui-scale, 3));
+  height: calc(16px * var(--mc-ui-scale, 3));
+  min-width: calc(16px * var(--mc-ui-scale, 3));
+  min-height: calc(16px * var(--mc-ui-scale, 3));
+  overflow: visible;
+}
+
 .mc-menu-coin {
-  width: calc(10px * var(--mc-ui-scale, 3));
-  height: calc(10px * var(--mc-ui-scale, 3));
-  image-rendering: pixelated;
+  display: block;
+  flex: none;
+  box-sizing: content-box;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
+  overflow: visible;
+  image-rendering: auto;
   pointer-events: none;
 }
 
@@ -1778,10 +1878,7 @@ button {
   position: relative;
 }
 
-.mc-menu-stage > .mc-close:not(.mc-back) {
-  position: absolute;
-  top: calc(3px * var(--mc-ui-scale, 3));
-  right: calc(3px * var(--mc-ui-scale, 3));
+.mc-stage > .mc-close:not(.mc-back) {
   width: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
   height: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
   background-color: transparent;
@@ -1793,26 +1890,32 @@ button {
   image-rendering: pixelated;
 }
 
-.mc-menu-stage > .mc-close:not(.mc-back):hover,
-.mc-menu-stage > .mc-close:not(.mc-back):focus-visible {
+.mc-menu-stage > .mc-close:not(.mc-back) {
+  position: absolute;
+  top: calc(3px * var(--mc-ui-scale, 3));
+  right: calc(3px * var(--mc-ui-scale, 3));
+}
+
+.mc-stage > .mc-close:not(.mc-back):hover,
+.mc-stage > .mc-close:not(.mc-back):focus-visible {
   background-color: transparent;
   background-image: var(--mc-menu-close-hover);
   outline: none;
 }
 
-.mc-menu-stage > .mc-close:not(.mc-back):active {
+.mc-stage > .mc-close:not(.mc-back):active {
   padding: 0;
   background-color: transparent;
   background-image: var(--mc-menu-close-pressed);
   box-shadow: none;
 }
 
-.mc-menu-stage > .mc-close:not(.mc-back) .mc-close-x,
-.mc-menu-stage > .mc-close:not(.mc-back) .mc-close-hotkey {
+.mc-stage > .mc-close:not(.mc-back) .mc-close-x,
+.mc-stage > .mc-close:not(.mc-back) .mc-close-hotkey {
   opacity: 0;
 }
 
-.mc-menu-stage .mc-close.mc-back {
+.mc-stage .mc-close.mc-back {
   width: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
   height: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
   color: transparent;
@@ -1826,14 +1929,14 @@ button {
   image-rendering: pixelated;
 }
 
-.mc-menu-stage .mc-close.mc-back:hover,
-.mc-menu-stage .mc-close.mc-back:focus-visible {
+.mc-stage .mc-close.mc-back:hover,
+.mc-stage .mc-close.mc-back:focus-visible {
   background-color: transparent;
   background-image: var(--mc-menu-back-hover);
   outline: none;
 }
 
-.mc-menu-stage .mc-close.mc-back:active {
+.mc-stage .mc-close.mc-back:active {
   padding: 0;
   background-color: transparent;
   background-image: var(--mc-menu-back-pressed);
@@ -1870,6 +1973,18 @@ button {
 
 .mc-menu-panel .mc-ah-btn:active {
   background: #22252a;
+}
+
+.mc-menu-panel .mc-ah-btn.mc-btn-positive,
+.mc-menu-panel .mc-ah-btn.mc-btn-positive:hover,
+.mc-menu-panel .mc-ah-btn.mc-btn-positive:focus-visible {
+  background: var(--mc-btn-positive);
+}
+
+.mc-menu-panel .mc-ah-btn.mc-btn-danger,
+.mc-menu-panel .mc-ah-btn.mc-btn-danger:hover,
+.mc-menu-panel .mc-ah-btn.mc-btn-danger:focus-visible {
+  background: var(--mc-btn-danger);
 }
 
 .mc-menu-panel .mc-ah-btn::after {
@@ -1916,6 +2031,209 @@ button {
   color: #d8d8d8;
 }
 
+.mc-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-player-row,
+.mc-player-row-button {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  width: 100%;
+  min-height: calc(22px * var(--mc-ui-scale, 3));
+  margin: 0;
+  padding: calc(4px * var(--mc-ui-scale, 3)) calc(6px * var(--mc-ui-scale, 3));
+  border: 0;
+  border-radius: 2px;
+  color: var(--mc-text);
+  background: var(--mc-row-face);
+  box-shadow: var(--mc-btn-edge);
+  font: inherit;
+  text-align: left;
+}
+
+.mc-player-row-button {
+  cursor: pointer;
+}
+
+.mc-player-row-button.is-selected,
+.mc-player-row.is-selected {
+  box-shadow:
+    0 0 0 calc(1px * var(--mc-ui-scale, 3)) var(--ui-accent),
+    inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(232, 193, 74, 0.35);
+}
+
+.mc-player-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(1px * var(--mc-ui-scale, 3));
+}
+
+.mc-player-name {
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.mc-player-meta,
+.mc-player-distance {
+  color: var(--mc-text-muted);
+  font-size: calc(6.5px * var(--mc-ui-scale, 3));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mc-status-dot {
+  flex: none;
+  width: calc(6px * var(--mc-ui-scale, 3));
+  height: calc(6px * var(--mc-ui-scale, 3));
+  border-radius: 50%;
+  background: var(--mc-offline);
+  box-shadow: 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(0, 0, 0, 0.45);
+}
+
+.mc-status-dot.is-online {
+  background: var(--mc-online);
+}
+
+.mc-status-dot.is-offline {
+  background: var(--mc-offline);
+}
+
+.mc-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: calc(28px * var(--mc-ui-scale, 3));
+  height: calc(14px * var(--mc-ui-scale, 3));
+  padding: calc(2px * var(--mc-ui-scale, 3));
+  border: 0;
+  border-radius: 2px;
+  background: #1a1c20;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #3a3d44;
+  cursor: pointer;
+}
+
+.mc-toggle.is-on {
+  background: #245230;
+}
+
+.mc-toggle-knob {
+  width: calc(10px * var(--mc-ui-scale, 3));
+  height: calc(10px * var(--mc-ui-scale, 3));
+  border-radius: 1px;
+  background: #c8c8c8;
+}
+
+.mc-toggle.is-on .mc-toggle-knob {
+  margin-left: auto;
+  background: var(--mc-online);
+}
+
+.mc-menu-toggle {
+  justify-content: space-between;
+}
+
+.mc-menu-online {
+  color: var(--mc-online);
+}
+
+.mc-menu-offline {
+  color: var(--mc-offline);
+}
+
+.mc-ah-search,
+.mc-ah-field,
+.mc-menu-count,
+.mc-trade-ready,
+.mc-trade-swap,
+.mc-clan-count,
+.mc-clan-rank,
+.mc-clan-trophy b,
+.mc-clan-owner-mini,
+.mc-craft-name,
+.mc-craft-uncraftable,
+.mc-craft-empty {
+  color: var(--mc-text-secondary);
+}
+
+.mc-ah-search input,
+.mc-ah-field input,
+.mc-menu-add input,
+.mc-menu-body input[type="text"],
+.mc-craft-left input,
+.mc-panel input[type="text"],
+.mc-panel input[type="search"] {
+  color: var(--mc-text);
+  background: var(--mc-input-face);
+  border-color: #111214;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #3a3d44;
+}
+
+.mc-ah-search input::placeholder,
+.mc-ah-field input::placeholder,
+.mc-menu-add input::placeholder,
+.mc-menu-body input[type="text"]::placeholder,
+.mc-craft-left input::placeholder {
+  color: var(--mc-text-muted);
+}
+
+.mc-clan-row,
+.mc-clan-icon-pick,
+.mc-menu-row-main,
+.mc-craft-open,
+.mc-craft-do,
+.mc-book-button,
+.mc-recipe-book {
+  color: var(--mc-text);
+  background: var(--mc-btn-face);
+  box-shadow: var(--mc-btn-edge);
+}
+
+.mc-craft-result,
+.mc-arrow,
+.mc-arrow-progress,
+.mc-flame,
+.mc-creative-tab,
+.mc-recipe-tab {
+  background: var(--mc-slot-well);
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #3a3d44;
+}
+
+.mc-craft-list .mc-craft-available {
+  box-shadow:
+    inset 0 0 0 calc(1px * var(--mc-ui-scale)) var(--mc-online),
+    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #3a3d44;
+}
+
+.mc-slot.ghost.missing,
+.mc-craft-need.missing {
+  color: var(--mc-error);
+}
+
+.mc-craft-do {
+  color: var(--mc-text-title);
+  font-weight: 800;
+}
+
+.mc-craft-do:not(:disabled) {
+  background: var(--mc-btn-positive);
+}
+
 @media (max-width: 560px), (orientation: portrait) and (max-width: 820px) {
   .mc-menu-grid-row-4,
   .mc-menu-grid-row-3 {
@@ -1955,8 +2273,26 @@ button {
 .mc-trade-boards {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
-  align-items: center;
+  align-items: start;
   gap: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-trade-side {
+  min-width: 0;
+}
+
+.mc-trade-money {
+  margin: calc(4px * var(--mc-ui-scale, 3)) 0 0;
+  color: #d8d8d8;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mc-trade-money-partner {
+  display: flex;
+  align-items: center;
+  min-height: calc(18px * var(--mc-ui-scale, 3));
 }
 
 .mc-trade-grid {
@@ -2202,7 +2538,7 @@ button {
   font-size: 0.85em;
   font-weight: 700;
   opacity: 1;
-  color: #2b2b2b;
+  color: var(--mc-text-secondary);
 }
 
 .mc-clan-btn-2line:disabled,
@@ -2255,10 +2591,10 @@ button {
   padding: calc(7px * var(--mc-ui-scale)) calc(7px * var(--mc-ui-scale)) calc(8px * var(--mc-ui-scale));
   background: var(--ui-mc-panel);
   box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #ffffff,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #373737,
-    calc(2px * var(--mc-ui-scale)) calc(2px * var(--mc-ui-scale)) 0 rgba(0, 0, 0, 0.35);
-  color: #3f3f3f;
+    inset 0 0 0 calc(1px * var(--mc-ui-scale)) rgba(220, 224, 230, 0.22),
+    inset 0 0 0 calc(2px * var(--mc-ui-scale)) rgba(0, 0, 0, 0.55),
+    calc(2px * var(--mc-ui-scale)) calc(3px * var(--mc-ui-scale)) calc(10px * var(--mc-ui-scale)) rgba(0, 0, 0, 0.48);
+  color: var(--mc-text);
   font-family: var(--font-ui);
   font-size: calc(8px * var(--mc-ui-scale));
   font-weight: 600;
@@ -2277,6 +2613,7 @@ button {
 .mc-label {
   height: calc(11px * var(--mc-ui-scale));
   margin: 0 0 calc(3px * var(--mc-ui-scale));
+  color: var(--mc-text-title);
   font-family: var(--font-display);
   font-size: calc(5px * var(--mc-ui-scale));
   font-weight: 400;
@@ -2304,11 +2641,11 @@ button {
   flex: none;
   padding: calc(1px * var(--mc-ui-scale));
   border: 0;
-  border-radius: 0;
-  background: #8b8b8b;
+  border-radius: 2px;
+  background: var(--mc-slot-well);
   box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #373737,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #ffffff;
+    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #3a3d44;
 }
 
 .mc-panel .mc-ah-claimable .mc-slot,
@@ -2427,14 +2764,14 @@ button {
   height: calc(14px * var(--mc-ui-scale));
   padding: 0 calc(4px * var(--mc-ui-scale));
   border: 0;
-  color: #202020;
-  background: #8b8b8b;
-  box-shadow: inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #373737;
+  color: var(--mc-text);
+  background: var(--mc-input-face);
+  box-shadow: inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #0a0a0c;
   font: calc(7px * var(--mc-ui-scale))/1 var(--font-ui);
 }
 
 .mc-craft-left input::placeholder {
-  color: #4a4a4a;
+  color: var(--mc-text-muted);
   opacity: 1;
 }
 
@@ -2942,27 +3279,32 @@ button {
   white-space: nowrap;
   min-height: calc(14px * var(--mc-ui-scale));
   border: 0;
-  background: #8b8b8b;
-  color: #202020;
+  border-radius: 2px;
+  background: var(--mc-btn-pressed);
+  color: var(--mc-text-muted);
   font-family: var(--font-display);
   font-size: calc(5px * var(--mc-ui-scale));
+  font-weight: 400;
   line-height: 1.2;
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #ffffff,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #555;
+  box-shadow: var(--mc-btn-edge);
+  cursor: pointer;
 }
 
 .mc-creative-tabs button.active {
-  color: #f7f7f7;
-  background: #686f7c;
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #42464f,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #d6d9df;
+  color: var(--mc-text-title);
+  background: var(--mc-btn-face);
 }
 
+.mc-creative-tabs button:hover,
 .mc-creative-tabs button:focus-visible {
-  outline: calc(1px * var(--mc-ui-scale)) solid #ffffff;
+  background: var(--mc-btn-hover);
+  color: var(--mc-text-title);
+  outline: calc(1px * var(--mc-ui-scale)) solid rgba(232, 234, 238, 0.35);
   outline-offset: calc(1px * var(--mc-ui-scale));
+}
+
+.mc-creative-tabs button:active {
+  background: var(--mc-btn-pressed);
 }
 
 .mc-creative-catalog {
@@ -2972,10 +3314,21 @@ button {
   justify-content: start;
   overflow-x: hidden;
   overflow-y: auto;
-  width: calc(9 * var(--mc-slot) + max(16px, calc(8px * var(--mc-ui-scale))));
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  width: 100%;
   max-width: 100%;
-  padding-right: max(16px, calc(8px * var(--mc-ui-scale)));
+  padding-right: 0;
   max-height: calc(108px * var(--mc-ui-scale));
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scrollbar-gutter: auto;
+}
+
+.mc-creative-catalog::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .mc-creative-catalog .mc-slot {
@@ -4267,4 +4620,126 @@ button {
 
 .hologram-editor-preview-stage.is-fixed .hologram-editor-preview-text {
   transform: none;
+}
+
+.screen.pause-overlay {
+  background: rgba(4, 7, 10, 0.42);
+  backdrop-filter: none;
+  place-items: center;
+}
+
+.pause-overlay .menu-window {
+  min-height: 0;
+}
+
+.pause-window {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  min-height: 0;
+  max-height: min(90vh, 820px);
+  overflow: auto;
+  padding: 0;
+}
+
+.pause-actions {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+}
+
+.pause-overlay .pause-actions .game-button {
+  min-height: clamp(64px, 13vh, 96px);
+  padding: 16px 28px;
+  font-size: clamp(20px, 3.8vh, 28px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+@media (max-height: 540px), (max-width: 900px) {
+  .pause-actions {
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .pause-overlay .pause-actions .game-button {
+    min-height: 52px;
+    padding: 8px 16px;
+    font-size: 18px;
+  }
+}
+
+.mc-clan-row,
+.mc-clan-icon-pick {
+  color: var(--mc-text);
+  background: var(--mc-row-face);
+  box-shadow: var(--mc-btn-edge);
+}
+
+.mc-clan-count,
+.mc-clan-rank,
+.mc-clan-trophy b,
+.mc-clan-owner-mini {
+  color: var(--mc-text-secondary);
+}
+
+.mc-craft-name,
+.mc-craft-uncraftable,
+.mc-craft-empty {
+  color: var(--mc-text-secondary);
+}
+
+.mc-craft-open,
+.mc-craft-do,
+.mc-book-button {
+  color: var(--mc-text-title);
+  background: var(--mc-btn-face);
+  box-shadow: var(--mc-btn-edge);
+}
+
+.mc-craft-do:not(:disabled) {
+  background: var(--mc-btn-positive);
+}
+
+.mc-craft-list .mc-craft-available {
+  box-shadow:
+    inset 0 0 0 calc(1px * var(--mc-ui-scale)) var(--mc-online),
+    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #3a3d44;
+}
+
+.mc-recipe-book {
+  background: var(--ui-mc-panel);
+  box-shadow: var(--mc-panel-inset);
+}
+
+.submenu-screen .game-button {
+  border: 0;
+  border-radius: 2px;
+  color: #fff;
+  background: var(--mc-btn-face);
+  box-shadow: var(--mc-btn-edge);
+  text-shadow: none;
+}
+
+.submenu-screen .game-button:hover,
+.submenu-screen .game-button:focus-visible {
+  border-color: transparent;
+  outline: 1px solid rgba(232, 234, 238, 0.35);
+  background: var(--mc-btn-hover);
+  filter: none;
+}
+
+.submenu-screen .game-button.primary,
+.submenu-screen .game-button.primary:hover,
+.submenu-screen .game-button.primary:focus-visible {
+  color: #fff;
+  border-color: transparent;
+  background: var(--mc-btn-positive);
+  text-shadow: none;
+}
+
+.submenu-screen .game-button.danger,
+.submenu-screen .game-button.danger:hover {
+  background: var(--mc-btn-danger);
 }

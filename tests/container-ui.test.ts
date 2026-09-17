@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CRAFTING_RECIPES, SMELTING_RECIPES, findSmeltingRecipe, getFuelBurnTicks } from '../src/crafting';
 import { Inventory, createItemStack } from '../src/inventory';
@@ -43,6 +46,9 @@ import {
   slotStateSignature,
 } from '../src/ui/inventoryLayout';
 
+const STYLE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/style.css'), 'utf8');
+const GAME_UI = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/ui/GameUI.ts'), 'utf8');
+
 describe('container layout', () => {
   it('keeps furnace/crafting logical size near vanilla 176×166', () => {
     expect(containerStageSize('furnace', false)).toEqual({ width: 176, height: 166 });
@@ -63,6 +69,7 @@ describe('container layout', () => {
     expect(MC_BOOK_BUTTON_IN_CRAFT_ROW).toBe(true);
     const creativeInner = 195 - 14;
     expect(9 * 18).toBeLessThanOrEqual(creativeInner);
+    expect(MC_CREATIVE_SCROLL_GUTTER).toBe(0);
     expect(9 * 18 + MC_CREATIVE_SCROLL_GUTTER).toBeLessThanOrEqual(creativeInner);
   });
 
@@ -386,6 +393,43 @@ describe('creative inventory contract', () => {
     expect(result.identity).toBe(true);
     expect(existing[0]).toBe(slot);
     expect(slot.innerHTML).toBe('63');
+  });
+});
+
+describe('creative catalog chrome', () => {
+  it('keeps Catalog/Inventory tabs on the existing data attributes', () => {
+    expect(GAME_UI).toContain('data-creative-tab="catalog"');
+    expect(GAME_UI).toContain('data-creative-tab="inventory"');
+    expect(GAME_UI).toContain('data-creative-catalog');
+  });
+
+  it('styles creative tabs with graphite tokens and a distinct active face', () => {
+    expect(STYLE).toContain('.mc-creative-tabs button {');
+    expect(STYLE).toContain('.mc-creative-tabs button.active {');
+    const tabsStart = STYLE.indexOf('.mc-creative-tabs button {');
+    const catalogStart = STYLE.indexOf('.mc-creative-catalog {');
+    const tabsCss = STYLE.slice(tabsStart, catalogStart);
+    expect(tabsCss).toContain('background: var(--mc-btn-pressed);');
+    expect(tabsCss).toContain('color: var(--mc-text-muted);');
+    expect(tabsCss).toContain('box-shadow: var(--mc-btn-edge);');
+    expect(tabsCss).toContain('background: var(--mc-btn-face);');
+    expect(tabsCss).toContain('color: var(--mc-text-title);');
+    expect(tabsCss).not.toContain('#8b8b8b');
+    expect(tabsCss).not.toContain('#686f7c');
+  });
+
+  it('hides the catalog scrollbar without reserving a track or clipping nine columns', () => {
+    const start = STYLE.indexOf('.mc-creative-catalog {');
+    const end = STYLE.indexOf('\n}', start);
+    const catalog = STYLE.slice(start, end + 2);
+    expect(catalog).toContain('grid-template-columns: repeat(9, var(--mc-slot));');
+    expect(catalog).toContain('overflow-y: auto;');
+    expect(catalog).toContain('touch-action: pan-y;');
+    expect(catalog).toContain('scrollbar-width: none;');
+    expect(catalog).toContain('width: 100%;');
+    expect(catalog).not.toContain('padding-right: max(');
+    expect(STYLE).toContain('.mc-creative-catalog::-webkit-scrollbar {');
+    expect(STYLE).toContain('display: none;');
   });
 });
 

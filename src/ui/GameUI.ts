@@ -83,7 +83,7 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import { hudChromeStyle, menuBackHtml, menuBodyHtml, menuChromeStyle } from './gameMenuGui';
+import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
@@ -353,16 +353,16 @@ export class GameUI {
         <div id="selected-item"></div>
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
-        <div id="chat" data-chat-anchor="top-left" data-chat-open-width="viewport">
+        <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
           <div id="chat-main">
             <div id="chat-compose">
               <form id="chat-form" autocomplete="off">
                 <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
               </form>
               <div id="chat-tabs" role="tablist" aria-label="Каналы чата">
-                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active">Общий</button>
-                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false">Рядом</button>
-                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false">Клан</button>
+                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active"><span class="chat-sr">Общий</span></button>
+                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false"><span class="chat-sr">Рядом</span></button>
+                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false"><span class="chat-sr">Клан</span></button>
               </div>
             </div>
             <div id="chat-log" aria-live="polite">
@@ -373,32 +373,15 @@ export class GameUI {
           </div>
           <aside id="chat-side" aria-label="Действия чата">
             <button type="submit" form="chat-form" id="chat-send" aria-label="Отправить сообщение">
-              <span class="chat-btn-glyph" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M5 12h14"/>
-                  <path d="M13 6l6 6-6 6"/>
-                </svg>
-              </span>
-              <span class="chat-btn-hotkey">ENTER</span>
+              <span class="chat-sr">ENTER</span>
             </button>
             <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат (Tab)">
-              <span class="chat-btn-glyph chat-close-x" aria-hidden="true">X</span>
-              <span class="chat-btn-hotkey">TAB</span>
+              <span class="chat-sr chat-close-x">X</span>
+              <span class="chat-sr">TAB</span>
             </button>
             <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
-              <span class="chat-vis-on" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                </svg>
-              </span>
-              <span class="chat-vis-off" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                  <path d="M5 19 L19 5" stroke-width="2.4"/>
-                </svg>
-              </span>
-              <span class="chat-btn-hotkey chat-vis-caption-on">CHAT ON</span>
-              <span class="chat-btn-hotkey chat-vis-caption-off">CHAT OFF</span>
+              <span class="chat-sr chat-vis-on chat-vis-caption-on">CHAT ON</span>
+              <span class="chat-sr chat-vis-off chat-vis-caption-off">CHAT OFF</span>
             </button>
           </aside>
         </div>
@@ -876,22 +859,24 @@ export class GameUI {
 
   showPause(actions: PauseActions): void {
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="brand"><div class="brand-mark"></div><h2>Пауза</h2><p>мир остановлен и сохранён</p></div>
-        <div class="menu-stack">
-          <button class="game-button primary" data-action="resume">Продолжить</button>
-          <button class="game-button" data-action="settings">Настройки</button>
-          <button class="game-button ghost" data-action="quit">Сохранить и выйти</button>
+      <section class="screen pause-overlay" data-pause-overlay="world">
+        <div class="menu-card pause-window">
+          <div class="menu-stack pause-actions">
+            <button class="game-button primary" data-action="resume">Продолжить</button>
+            <button class="game-button" data-action="settings">Настройки</button>
+            <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
+          </div>
         </div>
-      </div></section>`);
+      </section>`);
     this.bindAction('resume', actions.resume);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
   }
 
-  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void): void {
+  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void, overlayWorld = false): void {
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window settings-window" id="settings-form">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><form class="menu-card menu-window settings-window" id="settings-form">
         <header class="menu-heading"><div><span class="eyebrow">Параметры игры</span><h1>Настройки</h1></div></header>
         <div class="settings-grid">
           ${this.settingRange('Громкость', 'volume', 0, 1, 0.05, this.settings.volume)}
@@ -924,13 +909,14 @@ export class GameUI {
     });
   }
 
-  showControls(onBack: () => void): void {
+  showControls(onBack: () => void, overlayWorld = false): void {
     const sections = DESKTOP_CONTROL_SECTIONS.map((section) => `
       <section class="control-section"><h2>${section.title}</h2><div class="control-list">
         ${section.bindings.map((binding) => `<div class="control-row"><span><strong>${binding.action}</strong>${binding.note ? `<small>${binding.note}</small>` : ''}</span><kbd>${binding.key}</kbd></div>`).join('')}
       </div></section>`).join('');
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window controls-window">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
         <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
@@ -1946,7 +1932,7 @@ export class GameUI {
     const stage = containerStageSize('craft', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
           <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
           <div class="mc-craft-layout">
@@ -2037,7 +2023,7 @@ export class GameUI {
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
             <button type="button" role="tab" aria-selected="${this.creativeTab === 'catalog'}" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
@@ -2094,7 +2080,7 @@ export class GameUI {
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.dataset.bookUi = layoutKey;
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
           <div data-container-body>${body}</div>
@@ -2758,7 +2744,7 @@ export class GameUI {
       ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
       : '';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         ${back}
         <div class="mc-panel" data-container-kind="chest">
           ${this.auctionBodyHtml(state)}
@@ -3047,7 +3033,7 @@ export class GameUI {
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-clan-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:220">
+      <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
           ${this.clanBodyHtml(state)}
@@ -3430,7 +3416,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
           ${this.buyerBodyHtml(state)}
         </div>
@@ -3563,7 +3549,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}; ${menuChromeStyle()}">
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         ${menuBackHtml(state.screen)}
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${menuBodyHtml(state, (value) => this.escape(value))}
@@ -3689,6 +3675,11 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'claim_set_pvp', enabled: claimPvp.dataset.menuClaimPvp === 'on' });
         return;
       }
+      const tradeNearby = target.closest<HTMLElement>('[data-menu-trade-nearby]');
+      if (tradeNearby?.dataset.menuTradeNearby) {
+        actions.send({ type: 'menu_action', action: 'trade_request', name: tradeNearby.dataset.menuTradeNearby });
+        return;
+      }
       const tradeAccept = target.closest<HTMLElement>('[data-menu-trade-accept]');
       if (tradeAccept?.dataset.menuTradeAccept) {
         actions.send({ type: 'menu_action', action: 'trade_accept', requestId: tradeAccept.dataset.menuTradeAccept });
@@ -3744,7 +3735,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${MC_MENU_WIDTH}; ${menuChromeStyle()}">
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${tradeWindowChrome(state, (value) => this.escape(value), {
             self: this.tradeSlotCells(state.selfSlots, 'self'),

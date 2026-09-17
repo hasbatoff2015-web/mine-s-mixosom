@@ -2,7 +2,14 @@ import type { Plugin, ServerAPI } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
-import { HOME_LIMIT_ERROR, HOME_MISSING_ERROR, validateHomeName } from '../../shared/homes';
+import {
+  HOME_LIMIT_ERROR,
+  HOME_MAX_DEFAULT,
+  HOME_MAX_PREMIUM,
+  HOME_MAX_VIP,
+  HOME_MISSING_ERROR,
+  validateHomeName,
+} from '../../shared/homes';
 
 const HELP = {
   name: 'home',
@@ -29,9 +36,9 @@ const SCHEMA = {
 };
 
 export function maxHomesFor(api: ServerAPI, playerId: string): number {
-  const def = Number(api.getConfig('maxHomesDefault', 4));
-  const vip = Number(api.getConfig('maxHomesVip', 4));
-  const premium = Number(api.getConfig('maxHomesPremium', 5));
+  const def = Number(api.getConfig('maxHomesDefault', HOME_MAX_DEFAULT));
+  const vip = Number(api.getConfig('maxHomesVip', HOME_MAX_VIP));
+  const premium = Number(api.getConfig('maxHomesPremium', HOME_MAX_PREMIUM));
   if (api.isOperator(playerId) || api.hasPermission(playerId, 'home.*')) {
     return Math.max(premium, vip, def);
   }
@@ -51,9 +58,9 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
       const config = api.loadConfig({
         cooldownSeconds: 5,
         warmupSeconds: 0,
-        maxHomesDefault: 4,
-        maxHomesVip: 4,
-        maxHomesPremium: 5,
+        maxHomesDefault: HOME_MAX_DEFAULT,
+        maxHomesVip: HOME_MAX_VIP,
+        maxHomesPremium: HOME_MAX_PREMIUM,
         cancelOnMove: true,
         cancelOnDamage: true,
       });

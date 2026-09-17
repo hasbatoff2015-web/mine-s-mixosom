@@ -53,7 +53,9 @@ describe('loading, HUD and Creative DOM contracts', () => {
   });
 
   it('keeps the canonical close callback, scroll host and compact catalog composition', () => {
-    expect(gameUi).toContain("querySelector('[data-ui=\"close\"]')?.addEventListener('click', () => context.onClose())");
+    expect(gameUi).toContain("querySelector('[data-ui=\"close\"]')?.addEventListener('click', () => {");
+    expect(gameUi).toContain('if (this.craftMenuOpen) this.closeCraftMenu()');
+    expect(gameUi).toContain('context.onClose()');
     expect(gameUi).toContain('data-creative-catalog');
     expect(style).toContain('overflow-y: auto');
     expect(style).toContain('max-height: calc(108px * var(--mc-ui-scale))');

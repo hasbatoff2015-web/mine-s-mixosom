@@ -1,5 +1,38 @@
 # Roadmap
 
+## 2026-09-17: Pause heading off + Creative graphite tabs
+
+- [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.
+- [x] Creative Catalog/Inventory tabs use graphite chrome; catalog scrollbar is hidden while wheel and touch pan still scroll all 9 columns.
+
+## 2026-09-17: Pause overlay + larger HUD/chat/pause buttons
+
+- [x] In-game TAB Pause overlays the live world canvas; it does not switch to the Main Menu photo.
+- [x] Chat tab/side sprites and pause actions are ~2× larger; HUD Pause/Chat/Menu settled at 76 logical px squares.
+
+## 2026-09-17: Menu coin asset + chat PNG sprites
+
+- [x] Main Menu balance coin uses the attached padded PNG and is fully visible next to unchanged «Баланс» copy.
+- [x] Open-chat tabs and side controls use the attached PNG faces (`public/ui/chat/`), not CSS-drawn bevels.
+- [x] Chat channel routing, T/Enter/TAB/X, ON/OFF, history and scrolling stay on the existing client path.
+
+## 2026-09-17: Trade partner coins, chat chrome, home limit 3, menu coin
+
+- [x] Trade snapshot + GUI show both players' coin offers; server remains source of truth.
+- [x] Open chat log has no message-area panel fill.
+- [x] Ordinary home cap is `HOME_MAX_DEFAULT = 3` for commands and UI.
+
+## 2026-09-17: Unknown-block save load compat
+
+- [x] Runtime placeholder for any unregistered storable voxel ID, including JSON string `"165"`.
+- [x] Saved-world load regression (IndexedDB snapshot + Anarchy `WorldInstance.initialize`) without rewriting ID 165 or adding it to `BLOCK_REGISTRY`.
+
+## 2026-09-16: Unified in-game UI chrome
+
+- [x] Shared graphite panel/button/input/list/close chrome for every existing overlay.
+- [x] Friends and Trade lobby match the attached reference without new social systems.
+- [x] Inventory, craft, chat, auction, clan, buyer, pause, settings restyled; functionality kept.
+
 ## 2026-09-16: Merge unknown-block compat into menu visual
 
 - [x] Merge `--no-ff` `cursor/unknown-block-compat-31b4` into `cursor/main-menu-visual-31b4` without dropping menu chrome.

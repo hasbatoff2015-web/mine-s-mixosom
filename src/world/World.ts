@@ -1,6 +1,6 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
 import { migrateLegacyStack } from '../inventory/legacyItems';
-import { BlockId, getBlockDefinition, torchBlockEmission, type BlockRenderState } from '../blocks';
+import { BlockId, getBlockDefinition, normalizeStorableBlockId, torchBlockEmission, type BlockRenderState } from '../blocks';
 import { rayAabbDistance, blockCollisionBoxes } from './collision';
 import { blockSelectionBoxes } from './selection';
 import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
@@ -258,9 +258,11 @@ export class VoxelWorld {
     for (const [key, entries] of Object.entries(state.modifications)) {
       const delta = new Map<number, BlockId>();
       for (const [index, block] of Object.entries(entries)) {
-        const id = Number(block);
+        const id = normalizeStorableBlockId(block);
+        const cell = Number(index);
+        if (id === undefined || !Number.isInteger(cell) || cell < 0) continue;
         adoptUnknownBlockLight(id);
-        delta.set(Number(index), id as BlockId);
+        delta.set(cell, id as BlockId);
       }
       this.modifications.set(key, delta);
     }

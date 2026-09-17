@@ -298,6 +298,10 @@ export function applyGameMenuAction(
     session.tradeNameText = message.name ?? '';
     return { kind: 'flush' };
   }
+  if (action === 'trade_refresh') {
+    session.message = undefined;
+    return { kind: 'flush' };
+  }
   if (action === 'trade_request') {
     const name = (message.name ?? session.tradeNameText).trim();
     if (!name) {
