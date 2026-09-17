@@ -581,10 +581,14 @@ export function tryGetBlockDefinition(id: unknown): BlockDefinition | undefined 
 }
 
 export function getBlockDefinition(id: BlockId): BlockDefinition {
+  if (typeof id === 'number') {
+    const known = BLOCK_DEFINITIONS_BY_ID[id];
+    if (known !== undefined) return known;
+  }
   const numeric = normalizeStorableBlockId(id);
   if (numeric === undefined) throw new RangeError(`Invalid block id: ${id}`);
-  const known = BLOCK_DEFINITIONS_BY_ID[numeric];
-  if (known !== undefined) return known;
+  const registered = BLOCK_DEFINITIONS_BY_ID[numeric];
+  if (registered !== undefined) return registered;
   return unknownBlockDefinition(numeric);
 }
 
