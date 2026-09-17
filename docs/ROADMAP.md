@@ -3,7 +3,7 @@
 ## 2026-09-17: Pause overlay + larger HUD/chat/pause buttons
 
 - [x] In-game TAB Pause overlays the live world canvas; it does not switch to the Main Menu photo.
-- [x] Chat tab/side sprites, HUD Pause/Chat/Menu, and pause actions are ~2× larger with preserved aspect ratios.
+- [x] Chat tab/side sprites and pause actions are ~2× larger; HUD Pause/Chat/Menu settled at 76 logical px squares.
 
 ## 2026-09-17: Menu coin asset + chat PNG sprites
 

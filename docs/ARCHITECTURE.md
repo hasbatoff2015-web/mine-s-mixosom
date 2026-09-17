@@ -2,7 +2,7 @@
 
 ## Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
 
-In-game Pause (`GameUI.showPause`) is a `.screen.pause-overlay` over the live WebGL canvas. It no longer uses `menu-screen` / `submenu-screen`, so it does not paint `frontier-menu-background.png`. Settings/Controls opened from pause pass `overlayWorld` and keep the same overlay. Simulation still goes `PAUSED` via `openingPauseMenuPausesSimulation()`; `resumeFromPause` → `enterPlaying`. Chat side/tab faces are height×2 with native `aspect-ratio` + `contain`; HUD corner sprites are 116 logical px squares.
+In-game Pause (`GameUI.showPause`) is a `.screen.pause-overlay` over the live WebGL canvas. It no longer uses `menu-screen` / `submenu-screen`, so it does not paint `frontier-menu-background.png`. Settings/Controls opened from pause pass `overlayWorld` and keep the same overlay. Simulation still goes `PAUSED` via `openingPauseMenuPausesSimulation()`; `resumeFromPause` → `enterPlaying`. Chat side/tab faces are height×2 with native `aspect-ratio` + `contain`; HUD corner sprites are 76 logical px squares.
 
 ## Menu coin asset + chat PNG sprites — 2026-09-17
 

@@ -711,7 +711,7 @@ button {
   z-index: 7;
   display: flex;
   flex-direction: column;
-  gap: calc(8px * var(--hud-scale));
+  gap: calc(6px * var(--hud-scale));
   pointer-events: auto;
 }
 
@@ -719,8 +719,8 @@ button {
   box-sizing: border-box;
   position: relative;
   display: block;
-  width: calc(116px * var(--hud-scale));
-  height: calc(116px * var(--hud-scale));
+  width: calc(76px * var(--hud-scale));
+  height: calc(76px * var(--hud-scale));
   aspect-ratio: 1;
   margin: 0;
   padding: 0;

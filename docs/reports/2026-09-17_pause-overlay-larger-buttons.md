@@ -17,7 +17,7 @@ Done. Pause is a translucent overlay on `#game-canvas`. Simulation still pauses.
 - Overlay background is `rgba(4, 7, 10, 0.42)` with `backdrop-filter: none` so the live frame stays visible. The renderer already continues in `PAUSED`; only the UI layer was covering it with the menu photo.
 - Settings/Controls opened from pause pass `overlayWorld` so they stay on the same overlay instead of swapping to the Main Menu photo.
 - Chat faces: side height 52→104 (mobile 44→88), tabs 30→60 (mobile 26→52), still `aspect-ratio` + `background-size: contain`.
-- HUD corner sprites: 58→116 square, `contain`.
+- HUD corner sprites: 76 logical px square (`contain`), after a follow-up shrink from 116.
 - Pause actions: `min-height: clamp(64px, 13vh, 96px)` (~2× on desktop).
 - DEV `?qaUi=pause` uses a sky/terrain canvas stand-in, not the menu photo, so overlay-over-world is checkable without a WebGL session.
 
@@ -37,7 +37,7 @@ Done. Pause is a translucent overlay on `#game-canvas`. Simulation still pauses.
 
 - Pause overlay: no menu-screen/photo on `showPause`; overlay CSS has no `url(`; simulation still PAUSED.
 - Chat layout: 104px side / 60px tabs, `contain`.
-- HUD: 116×116 `contain` squares.
+- HUD: 76×76 `contain` squares.
 
 ## Visual QA
 

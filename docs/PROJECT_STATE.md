@@ -3,7 +3,7 @@
 ## Последний проход: Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
 
 - TAB Pause — overlay поверх живого `#game-canvas`, без `frontier-menu-background.png` и без `menu-screen`/`submenu-screen`. Симуляция по-прежнему `PAUSED`. Resume возвращает тот же мир.
-- Chat PNG (вкладки, Enter, X, ON/OFF) и HUD Pause/Chat/Menu увеличены ~2× с `aspect-ratio` / `contain`. Кнопки паузы крупнее, graphite сохранён.
+- Chat PNG (вкладки, Enter, X, ON/OFF) увеличены ~2×. HUD Pause/Chat/Menu — 76 logical px (на ~35% меньше промежуточных 116). Кнопки паузы крупнее, graphite сохранён.
 - Handoff: `docs/reports/2026-09-17_pause-overlay-larger-buttons.md`.
 
 ## Предыдущий проход: Menu coin asset + chat PNG sprites — 2026-09-17
