@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-17: Unknown-block save load compat
+
+- [x] Runtime placeholder for any unregistered storable voxel ID, including JSON string `"165"`.
+- [x] Saved-world load regression (IndexedDB snapshot + Anarchy `WorldInstance.initialize`) without rewriting ID 165 or adding it to `BLOCK_REGISTRY`.
+
 ## 2026-09-16: Unified in-game UI chrome
 
 - [x] Shared graphite panel/button/input/list/close chrome for every existing overlay.

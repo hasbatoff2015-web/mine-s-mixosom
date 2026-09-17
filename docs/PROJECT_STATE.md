@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Unknown-block save load compat — 2026-09-17
+
+- Загрузка мира с незарегистрированным voxel ID (включая **165**) больше не падает. Placeholder по-прежнему runtime-only: ID в save/chunk не переписывается, в `BLOCK_REGISTRY` не добавляется.
+- Предыдущий compat не срабатывал на JSON-строке `"165"` (`Number.isInteger("165") === false` → `RangeError`). `getBlockDefinition` / restore теперь нормализуют storable Uint16.
+- Регрессия: `IdbWorldStore` + `FsWorldStore`/`WorldInstance.initialize` с ID 165. Handoff: `docs/reports/2026-09-17_unknown-block-save-load.md`.
+
 ## Последний проход: Unified in-game UI chrome — 2026-09-16
 
 - Все inventory-style окна (меню, инвентарь, крафт, аукцион, клан, скупщик, обмен) используют один graphite chrome: тёмная панель, bevel-кнопки, `closeButtonHtml()` + close/back sprites, общие состояния online/offline/danger/positive.

@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-17 Unknown-block save load compat
+
+Report: `reports/2026-09-17_unknown-block-save-load.md`.
+
+```text
+npx vitest run tests/unknown-block-load.test.ts tests/block-registry.test.ts tests/fs-world-store.test.ts --maxWorkers=2
+```
+
+Focused unknown-block + persist tests, then `test:server`, four typechecks, boundaries, and `build`.
+
 ## 2026-09-16 Unified in-game UI chrome
 
 Report: `reports/2026-09-16_ui-redesign.md`.

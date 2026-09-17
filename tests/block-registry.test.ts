@@ -187,6 +187,9 @@ describe('item registry', () => {
     expect(definition.hiddenFromGameplay).toBe(true);
     expect(definition.textures.all).toBe('block/stone');
     expect(getBlockDefinition(unknown as BlockId)).toBe(definition);
+    expect(getBlockDefinition('165' as unknown as BlockId).id).toBe(unknown);
+    expect(tryGetBlockDefinition('165')).toBeUndefined();
+    expect(BLOCK_REGISTRY.size).toBe(BLOCKS.length);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
