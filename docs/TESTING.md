@@ -8,7 +8,7 @@ Report: `reports/2026-09-17_unknown-block-save-load.md`.
 npx vitest run tests/unknown-block-load.test.ts tests/block-registry.test.ts tests/fs-world-store.test.ts --maxWorkers=2
 ```
 
-Focused unknown-block + persist tests, then `test:server`, four typechecks, boundaries, and `build`.
+Focused unknown-block + persist tests PASS (unknown-block-load 3/3, block-registry 16/16, fs-world-store 7/7). `test:server` 50/51 files / 497/498 (`tick-load-flight` timing flake under load; isolated 3/3 PASS). Four typechecks, boundaries, and `build` PASS.
 
 ## 2026-09-16 Unified in-game UI chrome
 

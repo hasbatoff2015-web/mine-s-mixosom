@@ -41,8 +41,9 @@ Existing tests only called `VoxelWorld.restore` with a numeric `165`, not `parse
 
 ## Tests
 
-- Focused: `tests/unknown-block-load.test.ts`, `tests/block-registry.test.ts`, `tests/fs-world-store.test.ts`
-- Gates: `test:server`, `typecheck`, `typecheck:client`, `typecheck:server`, `typecheck:sim`, `check:boundaries`, `build`
+- Focused: unknown-block-load 3/3, block-registry 16/16, fs-world-store 7/7 PASS.
+- `test:server`: 50/51 files, 497/498. `tests/server/tick-load-flight.test.ts` timing flake under parallel load (mean/max setView budget); isolated retry 3/3 PASS (same flake as earlier reports).
+- `typecheck`, `typecheck:client`, `typecheck:server`, `typecheck:sim`, `check:boundaries`, `build` PASS.
 
 ## Visual QA
 
@@ -58,4 +59,4 @@ Not a UI change. Unknown voxels still look like stone until the real block is re
 
 ## Git
 
-Branch: `cursor/ui-redesign-a8dc` (no visual redesign edits in this pass).
+Branch: `cursor/ui-redesign-a8dc` (no visual redesign edits in this pass). Commits `a1bbcd3`, `7e56f83`.
