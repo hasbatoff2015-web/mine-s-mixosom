@@ -86,6 +86,7 @@ export interface AuctionSession {
   amount?: number;
   priceText: string;
   message?: string;
+  openedFromMenu?: boolean;
 }
 
 interface AuctionFile {
@@ -278,7 +279,12 @@ export class AuctionService {
       session.listingId = undefined;
       session.slot = undefined;
       session.expectedItem = undefined;
+      session.openedFromMenu = undefined;
     }
+  }
+
+  markOpenedFromMenu(playerId: string): void {
+    this.session(playerId).openedFromMenu = true;
   }
 
   openBrowse(playerId: string, search = ''): AuctionSession {
@@ -604,8 +610,11 @@ export class AuctionService {
 
   buildMessage(playerId: string, inventory: Inventory): ServerAuctionMessage {
     const session = this.session(playerId);
+    const withSource = (message: ServerAuctionMessage): ServerAuctionMessage => (
+      session.openedFromMenu ? { ...message, source: 'menu' } : message
+    );
     if (session.screen === 'closed') {
-      return {
+      return withSource({
         type: 'auction',
         screen: 'closed',
         title: '',
@@ -614,7 +623,7 @@ export class AuctionService {
         totalPages: 1,
         totalCount: 0,
         listings: [],
-      };
+      });
     }
     const now = this.now();
     if (session.screen === 'browse' || session.screen === 'buy') {
@@ -625,7 +634,7 @@ export class AuctionService {
       });
       session.page = page.page;
       const selected = session.listingId ? this.listings.get(session.listingId) : undefined;
-      return {
+      return withSource({
         type: 'auction',
         screen: session.screen === 'buy' && selected ? 'buy' : 'browse',
         title: session.screen === 'buy' ? 'Подтверждение покупки' : 'Аукцион',
@@ -642,14 +651,14 @@ export class AuctionService {
             prompt: `Вы уверены, что хотите купить этот предмет за ${formatMegacoins(selected.price)}?`,
           },
         } : {}),
-      };
+      });
     }
     if (session.screen === 'sell-pick' || session.screen === 'sell-confirm') {
       const slot = session.slot;
       const current = slot !== undefined ? inventory.getSlot(slot) : null;
       const maxAmount = current?.count ?? session.expectedItem?.count ?? 1;
       const amount = Math.min(session.amount ?? maxAmount, maxAmount);
-      return {
+      return withSource({
         type: 'auction',
         screen: session.screen,
         title: session.screen === 'sell-confirm' ? 'Подтверждение продажи' : 'Выставить на продажу',
@@ -674,7 +683,7 @@ export class AuctionService {
             }
             : {}),
         },
-      };
+      });
     }
     if (session.screen === 'mine' || session.screen === 'manage' || session.screen === 'claim' || session.screen === 'relist') {
       const page = this.queryMine(playerId, session.page);
@@ -687,7 +696,7 @@ export class AuctionService {
         : session.screen === 'relist' ? 'Изменить цену'
           : session.screen === 'manage' ? 'Ваш товар'
             : 'Мои товары';
-      return {
+      return withSource({
         type: 'auction',
         screen: session.screen,
         title,
@@ -709,9 +718,9 @@ export class AuctionService {
                 : `Цена: ${formatMegacoins(selected.price)}`,
           },
         } : {}),
-      };
+      });
     }
-    return {
+    return withSource({
       type: 'auction',
       screen: 'closed',
       title: '',
@@ -720,7 +729,7 @@ export class AuctionService {
       totalPages: 1,
       totalCount: 0,
       listings: [],
-    };
+    });
   }
 }
 

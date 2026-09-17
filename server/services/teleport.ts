@@ -10,7 +10,8 @@ export type TeleportReason =
   | 'portal'
   | 'back'
   | 'death'
-  | 'automine';
+  | 'automine'
+  | 'friends';
 
 export interface TeleportLocation {
   readonly worldId: string;

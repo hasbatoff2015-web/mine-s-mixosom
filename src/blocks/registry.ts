@@ -507,16 +507,89 @@ function buildRegistry<K>(keyOf: (definition: BlockDefinition) => K): ReadonlyMa
 
 export const BLOCK_REGISTRY = buildRegistry((definition) => definition.id);
 export const BLOCKS_BY_KEY = buildRegistry((definition) => definition.key);
-const BLOCK_DEFINITIONS_BY_ID: readonly (BlockDefinition | undefined)[] = (() => {
-  const definitions: Array<BlockDefinition | undefined> = [];
-  for (const definition of BLOCKS) definitions[definition.id] = definition;
-  return definitions;
-})();
+
+const UNKNOWN_BLOCK_MAX_ID = 0xffff;
+const BLOCK_DEFINITIONS_BY_ID: Array<BlockDefinition | undefined> = new Array(UNKNOWN_BLOCK_MAX_ID + 1);
+for (const definition of BLOCKS) BLOCK_DEFINITIONS_BY_ID[definition.id] = definition;
+
+const unknownBlockDefinitions = new Map<number, BlockDefinition>();
+const warnedUnknownBlockIds = new Set<number>();
+let adoptUnknownBlockLight: ((id: number) => void) | undefined;
+
+const STORABLE_BLOCK_ID = /^(0|[1-9][0-9]*)$/;
+
+/**
+ * Coerce JSON/network voxel IDs to a Uint16. String `"165"` from a snapshot must
+ * not miss the placeholder (Number.isInteger("165") is false).
+ */
+export function normalizeStorableBlockId(id: unknown): number | undefined {
+  if (typeof id === 'number') {
+    if (!Number.isInteger(id) || id < 0 || id > UNKNOWN_BLOCK_MAX_ID) return undefined;
+    return id;
+  }
+  if (typeof id === 'string' && STORABLE_BLOCK_ID.test(id)) {
+    const numeric = Number(id);
+    if (numeric > UNKNOWN_BLOCK_MAX_ID) return undefined;
+    return numeric;
+  }
+  return undefined;
+}
+
+/** LightEngine fills FILTER/OCCLUDES for unknown IDs without importing this module from lighting. */
+export function bindUnknownBlockLight(adopt: (id: number) => void): void {
+  adoptUnknownBlockLight = adopt;
+  for (const unknownId of unknownBlockDefinitions.keys()) adopt(unknownId);
+}
+
+/**
+ * Runtime-only stand-in for a numeric ID that this build has not registered.
+ * The voxel keeps the original ID in chunk/save data; this object is not added
+ * to BLOCK_REGISTRY, so a later build that registers the same ID wins.
+ */
+function unknownBlockDefinition(id: number): BlockDefinition {
+  const cached = unknownBlockDefinitions.get(id);
+  if (cached) return cached;
+  if (!warnedUnknownBlockIds.has(id)) {
+    warnedUnknownBlockIds.add(id);
+    console.warn(`[blocks] keeping unregistered block id ${id} (dev compat; voxel ID is unchanged)`);
+  }
+  const definition: BlockDefinition = Object.freeze({
+    id: id as BlockId,
+    key: `unknown_${id}`,
+    name: `Unknown (${id})`,
+    category: 'building',
+    hardness: -1,
+    solid: true,
+    opaque: true,
+    occludesFaces: true,
+    renderLayer: 'opaque',
+    renderShape: 'cube',
+    textures: Object.freeze({ all: 'block/stone' }),
+    breakable: false,
+    hasItem: false,
+    hiddenFromGameplay: true,
+    soundGroup: 'stone',
+  });
+  unknownBlockDefinitions.set(id, definition);
+  adoptUnknownBlockLight?.(id);
+  return definition;
+}
+
+export function tryGetBlockDefinition(id: unknown): BlockDefinition | undefined {
+  const numeric = normalizeStorableBlockId(id);
+  return numeric === undefined ? undefined : BLOCK_DEFINITIONS_BY_ID[numeric];
+}
 
 export function getBlockDefinition(id: BlockId): BlockDefinition {
-  const definition = BLOCK_DEFINITIONS_BY_ID[id];
-  if (definition === undefined) throw new RangeError(`Unknown block id: ${id}`);
-  return definition;
+  if (typeof id === 'number') {
+    const known = BLOCK_DEFINITIONS_BY_ID[id];
+    if (known !== undefined) return known;
+  }
+  const numeric = normalizeStorableBlockId(id);
+  if (numeric === undefined) throw new RangeError(`Invalid block id: ${id}`);
+  const registered = BLOCK_DEFINITIONS_BY_ID[numeric];
+  if (registered !== undefined) return registered;
+  return unknownBlockDefinition(numeric);
 }
 
 export function getBlockByKey(key: string): BlockDefinition | undefined {

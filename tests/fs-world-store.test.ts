@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { BlockId } from '../src/blocks';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BlockId, isKnownBlockId } from '../src/blocks';
+import { Chunk } from '../src/world/Chunk';
 import { PersistenceError } from '../src/save/PersistenceError';
 import { WORLD_SCHEMA_VERSION } from '../src/save/types';
 import { FsWorldStore } from '../server/FsWorldStore';
@@ -180,5 +181,42 @@ describe('FsWorldStore', () => {
     if ('error' in resumed) throw new Error(resumed.error);
     expect(resumed.player.inventory.has('iron_ingot', 4)).toBe(true);
     await second.stop();
+  });
+
+  it('loads a saved world that still contains unknown block ID 165', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dataDir = await tempDir();
+    const store = new FsWorldStore(dataDir);
+    const index = Chunk.index(8, 70, 8);
+    const snapshot = sampleSnapshot({
+      summary: {
+        id: ANARCHY_WORLD_ID,
+        name: 'Анархия',
+        seed: ANARCHY_WORLD_SEED,
+        mode: 'survival',
+        kind: 'server',
+        serverId: 'anarchy-pvp',
+        createdAt: 1,
+        updatedAt: 1,
+        playTimeSeconds: 0,
+      },
+      modifications: { '0,0': { [String(index)]: 165 } },
+      serverWorld: {
+        id: ANARCHY_WORLD_ID,
+        initialized: true,
+        spawnImported: true,
+        importVersion: 3,
+        spawn: [8.5, 64, 8.5],
+      },
+    });
+    await store.save(snapshot);
+
+    const instance = new WorldInstance(testConfig(dataDir));
+    await expect(instance.initialize()).resolves.toBeUndefined();
+    expect(instance.world.getBlock(8, 70, 8)).toBe(165);
+    expect(instance.world.serializeModifications()['0,0']?.[String(index)]).toBe(165);
+    expect(isKnownBlockId(165)).toBe(false);
+    await instance.stop();
+    warn.mockRestore();
   });
 });

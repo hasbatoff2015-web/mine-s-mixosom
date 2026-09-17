@@ -77,10 +77,12 @@ describe('clan GUI helpers', () => {
     expect(clanJoinDisabled({ ...none, joinState: 'own' })).toBe(true);
   });
 
-  it('shows back on the clan card but not on ranking', () => {
+  it('shows back on the clan card but not on ranking unless opened from the game menu', () => {
     expect(showsClanBack('card')).toBe(true);
     expect(showsClanBack('ranking')).toBe(false);
     expect(showsClanBack('create')).toBe(false);
+    expect(showsClanBack('ranking', 'menu')).toBe(true);
+    expect(showsClanBack('create', 'menu')).toBe(true);
     expect(showsClanBack('join-confirm')).toBe(true);
   });
 

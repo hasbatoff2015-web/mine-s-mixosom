@@ -396,6 +396,7 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(store.claims.some((claim) => claim.name === 'garden' && !claim.anchor)).toBe(true);
     expect(store.claims.some((claim) => claim.anchor?.block === 'iron_block' && claim.anchor.x === x + 84)).toBe(true);
 
+    expect(chat(world, ada, '/claim delete 2').some((line) => line.includes("Deleted claim '2'"))).toBe(true);
     const iron = store.claims.find((claim) => claim.anchor?.block === 'iron_block' && claim.anchor.x === x)!;
     ada.player.controller.teleport([iron.volume.minX + 0.5, y, iron.volume.minZ + 0.5]);
     chat(world, ada, '/claim pos1');

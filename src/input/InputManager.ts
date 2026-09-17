@@ -33,6 +33,7 @@ export interface InputCallbacks {
   dropItem(): void;
   selectHotbar(index: number): void;
   cyclePerspective?(): void;
+  toggleMenu?(): void;
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
@@ -259,6 +260,12 @@ export class InputManager {
         this.callbacks.togglePause();
         return;
       }
+      if (event.code === 'Tab' && !event.repeat) {
+        event.preventDefault();
+        if (this.callbacks.isChatOpen?.()) return;
+        this.callbacks.togglePause();
+        return;
+      }
       if (typing) {
         const chatOpen = this.callbacks.isChatOpen?.() === true;
         const isChatInput = event.target instanceof HTMLElement && event.target.id === 'chat-input';
@@ -273,6 +280,11 @@ export class InputManager {
       if ((event.code === 'KeyT' || event.key === '/') && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         this.callbacks.openChat(event.key === '/' ? '/' : '');
+        return;
+      }
+      if (event.code === 'KeyM' && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        this.callbacks.toggleMenu?.();
         return;
       }
       if (event.code === 'KeyQ' && !event.repeat) {

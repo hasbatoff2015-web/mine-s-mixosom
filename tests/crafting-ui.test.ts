@@ -57,8 +57,8 @@ describe('craft menu chrome', () => {
     expect(css).toContain('touch-action: pan-y');
     expect(css).toContain('.mc-craft-list::-webkit-scrollbar');
     expect(gameUi).toContain("addEventListener('wheel'");
-    expect(css).toMatch(/\.mc-craft-left input \{[^}]*background: #8b8b8b;/);
-    expect(css).toMatch(/\.mc-craft-left input::placeholder \{[^}]*color: #4a4a4a;/);
+    expect(css).toMatch(/\.mc-craft-left input \{[^}]*background: var\(--mc-input-face\);/);
+    expect(css).toMatch(/\.mc-craft-left input::placeholder \{[^}]*color: var\(--mc-text-muted\);/);
   });
 
   it('keeps the live search draft when the input still has focus', () => {
@@ -100,7 +100,7 @@ describe('close button E caption', () => {
 
   it('does not put an E caption on the clan back arrow', () => {
     expect(gameUi).toContain('class="mc-close mc-back"');
-    const back = sourceSection(gameUi, 'showsClanBack(state.screen)', 'this.closeButtonHtml()');
+    const back = sourceSection(gameUi, 'showsClanBack(state.screen, state.source)', 'this.closeButtonHtml()');
     expect(back).toContain('data-clan-action="back"');
     expect(back).not.toContain('mc-close-hotkey');
     expect(back).not.toContain('CONTAINER_STRINGS.closeHotkey');

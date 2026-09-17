@@ -30,6 +30,9 @@ import {
 import {
   containerStageSize,
   containerUiScaleWithClose,
+  MC_MENU_WIDTH,
+  menuLogicalHeight,
+  menuUiScale,
 } from './containerTheme';
 import {
   allCraftingBookEntries,
@@ -80,7 +83,9 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage } from '../../shared/protocol';
+import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
+import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
+import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -175,6 +180,16 @@ export interface ClanGuiActions {
 
 export interface BuyerGuiActions {
   send(message: ClientBuyerActionMessage): void;
+  close(): void;
+}
+
+export interface MenuGuiActions {
+  send(message: ClientMenuActionMessage): void;
+  close(): void;
+}
+
+export interface TradeGuiActions {
+  send(message: ClientTradeActionMessage): void;
   close(): void;
 }
 
@@ -298,6 +313,13 @@ export class GameUI {
   private clanSearchTimer?: number;
   private buyerState?: ServerBuyerMessage;
   private buyerActions?: BuyerGuiActions;
+  private menuState?: ServerMenuMessage;
+  private menuActions?: MenuGuiActions;
+  private tradeState?: ServerTradeMessage;
+  private tradeActions?: TradeGuiActions;
+  onHudPause?: () => void;
+  onHudChat?: () => void;
+  onHudMenu?: () => void;
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -331,16 +353,16 @@ export class GameUI {
         <div id="selected-item"></div>
         <div id="hotbar"></div>
         <div id="effect-hud" class="hidden"></div>
-        <div id="chat" data-chat-anchor="top-left" data-chat-open-width="viewport">
+        <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
           <div id="chat-main">
             <div id="chat-compose">
               <form id="chat-form" autocomplete="off">
                 <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
               </form>
               <div id="chat-tabs" role="tablist" aria-label="Каналы чата">
-                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active">Общий</button>
-                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false">Рядом</button>
-                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false">Клан</button>
+                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active"><span class="chat-sr">Общий</span></button>
+                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false"><span class="chat-sr">Рядом</span></button>
+                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false"><span class="chat-sr">Клан</span></button>
               </div>
             </div>
             <div id="chat-log" aria-live="polite">
@@ -351,34 +373,34 @@ export class GameUI {
           </div>
           <aside id="chat-side" aria-label="Действия чата">
             <button type="submit" form="chat-form" id="chat-send" aria-label="Отправить сообщение">
-              <span class="chat-btn-glyph" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M5 12h14"/>
-                  <path d="M13 6l6 6-6 6"/>
-                </svg>
-              </span>
-              <span class="chat-btn-hotkey">ENTER</span>
+              <span class="chat-sr">ENTER</span>
             </button>
             <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат (Tab)">
-              <span class="chat-btn-glyph chat-close-x" aria-hidden="true">X</span>
-              <span class="chat-btn-hotkey">TAB</span>
+              <span class="chat-sr chat-close-x">X</span>
+              <span class="chat-sr">TAB</span>
             </button>
             <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
-              <span class="chat-vis-on" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                </svg>
-              </span>
-              <span class="chat-vis-off" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                  <path d="M4 6.5h12a3 3 0 0 1 3 3V15a3 3 0 0 1-3 3H11l-4.5 3v-3H7a3 3 0 0 1-3-3V6.5z"/>
-                  <path d="M5 19 L19 5" stroke-width="2.4"/>
-                </svg>
-              </span>
-              <span class="chat-btn-hotkey chat-vis-caption-on">CHAT ON</span>
-              <span class="chat-btn-hotkey chat-vis-caption-off">CHAT OFF</span>
+              <span class="chat-sr chat-vis-on chat-vis-caption-on">CHAT ON</span>
+              <span class="chat-sr chat-vis-off chat-vis-caption-off">CHAT OFF</span>
             </button>
           </aside>
+        </div>
+        <div id="hud-corner" style="${hudChromeStyle()}">
+          <button type="button" id="hud-pause" data-hud="pause" aria-label="Пауза">
+            <span class="hud-corner-icon" aria-hidden="true">Ⅱ</span>
+            <span class="hud-corner-key">TAB</span>
+            <span class="hud-corner-label">Пауза</span>
+          </button>
+          <button type="button" id="hud-chat" data-hud="chat" aria-label="Чат">
+            <span class="hud-corner-icon" aria-hidden="true">✉</span>
+            <span class="hud-corner-key">T</span>
+            <span class="hud-corner-label">Чат</span>
+          </button>
+          <button type="button" id="hud-menu" data-hud="menu" aria-label="Меню">
+            <span class="hud-corner-icon" aria-hidden="true">☰</span>
+            <span class="hud-corner-key">M</span>
+            <span class="hud-corner-label">Меню</span>
+          </button>
         </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
@@ -409,6 +431,9 @@ export class GameUI {
     this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
     this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
+    this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
+    this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
+    this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -834,22 +859,24 @@ export class GameUI {
 
   showPause(actions: PauseActions): void {
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="brand"><div class="brand-mark"></div><h2>Пауза</h2><p>мир остановлен и сохранён</p></div>
-        <div class="menu-stack">
-          <button class="game-button primary" data-action="resume">Продолжить</button>
-          <button class="game-button" data-action="settings">Настройки</button>
-          <button class="game-button ghost" data-action="quit">Сохранить и выйти</button>
+      <section class="screen pause-overlay" data-pause-overlay="world">
+        <div class="menu-card pause-window">
+          <div class="menu-stack pause-actions">
+            <button class="game-button primary" data-action="resume">Продолжить</button>
+            <button class="game-button" data-action="settings">Настройки</button>
+            <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
+          </div>
         </div>
-      </div></section>`);
+      </section>`);
     this.bindAction('resume', actions.resume);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
   }
 
-  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void): void {
+  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void, overlayWorld = false): void {
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window settings-window" id="settings-form">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><form class="menu-card menu-window settings-window" id="settings-form">
         <header class="menu-heading"><div><span class="eyebrow">Параметры игры</span><h1>Настройки</h1></div></header>
         <div class="settings-grid">
           ${this.settingRange('Громкость', 'volume', 0, 1, 0.05, this.settings.volume)}
@@ -882,13 +909,14 @@ export class GameUI {
     });
   }
 
-  showControls(onBack: () => void): void {
+  showControls(onBack: () => void, overlayWorld = false): void {
     const sections = DESKTOP_CONTROL_SECTIONS.map((section) => `
       <section class="control-section"><h2>${section.title}</h2><div class="control-list">
         ${section.bindings.map((binding) => `<div class="control-row"><span><strong>${binding.action}</strong>${binding.note ? `<small>${binding.note}</small>` : ''}</span><kbd>${binding.key}</kbd></div>`).join('')}
       </div></section>`).join('');
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window controls-window">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
         <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
@@ -1130,12 +1158,20 @@ export class GameUI {
     return this.buyerState !== undefined && this.buyerState.screen !== 'closed';
   }
 
+  isGameMenuOpen(): boolean {
+    return this.menuState !== undefined && this.menuState.screen !== 'closed';
+  }
+
+  isTradeOpen(): boolean {
+    return this.tradeState !== undefined && this.tradeState.screen !== 'closed';
+  }
+
   isAuctionTextInputFocused(): boolean {
     const el = document.activeElement;
     return el instanceof HTMLInputElement
       && this.modal !== undefined
       && this.modal.contains(el)
-      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen() || this.craftMenuOpen);
+      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen() || this.isGameMenuOpen() || this.isTradeOpen() || this.craftMenuOpen);
   }
 
   isCraftMenuOpen(): boolean {
@@ -1305,6 +1341,8 @@ export class GameUI {
   }
 
   openInventory(context: InventoryContext): void {
+    this.closeGameMenu();
+    this.closeTrade();
     this.closeInventory(false);
     this.inventoryContext = context;
     this.cursorStack = null;
@@ -1359,6 +1397,8 @@ export class GameUI {
     if (!alreadyOpen) {
       this.closeClan();
       this.closeBuyer();
+      this.closeGameMenu();
+      this.closeTrade();
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchAuction(state);
@@ -1402,6 +1442,8 @@ export class GameUI {
     if (!alreadyOpen) {
       this.closeAuction();
       this.closeBuyer();
+      this.closeGameMenu();
+      this.closeTrade();
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchClan(state);
@@ -1445,6 +1487,8 @@ export class GameUI {
     if (!alreadyOpen) {
       this.closeAuction();
       this.closeClan();
+      this.closeGameMenu();
+      this.closeTrade();
       this.closeInventory(false);
     }
     if (alreadyOpen) this.patchBuyer(state);
@@ -1472,6 +1516,80 @@ export class GameUI {
       this.buyerState = undefined;
       this.setControlsSuppressed(false);
     }
+  }
+
+  openGameMenu(state: ServerMenuMessage, actions: MenuGuiActions): void {
+    this.menuActions = actions;
+    if (state.screen === 'closed') {
+      this.closeGameMenu();
+      return;
+    }
+    const alreadyOpen = this.isGameMenuOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeBuyer();
+      this.closeTrade();
+      this.closeInventory(false);
+    }
+    this.menuState = state;
+    this.renderGameMenu();
+    this.setControlsSuppressed(true);
+  }
+
+  applyGameMenu(state: ServerMenuMessage): void {
+    if (!this.menuActions) {
+      this.menuState = state;
+      return;
+    }
+    this.openGameMenu(state, this.menuActions);
+  }
+
+  closeGameMenu(): void {
+    if (!this.menuState) return;
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = undefined;
+    this.menuState = undefined;
+    this.setControlsSuppressed(false);
+  }
+
+  openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
+    this.tradeActions = actions;
+    if (state.screen === 'closed') {
+      this.closeTrade();
+      return;
+    }
+    const alreadyOpen = this.isTradeOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeBuyer();
+      this.closeGameMenu();
+      this.closeInventory(false);
+    }
+    this.tradeState = state;
+    this.renderTrade();
+    this.setControlsSuppressed(true);
+  }
+
+  applyTrade(state: ServerTradeMessage): void {
+    if (!this.tradeActions) {
+      this.tradeState = state;
+      return;
+    }
+    this.openTrade(state, this.tradeActions);
+  }
+
+  closeTrade(): void {
+    if (!this.tradeState) return;
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = undefined;
+    this.tradeState = undefined;
+    this.setControlsSuppressed(false);
   }
 
   openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
@@ -1814,7 +1932,7 @@ export class GameUI {
     const stage = containerStageSize('craft', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
           <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
           <div class="mc-craft-layout">
@@ -1905,7 +2023,7 @@ export class GameUI {
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
             <button type="button" role="tab" aria-selected="${this.creativeTab === 'catalog'}" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
@@ -1962,7 +2080,7 @@ export class GameUI {
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.dataset.bookUi = layoutKey;
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
           <div data-container-body>${body}</div>
@@ -2622,8 +2740,12 @@ export class GameUI {
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
+    const back = state.source === 'menu' && (state.screen === 'browse' || state.screen === 'sell-pick' || state.screen === 'mine')
+      ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
+      : '';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
+        ${back}
         <div class="mc-panel" data-container-kind="chest">
           ${this.auctionBodyHtml(state)}
         </div>
@@ -2907,11 +3029,11 @@ export class GameUI {
     this.modal?.remove();
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
-    const back = showsClanBack(state.screen)
+    const back = showsClanBack(state.screen, state.source)
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
     this.modal.innerHTML = `
-      <div class="mc-stage mc-clan-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:220">
+      <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
           ${this.clanBodyHtml(state)}
@@ -3294,7 +3416,7 @@ export class GameUI {
     this.modal = document.createElement('div');
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:176">
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
           ${this.buyerBodyHtml(state)}
         </div>
@@ -3411,6 +3533,305 @@ export class GameUI {
     input.value = keep.value;
     input.focus();
     input.setSelectionRange(keep.start, keep.end);
+  }
+
+  private renderGameMenu(): void {
+    const state = this.menuState;
+    const actions = this.menuActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureMenuInputFocus();
+    const logicalWidth = MC_MENU_WIDTH;
+    const logicalHeight = menuLogicalHeight(state.screen);
+    const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
+        ${menuBackHtml(state.screen)}
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+          ${menuBodyHtml(state, (value) => this.escape(value))}
+        </div>
+        ${this.closeButtonHtml()}
+      </div>`;
+    this.root.append(this.modal);
+    this.bindGameMenuChrome();
+    this.restoreMenuInputFocus(keep);
+  }
+
+  private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const selector = el.hasAttribute('data-menu-home-name') ? '[data-menu-home-name]'
+      : el.hasAttribute('data-menu-friend-name') ? '[data-menu-friend-name]'
+        : el.hasAttribute('data-menu-claim-name') ? '[data-menu-claim-name]'
+          : el.hasAttribute('data-menu-claim-member') ? '[data-menu-claim-member]'
+            : el.hasAttribute('data-menu-trade-name') ? '[data-menu-trade-name]'
+              : undefined;
+    if (!selector) return undefined;
+    return {
+      selector,
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreMenuInputFocus(
+    keep: { selector: string; value: string; start: number; end: number } | undefined,
+  ): void {
+    if (!keep || !this.modal) return;
+    const input = this.modal.querySelector<HTMLInputElement>(keep.selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    try { input.setSelectionRange(keep.start, keep.end); } catch { /* ignore */ }
+  }
+
+  private bindGameMenuChrome(): void {
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.menuActions?.close());
+    const bindDraft = (selector: string, send: (value: string) => void) => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => send(input.value));
+    };
+    bindDraft('[data-menu-home-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_home_name', name }));
+    bindDraft('[data-menu-friend-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_friend_name', name }));
+    bindDraft('[data-menu-claim-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_name', name }));
+    bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
+    bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
+    const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list');
+    for (const list of lists) {
+      list.addEventListener('wheel', (event) => {
+        event.stopPropagation();
+        list.scrollTop += event.deltaY;
+        event.preventDefault();
+      }, { passive: false });
+    }
+    this.modal!.addEventListener('click', (event) => {
+      const actions = this.menuActions;
+      const current = this.menuState;
+      if (!actions || !current) return;
+      const target = event.target as HTMLElement;
+      const open = target.closest<HTMLElement>('[data-menu-open]');
+      if (open?.dataset.menuOpen) {
+        if (open instanceof HTMLButtonElement && open.disabled) return;
+        const id = open.dataset.menuOpen;
+        if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
+        else actions.send({ type: 'menu_action', action: 'open', screen: id as ServerMenuMessage['screen'] });
+        return;
+      }
+      const home = target.closest<HTMLElement>('[data-menu-home]');
+      if (home?.dataset.menuHome) {
+        actions.send({ type: 'menu_action', action: 'home_teleport', name: home.dataset.menuHome });
+        return;
+      }
+      const homeDelete = target.closest<HTMLElement>('[data-menu-home-delete]');
+      if (homeDelete?.dataset.menuHomeDelete) {
+        actions.send({ type: 'menu_action', action: 'home_delete', name: homeDelete.dataset.menuHomeDelete });
+        return;
+      }
+      const friendAccept = target.closest<HTMLElement>('[data-menu-friend-accept]');
+      if (friendAccept?.dataset.menuFriendAccept) {
+        actions.send({ type: 'menu_action', action: 'friends_accept', requestId: friendAccept.dataset.menuFriendAccept });
+        return;
+      }
+      const friendReject = target.closest<HTMLElement>('[data-menu-friend-reject]');
+      if (friendReject?.dataset.menuFriendReject) {
+        actions.send({ type: 'menu_action', action: 'friends_reject', requestId: friendReject.dataset.menuFriendReject });
+        return;
+      }
+      const friendTp = target.closest<HTMLElement>('[data-menu-friend-tp]');
+      if (friendTp?.dataset.menuFriendTp) {
+        actions.send({ type: 'menu_action', action: 'friends_teleport', playerId: friendTp.dataset.menuFriendTp });
+        return;
+      }
+      const friendDelete = target.closest<HTMLElement>('[data-menu-friend-delete]');
+      if (friendDelete?.dataset.menuFriendDelete) {
+        actions.send({ type: 'menu_action', action: 'friends_delete', playerId: friendDelete.dataset.menuFriendDelete });
+        return;
+      }
+      const tp = target.closest<HTMLElement>('[data-menu-tp]');
+      if (tp?.dataset.menuTp) {
+        actions.send({ type: 'menu_action', action: 'friends_set_tp', enabled: tp.dataset.menuTp === 'on' });
+        return;
+      }
+      const claim = target.closest<HTMLElement>('[data-menu-claim]');
+      if (claim?.dataset.menuClaim) {
+        actions.send({ type: 'menu_action', action: 'claim_open', claimId: claim.dataset.menuClaim });
+        return;
+      }
+      const claimKick = target.closest<HTMLElement>('[data-menu-claim-kick]');
+      if (claimKick?.dataset.menuClaimKick) {
+        actions.send({ type: 'menu_action', action: 'claim_remove_member', name: claimKick.dataset.menuClaimKick });
+        return;
+      }
+      const claimPvp = target.closest<HTMLElement>('[data-menu-claim-pvp]');
+      if (claimPvp?.dataset.menuClaimPvp) {
+        actions.send({ type: 'menu_action', action: 'claim_set_pvp', enabled: claimPvp.dataset.menuClaimPvp === 'on' });
+        return;
+      }
+      const tradeNearby = target.closest<HTMLElement>('[data-menu-trade-nearby]');
+      if (tradeNearby?.dataset.menuTradeNearby) {
+        actions.send({ type: 'menu_action', action: 'trade_request', name: tradeNearby.dataset.menuTradeNearby });
+        return;
+      }
+      const tradeAccept = target.closest<HTMLElement>('[data-menu-trade-accept]');
+      if (tradeAccept?.dataset.menuTradeAccept) {
+        actions.send({ type: 'menu_action', action: 'trade_accept', requestId: tradeAccept.dataset.menuTradeAccept });
+        return;
+      }
+      const tradeReject = target.closest<HTMLElement>('[data-menu-trade-reject]');
+      if (tradeReject?.dataset.menuTradeReject) {
+        actions.send({ type: 'menu_action', action: 'trade_reject', requestId: tradeReject.dataset.menuTradeReject });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-menu-action]');
+      const kind = button?.dataset.menuAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      if (kind === 'home_create') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-home-name]')?.value ?? current.homeNameText;
+        actions.send({ type: 'menu_action', action: 'home_create', name });
+        return;
+      }
+      if (kind === 'friends_request') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-friend-name]')?.value ?? current.friendNameText;
+        actions.send({ type: 'menu_action', action: 'friends_request', name });
+        return;
+      }
+      if (kind === 'claim_rename') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-claim-name]')?.value ?? current.claimNameText;
+        actions.send({ type: 'menu_action', action: 'claim_rename', name });
+        return;
+      }
+      if (kind === 'claim_add_member') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-claim-member]')?.value ?? current.claimMemberText;
+        actions.send({ type: 'menu_action', action: 'claim_add_member', name });
+        return;
+      }
+      if (kind === 'trade_request') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-trade-name]')?.value ?? current.tradeNameText;
+        actions.send({ type: 'menu_action', action: 'trade_request', name });
+        return;
+      }
+      actions.send({ type: 'menu_action', action: kind as ClientMenuActionMessage['action'] });
+    });
+  }
+
+  private renderTrade(): void {
+    const state = this.tradeState;
+    const actions = this.tradeActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureTradeInputFocus();
+    const scale = menuUiScale(window.innerWidth, window.innerHeight, MC_MENU_WIDTH, 248);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+          ${tradeWindowChrome(state, (value) => this.escape(value), {
+            self: this.tradeSlotCells(state.selfSlots, 'self'),
+            partner: this.tradeSlotCells(state.partnerSlots, 'partner'),
+            inventory: this.tradeInventoryCells(state),
+          })}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindTradeChrome();
+    this.restoreTradeInputFocus(keep);
+  }
+
+  private tradeStack(value: unknown): ItemStack | null {
+    try {
+      return parseSerializedItemStack(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private tradeSlotCells(slots: readonly unknown[] | undefined, side: 'self' | 'partner'): string {
+    return Array.from({ length: tradeSlotCount() }, (_unused, index) => {
+      const stack = this.tradeStack(slots?.[index]);
+      const attr = side === 'self' ? ` data-trade-slot="${index}"` : '';
+      return `<div${attr}>${this.slotHtml(stack, `trade-${side}-${index}`)}</div>`;
+    }).join('');
+  }
+
+  private tradeInventoryCells(state: ServerTradeMessage): string {
+    const slots = state.inventorySlots ?? [];
+    const cell = (index: number) => {
+      const stack = this.tradeStack(slots[index]);
+      return `<div data-trade-inv="${index}">${this.slotHtml(stack, `trade-inv-${index}`)}</div>`;
+    };
+    const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+    const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+    return `<div class="mc-grid mc-grid-9">${main}</div>
+    <div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>`;
+  }
+
+  private captureTradeInputFocus(): { value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el) || !el.hasAttribute('data-trade-money')) {
+      return undefined;
+    }
+    return {
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreTradeInputFocus(keep: { value: string; start: number; end: number } | undefined): void {
+    if (!keep || !this.modal) return;
+    const input = this.modal.querySelector<HTMLInputElement>('[data-trade-money]');
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    try { input.setSelectionRange(keep.start, keep.end); } catch { /* ignore */ }
+  }
+
+  private bindTradeChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.tradeActions?.close());
+    const money = this.modal!.querySelector<HTMLInputElement>('[data-trade-money]');
+    money?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    money?.addEventListener('keydown', (event) => event.stopPropagation());
+    money?.addEventListener('keyup', (event) => event.stopPropagation());
+    money?.addEventListener('input', () => {
+      const digits = money.value.replace(/[^\d]/g, '');
+      if (money.value !== digits) money.value = digits;
+      this.tradeActions?.send({ type: 'trade_action', action: 'set_money', money: digits || '0' });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const actions = this.tradeActions;
+      if (!actions) return;
+      const target = event.target as HTMLElement;
+      const inv = target.closest<HTMLElement>('[data-trade-inv]');
+      if (inv?.dataset.tradeInv) {
+        actions.send({ type: 'trade_action', action: 'put_item', slot: Number(inv.dataset.tradeInv) });
+        return;
+      }
+      const slot = target.closest<HTMLElement>('[data-trade-slot]');
+      if (slot?.dataset.tradeSlot) {
+        actions.send({ type: 'trade_action', action: 'return_item', tradeSlot: Number(slot.dataset.tradeSlot) });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-trade-action]');
+      const kind = button?.dataset.tradeAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      actions.send({ type: 'trade_action', action: kind as ClientTradeActionMessage['action'] });
+    });
   }
 
   private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {

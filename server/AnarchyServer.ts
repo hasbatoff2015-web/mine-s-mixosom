@@ -511,11 +511,17 @@ export class AnarchyServer {
       case 'clan_action':
         this.world.handleClanAction(player, message);
         return;
+      case 'menu_action':
+        this.world.handleMenuAction(player, message);
+        return;
       case 'buyer_interact':
         this.world.interactBuyer(player, message.buyerId);
         return;
       case 'buyer_action':
         this.world.handleBuyerAction(player, message);
+        return;
+      case 'trade_action':
+        this.world.handleTradeAction(player, message);
         return;
     }
   }

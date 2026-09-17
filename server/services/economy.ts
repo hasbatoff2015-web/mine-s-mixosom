@@ -1,6 +1,9 @@
 import { BlockId, getBlockDefinition } from '../../src/blocks';
 import type { MobKind } from '../../src/entities/mobDefinitions';
+import { formatMegacoinAmount } from '../../shared/megacoins';
 import type { JsonFileStore } from './jsonStore';
+
+export { formatMegacoinAmount };
 
 export const ECONOMY_PLUGIN_NAME = 'economy';
 export const ECONOMY_CURRENCY_NAME = 'Мегакоин';
@@ -28,6 +31,7 @@ export type EconomyReason =
   | 'AUCTION_PURCHASE'
   | 'AUCTION_SALE'
   | 'CLAN_CREATE'
+  | 'TRADE'
   | 'OTHER';
 
 export type EconomyTxType = 'deposit' | 'withdraw' | 'set';
@@ -122,6 +126,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   AUCTION_PURCHASE: 'покупка на аукционе',
   AUCTION_SALE: 'продажа на аукционе',
   CLAN_CREATE: 'создание клана',
+  TRADE: 'обмен',
   OTHER: 'другое',
 };
 
@@ -140,14 +145,6 @@ interface PlacedFile {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function formatMegacoinAmount(amount: number): string {
-  const n = Math.trunc(amount);
-  const sign = n < 0 ? '-' : '';
-  const digits = String(Math.abs(n));
-  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return `${sign}${grouped}`;
 }
 
 /** 1 Мегакоин, 2 Мегакоина, 5 Мегакоинов. 11–14 always Мегакоинов. */

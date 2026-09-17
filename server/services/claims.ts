@@ -21,6 +21,7 @@ export type ClaimFlagMap = Partial<Record<ClaimFlag, boolean>>;
 export const CLAIM_PRIORITY_MIN = -1_000_000;
 export const CLAIM_PRIORITY_MAX = 1_000_000;
 export const CLAIM_PRIORITY_DEFAULT = 0;
+export { CLAIM_MAX_OWNED } from '../../shared/gameMenu';
 
 export const DEFAULT_CLAIM_FLAGS: Record<ClaimFlag, boolean> = {
   pvp: false,
@@ -45,7 +46,7 @@ export interface ClaimAnchor {
 
 export interface Claim {
   readonly id: string;
-  readonly name: string;
+  name: string;
   readonly owner: string;
   readonly worldId: string;
   readonly volume: SelectionVolume;

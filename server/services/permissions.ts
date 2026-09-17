@@ -43,6 +43,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'clan.kick',
     'clan.list',
     'buyer.use',
+    'friends.use',
+    'friends.teleport',
+    'trade.use',
   ],
   moderator: [
     'claim.admin',
@@ -65,6 +68,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'auction.*',
     'clan.*',
     'buyer.*',
+    'friends.*',
+    'trade.*',
   ],
   vip: [
     'home.multiple',

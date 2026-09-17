@@ -24,6 +24,8 @@ describe('PermissionService', () => {
     const permissions = await service();
     expect(permissions.has('steve', 'home.use')).toBe(true);
     expect(permissions.has('steve', 'buyer.use')).toBe(true);
+    expect(permissions.has('steve', 'friends.use')).toBe(true);
+    expect(permissions.has('steve', 'trade.use')).toBe(true);
     expect(permissions.has('steve', 'buyer.create')).toBe(false);
     expect(permissions.has('steve', 'server.admin')).toBe(false);
     expect(permissions.isOperator('steve')).toBe(false);

@@ -719,6 +719,7 @@ export class Game {
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
       cyclePerspective: () => this.cycleCameraPerspective(),
+      toggleMenu: () => this.toggleGameMenu(),
       onPointerLockAcquired: () => {
         this.lifecycle.resumePlayingIfVisible();
         this.lifecycle.endOnlineRespawnRestore();
@@ -738,6 +739,9 @@ export class Game {
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.ui.onChatSubmit = (line) => this.submitChat(line);
     this.ui.onChatCancel = () => this.closeChatAndResumeLook();
+    this.ui.onHudPause = () => this.togglePause();
+    this.ui.onHudChat = () => this.openChat();
+    this.ui.onHudMenu = () => this.toggleGameMenu();
     this.canvas.addEventListener('click', () => {
       this.lifecycle.resumePlayingIfVisible();
       this.canvas.focus({ preventScroll: true });
@@ -1307,6 +1311,12 @@ export class Game {
         return;
       case 'clan':
         this.openClanHouse(message);
+        return;
+      case 'menu':
+        this.openGameMenuHouse(message);
+        return;
+      case 'trade':
+        this.openTradeHouse(message);
         return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
@@ -2210,6 +2220,14 @@ export class Game {
       session.online.client.send({ type: 'auction_action', action: 'close' });
       this.ui.closeAuction();
     }
+    if (this.ui.isGameMenuOpen()) {
+      session.online.client.send({ type: 'menu_action', action: 'close' });
+      this.ui.closeGameMenu();
+    }
+    if (this.ui.isTradeOpen()) {
+      session.online.client.send({ type: 'trade_action', action: 'close' });
+      this.ui.closeTrade();
+    }
     if (this.ui.isClanOpen()) {
       session.online.client.send({ type: 'clan_action', action: 'close' });
       this.ui.closeClan();
@@ -2252,7 +2270,14 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeAuction();
-      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen()) {
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isGameMenuOpen()
+        && !this.ui.isTradeOpen()
+      ) {
         this.enterPlaying();
         this.input.tryRequestPointerLock();
       }
@@ -2284,7 +2309,14 @@ export class Game {
     this.ui.setPlayerInClan(Boolean(message.viewer?.clanId));
     if (message.screen === 'closed') {
       this.ui.closeClan();
-      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen() && !this.ui.isAuctionOpen()) {
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isGameMenuOpen()
+        && !this.ui.isTradeOpen()
+      ) {
         this.enterPlaying();
         this.input.tryRequestPointerLock();
       }
@@ -2307,6 +2339,82 @@ export class Game {
       this.session.online.client.send({ type: 'clan_action', action: 'close' });
     }
     this.ui.closeClan();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openGameMenuHouse(message: Extract<ServerMessage, { type: 'menu' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeGameMenu();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isTradeOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isGameMenuOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      this.openGameplayModal();
+    }
+    this.ui.openGameMenu(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeGameMenuAndResumeLook(true),
+    });
+  }
+
+  private closeGameMenuAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'menu_action', action: 'close' });
+    }
+    this.ui.closeGameMenu();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openTradeHouse(message: Extract<ServerMessage, { type: 'trade' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeTrade();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isGameMenuOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isTradeOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      this.openGameplayModal();
+    }
+    this.ui.openTrade(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeTradeAndResumeLook(true),
+    });
+  }
+
+  private closeTradeAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'trade_action', action: 'close' });
+    }
+    this.ui.closeTrade();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -2353,7 +2461,14 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeBuyer();
-      if (!this.ui.isInventoryOpen() && !this.ui.isHologramEditorOpen()) {
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isGameMenuOpen()
+        && !this.ui.isTradeOpen()
+      ) {
         this.enterPlaying();
         this.input.tryRequestPointerLock();
       }
@@ -3633,6 +3748,8 @@ export class Game {
     this.ui.closeAuction();
     this.ui.closeClan();
     this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.ui.closeInventory();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
@@ -3753,6 +3870,16 @@ export class Game {
       this.closeBuyerAndResumeLook(true);
       return;
     }
+    if (this.ui.isGameMenuOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeGameMenuAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isTradeOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeTradeAndResumeLook(true);
+      return;
+    }
     if (this.ui.isCraftMenuOpen()) {
       if (this.ui.isAuctionTextInputFocused()) return;
       this.ui.closeCraftMenu();
@@ -3842,6 +3969,14 @@ export class Game {
       this.closeBuyerAndResumeLook(true);
       return;
     }
+    if (this.ui.isGameMenuOpen()) {
+      this.closeGameMenuAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isTradeOpen()) {
+      this.closeTradeAndResumeLook(true);
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3850,6 +3985,42 @@ export class Game {
       this.input.releasePointerLock();
       this.openPauseMenu();
     } else if (this.lifecycle.state === 'PAUSED') this.resumeFromPause();
+  }
+
+  private toggleGameMenu(): void {
+    const session = this.session;
+    if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD' || this.lifecycle.state === 'PAUSED') {
+      return;
+    }
+    if (this.ui.isChatOpen()) this.ui.closeChat();
+    if (this.ui.isGameMenuOpen()) {
+      this.closeGameMenuAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isTradeOpen()) {
+      this.closeTradeAndResumeLook(true);
+      return;
+    }
+    if (!session.online) {
+      this.ui.toast('Меню доступно в онлайн-игре.');
+      return;
+    }
+    if (this.ui.isHologramEditorOpen()) this.closeHologramEditorAndResumeLook();
+    if (this.ui.isAuctionOpen()) {
+      session.online.client.send({ type: 'auction_action', action: 'close' });
+      this.ui.closeAuction();
+    }
+    if (this.ui.isClanOpen()) {
+      session.online.client.send({ type: 'clan_action', action: 'close' });
+      this.ui.closeClan();
+    }
+    if (this.ui.isBuyerOpen()) {
+      session.online.client.send({ type: 'buyer_action', action: 'close' });
+      this.ui.closeBuyer();
+    }
+    if (this.ui.isInventoryOpen()) this.closeInventoryAndResumeLook();
+    this.openGameplayModal();
+    session.online.client.send({ type: 'menu_action', action: 'open', screen: 'root' });
   }
 
   private showSettings(): void {
@@ -3861,7 +4032,7 @@ export class Game {
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
       if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
-    }, () => this.ui.showControls(() => this.showSettings()), () => {
+    }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
           resume: () => this.resumeFromPause(),
@@ -3869,7 +4040,7 @@ export class Game {
           saveAndQuit: () => void this.saveAndQuit(),
         });
       } else this.showMainMenu();
-    });
+    }, this.screenBeforeSettings === 'pause');
   }
 
   private async saveAndQuit(): Promise<void> {
@@ -5333,6 +5504,8 @@ export class Game {
     this.ui.closeAuction();
     this.ui.closeClan();
     this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
@@ -5787,6 +5960,8 @@ export class Game {
     this.ui.closeAuction();
     this.ui.closeClan();
     this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.inspectFreeze = null;
     this.inspectorHud = '';
     this.overlayCategories.clear();
