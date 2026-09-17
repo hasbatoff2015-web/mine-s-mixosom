@@ -51,7 +51,8 @@ describe('in-game pause overlay', () => {
   it('enlarges pause actions without stretching a photo background', () => {
     expect(cssRule('.pause-overlay .pause-actions .game-button')).toContain('min-height: clamp(64px, 13vh, 96px);');
     expect(cssRule('.pause-window')).toContain('width: min(560px, 92vw);');
-    expect(cssRule('.pause-window')).toContain('overflow: visible;');
+    expect(cssRule('.pause-window')).toContain('overflow: auto;');
+    expect(STYLE).toContain('min-height: 52px;');
   });
 
   it('uses a non-menu canvas stand-in for the pause QA fixture', () => {

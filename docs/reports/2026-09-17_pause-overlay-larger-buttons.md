@@ -49,7 +49,7 @@ No tick/mesh/network rate changes. Overlay is a single translucent DOM layer.
 
 ## Known issues
 
-Very short landscape still clamps pause button height to 64px so three actions fit.
+Very short landscape clamps pause actions to 52px min-height so Continue / Settings / Quit all fit.
 
 ## Deferred
 
