@@ -173,22 +173,33 @@ describe('item registry', () => {
     expect(ITEMS.filter((item) => item.hiddenFromGameplay !== true).some((item) => item.id === 'stone_stairs')).toBe(false);
   });
 
+  it('registers OakSign as stable voxel ID 165', () => {
+    expect(BlockId.OakSign).toBe(165);
+    expect(isKnownBlockId(165)).toBe(true);
+    expect(BLOCK_REGISTRY.has(BlockId.OakSign)).toBe(true);
+    expect(getBlockDefinition(BlockId.OakSign).key).toBe('oak_sign');
+    expect(getBlockDefinition(165 as BlockId).key).toBe('oak_sign');
+    expect(getBlockDefinition('165' as unknown as BlockId).id).toBe(BlockId.OakSign);
+    expect(tryGetBlockDefinition(165)?.key).toBe('oak_sign');
+    expect(tryGetBlockDefinition('165')?.key).toBe('oak_sign');
+  });
+
   it('keeps unregistered save IDs without adding them to the registry', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const unknown = 165;
+    const unknown = 0xfffe;
     expect(isKnownBlockId(unknown)).toBe(false);
     expect(tryGetBlockDefinition(unknown)).toBeUndefined();
     expect(BLOCK_REGISTRY.has(unknown as BlockId)).toBe(false);
     const definition = getBlockDefinition(unknown as BlockId);
     expect(definition.id).toBe(unknown);
-    expect(definition.key).toBe('unknown_165');
+    expect(definition.key).toBe('unknown_65534');
     expect(definition.solid).toBe(true);
     expect(definition.breakable).toBe(false);
     expect(definition.hiddenFromGameplay).toBe(true);
     expect(definition.textures.all).toBe('block/stone');
     expect(getBlockDefinition(unknown as BlockId)).toBe(definition);
-    expect(getBlockDefinition('165' as unknown as BlockId).id).toBe(unknown);
-    expect(tryGetBlockDefinition('165')).toBeUndefined();
+    expect(getBlockDefinition('65534' as unknown as BlockId).id).toBe(unknown);
+    expect(tryGetBlockDefinition('65534')).toBeUndefined();
     expect(BLOCK_REGISTRY.size).toBe(BLOCKS.length);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();

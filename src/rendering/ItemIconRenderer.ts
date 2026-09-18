@@ -5,7 +5,6 @@ import {
   itemIconDescriptor,
   generatedHeldTexturePath,
   orthographicFitExtent,
-  OAK_DOOR_HELD_TEXTURE,
   type SpecialIconCategory,
 } from '../items';
 import { TextureAtlas } from './TextureAtlas';
@@ -30,7 +29,6 @@ export class ItemIconRenderer {
   bake(): void {
     for (const item of ITEMS) {
       if (itemIconDescriptor(item).kind === 'special_preview') this.url(item.id);
-      if (item.id === 'oak_door') this.url(item.id);
     }
   }
 
@@ -48,10 +46,6 @@ export class ItemIconRenderer {
   }
 
   private resolve(itemId: string): string {
-    if (itemId === 'oak_door') {
-      const composite = this.factory.generatedTextureDataUrl(OAK_DOOR_HELD_TEXTURE);
-      if (composite) return composite;
-    }
     const descriptor = itemIconDescriptor(itemId);
     if (descriptor.kind !== 'special_preview') {
       return TextureAtlas.url(descriptor.texturePath ?? generatedHeldTexturePath(itemId));

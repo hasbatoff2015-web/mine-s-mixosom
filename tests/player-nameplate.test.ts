@@ -61,6 +61,26 @@ function makeView(info: RemotePlayerInfo = remoteInfo): {
 }
 
 describe('player nameplate', () => {
+  it('keeps one WH rim per base body part across Classic and Slim rebuilds', () => {
+    const { view, visual, dispose } = makeView();
+    const outlines = () => {
+      const lines: THREE.LineSegments[] = [];
+      visual.root.traverse((part) => { if (part instanceof THREE.LineSegments) lines.push(part); });
+      return lines;
+    };
+    view.setWhMarked(true);
+    const classic = outlines();
+    expect(classic).toHaveLength(6);
+    expect(classic.every((line) => line.visible)).toBe(true);
+    view.setAppearance(createPlayerAppearance({ ...DEFAULT_PLAYER_APPEARANCE, model: 'slim' }));
+    const slim = outlines();
+    expect(slim).toHaveLength(6);
+    expect(slim.every((line) => line.visible && line.parent !== null)).toBe(true);
+    expect(classic.every((line) => line.parent === null)).toBe(true);
+    view.setWhMarked(false);
+    expect(outlines().every((line) => !line.visible)).toBe(true);
+    dispose();
+  });
   it('shows nickname and health on two lines', () => {
     expect(nameplateLines('Misha', 20)).toEqual(['Misha', '❤ 20']);
     const plate = new PlayerNameplate('Misha', 20);

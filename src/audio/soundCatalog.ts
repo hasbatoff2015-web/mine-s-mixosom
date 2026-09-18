@@ -68,6 +68,10 @@ const NAMED: readonly SoundEventProfile[] = [
     volume: 0.4, pitchMin: 0.96, pitchMax: 1.08, positional: false,
     maxDistance: 12, bus: 'ui', maxConcurrent: 3, priority: 5,
   }),
+  named('totem.activate', ['totem-sound.mp3'], {
+    volume: 0.225, pitchMin: 0.98, pitchMax: 1.02, positional: true, startOffsetSeconds: 0.7,
+    maxDistance: 32, refDistance: 4, bus: 'combat', maxConcurrent: 2, priority: 9,
+  }),
   named('food.eat', ['food_eat.mp3'], {
     volume: 0.45, pitchMin: 0.94, pitchMax: 1.08, positional: false,
     maxDistance: 12, bus: 'ui', maxConcurrent: 2, priority: 4,
@@ -127,6 +131,7 @@ function named(
     bus: rest.bus,
     maxConcurrent: rest.maxConcurrent,
     priority: rest.priority,
+    ...(rest.startOffsetSeconds === undefined ? {} : { startOffsetSeconds: rest.startOffsetSeconds }),
   };
 }
 
@@ -161,6 +166,11 @@ export const SOUND_CATALOG: ReadonlyMap<SoundEventId, SoundEventProfile> = new M
 
 export const SFX_BASE_PATH = 'audio/sfx/';
 
+/** Resolve public samples under the same Vite deployment base as textures. */
+export function sfxAssetBaseUrl(viteBaseUrl: string): string {
+  return `${viteBaseUrl.endsWith('/') ? viteBaseUrl : `${viteBaseUrl}/`}${SFX_BASE_PATH}`;
+}
+
 export function getSoundProfile(event: SoundEventId): SoundEventProfile | undefined {
   return SOUND_CATALOG.get(event);
 }
@@ -179,4 +189,4 @@ export function resolveCatalogEvent(event: SoundEventId): SoundEventProfile | un
 }
 
 /** Production source-file budget: material variants plus named one-shots. */
-export const PRODUCTION_SFX_FILE_BUDGET = 26;
+export const PRODUCTION_SFX_FILE_BUDGET = 27;

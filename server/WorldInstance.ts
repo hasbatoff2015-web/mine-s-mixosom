@@ -14,7 +14,7 @@ import {
   type PortalChestInventory,
 } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
+import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
@@ -37,6 +37,10 @@ import {
   worldSoundMaxDistance,
 } from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
+import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
+import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
+import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
+import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
@@ -51,6 +55,8 @@ import type {
   ClientMenuActionMessage,
   ClientTradeActionMessage,
   GameMenuScreenKind,
+  ClientBookUpdateMessage,
+  ClientSignUpdateMessage,
   ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
@@ -236,6 +242,7 @@ export class ServerPlayer implements GameplayPlayer {
   craftSlots: Array<ItemStack | null> = [null, null, null, null];
   window: InventoryWindow = { kind: 'inventory' };
   ridingCartId?: string;
+  restingBed?: BedRestState;
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
   private presentationSwingSeq = 0;
   private presentationHurtSeq = 0;
@@ -252,6 +259,8 @@ export class ServerPlayer implements GameplayPlayer {
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  totemActivated = false;
+  pendingSignEdit?: { x: number; y: number; z: number };
   deathLootDropped = false;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
@@ -275,9 +284,17 @@ export class ServerPlayer implements GameplayPlayer {
     appearance?: PlayerAppearance,
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
+    this.survival.setDeathProtection(() => {
+      if (this.gamemode !== 'survival') return false;
+      if (!consumeOffhandTotem(this.inventory)) return false;
+      this.inventoryDirty = true;
+      this.totemActivated = true;
+      return true;
+    });
     this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
+      if (this.survival.dead) this.restingBed = undefined;
     });
   }
 
@@ -304,11 +321,13 @@ export class ServerPlayer implements GameplayPlayer {
         ? { ...target, blockId: target.blockId, progress: Math.max(0, this.miningProgress) }
         : null,
       heldItemId,
+      offhandItemId: this.inventory.offhand?.itemId ?? null,
       bowCharge: alive && heldItemId === ItemId.Bow && this.bowUseTicks > 0
         ? this.combat.bowCharge(this.bowUseTicks).power : 0,
       foodUseProgress: alive && heldItemId && tryGetItemDefinition(heldItemId)?.kind === 'food'
         ? Math.min(1, Math.max(0, this.foodUseTicks / 32)) : 0,
       swordBlocking: alive && this.combat.swordBlocking,
+      bedRest: alive ? this.restingBed ?? null : null,
       swingSeq: this.presentationSwingSeq,
       armor: equippedArmorFromInventory(this.inventory),
       hurtSeq: this.presentationHurtSeq,
@@ -556,6 +575,7 @@ export class WorldInstance {
         if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
       }
     });
+    this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
@@ -656,6 +676,7 @@ export class WorldInstance {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
+          player.restingBed = undefined;
           player.controller.teleport([x, y, z]);
           if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
           if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
@@ -761,6 +782,7 @@ export class WorldInstance {
         modifications: existing.modifications,
         chests: (existing.chests ?? {}) as never,
         furnaces: (existing.furnaces ?? {}) as never,
+        signs: existing.signs,
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
@@ -1923,6 +1945,8 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    player.restingBed = undefined;
+    this.gameplay.whMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
     player.sink = null;
     player.activeSocketCount = 0;
@@ -2536,7 +2560,53 @@ export class WorldInstance {
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    if (player.pendingSignEdit) {
+      const { x, y, z } = player.pendingSignEdit;
+      player.pendingSignEdit = undefined;
+      if (this.world.getBlock(x, y, z, false) === BlockId.OakSign) {
+        this.sendTo(player, { type: 'sign_editor', x, y, z, lines: this.world.signText(x, y, z) ?? EMPTY_SIGN_LINES });
+      }
+    }
     return result;
+  }
+
+  updateBook(player: ServerPlayer, message: ClientBookUpdateMessage): void {
+    const draft = sanitizeBookDraft(message);
+    const selected = player.inventory.getSlot(message.slot);
+    if (!player.connected || player.survival.dead || player.selectedSlot !== message.slot
+      || selected?.itemId !== ItemId.Book || readBookContent(selected)?.locked || !draft) {
+      this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
+      return;
+    }
+    const overflow = writeBookInSlot(player.inventory, message.slot, draft, message.sign ? player.name : undefined);
+    if (overflow === undefined) {
+      this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
+      return;
+    }
+    if (overflow) this.gameplay.dropFromPlayer(player, overflow);
+    player.inventoryDirty = true;
+    this.dirty = true;
+    this.flushPlayerInventory(player);
+  }
+
+  updateSign(player: ServerPlayer, message: ClientSignUpdateMessage): void {
+    const { x, y, z } = message;
+    const lines = sanitizeSignLines(message.lines);
+    const eye = player.controller.eyePosition();
+    const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
+    if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
+      || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
+      this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
+      return;
+    }
+    const use = this.events.createPlayerInteract(player.id, x, y, z, BlockId.OakSign);
+    this.events.emit('playerInteract', use);
+    if (use.cancelled || !this.world.setSignText(x, y, z, lines)) return;
+    this.dirty = true;
+    const key = chunkKey(floorDiv(x, 16), floorDiv(z, 16));
+    for (const viewer of this.connectedPlayers()) if (viewer.knownChunks.has(key)) {
+      this.sendTo(viewer, { type: 'sign_data', x, y, z, lines });
+    }
   }
 
   pickup(player: ServerPlayer): void {
@@ -3015,7 +3085,33 @@ export class WorldInstance {
       this.snapshotsSent += 1;
     }
     this.resetInputPacketCounters();
+    for (const player of this.players.values()) {
+      if (player.totemActivated) {
+        this.gameplay.whMarks.clearTarget(player.id);
+        const position = player.controller.position;
+        const x = position.x;
+        const y = position.y + 1;
+        const z = position.z;
+        this.gameplay.emitWorldSound('totem.activate', x, y, z);
+        const packet = { type: 'totem_activate' as const, playerId: player.id, x, y, z };
+        for (const listener of this.connectedPlayers()) {
+          if (listenerHearsWorldSound(listener.controller.position, packet, TOTEM_PRESENTATION_DISTANCE)) {
+            this.sendTo(listener, packet);
+          }
+        }
+        player.totemActivated = false;
+      }
+      if (!player.connected || player.survival.dead) this.gameplay.whMarks.clearPlayer(player.id);
+    }
     for (const player of this.connectedPlayers()) {
+      this.sendTo(player, {
+        type: 'wh_marks',
+        targetIds: this.gameplay.whMarks.forViewer(player.id, this.world.tickNumber)
+          .filter((id) => {
+            const target = this.players.get(id);
+            return target?.connected && !target.survival.dead;
+          }),
+      });
       this.sendTo(player, {
         type: 'entity_snapshot',
         tick: this.tickNumber,
@@ -3200,6 +3296,7 @@ export class WorldInstance {
         }
       }
       if (player.survival.dead) {
+        player.restingBed = undefined;
         player.controller.velocity.set(0, 0, 0);
         this.flushHealthIfDeadThenRespawn(player);
         const position = player.controller.position;
@@ -3220,7 +3317,19 @@ export class WorldInstance {
         continue;
       }
       const input = player.lastInput;
-      const jump = input.jump;
+      let exitedRest = false;
+      if (player.restingBed) {
+        const rest = player.restingBed;
+        if (!isBedRestValid(this.world, rest) || command?.jump === true) {
+          player.restingBed = undefined;
+          player.controller.teleport(bedExitPosition(this.world, rest));
+          exitedRest = true;
+          player.lastInput = { ...player.lastInput, jump: false };
+        } else {
+          player.controller.velocity.set(0, 0, 0);
+        }
+      }
+      const jump = input.jump && !exitedRest;
       const using = input.use === true;
       const heldItemId = player.inventory.getSlot(player.selectedSlot)?.itemId;
       const movement = movementDuringItemUse({
@@ -3235,7 +3344,7 @@ export class WorldInstance {
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
-      player.controller.tick(this.world, {
+      if (!player.restingBed) player.controller.tick(this.world, {
         yaw: input.yaw,
         pitch: input.pitch,
         locomotion: !riding,
@@ -3295,9 +3404,9 @@ export class WorldInstance {
       this.gameplay.advanceUseHold(player, using, player.appliedCommandSeq, player.selectedSlot);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
-        forward: riding ? 0 : input.forward,
-        right: riding ? 0 : input.right,
-        jump: riding ? false : jump,
+        forward: riding || player.restingBed ? 0 : input.forward,
+        right: riding || player.restingBed ? 0 : input.right,
+        jump: riding || player.restingBed ? false : jump,
         sneak: input.sneak,
         descend: input.descend === true,
         flySprint: input.flySprint === true,
@@ -3508,7 +3617,9 @@ export class WorldInstance {
   }
 
   respawn(player: ServerPlayer): boolean {
-    return this.gameplay.respawnPlayer(player);
+    const respawned = this.gameplay.respawnPlayer(player);
+    if (respawned) player.restingBed = undefined;
+    return respawned;
   }
 
   private flushHealth(player: ServerPlayer): void {
@@ -3589,7 +3700,7 @@ export class WorldInstance {
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
           const mods = this.world.serializeChunkModifications(x, z);
-          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods });
+          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
           this.lastChunkSends += 1;
         }
       }
@@ -3665,6 +3776,7 @@ export class WorldInstance {
       snapshot: () => player.snapshot(),
       teleport: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        player.restingBed = undefined;
         player.controller.teleport([x, y, z]);
         return true;
       },

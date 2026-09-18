@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
+import { ItemId, bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
 import type { VoxelWorld } from '../../world/World';
 import {
   createPlayerAppearance,
@@ -37,6 +37,7 @@ import {
   type PlayerArmorResources,
 } from './PlayerArmorVisual';
 import type { PlayerEquipmentState } from '../../../shared/protocol';
+import { BED_REST_ANCHOR_HEIGHT, type BedRestState } from '../../world/bed';
 import {
   humanoidDeathRotationZ,
   humanoidDeathScale,
@@ -44,6 +45,7 @@ import {
 import { SharedFireTexture } from '../fireTexture';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
+  readonly bedRest?: BedRestState | null;
   readonly invisible: boolean;
   readonly hurtFlash: number;
   /** 0 = living pose. 1 = completed humanoid death tilt. */
@@ -58,6 +60,9 @@ export const UPPER_BODY_PIVOT_Y = 12 * PLAYER_MODEL_PIXEL;
  * PlayerVisual body scale are unchanged. Mobs use ThreeEntityHost.
  */
 export const PLAYER_FIRE_OVERLAY_SCALE_Y = 0.5;
+// Bed top is 6/16 + half of its 6/16 body height. Rest the 4px-deep torso
+// on that surface with 0.01 clearance; the authoritative anchor stays fixed.
+const BED_REST_VISUAL_Y_OFFSET = 9 / 16 + 2 * PLAYER_MODEL_PIXEL + 0.01 - BED_REST_ANCHOR_HEIGHT;
 
 export interface PlayerVisualRig {
   readonly upperBody: THREE.Group;
@@ -68,6 +73,7 @@ export interface PlayerVisualRig {
   readonly rightLeg: THREE.Group;
   readonly leftLeg: THREE.Group;
   readonly heldItem: THREE.Group;
+  readonly offhandItem: THREE.Group;
 }
 
 interface SkinPartMeshes {
@@ -110,6 +116,7 @@ export class PlayerVisual {
   readonly animator = new PlayerVisualAnimator();
   readonly armor: PlayerArmorVisual;
   private readonly bodyYawRoot = new THREE.Group();
+  private readonly restPoseRoot = new THREE.Group();
   private readonly baseMaterial: THREE.MeshBasicMaterial;
   private readonly outerMaterial: THREE.MeshBasicMaterial;
   private readonly outerMaterials = new Map<number, THREE.MeshBasicMaterial>();
@@ -118,6 +125,8 @@ export class PlayerVisual {
   private skinHandle: SkinTextureHandle;
   private heldModel?: THREE.Group;
   private heldItemId?: string;
+  private offhandModel?: THREE.Group;
+  private offhandItemId?: string;
   private bowTexturePath = 'item/bow';
   private invisible = false;
   private hurtFlash = 0;
@@ -148,6 +157,7 @@ export class PlayerVisual {
     this.outerMaterials.set(1, this.createOuterMaterial(1, translucentOuter));
     this.outerMaterials.set(2, this.createOuterMaterial(2, translucentOuter));
     this.root.name = 'player-visual';
+    this.restPoseRoot.name = 'player-visual:rest-pose';
     this.bodyYawRoot.name = 'player-visual:yaw';
     const upperBody = new THREE.Group();
     const head = new THREE.Group();
@@ -157,6 +167,7 @@ export class PlayerVisual {
     const rightLeg = new THREE.Group();
     const leftLeg = new THREE.Group();
     const heldItem = new THREE.Group();
+    const offhandItem = new THREE.Group();
     upperBody.name = 'player:upper-body';
     head.name = 'player:head-pivot';
     body.name = 'player:body-pivot';
@@ -165,11 +176,14 @@ export class PlayerVisual {
     rightLeg.name = 'player:right-leg-pivot';
     leftLeg.name = 'player:left-leg-pivot';
     heldItem.name = 'player:right-hand-item';
-    this.rig = { upperBody, head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem };
-    this.root.add(this.bodyYawRoot);
+    offhandItem.name = 'player:left-hand-item';
+    this.rig = { upperBody, head, body, rightArm, leftArm, rightLeg, leftLeg, heldItem, offhandItem };
+    this.root.add(this.restPoseRoot);
+    this.restPoseRoot.add(this.bodyYawRoot);
     this.bodyYawRoot.add(upperBody, rightLeg, leftLeg);
     upperBody.add(head, body, rightArm, leftArm);
     rightArm.add(heldItem);
+    leftArm.add(offhandItem);
     this.configurePivots();
     const armorResources = options.armorResources ?? {
       materials: new PlayerArmorMaterialCache(),
@@ -188,6 +202,10 @@ export class PlayerVisual {
 
   get heldItem(): string | undefined {
     return this.heldItemId;
+  }
+
+  get offhandItem(): string | undefined {
+    return this.offhandItemId;
   }
 
   setAppearance(appearance: PlayerAppearance): void {
@@ -220,6 +238,20 @@ export class PlayerVisual {
     this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
   }
 
+  setOffhandItem(itemId?: string): void {
+    this.assertActive();
+    const visibleItem = itemId === ItemId.TotemOfUndying ? itemId : undefined;
+    if (visibleItem === this.offhandItemId) return;
+    this.offhandModel?.removeFromParent();
+    this.offhandItemId = visibleItem;
+    this.offhandModel = visibleItem ? this.itemVisuals.createItemModel(visibleItem) : undefined;
+    if (!this.offhandModel) return;
+    this.rig.offhandItem.add(this.offhandModel);
+    this.offhandModel.position.set(0, -0.04, -0.06);
+    this.offhandModel.rotation.set(-0.16, 0, 0.72);
+    this.offhandModel.scale.setScalar(0.4);
+  }
+
   setArmor(equipment: PlayerEquipmentState): void {
     this.assertActive();
     this.armor.setEquipment(equipment);
@@ -240,7 +272,8 @@ export class PlayerVisual {
     const timedFlash = this.hurtFlashStartedAt >= 0 ? playerHurtFlashIntensity(nowMs - this.hurtFlashStartedAt) : 0;
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
     const dying = (state.deathProgress ?? 0) > 0;
-    const pose = this.animator.advance(deltaSeconds, dying
+    const resting = !dying && Boolean(state.bedRest);
+    const pose = this.animator.advance(deltaSeconds, dying || resting
       ? {
         ...state,
         movementSpeed: 0,
@@ -252,7 +285,17 @@ export class PlayerVisual {
         foodUseProgress: 0,
       }
       : state);
-    this.applyPose(pose);
+    this.applyPose(resting ? {
+      ...pose, bodyYaw: 0, headYaw: 0, headPitch: 0, bodyPitch: 0, bodyYOffset: 0, bodyZOffset: 0,
+      rightArmX: 0, rightArmY: 0, rightArmZ: 0, leftArmX: 0, leftArmY: 0, leftArmZ: 0,
+      rightLegX: 0, leftLegX: 0, swingProgress: 0,
+    } : pose);
+    const restYaw = state.bedRest?.facing === 'east' ? -Math.PI / 2
+      : state.bedRest?.facing === 'south' ? Math.PI
+        : state.bedRest?.facing === 'west' ? Math.PI / 2 : 0;
+    // +X puts the model's front (-Z) upward; adding PI preserves head direction.
+    this.restPoseRoot.rotation.set(resting ? Math.PI / 2 : 0, resting ? restYaw + Math.PI : 0, 0, 'YXZ');
+    this.restPoseRoot.position.set(0, resting ? BED_REST_VISUAL_Y_OFFSET : 0, 0);
     this.syncFireOverlay(state.onFire === true);
     if (dying) {
       const progress = Math.min(1, Math.max(0, state.deathProgress ?? 0));
@@ -295,6 +338,7 @@ export class PlayerVisual {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
+    this.offhandModel?.removeFromParent();
     this.fireOverlay?.removeFromParent();
     this.fireOverlay?.geometry.dispose();
     this.fireOverlay = undefined;
@@ -324,6 +368,7 @@ export class PlayerVisual {
     this.rig.leftArm.position.set(5 * pixel, shoulderY, 0);
     const armCenterX = (slim ? 0.5 : 1) * pixel;
     this.rig.heldItem.position.set(-armCenterX, -10 * pixel, -1.5 * pixel);
+    this.rig.offhandItem.position.set(armCenterX, -10 * pixel, -1.5 * pixel);
   }
 
   private rebuildMeshes(): void {
@@ -403,6 +448,7 @@ export class PlayerVisual {
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
     this.rig.heldItem.visible = this.heldModel !== undefined;
+    this.rig.offhandItem.visible = this.offhandModel !== undefined;
   }
 
   private syncFireOverlay(onFire: boolean): void {

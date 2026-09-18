@@ -11,6 +11,8 @@ export class ArrowVisualFactory {
   private readonly texture: THREE.Texture;
   private readonly material: THREE.MeshBasicMaterial;
   private readonly flamingMaterial: THREE.MeshBasicMaterial;
+  private readonly spectralTexture: THREE.Texture;
+  private readonly spectralMaterial: THREE.MeshBasicMaterial;
 
   constructor() {
     this.texture = typeof document === 'undefined'
@@ -28,11 +30,23 @@ export class ArrowVisualFactory {
     this.flamingMaterial = createEntityMaterial({
       map: this.texture, alphaTest: 0.08, side: THREE.DoubleSide, color: 0xff7a22,
     });
+    this.spectralTexture = typeof document === 'undefined'
+      ? new THREE.Texture()
+      : new THREE.TextureLoader().load(TextureAtlas.url('entity/spectral_arrow'));
+    this.spectralTexture.colorSpace = THREE.SRGBColorSpace;
+    this.spectralTexture.magFilter = THREE.NearestFilter;
+    this.spectralTexture.minFilter = THREE.NearestFilter;
+    this.spectralTexture.generateMipmaps = false;
+    this.spectralMaterial = createEntityMaterial({
+      map: this.spectralTexture, alphaTest: 0.08, side: THREE.DoubleSide,
+    });
   }
 
-  create(flaming = false): THREE.Mesh {
-    const mesh = new THREE.Mesh(this.geometry, flaming ? this.flamingMaterial : this.material);
-    mesh.name = flaming ? 'fire-arrow-projectile' : 'arrow-projectile';
+  create(kindOrFlaming: 'normal' | 'fire' | 'wh' | boolean = 'normal'): THREE.Mesh {
+    const kind = typeof kindOrFlaming === 'boolean' ? (kindOrFlaming ? 'fire' : 'normal') : kindOrFlaming;
+    const mesh = new THREE.Mesh(this.geometry,
+      kind === 'wh' ? this.spectralMaterial : kind === 'fire' ? this.flamingMaterial : this.material);
+    mesh.name = kind === 'normal' ? 'arrow-projectile' : `${kind}-arrow-projectile`;
     bindEntityLightReceiver(mesh);
     return mesh;
   }
@@ -41,6 +55,8 @@ export class ArrowVisualFactory {
     this.geometry.dispose();
     this.material.dispose();
     this.flamingMaterial.dispose();
+    this.spectralMaterial.dispose();
+    this.spectralTexture.dispose();
     this.texture.dispose();
   }
 }

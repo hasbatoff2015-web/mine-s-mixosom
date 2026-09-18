@@ -60,6 +60,7 @@ export interface DamageResult {
   readonly ignored: boolean;
   readonly accepted: boolean;
   readonly fullHurt: boolean;
+  readonly deathProtected?: boolean;
 }
 
 export interface SurvivalTickContext {
@@ -194,6 +195,7 @@ export class SurvivalSystem {
   private readonly onDeath?: (source: DamageSource) => void;
   private readonly isSwordBlocking?: () => boolean;
   private readonly damageListeners: Array<(result: DamageResult) => void> = [];
+  private tryDeathProtection?: (source: DamageSource) => boolean;
 
   constructor(options: SurvivalOptions = {}) {
     this.health = clamp(options.health ?? MAX_HEALTH, 0, MAX_HEALTH);
@@ -238,6 +240,11 @@ export class SurvivalSystem {
     this.damageListeners.push(listener);
   }
 
+  /** Invoked only for otherwise lethal, non-void damage before any death state or event. */
+  setDeathProtection(handler: (source: DamageSource) => boolean): void {
+    this.tryDeathProtection = handler;
+  }
+
   heal(amount: number): number {
     if (this.dead || !Number.isFinite(amount) || amount <= 0) return 0;
     const before = this.health;
@@ -252,6 +259,9 @@ export class SurvivalSystem {
     const requested = Number.isFinite(amount) ? Math.max(0, amount) : 0;
     const healthBefore = this.health;
     if (requested <= 0 || this.dead) return this.emptyDamageResult(source, requested, healthBefore);
+    if ((source === 'fire' || source === 'lava') && this.hasEffect('fire_resistance')) {
+      return this.emptyDamageResult(source, requested, healthBefore);
+    }
 
     const hurt = this.hurtResistance.receive(requested, options.ignoreInvulnerability);
     if (!hurt.accepted) return this.emptyDamageResult(source, requested, healthBefore);
@@ -267,6 +277,14 @@ export class SurvivalSystem {
     this.absorption -= absorbed;
     const dealt = Math.max(0, afterArmor - absorbed);
     this.health = Math.max(0, this.health - dealt);
+    const deathProtected = this.health <= 0 && source !== 'void' && this.tryDeathProtection?.(source) === true;
+    if (deathProtected) {
+      this.clearEffects();
+      this.health = 1;
+      this.applyEffect({ id: 'regeneration', amplifier: 1, durationTicks: 900 });
+      this.applyEffect({ id: 'fire_resistance', amplifier: 0, durationTicks: 800 });
+      this.applyEffect({ id: 'absorption', amplifier: 1, durationTicks: 100 });
+    }
     this.enforceLifeInvariant();
     const killed = this.health <= 0;
     if (killed) this.dead = true;
@@ -282,6 +300,7 @@ export class SurvivalSystem {
       ignored: false,
       accepted: true,
       fullHurt: hurt.fullHurt,
+      ...(deathProtected ? { deathProtected: true } : {}),
     };
     this.lastDamage = result;
     options.onDamage?.(result);
@@ -304,6 +323,13 @@ export class SurvivalSystem {
     if (!current || effect.amplifier > current.amplifier || effect.durationTicks > current.ticks) {
       this.effects.set(effect.id, { amplifier: effect.amplifier, ticks: effect.durationTicks });
     }
+  }
+
+  /** Clear status effects without touching health, hunger, or physical fire timers. */
+  clearEffects(): void {
+    this.effects.clear();
+    this.absorption = 0;
+    this.effectRegenTimer = 0;
   }
 
   hasEffect(id: StatusEffectId): boolean {
@@ -374,6 +400,7 @@ export class SurvivalSystem {
     this.hunger = Math.min(MAX_HUNGER, this.hunger + item.food.nutrition);
     this.saturation = Math.min(this.hunger, this.saturation + item.food.saturation);
     for (const effect of item.food.effects ?? []) this.applyEffect(effect);
+    if (item.food.clearsEffects) this.clearEffects();
     if (item.food.returnsItem) inventory?.addItem(item.food.returnsItem, 1);
     return true;
   }

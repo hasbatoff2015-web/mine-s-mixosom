@@ -40,9 +40,10 @@ export interface FoodProperties {
   readonly alwaysEdible?: boolean;
   readonly returnsItem?: string;
   readonly effects?: readonly StatusEffectSpec[];
+  readonly clearsEffects?: boolean;
 }
 
-export type StatusEffectId = 'absorption' | 'regeneration' | 'invisibility';
+export type StatusEffectId = 'absorption' | 'regeneration' | 'invisibility' | 'fire_resistance';
 
 export interface StatusEffectSpec {
   readonly id: StatusEffectId;
@@ -111,8 +112,12 @@ export const ItemId = Object.freeze({
   Leather: 'leather',
   Gunpowder: 'gunpowder',
   Book: 'book',
+  Paper: 'paper',
+  FireworkRocket: 'firework_rocket',
   Arrow: 'arrow',
   FireArrow: 'fire_arrow',
+  WHArrow: 'wh_arrow',
+  TotemOfUndying: 'totem_of_undying',
   FlintAndSteel: 'flint_and_steel',
   GoldenApple: 'golden_apple',
   GlassBottle: 'glass_bottle',
@@ -121,6 +126,7 @@ export const ItemId = Object.freeze({
   Bucket: 'bucket',
   WaterBucket: 'water_bucket',
   LavaBucket: 'lava_bucket',
+  MilkBucket: 'milk_bucket',
   Minecart: 'minecart',
 
   Apple: 'apple',

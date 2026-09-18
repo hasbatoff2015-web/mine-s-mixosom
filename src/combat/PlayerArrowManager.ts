@@ -21,16 +21,21 @@ export interface PlayerArrow {
   readonly position: Vec3;
   readonly previousPosition: Vec3;
   readonly velocity: Vec3;
+  /** Last non-zero flight direction, retained when an arrow embeds in a block. */
+  readonly visualDirection: Vec3;
   readonly visual?: EntityVisual;
   age: number;
   critical: boolean;
   inGround: boolean;
   embedded?: EmbeddedArrowState;
   flaming: boolean;
+  kind: ArrowKind;
   pickupDelay: number;
   /** Historical player timeline used only for player collision; blocks stay current. */
   playerTimelineTick?: number;
 }
+
+export type ArrowKind = 'normal' | 'fire' | 'wh';
 
 export interface ArrowPlayerTarget {
   readonly id: string;
@@ -46,6 +51,7 @@ export interface ArrowTickOptions {
     flaming: boolean,
     position: Vec3,
     attackerId?: string,
+    kind?: ArrowKind,
   ) => void;
 }
 
@@ -120,11 +126,12 @@ export class PlayerArrowManager {
     ownerId?: string,
     spread?: number,
     playerTimelineTick?: number,
+    kind: ArrowKind = flaming ? 'fire' : 'normal',
   ): string {
     if (this.arrows.length >= 48) this.remove(0);
     const originVec = new Vec3(origin.x, origin.y, origin.z);
     const velocity = inaccurateArrowDirection(direction, this.random, spread).multiplyScalar(speedBlocksPerTick);
-    const visual = this.host.createArrow(flaming) as EntityVisual | undefined;
+    const visual = this.host.createArrow(flaming, kind) as EntityVisual | undefined;
     if (visual) {
       this.host.setPosition(visual, originVec.x, originVec.y, originVec.z);
       this.host.orientArrow(visual, velocity.x, velocity.y, velocity.z);
@@ -137,11 +144,13 @@ export class PlayerArrowManager {
       position: originVec.clone(),
       previousPosition: originVec.clone(),
       velocity,
+      visualDirection: velocity.clone(),
       visual,
       age: 0,
       critical,
       inGround: false,
       flaming,
+      kind,
       pickupDelay: ARROW_PICKUP_DELAY_SECONDS,
       ...(playerTimelineTick !== undefined ? { playerTimelineTick } : {}),
     });
@@ -158,36 +167,47 @@ export class PlayerArrowManager {
     vy: number,
     vz: number,
     flaming: boolean,
-    options?: { readonly snapVisual?: boolean },
+    options?: { readonly snapVisual?: boolean; readonly kind?: ArrowKind; readonly impactVelocity?: Vec3Like },
   ): void {
+    const direction = options?.impactVelocity ?? { x: vx, y: vy, z: vz };
+    const directionSq = direction.x * direction.x + direction.y * direction.y + direction.z * direction.z;
     const existing = this.arrows.find((arrow) => arrow.id === id);
     if (existing) {
       existing.previousPosition.copy(existing.position);
       existing.position.set(x, y, z);
       existing.velocity.set(vx, vy, vz);
+      if (directionSq > 1e-8) existing.visualDirection.set(direction.x, direction.y, direction.z);
+      existing.inGround = options?.impactVelocity !== undefined;
+      existing.pickupDelay = Infinity;
       existing.flaming = flaming;
+      existing.kind = options?.kind ?? (flaming ? 'fire' : 'normal');
       if (options?.snapVisual !== false) this.syncArrowVisual(existing);
       return;
     }
-    const speed = Math.hypot(vx, vy, vz) || 1;
-    this.spawn(new Vec3(x, y, z), new Vec3(vx, vy, vz), speed, 0, false, flaming, id);
-    const created = this.arrows[this.arrows.length - 1];
-    if (created && created.id === id) {
-      created.velocity.set(vx, vy, vz);
-      created.position.set(x, y, z);
-      created.previousPosition.set(x, y, z);
-      this.syncArrowVisual(created);
-    }
+    if (this.arrows.length >= 48) this.remove(0);
+    const visual = this.host.createArrow(flaming, options?.kind ?? (flaming ? 'fire' : 'normal')) as EntityVisual | undefined;
+    const position = new Vec3(x, y, z);
+    const created: PlayerArrow = {
+      id, position, previousPosition: position.clone(), velocity: new Vec3(vx, vy, vz),
+      visualDirection: directionSq > 1e-8
+        ? new Vec3(direction.x, direction.y, direction.z) : new Vec3(0, 0, 1),
+      visual, age: 0, critical: false, inGround: options?.impactVelocity !== undefined,
+      flaming, kind: options?.kind ?? (flaming ? 'fire' : 'normal'), pickupDelay: Infinity,
+    };
+    this.arrows.push(created);
+    if (visual) this.host.attach(visual);
+    this.syncArrowVisual(created);
+    this.onSpawn?.(id);
   }
 
   applyRenderPose(id: string, x: number, y: number, z: number, vx: number, vy: number, vz: number): void {
     const arrow = this.arrows.find((entry) => entry.id === id);
     if (!arrow) return;
     const speedSq = vx * vx + vy * vy + vz * vz;
-    if (speedSq > 1e-8) arrow.velocity.set(vx, vy, vz);
+    if (speedSq > 1e-8) arrow.visualDirection.set(vx, vy, vz);
     if (arrow.visual) {
       this.host.setPosition(arrow.visual, x, y, z);
-      this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+      this.host.orientArrow(arrow.visual, arrow.visualDirection.x, arrow.visualDirection.y, arrow.visualDirection.z);
       this.applyArrowLight(arrow, x, y, z);
     }
   }
@@ -218,6 +238,7 @@ export class PlayerArrowManager {
         arrow.pickupDelay = Math.max(0, arrow.pickupDelay - dt);
         if (!arrow.embedded || arrowSupportIntact(this.world, arrow.embedded)) continue;
         releaseEmbeddedArrow(arrow.velocity, arrow.embedded, this.random);
+        arrow.visualDirection.copy(arrow.velocity);
         arrow.embedded = undefined;
         arrow.inGround = false;
         arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
@@ -283,6 +304,7 @@ export class PlayerArrowManager {
           arrow.flaming,
           arrow.position,
           arrow.ownerId,
+          arrow.kind,
         );
         this.remove(index);
         return true;
@@ -300,6 +322,7 @@ export class PlayerArrowManager {
       }
       if (blockHit) {
         arrow.embedded = embedArrow(blockHit, arrow.velocity);
+        arrow.visualDirection.copy(arrow.velocity);
         arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
         arrow.inGround = true;
         arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
@@ -384,7 +407,7 @@ export class PlayerArrowManager {
         collected += 1;
         continue;
       }
-      const pickupItemId = arrow.flaming ? ItemId.FireArrow : ItemId.Arrow;
+      const pickupItemId = arrow.kind === 'wh' ? ItemId.WHArrow : arrow.kind === 'fire' ? ItemId.FireArrow : ItemId.Arrow;
       if (options.addItem(pickupItemId, 1) !== 0) continue;
       this.remove(index);
       collected += 1;
@@ -406,7 +429,9 @@ export class PlayerArrowManager {
 
   private orientArrow(arrow: PlayerArrow): void {
     if (!arrow.visual) return;
-    this.host.orientArrow(arrow.visual, arrow.velocity.x, arrow.velocity.y, arrow.velocity.z);
+    const direction = arrow.inGround ? arrow.visualDirection : arrow.velocity;
+    if (direction.lengthSq() > 1e-8) arrow.visualDirection.copy(direction);
+    this.host.orientArrow(arrow.visual, arrow.visualDirection.x, arrow.visualDirection.y, arrow.visualDirection.z);
   }
 
   private applyArrowLight(arrow: PlayerArrow, x?: number, y?: number, z?: number): void {

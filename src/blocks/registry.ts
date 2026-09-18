@@ -269,7 +269,16 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     renderLayer: 'cutout', renderShape: 'ladder', occludesFaces: false,
     tool: 'axe', tier: 'hand', flammable: true,
   }),
-  block(BlockId.WhiteBed, 'white_bed', { category: 'utility', hardness: 0.2, opaque: false, tool: 'axe', tier: 'hand', flammable: true }),
+  block(BlockId.WhiteBed, 'white_bed', {
+    category: 'utility', hardness: 0.2, opaque: false, occludesFaces: false,
+    renderShape: 'bed', tool: 'axe', tier: 'hand', flammable: true,
+    textures: { all: 'block/white_bed' },
+  }),
+  block(BlockId.OakSign, 'oak_sign', {
+    category: 'utility', hardness: 1, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'sign', tool: 'axe', tier: 'hand', flammable: true,
+    textures: { all: 'block/oak_sign' },
+  }),
   block(BlockId.OakDoor, 'oak_door', {
     category: 'utility', hardness: 3, opaque: false, tool: 'axe', tier: 'hand',
     flammable: true, renderLayer: 'cutout', renderShape: 'door', occludesFaces: false,
@@ -492,6 +501,11 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
     renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
     replaceable: true, drop: false, hasItem: false,
+  }),
+  block(BlockId.SugarCane, 'sugar_cane', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+    textures: { all: 'block/sugar_cane' },
   }),
 ]);
 

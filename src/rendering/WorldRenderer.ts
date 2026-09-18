@@ -20,6 +20,7 @@ import {
 import type { TextureAtlas } from './TextureAtlas';
 import { createWorldChunkMaterial, setWorldDaylight } from './worldLighting';
 import { SharedFireTexture } from './fireTexture';
+import { SignRenderer } from './SignRenderer';
 
 interface ChunkVisual {
   group: THREE.Group;
@@ -34,6 +35,7 @@ export class WorldRenderer {
   readonly breaking: BlockBreakingOverlay;
   readonly remoteBreaking: RemoteBreakingOverlays;
   readonly chests = new ChestRenderer();
+  readonly signs: SignRenderer;
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
   private readonly resolveState: BlockRenderStateResolver;
@@ -56,6 +58,7 @@ export class WorldRenderer {
   ) {
     this.group.name = 'voxel-world';
     this.resolveState = resolveState;
+    this.signs = new SignRenderer(world, (key) => this.chunks.has(key));
     this.mesher = new ChunkMesher(atlas, resolveState);
     this.opaqueMaterial = createWorldChunkMaterial(atlas);
     this.cutoutMaterial = createWorldChunkMaterial(atlas, {
@@ -104,6 +107,7 @@ export class WorldRenderer {
     this.group.add(this.breaking.group);
     this.group.add(this.selection);
     this.group.add(this.chests.group);
+    this.group.add(this.signs.group);
   }
 
   get cutoutSide(): THREE.Side {
@@ -242,6 +246,7 @@ export class WorldRenderer {
       const chests = group.userData.chests as Array<{ x: number; y: number; z: number }> | undefined;
       if (chests) visual.chests.push(...chests);
     }
+    this.signs.invalidateVisibility();
     chunk.dirty = false;
     chunk.meshedLightVersion = chunk.lightVersion;
     this.world.acknowledgeMeshed(chunk);
@@ -304,6 +309,7 @@ export class WorldRenderer {
   }
 
   updateChests(dtSeconds: number): void {
+    this.signs.sync();
     const cells: ChestRenderCell[] = [];
     for (const visual of this.chunks.values()) {
       for (const chest of visual.chests) {
@@ -350,6 +356,7 @@ export class WorldRenderer {
     this.glassMaterial.dispose();
     this.waterMaterial.dispose();
     this.chests.dispose();
+    this.signs.dispose();
   }
 
   private removeChunk(key: string): void {
@@ -359,6 +366,7 @@ export class WorldRenderer {
     for (const section of existing.sections.values()) this.disposeObject3D(section);
     this.disposeObject3D(existing.group);
     this.chunks.delete(key);
+    this.signs.invalidateVisibility();
   }
 
   private rebuildSection(chunk: Chunk, visual: ChunkVisual, section: number): void {

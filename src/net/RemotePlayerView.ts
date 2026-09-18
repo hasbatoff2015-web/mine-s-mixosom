@@ -53,6 +53,12 @@ export class RemotePlayerView {
   private hurtSeq = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  private readonly whOutline: THREE.LineSegments[] = [];
+  private readonly whOutlineGeometries: THREE.EdgesGeometry[] = [];
+  private readonly whOutlineMaterial = new THREE.LineBasicMaterial({
+    color: 0xfff49a, depthTest: false, depthWrite: false, transparent: true, opacity: 0.95,
+  });
+  private whMarked = false;
   /** -1 = living. Accumulates only after the dead edge so snapshots cannot restart the pose. */
   private deathSeconds = -1;
   private joinOnFire = false;
@@ -72,6 +78,7 @@ export class RemotePlayerView {
     this.nameplate = new PlayerNameplate(info.name, info.health ?? 20);
     this.group.add(this.nameplate.sprite);
     if (info.appearance) this.visual.setAppearance(createPlayerAppearance(info.appearance));
+    this.rebuildWhOutline();
     this.reset(info, now);
   }
 
@@ -90,6 +97,7 @@ export class RemotePlayerView {
     this.swingSeq = this.presentation.swingSeq;
     this.hurtSeq = presentationHurtSeq(this.presentation);
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
     if (info.appearance) this.setAppearance(info.appearance);
@@ -97,7 +105,35 @@ export class RemotePlayerView {
   }
 
   setAppearance(appearance: PlayerAppearance): void {
+    const previousModel = this.visual.appearance.model;
     this.visual.setAppearance(createPlayerAppearance(appearance ?? DEFAULT_PLAYER_APPEARANCE));
+    if (this.visual.appearance.model !== previousModel) this.rebuildWhOutline();
+  }
+
+  setWhMarked(marked: boolean): void {
+    this.whMarked = marked;
+    for (const line of this.whOutline) line.visible = marked;
+  }
+
+  /** Base skin only: outer clothes would create a second rim around every part. */
+  private rebuildWhOutline(): void {
+    for (const line of this.whOutline) line.removeFromParent();
+    for (const geometry of this.whOutlineGeometries) geometry.dispose();
+    this.whOutline.length = 0;
+    this.whOutlineGeometries.length = 0;
+    this.visual.root.traverse((part) => {
+      if (!(part instanceof THREE.Mesh) || !part.name.startsWith('player:') || !part.name.endsWith(':base')) return;
+      const geometry = new THREE.EdgesGeometry(part.geometry, 30);
+      const lines = new THREE.LineSegments(geometry, this.whOutlineMaterial);
+      lines.position.copy(part.position);
+      lines.rotation.copy(part.rotation);
+      lines.scale.copy(part.scale).multiplyScalar(1.035);
+      lines.renderOrder = 1000;
+      lines.visible = this.whMarked;
+      part.parent?.add(lines);
+      this.whOutlineGeometries.push(geometry);
+      this.whOutline.push(lines);
+    });
   }
 
   applySnapshot(snapshot: PlayerSnapshot | RemotePlayerInfo, now = 0, tick?: number): void {
@@ -126,6 +162,7 @@ export class RemotePlayerView {
       }
       : next;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
+    this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     if ('health' in snapshot && typeof snapshot.health === 'number') {
       this.nameplate.setIdentity(snapshot.name, snapshot.health);
@@ -140,6 +177,7 @@ export class RemotePlayerView {
     const actions = active ? this.presentation : IDLE_PLAYER_PRESENTATION;
     const mining = actions.mining;
     const actionFrame = {
+      bedRest: this.presentation.bedRest ?? null,
       mining: mining !== null && this.options.world.getBlock(mining.x, mining.y, mining.z, false) === mining.blockId,
       bowCharge: actions.bowCharge,
       swordBlocking: actions.swordBlocking,
@@ -171,7 +209,7 @@ export class RemotePlayerView {
     this.visual.update(deltaSeconds, {
       viewYaw: pose.yaw,
       viewPitch: pose.pitch,
-      movementSpeed: dying ? 0 : Math.hypot(pose.vx, pose.vz),
+      movementSpeed: dying || actionFrame.bedRest ? 0 : Math.hypot(pose.vx, pose.vz),
       onGround: pose.onGround,
       sneaking: dying ? false : pose.sneaking,
       sprinting: dying ? false : pose.sprinting,
@@ -207,6 +245,9 @@ export class RemotePlayerView {
     this.options.onRemove?.(this.id);
     this.buffer.reset();
     this.nameplate.dispose();
+    for (const line of this.whOutline) line.removeFromParent();
+    for (const geometry of this.whOutlineGeometries) geometry.dispose();
+    this.whOutlineMaterial.dispose();
     this.visual.dispose();
     this.group.removeFromParent();
   }

@@ -13,8 +13,79 @@
 - Remote players show authoritative `onFire` via `PlayerVisual` fire overlay (discrete, not interpolated).
 - Resume after disconnect re-broadcasts `player_joined` with `remoteInfo().appearance`; pending appearance covers appearance-before-spawn.
 - RTP retries independent columns; chunk-generate budget is per search step, not a lifetime of 1 generate.
-- `health === 0` ⇒ dead. HUD half-heart is any remaining HP `> 0` (armor leftovers no longer look like 0 hearts).
+- `health === 0` ⇒ dead. HUD half-heart is any remaining HP `> 0` (armor leftovers no longer look like 0 hearts). Totem death-protection still intercepts lethal damage before this invariant.
 - Handoff: `docs/reports/2026-09-17_bugfix-performance-gameplay-pass.md`.
+
+## Предыдущий проход: Merge Utility Items V1 into current main — 2026-09-18
+
+- Integration branch `merge/utility-items-v1` от `origin/main@ef619a9` + `origin/codex/utility-items-v1@475acc6`, без rebase/force-push feature. OakSign остаётся **165** и теперь known; generic unknown-block compat сохранён для прочих Uint16 (например 65534). Semantic union: registry lookup + Utility blocks, World restore + signs, protocol menu/trade/book/sign/totem, WorldInstance occupancy/Totem + menu/friends/trade, Game/GameUI modern chrome + Utility HUD.
+- Гейты: 165/unknown **29/29**; Utility+menu focused 219 PASS; chat-layout 4 CRLF host failures (как на main). Typechecks, boundaries, build, size/archive PASS (**4.74 MiB / 403 files**). Full Vitest 245/252 files; isolated lighting/import PASS.
+- Подробности: `docs/reports/2026-09-18_merge-utility-items-v1.md`.
+
+## Последний проход: Totem particle spread / quieter sound — 2026-09-18
+
+- Ветка `codex/utility-items-v1`: burst Totem остаётся authoritative presentation. Count `28 → 48`, Points size `0.08 → 0.05`, spawn radius без изменений, скорость `1.15/1.55 → 2.3/3.1` (~×2 разлёт), чуть сильнее upward impulse. Lifetime 0.55–0.9 с и palette без изменений.
+- `totem.activate` catalog volume `0.45 → 0.225`; `startOffsetSeconds = 0.7` сохранён. AudioManager, HUD, occupancy, icons не менялись.
+- Гейты: focused **3 files / 50 tests PASS**; `typecheck` / client / server, boundaries, build, size/archive PASS (**4.39 MiB / 368 files**). Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_totem-particle-spread-volume.md`. `main` не менялся.
+
+## Последний проход: Bed occupancy / Totem particles / utility icons — 2026-09-18
+
+- Ветка `codex/utility-items-v1` (без merge/rebase `main`): одна физическая кровать занимает не больше одного игрока. Occupancy выводится из `ServerPlayer.restingBed` и канонической HEAD-клетки (`isSameBed` / `findBedOccupant`); отдельной occupancy map нет. Занятая кровать даёт authoritative `action_result` `occupied` и toast «Кровать занята». Disconnect/death/respawn/exit/broken bed по-прежнему снимают `restingBed`.
+- После реальной authoritative Totem activation `totem_activate` несёт `playerId` и позицию и рассылается nearby клиентам (радиус 32, независимо от audio). Owner включает HUD, все получатели спавнят короткий `TotemParticles` burst (~28, 0.55–0.9 с, lime/green/gold). FireworkVisuals и AudioManager не менялись; клиент не предсказывает particles от HP.
+- Иконки: White Bed — 3D `special_preview` из `entity/bed/white`; Oak Door и Sugar Cane — flat `item/oak_door` / `item/sugar_cane` с `preserveAspect`; Farmland — низкий 3D block, top ≠ side, высота 15/16.
+- Гейты: focused occupancy/totem/icon **6 files / 81 tests PASS**; четыре typecheck, boundaries, build, size/archive PASS (**4.39 MiB / 368 files**). Full Vitest на этой ветке не green (известные host timeouts/CRLF/tick-load). Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_utility-bed-occupancy-totem-particles-icons.md`. `main` не менялся.
+
+## Последний проход: Utility Items final polish — 2026-09-15
+
+- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая F5-перспектива не переписывается, F5 в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
+- Только `totem.activate`: catalog volume `0.9 → 0.45`; optional `startOffsetSeconds = 0.7` передаётся через `named()` в `AudioBufferSourceNode.start(0, 0.7)`, чтобы сразу начать после тишины внутри MP3. Остальные события используют `start(0)`; короткий/невалидный buffer тоже безопасно использует `start(0)`. Combat voice policy, retry и один authoritative `world_sound` не менялись.
+- HUD offhand отделён от центрированного hotbar: CSS gap `8 → 20px` (сдвиг влево на 12 CSS px). Браузерные измерения при 1280×720, 1920×1080, 2560×1440, 960×600 подтвердили центр hotbar и 20px gap. Browser Audio QA: 27/27 decoded, volume 0.45, один `recentPlays`, без drops. Relevant tests 123/123, sim 66/66, typechecks/build/checks PASS; full Vitest 234/238 files, 2289/2297 tests и один worker timeout — не green (известные extractor/CRLF/fire timeout/tick-load failures). Интерактивный bed/PvP QA в in-app browser ограничен недоступным pointer lock; 10 двухклиентных активаций со слуховой проверкой не выполнены. Детали: `docs/reports/2026-09-15_utility-items-final-polish.md`.
+
+## Последний проход: Utility Items bed pose / Totem audio admission — 2026-09-15
+
+- В `codex/utility-items-v1` rest-поза `PlayerVisual` развёрнута лицом вверх: канонический front `-Z` теперь смотрит в `+Y` для north/east/south/west, поворот yaw сохраняет голову у подушки. `restPoseRoot` смещён вниз только визуально на `0.125` блока для контакта торса с матрасом; gameplay anchor `bedRestPosition = y + 0.81` и протокол не менялись. При выходе rotation и position rest-root обнуляются. Браузерный `/?qaBed=1&pose=1&facing=north|east|south|west` проверен; Slim с бронёй, mainhand и offhand тоже показан.
+- `AudioManager` допускает вытеснение голоса внутри насыщенного bus, только если новый event строго приоритетнее самого слабого голоса этого bus. Это пропускает Totem priority 9 после `player.hurt` 8 и `combat.hit` 7 при лимите combat 2 без второго `world_sound`. HTTP 404/410 и явно испорченный decode остаются permanent; network/5xx и временный decode сбой получают ограниченный backoff и повторную попытку при следующем play. `recentDrops` показывает admission/context/asset причину; `missingFiles` теперь содержит только permanent ошибки.
+- Regression owner/nearby, bed contact/reset, Classic/Slim, typechecks, boundaries, build, size/archive и smoke пройдены. Full Vitest: **233/238 files, 2275/2293 tests**, известные extractor/CRLF/timing/load failures; не green. Реальная двухклиентная серия 10+5 Totem со слуховым подтверждением **не выполнена**; до неё аудио нельзя считать принятым. Подробности: `docs/reports/2026-09-15_utility-bed-pose-totem-audio.md`.
+
+## Последний проход: Utility Items bed rest / Sign post / SFX race / Book — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: RMB по любой половине корректной White Bed укладывает игрока вдоль кровати, с головой у подушки; Space выводит на свободную клетку сбоку. Сон не меняет время, spawnPoint/home и не открывает отдельный экран. Singleplayer и серверный Anarchy используют общий `src/world/bed.ts`; сервер хранит `ServerPlayer.restingBed`, посылает `presentation.bedRest`, а клиент останавливает локальное предсказание перемещения до авторитетного выхода. Смерть, разрыв кровати, телепорт, respawn, disconnect и закрытие мира снимают rest.
+- У напольной Oak Sign стойка доходит только до нижней грани доски; боковой UV обрезан по фактической высоте, внутренние торцевые грани удалены. Wall Sign и текст не менялись. `/?qaSign=1` проверен в браузере в прямом и повёрнутом виде.
+- `AudioManager` теперь дедуплицирует fetch/decode каждого файла и откладывает только конкретный one-shot до готовности буфера; перед стартом заново проверяет mute/pause/volume, дистанцию и лимит голосов. Первый звук до `preload()` больше не теряется. Авторитетная доставка `world_sound` и HUD-only `totem_activate` не менялись.
+- Book открывается в Singleplayer и Anarchy при RMB, если цель не интерактивный блок. В редакторе есть страницы, Done для черновика и отдельное подтверждение Sign; подписанная книга показывает title/author и только чтение. `book_update.sign` — намерение клиента; автором и блокировкой управляет сервер из authenticated player name. Лимиты 32×1024/64 и выбранный слот сохранены.
+- Проверки, ручной QA и ограничения: `docs/reports/2026-09-14_utility-items-bed-rest-sign-audio-book.md`. `main` не менялся.
+
+## Последний проход: Utility Items bed/sign/Totem/firework follow-up — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: поворот UV верхней грани head-half исправлен; подушка теперь у внешнего края изголовья при всех четырёх направлениях, без изменений bed placement/collision/drop. Dev-сцена `/?qaBed=1` проверена в браузере.
+- Полный `128×64` `entity/sign.png` зарегистрирован в mip-safe `TextureAtlas`. `ChunkMesher` использует отдельные UV доски (front/back/top/bottom/edges) и стойки из sign sheet; wall sign без стойки. `SignRenderer` выравнивает текст по новой передней грани. Dev-сцена `/?qaSign=1` проверена на standing/wall и поворотах, без magenta fallback.
+- Totem отображается в выбранной основной руке локально и у других игроков; защита от смерти потребляет **только** `Inventory.offhand` в Singleplayer и на сервере. Когда Totem в обеих руках, основной остаётся. HUD-анимация и server-authoritative `world_sound` сохранены.
+- Визуальный burst Firework содержит 70 белых и 18 равномерно размещённых частиц одного случайного насыщенного акцента. URL rocket image берётся из `TextureAtlas.url`.
+- Браузерный `/?qaAudio=1` подтвердил HTTP 200, декодирование MP3, 27/27 буферов, отсутствие missing files/events и `AudioBufferSource` после разбора тестового `world_sound` пакета (`contextState: running`, `recentPlays: totem.activate`). Серверный тест подтверждает доставку одному владельцу и одному соседу, но реальный двухклиентный слуховой тест остаётся открытым; причину жалобы в живой сессии локально воспроизвести не удалось. URL SFX теперь явно учитывает Vite `BASE_URL`.
+- Подробности и checklist: `docs/reports/2026-09-14_utility-items-sign-pillow-totem-firework.md`. `main` не менялся.
+
+## Последний проход: Utility Items texture, offhand, SFX QA — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: White Bed использует реальный `128×128` entity sheet в `TextureAtlas` без обрезки до `32×32`. `bedVisualParts` задаёт UV каждого видимого face для head/foot body и четырёх ножек; деревянная рама и торцы берутся из sheet, а не из отдельного `oak_planks` cuboid. Dev-сцена `/?qaBed=1` показала цельную белую кровать без magenta fallback.
+- Каждый burst фейерверка выбирает один насыщенный акцент из шести; 70 частиц белые, 18 окрашены в выбранный акцент, общий `PointsMaterial` без additive washout. 20 TPS столкновения/тайминг и лимиты 32/512 не менялись.
+- Серверный `PlayerPresentationState.offhandItemId` отражает `Inventory.offhand`. `RemotePlayerView` отображает Totem на левой руке канонического `PlayerVisual`; выбранный Totem также виден в основной руке и first-person. Очистка при снятии и Classic/Slim pivot покрыты тестом.
+- При серверном срабатывании Totem `WorldInstance` отправляет одно `world_sound` из позиции игрока всем слушателям в 32 блоках, включая владельца; отдельный `totem_activate` оставлен только для HUD-анимации. Каталог использует предоставленный `totem-sound.mp3`, старый процедурный WAV удалён; Singleplayer играет новый звук локально один раз.
+- Проверки и ограничения: `docs/reports/2026-09-14_utility-items-bed-offhand-sfx.md`. `main` не менялся.
+
+## Последний проход: Utility Items live QA fixes — 2026-09-14
+
+- В `codex/utility-items-v1` исправлены обнаруженные причины проблем: Firework столкновение и плавное отображение между 20 TPS снапшотами, крупный многоцветный burst; одиночный WH-контур только по base skin с пересборкой при Classic/Slim; точное направление застрявшей сетевой стрелы.
+- Публичное имя стрелы унифицировано как WH в item id, протоколе, ресурсах, коде и тестах. Alias для прежнего имени не введён. Bed получил отдельную head/foot геометрию с поворотом и sheet UV; генерация Cane выбирает настоящий водный берег и ограничена одной стойкой на береговой chunk.
+- Существующий offhand показан слева от hotbar и в inventory; Totem получил увеличенную анимацию с искрами и собственный процедурный звук. 20 TPS, authoritativeness Anarchy и skin depth policy сохранены.
+- Проверки, причины, ручной QA checklist и ограничения: `docs/reports/2026-09-14_utility-items-live-qa-fixes.md`.
+
+## Последний проход: Utility Items V1 — 2026-09-13
+
+- Ветка `codex/utility-items-v1` от `main@1c802ab`: Paper/Sugar Cane, редактируемая Book, Oak Sign, декоративная двухблочная White Bed, Milk Bucket, Firework Rocket Flight 1–3, приватная WH Arrow и Totem of Undying.
+- Shared simulation остаётся Node-safe. Bed ставится/ломается как две части с одним дропом; использование **не меняет spawnPoint/home и не пропускает время** и теперь позволяет только лежать до Space/инвалидации. Sign text — `VoxelWorld.signs` в world save, book pages — `ItemStack.metadata.book` в обычном inventory/save/auction path.
+- Firework — временная серверная сущность 20 TPS, без урона и permanent save; WH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `WhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
+- Totem доступен через Creative/admin/test. Покупка у trader отложена: полноценной trader-системы в текущем коде нет; Buyer NPC — это скупщик, не продавец.
+- Focused tests: `tests/utility-items.test.ts` и `tests/server/utility-items-authority.test.ts`. Полная проверка и ограничения описаны в `docs/reports/2026-09-13_utility-items-v1.md`.
 
 ## Последний проход: Pause heading off + Creative graphite tabs — 2026-09-17
 

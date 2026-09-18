@@ -47,6 +47,11 @@ import {
   type DoorFaceRole,
   type LocalBox,
   type TextureUvRect,
+  bedVisualParts,
+  signVisualParts,
+  type BedVisualPart,
+  type BedFaceDirection,
+  type SignVisualPart,
 } from './specialBlockGeometry';
 import { fluidCellGeometry } from '../world/fluidSurface';
 import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
@@ -71,6 +76,7 @@ const FACES: readonly Face[] = [
   { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], shade: 0.88, texture: 'side' },
   { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], shade: 0.76, texture: 'front' },
 ];
+const ENTITY_FACE_DIRECTIONS: readonly BedFaceDirection[] = ['east', 'west', 'up', 'down', 'south', 'north'];
 
 function localFaceUv(face: Face, box: LocalBox): TextureUvRect {
   const nx = face.normal[0];
@@ -519,6 +525,8 @@ export class ChunkMesher {
       case 'lantern': return this.addLantern(buffers, definition, state, world, x, y, z);
       case 'chain': return this.addChain(buffers, definition, world, x, y, z);
       case 'farmland': return this.addFarmland(buffers, definition, state, world, x, y, z);
+      case 'bed': return this.addBed(buffers, definition, state, world, x, y, z);
+      case 'sign': return this.addSign(buffers, definition, state, world, x, y, z);
       case 'chest': return 0;
       case 'cube': return 0;
     }
@@ -844,6 +852,83 @@ export class ChunkMesher {
       this.addQuad(buffers, texture, face.corners, face.normal, lighting, uv);
     }
     return faces.length;
+  }
+
+  /** Connected two-cell bed with north-facing source geometry rotated to block state. */
+  private addBed(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const facing = state?.facing ?? 'north';
+    const angle = facing === 'east' ? -Math.PI / 2
+      : facing === 'south' ? Math.PI : facing === 'west' ? Math.PI / 2 : 0;
+    const rotation = new THREE.Matrix4().makeRotationY(angle);
+    let faces = 0;
+    for (const piece of bedVisualParts(state?.bedPart === 'head' ? 'head' : 'foot')) {
+      faces += this.addEntitySheetPart(buffers, piece, rotation, world, definition, x, y, z);
+    }
+    return faces;
+  }
+
+  private addEntitySheetPart(
+    buffers: GeometryBuffers,
+    piece: BedVisualPart | SignVisualPart,
+    rotation: THREE.Matrix4,
+    world: VoxelWorld,
+    definition: BlockDefinition,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const offset = new THREE.Vector3(piece.center[0], 0, piece.center[2]).applyMatrix4(rotation);
+    const matrix = new THREE.Matrix4().makeTranslation(
+      x + 0.5 + offset.x, y + piece.center[1], z + 0.5 + offset.z,
+    ).multiply(rotation);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+    let faces = 0;
+    for (let index = 0; index < FACES.length; index += 1) {
+      const face = FACES[index]!;
+      const surface = piece.faces[ENTITY_FACE_DIRECTIONS[index]!];
+      if (!surface) continue; // Omitted surfaces include Bed inner seams and buried leg tops.
+      const corners = face.corners.map((corner) => new THREE.Vector3(
+        (corner[0] - 0.5) * piece.size[0],
+        (corner[1] - 0.5) * piece.size[1],
+        (corner[2] - 0.5) * piece.size[2],
+      ).applyMatrix4(matrix).toArray() as [number, number, number]);
+      const normal = new THREE.Vector3(...face.normal).applyMatrix3(normalMatrix).normalize()
+        .toArray() as [number, number, number];
+      this.addQuad(buffers, piece.texture, corners, normal,
+        this.lightingFor(world, definition, piece.texture, x, y, z, normal, face.shade),
+        surface.uv, false, surface.rotation);
+      faces += 1;
+    }
+    return faces;
+  }
+
+  private addSign(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const facing = state?.facing ?? 'south';
+    const angle = state?.attachment === 'floor' && state.signRotation !== undefined
+      ? state.signRotation * Math.PI / 8
+      : facing === 'north' ? Math.PI : facing === 'east' ? Math.PI / 2 : facing === 'west' ? -Math.PI / 2 : 0;
+    const rotation = new THREE.Matrix4().makeRotationY(angle);
+    let faces = 0;
+    for (const piece of signVisualParts(state?.attachment === 'wall' ? 'wall' : 'floor')) {
+      faces += this.addEntitySheetPart(buffers, piece, rotation, world, definition, x, y, z);
+    }
+    return faces;
   }
 
   private addLadder(
@@ -1189,6 +1274,7 @@ export class ChunkMesher {
     lighting: VertexLighting,
     textureUv: TextureUvRect = [0, 0, 1, 1],
     backFace = false,
+    uvRotation: 0 | 90 | 180 | 270 = 0,
   ): void {
     const base = buffers.positions.length / 3;
     const tile = this.atlas.tile(textureKey);
@@ -1196,9 +1282,11 @@ export class ChunkMesher {
     const v0 = THREE.MathUtils.lerp(tile.v0, tile.v1, textureUv[1]);
     const u1 = THREE.MathUtils.lerp(tile.u0, tile.u1, textureUv[2]);
     const v1 = THREE.MathUtils.lerp(tile.v0, tile.v1, textureUv[3]);
-    const uv = backFace
+    const baseUv = backFace
       ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
       : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
+    const uv = uvRotation === 0 ? baseUv : baseUv.map((_, index) =>
+      baseUv[(index + uvRotation / 90) % 4]!);
     for (let index = 0; index < 4; index += 1) {
       buffers.positions.push(...corners[index]!);
       buffers.normals.push(...normal);

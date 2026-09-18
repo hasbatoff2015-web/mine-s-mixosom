@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getItemDefinition, itemHeldMeshKind, itemIconDescriptor, ITEMS, SPECIAL_ICON_POSES, usesCanonicalSpecialPreview, usesFrontFacingGuiTexture } from '../src/items';
 import { SPECIAL_ICON_PREVIEW_POLICY } from '../src/rendering/itemIconPreview';
 import { specialPreviewEntityTexturePaths } from '../src/rendering/ItemVisualFactory';
+import { BED_SHEET_KEY } from '../src/rendering/TextureAtlas';
 import { CHEST_TEXTURE_KEY, PORTAL_CHEST_TEXTURE_KEY } from '../src/rendering/chestModel';
 
 describe('generic special preview contract', () => {
@@ -40,8 +41,10 @@ describe('generic special preview contract', () => {
   it('preloads entity textures used by special previews (chest) without brightness hacks', () => {
     expect(specialPreviewEntityTexturePaths()).toContain(CHEST_TEXTURE_KEY);
     expect(specialPreviewEntityTexturePaths()).toContain(PORTAL_CHEST_TEXTURE_KEY);
+    expect(specialPreviewEntityTexturePaths()).toContain(BED_SHEET_KEY);
     expect(CHEST_TEXTURE_KEY).toBe('entity/chest/normal');
     expect(PORTAL_CHEST_TEXTURE_KEY).toBe('entity/chest/portal');
+    expect(BED_SHEET_KEY).toBe('entity/bed/white');
   });
 
   it('keeps cube GUI icons on the authored front face instead of the side/back', () => {

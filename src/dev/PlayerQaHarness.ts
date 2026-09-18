@@ -35,6 +35,7 @@ const QA_ITEMS = Object.freeze({
   block: 'stone',
   bow: 'bow',
   food: 'apple',
+  totem: 'totem_of_undying',
 });
 
 const QA_ARMOR_SLOT_NAMES: Readonly<Record<ArmorSlot, string>> = Object.freeze({
@@ -100,6 +101,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   let perspective: CameraPerspective = 'thirdPersonFront';
   let pose: QaPose = 'idle';
   let heldItem = '';
+  let offhandItem = '';
   const layers: { -readonly [K in keyof PlayerSkinLayers]: boolean } = { ...ALL_PLAYER_SKIN_LAYERS };
   let invisible = false;
   let hurt = false;
@@ -123,6 +125,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       <label for="qa-model">model</label><select id="qa-model"><option>classic</option><option>slim</option></select>
       <label for="qa-pose">pose</label><select id="qa-pose">${(['idle', 'walk', 'sprint', 'sneak', 'jump', 'attack', 'mining', 'bow', 'block', 'eat'] as QaPose[]).map((name) => `<option>${name}</option>`).join('')}</select>
       <label for="qa-held">held</label><select id="qa-held">${Object.entries(QA_ITEMS).map(([name, id]) => `<option value="${id}">${name}</option>`).join('')}</select>
+      <label for="qa-offhand">offhand</label><select id="qa-offhand"><option value="">none</option><option value="totem_of_undying">totem</option></select>
       <label for="qa-armor-head">helmet</label><select id="qa-armor-head">${armorOptions('head', equipment.head)}</select>
       <label for="qa-armor-chest">chestplate</label><select id="qa-armor-chest">${armorOptions('chest', equipment.chest)}</select>
       <label for="qa-armor-legs">leggings</label><select id="qa-armor-legs">${armorOptions('legs', equipment.legs)}</select>
@@ -141,6 +144,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   const modelSelect = root.querySelector<HTMLSelectElement>('#qa-model')!;
   const poseSelect = root.querySelector<HTMLSelectElement>('#qa-pose')!;
   const heldSelect = root.querySelector<HTMLSelectElement>('#qa-held')!;
+  const offhandSelect = root.querySelector<HTMLSelectElement>('#qa-offhand')!;
   const yawInput = root.querySelector<HTMLInputElement>('#qa-yaw')!;
   const pitchInput = root.querySelector<HTMLInputElement>('#qa-pitch')!;
   const cameraOrbitInput = root.querySelector<HTMLInputElement>('#qa-camera-orbit')!;
@@ -175,6 +179,10 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     heldItem = heldSelect.value;
     player.setHeldItem(heldItem || undefined);
     firstPerson.setHeldItems(heldItem || undefined);
+  });
+  offhandSelect.addEventListener('change', () => {
+    offhandItem = offhandSelect.value;
+    player.setOffhandItem(offhandItem || undefined);
   });
   for (const { slot, select } of armorSelects) {
     select.addEventListener('change', () => {
@@ -292,7 +300,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     renderer.render(scene, camera);
     firstPerson.render(renderer);
     const enabledLayers = Object.entries(layers).filter(([, enabled]) => enabled).map(([layer]) => layer).join(', ');
-    output.textContent = `${appearance.skinId} · ${appearance.model} · layers ${enabledLayers || 'none'}\n${pose} · ${perspective} · orbit ${THREE.MathUtils.radToDeg(cameraOrbit).toFixed(0)}° · distance ${cameraDistance.toFixed(1)} · held ${heldItem || 'empty'}\narmor ${equipment.head ?? '-'} | ${equipment.chest ?? '-'} | ${equipment.legs ?? '-'} | ${equipment.feet ?? '-'}\ncache skins ${skins.cacheSize} refs ${skins.referenceCount(appearance.skinId)} · geometry ${geometries.size} · armor ${armorGeometries.size}/${armorMaterials.textureCount}\ndraw ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`;
+    output.textContent = `${appearance.skinId} · ${appearance.model} · layers ${enabledLayers || 'none'}\n${pose} · ${perspective} · orbit ${THREE.MathUtils.radToDeg(cameraOrbit).toFixed(0)}° · distance ${cameraDistance.toFixed(1)} · held ${heldItem || 'empty'} · offhand ${offhandItem || 'empty'}\narmor ${equipment.head ?? '-'} | ${equipment.chest ?? '-'} | ${equipment.legs ?? '-'} | ${equipment.feet ?? '-'}\ncache skins ${skins.cacheSize} refs ${skins.referenceCount(appearance.skinId)} · geometry ${geometries.size} · armor ${armorGeometries.size}/${armorMaterials.textureCount}\ndraw ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`;
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);

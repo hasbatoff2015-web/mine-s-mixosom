@@ -7,6 +7,128 @@
  */
 
 import * as THREE from 'three';
+import { BED_SHEET_KEY, SIGN_SHEET_KEY } from './TextureAtlas';
+
+export type BedFaceDirection = 'east' | 'west' | 'up' | 'down' | 'south' | 'north';
+export interface BedFaceTexture {
+  readonly uv: readonly [number, number, number, number];
+  readonly rotation: 0 | 90 | 180 | 270;
+}
+export interface BedVisualPart {
+  readonly texture: typeof BED_SHEET_KEY;
+  readonly center: readonly [number, number, number];
+  readonly size: readonly [number, number, number];
+  readonly faces: Partial<Record<BedFaceDirection, BedFaceTexture>>;
+}
+
+// Original entity sheet is 64x64 logical texels (128x128 in this pack).
+// These rectangles are the bed head/foot and leg nets, in 0..16 sheet units.
+function bedFace(u0: number, v0: number, u1: number, v1: number, rotation: BedFaceTexture['rotation'] = 0): BedFaceTexture {
+  return { uv: [u0 / 16, 1 - v1 / 16, u1 / 16, 1 - v0 / 16], rotation };
+}
+
+const FOOT_BODY: BedVisualPart['faces'] = {
+  east: bedFace(5.5, 7, 7, 11, 90),
+  west: bedFace(0, 7, 1.5, 11, 270),
+  up: bedFace(1.5, 7, 5.5, 11, 180),
+  down: bedFace(7, 7, 11, 11),
+  south: bedFace(5.5, 5.5, 9.5, 7, 180),
+};
+const HEAD_BODY: BedVisualPart['faces'] = {
+  east: bedFace(5.5, 1.5, 7, 5.5, 90),
+  west: bedFace(0, 1.5, 1.5, 5.5, 270),
+  // The source's pillow occupies the low-V half. Our north-facing top quad
+  // already maps low V to the north (head) edge; 180° put it by the seam.
+  up: bedFace(1.5, 1.5, 5.5, 5.5),
+  down: bedFace(7, 1.5, 11, 5.5),
+  north: bedFace(1.5, 0, 5.5, 1.5, 180),
+};
+const FOOT_LEGS: readonly BedVisualPart['faces'][] = [
+  { north: bedFace(14, 5.25, 14.75, 6), east: bedFace(13.25, 5.25, 14, 6),
+    south: bedFace(12.5, 5.25, 13.25, 6), west: bedFace(14.75, 5.25, 15.5, 6),
+    down: bedFace(14, 4.5, 14.75, 5.25) },
+  { north: bedFace(14.75, 3.75, 15.5, 4.5), east: bedFace(14, 3.75, 14.75, 4.5),
+    south: bedFace(14, 3.75, 13.25, 4.5), west: bedFace(12.5, 3.75, 13.25, 4.5),
+    down: bedFace(14, 3, 14.75, 3.75) },
+];
+const HEAD_LEGS: readonly BedVisualPart['faces'][] = [
+  { north: bedFace(13.25, 0.75, 14, 1.5), east: bedFace(12.5, 0.75, 13.25, 1.5),
+    south: bedFace(14.75, 0.75, 15.5, 1.5), west: bedFace(14, 0.75, 14.75, 1.5),
+    down: bedFace(14, 0, 14.75, 0.75) },
+  { north: bedFace(12.5, 2.25, 13.25, 3), east: bedFace(14.75, 2.25, 15.5, 3),
+    south: bedFace(14, 2.25, 14.75, 3), west: bedFace(13.25, 2.25, 14, 3),
+    down: bedFace(14, 1.5, 14.75, 2.25) },
+];
+
+/** North-facing connected halves. The colored top, wooden frame/end caps, and legs all come from the sheet. */
+export function bedVisualParts(part: 'head' | 'foot'): readonly BedVisualPart[] {
+  const legs = part === 'head' ? HEAD_LEGS : FOOT_LEGS;
+  const legZ = part === 'head' ? -13 / 32 : 13 / 32;
+  return [
+    { texture: BED_SHEET_KEY, center: [0, 6 / 16, 0], size: [1, 6 / 16, 1],
+      faces: part === 'head' ? HEAD_BODY : FOOT_BODY },
+    { texture: BED_SHEET_KEY, center: [-13 / 32, 3 / 32, legZ], size: [3 / 16, 3 / 16, 3 / 16], faces: legs[0]! },
+    { texture: BED_SHEET_KEY, center: [13 / 32, 3 / 32, legZ], size: [3 / 16, 3 / 16, 3 / 16], faces: legs[1]! },
+  ];
+}
+
+/** Full two-cell bed for inventory/held preview, centered on the origin. */
+export function bedItemVisualParts(): readonly BedVisualPart[] {
+  return [
+    ...bedVisualParts('head').map((part) => ({
+      ...part,
+      center: [part.center[0], part.center[1], part.center[2] - 0.5] as const,
+    })),
+    ...bedVisualParts('foot').map((part) => ({
+      ...part,
+      center: [part.center[0], part.center[1], part.center[2] + 0.5] as const,
+    })),
+  ];
+}
+
+export interface SignVisualPart {
+  readonly texture: typeof SIGN_SHEET_KEY;
+  readonly center: readonly [number, number, number];
+  readonly size: readonly [number, number, number];
+  readonly faces: Partial<Record<BedFaceDirection, BedFaceTexture>>;
+}
+
+// sign.png is 128x64, a 2x pack of the 64x32 ModelSign texture. Vanilla's
+// board is a 24x12x2 box at (0,0); the 2x14x2 post starts at (0,14).
+function signFace(u0: number, v0: number, u1: number, v1: number): BedFaceTexture {
+  return { uv: [u0 / 64, 1 - v1 / 32, u1 / 64, 1 - v0 / 32], rotation: 0 };
+}
+
+const SIGN_BOARD: SignVisualPart['faces'] = {
+  south: signFace(2, 2, 26, 14), // front, same +Z face as SignRenderer text
+  north: signFace(28, 2, 52, 14),
+  west: signFace(0, 2, 2, 14),
+  east: signFace(26, 2, 28, 14),
+  up: signFace(2, 0, 26, 2),
+  down: signFace(26, 0, 50, 2),
+};
+const SIGN_POST: SignVisualPart['faces'] = {
+  south: signFace(2, 22.4, 4, 30),
+  north: signFace(6, 22.4, 8, 30),
+  west: signFace(0, 22.4, 2, 30),
+  east: signFace(4, 22.4, 6, 30),
+};
+
+/** ModelSign proportions scaled to fit the current cell-height sign placement. */
+export function signVisualParts(attachment: 'floor' | 'wall'): readonly SignVisualPart[] {
+  const board: SignVisualPart = {
+    texture: SIGN_SHEET_KEY,
+    center: [0, attachment === 'wall' ? 0.5 : 0.68, attachment === 'wall' ? 0.24 : 0],
+    size: [1.2, 0.6, 0.1],
+    faces: SIGN_BOARD,
+  };
+  return attachment === 'wall' ? [board] : [board, {
+    texture: SIGN_SHEET_KEY,
+    center: [0, 0.19, 0],
+    size: [0.08, 0.38, 0.08],
+    faces: SIGN_POST,
+  }];
+}
 import type {
   BlockAttachment,
   BlockDefinition,
@@ -50,6 +172,7 @@ export {
   CROSS_BOX,
   COBWEB_BOX,
   DOOR_THICKNESS,
+  FARMLAND_BOX,
   FIRE_BOX,
   FULL_BLOCK,
   LADDER_DEPTH,
@@ -412,6 +535,15 @@ export function selectionBoxesForBlock(
     case 'farmland':
       return selectionBoxesFromLocal(x, y, z, [{
         minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 15 / 16, maxZ: 1,
+      }]);
+    case 'bed':
+      return selectionBoxesFromLocal(x, y, z, [{
+        minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1,
+      }]);
+    case 'sign':
+      return selectionBoxesFromLocal(x, y, z, [{
+        minX: 0.05, minY: state?.attachment === 'wall' ? 0.28 : 0,
+        minZ: 0.05, maxX: 0.95, maxY: 0.92, maxZ: 0.95,
       }]);
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }

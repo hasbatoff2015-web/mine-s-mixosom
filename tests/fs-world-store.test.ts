@@ -183,8 +183,7 @@ describe('FsWorldStore', () => {
     await second.stop();
   });
 
-  it('loads a saved world that still contains unknown block ID 165', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it('loads a saved world whose voxel 165 is now OakSign', async () => {
     const dataDir = await tempDir();
     const store = new FsWorldStore(dataDir);
     const index = Chunk.index(8, 70, 8);
@@ -201,6 +200,8 @@ describe('FsWorldStore', () => {
         playTimeSeconds: 0,
       },
       modifications: { '0,0': { [String(index)]: 165 } },
+      blockStates: { '8,70,8': { attachment: 'floor', facing: 'north' } },
+      signs: { '8,70,8': ['Keep', 'me', '', ''] },
       serverWorld: {
         id: ANARCHY_WORLD_ID,
         initialized: true,
@@ -213,9 +214,48 @@ describe('FsWorldStore', () => {
 
     const instance = new WorldInstance(testConfig(dataDir));
     await expect(instance.initialize()).resolves.toBeUndefined();
+    expect(BlockId.OakSign).toBe(165);
+    expect(instance.world.getBlock(8, 70, 8)).toBe(BlockId.OakSign);
     expect(instance.world.getBlock(8, 70, 8)).toBe(165);
+    expect(isKnownBlockId(165)).toBe(true);
     expect(instance.world.serializeModifications()['0,0']?.[String(index)]).toBe(165);
-    expect(isKnownBlockId(165)).toBe(false);
+    expect(instance.world.signText(8, 70, 8)).toEqual(['Keep', 'me', '', '']);
+    await instance.stop();
+  });
+
+  it('loads a saved world that still contains unknown block ID 65534', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dataDir = await tempDir();
+    const store = new FsWorldStore(dataDir);
+    const index = Chunk.index(8, 70, 8);
+    const snapshot = sampleSnapshot({
+      summary: {
+        id: ANARCHY_WORLD_ID,
+        name: 'Анархия',
+        seed: ANARCHY_WORLD_SEED,
+        mode: 'survival',
+        kind: 'server',
+        serverId: 'anarchy-pvp',
+        createdAt: 1,
+        updatedAt: 1,
+        playTimeSeconds: 0,
+      },
+      modifications: { '0,0': { [String(index)]: 65534 } },
+      serverWorld: {
+        id: ANARCHY_WORLD_ID,
+        initialized: true,
+        spawnImported: true,
+        importVersion: 3,
+        spawn: [8.5, 64, 8.5],
+      },
+    });
+    await store.save(snapshot);
+
+    const instance = new WorldInstance(testConfig(dataDir));
+    await expect(instance.initialize()).resolves.toBeUndefined();
+    expect(instance.world.getBlock(8, 70, 8)).toBe(65534);
+    expect(instance.world.serializeModifications()['0,0']?.[String(index)]).toBe(65534);
+    expect(isKnownBlockId(65534)).toBe(false);
     await instance.stop();
     warn.mockRestore();
   });

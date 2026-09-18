@@ -7,6 +7,7 @@ import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual, UPPER_BODY_PIVOT_Y } from '../src/rendering/player/PlayerVisual';
 import { PlayerVisualAnimator } from '../src/rendering/player/PlayerVisualAnimator';
+import { bedRestPosition } from '../src/world/bed';
 
 const idle = {
   viewYaw: 0,
@@ -68,6 +69,75 @@ const visualFrame = {
 };
 
 describe('player visual rig hierarchy', () => {
+  it.each([
+    ['north', 0, -1], ['south', 0, 1], ['east', 1, 0], ['west', -1, 0],
+  ] as const)('lies face-up toward bed %s with torso on the mattress and fully stands after exit', (facing, dx, dz) => {
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+    const rest = { x: 5, y: 70, z: 5, facing };
+    visual.root.position.fromArray(bedRestPosition(rest));
+    visual.update(1 / 60, { ...visualFrame, bedRest: rest,
+      movementSpeed: 4, mining: true, bowCharge: 1 });
+    visual.root.updateMatrixWorld(true);
+    const head = visual.rig.head.getWorldPosition(new THREE.Vector3());
+    const foot = visual.rig.rightLeg.getWorldPosition(new THREE.Vector3());
+    expect((head.x - foot.x) * dx + (head.z - foot.z) * dz).toBeGreaterThan(0.4);
+    expect(Math.abs(head.y - foot.y)).toBeLessThan(0.1);
+    const restRoot = visual.root.getObjectByName('player-visual:rest-pose')!;
+    const restRotation = restRoot.getWorldQuaternion(new THREE.Quaternion());
+    const worldFront = new THREE.Vector3(0, 0, -1).applyQuaternion(restRotation);
+    const worldBack = new THREE.Vector3(0, 0, 1).applyQuaternion(restRotation);
+    expect(worldFront.y).toBeGreaterThan(0.99);
+    expect(worldBack.y).toBeLessThan(-0.99);
+    const mattressTop = rest.y + 9 / 16;
+    // Include the rendered base cuboids, not invisible armor meshes under the pivots.
+    const torsoBottom = new THREE.Box3().setFromObject(visual.rig.body.getObjectByName('player:body:base')!).min.y;
+    const headBottom = new THREE.Box3().setFromObject(visual.rig.head.getObjectByName('player:head:base')!).min.y;
+    expect(torsoBottom - mattressTop).toBeGreaterThanOrEqual(-0.02);
+    expect(torsoBottom - mattressTop).toBeLessThan(0.035);
+    expect(headBottom - mattressTop).toBeGreaterThan(-0.15);
+    expect(headBottom - mattressTop).toBeLessThan(0);
+    visual.update(1 / 60, visualFrame);
+    visual.root.updateMatrixWorld(true);
+    expect(restRoot.rotation.x).toBe(0);
+    expect(restRoot.rotation.y).toBe(0);
+    expect(restRoot.position.toArray()).toEqual([0, 0, 0]);
+    expect(visual.rig.head.getWorldPosition(new THREE.Vector3()).y).toBeGreaterThan(
+      visual.rig.rightLeg.getWorldPosition(new THREE.Vector3()).y,
+    );
+    visual.dispose();
+    geometries.dispose();
+    items.dispose();
+    skins.dispose();
+  });
+  it.each(['classic', 'slim'] as const)('keeps %s armor and both held items attached through rest and exit', (model) => {
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, { ...DEFAULT_PLAYER_APPEARANCE, model });
+    visual.setArmor({ head: 'iron_helmet', chest: 'iron_chestplate', legs: 'iron_leggings', feet: 'iron_boots' });
+    visual.setHeldItem('apple');
+    visual.setOffhandItem('totem_of_undying');
+    visual.update(1 / 60, { ...visualFrame, bedRest: { x: 5, y: 70, z: 5, facing: 'east' } });
+    visual.root.updateMatrixWorld(true);
+    const restRoot = visual.root.getObjectByName('player-visual:rest-pose')!;
+    expect(new THREE.Vector3(0, 0, -1).applyQuaternion(restRoot.getWorldQuaternion(new THREE.Quaternion())).y)
+      .toBeGreaterThan(0.99);
+    expect(visual.armor.meshes('chest').length).toBeGreaterThan(0);
+    expect(visual.rig.heldItem.visible).toBe(true);
+    expect(visual.rig.offhandItem.visible).toBe(true);
+    visual.update(1 / 60, visualFrame);
+    expect(restRoot.position.toArray()).toEqual([0, 0, 0]);
+    expect(restRoot.rotation.toArray().slice(0, 3)).toEqual([0, 0, 0]);
+    expect(visual.rig.heldItem.visible).toBe(true);
+    expect(visual.rig.offhandItem.visible).toBe(true);
+    visual.dispose();
+    geometries.dispose();
+    items.dispose();
+    skins.dispose();
+  });
   it('parents head, arms and held item to upper body and crouches over the legs', () => {
     const skins = new MinecraftSkinRegistry();
     const geometries = new PlayerSkinGeometryCache();

@@ -72,6 +72,20 @@ const recipes: Recipe[] = [
     output: { item: 'white_bed', count: 1 }, gridSize: 3,
   },
   {
+    id: 'paper', type: 'shaped', pattern: ['CCC'], key: { C: exact('sugar_cane') },
+    output: { item: ItemId.Paper, count: 3 }, gridSize: 3,
+  },
+  {
+    id: 'book', type: 'shapeless',
+    ingredients: [exact(ItemId.Paper), exact(ItemId.Paper), exact(ItemId.Paper), exact(ItemId.Leather)],
+    output: { item: ItemId.Book, count: 1 }, gridSize: 2,
+  },
+  {
+    id: 'oak_sign', type: 'shaped', pattern: ['PPP', 'PPP', ' S '],
+    key: { P: tag('planks'), S: exact(ItemId.Stick) },
+    output: { item: 'oak_sign', count: 3 }, gridSize: 3,
+  },
+  {
     id: 'oak_door', type: 'shaped', pattern: ['PP', 'PP', 'PP'], key: { P: tag('planks') },
     output: { item: 'oak_door', count: 3 }, gridSize: 3,
   },
@@ -133,6 +147,21 @@ const recipes: Recipe[] = [
     remainders: { [ItemId.LavaBucket]: ItemId.Bucket },
     gridSize: 2,
   },
+  {
+    id: 'wh_arrow', type: 'shapeless', gridSize: 3,
+    ingredients: [
+      exact(ItemId.Arrow), exact(ItemId.Arrow), exact(ItemId.Arrow), exact(ItemId.Arrow),
+      exact('glowstone'), exact(ItemId.Diamond), exact(ItemId.RedstoneDust), exact(ItemId.RedstoneDust),
+    ],
+    output: { item: ItemId.WHArrow, count: 4 },
+  },
+  ...([1, 2, 3] as const).map((flight) => ({
+    id: `firework_rocket_flight_${flight}`,
+    type: 'shapeless' as const,
+    ingredients: [exact(ItemId.Paper), ...Array.from({ length: flight }, () => exact(ItemId.Gunpowder))],
+    output: { item: ItemId.FireworkRocket, count: 3, metadata: { firework: { flight } } },
+    gridSize: 2 as const,
+  })),
   {
     id: 'oak_fence', type: 'shaped', pattern: ['PSP', 'PSP'],
     key: { P: exact('oak_planks'), S: exact(ItemId.Stick) },

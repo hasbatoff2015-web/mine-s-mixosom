@@ -92,6 +92,7 @@ export class WorldPersistence {
       blockStates: asRecord(worldFile.blockStates),
       chests: asRecord(worldFile.chests),
       furnaces: asRecord(worldFile.furnaces),
+      signs: asRecord(worldFile.signs) as FsWorldFile['signs'],
       droppedItems: asArray(worldFile.droppedItems),
       mobs: asArray(worldFile.mobs),
       minecarts: asArray(worldFile.minecarts),

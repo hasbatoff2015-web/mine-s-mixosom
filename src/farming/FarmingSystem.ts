@@ -1,8 +1,9 @@
 import { BlockId, getBlockDefinition } from '../blocks';
-import { CHUNK_SIZE, chunkKey, floorDiv } from '../core/constants';
+import { CHUNK_SIZE, SEA_LEVEL, chunkKey, floorDiv } from '../core/constants';
 import { systemRandomFn, type RandomFn } from '../gameplay/random';
 import { Chunk } from '../world/Chunk';
 import type { CommittedBlockChange, VoxelWorld } from '../world/World';
+import { canSugarCaneStandAt } from '../world/placement';
 import {
   FARMING_BLOCKS,
   FARMING_DIRECTIONS,
@@ -91,6 +92,15 @@ export class FarmingSystem {
       }
     }
     if (growthPulse) for (const { position, block } of active) {
+      if (block === BlockId.SugarCane) {
+        const { x, y, z } = position;
+        if (this.world.getBlock(x, y + 1, z, false) !== BlockId.Air) continue;
+        let bottom = y;
+        while (this.world.getBlock(x, bottom - 1, z, false) === BlockId.SugarCane) bottom -= 1;
+        if (y - bottom >= 2 || !canSugarCaneStandAt(this.world, x, bottom, z)) continue;
+        if (this.random() < 1 / 3 && this.world.setBlock(x, y + 1, z, BlockId.SugarCane)) fruitWrites += 1;
+        continue;
+      }
       if (!isCropBlock(block)) continue;
       if (this.world.getBlock(position.x, position.y - 1, position.z, false) !== BlockId.Farmland) continue;
       if (this.world.getBlockState(position.x, position.y - 1, position.z)?.hydrated !== true) continue;
@@ -134,6 +144,12 @@ export class FarmingSystem {
       const x = local % CHUNK_SIZE;
       const block = chunk.get(x, y, z) as BlockId;
       if (FARMING_BLOCKS.has(block)) this.add(chunk.x * CHUNK_SIZE + x, y, chunk.z * CHUNK_SIZE + z, key);
+    }
+    // Naturally generated shore cane is sparse and confined to the sea-level band.
+    for (let y = SEA_LEVEL + 1; y <= Math.min(SEA_LEVEL + 3, chunk.scanMaxY()); y += 1) for (let z = 0; z < CHUNK_SIZE; z += 1) {
+      for (let x = 0; x < CHUNK_SIZE; x += 1) if (chunk.get(x, y, z) === BlockId.SugarCane) {
+        this.add(chunk.x * CHUNK_SIZE + x, y, chunk.z * CHUNK_SIZE + z, key);
+      }
     }
   }
 

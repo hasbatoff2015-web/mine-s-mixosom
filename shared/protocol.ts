@@ -45,7 +45,7 @@ export type InventoryActionKind =
   | 'recipe'
   | 'craft_recipe';
 
-export type EntityKind = 'item' | 'mob' | 'minecart' | 'tnt' | 'arrow' | 'falling';
+export type EntityKind = 'item' | 'mob' | 'minecart' | 'tnt' | 'arrow' | 'falling' | 'firework';
 
 export type VehicleAction = 'enter' | 'exit' | 'steer';
 
@@ -183,6 +183,10 @@ export interface EntitySnapshot {
   readonly vx?: number;
   readonly vy?: number;
   readonly vz?: number;
+  /** Retained trajectory for an arrow whose live velocity is zero in a block. */
+  readonly impactVx?: number;
+  readonly impactVy?: number;
+  readonly impactVz?: number;
   readonly itemId?: string;
   readonly count?: number;
   readonly mobKind?: string;
@@ -236,6 +240,8 @@ export interface NetworkBlockState {
   readonly railShape?: NetworkRailShape;
   readonly hydrated?: boolean;
   readonly age?: number;
+  readonly bedPart?: 'foot' | 'head';
+  readonly signRotation?: number;
 }
 
 export interface BlockChange {
@@ -405,6 +411,23 @@ export interface ClientActionMessage {
 export interface ClientPickupMessage {
   readonly type: 'pickup';
   readonly entityId?: string;
+}
+
+export interface ClientBookUpdateMessage {
+  readonly type: 'book_update';
+  readonly slot: number;
+  readonly pages: readonly string[];
+  readonly title?: string;
+  /** Finalize using the authenticated server player as author. */
+  readonly sign?: boolean;
+}
+
+export interface ClientSignUpdateMessage {
+  readonly type: 'sign_update';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly lines: readonly string[];
 }
 
 export interface ClientRespawnMessage {
@@ -647,6 +670,8 @@ export type ClientMessage =
   | ClientBowReleaseMessage
   | ClientActionMessage
   | ClientPickupMessage
+  | ClientBookUpdateMessage
+  | ClientSignUpdateMessage
   | ClientRespawnMessage
   | ClientHologramInteractMessage
   | ClientHologramUpdateMessage
@@ -782,6 +807,23 @@ export interface ServerChunkMessage {
   readonly cz: number;
   /** Modification delta for this chunk only (existing save representation). */
   readonly modifications: Record<string, number>;
+  readonly signs?: Record<string, readonly string[]>;
+}
+
+export interface ServerSignDataMessage {
+  readonly type: 'sign_data';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly lines: readonly string[];
+}
+
+export interface ServerSignEditorMessage {
+  readonly type: 'sign_editor';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly lines: readonly string[];
 }
 
 export interface ServerUnloadChunkMessage {
@@ -850,6 +892,20 @@ export interface ServerHealthMessage {
 export interface ServerEffectsMessage {
   readonly type: 'effects';
   readonly effects: readonly EffectSnapshot[];
+}
+
+/** Sent per viewer; marks must never be embedded in the broadcast player state. */
+export interface ServerWhMarksMessage {
+  readonly type: 'wh_marks';
+  readonly targetIds: readonly string[];
+}
+
+export interface ServerTotemActivateMessage {
+  readonly type: 'totem_activate';
+  readonly playerId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
 }
 
 export interface ServerEntitySnapshotMessage {
@@ -1250,6 +1306,8 @@ export type ServerMessage =
   | ServerBlockResultMessage
   | ServerActionResultMessage
   | ServerChunkMessage
+  | ServerSignDataMessage
+  | ServerSignEditorMessage
   | ServerUnloadChunkMessage
   | ServerChatMessage
   | ServerErrorMessage
@@ -1258,6 +1316,8 @@ export type ServerMessage =
   | ServerInventoryMessage
   | ServerHealthMessage
   | ServerEffectsMessage
+  | ServerWhMarksMessage
+  | ServerTotemActivateMessage
   | ServerEntitySnapshotMessage
   | ServerEntityEventMessage
   | ServerWorldSoundMessage
@@ -1289,6 +1349,8 @@ export const CLIENT_MESSAGE_TYPES = [
   'bow_release',
   'action',
   'pickup',
+  'book_update',
+  'sign_update',
   'respawn',
   'hologram_interact',
   'hologram_update',
@@ -1312,6 +1374,8 @@ export const SERVER_MESSAGE_TYPES = [
   'block_result',
   'action_result',
   'chunk_data',
+  'sign_data',
+  'sign_editor',
   'unload_chunk',
   'chat',
   'error',
@@ -1321,6 +1385,8 @@ export const SERVER_MESSAGE_TYPES = [
   'health',
   'effects',
   'entity_snapshot',
+  'wh_marks',
+  'totem_activate',
   'entity_event',
   'world_sound',
   'command_result',
@@ -1476,6 +1542,8 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
     railShape?: NetworkRailShape;
     hydrated?: boolean;
     age?: number;
+    bedPart?: 'foot' | 'head';
+    signRotation?: number;
   } = {};
   if (typeof raw.powered === 'boolean') state.powered = raw.powered;
   if (Number.isInteger(raw.power) && finite(raw.power)) {
@@ -1503,6 +1571,10 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
   }
   if (typeof raw.hydrated === 'boolean') state.hydrated = raw.hydrated;
   if (Number.isInteger(raw.age) && finite(raw.age)) state.age = clampNumber(Math.floor(raw.age), 0, 7);
+  if (raw.bedPart === 'foot' || raw.bedPart === 'head') state.bedPart = raw.bedPart;
+  if (Number.isInteger(raw.signRotation) && finite(raw.signRotation)) {
+    state.signRotation = clampNumber(Math.floor(raw.signRotation), 0, 15);
+  }
   return Object.keys(state).length > 0 ? state : undefined;
 }
 
@@ -1854,6 +1926,28 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const entityId = optionalString(raw.entityId, 64);
       return { type: 'pickup', ...(entityId ? { entityId } : {}) };
     }
+    case 'book_update': {
+      if (!Number.isInteger(raw.slot) || (raw.slot as number) < 0 || (raw.slot as number) > 8
+        || !Array.isArray(raw.pages) || raw.pages.length > 32
+        || raw.pages.some((page: unknown) => typeof page !== 'string' || page.length > 1024)
+        || (raw.title !== undefined && (typeof raw.title !== 'string' || raw.title.length > 64))
+        || (raw.sign !== undefined && typeof raw.sign !== 'boolean')) {
+        return { error: 'book_update invalid' };
+      }
+      return {
+        type: 'book_update', slot: raw.slot as number, pages: raw.pages as string[],
+        ...(raw.title === undefined ? {} : { title: raw.title as string }),
+        ...(raw.sign === undefined ? {} : { sign: raw.sign as boolean }),
+      };
+    }
+    case 'sign_update': {
+      if (!Number.isInteger(raw.x) || !Number.isInteger(raw.y) || !Number.isInteger(raw.z)
+        || !Array.isArray(raw.lines) || raw.lines.length !== 4
+        || raw.lines.some((line: unknown) => typeof line !== 'string' || line.length > 32)) {
+        return { error: 'sign_update invalid' };
+      }
+      return { type: 'sign_update', x: raw.x as number, y: raw.y as number, z: raw.z as number, lines: raw.lines as string[] };
+    }
     case 'respawn':
       return { type: 'respawn' };
     case 'hologram_interact': {
@@ -2102,6 +2196,26 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'entity_snapshot invalid' };
       }
       return raw as unknown as ServerEntitySnapshotMessage;
+    }
+    case 'wh_marks': {
+      if (!Array.isArray(raw.targetIds) || raw.targetIds.length > 64
+        || raw.targetIds.some((id) => typeof id !== 'string' || id.length > 128)) {
+        return { error: 'wh_marks invalid' };
+      }
+      return { type: 'wh_marks', targetIds: raw.targetIds as string[] };
+    }
+    case 'totem_activate': {
+      if (typeof raw.playerId !== 'string' || raw.playerId.length === 0 || raw.playerId.length > 128
+        || !finite(raw.x) || !finite(raw.y) || !finite(raw.z)) {
+        return { error: 'totem_activate invalid' };
+      }
+      return {
+        type: 'totem_activate',
+        playerId: raw.playerId,
+        x: raw.x,
+        y: raw.y,
+        z: raw.z,
+      };
     }
     case 'entity_event': {
       if (!finite(raw.tick) || !Number.isInteger(raw.tick) || raw.tick < 0 || !Array.isArray(raw.events)) {
