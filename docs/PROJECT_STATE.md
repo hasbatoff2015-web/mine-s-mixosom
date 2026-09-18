@@ -1,5 +1,17 @@
 # Состояние проекта
 
+## Последний проход: Repair potion max-durability + armor bar — 2026-09-18
+
+- **Зелье починки** теперь восстанавливает **50% максимальной** remaining durability: `new = min(max, current + round(max * 0.5))`. Не 50% потерянной прочности. Примеры max=100: 100→100, 90→100, 20→70, 10→60, 1→51, 0→50; два глотка `20→70→100` и `10→60→100`. Целые предметы и предметы без durability не меняются. Одна формула: `restoredRemainingDurability` (SP `SurvivalSystem.consumeFood`, Anarchy `ServerGameplay` после consume).
+- Полоса прочности — тот же `slotDurabilityBarHtml` / `GameUI.slotHtml` для hotbar, inventory, offhand и **всех armor slots** (head/chest/legs/feet). Появляется только если `stack.durability` задан (remaining HP; omit = pristine).
+- Equipped armor теряет remaining durability на armor-mitigated hit (`armorDurabilityLoss` = `max(1, round(raw/4))` на каждую надетую часть). Anarchy ставит `inventoryDirty` через `DamageResult.armorWorn`. Inventory/HUD патчится существующим sync без переоткрытия.
+- Подробности: `docs/reports/2026-09-18_repair-potion-max-durability-armor-bar.md`.
+
+## Предыдущий проход: Repair potion — 2026-09-18
+
+- Consumable `potion_repair` / **Зелье починки** (initial PR): drinkable potion, glass bottle, no status effect, no recipe, Buyer example 500 МК, teal bottle. Formula later changed to 50% of **max** durability — see the pass above.
+- Подробности: `docs/reports/2026-09-18_repair-potion.md`.
+
 ## Последний проход: Player fire height + AutoMine reset pipeline — 2026-09-17
 
 - Burning-player fire overlay: `PlayerVisual` keeps overlay width and `position.y = 0.15`, then `scale.y = 0.5`. Mob / first-person fire paths unchanged.
@@ -1436,7 +1448,7 @@
 
 ### Готово
 
-- Data-first item registry связывает block items, resources, foods, tools, weapons, четыре комплекта armor, **flint and steel**, **golden apple**, **glass bottle**, **invisibility/regeneration potions**, **buckets**, **fire arrow** и **minecart**.
+- Data-first item registry связывает block items, resources, foods, tools, weapons, четыре комплекта armor, **flint and steel**, **golden apple**, **glass bottle**, **invisibility/regeneration/repair potions**, **buckets**, **fire arrow** и **minecart**.
 - Bucket follow-up: empty stack max 16, filled max 1. Пустое ведро использует тот же DDA с `stopOnLiquids`: первый liquid останавливает луч, source проверяется через `isFluidSource`; нельзя забирать через стену или flowing/falling cell. Обычный targeting по-прежнему игнорирует fluids. Survival сохраняет остаток пустого стака и добавляет filled bucket (при полном inventory — canonical drop); Creative pickup кладёт filled в active slot, placement его сохраняет. Source placement/pickup используют deferred lighting; Lava emission удаляется через существующий budgeted lighting path.
 - Fluid timing follow-up: все новые задания, включая generic block edits и generated boundaries, получают material-aware delay, Air не ставится в очередь. Water first arrivals = ticks **5/10/15/20**, Lava = **30/60/90**. Старые `delay=1` calls не обходят rate; `+1` остаётся только для already-due budget retry. Material/lifetime смена инвалидирует старый ticket. Hill footprint предыдущего routing pass сохранён: **134 / 42** cells, late writes 0.
 - В progression есть wood/stone/iron/diamond pickaxe, axe, shovel и sword; hoe и gold tools намеренно исключены.
@@ -1468,7 +1480,7 @@
 - Render camera получает текущие yaw/pitch непосредственно из input каждый animation frame; физика и gameplay остаются на fixed `20 TPS`, поэтому mouse-look не квантуется simulation ticks. Hurt camera roll — только `camera.rotation.z` (render offset); yaw/pitch и aim не меняются.
 - Визуальные transforms мобов, drops, player arrows и primed TNT/falling blocks интерполируются на render frame (`alpha = accumulator / FIXED_DT`). AI, hitbox, damage и collision читают только simulation pose. Teleport/spawn/коррекции ≥ 6 блоков делают snap.
 - Есть water/lava state, плавучесть/drag, утопление, lava/fire/cactus damage и fall damage после трёх блоков. Fire contact — AABB overlap с `BlockId.Fire` (`PlayerController.inFire` / `aabbOverlapsBlockType`), **1 HP / 20 ticks** while intersecting Fire; damage идёт через canonical armor mitigation (`fire`/`lava` **не** bypass). Выход из Fire сразу гасит `contactFire` (нет afterburn от ordinary Fire). Lava: 4 HP / 10 ticks + linger `ignite(300)`, тоже через armor. `FIRE_ARROW` (≈100 ticks) — отдельный таймер. Вода гасит arrow/lava/sunlight, не ordinary-fire contact (его и так нет вне клетки). First-person burning overlay — два нижних flame quad (shared fire strip, opacity 0.76), не 6-plane block перед камерой. Успешный health damage (`SurvivalSystem.onDamage`, `dealt > 0`) даёт короткий red flash и bounded hurt kick. Cobweb сильно замедляет игрока/мобов (`movementMultiplier` 0.15) и стрелы. Fence collision height 1.5.
-- Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance. Status effects: absorption, regeneration (heal-over-time), invisibility (hostile `playerTargetable` false; first-person empty-hand arm hidden while the effect is active, held item can remain). Drinkable potions: invisibility **3 min** (`3600` ticks), regeneration **1 min** (`1200` ticks). Active invis/regen show a small bottom-right HUD chip (potion icon, Russian name, `M:SS` countdown) and a soft lower-screen swirl particle overlay from `textures/particle/particles.png`. Absorption HP is saved with optional remaining ticks; other effects are not serialized. HUD показывает yellow absorption hearts справа от red hearts. Effect expiry zeros leftover absorption.
+- Survival считает health/hunger/saturation/exhaustion, regeneration/starvation и hurt resistance. Status effects: absorption, regeneration (heal-over-time), invisibility (hostile `playerTargetable` false; first-person empty-hand arm hidden while the effect is active, held item can remain). Drinkable potions: invisibility **3 min** (`3600` ticks), regeneration **1 min** (`1200` ticks), repair (instant 50% of max durability, no status ticks). Active invis/regen show a small bottom-right HUD chip (potion icon, Russian name, `M:SS` countdown) and a soft lower-screen swirl particle overlay from `textures/particle/particles.png`. Absorption HP is saved with optional remaining ticks; other effects are not serialized. HUD показывает yellow absorption hearts справа от red hearts. Effect expiry zeros leftover absorption.
 - Health HUD: 10 pixel-art hearts (`gui/heart_{empty,half,full}.png`), same `--hud-status-icon-size` / gap as the 10 armor icons so the rows match in width. Full = 2 HP, half = 1 HP, still 20 HP max. Hunger remains emoji pips.
 - Sprint в Survival доступен только при hunger выше `6`; удержание jump начисляет jump exhaustion только в tick фактического отрыва от земли.
 - Armor использует classic fixed reduction `(25-clamp(points,0,20))/25`, без damage-dependent curve/toughness. Piece values сохранены (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.

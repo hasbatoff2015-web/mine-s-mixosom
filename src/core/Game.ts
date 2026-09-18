@@ -4489,6 +4489,7 @@ export class Game {
       }
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
+    if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
   }
 
   private tick(): void {

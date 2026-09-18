@@ -4,6 +4,8 @@
  * Live furnace ticks patch slot contents in place so CSS :hover stays stable.
  */
 
+import { getItemDefinition } from '../items';
+
 export type InventoryPaintMode = 'mount' | 'patch-dynamic';
 export type CreativeInventoryTab = 'catalog' | 'inventory';
 
@@ -46,6 +48,37 @@ export function slotStateSignature(state: {
   if (state.ghost) return `ghost:${state.itemId ?? ''}:${state.missing ? 1 : 0}`;
   if (!state.itemId) return `empty:${state.selected ? 1 : 0}`;
   return `item:${state.itemId}:${state.count ?? 1}:${state.durability ?? ''}:${state.selected ? 1 : 0}`;
+}
+
+export const DURABILITY_BAR_GREEN = '#67d960';
+export const DURABILITY_BAR_ORANGE = '#e8932a';
+export const DURABILITY_BAR_RED = '#e03d3d';
+
+/**
+ * Fill color from remaining durability. Integer-safe thresholds:
+ * 67–100% green, 33–66% orange, 0–32% red.
+ */
+export function durabilityBarFillColor(current: number, maxDurability: number): string {
+  if (!Number.isFinite(current) || !Number.isFinite(maxDurability) || maxDurability <= 0 || current <= 0) {
+    return DURABILITY_BAR_RED;
+  }
+  if (current * 100 >= maxDurability * 67) return DURABILITY_BAR_GREEN;
+  if (current * 100 >= maxDurability * 33) return DURABILITY_BAR_ORANGE;
+  return DURABILITY_BAR_RED;
+}
+
+/**
+ * Same durability overlay used by hotbar, inventory, armor slots, and offhand.
+ * Remaining `stack.durability` omitted means pristine — no bar.
+ */
+export function slotDurabilityBarHtml(stack: { readonly itemId: string; readonly durability?: number } | null): string {
+  if (!stack || stack.durability === undefined) return '';
+  const definition = getItemDefinition(stack.itemId);
+  const maxDurability = 'durability' in definition ? definition.durability : undefined;
+  if (maxDurability === undefined) return '';
+  const ratio = Math.max(0, Math.min(1, stack.durability / maxDurability));
+  const color = durabilityBarFillColor(stack.durability, maxDurability);
+  return `<div class="durability"><span style="width:${ratio * 100}%;background:${color}"></span></div>`;
 }
 
 export function slotKeysMatch(existing: readonly string[], next: readonly string[]): boolean {

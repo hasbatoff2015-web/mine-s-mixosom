@@ -30,7 +30,7 @@ describe('new items, blocks and entities', () => {
     const ids = new Set(obtainableItems().map((item) => item.id));
     for (const id of [
       ItemId.FlintAndSteel, ItemId.GoldenApple, ItemId.GlassBottle,
-      ItemId.PotionInvisibility, ItemId.PotionRegeneration, ItemId.FireArrow,
+      ItemId.PotionInvisibility, ItemId.PotionRegeneration, ItemId.PotionRepair, ItemId.FireArrow,
       ItemId.Minecart, 'oak_fence', 'rail', 'cobweb',
     ]) {
       expect(ids.has(id), id).toBe(true);

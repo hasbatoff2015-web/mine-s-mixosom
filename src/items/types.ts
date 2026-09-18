@@ -21,6 +21,8 @@ export interface BaseItemDefinition {
    * The registry entry may remain for combat/tests/old saves.
    */
   readonly hiddenFromGameplay?: boolean;
+  /** Optional tooltip body under the display name. */
+  readonly description?: string;
 }
 
 export interface BlockItemDefinition extends BaseItemDefinition {
@@ -41,6 +43,8 @@ export interface FoodProperties {
   readonly returnsItem?: string;
   readonly effects?: readonly StatusEffectSpec[];
   readonly clearsEffects?: boolean;
+  /** Restore this fraction of each item's *maximum* durability on every damaged durability stack. */
+  readonly repairLostDurabilityFraction?: number;
 }
 
 export type StatusEffectId = 'absorption' | 'regeneration' | 'invisibility' | 'fire_resistance';
@@ -123,6 +127,7 @@ export const ItemId = Object.freeze({
   GlassBottle: 'glass_bottle',
   PotionInvisibility: 'potion_invisibility',
   PotionRegeneration: 'potion_regeneration',
+  PotionRepair: 'potion_repair',
   Bucket: 'bucket',
   WaterBucket: 'water_bucket',
   LavaBucket: 'lava_bucket',

@@ -201,3 +201,42 @@ export function damageItem(stack: ItemStack, amount = 1): ItemStack | null {
     ? null
     : { ...cloneStack(stack) as ItemStack, durability: remaining };
 }
+
+/**
+ * Restore `fraction` of *maximum* durability: `min(max, current + round(max * fraction))`.
+ * Intact items (`current >= max`) are unchanged. `stack.durability` is remaining HP.
+ */
+export function restoredRemainingDurability(
+  current: number,
+  maxDurability: number,
+  fraction: number,
+): number {
+  if (!Number.isFinite(current) || !Number.isFinite(maxDurability) || !Number.isFinite(fraction)) {
+    throw new RangeError('Durability restore inputs must be finite numbers');
+  }
+  if (maxDurability < 1 || fraction < 0 || fraction > 1) {
+    throw new RangeError('Durability restore requires max >= 1 and fraction in 0..1');
+  }
+  const remaining = Math.min(maxDurability, Math.max(0, current));
+  if (remaining >= maxDurability) return remaining;
+  const restore = Math.round(maxDurability * fraction);
+  return Math.min(maxDurability, remaining + restore);
+}
+
+export function repairItemLostDurability(stack: ItemStack, fraction: number): ItemStack {
+  validateItemStack(stack);
+  const maximum = definitionDurability(getItemDefinition(stack.itemId));
+  if (maximum === undefined) return cloneStack(stack) as ItemStack;
+  const current = stack.durability ?? maximum;
+  const restored = restoredRemainingDurability(current, maximum, fraction);
+  const next = cloneStack(stack) as ItemStack;
+  if (restored >= maximum) {
+    return {
+      itemId: next.itemId,
+      count: next.count,
+      ...(next.metadata === undefined ? {} : { metadata: next.metadata }),
+    };
+  }
+  if (restored === current && stack.durability !== undefined) return next;
+  return { ...next, durability: restored };
+}

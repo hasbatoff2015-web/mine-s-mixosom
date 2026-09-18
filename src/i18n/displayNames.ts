@@ -1,5 +1,5 @@
 import { EN_DISPLAY_NAMES } from './en';
-import { RU_DISPLAY_NAMES } from './ru';
+import { RU_DISPLAY_NAMES, RU_ITEM_DESCRIPTIONS } from './ru';
 
 export type DisplayLanguage = 'ru' | 'en';
 
@@ -22,4 +22,10 @@ export function requiredDisplayName(id: string, language: DisplayLanguage = 'ru'
   return name;
 }
 
-export { EN_DISPLAY_NAMES, RU_DISPLAY_NAMES };
+export function itemDescriptionFor(id: string, language: DisplayLanguage = 'ru'): string | undefined {
+  if (language !== 'ru') return undefined;
+  const description = RU_ITEM_DESCRIPTIONS[id];
+  return description || undefined;
+}
+
+export { EN_DISPLAY_NAMES, RU_DISPLAY_NAMES, RU_ITEM_DESCRIPTIONS };

@@ -1160,6 +1160,9 @@ export class ServerGameplay {
       const current = player.inventory.getSlot(activeSlot);
       if (current?.itemId === item.id && player.survival.consumeFood(item)) {
         player.inventory.setSlot(activeSlot, current.count <= 1 ? null : { ...current, count: current.count - 1 });
+        if (item.food.repairLostDurabilityFraction !== undefined) {
+          player.inventory.repairLostDurability(item.food.repairLostDurabilityFraction);
+        }
         if (item.food.returnsItem) {
           const overflow = player.inventory.addItem(item.food.returnsItem, 1);
           if (overflow > 0) {
