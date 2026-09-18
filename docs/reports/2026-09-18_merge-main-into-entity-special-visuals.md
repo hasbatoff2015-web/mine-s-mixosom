@@ -172,7 +172,9 @@ This Cursor browser IndexedDB had no local worlds (`Сохранённых ми�
 
 ## 16. New feature HEAD
 
-Merge commit on `codex/entity-special-visual-fixes` (see git after this file is committed). Pushed to `origin/codex/entity-special-visual-fixes`. **Not** merged to `main`. No rebase, no force-push.
+`7551574bf660b607f7a4844f67757eed8751dc02` — `merge origin/main into entity-special-visual-fixes`
+
+Pushed to `origin/codex/entity-special-visual-fixes`. **Not** merged to `main`. No rebase, no force-push.
 
 ## 17. Main unchanged
 
