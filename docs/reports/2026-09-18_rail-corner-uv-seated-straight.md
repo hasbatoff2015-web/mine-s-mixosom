@@ -93,3 +93,7 @@ Owner visual confirmation. Do not merge `main`.
 ## Git
 
 Feature branch `codex/entity-special-visual-fixes` only. No merge to `main`, no rebase, no force push.
+
+- Before: `36d295133c20354d89035c3411f1de6081b855ef`
+- After: `9c6c00bbce347e74b275d91f3d8e0cf2455dc51e`
+- `origin/main` unchanged: `ce6facdb328321b5b2113196aa9ee277469b3341`
