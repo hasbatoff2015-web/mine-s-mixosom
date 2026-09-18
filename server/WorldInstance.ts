@@ -294,6 +294,7 @@ export class ServerPlayer implements GameplayPlayer {
     this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
+      if (result.armorWorn) this.inventoryDirty = true;
       if (this.survival.dead) this.restingBed = undefined;
     });
   }

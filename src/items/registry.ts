@@ -19,8 +19,10 @@ import {
 export const POTION_INVISIBILITY_DURATION_TICKS = 3600;
 /** Regeneration potion: 1 minute at 20 TPS. Golden apple regen stays separate. */
 export const POTION_REGENERATION_DURATION_TICKS = 1200;
-/** Repair potion restores this fraction of missing durability on every durability item. */
-export const REPAIR_POTION_LOST_FRACTION = 0.5;
+/** Repair potion restores this fraction of each item's maximum durability. */
+export const REPAIR_POTION_RESTORE_FRACTION = 0.5;
+/** @deprecated Same value as `REPAIR_POTION_RESTORE_FRACTION`; kept for existing imports. */
+export const REPAIR_POTION_LOST_FRACTION = REPAIR_POTION_RESTORE_FRACTION;
 
 type ResourceOptions = Partial<Pick<BaseItemDefinition, 'maxStack' | 'tags' | 'placesBlockId'>> & {
   readonly durability?: number;
@@ -297,7 +299,7 @@ const foods: readonly ItemDefinition[] = [
   food(ItemId.PotionRepair, 0, 0, {
     alwaysEdible: true,
     returnsItem: ItemId.GlassBottle,
-    repairLostDurabilityFraction: REPAIR_POTION_LOST_FRACTION,
+    repairLostDurabilityFraction: REPAIR_POTION_RESTORE_FRACTION,
   }),
 ];
 

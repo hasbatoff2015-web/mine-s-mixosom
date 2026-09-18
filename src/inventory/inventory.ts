@@ -5,6 +5,7 @@ import {
   canStacksMerge,
   cloneStack,
   createItemStack,
+  damageItem,
   repairItemLostDurability,
   splitItemStack,
   validateItemStack,
@@ -342,7 +343,10 @@ export class Inventory {
     ];
   }
 
-  /** Restore `fraction` of missing durability on every durability stack the player holds. */
+  /**
+   * Restore `fraction` of each stack's maximum durability on every damaged
+   * durability item the player holds (hotbar, main, armor, offhand).
+   */
   repairLostDurability(fraction: number): void {
     for (const ref of this.slotRefs()) {
       const stack = this.getSlot(ref);
@@ -350,6 +354,28 @@ export class Inventory {
       const repaired = repairItemLostDurability(stack, fraction);
       if (repaired.durability !== stack.durability) this.setSlot(ref, repaired);
     }
+  }
+
+  /**
+   * Subtract remaining durability from every equipped armor piece that matches
+   * its slot. Broken pieces (`damageItem` → null) are removed. Returns whether
+   * any slot changed.
+   */
+  damageEquippedArmor(amount: number): boolean {
+    if (!Number.isInteger(amount) || amount < 0) {
+      throw new RangeError('Armor damage must be a non-negative integer');
+    }
+    if (amount === 0) return false;
+    let changed = false;
+    for (const slot of ARMOR_SLOTS) {
+      const stack = this.getSlot({ section: 'armor', slot });
+      if (stack === null) continue;
+      const definition = getItemDefinition(stack.itemId);
+      if (definition.kind !== 'armor' || definition.slot !== slot) continue;
+      this.setSlot({ section: 'armor', slot }, damageItem(stack, amount));
+      changed = true;
+    }
+    return changed;
   }
 
   private allStacks(): readonly (ItemStack | null)[] {

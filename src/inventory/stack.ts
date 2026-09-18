@@ -202,7 +202,10 @@ export function damageItem(stack: ItemStack, amount = 1): ItemStack | null {
     : { ...cloneStack(stack) as ItemStack, durability: remaining };
 }
 
-/** Restore `fraction` of missing durability without exceeding `maxDurability`. */
+/**
+ * Restore `fraction` of *maximum* durability: `min(max, current + round(max * fraction))`.
+ * Intact items (`current >= max`) are unchanged. `stack.durability` is remaining HP.
+ */
 export function restoredRemainingDurability(
   current: number,
   maxDurability: number,
@@ -215,9 +218,9 @@ export function restoredRemainingDurability(
     throw new RangeError('Durability restore requires max >= 1 and fraction in 0..1');
   }
   const remaining = Math.min(maxDurability, Math.max(0, current));
-  const lost = maxDurability - remaining;
-  if (lost <= 0) return remaining;
-  return Math.min(maxDurability, remaining + Math.round(lost * fraction));
+  if (remaining >= maxDurability) return remaining;
+  const restore = Math.round(maxDurability * fraction);
+  return Math.min(maxDurability, remaining + restore);
 }
 
 export function repairItemLostDurability(stack: ItemStack, fraction: number): ItemStack {

@@ -1,8 +1,15 @@
 # Roadmap
 
+## 2026-09-18: Repair potion max-durability + armor bar
+
+- [x] Зелье починки: 50% **максимальной** durability (`current + round(max * 0.5)`), clamp, без изменения целых предметов.
+- [x] Та же формула в Anarchy и Singleplayer.
+- [x] Durability bar на armor slots через существующий slot renderer.
+- [x] Equipped armor wear on armor-mitigated hits so the bar can appear and update live.
+
 ## 2026-09-18: Repair potion
 
-- [x] Добавить consumable «Зелье починки» на существующем potion drink path: 50% lost remaining durability по всему player inventory, server-authoritative в Anarchy.
+- [x] Добавить consumable «Зелье починки» на существующем potion drink path: 50% of max remaining durability по всему player inventory, server-authoritative в Anarchy.
 - [x] Тот же bottle mesh/geometry, teal overlay tint, tooltip, no recipe, Buyer example price 500 МК.
 - [x] Regression tests for math, slots, armor/hotbar, consume, no recipe, buyer sell, inventory sync.
 

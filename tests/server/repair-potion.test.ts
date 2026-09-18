@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Inventory, createItemStack, restoredRemainingDurability } from '../../src/inventory';
-import { ItemId, REPAIR_POTION_LOST_FRACTION, getItemDefinition } from '../../src/items';
+import { ItemId, REPAIR_POTION_RESTORE_FRACTION, getItemDefinition } from '../../src/items';
 import type { ClientInputMessage } from '../../shared/protocol';
 import {
   BUYER_EXAMPLE_REPAIR_POTION_ITEM,
@@ -82,9 +82,9 @@ describe('repair potion server authority', { timeout: 20_000 }, () => {
     return { world, player: joined.player, sink };
   }
 
-  function drink(world: WorldInstance, player: ServerPlayer) {
-    world.applyInput(player, input(1, { selectedSlot: 0, use: true }));
-    expect(world.interact(player, undefined, 1, 1, 0)).toEqual({ ok: true });
+  function drink(world: WorldInstance, player: ServerPlayer, seq = 1) {
+    world.applyInput(player, input(seq, { selectedSlot: 0, use: true }));
+    expect(world.interact(player, undefined, seq, seq, 0)).toEqual({ ok: true });
     for (let tick = 0; tick < 31; tick += 1) world.tick();
   }
 
@@ -104,9 +104,9 @@ describe('repair potion server authority', { timeout: 20_000 }, () => {
     const helmMax = durabilityOf(ItemId.IronHelmet);
     expect(player.inventory.count(ItemId.PotionRepair)).toBe(1);
     expect(player.inventory.count(ItemId.GlassBottle)).toBe(1);
-    expect(player.inventory.getSlot(1)?.durability).toBe(restoredRemainingDurability(20, swordMax, REPAIR_POTION_LOST_FRACTION));
-    expect(player.inventory.getSlot(15)?.durability).toBe(restoredRemainingDurability(40, pickMax, REPAIR_POTION_LOST_FRACTION));
-    expect(player.inventory.armor.head?.durability).toBe(restoredRemainingDurability(30, helmMax, REPAIR_POTION_LOST_FRACTION));
+    expect(player.inventory.getSlot(1)?.durability).toBe(restoredRemainingDurability(20, swordMax, REPAIR_POTION_RESTORE_FRACTION));
+    expect(player.inventory.getSlot(15)?.durability).toBe(restoredRemainingDurability(40, pickMax, REPAIR_POTION_RESTORE_FRACTION));
+    expect(player.inventory.armor.head?.durability).toBe(restoredRemainingDurability(30, helmMax, REPAIR_POTION_RESTORE_FRACTION));
     expect(player.inventory.getSlot(8)).toEqual({ itemId: ItemId.Apple, count: 4 });
 
     const snapshot = lastInventory(sink);
@@ -115,6 +115,44 @@ describe('repair potion server authority', { timeout: 20_000 }, () => {
     expect(synced.count(ItemId.PotionRepair)).toBe(1);
     expect(synced.getSlot(1)?.durability).toBe(player.inventory.getSlot(1)?.durability);
     expect(synced.armor.head?.durability).toBe(player.inventory.armor.head?.durability);
+  });
+
+  it('fully restores a heavily damaged sword after two drinks and syncs inventory', async () => {
+    const { world, player, sink } = await boot();
+    player.inventory.clear();
+    const swordMax = durabilityOf(ItemId.IronSword);
+    player.inventory.setSlot(0, createItemStack(ItemId.PotionRepair, 2));
+    player.inventory.setSlot(1, createItemStack(ItemId.IronSword, 1, { durability: 20 }));
+    drink(world, player, 1);
+    expect(player.inventory.getSlot(1)?.durability).toBe(restoredRemainingDurability(20, swordMax, REPAIR_POTION_RESTORE_FRACTION));
+    drink(world, player, 2);
+    expect(player.inventory.getSlot(1)).toEqual({ itemId: ItemId.IronSword, count: 1 });
+    expect(player.inventory.count(ItemId.PotionRepair)).toBe(0);
+    const snapshot = lastInventory(sink);
+    expect(snapshot).toBeDefined();
+    const synced = Inventory.deserialize(snapshot!.inventory);
+    expect(synced.getSlot(1)).toEqual({ itemId: ItemId.IronSword, count: 1 });
+  });
+
+  it('wears equipped armor on a hit and flushes remaining durability', async () => {
+    const { world, player, sink } = await boot();
+    player.inventory.clear();
+    player.inventory.setSlot({ section: 'armor', slot: 'head' }, createItemStack(ItemId.IronHelmet));
+    player.inventory.setSlot({ section: 'armor', slot: 'chest' }, createItemStack(ItemId.IronChestplate));
+    player.inventory.setSlot({ section: 'armor', slot: 'legs' }, createItemStack(ItemId.IronLeggings));
+    player.inventory.setSlot({ section: 'armor', slot: 'feet' }, createItemStack(ItemId.IronBoots));
+    sink.payloads.length = 0;
+    const result = player.survival.damage(8, 'melee', { armor: player.inventory, ignoreInvulnerability: true });
+    expect(result.armorWorn).toBe(true);
+    expect(player.inventoryDirty).toBe(true);
+    world.tick();
+    const snapshot = lastInventory(sink);
+    expect(snapshot).toBeDefined();
+    const synced = Inventory.deserialize(snapshot!.inventory);
+    expect(synced.armor.head?.durability).toBe(player.inventory.armor.head?.durability);
+    expect(synced.armor.chest?.durability).toBeDefined();
+    expect(synced.armor.legs?.durability).toBeDefined();
+    expect(synced.armor.feet?.durability).toBeDefined();
   });
 
   it('still consumes the potion when nothing is damaged', async () => {

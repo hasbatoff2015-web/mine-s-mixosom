@@ -34,11 +34,18 @@ const HUD_ITEMS = [
 
 function fixtureInventory(): Inventory {
   const inventory = new Inventory();
-  HUD_ITEMS.forEach(([itemId, count], index) => inventory.setSlot(index, createItemStack(itemId, count)));
-  inventory.setSlot({ section: 'armor', slot: 'head' }, createItemStack('diamond_helmet'));
-  inventory.setSlot({ section: 'armor', slot: 'chest' }, createItemStack('diamond_chestplate'));
-  inventory.setSlot({ section: 'armor', slot: 'legs' }, createItemStack('diamond_leggings'));
-  inventory.setSlot({ section: 'armor', slot: 'feet' }, createItemStack('diamond_boots'));
+  HUD_ITEMS.forEach(([itemId, count], index) => {
+    const stack = itemId === 'iron_pickaxe'
+      ? createItemStack(itemId, count, { durability: 40 })
+      : createItemStack(itemId, count);
+    inventory.setSlot(index, stack);
+  });
+  inventory.setSlot({ section: 'armor', slot: 'head' }, createItemStack('diamond_helmet', 1, { durability: 80 }));
+  inventory.setSlot({ section: 'armor', slot: 'chest' }, createItemStack('diamond_chestplate', 1, { durability: 120 }));
+  inventory.setSlot({ section: 'armor', slot: 'legs' }, createItemStack('diamond_leggings', 1, { durability: 90 }));
+  inventory.setSlot({ section: 'armor', slot: 'feet' }, createItemStack('diamond_boots', 1, { durability: 40 }));
+  inventory.setSlot(9, createItemStack('iron_helmet', 1, { durability: 40 }));
+  inventory.setSlot(10, createItemStack('potion_repair', 8));
   return inventory;
 }
 

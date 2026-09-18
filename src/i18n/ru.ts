@@ -238,5 +238,5 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
 
 /** Optional tooltip bodies keyed by the same item IDs as `RU_DISPLAY_NAMES`. */
 export const RU_ITEM_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
-  potion_repair: 'Восстанавливает 50% потерянной прочности всех предметов',
+  potion_repair: 'Восстанавливает 50% максимальной прочности всех повреждённых предметов',
 });

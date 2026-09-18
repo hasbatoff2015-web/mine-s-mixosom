@@ -43,7 +43,7 @@ export interface FoodProperties {
   readonly returnsItem?: string;
   readonly effects?: readonly StatusEffectSpec[];
   readonly clearsEffects?: boolean;
-  /** Restore this fraction of missing durability on every durability item in the player inventory. */
+  /** Restore this fraction of each item's *maximum* durability on every damaged durability stack. */
   readonly repairLostDurabilityFraction?: number;
 }
 

@@ -61,6 +61,8 @@ export interface DamageResult {
   readonly accepted: boolean;
   readonly fullHurt: boolean;
   readonly deathProtected?: boolean;
+  /** True when equipped armor remaining durability changed during this hit. */
+  readonly armorWorn?: boolean;
 }
 
 export interface SurvivalTickContext {
@@ -158,6 +160,21 @@ export function reduceDamageByArmor(
 ): number {
   const incoming = Math.max(0, damage);
   return incoming * (25 - getArmorPoints(armor)) / 25;
+}
+
+/**
+ * Remaining-durability loss applied to each equipped armor piece for one
+ * armor-mitigated hit. Java-like: at least 1, otherwise round(incoming / 4).
+ */
+export function armorDurabilityLoss(incomingDamage: number): number {
+  if (!Number.isFinite(incomingDamage) || incomingDamage <= 0) return 0;
+  return Math.max(1, Math.round(incomingDamage / 4));
+}
+
+function wearEquippedArmor(source: ArmorSource | undefined, amount: number): boolean {
+  if (!source || amount <= 0 || !('damageEquippedArmor' in source)) return false;
+  const mutate = source as { damageEquippedArmor?: (value: number) => boolean };
+  return mutate.damageEquippedArmor?.(amount) === true;
 }
 
 export function isSwordBlockable(source: DamageSource, fireContact = false): boolean {
@@ -273,6 +290,9 @@ export class SurvivalSystem {
     const afterArmor = bypassArmor
       ? rawToApply
       : reduceDamageByArmor(rawToApply, options.armor);
+    const armorWorn = bypassArmor
+      ? false
+      : wearEquippedArmor(options.armor, armorDurabilityLoss(rawToApply));
     const absorbed = Math.min(this.absorption, afterArmor);
     this.absorption -= absorbed;
     const dealt = Math.max(0, afterArmor - absorbed);
@@ -301,6 +321,7 @@ export class SurvivalSystem {
       accepted: true,
       fullHurt: hurt.fullHurt,
       ...(deathProtected ? { deathProtected: true } : {}),
+      ...(armorWorn ? { armorWorn: true } : {}),
     };
     this.lastDamage = result;
     options.onDamage?.(result);
