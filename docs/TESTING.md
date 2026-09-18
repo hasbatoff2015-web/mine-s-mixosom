@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-18 Third-person sword vs tool poses
+
+Focused:
+
+```text
+npx vitest run tests/third-person-held-item.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent
+```
+
+Contracts: every `weapon === 'sword'` uses sword pose; every `kind: 'tool'` uses tool pose; wooden/iron/diamond sword+pickaxe, axe, shovel covered; stick/flint stay historical `handheld`; block/generated/bow unchanged; `FIRST_PERSON_SPRITE_POSE` unchanged. No `gold_sword` / `gold_pickaxe` in registry (golden_hoe is a tool).
+
 ## 2026-09-18 Third-person held-item calibrator `/moveitems`
 
 Focused:

@@ -1,9 +1,11 @@
 # Roadmap
 
-## 2026-09-18: Third-person held-item calibrator
+## 2026-09-18: Third-person sword vs tool poses
 
-- [x] DEV `/moveitems`: third-person `PlayerVisual` + real held-item renderer, live pos/rot/scale, per-item memory, RESET, COPY/COPY ALL, orbit camera.
-- [ ] Manual calibration of remote held tools/swords; production write of chosen numbers is a separate follow-up.
+- [x] Production third-person: all swords share one pose; all other `kind: 'tool'` items share the iron_pickaxe pose.
+- [x] Leave block / generated / bow / first-person unchanged.
+
+## 2026-09-18: Third-person held-item calibrator
 
 ## 2026-09-18: Repair potion max-durability + armor bar
 

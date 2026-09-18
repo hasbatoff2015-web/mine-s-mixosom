@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
-import { FIRST_PERSON_SPRITE_POSE, classifyItemForRendering } from '../src/items';
+import {
+  FIRST_PERSON_SPRITE_POSE,
+  ITEMS,
+  classifyItemForRendering,
+  itemRenderProfile,
+} from '../src/items';
 import { isMoveItemsCalibratorPath } from '../src/dev/moveItemsRoute';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
@@ -10,14 +15,20 @@ import {
   THIRD_PERSON_HELD_ITEM_DEFAULTS,
   ThirdPersonHeldItemCalibratorState,
   applyThirdPersonHeldItemTransform,
+  classifyThirdPersonHeldItem,
   cloneThirdPersonHeldItemTransform,
   defaultThirdPersonHeldItemTransform,
   defaultThirdPersonHeldItemTransformForItem,
   formatThirdPersonHeldItemCopy,
   formatThirdPersonHeldItemCopyAll,
+  isThirdPersonSwordItem,
+  isThirdPersonToolItem,
   thirdPersonHeldTransformsClose,
 } from '../src/rendering/player/thirdPersonHeldItem';
 import { Group } from 'three';
+
+const SWORD_IDS = ITEMS.filter((item) => isThirdPersonSwordItem(item)).map((item) => item.id);
+const TOOL_IDS = ITEMS.filter((item) => isThirdPersonToolItem(item)).map((item) => item.id);
 
 describe('moveitems calibrator route', () => {
   it('matches /moveitems with or without a trailing slash', () => {
@@ -29,33 +40,88 @@ describe('moveitems calibrator route', () => {
 });
 
 describe('third-person held item defaults', () => {
-  it('keeps the production category poses used by remote PlayerVisual', () => {
+  it('keeps block, generated, handheld and bow poses unchanged', () => {
     expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.block).toEqual({
       position: { x: 0, y: -0.02, z: -0.02 },
       rotation: { x: -0.55, y: 0.45, z: -0.28 },
       scale: { x: 0.24, y: 0.24, z: 0.24 },
     });
-    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.handheld.scale.x).toBe(0.55);
-    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.generated.scale.x).toBe(0.40);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.generated).toEqual({
+      position: { x: 0, y: -0.04, z: -0.06 },
+      rotation: { x: -0.16, y: 0, z: -0.72 },
+      scale: { x: 0.40, y: 0.40, z: 0.40 },
+    });
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.handheld).toEqual({
+      position: { x: 0, y: -0.04, z: -0.06 },
+      rotation: { x: -0.16, y: 0, z: -0.72 },
+      scale: { x: 0.55, y: 0.55, z: 0.55 },
+    });
     expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.bow.rotation.z).toBe(0.85);
-    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.handheld.rotation.z).toBe(-0.72);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.bow.scale.x).toBe(0.46);
   });
 
-  it('maps tools, swords, blocks and bow onto those category defaults', () => {
-    expect(classifyItemForRendering('iron_pickaxe')).toBe('handheld');
-    expect(classifyItemForRendering('diamond_sword')).toBe('handheld');
-    expect(classifyItemForRendering('bow')).toBe('bow');
-    expect(classifyItemForRendering('stone')).toBe('block');
-    expect(classifyItemForRendering('apple')).toBe('generated');
-    expect(defaultThirdPersonHeldItemTransformForItem('iron_pickaxe')).toEqual(
-      defaultThirdPersonHeldItemTransform('handheld'),
-    );
+  it('uses one sword pose for every sword and one tool pose for every non-sword tool', () => {
+    expect(SWORD_IDS).toEqual([
+      'wooden_sword', 'stone_sword', 'iron_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
+    ]);
+    expect(TOOL_IDS).toContain('wooden_pickaxe');
+    expect(TOOL_IDS).toContain('iron_pickaxe');
+    expect(TOOL_IDS).toContain('diamond_pickaxe');
+    expect(TOOL_IDS).toContain('iron_axe');
+    expect(TOOL_IDS).toContain('diamond_shovel');
+    expect(TOOL_IDS).toContain('golden_hoe');
+    expect(SWORD_IDS).not.toContain('gold_sword');
+    expect(TOOL_IDS).not.toContain('gold_pickaxe');
+
+    for (const id of ['wooden_sword', 'iron_sword', 'diamond_sword'] as const) {
+      expect(classifyThirdPersonHeldItem(id)).toBe('sword');
+      expect(classifyItemForRendering(id)).toBe('handheld');
+      expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword);
+    }
+    for (const id of ['wooden_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'iron_axe', 'iron_shovel'] as const) {
+      expect(classifyThirdPersonHeldItem(id)).toBe('tool');
+      expect(classifyItemForRendering(id)).toBe('handheld');
+      expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool);
+    }
+    for (const id of SWORD_IDS) {
+      expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword);
+    }
+    for (const id of TOOL_IDS) {
+      expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool);
+    }
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword).toEqual({
+      position: { x: 0, y: 0.225, z: -0.245 },
+      rotation: { x: -0.1232, y: 1.4668, z: -0.1232 },
+      scale: { x: 0.55, y: 0.55, z: 0.55 },
+    });
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool).toEqual({
+      position: { x: 0, y: 0.215, z: -0.155 },
+      rotation: { x: -0.1232, y: 1.4668, z: -0.1232 },
+      scale: { x: 0.55, y: 0.55, z: 0.55 },
+    });
   });
 
-  it('does not change the first-person production pose', () => {
+  it('leaves stick, flint, blocks, generated items and bow on the historical third-person poses', () => {
+    expect(classifyThirdPersonHeldItem('stick')).toBe('handheld');
+    expect(classifyThirdPersonHeldItem('flint_and_steel')).toBe('handheld');
+    expect(defaultThirdPersonHeldItemTransformForItem('stick')).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.handheld);
+    expect(classifyThirdPersonHeldItem('stone')).toBe('block');
+    expect(classifyThirdPersonHeldItem('apple')).toBe('generated');
+    expect(classifyThirdPersonHeldItem('bow')).toBe('bow');
+    expect(defaultThirdPersonHeldItemTransformForItem('stone')).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.block);
+    expect(defaultThirdPersonHeldItemTransformForItem('apple')).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.generated);
+    expect(defaultThirdPersonHeldItemTransformForItem('bow')).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.bow);
+  });
+
+  it('does not change the first-person production pose or handheld first-person profile', () => {
     expect(FIRST_PERSON_SPRITE_POSE.position).toEqual([0.67, -0.29, -0.70]);
     expect(FIRST_PERSON_SPRITE_POSE.rotationDeg).toEqual([1, -90, 34]);
     expect(FIRST_PERSON_SPRITE_POSE.scale).toBe(0.60);
+    const handheldFp = itemRenderProfile('iron_pickaxe').transforms.firstPersonRightHand;
+    const swordFp = itemRenderProfile('diamond_sword').transforms.firstPersonRightHand;
+    expect(handheldFp.position).toEqual(FIRST_PERSON_SPRITE_POSE.position);
+    expect(swordFp.position).toEqual(FIRST_PERSON_SPRITE_POSE.position);
+    expect(handheldFp.scale).toEqual([0.60, 0.60, 0.60]);
   });
 });
 
@@ -73,6 +139,7 @@ describe('third-person held item calibrator state', () => {
     expect(state.get('diamond_sword').position.x).toBe(1);
     const reset = state.reset('iron_pickaxe');
     expect(thirdPersonHeldTransformsClose(reset, original)).toBe(true);
+    expect(reset.position.y).toBe(0.215);
     expect(state.get('diamond_sword').position.x).toBe(1);
   });
 
@@ -83,7 +150,7 @@ describe('third-person held item calibrator state', () => {
     expect(text).toContain('position:');
     expect(text).toContain('rotation:');
     expect(text).toContain('scale:');
-    expect(text).toContain('y: -0.04');
+    expect(text).toContain('y: 0.215');
     const all = formatThirdPersonHeldItemCopyAll([
       { itemId: 'iron_pickaxe', transform },
       { itemId: 'bow', transform: defaultThirdPersonHeldItemTransformForItem('bow') },
@@ -94,26 +161,31 @@ describe('third-person held item calibrator state', () => {
 });
 
 describe('PlayerVisual third-person held calibration', () => {
-  it('applies production defaults then live overlay without mutating those defaults', () => {
+  it('applies sword and tool production poses then live overlay without mutating defaults', () => {
     const skins = new MinecraftSkinRegistry();
     const geometries = new PlayerSkinGeometryCache();
     const items = new ItemVisualFactory();
     const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
     visual.setHeldItem('iron_pickaxe');
-    const production = visual.readHeldItemTransform();
-    expect(production).toBeDefined();
-    expect(thirdPersonHeldTransformsClose(production!, defaultThirdPersonHeldItemTransform('handheld'))).toBe(true);
+    expect(thirdPersonHeldTransformsClose(
+      visual.readHeldItemTransform()!,
+      defaultThirdPersonHeldItemTransform('tool'),
+    )).toBe(true);
 
-    const live = cloneThirdPersonHeldItemTransform(production!);
+    visual.setHeldItem('diamond_sword');
+    expect(thirdPersonHeldTransformsClose(
+      visual.readHeldItemTransform()!,
+      defaultThirdPersonHeldItemTransform('sword'),
+    )).toBe(true);
+
+    const live = cloneThirdPersonHeldItemTransform(visual.readHeldItemTransform()!);
     live.position.x = 0.2;
     live.rotation.z = -0.3;
     live.scale.x = 0.7;
     visual.applyHeldItemCalibration(live);
     expect(visual.readHeldItemTransform()?.position.x).toBeCloseTo(0.2);
-    expect(visual.readHeldItemTransform()?.rotation.z).toBeCloseTo(-0.3);
-    expect(visual.readHeldItemTransform()?.scale.x).toBeCloseTo(0.7);
-    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.handheld.position.x).toBe(0);
-    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.handheld.scale.x).toBe(0.55);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword.position.y).toBe(0.225);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool.position.y).toBe(0.215);
 
     visual.setHeldItem('stone');
     expect(thirdPersonHeldTransformsClose(

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { ItemId, bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
+import { ItemId, bowPullingTexturePath, itemRenderProfile } from '../../items';
 import {
   applyThirdPersonHeldItemTransform,
-  defaultThirdPersonHeldItemTransform,
+  defaultThirdPersonHeldItemTransformForItem,
   readThirdPersonHeldItemTransform,
   type ThirdPersonHeldItemTransform,
 } from './thirdPersonHeldItem';
@@ -241,7 +241,7 @@ export class PlayerVisual {
     this.bowTexturePath = 'item/bow';
     if (!this.heldModel || !itemId) return;
     this.rig.heldItem.add(this.heldModel);
-    this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
+    this.applyHeldItemTransform(this.heldModel, itemId);
   }
 
   /** Live overlay for the `/moveitems` calibrator. Does not change production defaults. */
@@ -495,8 +495,8 @@ export class PlayerVisual {
     this.rig.leftLeg.rotation.x = pose.leftLegX;
   }
 
-  private applyHeldItemTransform(model: THREE.Group, category: ItemRenderCategory): void {
-    applyThirdPersonHeldItemTransform(model, defaultThirdPersonHeldItemTransform(category));
+  private applyHeldItemTransform(model: THREE.Group, itemId: string): void {
+    applyThirdPersonHeldItemTransform(model, defaultThirdPersonHeldItemTransformForItem(itemId));
   }
 
   private assertActive(): void {

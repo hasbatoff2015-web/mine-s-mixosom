@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { BlockId } from '../blocks';
 import {
   ITEMS,
-  classifyItemForRendering,
   type ItemDefinition,
   type ItemKind,
 } from '../items';
@@ -15,6 +14,7 @@ import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry'
 import { PlayerVisual, type PlayerVisualFrameState } from '../rendering/player/PlayerVisual';
 import {
   ThirdPersonHeldItemCalibratorState,
+  classifyThirdPersonHeldItem,
   type ThirdPersonHeldItemTransform,
 } from '../rendering/player/thirdPersonHeldItem';
 import { setEntityLight } from '../rendering/worldLighting';
@@ -182,7 +182,7 @@ export async function startMoveItemsHarness(
     catalog,
     getItemId: () => currentItem,
     getTransform,
-    getCategory: () => classifyItemForRendering(currentItem),
+    getCategory: () => classifyThirdPersonHeldItem(currentItem),
     onSelectItem: (itemId) => {
       currentItem = itemId;
       applyItem(itemId, state.remember(itemId));

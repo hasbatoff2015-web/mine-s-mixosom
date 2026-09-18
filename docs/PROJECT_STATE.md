@@ -1,6 +1,13 @@
 # Состояние проекта
 
-## Последний проход: Third-person held-item calibrator `/moveitems` — 2026-09-18
+## Последний проход: Third-person sword vs tool poses — 2026-09-18
+
+- Remote/third-person held items: **все мечи** делят одну pose (`y 0.225`, `z -0.245`, rot `-0.1232 / 1.4668 / -0.1232`, scale `0.55`), **все `kind: 'tool'`** — другую (`y 0.215`, `z -0.155`, та же rotation/scale). Не per-item override для `diamond_sword` / `iron_pickaxe`.
+- `block` / `generated` / `handheld` (stick, flint) / `bow` и first-person `FIRST_PERSON_SPRITE_POSE` не менялись. Классификация mesh/FP остаётся `handheld`.
+- Позы живут в `thirdPersonHeldItem.ts`; `PlayerVisual.setHeldItem` выбирает по item kind. `/moveitems` RESET читает эти же production defaults.
+- Подробности: `docs/reports/2026-09-18_third-person-sword-tool-poses.md`.
+
+## Предыдущий проход: Third-person held-item calibrator `/moveitems` — 2026-09-18
 
 - DEV-страница `http://localhost:4173/moveitems` — live калибратор предметов в руке **другого игрока**. Не пишет production pose, не меняет first-person `FIRST_PERSON_SPRITE_POSE`, gameplay, protocol и сервер.
 - Сцена: маленький `VoxelWorld` + `WorldRenderer`, канонический `PlayerVisual` (тот же путь, что `RemotePlayerView.setHeldItem`), orbit-камера. Панель: position/rotation/scale, RESET, COPY / COPY ALL, переключение реальных item id.

@@ -1,5 +1,10 @@
 import type { Object3D } from 'three';
-import { itemRenderProfile, type ItemRenderCategory } from '../../items';
+import {
+  classifyItemForRendering,
+  getItemDefinition,
+  type ItemDefinition,
+  type ItemRenderCategory,
+} from '../../items';
 
 /** Live/production third-person held-item pose used by `PlayerVisual` / remote players. */
 export interface ThirdPersonHeldItemTransform {
@@ -26,25 +31,52 @@ function pose(
 }
 
 /**
- * Production third-person held transforms, keyed by render category.
- * Numbers match the historical `PlayerVisual.applyHeldItemTransform` defaults.
- * The `/moveitems` calibrator reads these as RESET; it does not write them back.
+ * Third-person pose kind. `ItemRenderCategory` still owns first-person/mesh routing.
+ * Swords and other `kind: 'tool'` items share `handheld` there, but use distinct
+ * third-person poses calibrated on diamond_sword / iron_pickaxe.
  */
-export const THIRD_PERSON_HELD_ITEM_DEFAULTS: Readonly<Record<ItemRenderCategory, ThirdPersonHeldItemTransform>> = Object.freeze({
+export type ThirdPersonHeldItemPoseKind = ItemRenderCategory | 'sword' | 'tool';
+
+const SWORD_ROTATION = vec(-0.1232, 1.4668, -0.1232);
+
+/**
+ * Production third-person held transforms for `PlayerVisual` / remote players.
+ * `block` / `generated` / `handheld` / `bow` keep the historical numbers.
+ * `sword` and `tool` are group poses, not per-item overrides.
+ */
+export const THIRD_PERSON_HELD_ITEM_DEFAULTS: Readonly<Record<ThirdPersonHeldItemPoseKind, ThirdPersonHeldItemTransform>> = Object.freeze({
   block: pose(vec(0, -0.02, -0.02), vec(-0.55, 0.45, -0.28), 0.24),
   generated: pose(vec(0, -0.04, -0.06), vec(-0.16, 0, -0.72), 0.40),
   handheld: pose(vec(0, -0.04, -0.06), vec(-0.16, 0, -0.72), 0.55),
   bow: pose(vec(0, -0.04, -0.06), vec(-0.16, 0, 0.85), 0.46),
+  sword: pose(vec(0, 0.225, -0.245), SWORD_ROTATION, 0.55),
+  tool: pose(vec(0, 0.215, -0.155), SWORD_ROTATION, 0.55),
 });
 
+export function isThirdPersonSwordItem(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  return item.kind === 'weapon' && item.weapon === 'sword';
+}
+
+export function isThirdPersonToolItem(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  return item.kind === 'tool';
+}
+
+export function classifyThirdPersonHeldItem(itemOrId: string | ItemDefinition): ThirdPersonHeldItemPoseKind {
+  if (isThirdPersonSwordItem(itemOrId)) return 'sword';
+  if (isThirdPersonToolItem(itemOrId)) return 'tool';
+  return classifyItemForRendering(itemOrId);
+}
+
 export function defaultThirdPersonHeldItemTransform(
-  category: ItemRenderCategory,
+  kind: ThirdPersonHeldItemPoseKind,
 ): ThirdPersonHeldItemTransform {
-  return cloneThirdPersonHeldItemTransform(THIRD_PERSON_HELD_ITEM_DEFAULTS[category]);
+  return cloneThirdPersonHeldItemTransform(THIRD_PERSON_HELD_ITEM_DEFAULTS[kind]);
 }
 
 export function defaultThirdPersonHeldItemTransformForItem(itemId: string): ThirdPersonHeldItemTransform {
-  return defaultThirdPersonHeldItemTransform(itemRenderProfile(itemId).category);
+  return defaultThirdPersonHeldItemTransform(classifyThirdPersonHeldItem(itemId));
 }
 
 export function cloneThirdPersonHeldItemTransform(
