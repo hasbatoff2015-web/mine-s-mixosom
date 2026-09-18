@@ -5836,6 +5836,7 @@ export class Game {
     );
     session.playerVisual.update(this.renderDeltaSeconds, {
       bedRest: session.restingBed,
+      seated: Boolean(session.ridingCartId),
       viewYaw: this.input.yaw,
       viewPitch: this.input.pitch,
       movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),

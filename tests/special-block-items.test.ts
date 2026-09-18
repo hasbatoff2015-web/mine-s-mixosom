@@ -248,8 +248,10 @@ describe('oak door world model', () => {
     expect(doorFaceTextureUv('edge', 'left')[2] - doorFaceTextureUv('edge', 'left')[0]).toBeCloseTo(3 / 16, 6);
 
     expect(occupiedDoorFacing('south', false, 'left')).toBe('south');
-    expect(occupiedDoorFacing('south', true, 'left')).toBe('east');
-    expect(occupiedDoorFacing('south', true, 'right')).toBe('west');
+    expect(occupiedDoorFacing('south', true, 'left')).toBe('west');
+    expect(occupiedDoorFacing('south', true, 'right')).toBe('east');
+    expect(occupiedDoorFacing('north', true, 'left')).toBe('east');
+    expect(occupiedDoorFacing('east', true, 'left')).toBe('south');
 
     const keys: string[] = [];
     const atlas = {

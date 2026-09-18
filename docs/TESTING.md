@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-18 Rail corners / sign / door / minecart / seated
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/sign-entity-model.test.ts tests/special-block-items.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/lighting-physics-interaction.test.ts tests/tnt-minecart.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/utility-items.test.ts tests/arrow-visual-orientation.test.ts tests/skeleton-presentation.test.ts tests/mob-projectile-routing.test.ts tests/server/anarchy-gameplay.test.ts tests/block-selection-raycast.test.ts --maxWorkers=2
+```
+
+Focused (without full fire-contact file): **rail-corner-path 3/3**, **sign-entity-model 3/3**, **special-block-items 12/12**, **player-visual-animation 16/16**, **entity-special-block-rendering 8/8**, plus 165/unknown and anarchy 35/35. Isolated minecart floor visual **PASS**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS (**4.75 MiB / 404 files**).
+
+Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
 ## 2026-09-18 Merge current main into entity-special-visual-fixes
 
 Save/block:

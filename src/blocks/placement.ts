@@ -169,7 +169,11 @@ export function ladderPlacementFromHit(
   };
 }
 
-/** Closed door occupies `facing`; open door swings 90° by hinge. */
+/**
+ * Closed door occupies `facing` (outside). Open door swings 90° around the hinge.
+ * `left` is the left edge when looking at the closed door from outside, so a
+ * south-facing left-hinge door pivots on the west edge and occupies west when open.
+ */
 export function occupiedDoorFacing(
   facing: HorizontalFacing,
   open: boolean,
@@ -178,17 +182,36 @@ export function occupiedDoorFacing(
   if (!open) return facing;
   if (hinge === 'left') {
     switch (facing) {
-      case 'north': return 'west';
-      case 'west': return 'south';
-      case 'south': return 'east';
-      case 'east': return 'north';
+      case 'north': return 'east';
+      case 'east': return 'south';
+      case 'south': return 'west';
+      case 'west': return 'north';
     }
   }
   switch (facing) {
-    case 'north': return 'east';
-    case 'east': return 'south';
-    case 'south': return 'west';
-    case 'west': return 'north';
+    case 'north': return 'west';
+    case 'west': return 'south';
+    case 'south': return 'east';
+    case 'east': return 'north';
+  }
+}
+
+/**
+ * Hinge from the click on the door cell: left/right as seen from outside (`facing`).
+ */
+export function doorHingeFromPlacement(
+  facing: HorizontalFacing,
+  point: { readonly x: number; readonly z: number },
+  cellX: number,
+  cellZ: number,
+): DoorHinge {
+  const lx = point.x - cellX;
+  const lz = point.z - cellZ;
+  switch (facing) {
+    case 'south': return lx < 0.5 ? 'left' : 'right';
+    case 'north': return lx > 0.5 ? 'left' : 'right';
+    case 'east': return lz > 0.5 ? 'left' : 'right';
+    case 'west': return lz < 0.5 ? 'left' : 'right';
   }
 }
 

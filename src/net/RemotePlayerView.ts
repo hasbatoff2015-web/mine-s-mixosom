@@ -53,6 +53,7 @@ export class RemotePlayerView {
   private hurtSeq = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  private seated = false;
   private readonly whOutline: THREE.LineSegments[] = [];
   private readonly whOutlineGeometries: THREE.EdgesGeometry[] = [];
   private readonly whOutlineMaterial = new THREE.LineBasicMaterial({
@@ -97,6 +98,7 @@ export class RemotePlayerView {
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
+    this.seated = Boolean('ridingEntityId' in info && info.ridingEntityId);
     this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
     if (info.appearance) this.setAppearance(info.appearance);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
@@ -162,6 +164,7 @@ export class RemotePlayerView {
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
+    this.seated = !dead && Boolean('ridingEntityId' in snapshot && snapshot.ridingEntityId);
     if ('health' in snapshot && typeof snapshot.health === 'number') {
       this.nameplate.setIdentity(snapshot.name, snapshot.health);
     } else if (snapshot.name !== this.nameplate.name) {
@@ -195,6 +198,7 @@ export class RemotePlayerView {
         sprinting: false,
         verticalVelocity: 0,
         ...actionFrame,
+        seated: this.seated && !dying,
         invisible: false,
         hurtFlash: 0,
         deathProgress,
@@ -212,6 +216,7 @@ export class RemotePlayerView {
       sprinting: dying ? false : pose.sprinting,
       verticalVelocity: dying ? 0 : pose.vy,
       ...actionFrame,
+      seated: this.seated && !dying,
       invisible: pose.invisible,
       hurtFlash: 0,
       deathProgress,

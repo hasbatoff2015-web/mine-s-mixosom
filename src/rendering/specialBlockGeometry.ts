@@ -108,24 +108,32 @@ const SIGN_BOARD: SignVisualPart['faces'] = {
   down: signFace(26, 0, 50, 2),
 };
 const SIGN_POST: SignVisualPart['faces'] = {
-  south: signFace(2, 22.4, 4, 30),
-  north: signFace(6, 22.4, 8, 30),
-  west: signFace(0, 22.4, 2, 30),
-  east: signFace(4, 22.4, 6, 30),
+  south: signFace(2, 16, 4, 30),
+  north: signFace(6, 16, 8, 30),
+  west: signFace(0, 16, 2, 30),
+  east: signFace(4, 16, 6, 30),
 };
 
-/** ModelSign proportions scaled to fit the current cell-height sign placement. */
+const SIGN_BOARD_SIZE = [1, 8 / 16, 2 / 16] as const;
+const SIGN_POST_SIZE = [2 / 16, 8 / 16, 2 / 16] as const;
+
+/**
+ * Board stays inside the cell (14×8×2 px). Wall signs sit on the attached
+ * face: local −Z is north, and `addSign` rotates so that is the wall.
+ */
 export function signVisualParts(attachment: 'floor' | 'wall'): readonly SignVisualPart[] {
   const board: SignVisualPart = {
     texture: SIGN_SHEET_KEY,
-    center: [0, attachment === 'wall' ? 0.5 : 0.68, attachment === 'wall' ? 0.24 : 0],
-    size: [1.2, 0.6, 0.1],
+    center: attachment === 'wall'
+      ? [0, 8 / 16, -0.5 + SIGN_BOARD_SIZE[2] / 2]
+      : [0, 12 / 16, 0],
+    size: SIGN_BOARD_SIZE,
     faces: SIGN_BOARD,
   };
   return attachment === 'wall' ? [board] : [board, {
     texture: SIGN_SHEET_KEY,
-    center: [0, 0.19, 0],
-    size: [0.08, 0.38, 0.08],
+    center: [0, 4 / 16, 0],
+    size: SIGN_POST_SIZE,
     faces: SIGN_POST,
   }];
 }
@@ -160,6 +168,7 @@ import {
   railLocalBoxes,
   resolveRailShape,
   resolveStairShape,
+  signLocalBoxes,
   slabLocalBoxes,
   stairLocalBoxes,
   type BlockNeighborView,
@@ -192,6 +201,7 @@ export {
   defaultStairFacing,
   defaultStairHalf,
   doorLocalBox,
+  signLocalBoxes,
   fenceConnects,
   fenceConnections,
   fenceLocalBoxes,
@@ -491,12 +501,22 @@ export function railRenderQuads(shape: RailShape): readonly RailRenderQuad[] {
     case 'ascending_south': return [ns(high, lo, 'straight', [0, 0, 1, 1])];
     case 'ascending_east': return [ew(lo, high)];
     case 'ascending_west': return [ew(high, lo)];
-    case 'north_east': return [ns(lo, lo, 'corner', [0, 0, 1, 1])];
-    case 'north_west': return [ns(lo, lo, 'corner', [1, 0, 0, 1])];
-    case 'south_east': return [ns(lo, lo, 'corner', [0, 1, 1, 0])];
-    case 'south_west': return [ns(lo, lo, 'corner', [1, 1, 0, 0])];
+    // rail_corner.png authors the L on image left+bottom. addQuad maps that
+    // island onto the south+west edges, so identity UV is south_west.
+    case 'south_west': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.south_west)];
+    case 'south_east': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.south_east)];
+    case 'north_west': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.north_west)];
+    case 'north_east': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.north_east)];
   }
 }
+
+/** Corner UVs in mesher space (v=0 at image bottom). Exported for tests. */
+export const RAIL_CORNER_UV = {
+  south_west: [0, 0, 1, 1],
+  south_east: [1, 0, 0, 1],
+  north_west: [0, 1, 1, 0],
+  north_east: [1, 1, 0, 0],
+} as const satisfies Record<'north_east' | 'north_west' | 'south_east' | 'south_west', TextureUvRect>;
 
 export interface ChainMeshPlane {
   readonly corners: readonly (readonly [number, number, number])[];
@@ -587,10 +607,7 @@ export function selectionBoxesForBlock(
         minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1,
       }]);
     case 'sign':
-      return selectionBoxesFromLocal(x, y, z, [{
-        minX: 0.05, minY: state?.attachment === 'wall' ? 0.28 : 0,
-        minZ: 0.05, maxX: 0.95, maxY: 0.92, maxZ: 0.95,
-      }]);
+      return selectionBoxesFromLocal(x, y, z, signLocalBoxes(state));
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }

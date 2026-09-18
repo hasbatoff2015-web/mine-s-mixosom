@@ -9,6 +9,7 @@ import {
   LANTERN_BODY_END_UV,
   LANTERN_BODY_SIDE_UV,
   RAIL_SURFACE_EPSILON,
+  RAIL_CORNER_UV,
   TORCH_BOTTOM_UV,
   TORCH_SIDE_UV,
   TORCH_TOP_UV,
@@ -112,6 +113,15 @@ describe('render-only rail surfaces', () => {
       expect(Math.min(...ys), shape).toBe(RAIL_SURFACE_EPSILON);
       if (shape.startsWith('ascending_')) expect(Math.max(...ys), shape).toBe(1 + RAIL_SURFACE_EPSILON);
     }
+  });
+
+  it('maps rail_corner.png so south+west is identity and the other three corners rotate that L', () => {
+    expect(railRenderQuads('south_west')[0]?.uv).toEqual(RAIL_CORNER_UV.south_west);
+    expect(railRenderQuads('south_east')[0]?.uv).toEqual(RAIL_CORNER_UV.south_east);
+    expect(railRenderQuads('north_west')[0]?.uv).toEqual(RAIL_CORNER_UV.north_west);
+    expect(railRenderQuads('north_east')[0]?.uv).toEqual(RAIL_CORNER_UV.north_east);
+    expect(RAIL_CORNER_UV.south_west).toEqual([0, 0, 1, 1]);
+    expect(RAIL_CORNER_UV.north_east).toEqual([1, 1, 0, 0]);
   });
 
   it('meshes every stored shape as exactly one double-sided surface and selects the corner asset', () => {

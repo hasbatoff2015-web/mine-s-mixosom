@@ -51,6 +51,17 @@ describe('player visual animator', () => {
     expect(sneak.bodyZOffset).toBe(0);
   });
 
+  it('applies a reusable seated pose with folded legs and a lowered hip', () => {
+    const seated = new PlayerVisualAnimator().advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
+    expect(seated.rightLegX).toBeLessThan(-1);
+    expect(seated.leftLegX).toBeCloseTo(seated.rightLegX);
+    expect(seated.bodyYOffset).toBeLessThan(-0.2);
+    expect(Math.abs(seated.rightArmX - seated.leftArmX)).toBeLessThan(0.01);
+    const standing = new PlayerVisualAnimator().advance(1 / 60, idle);
+    expect(standing.bodyYOffset).toBe(0);
+    expect(standing.rightLegX).toBeCloseTo(0);
+  });
+
   it('overlays attack, bow, sword block and food poses without touching simulation state', () => {
     const animator = new PlayerVisualAnimator();
     animator.advance(0, idle);

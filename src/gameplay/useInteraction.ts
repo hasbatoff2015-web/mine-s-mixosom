@@ -19,6 +19,7 @@ import {
   chainPlacementFromHit,
   chestFacingFromYaw,
   doorFacingFromYaw,
+  doorHingeFromPlacement,
   furnaceFacingFromYaw,
   getBlockDefinition,
   horizontalFacingFromXZ,
@@ -573,7 +574,7 @@ export function placeBlockAt(
 
   if (blockId === BlockId.OakDoor) {
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
-    return placeDoor(ctx, x, y, z, existing);
+    return placeDoor(ctx, x, y, z, existing, hit);
   }
 
   if (blockId === BlockId.Torch || blockId === BlockId.RedstoneTorch) {
@@ -848,6 +849,7 @@ function placeDoor(
   y: number,
   z: number,
   previous: number,
+  hit?: VoxelHit,
 ): PlaceResult {
   if (y + 1 >= WORLD_HEIGHT) return { ok: false, reason: 'door-space' };
   const upperBlock = ctx.world.getBlock(x, y + 1, z);
@@ -863,8 +865,11 @@ function placeDoor(
     return { ok: false, reason: 'rejected' };
   }
   const facing = doorFacingFromYaw(ctx.yaw);
-  ctx.world.setBlockState(x, y, z, { facing, hinge: 'left', open: false, half: 'lower' });
-  ctx.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
+  const hinge = hit?.point
+    ? doorHingeFromPlacement(facing, hit.point, x, z)
+    : 'left' as const;
+  ctx.world.setBlockState(x, y, z, { facing, hinge, open: false, half: 'lower' });
+  ctx.world.setBlockState(x, y + 1, z, { facing, hinge, open: false, half: 'upper' });
   ctx.redstone.notifyBlockChanged(x, y, z);
   ctx.redstone.notifyBlockChanged(x, y + 1, z);
   ctx.effects?.playBlock?.('place', BlockId.OakDoor, x, y, z);

@@ -33,7 +33,6 @@ import {
   MINECART_TNT_CARGO_NAME,
   MINECART_TNT_SEAT,
   MINECART_TNT_SIZE,
-  MINECART_WIDTH,
   RAIL_STRIP_HEIGHT,
   minecartFloorMesh,
 } from '../src/rendering/minecartGeometry';
@@ -677,13 +676,14 @@ describe('minecart solid inner floor', () => {
     const floor = minecartFloorMesh(asObject3D(cart.visual)!);
     expect(floor).toBeDefined();
     expect(floor!.name).toBe(MINECART_FLOOR_NAME);
-    const geometry = floor!.geometry as THREE.BoxGeometry;
-    expect(geometry.parameters.width).toBeCloseTo(MINECART_WIDTH, 5);
-    expect(geometry.parameters.depth).toBeCloseTo(MINECART_WIDTH, 5);
-    expect(geometry.parameters.height).toBeCloseTo(MINECART_FLOOR_THICKNESS, 5);
-    expect(geometry.getIndex()?.count).toBe(36);
+    floor!.geometry.computeBoundingBox();
+    const size = floor!.geometry.boundingBox!.getSize(new THREE.Vector3());
+    expect(size.x).toBeCloseTo(20 / 16, 5);
+    expect(size.y).toBeCloseTo(16 / 16, 5);
+    expect(size.z).toBeCloseTo(MINECART_FLOOR_THICKNESS, 5);
+    expect(floor!.rotation.x).toBeCloseTo(Math.PI / 2, 5);
     expect(MINECART_FLOOR_TOP).toBeGreaterThan(RAIL_STRIP_HEIGHT);
-    const floorTop = floor!.position.y + geometry.parameters.height / 2;
+    const floorTop = floor!.position.y + MINECART_FLOOR_THICKNESS / 2;
     expect(floorTop).toBeCloseTo(MINECART_FLOOR_TOP, 5);
     expect(floorTop).toBeGreaterThan(RAIL_STRIP_HEIGHT);
     const material = floor!.material as THREE.MeshBasicMaterial;
@@ -692,6 +692,16 @@ describe('minecart solid inner floor', () => {
     expect(material.depthWrite).toBe(true);
     expect(material.depthTest).toBe(true);
     expect(material.side).toBe(THREE.DoubleSide);
+    expect(material.map).toBeTruthy();
+
+    const cartMeshes: THREE.Mesh[] = [];
+    asObject3D(cart.visual)!.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.name !== MINECART_TNT_CARGO_NAME) cartMeshes.push(child);
+    });
+    expect(cartMeshes).toHaveLength(5);
+    for (const mesh of cartMeshes) {
+      expect((mesh.material as THREE.MeshBasicMaterial).map, mesh.name).toBeTruthy();
+    }
 
     manager.insertTnt(cart);
     const cargo = cart.visual!.getObjectByName(MINECART_TNT_CARGO_NAME) as THREE.Mesh;

@@ -1,5 +1,9 @@
 # Архитектура
 
+## Rail corners / sign / door hinge / minecart / seated — 2026-09-18
+
+`railRenderQuads` maps `rail_corner.png` with identity UV = south+west (image left+bottom in mesher v=0-at-bottom space). `resolveRailShape` and `railPath` names were already neighbor-correct. `occupiedDoorFacing` left hinge is outside-left: south closed → west open. Signs: 16×8×2 board, wall on attached face at ±0.5∓1/16. Minecart visual is ModelMinecart floor (0,10) + four walls (0,0) from `entity/minecart`. `PlayerAnimationState.seated` is a reusable sit pose; minecart passengers set it from `ridingCartId` / snapshot `ridingEntityId`.
+
 ## Merge current main into entity-special-visual-fixes — 2026-09-18
 
 `origin/main` architecture (Utility Items, OakSign=165, unknown-block placeholders, menu/social, current arrow `visualDirection`/`impactVx`) stays canonical. Entity/special visual fixes overlay that architecture: authored torch/lantern/rail render geometry, exact skeleton projectile `targetPlayerId`, third-person grip table, bow pitch sign, and flying-arrow orientation from this tick's movement segment. Chicken keeps the current main `[29, 0]` yellow-island UV rather than the older feature per-face remap.

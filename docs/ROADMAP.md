@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-18: rail corners / sign / door hinge / minecart visual / seated pose
+
+- [x] Align `rail_corner` UV with south+west authored L; keep live `resolveRailShape` + `railPath`.
+- [x] Fit standing/wall OakSign mesh and selection inside the cell; wall flush to attached face.
+- [x] Open doors around the outside-left hinge (south+left → west).
+- [x] Rebuild minecart from `entity/minecart` ModelMinecart floor+walls.
+- [x] Reusable `seated` animator pose for minecart passengers (local + remote `ridingEntityId`).
+- [ ] Owner live: four-corner ride, wall sign against a real block, left/right door swing, sit in cart third-person.
+
 ## 2026-09-18: merge current main into entity-special-visual-fixes
 
 - [x] Semantic merge `origin/main` into `codex/entity-special-visual-fixes` without shifting OakSign off 165 or dropping unknown-block compatibility.

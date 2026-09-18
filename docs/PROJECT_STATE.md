@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: rail corners, sign, door hinge, minecart visual, seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Corner rail UV совпадает с `south_west` native `rail_corner.png`; door `occupiedDoorFacing` качает петли с внешней левой стороны; табличка 16×8×2 внутри клетки, wall flush; minecart — ModelMinecart UV; `seated` pose для пассажира.
+- Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
 ## Последний проход: merge current main into entity-special-visual-fixes — 2026-09-18
 
 - Ветка `codex/entity-special-visual-fixes` синхронизирована с `origin/main` через `--no-ff --no-commit` semantic union. OakSign остаётся **165**; generic unknown-block compat (`65534`) сохранён. Feature history не переписывалась, `main` не менялся.
