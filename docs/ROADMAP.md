@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-18: seated pose sign, door outside facing, rail connectivity
+
+- [x] Flip seated limb X rotations so tips go to local −Z (forward).
+- [x] Store door `facing` as closed-door outward normal; `doorHingeEdge` is the open occupied edge.
+- [x] Reciprocal rail endpoints for resolve/path; curve length `π/4`; bounded neighbor refresh.
+- [ ] Owner live: seated cart third-person, four door facings, straight→corner minecart tracks.
+
 ## 2026-09-18: rail corners / sign / door hinge / minecart visual / seated pose
 
 - [x] Align `rail_corner` UV with south+west authored L; keep live `resolveRailShape` + `railPath`.

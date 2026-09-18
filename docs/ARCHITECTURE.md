@@ -1,5 +1,13 @@
 # Архитектура
 
+## Seated pose / door outside facing / rail connectivity — 2026-09-18
+
+Seated pose keeps reusable `PlayerAnimationState.seated`. Limb X rotations are positive so a −Y limb tip moves to local −Z (model front).
+
+Door `BlockRenderState.facing` is the closed slab's outward normal. `doorFacingFromYaw` stays look-direction for chests/furnaces/beds. `doorOutsideFacingFromYaw` is look-opposite and is what `placeDoor` stores. `doorHingeEdge(facing, hinge)` is the physical hinge edge; open occupancy, `doorLocalBox`, and `ChunkMesher.addDoor` all use `occupiedDoorFacing` → that edge.
+
+Rail connectivity is `railEndDirections(shape)` in Node-safe `blockGeometry`. `resolveRailShape` uses occupied neighbors plus reciprocal endpoints and existing shape as a 3-neighbor tie-breaker. `railPath.nextRail` / `entryProgress` share that table; a non-reciprocal neighbor is not a path. Corner `railLength` is radius 0.5 × π/2 = π/4. `RAIL_CORNER_UV.south_west` identity is unchanged.
+
 ## Rail corners / sign / door hinge / minecart / seated — 2026-09-18
 
 `railRenderQuads` maps `rail_corner.png` with identity UV = south+west (image left+bottom in mesher v=0-at-bottom space). `resolveRailShape` and `railPath` names were already neighbor-correct. `occupiedDoorFacing` left hinge is outside-left: south closed → west open. Signs: 16×8×2 board, wall on attached face at ±0.5∓1/16. Minecart visual is ModelMinecart floor (0,10) + four walls (0,0) from `entity/minecart`. `PlayerAnimationState.seated` is a reusable sit pose; minecart passengers set it from `ridingCartId` / snapshot `ridingEntityId`.

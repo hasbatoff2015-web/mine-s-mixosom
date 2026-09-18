@@ -837,7 +837,7 @@ export class ChunkMesher {
       state?.facing ?? 'north',
       state?.open === true,
       state?.hinge ?? 'left',
-    );
+    ); // closed = outward edge; open = doorHingeEdge(facing, hinge)
     const hinge = state?.hinge ?? 'left';
     const texture = doorHalfTexture(state?.half, definition.textures);
     const t = DOOR_THICKNESS;

@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { BlockId, type HorizontalFacing, type RailShape } from '../blocks';
 import { CHUNK_SIZE, chunkKey } from '../core/constants';
+import { MinecartManager } from '../entities/MinecartManager';
+import { toggleDoorState } from '../gameplay/useInteraction';
+import { DEFAULT_PLAYER_APPEARANCE } from '../player/appearance/PlayerAppearance';
+import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
 import { TextureAtlas } from '../rendering/TextureAtlas';
+import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
+import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
+import { PlayerVisual } from '../rendering/player/PlayerVisual';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { Chunk } from '../world/Chunk';
 import { disposeWorldLighting } from '../world/LightEngine';
 import { VoxelWorld } from '../world/World';
 
-type RailQaRow = 'all' | 'flat' | 'slope';
+type RailQaRow = 'all' | 'flat' | 'slope' | 'tracks';
 
 const TORCH_FACINGS: readonly HorizontalFacing[] = ['north', 'south', 'east', 'west'];
 
@@ -23,28 +30,20 @@ export async function startRailQaHarness(
   uiRoot: HTMLElement,
   requestedRow: string | null,
 ): Promise<() => void> {
-  const row: RailQaRow = requestedRow === 'flat' || requestedRow === 'slope' ? requestedRow : 'all';
+  const row: RailQaRow = requestedRow === 'flat' || requestedRow === 'slope' || requestedRow === 'tracks'
+    ? requestedRow
+    : 'all';
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">${
+    row === 'tracks'
+      ? 'RAIL TRACK QA · straight → corner → straight\nNE · NW · SE · SW with moving minecarts'
+      : `RAIL QA · production WorldRenderer · ${row}\nflat: NS · EW · NE · NW · SE · SW\nslope: north · south · east · west`
+  }</div>`;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x90b9cf);
-  const world = createRailQaWorld();
-  const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
-  const worldRenderer = new WorldRenderer(world, atlas, (x, y, z) => world.getBlockState(x, y, z));
-  worldRenderer.setDaylight(1);
-  scene.add(worldRenderer.group);
-
   const camera = new THREE.PerspectiveCamera(52, 1, 0.05, 100);
-  const view = row === 'flat'
-    ? { position: [15, 45, 20] as const, look: [15, 40, 7] as const }
-    : row === 'slope'
-      ? { position: [15, 45, 27] as const, look: [15, 40.3, 17] as const }
-      : { position: [15, 52, 37] as const, look: [15, 40, 12] as const };
-  camera.position.set(view.position[0], view.position[1], view.position[2]);
-  camera.lookAt(view.look[0], view.look[1], view.look[2]);
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">RAIL QA · production WorldRenderer · ${row}\nflat: NS · EW · NE · NW · SE · SW\nslope: north · south · east · west</div>`;
-
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
@@ -54,18 +53,46 @@ export async function startRailQaHarness(
   };
   resize();
   addEventListener('resize', resize);
+  renderer.render(scene, camera);
+  const world = row === 'tracks' ? createRailTrackQaWorld() : createRailQaWorld();
+  const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
+  const worldRenderer = new WorldRenderer(world, atlas, (x, y, z) => world.getBlockState(x, y, z));
+  worldRenderer.setDaylight(1);
+  scene.add(worldRenderer.group);
+
+  const view = row === 'flat'
+    ? { position: [15, 45, 20] as const, look: [15, 40, 7] as const }
+    : row === 'slope'
+      ? { position: [15, 45, 27] as const, look: [15, 40.3, 17] as const }
+      : row === 'tracks'
+        ? { position: [10, 44, 18] as const, look: [9, 40.1, 10] as const }
+        : { position: [15, 52, 37] as const, look: [15, 40, 12] as const };
+  camera.position.set(view.position[0], view.position[1], view.position[2]);
+  camera.lookAt(view.look[0], view.look[1], view.look[2]);
+
+  let carts: MinecartManager | undefined;
   let frame = 0;
-  const render = (): void => {
+  let previous = performance.now();
+  const render = (now: number): void => {
+    const delta = Math.min(0.05, Math.max(0, (now - previous) / 1000));
+    previous = now;
     world.processLighting(3, 15, 12);
     worldRenderer.rebuildDirty(4, 8, 15, 12, { requireNeighborLight: false });
+    carts?.update(delta);
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);
   };
-  render();
+  frame = requestAnimationFrame(render);
+  if (row === 'tracks') {
+    const items = new ItemVisualFactory({ atlas });
+    carts = new MinecartManager(scene, world, items);
+    spawnTrackCarts(carts);
+  }
 
   return () => {
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
+    carts?.dispose();
     worldRenderer.dispose();
     disposeWorldLighting(world);
     atlas.dispose();
@@ -193,4 +220,237 @@ function placeShapeRow(world: VoxelWorld, shapes: readonly RailShape[], z: numbe
     world.setBlock(x, 40, z, BlockId.Rail, false);
     world.setBlockState(x, 40, z, { railShape: shape });
   });
+}
+
+function createStoneQaWorld(name: string): VoxelWorld {
+  const world = new VoxelWorld(name);
+  for (let chunkZ = 0; chunkZ <= 1; chunkZ += 1) {
+    for (let chunkX = 0; chunkX <= 1; chunkX += 1) {
+      const chunk = new Chunk(chunkX, chunkZ);
+      chunk.generated = true;
+      const start = 39 * CHUNK_SIZE * CHUNK_SIZE;
+      chunk.blocks.fill(BlockId.Stone, start, start + CHUNK_SIZE * CHUNK_SIZE);
+      chunk.occupancyTop = 39;
+      chunk.surfaceHeights.fill(39);
+      world.chunks.set(chunkKey(chunkX, chunkZ), chunk);
+    }
+  }
+  world.setViewCenter(12, 10, 1);
+  world.deferredLighting = true;
+  return world;
+}
+
+function writeQaRail(world: VoxelWorld, x: number, z: number, shape: RailShape): void {
+  world.setBlock(x, 40, z, BlockId.Rail, false);
+  world.setBlockState(x, 40, z, { railShape: shape });
+}
+
+function createRailTrackQaWorld(): VoxelWorld {
+  const world = createStoneQaWorld('rail-track-qa');
+  // NE: south NS → corner → east EW
+  writeQaRail(world, 4, 4, 'north_south');
+  writeQaRail(world, 4, 5, 'north_south');
+  writeQaRail(world, 4, 6, 'north_east');
+  writeQaRail(world, 5, 6, 'east_west');
+  writeQaRail(world, 6, 6, 'east_west');
+  // NW
+  writeQaRail(world, 14, 4, 'north_south');
+  writeQaRail(world, 14, 5, 'north_south');
+  writeQaRail(world, 14, 6, 'north_west');
+  writeQaRail(world, 13, 6, 'east_west');
+  writeQaRail(world, 12, 6, 'east_west');
+  // SE
+  writeQaRail(world, 4, 16, 'north_south');
+  writeQaRail(world, 4, 15, 'north_south');
+  writeQaRail(world, 4, 14, 'south_east');
+  writeQaRail(world, 5, 14, 'east_west');
+  writeQaRail(world, 6, 14, 'east_west');
+  // SW
+  writeQaRail(world, 14, 16, 'north_south');
+  writeQaRail(world, 14, 15, 'north_south');
+  writeQaRail(world, 14, 14, 'south_west');
+  writeQaRail(world, 13, 14, 'east_west');
+  writeQaRail(world, 12, 14, 'east_west');
+  return world;
+}
+
+function spawnTrackCarts(manager: MinecartManager): void {
+  const north = manager.spawn(4, 40, 4);
+  if (north) north.alongSpeed = 3;
+  const northWest = manager.spawn(14, 40, 4);
+  if (northWest) northWest.alongSpeed = 3;
+  const south = manager.spawn(4, 40, 16);
+  if (south) south.alongSpeed = -3;
+  const southWest = manager.spawn(14, 40, 16);
+  if (southWest) southWest.alongSpeed = -3;
+}
+
+export async function startDoorQaHarness(
+  canvas: HTMLCanvasElement,
+  uiRoot: HTMLElement,
+): Promise<() => void> {
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">DOOR QA · facing = closed outward normal
+front row closed · back row open · hinge left as seen from outside
+N · S · E · W    Space toggles every door</div>`;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fb4c8);
+  const world = createStoneQaWorld('door-qa');
+  const facings: readonly HorizontalFacing[] = ['north', 'south', 'east', 'west'];
+  facings.forEach((facing, index) => {
+    const x = 6 + index * 4;
+    world.setBlock(x, 40, 8, BlockId.OakDoor, false);
+    world.setBlock(x, 41, 8, BlockId.OakDoor, false);
+    world.setBlockState(x, 40, 8, { facing, hinge: 'left', open: false, half: 'lower' });
+    world.setBlockState(x, 41, 8, { facing, hinge: 'left', open: false, half: 'upper' });
+    world.setBlock(x, 40, 12, BlockId.OakDoor, false);
+    world.setBlock(x, 41, 12, BlockId.OakDoor, false);
+    world.setBlockState(x, 40, 12, { facing, hinge: 'left', open: true, half: 'lower' });
+    world.setBlockState(x, 41, 12, { facing, hinge: 'left', open: true, half: 'upper' });
+  });
+  const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
+  const worldRenderer = new WorldRenderer(world, atlas, (x, y, z) => world.getBlockState(x, y, z));
+  worldRenderer.setDaylight(1);
+  scene.add(worldRenderer.group);
+  const camera = new THREE.PerspectiveCamera(52, 1, 0.05, 100);
+  camera.position.set(12, 46, 22);
+  camera.lookAt(12, 41, 10);
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">DOOR QA · facing = closed outward normal
+front row closed · back row open · hinge left as seen from outside
+N · S · E · W    Space toggles every door</div>`;
+  const resize = (): void => {
+    const width = Math.max(1, innerWidth);
+    const height = Math.max(1, innerHeight);
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  };
+  resize();
+  addEventListener('resize', resize);
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.code !== 'Space' || event.repeat) return;
+    event.preventDefault();
+    facings.forEach((_, index) => {
+      const x = 6 + index * 4;
+      toggleDoorState(world, x, 40, 8);
+      toggleDoorState(world, x, 40, 12);
+    });
+  };
+  addEventListener('keydown', onKey);
+  let frame = 0;
+  const render = (): void => {
+    world.processLighting(3, 15, 12);
+    worldRenderer.rebuildDirty(4, 8, 15, 12, { requireNeighborLight: false });
+    renderer.render(scene, camera);
+    frame = requestAnimationFrame(render);
+  };
+  render();
+  return () => {
+    cancelAnimationFrame(frame);
+    removeEventListener('resize', resize);
+    removeEventListener('keydown', onKey);
+    worldRenderer.dispose();
+    disposeWorldLighting(world);
+    atlas.dispose();
+    renderer.dispose();
+  };
+}
+
+export async function startSeatedCartQaHarness(
+  canvas: HTMLCanvasElement,
+  uiRoot: HTMLElement,
+): Promise<() => void> {
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">SEATED CART QA · third-person back
+legs/arms must fold forward (−Z), not into the backrest</div>`;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x769fba);
+  const camera = new THREE.PerspectiveCamera(48, 1, 0.05, 80);
+  const resize = (): void => {
+    const width = Math.max(1, innerWidth);
+    const height = Math.max(1, innerHeight);
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  };
+  resize();
+  addEventListener('resize', resize);
+  const world = createStoneQaWorld('seated-cart-qa');
+  for (let z = 6; z <= 12; z += 1) writeQaRail(world, 8, z, 'north_south');
+  const atlas = await TextureAtlas.create(Math.min(renderer.capabilities.getMaxAnisotropy(), 8));
+  const worldRenderer = new WorldRenderer(world, atlas, (x, y, z) => world.getBlockState(x, y, z));
+  worldRenderer.setDaylight(1);
+  scene.add(worldRenderer.group);
+  const playerState = {
+    viewYaw: 0,
+    viewPitch: 0,
+    movementSpeed: 2,
+    onGround: true,
+    sneaking: false,
+    sprinting: false,
+    verticalVelocity: 0,
+    mining: false,
+    bowCharge: 0,
+    swordBlocking: false,
+    foodUseProgress: 0,
+    seated: true,
+    invisible: false,
+    hurtFlash: 0,
+  };
+  let carts: MinecartManager | undefined;
+  let cart: ReturnType<MinecartManager['spawn']>;
+  let player: PlayerVisual | undefined;
+  let frame = 0;
+  let previous = performance.now();
+  const render = (now: number): void => {
+    const delta = Math.min(0.05, Math.max(0, (now - previous) / 1000));
+    previous = now;
+    world.processLighting(3, 15, 12);
+    worldRenderer.rebuildDirty(4, 8, 15, 12, { requireNeighborLight: false });
+    carts?.update(delta);
+    const seat = cart ?? { position: { x: 8.5, y: 40, z: 8.5 }, yaw: 0 };
+    if (player) {
+      player.root.position.set(seat.position.x, seat.position.y, seat.position.z);
+      playerState.viewYaw = 'yaw' in seat ? seat.yaw : 0;
+      player.update(delta, playerState);
+    }
+    camera.position.set(
+      seat.position.x + Math.sin(playerState.viewYaw) * 4.2,
+      seat.position.y + 2.4,
+      seat.position.z + Math.cos(playerState.viewYaw) * 4.2,
+    );
+    camera.lookAt(seat.position.x, seat.position.y + 1.1, seat.position.z);
+    renderer.render(scene, camera);
+    frame = requestAnimationFrame(render);
+  };
+  frame = requestAnimationFrame(render);
+  const items = new ItemVisualFactory({ atlas });
+  try {
+    carts = new MinecartManager(scene, world, items);
+    cart = carts.spawn(8, 40, 8);
+    if (cart) cart.alongSpeed = 0;
+  } catch (error) {
+    console.error(error);
+  }
+  const skins = new MinecraftSkinRegistry();
+  const geometries = new PlayerSkinGeometryCache();
+  player = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+  scene.add(player.root);
+  return () => {
+    cancelAnimationFrame(frame);
+    removeEventListener('resize', resize);
+    player?.dispose();
+    geometries.dispose();
+    skins.dispose();
+    carts?.dispose();
+    worldRenderer.dispose();
+    disposeWorldLighting(world);
+    items.dispose();
+    atlas.dispose();
+    renderer.dispose();
+  };
 }

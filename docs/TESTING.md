@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-18 Seated pose / door facing / rail connectivity
+
+```text
+npx vitest run tests/player-visual-animation.test.ts tests/rail-corner-path.test.ts tests/special-block-items.test.ts tests/entity-special-block-rendering.test.ts tests/lighting-physics-interaction.test.ts tests/tnt-minecart.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/content-pass.test.ts tests/chest-model.test.ts tests/use-interaction.test.ts tests/server/anarchy-gameplay.test.ts --maxWorkers=2
+```
+
+Focused: **player-visual-animation 16/16**, **rail-corner-path 10/10**, **special-block-items 13/13**, **entity-special-block-rendering 8/8**, **block-registry + unknown-block-load 21/21**, **tnt-minecart 8/8**. Related anarchy/content/chest/use **PASS**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` PASS (**4.75 MiB / 404 files**). Full `fire-contact-sunlight-minecart.test.ts` skipped (known host hang); topology cases live in `rail-corner-path`.
+
+Manual DEV: `/?qaSpecial=rails&row=tracks`, `/?qaSpecial=doors`, `/?qaSpecial=seated`.
+
+Подробности: `docs/reports/2026-09-18_seated-door-rail-connectivity.md`.
+
 ## 2026-09-18 Rail corners / sign / door / minecart / seated
 
 ```text

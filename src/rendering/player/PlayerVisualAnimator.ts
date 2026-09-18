@@ -101,10 +101,12 @@ export class PlayerVisualAnimator {
 
     if (seated) {
       this.walkStrength = 0;
-      rightLegX = -1.18;
-      leftLegX = -1.18;
-      rightArmX = -0.42;
-      leftArmX = -0.42;
+      // Canonical PlayerVisual front is local −Z. A limb hangs down −Y, so
+      // positive X rotation swings the tip forward (−Z); negative X is backward.
+      rightLegX = 1.18;
+      leftLegX = 1.18;
+      rightArmX = 0.42;
+      leftArmX = 0.42;
       rightArmZ = 0.1;
       leftArmZ = -0.1;
       bodyYOffset = -0.38;

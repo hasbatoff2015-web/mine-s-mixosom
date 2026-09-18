@@ -618,6 +618,12 @@ export class MinecartManager {
         cart.rail.y - neighbor.y,
         cart.rail.z - neighbor.z,
       );
+      if (enterT === undefined) {
+        const end = sampleRail(cart.rail, tEnd);
+        this.leaveRail(cart, leftover, end);
+        remaining = 0;
+        break;
+      }
       const oldSample = sampleRail(cart.rail, tEnd);
       cart.rail = neighbor;
       cart.progress = enterT;

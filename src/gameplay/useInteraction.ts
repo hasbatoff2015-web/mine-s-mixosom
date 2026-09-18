@@ -20,6 +20,7 @@ import {
   chestFacingFromYaw,
   doorFacingFromYaw,
   doorHingeFromPlacement,
+  doorOutsideFacingFromYaw,
   furnaceFacingFromYaw,
   getBlockDefinition,
   horizontalFacingFromXZ,
@@ -723,14 +724,24 @@ export function clearDoorBlocks(world: VoxelWorld, x: number, y: number, z: numb
   return halves;
 }
 
+const RAIL_REFRESH_PASSES = 4;
+
 export function refreshNeighborRails(world: VoxelWorld, x: number, y: number, z: number): void {
-  const cells = [
-    [x, y, z], [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1],
-    [x + 1, y + 1, z], [x - 1, y + 1, z], [x, y + 1, z + 1], [x, y + 1, z - 1],
-  ];
-  for (const [cx, cy, cz] of cells) {
-    if (world.getBlock(cx!, cy!, cz!, false) !== BlockId.Rail) continue;
-    world.setBlockState(cx!, cy!, cz!, { railShape: resolveRailShape(world, cx!, cy!, cz!) });
+  const cells: Array<readonly [number, number, number]> = [];
+  for (let dy = -1; dy <= 1; dy += 1) {
+    cells.push([x, y + dy, z]);
+    cells.push([x + 1, y + dy, z], [x - 1, y + dy, z], [x, y + dy, z + 1], [x, y + dy, z - 1]);
+  }
+  for (let pass = 0; pass < RAIL_REFRESH_PASSES; pass += 1) {
+    let changed = false;
+    for (const [cx, cy, cz] of cells) {
+      if (world.getBlock(cx, cy, cz, false) !== BlockId.Rail) continue;
+      const next = resolveRailShape(world, cx, cy, cz);
+      if (world.getBlockState(cx, cy, cz)?.railShape === next) continue;
+      world.setBlockState(cx, cy, cz, { railShape: next });
+      changed = true;
+    }
+    if (!changed) break;
   }
 }
 
@@ -864,7 +875,7 @@ function placeDoor(
     ctx.world.setBlock(x, y, z, previous);
     return { ok: false, reason: 'rejected' };
   }
-  const facing = doorFacingFromYaw(ctx.yaw);
+  const facing = doorOutsideFacingFromYaw(ctx.yaw);
   const hinge = hit?.point
     ? doorHingeFromPlacement(facing, hit.point, x, z)
     : 'left' as const;

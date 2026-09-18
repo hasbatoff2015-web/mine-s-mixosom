@@ -52,11 +52,22 @@ describe('player visual animator', () => {
   });
 
   it('applies a reusable seated pose with folded legs and a lowered hip', () => {
-    const seated = new PlayerVisualAnimator().advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
-    expect(seated.rightLegX).toBeLessThan(-1);
-    expect(seated.leftLegX).toBeCloseTo(seated.rightLegX);
+    const animator = new PlayerVisualAnimator();
+    const seated = animator.advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
+    const limbTip = (rotationX: number): THREE.Vector3 => (
+      new THREE.Vector3(0, -1, 0).applyAxisAngle(new THREE.Vector3(1, 0, 0), rotationX)
+    );
+    expect(limbTip(seated.rightLegX).z).toBeLessThan(0);
+    expect(limbTip(seated.leftLegX).z).toBeLessThan(0);
+    expect(limbTip(seated.rightArmX).z).toBeLessThan(0);
+    expect(limbTip(seated.leftArmX).z).toBeLessThan(0);
+    expect(seated.rightLegX).toBeCloseTo(seated.leftLegX);
+    expect(seated.rightLegX).toBeGreaterThan(1);
     expect(seated.bodyYOffset).toBeLessThan(-0.2);
     expect(Math.abs(seated.rightArmX - seated.leftArmX)).toBeLessThan(0.01);
+    const stillSeated = animator.advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
+    expect(stillSeated.rightLegX).toBeCloseTo(seated.rightLegX);
+    expect(stillSeated.leftLegX).toBeCloseTo(stillSeated.rightLegX);
     const standing = new PlayerVisualAnimator().advance(1 / 60, idle);
     expect(standing.bodyYOffset).toBe(0);
     expect(standing.rightLegX).toBeCloseTo(0);

@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: seated pose sign, door outside facing, rail connectivity — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Seated X rotations `+1.18` / `+0.42` (front = local −Z). Door `facing` = outward normal via `doorOutsideFacingFromYaw`; open occupancy = `doorHingeEdge`. Rails: reciprocal `railEndDirections`, `entryProgress` may be `undefined`, curve length `π/4`. `RAIL_CORNER_UV` не трогали.
+- Подробности: `docs/reports/2026-09-18_seated-door-rail-connectivity.md`.
+
 ## Последний проход: rail corners, sign, door hinge, minecart visual, seated pose — 2026-09-18
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Corner rail UV совпадает с `south_west` native `rail_corner.png`; door `occupiedDoorFacing` качает петли с внешней левой стороны; табличка 16×8×2 внутри клетки, wall flush; minecart — ModelMinecart UV; `seated` pose для пассажира.

@@ -212,6 +212,8 @@ export {
   lanternSelectionLocalBox,
   leverHandleAngle,
   leverLocalBoxes,
+  railConnectsToward,
+  railEndDirections,
   railLocalBoxes,
   railRunsEastWest,
   railTextureYaw,

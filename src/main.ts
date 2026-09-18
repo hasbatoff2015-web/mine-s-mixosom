@@ -42,6 +42,16 @@ if (import.meta.env.DEV) {
     void import('./dev/SpecialBlockQaHarness').then(async ({ startRailQaHarness }) => {
       disposeApplication = await startRailQaHarness(canvas, uiRoot, search.get('row'));
     });
+  } else if (qaSpecial === 'doors') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startDoorQaHarness }) => {
+      disposeApplication = await startDoorQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'seated') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startSeatedCartQaHarness }) => {
+      disposeApplication = await startSeatedCartQaHarness(canvas, uiRoot);
+    });
   } else if (qaSpecial === 'lights') {
     runningDevHarness = true;
     void import('./dev/SpecialBlockQaHarness').then(async ({ startLightBlockQaHarness }) => {
