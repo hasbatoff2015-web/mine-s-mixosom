@@ -222,13 +222,13 @@ export class ServerGameplay {
       for (const change of changes) {
         this.onBlockReplaced?.(change.x, change.y, change.z);
         this.noteBlockDelta(change.x, change.y, change.z, change.block);
-        this.redstone.notifyBlockChanged(change.x, change.y, change.z);
         if (isFluidBlock(change.block) || isFluidBlock(change.previous)) {
           this.events.emit('fluidUpdate', {
             x: change.x, y: change.y, z: change.z, blockId: change.block,
           });
         }
       }
+      if (changes.length > 0) this.redstone?.notifyBlocksChanged(changes);
     };
     world.onCommittedBlockState = (change) => {
       this.noteBlockDelta(change.x, change.y, change.z, change.block);

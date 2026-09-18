@@ -61,6 +61,7 @@ export class RemotePlayerView {
   private whMarked = false;
   /** -1 = living. Accumulates only after the dead edge so snapshots cannot restart the pose. */
   private deathSeconds = -1;
+  private joinOnFire = false;
 
   constructor(
     info: RemotePlayerInfo,
@@ -86,6 +87,7 @@ export class RemotePlayerView {
     this.lastRenderedPose = undefined;
     this.spawnYaw = info.yaw;
     this.spawnPitch = info.pitch;
+    this.joinOnFire = info.onFire === true;
     this.group.position.set(info.x, info.y, info.z);
     this.visual.animator.reset(info.yaw);
     this.deathSeconds = info.dead === true ? 0 : -1;
@@ -198,6 +200,7 @@ export class RemotePlayerView {
         invisible: false,
         hurtFlash: 0,
         deathProgress,
+        onFire: this.lastRenderedPose?.onFire === true || this.joinOnFire,
       });
       return undefined;
     }
@@ -215,6 +218,7 @@ export class RemotePlayerView {
       invisible: pose.invisible,
       hurtFlash: 0,
       deathProgress,
+      onFire: pose.onFire === true,
     });
     this.lastInvisible = pose.invisible === true;
     this.nameplate.setInvisible(this.lastInvisible);

@@ -42,6 +42,7 @@ import {
   humanoidDeathRotationZ,
   humanoidDeathScale,
 } from '../../entities/humanoidDeath';
+import { SharedFireTexture } from '../fireTexture';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly bedRest?: BedRestState | null;
@@ -49,9 +50,16 @@ export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly hurtFlash: number;
   /** 0 = living pose. 1 = completed humanoid death tilt. */
   readonly deathProgress?: number;
+  /** Authoritative burning flag. Discrete; not interpolated. */
+  readonly onFire?: boolean;
 }
 
 export const UPPER_BODY_PIVOT_Y = 12 * PLAYER_MODEL_PIXEL;
+/**
+ * Squash only the burning-player overlay on Y. Width stays 1; geometry and
+ * PlayerVisual body scale are unchanged. Mobs use ThreeEntityHost.
+ */
+export const PLAYER_FIRE_OVERLAY_SCALE_Y = 0.5;
 // Bed top is 6/16 + half of its 6/16 body height. Rest the 4px-deep torso
 // on that surface with 0.01 clearance; the authoritative anchor stays fixed.
 const BED_REST_VISUAL_Y_OFFSET = 9 / 16 + 2 * PLAYER_MODEL_PIXEL + 0.01 - BED_REST_ANCHOR_HEIGHT;
@@ -124,6 +132,7 @@ export class PlayerVisual {
   private hurtFlash = 0;
   private hurtFlashStartedAt = -1;
   private disposed = false;
+  private fireOverlay?: THREE.Mesh;
   private readonly ownedArmorResources?: PlayerArmorResources;
 
   constructor(
@@ -287,6 +296,7 @@ export class PlayerVisual {
     // +X puts the model's front (-Z) upward; adding PI preserves head direction.
     this.restPoseRoot.rotation.set(resting ? Math.PI / 2 : 0, resting ? restYaw + Math.PI : 0, 0, 'YXZ');
     this.restPoseRoot.position.set(0, resting ? BED_REST_VISUAL_Y_OFFSET : 0, 0);
+    this.syncFireOverlay(state.onFire === true);
     if (dying) {
       const progress = Math.min(1, Math.max(0, state.deathProgress ?? 0));
       this.root.rotation.z = humanoidDeathRotationZ(progress);
@@ -316,11 +326,22 @@ export class PlayerVisual {
     this.root.visible = visible;
   }
 
+  get fireOverlayVisible(): boolean {
+    return this.fireOverlay?.visible === true;
+  }
+
+  get fireOverlayScaleY(): number | undefined {
+    return this.fireOverlay?.scale.y;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
     this.offhandModel?.removeFromParent();
+    this.fireOverlay?.removeFromParent();
+    this.fireOverlay?.geometry.dispose();
+    this.fireOverlay = undefined;
     this.armor.dispose();
     this.baseMaterial.dispose();
     for (const material of this.outerMaterials.values()) material.dispose();
@@ -428,6 +449,21 @@ export class PlayerVisual {
     }
     this.rig.heldItem.visible = this.heldModel !== undefined;
     this.rig.offhandItem.visible = this.offhandModel !== undefined;
+  }
+
+  private syncFireOverlay(onFire: boolean): void {
+    if (onFire) {
+      if (!this.fireOverlay) {
+        const overlay = SharedFireTexture.instance().createScaledOverlay(0.7, 1.85);
+        overlay.position.y = 0.15;
+        overlay.scale.y = PLAYER_FIRE_OVERLAY_SCALE_Y;
+        this.root.add(overlay);
+        this.fireOverlay = overlay;
+      }
+      this.fireOverlay.visible = true;
+      return;
+    }
+    if (this.fireOverlay) this.fireOverlay.visible = false;
   }
 
   private applyPose(pose: PlayerVisualPose): void {

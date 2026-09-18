@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-09-17: Bugfix/performance gameplay pass
+
+- [x] AutoMine incremental top-down reset with deferred lighting (no 2–3s frame freeze from a full-cuboid write).
+- [x] AutoMine reset no longer remeshes the full 16×256×16 column per batch; lighting is time-sliced and held during voxel bursts.
+- [x] Burning-player fire overlay height halved via `scale.y` (width unchanged).
+- [x] Hotbar select + immediate use/click without selected-slot rollback.
+- [x] Remote player fire overlay from authoritative `PlayerSnapshot.onFire`.
+- [x] Selected skin on first remote spawn / resume without requiring reconnect.
+- [x] RTP keeps searching until a valid column or a real attempt budget.
+- [x] Health 0 is always death; HUD matches living HP above 0. Totem still intercepts lethal hits first.
+
 ## 2026-09-18: Merge Utility Items V1 into current main
 
 - [x] Semantic merge feature `codex/utility-items-v1@475acc6` into current main without shifting OakSign off 165 or dropping unknown-block compatibility.
@@ -76,6 +87,7 @@
 - [x] Focused authority tests, typechecks, boundaries, build and archive size check.
 - [ ] Three interactive clients visual QA for WH outline, fireworks, sign and book flows.
 - [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
+
 ## 2026-09-17: Pause heading off + Creative graphite tabs
 
 - [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.

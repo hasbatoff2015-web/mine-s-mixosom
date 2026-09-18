@@ -285,6 +285,7 @@ export class SurvivalSystem {
       this.applyEffect({ id: 'fire_resistance', amplifier: 0, durationTicks: 800 });
       this.applyEffect({ id: 'absorption', amplifier: 1, durationTicks: 100 });
     }
+    this.enforceLifeInvariant();
     const killed = this.health <= 0;
     if (killed) this.dead = true;
     const result: DamageResult = {
@@ -488,6 +489,14 @@ export class SurvivalSystem {
       }
     }
     this.dead = state.dead ?? this.health <= 0;
+    this.enforceLifeInvariant();
+  }
+
+  /** Living players always have health > 0. health === 0 means dead. */
+  private enforceLifeInvariant(): void {
+    if (this.health > 0) return;
+    this.health = 0;
+    this.dead = true;
   }
 
   private tickOnce(context: SurvivalTickContext, events: DamageResult[]): void {

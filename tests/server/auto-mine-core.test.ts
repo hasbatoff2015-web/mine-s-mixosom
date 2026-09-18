@@ -18,6 +18,7 @@ import {
   validateAutoMineVolume,
   volumeFromSelection,
   voxelAt,
+  fillVoxelAt,
   type AutoMineHost,
   type AutoMinePlayerRef,
   type AutoMineStore,
@@ -221,9 +222,100 @@ describe('AutoMine generation workload', () => {
     manager.tick();
     expect(manager.isResetting('spawnmine')).toBe(true);
     expect(Math.max(...batchSizes)).toBe(64);
-    drain(manager, 'spawnmine', 80);
+    drain(manager, 'spawnmine', 120);
     expect(cuboidSize(volume).blocks).toBe(countVolume(world, volume));
     expect(dirtCount(world, volume)).toBe(0);
+  });
+
+  it('fills a 32×32×32 volume through the same batched pipeline', () => {
+    const world = new VoxelWorld('automine-32');
+    const volume = volumeFromCorners({ x: 0, y: 40, z: 0 }, { x: 31, y: 71, z: 31 });
+    expect(cuboidSize(volume).blocks).toBe(32 * 32 * 32);
+    const batchSizes: number[] = [];
+    const original = world.applyBlockBatch.bind(world);
+    world.applyBlockBatch = ((mutations, options) => {
+      batchSizes.push(mutations.length);
+      expect(options?.updateLighting).toBe(false);
+      return original(mutations, options);
+    }) as VoxelWorld['applyBlockBatch'];
+    const host = memoryHost(world);
+    const manager = new AutoMineManager(host);
+    manager.enabled = true;
+    manager.blocksPerTick = 64;
+    expect(manager.create('bigmine', volume, 'anarchy').ok).toBe(true);
+    drain(manager, 'bigmine', 700);
+    expect(manager.statusOf('bigmine')).toBe('READY');
+    expect(Math.max(...batchSizes)).toBe(64);
+    expect(countVolume(world, volume)).toBe(32 * 32 * 32);
+    expect(manager.lastResetMetrics?.blocksWritten).toBe(32 * 32 * 32);
+    expect(manager.lastResetMetrics?.maxBatch).toBe(64);
+    expect(manager.lastResetMetrics?.lightingTicks).toBeGreaterThanOrEqual(1);
+    expect(AUTOMINE_ALLOWED_BLOCKS.has(world.getBlock(0, 71, 0))).toBe(true);
+    expect(AUTOMINE_ALLOWED_BLOCKS.has(world.getBlock(31, 40, 31))).toBe(true);
+  });
+
+  it('fills top-down in bounded batches, defers lighting, and refuses a parallel reset', () => {
+    const world = new VoxelWorld('automine-topdown');
+    const volume = volumeFromCorners({ x: 4, y: 40, z: 4 }, { x: 6, y: 42, z: 6 });
+    const size = cuboidSize(volume);
+    const writes: Array<{ y: number; count: number; deferLighting?: boolean; updateLighting?: boolean }> = [];
+    const original = world.applyBlockBatch.bind(world);
+    world.applyBlockBatch = ((mutations, options) => {
+      writes.push({
+        y: mutations[0]!.y,
+        count: mutations.length,
+        deferLighting: options?.deferLighting,
+        updateLighting: options?.updateLighting,
+      });
+      for (let i = 1; i < mutations.length; i += 1) {
+        expect(mutations[i]!.y).toBeLessThanOrEqual(mutations[i - 1]!.y);
+      }
+      return original(mutations, options);
+    }) as VoxelWorld['applyBlockBatch'];
+    const teleported: string[] = [];
+    const host = memoryHost(world, {
+      players: () => [playerRef('inside', 5.2, 41.1, 5.4, 0, 0)],
+      teleport: (id) => {
+        teleported.push(id);
+        return { ok: true };
+      },
+    });
+    host.teleportDest = { worldId: 'anarchy', x: 0.5, y: 50, z: 0.5, yaw: 0, pitch: 0 };
+    const manager = new AutoMineManager(host);
+    manager.enabled = true;
+    manager.blocksPerTick = 5;
+    expect(manager.create('shaft', volume, 'anarchy').ok).toBe(true);
+    drain(manager, 'shaft');
+    expect(manager.setTeleport('shaft', host.teleportDest).ok).toBe(true);
+    writes.length = 0;
+    expect(manager.requestReset('shaft', { manual: true }).ok).toBe(true);
+    expect(teleported).toEqual(['inside']);
+    expect(manager.requestReset('shaft', { manual: true }).ok).toBe(false);
+    const ticks: number[] = [];
+    let generatingTicks = 0;
+    while (manager.isResetting('shaft')) {
+      generatingTicks += 1;
+      manager.tick();
+      ticks.push(writes.length);
+      expect(generatingTicks).toBeLessThan(80);
+    }
+    expect(generatingTicks).toBeGreaterThan(1);
+    expect(Math.max(...writes.map((entry) => entry.count))).toBeLessThanOrEqual(5);
+    expect(writes.every((entry) => entry.deferLighting === true)).toBe(true);
+    expect(writes.every((entry) => entry.updateLighting === false)).toBe(true);
+    for (let i = 1; i < writes.length; i += 1) {
+      expect(writes[i]!.y).toBeLessThanOrEqual(writes[i - 1]!.y);
+    }
+    expect(fillVoxelAt(volume, 0).y).toBe(volume.maxY);
+    expect(fillVoxelAt(volume, size.width * size.depth).y).toBe(volume.maxY - 1);
+    expect(manager.lastResetMetrics?.maxBatch).toBeLessThanOrEqual(5);
+    expect(manager.lastResetMetrics?.blocksWritten).toBe(size.blocks);
+    expect(manager.lastResetMetrics?.lightingTicks).toBeGreaterThanOrEqual(1);
+    expect(manager.lastResetMetrics!.ticks).toBeGreaterThan(Math.ceil(size.blocks / 5));
+    for (let i = 0; i < size.blocks; i += 1) {
+      const pos = voxelAt(volume, i);
+      expect(AUTOMINE_ALLOWED_BLOCKS.has(world.getBlock(pos.x, pos.y, pos.z))).toBe(true);
+    }
   });
 
   it('does not start overlapping resets and restores originals on delete', () => {
@@ -377,7 +469,7 @@ function memoryHost(world: VoxelWorld, extra: Partial<AutoMineHost> = {}): AutoM
   return host;
 }
 
-function drain(manager: AutoMineManager, name: string, ticks = 80): void {
+function drain(manager: AutoMineManager, name: string, ticks = 800): void {
   for (let i = 0; i < ticks; i += 1) {
     if (!manager.isResetting(name)) return;
     manager.tick();

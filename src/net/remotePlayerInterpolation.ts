@@ -58,6 +58,7 @@ export interface RemoteInterpSample {
   readonly sneaking: boolean;
   readonly flying: boolean;
   readonly invisible: boolean;
+  readonly onFire: boolean;
   readonly dead: boolean;
   /** Client receive time. Telemetry / latest-clock elapsed only. */
   readonly receivedAt: number;
@@ -77,6 +78,7 @@ export interface RemoteSampledPose {
   readonly sneaking: boolean;
   readonly flying: boolean;
   readonly invisible: boolean;
+  readonly onFire: boolean;
   readonly dead: boolean;
   readonly renderTick: number;
   readonly mode: RemoteInterpMode;
@@ -129,7 +131,7 @@ function discreteFrom(
   previous: RemoteInterpSample,
   next: RemoteInterpSample,
   t: number,
-): Pick<RemoteInterpSample, 'onGround' | 'sprinting' | 'sneaking' | 'flying' | 'invisible' | 'dead'> {
+): Pick<RemoteInterpSample, 'onGround' | 'sprinting' | 'sneaking' | 'flying' | 'invisible' | 'onFire' | 'dead'> {
   const pick = t < 0.5 ? previous : next;
   return {
     onGround: pick.onGround,
@@ -137,6 +139,7 @@ function discreteFrom(
     sneaking: pick.sneaking,
     flying: pick.flying,
     invisible: pick.invisible,
+    onFire: pick.onFire,
     dead: pick.dead,
   };
 }
@@ -167,6 +170,7 @@ function poseFromSample(sample: RemoteInterpSample, extras: PoseExtras): RemoteS
     sneaking: sample.sneaking,
     flying: sample.flying,
     invisible: sample.invisible,
+    onFire: sample.onFire,
     dead: sample.dead,
     ...extras,
   };
@@ -190,6 +194,7 @@ function extrapolateSample(
     sneaking: sample.sneaking,
     flying: sample.flying,
     invisible: sample.invisible,
+    onFire: sample.onFire,
     dead: sample.dead,
   };
 }
@@ -602,6 +607,7 @@ export function remoteSampleFromSnapshot(
     readonly sneaking?: boolean;
     readonly flying?: boolean;
     readonly invisible?: boolean;
+    readonly onFire?: boolean;
     readonly dead?: boolean;
   },
   serverTick: number,
@@ -622,6 +628,7 @@ export function remoteSampleFromSnapshot(
     sneaking: snapshot.sneaking ?? false,
     flying: snapshot.flying ?? false,
     invisible: snapshot.invisible ?? false,
+    onFire: snapshot.onFire ?? false,
     dead: snapshot.dead ?? false,
     receivedAt,
   };

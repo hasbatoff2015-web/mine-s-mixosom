@@ -26,6 +26,7 @@ export interface RtpSearchState {
   generates: number;
   found?: RtpDestination;
   exhausted: boolean;
+  tried?: Set<string>;
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -62,6 +63,29 @@ export function randomRtpColumn(
   return { x, z };
 }
 
+/** Next unused column. Prevents RNG repeats from stalling the search forever. */
+export function nextUntriedRtpColumn(
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number,
+  tried: ReadonlySet<string>,
+  random: () => number = Math.random,
+): { x: number; z: number } | undefined {
+  const width = maxX - minX + 1;
+  const depth = maxZ - minZ + 1;
+  const area = width * depth;
+  if (tried.size >= area || area <= 0) return undefined;
+  const start = Math.floor(random() * area);
+  for (let i = 0; i < area; i += 1) {
+    const index = (start + i) % area;
+    const x = minX + (index % width);
+    const z = minZ + Math.floor(index / width);
+    if (!tried.has(`${x},${z}`)) return { x, z };
+  }
+  return undefined;
+}
+
 export function isDangerousBlock(blockId: number): boolean {
   return blockId === BlockId.Lava || blockId === BlockId.Fire || blockId === BlockId.Cactus;
 }
@@ -86,30 +110,46 @@ export class RtpService {
   }
 
   /**
-   * Bounded search: at most `attemptsPerTick` columns and `maxChunkGenerates`
-   * new chunks per call. Never walks the full 20k region in one tick.
+   * Bounded search: at most `attemptsPerTick` evaluated columns and
+   * `maxChunkGenerates` new chunks *per call*. Generate-budget skips do not
+   * consume `maxAttempts`. Duplicate columns are skipped.
    */
   step(state: RtpSearchState, options: RtpSearchOptions, random: () => number = Math.random): RtpSearchState {
     if (state.found || state.exhausted) return state;
     const bounds = clampRtpBounds(options);
     const attemptBudget = Math.max(1, options.attemptsPerTick);
     const generateBudget = Math.max(0, options.maxChunkGenerates);
+    const tried = state.tried ?? (state.tried = new Set<string>());
+    const area = (bounds.maxX - bounds.minX + 1) * (bounds.maxZ - bounds.minZ + 1);
     let generates = 0;
     for (let i = 0; i < attemptBudget; i += 1) {
-      if (state.attempts >= options.maxAttempts) {
-        state.exhausted = true;
+      if (state.attempts >= options.maxAttempts || tried.size >= area) {
+        if (!state.found) state.exhausted = true;
+        state.generates += generates;
         return state;
       }
-      state.attempts += 1;
-      const column = randomRtpColumn(bounds.minX, bounds.maxX, bounds.minZ, bounds.maxZ, random);
+      let column = randomRtpColumn(bounds.minX, bounds.maxX, bounds.minZ, bounds.maxZ, random);
+      let key = `${column.x},${column.z}`;
+      if (tried.has(key)) {
+        const next = nextUntriedRtpColumn(bounds.minX, bounds.maxX, bounds.minZ, bounds.maxZ, tried, random);
+        if (!next) {
+          if (!state.found) state.exhausted = true;
+          state.generates += generates;
+          return state;
+        }
+        column = next;
+        key = `${column.x},${column.z}`;
+      }
       const cx = floorDiv(column.x, CHUNK_SIZE);
       const cz = floorDiv(column.z, CHUNK_SIZE);
       const existing = this.world.getChunk(cx, cz, false);
       if (!existing) {
-        if (state.generates + generates >= generateBudget) continue;
+        if (generates >= generateBudget) continue;
         this.world.getChunk(cx, cz, true);
         generates += 1;
       }
+      tried.add(key);
+      state.attempts += 1;
       const y = this.world.surfaceY(column.x, column.z);
       if (isSafeRtpStand(this.world, column.x, y, column.z)) {
         state.found = { x: column.x + 0.5, y: y + 1, z: column.z + 0.5 };
@@ -118,7 +158,7 @@ export class RtpService {
       }
     }
     state.generates += generates;
-    if (state.attempts >= options.maxAttempts) state.exhausted = true;
+    if (state.attempts >= options.maxAttempts || tried.size >= area) state.exhausted = true;
     return state;
   }
 }

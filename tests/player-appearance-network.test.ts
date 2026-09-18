@@ -93,6 +93,8 @@ describe('player appearance network metadata', () => {
     expect(gameSource).toContain("type: 'appearance'");
     expect(gameSource).toContain('this.setPlayerAppearance(appearance)');
     expect(gameSource).toContain('applyOnlineAppearance');
-    expect(gameSource).toContain('info.appearance ?? DEFAULT_PLAYER_APPEARANCE');
+    expect(gameSource).toContain('appearanceForRemoteSpawn');
+    expect(gameSource).toContain("case 'player_joined'");
+    expect(gameSource).not.toContain('info.appearance ?? DEFAULT_PLAYER_APPEARANCE');
   });
 });

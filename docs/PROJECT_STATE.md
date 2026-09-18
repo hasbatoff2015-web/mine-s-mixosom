@@ -1,6 +1,22 @@
 # Состояние проекта
 
-## Последний проход: Merge Utility Items V1 into current main — 2026-09-18
+## Последний проход: Player fire height + AutoMine reset pipeline — 2026-09-17
+
+- Burning-player fire overlay: `PlayerVisual` keeps overlay width and `position.y = 0.15`, then `scale.y = 0.5`. Mob / first-person fire paths unchanged.
+- AutoMine lag root cause was repeated full-column remesh + restarted lighting floods, not 64 writes/tick. Fill uses `updateLighting: false`; lighting is budgeted `processLighting`. Client remeshes dirty Y sections (`MESH_SECTION_HEIGHT = 16`). Edit-region floods wait until a voxel burst pauses.
+- Handoff: `docs/reports/2026-09-17_automine-fire-pipeline.md`.
+
+## Предыдущий проход: Bugfix/performance gameplay pass — 2026-09-17
+
+- AutoMine reset: top-down incremental fill (≤64 voxels/tick), lighting deferred until the next tick after writes. No whole-mine `setBlock` in one tick.
+- Hotbar 1–9 then instant LMB/RMB: selection is committed into the command stream; inventory echo cannot roll back a newer local slot.
+- Remote players show authoritative `onFire` via `PlayerVisual` fire overlay (discrete, not interpolated).
+- Resume after disconnect re-broadcasts `player_joined` with `remoteInfo().appearance`; pending appearance covers appearance-before-spawn.
+- RTP retries independent columns; chunk-generate budget is per search step, not a lifetime of 1 generate.
+- `health === 0` ⇒ dead. HUD half-heart is any remaining HP `> 0` (armor leftovers no longer look like 0 hearts). Totem death-protection still intercepts lethal damage before this invariant.
+- Handoff: `docs/reports/2026-09-17_bugfix-performance-gameplay-pass.md`.
+
+## Предыдущий проход: Merge Utility Items V1 into current main — 2026-09-18
 
 - Integration branch `merge/utility-items-v1` от `origin/main@ef619a9` + `origin/codex/utility-items-v1@475acc6`, без rebase/force-push feature. OakSign остаётся **165** и теперь known; generic unknown-block compat сохранён для прочих Uint16 (например 65534). Semantic union: registry lookup + Utility blocks, World restore + signs, protocol menu/trade/book/sign/totem, WorldInstance occupancy/Totem + menu/friends/trade, Game/GameUI modern chrome + Utility HUD.
 - Гейты: 165/unknown **29/29**; Utility+menu focused 219 PASS; chat-layout 4 CRLF host failures (как на main). Typechecks, boundaries, build, size/archive PASS (**4.74 MiB / 403 files**). Full Vitest 245/252 files; isolated lighting/import PASS.
@@ -70,6 +86,7 @@
 - Firework — временная серверная сущность 20 TPS, без урона и permanent save; WH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `WhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
 - Totem доступен через Creative/admin/test. Покупка у trader отложена: полноценной trader-системы в текущем коде нет; Buyer NPC — это скупщик, не продавец.
 - Focused tests: `tests/utility-items.test.ts` и `tests/server/utility-items-authority.test.ts`. Полная проверка и ограничения описаны в `docs/reports/2026-09-13_utility-items-v1.md`.
+
 ## Последний проход: Pause heading off + Creative graphite tabs — 2026-09-17
 
 - Pause overlay больше не показывает «ИГРА НА ПАУЗЕ» / «Пауза». Остаются только Продолжить / Настройки / Сохранить и выйти; отступы карточки сжаты, кнопки по центру по вертикали. Живой мир под overlay и graphite-кнопки без изменений.

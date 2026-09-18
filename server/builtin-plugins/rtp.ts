@@ -39,7 +39,7 @@ export function rtpOptionsFromConfig(get: (key: string, fallback: number) => num
   return {
     ...bounds,
     attemptsPerTick: Math.max(1, get('attemptsPerTick', 2)),
-    maxAttempts: Math.max(1, get('maxAttempts', 24)),
+    maxAttempts: Math.max(1, get('maxAttempts', 80)),
     maxChunkGenerates: Math.max(0, get('maxChunkGenerates', 1)),
   };
 }
@@ -58,7 +58,7 @@ export function createRtpPlugin(ctx: BuiltinPluginContext): Plugin {
         cooldownSeconds: 15,
         warmupSeconds: 0,
         attemptsPerTick: 2,
-        maxAttempts: 24,
+        maxAttempts: 80,
         maxChunkGenerates: 1,
         cancelOnMove: true,
         cancelOnDamage: true,
