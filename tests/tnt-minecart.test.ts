@@ -8,6 +8,7 @@ import {
   FallingBlockManager,
   MINECART_OFF_RAIL_PUSH_FACTOR,
   MINECART_PUSH_GAIN,
+  MINECART_VISUAL_YAW_OFFSET,
   MinecartManager,
   MobManager,
   igniteMinecartTntFromFireArrow,
@@ -314,6 +315,39 @@ describe('off-rail minecart player push', () => {
     pusher2.velocity.set(0, 0, 2);
     manager.tryPushFromPlayer(pusher2);
     expect(destructive.velocity.z).toBeGreaterThan(0);
+    manager.dispose();
+  });
+});
+
+describe('minecart visual yaw', () => {
+  it('turns the long local +X hull onto the rail tangent without changing cart.yaw', () => {
+    const world = new VoxelWorld('cart-visual-yaw');
+    emptyColumn(world, 5, 5, 2);
+    stoneAt(world, 5, 40, 5);
+    stoneAt(world, 8, 40, 8);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: 'north_south' });
+    world.setBlock(8, 41, 8, BlockId.Rail);
+    world.setBlockState(8, 41, 8, { railShape: 'east_west' });
+    const manager = carts(world);
+
+    const ns = manager.spawn(5, 41, 5)!;
+    expect(MINECART_VISUAL_YAW_OFFSET).toBeCloseTo(-Math.PI / 2);
+    expect(ns.visual!.rotation.y).toBeCloseTo(ns.yaw + MINECART_VISUAL_YAW_OFFSET);
+    const nsAlong = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), ns.visual!.rotation.y);
+    expect(nsAlong.x).toBeCloseTo(0);
+    expect(nsAlong.z).toBeCloseTo(1);
+    expect(manager.serialize().find((entry) => entry.id === ns.id)?.yaw).toBeCloseTo(ns.yaw);
+
+    const ew = manager.spawn(8, 41, 8)!;
+    expect(ew.visual!.rotation.y).toBeCloseTo(ew.yaw + MINECART_VISUAL_YAW_OFFSET);
+    const ewAlong = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), ew.visual!.rotation.y);
+    expect(ewAlong.x).toBeCloseTo(1);
+    expect(ewAlong.z).toBeCloseTo(0);
+    expect(ew.yaw).not.toBeCloseTo(ew.visual!.rotation.y);
+
+    manager.interpolateVisuals(1);
+    expect(ns.visual!.rotation.y).toBeCloseTo(ns.yaw + MINECART_VISUAL_YAW_OFFSET);
     manager.dispose();
   });
 });

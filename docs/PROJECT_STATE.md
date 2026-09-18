@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: minecart visual yaw −π/2 — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Visual-only: `MINECART_VISUAL_YAW_OFFSET = −π/2` в `MinecartManager.applyVisualTransform`. `cart.yaw`, railPath и seated не менялись.
+- Подробности: `docs/reports/2026-09-19_minecart-visual-yaw.md`.
+
 ## Последний проход: rail corner UV south-east + straight seated pose — 2026-09-18
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). `rail_corner.png` authored L = image **bottom+right** = **south+east**; identity UV is `south_east` (previous SW identity was a horizontal flip). Topology (`railEndDirections` / reciprocal path / π/4) не переписывалась. Seated: hip `π/2`, прямые ноги вперёд, `bodyPitch`/`bodyYOffset` = 0; visual seat root `+Z` back 0.25 и hip на `MINECART_FLOOR_TOP`.

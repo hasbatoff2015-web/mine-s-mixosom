@@ -37,6 +37,12 @@ export const MINECART_MAX_SPEED = WALK_SPEED;
 /** On-rail player overlap impulse. Off-rail uses this times OFF_RAIL_PUSH_FACTOR. */
 export const MINECART_PUSH_GAIN = 0.28;
 export const MINECART_OFF_RAIL_PUSH_FACTOR = 0.5;
+/**
+ * `sampleRail` yaw aims Three.js local +Z along the tangent. ModelMinecart's
+ * floor is 20px on local +X (16px on Z), so the hull is a quarter-turn off.
+ * Visual-only: never add this to `cart.yaw` (steering, serialize, network).
+ */
+export const MINECART_VISUAL_YAW_OFFSET = -Math.PI / 2;
 const ACCEL_TIME = 0.5;
 const COAST_FRICTION = 0.965;
 const SLOPE_GRAVITY = 6.5;
@@ -487,8 +493,7 @@ export class MinecartManager {
         cart.position.x, cart.position.y, cart.position.z,
         t,
       );
-      this.host.setPosition(cart.visual, visual.x, visual.y, visual.z);
-      this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+      this.applyVisualTransform(cart, visual.x, visual.y, visual.z);
       // Online skips `update()`; visual sync must re-sample after deferred lighting.
       this.host.applyLight(cart.visual, this.world, visual.x, visual.y + 0.3, visual.z, 0.3);
     }
@@ -758,10 +763,15 @@ export class MinecartManager {
     this.carts.delete(cart.id);
   }
 
+  private applyVisualTransform(cart: MinecartEntity, x: number, y: number, z: number): void {
+    if (!cart.visual) return;
+    this.host.setPosition(cart.visual, x, y, z);
+    this.host.setRotation(cart.visual, cart.pitch, cart.yaw + MINECART_VISUAL_YAW_OFFSET, 0);
+  }
+
   private syncVisual(cart: MinecartEntity): void {
     if (!cart.visual) return;
-    this.host.setPosition(cart.visual, cart.position.x, cart.position.y, cart.position.z);
-    this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+    this.applyVisualTransform(cart, cart.position.x, cart.position.y, cart.position.z);
     this.syncCargoVisual(cart);
     this.host.applyLight(
       cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,

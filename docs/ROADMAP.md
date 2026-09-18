@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-19: minecart visual yaw
+
+- [x] Visual-only −π/2 so ModelMinecart local +X follows the rail tangent.
+- [ ] Owner live: cart hull along NS/EW and around corners.
+
 ## 2026-09-18: rail corner UV south-east + straight seated pose
 
 - [x] Identity `RAIL_CORNER_UV` = south+east (asset bottom+right); SW/NE/NW are H/V/180 flips.

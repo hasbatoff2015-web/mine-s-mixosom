@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-19 Minecart visual yaw
+
+```text
+npx vitest run tests/tnt-minecart.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/entity-special-block-rendering.test.ts --maxWorkers=2
+```
+
+Подробности: `docs/reports/2026-09-19_minecart-visual-yaw.md`.
+
 ## 2026-09-18 Rail corner UV south-east / straight seated pose
 
 ```text

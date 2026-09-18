@@ -1,5 +1,9 @@
 # Архитектура
 
+## Minecart visual yaw — 2026-09-19
+
+Gameplay `cart.yaw` stays `sampleRail` `atan2(tangentX, tangentZ)` (Three.js local +Z along motion). The ModelMinecart floor is 20px on local **+X** after `rotation.x = π/2`, so `applyVisualTransform` adds `MINECART_VISUAL_YAW_OFFSET = −π/2` only when calling `host.setRotation`. Serialize, steering and seated pose still use `cart.yaw`.
+
 ## Rail corner UV / straight seated pose — 2026-09-18
 
 `rail_corner.png` authors the L on image **bottom+right** (PNG scanline y=0 is file top, which is empty). `ChunkMesher.addQuad` maps identity `v0` to image bottom / world south and `u1` to image right / world east, so identity UV is **south_east**. `south_west` is horizontal flip, `north_east` vertical, `north_west` 180°. Geometry corners and `railPath` topology are unchanged.
