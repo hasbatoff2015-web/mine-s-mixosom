@@ -33,7 +33,7 @@ export function isMinecartEntityVisual(object: { readonly userData?: { readonly 
 export const TNT_MINECART_FUSE_TICKS = 80;
 export const TNT_MINECART_EXPLOSION_POWER = 4;
 export const TNT_MINECART_EXPLOSION_RADIUS = 4;
-export const MINECART_MAX_SPEED = WALK_SPEED;
+export const MINECART_MAX_SPEED = WALK_SPEED * 1.5;
 /** On-rail player overlap impulse. Off-rail uses this times OFF_RAIL_PUSH_FACTOR. */
 export const MINECART_PUSH_GAIN = 0.28;
 export const MINECART_OFF_RAIL_PUSH_FACTOR = 0.5;

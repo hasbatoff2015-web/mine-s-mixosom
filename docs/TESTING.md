@@ -1,5 +1,16 @@
 # Тестирование
 
+## 2026-09-19 Minecart rider interpolation / 1.5× speed
+
+```text
+npx vitest run tests/player-visual-animation.test.ts tests/tnt-minecart.test.ts tests/rail-corner-path.test.ts tests/server/tnt-minecart.test.ts tests/server/anarchy-gameplay.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "caps at 1.5" --maxWorkers=1
+```
+
+Focused: **player-visual-animation 18/18**, **tnt-minecart 10/10**, **rail-corner-path 10/10**, isolated fire-contact W/S **PASS**, **server/tnt-minecart + anarchy-gameplay 40/40**. `typecheck` ×4, `check:boundaries`, `build` PASS. Full `fire-contact-sunlight-minecart.test.ts` still hangs on this host (baseline); that one W/S case uses `deferredLighting` so it can finish.
+
+Подробности: `docs/reports/2026-09-19_minecart-rider-interpolation-speed.md`.
+
 ## 2026-09-19 Minecart visual yaw
 
 ```text

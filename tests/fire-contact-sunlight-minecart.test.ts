@@ -11,6 +11,7 @@ import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED, WORLD_HEIGHT } from '../src/core/
 import { findCraftingRecipe, getCraftingResult, CRAFTING_RECIPES } from '../src/crafting';
 import {
   isMinecartEntityVisual,
+  MINECART_MAX_SPEED,
   MinecartManager,
   MobManager,
   TNT_MINECART_EXPLOSION_POWER,
@@ -398,8 +399,9 @@ describe('minecart 3D entity, riding and rail motion', () => {
     manager.dispose();
   });
 
-  it('accelerates with W, brakes/reverses with S, caps near walk speed and coasts after release', () => {
+  it('accelerates with W, brakes/reverses with S, caps at 1.5× walk speed and coasts after release', () => {
     const world = new VoxelWorld('cart-ws');
+    world.deferredLighting = true;
     world.getChunk(0, 0);
     world.getChunk(0, 1);
     world.getChunk(0, 2);
@@ -422,8 +424,10 @@ describe('minecart 3D entity, riding and rail motion', () => {
     for (let tick = 0; tick < 12; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: lookSouth });
     }
-    expect(cart.alongSpeed).toBeGreaterThan(3);
-    expect(cart.alongSpeed).toBeLessThanOrEqual(WALK_SPEED + 1e-3);
+    expect(MINECART_MAX_SPEED).toBeCloseTo(WALK_SPEED * 1.5);
+    expect(cart.alongSpeed).toBeGreaterThan(WALK_SPEED);
+    expect(cart.alongSpeed).toBeCloseTo(MINECART_MAX_SPEED, 5);
+    expect(cart.alongSpeed).toBeLessThanOrEqual(MINECART_MAX_SPEED + 1e-3);
     expect(cart.rail).toBeDefined();
     expect(cart.position.z).toBeGreaterThan(7);
     expect(cart.position.z).toBeLessThan(20);

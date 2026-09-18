@@ -153,7 +153,7 @@ import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../rendering/player/PlayerVisual';
-import { applySeatVisualRoot, MINECART_RIDER_GAMEPLAY_Y } from '../rendering/player/seatVisual';
+import { applySeatVisualRoot, seatedLocalPlayerVisualOrigin } from '../rendering/player/seatVisual';
 import {
   PlayerArmorGeometryCache,
   PlayerArmorMaterialCache,
@@ -5852,11 +5852,10 @@ export class Game {
       invisible: session.survival.invisible,
       hurtFlash: this.hurt.modelIntensity(now),
     });
-    const cart = seated && session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
     applySeatVisualRoot(
       session.playerVisual.root,
-      cart
-        ? { x: cart.position.x, y: cart.position.y + MINECART_RIDER_GAMEPLAY_Y, z: cart.position.z }
+      seated
+        ? seatedLocalPlayerVisualOrigin(position)
         : { x: position.x, y: position.y, z: position.z },
       pose.bodyYaw,
       seated,

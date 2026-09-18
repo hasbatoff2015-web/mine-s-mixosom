@@ -33,6 +33,24 @@ export const MINECART_SEAT_VISUAL: SeatVisualTransform = {
   backwardOffset: MINECART_SEAT_BACK_OFFSET,
 };
 
+/**
+ * Local seated player visual world origin.
+ *
+ * `sampledRidePose` is the LocalPlayerRenderState sample already passed into
+ * `Game.updatePlayerPresentation`. `updateMinecartRiding` writes player
+ * previous/current from cart previous/current plus `MINECART_RIDER_GAMEPLAY_Y`,
+ * so this pose is already on the same adjacent-tick clock as the cart visual.
+ * Do not parent the local rider to `cart.position` (current sim tick).
+ * Do not add rider Y a second time.
+ */
+export function seatedLocalPlayerVisualOrigin(sampledRidePose: SeatVisualOrigin): SeatVisualOrigin {
+  return {
+    x: sampledRidePose.x,
+    y: sampledRidePose.y,
+    z: sampledRidePose.z,
+  };
+}
+
 /** World offset of a visual seat root. Backward is opposite player front (−Z at yaw 0). */
 export function seatVisualOffset(yaw: number, seat: SeatVisualTransform): SeatVisualOrigin {
   return {

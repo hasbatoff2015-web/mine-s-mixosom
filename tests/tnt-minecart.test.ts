@@ -6,6 +6,7 @@ import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED } from '../src/core/constants';
 import {
   DroppedItemManager,
   FallingBlockManager,
+  MINECART_MAX_SPEED,
   MINECART_OFF_RAIL_PUSH_FACTOR,
   MINECART_PUSH_GAIN,
   MINECART_VISUAL_YAW_OFFSET,
@@ -348,6 +349,48 @@ describe('minecart visual yaw', () => {
 
     manager.interpolateVisuals(1);
     expect(ns.visual!.rotation.y).toBeCloseTo(ns.yaw + MINECART_VISUAL_YAW_OFFSET);
+    manager.dispose();
+  });
+});
+
+describe('minecart max speed', () => {
+  it('reaches 1.5× walk speed on a long straight, then brakes, coasts and reverses', () => {
+    expect(MINECART_MAX_SPEED).toBeCloseTo(WALK_SPEED * 1.5);
+    expect(MINECART_MAX_SPEED).toBeCloseTo(6.4755);
+    const world = new VoxelWorld('cart-max-speed');
+    for (let z = 0; z <= 80; z += 1) {
+      emptyColumn(world, 5, z, 0);
+      stoneAt(world, 5, 40, z);
+      world.setBlock(5, 41, z, BlockId.Rail);
+      world.setBlockState(5, 41, z, { railShape: 'north_south' });
+    }
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 4)!;
+    const lookSouth = Math.PI;
+    manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: lookSouth });
+    const first = cart.alongSpeed;
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThan(WALK_SPEED);
+    for (let tick = 0; tick < 23; tick += 1) {
+      manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: lookSouth });
+      expect(Math.abs(cart.alongSpeed)).toBeLessThanOrEqual(MINECART_MAX_SPEED + 1e-6);
+      expect(manager.isOnRail(cart)).toBe(true);
+    }
+    expect(cart.alongSpeed).toBeGreaterThan(WALK_SPEED);
+    expect(cart.alongSpeed).toBeCloseTo(MINECART_MAX_SPEED, 5);
+    expect(cart.position.z).toBeGreaterThan(8);
+    const cruising = cart.alongSpeed;
+    manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
+    expect(cart.alongSpeed).toBeLessThan(cruising);
+    const released = cart.alongSpeed;
+    for (let tick = 0; tick < 16; tick += 1) manager.update(0.05, { riderId: cart.id, forward: 0 });
+    expect(Math.abs(cart.alongSpeed)).toBeGreaterThan(0);
+    expect(Math.abs(cart.alongSpeed)).toBeLessThan(Math.abs(released));
+    for (let tick = 0; tick < 40; tick += 1) {
+      manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
+    }
+    expect(cart.alongSpeed).toBeLessThan(0);
+    expect(cart.alongSpeed).toBeCloseTo(-MINECART_MAX_SPEED, 5);
     manager.dispose();
   });
 });

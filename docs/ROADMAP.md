@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-19: minecart rider interpolation + 1.5× speed
+
+- [x] Local seated origin uses render-sampled ride pose, not current `cart.position`.
+- [x] `MINECART_MAX_SPEED = WALK_SPEED * 1.5`; keep 0.5 s accel time.
+- [ ] Owner live: third-person ride on straight/corners/slopes; Anarchy observer.
+
 ## 2026-09-19: minecart visual yaw
 
 - [x] Visual-only −π/2 so ModelMinecart local +X follows the rail tangent.

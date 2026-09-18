@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { FIXED_DT } from '../src/core/constants';
+import { LocalPlayerRenderState } from '../src/core/localPlayerRenderState';
 import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
 import { applyMobHurtTint } from '../src/entities/MobManager';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
@@ -13,6 +15,7 @@ import {
   MINECART_SEAT_BACK_OFFSET,
   MINECART_SEAT_VISUAL,
   PLAYER_SEAT_HIP_HEIGHT,
+  seatedLocalPlayerVisualOrigin,
   seatVisualOffset,
 } from '../src/rendering/player/seatVisual';
 import { MINECART_FLOOR_TOP } from '../src/rendering/minecartGeometry';
@@ -101,6 +104,37 @@ describe('player visual animator', () => {
     expect(root.position.z).toBeCloseTo(8 + MINECART_SEAT_BACK_OFFSET);
     applySeatVisualRoot(root, { x: 10, y: 40.2, z: 8 }, 0, false);
     expect(root.position.toArray()).toEqual([10, 40.2, 8]);
+  });
+
+  it('anchors a local seated rider to the render-sampled ride pose, not the current cart tick', () => {
+    const previousCart = { x: 8.5, y: 40, z: 10.0 };
+    const currentCart = { x: 8.5, y: 40, z: 10.3 };
+    const render = new LocalPlayerRenderState();
+    render.reset({
+      x: previousCart.x,
+      y: previousCart.y + MINECART_RIDER_GAMEPLAY_Y,
+      z: previousCart.z,
+    });
+    render.pushAfterTick({
+      x: currentCart.x,
+      y: currentCart.y + MINECART_RIDER_GAMEPLAY_Y,
+      z: currentCart.z,
+      vx: 0,
+      vy: 0,
+      vz: 6,
+    });
+    const sampled = render.sample(FIXED_DT * 0.5);
+    expect(sampled.alpha).toBeCloseTo(0.5);
+    expect(sampled.z).toBeCloseTo(10.15);
+    expect(sampled.y).toBeCloseTo(40 + MINECART_RIDER_GAMEPLAY_Y);
+    const origin = seatedLocalPlayerVisualOrigin(sampled);
+    expect(origin.z).toBeCloseTo(10.15);
+    expect(origin.z).not.toBeCloseTo(currentCart.z);
+    expect(origin.y).toBeCloseTo(sampled.y);
+    const root = { position: new THREE.Vector3() };
+    applySeatVisualRoot(root, origin, 0, true);
+    expect(root.position.z).toBeCloseTo(10.15 + MINECART_SEAT_BACK_OFFSET);
+    expect(root.position.z).not.toBeCloseTo(currentCart.z + MINECART_SEAT_BACK_OFFSET);
   });
 
   it('overlays attack, bow, sword block and food poses without touching simulation state', () => {
