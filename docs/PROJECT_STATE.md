@@ -1,6 +1,13 @@
 # Состояние проекта
 
-## Последний проход: Repair potion max-durability + armor bar — 2026-09-18
+## Последний проход: Third-person held-item calibrator `/moveitems` — 2026-09-18
+
+- DEV-страница `http://localhost:4173/moveitems` — live калибратор предметов в руке **другого игрока**. Не пишет production pose, не меняет first-person `FIRST_PERSON_SPRITE_POSE`, gameplay, protocol и сервер.
+- Сцена: маленький `VoxelWorld` + `WorldRenderer`, канонический `PlayerVisual` (тот же путь, что `RemotePlayerView.setHeldItem`), orbit-камера. Панель: position/rotation/scale, RESET, COPY / COPY ALL, переключение реальных item id.
+- Production third-person defaults вынесены в `thirdPersonHeldItem.ts` без смены чисел. Калибратор применяет live overlay через `PlayerVisual.applyHeldItemCalibration`.
+- Подробности: `docs/reports/2026-09-18_moveitems-third-person-calibrator.md`.
+
+## Предыдущий проход: Repair potion max-durability + armor bar — 2026-09-18
 
 - **Зелье починки** теперь восстанавливает **50% максимальной** remaining durability: `new = min(max, current + round(max * 0.5))`. Не 50% потерянной прочности. Примеры max=100: 100→100, 90→100, 20→70, 10→60, 1→51, 0→50; два глотка `20→70→100` и `10→60→100`. Целые предметы и предметы без durability не меняются. Одна формула: `restoredRemainingDurability` (SP `SurvivalSystem.consumeFood`, Anarchy `ServerGameplay` после consume).
 - Полоса прочности — тот же `slotDurabilityBarHtml` / `GameUI.slotHtml` для hotbar, inventory, offhand и **всех armor slots** (head/chest/legs/feet). Появляется только если `stack.durability` задан (remaining HP; omit = pristine).

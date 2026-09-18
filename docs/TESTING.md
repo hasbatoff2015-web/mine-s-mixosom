@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-18 Third-person held-item calibrator `/moveitems`
+
+Focused:
+
+```text
+npx vitest run tests/third-person-held-item.test.ts --maxWorkers=2 --silent
+```
+
+Contracts: `/moveitems` path helper; production category defaults unchanged (`block` 0.24, `handheld` 0.55, `generated` 0.40, `bow` 0.46); first-person `FIRST_PERSON_SPRITE_POSE` untouched; per-item live store + RESET; COPY/COPY ALL text; `PlayerVisual.setHeldItem` applies defaults then `applyHeldItemCalibration` overlays without mutating defaults.
+
+DEV URL: `http://localhost:4173/moveitems`. First-person harness `?qaItem=` / `qaView=held` не используется этим маршрутом.
+
 ## 2026-09-18 Merge Utility Items V1 into current main
 
 ```text

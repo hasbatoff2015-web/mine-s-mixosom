@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-18: Third-person held-item calibrator
+
+- [x] DEV `/moveitems`: third-person `PlayerVisual` + real held-item renderer, live pos/rot/scale, per-item memory, RESET, COPY/COPY ALL, orbit camera.
+- [ ] Manual calibration of remote held tools/swords; production write of chosen numbers is a separate follow-up.
+
 ## 2026-09-18: Repair potion max-durability + armor bar
 
 - [x] Зелье починки: 50% **максимальной** durability (`current + round(max * 0.5)`), clamp, без изменения целых предметов.

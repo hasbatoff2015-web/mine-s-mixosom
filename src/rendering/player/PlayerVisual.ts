@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { ItemId, bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
+import {
+  applyThirdPersonHeldItemTransform,
+  defaultThirdPersonHeldItemTransform,
+  readThirdPersonHeldItemTransform,
+  type ThirdPersonHeldItemTransform,
+} from './thirdPersonHeldItem';
 import type { VoxelWorld } from '../../world/World';
 import {
   createPlayerAppearance,
@@ -236,6 +242,17 @@ export class PlayerVisual {
     if (!this.heldModel || !itemId) return;
     this.rig.heldItem.add(this.heldModel);
     this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
+  }
+
+  /** Live overlay for the `/moveitems` calibrator. Does not change production defaults. */
+  applyHeldItemCalibration(transform: ThirdPersonHeldItemTransform): void {
+    this.assertActive();
+    if (!this.heldModel) return;
+    applyThirdPersonHeldItemTransform(this.heldModel, transform);
+  }
+
+  readHeldItemTransform(): ThirdPersonHeldItemTransform | undefined {
+    return this.heldModel ? readThirdPersonHeldItemTransform(this.heldModel) : undefined;
   }
 
   setOffhandItem(itemId?: string): void {
@@ -479,15 +496,7 @@ export class PlayerVisual {
   }
 
   private applyHeldItemTransform(model: THREE.Group, category: ItemRenderCategory): void {
-    if (category === 'block') {
-      model.position.set(0, -0.02, -0.02);
-      model.rotation.set(-0.55, 0.45, -0.28);
-      model.scale.setScalar(0.24);
-      return;
-    }
-    model.position.set(0, -0.04, -0.06);
-    model.rotation.set(-0.16, 0, category === 'bow' ? 0.85 : -0.72);
-    model.scale.setScalar(category === 'bow' ? 0.46 : category === 'handheld' ? 0.55 : 0.40);
+    applyThirdPersonHeldItemTransform(model, defaultThirdPersonHeldItemTransform(category));
   }
 
   private assertActive(): void {
