@@ -32,4 +32,8 @@ Visual-only yaw offset on the feature branch. Topology, UV, `cart.yaw`, seated p
 
 ## Git
 
-Feature branch only. No merge to `main`, no rebase, no force push.
+Feature branch `codex/entity-special-visual-fixes` only. No merge to `main`, no rebase, no force push.
+
+- Before: `029b5a01a23cf8791d6ee87cc85fb04ee17450c2`
+- After: `4a78a0c2594ec1a0002d08ce62dc0b44c7bdbb61`
+- `origin/main` unchanged: `ce6facdb328321b5b2113196aa9ee277469b3341`
