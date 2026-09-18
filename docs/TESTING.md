@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-18 Rail corner UV south-east / straight seated pose
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/tnt-minecart.test.ts tests/lighting-physics-interaction.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts --maxWorkers=2
+```
+
+Focused: **entity-special-block-rendering 9/9** (PNG bottom+right probe + SE identity), **rail-corner-path 10/10**, **player-visual-animation 17/17**, **tnt-minecart 8/8**, **block-registry + unknown-block-load 21/21**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` PASS (**4.75 MiB / 404 files**).
+
+Подробности: `docs/reports/2026-09-18_rail-corner-uv-seated-straight.md`.
+
 ## 2026-09-18 Seated pose / door facing / rail connectivity
 
 ```text

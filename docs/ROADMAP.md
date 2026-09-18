@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-18: rail corner UV south-east + straight seated pose
+
+- [x] Identity `RAIL_CORNER_UV` = south+east (asset bottom+right); SW/NE/NW are H/V/180 flips.
+- [x] Seated hip `π/2`, upright torso, relaxed arms; seat visual offset instead of `bodyYOffset`.
+- [ ] Owner live: four-corner texture joins, side-view seated cart.
+
 ## 2026-09-18: seated pose sign, door outside facing, rail connectivity
 
 - [x] Flip seated limb X rotations so tips go to local −Z (forward).

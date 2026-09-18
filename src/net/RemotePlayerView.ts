@@ -7,6 +7,7 @@ import {
   type PlayerPresentationState,
 } from '../../shared/playerPresentation';
 import type { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { applySeatVisualRoot } from '../rendering/player/seatVisual';
 import { EMPTY_PLAYER_EQUIPMENT } from '../inventory';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -189,7 +190,8 @@ export class RemotePlayerView {
     if (dying) this.deathSeconds += Math.max(0, deltaSeconds);
     const deathProgress = dying ? humanoidDeathProgress(this.deathSeconds) : 0;
     if (!pose) {
-      this.visual.update(deltaSeconds, {
+      const seated = this.seated && !dying;
+      const visualPose = this.visual.update(deltaSeconds, {
         viewYaw: this.spawnYaw,
         viewPitch: this.spawnPitch,
         movementSpeed: 0,
@@ -198,16 +200,18 @@ export class RemotePlayerView {
         sprinting: false,
         verticalVelocity: 0,
         ...actionFrame,
-        seated: this.seated && !dying,
+        seated,
         invisible: false,
         hurtFlash: 0,
         deathProgress,
       });
+      applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
     this.lastRenderedPose = pose;
-    this.visual.update(deltaSeconds, {
+    const seated = this.seated && !dying;
+    const visualPose = this.visual.update(deltaSeconds, {
       viewYaw: pose.yaw,
       viewPitch: pose.pitch,
       movementSpeed: dying || actionFrame.bedRest ? 0 : Math.hypot(pose.vx, pose.vz),
@@ -216,11 +220,12 @@ export class RemotePlayerView {
       sprinting: dying ? false : pose.sprinting,
       verticalVelocity: dying ? 0 : pose.vy,
       ...actionFrame,
-      seated: this.seated && !dying,
+      seated,
       invisible: pose.invisible,
       hurtFlash: 0,
       deathProgress,
     });
+    applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
     this.lastInvisible = pose.invisible === true;
     this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);

@@ -8,6 +8,15 @@ import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeome
 import { PlayerVisual, UPPER_BODY_PIVOT_Y } from '../src/rendering/player/PlayerVisual';
 import { PlayerVisualAnimator } from '../src/rendering/player/PlayerVisualAnimator';
 import {
+  applySeatVisualRoot,
+  MINECART_RIDER_GAMEPLAY_Y,
+  MINECART_SEAT_BACK_OFFSET,
+  MINECART_SEAT_VISUAL,
+  PLAYER_SEAT_HIP_HEIGHT,
+  seatVisualOffset,
+} from '../src/rendering/player/seatVisual';
+import { MINECART_FLOOR_TOP } from '../src/rendering/minecartGeometry';
+import {
   FIRST_PERSON_SPRITE_POSE,
   classifyThirdPersonItemPose,
   itemRenderProfile,
@@ -51,26 +60,47 @@ describe('player visual animator', () => {
     expect(sneak.bodyZOffset).toBe(0);
   });
 
-  it('applies a reusable seated pose with folded legs and a lowered hip', () => {
+  it('sits with a 90° hip, straight horizontal legs, and an upright torso', () => {
     const animator = new PlayerVisualAnimator();
     const seated = animator.advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
     const limbTip = (rotationX: number): THREE.Vector3 => (
       new THREE.Vector3(0, -1, 0).applyAxisAngle(new THREE.Vector3(1, 0, 0), rotationX)
     );
-    expect(limbTip(seated.rightLegX).z).toBeLessThan(0);
+    const tip = limbTip(seated.rightLegX);
+    expect(seated.rightLegX).toBeCloseTo(Math.PI / 2);
+    expect(seated.leftLegX).toBeCloseTo(Math.PI / 2);
+    expect(seated.bodyPitch).toBe(0);
+    expect(seated.bodyYOffset).toBe(0);
+    expect(Math.abs(seated.rightArmX)).toBeLessThan(0.05);
+    expect(Math.abs(seated.leftArmX)).toBeLessThan(0.05);
+    expect(tip.z).toBeLessThan(0);
+    expect(tip.y).toBeCloseTo(0);
     expect(limbTip(seated.leftLegX).z).toBeLessThan(0);
-    expect(limbTip(seated.rightArmX).z).toBeLessThan(0);
-    expect(limbTip(seated.leftArmX).z).toBeLessThan(0);
     expect(seated.rightLegX).toBeCloseTo(seated.leftLegX);
-    expect(seated.rightLegX).toBeGreaterThan(1);
-    expect(seated.bodyYOffset).toBeLessThan(-0.2);
-    expect(Math.abs(seated.rightArmX - seated.leftArmX)).toBeLessThan(0.01);
     const stillSeated = animator.advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
-    expect(stillSeated.rightLegX).toBeCloseTo(seated.rightLegX);
-    expect(stillSeated.leftLegX).toBeCloseTo(stillSeated.rightLegX);
+    expect(stillSeated.rightLegX).toBeCloseTo(Math.PI / 2);
     const standing = new PlayerVisualAnimator().advance(1 / 60, idle);
     expect(standing.bodyYOffset).toBe(0);
     expect(standing.rightLegX).toBeCloseTo(0);
+    expect(standing.bodyPitch).toBe(0);
+  });
+
+  it('offsets a seated visual root backward relative to yaw by the seat-back distance', () => {
+    expect(PLAYER_SEAT_HIP_HEIGHT).toBeCloseTo(UPPER_BODY_PIVOT_Y);
+    const north = seatVisualOffset(0, MINECART_SEAT_VISUAL);
+    expect(north.x).toBeCloseTo(0);
+    expect(north.z).toBeCloseTo(MINECART_SEAT_BACK_OFFSET);
+    expect(Math.hypot(north.x, north.z)).toBeCloseTo(MINECART_SEAT_BACK_OFFSET);
+    expect(north.y).toBeCloseTo(MINECART_FLOOR_TOP - MINECART_RIDER_GAMEPLAY_Y - PLAYER_SEAT_HIP_HEIGHT);
+    const east = seatVisualOffset(Math.PI / 2, MINECART_SEAT_VISUAL);
+    expect(east.x).toBeCloseTo(MINECART_SEAT_BACK_OFFSET);
+    expect(east.z).toBeCloseTo(0);
+    const root = { position: new THREE.Vector3() };
+    applySeatVisualRoot(root, { x: 10, y: 40.2, z: 8 }, 0, true);
+    expect(root.position.x).toBeCloseTo(10);
+    expect(root.position.z).toBeCloseTo(8 + MINECART_SEAT_BACK_OFFSET);
+    applySeatVisualRoot(root, { x: 10, y: 40.2, z: 8 }, 0, false);
+    expect(root.position.toArray()).toEqual([10, 40.2, 8]);
   });
 
   it('overlays attack, bow, sword block and food poses without touching simulation state', () => {

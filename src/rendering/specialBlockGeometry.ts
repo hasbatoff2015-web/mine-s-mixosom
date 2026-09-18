@@ -503,8 +503,9 @@ export function railRenderQuads(shape: RailShape): readonly RailRenderQuad[] {
     case 'ascending_south': return [ns(high, lo, 'straight', [0, 0, 1, 1])];
     case 'ascending_east': return [ew(lo, high)];
     case 'ascending_west': return [ew(high, lo)];
-    // rail_corner.png authors the L on image left+bottom. addQuad maps that
-    // island onto the south+west edges, so identity UV is south_west.
+    // rail_corner.png authors the L on image BOTTOM+RIGHT (PNG y increases down).
+    // addQuad identity: v0 = image bottom = world south, u1 = image right = world
+    // east, so identity UV is south_east. Geometry corners stay SW,SE,NE,NW.
     case 'south_west': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.south_west)];
     case 'south_east': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.south_east)];
     case 'north_west': return [ns(lo, lo, 'corner', RAIL_CORNER_UV.north_west)];
@@ -514,10 +515,10 @@ export function railRenderQuads(shape: RailShape): readonly RailRenderQuad[] {
 
 /** Corner UVs in mesher space (v=0 at image bottom). Exported for tests. */
 export const RAIL_CORNER_UV = {
-  south_west: [0, 0, 1, 1],
-  south_east: [1, 0, 0, 1],
-  north_west: [0, 1, 1, 0],
-  north_east: [1, 1, 0, 0],
+  south_east: [0, 0, 1, 1],
+  south_west: [1, 0, 0, 1],
+  north_east: [0, 1, 1, 0],
+  north_west: [1, 1, 0, 0],
 } as const satisfies Record<'north_east' | 'north_west' | 'south_east' | 'south_west', TextureUvRect>;
 
 export interface ChainMeshPlane {

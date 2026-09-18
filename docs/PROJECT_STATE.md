@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: rail corner UV south-east + straight seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). `rail_corner.png` authored L = image **bottom+right** = **south+east**; identity UV is `south_east` (previous SW identity was a horizontal flip). Topology (`railEndDirections` / reciprocal path / π/4) не переписывалась. Seated: hip `π/2`, прямые ноги вперёд, `bodyPitch`/`bodyYOffset` = 0; visual seat root `+Z` back 0.25 и hip на `MINECART_FLOOR_TOP`.
+- Подробности: `docs/reports/2026-09-18_rail-corner-uv-seated-straight.md`.
+
 ## Последний проход: seated pose sign, door outside facing, rail connectivity — 2026-09-18
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Seated X rotations `+1.18` / `+0.42` (front = local −Z). Door `facing` = outward normal via `doorOutsideFacingFromYaw`; open occupancy = `doorHingeEdge`. Rails: reciprocal `railEndDirections`, `entryProgress` may be `undefined`, curve length `π/4`. `RAIL_CORNER_UV` не трогали.

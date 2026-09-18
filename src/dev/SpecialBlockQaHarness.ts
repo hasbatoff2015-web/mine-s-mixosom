@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BlockId, type HorizontalFacing, type RailShape } from '../blocks';
 import { CHUNK_SIZE, chunkKey } from '../core/constants';
 import { MinecartManager } from '../entities/MinecartManager';
+import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { toggleDoorState } from '../gameplay/useInteraction';
 import { DEFAULT_PLAYER_APPEARANCE } from '../player/appearance/PlayerAppearance';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -9,6 +10,7 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { applySeatVisualRoot, MINECART_RIDER_GAMEPLAY_Y } from '../rendering/player/seatVisual';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { Chunk } from '../world/Chunk';
 import { disposeWorldLighting } from '../world/LightEngine';
@@ -71,6 +73,7 @@ export async function startRailQaHarness(
   camera.lookAt(view.look[0], view.look[1], view.look[2]);
 
   let carts: MinecartManager | undefined;
+  let entityHost: ThreeEntityHost | undefined;
   let frame = 0;
   let previous = performance.now();
   const render = (now: number): void => {
@@ -85,7 +88,8 @@ export async function startRailQaHarness(
   frame = requestAnimationFrame(render);
   if (row === 'tracks') {
     const items = new ItemVisualFactory({ atlas });
-    carts = new MinecartManager(scene, world, items);
+    entityHost = new ThreeEntityHost(scene, { itemVisuals: items, ownsItemVisuals: true });
+    carts = new MinecartManager(entityHost, world);
     spawnTrackCarts(carts);
   }
 
@@ -93,6 +97,7 @@ export async function startRailQaHarness(
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
     carts?.dispose();
+    entityHost?.dispose();
     worldRenderer.dispose();
     disposeWorldLighting(world);
     atlas.dispose();
@@ -362,8 +367,8 @@ export async function startSeatedCartQaHarness(
   canvas: HTMLCanvasElement,
   uiRoot: HTMLElement,
 ): Promise<() => void> {
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">SEATED CART QA · third-person back
-legs/arms must fold forward (−Z), not into the backrest</div>`;
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">SEATED CART QA · side + slightly above
+torso upright · hip 90° · straight legs forward · pelvis toward rear wall</div>`;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -402,6 +407,7 @@ legs/arms must fold forward (−Z), not into the backrest</div>`;
     hurtFlash: 0,
   };
   let carts: MinecartManager | undefined;
+  let entityHost: ThreeEntityHost | undefined;
   let cart: ReturnType<MinecartManager['spawn']>;
   let player: PlayerVisual | undefined;
   let frame = 0;
@@ -413,32 +419,32 @@ legs/arms must fold forward (−Z), not into the backrest</div>`;
     worldRenderer.rebuildDirty(4, 8, 15, 12, { requireNeighborLight: false });
     carts?.update(delta);
     const seat = cart ?? { position: { x: 8.5, y: 40, z: 8.5 }, yaw: 0 };
+    const yaw = 'yaw' in seat ? seat.yaw : 0;
     if (player) {
-      player.root.position.set(seat.position.x, seat.position.y, seat.position.z);
-      playerState.viewYaw = 'yaw' in seat ? seat.yaw : 0;
-      player.update(delta, playerState);
+      playerState.viewYaw = yaw;
+      const pose = player.update(delta, playerState);
+      applySeatVisualRoot(
+        player.root,
+        { x: seat.position.x, y: seat.position.y + MINECART_RIDER_GAMEPLAY_Y, z: seat.position.z },
+        pose.bodyYaw,
+        true,
+      );
     }
-    camera.position.set(
-      seat.position.x + Math.sin(playerState.viewYaw) * 4.2,
-      seat.position.y + 2.4,
-      seat.position.z + Math.cos(playerState.viewYaw) * 4.2,
-    );
-    camera.lookAt(seat.position.x, seat.position.y + 1.1, seat.position.z);
+    camera.position.set(seat.position.x + 3.4, seat.position.y + 1.55, seat.position.z + 1.2);
+    camera.lookAt(seat.position.x, seat.position.y + 0.55, seat.position.z);
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);
   const items = new ItemVisualFactory({ atlas });
-  try {
-    carts = new MinecartManager(scene, world, items);
-    cart = carts.spawn(8, 40, 8);
-    if (cart) cart.alongSpeed = 0;
-  } catch (error) {
-    console.error(error);
-  }
+  entityHost = new ThreeEntityHost(scene, { itemVisuals: items, ownsItemVisuals: false });
+  carts = new MinecartManager(entityHost, world);
+  cart = carts.spawn(8, 40, 8);
+  if (cart) cart.alongSpeed = 0;
   const skins = new MinecraftSkinRegistry();
   const geometries = new PlayerSkinGeometryCache();
   player = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+  player.animator.reset(0);
   scene.add(player.root);
   return () => {
     cancelAnimationFrame(frame);
@@ -447,6 +453,7 @@ legs/arms must fold forward (−Z), not into the backrest</div>`;
     geometries.dispose();
     skins.dispose();
     carts?.dispose();
+    entityHost?.dispose();
     worldRenderer.dispose();
     disposeWorldLighting(world);
     items.dispose();

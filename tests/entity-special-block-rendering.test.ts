@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition, type BlockAttachment, type HorizontalFacing, type RailShape } from '../src/blocks';
@@ -43,6 +44,86 @@ function disposeMeshed(meshed: ReturnType<ChunkMesher['build']>): void {
 function pngSize(path: URL): readonly [number, number] {
   const png = readFileSync(path);
   return [png.readUInt32BE(16), png.readUInt32BE(20)];
+}
+
+function decodePngRgba(bytes: Buffer): { width: number; height: number; data: Buffer } {
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  const bitDepth = bytes[24];
+  const colorType = bytes[25];
+  if (bitDepth !== 8 || bytes[28] !== 0) throw new Error('unsupported png');
+  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 0 ? 1 : 0;
+  if (!channels) throw new Error(`unsupported png color type ${colorType}`);
+  const chunks: Buffer[] = [];
+  for (let offset = 8; offset < bytes.length;) {
+    const size = bytes.readUInt32BE(offset);
+    if (bytes.toString('ascii', offset + 4, offset + 8) === 'IDAT') {
+      chunks.push(bytes.subarray(offset + 8, offset + 8 + size));
+    }
+    offset += size + 12;
+  }
+  const raw = inflateSync(Buffer.concat(chunks));
+  const stride = width * channels;
+  const prev = Buffer.alloc(stride);
+  const data = Buffer.alloc(width * height * 4);
+  let src = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[src];
+    src += 1;
+    const row = Buffer.from(raw.subarray(src, src + stride));
+    src += stride;
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= channels ? row[x - channels] ?? 0 : 0;
+      const up = prev[x] ?? 0;
+      const ul = x >= channels ? prev[x - channels] ?? 0 : 0;
+      const p = left + up - ul;
+      const pa = Math.abs(p - left);
+      const pb = Math.abs(p - up);
+      const pc = Math.abs(p - ul);
+      const predictor = filter === 0 ? 0
+        : filter === 1 ? left
+          : filter === 2 ? up
+            : filter === 3 ? (left + up) >> 1
+              : pa <= pb && pa <= pc ? left : pb <= pc ? up : ul;
+      row[x] = ((row[x] ?? 0) + predictor) & 255;
+    }
+    row.copy(prev);
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      if (channels === 4) {
+        data[i] = row[x * 4]!; data[i + 1] = row[x * 4 + 1]!; data[i + 2] = row[x * 4 + 2]!; data[i + 3] = row[x * 4 + 3]!;
+      } else if (channels === 3) {
+        data[i] = row[x * 3]!; data[i + 1] = row[x * 3 + 1]!; data[i + 2] = row[x * 3 + 2]!; data[i + 3] = 255;
+      } else if (channels === 2) {
+        data[i] = row[x * 2]!; data[i + 1] = row[x * 2]!; data[i + 2] = row[x * 2]!; data[i + 3] = row[x * 2 + 1]!;
+      } else {
+        data[i] = row[x]!; data[i + 1] = row[x]!; data[i + 2] = row[x]!; data[i + 3] = 255;
+      }
+    }
+  }
+  return { width, height, data };
+}
+
+function opaqueOnEdge(
+  image: { width: number; height: number; data: Buffer },
+  edge: 'top' | 'right' | 'bottom' | 'left',
+): number {
+  const strip = 4;
+  let count = 0;
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const onEdge = edge === 'top' ? y < strip
+        : edge === 'bottom' ? y >= image.height - strip
+          : edge === 'left' ? x < strip
+            : x >= image.width - strip;
+      if (!onEdge) continue;
+      const i = (y * image.width + x) * 4;
+      const alpha = image.data[i + 3] ?? 0;
+      const luma = ((image.data[i] ?? 0) + (image.data[i + 1] ?? 0) + (image.data[i + 2] ?? 0)) / 3;
+      if (alpha > 48 && luma > 24) count += 1;
+    }
+  }
+  return count;
 }
 
 describe('torch authored face UVs', () => {
@@ -115,13 +196,28 @@ describe('render-only rail surfaces', () => {
     }
   });
 
-  it('maps rail_corner.png so south+west is identity and the other three corners rotate that L', () => {
-    expect(railRenderQuads('south_west')[0]?.uv).toEqual(RAIL_CORNER_UV.south_west);
+  it('maps rail_corner.png so south+east is identity and the other three corners flip that L', () => {
     expect(railRenderQuads('south_east')[0]?.uv).toEqual(RAIL_CORNER_UV.south_east);
-    expect(railRenderQuads('north_west')[0]?.uv).toEqual(RAIL_CORNER_UV.north_west);
+    expect(railRenderQuads('south_west')[0]?.uv).toEqual(RAIL_CORNER_UV.south_west);
     expect(railRenderQuads('north_east')[0]?.uv).toEqual(RAIL_CORNER_UV.north_east);
-    expect(RAIL_CORNER_UV.south_west).toEqual([0, 0, 1, 1]);
-    expect(RAIL_CORNER_UV.north_east).toEqual([1, 1, 0, 0]);
+    expect(railRenderQuads('north_west')[0]?.uv).toEqual(RAIL_CORNER_UV.north_west);
+    expect(RAIL_CORNER_UV.south_east).toEqual([0, 0, 1, 1]);
+    expect(RAIL_CORNER_UV.south_west).toEqual([1, 0, 0, 1]);
+    expect(RAIL_CORNER_UV.north_east).toEqual([0, 1, 1, 0]);
+    expect(RAIL_CORNER_UV.north_west).toEqual([1, 1, 0, 0]);
+  });
+
+  it('proves raw rail_corner.png is authored south+east (image bottom+right), so identity UV is south_east', () => {
+    const image = decodePngRgba(readFileSync(new URL('../public/textures/block/rail_corner.png', import.meta.url)));
+    expect(image.width).toBe(32);
+    expect(image.height).toBe(32);
+    const top = opaqueOnEdge(image, 'top');
+    const right = opaqueOnEdge(image, 'right');
+    const bottom = opaqueOnEdge(image, 'bottom');
+    const left = opaqueOnEdge(image, 'left');
+    expect(bottom).toBeGreaterThan(top * 2 + 8);
+    expect(right).toBeGreaterThan(left * 2 + 8);
+    expect(railRenderQuads('south_east')[0]?.uv).toEqual([0, 0, 1, 1]);
   });
 
   it('meshes every stored shape as exactly one double-sided surface and selects the corner asset', () => {

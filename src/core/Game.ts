@@ -153,6 +153,7 @@ import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { applySeatVisualRoot, MINECART_RIDER_GAMEPLAY_Y } from '../rendering/player/seatVisual';
 import {
   PlayerArmorGeometryCache,
   PlayerArmorMaterialCache,
@@ -5828,15 +5829,15 @@ export class Game {
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
     session.playerVisual.setOffhandItem(session.inventory.offhand?.itemId);
-    session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson
       && this.lifecycle.state === 'PLAYING'
       && !this.ui.isInventoryOpen(),
     );
-    session.playerVisual.update(this.renderDeltaSeconds, {
+    const seated = Boolean(session.ridingCartId);
+    const pose = session.playerVisual.update(this.renderDeltaSeconds, {
       bedRest: session.restingBed,
-      seated: Boolean(session.ridingCartId),
+      seated,
       viewYaw: this.input.yaw,
       viewPitch: this.input.pitch,
       movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
@@ -5851,6 +5852,15 @@ export class Game {
       invisible: session.survival.invisible,
       hurtFlash: this.hurt.modelIntensity(now),
     });
+    const cart = seated && session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
+    applySeatVisualRoot(
+      session.playerVisual.root,
+      cart
+        ? { x: cart.position.x, y: cart.position.y + MINECART_RIDER_GAMEPLAY_Y, z: cart.position.z }
+        : { x: position.x, y: position.y, z: position.z },
+      pose.bodyYaw,
+      seated,
+    );
     session.playerVisual.applyWorldLight(
       session.world,
       position.x,

@@ -96,20 +96,17 @@ export class PlayerVisualAnimator {
     let rightArmZ = 0.04;
     let leftArmZ = -0.04;
     const seated = state.seated === true;
-    const bodyPitch = seated ? 0.06 : state.sneaking ? -0.48 : 0;
-    let bodyYOffset = 0;
+    const bodyPitch = seated ? 0 : state.sneaking ? -0.48 : 0;
+    const bodyYOffset = 0;
 
     if (seated) {
       this.walkStrength = 0;
-      // Canonical PlayerVisual front is local −Z. A limb hangs down −Y, so
-      // positive X rotation swings the tip forward (−Z); negative X is backward.
-      rightLegX = 1.18;
-      leftLegX = 1.18;
-      rightArmX = 0.42;
-      leftArmX = 0.42;
-      rightArmZ = 0.1;
-      leftArmZ = -0.1;
-      bodyYOffset = -0.38;
+      // Hip 90°: a −Y limb with +X rotation lies along local −Z (model front).
+      // Seat height is a presentation root offset, not upper-body deformation.
+      rightLegX = Math.PI / 2;
+      leftLegX = Math.PI / 2;
+      rightArmX = 0;
+      leftArmX = 0;
     } else if (!state.onGround) {
       const falling = state.verticalVelocity < -0.05;
       rightLegX = falling ? 0.18 : -0.18;

@@ -1,16 +1,22 @@
 # Архитектура
 
+## Rail corner UV / straight seated pose — 2026-09-18
+
+`rail_corner.png` authors the L on image **bottom+right** (PNG scanline y=0 is file top, which is empty). `ChunkMesher.addQuad` maps identity `v0` to image bottom / world south and `u1` to image right / world east, so identity UV is **south_east**. `south_west` is horizontal flip, `north_east` vertical, `north_west` 180°. Geometry corners and `railPath` topology are unchanged.
+
+Seated pose is hip `π/2` with straight legs along local −Z and `bodyPitch`/`bodyYOffset` = 0. Minecart sit height is presentation-only: `applySeatVisualRoot` on interpolated/cart rider origin using `MINECART_SEAT_VISUAL` (hip on `MINECART_FLOOR_TOP`, root toward local +Z by 0.25). Gameplay rider stays `cart.y + 0.2`. Local (`ridingCartId`) and remote (`ridingEntityId`) share the helper.
+
 ## Seated pose / door outside facing / rail connectivity — 2026-09-18
 
 Seated pose keeps reusable `PlayerAnimationState.seated`. Limb X rotations are positive so a −Y limb tip moves to local −Z (model front).
 
 Door `BlockRenderState.facing` is the closed slab's outward normal. `doorFacingFromYaw` stays look-direction for chests/furnaces/beds. `doorOutsideFacingFromYaw` is look-opposite and is what `placeDoor` stores. `doorHingeEdge(facing, hinge)` is the physical hinge edge; open occupancy, `doorLocalBox`, and `ChunkMesher.addDoor` all use `occupiedDoorFacing` → that edge.
 
-Rail connectivity is `railEndDirections(shape)` in Node-safe `blockGeometry`. `resolveRailShape` uses occupied neighbors plus reciprocal endpoints and existing shape as a 3-neighbor tie-breaker. `railPath.nextRail` / `entryProgress` share that table; a non-reciprocal neighbor is not a path. Corner `railLength` is radius 0.5 × π/2 = π/4. `RAIL_CORNER_UV.south_west` identity is unchanged.
+Rail connectivity is `railEndDirections(shape)` in Node-safe `blockGeometry`. `resolveRailShape` uses occupied neighbors plus reciprocal endpoints and existing shape as a 3-neighbor tie-breaker. `railPath.nextRail` / `entryProgress` share that table; a non-reciprocal neighbor is not a path. Corner `railLength` is radius 0.5 × π/2 = π/4. Corner render UV identity is `south_east` (asset bottom+right).
 
 ## Rail corners / sign / door hinge / minecart / seated — 2026-09-18
 
-`railRenderQuads` maps `rail_corner.png` with identity UV = south+west (image left+bottom in mesher v=0-at-bottom space). `resolveRailShape` and `railPath` names were already neighbor-correct. `occupiedDoorFacing` left hinge is outside-left: south closed → west open. Signs: 16×8×2 board, wall on attached face at ±0.5∓1/16. Minecart visual is ModelMinecart floor (0,10) + four walls (0,0) from `entity/minecart`. `PlayerAnimationState.seated` is a reusable sit pose; minecart passengers set it from `ridingCartId` / snapshot `ridingEntityId`.
+`railRenderQuads` maps `rail_corner.png` with identity UV = south+east (image bottom+right in mesher v=0-at-bottom space). `resolveRailShape` and `railPath` names remain neighbor-correct. `occupiedDoorFacing` left hinge is outside-left: south closed → west open. Signs: 16×8×2 board, wall on attached face at ±0.5∓1/16. Minecart visual is ModelMinecart floor (0,10) + four walls (0,0) from `entity/minecart`. `PlayerAnimationState.seated` is a reusable sit pose; minecart passengers set it from `ridingCartId` / snapshot `ridingEntityId`.
 
 ## Merge current main into entity-special-visual-fixes — 2026-09-18
 
