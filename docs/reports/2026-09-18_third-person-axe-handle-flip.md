@@ -76,9 +76,18 @@ Unflipped tool/pickaxe/shovel/hoe rotation remains `-0.1232 / 1.4668 / -0.1232`.
 
 Focused `tests/third-person-held-item.test.ts`.
 
+```text
+npm run typecheck                                      PASS
+npx vitest run tests/third-person-held-item.test.ts    10/10 PASS
+npm run build                                          PASS
+```
+
 ## Visual QA
 
-`/moveitems`: wooden/iron/diamond axe RESET shows blade on the other side of the handle vs previous tool pose; iron_pickaxe stays unflipped.
+`/moveitems` RESET:
+
+- wooden_axe / iron_axe / diamond_axe: category `axe`, pos `0 / 0.215 / -0.155`, rot `3.0184 / -1.4668 / -1.4476`, scale `0.55`. Head at the hip (other side of the handle), tilt unchanged.
+- iron_pickaxe / wooden_pickaxe: category `tool`, same position/scale, rot `-0.1232 / 1.4668 / -0.1232`. Head still at the upper end of the handle.
 
 ## Git
 
