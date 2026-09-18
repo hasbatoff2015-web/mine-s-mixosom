@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-18 Third-person axe 180° handle flip
+
+Focused:
+
+```text
+npx vitest run tests/third-person-held-item.test.ts --maxWorkers=2 --silent
+```
+
+Contracts: every `tool === 'axe'` uses tool position/scale plus local 180° handle flip `(1,1,0)`; pickaxe/shovel/hoe stay unflipped tool pose; swords stay sword pose; first-person / block / generated / bow unchanged. Axe IDs: wooden/stone/iron/diamond/ruby/titanium_axe. No `gold_axe`.
+
 ## 2026-09-18 Third-person sword vs tool poses
 
 Focused:
@@ -8,7 +18,7 @@ Focused:
 npx vitest run tests/third-person-held-item.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent
 ```
 
-Contracts: every `weapon === 'sword'` uses sword pose; every `kind: 'tool'` uses tool pose; wooden/iron/diamond sword+pickaxe, axe, shovel covered; stick/flint stay historical `handheld`; block/generated/bow unchanged; `FIRST_PERSON_SPRITE_POSE` unchanged. No `gold_sword` / `gold_pickaxe` in registry (golden_hoe is a tool).
+Contracts: every `weapon === 'sword'` uses sword pose; every `kind: 'tool'` except axes uses tool pose; wooden/iron/diamond sword+pickaxe, shovel, hoe covered; stick/flint stay historical `handheld`; block/generated/bow unchanged; `FIRST_PERSON_SPRITE_POSE` unchanged. No `gold_sword` / `gold_pickaxe` in registry (golden_hoe is a tool).
 
 ## 2026-09-18 Third-person held-item calibrator `/moveitems`
 

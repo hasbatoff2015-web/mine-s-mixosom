@@ -12,6 +12,8 @@ import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
 import {
+  AXE_HANDLE_FLIP_RADIANS,
+  AXE_HANDLE_LOCAL_AXIS,
   THIRD_PERSON_HELD_ITEM_DEFAULTS,
   ThirdPersonHeldItemCalibratorState,
   applyThirdPersonHeldItemTransform,
@@ -19,16 +21,21 @@ import {
   cloneThirdPersonHeldItemTransform,
   defaultThirdPersonHeldItemTransform,
   defaultThirdPersonHeldItemTransformForItem,
+  flipAroundLocalAxis,
   formatThirdPersonHeldItemCopy,
   formatThirdPersonHeldItemCopyAll,
+  isThirdPersonAxeItem,
   isThirdPersonSwordItem,
   isThirdPersonToolItem,
   thirdPersonHeldTransformsClose,
 } from '../src/rendering/player/thirdPersonHeldItem';
-import { Group } from 'three';
+import { Euler, Group, Quaternion, Vector3 } from 'three';
 
 const SWORD_IDS = ITEMS.filter((item) => isThirdPersonSwordItem(item)).map((item) => item.id);
-const TOOL_IDS = ITEMS.filter((item) => isThirdPersonToolItem(item)).map((item) => item.id);
+const AXE_IDS = ITEMS.filter((item) => isThirdPersonAxeItem(item)).map((item) => item.id);
+const OTHER_TOOL_IDS = ITEMS
+  .filter((item) => isThirdPersonToolItem(item) && !isThirdPersonAxeItem(item))
+  .map((item) => item.id);
 
 describe('moveitems calibrator route', () => {
   it('matches /moveitems with or without a trailing slash', () => {
@@ -60,25 +67,26 @@ describe('third-person held item defaults', () => {
     expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.bow.scale.x).toBe(0.46);
   });
 
-  it('uses one sword pose for every sword and one tool pose for every non-sword tool', () => {
+  it('uses one sword pose for every sword and one tool pose for every non-axe tool', () => {
     expect(SWORD_IDS).toEqual([
       'wooden_sword', 'stone_sword', 'iron_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
     ]);
-    expect(TOOL_IDS).toContain('wooden_pickaxe');
-    expect(TOOL_IDS).toContain('iron_pickaxe');
-    expect(TOOL_IDS).toContain('diamond_pickaxe');
-    expect(TOOL_IDS).toContain('iron_axe');
-    expect(TOOL_IDS).toContain('diamond_shovel');
-    expect(TOOL_IDS).toContain('golden_hoe');
+    expect(OTHER_TOOL_IDS).toContain('wooden_pickaxe');
+    expect(OTHER_TOOL_IDS).toContain('iron_pickaxe');
+    expect(OTHER_TOOL_IDS).toContain('diamond_pickaxe');
+    expect(OTHER_TOOL_IDS).toContain('iron_shovel');
+    expect(OTHER_TOOL_IDS).toContain('diamond_shovel');
+    expect(OTHER_TOOL_IDS).toContain('golden_hoe');
+    expect(OTHER_TOOL_IDS).not.toContain('iron_axe');
     expect(SWORD_IDS).not.toContain('gold_sword');
-    expect(TOOL_IDS).not.toContain('gold_pickaxe');
+    expect(OTHER_TOOL_IDS).not.toContain('gold_pickaxe');
 
     for (const id of ['wooden_sword', 'iron_sword', 'diamond_sword'] as const) {
       expect(classifyThirdPersonHeldItem(id)).toBe('sword');
       expect(classifyItemForRendering(id)).toBe('handheld');
       expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword);
     }
-    for (const id of ['wooden_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'iron_axe', 'iron_shovel'] as const) {
+    for (const id of ['wooden_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'iron_shovel'] as const) {
       expect(classifyThirdPersonHeldItem(id)).toBe('tool');
       expect(classifyItemForRendering(id)).toBe('handheld');
       expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool);
@@ -86,7 +94,7 @@ describe('third-person held item defaults', () => {
     for (const id of SWORD_IDS) {
       expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword);
     }
-    for (const id of TOOL_IDS) {
+    for (const id of OTHER_TOOL_IDS) {
       expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool);
     }
     expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.sword).toEqual({
@@ -99,6 +107,55 @@ describe('third-person held item defaults', () => {
       rotation: { x: -0.1232, y: 1.4668, z: -0.1232 },
       scale: { x: 0.55, y: 0.55, z: 0.55 },
     });
+  });
+
+  it('flips every axe 180° around the local handle axis on top of the shared tool pose', () => {
+    expect(AXE_IDS).toEqual([
+      'wooden_axe', 'stone_axe', 'iron_axe', 'diamond_axe', 'ruby_axe', 'titanium_axe',
+    ]);
+    expect(AXE_HANDLE_LOCAL_AXIS).toEqual({ x: 1, y: 1, z: 0 });
+    expect(AXE_HANDLE_FLIP_RADIANS).toBe(Math.PI);
+
+    const expected = flipAroundLocalAxis(
+      THIRD_PERSON_HELD_ITEM_DEFAULTS.tool,
+      AXE_HANDLE_LOCAL_AXIS,
+      AXE_HANDLE_FLIP_RADIANS,
+    );
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe.position).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool.position);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe.scale).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool.scale);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe.rotation).not.toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool.rotation);
+    expect(thirdPersonHeldTransformsClose(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe, expected)).toBe(true);
+
+    const identity = {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    };
+    const spun = flipAroundLocalAxis(identity, { x: 0, y: 0, z: 1 }, Math.PI);
+    expect(spun.rotation.x).toBeCloseTo(0, 6);
+    expect(spun.rotation.y).toBeCloseTo(0, 6);
+    expect(spun.rotation.z).toBeCloseTo(Math.PI, 6);
+
+    const poseQ = new Quaternion().setFromEuler(new Euler(-0.1232, 1.4668, -0.1232, 'XYZ'));
+    const composed = poseQ.clone().multiply(
+      new Quaternion().setFromAxisAngle(new Vector3(1, 1, 0).normalize(), Math.PI),
+    );
+    const euler = new Euler().setFromQuaternion(composed, 'XYZ');
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe.rotation.x).toBeCloseTo(euler.x, 6);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe.rotation.y).toBeCloseTo(euler.y, 6);
+    expect(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe.rotation.z).toBeCloseTo(euler.z, 6);
+
+    for (const id of ['wooden_axe', 'iron_axe', 'diamond_axe'] as const) {
+      expect(classifyThirdPersonHeldItem(id)).toBe('axe');
+      expect(classifyItemForRendering(id)).toBe('handheld');
+      expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe);
+    }
+    for (const id of AXE_IDS) {
+      expect(isThirdPersonAxeItem(id)).toBe(true);
+      expect(isThirdPersonToolItem(id)).toBe(true);
+      expect(classifyThirdPersonHeldItem(id)).toBe('axe');
+      expect(defaultThirdPersonHeldItemTransformForItem(id)).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.axe);
+    }
   });
 
   it('leaves stick, flint, blocks, generated items and bow on the historical third-person poses', () => {
@@ -161,7 +218,7 @@ describe('third-person held item calibrator state', () => {
 });
 
 describe('PlayerVisual third-person held calibration', () => {
-  it('applies sword and tool production poses then live overlay without mutating defaults', () => {
+  it('applies sword, tool and axe production poses then live overlay without mutating defaults', () => {
     const skins = new MinecraftSkinRegistry();
     const geometries = new PlayerSkinGeometryCache();
     const items = new ItemVisualFactory();
@@ -171,6 +228,14 @@ describe('PlayerVisual third-person held calibration', () => {
       visual.readHeldItemTransform()!,
       defaultThirdPersonHeldItemTransform('tool'),
     )).toBe(true);
+
+    visual.setHeldItem('wooden_axe');
+    expect(thirdPersonHeldTransformsClose(
+      visual.readHeldItemTransform()!,
+      defaultThirdPersonHeldItemTransform('axe'),
+    )).toBe(true);
+    expect(visual.readHeldItemTransform()?.position).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool.position);
+    expect(visual.readHeldItemTransform()?.scale).toEqual(THIRD_PERSON_HELD_ITEM_DEFAULTS.tool.scale);
 
     visual.setHeldItem('diamond_sword');
     expect(thirdPersonHeldTransformsClose(

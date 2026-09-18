@@ -1,8 +1,15 @@
 # Состояние проекта
 
-## Последний проход: Third-person sword vs tool poses — 2026-09-18
+## Последний проход: Third-person axe 180° handle flip — 2026-09-18
 
-- Remote/third-person held items: **все мечи** делят одну pose (`y 0.225`, `z -0.245`, rot `-0.1232 / 1.4668 / -0.1232`, scale `0.55`), **все `kind: 'tool'`** — другую (`y 0.215`, `z -0.155`, та же rotation/scale). Не per-item override для `diamond_sword` / `iron_pickaxe`.
+- Топоры (`kind: 'tool' && tool === 'axe'`) берут **ту же** tool position/scale (`0 / 0.215 / -0.155`, `0.55`) и tool Euler, затем **локальный 180° roll** вокруг оси рукояти спрайта `(1, 1, 0)`: `qPose * qFromAxisAngle(normalize(1,1,0), π)` → Euler XYZ `3.0184 / -1.4668 / -1.4476`.
+- Кирки, лопаты, мотыги остаются на unflipped tool pose. Мечи — sword pose. First-person / block / generated / bow не менялись.
+- Не per-item override: все `*_axe` IDs (wooden/stone/iron/diamond/ruby/titanium).
+- Подробности: `docs/reports/2026-09-18_third-person-axe-handle-flip.md`.
+
+## Предыдущий проход: Third-person sword vs tool poses — 2026-09-18
+
+- Remote/third-person held items: **все мечи** делят одну pose (`y 0.225`, `z -0.245`, rot `-0.1232 / 1.4668 / -0.1232`, scale `0.55`), **все `kind: 'tool'` кроме топоров** — другую (`y 0.215`, `z -0.155`, та же rotation/scale). Не per-item override для `diamond_sword` / `iron_pickaxe`.
 - `block` / `generated` / `handheld` (stick, flint) / `bow` и first-person `FIRST_PERSON_SPRITE_POSE` не менялись. Классификация mesh/FP остаётся `handheld`.
 - Позы живут в `thirdPersonHeldItem.ts`; `PlayerVisual.setHeldItem` выбирает по item kind. `/moveitems` RESET читает эти же production defaults.
 - Подробности: `docs/reports/2026-09-18_third-person-sword-tool-poses.md`.

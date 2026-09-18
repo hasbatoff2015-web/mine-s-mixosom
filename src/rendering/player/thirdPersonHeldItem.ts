@@ -1,4 +1,4 @@
-import type { Object3D } from 'three';
+import { Euler, Quaternion, Vector3, type Object3D } from 'three';
 import {
   classifyItemForRendering,
   getItemDefinition,
@@ -32,17 +32,46 @@ function pose(
 
 /**
  * Third-person pose kind. `ItemRenderCategory` still owns first-person/mesh routing.
- * Swords and other `kind: 'tool'` items share `handheld` there, but use distinct
- * third-person poses calibrated on diamond_sword / iron_pickaxe.
+ * Swords, axes and other `kind: 'tool'` items share `handheld` there, but use
+ * distinct third-person poses.
  */
-export type ThirdPersonHeldItemPoseKind = ItemRenderCategory | 'sword' | 'tool';
+export type ThirdPersonHeldItemPoseKind = ItemRenderCategory | 'sword' | 'tool' | 'axe';
 
 const SWORD_ROTATION = vec(-0.1232, 1.4668, -0.1232);
+const TOOL_POSE = pose(vec(0, 0.215, -0.155), SWORD_ROTATION, 0.55);
+
+/**
+ * Generated-item handle runs along the sprite diagonal (texture bottom-left →
+ * top-right = local +X+Y). A 180° roll around that axis keeps the tool tilt
+ * and flips the head to the other side of the handle.
+ */
+export const AXE_HANDLE_LOCAL_AXIS = Object.freeze({ x: 1, y: 1, z: 0 });
+export const AXE_HANDLE_FLIP_RADIANS = Math.PI;
+
+export function flipAroundLocalAxis(
+  transform: ThirdPersonHeldItemTransform,
+  axis: { readonly x: number; readonly y: number; readonly z: number },
+  radians = Math.PI,
+): ThirdPersonHeldItemTransform {
+  const quaternion = new Quaternion().setFromEuler(
+    new Euler(transform.rotation.x, transform.rotation.y, transform.rotation.z, 'XYZ'),
+  );
+  quaternion.multiply(new Quaternion().setFromAxisAngle(
+    new Vector3(axis.x, axis.y, axis.z).normalize(),
+    radians,
+  ));
+  const next = new Euler().setFromQuaternion(quaternion, 'XYZ');
+  return {
+    position: { ...transform.position },
+    rotation: { x: next.x, y: next.y, z: next.z },
+    scale: { ...transform.scale },
+  };
+}
 
 /**
  * Production third-person held transforms for `PlayerVisual` / remote players.
  * `block` / `generated` / `handheld` / `bow` keep the historical numbers.
- * `sword` and `tool` are group poses, not per-item overrides.
+ * `sword` / `tool` / `axe` are group poses, not per-item overrides.
  */
 export const THIRD_PERSON_HELD_ITEM_DEFAULTS: Readonly<Record<ThirdPersonHeldItemPoseKind, ThirdPersonHeldItemTransform>> = Object.freeze({
   block: pose(vec(0, -0.02, -0.02), vec(-0.55, 0.45, -0.28), 0.24),
@@ -50,12 +79,22 @@ export const THIRD_PERSON_HELD_ITEM_DEFAULTS: Readonly<Record<ThirdPersonHeldIte
   handheld: pose(vec(0, -0.04, -0.06), vec(-0.16, 0, -0.72), 0.55),
   bow: pose(vec(0, -0.04, -0.06), vec(-0.16, 0, 0.85), 0.46),
   sword: pose(vec(0, 0.225, -0.245), SWORD_ROTATION, 0.55),
-  tool: pose(vec(0, 0.215, -0.155), SWORD_ROTATION, 0.55),
+  tool: TOOL_POSE,
+  axe: pose(
+    vec(TOOL_POSE.position.x, TOOL_POSE.position.y, TOOL_POSE.position.z),
+    flipAroundLocalAxis(TOOL_POSE, AXE_HANDLE_LOCAL_AXIS, AXE_HANDLE_FLIP_RADIANS).rotation,
+    TOOL_POSE.scale.x,
+  ),
 });
 
 export function isThirdPersonSwordItem(itemOrId: string | ItemDefinition): boolean {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
   return item.kind === 'weapon' && item.weapon === 'sword';
+}
+
+export function isThirdPersonAxeItem(itemOrId: string | ItemDefinition): boolean {
+  const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
+  return item.kind === 'tool' && item.tool === 'axe';
 }
 
 export function isThirdPersonToolItem(itemOrId: string | ItemDefinition): boolean {
@@ -65,6 +104,7 @@ export function isThirdPersonToolItem(itemOrId: string | ItemDefinition): boolea
 
 export function classifyThirdPersonHeldItem(itemOrId: string | ItemDefinition): ThirdPersonHeldItemPoseKind {
   if (isThirdPersonSwordItem(itemOrId)) return 'sword';
+  if (isThirdPersonAxeItem(itemOrId)) return 'axe';
   if (isThirdPersonToolItem(itemOrId)) return 'tool';
   return classifyItemForRendering(itemOrId);
 }
