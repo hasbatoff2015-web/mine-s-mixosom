@@ -18,7 +18,11 @@ import {
 } from '../shared/buyers';
 import { itemHoverAttributeString } from '../src/ui/itemTooltip';
 import {
+  DURABILITY_BAR_GREEN,
+  DURABILITY_BAR_ORANGE,
+  DURABILITY_BAR_RED,
   applySlotSnapshots,
+  durabilityBarFillColor,
   slotDurabilityBarHtml,
   slotStateSignature,
 } from '../src/ui/inventoryLayout';
@@ -218,6 +222,30 @@ describe('armor durability display path', () => {
     }]);
     expect(result.updated).toBe(1);
     expect(slot.innerHTML).toBe(slotDurabilityBarHtml(createItemStack(ItemId.IronHelmet, 1, { durability: 90 })));
+  });
+
+  it('colors the shared durability bar by remaining percent', () => {
+    expect(durabilityBarFillColor(100, 100)).toBe(DURABILITY_BAR_GREEN);
+    expect(durabilityBarFillColor(67, 100)).toBe(DURABILITY_BAR_GREEN);
+    expect(durabilityBarFillColor(66, 100)).toBe(DURABILITY_BAR_ORANGE);
+    expect(durabilityBarFillColor(33, 100)).toBe(DURABILITY_BAR_ORANGE);
+    expect(durabilityBarFillColor(32, 100)).toBe(DURABILITY_BAR_RED);
+    expect(durabilityBarFillColor(1, 100)).toBe(DURABILITY_BAR_RED);
+    expect(durabilityBarFillColor(0, 100)).toBe(DURABILITY_BAR_RED);
+
+    const pickMax = durabilityOf(ItemId.IronPickaxe);
+    const swordMax = durabilityOf(ItemId.IronSword);
+    const helmMax = durabilityOf(ItemId.IronHelmet);
+    const greenPick = createItemStack(ItemId.IronPickaxe, 1, { durability: Math.max(1, Math.ceil(pickMax * 0.67)) });
+    const orangeSword = createItemStack(ItemId.IronSword, 1, { durability: Math.max(1, Math.floor(swordMax * 0.50)) });
+    const redHelm = createItemStack(ItemId.IronHelmet, 1, { durability: 1 });
+    expect(durabilityBarFillColor(greenPick.durability!, pickMax)).toBe(DURABILITY_BAR_GREEN);
+    expect(durabilityBarFillColor(orangeSword.durability!, swordMax)).toBe(DURABILITY_BAR_ORANGE);
+    expect(durabilityBarFillColor(redHelm.durability!, helmMax)).toBe(DURABILITY_BAR_RED);
+    expect(slotDurabilityBarHtml(greenPick)).toContain(`background:${DURABILITY_BAR_GREEN}`);
+    expect(slotDurabilityBarHtml(orangeSword)).toContain(`background:${DURABILITY_BAR_ORANGE}`);
+    expect(slotDurabilityBarHtml(redHelm)).toContain(`background:${DURABILITY_BAR_RED}`);
+    expect(slotDurabilityBarHtml(createItemStack(ItemId.Apple, 4))).toBe('');
   });
 });
 
