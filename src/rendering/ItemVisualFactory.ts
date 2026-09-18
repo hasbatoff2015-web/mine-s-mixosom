@@ -15,7 +15,7 @@ import {
   slabLocalBoxes,
   stairLocalBoxes,
   fenceLocalBoxes,
-  railLocalBoxes,
+  railRenderQuads,
   lanternMeshCuboids,
   lanternHangerPlanes,
   chainMeshPlanes,
@@ -299,7 +299,7 @@ export class ItemVisualFactory {
         );
         break;
       case 'rail':
-        geometry = this.geometryFromLocalBoxes(railLocalBoxes('north_south'), texture);
+        geometry = this.geometryFromAtlasParts([], railRenderQuads('north_south'), texture);
         break;
       case 'lantern':
         geometry = this.geometryFromAtlasParts(

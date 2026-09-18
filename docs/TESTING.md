@@ -1,5 +1,41 @@
 # Тестирование
 
+## 2026-09-18 Rail corners / sign / door / minecart / seated
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/sign-entity-model.test.ts tests/special-block-items.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/lighting-physics-interaction.test.ts tests/tnt-minecart.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/utility-items.test.ts tests/arrow-visual-orientation.test.ts tests/skeleton-presentation.test.ts tests/mob-projectile-routing.test.ts tests/server/anarchy-gameplay.test.ts tests/block-selection-raycast.test.ts --maxWorkers=2
+```
+
+Focused (without full fire-contact file): **rail-corner-path 3/3**, **sign-entity-model 3/3**, **special-block-items 12/12**, **player-visual-animation 16/16**, **entity-special-block-rendering 8/8**, plus 165/unknown and anarchy 35/35. Isolated minecart floor visual **PASS**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS (**4.75 MiB / 404 files**).
+
+Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
+## 2026-09-18 Merge current main into entity-special-visual-fixes
+
+Save/block:
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/fs-world-store.test.ts --maxWorkers=1
+```
+
+**29/29 PASS.** `BlockId.OakSign === 165`, `isKnownBlockId(165) === true`, restore of `"165"` / numeric 165 succeeds as `oak_sign`. Generic unknown `65534` stays unregistered placeholder `unknown_65534` and serializes as 65534.
+
+Focused feature:
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/skeleton-presentation.test.ts tests/mob-projectile-routing.test.ts tests/visual-models.test.ts tests/player-visual-animation.test.ts tests/server/anarchy-gameplay.test.ts tests/arrow-visual-orientation.test.ts tests/network-entity-visual-events.test.ts --maxWorkers=2
+```
+
+Plus related main arrow tests already in that set. **12 files / 122 tests PASS.**
+
+`npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.75 MiB / 404 files**.
+
+Full `npx vitest run --maxWorkers=2`: **251 passed / 5 failed / 256 files**. Failures match current origin/main host baseline classes (extractor parse, chat-layout CRLF, fire-contact-sunlight-minecart timeout, worldgen timeout, tick-load-flight >80ms). Isolated `tnt-minecart` / `import-schematic` / `block-geometry` PASS; `lighting-scheduler` radius-6 can flake under load.
+
+Manual QA harnesses (`/?qaSpecial=1`, `/?qaChicken=1`, `/?qaSkeleton=1`, `/?qaPlayer=1`, `/?qaArrow=1`) exercised in the Cursor browser. Live two-client skeleton attribution and continuous minecart ride remain owner-deferred. This browser had no IndexedDB save with 165; restore coverage is the 29/29 suite.
+
+Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
 ## 2026-09-18 Merge Utility Items V1 into current main
 
 ```text

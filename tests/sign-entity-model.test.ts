@@ -35,11 +35,15 @@ describe('sign entity model', () => {
     expect(board.faces.north?.uv).toEqual([28 / 64, 1 - 14 / 32, 52 / 64, 1 - 2 / 32]);
     expect(board.faces.up?.uv).toEqual([2 / 64, 1 - 2 / 32, 26 / 64, 1]);
     expect(board.faces.west?.uv).not.toEqual(board.faces.east?.uv);
-    expect(standing[1]!.faces.south?.uv).toEqual([2 / 64, 1 - 30 / 32, 4 / 64, 1 - 22.4 / 32]);
+    expect(standing[1]!.faces.south?.uv).toEqual([2 / 64, 1 - 30 / 32, 4 / 64, 1 - 16 / 32]);
     expect(standing[1]!.faces.west?.uv).not.toEqual(board.faces.west?.uv);
-    expect(board.size[0] / board.size[1]).toBeCloseTo(24 / 12);
+    expect(board.size[0]).toBeLessThanOrEqual(1);
+    expect(board.size[0] / board.size[1]).toBeCloseTo(2);
     expect(standing[1]!.center[1] + standing[1]!.size[1] / 2).toBeCloseTo(board.center[1] - board.size[1] / 2);
-    expect(standing[1]!.size[2]).toBeLessThan(board.size[2]);
+    expect(standing[1]!.size[0]).toBeCloseTo(2 / 16);
+    const wallBoard = wall[0]!;
+    expect(wallBoard.center[2] + wallBoard.size[2] / 2).toBeCloseTo(-0.5 + wallBoard.size[2]);
+    expect(wallBoard.center[2]).toBeLessThan(-0.3);
   });
 
   it('meshes board + post for floor, but board only for wall', () => {
@@ -51,15 +55,18 @@ describe('sign entity model', () => {
     const floor0 = signMesh({ attachment: 'floor', signRotation: 0 }).bounds;
     const floor4 = signMesh({ attachment: 'floor', signRotation: 4 }).bounds;
     const floor8 = signMesh({ attachment: 'floor', signRotation: 8 }).bounds;
-    expect(floor0.max.x - floor0.min.x).toBeCloseTo(1.2);
-    expect(floor4.max.z - floor4.min.z).toBeCloseTo(1.2);
+    expect(floor0.max.x - floor0.min.x).toBeCloseTo(1);
+    expect(floor4.max.z - floor4.min.z).toBeCloseTo(1);
     expect(floor8.getCenter(new THREE.Vector3()).x).toBeCloseTo(8.5);
     for (const facing of ['north', 'east', 'south', 'west'] as const) {
       const { bounds, vertices } = signMesh({ attachment: 'wall', facing });
       expect(vertices, facing).toBe(24);
       const span = facing === 'east' || facing === 'west'
         ? bounds.max.z - bounds.min.z : bounds.max.x - bounds.min.x;
-      expect(span, facing).toBeCloseTo(1.2);
+      expect(span, facing).toBeCloseTo(1);
+      const depth = facing === 'east' || facing === 'west'
+        ? bounds.max.x - bounds.min.x : bounds.max.z - bounds.min.z;
+      expect(depth, facing).toBeCloseTo(2 / 16);
     }
   });
 });

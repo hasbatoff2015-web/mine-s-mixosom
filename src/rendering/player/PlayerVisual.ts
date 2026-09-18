@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ItemId, bowPullingTexturePath, itemRenderProfile, type ItemRenderCategory } from '../../items';
+import { ItemId, bowPullingTexturePath, itemRenderProfile, thirdPersonItemPose } from '../../items';
 import type { VoxelWorld } from '../../world/World';
 import {
   createPlayerAppearance,
@@ -226,7 +226,7 @@ export class PlayerVisual {
     this.bowTexturePath = 'item/bow';
     if (!this.heldModel || !itemId) return;
     this.rig.heldItem.add(this.heldModel);
-    this.applyHeldItemTransform(this.heldModel, itemRenderProfile(itemId).category);
+    this.applyHeldItemTransform(this.heldModel, itemId);
   }
 
   setOffhandItem(itemId?: string): void {
@@ -442,16 +442,11 @@ export class PlayerVisual {
     this.rig.leftLeg.rotation.x = pose.leftLegX;
   }
 
-  private applyHeldItemTransform(model: THREE.Group, category: ItemRenderCategory): void {
-    if (category === 'block') {
-      model.position.set(0, -0.02, -0.02);
-      model.rotation.set(-0.55, 0.45, -0.28);
-      model.scale.setScalar(0.24);
-      return;
-    }
-    model.position.set(0, -0.04, -0.06);
-    model.rotation.set(-0.16, 0, category === 'bow' ? 0.85 : -0.72);
-    model.scale.setScalar(category === 'bow' ? 0.46 : category === 'handheld' ? 0.55 : 0.40);
+  private applyHeldItemTransform(model: THREE.Group, itemId: string): void {
+    const pose = thirdPersonItemPose(itemId);
+    model.position.set(...pose.position);
+    model.rotation.set(...pose.rotation);
+    model.scale.set(...pose.scale);
   }
 
   private assertActive(): void {

@@ -1,5 +1,25 @@
 # Состояние проекта
 
+## Последний проход: rail corners, sign, door hinge, minecart visual, seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Corner rail UV совпадает с `south_west` native `rail_corner.png`; door `occupiedDoorFacing` качает петли с внешней левой стороны; табличка 16×8×2 внутри клетки, wall flush; minecart — ModelMinecart UV; `seated` pose для пассажира.
+- Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
+## Последний проход: merge current main into entity-special-visual-fixes — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` синхронизирована с `origin/main` через `--no-ff --no-commit` semantic union. OakSign остаётся **165**; generic unknown-block compat (`65534`) сохранён. Feature history не переписывалась, `main` не менялся.
+- Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
+## Последний проход: special blocks, mob presentation, skeleton projectile routing — 2026-09-10
+
+- Ветка `codex/entity-special-visual-fixes` создана от `e4d43ff3`. Четыре implementation commits завершаются SHA `5f86c29`; подробности — `docs/reports/2026-09-10_entity-special-visual-fixes.md`.
+- Torch/redstone torch используют отдельные authored side/top/bottom UV для одного и того же floor/four-wall transform. Lantern получил читаемые standing/hanging body/cap/hanger/chain parts на authored atlas regions без изменения light/placement gameplay.
+- Rail world/held rendering отделён от collision/selection `railLocalBoxes`: десять `RailShape` рисуются одной тонкой double-sided surface, четыре ascending формы реально наклонены, четыре curve формы используют `block/rail_corner`. `railPath` разрешает форму по живым соседям, а не по stale default state.
+- Chicken остаётся двухногим legacy rig main: обе ноги grounded, opposite gait, UV island `[29, 0]` вместо прозрачного `[26, 0]`. Skeleton получает один cached `ItemVisualFactory` bow на hand anchor и отдельную ranged pose.
+- Skeleton projectile simulation принимает все living/targetable player foci со stable id, ищет ближайшее swept-segment попадание по каноническому player AABB, сравнивает его с block distance и передаёт точный `targetPlayerId`; серверный nearest-player fallback удалён. Singleplayer использует стабильный `local-player` id.
+- Third-person held item pose отделена от first-person профилей на категории sword/tool/bow/generic/block. Bow arms используют `π/2 + viewPitch` с однократной компенсацией sneak parent, поэтому положительный pitch визуально направляет руки вверх.
+- Arrow visuals: local `visualDirection` = movement segment этого tick; embed/network используют current main `impactVx/Y/Z` + `state: embedded`. Старые `visualVx` поля не возвращены.
+
 ## Последний проход: Merge Utility Items V1 into current main — 2026-09-18
 
 - Integration branch `merge/utility-items-v1` от `origin/main@ef619a9` + `origin/codex/utility-items-v1@475acc6`, без rebase/force-push feature. OakSign остаётся **165** и теперь known; generic unknown-block compat сохранён для прочих Uint16 (например 65534). Semantic union: registry lookup + Utility blocks, World restore + signs, protocol menu/trade/book/sign/totem, WorldInstance occupancy/Totem + menu/friends/trade, Game/GameUI modern chrome + Utility HUD.

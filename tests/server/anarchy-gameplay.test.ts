@@ -264,6 +264,25 @@ describe('Anarchy server gameplay authority', () => {
     expect(mob.health).toBeLessThan(mobHealth);
   });
 
+  it('routes a skeleton arrow to its exact target instead of a closer invisible player', async () => {
+    const world = await bootWorld();
+    const decoy = join(world, 'InvisibleDecoy');
+    const target = join(world, 'ArrowTarget');
+    if ('error' in decoy || 'error' in target) throw new Error('join failed');
+    decoy.player.controller.teleport([7.7, 100, 5.8]);
+    target.player.controller.teleport([7.7, 100, 5.5]);
+    decoy.player.survival.applyEffect({ id: 'invisibility', amplifier: 0, durationTicks: 100 });
+    const decoyHealth = decoy.player.survival.health;
+    const targetHealth = target.player.survival.health;
+    const skeleton = world.gameplay.mobs.spawn('skeleton', new THREE.Vector3(8, 100, 8), { force: true });
+    if (!skeleton) throw new Error('skeleton spawn failed');
+
+    for (let tick = 0; tick < 4; tick += 1) world.tick();
+
+    expect(decoy.player.survival.health).toBe(decoyHealth);
+    expect(target.player.survival.health).toBeLessThan(targetHealth);
+  });
+
   it('applies a real server bow shot outside claims and preserves attackerId in both damage events', async () => {
     const world = await bootWorld();
     const a = join(world, 'ArrowA');

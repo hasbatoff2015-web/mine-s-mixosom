@@ -1,5 +1,32 @@
 # Roadmap
 
+## 2026-09-18: rail corners / sign / door hinge / minecart visual / seated pose
+
+- [x] Align `rail_corner` UV with south+west authored L; keep live `resolveRailShape` + `railPath`.
+- [x] Fit standing/wall OakSign mesh and selection inside the cell; wall flush to attached face.
+- [x] Open doors around the outside-left hinge (south+left → west).
+- [x] Rebuild minecart from `entity/minecart` ModelMinecart floor+walls.
+- [x] Reusable `seated` animator pose for minecart passengers (local + remote `ridingEntityId`).
+- [ ] Owner live: four-corner ride, wall sign against a real block, left/right door swing, sit in cart third-person.
+
+## 2026-09-18: merge current main into entity-special-visual-fixes
+
+- [x] Semantic merge `origin/main` into `codex/entity-special-visual-fixes` without shifting OakSign off 165 or dropping unknown-block compatibility.
+- [ ] Owner review of the synchronized feature branch before any merge to main.
+
+## 2026-09-10: special blocks, mob presentation, skeleton hit routing
+
+- [x] Give torch/redstone torch explicit authored side/top/bottom UV while preserving floor/four-wall attachment and light gameplay.
+- [x] Rebuild standing/hanging lantern silhouette from authored body/cap/hanger regions.
+- [x] Separate ten-shape rail render surfaces from simulation collision boxes; add true slopes and authored curved tile.
+- [x] Keep current main chicken `[29, 0]` yellow-island UV with two grounded opposite-gait legs.
+- [x] Attach one shared-factory bow to skeleton hand and add distinct bounded bow/draw arm pose.
+- [x] Sweep skeleton projectiles against every living/targetable canonical player AABB, compare block distance and route exact `targetPlayerId` without nearest fallback.
+- [x] Add independent third-person sword/tool/bow/generic/block grips and correct bow pitch/sneak composition without changing first person.
+- [x] Adapt flying/embedded arrow orientation onto current `visualDirection` / `impactVx` without restoring `visualVx`.
+- [ ] Owner manual: two simultaneous Anarchy clients with skeleton fire and visible health attribution.
+- [ ] Owner manual: continuous minecart ride through break/rebuild/high/curve/save-load scenario.
+
 ## 2026-09-18: Merge Utility Items V1 into current main
 
 - [x] Semantic merge feature `codex/utility-items-v1@475acc6` into current main without shifting OakSign off 165 or dropping unknown-block compatibility.

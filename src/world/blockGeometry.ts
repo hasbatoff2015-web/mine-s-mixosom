@@ -436,6 +436,30 @@ export function ladderLocalBox(facing: HorizontalFacing): LocalBox {
   return { minX: 0, minY: 0, minZ: plane.min, maxX: 1, maxY: 1, maxZ: plane.max };
 }
 
+/**
+ * Thin post + board for standing signs; a 2px slab flush to the attached wall.
+ * Width stays inside the cell so the outline is not a near-full cube.
+ */
+export function signLocalBoxes(state: BlockRenderState | undefined): LocalBox[] {
+  const t = 2 / 16;
+  if (state?.attachment !== 'wall') {
+    return [
+      { minX: 7 / 16, minY: 0, minZ: 7 / 16, maxX: 9 / 16, maxY: 8 / 16, maxZ: 9 / 16 },
+      { minX: 0, minY: 8 / 16, minZ: 7 / 16, maxX: 1, maxY: 1, maxZ: 9 / 16 },
+    ];
+  }
+  switch (state.facing ?? 'south') {
+    case 'north':
+      return [{ minX: 0, minY: 4 / 16, minZ: 1 - t, maxX: 1, maxY: 12 / 16, maxZ: 1 }];
+    case 'south':
+      return [{ minX: 0, minY: 4 / 16, minZ: 0, maxX: 1, maxY: 12 / 16, maxZ: t }];
+    case 'west':
+      return [{ minX: 1 - t, minY: 4 / 16, minZ: 0, maxX: 1, maxY: 12 / 16, maxZ: 1 }];
+    case 'east':
+      return [{ minX: 0, minY: 4 / 16, minZ: 0, maxX: t, maxY: 12 / 16, maxZ: 1 }];
+  }
+}
+
 export function doorLocalBox(state: BlockRenderState | undefined): LocalBox {
   const occupied = occupiedDoorFacing(
     state?.facing ?? 'north',
@@ -631,8 +655,7 @@ export function selectionLocalBoxes(
     case 'ladder': return [ladderLocalBox(state?.facing ?? 'north')];
     case 'cross': return [CROSS_BOX];
     case 'bed': return [{ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1 }];
-    case 'sign': return [{ minX: 0.05, minY: state?.attachment === 'wall' ? 0.28 : 0,
-      minZ: 0.05, maxX: 0.95, maxY: 0.92, maxZ: 0.95 }];
+    case 'sign': return signLocalBoxes(state);
     case 'fire': return [FIRE_BOX];
     case 'stairs':
       return stairLocalBoxes(

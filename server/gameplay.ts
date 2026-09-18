@@ -409,6 +409,7 @@ export class ServerGameplay {
       tickMobs: () => {
         this.mobs.update(dt, {
           players: connected.map((player) => ({
+            id: player.id,
             position: player.controller.position,
             eyePosition: player.controller.eyePosition(),
             alive: !player.survival.dead,
@@ -422,8 +423,8 @@ export class ServerGameplay {
           this.drops.spawn(drop.stack, drop.position, { velocity: drop.velocity });
         }
         for (const event of this.mobs.consumePlayerDamage()) {
-          const victim = this.nearestSurvivalPlayer(connected, event.position);
-          if (!victim) continue;
+          const victim = connected.find((player) => player.id === event.targetPlayerId);
+          if (!victim || victim.gamemode !== 'survival' || victim.survival.dead) continue;
           const damageEvent = this.events.createPlayerDamage(victim.id, event.amount, event.source);
           this.events.emit('playerDamage', damageEvent);
           if (damageEvent.cancelled) continue;
@@ -561,6 +562,12 @@ export class ServerGameplay {
         id: projectile.id, kind: 'arrow',
         x: projectile.x, y: projectile.y, z: projectile.z,
         vx: projectile.vx, vy: projectile.vy, vz: projectile.vz,
+        state: projectile.inGround ? 'embedded' : 'flight',
+        ...(projectile.inGround ? {
+          impactVx: projectile.impactVx,
+          impactVy: projectile.impactVy,
+          impactVz: projectile.impactVz,
+        } : {}),
       });
     }
     const fireworks: EntitySnapshot[] = this.fireworks.entities
@@ -1595,20 +1602,6 @@ export class ServerGameplay {
         });
       }
     }
-  }
-
-  private nearestSurvivalPlayer(players: readonly GameplayPlayer[], position: Vec3): GameplayPlayer | undefined {
-    let best: GameplayPlayer | undefined;
-    let bestDistance = 4;
-    for (const player of players) {
-      if (player.gamemode !== 'survival' || player.survival.dead) continue;
-      const distance = player.controller.position.distanceTo(position);
-      if (distance < bestDistance) {
-        best = player;
-        bestDistance = distance;
-      }
-    }
-    return best;
   }
 
   private raycastPlayers(

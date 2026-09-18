@@ -58,9 +58,9 @@ Base skin и fleece — две отдельные definitions, которые д
 |---|---|---|---|
 | Head/beak/wattle | `(0,15,-4)` | `4×6×3 @ 0,0`; `4×2×2 @ 14,0`; `2×2×2 @ 14,4` | Legacy match |
 | Body | `(0,16,0)`, `rx=π/2` | `(-3,-4,-3); 6×8×6; 0,9` | Legacy match |
-| Legs | `(-2,19,1)`, `(1,19,1)` | `(-1,0,-3); 3×5×3; **29,0**` | Legacy box/pivot; pack UV adaptation |
+| Legs | `(-2,19,1)`, `(1,19,1)` | logical `(-1,0,-3); 3×5×3; **26,0**`, physical shin `1×5×1` | Legacy pivot/layout; pack face-UV adaptation |
 
-This pack's `entity/chicken` 64×32 sheet leaves the vanilla `[26,0]` island transparent (`alphaTest` discarded the legs). The yellow leg/foot lives near logical `32,0`; UV `[29,0]` samples that island without changing cuboid size or hip pivots. Cow/pig/sheep/zombie/skeleton/creeper/spider rigs are unchanged.
+This pack's physical `128×64` (`64×32` logical) `entity/chicken` sheet leaves most of the vanilla `[26,0]` cuboid-cross island transparent. The authored yellow foot is logical `32,0..35,3`; the only opaque shin column is `36,3..37,8`. `faceUvRects` deliberately reuses those pixels on all six faces, while `physicalSize=[1,5,1]` prevents a three-column painted quad from looking like extra legs. The rig still contains exactly two parts, their hip pivots and grounded Y remain unchanged, the left is mirrored, and gait signs stay `[+1,-1]`.
 | Wings | `(-4,13,0)`, `(4,13,0)` | `1×4×6; 24,13` | Legacy match |
 
 ## Zombie
@@ -82,9 +82,9 @@ Zombie cuboid dimensions and pivots were retained. The missing-leg/backward-arm 
 | Head/torso | biped pivots | `8×8×8`; `8×12×4` | Legacy match |
 | Arms | `(-5,2,0)`, `(5,2,0)` | `(-1,-2,-1); 2×12×2; 40,16` | Legacy match |
 | Legs | `(-2,12,0)`, `(2,12,0)` | `(-1,0,-1); 2×12×2` | Legacy match |
-| Ranged arm pose | attack `rx=-1.15` | Alpha approximation; not full vanilla bow pose |
+| Ranged arm pose | bow arm `(1.35,-0.10,-0.08)`, draw arm `(1.10,0.55,0.15)` | Bounded alpha ranged pose |
 
-Skeleton torso alone renders `DoubleSide`, so thin ribs/spine remain readable from front and rear. Zombie and other ordinary cuboids remain `FrontSide`; this is a targeted rendering approximation, not a global material change.
+Skeleton torso alone renders `DoubleSide`, so thin ribs/spine remain readable from front and rear. One shared-factory bow item visual is created with the mob, attached below the right-arm pivot through a hand anchor, and reused for its lifetime; the anchor cancels arm-X rotation so the bow stays readable while the two arms form distinct bow/draw poses. Zombie and other ordinary cuboids remain `FrontSide`; this is a targeted rendering approximation, not a global material change.
 
 ## Creeper
 

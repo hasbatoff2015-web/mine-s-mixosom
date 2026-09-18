@@ -33,15 +33,16 @@ function ingestPose(
   snap: EntitySnapshot,
   tick: number,
   now: number,
+  presentationVelocity?: { readonly x: number; readonly y: number; readonly z: number },
 ): void {
   interpolator?.ingest(snap.id, {
     x: snap.x,
     y: snap.y,
     z: snap.z,
     yaw: snap.yaw,
-    vx: snap.vx,
-    vy: snap.vy,
-    vz: snap.vz,
+    vx: presentationVelocity?.x ?? snap.vx,
+    vy: presentationVelocity?.y ?? snap.vy,
+    vz: presentationVelocity?.z ?? snap.vz,
   }, tick, now);
 }
 
@@ -150,6 +151,9 @@ export function applyEntitySnapshots(
         break;
       }
       case 'arrow': {
+        const impactVelocity = snap.state === 'embedded'
+          ? { x: snap.impactVx ?? 0, y: snap.impactVy ?? 0, z: snap.impactVz ?? 0 }
+          : undefined;
         session.arrows.applyNetwork(
           snap.id, snap.x, snap.y, snap.z,
           snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0,
@@ -157,12 +161,10 @@ export function applyEntitySnapshots(
           {
             snapVisual: false,
             kind: snap.variant === 'wh' ? 'wh' : snap.onFire ? 'fire' : 'normal',
-            impactVelocity: snap.state === 'embedded'
-              ? { x: snap.impactVx ?? 0, y: snap.impactVy ?? 0, z: snap.impactVz ?? 0 }
-              : undefined,
+            impactVelocity,
           },
         );
-        ingestPose(interpolator, snap, tick, now);
+        ingestPose(interpolator, snap, tick, now, impactVelocity);
         break;
       }
       case 'firework':
