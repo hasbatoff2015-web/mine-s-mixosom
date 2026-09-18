@@ -2716,7 +2716,12 @@ export class GameUI {
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {
-    return itemHoverAttributeString(name, itemId, (value) => this.escape(value));
+    return itemHoverAttributeString(
+      name,
+      itemId,
+      (value) => this.escape(value),
+      getItemDefinition(itemId).description,
+    );
   }
 
   private itemIcon(itemId: string): string {

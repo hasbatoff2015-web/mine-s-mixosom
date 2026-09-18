@@ -392,7 +392,12 @@ export class SurvivalSystem {
   }
 
   /** Applies a food item and optionally removes one from the supplied inventory. */
-  consumeFood(itemOrId: string | FoodItemDefinition, inventory?: Pick<Inventory, 'has' | 'remove' | 'addItem'>): boolean {
+  consumeFood(
+    itemOrId: string | FoodItemDefinition,
+    inventory?: Pick<Inventory, 'has' | 'remove' | 'addItem'> & {
+      repairLostDurability?(fraction: number): void;
+    },
+  ): boolean {
     const item = typeof itemOrId === 'string' ? tryGetItemDefinition(itemOrId) : itemOrId;
     if (item?.kind !== 'food' || !this.canConsumeFood(item.id)) return false;
     if (inventory && !inventory.has(item.id, 1)) return false;
@@ -401,6 +406,9 @@ export class SurvivalSystem {
     this.saturation = Math.min(this.hunger, this.saturation + item.food.saturation);
     for (const effect of item.food.effects ?? []) this.applyEffect(effect);
     if (item.food.clearsEffects) this.clearEffects();
+    if (item.food.repairLostDurabilityFraction !== undefined) {
+      inventory?.repairLostDurability?.(item.food.repairLostDurabilityFraction);
+    }
     if (item.food.returnsItem) inventory?.addItem(item.food.returnsItem, 1);
     return true;
   }

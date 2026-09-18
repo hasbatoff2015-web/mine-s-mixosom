@@ -1244,7 +1244,7 @@ Browser QA **не пройден**: браузер ранее отклонил l
 
 После восстановления разрешённого сеанса выполнить:
 
-1. Inventory/hotbar: bucket, water_bucket, lava_bucket, minecart, glass_bottle, potion_invisibility, potion_regeneration; silhouettes и прозрачность.
+1. Inventory/hotbar: bucket, water_bucket, lava_bucket, minecart, glass_bottle, potion_invisibility, potion_regeneration, potion_repair; silhouettes и прозрачность.
 2. `?qaItem=<id>&qaView=held&pose=idle` для каждого; guard items iron_pickaxe/diamond_sword/apple/coal/torch/bow без изменения pose.
 3. `?qaArrow=1&arrowScene=inspect&arrowView=front`: кнопки front/back/side/top/angle; normal/fire.
 4. `?qaArrow=1&arrowScene=ground` и `arrowScene=wall`: tip inside, shaft outside, нет billboard при смене camera angle; затем реальные player и skeleton shots в игре.

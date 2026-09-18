@@ -5,6 +5,7 @@ import {
   canStacksMerge,
   cloneStack,
   createItemStack,
+  repairItemLostDurability,
   splitItemStack,
   validateItemStack,
 } from './stack';
@@ -330,6 +331,25 @@ export class Inventory {
     }
     for (const slot of ARMOR_SLOTS) this.#armor[slot] = other.getSlot({ section: 'armor', slot });
     this.#offhand = other.getSlot({ section: 'offhand' });
+  }
+
+  /** All player-owned slots that can hold durability items, including equipment. */
+  slotRefs(): readonly InventorySlotRef[] {
+    return [
+      ...Array.from({ length: Inventory.SLOT_COUNT }, (_unused, index) => index),
+      ...ARMOR_SLOTS.map((slot) => ({ section: 'armor' as const, slot })),
+      { section: 'offhand' },
+    ];
+  }
+
+  /** Restore `fraction` of missing durability on every durability stack the player holds. */
+  repairLostDurability(fraction: number): void {
+    for (const ref of this.slotRefs()) {
+      const stack = this.getSlot(ref);
+      if (stack === null) continue;
+      const repaired = repairItemLostDurability(stack, fraction);
+      if (repaired.durability !== stack.durability) this.setSlot(ref, repaired);
+    }
   }
 
   private allStacks(): readonly (ItemStack | null)[] {

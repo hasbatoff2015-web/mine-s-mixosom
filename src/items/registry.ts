@@ -1,5 +1,5 @@
 import { BLOCKS, BlockId, type BlockDefinition } from '../blocks';
-import { requiredDisplayName } from '../i18n';
+import { requiredDisplayName, itemDescriptionFor } from '../i18n';
 import { blockItemIconTexture } from '../blocks/placement';
 import {
   ItemId,
@@ -19,6 +19,8 @@ import {
 export const POTION_INVISIBILITY_DURATION_TICKS = 3600;
 /** Regeneration potion: 1 minute at 20 TPS. Golden apple regen stays separate. */
 export const POTION_REGENERATION_DURATION_TICKS = 1200;
+/** Repair potion restores this fraction of missing durability on every durability item. */
+export const REPAIR_POTION_LOST_FRACTION = 0.5;
 
 type ResourceOptions = Partial<Pick<BaseItemDefinition, 'maxStack' | 'tags' | 'placesBlockId'>> & {
   readonly durability?: number;
@@ -66,14 +68,23 @@ function food(
   id: string,
   nutrition: number,
   saturation: number,
-  extra: { alwaysEdible?: boolean; returnsItem?: string; effects?: FoodItemDefinition['food']['effects']; clearsEffects?: boolean; maxStack?: number } = {},
+  extra: {
+    alwaysEdible?: boolean;
+    returnsItem?: string;
+    effects?: FoodItemDefinition['food']['effects'];
+    clearsEffects?: boolean;
+    maxStack?: number;
+    repairLostDurabilityFraction?: number;
+  } = {},
 ): FoodItemDefinition {
+  const description = itemDescriptionFor(id);
   return Object.freeze({
     id,
     name: requiredDisplayName(id),
     kind: 'food',
     maxStack: extra.maxStack ?? 64,
     texture: `item/${id}`,
+    ...(description === undefined ? {} : { description }),
     food: Object.freeze({
       nutrition,
       saturation,
@@ -81,6 +92,9 @@ function food(
       ...(extra.returnsItem ? { returnsItem: extra.returnsItem } : {}),
       ...(extra.effects ? { effects: extra.effects } : {}),
       ...(extra.clearsEffects ? { clearsEffects: true } : {}),
+      ...(extra.repairLostDurabilityFraction === undefined
+        ? {}
+        : { repairLostDurabilityFraction: extra.repairLostDurabilityFraction }),
     }),
   });
 }
@@ -279,6 +293,11 @@ const foods: readonly ItemDefinition[] = [
     alwaysEdible: true,
     returnsItem: ItemId.GlassBottle,
     effects: [{ id: 'regeneration', amplifier: 0, durationTicks: POTION_REGENERATION_DURATION_TICKS }],
+  }),
+  food(ItemId.PotionRepair, 0, 0, {
+    alwaysEdible: true,
+    returnsItem: ItemId.GlassBottle,
+    repairLostDurabilityFraction: REPAIR_POTION_LOST_FRACTION,
   }),
 ];
 

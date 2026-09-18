@@ -175,6 +175,7 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   golden_apple: 'Золотое яблоко',
   potion_invisibility: 'Зелье невидимости',
   potion_regeneration: 'Зелье регенерации',
+  potion_repair: 'Зелье починки',
 
   wooden_pickaxe: 'Деревянная кирка',
   wooden_axe: 'Деревянный топор',
@@ -233,4 +234,9 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   titanium_chestplate: 'Титановый нагрудник',
   titanium_leggings: 'Титановые поножи',
   titanium_boots: 'Титановые ботинки',
+});
+
+/** Optional tooltip bodies keyed by the same item IDs as `RU_DISPLAY_NAMES`. */
+export const RU_ITEM_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
+  potion_repair: 'Восстанавливает 50% потерянной прочности всех предметов',
 });

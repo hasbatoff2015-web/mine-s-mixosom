@@ -1,5 +1,9 @@
 # Архитектура
 
+## Repair potion — 2026-09-18
+
+`potion_repair` — обычный `kind: 'food'` item с `alwaysEdible`, `returnsItem: glass_bottle` и `food.repairLostDurabilityFraction = 0.5`. Нет нового status effect и нет второго use-path: Singleplayer чинит inventory внутри `SurvivalSystem.consumeFood`, Anarchy — после authoritative consume в `ServerGameplay` на captured hotbar slot, затем `inventoryDirty` → существующий `inventory` snapshot. Формула работает с remaining durability (`stack.durability ?? max`): `current + round(lost * 0.5)`, clamp к max; at-max опускает поле `durability`. Слоты берутся из `Inventory.slotRefs()` (36 + armor + offhand), без hardcoded tool list. Buyer NPC остаётся скупщиком: item/price — `BUYER_EXAMPLE_REPAIR_POTION_ITEM/PRICE` в `shared/buyers.ts`, не gameplay constant.
+
 ## Merge Utility Items V1 — 2026-09-18
 
 `BlockId.OakSign = 165` is now a registered block. `normalizeStorableBlockId` / runtime placeholders remain for any other unregistered Uint16. World restore still normalizes JSON string IDs, adopts unknown lighting only for unregistered IDs, and restores Utility `signs`. Protocol and WorldInstance keep main menu/friends/trade together with bed occupancy, Totem presentation, book and sign updates.
