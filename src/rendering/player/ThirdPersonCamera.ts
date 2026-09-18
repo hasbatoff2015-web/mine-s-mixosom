@@ -18,6 +18,11 @@ export function nextCameraPerspective(current: CameraPerspective): CameraPerspec
   return 'firstPerson';
 }
 
+/** Bed rest temporarily changes presentation without changing the player's F5 preference. */
+export function effectiveCameraPerspective(preferred: CameraPerspective, resting: boolean): CameraPerspective {
+  return resting ? 'thirdPersonBack' : preferred;
+}
+
 export interface CameraCollisionSource {
   collisionBoxes(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): readonly CollisionBox[];
 }

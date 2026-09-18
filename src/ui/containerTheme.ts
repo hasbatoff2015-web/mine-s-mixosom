@@ -9,7 +9,8 @@ export const MC_INVENTORY_HEIGHT = 166;
 export const MC_CREATIVE_WIDTH = 195;
 /** Compact tabs + six-row catalog + controlled hotbar gap; not a forced panel height. */
 export const MC_CREATIVE_HEIGHT = 166;
-export const MC_CREATIVE_SCROLL_GUTTER = 8;
+/** Native catalog scrollbar is hidden; 9 slots must fit without a reserved track. */
+export const MC_CREATIVE_SCROLL_GUTTER = 0;
 export const MC_RECIPE_BOOK_WIDTH = 147;
 export const MC_RECIPE_BOOK_GAP = 4;
 /** Book toggle lives inside the craft row, not as extra stage width. */
@@ -20,9 +21,29 @@ export const MC_MAX_UI_SCALE = 4;
 export const MC_MIN_UI_SCALE = 0.5;
 /** Logical px reserved so the close control sits outside the panel, not over tabs. */
 export const MC_CLOSE_GUTTER = 20;
+export const MC_CRAFT_MENU_WIDTH = 256;
+export const MC_CRAFT_MENU_HEIGHT = 166;
+/** Matches `.mc-panel` horizontal padding. */
+export const MC_CRAFT_PANEL_PAD_X = 7;
+export const MC_CRAFT_DETAIL_WIDTH = 88;
+export const MC_CRAFT_LAYOUT_GAP = 6;
+export const MC_CRAFT_LIST_COLUMNS = 6;
+
+export function craftListInnerWidth(panelWidth = MC_CRAFT_MENU_WIDTH): number {
+  return panelWidth - MC_CRAFT_PANEL_PAD_X * 2 - MC_CRAFT_LAYOUT_GAP - MC_CRAFT_DETAIL_WIDTH;
+}
+
+export function craftListFitsColumns(
+  columns = MC_CRAFT_LIST_COLUMNS,
+  slot = MC_SLOT_PITCH,
+  panelWidth = MC_CRAFT_MENU_WIDTH,
+): boolean {
+  return columns * slot <= craftListInnerWidth(panelWidth);
+}
+
 /** Minimum touch target for the outside close control. */
 export const MC_CLOSE_HIT_MIN_PX = 44;
-export const MC_CLOSE_LOGICAL_SIZE = 14;
+export const MC_CLOSE_LOGICAL_SIZE = 20;
 export const MC_STAGE_GAP = 4;
 
 export function containerUiScaleWithClose(
@@ -56,11 +77,40 @@ export function containerUiScale(
   return Math.min(MC_MAX_UI_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
 }
 
+/** In-game social menu: compact dark panel, not a fullscreen overlay. */
+export const MC_MENU_WIDTH = 248;
+export const MC_MENU_ROOT_HEIGHT = 176;
+export const MC_MENU_MAX_SCALE = 3;
+
+export function menuLogicalHeight(screen: string): number {
+  if (screen === 'root') return MC_MENU_ROOT_HEIGHT;
+  if (screen === 'friends' || screen === 'friend-delete-confirm') return 268;
+  if (screen === 'homes' || screen === 'home-delete-confirm') return 236;
+  if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 248;
+  if (screen === 'trade') return 268;
+  return 216;
+}
+
+export function menuUiScale(
+  viewportWidth: number,
+  viewportHeight: number,
+  logicalWidth: number,
+  logicalHeight: number,
+): number {
+  const pad = 24;
+  const availableW = Math.max(160, viewportWidth - pad);
+  const availableH = Math.max(140, viewportHeight - pad);
+  const raw = Math.min(availableW / logicalWidth, availableH / logicalHeight, MC_MENU_MAX_SCALE);
+  const quantized = Math.max(MC_MIN_UI_SCALE, Math.floor(raw * 2) / 2);
+  return Math.min(MC_MENU_MAX_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
+}
+
 export function containerStageSize(
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'creative',
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'creative' | 'craft',
   recipeBookOpen: boolean,
 ): { width: number; height: number } {
   if (kind === 'creative') return { width: MC_CREATIVE_WIDTH, height: MC_CREATIVE_HEIGHT };
+  if (kind === 'craft') return { width: MC_CRAFT_MENU_WIDTH, height: MC_CRAFT_MENU_HEIGHT };
   const height = kind === 'chest' || kind === 'portal-chest' ? MC_CHEST_HEIGHT
     : kind === 'furnace' || kind === 'crafting-table' ? MC_FURNACE_HEIGHT
       : MC_INVENTORY_HEIGHT;

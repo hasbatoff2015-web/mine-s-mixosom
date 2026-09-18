@@ -1,5 +1,6 @@
 import type { BlockId } from '../src/blocks';
 import type { ItemStack } from '../src/inventory';
+import type { BedRestState } from '../src/world/bed';
 
 export interface EquippedArmorPresentation {
   readonly head: ItemStack['itemId'] | null;
@@ -26,9 +27,13 @@ export interface PlayerPresentationState {
     readonly progress: number;
   } | null;
   readonly heldItemId: ItemStack['itemId'] | null;
+  /** Authoritative second-hand item; currently rendered only for the Totem. */
+  readonly offhandItemId?: ItemStack['itemId'] | null;
   readonly bowCharge: number;
   readonly foodUseProgress: number;
   readonly swordBlocking: boolean;
+  /** Server-owned bed rest; head cell and orientation identify the pose. */
+  readonly bedRest?: BedRestState | null;
   /** Server-owned swing counter. A join establishes a baseline, never replays history. */
   readonly swingSeq: number;
   /** Worn armor item ids. Missing on old snapshots means unequipped. */
@@ -71,9 +76,11 @@ export const REMOTE_ACTION_STALE_MS = 1500;
 export const IDLE_PLAYER_PRESENTATION: PlayerPresentationState = Object.freeze({
   mining: null,
   heldItemId: null,
+  offhandItemId: null,
   bowCharge: 0,
   foodUseProgress: 0,
   swordBlocking: false,
+  bedRest: null,
   swingSeq: 0,
   armor: EMPTY_EQUIPPED_ARMOR,
   hurtSeq: 0,

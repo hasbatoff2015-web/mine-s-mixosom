@@ -1,5 +1,302 @@
 # Тестирование
 
+## 2026-09-18 Merge current main into entity-special-visual-fixes
+
+Save/block:
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/fs-world-store.test.ts --maxWorkers=1
+```
+
+**29/29 PASS.** `BlockId.OakSign === 165`, `isKnownBlockId(165) === true`, restore of `"165"` / numeric 165 succeeds as `oak_sign`. Generic unknown `65534` stays unregistered placeholder `unknown_65534` and serializes as 65534.
+
+Focused feature:
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/skeleton-presentation.test.ts tests/mob-projectile-routing.test.ts tests/visual-models.test.ts tests/player-visual-animation.test.ts tests/server/anarchy-gameplay.test.ts tests/arrow-visual-orientation.test.ts tests/network-entity-visual-events.test.ts --maxWorkers=2
+```
+
+Plus related main arrow tests already in that set. **12 files / 122 tests PASS.**
+
+`npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.75 MiB / 404 files**.
+
+Full `npx vitest run --maxWorkers=2`: **251 passed / 5 failed / 256 files**. Failures match current origin/main host baseline classes (extractor parse, chat-layout CRLF, fire-contact-sunlight-minecart timeout, worldgen timeout, tick-load-flight >80ms). Isolated `tnt-minecart` / `import-schematic` / `block-geometry` PASS; `lighting-scheduler` radius-6 can flake under load.
+
+Manual QA harnesses (`/?qaSpecial=1`, `/?qaChicken=1`, `/?qaSkeleton=1`, `/?qaPlayer=1`, `/?qaArrow=1`) exercised in the Cursor browser. Live two-client skeleton attribution and continuous minecart ride remain owner-deferred. This browser had no IndexedDB save with 165; restore coverage is the 29/29 suite.
+
+Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
+## 2026-09-18 Merge Utility Items V1 into current main
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/fs-world-store.test.ts --maxWorkers=1
+```
+
+**165 / unknown:** block-registry 17/17, unknown-block-load 4/4, fs-world-store 8/8 (serial). OakSign=165 known; generic unknown uses 65534.
+
+Utility + menu focused (23 files): **22 files / 219 tests PASS**; `chat-layout` 4 failures are the existing CRLF vs LF `style.css` host issue (selectors present). `typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.74 MiB / 403 files**. Full `npx vitest run --maxWorkers=2`: **245/252 files, 2358/2381**; isolated `lighting-scheduler` 19/19 and `import-schematic` 5/5 PASS. Remaining classes: extractor parse, chat CRLF, fire/worldgen 5s, tick-load-flight. See `docs/reports/2026-09-18_merge-utility-items-v1.md`.
+
+## 2026-09-18 Totem particle spread / quieter sound
+
+```text
+npx vitest run tests/totem-burst.test.ts tests/audio-sfx.test.ts tests/server/utility-items-authority.test.ts --maxWorkers=2 --silent
+```
+
+**3 files / 50 tests PASS** (`totem-burst` 5, `audio-sfx` 27, `utility-items-authority` 18). `typecheck`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.39 MiB / 368 files**. `startOffsetSeconds` Totem остаётся `0.7`, volume `0.225`. Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_totem-particle-spread-volume.md`.
+
+## 2026-09-18 Bed occupancy / Totem particles / utility icons
+
+Focused:
+
+```text
+npx vitest run tests/totem-burst.test.ts tests/item-icon-utility.test.ts tests/server/utility-items-authority.test.ts tests/utility-items.test.ts tests/special-block-items.test.ts tests/special-preview-contract.test.ts --maxWorkers=2 --silent
+```
+
+**6 files / 81 tests PASS** (`totem-burst` 3, `item-icon-utility` 5, `utility-items-authority` 18 включая occupancy A–E и nearby `totem_activate`, `utility-items` 39, `special-block-items` 12, `special-preview-contract` 4). `npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.39 MiB / 368 files**. Full `npm test` на этой ветке ранее имел известные host baseline failures (timeouts, CRLF chat-layout, tick-load-flight); полный suite в этом проходе не запускался и не считается green. Live two-client occupancy/Totem/icon QA не выполнялся. Подробности: `docs/reports/2026-09-18_utility-bed-occupancy-totem-particles-icons.md`.
+
+## 2026-09-14 Utility Items live QA fixes
+
+Профильный прогон: `npx vitest run tests/utility-items.test.ts tests/server/utility-items-authority.test.ts tests/player-nameplate.test.ts tests/network-entity-visual-events.test.ts tests/special-block-items.test.ts tests/world-generation.test.ts tests/item-rendering.test.ts tests/entities.test.ts --maxWorkers=2 --silent` — **8 files / 106 tests PASS**. Отдельно `tests/audio-sfx.test.ts` — **20/20 PASS**. Проверены четыре направления Bed mesh, реальный детерминированный берег Cane, collision Firework, 6 WH-линий после Classic/Slim, impact direction сетевой стрелы, Firework interpolation buffer.
+
+`npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Build 4.32 MiB / 367 files. Полный `npm test` в этом проходе не запускался: предыдущий проход документировал host-sensitive timeouts/CRLF failures; требуемый ручной visual QA ещё открыт. Подробности: `docs/reports/2026-09-14_utility-items-live-qa-fixes.md`.
+
+## 2026-09-13 Utility Items V1
+
+Focused: `npx vitest run tests/entities.test.ts tests/utility-items.test.ts tests/server/utility-items-authority.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent` — 71/71 passed (26 utility, 9 server authority, 27 item rendering, 9 entity regressions). Server cases include three-player WH privacy, invisible target, cancelled versus accepted PvP hit, book validation, sign permission checks, rocket visibility, Milk clearing all viewers, and Totem hand priority. Four typechecks, `check:boundaries`, `build`, `check:size` and `check:archive` passed; production build is 4.27 MiB / 366 files.
+
+Unbounded parallel `npm test` on this Windows host produced 37 failures / 2234 tests, dominated by worldgen/streaming/minecart timing thresholds and worker timeouts. The `tick-load-flight` max-80ms assertion also failed on isolated archived `main@1c802ab` (110–121ms), so that particular failure is host baseline. A second full run with two workers was stopped as impractical after a single 39-case minecart/fire suite took 282 seconds and timed out 17 cases. That run exposed an arrow mesh-name regression; it was fixed and `tests/entities.test.ts` now passes 9/9. White Bed/Oak Sign texture registry keys were also corrected and item-rendering passes 27/27. `tests/chat-layout.test.ts` compares LF literals with a CRLF checkout; the separate reference-extractor Vitest failure remains unclassified. See the report for exact QA limits.
+## 2026-09-17 Unknown-block save load compat
+
+Report: `reports/2026-09-17_unknown-block-save-load.md`.
+
+```text
+npx vitest run tests/unknown-block-load.test.ts tests/block-registry.test.ts tests/fs-world-store.test.ts --maxWorkers=2
+```
+
+Focused unknown-block + persist tests PASS (unknown-block-load 3/3, block-registry 16/16, fs-world-store 7/7). `test:server` 50/51 files / 497/498 (`tick-load-flight` timing flake under load; isolated 3/3 PASS). Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-16 Unified in-game UI chrome
+
+Report: `reports/2026-09-16_ui-redesign.md`.
+
+```text
+npm test -- tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/crafting-ui.test.ts tests/chat-layout.test.ts tests/ui-visual-contract.test.mjs tests/clan-gui.test.ts tests/auction-gui.test.ts tests/buyer-gui.test.ts tests/container-ui.test.ts tests/ui-visual-system.test.ts tests/server/game-menu.test.ts tests/server/friends.test.ts tests/server/trade.test.ts tests/chat-channels.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused UI + related server: **123 PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-16 Merge unknown-block into menu visual
+
+Report: `reports/2026-09-16_merge-unknown-block-into-menu-visual.md`. Merge `d3801a1`.
+
+```text
+npm test -- tests/unknown-block-load.test.ts tests/block-registry.test.ts tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/server/game-menu.test.ts
+```
+
+Focused: **31/31 PASS** (unknown-block-load 2/2, block-registry 16/16, game-menu-gui 6/6, trade-gui 2/2, server/game-menu 5/5). Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-16 Main Menu visual restyle
+
+Report: `reports/2026-09-16_main-menu-visual.md`.
+
+```text
+npx vitest run tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/server/game-menu.test.ts tests/server/friends.test.ts tests/server/trade.test.ts tests/crafting-ui.test.ts tests/container-ui.test.ts --maxWorkers=2
+```
+
+Contracts: root HTML is a 4+3 icon grid with live `Баланс: … монет`; `closeButtonHtml()` remains the close control; server `menu` snapshots include `balance` / `balanceLabel` from `EconomyService`; inventory close CSS (X+E) is unchanged.
+
+## 2026-09-16 Unknown block load compat
+
+Report: `reports/2026-09-16_unknown-block-load-compat.md`.
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts --maxWorkers=2
+```
+
+Focused: block-registry 16/16, unknown-block-load 2/2. Related world/lighting 55/55. `test:server` **51 files / 497 PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-16 Main Menu + Friends + Trade
+
+Report: `reports/2026-09-16_main-menu-friends-trade.md`.
+
+```text
+npx vitest run tests/server/friends.test.ts tests/server/trade.test.ts tests/server/homes.test.ts tests/server/game-menu.test.ts tests/game-menu-gui.test.ts tests/trade-gui.test.ts tests/clan-gui.test.ts tests/menu-model.test.ts --maxWorkers=2
+```
+
+Focused: friends 3/3, trade 5/5, homes 3/3, game-menu, game-menu-gui 5/5, trade-gui 2/2, clan-gui 7/7, menu-model 3/3, claim-anchor 8/8. `test:server` **51 files / 497 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run in this cloud pass.
+
+Contracts: friends teleport needs friendship + online + the friend's own permission; home names are unique per player in the menu path (`/sethome` still overwrites); claim rename rejects a duplicate and `/claim create` shares the cap of 4; trade rejects forged slot indexes, resets both Ready flags on any offer change, needs double Accept, and returns escrow on cancel / X / E / disconnect.
+
+Canonical modules are `shared/gameMenu.ts`, `server/services/gameMenu.ts`, `src/ui/gameMenuGui.ts`. A parallel `shared/menu.ts` / `MenuService` / `menuGui.ts` from the same branch was dropped during merge so there is only one menu system.
+
+## 2026-09-13 Crafting UI merged into main
+
+Report: `reports/2026-09-13_crafting-ui-main-merge.md`. Merge commit `7e8b928`. No extra test run on the merge commit itself; feature-branch gates are in the crafting UI reports.
+
+## 2026-09-13 Close X inner E
+
+Report: `reports/2026-09-13_close-button-inner-e.md`.
+
+```text
+npx vitest run tests/crafting-ui.test.ts tests/container-ui.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused: crafting-ui 7/7, container-ui 22/22, gameplay-ui-entity-polish 27/27. `test:server` 46/47 files (tick-load-flight flake under load; isolated retry 3/3 PASS). Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-13 Crafting UI UX patch
+
+Report: `reports/2026-09-13_crafting-ui-ux.md`.
+
+```text
+npx vitest run tests/crafting-catalog.test.ts tests/crafting-once.test.ts tests/crafting-ui.test.ts tests/crafting.test.ts tests/container-ui.test.ts tests/ui-main-integration.test.ts tests/gameplay-ui-entity-polish.test.ts --maxWorkers=2
+```
+
+Focused: catalog 6/6 (craftable-first sort), once 8/8, ui 7/7, crafting 12/12, container-ui 22/22 (list geometry), ui-main-integration 5/5, gameplay-ui-entity-polish 27/27. `test:server` **47 files / 481 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-12 Crafting UI overhaul
+
+Report: `reports/2026-09-12_crafting-ui.md`.
+
+```text
+npx vitest run tests/crafting-catalog.test.ts tests/crafting-once.test.ts tests/crafting-ui.test.ts tests/crafting.test.ts tests/container-ui.test.ts tests/ui-main-integration.test.ts tests/server/craft-recipe.test.ts --maxWorkers=2
+```
+
+Focused: crafting-catalog 5/5, crafting-once 8/8, crafting-ui 7/7, crafting 12/12, container-ui 22/22, ui-main-integration 5/5, server craft-recipe 3/3. `test:server` **47 files / 481 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-12 Chat fullscreen transparent
+
+Report: `reports/2026-09-12_chat-fullscreen.md`.
+
+```text
+npx vitest run tests/chat-layout.test.ts tests/chat-channels.test.ts tests/chat-commands.test.ts tests/server/chat-channels.test.ts tests/server/chat-scroll.test.ts tests/ui-main-integration.test.ts --maxWorkers=2
+```
+
+Focused: chat-layout 10/10, chat-channels 6/6, chat-commands 10/10, server chat-channels 8/8, chat-scroll 3/3, ui-main-integration 5/5. `test:server` **46 files / 478 tests PASS**. Four typechecks, boundaries, and `build` PASS. Full `npm test`: 231/232 files, 2208/2213 tests PASS; 5 failures are known 5s timeouts in `tests/fire-contact-sunlight-minecart.test.ts` (not from chat).
+
+## 2026-09-12 Chat layout top-left
+
+Report: `reports/2026-09-12_chat-layout.md`.
+
+```text
+npx vitest run tests/chat-layout.test.ts tests/chat-channels.test.ts tests/chat-commands.test.ts tests/server/chat-channels.test.ts tests/server/chat-scroll.test.ts tests/ui-main-integration.test.ts --maxWorkers=2
+```
+
+Focused: chat-layout 8/8, chat-channels 6/6, chat-commands 10/10, server chat-channels 8/8, chat-scroll 3/3, ui-main-integration 5/5. `test:server` **46 files / 478 tests PASS**. Four typechecks, boundaries, and `build` PASS. Full `npm test`: 231/232 files, 2202/2207 tests PASS; 5 failures are known 5s timeouts in `tests/fire-contact-sunlight-minecart.test.ts` (not from chat).
+
+## 2026-09-12 Chat channels
+
+Report: `reports/2026-09-12_chat-channels.md`.
+
+```text
+npx vitest run tests/chat-channels.test.ts tests/chat-commands.test.ts tests/server/chat-channels.test.ts tests/server/chat-scroll.test.ts tests/server/clan-plugin.test.ts tests/ui-main-integration.test.ts --maxWorkers=2
+```
+
+Focused: chat-channels 6/6, chat-commands 10/10, server chat-channels 8/8, chat-scroll 3/3, ui-main-integration 5/5, clan-plugin 7/7. `test:server` **46 files / 478 tests PASS**. Four typechecks, boundaries, and `build` PASS. Full `npm test`: 230/231 files, 2198/2203 tests PASS; 5 failures are known 5s timeouts in `tests/fire-contact-sunlight-minecart.test.ts` (not from chat).
+
+## 2026-09-12 Buyer System merged into main
+
+Report: `reports/2026-09-12_buyer-system-main-merge.md`. Merge `--no-ff` `c4d0ca6`. Pre-merge gates: four typechecks, `test:server` 45/470, boundaries, build PASS.
+
+## 2026-09-12 Buyer hologram editor
+
+Report: `reports/2026-09-11_buyer-system.md`.
+
+Buyer hologram settings use the shared hologram editor (`hologram_editor` / `hologram_update`). `holograms.create` does not grant edit on `buyer-<id>`.
+
+```text
+npx vitest run tests/server/buyer.test.ts tests/server/buyer-plugin.test.ts tests/buyer-gui.test.ts tests/server/hologram-editor.test.ts tests/hologram-style.test.ts tests/hologram-hit.test.ts tests/hologram-timer.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: buyer 17/17, buyer-plugin 6/6, buyer-gui 6/6, hologram-editor 9/9, hologram-style 8/8, hologram-hit 3/3, hologram-timer 10/10, auction 24/24, auction-plugin 9/9, auction-gui 6/6, clan 20/20, clan-plugin 7/7, clan-gui 7/7, economy 15/15. `test:server` **45 files / 470 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-11 Buyer NPC system
+
+Report: `reports/2026-09-11_buyer-system.md`.
+
+```text
+npx vitest run tests/server/buyer.test.ts tests/server/buyer-plugin.test.ts tests/buyer-gui.test.ts tests/server/permissions.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: buyer 15/15, buyer-plugin 5/5, buyer-gui 6/6, permissions 5/5, auction 24/24, auction-plugin 9/9, auction-gui 6/6, clan 20/20, clan-plugin 7/7, clan-gui 7/7, economy 15/15. `test:server` **45 files / 467 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live Anarchy QA: `/buyer create Farmer`, admin GUI, Pumpkin 50, trade 32 → 1 600 MK, sell chat, hologram without HP.
+
+## 2026-09-11 Clan system merged into main
+
+Report: `reports/2026-09-11_clan-system-main-merge.md`. Merge `--no-ff` `ae904a3`. Pre-merge gates as below.
+
+## 2026-09-11 Clan QA fixes
+
+Report: `reports/2026-09-11_clan-qa-fixes.md`.
+
+```text
+npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: clan 20/20, clan-plugin 7/7, clan-gui 7/7, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 447 tests PASS**. Four typechecks, boundaries, and `build` PASS.
+
+## 2026-09-10 Clan system
+
+Report: `reports/2026-09-10_clan-system.md`.
+
+```text
+npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/clan-gui.test.ts tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` **43 files / 440 tests PASS**. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Auction House tooltip type
+
+Report: `reports/2026-09-10_auction-house-tooltip-type.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15. `test:server` 41 files / 420 tests PASS. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Auction House amount + claimable lots
+
+Report: `reports/2026-09-10_auction-house-amount-claim.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: auction 23/23, auction-plugin 9/9, auction-gui 5/5, economy 15/15. `test:server` 41 files / 419 tests PASS. Four typechecks, boundaries, and `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Auction House UI polish
+
+Report: `reports/2026-09-10_auction-house-ui.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/auction-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
+```
+
+Focused: auction 21/21, auction-plugin 8/8, auction-gui 2/2, economy 15/15. `test:server` 41 files / 416 tests PASS. `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-09 Auction House
+
+Report: `reports/2026-09-09_auction-house.md`.
+
+```text
+npx vitest run tests/server/auction.test.ts tests/server/auction-plugin.test.ts tests/server/economy.test.ts tests/server/economy-plugin.test.ts tests/server/anarchy-plugins.test.ts tests/plugin-boundaries.test.ts --maxWorkers=2
+```
+
+Contracts: listing create/persist/expire/cancel/claim/relist; exact and partial stack extract; metadata preserved; price 10..100000000 integers only; 30 ACTIVE cap; cancelled frees a slot and expired does not count; buy withdraw/deposit via `settle` with `listingId` pairId; self-buy / sold / expired / full inventory / duplicate buy rejected; search case-insensitive; pagination clamps after last-item purchase; restart keeps SOLD listings and seller balance; GUI commands open inventory-style snapshots.
+
+Focused run: auction 18/18, auction-plugin 5/5, economy 15/15, economy-plugin 10/10, anarchy-plugins 36/36, auto-mine 3/3, plugin-boundaries 4/4. `test:sim` 12 files / 65 tests PASS. `test:server` 41 files / 410 tests PASS. `typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
+## 2026-09-10 Economy plugin (Мегакоин)
+
+Report: `reports/2026-09-10_economy-plugin.md`.
+
+```text
+npx vitest run tests/server/economy.test.ts tests/server/economy-plugin.test.ts tests/server/anarchy-plugins.test.ts tests/server/auto-mine.test.ts tests/plugin-boundaries.test.ts --maxWorkers=2
+```
+
+Contracts: new player 100; deposit/withdraw/transfer atomicity; overflow/negative/insufficient rejected; reset 100; persistence of balances+transactions; `/bal` `/pay` `/baltop` `/eco *`; natural Stone/Dirt/Sand/Gravel/Wood/Coal/Diamond reward; placed and TNT no reward; AutoMine diamond uses the same table; peaceful < hostile mob reward; duplicate mob/player death no double pay; PvP floor(10%) and 5-minute same-pair cooldown; offline `/pay`.
+
+Focused run: economy 14/14, economy-plugin 10/10, anarchy-plugins 36/36, auto-mine 3/3, plugin-boundaries 4/4. `test:sim` 12/65. `test:server` 39 files / 386 tests PASS. `typecheck` / `typecheck:server` / `typecheck:sim` / `check:boundaries` / `build` PASS. Live browser Anarchy QA was not run.
+
 ## 2026-09-10 Player layer z-fighting + current main integration
 
 Report: `reports/2026-09-10_player-layer-zfighting-main-integration.md`.
@@ -1078,7 +1375,11 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/bucket-interaction.test.ts` | 31 | Same-DDA liquid hits vs ordinary targeting, source/flow/falling/occlusion/reach, source removal/save delta/mesh, inventory modes/full fallback, source placement and promotion delay, drain, deferred Lava light removal, legacy player bucket stacks |
 | `tests/block-registry.test.ts` | 12 | Registry invariants, independent render layers, special shapes, hidden stone_stairs и replaceable cross-plant definitions |
 | `tests/inventory.test.ts` | 7 | Stack insertion/remainder/removal, cursor clicks, equipment, shift move, drag API, serialization, atomic consume, durability break |
-| `tests/crafting.test.ts` | 9 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
+| `tests/crafting.test.ts` | 12 | Shapeless/shifted/mirrored recipes, white-bed restriction, consumption plan, core recipe outputs including brick stairs/stone plate, smelting/fuel data |
+| `tests/crafting-catalog.test.ts` | 6 | All obtainable items, uncraftable last, plank/tool/armor/TNT order, available/missing/no-recipe bands after inventory changes, name search, availability and ingredient have/need |
+| `tests/crafting-once.test.ts` | 8 | One-craft output count, repeat crafts, missing/unknown no-op, full-inventory atomicity, remainders, `craft_recipe` ignores forged count |
+| `tests/crafting-ui.test.ts` | 7 | Survival CRAFT button, no 2×2/book, craft menu chrome, search focus helper, X/E close, E under X, clan back and chat X unchanged |
+| `tests/server/craft-recipe.test.ts` | 3 | Protocol recipeId-only, server one-craft + availability, full inventory does not consume |
 | `tests/combat.test.ts` | 47 | Classic total damage, shared hurt resistance, crit+sprint, canonical KB, armor, sword blocking, legacy migration, bow/survival |
 | `tests/player-physics.test.ts` | 5 | Floor/wall sliding, fall damage, slab collision/step-up, stair generic step-up и takeoff-only jump event |
 | `tests/entities.test.ts` | 9 | Dropped-item merge/pickup/cap/restore, all 8 mob models, raycast/damage, creeper, skeleton, Creative non-targetability, vertical melee guard и bounded soft separation |
@@ -1098,7 +1399,7 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/chest-model.test.ts` | 10 | Chest ≠ oak cube, entity texture, no chunk faces, opposite-of-look facing vs doors, lid opens up, lid interior `down` face, coplanar seam, held special_model, 27-slot persist, Creative catalog gate (chest **and** portal-chest), shift transfer, single open target |
 | `tests/portal-chest.test.ts` | 7 | Distinct block id/texture, recipe, 27 personal slots, not shared, snapshot parse, meshing/collision |
 | `tests/server/portal-chest.test.ts` | 8 | Open, second block same store, two players, break/replace, persist/restart, playerInteract cancel, claims place/break, ordinary chest still shared |
-| `tests/container-ui.test.ts` | 21 | Logical 176×166 scale, book button in craft row (no extra closed width), no furnace Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
+| `tests/container-ui.test.ts` | 22 | Logical 176×166 scale, craft menu 256×166, book button in craft row (no extra closed width), no furnace Recipe Book, no Survival inventory Recipe Book, furnace slot rules, smelting without GUI, 3×3 consume/return, recipe A→B transaction, abort-on-full, craftable quantities, 2×2 filter, Creative tab slot contract without offhand, slot DOM identity, icon category tabs |
 | `tests/creative-flight.test.ts` | 8 | 7-tick edge double-tap, Survival never flies, toggle on/off, hover/ascend/descend/Ctrl sprint, collision/landing/ladder override, mode switch, GUI input block while world ticks |
 | `tests/gameplay-modal.test.ts` | 9 | Esc Pause stops sim; inventory/creative/chest/furnace/crafting keep PLAYING; gameplay input blocked; furnace cook/burn while GUI open; Recipe Book does not pause; pointer-lock overlay rules; `LOADING_WORLD` is not simulating |
 | `tests/furnace-orientation-lit.test.ts` | 5 | N/S/E/W front, lit/unlit texture, GUI icon uses furnace_front not side, torch emission, LightEngine on/off, save/load burning |
@@ -1138,7 +1439,9 @@ Main JS: ~962 kB / ~269 kB gzip; CSS: 38.93 kB / 9.04 kB gzip
 | `tests/fire-contact-sunlight-minecart.test.ts` | 39 | Fire AABB contact vs leave, Fire vs Lava cadence, armor reduces Fire/Lava (no bypass), independent Fire Arrow timer, hostile daylight burn (all hostiles, shade/water/night/passive/player exempt), rail look-axis + EW visual yaw, 3D cart, W/S cap/coast/reverse, push projection, curve/slope/chunk-border, opaque inner floor, derail/off-rail inertia/gravity/friction/no-steer/recapture, Shift dismount edge + safe position, TNT insert of stored type, Flint does not prime cart cargo, Fire Arrow ejects primed TNT vs ordinary arrow via `PlayerArrowManager`, U-recipe + Recipe Book |
 | `tests/hostile-spawn-balance.test.ts` | 8 | Surface night hostiles ≈ ×0.5, passive day rate independent of the night factor, cave hostiles in dark air not lava/water, min distance / floor / headroom, max 1 new cave hostile per chunk/event, density, respawn after death, global cap |
 | `tests/block-selection-raycast.test.ts` | 22 | Screenshot rail empty-cell miss → Dirt; direct rail hit; plate/ladder/slab/stairs/fence pass-through; nearest actual AABB; chunk-border; face normal; shared outline/LMB target; minecart break/drop/ridden/TNT/priority/hitbox/pickup; Survival vs Creative loot helper; reach |
-| `tests/chat-commands.test.ts` | 9 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
+| `tests/chat-commands.test.ts` | 10 | Parse say vs command; registry names/aliases; gamemode s/c/0/1; time presets; give known/unknown; tp/seed/clear/kill/help; death messages; fade/history/Up-Down; overlay + typing Esc do not open pause |
+| `tests/chat-layout.test.ts` | 4 | Top-left anchor; fixed open log height; ENTER/TAB/CHAT ON labels; hidden native scrollbar with wheel/touch pan-y |
+| `tests/server/chat-channels.test.ts` | 8 | Global/nearby/clan routing, inclusive 3D radius 20, sender-only nearby, ClanService live membership, no replay, 128 reject, forged fields stripped |
 | `tests/fire-overlay-hurt.test.ts` | 6 | FP fire overlay: two lower quads, translucent, UV animation without remesh; hurt flash/kick on real damage, time decay, look unchanged, bounded repeats |
 | `tests/lava-bedrock-ore-pass.test.ts` | 10 | Stone cap Y=3, 20-seed pond bounds/depth/support/exposed-bedrock=0/enclosed waterline=0, Coal/Iron/Gold/Redstone ×2, Diamond ≈0.33× current, chunk-border determinism + generator-space neighbor walls, boundary-only enqueue + shore-break + cross-chunk 15/16, idle enclosed pond, ore Y/vein size |
 

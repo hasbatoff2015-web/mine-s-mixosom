@@ -221,6 +221,49 @@ export class HologramNetwork {
     this.emit();
   }
 
+  upsert(record: HologramRecord): HologramRecord | undefined {
+    const normalized = normalizeHologramRecord(record, record.worldId);
+    if (!normalized) return undefined;
+    const index = this.records.findIndex((entry) => entry.name === normalized.name);
+    if (index >= 0) this.records[index] = normalized;
+    else this.records.push(normalized);
+    this.emit();
+    this.persist?.(this.records);
+    return normalized;
+  }
+
+  remove(name: string): boolean {
+    const key = name.trim().toLowerCase().slice(0, HOLOGRAM_MAX_NAME);
+    const next = this.records.filter((entry) => entry.name !== key);
+    if (next.length === this.records.length) return false;
+    this.records = next;
+    this.emit();
+    this.persist?.(this.records);
+    return true;
+  }
+
+  setPosition(name: string, x: number, y: number, z: number, worldId?: string): HologramRecord | undefined {
+    const hologram = this.get(name);
+    if (!hologram) return undefined;
+    hologram.x = x;
+    hologram.y = y;
+    hologram.z = z;
+    if (worldId && worldId.length > 0) hologram.worldId = worldId;
+    this.emit();
+    this.persist?.(this.records);
+    return hologram;
+  }
+
+  setLines(name: string, lines: readonly string[]): HologramRecord | undefined {
+    const hologram = this.get(name);
+    if (!hologram) return undefined;
+    const appearance = parseHologramAppearanceLenient({ ...hologram, lines });
+    hologram.lines = appearance.lines.length > 0 ? appearance.lines : [hologram.name];
+    this.emit();
+    this.persist?.(this.records);
+    return hologram;
+  }
+
   updateAppearance(
     name: string,
     message: ClientHologramUpdateMessage,

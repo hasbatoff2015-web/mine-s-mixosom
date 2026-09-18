@@ -18,8 +18,10 @@ describe('menu model', () => {
     const bindings = DESKTOP_CONTROL_SECTIONS.flatMap((section) => section.bindings);
     expect(bindings).toContainEqual({ action: 'Бег', key: 'Shift' });
     expect(bindings).toContainEqual({ action: 'Присесть', key: 'C' });
+    expect(bindings).toContainEqual({ action: 'Меню', key: 'M' });
     expect(bindings).toContainEqual({ action: 'Чат', key: 'T' });
     expect(bindings).toContainEqual({ action: 'Команда', key: '/' });
+    expect(bindings).toContainEqual({ action: 'Пауза / назад', key: 'Tab / Esc' });
     expect(bindings.some((binding) => binding.action === 'Ускорить полёт')).toBe(false);
   });
 

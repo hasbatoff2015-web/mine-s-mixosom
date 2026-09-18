@@ -20,6 +20,7 @@ import {
 import type { TextureAtlas } from './TextureAtlas';
 import { createWorldChunkMaterial, setWorldDaylight } from './worldLighting';
 import { SharedFireTexture } from './fireTexture';
+import { SignRenderer } from './SignRenderer';
 
 interface ChunkVisual {
   group: THREE.Group;
@@ -33,6 +34,7 @@ export class WorldRenderer {
   readonly breaking: BlockBreakingOverlay;
   readonly remoteBreaking: RemoteBreakingOverlays;
   readonly chests = new ChestRenderer();
+  readonly signs: SignRenderer;
   private readonly chunks = new Map<string, ChunkVisual>();
   private readonly mesher: ChunkMesher;
   private readonly resolveState: BlockRenderStateResolver;
@@ -54,6 +56,7 @@ export class WorldRenderer {
   ) {
     this.group.name = 'voxel-world';
     this.resolveState = resolveState;
+    this.signs = new SignRenderer(world, (key) => this.chunks.has(key));
     this.mesher = new ChunkMesher(atlas, resolveState);
     this.opaqueMaterial = createWorldChunkMaterial(atlas);
     this.cutoutMaterial = createWorldChunkMaterial(atlas, {
@@ -102,6 +105,7 @@ export class WorldRenderer {
     this.group.add(this.breaking.group);
     this.group.add(this.selection);
     this.group.add(this.chests.group);
+    this.group.add(this.signs.group);
   }
 
   get cutoutSide(): THREE.Side {
@@ -237,6 +241,7 @@ export class WorldRenderer {
     } else meshed.fire.dispose();
     this.group.add(group);
     this.chunks.set(key, { group, faces: meshed.faces, chests: meshed.chests });
+    this.signs.invalidateVisibility();
     chunk.dirty = false;
     chunk.meshedLightVersion = chunk.lightVersion;
     this.world.acknowledgeMeshed(chunk);
@@ -299,6 +304,7 @@ export class WorldRenderer {
   }
 
   updateChests(dtSeconds: number): void {
+    this.signs.sync();
     const cells: ChestRenderCell[] = [];
     for (const visual of this.chunks.values()) {
       for (const chest of visual.chests) {
@@ -341,6 +347,7 @@ export class WorldRenderer {
     this.glassMaterial.dispose();
     this.waterMaterial.dispose();
     this.chests.dispose();
+    this.signs.dispose();
   }
 
   private removeChunk(key: string): void {
@@ -349,5 +356,6 @@ export class WorldRenderer {
     this.group.remove(existing.group);
     for (const child of existing.group.children) if (child instanceof THREE.Mesh) child.geometry.dispose();
     this.chunks.delete(key);
+    this.signs.invalidateVisibility();
   }
 }

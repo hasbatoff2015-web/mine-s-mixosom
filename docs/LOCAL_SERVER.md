@@ -168,7 +168,7 @@ cp server/plugin-examples/hello.ts server/plugins/hello.ts
 
 or `FC_EXAMPLE_PLUGIN=1 npm run dev:server`.
 
-Starter plugins such as homes/economy/kits/tpa are **not** implemented in this pass.
+Starter plugins such as kits are **not** implemented in this pass. Homes/TPA/claims/holograms/AutoMine/Economy/Auction load from `server/builtin-plugins/`.
 
 ## Commands (server registry)
 
@@ -176,9 +176,9 @@ Online chat lines starting with `/` go to the server registry: `/help`, `/gamemo
 
 ## Protocol (JSON over WebSocket)
 
-Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`, `ping`
+Client → server: `join`, `input`, `break_block`, `place_block`, `chat`, `view`, `ping`, `auction_action`
 
-Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`, `entity_snapshot`, `entity_event`, `health`, `effects`, `time`, `command_result`
+Server → client: `welcome`, `player_joined`, `player_left`, `player_state`, `block_update`, `block_result`, `chunk_data`, `unload_chunk`, `chat`, `error`, `pong`, `status`, `inventory`, `entity_snapshot`, `entity_event`, `health`, `effects`, `time`, `command_result`, `auction`
 
 `inventory` is also the chest/furnace GUI sync: `window.slots` is applied to the live container even while that GUI is already open. Other players viewing the same chest receive the same message (their inventory + shared slots). No extra protocol type.
 

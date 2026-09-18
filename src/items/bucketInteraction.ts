@@ -45,9 +45,25 @@ export interface BucketContext {
   readonly onDrop: (stack: ItemStack) => void;
 }
 
-function storeOrDrop(context: BucketContext, stack: ItemStack): void {
+function storeOrDrop(context: Pick<BucketContext, 'inventory' | 'onDrop'>, stack: ItemStack): void {
   const remainder = context.inventory.add(stack);
   if (remainder) context.onDrop(remainder);
+}
+
+/** Existing bucket-stack conversion semantics, shared by SP and authority. */
+export function fillBucketWithMilk(context: Omit<BucketContext, 'world'>): boolean {
+  const { inventory, selectedSlot, mode } = context;
+  const stack = inventory.getSlot(selectedSlot);
+  if (stack?.itemId !== ItemId.Bucket) return false;
+  const filled = createItemStack(ItemId.MilkBucket);
+  if (stack.count === 1 || mode === 'creative') {
+    inventory.setSlot(selectedSlot, filled);
+    if (stack.count > 1) storeOrDrop(context, { ...stack, count: stack.count - 1 });
+  } else {
+    inventory.setSlot(selectedSlot, { ...stack, count: stack.count - 1 });
+    storeOrDrop(context, filled);
+  }
+  return true;
 }
 
 /** The existing DDA stops at the first liquid, then source semantics decide pickup. */

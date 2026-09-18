@@ -27,6 +27,7 @@ export interface FsWorldFile {
   readonly blockStates: Record<string, unknown>;
   readonly chests: Record<string, unknown>;
   readonly furnaces: Record<string, unknown>;
+  readonly signs?: Record<string, readonly string[]>;
   readonly droppedItems: unknown[];
   readonly mobs: unknown[];
   readonly minecarts: unknown[];
@@ -73,6 +74,7 @@ export function snapshotToFsRecords(snapshot: WorldSnapshot): FsWorldRecords {
       blockStates: snapshot.blockStates ?? {},
       chests: snapshot.chests,
       furnaces: snapshot.furnaces,
+      signs: snapshot.signs ?? {},
       droppedItems: snapshot.droppedItems,
       mobs: snapshot.mobs ?? [],
       minecarts: snapshot.minecarts ?? [],
@@ -111,6 +113,7 @@ export function fsRecordsToSnapshot(records: FsWorldRecords): WorldSnapshot {
     modifications: records.world.modifications,
     chests: records.world.chests,
     furnaces: records.world.furnaces,
+    signs: records.world.signs ?? {},
     droppedItems: records.world.droppedItems,
     mobs: records.world.mobs,
     minecarts: records.world.minecarts,

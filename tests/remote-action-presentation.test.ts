@@ -12,7 +12,7 @@ const info: RemotePlayerInfo = { id: 'actor', name: 'Actor', x: 0, y: 70, z: 0, 
 function harness(presentation?: PlayerPresentationState) {
   const visual = {
     root: new THREE.Group(), animator: { reset: vi.fn() },
-    update: vi.fn(), setHeldItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
+    update: vi.fn(), setHeldItem: vi.fn(), setOffhandItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
     triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
   };
   const onMining = vi.fn();
@@ -25,6 +25,16 @@ function harness(presentation?: PlayerPresentationState) {
 }
 
 describe('authoritative remote action presentation', () => {
+  it('passes server bed rest to the existing visual and clears it on exit', () => {
+    const bedRest = { x: 8, y: 70, z: 8, facing: 'north' as const };
+    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, bedRest });
+    view.interpolate(100, 0.016);
+    expect(visual.update).toHaveBeenLastCalledWith(0.016, expect.objectContaining({ bedRest, movementSpeed: 0 }));
+    view.applySnapshot({ ...info, presentation: IDLE_PLAYER_PRESENTATION }, 150, 1);
+    view.interpolate(150, 0.016);
+    expect(visual.update).toHaveBeenLastCalledWith(0.016, expect.objectContaining({ bedRest: null }));
+    view.dispose();
+  });
   it('exposes the tick of the pose already rendered, without sampling twice', () => {
     const { view } = harness();
     expect(view.lastRenderTick).toBeUndefined();
@@ -44,6 +54,16 @@ describe('authoritative remote action presentation', () => {
     expect(visual.setHeldItem).toHaveBeenLastCalledWith('iron_pickaxe');
     expect(onMining).toHaveBeenLastCalledWith('actor', mining, 100);
     expect(visual.swing).not.toHaveBeenCalled();
+    view.dispose();
+  });
+
+  it('applies and clears the authoritative offhand item across snapshots and reset', () => {
+    const { view, visual } = harness({ ...IDLE_PLAYER_PRESENTATION, offhandItemId: 'totem_of_undying' });
+    expect(visual.setOffhandItem).toHaveBeenLastCalledWith('totem_of_undying');
+    view.applySnapshot({ ...info, presentation: IDLE_PLAYER_PRESENTATION }, 150, 1);
+    expect(visual.setOffhandItem).toHaveBeenLastCalledWith(undefined);
+    view.reset({ ...info, presentation: { ...IDLE_PLAYER_PRESENTATION, offhandItemId: 'totem_of_undying' } }, 200);
+    expect(visual.setOffhandItem).toHaveBeenLastCalledWith('totem_of_undying');
     view.dispose();
   });
 

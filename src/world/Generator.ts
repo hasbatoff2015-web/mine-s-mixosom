@@ -292,6 +292,7 @@ export class TerrainGenerator {
     this.generateOres(chunk);
     this.generateCaveDeposits(chunk);
     this.decorate(chunk);
+    this.decorateSugarCane(chunk);
     chunk.generated = true;
     chunk.dirty = true;
   }
@@ -886,6 +887,29 @@ export class TerrainGenerator {
       else if (kind < 0.89) chunk.set(x, plantY, z, BlockId.Dandelion);
       else if (kind < 0.96) chunk.set(x, plantY, z, BlockId.Poppy);
       else chunk.set(x, plantY, z, BlockId.OxeyeDaisy);
+    }
+  }
+
+  /** Separate deterministic namespace: old ore, tree, and flower RNG streams are unchanged. */
+  private decorateSugarCane(chunk: Chunk): void {
+    const rng = mulberry32(hashCoords(this.numericSeed + 26183, chunk.x, 0, chunk.z));
+    const shore: Array<readonly [number, number]> = [];
+    for (let z = 1; z < CHUNK_SIZE - 1; z += 1) for (let x = 1; x < CHUNK_SIZE - 1; x += 1) {
+      const soil = chunk.get(x, SEA_LEVEL, z);
+      if (soil !== BlockId.GrassBlock && soil !== BlockId.Sand) continue;
+      if (chunk.get(x, SEA_LEVEL + 1, z) !== BlockId.Air) continue;
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
+        chunk.get(x + dx!, SEA_LEVEL, z + dz!) === BlockId.Water)) continue;
+      shore.push([x, z]);
+    }
+    // At most one small stand per shoreline chunk, without depending on other decorator RNG streams.
+    if (shore.length > 0 && rng() < 0.55) {
+      const [x, z] = shore[Math.floor(rng() * shore.length)]!;
+      const height = 1 + Math.floor(rng() * 3);
+      for (let segment = 1; segment <= height; segment += 1) {
+        if (chunk.get(x, SEA_LEVEL + segment, z) !== BlockId.Air) break;
+        chunk.set(x, SEA_LEVEL + segment, z, BlockId.SugarCane);
+      }
     }
   }
 

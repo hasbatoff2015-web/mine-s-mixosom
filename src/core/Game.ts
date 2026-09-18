@@ -16,9 +16,11 @@ import {
   chatLineOpacity,
   deathMessage,
   dispatchChatLine,
+  outgoingChatText,
   type CommandContext,
 } from '../chat';
 import { AudioManager } from './AudioManager';
+import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
 import {
   advanceFootsteps,
   blockUnderFeet,
@@ -114,7 +116,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, getItemDefinition, tryGetItemDefinition } from '../items';
+import { ItemId, getItemDefinition, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -159,6 +161,7 @@ import {
   THIRD_PERSON_CAMERA_DISTANCE,
   availableThirdPersonDistance,
   nextCameraPerspective,
+  effectiveCameraPerspective,
   smoothThirdPersonDistance,
   worldCameraCollisionSource,
   type CameraCollisionSource,
@@ -213,6 +216,7 @@ import {
   resolveAnarchyStartup,
 } from '../world/import';
 import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import { BuyerNpcView } from '../net/BuyerNpcView';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
 import {
@@ -338,9 +342,15 @@ import {
   type UseSimulationContext,
 } from '../gameplay';
 import { isUseTargetBlock } from '../world/blockInteraction';
+import { bedExitPosition, bedRestCameraPosition, bedRestPosition, clearBedBlocks, isBedRestValid, resolveBedRest, type BedRestState } from '../world/bed';
+import { fillBucketWithMilk } from '../items/bucketInteraction';
+import { FireworkManager, fireworkFlight } from '../entities/FireworkManager';
+import { FireworkVisuals } from '../rendering/FireworkVisuals';
+import { TotemParticles } from '../rendering/TotemParticles';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
-import type { ContainerKind, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -372,9 +382,13 @@ export interface GameSession {
   falling: FallingBlockManager;
   mobs: MobManager;
   arrows: PlayerArrowManager;
+  fireworks: FireworkManager;
+  fireworkVisuals: FireworkVisuals;
+  totemParticles: TotemParticles;
   minecarts: MinecartManager;
   entityHost: ThreeEntityHost;
   ridingCartId?: string;
+  restingBed?: BedRestState;
   redstone: RedstoneSystem;
   farming: FarmingSystem;
   activePressurePlates: Set<string>;
@@ -394,6 +408,7 @@ export interface OnlineAnarchySession {
   client: AnarchyClient;
   playerId: string;
   remotes: Map<string, RemotePlayerView>;
+  buyers: Map<string, BuyerNpcView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
   /** Wire state of the last input packet actually handed to AnarchyClient. */
@@ -715,6 +730,7 @@ export class Game {
       dropItem: () => this.dropSelectedItem(),
       selectHotbar: (index) => this.selectHotbar(index),
       cyclePerspective: () => this.cycleCameraPerspective(),
+      toggleMenu: () => this.toggleGameMenu(),
       onPointerLockAcquired: () => {
         this.lifecycle.resumePlayingIfVisible();
         this.lifecycle.endOnlineRespawnRestore();
@@ -734,6 +750,9 @@ export class Game {
     this.ui.onHotbarSelect = (index) => this.selectHotbar(index);
     this.ui.onChatSubmit = (line) => this.submitChat(line);
     this.ui.onChatCancel = () => this.closeChatAndResumeLook();
+    this.ui.onHudPause = () => this.togglePause();
+    this.ui.onHudChat = () => this.openChat();
+    this.ui.onHudMenu = () => this.toggleGameMenu();
     this.canvas.addEventListener('click', () => {
       this.lifecycle.resumePlayingIfVisible();
       this.canvas.focus({ preventScroll: true });
@@ -969,6 +988,7 @@ export class Game {
       mode: welcome.you.gamemode,
     };
     const remotes = new Map<string, RemotePlayerView>();
+    const buyers = new Map<string, BuyerNpcView>();
     await this.startSession(summary, world, inventory, undefined, {
       spawn: [welcome.you.x, welcome.you.y, welcome.you.z],
       snapSpawn: false,
@@ -977,6 +997,7 @@ export class Game {
         client,
         playerId: welcome.playerId,
         remotes,
+        buyers,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
         lastSentInputSeq: 0,
@@ -1024,6 +1045,8 @@ export class Game {
     this.holograms?.dispose();
     this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
+    this.syncBuyers(session, welcome.buyers ?? []);
+    this.ui.setPlayerInClan(Boolean(welcome.inClan));
     this.claimBoundaries?.dispose();
     this.claimBoundaries = new ClaimBoundaryRenderer(this.scene);
     client.onMessage((message) => {
@@ -1138,11 +1161,12 @@ export class Game {
         return;
       }
       case 'entity_snapshot':
-        applyEntitySnapshots(session, message.entities, {
+        if (!applyEntitySnapshots(session, message.entities, {
           interpolator: session.online.interpolator,
           tick: message.tick,
           now: performance.now(),
-        });
+        })) return;
+        session.fireworkVisuals.sync(message.entities.filter((entity) => entity.kind === 'firework'));
         return;
       case 'entity_event':
         applyNetworkEntityEvents(session, message.events);
@@ -1215,6 +1239,12 @@ export class Game {
         return;
       case 'chunk_data':
         session.world.getChunk(message.cx, message.cz, true);
+        for (const [key, lines] of Object.entries(message.signs ?? {})) {
+          const [x, y, z] = key.split(',').map(Number);
+          if (Number.isInteger(x) && Number.isInteger(y) && Number.isInteger(z) && lines.length === 4) {
+            session.world.setSignText(x!, y!, z!, lines as [string, string, string, string]);
+          }
+        }
         motionProbe.noteChunkUpdate();
         if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
           localNetTrace.noteWorld({
@@ -1228,9 +1258,36 @@ export class Game {
           motionProbe.note('world:volume');
         }
         return;
+      case 'wh_marks': {
+        const marked = new Set(message.targetIds);
+        for (const [id, view] of session.online.remotes) view.setWhMarked(marked.has(id));
+        return;
+      }
+      case 'totem_activate': {
+        const local = session.online?.playerId === message.playerId;
+        session.totemParticles.burst(message.x, message.y, message.z, { firstPerson: local });
+        if (local) this.ui.playTotemActivation();
+        return;
+      }
+      case 'sign_data':
+        session.world.setSignText(message.x, message.y, message.z,
+          message.lines as [string, string, string, string]);
+        return;
+      case 'sign_editor':
+        this.openSignEditor(message.x, message.y, message.z, message.lines);
+        return;
       case 'chat':
-        if (message.kind === 'player') this.pushChat('player', `<${message.from}> ${message.text}`);
-        else this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+        if (message.kind === 'player') {
+          if (message.channel === 'clan') this.ui.setPlayerInClan(true);
+          this.pushChat('player', message.text, {
+            from: message.from,
+            channel: message.channel ?? 'global',
+            id: message.messageId,
+          });
+        } else {
+          if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
+          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+        }
         return;
       case 'inventory':
         try {
@@ -1276,8 +1333,26 @@ export class Game {
       case 'holograms':
         this.holograms?.sync(message.holograms);
         return;
+      case 'buyers':
+        if (this.session) this.syncBuyers(this.session, message.buyers);
+        return;
+      case 'buyer':
+        this.openBuyerHouse(message);
+        return;
       case 'hologram_editor':
         this.openHologramEditor(message.hologram);
+        return;
+      case 'auction':
+        this.openAuctionHouse(message);
+        return;
+      case 'clan':
+        this.openClanHouse(message);
+        return;
+      case 'menu':
+        this.openGameMenuHouse(message);
+        return;
+      case 'trade':
+        this.openTradeHouse(message);
         return;
       case 'claim_boundary':
         this.claimBoundaries?.show(message);
@@ -1893,6 +1968,9 @@ export class Game {
       }
       return;
     }
+    if (message.kind === 'block_use' && !message.ok && message.reason === 'occupied') {
+      this.ui.toast('Кровать занята');
+    }
     if (message.kind === 'block_use' && !message.ok
       && online.localFoodUse?.actionSeq === message.actionSeq) {
       session.foodUseTicks = 0;
@@ -2069,9 +2147,14 @@ export class Game {
   private sendOnlineUse(session: GameSession): void {
     const online = session.online;
     if (!online) return;
+    if (this.tryInteractBuyer(session)) return;
     if (this.tryInteractHologram(session)) return;
-    const source = this.onlineActionSource(session);
     const selected = this.selectedStack();
+    if (shouldOpenBookOnUse(selected?.itemId, session.target?.block)) {
+      this.openSelectedBook(session);
+      return;
+    }
+    const source = this.onlineActionSource(session);
     if (this.selectedStack()?.itemId === ItemId.Bow) {
       source.actionSeq += 1;
       this.commitOnlineActionSeq(session, source);
@@ -2135,6 +2218,32 @@ export class Game {
     });
   }
 
+  private tryInteractBuyer(session: GameSession): boolean {
+    if (!session.online || this.ui?.isHologramEditorOpen()) return false;
+    const aim = this.lastLocalAim;
+    if (!aim) return false;
+    let closest: { id: string; distance: number } | undefined;
+    for (const view of session.online.buyers.values()) {
+      const distance = view.raycast(aim.origin, aim.direction, PLAYER_REACH);
+      if (distance === undefined) continue;
+      if (closest && distance >= closest.distance) continue;
+      closest = { id: view.id, distance };
+    }
+    const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
+    if (hologramHit) {
+      for (const view of session.online.buyers.values()) {
+        if (view.hologramName !== hologramHit.name) continue;
+        if (!closest || hologramHit.distance <= closest.distance + 0.05) {
+          closest = { id: view.id, distance: hologramHit.distance };
+        }
+      }
+    }
+    if (!closest) return false;
+    if (session.target && session.target.distance < closest.distance) return false;
+    session.online.client.send({ type: 'buyer_interact', buyerId: closest.id });
+    return true;
+  }
+
   private tryInteractHologram(session: GameSession): boolean {
     if (!session.online || this.ui?.isHologramEditorOpen()) return false;
     const aim = this.lastLocalAim;
@@ -2150,8 +2259,26 @@ export class Game {
     const session = this.session;
     if (!session?.online || this.lifecycle.state !== 'PLAYING') return;
     this.ui.closeChat();
-    if (this.ui.isInventoryOpen()) this.ui.closeInventory(false);
-    this.openGameplayModal();
+    if (this.ui.isAuctionOpen()) {
+      session.online.client.send({ type: 'auction_action', action: 'close' });
+      this.ui.closeAuction();
+    }
+    if (this.ui.isGameMenuOpen()) {
+      session.online.client.send({ type: 'menu_action', action: 'close' });
+      this.ui.closeGameMenu();
+    }
+    if (this.ui.isTradeOpen()) {
+      session.online.client.send({ type: 'trade_action', action: 'close' });
+      this.ui.closeTrade();
+    }
+    if (this.ui.isClanOpen()) {
+      session.online.client.send({ type: 'clan_action', action: 'close' });
+      this.ui.closeClan();
+    }
+    if (this.ui.isBuyerOpen()) {
+      session.online.client.send({ type: 'buyer_action', action: 'close' });
+      this.ui.closeBuyer();
+    }
     this.ui.openHologramEditor(hologram, {
       nowMs: () => Date.now() + this.serverTimeOffsetMs,
       save: (update) => {
@@ -2177,6 +2304,237 @@ export class Game {
 
   private closeHologramEditorAndResumeLook(): void {
     this.ui.closeHologramEditor();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openAuctionHouse(message: Extract<ServerMessage, { type: 'auction' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeAuction();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isGameMenuOpen()
+        && !this.ui.isTradeOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isAuctionOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      this.openGameplayModal();
+    }
+    this.ui.openAuction(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeAuctionAndResumeLook(true),
+    });
+  }
+
+  private closeAuctionAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'auction_action', action: 'close' });
+    }
+    this.ui.closeAuction();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openClanHouse(message: Extract<ServerMessage, { type: 'clan' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    this.ui.setPlayerInClan(Boolean(message.viewer?.clanId));
+    if (message.screen === 'closed') {
+      this.ui.closeClan();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isGameMenuOpen()
+        && !this.ui.isTradeOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isClanOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      if (this.ui.isAuctionOpen()) this.ui.closeAuction();
+      this.openGameplayModal();
+    }
+    this.ui.openClan(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeClanAndResumeLook(true),
+    });
+  }
+
+  private closeClanAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'clan_action', action: 'close' });
+    }
+    this.ui.closeClan();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openGameMenuHouse(message: Extract<ServerMessage, { type: 'menu' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeGameMenu();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isTradeOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isGameMenuOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      this.openGameplayModal();
+    }
+    this.ui.openGameMenu(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeGameMenuAndResumeLook(true),
+    });
+  }
+
+  private closeGameMenuAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'menu_action', action: 'close' });
+    }
+    this.ui.closeGameMenu();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private openTradeHouse(message: Extract<ServerMessage, { type: 'trade' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeTrade();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isBuyerOpen()
+        && !this.ui.isGameMenuOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isTradeOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      this.openGameplayModal();
+    }
+    this.ui.openTrade(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeTradeAndResumeLook(true),
+    });
+  }
+
+  private closeTradeAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'trade_action', action: 'close' });
+    }
+    this.ui.closeTrade();
+    this.enterPlaying();
+    this.input.tryRequestPointerLock();
+  }
+
+  private syncBuyers(session: GameSession, buyers: readonly NetworkBuyerNpc[]): void {
+    const online = session.online;
+    if (!online || !this.itemVisuals) return;
+    const next = new Set(buyers.map((entry) => entry.id));
+    for (const [id, view] of online.buyers) {
+      if (next.has(id)) continue;
+      this.scene.remove(view.group);
+      view.dispose();
+      online.buyers.delete(id);
+    }
+    const daylight = daylightFactor(session.world.timeOfDay);
+    for (const info of buyers) {
+      const existing = online.buyers.get(info.id);
+      if (existing) {
+        existing.apply(info, 0, daylight);
+        continue;
+      }
+      const view = new BuyerNpcView(info, {
+        visual: new PlayerVisual(
+          this.playerSkins,
+          this.playerSkinGeometries,
+          this.itemVisuals,
+          createPlayerAppearance({ skinId: 'buyer_merchant', model: 'classic' }),
+          {
+            armorResources: {
+              materials: this.playerArmorMaterials,
+              geometries: this.playerArmorGeometries,
+            },
+          },
+        ),
+        world: session.world,
+      });
+      online.buyers.set(info.id, view);
+      this.scene.add(view.group);
+    }
+  }
+
+  private openBuyerHouse(message: Extract<ServerMessage, { type: 'buyer' }>): void {
+    const session = this.session;
+    if (!session?.online) return;
+    if (message.screen === 'closed') {
+      this.ui.closeBuyer();
+      if (
+        !this.ui.isInventoryOpen()
+        && !this.ui.isHologramEditorOpen()
+        && !this.ui.isAuctionOpen()
+        && !this.ui.isClanOpen()
+        && !this.ui.isGameMenuOpen()
+        && !this.ui.isTradeOpen()
+      ) {
+        this.enterPlaying();
+        this.input.tryRequestPointerLock();
+      }
+      return;
+    }
+    if (!this.ui.isBuyerOpen()) {
+      this.ui.closeChat();
+      if (this.ui.isHologramEditorOpen()) this.ui.closeHologramEditor();
+      if (this.ui.isAuctionOpen()) this.ui.closeAuction();
+      if (this.ui.isClanOpen()) this.ui.closeClan();
+      this.openGameplayModal();
+    }
+    this.ui.openBuyer(message, {
+      send: (action) => session.online?.client.send(action),
+      close: () => this.closeBuyerAndResumeLook(true),
+    });
+  }
+
+  private closeBuyerAndResumeLook(notifyServer: boolean): void {
+    if (notifyServer && this.session?.online) {
+      this.session.online.client.send({ type: 'buyer_action', action: 'close' });
+    }
+    this.ui.closeBuyer();
     this.enterPlaying();
     this.input.tryRequestPointerLock();
   }
@@ -2426,7 +2784,7 @@ export class Game {
       online.inputSeq,
       { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
       { yaw: this.input.yaw, pitch: this.input.pitch },
-      !session.ridingCartId,
+      !session.ridingCartId && !session.restingBed,
     );
     if (!online.ignoreNetworkSend) {
       const clientSentAt = isDevRuntime() ? performance.now() : undefined;
@@ -2456,7 +2814,8 @@ export class Game {
       motionProbe.noteSend(online.inputSeq);
       this.visibilityProbe.noteInputSent();
     }
-    predictLocalMove(session.player, session.world, online.prediction, predicted);
+    predictLocalMove(session.player, session.world, online.prediction,
+      session.restingBed ? { ...predicted, resting: true } : predicted);
     this.visibilityProbe.noteTick();
     this.localRender.pushAfterTick({
       x: session.player.position.x,
@@ -2685,6 +3044,22 @@ export class Game {
     }
 
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
+    survival.setDeathProtection(() => {
+      if (summary.mode !== 'survival') return false;
+      if (!consumeOffhandTotem(inventory)) return false;
+      this.ui.playTotemActivation();
+      this.playLocal('totem.activate');
+      const actor = this.session?.player;
+      if (actor) {
+        this.session?.totemParticles.burst(
+          actor.position.x,
+          actor.position.y + 1,
+          actor.position.z,
+          { firstPerson: true },
+        );
+      }
+      return true;
+    });
     const mobs = new MobManager(entityHost, world, {
       maxMobs: isCoarsePointer() ? 24 : 40,
       passiveCap: isCoarsePointer() ? 10 : 16,
@@ -2721,6 +3096,11 @@ export class Game {
         igniteMinecartTntFromFireArrow(session.minecarts, session.redstone, cart);
       },
     });
+    const fireworks = new FireworkManager(world);
+    const fireworkVisuals = new FireworkVisuals();
+    this.scene.add(fireworkVisuals.group);
+    const totemParticles = new TotemParticles();
+    this.scene.add(totemParticles.group);
     const playerVisual = new PlayerVisual(
       this.playerSkins,
       this.playerSkinGeometries,
@@ -2752,6 +3132,9 @@ export class Game {
       falling,
       mobs,
       arrows,
+      fireworks,
+      fireworkVisuals,
+      totemParticles,
       minecarts,
       entityHost,
       redstone,
@@ -3430,6 +3813,11 @@ export class Game {
 
   private enterPlaying(): void {
     this.session?.worldRenderer.setOpenChest(undefined);
+    this.ui.closeAuction();
+    this.ui.closeClan();
+    this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.ui.closeInventory();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
@@ -3535,6 +3923,36 @@ export class Game {
       this.closeHologramEditorAndResumeLook();
       return;
     }
+    if (this.ui.isAuctionOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeAuctionAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isClanOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeClanAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isBuyerOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeBuyerAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isGameMenuOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeGameMenuAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isTradeOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.closeTradeAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isCraftMenuOpen()) {
+      if (this.ui.isAuctionTextInputFocused()) return;
+      this.ui.closeCraftMenu();
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3607,6 +4025,26 @@ export class Game {
       this.closeHologramEditorAndResumeLook();
       return;
     }
+    if (this.ui.isAuctionOpen()) {
+      this.closeAuctionAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isClanOpen()) {
+      this.closeClanAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isBuyerOpen()) {
+      this.closeBuyerAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isGameMenuOpen()) {
+      this.closeGameMenuAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isTradeOpen()) {
+      this.closeTradeAndResumeLook(true);
+      return;
+    }
     if (this.ui.isInventoryOpen()) {
       this.closeInventoryAndResumeLook();
       return;
@@ -3615,6 +4053,42 @@ export class Game {
       this.input.releasePointerLock();
       this.openPauseMenu();
     } else if (this.lifecycle.state === 'PAUSED') this.resumeFromPause();
+  }
+
+  private toggleGameMenu(): void {
+    const session = this.session;
+    if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD' || this.lifecycle.state === 'PAUSED') {
+      return;
+    }
+    if (this.ui.isChatOpen()) this.ui.closeChat();
+    if (this.ui.isGameMenuOpen()) {
+      this.closeGameMenuAndResumeLook(true);
+      return;
+    }
+    if (this.ui.isTradeOpen()) {
+      this.closeTradeAndResumeLook(true);
+      return;
+    }
+    if (!session.online) {
+      this.ui.toast('Меню доступно в онлайн-игре.');
+      return;
+    }
+    if (this.ui.isHologramEditorOpen()) this.closeHologramEditorAndResumeLook();
+    if (this.ui.isAuctionOpen()) {
+      session.online.client.send({ type: 'auction_action', action: 'close' });
+      this.ui.closeAuction();
+    }
+    if (this.ui.isClanOpen()) {
+      session.online.client.send({ type: 'clan_action', action: 'close' });
+      this.ui.closeClan();
+    }
+    if (this.ui.isBuyerOpen()) {
+      session.online.client.send({ type: 'buyer_action', action: 'close' });
+      this.ui.closeBuyer();
+    }
+    if (this.ui.isInventoryOpen()) this.closeInventoryAndResumeLook();
+    this.openGameplayModal();
+    session.online.client.send({ type: 'menu_action', action: 'open', screen: 'root' });
   }
 
   private showSettings(): void {
@@ -3626,7 +4100,7 @@ export class Game {
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
       if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
-    }, () => this.ui.showControls(() => this.showSettings()), () => {
+    }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
           resume: () => this.resumeFromPause(),
@@ -3634,7 +4108,7 @@ export class Game {
           saveAndQuit: () => void this.saveAndQuit(),
         });
       } else this.showMainMenu();
-    });
+    }, this.screenBeforeSettings === 'pause');
   }
 
   private async saveAndQuit(): Promise<void> {
@@ -3674,6 +4148,7 @@ export class Game {
       modifications: session.world.serializeModifications(),
       chests: Object.fromEntries(session.world.chests),
       furnaces: Object.fromEntries(session.world.furnaces),
+      signs: session.world.serializeSigns(),
       droppedItems: session.drops.serialize(),
       fallingBlocks: session.falling.serialize(),
       minecarts: session.minecarts.serialize(),
@@ -3751,6 +4226,13 @@ export class Game {
     }
     this.updateFirstPerson(rawElapsed);
     if (this.session) {
+      this.session.fireworkVisuals.update(
+        rawElapsed,
+        interpolationAlpha(this.accumulator, FIXED_DT),
+        this.session.online?.interpolator,
+        performance.now(),
+      );
+      this.session.totemParticles.update(rawElapsed);
       updateSharedFireAnimation(rawElapsed);
       this.session.mobs.advanceDeathVisuals(rawElapsed);
       this.session.worldRenderer.updateChests(rawElapsed);
@@ -3880,7 +4362,7 @@ export class Game {
       online.inputSeq,
       movement,
       { yaw: this.input.yaw, pitch: this.input.pitch },
-      !riding,
+      !riding && !session.restingBed,
     );
     if (!online.ignoreNetworkSend) {
       const clientSentAt = isDevRuntime() ? performance.now() : undefined;
@@ -3914,7 +4396,8 @@ export class Game {
     }
     const prevX = session.player.position.x;
     const prevZ = session.player.position.z;
-    predictLocalMove(session.player, session.world, online.prediction, predicted);
+    predictLocalMove(session.player, session.world, online.prediction,
+      session.restingBed ? { ...predicted, resting: true } : predicted);
     if (gameplayAllowed) {
       this.updateFootsteps(session, Math.hypot(
         session.player.position.x - prevX,
@@ -4014,6 +4497,15 @@ export class Game {
         simMark = this.addSimPart('world', simMark);
       },
       tickPlayers: () => {
+        let exitedRest = false;
+        if (session.restingBed && (!isBedRestValid(session.world, session.restingBed)
+          || (gameplayAllowed && movementBefore.jump))) {
+          const rest = session.restingBed;
+          session.restingBed = undefined;
+          session.player.teleport(bedExitPosition(session.world, rest));
+          this.syncLocalRenderFromPlayer();
+          exitedRest = true;
+        }
         const selected = this.selectedStack();
         session.combat.setHeldItem(selected?.itemId);
         session.combat.setOffhand(session.inventory.offhand?.itemId);
@@ -4036,14 +4528,15 @@ export class Game {
             ...movement,
             forward: riding ? 0 : movement.forward,
             right: riding ? 0 : movement.right,
-            jump: riding ? false : movement.jump,
+            jump: riding || exitedRest ? false : movement.jump,
             sprint: !riding && movement.sprint
               && (session.summary.mode === 'creative' || session.survival.hunger > 6),
             descend: movement.descend === true,
             flySprint: movement.flySprint === true,
           }),
         };
-        const playerResult = session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
+        const playerResult = session.restingBed ? { horizontalDistance: 0, jumped: false }
+          : session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
           if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
         });
         motionProbe.notePredictionTick();
@@ -4084,6 +4577,13 @@ export class Game {
       tickProjectiles: () => {
         entityStart = performance.now();
         session.arrows.tick(FIXED_DT);
+        if (!session.online) {
+          session.fireworks.tick();
+          session.fireworkVisuals.sync(session.fireworks.entities.map((rocket) => ({
+            id: rocket.id, x: rocket.position.x, y: rocket.position.y, z: rocket.position.z,
+            state: rocket.exploded ? 'burst' : 'flight',
+          })));
+        }
         const collectedArrows = session.arrows.tryCollect(session.player.aabb, {
           mode: session.summary.mode,
           addItem: (itemId, count) => session.inventory.addItem(itemId, count),
@@ -4396,6 +4896,7 @@ export class Game {
     const item = toolStack ? tryGetItemDefinition(toolStack.itemId) : undefined;
     const harvestable = canHarvestBlock(definition, miningToolFromItemId(toolStack?.itemId));
     if (hit.block === BlockId.OakDoor) this.removeDoor(hit.x, hit.y, hit.z);
+    else if (hit.block === BlockId.WhiteBed) clearBedBlocks(session.world, hit.x, hit.y, hit.z);
     else {
       session.world.applyBlockBatch([{ x: hit.x, y: hit.y, z: hit.z, block: BlockId.Air }], {
         deferLighting: true,
@@ -4466,11 +4967,79 @@ export class Game {
 
   private useTargetOrItem(): void {
     const session = this.session!;
+    const held = session.inventory.getSlot(session.selectedSlot);
+    if (!session.online && held?.itemId === ItemId.FireworkRocket) {
+      const origin = session.target
+        ? session.target.point.clone().addScaledVector(session.target.normal, 0.2)
+        : session.player.eyePosition().addScaledVector(viewDirectionFromLook(this.input.yaw, this.input.pitch), 0.7);
+      origin.y += 0.15;
+      session.fireworks.spawn(origin, fireworkFlight(held.metadata));
+      if (session.summary.mode === 'survival') {
+        session.inventory.setSlot(session.selectedSlot, held.count <= 1 ? null : { ...held, count: held.count - 1 });
+      }
+      this.firstPerson?.swing();
+      this.refreshHud();
+      return;
+    }
+    if (!session.online && held?.itemId === ItemId.Bucket) {
+      const eye = session.player.eyePosition();
+      const direction = viewDirectionFromLook(this.input.yaw, this.input.pitch);
+      const cow = session.mobs.raycast(eye, direction, Math.min(3, PLAYER_REACH));
+      if (cow?.mob.kind === 'cow' && (!session.target || cow.distance <= session.target.distance)) {
+        if (fillBucketWithMilk({
+          inventory: session.inventory, selectedSlot: session.selectedSlot, mode: session.summary.mode,
+          onDrop: (stack) => this.spawnDroppedStack(stack),
+        })) {
+          this.ui.toast('Получено ведро молока');
+          this.refreshHud();
+          return;
+        }
+      }
+    }
+    if (shouldOpenBookOnUse(held?.itemId, session.target?.block)) {
+      this.openSelectedBook(session);
+      return;
+    }
     if (session.online) {
       this.sendOnlineUse(session);
       return;
     }
     performUseHeld(this.singleplayerUseContext());
+  }
+
+  private openSelectedBook(session: GameSession): void {
+    const slot = session.selectedSlot;
+    const held = session.inventory.getSlot(slot);
+    if (held?.itemId !== ItemId.Book) return;
+    this.openGameplayModal();
+    this.ui.openBook(held, (content, sign) => {
+      if (this.session !== session || session.selectedSlot !== slot) return;
+      if (session.online) {
+        session.online.client.send({ type: 'book_update', slot, pages: content.pages, title: content.title, sign });
+      } else {
+        const overflow = writeBookInSlot(session.inventory, slot, content, sign ? PLAYER_CHAT_NAME : undefined);
+        if (overflow) this.spawnDroppedStack(overflow);
+        this.refreshHud();
+        void this.saveSession();
+      }
+    }, () => {
+      this.enterPlaying();
+      this.input.tryRequestPointerLock();
+    });
+  }
+
+  private openSignEditor(x: number, y: number, z: number, lines?: readonly string[]): void {
+    const session = this.session;
+    if (!session || session.world.getBlock(x, y, z, false) !== BlockId.OakSign) return;
+    this.openGameplayModal();
+    this.ui.openSign(lines ?? session.world.signText(x, y, z), (edited) => {
+      if (this.session !== session) return;
+      if (session.online) session.online.client.send({ type: 'sign_update', x, y, z, lines: edited });
+      else if (session.world.setSignText(x, y, z, edited)) void this.saveSession();
+    }, () => {
+      this.enterPlaying();
+      this.input.tryRequestPointerLock();
+    });
   }
 
   private singleplayerUseContext(): UseSimulationContext {
@@ -4506,7 +5075,6 @@ export class Game {
       minecarts: session.minecarts,
       redstone: session.redstone,
       random: this.simRandom,
-      setSpawnPoint: (position) => session.survival?.setSpawnPoint(position),
       enterVehicle: (cartId) => {
         game.mountMinecart(cartId);
         return session.ridingCartId === cartId;
@@ -4529,12 +5097,14 @@ export class Game {
             };
           game.openBlockInventory(kind, hit);
         },
-        onBedUsed: (skippedNight) => {
-          game.ui.toast(skippedNight
-            ? 'Ночь пропущена. Точка возрождения установлена.'
-            : 'Точка возрождения установлена');
-          void game.saveSession();
+        onBedUsed: (x, y, z) => {
+          const rest = resolveBedRest(session.world, x, y, z);
+          if (!rest || session.survival.dead || session.ridingCartId) return;
+          session.restingBed = rest;
+          session.player.teleport(bedRestPosition(rest));
+          game.syncLocalRenderFromPlayer();
         },
+        onSignUsed: (x, y, z) => game.openSignEditor(x, y, z),
         onFlintIgnite: () => {
           game.playWorld(
             'fire.ignite',
@@ -4546,6 +5116,9 @@ export class Game {
         },
         onFlintAlreadyPrimed: () => { game.firstPerson?.swing(); },
         dropOverflow: (stack) => game.spawnDroppedStack(stack),
+        onPlaced: (x, y, z, blockId) => {
+          if (blockId === BlockId.OakSign) game.openSignEditor(x, y, z);
+        },
       },
     };
   }
@@ -4596,12 +5169,15 @@ export class Game {
       return;
     }
     if (session.summary.mode !== 'survival') {
-      this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow : ItemId.Arrow;
+      this.lastConsumedArrow = session.inventory.has(ItemId.FireArrow, 1) ? ItemId.FireArrow
+        : session.inventory.has(ItemId.WHArrow, 1) ? ItemId.WHArrow : ItemId.Arrow;
     }
     const aim = this.sampleLocalAim(session);
     const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
-    session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical, flaming);
+    session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical,
+      flaming, undefined, undefined, undefined, undefined,
+      this.lastConsumedArrow === ItemId.WHArrow ? 'wh' : flaming ? 'fire' : 'normal');
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
     }
@@ -4829,6 +5405,10 @@ export class Game {
       this.lastConsumedArrow = ItemId.FireArrow;
       return true;
     }
+    if (session.inventory.remove(ItemId.WHArrow, 1) === 1) {
+      this.lastConsumedArrow = ItemId.WHArrow;
+      return true;
+    }
     if (session.inventory.remove(ItemId.Arrow, 1) === 1) {
       this.lastConsumedArrow = ItemId.Arrow;
       return true;
@@ -4894,7 +5474,7 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen() || this.ui.isClanOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -4912,21 +5492,25 @@ export class Game {
   private submitChat(raw: string): void {
     const session = this.session;
     if (!session) return;
-    const trimmed = raw.replace(/\s+$/g, '');
-    if (!trimmed) {
-      this.closeChatAndResumeLook();
+    const parsed = outgoingChatText(raw);
+    if (parsed.kind === 'empty') return;
+    if (parsed.kind === 'too-long') {
+      this.pushChat('error', CHAT_TOO_LONG_ERROR);
       return;
     }
+    const channel = this.ui.getChatChannel();
+    if (channel === 'clan' && !this.ui.isPlayerInClan()) return;
+    const trimmed = parsed.text;
     this.chat.rememberInput(trimmed);
     this.ui.setChatInputHistory(this.chat.history);
+    this.ui.clearChatDraft();
     if (session.online) {
-      session.online.client.send({ type: 'chat', text: trimmed });
-      this.closeChatAndResumeLook();
+      session.online.client.send({ type: 'chat', text: trimmed, channel });
       return;
     }
     const dispatched = dispatchChatLine(trimmed, this.commandContext());
     if (dispatched.parsed.kind === 'say') {
-      this.pushChat('player', `<${PLAYER_CHAT_NAME}> ${dispatched.parsed.text}`);
+      this.pushChat('player', dispatched.parsed.text, { from: PLAYER_CHAT_NAME, channel });
     } else if (dispatched.parsed.kind === 'command') {
       this.pushChat('command', trimmed);
       const kind = dispatched.result?.ok ? 'system' : 'error';
@@ -4934,12 +5518,15 @@ export class Game {
         if (line) this.pushChat(kind, line);
       }
     }
-    this.closeChatAndResumeLook();
   }
 
-  private pushChat(kind: 'system' | 'player' | 'command' | 'death' | 'error', text: string): void {
-    const message = this.chat.push(kind, text);
-    this.ui.appendChat(message.kind, message.text, message.createdAtMs);
+  private pushChat(
+    kind: 'system' | 'player' | 'command' | 'death' | 'error',
+    text: string,
+    extra: { from?: string; channel?: ChatChannel; id?: string } = {},
+  ): void {
+    const message = this.chat.push(kind, text, performance.now(), extra);
+    this.ui.appendChat(message);
   }
 
   private commandContext(): CommandContext {
@@ -5006,6 +5593,7 @@ export class Game {
   private teleportPlayer(x: number, y: number, z: number): void {
     const session = this.session!;
     session.ridingCartId = undefined;
+    session.restingBed = undefined;
     const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
     session.player.teleport(destination);
     this.syncLocalRenderFromPlayer();
@@ -5088,6 +5676,11 @@ export class Game {
     const chatOpen = this.ui.isChatOpen();
     const inventoryOpen = this.ui.isInventoryOpen();
     this.ui.closeInventory(false);
+    this.ui.closeAuction();
+    this.ui.closeClan();
+    this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.ui.closeChat();
     this.ui.closeHologramEditor();
     this.ui.hidePointerLockFallback();
@@ -5112,9 +5705,13 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
+    session.restingBed = undefined;
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
+    this.ui.closeAuction();
+    this.ui.closeClan();
+    this.ui.closeBuyer();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -5190,6 +5787,9 @@ export class Game {
         );
         remote.updateNameplate(this.camera);
       });
+      session.online?.buyers.forEach((buyer) => {
+        buyer.update(this.renderDeltaSeconds, daylightFactor(session.world.timeOfDay));
+      });
       if (session.online) {
         applyInterpolatedEntityVisuals(session, session.online.interpolator, now);
       } else {
@@ -5223,9 +5823,11 @@ export class Game {
   }
 
   private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
-    const thirdPerson = this.cameraPerspective !== 'firstPerson';
+    const perspective = effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed));
+    const thirdPerson = perspective !== 'firstPerson';
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
+    session.playerVisual.setOffhandItem(session.inventory.offhand?.itemId);
     session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson
@@ -5233,6 +5835,7 @@ export class Game {
       && !this.ui.isInventoryOpen(),
     );
     session.playerVisual.update(this.renderDeltaSeconds, {
+      bedRest: session.restingBed,
       viewYaw: this.input.yaw,
       viewPitch: this.input.pitch,
       movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
@@ -5255,7 +5858,10 @@ export class Game {
       daylightFactor(session.world.timeOfDay),
     );
 
-    this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
+    if (session.restingBed) {
+      const [x, y, z] = bedRestCameraPosition(session.restingBed);
+      this.cameraPivot.set(x, y, z);
+    } else this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
     const roll = this.hurt.cameraRoll(now);
     if (!thirdPerson) {
       this.camera.position.copy(this.cameraPivot);
@@ -5270,7 +5876,7 @@ export class Game {
       Math.sin(this.input.pitch),
       -Math.cos(this.input.yaw) * cosPitch,
     );
-    if (this.cameraPerspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
+    if (perspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
     const available = availableThirdPersonDistance(
       this.cameraPivot,
       this.cameraTravelDirection,
@@ -5286,7 +5892,7 @@ export class Game {
       this.cameraTravelDirection,
       this.thirdPersonCameraDistance,
     );
-    if (this.cameraPerspective === 'thirdPersonFront') {
+    if (perspective === 'thirdPersonFront') {
       this.frontCameraLook.yaw = this.input.yaw + Math.PI;
       this.frontCameraLook.pitch = -this.input.pitch;
       applyImmediateRenderLook(this.camera, this.frontCameraLook, roll);
@@ -5300,6 +5906,7 @@ export class Game {
   ): void {
     const online = session.online;
     if (!online) return;
+    session.restingBed = presentation?.bedRest ?? undefined;
     const nextHurt = presentationHurtSeq(presentation ?? IDLE_PLAYER_PRESENTATION);
     if (online.ownHurtSeq !== undefined && nextHurt > online.ownHurtSeq) {
       session.playerVisual.triggerHurtFlash();
@@ -5315,7 +5922,7 @@ export class Game {
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
       && !this.ui.isInventoryOpen()
-      && this.cameraPerspective === 'firstPerson';
+      && effectiveCameraPerspective(this.cameraPerspective, Boolean(session?.restingBed)) === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
       state.onGround = session.player.onGround;
@@ -5450,7 +6057,8 @@ export class Game {
 
   private formatLocalAimDebug(session: GameSession): string {
     const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
-    const camera = this.cameraPerspective === 'thirdPersonFront' ? this.frontCameraLook : this.input;
+    const camera = effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed)) === 'thirdPersonFront'
+      ? this.frontCameraLook : this.input;
     const hit = session.target;
     return formatLocalAimHud({
       cameraYaw: camera.yaw,
@@ -5495,12 +6103,18 @@ export class Game {
     this.polishQaDispose?.();
     this.polishQaDispose = undefined;
     if (!this.session) return;
+    this.session.restingBed = undefined;
     if (this.session.online) {
       for (const view of this.session.online.remotes.values()) {
         this.scene.remove(view.group);
         view.dispose();
       }
       this.session.online.remotes.clear();
+      for (const view of this.session.online.buyers.values()) {
+        this.scene.remove(view.group);
+        view.dispose();
+      }
+      this.session.online.buyers.clear();
       this.session.online.client.disconnect();
     }
     this.holograms?.dispose();
@@ -5511,6 +6125,9 @@ export class Game {
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();
     this.session.arrows.dispose();
+    this.session.fireworkVisuals.dispose();
+    this.session.totemParticles.dispose();
+    this.session.fireworks.clear();
     this.session.minecarts.dispose();
     this.session.mobs.dispose();
     this.session.redstone.dispose();
@@ -5527,6 +6144,12 @@ export class Game {
     this.session = undefined;
     this.chat.clear();
     this.ui.clearChat();
+    this.ui.setPlayerInClan(false);
+    this.ui.closeAuction();
+    this.ui.closeClan();
+    this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.inspectFreeze = null;
     this.inspectorHud = '';
     this.overlayCategories.clear();
@@ -5590,6 +6213,7 @@ export class Game {
   }
 
   private cycleCameraPerspective(): void {
+    if (this.session?.restingBed) return;
     this.setCameraPerspective(nextCameraPerspective(this.cameraPerspective));
   }
 
@@ -5640,12 +6264,16 @@ export class Game {
     const snap = this.audio.debugSnapshot();
     const recent = snap.recentPlays.slice(-12).map((play) =>
       `${play.event} ${play.file} p${play.pitch.toFixed(2)} v${play.volume.toFixed(2)}${play.positional ? ' 3d' : ''}`).join('\n');
+    const drops = snap.recentDrops.slice(-6).map((drop) =>
+      `${drop.event}: ${drop.reason} (${drop.bus} ${drop.busActive}/${drop.busLimit}, p${drop.priority}, low ${drop.lowestBusPriority ?? '—'})`).join('\n');
     this.audioDebug.textContent = [
       `SFX ${snap.bufferCount}/${snap.catalogFiles} decoded · voices ${snap.voiceCount} · ctx ${snap.contextState}`,
       `vol ${snap.masterVolume.toFixed(2)}${snap.muted ? ' muted' : ''}${snap.paused ? ' paused' : ''}`,
-      snap.missingFiles.length ? `missing files: ${snap.missingFiles.join(', ')}` : 'files ok',
+      snap.permanentMissingFiles.length ? `permanent files: ${snap.permanentMissingFiles.join(', ')}` : 'files ok',
+      snap.transientFailures.length ? `transient: ${snap.transientFailures.map((item) => `${item.file} #${item.failureCount} retry ${item.nextRetryAt}`).join(', ')}` : 'transient ok',
       snap.missingEvents.length ? `missing events: ${snap.missingEvents.join(', ')}` : 'events ok',
       recent || '(no plays yet)',
+      drops ? `drops:\n${drops}` : 'drops: none',
     ].join('\n');
   }
 

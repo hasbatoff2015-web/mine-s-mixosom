@@ -4,6 +4,7 @@ import {
   MAX_CLIENT_MESSAGE_BYTES,
   PROTOCOL_VERSION,
 } from '../shared/config';
+import { CHAT_TOO_LONG_ERROR } from '../shared/chat';
 import {
   decodeJson,
   encodeMessage,
@@ -192,6 +193,18 @@ export class AnarchyServer {
     }
     const message = parseClientMessage(parsedJson);
     if ('error' in message) {
+      if (joined && (message.error === 'chat.text too long' || message.error === 'chat.channel invalid')) {
+        const binding = this.sockets.get(socket);
+        const player = binding ? this.world.players.get(binding.playerId) : undefined;
+        if (player?.connected && player.connectionId === binding?.connectionId) {
+          this.world.sendChatError(
+            player,
+            message.error === 'chat.text too long' ? CHAT_TOO_LONG_ERROR : 'Некорректный канал чата.',
+          );
+          return;
+        }
+      }
+      if (joined && message.error === 'chat.text empty') return;
       this.send(socket, { type: 'error', code: 'invalid', message: message.error });
       return;
     }
@@ -260,7 +273,9 @@ export class AnarchyServer {
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
       holograms: [...this.world.holograms.list()],
+      buyers: this.world.buyer.networkBuyers(),
       serverNow: Date.now(),
+      inClan: Boolean(this.world.clan.playerClan(player.id)),
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;
@@ -274,6 +289,7 @@ export class AnarchyServer {
     }
     if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
     this.send(socket, { type: 'holograms', holograms: [...this.world.holograms.list()] });
+    this.send(socket, { type: 'buyers', buyers: this.world.buyer.networkBuyers() });
     if (!resumed) {
       this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
     } else {
@@ -400,7 +416,7 @@ export class AnarchyServer {
         return;
       }
       case 'chat':
-        this.world.handleChat(player, message.text);
+        this.world.handleChat(player, message.text, message.channel ?? 'global');
         return;
       case 'view':
         this.world.setView(player, message.cx, message.cz, message.radius);
@@ -474,6 +490,12 @@ export class AnarchyServer {
       case 'pickup':
         this.world.pickup(player);
         return;
+      case 'book_update':
+        this.world.updateBook(player, message);
+        return;
+      case 'sign_update':
+        this.world.updateSign(player, message);
+        return;
       case 'vehicle_input':
         this.world.vehicleInput(player, message);
         return;
@@ -488,6 +510,24 @@ export class AnarchyServer {
         return;
       case 'hologram_update':
         this.world.updateHologramAppearance(player, message);
+        return;
+      case 'auction_action':
+        this.world.handleAuctionAction(player, message);
+        return;
+      case 'clan_action':
+        this.world.handleClanAction(player, message);
+        return;
+      case 'menu_action':
+        this.world.handleMenuAction(player, message);
+        return;
+      case 'buyer_interact':
+        this.world.interactBuyer(player, message.buyerId);
+        return;
+      case 'buyer_action':
+        this.world.handleBuyerAction(player, message);
+        return;
+      case 'trade_action':
+        this.world.handleTradeAction(player, message);
         return;
     }
   }

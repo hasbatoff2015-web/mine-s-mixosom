@@ -72,9 +72,9 @@ describe('Minecraft-compatible player skins', () => {
   });
 
   it('ships every unique archive skin and the authored QA sheet under its registry path', () => {
-    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(46);
+    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(47);
     expect(PRODUCTION_PLAYER_SKINS).toHaveLength(45);
-    expect(new Set(BUILTIN_MINECRAFT_SKINS.map((skin) => skin.id)).size).toBe(46);
+    expect(new Set(BUILTIN_MINECRAFT_SKINS.map((skin) => skin.id)).size).toBe(47);
     for (const skin of BUILTIN_MINECRAFT_SKINS) {
       expect(
         Object.keys(PLAYER_SKIN_ASSETS).some((path) => path.endsWith(`/textures/${skin.texturePath}.png`)),

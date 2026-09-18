@@ -13,6 +13,7 @@ import {
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
+  CLAIM_MAX_OWNED,
   clampClaimPriority,
   claimsAt,
   effectiveFlag,
@@ -40,6 +41,7 @@ const HELP = {
     { usage: '/claim pos2', description: 'Set second corner', permission: 'claim.create' },
     { usage: '/claim create <name>', description: 'Create a claim from the selection', permission: 'claim.create' },
     { usage: '/claim delete <name>', description: 'Delete your claim', permission: 'claim.use' },
+    { usage: '/claim rename <name> <new>', description: 'Rename your claim', permission: 'claim.use' },
     { usage: '/claim info [name]', description: 'Show claim info and effective flags', permission: 'claim.use' },
     { usage: '/claim list', description: 'List your claims', permission: 'claim.use' },
     { usage: '/claim addmember [name] <player>', description: 'Add a member (current claim or named)', permission: 'claim.use' },
@@ -262,7 +264,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             const volume = ctx.selection.volume(sender.playerId);
             if (!volume) return fail('Set /claim pos1 and pos2 first.');
             const store = load();
-            if (store.claims.some((claim) => claim.owner === ownerKey && claim.name === name)) {
+            if (store.claims.filter((claim) => claim.owner === ownerKey).length >= CLAIM_MAX_OWNED
+              && !bypass(sender.playerId, sender.name)) {
+              return fail('You can only create 4 claims.');
+            }
+            if (store.claims.some((claim) => claim.owner === ownerKey && claim.name.toLowerCase() === name.toLowerCase())) {
               return fail(`You already have a claim named '${name}'.`);
             }
             store.claims.push({
@@ -289,6 +295,25 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             store.claims.splice(index, 1);
             save(store);
             return ok(`Deleted claim '${name}'.`);
+          }
+          if (sub === 'rename') {
+            const current = args[1]?.toLowerCase();
+            const nextName = args.slice(2).join(' ').trim();
+            if (!current || !nextName) return usageError('/claim rename <name> <new>');
+            if (nextName.length > 24) return fail('Название привата не длиннее 24 символов.');
+            const store = load();
+            const live = store.claims.find((claim) => claim.name === current && (
+              claim.owner === ownerKey || bypass(sender.playerId, sender.name)
+            ));
+            if (!live) return fail(`Claim '${current}' not found.`);
+            if (!canEdit(live, sender)) return fail('You do not have permission.');
+            const key = nextName.toLowerCase();
+            if (store.claims.some((claim) => claim.owner === live.owner && claim.name.toLowerCase() === key && claim.id !== live.id)) {
+              return fail(`You already have a claim named '${nextName}'.`);
+            }
+            live.name = nextName;
+            save(store);
+            return ok(`Claim renamed to '${nextName}'.`);
           }
           if (sub === 'list') {
             const mine = load().claims.filter((claim) => claim.owner === ownerKey || claim.members.includes(ownerKey));

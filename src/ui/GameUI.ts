@@ -1,22 +1,39 @@
-import { matchCraftingRecipe } from '../crafting';
+import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
 import {
+  Inventory,
   applySlotClick,
   createItemStack,
-  Inventory,
   isChestWindowKind,
+  parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
-import { getItemDefinition, obtainableItems } from '../items';
+import { getItemDefinition, obtainableItems, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
+import { EMPTY_SIGN_LINES, sanitizeSignLines, type SignLines } from '../world/sign';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchRecipeGridHost, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature, armorSlotKind } from './inventoryLayout';
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
+import { auctionClaimableClass, auctionClaimHint, auctionIconStack, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import {
+  clanBalanceHtml,
+  clanIconHtml,
+  clanIconIds,
+  clanJoinCaption,
+  clanJoinDisabled,
+  clanMembersHtml,
+  clanRankHtml,
+  keepClanSearchDraft,
+  showsClanBack,
+} from './clanGui';
 import {
   containerStageSize,
   containerUiScaleWithClose,
+  MC_MENU_WIDTH,
+  menuLogicalHeight,
+  menuUiScale,
 } from './containerTheme';
 import {
   allCraftingBookEntries,
@@ -30,6 +47,7 @@ import {
   recipeBookTabUsesText,
   type RecipeBookCategory,
 } from './recipeBook';
+import { CRAFT_BUTTON_LABEL, keepCraftSearchDraft } from './craftGui';
 import {
   clickFurnaceSlot,
   furnaceAccepts,
@@ -42,9 +60,33 @@ import {
   takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
-import { MAX_CHAT_MESSAGES, chatScrollTopOnOpen, isChatStuckToBottom, restoreChatScrollTop, stepTypedHistoryIndex } from '../chat';
+import {
+  MAX_CHAT_MESSAGES,
+  chatScrollTopOnOpen,
+  isChatStuckToBottom,
+  restoreChatScrollTop,
+  stepTypedHistoryIndex,
+  tabHistory,
+  canSendChatOnTab,
+  shouldShowClanEmptyHint,
+  type ChatMessage,
+} from '../chat';
+import { MAX_CHAT_LENGTH } from '../../shared/config';
+import {
+  CHAT_NO_CLAN_HINT,
+  formatPlayerChatLine,
+  type ChatChannel,
+} from '../../shared/chat';
 import type { PotionHudEntry } from './effectHud';
-import type { ClientInventoryActionMessage, NetworkHologram } from '../../shared/protocol';
+import {
+  buyerPriceEachLabel,
+  buyerScreenHtml,
+  clampBuyerAmount,
+  keepBuyerDraft,
+} from './buyerGui';
+import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
+import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
+import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -127,6 +169,31 @@ export interface HologramEditorActions {
   nowMs?(): number;
 }
 
+export interface AuctionGuiActions {
+  send(message: ClientAuctionActionMessage): void;
+  close(): void;
+}
+
+export interface ClanGuiActions {
+  send(message: ClientClanActionMessage): void;
+  close(): void;
+}
+
+export interface BuyerGuiActions {
+  send(message: ClientBuyerActionMessage): void;
+  close(): void;
+}
+
+export interface MenuGuiActions {
+  send(message: ClientMenuActionMessage): void;
+  close(): void;
+}
+
+export interface TradeGuiActions {
+  send(message: ClientTradeActionMessage): void;
+  close(): void;
+}
+
 export interface WorldListActions {
   load(id: string): void;
   create(): void;
@@ -193,6 +260,7 @@ export class GameUI {
   private screen?: HTMLElement;
   private hud: HTMLElement;
   private hotbar: HTMLElement;
+  private offhandHud: HTMLElement;
   private selectedItem: HTMLElement;
   private hearts: HTMLElement;
   private hunger: HTMLElement;
@@ -202,6 +270,8 @@ export class GameUI {
   private effectHud: HTMLElement;
   private toasts: HTMLElement;
   private hurtFlash: HTMLElement;
+  private totemFlash: HTMLElement;
+  private totemFlashTimer?: number;
   private hurtFlashAlpha = -1;
   private chat: HTMLElement;
   private chatLogEl: HTMLElement;
@@ -210,7 +280,16 @@ export class GameUI {
   private chatPinnedToBottom = true;
   private chatForm: HTMLFormElement;
   private chatInput: HTMLInputElement;
+  private chatSendEl: HTMLButtonElement;
+  private chatCloseEl: HTMLButtonElement;
+  private chatVisibilityEl: HTMLButtonElement;
+  private chatClanEmptyEl: HTMLElement;
+  private chatTabButtons: NodeListOf<HTMLButtonElement>;
   private chatFocusToken = 0;
+  private chatTab: ChatChannel = 'global';
+  private chatDisplayEnabled = true;
+  private playerInClan = false;
+  private chatLines: ChatMessage[] = [];
   private pointerLockFallback: HTMLElement;
   private modal?: HTMLElement;
   private hologramEditor?: HTMLElement;
@@ -225,12 +304,31 @@ export class GameUI {
   private recipeBookCraftableOnly = false;
   private recipeBookPage = 0;
   private recipeVariantIndex = 0;
+  private craftMenuOpen = false;
+  private craftSearch = '';
+  private craftSelectedId = '';
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
+  private auctionState?: ServerAuctionMessage;
+  private auctionActions?: AuctionGuiActions;
+  private auctionSearchTimer?: number;
+  private clanState?: ServerClanMessage;
+  private clanActions?: ClanGuiActions;
+  private clanSearchTimer?: number;
+  private buyerState?: ServerBuyerMessage;
+  private buyerActions?: BuyerGuiActions;
+  private menuState?: ServerMenuMessage;
+  private menuActions?: MenuGuiActions;
+  private tradeState?: ServerTradeMessage;
+  private tradeActions?: TradeGuiActions;
+  onHudPause?: () => void;
+  onHudChat?: () => void;
+  onHudMenu?: () => void;
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
   private hotbarHtml = '';
+  private offhandHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
   private hungerHtml = '';
@@ -248,6 +346,7 @@ export class GameUI {
     this.root.innerHTML = `
       <div id="hud" class="hidden">
         <div id="hurt-flash" aria-hidden="true"></div>
+        <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" />${Array.from({ length: 12 }, (_, i) => `<span style="--spark-angle:${i * 30}deg"></span>`).join('')}</div>
         <div id="crosshair"></div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="status-bars">
@@ -259,15 +358,56 @@ export class GameUI {
         </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="offhand-hud" aria-label="Вторая рука"></div>
         <div id="effect-hud" class="hidden"></div>
-        <div id="chat">
-          <div id="chat-log" aria-live="polite">
-            <div id="chat-log-inner"></div>
+        <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
+          <div id="chat-main">
+            <div id="chat-compose">
+              <form id="chat-form" autocomplete="off">
+                <input id="chat-input" type="text" maxlength="${MAX_CHAT_LENGTH}" spellcheck="false" autocomplete="off" aria-label="Сообщение чата" />
+              </form>
+              <div id="chat-tabs" role="tablist" aria-label="Каналы чата">
+                <button type="button" role="tab" data-chat-tab="global" aria-selected="true" class="active"><span class="chat-sr">Общий</span></button>
+                <button type="button" role="tab" data-chat-tab="nearby" aria-selected="false"><span class="chat-sr">Рядом</span></button>
+                <button type="button" role="tab" data-chat-tab="clan" aria-selected="false"><span class="chat-sr">Клан</span></button>
+              </div>
+            </div>
+            <div id="chat-log" aria-live="polite">
+              <div id="chat-clan-empty" hidden>${CHAT_NO_CLAN_HINT}</div>
+              <div id="chat-log-inner"></div>
+            </div>
+            <button type="button" id="chat-new" hidden>↓ Новые сообщения</button>
           </div>
-          <button type="button" id="chat-new" hidden>↓ Новые сообщения</button>
-          <form id="chat-form" autocomplete="off">
-            <input id="chat-input" type="text" maxlength="256" spellcheck="false" autocomplete="off" aria-label="Chat" />
-          </form>
+          <aside id="chat-side" aria-label="Действия чата">
+            <button type="submit" form="chat-form" id="chat-send" aria-label="Отправить сообщение">
+              <span class="chat-sr">ENTER</span>
+            </button>
+            <button type="button" id="chat-close" aria-label="Закрыть чат" title="Закрыть чат (Tab)">
+              <span class="chat-sr chat-close-x">X</span>
+              <span class="chat-sr">TAB</span>
+            </button>
+            <button type="button" id="chat-visibility" aria-pressed="true" title="Скрыть сообщения чата" aria-label="Чат включён">
+              <span class="chat-sr chat-vis-on chat-vis-caption-on">CHAT ON</span>
+              <span class="chat-sr chat-vis-off chat-vis-caption-off">CHAT OFF</span>
+            </button>
+          </aside>
+        </div>
+        <div id="hud-corner" style="${hudChromeStyle()}">
+          <button type="button" id="hud-pause" data-hud="pause" aria-label="Пауза">
+            <span class="hud-corner-icon" aria-hidden="true">Ⅱ</span>
+            <span class="hud-corner-key">TAB</span>
+            <span class="hud-corner-label">Пауза</span>
+          </button>
+          <button type="button" id="hud-chat" data-hud="chat" aria-label="Чат">
+            <span class="hud-corner-icon" aria-hidden="true">✉</span>
+            <span class="hud-corner-key">T</span>
+            <span class="hud-corner-label">Чат</span>
+          </button>
+          <button type="button" id="hud-menu" data-hud="menu" aria-label="Меню">
+            <span class="hud-corner-icon" aria-hidden="true">☰</span>
+            <span class="hud-corner-key">M</span>
+            <span class="hud-corner-label">Меню</span>
+          </button>
         </div>
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
@@ -277,6 +417,7 @@ export class GameUI {
       </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
+    this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.hunger = this.root.querySelector('.hunger')!;
@@ -286,13 +427,22 @@ export class GameUI {
     this.effectHud = this.root.querySelector('#effect-hud')!;
     this.toasts = this.root.querySelector('#toast-stack')!;
     this.hurtFlash = this.root.querySelector('#hurt-flash')!;
+    this.totemFlash = this.root.querySelector('#totem-flash')!;
     this.chat = this.root.querySelector('#chat')!;
     this.chatLogEl = this.root.querySelector('#chat-log')!;
     this.chatLogInner = this.root.querySelector('#chat-log-inner')!;
     this.chatNewEl = this.root.querySelector('#chat-new')!;
     this.chatForm = this.root.querySelector('#chat-form')!;
     this.chatInput = this.root.querySelector('#chat-input')!;
+    this.chatSendEl = this.root.querySelector('#chat-send')!;
+    this.chatCloseEl = this.root.querySelector('#chat-close')!;
+    this.chatVisibilityEl = this.root.querySelector('#chat-visibility')!;
+    this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
+    this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
+    this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
+    this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
+    this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
     document.addEventListener('pointermove', (event) => {
       const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
       if (cursor) {
@@ -302,6 +452,7 @@ export class GameUI {
     });
     this.chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
+      if (!canSendChatOnTab(this.chatTab, this.playerInClan)) return;
       const value = this.chatInput.value;
       this.onChatSubmit?.(value);
     });
@@ -309,8 +460,22 @@ export class GameUI {
     this.chatLogEl.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
     this.chatLogEl.addEventListener('touchmove', (event) => event.stopPropagation(), { passive: true });
     this.chatNewEl.addEventListener('click', () => this.scrollChatToBottom());
+    this.chatCloseEl.addEventListener('click', () => this.onChatCancel?.());
+    this.chatVisibilityEl.addEventListener('click', () => this.toggleChatDisplay());
+    for (const button of this.chatTabButtons) {
+      button.addEventListener('click', () => {
+        const tab = button.dataset.chatTab;
+        if (tab === 'global' || tab === 'nearby' || tab === 'clan') this.selectChatTab(tab);
+      });
+    }
     this.chatInput.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.onChatCancel?.();
+        return;
+      }
+      if (event.key === 'Tab') {
         event.preventDefault();
         event.stopPropagation();
         this.onChatCancel?.();
@@ -326,6 +491,12 @@ export class GameUI {
         this.stepChatHistory(1);
       }
     });
+    window.addEventListener('keydown', (event) => {
+      if (!this.chatOpen || event.key !== 'Tab') return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onChatCancel?.();
+    }, { capture: true });
     window.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !this.onScreenEscape || !this.screen) return;
       event.preventDefault();
@@ -697,22 +868,24 @@ export class GameUI {
 
   showPause(actions: PauseActions): void {
     this.setScreen(`
-      <section class="screen"><div class="menu-card">
-        <div class="brand"><div class="brand-mark"></div><h2>Пауза</h2><p>мир остановлен и сохранён</p></div>
-        <div class="menu-stack">
-          <button class="game-button primary" data-action="resume">Продолжить</button>
-          <button class="game-button" data-action="settings">Настройки</button>
-          <button class="game-button ghost" data-action="quit">Сохранить и выйти</button>
+      <section class="screen pause-overlay" data-pause-overlay="world">
+        <div class="menu-card pause-window">
+          <div class="menu-stack pause-actions">
+            <button class="game-button primary" data-action="resume">Продолжить</button>
+            <button class="game-button" data-action="settings">Настройки</button>
+            <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
+          </div>
         </div>
-      </div></section>`);
+      </section>`);
     this.bindAction('resume', actions.resume);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
   }
 
-  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void): void {
+  showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void, overlayWorld = false): void {
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window settings-window" id="settings-form">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><form class="menu-card menu-window settings-window" id="settings-form">
         <header class="menu-heading"><div><span class="eyebrow">Параметры игры</span><h1>Настройки</h1></div></header>
         <div class="settings-grid">
           ${this.settingRange('Громкость', 'volume', 0, 1, 0.05, this.settings.volume)}
@@ -745,13 +918,14 @@ export class GameUI {
     });
   }
 
-  showControls(onBack: () => void): void {
+  showControls(onBack: () => void, overlayWorld = false): void {
     const sections = DESKTOP_CONTROL_SECTIONS.map((section) => `
       <section class="control-section"><h2>${section.title}</h2><div class="control-list">
         ${section.bindings.map((binding) => `<div class="control-row"><span><strong>${binding.action}</strong>${binding.note ? `<small>${binding.note}</small>` : ''}</span><kbd>${binding.key}</kbd></div>`).join('')}
       </div></section>`).join('');
+    const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window controls-window">
+      <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
         <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
@@ -791,6 +965,11 @@ export class GameUI {
   }
 
   updateHud(state: HudState): void {
+    const offhandHtml = this.slotHtml(state.inventory.offhand, 'offhand-hud');
+    if (offhandHtml !== this.offhandHtml) {
+      this.offhandHtml = offhandHtml;
+      this.offhandHud.innerHTML = offhandHtml;
+    }
     const slots = state.inventory.slots.slice(0, Inventory.HOTBAR_SIZE);
     const hotbarHtml = slots.map((stack, index) => this.slotHtml(stack, `hotbar-${index}`, index === state.selectedSlot)).join('');
     if (hotbarHtml !== this.hotbarHtml) {
@@ -877,19 +1056,15 @@ export class GameUI {
     window.setTimeout(() => toast.remove(), timeout);
   }
 
-  appendChat(kind: string, text: string, createdAtMs: number): void {
+  appendChat(message: ChatMessage): void {
+    if (this.chatLines.some((entry) => entry.id === message.id)) return;
+    this.chatLines.push(message);
+    while (this.chatLines.length > MAX_CHAT_MESSAGES) this.chatLines.shift();
     const log = this.chatLogEl;
     const previousTop = log.scrollTop;
     const previousHeight = log.scrollHeight;
     const stuck = this.chatPinnedToBottom || isChatStuckToBottom(previousTop, previousHeight, log.clientHeight);
-    const line = document.createElement('div');
-    line.className = `chat-line kind-${kind}`;
-    line.dataset.at = String(createdAtMs);
-    line.textContent = text;
-    this.chatLogInner.append(line);
-    while (this.chatLogInner.childElementCount > MAX_CHAT_MESSAGES) {
-      this.chatLogInner.firstElementChild?.remove();
-    }
+    this.renderChatLog();
     if (stuck) {
       this.scrollChatToBottom();
       return;
@@ -899,6 +1074,7 @@ export class GameUI {
   }
 
   clearChat(): void {
+    this.chatLines = [];
     this.chatLogInner.replaceChildren();
     this.scrollChatToBottom();
     this.closeChat();
@@ -910,15 +1086,18 @@ export class GameUI {
     this.chatOpen = true;
     this.chatHistoryIndex = -1;
     this.chatDraft = '';
+    this.selectChatTab('global');
     this.chat.classList.add('open');
     this.chatInput.value = prefix;
     this.setControlsSuppressed(true);
+    this.syncChatComposer();
     this.revealChatLines();
     this.chatPinnedToBottom = true;
     this.scrollChatToBottom();
     this.scheduleScrollChatToBottom(token);
     window.setTimeout(() => {
       if (token !== this.chatFocusToken || !this.chatOpen) return;
+      if (this.chatInput.disabled) return;
       this.chatInput.focus();
       const caret = this.chatInput.value.length;
       this.chatInput.setSelectionRange(caret, caret);
@@ -941,6 +1120,34 @@ export class GameUI {
     if (!this.inventoryContext) this.setControlsSuppressed(false);
   }
 
+  clearChatDraft(): void {
+    this.chatInput.value = '';
+    this.chatHistoryIndex = -1;
+    this.chatDraft = '';
+  }
+
+  getChatChannel(): ChatChannel {
+    return this.chatTab;
+  }
+
+  isPlayerInClan(): boolean {
+    return this.playerInClan;
+  }
+
+  setPlayerInClan(inClan: boolean): void {
+    if (this.playerInClan === inClan) {
+      this.syncChatComposer();
+      return;
+    }
+    this.playerInClan = inClan;
+    this.syncChatComposer();
+    this.renderChatLog();
+  }
+
+  isChatDisplayEnabled(): boolean {
+    return this.chatDisplayEnabled;
+  }
+
   isChatOpen(): boolean {
     return this.chatOpen;
   }
@@ -953,11 +1160,44 @@ export class GameUI {
     return this.hologramEditor !== undefined;
   }
 
+  isAuctionOpen(): boolean {
+    return this.auctionState !== undefined && this.auctionState.screen !== 'closed';
+  }
+
+  isClanOpen(): boolean {
+    return this.clanState !== undefined && this.clanState.screen !== 'closed';
+  }
+
+  isBuyerOpen(): boolean {
+    return this.buyerState !== undefined && this.buyerState.screen !== 'closed';
+  }
+
+  isGameMenuOpen(): boolean {
+    return this.menuState !== undefined && this.menuState.screen !== 'closed';
+  }
+
+  isTradeOpen(): boolean {
+    return this.tradeState !== undefined && this.tradeState.screen !== 'closed';
+  }
+
+  isAuctionTextInputFocused(): boolean {
+    const el = document.activeElement;
+    return el instanceof HTMLInputElement
+      && this.modal !== undefined
+      && this.modal.contains(el)
+      && (this.isAuctionOpen() || this.isClanOpen() || this.isBuyerOpen() || this.isGameMenuOpen() || this.isTradeOpen() || this.craftMenuOpen);
+  }
+
+  isCraftMenuOpen(): boolean {
+    return this.craftMenuOpen;
+  }
+
   setChatInputHistory(history: readonly string[]): void {
     this.chatHistorySource = history;
   }
 
   fadeChatLines(nowMs: number, opacityOf: (ageMs: number) => number): void {
+    if (!this.chatDisplayEnabled) return;
     if (this.chatOpen) {
       this.revealChatLines();
       return;
@@ -1006,7 +1246,85 @@ export class GameUI {
   }
 
   private setChatNewVisible(visible: boolean): void {
-    this.chatNewEl.hidden = !visible;
+    this.chatNewEl.hidden = !visible || !this.chatDisplayEnabled;
+  }
+
+  private selectChatTab(tab: ChatChannel): void {
+    this.chatTab = tab;
+    for (const button of this.chatTabButtons) {
+      const active = button.dataset.chatTab === tab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    }
+    this.syncChatComposer();
+    this.chatPinnedToBottom = true;
+    this.renderChatLog();
+    this.scrollChatToBottom();
+  }
+
+  private toggleChatDisplay(): void {
+    this.chatDisplayEnabled = !this.chatDisplayEnabled;
+    this.syncChatDisplayButton();
+    this.chat.classList.toggle('display-off', !this.chatDisplayEnabled);
+    if (this.chatDisplayEnabled) {
+      this.renderChatLog();
+      if (this.chatPinnedToBottom) {
+        this.scrollChatToBottom();
+      }
+    } else {
+      this.setChatNewVisible(false);
+    }
+  }
+
+  private syncChatDisplayButton(): void {
+    const on = this.chatDisplayEnabled;
+    this.chatVisibilityEl.setAttribute('aria-pressed', String(on));
+    this.chatVisibilityEl.setAttribute('aria-label', on ? 'Чат включён' : 'Чат выключен');
+    this.chatVisibilityEl.title = on ? 'Скрыть сообщения чата' : 'Показать сообщения чата';
+    this.chatVisibilityEl.dataset.chatDisplay = on ? 'on' : 'off';
+    this.chatVisibilityEl.classList.toggle('is-off', !on);
+  }
+
+  private syncChatComposer(): void {
+    const canSend = canSendChatOnTab(this.chatTab, this.playerInClan);
+    this.chatInput.disabled = !canSend;
+    this.chatSendEl.disabled = !canSend;
+    this.chatForm.classList.toggle('chat-send-disabled', !canSend);
+    this.chatClanEmptyEl.hidden = !shouldShowClanEmptyHint(this.chatTab, this.playerInClan);
+    if (!canSend && this.chatOpen) this.chatInput.blur();
+  }
+
+  private renderChatLog(): void {
+    const visible = tabHistory(this.chatLines, this.chatTab);
+    this.chatLogInner.replaceChildren(...visible.map((message) => this.chatLineElement(message)));
+    this.chatClanEmptyEl.hidden = !shouldShowClanEmptyHint(this.chatTab, this.playerInClan);
+  }
+
+  private chatLineElement(message: ChatMessage): HTMLElement {
+    const line = document.createElement('div');
+    line.className = `chat-line kind-${message.kind}`;
+    if (message.channel === 'nearby') line.classList.add('channel-nearby');
+    if (message.channel === 'clan') line.classList.add('channel-clan');
+    line.dataset.at = String(message.createdAtMs);
+    line.dataset.id = message.id;
+    if (message.channel) line.dataset.channel = message.channel;
+    if (message.kind === 'player' && message.from) {
+      const name = document.createElement('span');
+      name.className = 'chat-line-name';
+      name.textContent = message.from;
+      const sep = document.createElement('span');
+      sep.className = 'chat-line-sep';
+      sep.textContent = ': ';
+      const body = document.createElement('span');
+      body.className = 'chat-line-text';
+      body.textContent = message.text;
+      line.append(name, sep, body);
+    } else {
+      line.textContent = message.kind === 'player' && message.from
+        ? formatPlayerChatLine(message.from, message.text)
+        : message.text;
+    }
+    return line;
   }
 
   private chatHistorySource: readonly string[] = [];
@@ -1037,6 +1355,8 @@ export class GameUI {
   }
 
   openInventory(context: InventoryContext): void {
+    this.closeGameMenu();
+    this.closeTrade();
     this.closeInventory(false);
     this.inventoryContext = context;
     this.cursorStack = null;
@@ -1045,6 +1365,9 @@ export class GameUI {
     this.recipeBookCategory = 'all';
     this.recipeBookPage = 0;
     this.creativeTab = CREATIVE_DEFAULT_TAB;
+    this.craftMenuOpen = false;
+    this.craftSearch = '';
+    this.craftSelectedId = '';
     this.craftSlots = Array.from({ length: context.kind === 'crafting-table' ? 9 : 4 }, () => null);
     this.renderInventory();
     this.setControlsSuppressed(true);
@@ -1065,6 +1388,9 @@ export class GameUI {
     this.modal?.remove();
     this.modal = undefined;
     this.inventoryContext = undefined;
+    this.craftMenuOpen = false;
+    this.craftSearch = '';
+    this.craftSelectedId = '';
     this.cursorStack = null;
     this.craftSlots = [];
     this.ghostCraft = undefined;
@@ -1073,6 +1399,344 @@ export class GameUI {
 
   isInventoryOpen(): boolean {
     return this.modal !== undefined;
+  }
+
+  playTotemActivation(): void {
+    if (this.totemFlashTimer !== undefined) window.clearTimeout(this.totemFlashTimer);
+    this.totemFlash.classList.remove('active');
+    // Reuse the same HUD element; restarting the class restarts the short animation.
+    void this.totemFlash.offsetWidth;
+    this.totemFlash.classList.add('active');
+    this.totemFlashTimer = window.setTimeout(() => {
+      this.totemFlash.classList.remove('active');
+      this.totemFlashTimer = undefined;
+    }, 1700);
+    this.toast('Тотем бессмертия спас вас!', 2200);
+  }
+
+  openBook(stack: ItemStack, onSave: (content: BookContent, sign: boolean) => void, onClose: () => void): void {
+    this.closeInventory(false);
+    const content = readBookContent(stack);
+    const locked = content?.locked === true;
+    const pages = [...(content?.pages ?? [''])];
+    if (pages.length === 0) pages.push('');
+    let page = 0;
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop book-backdrop';
+    modal.innerHTML = `<section class="book-panel" role="dialog" aria-modal="true" aria-label="Книга">
+      <h2>Книга</h2>
+      <div class="book-signed-info" hidden><strong class="book-signed-title"></strong><span class="book-author"></span></div>
+      <div class="book-editor">
+        <textarea class="book-page" maxlength="1024" aria-label="Текст страницы"></textarea>
+        <div class="book-navigation"><button type="button" data-book="previous">←</button><span class="book-count"></span><button type="button" data-book="next">→</button></div>
+        <div class="book-actions"><button type="button" data-book="close">${locked ? 'Готово' : 'Закрыть'}</button><button type="button" data-book="save">Готово</button><button type="button" data-book="sign">Подписать</button></div>
+      </div>
+      <div class="book-signing" hidden>
+        <label>Название книги <input class="book-title" maxlength="64" type="text"></label>
+        <p>После подписания книгу нельзя изменить.</p>
+        <div class="book-actions"><button type="button" data-book="cancel-sign">Назад</button><button type="button" data-book="confirm-sign">Подписать и закрыть</button></div>
+      </div>
+    </section>`;
+    const title = modal.querySelector<HTMLInputElement>('.book-title')!;
+    const text = modal.querySelector<HTMLTextAreaElement>('.book-page')!;
+    const counter = modal.querySelector<HTMLElement>('.book-count')!;
+    title.value = content?.title ?? '';
+    text.readOnly = locked;
+    modal.querySelector<HTMLButtonElement>('[data-book="save"]')!.hidden = locked;
+    modal.querySelector<HTMLButtonElement>('[data-book="sign"]')!.hidden = locked;
+    modal.querySelector<HTMLElement>('.book-signed-info')!.hidden = !locked;
+    modal.querySelector<HTMLElement>('.book-signed-title')!.textContent = content?.title ?? '';
+    modal.querySelector<HTMLElement>('.book-author')!.textContent = content?.author ? `Автор: ${content.author}` : '';
+    const paint = (): void => {
+      text.value = pages[page] ?? '';
+      counter.textContent = `Страница ${page + 1} из ${pages.length}`;
+      modal.querySelector<HTMLButtonElement>('[data-book="previous"]')!.disabled = page === 0;
+      modal.querySelector<HTMLButtonElement>('[data-book="next"]')!.disabled = locked
+        ? page >= pages.length - 1 : page >= pages.length - 1 && pages.length >= MAX_BOOK_PAGES;
+    };
+    const capture = (): void => { if (!locked) pages[page] = text.value; };
+    const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    });
+    modal.querySelector('[data-book="previous"]')!.addEventListener('click', () => {
+      capture(); page -= 1; paint();
+    });
+    modal.querySelector('[data-book="next"]')!.addEventListener('click', () => {
+      capture(); if (page === pages.length - 1 && !locked && pages.length < MAX_BOOK_PAGES) pages.push('');
+      page += 1; paint();
+    });
+    modal.querySelector('[data-book="close"]')!.addEventListener('click', close);
+    modal.querySelector('[data-book="save"]')!.addEventListener('click', () => {
+      capture();
+      const draft = sanitizeBookDraft({ pages, title: content?.title });
+      if (!draft) { this.toast('Книга слишком длинная'); return; }
+      onSave(draft, false);
+      close();
+    });
+    modal.querySelector('[data-book="sign"]')!.addEventListener('click', () => {
+      capture();
+      modal.querySelector<HTMLElement>('.book-editor')!.hidden = true;
+      modal.querySelector<HTMLElement>('.book-signing')!.hidden = false;
+      title.focus();
+    });
+    modal.querySelector('[data-book="cancel-sign"]')!.addEventListener('click', () => {
+      modal.querySelector<HTMLElement>('.book-signing')!.hidden = true;
+      modal.querySelector<HTMLElement>('.book-editor')!.hidden = false;
+      text.focus();
+    });
+    modal.querySelector('[data-book="confirm-sign"]')!.addEventListener('click', () => {
+      capture();
+      const draft = sanitizeBookDraft({ pages, title: title.value });
+      if (!draft?.title) { this.toast('Введите название книги'); title.focus(); return; }
+      onSave(draft, true);
+      close();
+    });
+    this.modal = modal;
+    this.root.append(modal);
+    this.setControlsSuppressed(true);
+    paint();
+    (locked ? modal.querySelector<HTMLButtonElement>('[data-book="close"]') : text)?.focus();
+  }
+
+  openSign(lines: readonly string[] | undefined, onSave: (lines: SignLines) => void, onClose: () => void): void {
+    this.closeInventory(false);
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop sign-backdrop';
+    modal.innerHTML = `<section class="sign-panel" role="dialog" aria-modal="true" aria-label="Табличка">
+      <h2>Табличка</h2>
+      <div class="sign-lines"></div>
+      <div class="book-actions"><button type="button" data-sign="close">Закрыть</button><button type="button" data-sign="save">Готово / Сохранить</button></div>
+    </section>`;
+    const inputs = Array.from({ length: 4 }, (_, index) => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 32;
+      input.setAttribute('aria-label', `Строка ${index + 1}`);
+      input.value = lines?.[index] ?? EMPTY_SIGN_LINES[index] ?? '';
+      modal.querySelector('.sign-lines')!.append(input);
+      return input;
+    });
+    const close = (): void => { this.closeInventory(false); onClose(); };
+    modal.querySelector('[data-sign="close"]')!.addEventListener('click', close);
+    modal.querySelector('[data-sign="save"]')!.addEventListener('click', () => {
+      const sanitized = sanitizeSignLines(inputs.map((input) => input.value));
+      if (!sanitized) { this.toast('Строки таблички слишком длинные'); return; }
+      onSave(sanitized);
+      close();
+    });
+    this.modal = modal;
+    this.root.append(modal);
+    this.setControlsSuppressed(true);
+    inputs[0]?.focus();
+  }
+
+  openAuction(state: ServerAuctionMessage, actions: AuctionGuiActions): void {
+    this.auctionActions = actions;
+    if (state.screen === 'closed') {
+      this.closeAuction();
+      return;
+    }
+    const alreadyOpen = this.isAuctionOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeClan();
+      this.closeBuyer();
+      this.closeGameMenu();
+      this.closeTrade();
+      this.closeInventory(false);
+    }
+    if (alreadyOpen) this.patchAuction(state);
+    else {
+      this.auctionState = state;
+      this.renderAuction();
+    }
+    this.setControlsSuppressed(true);
+  }
+
+  applyAuction(state: ServerAuctionMessage): void {
+    if (!this.auctionActions) {
+      this.auctionState = state;
+      return;
+    }
+    this.openAuction(state, this.auctionActions);
+  }
+
+  closeAuction(): void {
+    if (this.auctionSearchTimer !== undefined) {
+      window.clearTimeout(this.auctionSearchTimer);
+      this.auctionSearchTimer = undefined;
+    }
+    if (this.auctionState) {
+      this.itemTooltip?.dispose();
+      this.itemTooltip = undefined;
+      this.modal?.remove();
+      this.modal = undefined;
+      this.auctionState = undefined;
+      this.setControlsSuppressed(false);
+    }
+  }
+
+  openClan(state: ServerClanMessage, actions: ClanGuiActions): void {
+    this.clanActions = actions;
+    if (state.screen === 'closed') {
+      this.closeClan();
+      return;
+    }
+    const alreadyOpen = this.isClanOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeBuyer();
+      this.closeGameMenu();
+      this.closeTrade();
+      this.closeInventory(false);
+    }
+    if (alreadyOpen) this.patchClan(state);
+    else {
+      this.clanState = state;
+      this.renderClan();
+    }
+    this.setControlsSuppressed(true);
+  }
+
+  applyClan(state: ServerClanMessage): void {
+    if (!this.clanActions) {
+      this.clanState = state;
+      return;
+    }
+    this.openClan(state, this.clanActions);
+  }
+
+  closeClan(): void {
+    if (this.clanSearchTimer !== undefined) {
+      window.clearTimeout(this.clanSearchTimer);
+      this.clanSearchTimer = undefined;
+    }
+    if (this.clanState) {
+      this.itemTooltip?.dispose();
+      this.itemTooltip = undefined;
+      this.modal?.remove();
+      this.modal = undefined;
+      this.clanState = undefined;
+      this.setControlsSuppressed(false);
+    }
+  }
+
+  openBuyer(state: ServerBuyerMessage, actions: BuyerGuiActions): void {
+    this.buyerActions = actions;
+    if (state.screen === 'closed') {
+      this.closeBuyer();
+      return;
+    }
+    const alreadyOpen = this.isBuyerOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeGameMenu();
+      this.closeTrade();
+      this.closeInventory(false);
+    }
+    if (alreadyOpen) this.patchBuyer(state);
+    else {
+      this.buyerState = state;
+      this.renderBuyer();
+    }
+    this.setControlsSuppressed(true);
+  }
+
+  applyBuyer(state: ServerBuyerMessage): void {
+    if (!this.buyerActions) {
+      this.buyerState = state;
+      return;
+    }
+    this.openBuyer(state, this.buyerActions);
+  }
+
+  closeBuyer(): void {
+    if (this.buyerState) {
+      this.itemTooltip?.dispose();
+      this.itemTooltip = undefined;
+      this.modal?.remove();
+      this.modal = undefined;
+      this.buyerState = undefined;
+      this.setControlsSuppressed(false);
+    }
+  }
+
+  openGameMenu(state: ServerMenuMessage, actions: MenuGuiActions): void {
+    this.menuActions = actions;
+    if (state.screen === 'closed') {
+      this.closeGameMenu();
+      return;
+    }
+    const alreadyOpen = this.isGameMenuOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeBuyer();
+      this.closeTrade();
+      this.closeInventory(false);
+    }
+    this.menuState = state;
+    this.renderGameMenu();
+    this.setControlsSuppressed(true);
+  }
+
+  applyGameMenu(state: ServerMenuMessage): void {
+    if (!this.menuActions) {
+      this.menuState = state;
+      return;
+    }
+    this.openGameMenu(state, this.menuActions);
+  }
+
+  closeGameMenu(): void {
+    if (!this.menuState) return;
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = undefined;
+    this.menuState = undefined;
+    this.setControlsSuppressed(false);
+  }
+
+  openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
+    this.tradeActions = actions;
+    if (state.screen === 'closed') {
+      this.closeTrade();
+      return;
+    }
+    const alreadyOpen = this.isTradeOpen() && this.modal !== undefined;
+    if (!alreadyOpen) {
+      this.closeAuction();
+      this.closeClan();
+      this.closeBuyer();
+      this.closeGameMenu();
+      this.closeInventory(false);
+    }
+    this.tradeState = state;
+    this.renderTrade();
+    this.setControlsSuppressed(true);
+  }
+
+  applyTrade(state: ServerTradeMessage): void {
+    if (!this.tradeActions) {
+      this.tradeState = state;
+      return;
+    }
+    this.openTrade(state, this.tradeActions);
+  }
+
+  closeTrade(): void {
+    if (!this.tradeState) return;
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = undefined;
+    this.tradeState = undefined;
+    this.setControlsSuppressed(false);
   }
 
   openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
@@ -1333,11 +1997,156 @@ export class GameUI {
   private renderInventory(): void {
     const context = this.inventoryContext;
     if (!context) return;
+    if (this.craftMenuOpen && context.kind === 'inventory' && context.mode !== 'creative') {
+      this.renderCraftMenu(context);
+      return;
+    }
     if (showsCreativeCatalog(context.kind, context.mode)) {
       this.renderCreativeInventory(context);
       return;
     }
     this.renderContainerScreen(context);
+  }
+
+  private openCraftMenu(): void {
+    const context = this.inventoryContext;
+    if (!context || context.kind !== 'inventory' || context.mode === 'creative') return;
+    this.craftMenuOpen = true;
+    if (!this.craftSelectedId) {
+      this.craftSelectedId = craftCatalogEntries(context.inventory)[0]?.itemId ?? '';
+    }
+    this.renderInventory();
+  }
+
+  closeCraftMenu(): void {
+    if (!this.craftMenuOpen) return;
+    this.craftMenuOpen = false;
+    this.renderInventory();
+  }
+
+  private handleCraftOnce(): void {
+    const context = this.inventoryContext;
+    if (!context) return;
+    const recipe = findPrimaryRecipeForItem(this.craftSelectedId);
+    if (!recipe) return;
+    const check = canCraftOnce(context.inventory, recipe.id);
+    if (check === 'full') {
+      this.toast(CRAFT_INVENTORY_FULL_MESSAGE);
+      return;
+    }
+    if (check !== true) return;
+    if (context.submitAction) {
+      context.submitAction({ type: 'inventory_action', action: 'craft_recipe', recipeId: recipe.id });
+      return;
+    }
+    const result = craftOnceByRecipeId(context.inventory, recipe.id);
+    if (!result.ok) {
+      if (result.reason === 'full') this.toast(CRAFT_INVENTORY_FULL_MESSAGE);
+      return;
+    }
+    context.onChanged();
+    this.renderInventory();
+  }
+
+  private renderCraftMenu(context: InventoryContext): void {
+    const entries = craftCatalogEntries(context.inventory, this.craftSearch);
+    if (this.craftSelectedId && !entries.some((entry) => entry.itemId === this.craftSelectedId)) {
+      /* keep selection even if filtered out */
+    } else if (!this.craftSelectedId) {
+      this.craftSelectedId = entries[0]?.itemId ?? '';
+    }
+    const list = this.craftListHtml(context);
+    const detail = this.craftDetailHtml(context);
+    const existing = this.modal?.querySelector('[data-craft-screen]');
+    if (existing) {
+      const search = this.modal?.querySelector<HTMLInputElement>('[data-craft-search]');
+      if (search && !keepCraftSearchDraft(document.activeElement, search)) search.value = this.craftSearch;
+      const listHost = this.modal?.querySelector('[data-craft-list]');
+      const detailHost = this.modal?.querySelector('[data-craft-detail]');
+      if (listHost instanceof HTMLElement) {
+        const scrollTop = listHost.scrollTop;
+        listHost.innerHTML = list;
+        listHost.scrollTop = scrollTop;
+      }
+      if (detailHost) detailHost.innerHTML = detail;
+      return;
+    }
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    const stage = containerStageSize('craft', false);
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
+        <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
+          <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
+          <div class="mc-craft-layout">
+            <div class="mc-craft-left">
+              <input data-craft-search type="search" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(this.craftSearch)}" />
+              <div class="mc-craft-list mc-grid mc-grid-6" data-craft-list>${list}</div>
+            </div>
+            <div class="mc-craft-detail" data-craft-detail>${detail}</div>
+          </div>
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindContainerChrome(context);
+    this.bindCraftSearch();
+  }
+
+  private bindCraftSearch(): void {
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-craft-search]');
+    search?.addEventListener('input', () => {
+      this.craftSearch = search.value;
+      const context = this.inventoryContext;
+      if (!context) return;
+      const listHost = this.modal?.querySelector('[data-craft-list]');
+      if (listHost) listHost.innerHTML = this.craftListHtml(context);
+    });
+    search?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    search?.addEventListener('keydown', (event) => event.stopPropagation());
+    search?.addEventListener('keyup', (event) => event.stopPropagation());
+    this.modal?.querySelector('[data-craft-list]')?.addEventListener('wheel', (event) => {
+      event.stopPropagation();
+    }, { passive: true });
+  }
+
+  private craftListHtml(context: InventoryContext): string {
+    return craftCatalogEntries(context.inventory, this.craftSearch).map((entry) => {
+      const available = entry.craftable ? ' mc-craft-available' : '';
+      const selected = entry.itemId === this.craftSelectedId ? ' selected' : '';
+      return `<button type="button" class="slot mc-slot${available}${selected}" data-craft-item="${this.escape(entry.itemId)}"${this.itemHoverAttrs(entry.itemId, entry.name)}><img src="${this.itemIcon(entry.itemId)}" alt="" /></button>`;
+    }).join('');
+  }
+
+  private craftDetailHtml(context: InventoryContext): string {
+    const itemId = this.craftSelectedId;
+    if (!itemId) {
+      return `<div class="mc-craft-empty">${this.escape(CRAFT_UNCRAFTABLE_HINT)}</div>`;
+    }
+    const definition = getItemDefinition(itemId);
+    const recipe = findPrimaryRecipeForItem(itemId);
+    const count = recipe && recipe.output.count > 1 ? `<span class="mc-craft-count">×${recipe.output.count}</span>` : '';
+    const icon = `<div class="mc-craft-result"><img src="${this.itemIcon(itemId)}" alt="" />${count}</div>`;
+    const title = `<div class="mc-craft-name">${this.escape(definition.name)}</div>`;
+    if (!recipe) {
+      return `${icon}${title}<p class="mc-craft-uncraftable">${this.escape(CRAFT_UNCRAFTABLE_HINT)}</p>`;
+    }
+    const check = canCraftOnce(context.inventory, recipe.id);
+    const disabled = check !== true ? ' disabled' : '';
+    const lines = craftIngredientLines(recipe, context.inventory).map((line) => (
+      `<div class="mc-craft-need${line.enough ? '' : ' missing'}">`
+      + `<span>${this.escape(line.name)}</span>`
+      + `<span>${line.have}/${line.need}</span>`
+      + `</div>`
+    )).join('');
+    return `${icon}${title}`
+      + `<button type="button" class="mc-craft-do"${disabled} data-craft-once>${CRAFT_BUTTON_LABEL}</button>`
+      + `<div class="mc-craft-needs">${lines}</div>`;
   }
 
   private renderCreativeInventory(context: InventoryContext): void {
@@ -1361,7 +2170,7 @@ export class GameUI {
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
             <button type="button" role="tab" aria-selected="${this.creativeTab === 'catalog'}" data-creative-tab="catalog" class="${this.creativeTab === 'catalog' ? 'active' : ''}">${CONTAINER_STRINGS.catalog}</button>
@@ -1418,7 +2227,7 @@ export class GameUI {
     this.modal.className = 'modal-backdrop mc-backdrop';
     this.modal.dataset.bookUi = layoutKey;
     this.modal.innerHTML = `
-      <div class="mc-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${stage.width}">
+      <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
           <div data-container-body>${body}</div>
@@ -1445,7 +2254,10 @@ export class GameUI {
     this.itemTooltip = attachItemTooltip(this.modal!, {
       cursorStackPresent: () => this.cursorStack !== null,
     });
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => context.onClose());
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => {
+      if (this.craftMenuOpen) this.closeCraftMenu();
+      else context.onClose();
+    });
     this.modal!.addEventListener('pointerdown', (event) => {
       const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-creative-tab]');
       if (tab?.dataset.creativeTab === 'catalog' || tab?.dataset.creativeTab === 'inventory') {
@@ -1453,6 +2265,25 @@ export class GameUI {
         this.creativeTab = tab.dataset.creativeTab;
         this.itemTooltip?.hide();
         this.renderInventory();
+        return;
+      }
+      const craftMenu = (event.target as HTMLElement).closest('[data-craft-menu]');
+      if (craftMenu) {
+        event.preventDefault();
+        this.openCraftMenu();
+        return;
+      }
+      const craftItem = (event.target as HTMLElement).closest<HTMLElement>('[data-craft-item]');
+      if (craftItem?.dataset.craftItem) {
+        event.preventDefault();
+        this.craftSelectedId = craftItem.dataset.craftItem;
+        this.renderInventory();
+        return;
+      }
+      const craftOnce = (event.target as HTMLElement).closest('[data-craft-once]');
+      if (craftOnce) {
+        event.preventDefault();
+        this.handleCraftOnce();
         return;
       }
       const toggle = (event.target as HTMLElement).closest('[data-recipe-toggle]');
@@ -1559,16 +2390,21 @@ export class GameUI {
   }
 
   private craftingHtml(context: InventoryContext): string {
-    const size = context.kind === 'crafting-table' ? 3 : 2;
-    const match = matchCraftingRecipe(this.craftSlots, size, size);
-    const label = context.kind === 'crafting-table' ? CONTAINER_STRINGS.crafting : CONTAINER_STRINGS.inventory;
-    const armor = context.kind === 'inventory'
-      ? this.equipmentColumnHtml(context)
-      : '';
-    const book = this.showsRecipeBook(context) ? this.recipeBookToggleHtml() : '';
-    return `<div class="mc-label">${label}</div>
+    if (context.kind === 'inventory') {
+      return `<div class="mc-label">${CONTAINER_STRINGS.inventory}</div>
       <div class="mc-craft-row">
-        ${armor}
+        ${this.equipmentColumnHtml(context)}
+        <button type="button" class="mc-craft-open" data-craft-menu>
+          <img src="${this.itemIcon('crafting_table')}" alt="" />
+          <span>${CONTAINER_STRINGS.craft}</span>
+        </button>
+      </div>`;
+    }
+    const size = 3;
+    const match = matchCraftingRecipe(this.craftSlots, size, size);
+    const book = this.showsRecipeBook(context) ? this.recipeBookToggleHtml() : '';
+    return `<div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
+      <div class="mc-craft-row">
         ${book}
         <div class="mc-grid mc-grid-${size}">${this.craftSlots.map((slot, index) => this.craftSlotHtml(slot, index)).join('')}</div>
         <div class="mc-arrow" aria-hidden="true"></div>
@@ -1581,7 +2417,7 @@ export class GameUI {
   }
 
   private equipmentColumnHtml(context: InventoryContext): string {
-    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}</div>`;
+    return `<div class="mc-armor">${this.slotHtml(context.inventory.armor.head, 'armor-head')}${this.slotHtml(context.inventory.armor.chest, 'armor-chest')}${this.slotHtml(context.inventory.armor.legs, 'armor-legs')}${this.slotHtml(context.inventory.armor.feet, 'armor-feet')}${this.slotHtml(context.inventory.offhand, 'offhand')}</div>`;
   }
 
   private craftSlotHtml(stack: ItemStack | null, index: number): string {
@@ -1848,7 +2684,14 @@ export class GameUI {
       </div>`;
   }
 
-  private slotHtml(stack: ItemStack | null, key: string, selected = false): string {
+  private slotHtml(
+    stack: ItemStack | null,
+    key: string,
+    selected = false,
+    tooltip?: string,
+    hint?: string,
+    layout?: 'auction',
+  ): string {
     const definition = stack ? getItemDefinition(stack.itemId) : undefined;
     const maxDurability = definition && 'durability' in definition ? definition.durability : undefined;
     const durability = stack && maxDurability && stack.durability !== undefined
@@ -1862,10 +2705,14 @@ export class GameUI {
     });
     const armor = armorSlotKind(key);
     const armorAttr = armor ? ` data-armor="${armor}"` : '';
+    const offhandAttr = key === 'offhand' || key === 'offhand-hud' ? ' aria-label="Вторая рука" title="Вторая рука"' : '';
     if (!stack) {
-      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
+      return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"></button>`;
     }
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${this.itemHoverAttrs(stack.itemId, definition!.name)}"><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    const hover = tooltip
+      ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint, layout)
+      : this.itemHoverAttrs(stack.itemId, definition!.name);
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {
@@ -1897,7 +2744,1242 @@ export class GameUI {
   }
 
   private closeButtonHtml(): string {
-    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">×</button>`;
+    return `<button type="button" class="mc-close" data-ui="close" aria-label="${CONTAINER_STRINGS.close}">`
+      + `<span class="mc-close-x" aria-hidden="true">×</span>`
+      + `<span class="mc-close-hotkey">${CONTAINER_STRINGS.closeHotkey}</span>`
+      + `</button>`;
+  }
+
+  private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const kind = el.hasAttribute('data-ah-search') ? 'search' : el.hasAttribute('data-ah-price') ? 'price' : undefined;
+    if (!kind) return undefined;
+    return {
+      kind,
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreAuctionInputFocus(
+    keep: { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined,
+  ): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'search' ? '[data-ah-search]' : '[data-ah-price]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    input.setSelectionRange(keep.start, keep.end);
+  }
+
+  private auctionStack(value: unknown): ItemStack | null {
+    try {
+      return parseSerializedItemStack(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private auctionListingCells(state: ServerAuctionMessage): string {
+    return Array.from({ length: 27 }, (_unused, index) => {
+      const listing = state.listings[index];
+      if (!listing) return this.slotHtml(null, `ah-${index}`);
+      const stack = this.auctionStack(listing.item);
+      const extra = auctionClaimableClass(listing.status);
+      const hint = auctionClaimHint(listing.status);
+      const wrapClass = extra ? ` class="${extra}"` : '';
+      return `<div data-ah-listing="${this.escape(listing.listingId)}"${wrapClass}>${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip, hint, 'auction')}</div>`;
+    }).join('');
+  }
+
+  private auctionSelectedStack(state: ServerAuctionMessage): ItemStack | null {
+    return auctionIconStack(this.auctionStack(state.selected?.item), state.selected?.amount);
+  }
+
+  private auctionMessageHtml(message: string | undefined): string {
+    return `<div class="mc-ah-message" data-ah-message${message ? '' : ' hidden'}>${this.escape(message ?? '')}</div>`;
+  }
+
+  private writeAuctionMessage(message: string | undefined): void {
+    const node = this.modal?.querySelector<HTMLElement>('[data-ah-message]');
+    if (!node) return;
+    node.hidden = !message;
+    node.textContent = message ?? '';
+  }
+
+  private patchAuction(state: ServerAuctionMessage): void {
+    const prev = this.auctionState;
+    const actions = this.auctionActions;
+    if (!actions || !this.modal || !prev || prev.screen !== state.screen) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
+    if (!this.modal.querySelector(`[data-ah-screen="${state.screen}"]`)) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
+    this.auctionState = state;
+    if (state.screen === 'browse' || state.screen === 'mine') {
+      this.patchAuctionList(state);
+      return;
+    }
+    if (state.screen === 'sell-confirm' || state.screen === 'relist') {
+      this.patchAuctionForm(state);
+      return;
+    }
+    this.renderAuction();
+  }
+
+  private patchAuctionList(state: ServerAuctionMessage): void {
+    const listings = this.modal?.querySelector('[data-ah-listings]');
+    const pageLabel = this.modal?.querySelector('[data-ah-page-label]');
+    const prev = this.modal?.querySelector<HTMLButtonElement>('[data-ah-page="prev"]');
+    const next = this.modal?.querySelector<HTMLButtonElement>('[data-ah-page="next"]');
+    const empty = this.modal?.querySelector<HTMLElement>('[data-ah-empty]');
+    if (!listings || !pageLabel || !prev || !next || !empty) {
+      this.renderAuction();
+      return;
+    }
+    listings.innerHTML = this.auctionListingCells(state);
+    pageLabel.textContent = `Страница ${state.page} из ${state.totalPages}`;
+    prev.disabled = state.page <= 1;
+    next.disabled = state.page >= state.totalPages;
+    empty.hidden = state.totalCount !== 0;
+    this.writeAuctionMessage(state.message);
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-ah-search]');
+    if (search && !keepAuctionSearchDraft(document.activeElement, search)) search.value = state.search;
+  }
+
+  private patchAuctionForm(state: ServerAuctionMessage): void {
+    const itemHost = this.modal?.querySelector('[data-ah-selected-item]');
+    if (!itemHost) {
+      this.renderAuction();
+      return;
+    }
+    itemHost.innerHTML = this.slotHtml(this.auctionSelectedStack(state), 'ah-selected');
+    const amount = state.selected?.amount ?? 1;
+    const max = state.selected?.maxAmount ?? amount;
+    const minus = this.modal?.querySelector<HTMLButtonElement>('[data-ah-delta="-1"]');
+    const plus = this.modal?.querySelector<HTMLButtonElement>('[data-ah-delta="1"]');
+    if (minus) minus.disabled = amount <= 1;
+    if (plus) plus.disabled = amount >= max;
+    this.writeAuctionMessage(state.message);
+  }
+
+  private renderAuction(): void {
+    const state = this.auctionState;
+    const actions = this.auctionActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureAuctionInputFocus();
+    const logicalHeight = state.screen === 'sell-pick' ? 222
+      : state.screen === 'browse' ? 216
+        : state.screen === 'mine' ? 200
+          : state.screen === 'manage' ? 236
+            : state.screen === 'sell-confirm' ? 204
+              : 218;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    const back = state.source === 'menu' && (state.screen === 'browse' || state.screen === 'sell-pick' || state.screen === 'mine')
+      ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
+      : '';
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
+        ${back}
+        <div class="mc-panel" data-container-kind="chest">
+          ${this.auctionBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindAuctionChrome();
+    this.restoreAuctionInputFocus(keep);
+  }
+
+  private auctionBodyHtml(state: ServerAuctionMessage): string {
+    const message = this.auctionMessageHtml(state.message);
+    if (state.screen === 'browse') {
+      return `<div class="mc-ah-body" data-ah-screen="browse">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-ah-search type="text" maxlength="64" placeholder="${CONTAINER_STRINGS.search}" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="ah-search" aria-label="${CONTAINER_STRINGS.search}" /></label>
+          <button type="button" class="mc-ah-btn" data-ah-action="refresh" aria-label="Обновить">Обновить</button>
+        </div>
+        <div class="mc-grid mc-grid-9" data-ah-listings>${this.auctionListingCells(state)}</div>
+        <div class="mc-ah-nav">
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+          <span class="mc-ah-page" data-ah-page-label>Страница ${state.page} из ${state.totalPages}</span>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+        </div>
+        <div class="mc-ah-empty" data-ah-empty${state.totalCount === 0 ? '' : ' hidden'}>На аукционе пока нет товаров.</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'sell-pick') {
+      const slots = state.inventorySlots ?? [];
+      const cell = (index: number) => {
+        const stack = this.auctionStack(slots[index]);
+        return `<div data-ah-slot="${index}">${this.slotHtml(stack, `inv-${index}`)}</div>`;
+      };
+      const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+      const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+      return `<div class="mc-ah-body" data-ah-screen="sell-pick">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-grid mc-grid-9">${main}</div>
+        <div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>
+        ${message}
+      </div>`;
+    }
+    const itemSlot = `<div class="mc-ah-center" data-ah-selected-item>${this.slotHtml(this.auctionSelectedStack(state), 'ah-selected')}</div>`;
+    if (state.screen === 'buy') {
+      return `<div class="mc-ah-body" data-ah-screen="buy">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-ah-action="buy">КУПИТЬ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'sell-confirm') {
+      const amount = state.selected?.amount ?? 1;
+      const max = state.selected?.maxAmount ?? amount;
+      return `<div class="mc-ah-body" data-ah-screen="sell-confirm">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-amount">
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="-1"${amount <= 1 ? ' disabled' : ''} aria-label="Меньше">−</button>
+          <div data-ah-selected-item>${this.slotHtml(this.auctionSelectedStack(state), 'ah-selected')}</div>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-delta="1"${amount >= max ? ' disabled' : ''} aria-label="Больше">+</button>
+        </div>
+        <label class="mc-ah-field">Цена за весь лот
+          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.selected?.priceText ?? '')}" autocomplete="off" spellcheck="false" name="ah-price" />
+        </label>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-ah-action="create">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'mine') {
+      return `<div class="mc-ah-body" data-ah-screen="mine">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-grid mc-grid-9" data-ah-listings>${this.auctionListingCells(state)}</div>
+        <div class="mc-ah-nav">
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+          <span class="mc-ah-page" data-ah-page-label>Страница ${state.page} из ${state.totalPages}</span>
+          <button type="button" class="mc-slot mc-ah-icon" data-ah-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+        </div>
+        <div class="mc-ah-empty" data-ah-empty${state.totalCount === 0 ? '' : ' hidden'}>У вас нет лотов.</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'manage') {
+      return `<div class="mc-ah-body" data-ah-screen="manage">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-ah-action="cancel">СНЯТЬ С ПРОДАЖИ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="relist">ИЗМЕНИТЬ ЦЕНУ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'relist') {
+      return `<div class="mc-ah-body" data-ah-screen="relist">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${itemSlot}
+        <label class="mc-ah-field">Новая цена за весь лот
+          <input data-ah-price type="text" inputmode="numeric" maxlength="9" value="${this.escape(state.selected?.priceText ?? '')}" autocomplete="off" spellcheck="false" name="ah-price" />
+        </label>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-ah-action="confirm-relist">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
+          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    return `<div class="mc-ah-body" data-ah-screen="claim">
+      <div class="mc-label">${this.escape(state.title)}</div>
+      ${itemSlot}
+      <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
+      <div class="mc-ah-actions">
+        <button type="button" class="mc-ah-btn" data-ah-action="claim">ЗАБРАТЬ</button>
+        <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
+      </div>
+      ${message}
+    </div>`;
+  }
+
+  private bindAuctionChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.auctionActions?.close());
+    const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
+    search?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    search?.addEventListener('keydown', (event) => event.stopPropagation());
+    search?.addEventListener('keyup', (event) => event.stopPropagation());
+    search?.addEventListener('input', () => {
+      window.clearTimeout(this.auctionSearchTimer);
+      this.auctionSearchTimer = window.setTimeout(() => {
+        this.auctionActions?.send({ type: 'auction_action', action: 'search', search: search.value });
+      }, 160);
+    });
+    const price = this.modal!.querySelector<HTMLInputElement>('[data-ah-price]');
+    price?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    price?.addEventListener('keydown', (event) => event.stopPropagation());
+    price?.addEventListener('keyup', (event) => event.stopPropagation());
+    price?.addEventListener('input', () => {
+      const digits = price.value.replace(/[^\d]/g, '');
+      if (price.value !== digits) price.value = digits;
+      this.auctionActions?.send({ type: 'auction_action', action: 'set_price', price: digits });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const current = this.auctionState;
+      const actions = this.auctionActions;
+      if (!current || !actions) return;
+      const target = event.target as HTMLElement;
+      const listing = target.closest<HTMLElement>('[data-ah-listing]');
+      if (listing?.dataset.ahListing) {
+        actions.send({ type: 'auction_action', action: 'select', listingId: listing.dataset.ahListing });
+        return;
+      }
+      const slot = target.closest<HTMLElement>('[data-ah-slot]');
+      if (slot?.dataset.ahSlot) {
+        actions.send({ type: 'auction_action', action: 'select_slot', slot: Number(slot.dataset.ahSlot) });
+        return;
+      }
+      const page = target.closest<HTMLElement>('[data-ah-page]');
+      if (page?.dataset.ahPage === 'prev' && current.page > 1) {
+        actions.send({ type: 'auction_action', action: 'page', page: current.page - 1 });
+        return;
+      }
+      if (page?.dataset.ahPage === 'next' && current.page < current.totalPages) {
+        actions.send({ type: 'auction_action', action: 'page', page: current.page + 1 });
+        return;
+      }
+      const delta = target.closest<HTMLElement>('[data-ah-delta]');
+      if (delta?.dataset.ahDelta) {
+        const max = current.selected?.maxAmount ?? current.selected?.amount ?? 1;
+        const next = clampAuctionAmount((current.selected?.amount ?? 1) + Number(delta.dataset.ahDelta), 1, max);
+        if (current.selected) {
+          const item = auctionIconStack(this.auctionStack(current.selected.item), next);
+          this.auctionState = {
+            ...current,
+            selected: { ...current.selected, amount: next, ...(item ? { item } : {}) },
+          };
+          this.patchAuctionForm(this.auctionState);
+        }
+        actions.send({ type: 'auction_action', action: 'set_amount', amount: next });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-ah-action]');
+      const kind = button?.dataset.ahAction;
+      if (kind === 'refresh') actions.send({ type: 'auction_action', action: 'refresh' });
+      else if (kind === 'buy') actions.send({ type: 'auction_action', action: 'buy', listingId: current.selected?.listingId });
+      else if (kind === 'back') actions.send({ type: 'auction_action', action: 'back' });
+      else if (kind === 'create') {
+        actions.send({
+          type: 'auction_action',
+          action: 'create',
+          slot: current.selected?.slot,
+          amount: current.selected?.amount,
+          price: price?.value ?? current.selected?.priceText,
+        });
+      } else if (kind === 'cancel') {
+        actions.send({ type: 'auction_action', action: 'cancel', listingId: current.selected?.listingId });
+      } else if (kind === 'relist') {
+        actions.send({ type: 'auction_action', action: 'relist', listingId: current.selected?.listingId });
+      } else if (kind === 'confirm-relist') {
+        actions.send({
+          type: 'auction_action',
+          action: 'relist',
+          listingId: current.selected?.listingId,
+          price: price?.value ?? current.selected?.priceText,
+        });
+      } else if (kind === 'claim') {
+        actions.send({ type: 'auction_action', action: 'claim', listingId: current.selected?.listingId });
+      }
+    });
+  }
+
+  private patchClan(state: ServerClanMessage): void {
+    const prev = this.clanState;
+    const actions = this.clanActions;
+    if (!actions || !this.modal || !prev || prev.screen !== state.screen) {
+      this.clanState = state;
+      this.renderClan();
+      return;
+    }
+    if (!this.modal.querySelector(`[data-clan-screen="${state.screen}"]`)) {
+      this.clanState = state;
+      this.renderClan();
+      return;
+    }
+    this.clanState = state;
+    if (state.screen === 'ranking' || state.screen === 'add' || state.screen === 'requests') {
+      this.patchClanList(state);
+      return;
+    }
+    this.renderClan();
+  }
+
+  private patchClanList(state: ServerClanMessage): void {
+    const list = this.modal?.querySelector<HTMLElement>('[data-clan-list]');
+    const search = this.modal?.querySelector<HTMLInputElement>('[data-clan-search]');
+    const page = this.modal?.querySelector('[data-clan-page-label]');
+    const empty = this.modal?.querySelector<HTMLElement>('[data-clan-empty]');
+    const prev = this.modal?.querySelector<HTMLButtonElement>('[data-clan-page="prev"]');
+    const next = this.modal?.querySelector<HTMLButtonElement>('[data-clan-page="next"]');
+    if (!list || !page) {
+      this.renderClan();
+      return;
+    }
+    if (search && !keepClanSearchDraft(document.activeElement, search)) search.value = state.search;
+    list.innerHTML = this.clanListHtml(state);
+    page.textContent = `Страница ${state.page} из ${state.totalPages}`;
+    if (prev) prev.disabled = state.page <= 1;
+    if (next) next.disabled = state.page >= state.totalPages;
+    if (empty) empty.hidden = state.totalCount !== 0;
+    this.writeClanMessage(state.message);
+  }
+
+  private writeClanMessage(message: string | undefined): void {
+    const node = this.modal?.querySelector<HTMLElement>('[data-clan-message]');
+    if (!node) return;
+    node.hidden = !message;
+    node.textContent = message ?? '';
+  }
+
+  private renderClan(): void {
+    const state = this.clanState;
+    const actions = this.clanActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureClanInputFocus();
+    const logicalHeight = state.screen === 'create' || state.screen === 'card' ? 248
+      : state.screen === 'ranking' ? 232
+        : 220;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    const back = showsClanBack(state.screen, state.source)
+      ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
+      : '';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
+        ${back}
+        <div class="mc-panel mc-clan-panel" data-container-kind="clan">
+          ${this.clanBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindClanChrome();
+    this.restoreClanInputFocus(keep);
+  }
+
+  private captureClanInputFocus(): { kind: 'search' | 'name'; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    if (el.hasAttribute('data-clan-search')) {
+      return { kind: 'search', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
+    if (el.hasAttribute('data-clan-name')) {
+      return { kind: 'name', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
+    return undefined;
+  }
+
+  private restoreClanInputFocus(keep: ReturnType<GameUI['captureClanInputFocus']>): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'search' ? '[data-clan-search]' : '[data-clan-name]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    try { input.setSelectionRange(keep.start, keep.end); } catch { /* ignore */ }
+  }
+
+  private clanBodyHtml(state: ServerClanMessage): string {
+    const message = `<div class="mc-ah-message" data-clan-message${state.message ? '' : ' hidden'}>${this.escape(state.message ?? '')}</div>`;
+    if (state.screen === 'ranking') {
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="ranking">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <div class="mc-ah-toolbar">
+          <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="Поиск клана" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" aria-label="Поиск клана" /></label>
+          <button type="button" class="mc-ah-btn" data-clan-action="refresh">Обновить</button>
+        </div>
+        <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
+        ${this.clanNavHtml(state)}
+        <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>Кланов пока нет.</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'create' || state.screen === 'create-confirm') {
+      const selected = state.create?.icon ?? 'swords';
+      const icons = clanIconIds().map((id) => {
+        const sample = state.create?.nameText?.trim() || 'Название клана';
+        return `<button type="button" class="mc-clan-icon-pick${id === selected ? ' is-selected' : ''}" data-clan-icon="${id}">
+          ${clanIconHtml(id)}<span>${this.escape(sample)}</span>
+        </button>`;
+      }).join('');
+      if (state.screen === 'create-confirm') {
+        return `<div class="mc-ah-body mc-clan-body" data-clan-screen="create-confirm">
+          <div class="mc-label">${this.escape(state.title)}</div>
+          <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
+          <div class="mc-ah-actions">
+            <button type="button" class="mc-ah-btn" data-clan-action="confirm_create">Да</button>
+            <button type="button" class="mc-ah-btn" data-clan-action="cancel_create">Нет</button>
+          </div>
+          ${message}
+        </div>`;
+      }
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="create">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <label class="mc-ah-field">Название клана
+          <input data-clan-name type="text" maxlength="16" value="${this.escape(state.create?.nameText ?? '')}" autocomplete="off" spellcheck="false" name="clan-name" />
+        </label>
+        <div class="mc-clan-icons">${icons}</div>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn mc-clan-btn-2line" data-clan-action="create">
+            <span>Создать клан</span><small>10 000 Мегакоинов</small>
+          </button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (this.clanConfirmScreen(state.screen)) {
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="${state.screen}">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '').replace(/\n/g, '<br>')}</p>
+        <div class="mc-ah-actions">
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanConfirmAction(state.screen)}">Да</button>
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanCancelAction(state.screen)}">Нет</button>
+        </div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'add' || state.screen === 'requests' || state.screen === 'makeleader' || state.screen === 'accept') {
+      const placeholder = state.screen === 'add' ? 'Поиск по нику' : state.screen === 'accept' ? '' : 'Поиск';
+      const search = state.screen === 'accept' ? '' : `<div class="mc-ah-toolbar">
+        <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="${placeholder}" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" /></label>
+      </div>`;
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="${state.screen}">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${search}
+        <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
+        ${state.screen === 'accept' ? '' : this.clanNavHtml(state)}
+        <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>${this.clanEmptyText(state.screen)}</div>
+        ${message}
+      </div>`;
+    }
+    const card = state.card;
+    const joinDisabled = clanJoinDisabled(card);
+    const joinCaption = clanJoinCaption(card);
+    const showJoin = card && !card.isMember;
+    const kick = card?.isOwner && card.canKickSelected
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="kick">Выгнать игрока</button>`
+      : '';
+    const requests = card?.isOwner
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы на вступление в клан</button>`
+      : '';
+    return `<div class="mc-ah-body mc-clan-body" data-clan-screen="card">
+      <div class="mc-label mc-clan-card-title">${clanIconHtml(card?.icon)} ${this.escape(card?.name ?? state.title)}</div>
+      <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
+      <div class="mc-clan-owner">Владелец: ${this.escape(card?.ownerName ?? '')}</div>
+      <div class="mc-clan-list" data-clan-list>${this.clanMemberHtml(state)}</div>
+      <div class="mc-ah-actions">
+        ${showJoin ? `<button type="button" class="mc-ah-btn"${joinDisabled ? ' disabled' : ''} data-clan-action="join">${this.escape(joinCaption)}</button>` : ''}
+        ${kick}
+        ${requests}
+      </div>
+      ${message}
+    </div>`;
+  }
+
+  private clanListHtml(state: ServerClanMessage): string {
+    if (state.screen === 'ranking') {
+      return (state.clans ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-id="${this.escape(row.clanId)}">
+        ${clanRankHtml(row.rank)}
+        <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.name)}</span></span>
+        ${clanBalanceHtml(row.totalLabel)}
+        ${clanMembersHtml(row.memberCount)}
+      </button>`).join('');
+    }
+    if (state.screen === 'accept') {
+      return (state.invitations ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-invitation="${this.escape(row.invitationId)}">
+        <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.clanName)}</span></span>
+        <span class="mc-clan-owner-mini">${this.escape(row.ownerName)}</span>
+      </button>`).join('');
+    }
+    const rows = state.screen === 'requests' ? state.requests : state.screen === 'makeleader' ? state.members : state.players;
+    if (state.screen === 'makeleader') {
+      return (state.members ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-member="${this.escape(row.playerId)}">
+        <span class="mc-clan-row-name">${this.escape(row.name)}</span>
+        ${clanBalanceHtml(row.balanceLabel)}
+      </button>`).join('');
+    }
+    const attr = state.screen === 'requests' ? 'data-clan-request' : 'data-clan-player';
+    return (rows ?? []).map((row) => {
+      const id = 'requestId' in row && row.requestId ? row.requestId : row.playerId;
+      return `<button type="button" class="mc-clan-row" ${attr}="${this.escape(id)}">
+        <span class="mc-clan-row-name">${this.escape(row.name)}</span>
+        ${clanBalanceHtml(row.balanceLabel)}
+      </button>`;
+    }).join('');
+  }
+
+  private clanMemberHtml(state: ServerClanMessage): string {
+    return (state.members ?? []).map((row) => `<button type="button" class="mc-clan-row${row.isOwner ? ' is-owner' : ''}${state.card?.selectedMemberId === row.playerId ? ' is-selected' : ''}" data-clan-member="${this.escape(row.playerId)}" ${row.isOwner ? 'data-clan-owner="1"' : ''}>
+      <span class="mc-clan-row-name">${this.escape(row.name)}</span>
+      ${clanBalanceHtml(row.balanceLabel)}
+    </button>`).join('');
+  }
+
+  private clanNavHtml(state: ServerClanMessage): string {
+    return `<div class="mc-ah-nav">
+      <button type="button" class="mc-slot mc-ah-icon" data-clan-page="prev" ${state.page <= 1 ? 'disabled' : ''}>←</button>
+      <span class="mc-ah-page" data-clan-page-label>Страница ${state.page} из ${state.totalPages}</span>
+      <button type="button" class="mc-slot mc-ah-icon" data-clan-page="next" ${state.page >= state.totalPages ? 'disabled' : ''}>→</button>
+    </div>`;
+  }
+
+  private clanEmptyText(screen: ServerClanMessage['screen']): string {
+    if (screen === 'add') return 'Нет подходящих игроков в сети.';
+    if (screen === 'accept') return 'Нет приглашений.';
+    if (screen === 'requests') return 'Нет заявок.';
+    if (screen === 'makeleader') return 'Нет участников для передачи лидерства.';
+    return 'Пусто.';
+  }
+
+  private clanConfirmScreen(screen: ServerClanMessage['screen']): boolean {
+    return screen === 'delete-confirm'
+      || screen === 'invite-confirm'
+      || screen === 'accept-confirm'
+      || screen === 'leave-confirm'
+      || screen === 'makeleader-confirm'
+      || screen === 'kick-confirm'
+      || screen === 'join-confirm'
+      || screen === 'replace-request-confirm'
+      || screen === 'request-confirm';
+  }
+
+  private clanConfirmAction(screen: ServerClanMessage['screen']): string {
+    if (screen === 'delete-confirm') return 'confirm_delete';
+    if (screen === 'invite-confirm') return 'confirm_invite';
+    if (screen === 'accept-confirm') return 'confirm_accept';
+    if (screen === 'leave-confirm') return 'confirm_leave';
+    if (screen === 'makeleader-confirm') return 'confirm_makeleader';
+    if (screen === 'kick-confirm') return 'confirm_kick';
+    if (screen === 'join-confirm') return 'confirm_join';
+    if (screen === 'replace-request-confirm') return 'confirm_replace_request';
+    return 'confirm_accept_request';
+  }
+
+  private clanCancelAction(screen: ServerClanMessage['screen']): string {
+    if (screen === 'delete-confirm') return 'cancel_delete';
+    if (screen === 'invite-confirm') return 'cancel_invite';
+    if (screen === 'accept-confirm') return 'cancel_accept';
+    if (screen === 'leave-confirm') return 'cancel_leave';
+    if (screen === 'makeleader-confirm') return 'cancel_makeleader';
+    if (screen === 'kick-confirm') return 'cancel_kick';
+    if (screen === 'join-confirm') return 'cancel_join';
+    if (screen === 'replace-request-confirm') return 'cancel_replace_request';
+    return 'cancel_accept_request';
+  }
+
+  private bindClanChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.clanActions?.close());
+    const bindField = (selector: string, action: 'search' | 'set_name') => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => {
+        window.clearTimeout(this.clanSearchTimer);
+        this.clanSearchTimer = window.setTimeout(() => {
+          if (action === 'search') this.clanActions?.send({ type: 'clan_action', action: 'search', search: input.value });
+          else this.clanActions?.send({ type: 'clan_action', action: 'set_name', name: input.value });
+        }, 160);
+      });
+    };
+    bindField('[data-clan-search]', 'search');
+    bindField('[data-clan-name]', 'set_name');
+    this.modal!.addEventListener('click', (event) => {
+      const current = this.clanState;
+      const actions = this.clanActions;
+      if (!current || !actions) return;
+      const target = event.target as HTMLElement;
+      const back = target.closest<HTMLElement>('[data-clan-action="back"]');
+      if (back) {
+        actions.send({ type: 'clan_action', action: 'back' });
+        return;
+      }
+      const clan = target.closest<HTMLElement>('[data-clan-id]');
+      if (clan?.dataset.clanId) {
+        actions.send({ type: 'clan_action', action: 'select_clan', clanId: clan.dataset.clanId });
+        return;
+      }
+      const invitation = target.closest<HTMLElement>('[data-clan-invitation]');
+      if (invitation?.dataset.clanInvitation) {
+        actions.send({ type: 'clan_action', action: 'select_invitation', invitationId: invitation.dataset.clanInvitation });
+        return;
+      }
+      const request = target.closest<HTMLElement>('[data-clan-request]');
+      if (request?.dataset.clanRequest) {
+        actions.send({ type: 'clan_action', action: 'select_request', requestId: request.dataset.clanRequest });
+        return;
+      }
+      const player = target.closest<HTMLElement>('[data-clan-player]');
+      if (player?.dataset.clanPlayer) {
+        actions.send({ type: 'clan_action', action: 'select_player', playerId: player.dataset.clanPlayer });
+        return;
+      }
+      const member = target.closest<HTMLElement>('[data-clan-member]');
+      if (member?.dataset.clanMember) {
+        if (member.dataset.clanOwner === '1') return;
+        actions.send({ type: 'clan_action', action: 'select_member', playerId: member.dataset.clanMember });
+        return;
+      }
+      const icon = target.closest<HTMLElement>('[data-clan-icon]');
+      if (icon?.dataset.clanIcon) {
+        actions.send({ type: 'clan_action', action: 'select_icon', icon: icon.dataset.clanIcon });
+        return;
+      }
+      const page = target.closest<HTMLElement>('[data-clan-page]');
+      if (page?.dataset.clanPage === 'prev' && current.page > 1) {
+        actions.send({ type: 'clan_action', action: 'page', page: current.page - 1 });
+        return;
+      }
+      if (page?.dataset.clanPage === 'next' && current.page < current.totalPages) {
+        actions.send({ type: 'clan_action', action: 'page', page: current.page + 1 });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-clan-action]');
+      const kind = button?.dataset.clanAction;
+      if (!kind || kind === 'back') return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      actions.send({
+        type: 'clan_action',
+        action: kind as ClientClanActionMessage['action'],
+        ...(current.card?.clanId ? { clanId: current.card.clanId } : {}),
+        ...(current.selected?.playerId || current.card?.selectedMemberId
+          ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId }
+          : {}),
+        ...(current.selected?.invitationId ? { invitationId: current.selected.invitationId } : {}),
+        ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
+      });
+    });
+  }
+
+  private buyerStack(value: unknown): ItemStack | null {
+    try {
+      return parseSerializedItemStack(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private buyerInventoryCells(state: ServerBuyerMessage): string {
+    const slots = state.inventorySlots ?? [];
+    const cell = (index: number) => {
+      const stack = this.buyerStack(slots[index]);
+      return `<div data-buyer-slot="${index}">${this.slotHtml(stack, `buyer-inv-${index}`)}</div>`;
+    };
+    const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+    const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+    return `<div class="mc-grid mc-grid-9">${main}</div><div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>`;
+  }
+
+  private buyerMessageHtml(message: string | undefined): string {
+    return message ? `<div class="mc-ah-message" data-buyer-message>${this.escape(message)}</div>` : '<div class="mc-ah-message" data-buyer-message hidden></div>';
+  }
+
+  private patchBuyer(state: ServerBuyerMessage): void {
+    const prev = this.buyerState;
+    if (!this.modal || !prev || prev.screen !== state.screen) {
+      this.buyerState = state;
+      this.renderBuyer();
+      return;
+    }
+    this.buyerState = state;
+    const name = this.modal.querySelector<HTMLInputElement>('[data-buyer-name]');
+    if (name && !keepBuyerDraft(document.activeElement, name)) name.value = state.name;
+    const price = this.modal.querySelector<HTMLInputElement>('[data-buyer-price]');
+    if (price && !keepBuyerDraft(document.activeElement, price)) price.value = state.priceText;
+    const itemHost = this.modal.querySelector('[data-buyer-item]');
+    if (itemHost) itemHost.innerHTML = this.slotHtml(this.buyerStack(state.item), 'buyer-item');
+    const tradeHost = this.modal.querySelector('[data-buyer-trade]');
+    if (tradeHost) tradeHost.innerHTML = this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade');
+    const qty = this.modal.querySelector('[data-buyer-qty]');
+    if (qty) qty.textContent = String(state.quantity);
+    const total = this.modal.querySelector('[data-buyer-total]');
+    if (total) total.textContent = state.totalLabel;
+    const priceLine = this.modal.querySelector('[data-buyer-price-line]');
+    if (priceLine) priceLine.textContent = buyerPriceEachLabel(state.pricePerItem);
+    const minus = this.modal.querySelector<HTMLButtonElement>('[data-buyer-delta="-1"]');
+    const plus = this.modal.querySelector<HTMLButtonElement>('[data-buyer-delta="1"]');
+    if (minus) minus.disabled = state.quantity <= 1;
+    if (plus) plus.disabled = state.quantity >= state.maxQuantity;
+    const sell = this.modal.querySelector<HTMLButtonElement>('[data-buyer-action="sell"]');
+    if (sell) sell.disabled = !state.configured || state.quantity < 1;
+    const inventory = this.modal.querySelector('[data-buyer-inventory]');
+    if (inventory) inventory.innerHTML = this.buyerInventoryCells(state);
+    const message = this.modal.querySelector<HTMLElement>('[data-buyer-message]');
+    if (message) {
+      message.hidden = !state.message;
+      message.textContent = state.message ?? '';
+    }
+  }
+
+  private renderBuyer(): void {
+    const state = this.buyerState;
+    const actions = this.buyerActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureBuyerInputFocus();
+    const logicalHeight = state.screen === 'pick-item' ? 222
+      : state.screen === 'trade' ? 248
+        : 248;
+    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
+        <div class="mc-panel" data-container-kind="chest">
+          ${this.buyerBodyHtml(state)}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindBuyerChrome();
+    this.restoreBuyerInputFocus(keep);
+  }
+
+  private buyerBodyHtml(state: ServerBuyerMessage): string {
+    return buyerScreenHtml({
+      screen: state.screen,
+      title: state.title,
+      name: state.name,
+      itemName: state.itemName,
+      hologramText: state.hologramText,
+      priceText: state.priceText,
+      priceLine: buyerPriceEachLabel(state.pricePerItem),
+      quantity: state.quantity,
+      maxQuantity: state.maxQuantity,
+      totalLabel: state.totalLabel,
+      configured: state.configured,
+      messageHtml: this.buyerMessageHtml(state.message),
+      itemSlotHtml: this.slotHtml(this.buyerStack(state.item), 'buyer-item'),
+      tradeSlotHtml: this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade'),
+      inventoryHtml: this.buyerInventoryCells(state),
+    });
+  }
+
+  private bindBuyerChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.buyerActions?.close());
+    const bindDraft = (selector: string, send: (value: string) => void) => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => send(input.value));
+    };
+    bindDraft('[data-buyer-name]', (name) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_name', name }));
+    const price = this.modal!.querySelector<HTMLInputElement>('[data-buyer-price]');
+    price?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    price?.addEventListener('keydown', (event) => event.stopPropagation());
+    price?.addEventListener('keyup', (event) => event.stopPropagation());
+    price?.addEventListener('input', () => {
+      const digits = price.value.replace(/[^\d]/g, '');
+      if (price.value !== digits) price.value = digits;
+      this.buyerActions?.send({ type: 'buyer_action', action: 'set_price', price: digits });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const current = this.buyerState;
+      const actions = this.buyerActions;
+      if (!current || !actions) return;
+      const target = event.target as HTMLElement;
+      const slot = target.closest<HTMLElement>('[data-buyer-slot]');
+      if (slot?.dataset.buyerSlot) {
+        actions.send({ type: 'buyer_action', action: 'select_slot', slot: Number(slot.dataset.buyerSlot) });
+        return;
+      }
+      const trade = target.closest<HTMLElement>('[data-buyer-trade]');
+      if (trade) {
+        actions.send({ type: 'buyer_action', action: 'select_slot', slot: -1 });
+        return;
+      }
+      const delta = target.closest<HTMLElement>('[data-buyer-delta]');
+      if (delta?.dataset.buyerDelta) {
+        const next = clampBuyerAmount(
+          (current.quantity ?? 0) + Number(delta.dataset.buyerDelta),
+          0,
+          current.maxQuantity,
+        );
+        actions.send({ type: 'buyer_action', action: 'set_amount', amount: next });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-buyer-action]');
+      const kind = button?.dataset.buyerAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      if (kind === 'save') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-buyer-name]')?.value ?? current.name;
+        const priceText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-price]')?.value ?? current.priceText;
+        actions.send({ type: 'buyer_action', action: 'save', name, price: priceText });
+        return;
+      }
+      actions.send({ type: 'buyer_action', action: kind as ClientBuyerActionMessage['action'] });
+    });
+  }
+
+  private captureBuyerInputFocus(): { kind: 'name' | 'price'; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const kind = el.hasAttribute('data-buyer-name') ? 'name'
+      : el.hasAttribute('data-buyer-price') ? 'price'
+        : undefined;
+    if (!kind) return undefined;
+    return {
+      kind,
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreBuyerInputFocus(
+    keep: { kind: 'name' | 'price'; value: string; start: number; end: number } | undefined,
+  ): void {
+    if (!keep || !this.modal) return;
+    const selector = keep.kind === 'name' ? '[data-buyer-name]'
+      : '[data-buyer-price]';
+    const input = this.modal.querySelector<HTMLInputElement>(selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    input.setSelectionRange(keep.start, keep.end);
+  }
+
+  private renderGameMenu(): void {
+    const state = this.menuState;
+    const actions = this.menuActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureMenuInputFocus();
+    const logicalWidth = MC_MENU_WIDTH;
+    const logicalHeight = menuLogicalHeight(state.screen);
+    const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
+        ${menuBackHtml(state.screen)}
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+          ${menuBodyHtml(state, (value) => this.escape(value))}
+        </div>
+        ${this.closeButtonHtml()}
+      </div>`;
+    this.root.append(this.modal);
+    this.bindGameMenuChrome();
+    this.restoreMenuInputFocus(keep);
+  }
+
+  private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
+    const selector = el.hasAttribute('data-menu-home-name') ? '[data-menu-home-name]'
+      : el.hasAttribute('data-menu-friend-name') ? '[data-menu-friend-name]'
+        : el.hasAttribute('data-menu-claim-name') ? '[data-menu-claim-name]'
+          : el.hasAttribute('data-menu-claim-member') ? '[data-menu-claim-member]'
+            : el.hasAttribute('data-menu-trade-name') ? '[data-menu-trade-name]'
+              : undefined;
+    if (!selector) return undefined;
+    return {
+      selector,
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreMenuInputFocus(
+    keep: { selector: string; value: string; start: number; end: number } | undefined,
+  ): void {
+    if (!keep || !this.modal) return;
+    const input = this.modal.querySelector<HTMLInputElement>(keep.selector);
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    try { input.setSelectionRange(keep.start, keep.end); } catch { /* ignore */ }
+  }
+
+  private bindGameMenuChrome(): void {
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.menuActions?.close());
+    const bindDraft = (selector: string, send: (value: string) => void) => {
+      const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      input?.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input?.addEventListener('keydown', (event) => event.stopPropagation());
+      input?.addEventListener('keyup', (event) => event.stopPropagation());
+      input?.addEventListener('input', () => send(input.value));
+    };
+    bindDraft('[data-menu-home-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_home_name', name }));
+    bindDraft('[data-menu-friend-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_friend_name', name }));
+    bindDraft('[data-menu-claim-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_name', name }));
+    bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
+    bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
+    const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list');
+    for (const list of lists) {
+      list.addEventListener('wheel', (event) => {
+        event.stopPropagation();
+        list.scrollTop += event.deltaY;
+        event.preventDefault();
+      }, { passive: false });
+    }
+    this.modal!.addEventListener('click', (event) => {
+      const actions = this.menuActions;
+      const current = this.menuState;
+      if (!actions || !current) return;
+      const target = event.target as HTMLElement;
+      const open = target.closest<HTMLElement>('[data-menu-open]');
+      if (open?.dataset.menuOpen) {
+        if (open instanceof HTMLButtonElement && open.disabled) return;
+        const id = open.dataset.menuOpen;
+        if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
+        else actions.send({ type: 'menu_action', action: 'open', screen: id as ServerMenuMessage['screen'] });
+        return;
+      }
+      const home = target.closest<HTMLElement>('[data-menu-home]');
+      if (home?.dataset.menuHome) {
+        actions.send({ type: 'menu_action', action: 'home_teleport', name: home.dataset.menuHome });
+        return;
+      }
+      const homeDelete = target.closest<HTMLElement>('[data-menu-home-delete]');
+      if (homeDelete?.dataset.menuHomeDelete) {
+        actions.send({ type: 'menu_action', action: 'home_delete', name: homeDelete.dataset.menuHomeDelete });
+        return;
+      }
+      const friendAccept = target.closest<HTMLElement>('[data-menu-friend-accept]');
+      if (friendAccept?.dataset.menuFriendAccept) {
+        actions.send({ type: 'menu_action', action: 'friends_accept', requestId: friendAccept.dataset.menuFriendAccept });
+        return;
+      }
+      const friendReject = target.closest<HTMLElement>('[data-menu-friend-reject]');
+      if (friendReject?.dataset.menuFriendReject) {
+        actions.send({ type: 'menu_action', action: 'friends_reject', requestId: friendReject.dataset.menuFriendReject });
+        return;
+      }
+      const friendTp = target.closest<HTMLElement>('[data-menu-friend-tp]');
+      if (friendTp?.dataset.menuFriendTp) {
+        actions.send({ type: 'menu_action', action: 'friends_teleport', playerId: friendTp.dataset.menuFriendTp });
+        return;
+      }
+      const friendDelete = target.closest<HTMLElement>('[data-menu-friend-delete]');
+      if (friendDelete?.dataset.menuFriendDelete) {
+        actions.send({ type: 'menu_action', action: 'friends_delete', playerId: friendDelete.dataset.menuFriendDelete });
+        return;
+      }
+      const tp = target.closest<HTMLElement>('[data-menu-tp]');
+      if (tp?.dataset.menuTp) {
+        actions.send({ type: 'menu_action', action: 'friends_set_tp', enabled: tp.dataset.menuTp === 'on' });
+        return;
+      }
+      const claim = target.closest<HTMLElement>('[data-menu-claim]');
+      if (claim?.dataset.menuClaim) {
+        actions.send({ type: 'menu_action', action: 'claim_open', claimId: claim.dataset.menuClaim });
+        return;
+      }
+      const claimKick = target.closest<HTMLElement>('[data-menu-claim-kick]');
+      if (claimKick?.dataset.menuClaimKick) {
+        actions.send({ type: 'menu_action', action: 'claim_remove_member', name: claimKick.dataset.menuClaimKick });
+        return;
+      }
+      const claimPvp = target.closest<HTMLElement>('[data-menu-claim-pvp]');
+      if (claimPvp?.dataset.menuClaimPvp) {
+        actions.send({ type: 'menu_action', action: 'claim_set_pvp', enabled: claimPvp.dataset.menuClaimPvp === 'on' });
+        return;
+      }
+      const tradeNearby = target.closest<HTMLElement>('[data-menu-trade-nearby]');
+      if (tradeNearby?.dataset.menuTradeNearby) {
+        actions.send({ type: 'menu_action', action: 'trade_request', name: tradeNearby.dataset.menuTradeNearby });
+        return;
+      }
+      const tradeAccept = target.closest<HTMLElement>('[data-menu-trade-accept]');
+      if (tradeAccept?.dataset.menuTradeAccept) {
+        actions.send({ type: 'menu_action', action: 'trade_accept', requestId: tradeAccept.dataset.menuTradeAccept });
+        return;
+      }
+      const tradeReject = target.closest<HTMLElement>('[data-menu-trade-reject]');
+      if (tradeReject?.dataset.menuTradeReject) {
+        actions.send({ type: 'menu_action', action: 'trade_reject', requestId: tradeReject.dataset.menuTradeReject });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-menu-action]');
+      const kind = button?.dataset.menuAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      if (kind === 'home_create') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-home-name]')?.value ?? current.homeNameText;
+        actions.send({ type: 'menu_action', action: 'home_create', name });
+        return;
+      }
+      if (kind === 'friends_request') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-friend-name]')?.value ?? current.friendNameText;
+        actions.send({ type: 'menu_action', action: 'friends_request', name });
+        return;
+      }
+      if (kind === 'claim_rename') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-claim-name]')?.value ?? current.claimNameText;
+        actions.send({ type: 'menu_action', action: 'claim_rename', name });
+        return;
+      }
+      if (kind === 'claim_add_member') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-claim-member]')?.value ?? current.claimMemberText;
+        actions.send({ type: 'menu_action', action: 'claim_add_member', name });
+        return;
+      }
+      if (kind === 'trade_request') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-trade-name]')?.value ?? current.tradeNameText;
+        actions.send({ type: 'menu_action', action: 'trade_request', name });
+        return;
+      }
+      actions.send({ type: 'menu_action', action: kind as ClientMenuActionMessage['action'] });
+    });
+  }
+
+  private renderTrade(): void {
+    const state = this.tradeState;
+    const actions = this.tradeActions;
+    if (!state || !actions || state.screen === 'closed') return;
+    const keep = this.captureTradeInputFocus();
+    const scale = menuUiScale(window.innerWidth, window.innerHeight, MC_MENU_WIDTH, 248);
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.modal.innerHTML = `
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
+        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+          ${tradeWindowChrome(state, (value) => this.escape(value), {
+            self: this.tradeSlotCells(state.selfSlots, 'self'),
+            partner: this.tradeSlotCells(state.partnerSlots, 'partner'),
+            inventory: this.tradeInventoryCells(state),
+          })}
+        </div>
+        ${this.closeButtonHtml()}
+        <div class="mc-item-tooltip"></div>
+      </div>`;
+    this.root.append(this.modal);
+    this.bindTradeChrome();
+    this.restoreTradeInputFocus(keep);
+  }
+
+  private tradeStack(value: unknown): ItemStack | null {
+    try {
+      return parseSerializedItemStack(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private tradeSlotCells(slots: readonly unknown[] | undefined, side: 'self' | 'partner'): string {
+    return Array.from({ length: tradeSlotCount() }, (_unused, index) => {
+      const stack = this.tradeStack(slots?.[index]);
+      const attr = side === 'self' ? ` data-trade-slot="${index}"` : '';
+      return `<div${attr}>${this.slotHtml(stack, `trade-${side}-${index}`)}</div>`;
+    }).join('');
+  }
+
+  private tradeInventoryCells(state: ServerTradeMessage): string {
+    const slots = state.inventorySlots ?? [];
+    const cell = (index: number) => {
+      const stack = this.tradeStack(slots[index]);
+      return `<div data-trade-inv="${index}">${this.slotHtml(stack, `trade-inv-${index}`)}</div>`;
+    };
+    const main = Array.from({ length: 27 }, (_unused, index) => cell(index + 9)).join('');
+    const hotbar = Array.from({ length: 9 }, (_unused, index) => cell(index)).join('');
+    return `<div class="mc-grid mc-grid-9">${main}</div>
+    <div class="mc-grid mc-grid-9 mc-hotbar-row">${hotbar}</div>`;
+  }
+
+  private captureTradeInputFocus(): { value: string; start: number; end: number } | undefined {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el) || !el.hasAttribute('data-trade-money')) {
+      return undefined;
+    }
+    return {
+      value: el.value,
+      start: el.selectionStart ?? el.value.length,
+      end: el.selectionEnd ?? el.value.length,
+    };
+  }
+
+  private restoreTradeInputFocus(keep: { value: string; start: number; end: number } | undefined): void {
+    if (!keep || !this.modal) return;
+    const input = this.modal.querySelector<HTMLInputElement>('[data-trade-money]');
+    if (!input) return;
+    input.value = keep.value;
+    input.focus();
+    try { input.setSelectionRange(keep.start, keep.end); } catch { /* ignore */ }
+  }
+
+  private bindTradeChrome(): void {
+    this.itemTooltip = attachItemTooltip(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.tradeActions?.close());
+    const money = this.modal!.querySelector<HTMLInputElement>('[data-trade-money]');
+    money?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    money?.addEventListener('keydown', (event) => event.stopPropagation());
+    money?.addEventListener('keyup', (event) => event.stopPropagation());
+    money?.addEventListener('input', () => {
+      const digits = money.value.replace(/[^\d]/g, '');
+      if (money.value !== digits) money.value = digits;
+      this.tradeActions?.send({ type: 'trade_action', action: 'set_money', money: digits || '0' });
+    });
+    this.modal!.addEventListener('click', (event) => {
+      const actions = this.tradeActions;
+      if (!actions) return;
+      const target = event.target as HTMLElement;
+      const inv = target.closest<HTMLElement>('[data-trade-inv]');
+      if (inv?.dataset.tradeInv) {
+        actions.send({ type: 'trade_action', action: 'put_item', slot: Number(inv.dataset.tradeInv) });
+        return;
+      }
+      const slot = target.closest<HTMLElement>('[data-trade-slot]');
+      if (slot?.dataset.tradeSlot) {
+        actions.send({ type: 'trade_action', action: 'return_item', tradeSlot: Number(slot.dataset.tradeSlot) });
+        return;
+      }
+      const button = target.closest<HTMLElement>('[data-trade-action]');
+      const kind = button?.dataset.tradeAction;
+      if (!kind) return;
+      if (button instanceof HTMLButtonElement && button.disabled) return;
+      actions.send({ type: 'trade_action', action: kind as ClientTradeActionMessage['action'] });
+    });
   }
 
   private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {

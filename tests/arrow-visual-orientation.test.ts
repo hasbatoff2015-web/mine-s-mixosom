@@ -82,7 +82,7 @@ describe('arrow visual movement-segment orientation', () => {
     expect(arrow.inGround).toBe(true);
     expect(arrow.velocity.lengthSq()).toBe(0);
     expect(arrow.embedded).toBeDefined();
-    expect(arrow.visualVelocity.toArray()).toEqual(arrow.embedded!.impactVelocity.toArray());
+    expect(arrow.visualDirection.toArray()).toEqual(arrow.embedded!.impactVelocity.toArray());
     expect(angularError(visualForward(arrow), arrow.embedded!.impactVelocity)).toBeLessThan(1e-7);
   });
 
@@ -107,12 +107,10 @@ describe('arrow visual movement-segment orientation', () => {
     const { arrows } = createFixture('arrow-render-timing-orientation');
     const impact = new Vec3(-0.35, 0.2, -2.8);
     arrows.applyNetwork('remote-a', 5, 70, 8, 0, 0, 0, false, {
-      inGround: true,
-      visualVelocity: impact,
+      impactVelocity: impact,
     });
     arrows.applyNetwork('remote-b', 7, 70, 8, 0, 0, 0, false, {
-      inGround: true,
-      visualVelocity: impact,
+      impactVelocity: impact,
     });
     const first = arrows.entities.find((arrow) => arrow.id === 'remote-a')!;
     const second = arrows.entities.find((arrow) => arrow.id === 'remote-b')!;
@@ -143,7 +141,7 @@ describe('arrow visual movement-segment orientation', () => {
 
     expect(projectile.inGround).toBe(true);
     expect(projectile.velocity.lengthSq()).toBe(0);
-    expect(projectile.visualVelocity.toArray()).toEqual(projectile.embedded!.impactVelocity.toArray());
+    expect(projectile.visualDirection.toArray()).toEqual(projectile.embedded!.impactVelocity.toArray());
     expect(projectile.embedded!.impactVelocity.toArray()).toEqual(impactVelocity.toArray());
     expect(angularError(visualForward(projectile), impactVelocity)).toBeLessThan(1e-7);
   });

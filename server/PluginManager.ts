@@ -37,7 +37,7 @@ export interface PlayerView {
   readonly connected: boolean;
   readonly gamemode: GameMode;
   health(): number;
-  position(): { readonly x: number; readonly y: number; readonly z: number };
+  position(): { readonly x: number; readonly y: number; readonly z: number; readonly yaw?: number; readonly pitch?: number };
   snapshot(): PlayerSnapshot;
   teleport(x: number, y: number, z: number): boolean;
   sendMessage(text: string): void;

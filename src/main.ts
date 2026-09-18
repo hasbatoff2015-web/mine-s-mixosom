@@ -23,7 +23,7 @@ if (import.meta.env.DEV) {
   const qaFrozenWater = search.get('qaFrozenWater') === '1';
   const qaLighting = search.get('qaLighting');
   const qaUi = search.get('qaUi');
-  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list']);
+  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list', 'menu-root', 'menu-homes', 'menu-friends', 'menu-trade', 'trade-session', 'chat-open', 'pause']);
   const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
@@ -31,6 +31,9 @@ if (import.meta.env.DEV) {
   const qaPlayer = search.get('qaPlayer') === '1';
   const qaSpecial = search.get('qaSpecial');
   const qaFarming = search.get('qaFarming') === '1' || search.get('qaFarming') === 'true';
+  const qaBed = search.get('qaBed') === '1';
+  const qaSign = search.get('qaSign') === '1';
+  const qaAudio = search.get('qaAudio') === '1';
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
@@ -53,6 +56,21 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     void import('./dev/FarmingQaHarness').then(async ({ startFarmingQaHarness }) => {
       disposeApplication = await startFarmingQaHarness(canvas, uiRoot);
+    });
+  } else if (qaBed) {
+    runningDevHarness = true;
+    void import('./dev/BedQaHarness').then(async ({ startBedQaHarness }) => {
+      disposeApplication = await startBedQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSign) {
+    runningDevHarness = true;
+    void import('./dev/SignQaHarness').then(async ({ startSignQaHarness }) => {
+      disposeApplication = await startSignQaHarness(canvas, uiRoot);
+    });
+  } else if (qaAudio) {
+    runningDevHarness = true;
+    void import('./dev/AudioQaHarness').then(async ({ startAudioQaHarness }) => {
+      disposeApplication = await startAudioQaHarness(uiRoot);
     });
   } else if (qaUi && uiScenes.has(qaUi)) {
     runningDevHarness = true;

@@ -8,7 +8,6 @@ import {
   itemIconDescriptor,
   itemRenderProfile,
   itemUsesGeneratedHeldGeometry,
-  OAK_DOOR_HELD_TEXTURE,
   type ItemRenderContext,
   type ItemViewTransform,
 } from '../items';
@@ -20,6 +19,9 @@ import {
   lanternMeshCuboids,
   lanternHangerPlanes,
   chainMeshPlanes,
+  bedItemVisualParts,
+  FARMLAND_BOX,
+  type BedFaceDirection,
   type LocalBox,
   type TextureUvRect,
 } from './specialBlockGeometry';
@@ -27,7 +29,7 @@ import {
   createGeneratedItemGeometry,
   type GeneratedItemMask,
 } from './GeneratedItemGeometry';
-import { TextureAtlas, type AtlasTile } from './TextureAtlas';
+import { TextureAtlas, type AtlasTile, BED_SHEET_KEY } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
 import { CHEST_TEXTURE_KEY, chestTextureKeyForBlock, createClosedChestGeometry } from './chestModel';
 
@@ -55,6 +57,7 @@ const CUBE_FACES: readonly CubeFace[] = [
   { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], texture: 'front' },
 ];
 
+const BED_FACE_DIRECTIONS: readonly BedFaceDirection[] = ['east', 'west', 'up', 'down', 'south', 'north'];
 const FULL_TILE: AtlasTile = Object.freeze({ u0: 0, v0: 0, u1: 1, v1: 1 });
 const DROPPED_OFFSETS: readonly (readonly [number, number, number])[] = [
   [0, 0, 0], [0.07, 0.025, 0.055], [-0.055, 0.045, -0.045], [0.025, 0.075, -0.07],
@@ -83,6 +86,9 @@ export function specialPreviewEntityTexturePaths(): string[] {
     if (itemIconDescriptor(item).kind !== 'special_preview') continue;
     if (item.kind === 'block' && getBlockDefinition(item.blockId).renderShape === 'chest') {
       paths.add(chestTextureKeyForBlock(item.blockId));
+    }
+    if (item.kind === 'block' && getBlockDefinition(item.blockId).renderShape === 'bed') {
+      paths.add(BED_SHEET_KEY);
     }
   }
   return [...paths];
@@ -154,7 +160,9 @@ export class ItemVisualFactory {
       const block = getBlockDefinition(definition.blockId);
       const mesh = block.renderShape === 'chest'
         ? new THREE.Mesh(this.specialHeldGeometry(definition.id), this.chestMaterial(chestTextureKeyForBlock(block.id)))
-        : new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
+        : block.renderShape === 'bed'
+          ? new THREE.Mesh(this.specialHeldGeometry(definition.id), this.chestMaterial(BED_SHEET_KEY))
+          : new THREE.Mesh(this.specialHeldGeometry(definition.id), this.blockMaterial(block));
       mesh.name = `${root.name}:special`;
       bindEntityLightReceiver(mesh);
       root.add(mesh);
@@ -303,6 +311,15 @@ export class ItemVisualFactory {
       case 'chain':
         geometry = this.geometryFromAtlasParts([], chainMeshPlanes(), texture);
         break;
+      case 'farmland':
+        geometry = this.geometryFromBlockBox(FARMLAND_BOX, block);
+        geometry.userData.iconBlockHeight = FARMLAND_BOX.maxY - FARMLAND_BOX.minY;
+        geometry.userData.iconTopTexture = this.textureForFace(block, 'top');
+        geometry.userData.iconSideTexture = this.textureForFace(block, 'side');
+        break;
+      case 'bed':
+        geometry = this.geometryFromBedParts();
+        break;
       default:
         throw new Error(`No special held model for ${itemId}`);
     }
@@ -332,6 +349,56 @@ export class ItemVisualFactory {
       }
     }
     return this.finishSpecialHeldGeometry(positions, normals, uvs, indices, boxes.length);
+  }
+
+  private geometryFromBlockBox(box: LocalBox, block: BlockDefinition): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    for (const face of CUBE_FACES) {
+      this.appendHeldQuad(
+        positions, normals, uvs, indices,
+        face.corners.map((corner) => [
+          box.minX + corner[0] * (box.maxX - box.minX) - 0.5,
+          box.minY + corner[1] * (box.maxY - box.minY) - 0.5,
+          box.minZ + corner[2] * (box.maxZ - box.minZ) - 0.5,
+        ]),
+        face.normal,
+        heldLocalFaceUv(face.normal, box),
+        this.atlas?.tile(this.textureForFace(block, face.texture)) ?? FULL_TILE,
+      );
+    }
+    return this.finishSpecialHeldGeometry(positions, normals, uvs, indices, 1);
+  }
+
+  private geometryFromBedParts(): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const parts = bedItemVisualParts();
+    for (const piece of parts) {
+      for (let index = 0; index < CUBE_FACES.length; index += 1) {
+        const face = CUBE_FACES[index]!;
+        const surface = piece.faces[BED_FACE_DIRECTIONS[index]!];
+        if (!surface) continue;
+        this.appendHeldQuad(
+          positions, normals, uvs, indices,
+          face.corners.map((corner) => [
+            (corner[0] - 0.5) * piece.size[0] + piece.center[0],
+            (corner[1] - 0.5) * piece.size[1] + piece.center[1],
+            (corner[2] - 0.5) * piece.size[2] + piece.center[2],
+          ]),
+          face.normal,
+          surface.uv,
+          FULL_TILE,
+          false,
+          surface.rotation,
+        );
+      }
+    }
+    return this.finishSpecialHeldGeometry(positions, normals, uvs, indices, parts.length);
   }
 
   /**
@@ -409,15 +476,18 @@ export class ItemVisualFactory {
     textureUv: readonly [number, number, number, number],
     tile: AtlasTile,
     backFace = false,
+    uvRotation: 0 | 90 | 180 | 270 = 0,
   ): void {
     const base = positions.length / 3;
     const u0 = lerp(tile.u0, tile.u1, textureUv[0]);
     const v0 = lerp(tile.v0, tile.v1, textureUv[1]);
     const u1 = lerp(tile.u0, tile.u1, textureUv[2]);
     const v1 = lerp(tile.v0, tile.v1, textureUv[3]);
-    const uv = backFace
+    const baseUv = backFace
       ? [[u0, v0], [u0, v1], [u1, v1], [u1, v0]] as const
       : [[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as const;
+    const uv = uvRotation === 0 ? baseUv : baseUv.map((_, index) =>
+      baseUv[(index + uvRotation / 90) % 4]!);
     for (let index = 0; index < 4; index += 1) {
       positions.push(...corners[index]!);
       normals.push(...normal);
@@ -553,10 +623,6 @@ export class ItemVisualFactory {
 
   private async loadGeneratedAsset(texturePath: string): Promise<void> {
     if (this.generatedGeometries.has(texturePath) && this.itemTextures.has(texturePath)) return;
-    if (texturePath === OAK_DOOR_HELD_TEXTURE) {
-      await this.loadCompositedDoorAsset();
-      return;
-    }
     const image = new Image();
     image.decoding = 'async';
     image.src = TextureAtlas.url(texturePath);
@@ -594,41 +660,6 @@ export class ItemVisualFactory {
     texture.wrapT = THREE.ClampToEdgeWrapping;
     this.itemTextures.get(texturePath)?.dispose();
     this.itemTextures.set(texturePath, texture);
-  }
-
-  /**
-   * Vanilla oak_door item is `item/generated` + `item/oak_door.png`. Faithful 1.21.8
-   * in this repo only ships block halves, so stack upper/lower into a square sprite.
-   */
-  private async loadCompositedDoorAsset(): Promise<void> {
-    const upper = await this.loadImageElement(TextureAtlas.url('block/oak_door_upper'));
-    const lower = await this.loadImageElement(TextureAtlas.url('block/oak_door'));
-    const size = 32;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('Unable to composite oak door item texture');
-    context.imageSmoothingEnabled = false;
-    context.drawImage(upper, 0, 0, upper.naturalWidth, upper.naturalHeight, 0, 0, size, size / 2);
-    context.drawImage(lower, 0, 0, lower.naturalWidth, lower.naturalHeight, 0, size / 2, size, size / 2);
-    const rgba = context.getImageData(0, 0, size, size).data;
-    const alpha = new Uint8Array(size * size);
-    for (let index = 0; index < alpha.length; index += 1) alpha[index] = rgba[index * 4 + 3]!;
-    this.generatedGeometries.get(OAK_DOOR_HELD_TEXTURE)?.dispose();
-    const mask: GeneratedItemMask = { width: size, height: size, alpha };
-    this.generatedMasks.set(OAK_DOOR_HELD_TEXTURE, mask);
-    this.generatedGeometries.set(OAK_DOOR_HELD_TEXTURE, createGeneratedItemGeometry(mask));
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
-    texture.generateMipmaps = false;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    this.itemTextures.get(OAK_DOOR_HELD_TEXTURE)?.dispose();
-    this.itemTextures.set(OAK_DOOR_HELD_TEXTURE, texture);
   }
 
   private loadImageElement(url: string): Promise<HTMLImageElement> {

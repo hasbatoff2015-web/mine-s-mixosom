@@ -1,9 +1,12 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { shouldCyclePerspectiveOnKey } from '../src/input/InputManager';
+import { Game } from '../src/core/Game';
+import { Inventory } from '../src/inventory';
 import {
   THIRD_PERSON_CAMERA_DISTANCE,
   availableThirdPersonDistance,
+  effectiveCameraPerspective,
   nextCameraPerspective,
   segmentAabbDistance,
   smoothThirdPersonDistance,
@@ -18,6 +21,84 @@ describe('third-person camera', () => {
     expect(nextCameraPerspective('firstPerson')).toBe('thirdPersonBack');
     expect(nextCameraPerspective('thirdPersonBack')).toBe('thirdPersonFront');
     expect(nextCameraPerspective('thirdPersonFront')).toBe('firstPerson');
+  });
+
+  it('shows third-person back only while resting and restores the stored preference', () => {
+    expect(effectiveCameraPerspective('firstPerson', false)).toBe('firstPerson');
+    expect(effectiveCameraPerspective('firstPerson', true)).toBe('thirdPersonBack');
+    expect(effectiveCameraPerspective('firstPerson', false)).toBe('firstPerson');
+    expect(effectiveCameraPerspective('thirdPersonFront', true)).toBe('thirdPersonBack');
+    expect(effectiveCameraPerspective('thirdPersonFront', false)).toBe('thirdPersonFront');
+  });
+
+  it('does not cycle the stored camera preference during bed rest', () => {
+    const game = Object.create(Game.prototype) as Game;
+    Object.assign(game, { cameraPerspective: 'firstPerson', session: { restingBed: { x: 0, y: 0, z: 0, facing: 'north' } } });
+    const cycle = (game as unknown as { cycleCameraPerspective: () => void }).cycleCameraPerspective.bind(game);
+    cycle();
+    expect(game.currentCameraPerspective).toBe('firstPerson');
+    Object.assign(game, { session: { restingBed: undefined } });
+    cycle();
+    expect(game.currentCameraPerspective).toBe('thirdPersonBack');
+  });
+
+  it('switches world model, hands and camera together on the first resting frame', () => {
+    const game = Object.create(Game.prototype) as any;
+    const visible: boolean[] = [];
+    const hands: boolean[] = [];
+    const session = {
+      restingBed: undefined as undefined | { x: number; y: number; z: number; facing: 'north' },
+      inventory: new Inventory(),
+      playerVisual: {
+        root: { position: new THREE.Vector3() },
+        setArmor: vi.fn(), setOffhandItem: vi.fn(),
+        setVisible: (value: boolean) => visible.push(value),
+        update: vi.fn(), applyWorldLight: vi.fn(),
+      },
+      player: { velocity: { x: 0, y: 0, z: 0 }, eyeHeight: 1.62,
+        onGround: true, sneaking: false, sprinting: false },
+      combat: { swordBlocking: false }, bowUseTicks: 0, foodUseTicks: 0,
+      survival: { invisible: false, isOnFire: false, hasEffect: () => false },
+      world: { timeOfDay: 0 }, cameraCollision: source(),
+    };
+    Object.assign(game, {
+      cameraPerspective: 'firstPerson', session, lifecycle: { state: 'PLAYING' },
+      ui: { isInventoryOpen: () => false }, input: { yaw: 0, pitch: 0, mining: false },
+      firstPersonFrameState: {}, firstPerson: { update: (_delta: number, state: { visible: boolean }) => hands.push(state.visible) },
+      camera: new THREE.PerspectiveCamera(), cameraPivot: new THREE.Vector3(),
+      cameraTravelDirection: new THREE.Vector3(), thirdPersonCameraDistance: THIRD_PERSON_CAMERA_DISTANCE,
+      frontCameraLook: { yaw: 0, pitch: 0 }, renderDeltaSeconds: 1 / 60,
+      hurt: { cameraRoll: () => 0, modelIntensity: () => 0 },
+    });
+    const frame = () => {
+      game.updateFirstPerson(1 / 60);
+      game.updatePlayerPresentation(session, new THREE.Vector3(0, 70, 0), 0);
+    };
+    frame();
+    expect(hands.at(-1)).toBe(true);
+    expect(visible.at(-1)).toBe(false);
+    session.restingBed = { x: 0, y: 70, z: 0, facing: 'north' };
+    frame();
+    expect(hands.at(-1)).toBe(false);
+    expect(visible.at(-1)).toBe(true);
+    expect(game.camera.position.z).toBeGreaterThan(game.cameraPivot.z);
+    expect(game.currentCameraPerspective).toBe('firstPerson');
+    session.restingBed = undefined;
+    frame();
+    expect(hands.at(-1)).toBe(true);
+    expect(visible.at(-1)).toBe(false);
+    expect(game.currentCameraPerspective).toBe('firstPerson');
+
+    game.setCameraPerspective('thirdPersonFront');
+    session.restingBed = { x: 0, y: 70, z: 0, facing: 'north' };
+    frame();
+    expect(hands.at(-1)).toBe(false);
+    expect(visible.at(-1)).toBe(true);
+    expect(game.camera.position.z).toBeGreaterThan(game.cameraPivot.z);
+    session.restingBed = undefined;
+    frame();
+    expect(game.currentCameraPerspective).toBe('thirdPersonFront');
+    expect(game.camera.position.z).toBeLessThan(game.cameraPivot.z);
   });
 
   it('captures one F5 edge only in active gameplay and leaves browser/menu F5 alone', () => {

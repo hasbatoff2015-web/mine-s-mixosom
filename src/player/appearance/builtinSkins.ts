@@ -60,11 +60,12 @@ export const BUILTIN_MINECRAFT_SKINS: readonly MinecraftSkinDescriptor[] = Objec
   { id: 'e936712cae837a84', texturePath: 'player/skins/e936712cae837a84', defaultModel: 'classic' },
   { id: 'f47ebc2553e02251', texturePath: 'player/skins/f47ebc2553e02251', defaultModel: 'slim' },
   { id: QA_PLAYER_SKIN_ID, texturePath: 'entity/player_uv_test', defaultModel: 'classic' },
+  { id: 'buyer_merchant', texturePath: 'player/skins/buyer_merchant', defaultModel: 'classic' },
 ]);
 
-/** Production selector catalog: 45 unique 64×64 skins, excluding the DEV UV sheet. */
+/** Production selector catalog: player skins only (no DEV UV sheet, no NPC merchant). */
 export const PRODUCTION_PLAYER_SKINS: readonly MinecraftSkinDescriptor[] = Object.freeze(
-  BUILTIN_MINECRAFT_SKINS.filter((skin) => skin.id !== QA_PLAYER_SKIN_ID),
+  BUILTIN_MINECRAFT_SKINS.filter((skin) => skin.id !== QA_PLAYER_SKIN_ID && skin.id !== 'buyer_merchant'),
 );
 
 const REGISTERED_SKIN_IDS = new Set(BUILTIN_MINECRAFT_SKINS.map((skin) => skin.id));

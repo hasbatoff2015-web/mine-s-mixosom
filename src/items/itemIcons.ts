@@ -35,6 +35,8 @@ export interface ItemIconDescriptor {
   readonly kind: ItemIconKind;
   readonly texturePath?: string;
   readonly category?: SpecialIconCategory;
+  /** Tall sprites keep native aspect via CSS `object-fit: contain`; never square-stretch. */
+  readonly preserveAspect?: boolean;
 }
 
 /**
@@ -84,7 +86,12 @@ export function itemIconDescriptor(itemOrId: string | ItemDefinition): ItemIconD
   if (usesBlockModelIcon(item)) {
     return { kind: 'special_preview', category: specialIconCategory(item) ?? 'generic' };
   }
-  return { kind: 'texture', texturePath: item.texture };
+  const preserveAspect = item.id === 'oak_door' || item.id === 'sugar_cane';
+  return {
+    kind: 'texture',
+    texturePath: item.texture,
+    ...(preserveAspect ? { preserveAspect: true } : {}),
+  };
 }
 
 /** Cube GUI tiles use `item.texture`, which prefers block `front` over `side`. */

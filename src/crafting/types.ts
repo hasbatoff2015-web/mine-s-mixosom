@@ -1,4 +1,4 @@
-import type { ItemStack } from '../inventory';
+import type { ItemMetadata, ItemStack } from '../inventory';
 
 export type ItemIngredient = string | {
   readonly item: string;
@@ -20,6 +20,7 @@ export type Ingredient = ItemIngredient | AnyOfIngredient | TagIngredient;
 export interface RecipeOutput {
   readonly item: string;
   readonly count: number;
+  readonly metadata?: ItemMetadata;
 }
 
 export interface BaseRecipe {

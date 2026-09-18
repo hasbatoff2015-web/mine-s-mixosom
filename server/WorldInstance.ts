@@ -14,7 +14,7 @@ import {
   type PortalChestInventory,
 } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { isKnownItemId, ItemId, tryGetItemDefinition } from '../src/items';
+import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import {
@@ -37,6 +37,10 @@ import {
   worldSoundMaxDistance,
 } from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
+import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
+import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
+import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
+import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
 import { ANARCHY_IMPORT_VERSION, ANARCHY_SERVER_ID, ANARCHY_WORLD_ID } from '../src/world/import/anarchy';
 import { estimateWorldSpawn, isGameMode } from '../src/world/spawn';
 import type {
@@ -45,13 +49,29 @@ import type {
   ClientHologramUpdateMessage,
   ClientInputMessage,
   ClientInventoryActionMessage,
+  ClientAuctionActionMessage,
+  ClientClanActionMessage,
+  ClientBuyerActionMessage,
+  ClientMenuActionMessage,
+  ClientTradeActionMessage,
+  GameMenuScreenKind,
+  ClientBookUpdateMessage,
+  ClientSignUpdateMessage,
   ClientVehicleInputMessage,
   GameMode,
   PlayerSnapshot,
   RemotePlayerInfo,
   WorldBlockStates,
   WorldModifications,
+  ServerChatMessage,
 } from '../shared/protocol';
+import { MAX_CHAT_LENGTH } from '../shared/config';
+import {
+  CHAT_NO_CLAN_HINT,
+  CHAT_TOO_LONG_ERROR,
+  isWithinNearbyChatRange,
+  type ChatChannel,
+} from '../shared/chat';
 import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
@@ -78,14 +98,38 @@ import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
+import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
+import { ClanService, type ClanResult, type ClanView } from './services/clan';
+import { BuyerService, type BuyerRecord } from './services/buyer';
+import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
+import { HomeService } from './services/home';
+import { FriendsService } from './services/friends';
+import { TradeService } from './services/trade';
+import {
+  buildTradeMessage,
+  closedMenuMessage,
+  createMenuSession,
+  menuTitle,
+  toMenuClaim,
+  type GameMenuSession,
+} from './services/gameMenu';
+import { FRIENDS_MAX } from '../shared/friends';
+import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
+import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
+import {
+  applyGameMenuAction,
+  type MenuActionHost,
+  type MenuPlayer,
+} from './services/gameMenuActions';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
-import { migrateClaimStore } from './services/claims';
+import { migrateClaimStore, type Claim } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
+import { isBuyerHologramName, playerCanReachBuyer } from '../shared/buyers';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
 import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
@@ -198,6 +242,7 @@ export class ServerPlayer implements GameplayPlayer {
   craftSlots: Array<ItemStack | null> = [null, null, null, null];
   window: InventoryWindow = { kind: 'inventory' };
   ridingCartId?: string;
+  restingBed?: BedRestState;
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
   private presentationSwingSeq = 0;
   private presentationHurtSeq = 0;
@@ -214,6 +259,8 @@ export class ServerPlayer implements GameplayPlayer {
   lastSprint = false;
   vehicleForward = 0;
   inventoryDirty = false;
+  totemActivated = false;
+  pendingSignEdit?: { x: number; y: number; z: number };
   deathLootDropped = false;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
@@ -232,9 +279,17 @@ export class ServerPlayer implements GameplayPlayer {
     appearance?: PlayerAppearance,
   ) {
     this.survival = survival ?? new SurvivalSystem({ health: 20 });
+    this.survival.setDeathProtection(() => {
+      if (this.gamemode !== 'survival') return false;
+      if (!consumeOffhandTotem(this.inventory)) return false;
+      this.inventoryDirty = true;
+      this.totemActivated = true;
+      return true;
+    });
     this.appearance = appearance ?? DEFAULT_PLAYER_APPEARANCE;
     this.survival.addDamageListener((result) => {
       if (result.fullHurt) this.presentHurt();
+      if (this.survival.dead) this.restingBed = undefined;
     });
   }
 
@@ -261,11 +316,13 @@ export class ServerPlayer implements GameplayPlayer {
         ? { ...target, blockId: target.blockId, progress: Math.max(0, this.miningProgress) }
         : null,
       heldItemId,
+      offhandItemId: this.inventory.offhand?.itemId ?? null,
       bowCharge: alive && heldItemId === ItemId.Bow && this.bowUseTicks > 0
         ? this.combat.bowCharge(this.bowUseTicks).power : 0,
       foodUseProgress: alive && heldItemId && tryGetItemDefinition(heldItemId)?.kind === 'food'
         ? Math.min(1, Math.max(0, this.foodUseTicks / 32)) : 0,
       swordBlocking: alive && this.combat.swordBlocking,
+      bedRest: alive ? this.restingBed ?? null : null,
       swingSeq: this.presentationSwingSeq,
       armor: equippedArmorFromInventory(this.inventory),
       hurtSeq: this.presentationHurtSeq,
@@ -439,9 +496,18 @@ export class WorldInstance {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly autoMine: AutoMineManager;
+  readonly economy: EconomyService;
+  readonly auction: AuctionService;
+  readonly clan: ClanService;
+  readonly buyer: BuyerService;
+  readonly homes: HomeService;
+  readonly friends: FriendsService;
+  readonly trade: TradeService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
+  private readonly menuSessions = new Map<string, GameMenuSession>();
+  private readonly menuReturn = new Map<string, GameMenuScreenKind>();
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
@@ -503,10 +569,77 @@ export class WorldInstance {
         if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
       }
     });
+    this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
+    this.economy = new EconomyService(this.pluginStore);
+    this.auction = new AuctionService(this.pluginStore, this.economy);
+    this.clan = new ClanService(this.pluginStore, this.economy);
+    this.homes = new HomeService(this.pluginStore);
+    this.friends = new FriendsService(this.pluginStore);
+    this.trade = new TradeService(this.economy);
+    this.clan.setRuntime({
+      onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
+      isOnline: (playerId) => this.players.get(playerId)?.connected === true,
+      displayName: (playerId) => {
+        const live = this.players.get(playerId);
+        if (live) return live.name;
+        const stored = this.storedPlayers[playerId];
+        if (stored) return stored.name;
+        return this.economy.displayName(playerId);
+      },
+      sendMessage: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+    });
+    this.friends.setRuntime({
+      isOnline: (playerId) => this.players.get(playerId)?.connected === true,
+      displayName: (playerId) => this.economy.displayName(playerId) === playerId.slice(0, 8)
+        ? (this.players.get(playerId)?.name ?? this.storedPlayers[playerId]?.name ?? playerId.slice(0, 8))
+        : this.economy.displayName(playerId),
+      lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
+      sendMessage: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+    });
+    this.trade.setRuntime({
+      isOnline: (playerId) => this.players.get(playerId)?.connected === true,
+      displayName: (playerId) => this.players.get(playerId)?.name
+        ?? this.storedPlayers[playerId]?.name
+        ?? this.economy.displayName(playerId),
+      lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
+      inventory: (playerId) => this.players.get(playerId)?.inventory,
+      balance: (playerId) => this.economy.getBalance(playerId),
+      sendMessage: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+    });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
       return store.claims
@@ -530,11 +663,14 @@ export class WorldInstance {
           x: player.controller.position.x,
           y: player.controller.position.y,
           z: player.controller.position.z,
+          yaw: player.controller.yaw,
+          pitch: player.controller.pitch,
         }),
         teleport: (x, y, z, look) => {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
+          player.restingBed = undefined;
           player.controller.teleport([x, y, z]);
           if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
           if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
@@ -601,10 +737,12 @@ export class WorldInstance {
         }
       },
       log: (message) => serverLog(`plugin automine ${message}`),
+      onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
     });
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
       if (player) this.sendTo(player, message);
@@ -638,6 +776,7 @@ export class WorldInstance {
         modifications: existing.modifications,
         chests: (existing.chests ?? {}) as never,
         furnaces: (existing.furnaces ?? {}) as never,
+        signs: existing.signs,
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
@@ -648,6 +787,12 @@ export class WorldInstance {
       }
       this.gameplay.restoreEntities(existing);
       this.permissions.load();
+      this.economy.load();
+      this.auction.load();
+      this.clan.load();
+      this.homes.load();
+      this.friends.load();
+      this.buyer.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -656,6 +801,12 @@ export class WorldInstance {
     this.spawn = estimateWorldSpawn(this.world);
     this.createdAt = Date.now();
     this.permissions.load();
+    this.economy.load();
+    this.auction.load();
+    this.clan.load();
+    this.homes.load();
+    this.friends.load();
+    this.buyer.load();
     this.preloadSpawnChunks();
     this.dirty = true;
     await this.save();
@@ -677,6 +828,19 @@ export class WorldInstance {
         rtpSessions: this.rtpSessions,
         selection: this.selection,
         autoMine: this.autoMine,
+        economy: this.economy,
+        auction: this.auction,
+        clan: this.clan,
+        buyer: this.buyer,
+        homes: this.homes,
+        friends: this.friends,
+        trade: this.trade,
+        openAuction: (playerId, view) => this.openAuction(playerId, view),
+        openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
+        openBuyerAdmin: (playerId, buyerId) => this.openBuyerAdmin(playerId, buyerId),
+        openGameMenu: (playerId, screen) => this.openGameMenu(playerId, (screen as GameMenuScreenKind | undefined) ?? 'root'),
+        broadcastBuyers: () => this.broadcastBuyers(),
+        lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -785,6 +949,10 @@ export class WorldInstance {
       },
     };
     await this.worldStore.save(snapshot);
+    this.economy.persist();
+    this.auction.persist();
+    this.clan.persist();
+    this.buyer.persist();
     this.dirty = false;
   }
 
@@ -796,6 +964,27 @@ export class WorldInstance {
 
   connectedPlayers(): ServerPlayer[] {
     return [...this.players.values()].filter((player) => player.connected);
+  }
+
+  private listTradeNearby(player: ServerPlayer): Array<{ playerId: string; name: string; distance: number }> {
+    const origin = player.controller.position;
+    return this.connectedPlayers()
+      .filter((other) => other.id !== player.id)
+      .map((other) => {
+        const pos = other.controller.position;
+        const dx = origin.x - pos.x;
+        const dy = origin.y - pos.y;
+        const dz = origin.z - pos.z;
+        return {
+          playerId: other.id,
+          name: other.name,
+          distance: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)),
+          inRange: isWithinNearbyChatRange(origin.x, origin.y, origin.z, pos.x, pos.y, pos.z),
+        };
+      })
+      .filter((row) => row.inRange)
+      .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name, 'ru'))
+      .map(({ playerId, name, distance }) => ({ playerId, name, distance }));
   }
 
   private maxInputGapMs(now = performance.now()): number {
@@ -851,6 +1040,7 @@ export class WorldInstance {
           + `resumeCount=${existing.resumeCount}`,
         );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
+        this.buyer.restoreOverflow(existing.id, existing.inventory);
         return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
@@ -865,6 +1055,7 @@ export class WorldInstance {
           + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
         );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
+        this.buyer.restoreOverflow(restored.id, restored.inventory);
         return { player: restored, resumed: true };
       }
     }
@@ -901,8 +1092,843 @@ export class WorldInstance {
       + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
     );
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
+    this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
     return { player, resumed: false };
+  }
+
+  findPlayerIdentity(idOrName: string): { id: string; name: string; connected: boolean } | undefined {
+    const direct = this.players.get(idOrName);
+    if (direct) return { id: direct.id, name: direct.name, connected: direct.connected };
+    const lower = idOrName.toLowerCase();
+    for (const player of this.players.values()) {
+      if (player.name.toLowerCase() === lower) {
+        return { id: player.id, name: player.name, connected: player.connected };
+      }
+    }
+    const storedDirect = this.storedPlayers[idOrName];
+    if (storedDirect) return { id: storedDirect.id, name: storedDirect.name, connected: false };
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (stored.name.toLowerCase() === lower) {
+        return { id: stored.id, name: stored.name, connected: false };
+      }
+    }
+    return undefined;
+  }
+
+  openAuction(playerId: string, view: AuctionView): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.connected) return;
+    if (view === 'browse') this.auction.openBrowse(playerId);
+    else if (view === 'sell') this.auction.openSell(playerId);
+    else this.auction.openMine(playerId);
+    this.flushAuction(player);
+  }
+
+  handleAuctionAction(player: ServerPlayer, message: ClientAuctionActionMessage): void {
+    if (!this.hasAuctionPermission(player, message.action)) {
+      this.sendTo(player, {
+        type: 'auction',
+        screen: 'closed',
+        title: '',
+        search: '',
+        page: 1,
+        totalPages: 1,
+        totalCount: 0,
+        listings: [],
+        message: 'You do not have permission.',
+      });
+      return;
+    }
+    this.auction.expireDue();
+    const session = this.auction.session(player.id);
+    session.message = undefined;
+    const action = message.action;
+    if (action === 'close') {
+      this.auction.closeSession(player.id);
+      this.menuReturn.delete(player.id);
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'search') {
+      this.auction.setSearch(player.id, message.search ?? '');
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'page') {
+      this.auction.setPage(player.id, message.page ?? session.page);
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'refresh') {
+      session.message = undefined;
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'back') {
+      if (session.screen === 'buy') this.auction.openBrowse(player.id, session.search);
+      else if (session.screen === 'sell-confirm') this.auction.openSell(player.id);
+      else if (session.screen === 'manage' || session.screen === 'claim' || session.screen === 'relist') {
+        this.auction.openMine(player.id);
+      } else {
+        this.auction.closeSession(player.id);
+      }
+      if (this.auction.session(player.id).screen === 'closed') {
+        this.tryRestoreMenu(player);
+        if (this.menuSessions.has(player.id)) return;
+      }
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'select' && message.listingId) {
+      const listing = this.auction.getListing(message.listingId);
+      const fromMine = session.screen === 'mine'
+        || session.screen === 'manage'
+        || session.screen === 'claim'
+        || session.screen === 'relist';
+      if (!listing) {
+        if (fromMine) this.auction.openMine(player.id);
+        else this.auction.openBrowse(player.id, session.search);
+        this.auction.session(player.id).message = 'Этот товар уже продан.';
+        this.flushAuction(player);
+        return;
+      }
+      if (fromMine) {
+        session.listingId = listing.listingId;
+        session.screen = listing.status === 'ACTIVE' ? 'manage' : 'claim';
+        session.priceText = String(listing.price);
+      } else if (listing.sellerPlayerId === player.id) {
+        session.message = 'Нельзя купить собственный товар.';
+        this.flushAuction(player);
+        return;
+      } else {
+        session.listingId = listing.listingId;
+        session.screen = 'buy';
+      }
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'buy' && (message.listingId || session.listingId)) {
+      const listingId = message.listingId ?? session.listingId!;
+      const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId);
+      if (!result.ok) {
+        session.message = result.error;
+        if (result.error === 'Этот товар уже продан.' || result.error === 'Срок продажи этого товара истёк.') {
+          session.screen = 'browse';
+          session.listingId = undefined;
+        }
+        this.flushAuction(player);
+        return;
+      }
+      player.inventoryDirty = true;
+      this.flushPlayerInventory(player);
+      const search = session.search;
+      const page = session.page;
+      this.auction.openBrowse(player.id, search);
+      this.auction.session(player.id).page = page;
+      const seller = this.players.get(result.listing!.sellerPlayerId);
+      if (seller?.connected) {
+        this.sendTo(seller, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text: `${player.name} купил ваш лот за ${formatMegacoins(result.listing!.price)}.`,
+          kind: 'system',
+        });
+      }
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'select_slot' && message.slot !== undefined) {
+      const result = this.auction.selectSellSlot(player.id, player.inventory, message.slot);
+      if (!result.ok) this.auction.session(player.id).message = result.error;
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'set_amount' && message.amount !== undefined) {
+      const current = session.slot !== undefined ? player.inventory.getSlot(session.slot) : undefined;
+      const max = current?.count ?? session.expectedItem?.count ?? 1;
+      session.amount = Math.max(1, Math.min(message.amount, max));
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'set_price') {
+      session.priceText = typeof message.price === 'string' || typeof message.price === 'number'
+        ? String(message.price)
+        : '';
+      return;
+    }
+    if (action === 'create') {
+      const amount = message.amount ?? session.amount;
+      const slot = message.slot ?? session.slot;
+      const priceRaw = message.price ?? session.priceText;
+      const priceError = auctionPriceError(priceRaw);
+      if (slot === undefined || amount === undefined) {
+        session.message = 'Предмет больше недоступен для продажи.';
+        this.flushAuction(player);
+        return;
+      }
+      if (priceError) {
+        session.message = priceError;
+        this.flushAuction(player);
+        return;
+      }
+      const parsedPrice = parseAuctionPrice(priceRaw)!;
+      const result = this.auction.createListing(
+        player.id,
+        player.name,
+        player.inventory,
+        slot,
+        amount,
+        parsedPrice,
+        session.expectedItem,
+      );
+      if (!result.ok) {
+        session.message = result.error;
+        this.flushAuction(player);
+        return;
+      }
+      player.inventoryDirty = true;
+      this.flushPlayerInventory(player);
+      this.auction.openSell(player.id);
+      this.auction.session(player.id).message = 'Товар выставлен на аукцион.';
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'cancel' && (message.listingId || session.listingId)) {
+      const result = this.auction.cancelListing(player.id, message.listingId ?? session.listingId!);
+      this.auction.openMine(player.id);
+      this.auction.session(player.id).message = result.ok
+        ? 'Товар снят с продажи. Заберите его в списке лотов.'
+        : result.error;
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'relist' && (message.listingId || session.listingId)) {
+      const listingId = message.listingId ?? session.listingId!;
+      if (session.screen !== 'relist' && !message.price) {
+        const listing = this.auction.getListing(listingId);
+        if (!listing || listing.sellerPlayerId !== player.id || listing.status !== 'ACTIVE') {
+          session.message = 'Этот товар уже продан.';
+          this.auction.openMine(player.id);
+          this.flushAuction(player);
+          return;
+        }
+        session.listingId = listingId;
+        session.screen = 'relist';
+        session.priceText = String(listing.price);
+        this.flushAuction(player);
+        return;
+      }
+      const priceError = auctionPriceError(message.price ?? session.priceText);
+      if (priceError) {
+        session.message = priceError;
+        this.flushAuction(player);
+        return;
+      }
+      const parsedPrice = parseAuctionPrice(message.price ?? session.priceText)!;
+      const result = this.auction.relist(
+        player.id,
+        listingId,
+        parsedPrice,
+      );
+      if (!result.ok) {
+        session.message = result.error;
+        this.flushAuction(player);
+        return;
+      }
+      this.auction.openMine(player.id);
+      this.auction.session(player.id).message = 'Товар выставлен заново.';
+      this.flushAuction(player);
+      return;
+    }
+    if (action === 'claim' && (message.listingId || session.listingId)) {
+      const result = this.auction.claimListing(
+        player.id,
+        player.inventory,
+        message.listingId ?? session.listingId!,
+      );
+      if (!result.ok) {
+        session.message = result.error;
+        this.flushAuction(player);
+        return;
+      }
+      player.inventoryDirty = true;
+      this.flushPlayerInventory(player);
+      this.auction.openMine(player.id);
+      this.auction.session(player.id).message = 'Предмет возвращён в инвентарь.';
+      this.flushAuction(player);
+      return;
+    }
+    this.flushAuction(player);
+  }
+
+  private hasAuctionPermission(player: ServerPlayer, action: ClientAuctionActionMessage['action']): boolean {
+    const node = action === 'buy' || action === 'select' ? 'auction.buy'
+      : action === 'select_slot' || action === 'set_amount' || action === 'set_price' || action === 'create'
+        ? 'auction.sell'
+        : action === 'cancel' || action === 'relist' || action === 'claim' ? 'auction.list'
+          : 'auction.use';
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  private flushAuction(player: ServerPlayer): void {
+    this.sendTo(player, this.auction.buildMessage(player.id, player.inventory));
+  }
+
+  openClan(playerId: string, view: ClanView, extra?: string): ClanResult | void {
+    const player = this.players.get(playerId);
+    if (!player || !player.connected) return { ok: false, error: 'Игрок не в сети.' };
+    this.economy.rememberName(player.id, player.name);
+    this.clan.purgeExpired();
+    let result: ClanResult = { ok: true };
+    if (view === 'ranking') this.clan.openRanking(playerId);
+    else if (view === 'create') result = this.clan.openCreate(playerId);
+    else if (view === 'delete') result = this.clan.openDelete(playerId);
+    else if (view === 'add') result = this.clan.openAdd(playerId);
+    else if (view === 'accept') result = this.clan.openAccept(playerId);
+    else if (view === 'leave') result = this.clan.openLeave(playerId);
+    else if (view === 'makeleader') result = this.clan.openMakeLeader(playerId);
+    else if (view === 'mine') result = this.clan.openMyClan(playerId);
+    else result = this.clan.openKick(playerId, extra ?? '');
+    if (!result.ok) return result;
+    this.flushClan(player);
+    return result;
+  }
+
+  handleClanAction(player: ServerPlayer, message: ClientClanActionMessage): void {
+    if (!this.hasClanPermission(player, message.action)) {
+      this.sendTo(player, {
+        type: 'clan',
+        screen: 'closed',
+        title: '',
+        search: '',
+        page: 1,
+        totalPages: 1,
+        totalCount: 0,
+        clans: [],
+        message: 'You do not have permission.',
+      });
+      return;
+    }
+    this.economy.rememberName(player.id, player.name);
+    const beforeIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
+    const isClose = message.action === 'close';
+    this.clan.handleAction(player.id, message);
+    if (isClose) this.menuReturn.delete(player.id);
+    const afterIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
+    const notify = new Set<string>([...beforeIds, ...afterIds, player.id]);
+    const restoring = !isClose && this.clan.session(player.id).screen === 'closed' && this.menuReturn.has(player.id);
+    for (const playerId of notify) {
+      if (restoring && playerId === player.id) continue;
+      const other = this.players.get(playerId);
+      if (other?.connected) this.flushClan(other);
+    }
+    if (restoring) this.tryRestoreMenu(player);
+  }
+
+  private hasClanPermission(player: ServerPlayer, action: ClientClanActionMessage['action']): boolean {
+    const node = action === 'confirm_create' || action === 'create' || action === 'select_icon' || action === 'set_name' || action === 'cancel_create'
+      ? 'clan.create'
+      : action === 'confirm_delete' || action === 'cancel_delete'
+        ? 'clan.delete'
+        : action === 'select_player' || action === 'confirm_invite' || action === 'cancel_invite'
+          ? 'clan.add'
+          : action === 'select_invitation' || action === 'confirm_accept' || action === 'cancel_accept'
+            ? 'clan.accept'
+            : action === 'confirm_leave' || action === 'cancel_leave'
+              ? 'clan.leave'
+              : action === 'select_member' || action === 'confirm_makeleader' || action === 'cancel_makeleader'
+                ? 'clan.makeleader'
+                : action === 'kick' || action === 'confirm_kick' || action === 'cancel_kick'
+                  ? 'clan.kick'
+                  : action === 'open_requests' || action === 'select_request' || action === 'confirm_accept_request' || action === 'cancel_accept_request'
+                    ? 'clan.add'
+                    : 'clan.use';
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  private flushClan(player: ServerPlayer): void {
+    this.sendTo(player, this.clan.buildMessage(player.id));
+  }
+
+  broadcastBuyers(): void {
+    this.broadcast({ type: 'buyers', buyers: this.buyer.networkBuyers() });
+    this.flushAffectedBuyers();
+  }
+
+  private flushAffectedBuyers(): void {
+    for (const playerId of this.buyer.takeAffectedPlayers()) {
+      const player = this.players.get(playerId);
+      if (!player?.connected) continue;
+      this.buyer.restoreOverflow(player.id, player.inventory);
+      this.flushPlayerInventory(player);
+      this.flushBuyer(player);
+    }
+  }
+
+  openBuyerAdmin(playerId: string, buyerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.connected) return;
+    if (!this.hasBuyerPermission(player, 'buyer.edit')) return;
+    this.buyer.openAdmin(playerId, buyerId, player.inventory);
+    this.flushBuyer(player);
+  }
+
+  interactBuyer(player: ServerPlayer, buyerId: string): void {
+    const buyer = this.buyer.get(buyerId) ?? this.buyer.findByHologram(buyerId);
+    if (!buyer) return;
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachBuyer(eye, buyer, PLAYER_NET_REACH)) return;
+    const canEdit = this.hasBuyerPermission(player, 'buyer.edit');
+    const canUse = this.hasBuyerPermission(player, 'buyer.use');
+    if (canEdit) {
+      this.buyer.openAdmin(player.id, buyer.id, player.inventory);
+      this.flushBuyer(player);
+      return;
+    }
+    if (!canUse) {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: 'You do not have permission.',
+        kind: 'error',
+      });
+      return;
+    }
+    this.buyer.openTrade(player.id, buyer.id, player.inventory);
+    this.flushBuyer(player);
+  }
+
+  handleBuyerAction(player: ServerPlayer, message: ClientBuyerActionMessage): void {
+    const can = {
+      edit: this.hasBuyerPermission(player, 'buyer.edit'),
+      delete: this.hasBuyerPermission(player, 'buyer.delete'),
+      use: this.hasBuyerPermission(player, 'buyer.use'),
+    };
+    if (message.action !== 'close' && !can.use && !can.edit) {
+      this.sendTo(player, {
+        type: 'buyer',
+        screen: 'closed',
+        title: '',
+        buyerId: '',
+        name: '',
+        hologramText: '',
+        priceText: '',
+        quantity: 0,
+        maxQuantity: 0,
+        total: 0,
+        totalLabel: '',
+        configured: false,
+        message: 'You do not have permission.',
+      });
+      return;
+    }
+    const result = this.buyer.handleAction(player.id, player.inventory, message, can);
+    if (result.inventoryDirty) this.flushPlayerInventory(player);
+    if (result.broadcast) this.broadcastBuyers();
+    if (result.chat) {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: result.chat,
+        kind: 'system',
+      });
+    }
+    if (result.openHologramEditor && result.buyer) {
+      this.openBuyerHologramEditor(player, result.buyer.hologramName);
+      return;
+    }
+    this.flushBuyer(player);
+  }
+
+  private openBuyerHologramEditor(player: ServerPlayer, hologramName: string): void {
+    const hologram = this.holograms.get(hologramName);
+    const owner = this.buyer.findByHologram(hologramName);
+    if (!hologram || !hologram.enabled || !owner) {
+      this.flushBuyer(player);
+      return;
+    }
+    if (!this.hasBuyerPermission(player, 'buyer.edit')) {
+      this.sendHologramPermissionDenied(player);
+      this.flushBuyer(player);
+      return;
+    }
+    this.sendTo(player, { type: 'hologram_editor', hologram: toNetworkHologram(hologram) });
+  }
+
+  private hasBuyerPermission(player: ServerPlayer, node: string): boolean {
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  private flushBuyer(player: ServerPlayer): void {
+    this.sendTo(player, this.buyer.buildMessage(player.id, player.inventory));
+  }
+
+  openGameMenu(playerId: string, screen: GameMenuScreenKind = 'root'): void {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return;
+    const session = this.menuSessions.get(playerId) ?? createMenuSession();
+    session.screen = screen === 'closed' ? 'root' : screen;
+    session.message = undefined;
+    this.menuSessions.set(playerId, session);
+    this.flushMenu(player);
+  }
+
+  handleMenuAction(player: ServerPlayer, message: ClientMenuActionMessage): void {
+    this.economy.rememberName(player.id, player.name);
+    if (message.action === 'close') {
+      this.menuSessions.delete(player.id);
+      this.menuReturn.delete(player.id);
+      this.sendTo(player, closedMenuMessage());
+      return;
+    }
+    const session = this.menuSessions.get(player.id) ?? createMenuSession();
+    this.menuSessions.set(player.id, session);
+    session.message = undefined;
+    this.applyMenuOutcome(player, session, applyGameMenuAction(this.menuHost(), this.menuPlayer(player), session, message));
+  }
+
+  handleTradeAction(player: ServerPlayer, message: ClientTradeActionMessage): void {
+    if (message.action === 'close' || message.action === 'cancel') {
+      const result = this.trade.cancel(player.id);
+      this.flushTradeResult(result);
+      return;
+    }
+    const result = message.action === 'put_item'
+      ? this.trade.putItem(player.id, message.slot ?? -1, message.tradeSlot)
+      : message.action === 'return_item'
+        ? this.trade.returnItem(player.id, message.tradeSlot ?? -1)
+        : message.action === 'set_money'
+          ? this.trade.setMoney(player.id, message.money ?? 0)
+          : message.action === 'ready'
+            ? this.trade.ready(player.id)
+            : this.trade.accept(player.id);
+    this.flushTradeResult(result, result.ok ? undefined : result.error);
+  }
+
+  private menuPlayer(player: ServerPlayer): MenuPlayer {
+    return {
+      id: player.id,
+      name: player.name,
+      x: player.controller.position.x,
+      y: player.controller.position.y,
+      z: player.controller.position.z,
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+    };
+  }
+
+  private menuHost(): MenuActionHost {
+    return {
+      homes: this.homes,
+      friends: this.friends,
+      trade: this.trade,
+      clan: this.clan,
+      worldId: this.worldId,
+      maxHomesFor: (entry) => {
+        const live = this.players.get(entry.id);
+        return live ? this.maxHomesFor(live) : HOME_MAX_DEFAULT;
+      },
+      loadClaims: () => this.loadClaimStore(),
+      saveClaims: (store) => this.saveClaimStore(store),
+      findOwnedClaim: (entry, claimId) => {
+        const live = this.players.get(entry.id);
+        return live ? this.findOwnedClaim(live, claimId) : undefined;
+      },
+    };
+  }
+
+  private applyMenuOutcome(
+    player: ServerPlayer,
+    session: GameMenuSession,
+    outcome: ReturnType<typeof applyGameMenuAction>,
+  ): void {
+    if (outcome.kind === 'flush') {
+      this.flushMenu(player);
+      return;
+    }
+    if (outcome.kind === 'close') {
+      this.menuSessions.delete(player.id);
+      this.sendTo(player, closedMenuMessage());
+      return;
+    }
+    if (outcome.kind === 'spawn') {
+      const spawn = this.worldView.spawn();
+      const result = this.teleports.schedule(player.id, { x: spawn[0], y: spawn[1], z: spawn[2] }, 'spawn', {
+        warmupMs: Number(this.pluginConfig.get('spawn', 'warmupSeconds', 0)) * 1000,
+        cooldownMs: Number(this.pluginConfig.get('spawn', 'cooldownSeconds', 5)) * 1000,
+        cancelOnMove: Boolean(this.pluginConfig.get('spawn', 'cancelOnMove', true)),
+        cancelOnDamage: Boolean(this.pluginConfig.get('spawn', 'cancelOnDamage', true)),
+      });
+      if (!result.ok) {
+        session.message = result.error ?? 'Teleport failed.';
+        this.flushMenu(player);
+        return;
+      }
+      this.menuSessions.delete(player.id);
+      this.sendTo(player, closedMenuMessage());
+      return;
+    }
+    if (outcome.kind === 'home-teleport') {
+      const dest = this.homes.get(player.name, outcome.name);
+      if (!dest) {
+        session.message = HOME_MISSING_ERROR;
+        this.flushMenu(player);
+        return;
+      }
+      const result = this.teleports.schedule(player.id, {
+        x: dest.x, y: dest.y, z: dest.z, yaw: dest.yaw, pitch: dest.pitch,
+      }, 'home', {
+        warmupMs: Number(this.pluginConfig.get('home', 'warmupSeconds', 0)) * 1000,
+        cooldownMs: Number(this.pluginConfig.get('home', 'cooldownSeconds', 5)) * 1000,
+        cancelOnMove: Boolean(this.pluginConfig.get('home', 'cancelOnMove', true)),
+        cancelOnDamage: Boolean(this.pluginConfig.get('home', 'cancelOnDamage', true)),
+      });
+      if (!result.ok) {
+        session.message = result.error ?? 'Teleport failed.';
+        this.flushMenu(player);
+        return;
+      }
+      this.menuSessions.delete(player.id);
+      this.sendTo(player, closedMenuMessage());
+      return;
+    }
+    if (outcome.kind === 'friend-teleport') {
+      const target = this.players.get(outcome.playerId);
+      if (!target?.connected) {
+        session.message = 'Игрок не в сети.';
+        this.flushMenu(player);
+        return;
+      }
+      const result = this.teleports.schedule(player.id, {
+        x: target.controller.position.x,
+        y: target.controller.position.y,
+        z: target.controller.position.z,
+        yaw: target.controller.yaw,
+        pitch: target.controller.pitch,
+      }, 'friends', { warmupMs: 0, cooldownMs: 0, cancelOnMove: false, cancelOnDamage: false });
+      if (!result.ok) {
+        session.message = result.error ?? 'Teleport failed.';
+        this.flushMenu(player);
+        return;
+      }
+      this.menuSessions.delete(player.id);
+      this.sendTo(player, closedMenuMessage());
+      return;
+    }
+    if (outcome.kind === 'open-clan') {
+      this.menuReturn.set(player.id, 'clans');
+      this.menuSessions.delete(player.id);
+      this.openClan(player.id, outcome.view);
+      this.clan.markOpenedFromMenu(player.id);
+      this.flushClan(player);
+      return;
+    }
+    if (outcome.kind === 'open-auction') {
+      this.menuReturn.set(player.id, 'auction');
+      this.menuSessions.delete(player.id);
+      this.openAuction(player.id, outcome.view);
+      this.auction.markOpenedFromMenu(player.id);
+      this.flushAuction(player);
+      return;
+    }
+    if (outcome.kind === 'trade-session') {
+      this.menuSessions.delete(player.id);
+      this.flushActiveTrades(outcome.affected);
+      return;
+    }
+    if (outcome.kind === 'refresh-players') {
+      this.flushMenuPlayers([...new Set([player.id, ...outcome.affected])]);
+      return;
+    }
+    this.flushMenuPlayers(outcome.affected);
+    this.flushActiveTrades(outcome.affected);
+  }
+
+  private tryRestoreMenu(player: ServerPlayer): void {
+    const screen = this.menuReturn.get(player.id);
+    if (!screen) return;
+    this.menuReturn.delete(player.id);
+    this.openGameMenu(player.id, screen);
+  }
+
+  private maxHomesFor(player: ServerPlayer): number {
+    const def = Number(this.pluginConfig.get('home', 'maxHomesDefault', HOME_MAX_DEFAULT));
+    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', HOME_MAX_VIP));
+    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', HOME_MAX_PREMIUM));
+    if (this.permissions.isOperator(player.id) || this.permissions.has(player.id, 'home.*')) {
+      return Math.max(premium, vip, def);
+    }
+    let max = def;
+    if (this.permissions.has(player.id, 'home.multiple') || this.permissions.has(player.name, 'home.multiple')) {
+      max = Math.max(max, vip);
+    }
+    if (this.permissions.has(player.id, 'home.limit.premium') || this.permissions.has(player.name, 'home.limit.premium')) {
+      max = Math.max(max, premium);
+    }
+    return max;
+  }
+
+  private loadClaimStore() {
+    return migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
+  }
+
+  private saveClaimStore(store: ReturnType<WorldInstance['loadClaimStore']>): void {
+    this.pluginStore.save('claims/claims', store);
+    this.dirty = true;
+  }
+
+  private findOwnedClaim(player: ServerPlayer, claimId: string) {
+    const key = player.name.toLowerCase();
+    return this.loadClaimStore().claims.find((claim) => claim.id === claimId && (
+      claim.owner === key || this.permissions.has(player.id, 'claim.admin') || this.permissions.isOperator(player.id)
+    ));
+  }
+
+  private flushMenu(player: ServerPlayer): void {
+    this.sendTo(player, this.buildMenuMessage(player));
+  }
+
+  private flushMenuPlayers(ids: readonly string[]): void {
+    for (const id of ids) {
+      const other = this.players.get(id);
+      if (other?.connected && this.menuSessions.has(id)) this.flushMenu(other);
+    }
+  }
+
+  private flushActiveTrades(ids: readonly string[]): void {
+    for (const id of ids) {
+      const other = this.players.get(id);
+      if (!other?.connected) continue;
+      if (this.trade.sessionFor(id)) {
+        this.menuSessions.delete(id);
+        this.flushTrade(other);
+      } else if (this.menuSessions.has(id)) {
+        this.flushMenu(other);
+      }
+    }
+  }
+
+  private flushTradeResult(result: { affected?: readonly string[]; closed?: boolean }, error?: string): void {
+    for (const id of result.affected ?? []) {
+      const other = this.players.get(id);
+      if (!other?.connected) continue;
+      this.flushPlayerInventory(other);
+      this.flushTrade(other, error ? { message: error } : undefined);
+    }
+  }
+
+  private flushTrade(player: ServerPlayer, extra?: { message?: string }): void {
+    const session = this.trade.sessionFor(player.id);
+    const payload = buildTradeMessage(this.trade, player.id, player.inventory.slots, extra);
+    if (session) {
+      const partnerId = session.playerA === player.id ? session.playerB : session.playerA;
+      this.sendTo(player, {
+        ...payload,
+        partnerName: this.players.get(partnerId)?.name
+          ?? this.storedPlayers[partnerId]?.name
+          ?? this.economy.displayName(partnerId),
+        balance: this.economy.getBalance(player.id),
+      });
+      return;
+    }
+    this.sendTo(player, payload);
+  }
+
+  private buildMenuMessage(player: ServerPlayer): import('../shared/protocol').ServerMenuMessage {
+    const session = this.menuSessions.get(player.id);
+    if (!session || session.screen === 'closed') return closedMenuMessage();
+    const inClan = Boolean(this.clan.playerClan(player.id));
+    const balance = this.economy.getBalance(player.id);
+    const base = {
+      type: 'menu' as const,
+      screen: session.screen as GameMenuScreenKind,
+      title: menuTitle(session.screen as GameMenuScreenKind),
+      balance,
+      balanceLabel: formatMegacoinAmount(balance),
+      inClan,
+      ...(session.message ? { message: session.message } : {}),
+    };
+    if (session.screen === 'homes' || session.screen === 'home-delete-confirm') {
+      const homes = this.homes.list(player.name);
+      return {
+        ...base,
+        homeNameText: session.homeNameText,
+        homes: homes.map((home) => ({ name: home.name, x: home.x, y: home.y, z: home.z })),
+        homeCount: homes.length,
+        homeMax: this.maxHomesFor(player),
+        ...(session.pendingHomeName ? { pendingHomeName: session.pendingHomeName } : {}),
+      };
+    }
+    if (session.screen === 'friends' || session.screen === 'friend-delete-confirm') {
+      const state = this.friends.state(player.id);
+      const friends = this.friends.sortedFriends(player.id);
+      const requests = this.friends.incomingRequests(player.id).map((request) => ({
+        playerId: request.fromPlayerId,
+        name: this.players.get(request.fromPlayerId)?.name
+          ?? this.storedPlayers[request.fromPlayerId]?.name
+          ?? this.economy.displayName(request.fromPlayerId),
+        online: this.players.get(request.fromPlayerId)?.connected === true,
+        canTeleport: false,
+        requestId: request.requestId,
+      }));
+      return {
+        ...base,
+        allowFriendTeleport: state.allowFriendTeleport,
+        friendNameText: session.friendNameText,
+        friendRequests: requests,
+        friends,
+        friendCount: friends.length,
+        friendMax: FRIENDS_MAX,
+        ...(session.pendingFriendId ? {
+          pendingFriendId: session.pendingFriendId,
+          pendingFriendName: session.pendingFriendName,
+        } : {}),
+      };
+    }
+    if (session.screen === 'claims' || session.screen === 'claim-settings' || session.screen === 'claim-delete-confirm') {
+      const owner = player.name.toLowerCase();
+      const mine = this.loadClaimStore().claims.filter((claim) => claim.owner === owner);
+      const selected = session.claimId ? mine.find((claim) => claim.id === session.claimId) : undefined;
+      return {
+        ...base,
+        claims: mine.map(toMenuClaim),
+        claimCount: mine.length,
+        claimMax: GAME_MENU_MAX_CLAIMS,
+        ...(selected ? {
+          claimId: selected.id,
+          claimNameText: session.claimNameText,
+          claimPvp: selected.flags.pvp === true,
+          claimMembers: selected.members.map((name) => ({ name })),
+          claimMemberText: session.claimMemberText,
+        } : {}),
+        ...(session.pendingClaimName ? { pendingClaimName: session.pendingClaimName } : {}),
+      };
+    }
+    if (session.screen === 'trade') {
+      return {
+        ...base,
+        tradeNameText: session.tradeNameText,
+        tradeNearby: this.listTradeNearby(player),
+        tradeIncoming: this.trade.incomingRequests(player.id).map((request) => ({
+          playerId: request.fromPlayerId,
+          name: this.players.get(request.fromPlayerId)?.name
+            ?? this.storedPlayers[request.fromPlayerId]?.name
+            ?? this.economy.displayName(request.fromPlayerId),
+          requestId: request.requestId,
+        })),
+        tradeOutgoing: this.trade.outgoingRequests(player.id).map((request) => ({
+          playerId: request.toPlayerId,
+          name: this.players.get(request.toPlayerId)?.name
+            ?? this.storedPlayers[request.toPlayerId]?.name
+            ?? this.economy.displayName(request.toPlayerId),
+        })),
+      };
+    }
+    return base;
   }
 
   disconnect(playerId: string, persist = true, connectionId?: string): void {
@@ -913,9 +1939,27 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    player.restingBed = undefined;
+    this.gameplay.whMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
     player.sink = null;
     player.activeSocketCount = 0;
+    this.auction.closeSession(player.id);
+    this.clan.closeSession(player.id);
+    this.buyer.closeSession(player.id, player.inventory);
+    const tradeResult = this.trade.disconnect(player.id);
+    this.menuSessions.delete(player.id);
+    this.menuReturn.delete(player.id);
+    if (tradeResult.affected) {
+      for (const id of tradeResult.affected) {
+        const other = this.players.get(id);
+        if (other?.connected) {
+          this.flushPlayerInventory(other);
+          this.flushTrade(other, { message: tradeResult.error });
+        }
+      }
+    }
+    this.flushPlayerInventory(player);
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
@@ -1509,7 +2553,53 @@ export class WorldInstance {
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
+    if (player.pendingSignEdit) {
+      const { x, y, z } = player.pendingSignEdit;
+      player.pendingSignEdit = undefined;
+      if (this.world.getBlock(x, y, z, false) === BlockId.OakSign) {
+        this.sendTo(player, { type: 'sign_editor', x, y, z, lines: this.world.signText(x, y, z) ?? EMPTY_SIGN_LINES });
+      }
+    }
     return result;
+  }
+
+  updateBook(player: ServerPlayer, message: ClientBookUpdateMessage): void {
+    const draft = sanitizeBookDraft(message);
+    const selected = player.inventory.getSlot(message.slot);
+    if (!player.connected || player.survival.dead || player.selectedSlot !== message.slot
+      || selected?.itemId !== ItemId.Book || readBookContent(selected)?.locked || !draft) {
+      this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
+      return;
+    }
+    const overflow = writeBookInSlot(player.inventory, message.slot, draft, message.sign ? player.name : undefined);
+    if (overflow === undefined) {
+      this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
+      return;
+    }
+    if (overflow) this.gameplay.dropFromPlayer(player, overflow);
+    player.inventoryDirty = true;
+    this.dirty = true;
+    this.flushPlayerInventory(player);
+  }
+
+  updateSign(player: ServerPlayer, message: ClientSignUpdateMessage): void {
+    const { x, y, z } = message;
+    const lines = sanitizeSignLines(message.lines);
+    const eye = player.controller.eyePosition();
+    const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
+    if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
+      || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
+      this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
+      return;
+    }
+    const use = this.events.createPlayerInteract(player.id, x, y, z, BlockId.OakSign);
+    this.events.emit('playerInteract', use);
+    if (use.cancelled || !this.world.setSignText(x, y, z, lines)) return;
+    this.dirty = true;
+    const key = chunkKey(floorDiv(x, 16), floorDiv(z, 16));
+    for (const viewer of this.connectedPlayers()) if (viewer.knownChunks.has(key)) {
+      this.sendTo(viewer, { type: 'sign_data', x, y, z, lines });
+    }
   }
 
   pickup(player: ServerPlayer): void {
@@ -1528,6 +2618,11 @@ export class WorldInstance {
   interactHologram(player: ServerPlayer, name: string): void {
     const hologram = this.holograms.get(name);
     if (!hologram || !hologram.enabled) return;
+    const owned = this.buyer.findByHologram(name);
+    if (owned) {
+      this.interactBuyer(player, owned.id);
+      return;
+    }
     const eye = player.controller.eyePosition();
     if (!playerCanReachHologram(eye, hologram, PLAYER_NET_REACH)) return;
     if (!this.canEditHolograms(player)) {
@@ -1538,6 +2633,11 @@ export class WorldInstance {
   }
 
   updateHologramAppearance(player: ServerPlayer, message: ClientHologramUpdateMessage): void {
+    const owner = this.buyer.findByHologram(message.name);
+    if (owner || isBuyerHologramName(message.name)) {
+      this.updateBuyerHologramAppearance(player, message, owner);
+      return;
+    }
     const hologram = this.holograms.get(message.name);
     if (!hologram || !hologram.enabled) {
       this.sendTo(player, {
@@ -1564,6 +2664,49 @@ export class WorldInstance {
     this.holograms.updateAppearance(message.name, message, {
       playerYaw: player.controller.yaw,
       nowMs: Date.now(),
+    });
+  }
+
+  private updateBuyerHologramAppearance(
+    player: ServerPlayer,
+    message: ClientHologramUpdateMessage,
+    owner: BuyerRecord | undefined,
+  ): void {
+    if (!owner || owner.hologramName !== message.name.trim().toLowerCase()) {
+      this.sendBuyerHologramDenied(player);
+      return;
+    }
+    if (!this.hasBuyerPermission(player, 'buyer.edit')) {
+      this.sendBuyerHologramDenied(player);
+      return;
+    }
+    const hologram = this.holograms.get(owner.hologramName);
+    if (!hologram || !hologram.enabled) {
+      this.sendBuyerHologramDenied(player);
+      return;
+    }
+    const eye = player.controller.eyePosition();
+    if (!playerCanReachBuyer(eye, owner, PLAYER_NET_REACH)) return;
+    this.holograms.updateAppearance(owner.hologramName, message, {
+      playerYaw: player.controller.yaw,
+      nowMs: Date.now(),
+    });
+    this.buyer.captureHologramText(owner.id);
+  }
+
+  private sendBuyerHologramDenied(player: ServerPlayer): void {
+    this.sendTo(player, {
+      type: 'command_result',
+      ok: false,
+      name: 'holograms',
+      lines: ['Эта голограмма принадлежит скупщику.'],
+    });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: 'Эта голограмма принадлежит скупщику.',
+      kind: 'error',
     });
   }
 
@@ -1602,7 +2745,7 @@ export class WorldInstance {
     }
   }
 
-  handleChat(player: ServerPlayer, text: string): void {
+  handleChat(player: ServerPlayer, text: string, channel: ChatChannel = 'global'): void {
     if (text.startsWith('/')) {
       const commandEvent = this.events.createPlayerCommand(player.id, text);
       this.events.emit('playerCommand', commandEvent);
@@ -1647,7 +2790,70 @@ export class WorldInstance {
       this.flushBlockChanges();
       return;
     }
-    this.broadcastChat('player', player.id, text, player.name);
+    const trimmed = text.replace(/\s+$/g, '');
+    if (!trimmed) return;
+    if (trimmed.length > MAX_CHAT_LENGTH) {
+      this.sendChatError(player, CHAT_TOO_LONG_ERROR);
+      return;
+    }
+    const recipients = this.chatRecipients(player, channel);
+    if (!recipients) return;
+    this.deliverPlayerChat(player, trimmed, channel, recipients);
+  }
+
+  sendChatError(player: ServerPlayer, text: string): void {
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text,
+      kind: 'error',
+    });
+  }
+
+  private chatRecipients(sender: ServerPlayer, channel: ChatChannel): ServerPlayer[] | undefined {
+    if (channel === 'global') return this.connectedPlayers();
+    if (channel === 'nearby') {
+      const origin = sender.controller.position;
+      return this.connectedPlayers().filter((other) => isWithinNearbyChatRange(
+        origin.x,
+        origin.y,
+        origin.z,
+        other.controller.position.x,
+        other.controller.position.y,
+        other.controller.position.z,
+      ));
+    }
+    const clan = this.clan.playerClan(sender.id);
+    if (!clan) {
+      this.sendChatError(sender, CHAT_NO_CLAN_HINT);
+      return undefined;
+    }
+    const members = new Set(clan.memberIds);
+    return this.connectedPlayers().filter((other) => members.has(other.id));
+  }
+
+  private deliverPlayerChat(
+    sender: ServerPlayer,
+    text: string,
+    channel: ChatChannel,
+    recipients: ServerPlayer[],
+  ): void {
+    const payload: ServerChatMessage = {
+      type: 'chat',
+      messageId: crypto.randomUUID(),
+      from: sender.name,
+      playerId: sender.id,
+      text,
+      kind: 'player',
+      channel,
+    };
+    const seen = new Set<string>();
+    for (const target of recipients) {
+      if (seen.has(target.id)) continue;
+      seen.add(target.id);
+      this.sendTo(target, payload);
+    }
   }
 
   setView(player: ServerPlayer, cx: number, cz: number, radius: number): void {
@@ -1872,7 +3078,33 @@ export class WorldInstance {
       this.snapshotsSent += 1;
     }
     this.resetInputPacketCounters();
+    for (const player of this.players.values()) {
+      if (player.totemActivated) {
+        this.gameplay.whMarks.clearTarget(player.id);
+        const position = player.controller.position;
+        const x = position.x;
+        const y = position.y + 1;
+        const z = position.z;
+        this.gameplay.emitWorldSound('totem.activate', x, y, z);
+        const packet = { type: 'totem_activate' as const, playerId: player.id, x, y, z };
+        for (const listener of this.connectedPlayers()) {
+          if (listenerHearsWorldSound(listener.controller.position, packet, TOTEM_PRESENTATION_DISTANCE)) {
+            this.sendTo(listener, packet);
+          }
+        }
+        player.totemActivated = false;
+      }
+      if (!player.connected || player.survival.dead) this.gameplay.whMarks.clearPlayer(player.id);
+    }
     for (const player of this.connectedPlayers()) {
+      this.sendTo(player, {
+        type: 'wh_marks',
+        targetIds: this.gameplay.whMarks.forViewer(player.id, this.world.tickNumber)
+          .filter((id) => {
+            const target = this.players.get(id);
+            return target?.connected && !target.survival.dead;
+          }),
+      });
       this.sendTo(player, {
         type: 'entity_snapshot',
         tick: this.tickNumber,
@@ -2037,6 +3269,7 @@ export class WorldInstance {
         }
       }
       if (player.survival.dead) {
+        player.restingBed = undefined;
         player.controller.velocity.set(0, 0, 0);
         this.flushHealthIfDeadThenRespawn(player);
         const position = player.controller.position;
@@ -2057,7 +3290,19 @@ export class WorldInstance {
         continue;
       }
       const input = player.lastInput;
-      const jump = input.jump;
+      let exitedRest = false;
+      if (player.restingBed) {
+        const rest = player.restingBed;
+        if (!isBedRestValid(this.world, rest) || command?.jump === true) {
+          player.restingBed = undefined;
+          player.controller.teleport(bedExitPosition(this.world, rest));
+          exitedRest = true;
+          player.lastInput = { ...player.lastInput, jump: false };
+        } else {
+          player.controller.velocity.set(0, 0, 0);
+        }
+      }
+      const jump = input.jump && !exitedRest;
       const using = input.use === true;
       const heldItemId = player.inventory.getSlot(player.selectedSlot)?.itemId;
       const movement = movementDuringItemUse({
@@ -2072,7 +3317,7 @@ export class WorldInstance {
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
-      player.controller.tick(this.world, {
+      if (!player.restingBed) player.controller.tick(this.world, {
         yaw: input.yaw,
         pitch: input.pitch,
         locomotion: !riding,
@@ -2132,9 +3377,9 @@ export class WorldInstance {
       this.gameplay.advanceUseHold(player, using, player.appliedCommandSeq, player.selectedSlot);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
-        forward: riding ? 0 : input.forward,
-        right: riding ? 0 : input.right,
-        jump: riding ? false : jump,
+        forward: riding || player.restingBed ? 0 : input.forward,
+        right: riding || player.restingBed ? 0 : input.right,
+        jump: riding || player.restingBed ? false : jump,
         sneak: input.sneak,
         descend: input.descend === true,
         flySprint: input.flySprint === true,
@@ -2345,7 +3590,9 @@ export class WorldInstance {
   }
 
   respawn(player: ServerPlayer): boolean {
-    return this.gameplay.respawnPlayer(player);
+    const respawned = this.gameplay.respawnPlayer(player);
+    if (respawned) player.restingBed = undefined;
+    return respawned;
   }
 
   private flushHealth(player: ServerPlayer): void {
@@ -2426,7 +3673,7 @@ export class WorldInstance {
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
           const mods = this.world.serializeChunkModifications(x, z);
-          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods });
+          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
           this.lastChunkSends += 1;
         }
       }
@@ -2496,10 +3743,13 @@ export class WorldInstance {
         x: player.controller.position.x,
         y: player.controller.position.y,
         z: player.controller.position.z,
+        yaw: player.controller.yaw,
+        pitch: player.controller.pitch,
       }),
       snapshot: () => player.snapshot(),
       teleport: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        player.restingBed = undefined;
         player.controller.teleport([x, y, z]);
         return true;
       },

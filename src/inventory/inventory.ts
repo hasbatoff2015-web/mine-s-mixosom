@@ -32,7 +32,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function parseStack(value: unknown): ItemStack | null {
+export function parseSerializedItemStack(value: unknown): ItemStack | null {
   value = migrateLegacyStack(value);
   if (value === null) return null;
   if (!isRecord(value) || typeof value.itemId !== 'string' || typeof value.count !== 'number') {
@@ -310,12 +310,12 @@ export class Inventory {
     }
 
     const inventory = new Inventory();
-    value.slots.forEach((stack, index) => inventory.setSlot(index, parseStack(stack)));
+    value.slots.forEach((stack, index) => inventory.setSlot(index, parseSerializedItemStack(stack)));
     for (const slot of ARMOR_SLOTS) {
       if (!(slot in value.armor)) throw new TypeError(`Serialized inventory is missing armor slot ${slot}`);
-      inventory.setSlot({ section: 'armor', slot }, parseStack(value.armor[slot]));
+      inventory.setSlot({ section: 'armor', slot }, parseSerializedItemStack(value.armor[slot]));
     }
-    inventory.setSlot({ section: 'offhand' }, parseStack(value.offhand));
+    inventory.setSlot({ section: 'offhand' }, parseSerializedItemStack(value.offhand));
     return inventory;
   }
 

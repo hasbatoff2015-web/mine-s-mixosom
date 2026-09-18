@@ -1,14 +1,304 @@
 # Состояние проекта
 
+## Последний проход: merge current main into entity-special-visual-fixes — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` синхронизирована с `origin/main` через `--no-ff --no-commit` semantic union. OakSign остаётся **165**; generic unknown-block compat (`65534`) сохранён. Feature history не переписывалась, `main` не менялся.
+- Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
 ## Последний проход: special blocks, mob presentation, skeleton projectile routing — 2026-09-10
 
-- Ветка `codex/entity-special-visual-fixes` создана от `e4d43ff3`; main не менялся и merge/rebase не выполнялись. Четыре implementation commits завершаются SHA `5f86c29`; подробности — `docs/reports/2026-09-10_entity-special-visual-fixes.md`.
+- Ветка `codex/entity-special-visual-fixes` создана от `e4d43ff3`. Четыре implementation commits завершаются SHA `5f86c29`; подробности — `docs/reports/2026-09-10_entity-special-visual-fixes.md`.
 - Torch/redstone torch используют отдельные authored side/top/bottom UV для одного и того же floor/four-wall transform. Lantern получил читаемые standing/hanging body/cap/hanger/chain parts на authored atlas regions без изменения light/placement gameplay.
 - Rail world/held rendering отделён от collision/selection `railLocalBoxes`: десять `RailShape` рисуются одной тонкой double-sided surface, четыре ascending формы реально наклонены, четыре curve формы используют `block/rail_corner`. `railPath` разрешает форму по живым соседям, а не по stale default state.
-- Chicken остаётся двухногим legacy rig: обе ноги имеют отдельные pivots и противоположный gait, а explicit per-face UV remap использует непрозрачные области фактического 128×64 sheet. Skeleton получает один cached `ItemVisualFactory` bow на hand anchor и отдельную ranged pose.
+- Chicken остаётся двухногим legacy rig main: обе ноги grounded, opposite gait, UV island `[29, 0]` вместо прозрачного `[26, 0]`. Skeleton получает один cached `ItemVisualFactory` bow на hand anchor и отдельную ranged pose.
 - Skeleton projectile simulation принимает все living/targetable player foci со stable id, ищет ближайшее swept-segment попадание по каноническому player AABB, сравнивает его с block distance и передаёт точный `targetPlayerId`; серверный nearest-player fallback удалён. Singleplayer использует стабильный `local-player` id.
 - Third-person held item pose отделена от first-person профилей на категории sword/tool/bow/generic/block. Bow arms используют `π/2 + viewPitch` с однократной компенсацией sneak parent, поэтому положительный pitch визуально направляет руки вверх.
-- QA: 116/116 targeted tests; root/sim/client/server typecheck, import boundaries, sim/server smoke, production build, size/archive — green. Full run без известного зависающего `fire-contact-sunlight-minecart.test.ts`: 2014/2029; последовательный retry первоначально упавших файлов: 89/92. Остались прежние два worldgen timeout, `server/tick-load-flight` (117 ms > 80 ms) и parser failure старого `minecraft-reference-extractor.test.mjs`; связанные persistence/TNT-minecart/lighting/fluid tests на retry green.
+- Arrow visuals: local `visualDirection` = movement segment этого tick; embed/network используют current main `impactVx/Y/Z` + `state: embedded`. Старые `visualVx` поля не возвращены.
+
+## Последний проход: Merge Utility Items V1 into current main — 2026-09-18
+
+- Integration branch `merge/utility-items-v1` от `origin/main@ef619a9` + `origin/codex/utility-items-v1@475acc6`, без rebase/force-push feature. OakSign остаётся **165** и теперь known; generic unknown-block compat сохранён для прочих Uint16 (например 65534). Semantic union: registry lookup + Utility blocks, World restore + signs, protocol menu/trade/book/sign/totem, WorldInstance occupancy/Totem + menu/friends/trade, Game/GameUI modern chrome + Utility HUD.
+- Гейты: 165/unknown **29/29**; Utility+menu focused 219 PASS; chat-layout 4 CRLF host failures (как на main). Typechecks, boundaries, build, size/archive PASS (**4.74 MiB / 403 files**). Full Vitest 245/252 files; isolated lighting/import PASS.
+- Подробности: `docs/reports/2026-09-18_merge-utility-items-v1.md`.
+
+## Последний проход: Totem particle spread / quieter sound — 2026-09-18
+
+- Ветка `codex/utility-items-v1`: burst Totem остаётся authoritative presentation. Count `28 → 48`, Points size `0.08 → 0.05`, spawn radius без изменений, скорость `1.15/1.55 → 2.3/3.1` (~×2 разлёт), чуть сильнее upward impulse. Lifetime 0.55–0.9 с и palette без изменений.
+- `totem.activate` catalog volume `0.45 → 0.225`; `startOffsetSeconds = 0.7` сохранён. AudioManager, HUD, occupancy, icons не менялись.
+- Гейты: focused **3 files / 50 tests PASS**; `typecheck` / client / server, boundaries, build, size/archive PASS (**4.39 MiB / 368 files**). Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_totem-particle-spread-volume.md`. `main` не менялся.
+
+## Последний проход: Bed occupancy / Totem particles / utility icons — 2026-09-18
+
+- Ветка `codex/utility-items-v1` (без merge/rebase `main`): одна физическая кровать занимает не больше одного игрока. Occupancy выводится из `ServerPlayer.restingBed` и канонической HEAD-клетки (`isSameBed` / `findBedOccupant`); отдельной occupancy map нет. Занятая кровать даёт authoritative `action_result` `occupied` и toast «Кровать занята». Disconnect/death/respawn/exit/broken bed по-прежнему снимают `restingBed`.
+- После реальной authoritative Totem activation `totem_activate` несёт `playerId` и позицию и рассылается nearby клиентам (радиус 32, независимо от audio). Owner включает HUD, все получатели спавнят короткий `TotemParticles` burst (~28, 0.55–0.9 с, lime/green/gold). FireworkVisuals и AudioManager не менялись; клиент не предсказывает particles от HP.
+- Иконки: White Bed — 3D `special_preview` из `entity/bed/white`; Oak Door и Sugar Cane — flat `item/oak_door` / `item/sugar_cane` с `preserveAspect`; Farmland — низкий 3D block, top ≠ side, высота 15/16.
+- Гейты: focused occupancy/totem/icon **6 files / 81 tests PASS**; четыре typecheck, boundaries, build, size/archive PASS (**4.39 MiB / 368 files**). Full Vitest на этой ветке не green (известные host timeouts/CRLF/tick-load). Live two-client QA не выполнялся. Подробности: `docs/reports/2026-09-18_utility-bed-occupancy-totem-particles-icons.md`. `main` не менялся.
+
+## Последний проход: Utility Items final polish — 2026-09-15
+
+- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая F5-перспектива не переписывается, F5 в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
+- Только `totem.activate`: catalog volume `0.9 → 0.45`; optional `startOffsetSeconds = 0.7` передаётся через `named()` в `AudioBufferSourceNode.start(0, 0.7)`, чтобы сразу начать после тишины внутри MP3. Остальные события используют `start(0)`; короткий/невалидный buffer тоже безопасно использует `start(0)`. Combat voice policy, retry и один authoritative `world_sound` не менялись.
+- HUD offhand отделён от центрированного hotbar: CSS gap `8 → 20px` (сдвиг влево на 12 CSS px). Браузерные измерения при 1280×720, 1920×1080, 2560×1440, 960×600 подтвердили центр hotbar и 20px gap. Browser Audio QA: 27/27 decoded, volume 0.45, один `recentPlays`, без drops. Relevant tests 123/123, sim 66/66, typechecks/build/checks PASS; full Vitest 234/238 files, 2289/2297 tests и один worker timeout — не green (известные extractor/CRLF/fire timeout/tick-load failures). Интерактивный bed/PvP QA в in-app browser ограничен недоступным pointer lock; 10 двухклиентных активаций со слуховой проверкой не выполнены. Детали: `docs/reports/2026-09-15_utility-items-final-polish.md`.
+
+## Последний проход: Utility Items bed pose / Totem audio admission — 2026-09-15
+
+- В `codex/utility-items-v1` rest-поза `PlayerVisual` развёрнута лицом вверх: канонический front `-Z` теперь смотрит в `+Y` для north/east/south/west, поворот yaw сохраняет голову у подушки. `restPoseRoot` смещён вниз только визуально на `0.125` блока для контакта торса с матрасом; gameplay anchor `bedRestPosition = y + 0.81` и протокол не менялись. При выходе rotation и position rest-root обнуляются. Браузерный `/?qaBed=1&pose=1&facing=north|east|south|west` проверен; Slim с бронёй, mainhand и offhand тоже показан.
+- `AudioManager` допускает вытеснение голоса внутри насыщенного bus, только если новый event строго приоритетнее самого слабого голоса этого bus. Это пропускает Totem priority 9 после `player.hurt` 8 и `combat.hit` 7 при лимите combat 2 без второго `world_sound`. HTTP 404/410 и явно испорченный decode остаются permanent; network/5xx и временный decode сбой получают ограниченный backoff и повторную попытку при следующем play. `recentDrops` показывает admission/context/asset причину; `missingFiles` теперь содержит только permanent ошибки.
+- Regression owner/nearby, bed contact/reset, Classic/Slim, typechecks, boundaries, build, size/archive и smoke пройдены. Full Vitest: **233/238 files, 2275/2293 tests**, известные extractor/CRLF/timing/load failures; не green. Реальная двухклиентная серия 10+5 Totem со слуховым подтверждением **не выполнена**; до неё аудио нельзя считать принятым. Подробности: `docs/reports/2026-09-15_utility-bed-pose-totem-audio.md`.
+
+## Последний проход: Utility Items bed rest / Sign post / SFX race / Book — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: RMB по любой половине корректной White Bed укладывает игрока вдоль кровати, с головой у подушки; Space выводит на свободную клетку сбоку. Сон не меняет время, spawnPoint/home и не открывает отдельный экран. Singleplayer и серверный Anarchy используют общий `src/world/bed.ts`; сервер хранит `ServerPlayer.restingBed`, посылает `presentation.bedRest`, а клиент останавливает локальное предсказание перемещения до авторитетного выхода. Смерть, разрыв кровати, телепорт, respawn, disconnect и закрытие мира снимают rest.
+- У напольной Oak Sign стойка доходит только до нижней грани доски; боковой UV обрезан по фактической высоте, внутренние торцевые грани удалены. Wall Sign и текст не менялись. `/?qaSign=1` проверен в браузере в прямом и повёрнутом виде.
+- `AudioManager` теперь дедуплицирует fetch/decode каждого файла и откладывает только конкретный one-shot до готовности буфера; перед стартом заново проверяет mute/pause/volume, дистанцию и лимит голосов. Первый звук до `preload()` больше не теряется. Авторитетная доставка `world_sound` и HUD-only `totem_activate` не менялись.
+- Book открывается в Singleplayer и Anarchy при RMB, если цель не интерактивный блок. В редакторе есть страницы, Done для черновика и отдельное подтверждение Sign; подписанная книга показывает title/author и только чтение. `book_update.sign` — намерение клиента; автором и блокировкой управляет сервер из authenticated player name. Лимиты 32×1024/64 и выбранный слот сохранены.
+- Проверки, ручной QA и ограничения: `docs/reports/2026-09-14_utility-items-bed-rest-sign-audio-book.md`. `main` не менялся.
+
+## Последний проход: Utility Items bed/sign/Totem/firework follow-up — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: поворот UV верхней грани head-half исправлен; подушка теперь у внешнего края изголовья при всех четырёх направлениях, без изменений bed placement/collision/drop. Dev-сцена `/?qaBed=1` проверена в браузере.
+- Полный `128×64` `entity/sign.png` зарегистрирован в mip-safe `TextureAtlas`. `ChunkMesher` использует отдельные UV доски (front/back/top/bottom/edges) и стойки из sign sheet; wall sign без стойки. `SignRenderer` выравнивает текст по новой передней грани. Dev-сцена `/?qaSign=1` проверена на standing/wall и поворотах, без magenta fallback.
+- Totem отображается в выбранной основной руке локально и у других игроков; защита от смерти потребляет **только** `Inventory.offhand` в Singleplayer и на сервере. Когда Totem в обеих руках, основной остаётся. HUD-анимация и server-authoritative `world_sound` сохранены.
+- Визуальный burst Firework содержит 70 белых и 18 равномерно размещённых частиц одного случайного насыщенного акцента. URL rocket image берётся из `TextureAtlas.url`.
+- Браузерный `/?qaAudio=1` подтвердил HTTP 200, декодирование MP3, 27/27 буферов, отсутствие missing files/events и `AudioBufferSource` после разбора тестового `world_sound` пакета (`contextState: running`, `recentPlays: totem.activate`). Серверный тест подтверждает доставку одному владельцу и одному соседу, но реальный двухклиентный слуховой тест остаётся открытым; причину жалобы в живой сессии локально воспроизвести не удалось. URL SFX теперь явно учитывает Vite `BASE_URL`.
+- Подробности и checklist: `docs/reports/2026-09-14_utility-items-sign-pillow-totem-firework.md`. `main` не менялся.
+
+## Последний проход: Utility Items texture, offhand, SFX QA — 2026-09-14
+
+- Ветка `codex/utility-items-v1`: White Bed использует реальный `128×128` entity sheet в `TextureAtlas` без обрезки до `32×32`. `bedVisualParts` задаёт UV каждого видимого face для head/foot body и четырёх ножек; деревянная рама и торцы берутся из sheet, а не из отдельного `oak_planks` cuboid. Dev-сцена `/?qaBed=1` показала цельную белую кровать без magenta fallback.
+- Каждый burst фейерверка выбирает один насыщенный акцент из шести; 70 частиц белые, 18 окрашены в выбранный акцент, общий `PointsMaterial` без additive washout. 20 TPS столкновения/тайминг и лимиты 32/512 не менялись.
+- Серверный `PlayerPresentationState.offhandItemId` отражает `Inventory.offhand`. `RemotePlayerView` отображает Totem на левой руке канонического `PlayerVisual`; выбранный Totem также виден в основной руке и first-person. Очистка при снятии и Classic/Slim pivot покрыты тестом.
+- При серверном срабатывании Totem `WorldInstance` отправляет одно `world_sound` из позиции игрока всем слушателям в 32 блоках, включая владельца; отдельный `totem_activate` оставлен только для HUD-анимации. Каталог использует предоставленный `totem-sound.mp3`, старый процедурный WAV удалён; Singleplayer играет новый звук локально один раз.
+- Проверки и ограничения: `docs/reports/2026-09-14_utility-items-bed-offhand-sfx.md`. `main` не менялся.
+
+## Последний проход: Utility Items live QA fixes — 2026-09-14
+
+- В `codex/utility-items-v1` исправлены обнаруженные причины проблем: Firework столкновение и плавное отображение между 20 TPS снапшотами, крупный многоцветный burst; одиночный WH-контур только по base skin с пересборкой при Classic/Slim; точное направление застрявшей сетевой стрелы.
+- Публичное имя стрелы унифицировано как WH в item id, протоколе, ресурсах, коде и тестах. Alias для прежнего имени не введён. Bed получил отдельную head/foot геометрию с поворотом и sheet UV; генерация Cane выбирает настоящий водный берег и ограничена одной стойкой на береговой chunk.
+- Существующий offhand показан слева от hotbar и в inventory; Totem получил увеличенную анимацию с искрами и собственный процедурный звук. 20 TPS, authoritativeness Anarchy и skin depth policy сохранены.
+- Проверки, причины, ручной QA checklist и ограничения: `docs/reports/2026-09-14_utility-items-live-qa-fixes.md`.
+
+## Последний проход: Utility Items V1 — 2026-09-13
+
+- Ветка `codex/utility-items-v1` от `main@1c802ab`: Paper/Sugar Cane, редактируемая Book, Oak Sign, декоративная двухблочная White Bed, Milk Bucket, Firework Rocket Flight 1–3, приватная WH Arrow и Totem of Undying.
+- Shared simulation остаётся Node-safe. Bed ставится/ломается как две части с одним дропом; использование **не меняет spawnPoint/home и не пропускает время** и теперь позволяет только лежать до Space/инвалидации. Sign text — `VoxelWorld.signs` в world save, book pages — `ItemStack.metadata.book` в обычном inventory/save/auction path.
+- Firework — временная серверная сущность 20 TPS, без урона и permanent save; WH проходит существующий bow release/arrow hit pipeline, а метки хранятся в server-only `WhMarks` и отправляются только своему viewer. Milk и Totem очищают эффекты и метки цели; Totem перехватывает летальный урон до `dead`/drop.
+- Totem доступен через Creative/admin/test. Покупка у trader отложена: полноценной trader-системы в текущем коде нет; Buyer NPC — это скупщик, не продавец.
+- Focused tests: `tests/utility-items.test.ts` и `tests/server/utility-items-authority.test.ts`. Полная проверка и ограничения описаны в `docs/reports/2026-09-13_utility-items-v1.md`.
+## Последний проход: Pause heading off + Creative graphite tabs — 2026-09-17
+
+- Pause overlay больше не показывает «ИГРА НА ПАУЗЕ» / «Пауза». Остаются только Продолжить / Настройки / Сохранить и выйти; отступы карточки сжаты, кнопки по центру по вертикали. Живой мир под overlay и graphite-кнопки без изменений.
+- Creative: вкладки «Каталог» / «Инвентарь» в graphite (`--mc-btn-face` / `--mc-btn-pressed`). Native scrollbar каталога скрыт; 9 колонок слотов, wheel и `touch-action: pan-y` сохранены.
+- Handoff: `docs/reports/2026-09-17_pause-heading-creative-tabs.md`.
+
+## Последний проход: Pause overlay + larger HUD/chat/pause buttons — 2026-09-17
+
+- TAB Pause — overlay поверх живого `#game-canvas`, без `frontier-menu-background.png` и без `menu-screen`/`submenu-screen`. Симуляция по-прежнему `PAUSED`. Resume возвращает тот же мир.
+- Chat PNG (вкладки, Enter, X, ON/OFF) увеличены ~2×. HUD Pause/Chat/Menu — 76 logical px (на ~35% меньше промежуточных 116). Кнопки паузы крупнее, graphite сохранён.
+- Handoff: `docs/reports/2026-09-17_pause-overlay-larger-buttons.md`.
+
+## Предыдущий проход: Menu coin asset + chat PNG sprites — 2026-09-17
+
+- Main Menu: `public/ui/menu/icon_coin.png` заменён на приложенный ассет (padded 128×128). `.mc-menu-coin-wrap` 16 logical px, `object-fit: contain`, без pixelated, без обрезки; текст «Баланс: … монет» не менялся.
+- Чат: кнопки Общий / Рядом / Клан, X+E, Chat ON/OFF, Enter — PNG из `public/ui/chat/` через `chatChromeStyle()`. Не CSS-bevel. Active-вкладка полная яркость, остальные `brightness(0.72)`. Пропорции через `aspect-ratio` + `background-size: contain`.
+- Серверная логика Chat / Trade / Homes не трогалась.
+- Handoff: `docs/reports/2026-09-17_menu-coin-chat-sprites.md`.
+
+## Предыдущий проход: Trade coins, chat chrome, homes 3, menu coin — 2026-09-17
+
+- Trade snapshot отдаёт **обе** суммы: `money`/`moneyText` (свои) и `partnerMoney`/`partnerMoneyText` (партнёр, только с сервера). GUI показывает «Монет:» у каждой доски. Ready по-прежнему сбрасывается при `set_money`.
+- Открытый чат: у `#chat.open #chat-log` нет панельного фона; строки `.chat-line` сохраняют читаемость.
+- Обычный игрок: `HOME_MAX_DEFAULT = 3` — единый лимит для `/sethome`, меню и GUI `Мои дома (n/3)`.
+- Handoff: `docs/reports/2026-09-17_trade-chat-homes-menu.md`.
+
+## Последний проход: Unknown-block save load compat — 2026-09-17
+
+- Загрузка мира с незарегистрированным voxel ID (включая **165**) больше не падает. Placeholder по-прежнему runtime-only: ID в save/chunk не переписывается, в `BLOCK_REGISTRY` не добавляется.
+- Предыдущий compat не срабатывал на JSON-строке `"165"` (`Number.isInteger("165") === false` → `RangeError`). `getBlockDefinition` / restore теперь нормализуют storable Uint16.
+- Регрессия: `IdbWorldStore` + `FsWorldStore`/`WorldInstance.initialize` с ID 165. Handoff: `docs/reports/2026-09-17_unknown-block-save-load.md`.
+
+## Последний проход: Unified in-game UI chrome — 2026-09-16
+
+- Все inventory-style окна (меню, инвентарь, крафт, аукцион, клан, скупщик, обмен) используют один graphite chrome: тёмная панель, bevel-кнопки, `closeButtonHtml()` + close/back sprites, общие состояния online/offline/danger/positive.
+- Friends/Trade layout ближе к референсу (статус-точки, toggle, Телепорт только при `canTeleport`, nearby 20 блоков).
+- Handoff: `docs/reports/2026-09-16_ui-redesign.md`.
+
+## Последний проход: Merge unknown-block compat into menu visual — 2026-09-16
+
+- Обычный merge `cursor/unknown-block-compat-31b4` (PR #90) в `cursor/main-menu-visual-31b4` (`d3801a1`). Визуал Main Menu сохранён.
+- Незарегистрированный voxel ID (например 165) больше не роняет загрузку. Handoff: `docs/reports/2026-09-16_merge-unknown-block-into-menu-visual.md`.
+
+## Последний проход: Main Menu visual restyle — 2026-09-16
+
+- In-game Main Menu is a compact dark inventory-style panel (not fullscreen): «Меню», live `EconomyService` balance, 4+3 icon tiles, graphite buttons, pixel-art assets in `public/ui/menu/`.
+- Nested menu tabs (homes/friends/clans/claims/trade/auction) and the trade session overlay share the same dark chrome. `closeButtonHtml()`, back, and server Friends/Trade/Homes/Claims/Clan/Auction logic are unchanged.
+- HUD Pause/Chat/Menu use the provided sprite sheets (TAB / T / M stay in the DOM).
+- Handoff: `docs/reports/2026-09-16_main-menu-visual.md`.
+
+## Последний проход: Unknown block load compat — 2026-09-16
+
+- Сохранённый voxel ID, которого нет в `BLOCK_REGISTRY` (например 165 с другой ветки), больше не роняет загрузку через `RangeError: Unknown block id`.
+- ID остаётся в `modifications` / `Uint16` чанка. Placeholder только для runtime (solid cube, текстура камня, unbreakable) и **не** регистрируется как настоящий блок.
+- Handoff: `docs/reports/2026-09-16_unknown-block-load-compat.md`.
+
+## Последний проход: Main Menu + Friends + Trade — 2026-09-16
+
+- HUD справа сверху: Пауза (TAB), Чат (T), Меню (M). Существующие Pause/Chat не дублировались.
+- Главное меню inventory-style: Спавн, Дома, Друзья, Кланы, Приваты, Обмен, Аукцион. Закрытие — общий `closeButtonHtml()` (красный X + E внутри). ← возвращает на предыдущую страницу.
+- Дома: `HomeService` (max 3 для обычного игрока, уникальные имена, yaw/pitch). Команды `/home` `/sethome` `/homes` `/delhome` сохранены.
+- Друзья: новый `FriendsService` (взаимные, 50, заявки, `allowFriendTeleport` по умолчанию выкл.).
+- Обмен: серверный `TradeService` (6 слотов, предметы снимаются из инвентаря, Ready сбрасывается при изменении оффера, двойной Accept, атомарно, lock, отмена/X/E/disconnect возвращает вещи).
+- Кланы/аукцион из меню открывают существующие GUI с `source: 'menu'` и ← назад в хаб.
+- Handoff: `docs/reports/2026-09-16_main-menu-friends-trade.md`.
+
+## Последний проход: Crafting UI merged into main — 2026-09-13
+
+- PR #88 влит в `main` обычным `--no-ff`: merge commit `7e8b928`. История не переписывалась.
+- Перед merge `origin/main` был на `1c802ab` (Chat channels); новых commit'ов товарища не было, extra merge main → feature не понадобился, конфликтов не было.
+- Сохранены Chat / Buyer / Auction House / Economy / Worldgen V2 / Clan вместе с dedicated craft menu.
+- Handoff: `docs/reports/2026-09-13_crafting-ui-main-merge.md`.
+
+## Последний проход: Close X inner E — 2026-09-13
+
+- Кнопка закрытия inventory-style UI чуть крупнее (20 logical px), квадратная.
+- Крупный красный × и небольшая белая **E** в правом нижнем углу **внутри** кнопки. Снаружи текста E нет.
+- Тот же `closeButtonHtml()` на inventory / craft / auction / buyer / clan. Clan ← и chat X без E.
+- Handoff: `docs/reports/2026-09-13_close-button-inner-e.md`.
+
+## Последний проход: Crafting list bands + search contrast — 2026-09-13
+
+- Список крафта: доступные → есть рецепт, но не хватает ресурсов → предметы без рецепта в самом конце. Внутри групп прежний порядок. Пересортировка после крафта.
+- Поле поиска меню крафта светлее (`#8b8b8b`, тёмный текст, читаемый placeholder), как слоты inventory UI.
+- Handoff: `docs/reports/2026-09-13_crafting-ui-ux.md`.
+
+## Последний проход: Crafting UI UX patch — 2026-09-13
+
+- Кнопка закрытия квадратная: красный × и белая E внутри кнопки (см. поздний патч inner E).
+- Список крафта: сначала доступные рецепты, затем остальные; внутри групп прежний порядок. Пересортировка после каждого крафта.
+- Кнопка «Крафт» в инвентаре ~в 2 раза меньше (32 logical px). Подпись русская: «Крафт».
+- Панель меню крафта реально 256 logical px (раньше CSS оставлял 176) — последняя колонка больше не обрезается. Scrollbar скрыт, wheel и touch pan-y работают.
+- Handoff: `docs/reports/2026-09-13_crafting-ui-ux.md`.
+
+## Последний проход: Crafting UI overhaul — 2026-09-12
+
+- Survival inventory больше не показывает 2×2 grid и книгу рецептов. Справа от брони — большая квадратная кнопка CRAFT с иконкой верстака; клик открывает отдельное меню крафта.
+- Меню крафта в inventory chrome (`mc-backdrop` / `mc-stage` / `mc-panel` / `mc-slot`): слева все obtainable предметы с поиском по имени, справа деталь выбранного. Зелёная подсветка только если рецепт есть и хватает всех ингредиентов на один крафт.
+- Один клик CRAFT = один `recipeId` (выход как в `CRAFTING_RECIPES`). Нет выбора количества. Меню остаётся открытым. Полный инвентарь — атомарный отказ, toast «Инвентарь заполнен.», без drop на землю.
+- Серверный intent `inventory_action` / `craft_recipe` несёт только `recipeId`. Старый `recipe` + click `result` сохранён для верстака 3×3.
+- Кнопка закрытия inventory-style UI: красный × и подпись **E** под ним. Clan ← (`.mc-back`) без подписи E.
+- Handoff: `docs/reports/2026-09-12_crafting-ui.md`.
+
+## Последний проход: Chat log text size — 2026-09-12
+
+- Текст строк `.chat-line` — `23px` × `--hud-scale` (между прежними 18px и 27px). Input, вкладки и кнопки не менялись.
+- Формат `player: сообщение`, Nearby/Clan полоски и серверные каналы без изменений.
+
+## Последний проход: Chat fullscreen transparent — 2026-09-12
+
+- Открытый чат растягивается на всю ширину HUD (`top/left/right: 0` equivalent): input слева, ENTER / X / CHAT ON-OFF у правого края.
+- Фон message area **transparent**; сами строки без изменений. Glyph **X** красный (`#ff3b3b`), подпись TAB белая.
+- Закрытое состояние по-прежнему top-left и `width: fit-content`, без полноэкранной пустой рамки.
+- Серверные каналы не менялись.
+- Handoff: `docs/reports/2026-09-12_chat-fullscreen.md`.
+
+## Последний проход: Chat layout top-left — 2026-09-12
+
+- Чат закреплён в **левом верхнем углу** (open и closed). Нижняя привязка к hotbar убрана.
+- Открытый message log имеет фиксированную высоту `--chat-open-log-height`; 5 vs 40 сообщений и смена вкладок не двигают input/tabs.
+- Крупные кнопки ENTER / TAB / CHAT ON|OFF справа. Native scrollbar скрыт, wheel и touch pan-y сохранены.
+- Серверные каналы Global / Nearby / Clan не менялись.
+- Handoff: `docs/reports/2026-09-12_chat-layout.md`.
+
+## Последний проход: Chat channels (Global / Nearby / Clan) — 2026-09-12
+
+- Существующий чат расширен, второй ChatLog / протокол / ClanService не добавлялись.
+- **T** открывает чат на вкладке «Общий» и фокусирует ввод. **Enter** отправляет и оставляет чат открытым. **Tab** и **X** закрывают чат и отбрасывают неотправленный текст.
+- Три канала: Global (все подключённые), Nearby (сервер, 3D `distance <= 20`), Clan (`ClanService.playerClan` в момент отправки).
+- Вкладка «Общий» агрегирует полученные Global + Nearby + Clan без дублей одного `messageId`. Nearby — жёлтая полоска, Clan — фиолетовая.
+- Лимит 128 символов на сервере (reject, не silent truncate). История с момента подключения, до ~40 сообщений на вкладку, без persist между рестартами.
+- Handoff: `docs/reports/2026-09-12_chat-channels.md`.
+
+## Последний проход: Buyer System merged into main — 2026-09-12
+
+- PR #86 влит в `main` обычным `--no-ff`: merge commit `c4d0ca6`. История не переписывалась.
+- Перед merge `origin/main` был на `5492846` (Clan System); новых commit'ов товарища не было, extra merge main → buyer не понадобился, конфликтов не было.
+- Сохранены Auction House / Economy, Worldgen V2, Clan System и Buyer NPCs (hologram editor, новый `buyer_merchant` PNG). Live visual QA нового скина отложена.
+- Гейты перед merge: `test:server` 45/470, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-12_buyer-system-main-merge.md`.
+
+## Последний проход: Buyer merchant skin cache-bust — 2026-09-12
+
+- Ручной тест показывал старого зелёно-чёрного скупщика после замены `public/textures/player/skins/buyer_merchant.png`. Файл в `public` уже был новым (64×64 indexed PNG, sha256 `69f4018a…`). Второго asset path не было.
+- Причина: `TextureAtlas.url` отдавал стабильный `./textures/player/skins/buyer_merchant.png` без content hash. Браузер/CDN могли держать старые байты; `MinecraftSkinRegistry` кэширует decoded texture по skin id на жизнь страницы.
+- Исправление: Vite plugin virtual module `virtual:player-skin-content-hashes` (не `define` global — в DEV он не попадал в `TextureAtlas.ts`). `TextureAtlas.url` добавляет `?v=<16 hex>` для `player/skins/*`. Registry перезагружает texture, если URL сменился. DEV console логирует skinId/URL/cache/sha256. Сам PNG не перезаписывался.
+- Handoff: `docs/reports/2026-09-12_buyer-merchant-skin-cache.md`.
+- Гейты: см. `docs/reports/2026-09-12_buyer-merchant-skin-cache.md`. Production JS содержит `"player/skins/buyer_merchant":"69f4018a158b79b5"`; `dist` PNG = public PNG.
+
+## Последний проход: Buyer hologram editor — 2026-09-12
+
+- Кнопка «Настроить голограмму» в admin GUI скупщика открывает **существующий** hologram editor (`hologram_editor` / `hologram_update`). Второй editor, renderer и store не добавлялись.
+- Appearance (текст/font/style/size/фон/billboard/yaw/timer) живёт в `HologramNetwork` / `plugin-data/holograms/holograms.json`. `/buyer move`, смена товара/цены и restart её не сбрасывают. Yaw NPC и yaw hologram разделены.
+- Редактор buyer hologram только у OP / `buyer.edit` / `buyer.*`. `holograms.create` и `/holograms` по-прежнему не могут править `buyer-<id>`.
+- Handoff: `docs/reports/2026-09-11_buyer-system.md`.
+- Гейты: buyer 17/17, buyer-plugin 6/6, buyer-gui 6/6, hologram-editor 9/9, hologram-style 8/8, hologram-hit 3/3, hologram-timer 10/10, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/470, четыре typecheck, boundaries, build PASS.
+
+## Последний проход: Buyer NPC system — 2026-09-11
+
+- Builtin `buyer` + `BuyerService` на существующем PluginManager / JsonFileStore / EconomyService / HologramNetwork. Второго кошелька и второй hologram-системы нет.
+- 1 скупщик = 1 Item ID. Цена целое 1…999 999 999 МК / шт. Выплата `quantity × pricePerItem` через `EconomyService.deposit(..., 'TRADER_SELL')`.
+- Статичный NPC на player model + skin `buyer_merchant` (не в production selector). Villager 3D-моделей в runtime нет; PNG жителей в texture pack не подключены.
+- Команды: `/buyer create|move|delete|list` (aliases `/buyers`, `/скупщик`). Persistence: `plugin-data/buyers/buyers.json`.
+- Права: `buyer.use` (default), `buyer.create|delete|move|list|edit`, `buyer.*` (admin), OP bypass.
+- Inventory-style GUI как Auction House. ПКМ: admin/OP → admin GUI, игрок → trade GUI. Сервер решает по permissions.
+- Голограмма `buyer-<id>` через HologramNetwork, без HP; `/holograms` не даёт orphan/edit. `/buyer move` двигает NPC+hologram. Настройка appearance — общий hologram editor из admin GUI.
+- Handoff: `docs/reports/2026-09-11_buyer-system.md`.
+- Гейты: buyer 15/15, buyer-plugin 5/5, buyer-gui 6/6, auction 24/24, clan 20/20, economy 15/15, `test:server` 45/467, четыре typecheck, boundaries, build PASS. Live Anarchy QA: create Farmer, admin/trade GUI, Pumpkin 50, sell 32 за 1 600 МК, hologram без HP.
+
+## Последний проход: Clan system merged into main — 2026-09-11
+
+- PR #85 влит в `main` обычным `--no-ff`: merge commit `ae904a3`. История не переписывалась.
+- Перед merge `origin/main` был на `750a3b7` (Auction House); новых commit'ов товарища не было, extra merge main → clan не понадобился, конфликтов не было.
+- Сохранены Auction House / Economy, Worldgen V2 (PR #83) и Clan System.
+- Гейты перед merge: clan 20/20, clan-plugin 7/7, clan-gui 7/7, auction 24/24, economy 15/15, `test:server` 43/447, четыре typecheck, boundaries, build PASS. Live Anarchy QA уже прошёл на Clan-ветке.
+- Handoff: `docs/reports/2026-09-11_clan-system-main-merge.md`.
+
+## Последний проход: Clan QA fixes — 2026-09-11
+
+- `/clan create`: кнопка «Создать клан / 10 000 Мегакоинов» ярче и жирнее (только `.mc-clan-btn-2line`).
+- Invitation chat: после успешного invite target получает system chat. Повторный invite не дублирует сообщение.
+- Clan card: активное invitation → `joinState: invited` → кнопка «Вступить в клан» → тот же accept-confirm, сервер проверяет invitation заново.
+- makeleader → leave → create: session больше не держит старое имя клана; leave/kick отвязывают игрока от всех кланов, где он не owner. После leave бывший owner может создать новый клан, пока старый жив.
+- Ranking: emoji 🏆 for #1/#2/#3 (gold / silver filter / bronze filter), `#N` after that; shield glyph uses VS16 so 🛡️ renders.
+- Гейты: clan 20/20, clan-plugin 7/7, clan-gui 7/7. PR #85.
+
+## Последний проход: Clan system — 2026-09-10
+
+- Builtin `clan` + `ClanService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк не добавлялся. «Богатство клана» = сумма текущих балансов участников, считается при `/clans` / refresh / snapshot, не каждый tick.
+- Команды: `/clans`, `/clan create|delete|add|accept|leave|makeleader|kick <ник>`.
+- Права: `clan.use` `clan.create` `clan.delete` `clan.add` `clan.accept` `clan.leave` `clan.makeleader` `clan.kick` `clan.list` `clan.*`. Default role + OP bypass.
+- GUI в стиле Auction House / inventory (`mc-panel`, длинные кнопки, поиск без потери focus, refresh, pagination, back ←, close ×, E закрывает).
+- Создание: 10 000 МК через `EconomyService.withdraw(..., CLAN_CREATE)`, `canCreateClan` hook (сейчас always true; PlaytimeService позже).
+- Максимум 20 участников включая owner. Invitations и join requests 24ч без per-item timer. Один игрок — один клан. Один активный request.
+- Persistence: `plugin-data/clans/clans.json`. Protocol: `clan_action` / `clan`.
+- Гейты: clan 15/15, clan-plugin 5/5, clan-gui 6/6, auction 24/24, economy 15/15, `test:server` 43/440, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-10_clan-system.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/85
+
+## Последний проход: Auction House merged into main — 2026-09-10
+
+- PR #82 влит в `main` обычным `--no-ff`: merge commit `d329f1f`. История не переписывалась.
+- Перед этим в Auction-ветку влит актуальный `origin/main` (`28b63be`): Worldgen V2 / PR #83 сохранён.
+- Конфликты при merge main → auction были только в docs; код Auction House и snowy spawn / `worldgenVersion` живут вместе.
+- Гейты на `main` после `--no-ff`: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15, `test:server` 41/420, четыре typecheck, boundaries, build PASS.
+- `git push origin main` успешен. `origin/main` = `d329f1f`.
+- Handoff: `docs/reports/2026-09-10_auction-house-main-merge.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82 (MERGED).
+
+## Последний проход: merge Worldgen V2 into Auction House — 2026-09-10
+
+- После основания Auction-ветки в `origin/main` появился PR #83: snowy plains, mixed forests, cave Gravel/Clay, `WORLDGEN_VERSION = 2`.
+- `origin/main` влит в `cursor/auction-house-a8dc` обычным merge (`28b63be`). Конфликты были только в `docs/PROJECT_STATE.md` и `docs/ROADMAP.md`; код (`WorldInstance.ts`, `Game.ts`, `ARCHITECTURE.md`) слился автоматически.
+- Сохранены и Worldgen V2 (spawn на SnowBlock, snapshot `worldgenVersion`), и Auction House / Economy.
+- Гейты после merge Worldgen V2: auction 24/24, auction-plugin 9/9, auction-gui 6/6, economy 15/15, `test:server` 41/420, worldgen-v2+snapshot 11/11, четыре typecheck, boundaries, build PASS.
+- Handoff: `docs/reports/2026-09-10_auction-house-main-merge.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
 
 ## Последний проход: Worldgen V2 — snowy plains, mixed forests, cave deposits — 2026-09-10
 
@@ -23,6 +313,48 @@
 - Worldgen V2 + ore digest: **16/16 PASS**; old terrain с extended timeout **14/14 PASS**; related lighting/chunk/fluid/falling/server packs PASS. Full suite: **210/217 files, 2025/2046 tests PASS**; три дополнительные parallel-run timeouts прошли isolated 30/30, оставшиеся классы совпадают с документированными main baseline (extractor parse, worldgen/fire-minecart 5s timeouts, tick-load threshold).
 - Manual WebGL QA: plains/forest/desert/snowy/frozen shore/Gravel/Clay прошли, warn/error console пуст. Fresh authoritative online world `qa-online-fresh-2026-09-10` загрузил 81 spawn chunks; клиент вошёл через UI, сервер держал 20 TPS, observed max tick 12.75 ms.
 - Handoff: `docs/reports/2026-09-10_worldgen-v2-snow-cave-deposits.md`.
+
+## Последний проход: Auction House tooltip type — 2026-09-10
+
+- Tooltip лота в `/ah`: без строки «Количество»; название и цена 18px, продавец/осталось 14px (+17% к прежним 12px). Stack count остаётся на иконке.
+- Фон, рамка, позиция у курсора и clamp к краю экрана не менялись. Inventory tooltip по-прежнему 12px.
+- Handoff: `docs/reports/2026-09-10_auction-house-tooltip-type.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
+## Последний проход: Auction House amount + claimable lots — 2026-09-10
+
+- Подтверждение продажи: `[ − ] [ предмет со stack count ] [ + ]` на одной оси; отдельная цифра amount убрана.
+- `/ah list`: `CANCELLED` / `EXPIRED` ячейки с приглушённым красным фоном; hover — жёлтая строка «Заберите этот предмет». ACTIVE / SOLD / RELISTED / CLAIMED без этой подсветки. CLAIMED и RELISTED по-прежнему не в списке.
+- Handoff: `docs/reports/2026-09-10_auction-house-amount-claim.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
+## Последний проход: Auction House UI polish — 2026-09-10
+
+- Inventory-style кнопки подтверждения (купить / выставить / отмена) больше не используют квадратный `mc-slot`; текст `nowrap`, по центру, на всю ширину колонки действий.
+- Поиск `/ah` больше не теряет focus: повторный snapshot патчит сетку лотов на месте и не перезаписывает focused search input.
+- На browse есть кнопка **Обновить** (`auction_action.refresh`); search сохраняется, страница клампится, если стала недоступна.
+- Успешная покупка больше не пишет «Вы купили предмет…» в GUI; ошибки покупки по-прежнему в `message`.
+- Иконка на подтверждении продажи показывает выбранный `amount`, не исходный stack count.
+- Пустая цена и цена вне 10…100 000 000 — разные сообщения. Сервер остаётся authoritative.
+- Handoff: `docs/reports/2026-09-10_auction-house-ui.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82.
+
+## Последний проход: Auction House — 2026-09-09
+
+- Builtin `auction` + `AuctionService` на существующем PluginManager / JsonFileStore / EconomyService. Второй кошелёк и второй persistence layer не добавлялись.
+- Команды: `/ah`, `/ah sell`, `/ah list` (алиасы `/auction`, `/auctionhouse`).
+- Права: `auction.use` `auction.sell` `auction.buy` `auction.list` `auction.*`. Default role + OP bypass.
+- GUI в стиле inventory/chest (`mc-panel`, слоты, иконки предметов, tooltip, крестик, E закрывает). Не меню-карточки Frontier Cubes.
+- Лоты 2 дня, лимит 30 ACTIVE, цена 10…100 000 000 за весь listing, комиссии нет. Снятые/истёкшие забираются вручную через `/ah list`.
+- Покупка: `EconomyService.settle(..., AUCTION_PURCHASE, AUCTION_SALE, listingId)`. Сервер — источник истины.
+- Handoff: `docs/reports/2026-09-09_auction-house.md`. PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/82 (`bc6c8f7`).
+
+## Последний проход: Economy plugin (Мегакоин) — 2026-09-10
+
+- Builtin `economy` + `EconomyService` на существующем PluginManager. Вторая валюта / второй persistence layer не добавлялись.
+- Валюта: Мегакоин. Старт 100, максимум 999 999 999, только целые. Баланс по `playerId` (UUID).
+- Команды: `/balance` `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco give|take|set|reset|balance|transactions`.
+- Права: `economy.balance` `economy.pay` `economy.baltop` `economy.transactions` `economy.admin` `economy.*`. OP bypass.
+- Добыча: Dirt/Sand/Gravel 1, Stone 2, logs 3, Coal Ore 8, Diamond Ore 25. Поставленные игроком и TNT — 0. AutoMine fill сбрасывает placed-метки и платит той же таблицей.
+- Мобы: peaceful 2–4, hostile 8–15. PvP: `floor(10%)`, кулдаун 5 минут на пару killer→victim.
+- Handoff: `docs/reports/2026-09-10_economy-plugin.md`.
 
 ## Последний проход: player skin z-fighting integrated into current main — 2026-09-10
 
@@ -445,7 +777,7 @@
 
 - Ветка `cursor/anarchy-plugin-platform-3f93` от `origin/main` `03685a9`. Не вторая Plugin System: расширены существующие `PluginManager`, `CommandRegistry`, `EventBus`.
 - Services: `PermissionService` (roles, wildcards, OP/DEOP, FC_OPERATORS seed), `TeleportService` + history, `RtpService` / `RtpSessionManager` (bounded search ±10000), `PluginConfigService`, `PlayerSelectionService`, JSON files in `worldDir/plugin-data/`.
-- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine. Auction House не делался.
+- Builtin plugins (loaded by default, `FC_NO_BUILTIN_PLUGINS=1` to skip): permissions, plugin-admin, economy, auction, tpa, spawn, home, back, rtp, rtpportal, claims, holograms, automine.
 - `/tp <x> <y> <z>` сохранён. `/spawn` перенесён в Spawn plugin и использует authoritative `WorldInstance.spawn`.
 - Plugin reload = disable → cleanup → load → enable на том же instance (ESM source не re-import). Failed plugins требуют restart.
 - Holograms: server-side persistence + networked 3D billboards. Chat dump при входе в range убран.
@@ -1045,7 +1377,7 @@
 | Rendering | Готово для alpha | Three.js, render-rate camera look, mip-safe padded runtime atlas, independent world passes including vegetation FrontSide cutout, budgeted chunk meshing, special/cross geometry, shape-aware selection outlines, **staged block-breaking crack overlay**, shared item/arrow visuals и отдельный first-person pass |
 | Player physics | Готово для alpha | Voxel AABB, walk/sprint/sneak/jump, Creative double-Space flight, step `0.6`, collision including fence 1.5 Y-overhang broadphase, fall damage, water/lava |
 | Mining/building | Готово для alpha | Shape-aware block raycast (AABB selection, not full-cell occupancy), 1.9 harvest formula, hardness/tool/tier, durability, Survival drops (Creative без collectible drops), dirty-mesh dedupe, deferred lighting flush |
-| Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, 2×2/3×3 recipes, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Recipe Book on crafting/Survival 2×2 (not furnace), Creative Catalog/Inventory tabs, close × outside panel |
+| Inventory/crafting | Готово для alpha | 36 slots, 9-slot hotbar, armor (UI без off-hand), cursor clicks, Survival CRAFT-кнопка → отдельное меню всех предметов, 3×3 Recipe Book на верстаке, pixel container GUI, 3D cached block icons, custom item tooltip, Russian display names, Creative Catalog/Inventory tabs, close × with small white E inside the button |
 | Chest/furnace/bed | Готово для alpha (bed проще) | Entity chest model + lid-up animation + 27-slot GUI; **portal chest** uses the same model with a personal 27-slot player store; furnace facing + lit front + torch-equivalent light, input/fuel/output GUI, spawn point and simple night skip |
 | Basic redstone/TNT | Готово для alpha | Power `0–15`, dust attenuation, torch/lever/button/plate, gravity-driven primed TNT with TNT texture + fuse tint pulse, budgeted batched explosions, save/restore |
 | Survival | Готово для alpha | Health, hunger, saturation, exhaustion, food, armor, air, lava/fire/cactus/starvation, death/respawn |
@@ -1113,11 +1445,11 @@
 - Есть core recipes для planks, sticks, crafting table, chest, furnace, torch, ladder, white bed, door, bow/arrows, tools, swords, armor, slabs/stairs (включая birch/spruce/brick/stone brick; без hidden `stone_stairs`) и basic redstone/TNT/`stone_pressure_plate`. **Minecart** — shaped 5× Iron Ingot U (`I I` / `III`), в Recipe Book через `CRAFTING_RECIPES`. **Glowstone** shapeless Torch+Gold Ingot; **Lantern** shapeless Torch+Iron Ingot; **Chain** shaped `ISI`×3 → 16. Shield полностью удалён из registry/recipes/render/combat; legacy stacks очищаются при загрузке.
 - Runtime furnace читает единые `SMELTING_RECIPES`/`FUEL_BURN_TICKS`: доступны iron/gold, sand→glass, logs→charcoal и raw foods без второй hardcoded table. Lit visual/light выводятся из `FurnaceState.burnTime > 0`, не из отдельного `lit` flag. LightEngine читает `world.blockEmissionAt`.
 - Dropped items имеют physics, merge radius, pickup delay, pickup, cap, despawn и save/restore. Environment health = 5: shape-aware item AABB получает 4 damage/tick в Lava и 1 damage/tick в Fire, removal идёт через manager path с reason `burned`; Water не наносит environmental damage. Optional serialized health сохраняет повреждение, старые entries без поля безопасно получают 5. Modern generic water buoyancy удалена; Lava сохраняет небольшой 1.9-style upward kick. Обычные cube block items рисуются atlas-cube. Sprite items (включая held torch и arrow) используют общую `GeneratedItemGeometry`: один front/back quad на весь sprite, толщина `1/16`, side spans только по opaque→transparent (`alpha == 0`) с merge соседних рёбер. Side faces — outer shell (winding совпадает с outward normal). Collapsed side UV берёт центр opaque texel, не границу с transparent neighbor. 32×32 pack не меняет model size, но диагонали дают больше 1-texel spans (у `iron_pickaxe.png` 104 merged spans). Generated item material без mob wrap-shade (voxel light для drops сохраняется). Stack size даёт до четырёх детерминированно смещённых визуальных копий без создания новых ресурсов на кадр.
-- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow`. Held mesh отдельно: `block_cube` / `generated` / `special_model`. `generated`, `handheld` и bow делят один first-person sprite pose: position `[0.67, -0.29, -0.70]`, rotation `[1, -90, 34]°`, `scale: 0.60` (**final** Three.js uniform, не множитель на vanilla `0.68`). Значения выбраны вручную через live QA calibrator; yaw −90° — намеренный visual result, не порт vanilla matrix и не candidate 8/18/32°. Канонический idle right-hand adapter (`heldItemVanillaTransform.ts`) остаётся diagnostic-only. Dev `?qaItem=` по умолчанию — isolated inspect (`qaView=front|back|left|right`), `qaView=held` возвращает first-person с live panel; RESET TO PRODUCTION возвращает эти числа. `qaSideDebug=1` красит UP/DOWN/LEFT/RIGHT. `held*` / `qaPose` override только idle held transform. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` накладываются поверх base. Held torch/lever/ladder — generated sprite по vanilla 1.21.8 item JSON (`layer0` = block texture); oak_door — generated из runtime-композиции `oak_door_upper`+`oak_door` (в pack нет `item/oak_door.png`). Button/pressure plate/stairs/slabs/chest/fence/rail/lantern/chain — `special_model`. **Любой** `special_model` идёт в `special_preview` (unknown shape → `generic` pose): auto-fit, sRGB, preview-only unlit clone, entity textures preloaded before `bake()`. Нет per-item brightness/scale. Chest icon использует тот же pipeline + `entity/chest/normal`. Ordinary cubes остаются 2D atlas tile; cube с `textures.front` (furnace, crafting table) использует front, не side. Creative E — отдельный `.mc-stage` с вкладками Каталог / Инвентарь (localization), catalog width 195 logical. Catalog: прокручиваемая сетка + gutter чтобы scrollbar не перекрывал 9-й столбец + только 9 hotbar slots; Inventory tab: armor слева сверху с силуэтами, без offhand, 3×9 на полную ширину + hotbar, без каталога. Catalog DOM/scroll сохраняется при переключении вкладок. Live `refreshOpenInventory()` патчит slot/recipe contents in-place (`data-sig`), hover — `::after` white overlay. Recipe Book только у crafting table и Survival 2×2 (кнопка в craft row, icon tabs); Furnace GUI без книги. Placement рецепта транзакционный: вернуть grid → затем real или ghost.
+- First-person предметы классифицируются как `block`, `generated`, `handheld`, `bow`. Held mesh отдельно: `block_cube` / `generated` / `special_model`. `generated`, `handheld` и bow делят один first-person sprite pose: position `[0.67, -0.29, -0.70]`, rotation `[1, -90, 34]°`, `scale: 0.60` (**final** Three.js uniform, не множитель на vanilla `0.68`). Значения выбраны вручную через live QA calibrator; yaw −90° — намеренный visual result, не порт vanilla matrix и не candidate 8/18/32°. Канонический idle right-hand adapter (`heldItemVanillaTransform.ts`) остаётся diagnostic-only. Dev `?qaItem=` по умолчанию — isolated inspect (`qaView=front|back|left|right`), `qaView=held` возвращает first-person с live panel; RESET TO PRODUCTION возвращает эти числа. `qaSideDebug=1` красит UP/DOWN/LEFT/RIGHT. `held*` / `qaPose` override только idle held transform. Textured Steve arm видна только при пустом main hand; equip, walk/idle bob, swing/mining, еда, bow texture stages `0 / 0.65 / 0.9` накладываются поверх base. Held torch/lever/ladder — generated sprite по vanilla 1.21.8 item JSON (`layer0` = block texture); oak_door — generated из runtime-композиции `oak_door_upper`+`oak_door` (в pack нет `item/oak_door.png`). Button/pressure plate/stairs/slabs/chest/fence/rail/lantern/chain — `special_model`. **Любой** `special_model` идёт в `special_preview` (unknown shape → `generic` pose): auto-fit, sRGB, preview-only unlit clone, entity textures preloaded before `bake()`. Нет per-item brightness/scale. Chest icon использует тот же pipeline + `entity/chest/normal`. Ordinary cubes остаются 2D atlas tile; cube с `textures.front` (furnace, crafting table) использует front, не side. Creative E — отдельный `.mc-stage` с вкладками Каталог / Инвентарь (localization), catalog width 195 logical. Catalog: прокручиваемая сетка + gutter чтобы scrollbar не перекрывал 9-й столбец + только 9 hotbar slots; Inventory tab: armor слева сверху с силуэтами, без offhand, 3×9 на полную ширину + hotbar, без каталога. Catalog DOM/scroll сохраняется при переключении вкладок. Live `refreshOpenInventory()` патчит slot/recipe contents in-place (`data-sig`), hover — `::after` white overlay. Survival inventory: броня слева и кнопка CRAFT вместо 2×2/книги; отдельное меню крафта со всеми obtainable предметами (`craft_recipe` + `recipeId`). Recipe Book только у crafting table (кнопка в craft row, icon tabs); Furnace GUI без книги. Placement рецепта на верстаке транзакционный: вернуть grid → затем real или ghost.
 
 ### Alpha approximation
 
-- UI реализует cursor clicks, shift-transfer chest↔inventory, furnace routing и Recipe Book на crafting/Survival 2×2 (отдельная левая панель, кнопка книги в craft row, icon categories, search / All-Craftable, transactional real vs ghost). Полноценный pointer-drag distribution остаётся в data layer.
+- UI реализует cursor clicks, shift-transfer chest↔inventory, furnace routing, Survival CRAFT-меню всех предметов и Recipe Book на верстаке (отдельная левая панель, кнопка книги в craft row, icon categories, search / All-Craftable, transactional real vs ghost). Полноценный pointer-drag distribution остаётся в data layer.
 - Chest одиночный и содержит 27 slots; double chest и lock/name semantics отсутствуют. Lid `openProgress` — runtime-only. Lid underside — `down` face с `CHEST_LID_SEAM`.
 - Печь тикает в общем world tick независимо от открытого GUI. Flame/arrow патчатся live. Recipe Book в печи сознательно отсутствует. GUI icon печи — `block/furnace_front`, не side.
 - Recipe Book читает `CRAFTING_RECIPES`. `SMELTING_RECIPES` остаются источником furnace simulation, не UI-книги. Все crafting registry recipes считаются known/unlocked. Нет vanilla advancement unlocks.
@@ -1140,7 +1472,7 @@
 - Armor использует classic fixed reduction `(25-clamp(points,0,20))/25`, без damage-dependent curve/toughness. Piece values сохранены (leather 7 / gold 11 / iron 15 / diamond 20). Canonical `getArmorPoints()` питает и mitigation, и HUD. Bar из 10 pixel-art chestplate icons над hearts (full=2, half=1), скрыт при 0.
 - Food use требует удержания, consumable проверяет hunger cap.
 - Death выбрасывает survival inventory/equipment, показывает экран смерти и возвращает игрока в spawn point. Death messages идут в локальный чат (`deathMessage(source)`).
-- Локальный чат (без сети): T открывает поле, `/` открывает с префиксом `/`, Enter отправляет, Esc закрывает, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
+- Локальный чат (без сети): T открывает поле на вкладке «Общий», `/` открывает с префиксом `/`, Enter отправляет и оставляет чат открытым, Tab/X/Esc закрывают, Up/Down — история. Команды через `src/chat` registry: `/help`, `/gamemode`, `/time`, `/give`, `/tp`, `/seed`, `/clear`, `/kill`.
 - Creative не расходует blocks/arrows/durability и не получает survival/environment/mob/explosion damage.
 
 ### Alpha approximation

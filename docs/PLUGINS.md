@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, back, RTP, claims, holograms, AutoMine) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Auction House is **not** implemented.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -111,7 +111,7 @@ Env:
 - `FC_PLUGIN_DIR` / `PLUGIN_DIR` — override the live plugin directory
 - `FC_EXAMPLE_PLUGIN=1` — register the bundled example without copying it into `server/plugins/`
 - `FC_OPERATORS` — comma-separated player names treated as OP (seeded into PermissionService, cannot `/deop`)
-- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine pack
+- `FC_NO_BUILTIN_PLUGINS=1` — skip permissions/TPA/home/claims/holograms/AutoMine/economy/auction/clan/buyer pack
 
 ## Permissions
 
@@ -129,15 +129,95 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | plugin-admin | `/plugins` | — |
 | tpa | `/tpa`, `/tpahere`, `/tpaccept`, `/tpdeny` | config |
 | spawn | `/spawn`, `/setspawn` | world spawn + config |
-| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` |
+| home | `/home`, `/sethome`, `/homes`, `/delhome` | `plugin-data/home/homes.json` (max 3 ordinary homes via `HomeService` / `HOME_MAX_DEFAULT`) |
 | back | `/back` | memory (teleport history) |
 | rtp | `/rtp` | config |
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
 | claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
 | holograms | `/holograms` (`/hologram reset`) | `plugin-data/holograms/holograms.json` (lines + font/size/style + background + billboard/yaw + timer) |
 | automine | `/automine` | `plugin-data/automine/automines.json` (+ `originals/<name>.json`) |
+| economy | `/balance`, `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco` | `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json` |
+| auction | `/ah`, `/ah sell`, `/ah list` (`/auction`, `/auctionhouse`) | `plugin-data/auction/listings.json` |
+| clan | `/clans`, `/clan create|delete|add|accept|leave|makeleader|kick` | `plugin-data/clans/clans.json` |
+| buyer | `/buyer create|move|delete|list` (`/buyers`, `/скупщик`) | `plugin-data/buyers/buyers.json` |
+| friends | `/friends` | `plugin-data/friends/friends.json` |
+| trade | `/trade` | memory (active sessions) |
+| menu | `/menu` (`/меню`) | — |
 
 `/tp <x> <y> <z>` remains a builtin and is not replaced by TPA.
+
+## Economy (Мегакоин)
+
+`EconomyService` (`server/services/economy.ts`) is the only balance API. Buyer NPCs, Auction House, Clans, and player Trade call it (`deposit` / `withdraw` / `transfer` / `settle` / `hasBalance`); they must not read `balances.json` themselves.
+
+- Currency display name: **Мегакоин** / **Мегакоинов**. Internal plugin name: `economy`.
+- New player: **100**. Maximum: **999 999 999**. Integers only. Negative balances are rejected. Deposit that would exceed the max is rejected (no clamp, no overflow).
+- Identity: `playerId` (UUID). Display names are cached for `/baltop` and `/pay`; they are not the storage key. `/pay` may target an offline stored profile.
+- Persistence: `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json`.
+- Transactions: every balance change writes a row (`transactionId`, `type`, `amount`, `balanceBefore`/`After`, `reason`, `timestamp`, optional `relatedPlayerId` / `pairId`). Transfers write two linked rows and are atomic.
+- Reasons include `BLOCK_BREAK`, `MOB_KILL`, `PLAYER_KILL`, `PLAYER_TRANSFER`, `ADMIN_*`, `TRADER_*`, `AUCTION_*`, `TRADE`, `OTHER`.
+- Block rewards (natural / AutoMine-generated only): Dirt/Grass/Sand/Gravel/Clay/Sandstone **1**, Stone **2**, logs **3**, Coal Ore **8**, Diamond Ore **25**. Player-placed copies pay **0**. TNT / explosion `blockBroken` (no `playerId`) pays **0**. AutoMine fill uses `applyBlockBatch` (not `blockPlaced`) and clears placed marks so regenerated ore pays through the same table.
+- Mob rewards: chicken 2, pig/sheep 3, cow 4, spider 8, zombie 10, skeleton 12, creeper 15. Unknown kinds pay 0. One `entityId` cannot be rewarded twice.
+- PvP: killer receives `floor(victimBalance * 0.10)`, victim loses that amount, atomic, reason `PLAYER_KILL`. Balance 0 or 1 → 0. Same killer→victim pair has a **5 minute** anti-farm cooldown (PvP itself is unchanged). Duplicate `entityDeath` for the same death does not double-pay.
+- Commands: `/balance` `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco give|take|set|reset|balance|transactions`.
+- Permissions: `economy.balance`, `economy.pay`, `economy.baltop`, `economy.transactions`, `economy.admin`, `economy.*`. Default role gets the player nodes. Admin role gets `economy.*`. OP bypasses via PermissionService.
+
+## Auction House
+
+Builtin plugin `auction` + `AuctionService` (`server/services/auction.ts`). This is a **fixed-price** listing market, not bidding. It does **not** create a second wallet: every purchase is `EconomyService.settle(buyer, seller, price, 'AUCTION_PURCHASE', 'AUCTION_SALE', listingId)`. No fee, no tax.
+
+- Commands: `/ah` (browse others), `/ah sell` (list from inventory), `/ah list` (own active + returnable). Aliases: `/auction`, `/auctionhouse`.
+- Permissions: `auction.use`, `auction.sell`, `auction.buy`, `auction.list`, `auction.*`. Default role gets the four player nodes. Admin gets `auction.*`. OP bypass.
+- GUI is the existing inventory/chest chrome (`mc-backdrop` / `mc-panel` / `mc-slot` / `mc-close`, item icons, `attachItemTooltip`). Not the Frontier Cubes menu cards. Close: top-right ×, Cancel where shown, key **E** (unless a search/price field is focused).
+- Screens: browse (27 slots/page, newest first, search, **Обновить**), buy confirm, sell-pick (player inventory + hotbar), sell-confirm (`−` / item / `+` with stack count on the icon), mine, manage (cancel / relist), relist price, claim. `CANCELLED` / `EXPIRED` cells in `/ah list` use a muted red slot and a yellow hover hint «Заберите этот предмет».
+- Listing lifetime: `expiresAt = createdAt + 2 days`. Server `expireDue` runs on a 1s plugin timer and on every action / load. `ACTIVE` → `EXPIRED` (returnable). Items are **not** auto-returned and are **not** dropped.
+- Listing lifetime: `expiresAt = createdAt + 2 days`. Server `expireDue` runs on a 1s plugin timer and on every action / load. `ACTIVE` → `EXPIRED` (returnable). Items are **not** auto-returned and are **not** dropped.
+- `/ah list` shows `ACTIVE` first, then `CANCELLED` / `EXPIRED`. Click active → cancel or relist. Click returnable → claim the **entire** stack or `"Недостаточно места в инвентаре."`
+- Relist is atomic: old listing `RELISTED` (not claimable), new `ACTIVE` with a fresh 2-day timer. Cancel on the price screen leaves the old listing `ACTIVE`. The item never re-enters inventory during relist.
+- Limits: 30 `ACTIVE` listings per player; price integer **10 … 100 000 000** Мегакоинов for the whole listing (not per item). Empty price → `Укажите цену этого предмета`. Out of range → `Доступная цена для выставления на продажу - от 10 до 100 000 000 Мегакоинов`.
+- Persistence: `plugin-data/auction/listings.json` via existing `JsonFileStore`. Full `ItemStack` clone (id, count, durability, metadata).
+- Protocol: client `auction_action` (intent only; includes `refresh`), server `auction` (paged snapshot). Search updates patch the listing grid in place so the search input keeps focus and caret. The client never mutates listings, balances, or inventory locally.
+- Anti-dupe: listing+player locks; re-validate slot/item/amount/price/status/balance/space on the server; item exists in **either** inventory **or** a listing, never both while `ACTIVE`.
+
+## Clans
+
+Builtin plugin `clan` + `ClanService` (`server/services/clan.ts`). There is **no clan wallet**. Rank wealth is the live sum of member `EconomyService` balances, computed when building a `/clans` snapshot (open / search / refresh / page), never every tick.
+
+- Commands: `/clans` (ranking), `/clan create`, `/clan delete`, `/clan add`, `/clan accept`, `/clan leave`, `/clan makeleader`, `/clan kick <ник>`.
+- Permissions: `clan.use`, `clan.create`, `clan.delete`, `clan.add`, `clan.accept`, `clan.leave`, `clan.makeleader`, `clan.kick`, `clan.list`, `clan.*`. Default role gets the player nodes. Admin gets `clan.*`. OP bypass.
+- GUI reuses Auction House inventory chrome (`mc-backdrop` / `mc-panel` / `mc-ah-btn` / close × / E to close unless a field is focused). Ranking uses a fixed-width rank column (emoji 🏆 for #1–#3 with gold/silver/bronze filters, `#N` after that) then `[icon] name`, compact МК, `n/20`. Clan card has back ← (does not close the GUI). An active invitation to that clan shows **Вступить в клан** (`joinState: invited`); the server re-checks the invitation on click. The `shield` badge is `🛡️` (VS16) so it renders in the pixel UI font stack.
+- Successful `/clan add` sends a one-shot system chat to the target: `Игрок <owner> пригласил вас в клан <name>. Используйте /clan accept…`. Duplicate invite does not resend.
+- After `makeleader` the old owner stays a member; `leave`/`kick` detach them from every clan they do not own and clear the create-name draft. They can create a new clan while the old one still exists.
+- Create costs **10 000** Мегакоинов via `withdraw(..., 'CLAN_CREATE')`. Atomic: no clan if the debit fails. `canCreateClan(playerId)` is the future playtime hook; today it always returns ok. Names 3–16 letters/digits/space/`_`/`-`, unique case-insensitively, not renameable. Icon is one of 10 ids, not changeable later.
+- Max **20** members including owner. One player, one clan. Invitations (online only) and join requests expire after 24h; expiry is checked on load/open/action, not with per-item timers. One active request per player; sending another offers replacement.
+- Persistence: `plugin-data/clans/clans.json` via `JsonFileStore`. Totals are not stored.
+- Protocol: client `clan_action` (intent only), server `clan` (paged snapshot). Search patches the list in place so the input keeps focus and caret.
+- Locks serialize player+clan keys so last-slot joins, duplicate accepts, and invite/request races cannot put a player in two clans or exceed 20.
+- In-game menu Кланы opens this same GUI (`open_my_clan` / `open_clan_list` / `open_create_clan`). Messages include `source: 'menu'`; ranking/card/create ← returns to the menu Clans hub instead of closing everything.
+
+## Friends and Trade (in-game menu)
+
+Builtin plugins `friends`, `trade`, and `menu` plus `FriendsService` / `TradeService` / `HomeService`. The client never decides friendship, online, teleport permission, offer stacks, money, Ready, or Accept.
+
+- Friends: max **50**; requests/accept/reject/remove; teleport only if the friend is online and has `allowFriendTeleport`. Permission `friends.use` (default role). Persistence: `plugin-data/friends/friends.json`.
+- Trade: 6 escrow slots, integer Мегакоины via `EconomyService` reason `TRADE`, Ready then Accept, both flags reset on offer change, atomic commit or nothing. Cancel / X / E / disconnect returns items. Permission `trade.use`. Sessions are in-memory.
+- Menu shell: `/menu` uses `spawn.use`. Protocol: `menu_action` / `menu` and `trade_action` / `trade`.
+- Ordinary players may own at most **4** claims (`CLAIM_MAX_OWNED` / `GAME_MENU_MAX_CLAIMS`), including mineral-block claims. `/claim create` enforces the same cap unless the sender bypasses.
+
+## Buyers (скупщики)
+
+Builtin plugin `buyer` + `BuyerService` (`server/services/buyer.ts`). There is **no NPC wallet**. Payout is `EconomyService.deposit(playerId, quantity × pricePerItem, 'TRADER_SELL')`. Holograms reuse `HologramNetwork`; names are `buyer-<id>` and are blocked from `/holograms` create/delete/move/line/range/reset.
+
+- Commands: `/buyer create <name>`, `/buyer move <name>`, `/buyer delete <name>`, `/buyer list`. Aliases: `/buyers`, `/скупщик`. Create uses the admin's current position + yaw/pitch and opens the admin GUI.
+- Permissions: `buyer.use`, `buyer.create`, `buyer.delete`, `buyer.move`, `buyer.list`, `buyer.edit`, `buyer.*`. Default role gets `buyer.use`. Admin gets `buyer.*`. OP bypass via PermissionService.
+- One NPC buys exactly one known Item ID. Pumpkin/melon means whole blocks (`pumpkin`, `melon`), not seeds or slices. Price is an integer **1…999 999 999** MK per item. Unconfigured NPCs cannot sell.
+- RMB: server checks reach + permissions. `buyer.edit` (admin/OP) opens admin GUI; `buyer.use` opens the single-item trade GUI. Client cannot choose which menu.
+- GUI reuses Auction House inventory chrome (`mc-panel`, `mc-grid`, `mc-slot`, close ×, E). Admin: name, item picker from inventory, price, «Настроить голограмму» (opens the existing hologram editor), save, delete, optional «Открыть торговлю». Player: item, price/each, trade slot, quantity, total, **ПРОДАТЬ**. Wrong items are rejected, not destroyed. Close/E/disconnect returns the trade slot (overflow goes to `returns` in `buyers.json` and is restored on join).
+- Bound hologram `buyer-<id>` is a normal `HologramRecord`. Appearance (lines, font, style, size, background, billboard/yaw, timer) lives in `plugin-data/holograms/holograms.json` via `HologramNetwork`. BuyerService creates/moves/deletes that record and may open the shared editor; it does not have a second renderer or editor. `/buyer move` updates hologram position only and does not reset yaw or other appearance. `/holograms` still cannot create/delete/move/line/range/reset `buyer-*`. RMB on the hologram opens the buyer GUI, not the hologram editor.
+- Client visual: `BuyerNpcView` on existing `PlayerVisual` + skin `buyer_merchant` (not in `PRODUCTION_PLAYER_SKINS`). No HP nameplate; text is the bound hologram only. NPC is not a mob: no physics, knockback, fire, drown, damage, or death.
+- Protocol: client `buyer_interact` / `buyer_action` (intent only, including `edit_hologram`). Server `buyers` snapshot + `buyer` GUI snapshot. Price/item/quantity on sell are ignored; the server uses the NPC record and the session trade slot. Hologram save is the existing `hologram_update`; the server allows it for `buyer-<id>` only when the hologram belongs to that buyer and the player has `buyer.edit` / `buyer.*` / OP. `holograms.create` is not enough.
+- Persistence: `plugin-data/buyers/buyers.json` via JsonFileStore. Restart restores pose, item, price, and the bound hologram (appearance from holograms.json). `ensureHolograms()` creates a missing bound hologram with defaults, repositions an existing one without rewriting appearance, and removes orphan `buyer-*` records.
+- Anti-dupe: player+NPC locks on sell; items leave inventory into the session slot before payout; failed deposit restores the slot; a second sell sees an empty slot.
 
 ## API version
 
@@ -159,7 +239,7 @@ Plugins receive a frozen `ServerAPI` scoped to that plugin:
 | `getStatus()` | world id, seed, tick rate, tick number, player count |
 | `getWorld()` | seed, spawn, time, `getBlock` / `setBlock` / `breakBlock`, entity id lookup |
 | `getPlayers()` / `getPlayer(id or name)` | online players |
-| `broadcast(text)` | system chat |
+| `broadcast(text)` | system chat to every connected player (not player Global/Nearby/Clan channels) |
 | `registerCommand(handler)` | existing `CommandRegistry`; returns unregister |
 | `registerEvent(name, handler)` | EventBus; returns unsubscribe |
 | `scheduleOnce(ms, fn)` / `scheduleRepeating(ms, fn)` | Node timers; cancelled on disable |
@@ -233,7 +313,7 @@ Not cancellable.
 | `playerJoin` / `playerQuit` | after session connect/disconnect |
 | `blockBroken` / `blockPlaced` | after the voxel write (player mining, or each cell `ExplosionQueue` actually destroyed) |
 | `playerDamaged` / `entityDamaged` | after health applied |
-| `entityDeath` | after a player or mob dies |
+| `entityDeath` | after a player or mob dies (`playerId` is killer for mobs, victim for players; optional `attackerId` / `mobKind`) |
 | `playerCommandExecuted` | after dispatch (`ok` is the result) |
 | `fluidUpdate` | after a committed fluid cell |
 | `projectileHit` | arrow hit with coordinates |
@@ -292,5 +372,5 @@ Plugin JSON lives next to the world save: `<dataDir>/<worldId>/plugin-data/`. Co
 - Not a Bukkit/Spigot jar loader
 - Not a second combat / fluid / inventory system
 - Not client mods
-- Not Auction House / economy / kits
+- Not Auction House bidding / kits. Auction House (fixed-price listings) **is** implemented as builtin `auction` + `AuctionService` on the existing EconomyService. Clans **are** implemented as builtin `clan` + `ClanService` on the same EconomyService. Buyer NPCs **are** implemented as builtin `buyer` + `BuyerService` on EconomyService + HologramNetwork.
 - Not a WorldGuard clone (claims are overlapping regions with per-flag priority; iron/gold/diamond blocks create extra cuboid claims in the same store)

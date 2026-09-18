@@ -6,6 +6,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "src/vite-env.d.ts",
     "shared/protocol.ts"
   ],
   "exclude": [

@@ -21,6 +21,7 @@ import {
   doorFacingFromYaw,
   furnaceFacingFromYaw,
   getBlockDefinition,
+  horizontalFacingFromXZ,
   isFenceBlock,
   isKnownBlockId,
   isPressurePlateBlock,
@@ -57,8 +58,9 @@ import {
 } from '../world/blockGeometry';
 import type { CollisionBox } from '../world/collision';
 import { isUseTargetBlock } from '../world/blockInteraction';
-import { canAttachToFace, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';
+import { canAttachToFace, canSugarCaneStandAt, canSupportHanger, canUseAsPlacementAnchor } from '../world/placement';
 import type { VoxelHit, VoxelWorld } from '../world/World';
+import { bedHeadCell } from '../world/bed';
 
 export type UseIntentKind =
   | 'pickup-bucket'
@@ -70,6 +72,7 @@ export type UseIntentKind =
   | 'press-button'
   | 'toggle-door'
   | 'use-bed'
+  | 'use-sign'
   | 'farming'
   | 'start-food'
   | 'start-bow'
@@ -98,6 +101,7 @@ export type PlaceFailReason =
   | 'ladder-side'
   | 'ladder-replace'
   | 'door-space'
+  | 'bed-space'
   | 'minecart-rails';
 
 export type PlaceResult = { ok: true } | { ok: false; reason: PlaceFailReason };
@@ -118,7 +122,8 @@ export interface UseHostEffects {
   playWorld?(event: string, x: number, y: number, z: number, options?: { pitch?: number }): void;
   playBlock?(action: 'place', block: BlockId, x: number, y: number, z: number): void;
   openContainer?(kind: 'crafting-table' | 'chest' | 'furnace' | 'portal-chest', x: number, y: number, z: number): void;
-  onBedUsed?(skippedNight: boolean): void;
+  onBedUsed?(x: number, y: number, z: number): void;
+  onSignUsed?(x: number, y: number, z: number): void;
   onInventoryChanged?(): void;
   onFlintIgnite?(): void;
   onFlintAlreadyPrimed?(): void;
@@ -159,7 +164,6 @@ export interface UseSimulationContext {
     | 'notifyBlockChanged'
   >;
   readonly random?: RandomFn;
-  setSpawnPoint?(position: readonly [number, number, number]): void;
   allowInteract?(x: number, y: number, z: number, block: number): boolean;
   allowPlace?(x: number, y: number, z: number, block: number): boolean;
   enterVehicle?(cartId: string): boolean;
@@ -179,6 +183,7 @@ const PLACE_TOAST: Partial<Record<PlaceFailReason, string>> = {
   'ladder-side': 'Лестницу можно поставить только на боковую сторону блока',
   'ladder-replace': 'Лестнице нужна сплошная боковая опора',
   'door-space': 'Нет места для двери',
+  'bed-space': 'Для кровати нужны две свободные клетки с опорой',
   'minecart-rails': 'Вагонетку можно поставить только на рельсы',
 };
 
@@ -210,6 +215,7 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
       case BlockId.StoneButton: return 'press-button';
       case BlockId.OakDoor: return 'toggle-door';
       case BlockId.WhiteBed: return 'use-bed';
+      case BlockId.OakSign: return 'use-sign';
       default: break;
     }
   }
@@ -292,13 +298,11 @@ export function performUseHeld(ctx: UseSimulationContext): void {
       return;
     }
     if (hit.block === BlockId.WhiteBed) {
-      ctx.setSpawnPoint?.([hit.x + 0.5, hit.y + 1.01, hit.z + 0.5]);
-      let skippedNight = false;
-      if (ctx.world.timeOfDay > 12_500 && ctx.world.timeOfDay < 23_500) {
-        ctx.world.timeOfDay = 1_000;
-        skippedNight = true;
-      }
-      ctx.effects?.onBedUsed?.(skippedNight);
+      ctx.effects?.onBedUsed?.(hit.x, hit.y, hit.z);
+      return;
+    }
+    if (hit.block === BlockId.OakSign) {
+      ctx.effects?.onSignUsed?.(hit.x, hit.y, hit.z);
       return;
     }
     if (tryFarmingUse(ctx, hit, stack?.itemId, item)) return;
@@ -467,6 +471,57 @@ export function placeBlockAt(
 
   const placed = getBlockDefinition(blockId);
   const view = ctx.viewDirection();
+  if (blockId === BlockId.WhiteBed) {
+    const facing = doorFacingFromYaw(ctx.yaw);
+    const head = bedHeadCell(x, y, z, facing);
+    if (!isValidWorldY(head.y)) return { ok: false, reason: 'bed-space' };
+    const headBlock = ctx.world.getBlock(head.x, head.y, head.z, false);
+    if (headBlock !== BlockId.Air && getBlockDefinition(headBlock).replaceable !== true) {
+      return { ok: false, reason: 'bed-space' };
+    }
+    if (!canAttachToFace(ctx.world, x, y - 1, z, UP_FACE)
+      || !canAttachToFace(ctx.world, head.x, head.y - 1, head.z, UP_FACE)) {
+      return { ok: false, reason: 'bed-space' };
+    }
+    const bedBox = [{ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1 }];
+    if (playerHitsBoxes(ctx, x, y, z, bedBox) || playerHitsBoxes(ctx, head.x, head.y, head.z, bedBox)) {
+      return { ok: false, reason: 'collision' };
+    }
+    if (ctx.allowPlace && (!ctx.allowPlace(x, y, z, blockId)
+      || !ctx.allowPlace(head.x, head.y, head.z, blockId))) return { ok: false, reason: 'cancelled' };
+    const result = ctx.world.applyBlockBatch([
+      { x, y, z, block: BlockId.WhiteBed },
+      { ...head, block: BlockId.WhiteBed },
+    ], { deferLighting: true });
+    if (result.applied !== 2) return { ok: false, reason: 'rejected' };
+    ctx.world.setBlockState(x, y, z, { bedPart: 'foot', facing });
+    ctx.world.setBlockState(head.x, head.y, head.z, { bedPart: 'head', facing });
+    ctx.redstone.notifyBlockChanged(x, y, z);
+    ctx.redstone.notifyBlockChanged(head.x, head.y, head.z);
+    ctx.effects?.playBlock?.('place', BlockId.WhiteBed, x, y, z);
+    ctx.effects?.swing?.();
+    if (ctx.gamemode === 'survival') consumeHeld(ctx, 1);
+    ctx.effects?.onPlaced?.(x, y, z, blockId);
+    ctx.effects?.onPlaced?.(head.x, head.y, head.z, blockId);
+    return { ok: true };
+  }
+  if (blockId === BlockId.SugarCane) {
+    let below = y - 1;
+    while (ctx.world.getBlock(x, below, z, false) === BlockId.SugarCane) below -= 1;
+    if (y - below > 3 || !canSugarCaneStandAt(ctx.world, x, y, z)) return { ok: false, reason: 'no-anchor' };
+  }
+  if (blockId === BlockId.OakSign) {
+    if (attachmentNormal.y < -0.5) return { ok: false, reason: 'no-anchor' };
+    const floor = attachmentNormal.y > 0.5;
+    if (!canAttachToFace(ctx.world, x - attachmentNormal.x, y - attachmentNormal.y,
+      z - attachmentNormal.z, attachmentNormal)) return { ok: false, reason: 'no-anchor' };
+    if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
+    if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };
+    ctx.world.setBlockState(x, y, z, floor
+      ? { attachment: 'floor', facing: 'south', signRotation: ((Math.round(ctx.yaw / (Math.PI / 8)) % 16) + 16) % 16 }
+      : { attachment: 'wall', facing: horizontalFacingFromXZ(attachmentNormal.x, attachmentNormal.z) });
+    return { ok: true };
+  }
 
   if (blockId === BlockId.Lantern) {
     const orientation = lanternPlacementFromHit(attachmentNormal.x, attachmentNormal.y, attachmentNormal.z);

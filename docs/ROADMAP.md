@@ -1,18 +1,257 @@
 # Roadmap
 
+## 2026-09-18: merge current main into entity-special-visual-fixes
+
+- [x] Semantic merge `origin/main` into `codex/entity-special-visual-fixes` without shifting OakSign off 165 or dropping unknown-block compatibility.
+- [ ] Owner review of the synchronized feature branch before any merge to main.
+
 ## 2026-09-10: special blocks, mob presentation, skeleton hit routing
 
 - [x] Give torch/redstone torch explicit authored side/top/bottom UV while preserving floor/four-wall attachment and light gameplay.
 - [x] Rebuild standing/hanging lantern silhouette from authored body/cap/hanger regions.
 - [x] Separate ten-shape rail render surfaces from simulation collision boxes; add true slopes and authored curved tile.
-- [x] Preserve exactly two grounded chicken legs using measured opaque sheet regions and opposite gait.
+- [x] Keep current main chicken `[29, 0]` yellow-island UV with two grounded opposite-gait legs.
 - [x] Attach one shared-factory bow to skeleton hand and add distinct bounded bow/draw arm pose.
 - [x] Sweep skeleton projectiles against every living/targetable canonical player AABB, compare block distance and route exact `targetPlayerId` without nearest fallback.
 - [x] Add independent third-person sword/tool/bow/generic/block grips and correct bow pitch/sneak composition without changing first person.
-- [x] Add focused regressions and production-renderer browser harnesses; pass 116/116 targeted tests, four typechecks, boundaries, smokes, build/size/archive.
+- [x] Adapt flying/embedded arrow orientation onto current `visualDirection` / `impactVx` without restoring `visualVx`.
 - [ ] Owner manual: two simultaneous Anarchy clients with skeleton fire and visible health attribution.
 - [ ] Owner manual: continuous minecart ride through break/rebuild/high/curve/save-load scenario.
-- [ ] Separate task: repair the pre-existing hanging `fire-contact-sunlight-minecart` runner and unrelated worldgen/tick-load/extractor failures.
+
+## 2026-09-18: Merge Utility Items V1 into current main
+
+- [x] Semantic merge feature `codex/utility-items-v1@475acc6` into current main without shifting OakSign off 165 or dropping unknown-block compatibility.
+- [ ] Live smoke: save with 165 as OakSign, bed occupancy, Totem, menu/friends/trade.
+
+## 2026-09-18: Totem particle spread / quieter sound
+
+- [x] Увеличить разлёт Totem burst примерно в 2 раза через initial speed, count 48, меньший point size, слегка сильнее вверх; volume `0.45 → 0.225`.
+- [ ] Live two-client visual/audio QA: 10 activations, spread/size/volume.
+
+## 2026-09-18: Bed occupancy / Totem particles / utility icons
+
+- [x] Authoritative one-player-per-bed occupancy from `ServerPlayer.restingBed` and canonical HEAD identity; reject occupied HEAD/FOOT clicks without a second occupancy map.
+- [x] Minecraft-like Totem world particle burst after authoritative activation; broadcast `totem_activate` with playerId/position to owner and nearby clients.
+- [x] Targeted inventory icons: White Bed 3D sheet preview, Oak Door and Sugar Cane item sprites with preserved aspect, Farmland shallow 3D block.
+- [ ] Live two-client QA: occupancy, 10 Totem activations, hotbar/inventory/creative icons.
+
+## 2026-09-15: Utility Items final polish
+
+- [x] Временно показывать `thirdPersonBack` на каждом resting frame, скрыть first-person руки и показать world-модель, сохранив preference и игнорируя F5 во время сна.
+- [x] Totem: `volume 0.9 → 0.45`, проигрывание сразу с `sample time 0.7s` без перекодирования и без таймера; остальные звуки/короткие буферы сохраняют безопасный старт.
+- [x] Сдвинуть только HUD offhand на 12 CSS px влево через существующий gap; hotbar остаётся центрированным на четырёх проверенных размерах окна.
+- [ ] Проверить в игровом клиенте интерактивный bed enter/Space exit с F5 и 10 Totem activations у owner+nearby слушателя. In-app browser не получил pointer lock; code-level frame test и браузерный single-event audio probe пройдены.
+
+## 2026-09-15: Utility Items bed pose / Totem audio admission
+
+- [x] Исправить ошибочный front/back bed test и развернуть rest-позу лицом вверх во всех четырёх направлениях, сохранив голову у подушки.
+- [x] Опустить только визуальный rest rig до контакта торса с матрасом; authoritative `y + 0.81` оставить прежним и полностью сбрасывать transform после выхода.
+- [x] При насыщении combat bus дать Totem priority 9 вытеснять более слабый combat voice; проверить точную owner-последовательность и nearby event без двойного старта.
+- [x] Разделить permanent missing sample и transient fetch/decode failure с bounded backoff; показывать причины отброса в audio debug.
+- [ ] Провести в живом Anarchy 10 owner+nearby активаций Totem и ещё 5 после рестарта owner с проверкой, что оба клиента слышат ровно один звук на каждую активацию. При пропуске снять `recentDrops`/`recentPlays`/`transientFailures` и повторно диагностировать. Проверить bed rest/Space глазами второго игрока.
+
+## 2026-09-14: Utility Items bed rest / Sign post / SFX race / Book
+
+- [x] RMB по foot/head валидной кровати → горизонтальная pose и камера у подушки в SP и Anarchy; Space выходит через применённую команду, server presentation передаёт rest, local prediction стоит на месте.
+- [x] Очищать rest при сломанной половине, смерти, respawn, teleport, disconnect и закрытии мира; время и spawnPoint не менять.
+- [x] Укоротить стойку напольной Sign до нижней поверхности доски, убрать перекрывающиеся cap faces и сохранить wall/text.
+- [x] Не терять первый звук до preload/fetch/decode; дедуплицировать файл, ограничить ожидающие one-shots, перепроверять admission на старте.
+- [x] Book: приоритет интерактивного блока, единый SP/online editor, draft Done, title+confirmation Sign, server-owned author/lock, read-only signed pages.
+- [ ] Реальный двухклиентный слуховой тест Anarchy и multiplayer/mобильный visual QA оставлены на ручной проход перед merge review.
+
+## 2026-09-14: Utility Items pillow/sign/Totem/firework follow-up
+
+- [x] Исправить только ориентацию pillow UV у bed head; сохранить соединение половин и проверить четыре facing.
+- [x] Подключить полный sign entity sheet и face-specific UV для доски/стойки; standing/wall и текст проверены в dev-сцене `/?qaSign=1`.
+- [x] Показывать Totem в main hand, активировать защиту только из offhand в Singleplayer и Anarchy; оба слота покрыты тестами.
+- [x] Проверить MP3 через браузерный decode и parsed `world_sound` playback; привести SFX URL к Vite `BASE_URL`; подтвердить серверную доставку owner/nearby/distant.
+- [x] Смешивать 70 белых и 18 частиц одного насыщенного акцента на burst; использовать canonical rocket asset URL.
+- [ ] Провести реальный двухклиентный слуховой тест в Anarchy и мобильный landscape QA перед merge review.
+
+## 2026-09-14: Utility Items bed/offhand/SFX follow-up
+
+- [x] Зарегистрировать полный White Bed entity sheet в runtime atlas; развернуть head/foot, верх, боковины, торцы, низ и ножки по исходным UV. Проверить через `/?qaBed=1` и regression tests.
+- [x] Один насыщенный акцент на Firework burst при прежних 20 TPS, лимитах и общем particle material; текущая пропорция 70 white / 18 accent.
+- [x] Серверный offhand Totem в remote/third-person левой руке; выбранный mainhand Totem также рисуется в first-person и third-person.
+- [x] Пользовательский `totem-sound.mp3` через существующий positional `world_sound` для владельца и соседей без дубля.
+- [ ] Трёхклиентный интерактивный PvP QA в браузере с реальным звуком и снятием Totem, а также мобильный landscape QA; unit/server проверки есть.
+
+## 2026-09-14: Utility Items live QA fixes
+
+- [x] Firework: блокирующий raycast на fixed tick, интерполяция локально и по сетевым снапшотам, крупный многоцветный burst.
+- [x] WH: единое имя в item/protocol/assets/docs; один контур base skin с пересборкой на Classic/Slim; застрявшая сетевая стрела без случайного разворота.
+- [x] Bed: отдельная соединённая head/foot геометрия и правильные UV; Sugar Cane: только настоящий водный берег, не лёд.
+- [x] Offhand HUD и inventory; заметная анимация Totem с отдельным звуком.
+- [ ] Ручной визуальный QA по checklist из `docs/reports/2026-09-14_utility-items-live-qa-fixes.md` в браузере с pointer lock и тремя клиентами.
+
+## 2026-09-13: Utility Items V1
+
+- [x] Paper recipe, wet-shore Sugar Cane generation/growth/placement; Book draft metadata, sign text and world persistence.
+- [x] Two-cell bed placement/break/support integrity; no spawn/home/time side effects. Rest interaction added in the 2026-09-14 follow-up above.
+- [x] Cow milk and 32-tick drink, effect clearing, fire resistance and central Totem death interception.
+- [x] Decorative Flight 1–3 fireworks with bounded client particles and server entity snapshots.
+- [x] WH Arrow through the existing bow/arrow authority, viewer-only 200-tick marks, wall-visible outline and invisibility compatibility.
+- [x] Focused authority tests, typechecks, boundaries, build and archive size check.
+- [ ] Three interactive clients visual QA for WH outline, fireworks, sign and book flows.
+- [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
+## 2026-09-17: Pause heading off + Creative graphite tabs
+
+- [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.
+- [x] Creative Catalog/Inventory tabs use graphite chrome; catalog scrollbar is hidden while wheel and touch pan still scroll all 9 columns.
+
+## 2026-09-17: Pause overlay + larger HUD/chat/pause buttons
+
+- [x] In-game TAB Pause overlays the live world canvas; it does not switch to the Main Menu photo.
+- [x] Chat tab/side sprites and pause actions are ~2× larger; HUD Pause/Chat/Menu settled at 76 logical px squares.
+
+## 2026-09-17: Menu coin asset + chat PNG sprites
+
+- [x] Main Menu balance coin uses the attached padded PNG and is fully visible next to unchanged «Баланс» copy.
+- [x] Open-chat tabs and side controls use the attached PNG faces (`public/ui/chat/`), not CSS-drawn bevels.
+- [x] Chat channel routing, T/Enter/TAB/X, ON/OFF, history and scrolling stay on the existing client path.
+
+## 2026-09-17: Trade partner coins, chat chrome, home limit 3, menu coin
+
+- [x] Trade snapshot + GUI show both players' coin offers; server remains source of truth.
+- [x] Open chat log has no message-area panel fill.
+- [x] Ordinary home cap is `HOME_MAX_DEFAULT = 3` for commands and UI.
+
+## 2026-09-17: Unknown-block save load compat
+
+- [x] Runtime placeholder for any unregistered storable voxel ID, including JSON string `"165"`.
+- [x] Saved-world load regression (IndexedDB snapshot + Anarchy `WorldInstance.initialize`) without rewriting ID 165 or adding it to `BLOCK_REGISTRY`.
+
+## 2026-09-16: Unified in-game UI chrome
+
+- [x] Shared graphite panel/button/input/list/close chrome for every existing overlay.
+- [x] Friends and Trade lobby match the attached reference without new social systems.
+- [x] Inventory, craft, chat, auction, clan, buyer, pause, settings restyled; functionality kept.
+
+## 2026-09-16: Merge unknown-block compat into menu visual
+
+- [x] Merge `--no-ff` `cursor/unknown-block-compat-31b4` into `cursor/main-menu-visual-31b4` without dropping menu chrome.
+
+## 2026-09-16: Main Menu visual restyle
+
+- [x] Dark compact Main Menu panel with live Megacoin balance and 4+3 icon grid.
+- [x] Reuse `closeButtonHtml()`, nested ←, and existing social systems (visual chrome only).
+- [x] HUD Pause/Chat/Menu sprites from the provided button sheet.
+
+## 2026-09-16: Unknown block load compat
+
+- [x] World load keeps unregistered voxel IDs instead of throwing `Unknown block id`.
+- [x] Placeholder is runtime-only; save/chunk data is not rewritten to a known BlockId.
+
+## 2026-09-16: Main Menu + Friends + Trade
+
+- [x] HUD Pause/Chat/Menu (TAB / T / M) without replacing existing Pause or Chat.
+- [x] Inventory-style main menu: Spawn, Homes, Friends, Clans, Claims, Trade, Auction. No "Топ".
+- [x] Friends plugin (mutual, 50, teleport permission) and server-authoritative P2P Trade.
+- [x] Reuse Home / Clan / Claims / Auction; nested ← returns to the previous menu page.
+
+## 2026-09-13: Merge Crafting UI into main
+
+- [x] Fetch current `origin/main`; no teammate commits after Chat merge `1c802ab`.
+- [x] Merge `--no-ff` `cursor/crafting-ui-a8dc` into `main` (`7e8b928`) without rebase/squash/force push.
+- [x] Keep Chat / Buyer / Auction House / Economy / Worldgen V2 / Clan together with the dedicated craft menu.
+
+## 2026-09-13: Close X inner E
+
+- [x] Inventory-style close is a slightly larger square: large red ×, small white E in the bottom-right **inside** the button.
+
+## 2026-09-13: Crafting UI UX patch
+
+- [x] Square close X with E inside the button (not a wrap / caption underneath).
+- [x] Craftable-now items first, then locked recipes, then items with no recipe; list re-sorts after inventory changes.
+- [x] Lighter craft-menu search field (`#8b8b8b`) with readable text/placeholder.
+- [x] Compact inventory «Крафт» button; craft panel width 256 so the last column fits; hidden scrollbar with wheel/touch scrolling.
+
+## 2026-09-12: Crafting UI overhaul
+
+- [x] Remove Survival 2×2 grid and recipe book from ordinary inventory; replace with CRAFT button (crafting-table icon).
+- [x] Inventory-style craft menu: all obtainable items, name search, no category tabs, green availability, one craft per click.
+- [x] Server-authoritative `craft_recipe` + `recipeId` only; atomic full-inventory reject; keep crafting-table 3×3 `recipe` + result click.
+- [x] Unified close control: red × with E caption on inventory-style UIs; clan back arrow unchanged.
+- [x] Tests: catalog/once/UI/server craft_recipe; `test:server` 47/481; four typechecks; boundaries; build.
+
+## 2026-09-12: Chat fullscreen transparent
+
+- [x] Open `#chat` spans available HUD width; side buttons sit on the right edge.
+- [x] Transparent message-area background; red close X; closed state stays compact top-left.
+- [x] Do not change Global / Nearby / Clan server routing.
+
+## 2026-09-12: Chat layout top-left
+
+- [x] Anchor `#chat` top-left; fixed open message-area height; hide native scrollbar.
+- [x] Larger input, ENTER/TAB hotkey buttons, CHAT ON/OFF toggle.
+- [x] Do not change Global / Nearby / Clan server routing.
+
+## 2026-09-12: Chat channels (Global / Nearby / Clan)
+
+- [x] Extend existing chat (no second ChatLog / protocol / ClanService).
+- [x] T opens on General; Enter sends and keeps open; Tab/X close and discard draft.
+- [x] Server-authoritative Global, Nearby ≤20 3D blocks, Clan via `ClanService.playerClan`.
+- [x] General aggregation with yellow/purple markers; 128-char server reject; ~40 history per tab.
+
+## 2026-09-12: Merge Buyer System into main
+
+- [x] Fetch current `origin/main`; no teammate commits after Clan merge `5492846`.
+- [x] Merge `--no-ff` `cursor/buyer-system-a8dc` into `main` (`c4d0ca6`) without rebase/squash/force push.
+- [x] Keep Auction House / Economy / Worldgen V2 / Clan together with Buyer NPCs.
+- [x] Pre-merge gates: `test:server` 45/470, four typechecks, boundaries, build PASS.
+
+## 2026-09-12: Buyer merchant skin cache-bust
+
+- [x] Diagnose buyer_merchant load chain; do not replace the current public PNG.
+- [x] Content-hash query on existing `TextureAtlas.url` for `player/skins/*` (Buyer + player skins).
+- [x] Use a Vite virtual hash module (DEV `define` did not reach TextureLoader).
+- [x] Test that TextureLoader URL for buyer_merchant matches current file hash and is not frontier_explorer.
+
+## 2026-09-12: Buyer hologram editor
+
+- [x] Admin GUI button «Настроить голограмму» opens the existing hologram editor (no second hologram system).
+- [x] Buyer hologram `buyer-<id>` keeps full appearance across move/item-price/restart; NPC yaw ≠ hologram yaw.
+- [x] Only `buyer.edit` / `buyer.*` / OP can edit the bound hologram; `/holograms` and `holograms.create` cannot.
+
+## 2026-09-11: Buyer NPC system
+
+- [x] Builtin `buyer` plugin + `BuyerService` on PluginManager / JsonFileStore / EconomyService / HologramNetwork (no second wallet, no second hologram renderer).
+- [x] Commands `/buyer create|move|delete|list`; aliases `/buyers` `/скупщик`.
+- [x] Permissions `buyer.use` `buyer.create` `buyer.delete` `buyer.move` `buyer.list` `buyer.edit` `buyer.*`; OP bypass.
+- [x] Static NPC: player model + `buyer_merchant` skin; no physics, damage, look-at, or HP nameplate.
+- [x] Inventory-style admin + trade GUIs; 1 NPC = 1 item; atomic sell; close/E returns the trade slot.
+- [x] Bound hologram `buyer-<id>`; move/delete with the NPC; hologram plugin cannot orphan or edit it. Appearance uses the shared hologram editor.
+- [x] Live Anarchy QA of create Farmer / admin GUI / Pumpkin 50 / sell 32 for 1600 (move/restart/two-NPC still on owner checklist).
+
+## 2026-09-11: Merge Clan System into main
+
+- [x] Fetch current `origin/main`; no teammate commits after Auction House merge `750a3b7`.
+- [x] Merge `--no-ff` `cursor/clan-system-a8dc` into `main` (`ae904a3`) without rebase/squash/force push.
+- [x] Keep Auction House / Economy / Worldgen V2 together with Clan System.
+- [x] Pre-merge gates: clan 20/20, clan-plugin 7/7, clan-gui 7/7, auction 24/24, economy 15/15, `test:server` 43/447, four typechecks, boundaries, build PASS.
+
+## 2026-09-11: Clan QA fixes
+
+- [x] Brighter two-line create button; invite chat to target; card «Вступить в клан»; makeleader→leave→create; CSS rank cups + aligned rank column.
+- [x] Owner live Anarchy QA of clan create/invite/accept/request/leave/kick/delete (passed before merge).
+
+## 2026-09-10: Clan system
+
+- [x] Builtin `clan` plugin + `ClanService` on PluginManager / JsonFileStore / EconomyService (no clan wallet).
+- [x] Commands `/clans` `/clan create|delete|add|accept|leave|makeleader|kick`.
+- [x] Permissions `clan.use` `clan.create` `clan.delete` `clan.add` `clan.accept` `clan.leave` `clan.makeleader` `clan.kick` `clan.list` `clan.*`; OP bypass.
+- [x] Inventory-style GUI matching Auction House (search/refresh/pagination, clan card, back arrow).
+- [x] 10 000 create cost, 20 members, 24h invites/requests, ranking by live balances.
+- [x] `canCreateClan` hook for future PlaytimeService (currently always true).
+- [ ] Owner live Anarchy QA of clan create/invite/accept/request/leave/kick/delete (not run in this pass).
+
+## 2026-09-10: Merge Worldgen V2 into Auction House
+
+- [x] Fetch current `origin/main`; confirm teammate PR #83 (snowy plains / cave deposits) landed after the Auction branch base.
+- [x] Merge `origin/main` into `cursor/auction-house-a8dc` without rebase/squash/force push.
+- [x] Keep Worldgen V2 snapshot metadata and snowy spawn together with Auction House / Economy.
+- [x] Auction/economy/`test:server`/typecheck/boundaries/build PASS after the Worldgen V2 merge.
+- [x] Merge `--no-ff` `cursor/auction-house-a8dc` into `main` (`d329f1f`) and push `origin/main`.
 
 ## 2026-09-10: Worldgen V2 — snowy plains, mixed forests, cave deposits
 
@@ -27,6 +266,34 @@
 - [x] Measure biome/tree/deposit distribution and generation performance; keep the representative batch regression to +5.2%.
 - [x] Complete WebGL QA for four biomes, frozen shore, both deposit types and a fresh authoritative online world.
 - [ ] Future only by explicit task: save-version selection/migration if old natural terrain must remain byte-identical after upgrades.
+
+## 2026-09-10: Auction House UI polish
+
+- [x] Inventory-style confirm buttons without text wrap; browse **Обновить**; in-place search patch (keep focus/caret).
+- [x] Empty vs range price messages; sell icon amount follows ±; no GUI success line after buy.
+- [ ] Owner live Anarchy QA of `/ah` browse/sell/buy/list/claim (not run in this pass).
+
+## 2026-09-09: Auction House
+
+- [x] Builtin `auction` plugin + `AuctionService` on PluginManager / JsonFileStore / EconomyService (no second wallet).
+- [x] Commands `/ah` `/ah sell` `/ah list`; aliases `/auction` `/auctionhouse`.
+- [x] Permissions `auction.use` `auction.sell` `auction.buy` `auction.list` `auction.*`; OP bypass.
+- [x] Inventory-style GUI (chest slots, item icons, tooltips, close ×, E to close).
+- [x] 2-day expiration, 30 ACTIVE listings, price 10…100 000 000, no commission.
+- [x] Manual claim of cancelled/expired items; atomic relist with a fresh timer.
+- [x] Server-authoritative create/buy/cancel/relist/claim; paged `auction` snapshots.
+- [ ] Owner live Anarchy QA of `/ah` browse/sell/buy/list/claim (not run in this pass).
+
+## 2026-09-10: Economy plugin (Мегакоин)
+
+- [x] Builtin `economy` plugin + `EconomyService` on existing PluginManager / JsonFileStore / PermissionService / EventBus.
+- [x] Player commands `/balance` `/bal` `/pay` `/baltop` `/transactions`; admin `/eco give|take|set|reset|balance|transactions`.
+- [x] Permissions `economy.balance` `economy.pay` `economy.baltop` `economy.transactions` `economy.admin` `economy.*`; OP bypass.
+- [x] Natural/AutoMine block rewards; no pay for player-placed or TNT-destroyed blocks.
+- [x] Mob kill table + PvP `floor(10%)` with 5-minute same-pair anti-farm cooldown.
+- [x] Integer Мегакоин, start 100, max 999 999 999, atomic transfer, persisted transactions.
+- [ ] Owner live Anarchy QA of `/pay` offline, AutoMine diamond, TNT ore, PvP 10%.
+- [x] Auction House uses EconomyService (this branch); Buyer NPCs use `deposit(..., 'TRADER_SELL')`.
 
 ## 2026-09-10: Integrate player layer z-fighting fix into current main
 
@@ -427,10 +694,12 @@
 - [x] Spawn / Home / Back / RTP / RTP Portal using existing world spawn and bounded RTP search.
 - [x] Claims with cancellable events and configurable flags (not WorldGuard).
 - [x] Holograms MVP (named, lines, range, persistence). No Auction House.
+- [x] Economy (Мегакоин) via EconomyService + builtin plugin. Auction House still later.
+- [x] Auction House (fixed-price listings) via builtin `auction` + `AuctionService`.
 - [ ] Owner in-game QA on a live Anarchy process: /op, homes, TPA, RTP portal water, claims PvP, 3D holograms.
 - [x] Client hologram rendering (planes; billboard or fixed). Click actions / placeholders / pages — later.
 - [x] In-game hologram editor (RMB, text/size/style/font, background, orientation, timer) on the existing plugin/renderer.
-- [ ] Auction House after inventory/GUI market framework.
+- [x] Auction House after inventory/GUI market framework.
 
 ## 2026-09-04: Anarchy spawn schematic → FsWorldStore
 
@@ -1190,7 +1459,7 @@ Definition of done: нет overlap/cutoff/blocking input defects, simulation д�
 - [x] Главное меню и связанные screens: оригинальный voxel background, крупный Frontier Cubes logo treatment, одиночная игра с выбранным миром, offline online-server mock, settings и read-only controls; mouse/Esc/back navigation без отдельной второй menu system.
 
 - [ ] Settings persistence, fullscreen toggle, remappable controls и touch-layout presets.
-- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival 2×2 inventory; Recipe Book слева на crafting/Survival (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter).
+- [x] Pixel Minecraft-like container GUI для chest / furnace / crafting table / Survival inventory (CRAFT-кнопка вместо 2×2) + отдельное меню крафта всех предметов; Recipe Book слева только на верстаке (кнопка книги в craft row, icon categories, search, All/Craftable, transactional ghost vs placement); Furnace без Recipe Book; Creative Catalog/Inventory tabs (без offhand, armor silhouettes, catalog scrollbar gutter); close × with small white E inside the button.
 - [x] Chest entity model + opposite-of-look facing + lid-up hinge; furnace facing + lit front + torch-equivalent block light from burn state.
 - [x] Creative double-Space flight (7 ticks, collision, landing, Ctrl sprint, Shift descend, ladder override).
 - [ ] Полный inventory drag UX, tooltips с характеристиками и vanilla advancement recipe unlocks.

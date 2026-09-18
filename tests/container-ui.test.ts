@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CRAFTING_RECIPES, SMELTING_RECIPES, findSmeltingRecipe, getFuelBurnTicks } from '../src/crafting';
 import { Inventory, createItemStack } from '../src/inventory';
@@ -29,7 +32,7 @@ import {
   RECIPE_BOOK_TAB_ICONS,
   visibleRecipeBookTabs,
 } from '../src/ui/recipeBook';
-import { containerStageSize, containerUiScale, containerUiScaleWithClose, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CLOSE_GUTTER, MC_CLOSE_HIT_MIN_PX, MC_CREATIVE_SCROLL_GUTTER } from '../src/ui/containerTheme';
+import { containerStageSize, containerUiScale, containerUiScaleWithClose, MC_BOOK_BUTTON_IN_CRAFT_ROW, MC_CLOSE_GUTTER, MC_CLOSE_HIT_MIN_PX, MC_CRAFT_DETAIL_WIDTH, MC_CRAFT_LAYOUT_GAP, MC_CRAFT_LIST_COLUMNS, MC_CRAFT_MENU_WIDTH, MC_CRAFT_PANEL_PAD_X, MC_CREATIVE_SCROLL_GUTTER, MC_SLOT_PITCH, craftListFitsColumns, craftListInnerWidth } from '../src/ui/containerTheme';
 import {
   applySlotSnapshots,
   armorSlotKind,
@@ -43,6 +46,9 @@ import {
   slotStateSignature,
 } from '../src/ui/inventoryLayout';
 
+const STYLE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/style.css'), 'utf8');
+const GAME_UI = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/ui/GameUI.ts'), 'utf8');
+
 describe('container layout', () => {
   it('keeps furnace/crafting logical size near vanilla 176×166', () => {
     expect(containerStageSize('furnace', false)).toEqual({ width: 176, height: 166 });
@@ -53,9 +59,17 @@ describe('container layout', () => {
     expect(withBook.width).toBeGreaterThan(176);
     expect(containerStageSize('creative', false).width).toBe(195);
     expect(containerStageSize('creative', false).height).toBe(166);
+    expect(containerStageSize('craft', false)).toEqual({ width: 256, height: 166 });
+    expect(MC_CRAFT_MENU_WIDTH).toBe(256);
+    expect(MC_CRAFT_LIST_COLUMNS * MC_SLOT_PITCH).toBeLessThanOrEqual(craftListInnerWidth());
+    expect(craftListFitsColumns()).toBe(true);
+    expect(craftListInnerWidth()).toBe(
+      MC_CRAFT_MENU_WIDTH - MC_CRAFT_PANEL_PAD_X * 2 - MC_CRAFT_LAYOUT_GAP - MC_CRAFT_DETAIL_WIDTH,
+    );
     expect(MC_BOOK_BUTTON_IN_CRAFT_ROW).toBe(true);
     const creativeInner = 195 - 14;
     expect(9 * 18).toBeLessThanOrEqual(creativeInner);
+    expect(MC_CREATIVE_SCROLL_GUTTER).toBe(0);
     expect(9 * 18 + MC_CREATIVE_SCROLL_GUTTER).toBeLessThanOrEqual(creativeInner);
   });
 
@@ -174,7 +188,7 @@ describe('recipe book', () => {
       .toEqual([...SMELTING_RECIPES].map((recipe) => recipe.id).sort());
     expect(hasRecipeBook('crafting-table')).toBe(true);
     expect(hasRecipeBook('furnace')).toBe(false);
-    expect(hasRecipeBook('inventory')).toBe(true);
+    expect(hasRecipeBook('inventory')).toBe(false);
     expect(hasRecipeBook('chest')).toBe(false);
   });
 
@@ -379,6 +393,43 @@ describe('creative inventory contract', () => {
     expect(result.identity).toBe(true);
     expect(existing[0]).toBe(slot);
     expect(slot.innerHTML).toBe('63');
+  });
+});
+
+describe('creative catalog chrome', () => {
+  it('keeps Catalog/Inventory tabs on the existing data attributes', () => {
+    expect(GAME_UI).toContain('data-creative-tab="catalog"');
+    expect(GAME_UI).toContain('data-creative-tab="inventory"');
+    expect(GAME_UI).toContain('data-creative-catalog');
+  });
+
+  it('styles creative tabs with graphite tokens and a distinct active face', () => {
+    expect(STYLE).toContain('.mc-creative-tabs button {');
+    expect(STYLE).toContain('.mc-creative-tabs button.active {');
+    const tabsStart = STYLE.indexOf('.mc-creative-tabs button {');
+    const catalogStart = STYLE.indexOf('.mc-creative-catalog {');
+    const tabsCss = STYLE.slice(tabsStart, catalogStart);
+    expect(tabsCss).toContain('background: var(--mc-btn-pressed);');
+    expect(tabsCss).toContain('color: var(--mc-text-muted);');
+    expect(tabsCss).toContain('box-shadow: var(--mc-btn-edge);');
+    expect(tabsCss).toContain('background: var(--mc-btn-face);');
+    expect(tabsCss).toContain('color: var(--mc-text-title);');
+    expect(tabsCss).not.toContain('#8b8b8b');
+    expect(tabsCss).not.toContain('#686f7c');
+  });
+
+  it('hides the catalog scrollbar without reserving a track or clipping nine columns', () => {
+    const start = STYLE.indexOf('.mc-creative-catalog {');
+    const end = STYLE.indexOf('\n}', start);
+    const catalog = STYLE.slice(start, end + 2);
+    expect(catalog).toContain('grid-template-columns: repeat(9, var(--mc-slot));');
+    expect(catalog).toContain('overflow-y: auto;');
+    expect(catalog).toContain('touch-action: pan-y;');
+    expect(catalog).toContain('scrollbar-width: none;');
+    expect(catalog).toContain('width: 100%;');
+    expect(catalog).not.toContain('padding-right: max(');
+    expect(STYLE).toContain('.mc-creative-catalog::-webkit-scrollbar {');
+    expect(STYLE).toContain('display: none;');
   });
 });
 

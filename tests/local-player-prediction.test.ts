@@ -160,6 +160,17 @@ function predictSeries(
 }
 
 describe('local player prediction', () => {
+  it('records rest commands without locomotion or gravity while preserving live look', () => {
+    const { world, player, buffer } = groundedPlayer();
+    player.velocity.set(2, 1, -3);
+    const before = player.position.clone();
+    const restMove = { ...move(1, { forward: 1, jump: true }, 0.7), resting: true, locomotion: false };
+    predictLocalMove(player, world, buffer, restMove);
+    expect(player.position.distanceTo(before)).toBe(0);
+    expect(player.velocity.length()).toBe(0);
+    expect(player.yaw).toBeCloseTo(0.7);
+    expect(buffer.entries[0]?.input.resting).toBe(true);
+  });
   it('predicts movement immediately without a snapshot', () => {
     const { world, player } = groundedPlayer();
     const startX = player.position.x;
