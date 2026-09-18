@@ -112,3 +112,7 @@ Owner visual confirmation of the three harnesses; then remaining entity visual r
 ## Git
 
 Feature branch `codex/entity-special-visual-fixes` only. No merge to `main`, no rebase, no force push.
+
+- Before: `3ebad77a242c79a96f0a7b94036da4a1bdedeb25`
+- After: `f01f188ed636606c16efa7769ffefe88e4db0ca8`
+- `origin/main` unchanged: `ce6facdb328321b5b2113196aa9ee277469b3341`
