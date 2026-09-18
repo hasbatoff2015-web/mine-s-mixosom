@@ -44,7 +44,14 @@ Done. `potion_repair` is a food potion like invisibility/regeneration: 32-tick d
 
 ## Visual QA
 
-See the agent run notes after live/dev checks.
+Browser on local Vite (`http://127.0.0.1:5173`):
+
+- `?qaItem=potion_repair&qaView=front` — same bottle/cork as other potions, teal liquid.
+- Invisibility remains gray; regeneration remains pink.
+- `?qaItem=potion_repair&qaView=held` — generated first-person pose, teal bottle in the lower-right.
+- `?qaUi=creative` — catalog shows **Зелье починки** next to the other potions; hover tooltip name + yellow hint «Восстанавливает 50% потерянной прочности всех предметов».
+
+In-world drink + trader click-through were not run: pointer lock is unreliable in this cloud browser. Consume/repair/sync/buyer sell are covered by tests.
 
 ## Performance
 
