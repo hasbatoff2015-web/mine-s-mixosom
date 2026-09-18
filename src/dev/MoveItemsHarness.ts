@@ -17,6 +17,7 @@ import {
   ThirdPersonHeldItemCalibratorState,
   type ThirdPersonHeldItemTransform,
 } from '../rendering/player/thirdPersonHeldItem';
+import { setEntityLight } from '../rendering/worldLighting';
 import { disposeWorldLighting } from '../world/LightEngine';
 import { VoxelWorld } from '../world/World';
 import { mountMoveItemsPanel, type MoveItemsCatalogGroup, type MoveItemsPanel } from './MoveItemsPanel';
@@ -56,6 +57,13 @@ function catalogGroups(): MoveItemsCatalogGroup[] {
     if (ids.length > 0) groups.push({ label: kindLabel[kind], ids });
   }
   return groups;
+}
+
+function wrapDegrees(radians: number): number {
+  let degrees = THREE.MathUtils.radToDeg(radians);
+  while (degrees > 180) degrees -= 360;
+  while (degrees < -180) degrees += 360;
+  return degrees;
 }
 
 function flattenClearing(world: VoxelWorld, x: number, z: number, radius: number): number {
@@ -111,9 +119,10 @@ export async function startMoveItemsHarness(
   scene.add(player.root);
 
   const camera = new THREE.PerspectiveCamera(48, 1, 0.05, 80);
-  let cameraOrbit = 0.55;
+  // Front three-quarter on the player's right hand (held-item socket).
+  let cameraOrbit = Math.PI + 0.55;
   let cameraPitch = 0.18;
-  let cameraDistance = 4.2;
+  let cameraDistance = 3.4;
   let dragging = false;
   let lastPointer = { x: 0, y: 0 };
 
@@ -150,7 +159,7 @@ export async function startMoveItemsHarness(
       <select id="moveitems-pose"><option value="idle">idle</option><option value="walk">walk</option><option value="mining">mining</option></select>
     </label>
     <label style="display:grid;grid-template-columns:72px 1fr;gap:6px;align-items:center;margin:0 0 6px">orbit
-      <input id="moveitems-orbit" type="range" min="-180" max="180" value="${Math.round(cameraOrbit * 180 / Math.PI)}">
+      <input id="moveitems-orbit" type="range" min="-180" max="180" value="${Math.round(wrapDegrees(cameraOrbit))}">
     </label>
     <label style="display:grid;grid-template-columns:72px 1fr;gap:6px;align-items:center;margin:0 0 6px">pitch
       <input id="moveitems-pitch" type="range" min="-35" max="70" value="${Math.round(cameraPitch * 180 / Math.PI)}">
@@ -214,7 +223,7 @@ export async function startMoveItemsHarness(
     lastPointer = { x: event.clientX, y: event.clientY };
     cameraOrbit -= dx * 0.008;
     cameraPitch = THREE.MathUtils.clamp(cameraPitch + dy * 0.006, -0.6, 1.2);
-    orbitInput.value = String(Math.round(THREE.MathUtils.radToDeg(cameraOrbit)));
+    orbitInput.value = String(Math.round(wrapDegrees(cameraOrbit)));
     pitchInput.value = String(Math.round(THREE.MathUtils.radToDeg(cameraPitch)));
   };
   const onPointerUp = (event: PointerEvent): void => {
@@ -254,7 +263,7 @@ export async function startMoveItemsHarness(
       mining: pose === 'mining',
     });
     player.update(delta, playerState);
-    player.applyWorldLight(world, playerX, playerY + 1, playerZ, 1);
+    setEntityLight(player.root, [1, 1, 1]);
     world.processLighting(2, originX, originZ);
     worldRenderer.rebuildDirty(2, 4, originX, originZ, { requireNeighborLight: true });
     placeCamera();

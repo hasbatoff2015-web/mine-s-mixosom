@@ -83,9 +83,26 @@ scale:
 - COPY / COPY ALL text.
 - `PlayerVisual` applies defaults then live overlay; switching items restores that item's production default before overlay.
 
+```text
+npm run typecheck                  PASS
+typecheck:client / typecheck:server PASS
+check:boundaries                   PASS
+vitest third-person + item-rendering + player-visual  3 files / 47 tests PASS
+npm run build                      PASS (harness not in production JS)
+```
+
 ## Visual QA
 
-Browser: open `/moveitems` on the Vite dev server, switch items, nudge transforms, RESET, COPY. Ordinary `/` still boots `Game`.
+Browser Chromium, Vite `http://localhost:4173/moveitems`:
+
+- Default camera is a front three-quarter on the right hand so the held item is visible (back view hid the thin sprite).
+- `iron_pickaxe` uses the real generated handheld mesh at production hip pose (the remote-player bug this tool is for).
+- Item switch: pickaxe → diamond_axe → diamond_sword, models swap immediately.
+- Live px / rz / scale sliders move the sword without reload.
+- RESET restores handheld defaults `0, -0.04, -0.06` / `-0.16, 0, -0.72` / `0.55` and status `reset to production default`.
+- COPY → `copied item`; COPY ALL → `copied all`.
+- Canvas drag orbits the camera.
+- `http://localhost:4173/` still opens the normal Frontier Cubes menu, not the calibrator.
 
 ## Performance
 
@@ -107,4 +124,4 @@ Browser: open `/moveitems` on the Vite dev server, switch items, nudge transform
 
 ## Git
 
-Ветка `cursor/moveitems-calibrator-d200` от `main` (`7c8a733`).
+Ветка `cursor/moveitems-calibrator-d200` от `main` (`7c8a733`). PR #95.
