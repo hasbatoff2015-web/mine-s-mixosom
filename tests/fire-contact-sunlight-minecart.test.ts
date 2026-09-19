@@ -399,7 +399,7 @@ describe('minecart 3D entity, riding and rail motion', () => {
     manager.dispose();
   });
 
-  it('accelerates with W, brakes/reverses with S, caps at 1.5× walk speed and coasts after release', () => {
+  it('accelerates in the latched travel direction with W, brakes to zero with S, caps at 1.5× walk speed and coasts after release', () => {
     const world = new VoxelWorld('cart-ws');
     world.deferredLighting = true;
     world.getChunk(0, 0);
@@ -434,6 +434,7 @@ describe('minecart 3D entity, riding and rail motion', () => {
     const cruising = cart.alongSpeed;
     manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
     expect(cart.alongSpeed).toBeLessThan(cruising);
+    expect(cart.alongSpeed).toBeGreaterThan(0);
     const released = cart.alongSpeed;
     for (let tick = 0; tick < 16; tick += 1) manager.update(0.05, { riderId: cart.id, forward: 0 });
     expect(Math.abs(cart.alongSpeed)).toBeGreaterThan(0);
@@ -441,7 +442,7 @@ describe('minecart 3D entity, riding and rail motion', () => {
     for (let tick = 0; tick < 24; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
     }
-    expect(cart.alongSpeed).toBeLessThan(0);
+    expect(cart.alongSpeed).toBe(0);
     const xOnRail = cart.position.x;
     for (let tick = 0; tick < 8; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: 1, strafe: 1, riderYaw: lookSouth });
@@ -468,11 +469,21 @@ describe('minecart 3D entity, riding and rail motion', () => {
     expect(cart.alongSpeed).toBeLessThan(down);
     cart.alongSpeed = 0;
     cart.progress = 0.08;
+    cart.throttleHeld = false;
+    for (let i = 1; i <= 5; i += 1) {
+      world.setBlock(5, 40 + i, 5 + i, BlockId.Stone);
+      world.setBlock(5, 41 + i, 5 + i, BlockId.Rail);
+      world.setBlockState(5, 41 + i, 5 + i, { railShape: 'ascending_south' });
+    }
     manager.update(0.05);
+    cart.alongSpeed = 0;
+    cart.throttleHeld = false;
     const startY = cart.position.y;
-    for (let tick = 0; tick < 30; tick += 1) {
+    for (let tick = 0; tick < 20; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: Math.PI });
     }
+    expect(cart.position.y).toBeGreaterThan(startY);
+    expect(manager.isOnRail(cart)).toBe(true);
     expect(cart.position.y).toBeGreaterThan(startY);
     manager.dispose();
   });

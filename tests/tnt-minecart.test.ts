@@ -359,7 +359,7 @@ describe('minecart visual yaw', () => {
 });
 
 describe('minecart max speed', () => {
-  it('reaches 1.5× walk speed on a long straight, then brakes, coasts and reverses', () => {
+  it('reaches 1.5× walk speed on a long straight, then brakes to a stop without reversing', () => {
     expect(MINECART_MAX_SPEED).toBeCloseTo(WALK_SPEED * 1.5);
     expect(MINECART_MAX_SPEED).toBeCloseTo(6.4755);
     const world = new VoxelWorld('cart-max-speed');
@@ -387,6 +387,7 @@ describe('minecart max speed', () => {
     const cruising = cart.alongSpeed;
     manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
     expect(cart.alongSpeed).toBeLessThan(cruising);
+    expect(cart.alongSpeed).toBeGreaterThan(0);
     const released = cart.alongSpeed;
     for (let tick = 0; tick < 16; tick += 1) manager.update(0.05, { riderId: cart.id, forward: 0 });
     expect(Math.abs(cart.alongSpeed)).toBeGreaterThan(0);
@@ -394,8 +395,7 @@ describe('minecart max speed', () => {
     for (let tick = 0; tick < 40; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
     }
-    expect(cart.alongSpeed).toBeLessThan(0);
-    expect(cart.alongSpeed).toBeCloseTo(-MINECART_MAX_SPEED, 5);
+    expect(cart.alongSpeed).toBe(0);
     manager.dispose();
   });
 });

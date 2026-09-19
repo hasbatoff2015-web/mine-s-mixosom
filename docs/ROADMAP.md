@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-20: minecart occupancy + stable vehicle controls
+
+- [x] One passenger per cart on the authoritative server; occupancy from `ridingCartId`.
+- [x] Per-cart rider input in a single `MinecartManager.update`.
+- [x] W launches from camera only on a new press from a stop; S brakes to zero.
+- [ ] Owner live: two-client same-cart / two-cart / disconnect / slope QA.
+
 ## 2026-09-19: minecart visual pose interpolation
 
 - [x] Interpolate cart yaw/pitch with position; shortest-angle wrap.

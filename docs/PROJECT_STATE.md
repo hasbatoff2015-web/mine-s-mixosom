@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: minecart occupancy + stable W/S controls — 2026-09-20
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Одна вагонетка = один пассажир (`player.ridingCartId`); `cart.rider` только derived. Disconnect/death/destruction `forceReleaseVehicle` без cancellable `vehicleExit`. Per-cart `controls` в одном `minecarts.update`. W latch с камеры только на новом press из stop; S тормоз до 0. Visual pose / 1.5× speed / rider interpolation не трогались.
+- Подробности: `docs/reports/2026-09-20_minecart-occupancy-controls.md`.
+
 ## Последний проход: minecart visual pose interpolation — 2026-09-19
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Cart visual interpolates position **and** yaw/pitch (`lerpAngle`). Slope pitch is `rotation.z = -pitch`, not `rotation.x`. `MINECART_VISUAL_YAW_OFFSET = −π/2` and `MINECART_MAX_SPEED = WALK_SPEED * 1.5` сохранены. Rider sample origin не откатывался.

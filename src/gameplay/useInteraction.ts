@@ -42,6 +42,7 @@ import { WORLD_HEIGHT, isValidWorldY } from '../core/constants';
 import {
   MinecartManager,
   resolveFlintAndSteelUse,
+  type MinecartEntity,
 } from '../entities';
 import { damageItem, type Inventory, type ItemStack } from '../inventory';
 import { ItemId, tryGetItemDefinition } from '../items';
@@ -200,6 +201,19 @@ export function cartIsCloser(
   return Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
 }
 
+function tryEnterMinecart(ctx: UseSimulationContext, cart: MinecartEntity): void {
+  if (ctx.ridingCartId === cart.id) return;
+  if (ctx.ridingCartId) {
+    ctx.effects?.toast?.('Сначала выйдите из текущей вагонетки.');
+    return;
+  }
+  if (cart.rider) {
+    ctx.effects?.toast?.('Вагонетка занята.');
+    return;
+  }
+  ctx.enterVehicle?.(cart.id);
+}
+
 /**
  * Pure use-order helper. Same inputs → same kind for SP-shaped and server-shaped
  * callers. Does not mutate the world.
@@ -326,7 +340,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
     }
     const tntId = tntBlockIdFromItem(stack?.itemId);
     if (tntId && insertTntCart(ctx, undefined, origin, direction, tntId)) return;
-    if (ctx.minecarts.isRideable(cartRay.cart)) ctx.enterVehicle?.(cartRay.cart.id);
+    if (ctx.minecarts.isRideable(cartRay.cart)) tryEnterMinecart(ctx, cartRay.cart);
     return;
   }
 
@@ -344,7 +358,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
   const nearbyCart = cartRay?.cart
     ?? (hit ? ctx.minecarts.cartAt(hit.x, hit.y, hit.z) : ctx.minecarts.nearest(ctx.position, 1.5));
   if (nearbyCart && ctx.minecarts.isRideable(nearbyCart)) {
-    ctx.enterVehicle?.(nearbyCart.id);
+    tryEnterMinecart(ctx, nearbyCart);
     return;
   }
 

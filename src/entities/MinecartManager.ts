@@ -62,8 +62,13 @@ export function minecartVisualEuler(yaw: number, pitch: number): { x: number; y:
 }
 
 const ACCEL_TIME = 0.5;
+/** Time from `MINECART_MAX_SPEED` to a full stop while holding S. */
+export const MINECART_BRAKE_TIME = 0.55;
 const COAST_FRICTION = 0.965;
 const SLOPE_GRAVITY = 6.5;
+const STOP_EPSILON = 0.02;
+const CONTROL_DEADZONE = 0.05;
+const LAUNCH_ALIGN = 0.01;
 const PUSH_GAIN = MINECART_PUSH_GAIN;
 const GROUND_FRICTION = 0.78;
 const AIR_DRAG = 0.995;
@@ -165,13 +170,23 @@ export interface MinecartEntity {
   progress: number;
   rail?: RailCell;
   derailGraceTicks: number;
+  /** W held at the end of the last physics step. Edge-only launch from stop. */
+  throttleHeld?: boolean;
+}
+
+export interface MinecartControlInput {
+  readonly throttle?: number;
+  readonly riderYaw?: number;
 }
 
 export interface MinecartUpdateInput {
+  /** Controlled cart id (legacy single-rider API). Prefer `controls`. */
   readonly riderId?: string;
   readonly forward?: number;
   readonly strafe?: number;
   readonly riderYaw?: number;
+  /** Per-cart input for one physics pass. Missing carts coast. */
+  readonly controls?: ReadonlyMap<string, MinecartControlInput>;
 }
 
 export interface MinecartExplosionEvent {
@@ -337,6 +352,16 @@ export class MinecartManager {
 
   isRideable(cart: MinecartEntity): boolean {
     return cart.variant === 'normal';
+  }
+
+  /**
+   * Local UX guard. Occupied carts cannot be boarded unless this is already
+   * the rider. Server occupancy is still authoritative.
+   */
+  canBoard(cart: MinecartEntity, ridingCartId?: string): boolean {
+    if (!this.isRideable(cart)) return false;
+    if (ridingCartId === cart.id) return true;
+    return !cart.rider;
   }
 
   insertTnt(cart: MinecartEntity, blockId: number = BlockId.Tnt): boolean {
@@ -588,6 +613,73 @@ export class MinecartManager {
     this.disposed = true;
   }
 
+  private applyOnRailControl(
+    cart: MinecartEntity,
+    dt: number,
+    sample: ReturnType<typeof sampleRail>,
+    control: { throttle: number; riderYaw?: number; ridden: boolean },
+  ): void {
+    const accelerating = control.ridden && control.throttle > CONTROL_DEADZONE;
+    const braking = control.ridden && control.throttle < -CONTROL_DEADZONE;
+    const launchPress = accelerating && !cart.throttleHeld;
+    cart.throttleHeld = accelerating;
+
+    if (Math.abs(cart.alongSpeed) <= STOP_EPSILON) cart.alongSpeed = 0;
+    const stopped = cart.alongSpeed === 0;
+    const accel = MINECART_MAX_SPEED / ACCEL_TIME;
+    const brakeDecel = MINECART_MAX_SPEED / MINECART_BRAKE_TIME;
+
+    if (accelerating) {
+      if (stopped) {
+        if (launchPress) {
+          const yaw = control.riderYaw ?? cart.yaw;
+          const along = -Math.sin(yaw) * sample.tangentX - Math.cos(yaw) * sample.tangentZ;
+          if (Math.abs(along) > LAUNCH_ALIGN) {
+            cart.alongSpeed += Math.sign(along) * accel * dt;
+          }
+        }
+      } else {
+        cart.alongSpeed += Math.sign(cart.alongSpeed) * accel * dt;
+      }
+    } else if (!braking) {
+      cart.alongSpeed *= COAST_FRICTION;
+    }
+
+    if (sample.tangentY !== 0) {
+      cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
+    }
+
+    if (braking) {
+      const delta = brakeDecel * dt;
+      if (Math.abs(cart.alongSpeed) <= delta) cart.alongSpeed = 0;
+      else cart.alongSpeed -= Math.sign(cart.alongSpeed) * delta;
+    }
+
+    cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    if (Math.abs(cart.alongSpeed) <= STOP_EPSILON && !accelerating) cart.alongSpeed = 0;
+  }
+
+  private controlFor(
+    cart: MinecartEntity,
+    input: MinecartUpdateInput,
+  ): { throttle: number; riderYaw?: number; ridden: boolean } {
+    const mapped = input.controls?.get(cart.id);
+    if (mapped) {
+      const ridden = cart.variant === 'normal';
+      return {
+        throttle: ridden ? (mapped.throttle ?? 0) : 0,
+        riderYaw: mapped.riderYaw,
+        ridden,
+      };
+    }
+    const ridden = input.riderId === cart.id && cart.variant === 'normal';
+    return {
+      throttle: ridden ? (input.forward ?? 0) : 0,
+      riderYaw: input.riderYaw,
+      ridden,
+    };
+  }
+
   private stepCart(cart: MinecartEntity, dt: number, input: MinecartUpdateInput): void {
     if (cart.derailGraceTicks > 0) cart.derailGraceTicks -= 1;
     if (cart.rail && this.world.getBlock(cart.rail.x, cart.rail.y, cart.rail.z, false) !== BlockId.Rail) {
@@ -595,28 +687,14 @@ export class MinecartManager {
     }
     if (!cart.rail && cart.derailGraceTicks <= 0) this.tryRecapture(cart);
     if (!cart.rail) {
+      cart.throttleHeld = false;
       this.stepOffRail(cart, dt);
       return;
     }
     const sample = sampleRail(cart.rail, cart.progress);
-    const ridden = input.riderId === cart.id && cart.variant === 'normal';
-    const forward = ridden ? (input.forward ?? 0) : 0;
+    const control = this.controlFor(cart, input);
     void input.strafe;
-    const accel = MINECART_MAX_SPEED / ACCEL_TIME;
-    if (Math.abs(forward) > 0.05) {
-      const yaw = input.riderYaw ?? cart.yaw;
-      const wishX = -Math.sin(yaw) * forward;
-      const wishZ = -Math.cos(yaw) * forward;
-      const along = wishX * sample.tangentX + wishZ * sample.tangentZ;
-      cart.alongSpeed += along * accel * dt;
-    } else {
-      cart.alongSpeed *= COAST_FRICTION;
-    }
-    if (sample.tangentY !== 0) {
-      cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
-    }
-    cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
-    if (Math.abs(cart.alongSpeed) < 0.02 && Math.abs(forward) <= 0.05) cart.alongSpeed = 0;
+    this.applyOnRailControl(cart, dt, sample, control);
 
     let remaining = cart.alongSpeed * dt;
     let guard = 0;
