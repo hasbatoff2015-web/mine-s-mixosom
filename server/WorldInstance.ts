@@ -106,6 +106,7 @@ import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { TradeService } from './services/trade';
 import {
+  buildRankingSnapshot,
   buildTradeMessage,
   closedMenuMessage,
   createMenuSession,
@@ -608,6 +609,10 @@ export class WorldInstance {
           kind: 'system',
         });
       },
+      lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
+      friendRelation: (viewerId, targetId) => this.friends.relation(viewerId, targetId),
+      requestFriend: (fromId, targetId) => this.friends.request(fromId, targetId),
+      cancelFriendRequest: (fromId, targetId) => this.friends.cancelOutgoing(fromId, targetId),
     });
     this.friends.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -1440,12 +1445,15 @@ export class WorldInstance {
       : action === 'confirm_delete' || action === 'cancel_delete'
         ? 'clan.delete'
         : action === 'select_player' || action === 'confirm_invite' || action === 'cancel_invite'
+          || action === 'set_invite_name' || action === 'invite_by_name'
           ? 'clan.add'
           : action === 'select_invitation' || action === 'confirm_accept' || action === 'cancel_accept'
             ? 'clan.accept'
             : action === 'confirm_leave' || action === 'cancel_leave'
               ? 'clan.leave'
-              : action === 'select_member' || action === 'confirm_makeleader' || action === 'cancel_makeleader'
+              : action === 'confirm_makeleader' || action === 'cancel_makeleader'
+                || action === 'promote_veteran' || action === 'demote_veteran'
+                || action === 'transfer_leader' || action === 'confirm_transfer_leader' || action === 'cancel_transfer_leader'
                 ? 'clan.makeleader'
                 : action === 'kick' || action === 'confirm_kick' || action === 'cancel_kick'
                   ? 'clan.kick'
@@ -1933,6 +1941,12 @@ export class WorldInstance {
             ?? this.storedPlayers[request.toPlayerId]?.name
             ?? this.economy.displayName(request.toPlayerId),
         })),
+      };
+    }
+    if (session.screen === 'rating') {
+      return {
+        ...base,
+        ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
       };
     }
     return base;

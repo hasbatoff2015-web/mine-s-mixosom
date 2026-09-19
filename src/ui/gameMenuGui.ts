@@ -101,7 +101,7 @@ export function menuRootHtml(state?: Pick<ServerMenuMessage, 'balance' | 'balanc
     ${menuBalanceHtml(state)}
     <div class="mc-menu-grid">
       <div class="mc-menu-grid-row mc-menu-grid-row-4">${row1}</div>
-      <div class="mc-menu-grid-row mc-menu-grid-row-3">${row2}</div>
+      <div class="mc-menu-grid-row mc-menu-grid-row-4">${row2}</div>
     </div>
   </div>`;
 }
@@ -321,6 +321,55 @@ export function menuAuctionHtml(): string {
   </div>`;
 }
 
+function rankingSortBtn(kind: string, current: string | undefined, label: string): string {
+  return `<button type="button" class="mc-ah-btn${current === kind ? ' is-on' : ''}" data-menu-rating="${kind}">${label}</button>`;
+}
+
+export function menuRatingHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
+  const kind = state.ratingKind ?? 'players-money';
+  const rows = (state.ratingRows ?? []).map((row) => {
+    const valueClass = row.metric === 'kills' ? 'mc-rank-kills' : '';
+    const highlight = row.highlight ? ' mc-rank-you' : '';
+    return `<div class="mc-rank-row${highlight}">
+      <span class="mc-rank-pos">${row.rank}.</span>
+      <span class="mc-rank-name">${escape(row.name)}</span>
+      <span class="mc-rank-value ${valueClass}">${escape(row.valueLabel)}</span>
+    </div>`;
+  }).join('');
+  const page = state.ratingPage ?? 1;
+  const totalPages = state.ratingTotalPages ?? 1;
+  const personal = state.personalText
+    ? `<div class="mc-rank-personal mc-rank-you">${escape(state.personalText)}</div>`
+    : '';
+  return `<div class="mc-menu-body" data-menu-screen="rating">
+    ${menuHeadingHtml('Рейтинг')}
+    <div class="mc-rank-groups">
+      <div class="mc-rank-group">
+        <div class="mc-rank-heading">Игроки</div>
+        <div class="mc-ah-actions mc-rank-actions">
+          ${rankingSortBtn('players-money', kind, 'По монетам')}
+          ${rankingSortBtn('players-kills', kind, 'По убийствам')}
+        </div>
+      </div>
+      <div class="mc-rank-group">
+        <div class="mc-rank-heading">Кланы</div>
+        <div class="mc-ah-actions mc-rank-actions">
+          ${rankingSortBtn('clans-money', kind, 'По монетам')}
+          ${rankingSortBtn('clans-kills', kind, 'По убийствам')}
+        </div>
+      </div>
+    </div>
+    <div class="mc-menu-list mc-rank-list">${rows || '<p class="mc-menu-empty">Пока нет записей.</p>'}</div>
+    <div class="mc-ah-nav">
+      <button type="button" class="mc-slot mc-ah-icon" data-menu-rating-page="prev" ${page <= 1 ? 'disabled' : ''}>←</button>
+      <span class="mc-ah-page">Страница ${page} / ${totalPages}</span>
+      <button type="button" class="mc-slot mc-ah-icon" data-menu-rating-page="next" ${page >= totalPages ? 'disabled' : ''}>→</button>
+    </div>
+    ${personal}
+    ${menuMessage(state.message, escape)}
+  </div>`;
+}
+
 export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
   if (state.screen === 'homes' || state.screen === 'home-delete-confirm') return menuHomesHtml(state, escape);
   if (state.screen === 'friends' || state.screen === 'friend-delete-confirm') return menuFriendsHtml(state, escape);
@@ -330,6 +379,7 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
   }
   if (state.screen === 'trade') return menuTradeLobbyHtml(state, escape);
   if (state.screen === 'auction') return menuAuctionHtml();
+  if (state.screen === 'rating') return menuRatingHtml(state, escape);
   return menuRootHtml(state);
 }
 

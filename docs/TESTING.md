@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-19 Clan roles + Rating menu
+
+Report: `reports/2026-09-19_clan-roles-rating.md`.
+
+```text
+npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/server/clan-roles-ranking.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts tests/server/friends.test.ts tests/game-menu-gui.test.ts tests/server/game-menu.test.ts --maxWorkers=2
+```
+
+Contracts: roles leader/veteran/member with server-side invite/kick/promote/transfer; nickname invite errors; online snapshot; PvP kills persist independently of economy cooldown and ignore mobs; clan kills = current members; four ranking kinds, top 50 / 10 per page / personal place >50; menu 4+4 + `icon_rating.png` and no «Топ»; friends cancel outgoing; missing roles/kills migrate. Focused **8 files / 80 tests PASS**. `typecheck` / client / server / sim and `check:boundaries` PASS.
+
 ## 2026-09-18 Third-person axe 180° handle flip
 
 Focused:

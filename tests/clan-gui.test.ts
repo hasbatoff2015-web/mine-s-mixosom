@@ -6,8 +6,10 @@ import {
   clanIconHtml,
   clanJoinCaption,
   clanJoinDisabled,
+  clanKillsHtml,
   clanRankHtml,
   clanRowLabel,
+  clanSortButtonsHtml,
   keepClanSearchDraft,
   showsClanBack,
 } from '../src/ui/clanGui';
@@ -84,6 +86,16 @@ describe('clan GUI helpers', () => {
     expect(showsClanBack('ranking', 'menu')).toBe(true);
     expect(showsClanBack('create', 'menu')).toBe(true);
     expect(showsClanBack('join-confirm')).toBe(true);
+    expect(showsClanBack('member-card')).toBe(true);
+    expect(showsClanBack('transfer-confirm')).toBe(true);
+  });
+
+  it('renders money/kills sort toggles and a muted kills label', () => {
+    expect(clanSortButtonsHtml('money', 'data-clan-member-sort')).toContain('is-on');
+    expect(clanSortButtonsHtml('money', 'data-clan-member-sort')).toContain('По монетам');
+    expect(clanSortButtonsHtml('kills', 'data-clan-ranking-sort')).toContain('data-clan-ranking-sort="kills"');
+    expect(clanKillsHtml('🗡️ 2 340 Уб.')).toContain('mc-clan-kills');
+    expect(clanKillsHtml('🗡️ 2 340 Уб.')).toContain('2 340');
   });
 
   it('formats compact balances for clan rows', () => {

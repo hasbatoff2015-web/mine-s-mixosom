@@ -23,8 +23,10 @@ import {
   clanIconIds,
   clanJoinCaption,
   clanJoinDisabled,
+  clanKillsHtml,
   clanMembersHtml,
   clanRankHtml,
+  clanSortButtonsHtml,
   keepClanSearchDraft,
   showsClanBack,
 } from './clanGui';
@@ -72,6 +74,11 @@ import {
   type ChatMessage,
 } from '../chat';
 import { MAX_CHAT_LENGTH } from '../../shared/config';
+import {
+  FRIENDS_ALREADY_LABEL,
+  FRIENDS_OUTGOING_LABEL,
+  FRIENDS_SELF_CARD_LABEL,
+} from '../../shared/friends';
 import {
   CHAT_NO_CLAN_HINT,
   formatPlayerChatLine,
@@ -3170,8 +3177,8 @@ export class GameUI {
     const actions = this.clanActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureClanInputFocus();
-    const logicalHeight = state.screen === 'create' || state.screen === 'card' ? 248
-      : state.screen === 'ranking' ? 232
+    const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' ? 268
+      : state.screen === 'ranking' || state.screen === 'requests' ? 252
         : 220;
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
     this.itemTooltip?.dispose();
@@ -3196,7 +3203,7 @@ export class GameUI {
     this.restoreClanInputFocus(keep);
   }
 
-  private captureClanInputFocus(): { kind: 'search' | 'name'; value: string; start: number; end: number } | undefined {
+  private captureClanInputFocus(): { kind: 'search' | 'name' | 'invite'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
     if (el.hasAttribute('data-clan-search')) {
@@ -3205,12 +3212,17 @@ export class GameUI {
     if (el.hasAttribute('data-clan-name')) {
       return { kind: 'name', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
     }
+    if (el.hasAttribute('data-clan-invite-name')) {
+      return { kind: 'invite', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
     return undefined;
   }
 
   private restoreClanInputFocus(keep: ReturnType<GameUI['captureClanInputFocus']>): void {
     if (!keep || !this.modal) return;
-    const selector = keep.kind === 'search' ? '[data-clan-search]' : '[data-clan-name]';
+    const selector = keep.kind === 'search' ? '[data-clan-search]'
+      : keep.kind === 'invite' ? '[data-clan-invite-name]'
+        : '[data-clan-name]';
     const input = this.modal.querySelector<HTMLInputElement>(selector);
     if (!input) return;
     input.value = keep.value;
@@ -3227,6 +3239,7 @@ export class GameUI {
           <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="Поиск клана" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" aria-label="Поиск клана" /></label>
           <button type="button" class="mc-ah-btn" data-clan-action="refresh">Обновить</button>
         </div>
+        ${clanSortButtonsHtml(state.rankingSort, 'data-clan-ranking-sort')}
         <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
         ${this.clanNavHtml(state)}
         <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>Кланов пока нет.</div>
@@ -3277,7 +3290,26 @@ export class GameUI {
         ${message}
       </div>`;
     }
-    if (state.screen === 'add' || state.screen === 'requests' || state.screen === 'makeleader' || state.screen === 'accept') {
+    if (state.screen === 'requests') {
+      const canInvite = state.card?.canInvite || state.viewer?.canInvite || state.viewer?.isOwner;
+      const invite = canInvite ? `<div class="mc-menu-add mc-clan-invite">
+        <input data-clan-invite-name type="text" maxlength="24" value="${this.escape(state.inviteName ?? '')}" placeholder="Введите ник игрока..." autocomplete="off" spellcheck="false" name="clan-invite" />
+        <button type="button" class="mc-ah-btn" data-clan-action="invite_by_name">Пригласить</button>
+      </div>
+      <div class="mc-ah-message" data-clan-invite-message${state.inviteMessage ? '' : ' hidden'}>${this.escape(state.inviteMessage ?? '')}</div>` : '';
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="requests">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${invite}
+        <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
+        ${this.clanNavHtml(state)}
+        <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>${this.clanEmptyText(state.screen)}</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'member-card') {
+      return this.clanPlayerCardHtml(state, message);
+    }
+    if (state.screen === 'add' || state.screen === 'makeleader' || state.screen === 'accept') {
       const placeholder = state.screen === 'add' ? 'Поиск по нику' : state.screen === 'accept' ? '' : 'Поиск';
       const search = state.screen === 'accept' ? '' : `<div class="mc-ah-toolbar">
         <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="${placeholder}" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" /></label>
@@ -3295,20 +3327,17 @@ export class GameUI {
     const joinDisabled = clanJoinDisabled(card);
     const joinCaption = clanJoinCaption(card);
     const showJoin = card && !card.isMember;
-    const kick = card?.isOwner && card.canKickSelected
-      ? `<button type="button" class="mc-ah-btn" data-clan-action="kick">Выгнать игрока</button>`
-      : '';
-    const requests = card?.isOwner
-      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы на вступление в клан</button>`
+    const requests = card?.canInvite || card?.isOwner
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы</button>`
       : '';
     return `<div class="mc-ah-body mc-clan-body" data-clan-screen="card">
       <div class="mc-label mc-clan-card-title">${clanIconHtml(card?.icon)} ${this.escape(card?.name ?? state.title)}</div>
-      <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
-      <div class="mc-clan-owner">Владелец: ${this.escape(card?.ownerName ?? '')}</div>
+      <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${card?.killsLabel ? clanKillsHtml(card.killsLabel) : ''} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
+      <div class="mc-clan-owner">Глава: ${this.escape(card?.ownerName ?? '')}</div>
+      ${clanSortButtonsHtml(state.memberSort ?? card?.memberSort, 'data-clan-member-sort')}
       <div class="mc-clan-list" data-clan-list>${this.clanMemberHtml(state)}</div>
       <div class="mc-ah-actions">
         ${showJoin ? `<button type="button" class="mc-ah-btn"${joinDisabled ? ' disabled' : ''} data-clan-action="join">${this.escape(joinCaption)}</button>` : ''}
-        ${kick}
         ${requests}
       </div>
       ${message}
@@ -3320,7 +3349,9 @@ export class GameUI {
       return (state.clans ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-id="${this.escape(row.clanId)}">
         ${clanRankHtml(row.rank)}
         <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.name)}</span></span>
-        ${clanBalanceHtml(row.totalLabel)}
+        ${(state.rankingSort ?? row.sort) === 'kills'
+          ? clanKillsHtml(row.killsLabel ?? '🗡️ 0 Уб.')
+          : clanBalanceHtml(row.totalLabel)}
         ${clanMembersHtml(row.memberCount)}
       </button>`).join('');
     }
@@ -3348,10 +3379,57 @@ export class GameUI {
   }
 
   private clanMemberHtml(state: ServerClanMessage): string {
-    return (state.members ?? []).map((row) => `<button type="button" class="mc-clan-row${row.isOwner ? ' is-owner' : ''}${state.card?.selectedMemberId === row.playerId ? ' is-selected' : ''}" data-clan-member="${this.escape(row.playerId)}" ${row.isOwner ? 'data-clan-owner="1"' : ''}>
+    const sort = state.memberSort ?? state.card?.memberSort ?? 'money';
+    return (state.members ?? []).map((row) => {
+      const metric = sort === 'kills' ? clanKillsHtml(row.killsLabel) : clanBalanceHtml(row.balanceLabel);
+      return `<button type="button" class="mc-clan-row${row.isOwner ? ' is-owner' : ''}${state.card?.selectedMemberId === row.playerId ? ' is-selected' : ''}" data-clan-member="${this.escape(row.playerId)}">
+      <span class="mc-status-dot ${row.online ? 'is-online' : 'is-offline'}" aria-hidden="true"></span>
       <span class="mc-clan-row-name">${this.escape(row.name)}</span>
-      ${clanBalanceHtml(row.balanceLabel)}
-    </button>`).join('');
+      <span class="mc-clan-role">${this.escape(row.roleLabel)}</span>
+      ${metric}
+    </button>`;
+    }).join('');
+  }
+
+  private clanPlayerCardHtml(state: ServerClanMessage, message: string): string {
+    const card = state.playerCard;
+    if (!card) return `<div class="mc-ah-body mc-clan-body" data-clan-screen="member-card">${message}</div>`;
+    const status = `<div class="mc-clan-player-status">
+      <span class="mc-status-dot ${card.online ? 'is-online' : 'is-offline'}" aria-hidden="true"></span>
+      <span>${this.escape(card.statusLabel)}</span>
+    </div>`;
+    let friends = '';
+    if (card.isSelf) {
+      friends = `<div class="mc-clan-self">${FRIENDS_SELF_CARD_LABEL}</div>`;
+    } else if (card.friendState === 'friend') {
+      friends = `<button type="button" class="mc-ah-btn" disabled>${FRIENDS_ALREADY_LABEL}</button>`;
+    } else if (card.friendState === 'outgoing') {
+      friends = `<div class="mc-ah-actions">
+        <button type="button" class="mc-ah-btn" disabled>${FRIENDS_OUTGOING_LABEL}</button>
+        <button type="button" class="mc-ah-btn" data-clan-action="friends_cancel">Отменить</button>
+      </div>`;
+    } else {
+      friends = `<button type="button" class="mc-ah-btn" data-clan-action="friends_request">Добавить в друзья</button>`;
+    }
+    const kick = card.canKick ? `<button type="button" class="mc-ah-btn mc-btn-danger" data-clan-action="kick">Выгнать</button>` : '';
+    const promote = card.canPromote ? `<button type="button" class="mc-ah-btn" data-clan-action="promote_veteran">Назначить ветераном</button>` : '';
+    const demote = card.canDemote ? `<button type="button" class="mc-ah-btn" data-clan-action="demote_veteran">Снять роль ветерана</button>` : '';
+    const transfer = card.canTransfer ? `<button type="button" class="mc-ah-btn" data-clan-action="transfer_leader">Передать главу</button>` : '';
+    return `<div class="mc-ah-body mc-clan-body" data-clan-screen="member-card">
+      <div class="mc-label">Игрок: ${this.escape(card.name)}</div>
+      ${status}
+      <div class="mc-clan-player-meta">Роль: ${this.escape(card.roleLabel)}</div>
+      <div class="mc-clan-player-meta">Монет: ${this.escape(card.balanceLabel)}</div>
+      <div class="mc-clan-player-meta mc-rank-kills">Убийств: ${this.escape(String(card.kills))}</div>
+      <div class="mc-ah-actions mc-clan-player-actions">
+        ${friends}
+        ${promote}
+        ${demote}
+        ${transfer}
+        ${kick}
+      </div>
+      ${message}
+    </div>`;
   }
 
   private clanNavHtml(state: ServerClanMessage): string {
@@ -3379,7 +3457,8 @@ export class GameUI {
       || screen === 'kick-confirm'
       || screen === 'join-confirm'
       || screen === 'replace-request-confirm'
-      || screen === 'request-confirm';
+      || screen === 'request-confirm'
+      || screen === 'transfer-confirm';
   }
 
   private clanConfirmAction(screen: ServerClanMessage['screen']): string {
@@ -3388,6 +3467,7 @@ export class GameUI {
     if (screen === 'accept-confirm') return 'confirm_accept';
     if (screen === 'leave-confirm') return 'confirm_leave';
     if (screen === 'makeleader-confirm') return 'confirm_makeleader';
+    if (screen === 'transfer-confirm') return 'confirm_transfer_leader';
     if (screen === 'kick-confirm') return 'confirm_kick';
     if (screen === 'join-confirm') return 'confirm_join';
     if (screen === 'replace-request-confirm') return 'confirm_replace_request';
@@ -3400,6 +3480,7 @@ export class GameUI {
     if (screen === 'accept-confirm') return 'cancel_accept';
     if (screen === 'leave-confirm') return 'cancel_leave';
     if (screen === 'makeleader-confirm') return 'cancel_makeleader';
+    if (screen === 'transfer-confirm') return 'cancel_transfer_leader';
     if (screen === 'kick-confirm') return 'cancel_kick';
     if (screen === 'join-confirm') return 'cancel_join';
     if (screen === 'replace-request-confirm') return 'cancel_replace_request';
@@ -3424,6 +3505,16 @@ export class GameUI {
     };
     bindField('[data-clan-search]', 'search');
     bindField('[data-clan-name]', 'set_name');
+    const invite = this.modal!.querySelector<HTMLInputElement>('[data-clan-invite-name]');
+    invite?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    invite?.addEventListener('keydown', (event) => event.stopPropagation());
+    invite?.addEventListener('keyup', (event) => event.stopPropagation());
+    invite?.addEventListener('input', () => {
+      window.clearTimeout(this.clanSearchTimer);
+      this.clanSearchTimer = window.setTimeout(() => {
+        this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
+      }, 160);
+    });
     this.modal!.addEventListener('click', (event) => {
       const current = this.clanState;
       const actions = this.clanActions;
@@ -3456,8 +3547,17 @@ export class GameUI {
       }
       const member = target.closest<HTMLElement>('[data-clan-member]');
       if (member?.dataset.clanMember) {
-        if (member.dataset.clanOwner === '1') return;
         actions.send({ type: 'clan_action', action: 'select_member', playerId: member.dataset.clanMember });
+        return;
+      }
+      const rankingSort = target.closest<HTMLElement>('[data-clan-ranking-sort]');
+      if (rankingSort?.dataset.clanRankingSort === 'money' || rankingSort?.dataset.clanRankingSort === 'kills') {
+        actions.send({ type: 'clan_action', action: 'set_ranking_sort', sort: rankingSort.dataset.clanRankingSort });
+        return;
+      }
+      const memberSort = target.closest<HTMLElement>('[data-clan-member-sort]');
+      if (memberSort?.dataset.clanMemberSort === 'money' || memberSort?.dataset.clanMemberSort === 'kills') {
+        actions.send({ type: 'clan_action', action: 'set_member_sort', sort: memberSort.dataset.clanMemberSort });
         return;
       }
       const icon = target.closest<HTMLElement>('[data-clan-icon]');
@@ -3478,15 +3578,17 @@ export class GameUI {
       const kind = button?.dataset.clanAction;
       if (!kind || kind === 'back') return;
       if (button instanceof HTMLButtonElement && button.disabled) return;
+      const inviteName = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]')?.value;
       actions.send({
         type: 'clan_action',
         action: kind as ClientClanActionMessage['action'],
         ...(current.card?.clanId ? { clanId: current.card.clanId } : {}),
-        ...(current.selected?.playerId || current.card?.selectedMemberId
-          ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId }
+        ...(current.selected?.playerId || current.card?.selectedMemberId || current.playerCard?.playerId
+          ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId ?? current.playerCard?.playerId }
           : {}),
         ...(current.selected?.invitationId ? { invitationId: current.selected.invitationId } : {}),
         ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
+        ...(kind === 'invite_by_name' && inviteName !== undefined ? { name: inviteName } : {}),
       });
     });
   }
@@ -3838,6 +3940,20 @@ export class GameUI {
       const tradeReject = target.closest<HTMLElement>('[data-menu-trade-reject]');
       if (tradeReject?.dataset.menuTradeReject) {
         actions.send({ type: 'menu_action', action: 'trade_reject', requestId: tradeReject.dataset.menuTradeReject });
+        return;
+      }
+      const ratingKind = target.closest<HTMLElement>('[data-menu-rating]');
+      if (ratingKind?.dataset.menuRating) {
+        actions.send({ type: 'menu_action', action: 'rating_set', ratingKind: ratingKind.dataset.menuRating });
+        return;
+      }
+      const ratingPage = target.closest<HTMLElement>('[data-menu-rating-page]');
+      if (ratingPage?.dataset.menuRatingPage === 'prev' && (current.ratingPage ?? 1) > 1) {
+        actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) - 1 });
+        return;
+      }
+      if (ratingPage?.dataset.menuRatingPage === 'next' && (current.ratingPage ?? 1) < (current.ratingTotalPages ?? 1)) {
+        actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) + 1 });
         return;
       }
       const button = target.closest<HTMLElement>('[data-menu-action]');

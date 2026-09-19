@@ -37,9 +37,56 @@ export const CLAN_ICON_GLYPH: Record<ClanIconId, string> = {
   mask: '🎭',
 };
 
+export const CLAN_ROLES = ['leader', 'veteran', 'member'] as const;
+export type ClanRole = (typeof CLAN_ROLES)[number];
+
+export const CLAN_ROLE_LABEL: Record<ClanRole, string> = {
+  leader: 'Глава',
+  veteran: 'Ветеран',
+  member: 'Участник',
+};
+
+export const CLAN_PLAYER_NOT_FOUND_ERROR = 'Игрок не найден';
+export const CLAN_ALREADY_IN_THIS_CLAN_ERROR = 'Игрок уже состоит в этом клане';
+export const CLAN_ALREADY_IN_OTHER_CLAN_ERROR = 'Игрок уже состоит в другом клане';
+export const CLAN_INVITE_EXISTS_ERROR = 'Игрок уже получил приглашение';
+export const CLAN_INVITE_EMPTY_ERROR = 'Введите ник игрока.';
+export const CLAN_INVITE_SENT_MESSAGE = 'Приглашение отправлено';
+export const CLAN_TRANSFER_VETERAN_ONLY_ERROR = 'Передать главу можно только ветерану.';
+export const CLAN_NO_VETERAN_ERROR = 'Нет ветеранов для передачи главы.';
+export const CLAN_PROMOTE_MEMBER_ONLY_ERROR = 'Назначить ветераном можно только участника.';
+export const CLAN_DEMOTE_VETERAN_ONLY_ERROR = 'Снять роль ветерана можно только с ветерана.';
+export const CLAN_KICK_DENIED_ERROR = 'Нельзя выгнать этого игрока.';
+
 export const CLAN_NAME_LENGTH_ERROR = 'Название клана должно содержать от 3 до 16 символов.';
 export const CLAN_NAME_CHARS_ERROR = 'Название может содержать только буквы, цифры, пробел, _ и -.';
 export const CLAN_NAME_UNSAFE_ERROR = 'Недопустимое название клана.';
+
+export function isClanRole(value: string | undefined): value is ClanRole {
+  return value !== undefined && (CLAN_ROLES as readonly string[]).includes(value);
+}
+
+export function clanRoleLabel(role: ClanRole | undefined): string {
+  return role ? CLAN_ROLE_LABEL[role] : CLAN_ROLE_LABEL.member;
+}
+
+export function canClanInvite(role: ClanRole | undefined): boolean {
+  return role === 'leader' || role === 'veteran';
+}
+
+export function canClanKick(actor: ClanRole | undefined, target: ClanRole | undefined): boolean {
+  if (actor === 'leader') return target === 'veteran' || target === 'member';
+  if (actor === 'veteran') return target === 'member';
+  return false;
+}
+
+export function canClanManageVeterans(role: ClanRole | undefined): boolean {
+  return role === 'leader';
+}
+
+export function canClanTransferLeader(actor: ClanRole | undefined, target: ClanRole | undefined): boolean {
+  return actor === 'leader' && target === 'veteran';
+}
 
 const NAME_CHARS = /^[\p{L}\p{N} _-]+$/u;
 const UNSAFE_NAME = /[<>&"'`\\]|[\u0000-\u001f\u007f]/;

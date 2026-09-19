@@ -136,8 +136,8 @@ describe('EconomyService', () => {
     economy.setBalance('s', 125_000, 'ADMIN_SET');
     economy.setBalance('a', 98_500, 'ADMIN_SET');
     expect(economy.getTopBalances(2)).toEqual([
-      { playerId: 's', name: 'Steve', balance: 125_000 },
-      { playerId: 'a', name: 'Alex', balance: 98_500 },
+      { playerId: 's', name: 'Steve', balance: 125_000, kills: 0 },
+      { playerId: 'a', name: 'Alex', balance: 98_500, kills: 0 },
     ]);
   });
 });
@@ -231,5 +231,29 @@ describe('Economy rewards', () => {
     expect(overflow.ok).toBe(false);
     expect(economy.getBalance('buyer')).toBe(250);
     expect(economy.getBalance('seller')).toBe(350);
+  });
+
+  it('records persistent PvP kills independently of the economy cooldown and ignores mobs', async () => {
+    let now = 1_000_000;
+    const dir = await mkdtemp(join(tmpdir(), 'fc-eco-kills-'));
+    dirs.push(dir);
+    const economy = new EconomyService(new JsonFileStore(dir), () => now);
+    economy.setBalance('killer', 100, 'ADMIN_SET');
+    economy.setBalance('victim', 1_000, 'ADMIN_SET');
+    expect(economy.recordPvpKill('killer', 'victim', 'death-a').ok).toBe(true);
+    expect(economy.getKills('killer')).toBe(1);
+    expect(economy.recordPvpKill('killer', 'victim', 'death-b').ok).toBe(true);
+    expect(economy.getKills('killer')).toBe(2);
+    expect(economy.recordPvpKill('killer', 'victim', 'death-b').ok).toBe(false);
+    economy.rewardPlayerKill('killer', 'victim', 'eco-1');
+    now += 600;
+    expect(economy.rewardPlayerKill('killer', 'victim', 'eco-2').error).toBe('cooldown');
+    expect(economy.recordPvpKill('killer', 'victim', 'death-c').ok).toBe(true);
+    expect(economy.getKills('killer')).toBe(3);
+    expect(economy.rewardMobKill('killer', 'zombie', 'mob-1').ok).toBe(true);
+    expect(economy.getKills('killer')).toBe(3);
+    const again = new EconomyService(new JsonFileStore(dir), () => now);
+    expect(again.getKills('killer')).toBe(3);
+    expect(again.getKills('nobody')).toBe(0);
   });
 });

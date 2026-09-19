@@ -7,22 +7,41 @@ import type {
   NetworkClanRow,
 } from '../../shared/protocol';
 import {
+  CLAN_ALREADY_IN_OTHER_CLAN_ERROR,
+  CLAN_ALREADY_IN_THIS_CLAN_ERROR,
   CLAN_CREATE_COST,
+  CLAN_DEMOTE_VETERAN_ONLY_ERROR,
   CLAN_ICON_IDS,
+  CLAN_INVITE_EMPTY_ERROR,
+  CLAN_INVITE_EXISTS_ERROR,
+  CLAN_INVITE_SENT_MESSAGE,
   CLAN_INVITE_TTL_MS,
+  CLAN_KICK_DENIED_ERROR,
   CLAN_MAX_MEMBERS,
   CLAN_NAME_MAX,
+  CLAN_NO_VETERAN_ERROR,
   CLAN_PAGE_SIZE,
+  CLAN_PLAYER_NOT_FOUND_ERROR,
   CLAN_PLUGIN_NAME,
+  CLAN_PROMOTE_MEMBER_ONLY_ERROR,
   CLAN_REQUEST_TTL_MS,
+  CLAN_TRANSFER_VETERAN_ONLY_ERROR,
+  canClanInvite,
+  canClanKick,
+  canClanManageVeterans,
+  canClanTransferLeader,
   clanNameKey,
+  clanRoleLabel,
   defaultClanCreatePolicy,
   isClanIconId,
+  isClanRole,
   validateClanName,
   type ClanCreatePolicy,
   type ClanIconId,
+  type ClanRole,
 } from '../../shared/clans';
 import { formatCompactMegacoins } from '../../shared/megacoins';
+import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
 import type { EconomyService } from './economy';
 import type { JsonFileStore } from './jsonStore';
 
@@ -46,6 +65,14 @@ export const CLAN_REQUEST_MISSING_ERROR = 'Заявка не найдена ил
 export const CLAN_KICK_SELF_ERROR = 'Нельзя выгнать самого себя.';
 export const CLAN_NOT_MEMBER_ERROR = 'Этот игрок не состоит в вашем клане.';
 export const CLAN_LEADER_SELF_ERROR = 'Вы уже владелец этого клана.';
+export {
+  CLAN_PLAYER_NOT_FOUND_ERROR,
+  CLAN_ALREADY_IN_THIS_CLAN_ERROR,
+  CLAN_ALREADY_IN_OTHER_CLAN_ERROR,
+  CLAN_INVITE_EXISTS_ERROR,
+  CLAN_INVITE_SENT_MESSAGE,
+  CLAN_TRANSFER_VETERAN_ONLY_ERROR,
+};
 
 export type ClanView =
   | 'ranking'
@@ -76,6 +103,8 @@ export type ClanScreen =
   | 'request-confirm'
   | 'join-confirm'
   | 'replace-request-confirm'
+  | 'member-card'
+  | 'transfer-confirm'
   | 'closed';
 
 export interface ClanRecord {
@@ -85,6 +114,7 @@ export interface ClanRecord {
   icon: ClanIconId;
   ownerId: string;
   memberIds: string[];
+  roles: Record<string, ClanRole>;
   createdAt: number;
 }
 
@@ -116,6 +146,10 @@ export interface ClanRuntime {
   isOnline(playerId: string): boolean;
   displayName(playerId: string): string;
   sendMessage(playerId: string, text: string): void;
+  lookupPlayer?(idOrName: string): { id: string; name: string; connected: boolean } | undefined;
+  friendRelation?(viewerId: string, targetId: string): 'self' | 'friend' | 'outgoing' | 'none';
+  requestFriend?(fromId: string, targetId: string): { ok: boolean; error?: string };
+  cancelFriendRequest?(fromId: string, targetId: string): { ok: boolean; error?: string };
 }
 
 export interface ClanSession {
@@ -126,11 +160,16 @@ export interface ClanSession {
   openedFromMenu?: boolean;
   selectedIcon: ClanIconId;
   nameText: string;
+  inviteName: string;
+  inviteMessage?: string;
+  memberSort: ClanMemberSort;
+  rankingSort: ClanMemberSort;
   selectedPlayerId?: string;
   selectedInvitationId?: string;
   selectedRequestId?: string;
   selectedMemberId?: string;
   acceptFromCard?: boolean;
+  transferFromCard?: boolean;
   message?: string;
 }
 
@@ -164,18 +203,27 @@ function parseClan(value: unknown): ClanRecord | undefined {
   if (!isRecord(value) || typeof value.clanId !== 'string' || typeof value.name !== 'string') return undefined;
   if (typeof value.ownerId !== 'string' || typeof value.icon !== 'string' || !isClanIconId(value.icon)) return undefined;
   if (!Array.isArray(value.memberIds)) return undefined;
-  const memberIds = value.memberIds.filter((id): id is string => typeof id === 'string');
+  const memberIds = [...new Set(value.memberIds.filter((id): id is string => typeof id === 'string'))];
   if (memberIds.length === 0 || !memberIds.includes(value.ownerId)) return undefined;
   const createdAt = Number(value.createdAt);
   if (!Number.isFinite(createdAt)) return undefined;
   const nameKey = typeof value.nameKey === 'string' ? value.nameKey : clanNameKey(value.name);
+  const rawRoles = isRecord(value.roles) ? value.roles : {};
+  const roles: Record<string, ClanRole> = {};
+  for (const memberId of memberIds) {
+    if (memberId === value.ownerId) roles[memberId] = 'leader';
+    else if (isClanRole(typeof rawRoles[memberId] === 'string' ? rawRoles[memberId] as string : undefined)
+      && rawRoles[memberId] === 'veteran') roles[memberId] = 'veteran';
+    else roles[memberId] = 'member';
+  }
   return {
     clanId: value.clanId,
     name: value.name,
     nameKey,
     icon: value.icon,
     ownerId: value.ownerId,
-    memberIds: [...new Set(memberIds)],
+    memberIds,
+    roles,
     createdAt,
   };
 }
@@ -306,6 +354,9 @@ export class ClanService {
       page: 1,
       selectedIcon: CLAN_ICON_IDS[0],
       nameText: '',
+      inviteName: '',
+      memberSort: 'money',
+      rankingSort: 'money',
     };
     this.sessions.set(playerId, created);
     return created;
@@ -322,6 +373,11 @@ export class ClanService {
     session.selectedRequestId = undefined;
     session.selectedMemberId = undefined;
     session.openedFromMenu = undefined;
+    session.inviteName = '';
+    session.inviteMessage = undefined;
+    session.memberSort = 'money';
+    session.rankingSort = 'money';
+    session.transferFromCard = undefined;
   }
 
   getClan(clanId: string | undefined): ClanRecord | undefined {
@@ -358,8 +414,42 @@ export class ClanService {
       if (clan.ownerId === playerId) continue;
       if (!clan.memberIds.includes(playerId)) continue;
       clan.memberIds = clan.memberIds.filter((id) => id !== playerId);
+      delete clan.roles[playerId];
     }
     this.clearCreateDraft(playerId);
+  }
+
+  clanKills(clan: ClanRecord): number {
+    let total = 0;
+    for (const memberId of clan.memberIds) total += this.economy.getKills(memberId);
+    return total;
+  }
+
+  roleOf(clan: ClanRecord, playerId: string): ClanRole {
+    if (playerId === clan.ownerId) return 'leader';
+    const stored = clan.roles[playerId];
+    return stored === 'veteran' ? 'veteran' : 'member';
+  }
+
+  private syncRoles(clan: ClanRecord): void {
+    const next: Record<string, ClanRole> = {};
+    for (const memberId of clan.memberIds) {
+      next[memberId] = memberId === clan.ownerId ? 'leader' : clan.roles[memberId] === 'veteran' ? 'veteran' : 'member';
+    }
+    clan.roles = next;
+  }
+
+  private lookupTarget(raw: string): { id: string; name: string; connected: boolean } | undefined {
+    const needle = raw.trim();
+    if (!needle) return undefined;
+    if (this.runtime.lookupPlayer) return this.runtime.lookupPlayer(needle);
+    const lower = needle.toLowerCase();
+    for (const player of this.runtime.onlinePlayers()) {
+      if (player.id === needle || player.name.toLowerCase() === lower) {
+        return { id: player.id, name: player.name, connected: true };
+      }
+    }
+    return undefined;
   }
 
   clanTotal(clan: ClanRecord): number {
@@ -386,13 +476,17 @@ export class ClanService {
     return [...this.requests.values()].filter((request) => request.clanId === clanId);
   }
 
-  ranked(search = ''): Array<{ clan: ClanRecord; total: number; rank: number }> {
+  ranked(search = '', sort: ClanMemberSort = 'money'): Array<{ clan: ClanRecord; total: number; kills: number; rank: number }> {
     this.purgeExpired();
     const needle = search.trim().toLowerCase();
     const rows = [...this.clans.values()]
       .filter((clan) => !needle || clan.name.toLowerCase().includes(needle))
-      .map((clan) => ({ clan, total: this.clanTotal(clan) }));
+      .map((clan) => ({ clan, total: this.clanTotal(clan), kills: this.clanKills(clan) }));
     rows.sort((a, b) => {
+      if (sort === 'kills') {
+        if (b.kills !== a.kills) return b.kills - a.kills;
+        return a.clan.name.localeCompare(b.clan.name, 'ru', { sensitivity: 'base' });
+      }
       if (b.total !== a.total) return b.total - a.total;
       if (b.clan.memberIds.length !== a.clan.memberIds.length) return b.clan.memberIds.length - a.clan.memberIds.length;
       return a.clan.createdAt - b.clan.createdAt;
@@ -407,7 +501,7 @@ export class ClanService {
     if (search !== undefined) session.search = search;
     session.selectedClanId = undefined;
     session.selectedMemberId = undefined;
-    session.page = this.clampPage(session.page, this.ranked(session.search).length);
+    session.page = this.clampPage(session.page, this.ranked(session.search, session.rankingSort).length);
   }
 
   openMyClan(playerId: string): ClanResult {
@@ -458,7 +552,7 @@ export class ClanService {
   openAdd(playerId: string): ClanResult {
     const clan = this.playerClan(playerId);
     if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
-    if (clan.ownerId !== playerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+    if (!canClanInvite(this.roleOf(clan, playerId))) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
     const session = this.session(playerId);
     session.screen = 'add';
     session.selectedClanId = clan.clanId;
@@ -493,6 +587,8 @@ export class ClanService {
     const clan = this.playerClan(playerId);
     if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
     if (clan.ownerId !== playerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+    const veterans = clan.memberIds.filter((id) => this.roleOf(clan, id) === 'veteran');
+    if (veterans.length === 0) return { ok: false, error: CLAN_NO_VETERAN_ERROR };
     const session = this.session(playerId);
     session.screen = 'makeleader';
     session.selectedClanId = clan.clanId;
@@ -506,9 +602,11 @@ export class ClanService {
   openKick(playerId: string, targetId: string): ClanResult {
     const clan = this.playerClan(playerId);
     if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
-    if (clan.ownerId !== playerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
     if (targetId === playerId) return { ok: false, error: CLAN_KICK_SELF_ERROR };
     if (!clan.memberIds.includes(targetId)) return { ok: false, error: CLAN_NOT_MEMBER_ERROR };
+    if (!canClanKick(this.roleOf(clan, playerId), this.roleOf(clan, targetId))) {
+      return { ok: false, error: CLAN_KICK_DENIED_ERROR };
+    }
     const session = this.session(playerId);
     session.screen = 'kick-confirm';
     session.selectedClanId = clan.clanId;
@@ -538,6 +636,7 @@ export class ClanService {
         icon,
         ownerId: playerId,
         memberIds: [playerId],
+        roles: { [playerId]: 'leader' },
         createdAt: this.now(),
       };
       this.clans.set(clan.clanId, clan);
@@ -574,24 +673,27 @@ export class ClanService {
     });
   }
 
-  invitePlayer(ownerId: string, targetId: string): ClanResult {
+  invitePlayer(ownerId: string, targetId: string, options: { allowOffline?: boolean; keepScreen?: boolean } = {}): ClanResult {
     const owned = this.playerClan(ownerId);
     return this.withLocks([`player:${ownerId}`, `player:${targetId}`, owned ? `clan:${owned.clanId}` : ''], () => {
       const clan = this.playerClan(ownerId);
       if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
-      if (clan.ownerId !== ownerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+      if (!canClanInvite(this.roleOf(clan, ownerId))) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
       if (targetId === ownerId) return { ok: false, error: CLAN_INVITE_SELF_ERROR };
-      if (!this.runtime.isOnline(targetId)) return { ok: false, error: CLAN_OFFLINE_INVITE_ERROR };
-      if (this.playerClan(targetId)) return { ok: false, error: CLAN_TARGET_IN_CLAN_ERROR };
+      if (!options.allowOffline && !this.runtime.isOnline(targetId)) return { ok: false, error: CLAN_OFFLINE_INVITE_ERROR };
+      const targetClan = this.playerClan(targetId);
+      if (targetClan?.clanId === clan.clanId) return { ok: false, error: CLAN_ALREADY_IN_THIS_CLAN_ERROR };
+      if (targetClan) return { ok: false, error: CLAN_ALREADY_IN_OTHER_CLAN_ERROR };
       if (clan.memberIds.length >= CLAN_MAX_MEMBERS) return { ok: false, error: CLAN_FULL_ERROR };
       const existing = [...this.invitations.values()].find(
         (invitation) => invitation.clanId === clan.clanId && invitation.toPlayerId === targetId,
       );
       if (existing && existing.expiresAt > this.now()) {
         const session = this.session(ownerId);
-        session.screen = 'add';
-        session.message = 'Приглашение уже отправлено.';
-        return { ok: true, clan };
+        if (!options.keepScreen) session.screen = 'add';
+        session.inviteMessage = CLAN_INVITE_EXISTS_ERROR;
+        session.message = options.keepScreen ? session.message : CLAN_INVITE_EXISTS_ERROR;
+        return { ok: false, error: CLAN_INVITE_EXISTS_ERROR, clan };
       }
       const now = this.now();
       const invitation: ClanInvitation = {
@@ -606,11 +708,34 @@ export class ClanService {
       this.persist();
       this.runtime.sendMessage(targetId, clanInviteChat(this.runtime.displayName(ownerId), clan.name));
       const session = this.session(ownerId);
-      session.screen = 'add';
-      session.selectedPlayerId = undefined;
-      session.message = `Приглашение отправлено игроку ${this.runtime.displayName(targetId)}.`;
+      if (!options.keepScreen) {
+        session.screen = 'add';
+        session.selectedPlayerId = undefined;
+        session.message = `Приглашение отправлено игроку ${this.runtime.displayName(targetId)}.`;
+      } else {
+        session.inviteName = '';
+        session.inviteMessage = CLAN_INVITE_SENT_MESSAGE;
+      }
       return { ok: true, clan };
     });
+  }
+
+  invitePlayerByName(actorId: string, rawName: string | undefined): ClanResult {
+    const name = (rawName ?? '').trim();
+    const session = this.session(actorId);
+    session.inviteName = name.slice(0, 24);
+    if (!name) {
+      session.inviteMessage = CLAN_INVITE_EMPTY_ERROR;
+      return { ok: false, error: CLAN_INVITE_EMPTY_ERROR };
+    }
+    const target = this.lookupTarget(name);
+    if (!target) {
+      session.inviteMessage = CLAN_PLAYER_NOT_FOUND_ERROR;
+      return { ok: false, error: CLAN_PLAYER_NOT_FOUND_ERROR };
+    }
+    const result = this.invitePlayer(actorId, target.id, { allowOffline: true, keepScreen: true });
+    session.inviteMessage = result.ok ? CLAN_INVITE_SENT_MESSAGE : (result.error ?? 'Не удалось отправить приглашение.');
+    return result;
   }
 
   acceptInvitation(playerId: string, invitationId: string): ClanResult {
@@ -624,9 +749,10 @@ export class ClanService {
       }
       const clan = this.clans.get(invitation.clanId);
       if (!clan) return { ok: false, error: CLAN_MISSING_ERROR };
-      if (clan.ownerId !== invitation.fromPlayerId) return { ok: false, error: CLAN_INVITE_MISSING_ERROR };
       if (clan.memberIds.length >= CLAN_MAX_MEMBERS) return { ok: false, error: CLAN_FULL_ERROR };
       clan.memberIds = [...clan.memberIds, playerId];
+      clan.roles[playerId] = 'member';
+      this.syncRoles(clan);
       this.clearPlayerPending(playerId);
       this.persist();
       const session = this.session(playerId);
@@ -659,13 +785,54 @@ export class ClanService {
       if (clan.ownerId !== ownerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
       if (targetId === ownerId) return { ok: false, error: CLAN_LEADER_SELF_ERROR };
       if (!clan.memberIds.includes(targetId)) return { ok: false, error: CLAN_NOT_MEMBER_ERROR };
+      if (this.roleOf(clan, targetId) !== 'veteran') return { ok: false, error: CLAN_TRANSFER_VETERAN_ONLY_ERROR };
+      clan.roles[ownerId] = 'veteran';
+      clan.roles[targetId] = 'leader';
       clan.ownerId = targetId;
+      this.syncRoles(clan);
       this.persist();
       const session = this.session(ownerId);
       session.screen = 'card';
       session.selectedClanId = clan.clanId;
       session.selectedMemberId = undefined;
-      session.message = `${this.runtime.displayName(targetId)} теперь владелец клана ${clan.name}.`;
+      session.transferFromCard = undefined;
+      session.message = `${this.runtime.displayName(targetId)} теперь глава клана ${clan.name}.`;
+      return { ok: true, clan };
+    });
+  }
+
+  promoteVeteran(ownerId: string, targetId: string): ClanResult {
+    return this.withLocks([`player:${ownerId}`, `player:${targetId}`], () => {
+      const clan = this.playerClan(ownerId);
+      if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+      if (!canClanManageVeterans(this.roleOf(clan, ownerId))) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+      if (!clan.memberIds.includes(targetId)) return { ok: false, error: CLAN_NOT_MEMBER_ERROR };
+      if (this.roleOf(clan, targetId) !== 'member') return { ok: false, error: CLAN_PROMOTE_MEMBER_ONLY_ERROR };
+      clan.roles[targetId] = 'veteran';
+      this.syncRoles(clan);
+      this.persist();
+      const session = this.session(ownerId);
+      session.selectedMemberId = targetId;
+      session.screen = 'member-card';
+      session.message = `${this.runtime.displayName(targetId)} назначен ветераном.`;
+      return { ok: true, clan };
+    });
+  }
+
+  demoteVeteran(ownerId: string, targetId: string): ClanResult {
+    return this.withLocks([`player:${ownerId}`, `player:${targetId}`], () => {
+      const clan = this.playerClan(ownerId);
+      if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+      if (!canClanManageVeterans(this.roleOf(clan, ownerId))) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+      if (!clan.memberIds.includes(targetId)) return { ok: false, error: CLAN_NOT_MEMBER_ERROR };
+      if (this.roleOf(clan, targetId) !== 'veteran') return { ok: false, error: CLAN_DEMOTE_VETERAN_ONLY_ERROR };
+      clan.roles[targetId] = 'member';
+      this.syncRoles(clan);
+      this.persist();
+      const session = this.session(ownerId);
+      session.selectedMemberId = targetId;
+      session.screen = 'member-card';
+      session.message = `${this.runtime.displayName(targetId)} снова участник.`;
       return { ok: true, clan };
     });
   }
@@ -674,9 +841,11 @@ export class ClanService {
     return this.withLocks([`player:${ownerId}`, `player:${targetId}`], () => {
       const clan = this.playerClan(ownerId);
       if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
-      if (clan.ownerId !== ownerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
       if (targetId === ownerId) return { ok: false, error: CLAN_KICK_SELF_ERROR };
       if (!clan.memberIds.includes(targetId)) return { ok: false, error: CLAN_NOT_MEMBER_ERROR };
+      if (!canClanKick(this.roleOf(clan, ownerId), this.roleOf(clan, targetId))) {
+        return { ok: false, error: CLAN_KICK_DENIED_ERROR };
+      }
       this.detachFromClans(targetId);
       this.persist();
       const kicked = this.session(targetId);
@@ -756,6 +925,8 @@ export class ClanService {
       if (this.playerClan(request.playerId)) return { ok: false, error: CLAN_TARGET_IN_CLAN_ERROR };
       if (clan.memberIds.length >= CLAN_MAX_MEMBERS) return { ok: false, error: CLAN_FULL_ERROR };
       clan.memberIds = [...clan.memberIds, request.playerId];
+      clan.roles[request.playerId] = 'member';
+      this.syncRoles(clan);
       this.clearPlayerPending(request.playerId);
       this.persist();
       const session = this.session(ownerId);
@@ -792,6 +963,32 @@ export class ClanService {
     if (action === 'set_name') {
       session.nameText = typeof message.name === 'string' ? message.name.slice(0, CLAN_NAME_MAX) : '';
       if (session.screen !== 'create' && session.screen !== 'create-confirm') session.screen = 'create';
+      return;
+    }
+    if (action === 'set_invite_name') {
+      session.inviteName = typeof message.name === 'string' ? message.name.slice(0, 24) : '';
+      session.inviteMessage = undefined;
+      return;
+    }
+    if (action === 'invite_by_name') {
+      const clan = this.playerClan(playerId);
+      if (!clan || !canClanInvite(this.roleOf(clan, playerId))) {
+        session.inviteMessage = CLAN_OWNER_ONLY_ERROR;
+        return;
+      }
+      if (session.screen !== 'requests') session.screen = 'requests';
+      this.invitePlayerByName(playerId, message.name ?? session.inviteName);
+      return;
+    }
+    if (action === 'set_member_sort' && isClanMemberSort(message.sort)) {
+      session.memberSort = message.sort;
+      if (session.screen === 'closed') session.screen = 'card';
+      return;
+    }
+    if (action === 'set_ranking_sort' && isClanMemberSort(message.sort)) {
+      session.rankingSort = message.sort;
+      session.page = 1;
+      if (session.screen === 'closed') session.screen = 'ranking';
       return;
     }
     if (action === 'select_icon' && isClanIconId(message.icon)) {
@@ -900,25 +1097,89 @@ export class ClanService {
     }
     if (action === 'select_member' && message.playerId) {
       const clan = this.getClan(session.selectedClanId) ?? this.playerClan(playerId);
-      if (clan && clan.ownerId === playerId && message.playerId !== playerId && clan.memberIds.includes(message.playerId)) {
+      if (clan && clan.memberIds.includes(message.playerId)) {
         session.selectedMemberId = message.playerId;
-        if (session.screen === 'makeleader') session.screen = 'makeleader-confirm';
-        else session.screen = 'card';
+        if (session.screen === 'makeleader') {
+          if (clan.ownerId === playerId && this.roleOf(clan, message.playerId) === 'veteran') {
+            session.screen = 'makeleader-confirm';
+          } else {
+            session.message = CLAN_TRANSFER_VETERAN_ONLY_ERROR;
+          }
+        } else {
+          session.screen = 'member-card';
+        }
       }
       return;
     }
-    if (action === 'confirm_makeleader') {
+    if (action === 'open_member' && message.playerId) {
+      const clan = this.getClan(session.selectedClanId) ?? this.playerClan(playerId);
+      if (clan && clan.memberIds.includes(message.playerId)) {
+        session.selectedMemberId = message.playerId;
+        session.screen = 'member-card';
+      }
+      return;
+    }
+    if (action === 'promote_veteran') {
+      const target = session.selectedMemberId ?? message.playerId;
+      if (!target) return;
+      const result = this.promoteVeteran(playerId, target);
+      if (!result.ok) session.message = result.error;
+      return;
+    }
+    if (action === 'demote_veteran') {
+      const target = session.selectedMemberId ?? message.playerId;
+      if (!target) return;
+      const result = this.demoteVeteran(playerId, target);
+      if (!result.ok) session.message = result.error;
+      return;
+    }
+    if (action === 'transfer_leader') {
+      const target = session.selectedMemberId ?? message.playerId;
+      if (!target) return;
+      const clan = this.playerClan(playerId);
+      if (!clan || clan.ownerId !== playerId || this.roleOf(clan, target) !== 'veteran') {
+        session.message = CLAN_TRANSFER_VETERAN_ONLY_ERROR;
+        session.screen = 'member-card';
+        return;
+      }
+      session.selectedMemberId = target;
+      session.transferFromCard = true;
+      session.screen = 'transfer-confirm';
+      return;
+    }
+    if (action === 'confirm_transfer_leader' || action === 'confirm_makeleader') {
       const target = session.selectedMemberId ?? message.playerId;
       if (!target) {
-        session.screen = 'makeleader';
+        session.screen = session.transferFromCard ? 'member-card' : 'makeleader';
         session.message = 'Выберите участника.';
         return;
       }
       const result = this.makeLeader(playerId, target);
       if (!result.ok) {
-        session.screen = 'makeleader';
+        session.screen = session.transferFromCard ? 'member-card' : 'makeleader';
         session.message = result.error;
       }
+      return;
+    }
+    if (action === 'cancel_transfer_leader') {
+      session.screen = session.transferFromCard ? 'member-card' : 'makeleader';
+      session.transferFromCard = undefined;
+      return;
+    }
+    if (action === 'friends_request') {
+      const target = session.selectedMemberId ?? message.playerId;
+      if (!target) return;
+      const result = this.runtime.requestFriend?.(playerId, target);
+      session.screen = 'member-card';
+      session.message = result?.ok ? undefined : (result?.error ?? 'Не удалось отправить заявку.');
+      return;
+    }
+    if (action === 'friends_cancel') {
+      const target = session.selectedMemberId ?? message.playerId;
+      if (!target) return;
+      const result = this.runtime.cancelFriendRequest?.(playerId, target);
+      session.screen = 'member-card';
+      session.message = result?.ok ? undefined : (result?.error ?? 'Заявка не найдена.');
       return;
     }
     if (action === 'cancel_makeleader') {
@@ -929,6 +1190,12 @@ export class ClanService {
     if (action === 'kick') {
       const target = session.selectedMemberId ?? message.playerId;
       if (!target) return;
+      const clan = this.playerClan(playerId);
+      if (!clan || !canClanKick(this.roleOf(clan, playerId), this.roleOf(clan, target))) {
+        session.screen = 'member-card';
+        session.message = CLAN_KICK_DENIED_ERROR;
+        return;
+      }
       session.selectedMemberId = target;
       session.screen = 'kick-confirm';
       return;
@@ -941,13 +1208,13 @@ export class ClanService {
       }
       const result = this.kickMember(playerId, target);
       if (!result.ok) {
-        session.screen = 'card';
+        session.screen = 'member-card';
         session.message = result.error;
       }
       return;
     }
     if (action === 'cancel_kick') {
-      session.screen = 'card';
+      session.screen = session.selectedMemberId ? 'member-card' : 'card';
       return;
     }
     if (action === 'join' && (message.clanId || session.selectedClanId)) {
@@ -1015,18 +1282,25 @@ export class ClanService {
     }
     if (action === 'open_requests') {
       const clan = this.playerClan(playerId);
-      if (!clan || clan.ownerId !== playerId) {
+      if (!clan || !canClanInvite(this.roleOf(clan, playerId))) {
         session.message = CLAN_OWNER_ONLY_ERROR;
         return;
       }
       session.screen = 'requests';
       session.selectedClanId = clan.clanId;
       session.selectedRequestId = undefined;
+      session.inviteName = session.inviteName ?? '';
+      session.inviteMessage = undefined;
       session.search = '';
       session.page = 1;
       return;
     }
     if (action === 'select_request' && message.requestId) {
+      const clan = this.playerClan(playerId);
+      if (!clan || clan.ownerId !== playerId) {
+        session.message = CLAN_OWNER_ONLY_ERROR;
+        return;
+      }
       session.selectedRequestId = message.requestId;
       session.screen = 'request-confirm';
       return;
@@ -1081,13 +1355,21 @@ export class ClanService {
       viewer: {
         ...(viewerClan ? { clanId: viewerClan.clanId } : {}),
         isOwner: viewerClan?.ownerId === playerId,
+        ...(viewerClan ? {
+          role: this.roleOf(viewerClan, playerId),
+          canInvite: canClanInvite(this.roleOf(viewerClan, playerId)),
+        } : {}),
         ...(pendingClan ? { pendingRequestClanId: pendingClan.clanId, pendingRequestClanName: pendingClan.name } : {}),
       },
+      inviteName: session.inviteName,
+      memberSort: session.memberSort,
+      rankingSort: session.rankingSort,
+      ...(session.inviteMessage ? { inviteMessage: session.inviteMessage } : {}),
       ...(session.message ? { message: session.message } : {}),
     };
 
     if (session.screen === 'ranking') {
-      const ranked = this.ranked(session.search);
+      const ranked = this.ranked(session.search, session.rankingSort);
       const paged = this.paginate(ranked, session);
       return {
         ...base,
@@ -1096,7 +1378,8 @@ export class ClanService {
         page: session.page,
         totalPages: paged.totalPages,
         totalCount: ranked.length,
-        clans: paged.items.map((row) => this.toRow(row.clan, row.total, row.rank)),
+        rankingSort: session.rankingSort,
+        clans: paged.items.map((row) => this.toRow(row.clan, row.total, row.rank, session.rankingSort, row.kills)),
       };
     }
 
@@ -1201,24 +1484,27 @@ export class ClanService {
       };
     }
 
-    if (session.screen === 'makeleader' || session.screen === 'makeleader-confirm') {
+    if (session.screen === 'makeleader' || session.screen === 'makeleader-confirm' || session.screen === 'transfer-confirm') {
       const clan = viewerClan;
-      const members = clan ? this.memberRows(clan).filter((row) => !row.isOwner) : [];
-      const selected = members.find((row) => row.playerId === session.selectedMemberId);
+      const members = clan ? this.memberRows(clan).filter((row) => row.role === 'veteran') : [];
+      const selected = members.find((row) => row.playerId === session.selectedMemberId)
+        ?? (clan ? this.memberRows(clan).find((row) => row.playerId === session.selectedMemberId) : undefined);
+      const confirm = session.screen === 'makeleader-confirm' || session.screen === 'transfer-confirm';
       return {
         ...base,
         screen: session.screen,
-        title: 'Передать лидерство',
+        title: 'Передать главу',
         totalPages: 1,
         totalCount: members.length,
         clans: [],
         members,
-        selected: session.screen === 'makeleader-confirm' && selected && clan
+        playerCard: clan && session.selectedMemberId ? this.playerCardPayload(playerId, clan, session.selectedMemberId) : undefined,
+        selected: confirm && selected && clan
           ? {
             playerId: selected.playerId,
             playerName: selected.name,
             clanName: clan.name,
-            prompt: `Вы уверены, что хотите сделать игрока ${selected.name} лидером вашего клана ${clan.name}?\n\nВы больше не будете являться владельцем клана.\nЭто действие нельзя отменить.`,
+            prompt: `Вы уверены, что хотите передать главу игроку ${selected.name}?\n\nВы станете ветераном клана ${clan.name}.\nЭто действие нельзя отменить.`,
           }
           : undefined,
       };
@@ -1258,6 +1544,9 @@ export class ClanService {
         totalCount: requests.length,
         clans: [],
         requests: paged.items,
+        inviteName: session.inviteName,
+        ...(session.inviteMessage ? { inviteMessage: session.inviteMessage } : {}),
+        card: clan ? this.cardPayload(playerId, clan, session.selectedMemberId) : undefined,
         selected: session.screen === 'request-confirm'
           ? {
             requestId: session.selectedRequestId,
@@ -1266,6 +1555,28 @@ export class ClanService {
             prompt: `Вы уверены, что хотите добавить в клан ${selected?.name ?? 'игрока'}?`,
           }
           : undefined,
+      };
+    }
+
+    if (session.screen === 'member-card') {
+      const memberClan = this.getClan(session.selectedClanId) ?? viewerClan;
+      const card = memberClan && session.selectedMemberId
+        ? this.playerCardPayload(playerId, memberClan, session.selectedMemberId)
+        : undefined;
+      if (!memberClan || !card) {
+        session.screen = 'card';
+        return this.buildMessage(playerId);
+      }
+      return {
+        ...base,
+        screen: 'member-card',
+        title: card.name,
+        totalPages: 1,
+        totalCount: 1,
+        clans: [this.toRow(memberClan, this.clanTotal(memberClan), this.rankOf(memberClan.clanId, session.rankingSort))],
+        members: this.memberRows(memberClan, session.memberSort),
+        card: this.cardPayload(playerId, memberClan, session.selectedMemberId),
+        playerCard: card,
       };
     }
 
@@ -1283,8 +1594,8 @@ export class ClanService {
       title: clan.name,
       totalPages: 1,
       totalCount: clan.memberIds.length,
-      clans: [this.toRow(clan, this.clanTotal(clan), this.rankOf(clan.clanId))],
-      members: this.memberRows(clan),
+      clans: [this.toRow(clan, this.clanTotal(clan), this.rankOf(clan.clanId, session.rankingSort))],
+      members: this.memberRows(clan, session.memberSort),
       card: this.cardPayload(playerId, clan, session.selectedMemberId),
       selected: session.screen === 'join-confirm'
         ? { clanId: clan.clanId, clanName: clan.name, prompt: `Вы уверены, что хотите отправить запрос на вступление в клан ${clan.name}?` }
@@ -1345,7 +1656,16 @@ export class ClanService {
         session.screen = 'makeleader';
         session.selectedMemberId = undefined;
         return;
+      case 'transfer-confirm':
+        session.screen = session.transferFromCard ? 'member-card' : 'makeleader';
+        session.transferFromCard = undefined;
+        return;
+      case 'member-card':
+        session.screen = 'card';
+        return;
       case 'kick-confirm':
+        session.screen = session.selectedMemberId ? 'member-card' : 'card';
+        return;
       case 'join-confirm':
       case 'replace-request-confirm':
         session.screen = 'card';
@@ -1394,20 +1714,32 @@ export class ClanService {
     return rows;
   }
 
-  private memberRows(clan: ClanRecord): NetworkClanMember[] {
+  private memberRows(clan: ClanRecord, sort: ClanMemberSort = 'money'): NetworkClanMember[] {
     const rows = clan.memberIds.map((memberId) => {
       const balance = this.economy.getBalance(memberId);
+      const kills = this.economy.getKills(memberId);
+      const role = this.roleOf(clan, memberId);
       return {
         playerId: memberId,
         name: this.runtime.displayName(memberId),
         balance,
         balanceLabel: coinLabel(balance),
         isOwner: memberId === clan.ownerId,
+        role,
+        roleLabel: clanRoleLabel(role),
+        online: this.runtime.isOnline(memberId),
+        kills,
+        killsLabel: formatKillsLabel(kills),
       };
     });
+    const metric = sort === 'kills' ? 'kills' : 'money';
     rows.sort((a, b) => {
-      if (a.isOwner !== b.isOwner) return a.isOwner ? -1 : 1;
-      return b.balance - a.balance || a.name.localeCompare(b.name, 'ru');
+      if (a.role === 'leader' && b.role !== 'leader') return -1;
+      if (b.role === 'leader' && a.role !== 'leader') return 1;
+      const av = metric === 'kills' ? a.kills : a.balance;
+      const bv = metric === 'kills' ? b.kills : b.balance;
+      if (bv !== av) return bv - av;
+      return a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' });
     });
     return rows;
   }
@@ -1442,7 +1774,13 @@ export class ClanService {
     return rows;
   }
 
-  private toRow(clan: ClanRecord, total: number, rank: number): NetworkClanRow {
+  private toRow(
+    clan: ClanRecord,
+    total: number,
+    rank: number,
+    sort: ClanMemberSort = 'money',
+    kills = this.clanKills(clan),
+  ): NetworkClanRow {
     return {
       clanId: clan.clanId,
       name: clan.name,
@@ -1450,13 +1788,16 @@ export class ClanService {
       rank,
       totalBalance: total,
       totalLabel: coinLabel(total),
+      totalKills: kills,
+      killsLabel: formatKillsLabel(kills),
       memberCount: clan.memberIds.length,
       createdAt: clan.createdAt,
+      sort,
     };
   }
 
-  private rankOf(clanId: string): number {
-    return this.ranked().find((row) => row.clan.clanId === clanId)?.rank ?? 0;
+  private rankOf(clanId: string, sort: ClanMemberSort = 'money'): number {
+    return this.ranked('', sort).find((row) => row.clan.clanId === clanId)?.rank ?? 0;
   }
 
   private cardPayload(playerId: string, clan: ClanRecord, selectedMemberId: string | undefined): NonNullable<ServerClanMessage['card']> {
@@ -1482,13 +1823,19 @@ export class ClanService {
       joinState = 'sent';
       joinLabel = 'Заявка отправлена';
     }
-    const canKick = isOwner && !!selectedMemberId && selectedMemberId !== playerId && clan.memberIds.includes(selectedMemberId);
+    const canKick = !!selectedMemberId
+      && selectedMemberId !== playerId
+      && clan.memberIds.includes(selectedMemberId)
+      && canClanKick(this.roleOf(clan, playerId), this.roleOf(clan, selectedMemberId));
+    const viewerRole = clan.memberIds.includes(playerId) ? this.roleOf(clan, playerId) : undefined;
     return {
       clanId: clan.clanId,
       name: clan.name,
       icon: clan.icon,
       totalBalance: this.clanTotal(clan),
       totalLabel: coinLabel(this.clanTotal(clan)),
+      totalKills: this.clanKills(clan),
+      killsLabel: formatKillsLabel(this.clanKills(clan)),
       memberCount: clan.memberIds.length,
       ownerId: clan.ownerId,
       ownerName: this.runtime.displayName(clan.ownerId),
@@ -1499,6 +1846,42 @@ export class ClanService {
       ...(joinLabel ? { joinLabel } : {}),
       ...(selectedMemberId ? { selectedMemberId } : {}),
       canKickSelected: canKick,
+      canInvite: canClanInvite(viewerRole),
+      ...(viewerRole ? { viewerRole } : {}),
+      memberSort: this.session(playerId).memberSort,
+      rankingSort: this.session(playerId).rankingSort,
+    };
+  }
+
+  private playerCardPayload(viewerId: string, clan: ClanRecord, memberId: string): NonNullable<ServerClanMessage['playerCard']> | undefined {
+    if (!clan.memberIds.includes(memberId)) return undefined;
+    const role = this.roleOf(clan, memberId);
+    const viewerRole = clan.memberIds.includes(viewerId) ? this.roleOf(clan, viewerId) : undefined;
+    const online = this.runtime.isOnline(memberId);
+    const name = this.runtime.displayName(memberId);
+    const balance = this.economy.getBalance(memberId);
+    const kills = this.economy.getKills(memberId);
+    const isSelf = viewerId === memberId;
+    const friendState = isSelf
+      ? 'self' as const
+      : (this.runtime.friendRelation?.(viewerId, memberId) ?? 'none');
+    return {
+      playerId: memberId,
+      name,
+      online,
+      role,
+      roleLabel: clanRoleLabel(role),
+      balance,
+      balanceLabel: coinLabel(balance),
+      kills,
+      killsLabel: formatKillsLabel(kills),
+      isSelf,
+      friendState,
+      canKick: !isSelf && canClanKick(viewerRole, role),
+      canPromote: !isSelf && canClanManageVeterans(viewerRole) && role === 'member',
+      canDemote: !isSelf && canClanManageVeterans(viewerRole) && role === 'veteran',
+      canTransfer: !isSelf && canClanTransferLeader(viewerRole, role),
+      statusLabel: online ? 'В сети' : `Игрок ${name} не в сети`,
     };
   }
 

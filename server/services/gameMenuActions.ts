@@ -9,6 +9,7 @@ import type { ClanService } from './clan';
 import type { Claim, ClaimStore } from './claims';
 import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
+import { isRankingKind } from '../../shared/ranking';
 
 export interface MenuPlayer {
   readonly id: string;
@@ -53,6 +54,21 @@ export function applyGameMenuAction(
   const action = message.action;
   if (action === 'open') {
     session.screen = message.screen && message.screen !== 'closed' ? message.screen as GameMenuSession['screen'] : 'root';
+    if (session.screen === 'rating') {
+      session.ratingKind = session.ratingKind || 'players-money';
+      session.ratingPage = 1;
+    }
+    return { kind: 'flush' };
+  }
+  if (action === 'rating_set' && isRankingKind(message.ratingKind ?? message.name)) {
+    session.screen = 'rating';
+    session.ratingKind = (message.ratingKind ?? message.name) as typeof session.ratingKind;
+    session.ratingPage = 1;
+    return { kind: 'flush' };
+  }
+  if (action === 'rating_page') {
+    session.screen = 'rating';
+    session.ratingPage = message.page ?? session.ratingPage;
     return { kind: 'flush' };
   }
   if (action === 'back') {

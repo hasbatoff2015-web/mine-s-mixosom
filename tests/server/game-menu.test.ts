@@ -88,7 +88,7 @@ describe('game menu plugin', () => {
     expect(root?.screen).toBe('root');
     expect(root?.balance).toBe(ECONOMY_INITIAL_BALANCE);
     expect(root?.balanceLabel).toBe('100');
-    expect(GAME_MENU_BUTTONS).toHaveLength(7);
+    expect(GAME_MENU_BUTTONS).toHaveLength(8);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'homes' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('homes');
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'back' });
@@ -212,5 +212,24 @@ describe('game menu plugin', () => {
     expect(adaTrade?.partnerReady).toBe(false);
     expect(bobTrade?.selfReady).toBe(false);
     expect(bobTrade?.bothReady).toBe(false);
+  });
+
+  it('opens the rating tab with four independent modes and personal place', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'rating' });
+    const first = lastOf<ServerMenuMessage>(ada.sink, 'menu');
+    expect(first?.screen).toBe('rating');
+    expect(first?.ratingKind).toBe('players-money');
+    expect(first?.personalRank).toBe(1);
+    expect(first?.personalText).toMatch(/#1/);
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'rating_set', ratingKind: 'players-kills' });
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.ratingKind).toBe('players-kills');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'rating_set', ratingKind: 'clans-money' });
+    const clans = lastOf<ServerMenuMessage>(ada.sink, 'menu');
+    expect(clans?.ratingKind).toBe('clans-money');
+    expect(clans?.personalText).toBe('Вы не состоите в клане');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'back' });
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('root');
   });
 });

@@ -66,11 +66,25 @@ export function showsClanBack(screen: ServerClanMessage['screen'], source?: 'men
     || screen === 'requests'
     || screen === 'request-confirm'
     || screen === 'join-confirm'
-    || screen === 'replace-request-confirm';
+    || screen === 'replace-request-confirm'
+    || screen === 'member-card'
+    || screen === 'transfer-confirm';
 }
 
 export function clanIconIds(): readonly ClanIconId[] {
   return CLAN_ICON_IDS;
+}
+
+export function clanSortButtonsHtml(current: 'money' | 'kills' | undefined, attr: string): string {
+  const moneyOn = current !== 'kills';
+  return `<div class="mc-ah-actions mc-clan-sort">
+    <button type="button" class="mc-ah-btn${moneyOn ? ' is-on' : ''}" ${attr}="money">По монетам</button>
+    <button type="button" class="mc-ah-btn${!moneyOn ? ' is-on' : ''}" ${attr}="kills">По убийствам</button>
+  </div>`;
+}
+
+export function clanKillsHtml(label: string): string {
+  return `<span class="mc-clan-kills">${label}</span>`;
 }
 
 export { formatCompactMegacoins, isClanIconId };

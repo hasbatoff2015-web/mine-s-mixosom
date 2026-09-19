@@ -2429,6 +2429,105 @@ button {
   color: #ffe566;
 }
 
+.mc-clan-role {
+  flex: none;
+  color: #2f2f2f;
+  font-size: calc(5px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mc-clan-kills,
+.mc-rank-kills {
+  color: #e39a9a;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mc-clan-sort {
+  margin: calc(2px * var(--mc-ui-scale, 3)) 0;
+}
+
+.mc-ah-btn.is-on {
+  color: #1a1a1a;
+  box-shadow:
+    inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) #d8c45a,
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #3a3d44;
+}
+
+.mc-clan-invite {
+  margin-bottom: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-clan-player-status,
+.mc-clan-player-meta {
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  color: #d8d8d8;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
+.mc-clan-self {
+  color: #ffe566;
+  font-weight: 800;
+}
+
+.mc-clan-player-actions {
+  flex-wrap: wrap;
+}
+
+.mc-rank-groups {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  margin-bottom: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-rank-heading {
+  color: #d0d0d0;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 800;
+  text-align: center;
+  margin-bottom: calc(3px * var(--mc-ui-scale, 3));
+}
+
+.mc-rank-actions {
+  justify-content: center;
+}
+
+.mc-rank-list {
+  min-height: calc(72px * var(--mc-ui-scale, 3));
+}
+
+.mc-rank-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  align-items: center;
+  padding: calc(3px * var(--mc-ui-scale, 3)) calc(2px * var(--mc-ui-scale, 3));
+  color: #fff;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
+.mc-rank-you {
+  color: #ffe566;
+}
+
+.mc-rank-you .mc-rank-kills {
+  color: #ffe566;
+}
+
+.mc-rank-personal {
+  margin-top: calc(4px * var(--mc-ui-scale, 3));
+  text-align: center;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 800;
+}
+
 .mc-clan-row.is-selected {
   outline: calc(1px * var(--mc-ui-scale, 3)) solid #ffff55;
 }
