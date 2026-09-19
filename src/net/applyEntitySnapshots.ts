@@ -40,6 +40,7 @@ function ingestPose(
     y: snap.y,
     z: snap.z,
     yaw: snap.yaw,
+    pitch: snap.pitch,
     vx: presentationVelocity?.x ?? snap.vx,
     vy: presentationVelocity?.y ?? snap.vy,
     vz: presentationVelocity?.z ?? snap.vz,
@@ -266,9 +267,7 @@ export function applyInterpolatedEntityVisuals(
   for (const cart of session.minecarts.entities) {
     const pose = interpolator.sample(cart.id, now);
     if (!pose) continue;
-    cart.previousPosition.set(pose.x, pose.y, pose.z);
-    cart.position.set(pose.x, pose.y, pose.z);
-    cart.yaw = pose.yaw;
+    session.minecarts.applyInterpolatedRenderPose(cart, pose);
   }
   session.minecarts.interpolateVisuals(1);
 

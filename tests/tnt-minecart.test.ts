@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { BlockId, tntTextureKey } from '../src/blocks';
+import { BlockId, tntTextureKey, type RailShape } from '../src/blocks';
 import { PlayerArrowManager } from '../src/combat';
 import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED } from '../src/core/constants';
+import { lerpAngle } from '../src/core/entityInterpolation';
 import {
   DroppedItemManager,
   FallingBlockManager,
@@ -13,6 +14,8 @@ import {
   MinecartManager,
   MobManager,
   igniteMinecartTntFromFireArrow,
+  minecartVisualEuler,
+  sampleRail,
 } from '../src/entities';
 import { applyEntitySnapshots } from '../src/net/applyEntitySnapshots';
 import { EntityInterpolationBuffer } from '../src/net/entitySnapshotInterpolation';
@@ -349,6 +352,8 @@ describe('minecart visual yaw', () => {
 
     manager.interpolateVisuals(1);
     expect(ns.visual!.rotation.y).toBeCloseTo(ns.yaw + MINECART_VISUAL_YAW_OFFSET);
+    expect(ns.visual!.rotation.x).toBeCloseTo(0);
+    expect(ns.visual!.rotation.z).toBeCloseTo(0);
     manager.dispose();
   });
 });
@@ -391,6 +396,136 @@ describe('minecart max speed', () => {
     }
     expect(cart.alongSpeed).toBeLessThan(0);
     expect(cart.alongSpeed).toBeCloseTo(-MINECART_MAX_SPEED, 5);
+    manager.dispose();
+  });
+});
+
+function visualAxis(
+  visual: { updateMatrixWorld?(force?: boolean): void },
+  local: THREE.Vector3,
+): THREE.Vector3 {
+  const object = visual as THREE.Object3D;
+  object.updateMatrixWorld(true);
+  return local.clone().applyQuaternion(object.quaternion).normalize();
+}
+
+describe('minecart visual pose interpolation', () => {
+  it('interpolates yaw at alpha 0.5 on a curved rail, not the current sim yaw', () => {
+    const world = new VoxelWorld('cart-yaw-alpha');
+    emptyColumn(world, 5, 6, 1);
+    stoneAt(world, 5, 40, 6);
+    world.setBlock(5, 41, 6, BlockId.Rail);
+    world.setBlockState(5, 41, 6, { railShape: 'south_east' });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 6)!;
+    cart.alongSpeed = 6;
+    manager.update(0.05);
+    expect(cart.yaw).not.toBeCloseTo(cart.previousYaw, 3);
+    const midYaw = lerpAngle(cart.previousYaw, cart.yaw, 0.5);
+    const midPitch = lerpAngle(cart.previousPitch, cart.pitch, 0.5);
+    const expected = minecartVisualEuler(midYaw, midPitch);
+    manager.interpolateVisuals(0.5);
+    expect(cart.visual!.position.x).toBeCloseTo((cart.previousPosition.x + cart.position.x) * 0.5, 5);
+    expect(cart.visual!.position.z).toBeCloseTo((cart.previousPosition.z + cart.position.z) * 0.5, 5);
+    expect(cart.visual!.rotation.y).toBeCloseTo(expected.y, 5);
+    expect(cart.visual!.rotation.y).not.toBeCloseTo(cart.yaw + MINECART_VISUAL_YAW_OFFSET, 3);
+    expect(cart.visual!.rotation.z).toBeCloseTo(expected.z, 5);
+    manager.dispose();
+  });
+
+  it('interpolates pitch at alpha 0.5 instead of using the current sim pitch', () => {
+    const world = new VoxelWorld('cart-pitch-alpha');
+    emptyColumn(world, 5, 5, 1);
+    stoneAt(world, 5, 40, 5);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: 'north_south' });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    cart.previousPosition.set(5.5, 41, 5.2);
+    cart.position.set(5.5, 41.2, 5.5);
+    cart.previousYaw = 0;
+    cart.yaw = 0;
+    cart.previousPitch = 0;
+    cart.pitch = -Math.PI / 4;
+    const expected = minecartVisualEuler(0, -Math.PI / 8);
+    manager.interpolateVisuals(0.5);
+    expect(cart.visual!.position.y).toBeCloseTo(41.1, 5);
+    expect(cart.visual!.rotation.x).toBeCloseTo(0);
+    expect(cart.visual!.rotation.z).toBeCloseTo(expected.z, 5);
+    expect(cart.visual!.rotation.z).not.toBeCloseTo(-cart.pitch, 3);
+    manager.dispose();
+  });
+
+  it('wraps interpolated yaw through ±π instead of the long way around', () => {
+    const world = new VoxelWorld('cart-yaw-wrap');
+    emptyColumn(world, 5, 5, 1);
+    stoneAt(world, 5, 40, 5);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    cart.previousYaw = Math.PI - 0.2;
+    cart.yaw = -Math.PI + 0.2;
+    cart.previousPitch = 0;
+    cart.pitch = 0;
+    const expected = minecartVisualEuler(lerpAngle(cart.previousYaw, cart.yaw, 0.5), 0);
+    manager.interpolateVisuals(0.5);
+    expect(cart.visual!.rotation.y).toBeCloseTo(expected.y, 5);
+    const longWay = (cart.previousYaw + cart.yaw) * 0.5 + MINECART_VISUAL_YAW_OFFSET;
+    expect(Math.abs(cart.visual!.rotation.y - longWay)).toBeGreaterThan(1);
+    manager.dispose();
+  });
+});
+
+describe('minecart visual slope orientation', () => {
+  const slopes: readonly RailShape[] = [
+    'ascending_east',
+    'ascending_west',
+    'ascending_north',
+    'ascending_south',
+  ];
+
+  it.each(slopes)('aligns local +X with the 3D rail tangent on %s without roll', (shape) => {
+    const world = new VoxelWorld(`cart-slope-${shape}`);
+    emptyColumn(world, 5, 5, 1);
+    stoneAt(world, 5, 40, 5);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: shape });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    const sample = sampleRail(cart.rail!, cart.progress);
+    const tangent = new THREE.Vector3(sample.tangentX, sample.tangentY, sample.tangentZ).normalize();
+    const forward = visualAxis(cart.visual!, new THREE.Vector3(1, 0, 0));
+    const up = visualAxis(cart.visual!, new THREE.Vector3(0, 1, 0));
+    const side = visualAxis(cart.visual!, new THREE.Vector3(0, 0, 1));
+    expect(forward.dot(tangent), `${shape} forward`).toBeCloseTo(1, 3);
+    expect(Math.sign(forward.y) || 0).toBe(Math.sign(tangent.y) || 0);
+    expect(forward.y).toBeGreaterThan(0.3);
+    const expectedSide = new THREE.Vector3().crossVectors(tangent, new THREE.Vector3(0, 1, 0)).normalize();
+    expect(side.dot(expectedSide), `${shape} side`).toBeCloseTo(1, 3);
+    expect(Math.abs(up.dot(tangent))).toBeLessThan(0.08);
+    const euler = minecartVisualEuler(cart.yaw, cart.pitch);
+    expect(cart.visual!.rotation.x).toBeCloseTo(0);
+    expect(cart.visual!.rotation.y).toBeCloseTo(euler.y);
+    expect(cart.visual!.rotation.z).toBeCloseTo(euler.z);
+    expect(cart.visual!.rotation.z).not.toBeCloseTo(0);
+    manager.dispose();
+  });
+
+  it('keeps hull heading on reverse alongSpeed so the nose is not mirrored', () => {
+    const world = new VoxelWorld('cart-slope-reverse');
+    emptyColumn(world, 5, 5, 1);
+    stoneAt(world, 5, 40, 5);
+    world.setBlock(5, 41, 5, BlockId.Rail);
+    world.setBlockState(5, 41, 5, { railShape: 'ascending_east' });
+    const manager = carts(world);
+    const cart = manager.spawn(5, 41, 5)!;
+    const before = visualAxis(cart.visual!, new THREE.Vector3(1, 0, 0));
+    cart.alongSpeed = -4;
+    manager.update(0.05);
+    manager.interpolateVisuals(1);
+    const after = visualAxis(cart.visual!, new THREE.Vector3(1, 0, 0));
+    expect(after.dot(before)).toBeGreaterThan(0.7);
+    expect(after.y).toBeGreaterThan(0);
     manager.dispose();
   });
 });

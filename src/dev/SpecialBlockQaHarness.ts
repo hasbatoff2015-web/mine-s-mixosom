@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BlockId, type HorizontalFacing, type RailShape } from '../blocks';
-import { CHUNK_SIZE, chunkKey } from '../core/constants';
-import { MinecartManager } from '../entities/MinecartManager';
+import { CHUNK_SIZE, FIXED_DT, chunkKey } from '../core/constants';
+import { MINECART_MAX_SPEED, MinecartManager } from '../entities/MinecartManager';
 import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { toggleDoorState } from '../gameplay/useInteraction';
 import { DEFAULT_PLAYER_APPEARANCE } from '../player/appearance/PlayerAppearance';
@@ -38,7 +38,7 @@ export async function startRailQaHarness(
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111d;color:#fff;font:13px/1.4 monospace;z-index:5;white-space:pre">${
     row === 'tracks'
       ? 'RAIL TRACK QA · straight → corner → straight\nNE · NW · SE · SW with moving minecarts'
-      : `RAIL QA · production WorldRenderer · ${row}\nflat: NS · EW · NE · NW · SE · SW\nslope: north · south · east · west`
+      : `RAIL QA · production WorldRenderer · ${row}\nflat: NS · EW · NE · NW · SE · SW\nslope: N · S · E · W carts pitched along the rail`
   }</div>`;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -76,21 +76,28 @@ export async function startRailQaHarness(
   let entityHost: ThreeEntityHost | undefined;
   let frame = 0;
   let previous = performance.now();
+  let leftover = 0;
   const render = (now: number): void => {
-    const delta = Math.min(0.05, Math.max(0, (now - previous) / 1000));
+    const delta = Math.min(0.25, Math.max(0, (now - previous) / 1000));
     previous = now;
+    leftover += delta;
     world.processLighting(3, 15, 12);
     worldRenderer.rebuildDirty(4, 8, 15, 12, { requireNeighborLight: false });
-    carts?.update(delta);
+    while (leftover >= FIXED_DT) {
+      carts?.update(FIXED_DT);
+      leftover -= FIXED_DT;
+    }
+    carts?.interpolateVisuals(leftover / FIXED_DT);
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);
-  if (row === 'tracks') {
+  if (row === 'tracks' || row === 'slope') {
     const items = new ItemVisualFactory({ atlas });
     entityHost = new ThreeEntityHost(scene, { itemVisuals: items, ownsItemVisuals: true });
     carts = new MinecartManager(entityHost, world);
-    spawnTrackCarts(carts);
+    if (row === 'tracks') spawnTrackCarts(carts);
+    else spawnSlopeCarts(carts);
   }
 
   return () => {
@@ -281,13 +288,22 @@ function createRailTrackQaWorld(): VoxelWorld {
 
 function spawnTrackCarts(manager: MinecartManager): void {
   const north = manager.spawn(4, 40, 4);
-  if (north) north.alongSpeed = 3;
+  if (north) north.alongSpeed = MINECART_MAX_SPEED;
   const northWest = manager.spawn(14, 40, 4);
-  if (northWest) northWest.alongSpeed = 3;
+  if (northWest) northWest.alongSpeed = MINECART_MAX_SPEED;
   const south = manager.spawn(4, 40, 16);
-  if (south) south.alongSpeed = -3;
+  if (south) south.alongSpeed = -MINECART_MAX_SPEED;
   const southWest = manager.spawn(14, 40, 16);
-  if (southWest) southWest.alongSpeed = -3;
+  if (southWest) southWest.alongSpeed = -MINECART_MAX_SPEED;
+}
+
+function spawnSlopeCarts(manager: MinecartManager): void {
+  const totalWidth = (SLOPE_SHAPES.length - 1) * 5;
+  const startX = Math.round(15 - totalWidth / 2);
+  SLOPE_SHAPES.forEach((_, index) => {
+    const cart = manager.spawn(startX + index * 5, 40, 17);
+    if (cart) cart.alongSpeed = 0;
+  });
 }
 
 export async function startDoorQaHarness(

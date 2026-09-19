@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: minecart visual pose interpolation — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Cart visual interpolates position **and** yaw/pitch (`lerpAngle`). Slope pitch is `rotation.z = -pitch`, not `rotation.x`. `MINECART_VISUAL_YAW_OFFSET = −π/2` and `MINECART_MAX_SPEED = WALK_SPEED * 1.5` сохранены. Rider sample origin не откатывался.
+- Подробности: `docs/reports/2026-09-19_minecart-visual-pose-interpolation.md`.
+
 ## Последний проход: minecart rider interpolation + 1.5× speed — 2026-09-19
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Local seated visual origin = `LocalPlayerRenderState` sample (`seatedLocalPlayerVisualOrigin`), not current `cart.position`. `MINECART_MAX_SPEED = WALK_SPEED * 1.5` (~6.4755), `ACCEL_TIME` 0.5 s. Remote `RemotePlayerView` still uses interpolated `group.position`.

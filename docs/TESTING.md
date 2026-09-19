@@ -1,5 +1,16 @@
 # Тестирование
 
+## 2026-09-19 Minecart visual pose interpolation
+
+```text
+npx vitest run tests/tnt-minecart.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/entity-snapshot-interpolation.test.ts tests/entity-host.test.ts tests/server/tnt-minecart.test.ts tests/server/anarchy-gameplay.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "caps at 1.5" --maxWorkers=1
+```
+
+Focused: **tnt-minecart 18/18** (four ascending shapes, alpha 0.5 yaw/pitch, wrap), **rail-corner-path 10/10**, **player-visual-animation 18/18**, **entity-snapshot-interpolation 11/11**, **entity-host 5/5**, **server/tnt-minecart 5/5**, **anarchy-gameplay** PASS, isolated fire-contact W/S **PASS**. `typecheck` ×4, `check:boundaries`, `build` PASS. Full `fire-contact-sunlight-minecart.test.ts` still hangs on this host (baseline).
+
+Подробности: `docs/reports/2026-09-19_minecart-visual-pose-interpolation.md`.
+
 ## 2026-09-19 Minecart rider interpolation / 1.5× speed
 
 ```text

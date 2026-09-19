@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-19: minecart visual pose interpolation
+
+- [x] Interpolate cart yaw/pitch with position; shortest-angle wrap.
+- [x] Slope pitch on local Z so local +X follows the 3D rail tangent (all four ascending shapes).
+- [ ] Owner live: third-person max-speed corners and slopes.
+
 ## 2026-09-19: minecart rider interpolation + 1.5× speed
 
 - [x] Local seated origin uses render-sampled ride pose, not current `cart.position`.

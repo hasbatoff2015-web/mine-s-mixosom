@@ -1,7 +1,7 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId, isTntBlock, tntItemId, tntTextureKey } from '../blocks';
 import { clamp, FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
-import { interpolateVec3 } from '../core/entityInterpolation';
+import { interpolateVec3, lerpAngle } from '../core/entityInterpolation';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
@@ -43,6 +43,24 @@ export const MINECART_OFF_RAIL_PUSH_FACTOR = 0.5;
  * Visual-only: never add this to `cart.yaw` (steering, serialize, network).
  */
 export const MINECART_VISUAL_YAW_OFFSET = -Math.PI / 2;
+
+/**
+ * Gameplay yaw aims local +Z along the rail tangent. ModelMinecart long axis
+ * is local +X, so yaw is offset by `MINECART_VISUAL_YAW_OFFSET`. Slope pitch
+ * must then rotate around local Z (the transverse axis) so local +X follows
+ * the 3D tangent. Putting pitch on rotation.x rolled the hull around its length.
+ *
+ * `sampleRail` pitch is `atan2(-tangentY, hypot(xz))` (negative when climbing).
+ * Euler XYZ with z = -pitch lifts local +X when tangentY > 0.
+ */
+export function minecartVisualEuler(yaw: number, pitch: number): { x: number; y: number; z: number } {
+  return {
+    x: 0,
+    y: yaw + MINECART_VISUAL_YAW_OFFSET,
+    z: -pitch,
+  };
+}
+
 const ACCEL_TIME = 0.5;
 const COAST_FRICTION = 0.965;
 const SLOPE_GRAVITY = 6.5;
@@ -136,6 +154,8 @@ export interface MinecartEntity {
   readonly visual?: EntityVisual;
   yaw: number;
   pitch: number;
+  previousYaw: number;
+  previousPitch: number;
   rider: boolean;
   variant: MinecartVariant;
   /** Set when `variant === 'tnt'`. Ordinary / powerful / destructive. */
@@ -228,6 +248,8 @@ export class MinecartManager {
       visual,
       yaw: 0,
       pitch: 0,
+      previousYaw: 0,
+      previousPitch: 0,
       rider: false,
       variant,
       tntBlockId: cargoId,
@@ -237,6 +259,7 @@ export class MinecartManager {
       derailGraceTicks: 0,
     };
     this.snapToRail(entity);
+    this.commitVisualPrevious(entity);
     this.carts.set(entityId, entity);
     this.syncVisual(entity);
     return entity;
@@ -470,7 +493,7 @@ export class MinecartManager {
     if (this.disposed) return;
     const dt = Number.isFinite(deltaSeconds) ? Math.min(deltaSeconds, 0.1) : FIXED_DT;
     for (const cart of [...this.carts.values()]) {
-      cart.previousPosition.copy(cart.position);
+      this.commitVisualPrevious(cart);
       if (cart.fuseTicks > 0) {
         cart.fuseTicks -= 1;
         if (cart.visual) this.host.pulseMinecartTnt(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
@@ -493,7 +516,13 @@ export class MinecartManager {
         cart.position.x, cart.position.y, cart.position.z,
         t,
       );
-      this.applyVisualTransform(cart, visual.x, visual.y, visual.z);
+      this.applyMinecartVisualPose(cart, {
+        x: visual.x,
+        y: visual.y,
+        z: visual.z,
+        yaw: lerpAngle(cart.previousYaw, cart.yaw, t),
+        pitch: lerpAngle(cart.previousPitch, cart.pitch, t),
+      });
       // Online skips `update()`; visual sync must re-sample after deferred lighting.
       this.host.applyLight(cart.visual, this.world, visual.x, visual.y + 0.3, visual.z, 0.3);
     }
@@ -530,7 +559,6 @@ export class MinecartManager {
       );
       if (!cart) continue;
       cart.position.set(entry.position[0], entry.position[1], entry.position[2]);
-      cart.previousPosition.copy(cart.position);
       cart.velocity.set(entry.velocity[0], entry.velocity[1], entry.velocity[2]);
       cart.yaw = entry.yaw;
       cart.fuseTicks = Math.max(0, Math.floor(entry.fuseTicks ?? 0));
@@ -542,6 +570,7 @@ export class MinecartManager {
         const tangent = this.tangentOf(cart);
         cart.alongSpeed = cart.velocity.x * tangent.x + cart.velocity.z * tangent.z;
       }
+      this.commitVisualPrevious(cart);
       this.syncVisual(cart);
     }
   }
@@ -763,15 +792,52 @@ export class MinecartManager {
     this.carts.delete(cart.id);
   }
 
-  private applyVisualTransform(cart: MinecartEntity, x: number, y: number, z: number): void {
+  /**
+   * Online render pose is already interpolated by EntityInterpolationBuffer.
+   * Copy previous = current so `interpolateVisuals(1)` stays temporally identity
+   * while still applying the model-axis mapping.
+   */
+  applyInterpolatedRenderPose(cart: MinecartEntity, pose: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly yaw: number;
+    readonly pitch?: number;
+  }): void {
+    cart.position.set(pose.x, pose.y, pose.z);
+    cart.yaw = pose.yaw;
+    if (pose.pitch !== undefined) cart.pitch = pose.pitch;
+    this.commitVisualPrevious(cart);
+  }
+
+  private commitVisualPrevious(cart: MinecartEntity): void {
+    cart.previousPosition.copy(cart.position);
+    cart.previousYaw = cart.yaw;
+    cart.previousPitch = cart.pitch;
+  }
+
+  private applyMinecartVisualPose(cart: MinecartEntity, pose: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly yaw: number;
+    readonly pitch: number;
+  }): void {
     if (!cart.visual) return;
-    this.host.setPosition(cart.visual, x, y, z);
-    this.host.setRotation(cart.visual, cart.pitch, cart.yaw + MINECART_VISUAL_YAW_OFFSET, 0);
+    this.host.setPosition(cart.visual, pose.x, pose.y, pose.z);
+    const euler = minecartVisualEuler(pose.yaw, pose.pitch);
+    this.host.setRotation(cart.visual, euler.x, euler.y, euler.z);
   }
 
   private syncVisual(cart: MinecartEntity): void {
     if (!cart.visual) return;
-    this.applyVisualTransform(cart, cart.position.x, cart.position.y, cart.position.z);
+    this.applyMinecartVisualPose(cart, {
+      x: cart.position.x,
+      y: cart.position.y,
+      z: cart.position.z,
+      yaw: cart.yaw,
+      pitch: cart.pitch,
+    });
     this.syncCargoVisual(cart);
     this.host.applyLight(
       cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,

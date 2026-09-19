@@ -12,6 +12,7 @@ export interface EntityPoseSample {
   readonly y: number;
   readonly z: number;
   readonly yaw: number;
+  readonly pitch: number;
   readonly vx: number;
   readonly vy: number;
   readonly vz: number;
@@ -24,6 +25,7 @@ export interface SampledEntityPose {
   readonly y: number;
   readonly z: number;
   readonly yaw: number;
+  readonly pitch: number;
   readonly vx: number;
   readonly vy: number;
   readonly vz: number;
@@ -73,6 +75,7 @@ export function sampleEntityPose(
     y: previous.y + dy * t,
     z: previous.z + dz * t,
     yaw: lerpAngle(previous.yaw, next.yaw, t),
+    pitch: lerpAngle(previous.pitch ?? 0, next.pitch ?? 0, t),
     vx: previous.vx + (next.vx - previous.vx) * t,
     vy: previous.vy + (next.vy - previous.vy) * t,
     vz: previous.vz + (next.vz - previous.vz) * t,
@@ -102,6 +105,7 @@ export class EntityInterpolationBuffer {
       readonly y: number;
       readonly z: number;
       readonly yaw?: number;
+      readonly pitch?: number;
       readonly vx?: number;
       readonly vy?: number;
       readonly vz?: number;
@@ -124,6 +128,7 @@ export class EntityInterpolationBuffer {
       y: pose.y,
       z: pose.z,
       yaw: pose.yaw ?? 0,
+      pitch: pose.pitch ?? 0,
       vx: pose.vx ?? 0,
       vy: pose.vy ?? 0,
       vz: pose.vz ?? 0,

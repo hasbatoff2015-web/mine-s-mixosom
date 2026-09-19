@@ -1,12 +1,16 @@
 # Архитектура
 
+## Minecart visual pose interpolation — 2026-09-19
+
+Cart visual pose is one render-time sample: `interpolateVec3(previousPosition, position, alpha)` plus `lerpAngle` on `previousYaw/Yaw` and `previousPitch/Pitch`. `minecartVisualEuler` maps gameplay look onto ModelMinecart local +X: `rotation.y = yaw − π/2`, `rotation.z = -pitch`, `rotation.x = 0`. Online buffer interpolates snapshot pitch; `applyInterpolatedRenderPose` copies previous=current so `interpolateVisuals(1)` does not double-lerp.
+
 ## Minecart rider interpolation / 1.5× speed — 2026-09-19
 
 Cart mesh interpolates `previousPosition → position` in `MinecartManager.interpolateVisuals(alpha)`. Local seated `PlayerVisual` origin is `seatedLocalPlayerVisualOrigin(sampledRidePose)` from `LocalPlayerRenderState` (same leftover/`FIXED_DT` clock). Do not parent the local rider to current `cart.position`. `updateMinecartRiding` already stores cart previous/current + `MINECART_RIDER_GAMEPLAY_Y` on the player. Remote riders keep interpolated `RemotePlayerView.group.position`; `visual.root` is seat offset only. On-rail cap is `MINECART_MAX_SPEED = WALK_SPEED * 1.5`; `ACCEL_TIME` stays 0.5 s. Shared `MinecartManager` is used by singleplayer and `server/gameplay.ts`.
 
 ## Minecart visual yaw — 2026-09-19
 
-Gameplay `cart.yaw` stays `sampleRail` `atan2(tangentX, tangentZ)` (Three.js local +Z along motion). The ModelMinecart floor is 20px on local **+X** after `rotation.x = π/2`, so `applyVisualTransform` adds `MINECART_VISUAL_YAW_OFFSET = −π/2` only when calling `host.setRotation`. Serialize, steering and seated pose still use `cart.yaw`.
+Gameplay `cart.yaw` stays `sampleRail` `atan2(tangentX, tangentZ)` (Three.js local +Z along motion). The ModelMinecart floor is 20px on local **+X** after `rotation.x = π/2`, so `minecartVisualEuler` adds `MINECART_VISUAL_YAW_OFFSET = −π/2` on Y and puts slope pitch on Z (`-pitch`). Serialize, steering and seated pose still use `cart.yaw`.
 
 ## Rail corner UV / straight seated pose — 2026-09-18
 
