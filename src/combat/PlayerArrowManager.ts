@@ -21,7 +21,10 @@ export interface PlayerArrow {
   readonly position: Vec3;
   readonly previousPosition: Vec3;
   readonly velocity: Vec3;
-  /** Last non-zero flight direction, retained when an arrow embeds in a block. */
+  /**
+   * Rendered flight direction: this tick's movement segment while airborne,
+   * then the retained impact when velocity is zero inside a block.
+   */
   readonly visualDirection: Vec3;
   readonly visual?: EntityVisual;
   age: number;
@@ -184,6 +187,7 @@ export class PlayerArrowManager {
       if (options?.snapVisual !== false) this.syncArrowVisual(existing);
       return;
     }
+    // Authoritative network poses must not receive a second, client-randomized spread pass.
     if (this.arrows.length >= 48) this.remove(0);
     const visual = this.host.createArrow(flaming, options?.kind ?? (flaming ? 'fire' : 'normal')) as EntityVisual | undefined;
     const position = new Vec3(x, y, z);
@@ -282,6 +286,7 @@ export class PlayerArrowManager {
         if (arrow.playerTimelineTick !== undefined) arrow.playerTimelineTick += 1;
         continue;
       }
+      arrow.visualDirection.copy(movement);
       const direction = movement.clone().multiplyScalar(1 / distance);
       const blockHit = this.world.raycast(arrow.position, direction, distance, { geometry: 'collision' });
       const mobHit = this.mobs.raycast(arrow.position, direction, distance);
@@ -322,7 +327,7 @@ export class PlayerArrowManager {
       }
       if (blockHit) {
         arrow.embedded = embedArrow(blockHit, arrow.velocity);
-        arrow.visualDirection.copy(arrow.velocity);
+        arrow.visualDirection.copy(arrow.embedded.impactVelocity);
         arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
         arrow.inGround = true;
         arrow.pickupDelay = ARROW_PICKUP_DELAY_SECONDS;
@@ -429,8 +434,6 @@ export class PlayerArrowManager {
 
   private orientArrow(arrow: PlayerArrow): void {
     if (!arrow.visual) return;
-    const direction = arrow.inGround ? arrow.visualDirection : arrow.velocity;
-    if (direction.lengthSq() > 1e-8) arrow.visualDirection.copy(direction);
     this.host.orientArrow(arrow.visual, arrow.visualDirection.x, arrow.visualDirection.y, arrow.visualDirection.z);
   }
 

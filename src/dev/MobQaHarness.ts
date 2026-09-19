@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { createMobModel } from '../entities/mobModels';
 import type { MobKind } from '../entities/mobDefinitions';
-import { VoxelVisualFactory } from '../entities/voxelVisuals';
+import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 
 export type MobQaView = 'front' | 'side' | 'rear' | 'three-quarter';
 
@@ -39,18 +38,9 @@ export function startMobQaHarness(
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
-  const visuals = new VoxelVisualFactory();
-  const model = createMobModel(visuals, kind);
-  if (kind === 'zombie') {
-    for (const arm of model.arms) arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) + 1.2;
-  }
-  if (kind === 'skeleton') {
-    model.arms.forEach((arm, index) => {
-      arm.rotation.x = Number(arm.userData.baseRotationX ?? 0) - 1.15;
-      arm.rotation.y = index === 0 ? -0.12 : 0.12;
-    });
-  }
-  scene.add(model.root as THREE.Object3D);
+  const host = new ThreeEntityHost(scene);
+  const { visual, model } = host.createMob(kind);
+  scene.add(visual as THREE.Object3D);
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">${kind} · ${view}</div>`;
 
   const resize = (): void => {
@@ -63,7 +53,29 @@ export function startMobQaHarness(
   resize();
   addEventListener('resize', resize);
   let frame = 0;
-  const render = (): void => {
+  const startedAt = performance.now();
+  const render = (now = performance.now()): void => {
+    const elapsed = (now - startedAt) / 1000;
+    host.syncMob({
+      kind,
+      model,
+      visual,
+      x: 0,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      walkPhase: elapsed * 5,
+      visualAge: elapsed,
+      locomotionSpeed: kind === 'chicken' ? 2.2 : 0,
+      state: kind === 'skeleton' ? 'attack' : 'idle',
+      stateSeconds: elapsed,
+      deathSeconds: 0,
+      fuseSeconds: 0,
+      onFire: false,
+      width: 0.6,
+      height: 1.8,
+      hurtFlashSeconds: 0,
+    });
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);
   };
@@ -71,7 +83,7 @@ export function startMobQaHarness(
   return () => {
     cancelAnimationFrame(frame);
     removeEventListener('resize', resize);
-    visuals.dispose();
+    host.dispose();
     ground.geometry.dispose();
     (ground.material as THREE.Material).dispose();
     renderer.dispose();

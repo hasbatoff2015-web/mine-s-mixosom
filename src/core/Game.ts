@@ -153,6 +153,7 @@ import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { applySeatVisualRoot, seatedLocalPlayerVisualOrigin } from '../rendering/player/seatVisual';
 import {
   PlayerArmorGeometryCache,
   PlayerArmorMaterialCache,
@@ -1998,6 +1999,12 @@ export class Game {
     }
     if (message.kind === 'block_use' && !message.ok && message.reason === 'occupied') {
       this.ui.toast('Кровать занята');
+    }
+    if (message.kind === 'block_use' && !message.ok && message.reason === 'vehicle_occupied') {
+      this.ui.toast('Вагонетка занята.');
+    }
+    if (message.kind === 'block_use' && !message.ok && message.reason === 'already_riding') {
+      this.ui.toast('Сначала выйдите из текущей вагонетки.');
     }
     if (message.kind === 'block_use' && !message.ok
       && online.localFoodUse?.actionSeq === message.actionSeq) {
@@ -4623,12 +4630,14 @@ export class Game {
         session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
         const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
         const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
-        session.minecarts.update(FIXED_DT, {
-          riderId: session.ridingCartId,
-          forward: riding && steerOnRail ? movementBefore.forward : 0,
-          strafe: riding && steerOnRail ? movementBefore.right : 0,
-          riderYaw: session.player.yaw,
-        });
+        const controls = new Map<string, { throttle: number; riderYaw: number }>();
+        if (session.ridingCartId && steerOnRail) {
+          controls.set(session.ridingCartId, {
+            throttle: riding ? movementBefore.forward : 0,
+            riderYaw: session.player.yaw,
+          });
+        }
+        session.minecarts.update(FIXED_DT, { controls });
         this.updateMinecartRiding(session);
         if (session.playTicks % 80 === 0) {
           const removed = session.world.pruneChunks(
@@ -4647,7 +4656,7 @@ export class Game {
             power: boom.power,
             profile: getTntProfile(boom.blockId),
           });
-          if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
+          if (session.ridingCartId === boom.id) this.clearMinecartRide(session);
         }
         simMark = this.addSimPart('entities', simMark);
       },
@@ -5450,10 +5459,33 @@ export class Game {
     const session = this.session!;
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) return;
+    if (session.ridingCartId === id) return;
+    if (session.ridingCartId) {
+      this.ui.toast('Сначала выйдите из текущей вагонетки.');
+      return;
+    }
+    if (cart.rider) {
+      this.ui.toast('Вагонетка занята.');
+      return;
+    }
     session.ridingCartId = id;
+    cart.rider = true;
     this.minecartDismountHeld = true;
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
     session.player.previousPosition.copy(session.player.position);
+    session.player.velocity.set(0, 0, 0);
+  }
+
+  private clearMinecartRide(session: GameSession, relocate = false): void {
+    const id = session.ridingCartId;
+    if (!id) return;
+    session.ridingCartId = undefined;
+    const cart = session.minecarts.get(id);
+    if (cart) cart.rider = false;
+    if (!relocate || !cart) return;
+    const exit = session.minecarts.findDismountPosition(cart);
+    session.player.position.copy(exit);
+    session.player.previousPosition.copy(exit);
     session.player.velocity.set(0, 0, 0);
   }
 
@@ -5465,17 +5497,13 @@ export class Game {
     }
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) {
-      session.ridingCartId = undefined;
+      this.clearMinecartRide(session);
       return;
     }
     const edge = minecartDismountFromSprint(this.input.movement().sprint, this.minecartDismountHeld);
     this.minecartDismountHeld = edge.held;
     if (edge.dismount) {
-      session.ridingCartId = undefined;
-      const exit = session.minecarts.findDismountPosition(cart);
-      session.player.position.copy(exit);
-      session.player.previousPosition.copy(exit);
-      session.player.velocity.set(0, 0, 0);
+      this.clearMinecartRide(session, true);
       return;
     }
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
@@ -5670,7 +5698,7 @@ export class Game {
 
   private teleportPlayer(x: number, y: number, z: number): void {
     const session = this.session!;
-    session.ridingCartId = undefined;
+    this.clearMinecartRide(session);
     session.restingBed = undefined;
     const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
     session.player.teleport(destination);
@@ -5744,7 +5772,7 @@ export class Game {
     this.deathShown = false;
     this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
-    session.ridingCartId = undefined;
+    this.clearMinecartRide(session);
     session.miningProgress = 0;
     session.miningTarget = undefined;
     session.foodUseTicks = 0;
@@ -5784,6 +5812,7 @@ export class Game {
     const session = this.session;
     if (!session || this.deathShown) return;
     session.restingBed = undefined;
+    this.clearMinecartRide(session);
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
@@ -5906,14 +5935,15 @@ export class Game {
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
     session.playerVisual.setOffhandItem(session.inventory.offhand?.itemId);
-    session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson
       && this.lifecycle.state === 'PLAYING'
       && !this.ui.isInventoryOpen(),
     );
-    session.playerVisual.update(this.renderDeltaSeconds, {
+    const seated = Boolean(session.ridingCartId);
+    const pose = session.playerVisual.update(this.renderDeltaSeconds, {
       bedRest: session.restingBed,
+      seated,
       viewYaw: this.input.yaw,
       viewPitch: this.input.pitch,
       movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
@@ -5929,6 +5959,14 @@ export class Game {
       hurtFlash: this.hurt.modelIntensity(now),
       onFire: session.survival.isOnFire,
     });
+    applySeatVisualRoot(
+      session.playerVisual.root,
+      seated
+        ? seatedLocalPlayerVisualOrigin(position)
+        : { x: position.x, y: position.y, z: position.z },
+      pose.bodyYaw,
+      seated,
+    );
     session.playerVisual.applyWorldLight(
       session.world,
       position.x,

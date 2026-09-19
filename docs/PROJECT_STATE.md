@@ -1,6 +1,56 @@
 # Состояние проекта
 
-## Последний проход: Third-person axe 180° handle flip — 2026-09-18
+## Последний проход: minecart occupancy + stable W/S controls — 2026-09-20
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Одна вагонетка = один пассажир (`player.ridingCartId`); `cart.rider` только derived. Disconnect/death/destruction `forceReleaseVehicle` без cancellable `vehicleExit`. Per-cart `controls` в одном `minecarts.update`. W latch с камеры только на новом press из stop; S тормоз до 0. Visual pose / 1.5× speed / rider interpolation не трогались.
+- Подробности: `docs/reports/2026-09-20_minecart-occupancy-controls.md`.
+
+## Последний проход: minecart visual pose interpolation — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Cart visual interpolates position **and** yaw/pitch (`lerpAngle`). Slope pitch is `rotation.z = -pitch`, not `rotation.x`. `MINECART_VISUAL_YAW_OFFSET = −π/2` and `MINECART_MAX_SPEED = WALK_SPEED * 1.5` сохранены. Rider sample origin не откатывался.
+- Подробности: `docs/reports/2026-09-19_minecart-visual-pose-interpolation.md`.
+
+## Последний проход: minecart rider interpolation + 1.5× speed — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Local seated visual origin = `LocalPlayerRenderState` sample (`seatedLocalPlayerVisualOrigin`), not current `cart.position`. `MINECART_MAX_SPEED = WALK_SPEED * 1.5` (~6.4755), `ACCEL_TIME` 0.5 s. Remote `RemotePlayerView` still uses interpolated `group.position`.
+- Подробности: `docs/reports/2026-09-19_minecart-rider-interpolation-speed.md`.
+
+## Последний проход: minecart visual yaw −π/2 — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Visual-only: `MINECART_VISUAL_YAW_OFFSET = −π/2` в `MinecartManager.applyVisualTransform`. `cart.yaw`, railPath и seated не менялись.
+- Подробности: `docs/reports/2026-09-19_minecart-visual-yaw.md`.
+
+## Последний проход: rail corner UV south-east + straight seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). `rail_corner.png` authored L = image **bottom+right** = **south+east**; identity UV is `south_east` (previous SW identity was a horizontal flip). Topology (`railEndDirections` / reciprocal path / π/4) не переписывалась. Seated: hip `π/2`, прямые ноги вперёд, `bodyPitch`/`bodyYOffset` = 0; visual seat root `+Z` back 0.25 и hip на `MINECART_FLOOR_TOP`.
+- Подробности: `docs/reports/2026-09-18_rail-corner-uv-seated-straight.md`.
+
+## Последний проход: seated pose sign, door outside facing, rail connectivity — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Seated X rotations `+1.18` / `+0.42` (front = local −Z). Door `facing` = outward normal via `doorOutsideFacingFromYaw`; open occupancy = `doorHingeEdge`. Rails: reciprocal `railEndDirections`, `entryProgress` may be `undefined`, curve length `π/4`. `RAIL_CORNER_UV` не трогали.
+- Подробности: `docs/reports/2026-09-18_seated-door-rail-connectivity.md`.
+
+## Последний проход: rail corners, sign, door hinge, minecart visual, seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Corner rail UV совпадает с `south_west` native `rail_corner.png`; door `occupiedDoorFacing` качает петли с внешней левой стороны; табличка 16×8×2 внутри клетки, wall flush; minecart — ModelMinecart UV; `seated` pose для пассажира.
+- Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
+## Последний проход: merge current main into entity-special-visual-fixes — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` синхронизирована с `origin/main` через `--no-ff --no-commit` semantic union. OakSign остаётся **165**; generic unknown-block compat (`65534`) сохранён. Feature history не переписывалась, `main` не менялся.
+- Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
+## Последний проход: special blocks, mob presentation, skeleton projectile routing — 2026-09-10
+
+- Ветка `codex/entity-special-visual-fixes` создана от `e4d43ff3`. Четыре implementation commits завершаются SHA `5f86c29`; подробности — `docs/reports/2026-09-10_entity-special-visual-fixes.md`.
+- Torch/redstone torch используют отдельные authored side/top/bottom UV для одного и того же floor/four-wall transform. Lantern получил читаемые standing/hanging body/cap/hanger/chain parts на authored atlas regions без изменения light/placement gameplay.
+- Rail world/held rendering отделён от collision/selection `railLocalBoxes`: десять `RailShape` рисуются одной тонкой double-sided surface, четыре ascending формы реально наклонены, четыре curve формы используют `block/rail_corner`. `railPath` разрешает форму по живым соседям, а не по stale default state.
+- Chicken остаётся двухногим legacy rig main: обе ноги grounded, opposite gait, UV island `[29, 0]` вместо прозрачного `[26, 0]`. Skeleton получает один cached `ItemVisualFactory` bow на hand anchor и отдельную ranged pose.
+- Skeleton projectile simulation принимает все living/targetable player foci со stable id, ищет ближайшее swept-segment попадание по каноническому player AABB, сравнивает его с block distance и передаёт точный `targetPlayerId`; серверный nearest-player fallback удалён. Singleplayer использует стабильный `local-player` id.
+- Third-person held item pose отделена от first-person профилей на категории sword/tool/bow/generic/block. Bow arms используют `π/2 + viewPitch` с однократной компенсацией sneak parent, поэтому положительный pitch визуально направляет руки вверх.
+- Arrow visuals: local `visualDirection` = movement segment этого tick; embed/network используют current main `impactVx/Y/Z` + `state: embedded`. Старые `visualVx` поля не возвращены.
+
+## Предыдущий проход: Third-person axe 180° handle flip — 2026-09-18
 
 - Топоры (`kind: 'tool' && tool === 'axe'`) берут **ту же** tool position/scale (`0 / 0.215 / -0.155`, `0.55`) и tool Euler, затем **локальный 180° roll** вокруг оси рукояти спрайта `(1, 1, 0)`: `qPose * qFromAxisAngle(normalize(1,1,0), π)` → Euler XYZ `3.0184 / -1.4668 / -1.4476`.
 - Кирки, лопаты, мотыги остаются на unflipped tool pose. Мечи — sword pose. First-person / block / generated / bow не менялись.
@@ -1532,7 +1582,7 @@
 - Hostile melee использует реальную 3D-дистанцию между eye positions и voxel line of sight, поэтому не бьёт игрока на другом этаже или через стену.
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
 - Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. **Fire arrow** — shapeless `arrow + lava_bucket` (остаётся empty bucket), projectile с оранжевым tint. Попадание: обычный урон стрелы + `igniteTicks` 100 (5 с) по живой цели; TNT block праймится; TNT в вагонетке вылетает primed TNT своего типа (только fire arrow; flint/обычная стрела не поджигают cargo); обычные блоки **не** поджигаются. Горение: `FIRE_CONTACT` / `FIRE_ARROW` / `SUNLIGHT` / lava — раздельные причины, общий overlay. **Все hostile** (`isHostileMob`) горят под прямым дневным солнцем (`daylight ≥ 0.82` и skylight ≥ 14), не vanilla undead whitelist. Player и passive не горят от солнца. Creeper имеет fuse/radial explosion, hostile hits передаются напрямую в armor/SurvivalSystem, смерть моба создаёт loot drops.
-- `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; end of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. LMB (attack edge) breaks a cart that is nearer than the block hit; Survival drops Minecart via `DroppedItemManager` (unprimed TNT cart also drops TNT); Creative removes without a world drop (`dropsForBrokenMinecart`); ridden and primed TNT carts are ignored. Player AABB push: on-rail tangent × `MINECART_PUSH_GAIN` (0.28); off-rail world `vx/vz` × 50% of that gain, cap `MINECART_MAX_SPEED`. TNT Use (`tnt` / `tnt_powerful` / `tnt_destructive`) stores `tntBlockId` + variant `tnt` (не rideable); cargo mesh `block/tnt*`. Flint не праймит cargo; Fire Arrow ejects primed TNT of that type (`vy=4`, fall `startY - currentY` 20/30 after leaving the rail support, explode on a closer floor or at the cap). Snapshot `blockId` syncs cargo to clients. Save `minecarts?` (position/velocity/variant/`tntBlockId`/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
+- `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; cap `MINECART_MAX_SPEED = WALK_SPEED * 1.5` (~6.4755 blocks/s), accel time 0.5 s. End of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. Local seated player visual uses the render-sampled ride pose, not current `cart.position`. LMB (attack edge) breaks a cart that is nearer than the block hit; Survival drops Minecart via `DroppedItemManager` (unprimed TNT cart also drops TNT); Creative removes without a world drop (`dropsForBrokenMinecart`); ridden and primed TNT carts are ignored. Player AABB push: on-rail tangent × `MINECART_PUSH_GAIN` (0.28); off-rail world `vx/vz` × 50% of that gain, cap `MINECART_MAX_SPEED`. TNT Use (`tnt` / `tnt_powerful` / `tnt_destructive`) stores `tntBlockId` + variant `tnt` (не rideable); cargo mesh `block/tnt*`. Flint не праймит cargo; Fire Arrow ejects primed TNT of that type (`vy=4`, fall `startY - currentY` 20/30 after leaving the rail support, explode on a closer floor or at the cap). Snapshot `blockId` syncs cargo to clients. Save `minecarts?` (position/velocity/variant/`tntBlockId`/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
 - Base player/mob melee knockback и full hurt flash запускаются только для `fullHurt`, в том числе при полном поглощении absorption. Rejected и differential hit не повторяют base KB/flash. Accepted extra sprint KB обрабатывается отдельно.
 - Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie left limbs берут mirrored classic `64×32` UV (`[40,16]`/`[0,16]`), а forward-arms pose задаётся положительным Three.js Euler (`+1.2` / `+1.55`), не Minecraft-значением `-1.2`. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.

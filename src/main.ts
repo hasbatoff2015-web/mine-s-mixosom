@@ -31,6 +31,7 @@ if (import.meta.env.DEV) {
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
   const qaPlayer = search.get('qaPlayer') === '1';
+  const qaSpecial = search.get('qaSpecial');
   const qaFarming = search.get('qaFarming') === '1' || search.get('qaFarming') === 'true';
   const qaBed = search.get('qaBed') === '1';
   const qaSign = search.get('qaSign') === '1';
@@ -42,6 +43,26 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     void import('./dev/MoveItemsHarness').then(async ({ startMoveItemsHarness }) => {
       disposeApplication = await startMoveItemsHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'rails') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startRailQaHarness }) => {
+      disposeApplication = await startRailQaHarness(canvas, uiRoot, search.get('row'));
+    });
+  } else if (qaSpecial === 'doors') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startDoorQaHarness }) => {
+      disposeApplication = await startDoorQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'seated') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startSeatedCartQaHarness }) => {
+      disposeApplication = await startSeatedCartQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'lights') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startLightBlockQaHarness }) => {
+      disposeApplication = await startLightBlockQaHarness(canvas, uiRoot);
     });
   } else if (qaWorldgenDeposit === 'gravel' || qaWorldgenDeposit === 'clay') {
     runningDevHarness = true;

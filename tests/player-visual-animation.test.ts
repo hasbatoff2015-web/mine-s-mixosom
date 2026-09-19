@@ -1,12 +1,31 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { FIXED_DT } from '../src/core/constants';
+import { LocalPlayerRenderState } from '../src/core/localPlayerRenderState';
 import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
 import { applyMobHurtTint } from '../src/entities/MobManager';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual, UPPER_BODY_PIVOT_Y } from '../src/rendering/player/PlayerVisual';
+import { defaultThirdPersonHeldItemTransformForItem } from '../src/rendering/player/thirdPersonHeldItem';
 import { PlayerVisualAnimator } from '../src/rendering/player/PlayerVisualAnimator';
+import {
+  applySeatVisualRoot,
+  MINECART_RIDER_GAMEPLAY_Y,
+  MINECART_SEAT_BACK_OFFSET,
+  MINECART_SEAT_VISUAL,
+  PLAYER_SEAT_HIP_HEIGHT,
+  seatedLocalPlayerVisualOrigin,
+  seatVisualOffset,
+} from '../src/rendering/player/seatVisual';
+import { MINECART_FLOOR_TOP } from '../src/rendering/minecartGeometry';
+import {
+  FIRST_PERSON_SPRITE_POSE,
+  classifyThirdPersonItemPose,
+  itemRenderProfile,
+  thirdPersonItemPose,
+} from '../src/items';
 import { bedRestPosition } from '../src/world/bed';
 
 const idle = {
@@ -45,6 +64,80 @@ describe('player visual animator', () => {
     expect(sneak.bodyZOffset).toBe(0);
   });
 
+  it('sits with a 90° hip, straight horizontal legs, and an upright torso', () => {
+    const animator = new PlayerVisualAnimator();
+    const seated = animator.advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
+    const limbTip = (rotationX: number): THREE.Vector3 => (
+      new THREE.Vector3(0, -1, 0).applyAxisAngle(new THREE.Vector3(1, 0, 0), rotationX)
+    );
+    const tip = limbTip(seated.rightLegX);
+    expect(seated.rightLegX).toBeCloseTo(Math.PI / 2);
+    expect(seated.leftLegX).toBeCloseTo(Math.PI / 2);
+    expect(seated.bodyPitch).toBe(0);
+    expect(seated.bodyYOffset).toBe(0);
+    expect(Math.abs(seated.rightArmX)).toBeLessThan(0.05);
+    expect(Math.abs(seated.leftArmX)).toBeLessThan(0.05);
+    expect(tip.z).toBeLessThan(0);
+    expect(tip.y).toBeCloseTo(0);
+    expect(limbTip(seated.leftLegX).z).toBeLessThan(0);
+    expect(seated.rightLegX).toBeCloseTo(seated.leftLegX);
+    const stillSeated = animator.advance(1 / 60, { ...idle, seated: true, movementSpeed: 3 });
+    expect(stillSeated.rightLegX).toBeCloseTo(Math.PI / 2);
+    const standing = new PlayerVisualAnimator().advance(1 / 60, idle);
+    expect(standing.bodyYOffset).toBe(0);
+    expect(standing.rightLegX).toBeCloseTo(0);
+    expect(standing.bodyPitch).toBe(0);
+  });
+
+  it('offsets a seated visual root backward relative to yaw by the seat-back distance', () => {
+    expect(PLAYER_SEAT_HIP_HEIGHT).toBeCloseTo(UPPER_BODY_PIVOT_Y);
+    const north = seatVisualOffset(0, MINECART_SEAT_VISUAL);
+    expect(north.x).toBeCloseTo(0);
+    expect(north.z).toBeCloseTo(MINECART_SEAT_BACK_OFFSET);
+    expect(Math.hypot(north.x, north.z)).toBeCloseTo(MINECART_SEAT_BACK_OFFSET);
+    expect(north.y).toBeCloseTo(MINECART_FLOOR_TOP - MINECART_RIDER_GAMEPLAY_Y - PLAYER_SEAT_HIP_HEIGHT);
+    const east = seatVisualOffset(Math.PI / 2, MINECART_SEAT_VISUAL);
+    expect(east.x).toBeCloseTo(MINECART_SEAT_BACK_OFFSET);
+    expect(east.z).toBeCloseTo(0);
+    const root = { position: new THREE.Vector3() };
+    applySeatVisualRoot(root, { x: 10, y: 40.2, z: 8 }, 0, true);
+    expect(root.position.x).toBeCloseTo(10);
+    expect(root.position.z).toBeCloseTo(8 + MINECART_SEAT_BACK_OFFSET);
+    applySeatVisualRoot(root, { x: 10, y: 40.2, z: 8 }, 0, false);
+    expect(root.position.toArray()).toEqual([10, 40.2, 8]);
+  });
+
+  it('anchors a local seated rider to the render-sampled ride pose, not the current cart tick', () => {
+    const previousCart = { x: 8.5, y: 40, z: 10.0 };
+    const currentCart = { x: 8.5, y: 40, z: 10.3 };
+    const render = new LocalPlayerRenderState();
+    render.reset({
+      x: previousCart.x,
+      y: previousCart.y + MINECART_RIDER_GAMEPLAY_Y,
+      z: previousCart.z,
+    });
+    render.pushAfterTick({
+      x: currentCart.x,
+      y: currentCart.y + MINECART_RIDER_GAMEPLAY_Y,
+      z: currentCart.z,
+      vx: 0,
+      vy: 0,
+      vz: 6,
+    });
+    const sampled = render.sample(FIXED_DT * 0.5);
+    expect(sampled.alpha).toBeCloseTo(0.5);
+    expect(sampled.z).toBeCloseTo(10.15);
+    expect(sampled.y).toBeCloseTo(40 + MINECART_RIDER_GAMEPLAY_Y);
+    const origin = seatedLocalPlayerVisualOrigin(sampled);
+    expect(origin.z).toBeCloseTo(10.15);
+    expect(origin.z).not.toBeCloseTo(currentCart.z);
+    expect(origin.y).toBeCloseTo(sampled.y);
+    const root = { position: new THREE.Vector3() };
+    applySeatVisualRoot(root, origin, 0, true);
+    expect(root.position.z).toBeCloseTo(10.15 + MINECART_SEAT_BACK_OFFSET);
+    expect(root.position.z).not.toBeCloseTo(currentCart.z + MINECART_SEAT_BACK_OFFSET);
+  });
+
   it('overlays attack, bow, sword block and food poses without touching simulation state', () => {
     const animator = new PlayerVisualAnimator();
     animator.advance(0, idle);
@@ -57,8 +150,72 @@ describe('player visual animator', () => {
     const eat = animator.advance(1 / 60, { ...idle, foodUseProgress: 0.5 });
     expect(eat.rightArmX).toBeGreaterThan(1);
     const bow = animator.advance(1 / 60, { ...idle, bowCharge: 0.8, viewPitch: 0.2 });
-    expect(bow.rightArmX).toBeCloseTo(Math.PI / 2 - 0.2);
+    expect(bow.rightArmX).toBeCloseTo(Math.PI / 2 + 0.2);
     expect(bow.leftArmX).toBeCloseTo(bow.rightArmX);
+  });
+
+  it('moves both bow arms monotonically with positive-up pitch, including sneaking parent pitch', () => {
+    for (const sneaking of [false, true]) {
+      const down = new PlayerVisualAnimator().advance(0, { ...idle, bowCharge: 0.8, viewPitch: -0.6, sneaking });
+      const level = new PlayerVisualAnimator().advance(0, { ...idle, bowCharge: 0.8, viewPitch: 0, sneaking });
+      const up = new PlayerVisualAnimator().advance(0, { ...idle, bowCharge: 0.8, viewPitch: 0.6, sneaking });
+      expect(down.rightArmX).toBeLessThan(level.rightArmX);
+      expect(level.rightArmX).toBeLessThan(up.rightArmX);
+      expect(down.leftArmX).toBeCloseTo(down.rightArmX);
+      expect(up.leftArmX).toBeCloseTo(up.rightArmX);
+      expect(down.bodyPitch + down.rightArmX).toBeCloseTo(Math.PI / 2 - 0.6, 6);
+      expect(up.bodyPitch + up.rightArmX).toBeCloseTo(Math.PI / 2 + 0.6, 6);
+    }
+  });
+});
+
+describe('third-person held item grip profiles', () => {
+  it('classifies sword/tool/bow/generic/block without changing first-person constants', () => {
+    expect(classifyThirdPersonItemPose('diamond_sword')).toBe('sword');
+    expect(classifyThirdPersonItemPose('iron_pickaxe')).toBe('tool');
+    expect(classifyThirdPersonItemPose('bow')).toBe('bow');
+    expect(classifyThirdPersonItemPose('apple')).toBe('generic');
+    expect(classifyThirdPersonItemPose('stone')).toBe('block');
+    expect(FIRST_PERSON_SPRITE_POSE).toEqual({
+      position: [0.67, -0.29, -0.70], rotationDeg: [1, -90, 34], scale: 0.60,
+    });
+    expect(itemRenderProfile('diamond_sword').transforms.firstPersonRightHand.position)
+      .toEqual(FIRST_PERSON_SPRITE_POSE.position);
+  });
+
+  it('keeps representative items raised at the wrist with bounded category-specific transforms', () => {
+    const categories = ['diamond_sword', 'iron_pickaxe', 'bow', 'apple', 'stone'] as const;
+    const rotations = new Set<number>();
+    for (const itemId of categories) {
+      const pose = thirdPersonItemPose(itemId);
+      expect(pose.position[1], itemId).toBeGreaterThan(0);
+      expect(Math.hypot(...pose.position), itemId).toBeLessThan(0.25);
+      expect(Math.max(...pose.scale), itemId).toBeLessThanOrEqual(0.54);
+      rotations.add(pose.rotation[2]);
+    }
+    expect(rotations.size).toBe(categories.length);
+  });
+
+  it('applies every category profile to the actual model parented at the right wrist', () => {
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+
+    for (const itemId of ['diamond_sword', 'iron_pickaxe', 'bow', 'apple', 'stone']) {
+      visual.setHeldItem(itemId);
+      const model = visual.rig.heldItem.children[0] as THREE.Group;
+      const pose = defaultThirdPersonHeldItemTransformForItem(itemId);
+      expect(model.parent, itemId).toBe(visual.rig.heldItem);
+      expect(model.position.toArray(), itemId).toEqual([pose.position.x, pose.position.y, pose.position.z]);
+      expect(model.rotation.toArray().slice(0, 3), itemId).toEqual([pose.rotation.x, pose.rotation.y, pose.rotation.z]);
+      expect(model.scale.toArray(), itemId).toEqual([pose.scale.x, pose.scale.y, pose.scale.z]);
+    }
+
+    visual.dispose();
+    geometries.dispose();
+    items.dispose();
+    skins.dispose();
   });
 });
 

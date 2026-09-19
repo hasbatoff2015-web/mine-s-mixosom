@@ -11,6 +11,7 @@ import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED, WORLD_HEIGHT } from '../src/core/
 import { findCraftingRecipe, getCraftingResult, CRAFTING_RECIPES } from '../src/crafting';
 import {
   isMinecartEntityVisual,
+  MINECART_MAX_SPEED,
   MinecartManager,
   MobManager,
   TNT_MINECART_EXPLOSION_POWER,
@@ -33,7 +34,6 @@ import {
   MINECART_TNT_CARGO_NAME,
   MINECART_TNT_SEAT,
   MINECART_TNT_SIZE,
-  MINECART_WIDTH,
   RAIL_STRIP_HEIGHT,
   minecartFloorMesh,
 } from '../src/rendering/minecartGeometry';
@@ -399,8 +399,9 @@ describe('minecart 3D entity, riding and rail motion', () => {
     manager.dispose();
   });
 
-  it('accelerates with W, brakes/reverses with S, caps near walk speed and coasts after release', () => {
+  it('accelerates in the latched travel direction with W, brakes to zero with S, caps at 1.5× walk speed and coasts after release', () => {
     const world = new VoxelWorld('cart-ws');
+    world.deferredLighting = true;
     world.getChunk(0, 0);
     world.getChunk(0, 1);
     world.getChunk(0, 2);
@@ -423,14 +424,17 @@ describe('minecart 3D entity, riding and rail motion', () => {
     for (let tick = 0; tick < 12; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: lookSouth });
     }
-    expect(cart.alongSpeed).toBeGreaterThan(3);
-    expect(cart.alongSpeed).toBeLessThanOrEqual(WALK_SPEED + 1e-3);
+    expect(MINECART_MAX_SPEED).toBeCloseTo(WALK_SPEED * 1.5);
+    expect(cart.alongSpeed).toBeGreaterThan(WALK_SPEED);
+    expect(cart.alongSpeed).toBeCloseTo(MINECART_MAX_SPEED, 5);
+    expect(cart.alongSpeed).toBeLessThanOrEqual(MINECART_MAX_SPEED + 1e-3);
     expect(cart.rail).toBeDefined();
     expect(cart.position.z).toBeGreaterThan(7);
     expect(cart.position.z).toBeLessThan(20);
     const cruising = cart.alongSpeed;
     manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
     expect(cart.alongSpeed).toBeLessThan(cruising);
+    expect(cart.alongSpeed).toBeGreaterThan(0);
     const released = cart.alongSpeed;
     for (let tick = 0; tick < 16; tick += 1) manager.update(0.05, { riderId: cart.id, forward: 0 });
     expect(Math.abs(cart.alongSpeed)).toBeGreaterThan(0);
@@ -438,7 +442,7 @@ describe('minecart 3D entity, riding and rail motion', () => {
     for (let tick = 0; tick < 24; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: -1, riderYaw: lookSouth });
     }
-    expect(cart.alongSpeed).toBeLessThan(0);
+    expect(cart.alongSpeed).toBe(0);
     const xOnRail = cart.position.x;
     for (let tick = 0; tick < 8; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: 1, strafe: 1, riderYaw: lookSouth });
@@ -465,11 +469,21 @@ describe('minecart 3D entity, riding and rail motion', () => {
     expect(cart.alongSpeed).toBeLessThan(down);
     cart.alongSpeed = 0;
     cart.progress = 0.08;
+    cart.throttleHeld = false;
+    for (let i = 1; i <= 5; i += 1) {
+      world.setBlock(5, 40 + i, 5 + i, BlockId.Stone);
+      world.setBlock(5, 41 + i, 5 + i, BlockId.Rail);
+      world.setBlockState(5, 41 + i, 5 + i, { railShape: 'ascending_south' });
+    }
     manager.update(0.05);
+    cart.alongSpeed = 0;
+    cart.throttleHeld = false;
     const startY = cart.position.y;
-    for (let tick = 0; tick < 30; tick += 1) {
+    for (let tick = 0; tick < 20; tick += 1) {
       manager.update(0.05, { riderId: cart.id, forward: 1, riderYaw: Math.PI });
     }
+    expect(cart.position.y).toBeGreaterThan(startY);
+    expect(manager.isOnRail(cart)).toBe(true);
     expect(cart.position.y).toBeGreaterThan(startY);
     manager.dispose();
   });
@@ -677,13 +691,14 @@ describe('minecart solid inner floor', () => {
     const floor = minecartFloorMesh(asObject3D(cart.visual)!);
     expect(floor).toBeDefined();
     expect(floor!.name).toBe(MINECART_FLOOR_NAME);
-    const geometry = floor!.geometry as THREE.BoxGeometry;
-    expect(geometry.parameters.width).toBeCloseTo(MINECART_WIDTH, 5);
-    expect(geometry.parameters.depth).toBeCloseTo(MINECART_WIDTH, 5);
-    expect(geometry.parameters.height).toBeCloseTo(MINECART_FLOOR_THICKNESS, 5);
-    expect(geometry.getIndex()?.count).toBe(36);
+    floor!.geometry.computeBoundingBox();
+    const size = floor!.geometry.boundingBox!.getSize(new THREE.Vector3());
+    expect(size.x).toBeCloseTo(20 / 16, 5);
+    expect(size.y).toBeCloseTo(16 / 16, 5);
+    expect(size.z).toBeCloseTo(MINECART_FLOOR_THICKNESS, 5);
+    expect(floor!.rotation.x).toBeCloseTo(Math.PI / 2, 5);
     expect(MINECART_FLOOR_TOP).toBeGreaterThan(RAIL_STRIP_HEIGHT);
-    const floorTop = floor!.position.y + geometry.parameters.height / 2;
+    const floorTop = floor!.position.y + MINECART_FLOOR_THICKNESS / 2;
     expect(floorTop).toBeCloseTo(MINECART_FLOOR_TOP, 5);
     expect(floorTop).toBeGreaterThan(RAIL_STRIP_HEIGHT);
     const material = floor!.material as THREE.MeshBasicMaterial;
@@ -692,6 +707,16 @@ describe('minecart solid inner floor', () => {
     expect(material.depthWrite).toBe(true);
     expect(material.depthTest).toBe(true);
     expect(material.side).toBe(THREE.DoubleSide);
+    expect(material.map).toBeTruthy();
+
+    const cartMeshes: THREE.Mesh[] = [];
+    asObject3D(cart.visual)!.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.name !== MINECART_TNT_CARGO_NAME) cartMeshes.push(child);
+    });
+    expect(cartMeshes).toHaveLength(5);
+    for (const mesh of cartMeshes) {
+      expect((mesh.material as THREE.MeshBasicMaterial).map, mesh.name).toBeTruthy();
+    }
 
     manager.insertTnt(cart);
     const cargo = cart.visual!.getObjectByName(MINECART_TNT_CARGO_NAME) as THREE.Mesh;
