@@ -208,6 +208,7 @@ export function menuClansHtml(state: ServerMenuMessage): string {
       <button type="button" class="mc-ah-btn" data-menu-action="clans_mine"${mineDisabled}>Мой клан</button>
       <button type="button" class="mc-ah-btn" data-menu-action="clans_list">Список кланов</button>
       <button type="button" class="mc-ah-btn" data-menu-action="clans_create">Создать клан</button>
+      <button type="button" class="mc-ah-btn" data-menu-action="clans_invitations">Приглашения</button>
     </div>
     ${menuMessage(state.message, (value) => value)}
   </div>`;
@@ -325,15 +326,30 @@ function rankingSortBtn(kind: string, current: string | undefined, label: string
   return `<button type="button" class="mc-ah-btn${current === kind ? ' is-on' : ''}" data-menu-rating="${kind}">${label}</button>`;
 }
 
+function rankingCoinHtml(): string {
+  return `<span class="mc-menu-coin-wrap mc-rank-coin-wrap">
+      <img class="mc-menu-coin" src="${menuAssetUrl('icon_coin.png')}" alt="" draggable="false" />
+    </span>`;
+}
+
+function rankingValueHtml(
+  row: { metric?: string; valueLabel: string },
+  escape: (value: string) => string,
+): string {
+  if (row.metric === 'kills') {
+    return `<span class="mc-rank-value mc-rank-kills">${escape(row.valueLabel)}</span>`;
+  }
+  return `<span class="mc-rank-value">${rankingCoinHtml()}<span>${escape(row.valueLabel)}</span></span>`;
+}
+
 export function menuRatingHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
   const kind = state.ratingKind ?? 'players-money';
   const rows = (state.ratingRows ?? []).map((row) => {
-    const valueClass = row.metric === 'kills' ? 'mc-rank-kills' : '';
     const highlight = row.highlight ? ' mc-rank-you' : '';
     return `<div class="mc-rank-row${highlight}">
       <span class="mc-rank-pos">${row.rank}.</span>
       <span class="mc-rank-name">${escape(row.name)}</span>
-      <span class="mc-rank-value ${valueClass}">${escape(row.valueLabel)}</span>
+      ${rankingValueHtml(row, escape)}
     </div>`;
   }).join('');
   const page = state.ratingPage ?? 1;

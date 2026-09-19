@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-19: Clan invitations + leader announcement
+
+- [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.
+- [x] Menu Кланы **Приглашения** (accept/reject, TTL, server checks); invite chat points to the menu.
+- [x] Leader-only clan announcement, chat limit 128, turquoise style, 3h persisted per-clan cooldown.
+
 ## 2026-09-19: Clan roles + Rating menu
 
 - [x] Roles Глава / Ветеран / Участник on existing `ClanService` (no parallel clan system).

@@ -56,10 +56,11 @@ export function clanJoinCaption(state: ServerClanMessage['card']): string {
 }
 
 export function showsClanBack(screen: ServerClanMessage['screen'], source?: 'menu'): boolean {
-  if (source === 'menu' && (screen === 'ranking' || screen === 'create' || screen === 'card')) return true;
+  if (source === 'menu' && (screen === 'ranking' || screen === 'create' || screen === 'card' || screen === 'accept')) return true;
   return screen === 'card'
     || screen === 'create-confirm'
     || screen === 'invite-confirm'
+    || screen === 'accept'
     || screen === 'accept-confirm'
     || screen === 'makeleader-confirm'
     || screen === 'kick-confirm'
@@ -68,7 +69,8 @@ export function showsClanBack(screen: ServerClanMessage['screen'], source?: 'men
     || screen === 'join-confirm'
     || screen === 'replace-request-confirm'
     || screen === 'member-card'
-    || screen === 'transfer-confirm';
+    || screen === 'transfer-confirm'
+    || screen === 'announce';
 }
 
 export function clanIconIds(): readonly ClanIconId[] {

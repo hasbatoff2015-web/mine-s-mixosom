@@ -1317,6 +1317,7 @@ export class GameUI {
     line.className = `chat-line kind-${message.kind}`;
     if (message.channel === 'nearby') line.classList.add('channel-nearby');
     if (message.channel === 'clan') line.classList.add('channel-clan');
+    if (message.style === 'announcement') line.classList.add('style-announcement');
     line.dataset.at = String(message.createdAtMs);
     line.dataset.id = message.id;
     if (message.channel) line.dataset.channel = message.channel;
@@ -3184,8 +3185,8 @@ export class GameUI {
     const actions = this.clanActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureClanInputFocus();
-    const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' ? 268
-      : state.screen === 'ranking' || state.screen === 'requests' ? 252
+    const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' || state.screen === 'announce' ? 268
+      : state.screen === 'ranking' || state.screen === 'requests' || state.screen === 'accept' ? 252
         : 220;
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
     this.itemTooltip?.dispose();
@@ -3207,7 +3208,7 @@ export class GameUI {
     this.restoreClanInputFocus(keep);
   }
 
-  private captureClanInputFocus(): { kind: 'search' | 'name' | 'invite'; value: string; start: number; end: number } | undefined {
+  private captureClanInputFocus(): { kind: 'search' | 'name' | 'invite' | 'announce'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
     if (el.hasAttribute('data-clan-search')) {
@@ -3219,6 +3220,9 @@ export class GameUI {
     if (el.hasAttribute('data-clan-invite-name')) {
       return { kind: 'invite', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
     }
+    if (el.hasAttribute('data-clan-announce-text')) {
+      return { kind: 'announce', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
     return undefined;
   }
 
@@ -3226,7 +3230,8 @@ export class GameUI {
     if (!keep || !this.modal) return;
     const selector = keep.kind === 'search' ? '[data-clan-search]'
       : keep.kind === 'invite' ? '[data-clan-invite-name]'
-        : '[data-clan-name]';
+        : keep.kind === 'announce' ? '[data-clan-announce-text]'
+          : '[data-clan-name]';
     const input = this.modal.querySelector<HTMLInputElement>(selector);
     if (!input) return;
     input.value = keep.value;
@@ -3313,6 +3318,22 @@ export class GameUI {
     if (state.screen === 'member-card') {
       return this.clanPlayerCardHtml(state, message);
     }
+    if (state.screen === 'announce') {
+      const cooling = !!state.announceCooldownLabel;
+      const sendDisabled = cooling ? ' disabled' : '';
+      const cooldown = state.announceCooldownLabel
+        ? `<div class="mc-clan-cooldown">${this.escape(state.announceCooldownLabel)}</div>`
+        : '';
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="announce">
+        <div class="mc-label">Напишите объявление клану</div>
+        <div class="mc-menu-add">
+          <input data-clan-announce-text type="text" maxlength="${MAX_CHAT_LENGTH}" value="${this.escape(state.announceText ?? '')}" placeholder="Текст объявления" autocomplete="off" spellcheck="false" name="clan-announce" />
+          <button type="button" class="mc-ah-btn" data-clan-action="send_announcement"${sendDisabled}>Отправить</button>
+        </div>
+        ${cooldown}
+        ${message}
+      </div>`;
+    }
     if (state.screen === 'add' || state.screen === 'makeleader' || state.screen === 'accept') {
       const placeholder = state.screen === 'add' ? 'Поиск по нику' : state.screen === 'accept' ? '' : 'Поиск';
       const search = state.screen === 'accept' ? '' : `<div class="mc-ah-toolbar">
@@ -3334,6 +3355,9 @@ export class GameUI {
     const requests = card?.canInvite || card?.isOwner
       ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы</button>`
       : '';
+    const announce = card?.canAnnounce
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_announce">Объявление соклановцам</button>`
+      : '';
     return `<div class="mc-ah-body mc-clan-body" data-clan-screen="card">
       <div class="mc-label mc-clan-card-title">${clanIconHtml(card?.icon)} ${this.escape(card?.name ?? state.title)}</div>
       <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${card?.killsLabel ? clanKillsHtml(card.killsLabel) : ''} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
@@ -3343,6 +3367,7 @@ export class GameUI {
       <div class="mc-ah-actions">
         ${showJoin ? `<button type="button" class="mc-ah-btn"${joinDisabled ? ' disabled' : ''} data-clan-action="join">${this.escape(joinCaption)}</button>` : ''}
         ${requests}
+        ${announce}
       </div>
       ${message}
     </div>`;
@@ -3360,10 +3385,17 @@ export class GameUI {
       </button>`).join('');
     }
     if (state.screen === 'accept') {
-      return (state.invitations ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-invitation="${this.escape(row.invitationId)}">
-        <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.clanName)}</span></span>
-        <span class="mc-clan-owner-mini">${this.escape(row.ownerName)}</span>
-      </button>`).join('');
+      return (state.invitations ?? []).map((row) => `<div class="mc-clan-row mc-clan-invite-row">
+        <div class="mc-player-main">
+          <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.clanName)}</span></span>
+          <span class="mc-clan-invite-meta">Пригласил: ${this.escape(row.fromName ?? row.ownerName)}</span>
+          ${row.remainingLabel ? `<span class="mc-clan-invite-meta">Осталось: ${this.escape(row.remainingLabel)}</span>` : ''}
+        </div>
+        <span class="mc-menu-row-actions">
+          <button type="button" class="mc-ah-btn mc-btn-positive" data-clan-action="confirm_accept" data-clan-invitation-id="${this.escape(row.invitationId)}">Принять</button>
+          <button type="button" class="mc-ah-btn mc-btn-danger" data-clan-action="reject_invitation" data-clan-invitation-id="${this.escape(row.invitationId)}">Отклонить</button>
+        </span>
+      </div>`).join('');
     }
     const rows = state.screen === 'requests' ? state.requests : state.screen === 'makeleader' ? state.members : state.players;
     if (state.screen === 'makeleader') {
@@ -3524,6 +3556,16 @@ export class GameUI {
         this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
       }, 160);
     });
+    const announce = this.modal!.querySelector<HTMLInputElement>('[data-clan-announce-text]');
+    announce?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    announce?.addEventListener('keydown', (event) => event.stopPropagation());
+    announce?.addEventListener('keyup', (event) => event.stopPropagation());
+    announce?.addEventListener('input', () => {
+      window.clearTimeout(this.clanSearchTimer);
+      this.clanSearchTimer = window.setTimeout(() => {
+        this.clanActions?.send({ type: 'clan_action', action: 'set_announce_text', text: announce.value });
+      }, 160);
+    });
     this.modal!.addEventListener('click', (event) => {
       event.stopPropagation();
       const current = this.clanState;
@@ -3602,6 +3644,7 @@ export class GameUI {
       if (button instanceof HTMLButtonElement && button.disabled) return;
       event.preventDefault();
       const inviteName = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]')?.value;
+      const announceText = this.modal?.querySelector<HTMLInputElement>('[data-clan-announce-text]')?.value;
       actions.send({
         type: 'clan_action',
         action: kind,
@@ -3609,9 +3652,12 @@ export class GameUI {
         ...(current.selected?.playerId || current.card?.selectedMemberId || current.playerCard?.playerId
           ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId ?? current.playerCard?.playerId }
           : {}),
-        ...(current.selected?.invitationId ? { invitationId: current.selected.invitationId } : {}),
+        ...(button.dataset.clanInvitationId || current.selected?.invitationId
+          ? { invitationId: button.dataset.clanInvitationId ?? current.selected?.invitationId }
+          : {}),
         ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
         ...(kind === 'invite_by_name' && inviteName !== undefined ? { name: inviteName } : {}),
+        ...(kind === 'send_announcement' && announceText !== undefined ? { text: announceText } : {}),
       });
     });
   }

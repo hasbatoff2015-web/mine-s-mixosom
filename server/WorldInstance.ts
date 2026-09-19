@@ -598,7 +598,7 @@ export class WorldInstance {
         if (stored) return stored.name;
         return this.economy.displayName(playerId);
       },
-      sendMessage: (playerId, text) => {
+      sendMessage: (playerId, text, extra) => {
         const target = this.players.get(playerId);
         if (!target?.connected) return;
         this.sendTo(target, {
@@ -607,6 +607,8 @@ export class WorldInstance {
           playerId: 'server',
           text,
           kind: 'system',
+          ...(extra?.channel ? { channel: extra.channel } : {}),
+          ...(extra?.style ? { style: extra.style } : {}),
         });
       },
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
@@ -1398,7 +1400,9 @@ export class WorldInstance {
     else if (view === 'create') result = this.clan.openCreate(playerId);
     else if (view === 'delete') result = this.clan.openDelete(playerId);
     else if (view === 'add') result = this.clan.openAdd(playerId);
-    else if (view === 'accept') result = this.clan.openAccept(playerId);
+    else if (view === 'accept') result = this.clan.openAccept(playerId, {
+      allowInClan: this.clan.session(playerId).openedFromMenu === true,
+    });
     else if (view === 'leave') result = this.clan.openLeave(playerId);
     else if (view === 'makeleader') result = this.clan.openMakeLeader(playerId);
     else if (view === 'mine') result = this.clan.openMyClan(playerId);
@@ -1454,6 +1458,7 @@ export class WorldInstance {
           || action === 'set_invite_name' || action === 'invite_by_name'
           ? 'clan.add'
           : action === 'select_invitation' || action === 'confirm_accept' || action === 'cancel_accept'
+            || action === 'reject_invitation'
             ? 'clan.accept'
             : action === 'confirm_leave' || action === 'cancel_leave'
               ? 'clan.leave'

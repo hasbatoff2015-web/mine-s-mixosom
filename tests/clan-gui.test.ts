@@ -88,6 +88,9 @@ describe('clan GUI helpers', () => {
     expect(showsClanBack('join-confirm')).toBe(true);
     expect(showsClanBack('member-card')).toBe(true);
     expect(showsClanBack('transfer-confirm')).toBe(true);
+    expect(showsClanBack('accept')).toBe(true);
+    expect(showsClanBack('announce')).toBe(true);
+    expect(showsClanBack('accept', 'menu')).toBe(true);
   });
 
   it('renders money/kills sort toggles and a muted kills label', () => {
@@ -157,6 +160,19 @@ describe('clan overlay CSS contracts', () => {
     expect(css).not.toMatch(/\.mc-clan-owner \{[^}]*color: #404040/);
     expect(gameUi).toContain("action: 'select_clan'");
     expect(gameUi).toContain("action: 'set_ranking_sort'");
+    expect(gameUi).toContain("data-clan-action=\"open_announce\"");
+    expect(gameUi).toContain("data-clan-action=\"send_announcement\"");
+    expect(gameUi).toContain("data-clan-action=\"reject_invitation\"");
+    expect(gameUi).toContain('Объявление соклановцам');
+    expect(gameUi).toContain('Напишите объявление клану');
+    expect(gameUi).toContain('data-clan-announce-text');
+    expect(gameUi).toContain('data-clan-invitation-id');
+    expect(gameUi).toContain('Принять');
+    expect(gameUi).toContain('Отклонить');
+    expect(gameUi).toContain("action: 'set_announce_text'");
+    expect(css).toContain('.chat-line.style-announcement');
+    expect(css).toContain('#4ecfdc');
+    expect(css).not.toContain('🪙');
     expect(gameUi).not.toMatch(/type: 'clan_action',\s*action: 'money'/);
     expect(gameUi).not.toMatch(/type: 'clan_action',\s*action: 'kills'/);
     expect(gameUi).toContain('.mc-clan-icon-pick[data-clan-icon]');

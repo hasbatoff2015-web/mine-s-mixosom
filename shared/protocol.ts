@@ -1,5 +1,5 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
-import { isChatChannel, type ChatChannel } from './chat';
+import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
@@ -536,7 +536,11 @@ export type ClanActionKind =
   | 'confirm_transfer_leader'
   | 'cancel_transfer_leader'
   | 'friends_request'
-  | 'friends_cancel';
+  | 'friends_cancel'
+  | 'reject_invitation'
+  | 'open_announce'
+  | 'set_announce_text'
+  | 'send_announcement';
 
 export interface ClientClanActionMessage {
   readonly type: 'clan_action';
@@ -549,6 +553,7 @@ export interface ClientClanActionMessage {
   readonly page?: number;
   readonly icon?: string;
   readonly name?: string;
+  readonly text?: string;
   readonly sort?: 'money' | 'kills';
 }
 
@@ -606,6 +611,7 @@ export type MenuActionKind =
   | 'clans_mine'
   | 'clans_list'
   | 'clans_create'
+  | 'clans_invitations'
   | 'claim_open'
   | 'claim_rename'
   | 'claim_set_pvp'
@@ -857,6 +863,7 @@ export interface ServerChatMessage {
   readonly text: string;
   readonly kind: 'player' | 'system' | 'command' | 'error';
   readonly channel?: ChatChannel;
+  readonly style?: ChatMessageStyle;
   readonly messageId?: string;
 }
 
@@ -1080,6 +1087,7 @@ export type ClanScreenKind =
   | 'replace-request-confirm'
   | 'member-card'
   | 'transfer-confirm'
+  | 'announce'
   | 'closed';
 
 export interface NetworkClanRow {
@@ -1123,7 +1131,10 @@ export interface NetworkClanInvitation {
   readonly clanName: string;
   readonly icon: string;
   readonly ownerName: string;
+  readonly fromPlayerId?: string;
+  readonly fromName?: string;
   readonly expiresAt: number;
+  readonly remainingLabel?: string;
 }
 
 export interface ServerClanMessage {
@@ -1162,6 +1173,9 @@ export interface ServerClanMessage {
     readonly rankingSort?: 'money' | 'kills';
     readonly totalKills?: number;
     readonly killsLabel?: string;
+    readonly canAnnounce?: boolean;
+    readonly announceCooldownUntil?: number;
+    readonly announceCooldownLabel?: string;
   };
   readonly playerCard?: {
     readonly playerId: string;
@@ -1209,6 +1223,10 @@ export interface ServerClanMessage {
   readonly inviteMessage?: string;
   readonly memberSort?: 'money' | 'kills';
   readonly rankingSort?: 'money' | 'kills';
+  readonly announceText?: string;
+  readonly announceCooldownUntil?: number;
+  readonly announceCooldownLabel?: string;
+  readonly canAnnounce?: boolean;
   readonly message?: string;
 }
 
@@ -1511,6 +1529,7 @@ export const CLAN_ACTIONS: readonly ClanActionKind[] = [
   'open_member', 'promote_veteran', 'demote_veteran',
   'transfer_leader', 'confirm_transfer_leader', 'cancel_transfer_leader',
   'friends_request', 'friends_cancel',
+  'reject_invitation', 'open_announce', 'set_announce_text', 'send_announcement',
 ];
 
 export const MENU_ACTIONS: readonly MenuActionKind[] = [
@@ -1518,7 +1537,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
   'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
   'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'set_friend_name',
-  'clans_mine', 'clans_list', 'clans_create',
+  'clans_mine', 'clans_list', 'clans_create', 'clans_invitations',
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
   'trade_request', 'trade_accept', 'trade_reject', 'trade_refresh', 'set_trade_name',
@@ -2133,6 +2152,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const icon = typeof raw.icon === 'string' ? raw.icon.slice(0, 32) : undefined;
       const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
       const sort = raw.sort === 'money' || raw.sort === 'kills' ? raw.sort : undefined;
+      if (raw.text !== undefined) {
+        if (typeof raw.text !== 'string') return { error: 'clan_action.text invalid' };
+        if (raw.text.length > MAX_CHAT_LENGTH) return { error: 'clan_action.text too long' };
+      }
+      const text = typeof raw.text === 'string' ? raw.text : undefined;
       return {
         type: 'clan_action',
         action: raw.action as ClanActionKind,
@@ -2144,6 +2168,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(page !== undefined ? { page } : {}),
         ...(icon ? { icon } : {}),
         ...(name !== undefined ? { name } : {}),
+        ...(text !== undefined ? { text } : {}),
         ...(sort ? { sort } : {}),
       };
     }

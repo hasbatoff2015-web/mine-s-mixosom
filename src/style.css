@@ -992,6 +992,7 @@ button {
 .chat-line.kind-command { color: #d0d0d0; }
 .chat-line.kind-death { color: #ffb0b0; }
 .chat-line.kind-system { color: #c8c8c8; }
+.chat-line.style-announcement { color: #4ecfdc; }
 
 #chat-form {
   display: flex;
@@ -2555,6 +2556,21 @@ button {
   color: #ffe566;
 }
 
+.mc-rank-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  white-space: nowrap;
+}
+
+.mc-rank-coin-wrap {
+  width: calc(8px * var(--mc-ui-scale, 3));
+  height: calc(8px * var(--mc-ui-scale, 3));
+  min-width: calc(8px * var(--mc-ui-scale, 3));
+  min-height: calc(8px * var(--mc-ui-scale, 3));
+}
+
 .mc-rank-you .mc-rank-kills {
   color: #ffe566;
 }
@@ -2763,6 +2779,33 @@ button {
 .mc-ah-actions .mc-ah-btn:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.mc-clan-panel .mc-ah-btn:disabled,
+.mc-menu-panel .mc-ah-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  color: #9a9a9a;
+}
+
+.mc-clan-invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  pointer-events: auto;
+}
+
+.mc-clan-invite-meta {
+  color: #d8d8d8;
+  font-size: calc(5px * var(--mc-ui-scale, 3));
+  font-weight: 600;
+}
+
+.mc-clan-cooldown {
+  color: #d8d8d8;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
 }
 
 .mc-clan-owner-mini {

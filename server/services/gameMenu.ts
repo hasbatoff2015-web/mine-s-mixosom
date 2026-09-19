@@ -153,7 +153,7 @@ export function buildRankingSnapshot(
       id: row.playerId,
       name: row.name,
       value: metric === 'kills' ? row.kills : row.balance,
-      valueLabel: metric === 'kills' ? formatKillsLabel(row.kills) : `🪙 ${formatMegacoinAmount(row.balance)}`,
+      valueLabel: metric === 'kills' ? formatKillsLabel(row.kills) : formatMegacoinAmount(row.balance),
       metric,
       highlight: row.playerId === playerId,
     }));
@@ -174,7 +174,7 @@ export function buildRankingSnapshot(
     id: row.clan.clanId,
     name: row.clan.name,
     value: metric === 'kills' ? row.kills : row.total,
-    valueLabel: metric === 'kills' ? formatKillsLabel(row.kills) : `🪙 ${formatMegacoinAmount(row.total)}`,
+    valueLabel: metric === 'kills' ? formatKillsLabel(row.kills) : formatMegacoinAmount(row.total),
     metric,
     highlight: viewerClan?.clanId === row.clan.clanId,
   }));

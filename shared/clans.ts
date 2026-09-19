@@ -5,6 +5,7 @@ export const CLAN_NAME_MIN = 3;
 export const CLAN_NAME_MAX = 16;
 export const CLAN_INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 export const CLAN_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
+export const CLAN_ANNOUNCEMENT_COOLDOWN_MS = 3 * 60 * 60 * 1000;
 export const CLAN_PAGE_SIZE = 6;
 
 export const CLAN_ICON_IDS = [
@@ -61,6 +62,8 @@ export const CLAN_KICK_DENIED_ERROR = 'Нельзя выгнать этого и
 export const CLAN_NAME_LENGTH_ERROR = 'Название клана должно содержать от 3 до 16 символов.';
 export const CLAN_NAME_CHARS_ERROR = 'Название может содержать только буквы, цифры, пробел, _ и -.';
 export const CLAN_NAME_UNSAFE_ERROR = 'Недопустимое название клана.';
+export const CLAN_ANNOUNCE_EMPTY_ERROR = 'Введите текст объявления.';
+export const CLAN_ANNOUNCE_COOLDOWN_PREFIX = 'Повторная отправка через ';
 
 export function isClanRole(value: string | undefined): value is ClanRole {
   return value !== undefined && (CLAN_ROLES as readonly string[]).includes(value);
@@ -82,6 +85,32 @@ export function canClanKick(actor: ClanRole | undefined, target: ClanRole | unde
 
 export function canClanManageVeterans(role: ClanRole | undefined): boolean {
   return role === 'leader';
+}
+
+export function canClanAnnounce(role: ClanRole | undefined): boolean {
+  return role === 'leader';
+}
+
+export function clanInviteChat(inviterName: string, clanName: string): string {
+  return `Игрок ${inviterName} пригласил вас в клан ${clanName}. Примите приглашение в меню`;
+}
+
+export function clanAnnouncementChat(text: string): string {
+  return `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "${text}"`;
+}
+
+export function formatRemainingDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms));
+  const hours = Math.floor(total / 3_600_000);
+  const minutes = Math.floor((total % 3_600_000) / 60_000);
+  if (hours > 0 && minutes > 0) return `${hours} ч ${minutes} мин`;
+  if (hours > 0) return `${hours} ч`;
+  if (minutes > 0) return `${minutes} мин`;
+  return 'меньше минуты';
+}
+
+export function clanAnnounceCooldownLabel(remainingMs: number): string {
+  return `${CLAN_ANNOUNCE_COOLDOWN_PREFIX}${formatRemainingDuration(remainingMs)}`;
 }
 
 export function canClanTransferLeader(actor: ClanRole | undefined, target: ClanRole | undefined): boolean {

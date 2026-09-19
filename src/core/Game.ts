@@ -356,7 +356,7 @@ import {
   takePendingAppearance,
 } from '../net/remoteAppearance';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
-import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel } from '../../shared/chat';
+import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -1306,7 +1306,11 @@ export class Game {
           });
         } else {
           if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
-          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text, {
+            channel: message.channel,
+            style: message.style,
+            id: message.messageId,
+          });
         }
         return;
       case 'inventory':
@@ -5559,7 +5563,7 @@ export class Game {
   private pushChat(
     kind: 'system' | 'player' | 'command' | 'death' | 'error',
     text: string,
-    extra: { from?: string; channel?: ChatChannel; id?: string } = {},
+    extra: { from?: string; channel?: ChatChannel; id?: string; style?: ChatMessageStyle } = {},
   ): void {
     const message = this.chat.push(kind, text, performance.now(), extra);
     this.ui.appendChat(message);

@@ -9,6 +9,8 @@ import type {
 import {
   CLAN_ALREADY_IN_OTHER_CLAN_ERROR,
   CLAN_ALREADY_IN_THIS_CLAN_ERROR,
+  CLAN_ANNOUNCEMENT_COOLDOWN_MS,
+  CLAN_ANNOUNCE_EMPTY_ERROR,
   CLAN_CREATE_COST,
   CLAN_DEMOTE_VETERAN_ONLY_ERROR,
   CLAN_ICON_IDS,
@@ -26,13 +28,18 @@ import {
   CLAN_PROMOTE_MEMBER_ONLY_ERROR,
   CLAN_REQUEST_TTL_MS,
   CLAN_TRANSFER_VETERAN_ONLY_ERROR,
+  canClanAnnounce,
   canClanInvite,
   canClanKick,
   canClanManageVeterans,
   canClanTransferLeader,
+  clanAnnounceCooldownLabel,
+  clanAnnouncementChat,
+  clanInviteChat,
   clanNameKey,
   clanRoleLabel,
   defaultClanCreatePolicy,
+  formatRemainingDuration,
   isClanIconId,
   isClanRole,
   validateClanName,
@@ -40,6 +47,8 @@ import {
   type ClanIconId,
   type ClanRole,
 } from '../../shared/clans';
+import { CHAT_TOO_LONG_ERROR, normalizeOutgoingChatText } from '../../shared/chat';
+import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
 import type { EconomyService } from './economy';
@@ -105,6 +114,7 @@ export type ClanScreen =
   | 'replace-request-confirm'
   | 'member-card'
   | 'transfer-confirm'
+  | 'announce'
   | 'closed';
 
 export interface ClanRecord {
@@ -116,6 +126,7 @@ export interface ClanRecord {
   memberIds: string[];
   roles: Record<string, ClanRole>;
   createdAt: number;
+  announcementCooldownUntil?: number;
 }
 
 export interface ClanInvitation {
@@ -145,7 +156,7 @@ export interface ClanRuntime {
   onlinePlayers(): readonly { id: string; name: string }[];
   isOnline(playerId: string): boolean;
   displayName(playerId: string): string;
-  sendMessage(playerId: string, text: string): void;
+  sendMessage(playerId: string, text: string, extra?: { channel?: 'global' | 'nearby' | 'clan'; style?: 'announcement' }): void;
   lookupPlayer?(idOrName: string): { id: string; name: string; connected: boolean } | undefined;
   friendRelation?(viewerId: string, targetId: string): 'self' | 'friend' | 'outgoing' | 'none';
   requestFriend?(fromId: string, targetId: string): { ok: boolean; error?: string };
@@ -158,11 +169,12 @@ export interface ClanSession {
   page: number;
   selectedClanId?: string;
   openedFromMenu?: boolean;
-  menuEntry?: 'ranking' | 'create' | 'mine';
+  menuEntry?: 'ranking' | 'create' | 'mine' | 'accept';
   selectedIcon: ClanIconId;
   nameText: string;
   inviteName: string;
   inviteMessage?: string;
+  announceText: string;
   memberSort: ClanMemberSort;
   rankingSort: ClanMemberSort;
   selectedPlayerId?: string;
@@ -187,9 +199,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function clanInviteChat(ownerName: string, clanName: string): string {
-  return `Игрок ${ownerName} пригласил вас в клан ${clanName}. Используйте /clan accept, чтобы посмотреть приглашение.`;
-}
+export { clanInviteChat, clanAnnouncementChat };
 
 function emptyRuntime(): ClanRuntime {
   return {
@@ -217,6 +227,8 @@ function parseClan(value: unknown): ClanRecord | undefined {
       && rawRoles[memberId] === 'veteran') roles[memberId] = 'veteran';
     else roles[memberId] = 'member';
   }
+  const cooldownRaw = Number(value.announcementCooldownUntil);
+  const announcementCooldownUntil = Number.isFinite(cooldownRaw) && cooldownRaw > 0 ? cooldownRaw : undefined;
   return {
     clanId: value.clanId,
     name: value.name,
@@ -226,6 +238,7 @@ function parseClan(value: unknown): ClanRecord | undefined {
     memberIds,
     roles,
     createdAt,
+    ...(announcementCooldownUntil ? { announcementCooldownUntil } : {}),
   };
 }
 
@@ -356,6 +369,7 @@ export class ClanService {
       selectedIcon: CLAN_ICON_IDS[0],
       nameText: '',
       inviteName: '',
+      announceText: '',
       memberSort: 'money',
       rankingSort: 'money',
     };
@@ -377,6 +391,7 @@ export class ClanService {
     session.menuEntry = undefined;
     session.inviteName = '';
     session.inviteMessage = undefined;
+    session.announceText = '';
     session.memberSort = 'money';
     session.rankingSort = 'money';
     session.transferFromCard = undefined;
@@ -517,7 +532,7 @@ export class ClanService {
     return { ok: true, clan };
   }
 
-  markOpenedFromMenu(playerId: string, view?: 'ranking' | 'create' | 'mine'): void {
+  markOpenedFromMenu(playerId: string, view?: 'ranking' | 'create' | 'mine' | 'accept'): void {
     const session = this.session(playerId);
     session.openedFromMenu = true;
     if (view) session.menuEntry = view;
@@ -567,8 +582,8 @@ export class ClanService {
     return { ok: true, clan };
   }
 
-  openAccept(playerId: string): ClanResult {
-    if (this.playerClan(playerId)) return { ok: false, error: CLAN_ALREADY_OTHER_CLAN_ERROR };
+  openAccept(playerId: string, options: { allowInClan?: boolean } = {}): ClanResult {
+    if (!options.allowInClan && this.playerClan(playerId)) return { ok: false, error: CLAN_ALREADY_OTHER_CLAN_ERROR };
     const session = this.session(playerId);
     session.screen = 'accept';
     session.selectedInvitationId = undefined;
@@ -763,6 +778,84 @@ export class ClanService {
       session.screen = 'card';
       session.selectedClanId = clan.clanId;
       session.message = `Вы вступили в клан ${clan.name}.`;
+      return { ok: true, clan };
+    });
+  }
+
+  rejectInvitation(playerId: string, invitationId: string): ClanResult {
+    return this.withLocks([`player:${playerId}`, `invite:${invitationId}`], () => {
+      this.purgeExpired();
+      const invitation = this.invitations.get(invitationId);
+      if (!invitation || invitation.toPlayerId !== playerId) {
+        const session = this.session(playerId);
+        session.screen = 'accept';
+        session.selectedInvitationId = undefined;
+        session.message = CLAN_INVITE_MISSING_ERROR;
+        return { ok: false, error: CLAN_INVITE_MISSING_ERROR };
+      }
+      this.invitations.delete(invitationId);
+      this.persist();
+      const session = this.session(playerId);
+      session.screen = 'accept';
+      session.selectedInvitationId = undefined;
+      session.message = 'Приглашение отклонено.';
+      return { ok: true };
+    });
+  }
+
+  openAnnounce(playerId: string): ClanResult {
+    const clan = this.playerClan(playerId);
+    if (!clan) return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+    if (!canClanAnnounce(this.roleOf(clan, playerId))) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+    const session = this.session(playerId);
+    session.screen = 'announce';
+    session.selectedClanId = clan.clanId;
+    session.message = undefined;
+    return { ok: true, clan };
+  }
+
+  sendAnnouncement(playerId: string, rawText: string | undefined): ClanResult {
+    const owned = this.playerClan(playerId);
+    return this.withLocks([`player:${playerId}`, owned ? `clan:${owned.clanId}` : ''], () => {
+      const clan = this.playerClan(playerId);
+      const session = this.session(playerId);
+      if (!clan) {
+        session.message = CLAN_NOT_IN_CLAN_ERROR;
+        session.screen = 'ranking';
+        return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+      }
+      if (!canClanAnnounce(this.roleOf(clan, playerId))) {
+        session.message = CLAN_OWNER_ONLY_ERROR;
+        session.screen = 'card';
+        session.selectedClanId = clan.clanId;
+        return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+      }
+      session.screen = 'announce';
+      session.selectedClanId = clan.clanId;
+      const parsed = normalizeOutgoingChatText(rawText ?? '');
+      session.announceText = parsed.slice(0, MAX_CHAT_LENGTH);
+      if (!parsed) {
+        session.message = CLAN_ANNOUNCE_EMPTY_ERROR;
+        return { ok: false, error: CLAN_ANNOUNCE_EMPTY_ERROR, clan };
+      }
+      if (parsed.length > MAX_CHAT_LENGTH) {
+        session.message = CHAT_TOO_LONG_ERROR;
+        return { ok: false, error: CHAT_TOO_LONG_ERROR, clan };
+      }
+      const remaining = (clan.announcementCooldownUntil ?? 0) - this.now();
+      if (remaining > 0) {
+        session.message = clanAnnounceCooldownLabel(remaining);
+        return { ok: false, error: session.message, clan };
+      }
+      clan.announcementCooldownUntil = this.now() + CLAN_ANNOUNCEMENT_COOLDOWN_MS;
+      this.persist();
+      session.announceText = '';
+      session.message = undefined;
+      const line = clanAnnouncementChat(parsed);
+      for (const memberId of clan.memberIds) {
+        if (!this.runtime.isOnline(memberId)) continue;
+        this.runtime.sendMessage(memberId, line, { channel: 'clan', style: 'announcement' });
+      }
       return { ok: true, clan };
     });
   }
@@ -1070,7 +1163,7 @@ export class ClanService {
       return;
     }
     if (action === 'confirm_accept') {
-      const invitationId = session.selectedInvitationId ?? message.invitationId;
+      const invitationId = message.invitationId ?? session.selectedInvitationId;
       if (!invitationId) {
         session.screen = 'accept';
         session.message = CLAN_INVITE_MISSING_ERROR;
@@ -1088,6 +1181,41 @@ export class ClanService {
       session.screen = session.acceptFromCard && session.selectedClanId ? 'card' : 'accept';
       session.selectedInvitationId = undefined;
       session.acceptFromCard = false;
+      return;
+    }
+    if (action === 'reject_invitation') {
+      const invitationId = message.invitationId ?? session.selectedInvitationId;
+      if (!invitationId) {
+        session.screen = 'accept';
+        session.message = CLAN_INVITE_MISSING_ERROR;
+        return;
+      }
+      const result = this.rejectInvitation(playerId, invitationId);
+      if (!result.ok) session.message = result.error;
+      return;
+    }
+    if (action === 'open_announce') {
+      const result = this.openAnnounce(playerId);
+      if (!result.ok) {
+        session.screen = this.playerClan(playerId) ? 'card' : 'ranking';
+        session.message = result.error;
+      }
+      return;
+    }
+    if (action === 'set_announce_text') {
+      const clan = this.playerClan(playerId);
+      if (!clan || !canClanAnnounce(this.roleOf(clan, playerId))) {
+        session.message = CLAN_OWNER_ONLY_ERROR;
+        session.screen = clan ? 'card' : 'ranking';
+        return;
+      }
+      session.announceText = typeof message.text === 'string' ? message.text.slice(0, MAX_CHAT_LENGTH) : '';
+      session.screen = 'announce';
+      return;
+    }
+    if (action === 'send_announcement') {
+      const result = this.sendAnnouncement(playerId, message.text ?? session.announceText);
+      if (!result.ok) session.message = result.error;
       return;
     }
     if (action === 'confirm_leave') {
@@ -1562,6 +1690,28 @@ export class ClanService {
       };
     }
 
+    if (session.screen === 'announce') {
+      const clan = viewerClan;
+      if (!clan || !canClanAnnounce(this.roleOf(clan, playerId))) {
+        session.screen = clan ? 'card' : 'ranking';
+        return this.buildMessage(playerId);
+      }
+      const remaining = Math.max(0, (clan.announcementCooldownUntil ?? 0) - this.now());
+      return {
+        ...base,
+        screen: 'announce',
+        title: 'Объявление соклановцам',
+        totalPages: 1,
+        totalCount: 0,
+        clans: [this.toRow(clan, this.clanTotal(clan), this.rankOf(clan.clanId, session.rankingSort))],
+        card: this.cardPayload(playerId, clan, session.selectedMemberId),
+        announceText: session.announceText,
+        canAnnounce: true,
+        ...this.announceCooldownFields(clan),
+        ...(remaining > 0 ? { announceCooldownLabel: clanAnnounceCooldownLabel(remaining) } : {}),
+      };
+    }
+
     if (session.screen === 'member-card') {
       const memberClan = this.getClan(session.selectedClanId) ?? viewerClan;
       const card = memberClan && session.selectedMemberId
@@ -1677,6 +1827,9 @@ export class ClanService {
       case 'requests':
         session.screen = 'card';
         return;
+      case 'announce':
+        session.screen = 'card';
+        return;
       case 'request-confirm':
         session.screen = 'requests';
         session.selectedRequestId = undefined;
@@ -1772,7 +1925,10 @@ export class ClanService {
         clanName: clan.name,
         icon: clan.icon,
         ownerName: this.runtime.displayName(clan.ownerId),
+        fromPlayerId: invitation.fromPlayerId,
+        fromName: this.runtime.displayName(invitation.fromPlayerId),
         expiresAt: invitation.expiresAt,
+        remainingLabel: formatRemainingDuration(invitation.expiresAt - this.now()),
       });
     }
     return rows;
@@ -1851,9 +2007,23 @@ export class ClanService {
       ...(selectedMemberId ? { selectedMemberId } : {}),
       canKickSelected: canKick,
       canInvite: canClanInvite(viewerRole),
+      canAnnounce: canClanAnnounce(viewerRole),
+      ...(this.announceCooldownFields(clan)),
       ...(viewerRole ? { viewerRole } : {}),
       memberSort: this.session(playerId).memberSort,
       rankingSort: this.session(playerId).rankingSort,
+    };
+  }
+
+  private announceCooldownFields(clan: ClanRecord): {
+    announceCooldownUntil?: number;
+    announceCooldownLabel?: string;
+  } {
+    const remaining = Math.max(0, (clan.announcementCooldownUntil ?? 0) - this.now());
+    if (remaining <= 0) return {};
+    return {
+      announceCooldownUntil: clan.announcementCooldownUntil,
+      announceCooldownLabel: clanAnnounceCooldownLabel(remaining),
     };
   }
 

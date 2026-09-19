@@ -28,7 +28,7 @@ export type MenuActionOutcome =
   | { kind: 'spawn' }
   | { kind: 'home-teleport'; name: string }
   | { kind: 'friend-teleport'; playerId: string }
-  | { kind: 'open-clan'; view: 'ranking' | 'create' | 'mine' }
+  | { kind: 'open-clan'; view: 'ranking' | 'create' | 'mine' | 'accept' }
   | { kind: 'open-auction'; view: 'browse' | 'list' | 'sell' }
   | { kind: 'trade-request'; affected: readonly string[] }
   | { kind: 'trade-session'; affected: readonly string[] }
@@ -213,6 +213,7 @@ export function applyGameMenuAction(
     }
     return { kind: 'open-clan', view: 'mine' };
   }
+  if (action === 'clans_invitations') return { kind: 'open-clan', view: 'accept' };
   if (action === 'claim_open' && message.claimId) {
     const claim = host.findOwnedClaim(player, message.claimId);
     if (!claim) {

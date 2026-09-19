@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-19 Clan invitations + leader announcement
+
+Report: `reports/2026-09-19_clan-invites-announce.md`.
+
+```text
+npx vitest run tests/server/clan-invites-announce.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/server/clan-roles-ranking.test.ts tests/clan-gui.test.ts tests/game-menu-gui.test.ts tests/server/game-menu.test.ts --maxWorkers=2
+```
+
 ## 2026-09-19 Clan roles + Rating menu
 
 Report: `reports/2026-09-19_clan-roles-rating.md`.

@@ -239,8 +239,8 @@ describe('main menu HUD and chrome', () => {
       ratingPage: 2,
       ratingTotalPages: 5,
       ratingRows: [
-        { rank: 11, id: 'a', name: 'Ada', value: 100, valueLabel: '🪙 100', metric: 'money', highlight: true },
-        { rank: 12, id: 'b', name: 'Bob', value: 90, valueLabel: '🪙 90', metric: 'money', highlight: false },
+        { rank: 11, id: 'a', name: 'Ada', value: 100, valueLabel: '100', metric: 'money', highlight: true },
+        { rank: 12, id: 'b', name: 'Bob', value: 90, valueLabel: '90', metric: 'money', highlight: false },
       ],
       personalRank: 11,
       personalText: 'Ваше место: #11',
@@ -254,5 +254,11 @@ describe('main menu HUD and chrome', () => {
     expect(rating).toContain('Ваше место: #11');
     expect(rating).toContain('data-menu-rating="players-kills"');
     expect(rating).toContain('data-menu-rating="clans-kills"');
+    expect(rating).toContain('mc-menu-coin');
+    expect(rating).toContain('icon_coin.png');
+    expect(rating).not.toContain('🪙');
+    const clansTab = menuBodyHtml(menu({ screen: 'clans' }), (value) => value);
+    expect(clansTab).toContain('clans_invitations');
+    expect(clansTab).toContain('Приглашения');
   });
 });

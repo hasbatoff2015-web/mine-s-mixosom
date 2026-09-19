@@ -303,6 +303,8 @@ describe('clan roles, ranking and kills', () => {
     expect(money.ratingRows![0]?.highlight).toBe(false);
     expect(money.personalRank).toBe(38);
     expect(money.personalText).toBe('Ваше место: #38');
+    expect(money.ratingRows![0]?.valueLabel).not.toContain('🪙');
+    expect(money.ratingRows!.every((row) => !row.valueLabel.includes('🪙'))).toBe(true);
     const page4 = buildRankingSnapshot(clan, economy, 'p37', 'players-money', 4);
     expect(page4.ratingRows?.some((row) => row.highlight)).toBe(true);
     const late = buildRankingSnapshot(clan, economy, 'p54', 'players-money', 1);
