@@ -61,11 +61,25 @@ Client never reports its own unread counts. Reset is `open` of friends / clans /
 
 ## Tests
 
-`vitest run` focused: `tests/server/menu-notifications-auction-history.test.ts`, `tests/game-menu-gui.test.ts`, `tests/server/clan-invites-announce.test.ts`, `tests/server/auction.test.ts`, `tests/server/game-menu.test.ts`, `tests/server/friends.test.ts` — PASS.
+`vitest run` focused: `tests/server/menu-notifications-auction-history.test.ts`, `tests/game-menu-gui.test.ts`, `tests/server/clan-invites-announce.test.ts`, `tests/server/auction.test.ts`, `tests/server/game-menu.test.ts`, `tests/server/friends.test.ts` — **74/74 PASS** (re-run after live QA).
 
 ## Visual QA / Live QA
 
-See the end of this report after the live Anarchy pass.
+Live Anarchy (`npm run dev:anarchy`, Vite 4173 + WS 2567). Player **ViewZ** (fresh tab) plus bots ChiefZ / PingL / TraderT / BuyerB. Friends A was verified earlier on **Bob**.
+
+| Case | Result |
+|---|---|
+| A Friends 3→open→0 then new request→1 | PASS (Bob). Video `friends-unread-badge-3-then-clear.mp4`. |
+| B Invite → Кланы [1] → Приглашения Wave2C → accept → badge gone | PASS. Nested overlay / ← / X/E OK. |
+| C Kick → Кланы [1] → open → gone | PASS (after creative rescue; spawn death loop otherwise). |
+| D Member→Veteran → Кланы [1] → open → gone; card shows Ветеран | PASS. |
+| E Seller sale → Аукцион [1]; history `Вы продали 32 Алмаз за 12 000 Мегакоинов` / `меньше часа назад`; buyer no auction badge; buy history also recorded | PASS. |
+| F TraderT offer → Обмен [1], sender no badge; open Обмен clears | PASS. |
+| G Announcement | PASS. Exact: `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - Сегодня в 20:00 идём фармить данжи` (no quotes, cyan, КЛАН tab). |
+
+Buyer history live row used starter **dirt** in SellerS slot 0 (`Вы купили 16 Земля за 50 Мегакоинов`); diamond sell row matches the spec example. Persistence files written: `plugin-data/auction/history.json`, `plugin-data/notifications/unread.json`.
+
+Videos: `qa-b-clan-invite-badge.mp4`, `qa-d-promote-badge.mp4`, `qa-e-auction-seller-history.mp4`, `qa-f-trade-badge.mp4`, `qa-g-clan-announcement-format.mp4`.
 
 ## Performance
 
@@ -75,6 +89,7 @@ No per-tick work. Notify/history persist only on confirmed domain events. Badge 
 
 - Auction listings are still full-stack purchases; history quantity is `listing.item.count` (the actually transferred amount).
 - Unread does not auto-clear while the player remains on an already-open tab; a new event after open increments again (as specified).
+- Live spawn near Anarchy origin can drop/kill a survival player; HUD/menu QA for kick needed a creative teleport rescue. Not caused by the badge/history change.
 
 ## Next work
 
