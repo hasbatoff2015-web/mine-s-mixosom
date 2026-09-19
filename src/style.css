@@ -3596,7 +3596,8 @@ button {
 
 #app.controls-suppressed #hud-corner,
 #app.controls-suppressed #hud-corner button,
-#app.controls-suppressed #pointer-lock-fallback {
+#app.controls-suppressed #pointer-lock-fallback,
+#app.controls-suppressed canvas {
   pointer-events: none !important;
 }
 

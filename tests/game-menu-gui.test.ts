@@ -87,6 +87,8 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain("action: 'rating_set'");
     expect(gameUi).toContain("target.closest('[data-ui=\"close\"]')");
     expect(gameUi).toContain("target.closest('input, textarea, label')");
+    expect(css).toContain('#app.controls-suppressed canvas');
+    expect(gameUi).toContain('ensureOverlayModal');
     expect(gameUi).toContain('event.stopPropagation()');
     expect(css).toContain('.mc-menu-tile-icon');
     expect(cssRule('.mc-menu-tile-icon')).toContain('background: transparent;');

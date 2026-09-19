@@ -2760,6 +2760,19 @@ export class GameUI {
       + `</button>`;
   }
 
+  /** Keep the backdrop in the DOM across nested screens so a click cannot fall through to the canvas. */
+  private ensureOverlayModal(): HTMLDivElement {
+    if (this.modal && this.root.contains(this.modal)) {
+      this.modal.className = 'modal-backdrop mc-backdrop';
+      return this.modal;
+    }
+    this.modal?.remove();
+    this.modal = document.createElement('div');
+    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.root.append(this.modal);
+    return this.modal;
+  }
+
   private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
@@ -3208,13 +3221,11 @@ export class GameUI {
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    const modal = this.ensureOverlayModal();
     const back = showsClanBack(state.screen, state.source)
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
-    this.modal.innerHTML = `
+    modal.innerHTML = `
       <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
@@ -3223,7 +3234,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindClanChrome();
     this.restoreClanInputFocus(keep);
   }
@@ -3841,10 +3851,8 @@ export class GameUI {
     const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.innerHTML = `
+    const modal = this.ensureOverlayModal();
+    modal.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         ${menuBackHtml(state.screen)}
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
@@ -3852,7 +3860,6 @@ export class GameUI {
         </div>
         ${this.closeButtonHtml()}
       </div>`;
-    this.root.append(this.modal);
     this.bindGameMenuChrome();
     this.restoreMenuInputFocus(keep);
   }

@@ -142,6 +142,8 @@ describe('clan overlay CSS contracts', () => {
     expect(css).toContain('.mc-clan-panel .mc-ah-btn.is-on');
     expect(css).toContain('#app.controls-suppressed #hud-corner');
     expect(css).toContain('#app.controls-suppressed #hud-corner button');
+    expect(css).toContain('#app.controls-suppressed canvas');
+    expect(gameUi).toContain('ensureOverlayModal');
     expect(css).toContain('#e8a8a8');
     expect(gameUi).toContain("action: 'select_clan'");
     expect(gameUi).toContain('.mc-clan-icon-pick[data-clan-icon]');
