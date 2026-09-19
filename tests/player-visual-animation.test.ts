@@ -8,6 +8,7 @@ import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual, UPPER_BODY_PIVOT_Y } from '../src/rendering/player/PlayerVisual';
+import { defaultThirdPersonHeldItemTransformForItem } from '../src/rendering/player/thirdPersonHeldItem';
 import { PlayerVisualAnimator } from '../src/rendering/player/PlayerVisualAnimator';
 import {
   applySeatVisualRoot,
@@ -204,11 +205,11 @@ describe('third-person held item grip profiles', () => {
     for (const itemId of ['diamond_sword', 'iron_pickaxe', 'bow', 'apple', 'stone']) {
       visual.setHeldItem(itemId);
       const model = visual.rig.heldItem.children[0] as THREE.Group;
-      const pose = thirdPersonItemPose(itemId);
+      const pose = defaultThirdPersonHeldItemTransformForItem(itemId);
       expect(model.parent, itemId).toBe(visual.rig.heldItem);
-      expect(model.position.toArray(), itemId).toEqual(pose.position);
-      expect(model.rotation.toArray().slice(0, 3), itemId).toEqual(pose.rotation);
-      expect(model.scale.toArray(), itemId).toEqual(pose.scale);
+      expect(model.position.toArray(), itemId).toEqual([pose.position.x, pose.position.y, pose.position.z]);
+      expect(model.rotation.toArray().slice(0, 3), itemId).toEqual([pose.rotation.x, pose.rotation.y, pose.rotation.z]);
+      expect(model.scale.toArray(), itemId).toEqual([pose.scale.x, pose.scale.y, pose.scale.z]);
     }
 
     visual.dispose();

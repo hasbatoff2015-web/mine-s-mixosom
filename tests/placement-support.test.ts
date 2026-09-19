@@ -101,7 +101,7 @@ describe('placement anchors and sturdy attachment faces', () => {
     expect(canAttachToFace(stairs.world, 5, 40, 5, faces[3]!)).toBe(false);
   });
 
-  it.each(['bow', 'apple', 'potion_invisibility', 'potion_regeneration'])('still dispatches use for %s', (item) => {
+  it.each(['bow', 'apple', 'potion_invisibility', 'potion_regeneration', 'potion_repair'])('still dispatches use for %s', (item) => {
     const f = fixture(); f.place(item);
     expect(item === 'bow' ? f.session.bowUseTicks : f.session.foodUseTicks).toBe(1);
   });

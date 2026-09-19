@@ -12,7 +12,7 @@ import type { GameMode, WorldSummary } from '../save/types';
 import type { ChestState, FurnaceState } from '../world/World';
 import { EMPTY_SIGN_LINES, sanitizeSignLines, type SignLines } from '../world/sign';
 import { TextureAtlas } from '../rendering/TextureAtlas';
-import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchRecipeGridHost, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature, armorSlotKind } from './inventoryLayout';
+import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchRecipeGridHost, CREATIVE_DEFAULT_TAB, type CreativeInventoryTab, slotStateSignature, slotDurabilityBarHtml, armorSlotKind } from './inventoryLayout';
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
@@ -2693,10 +2693,7 @@ export class GameUI {
     layout?: 'auction',
   ): string {
     const definition = stack ? getItemDefinition(stack.itemId) : undefined;
-    const maxDurability = definition && 'durability' in definition ? definition.durability : undefined;
-    const durability = stack && maxDurability && stack.durability !== undefined
-      ? `<div class="durability"><span style="width:${Math.max(0, stack.durability / maxDurability) * 100}%"></span></div>`
-      : '';
+    const durability = slotDurabilityBarHtml(stack);
     const sig = slotStateSignature({
       itemId: stack?.itemId,
       count: stack?.count,
@@ -2716,7 +2713,12 @@ export class GameUI {
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {
-    return itemHoverAttributeString(name, itemId, (value) => this.escape(value));
+    return itemHoverAttributeString(
+      name,
+      itemId,
+      (value) => this.escape(value),
+      getItemDefinition(itemId).description,
+    );
   }
 
   private itemIcon(itemId: string): string {

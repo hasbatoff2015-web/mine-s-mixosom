@@ -61,6 +61,8 @@ export interface DamageResult {
   readonly accepted: boolean;
   readonly fullHurt: boolean;
   readonly deathProtected?: boolean;
+  /** True when equipped armor remaining durability changed during this hit. */
+  readonly armorWorn?: boolean;
 }
 
 export interface SurvivalTickContext {
@@ -158,6 +160,21 @@ export function reduceDamageByArmor(
 ): number {
   const incoming = Math.max(0, damage);
   return incoming * (25 - getArmorPoints(armor)) / 25;
+}
+
+/**
+ * Remaining-durability loss applied to each equipped armor piece for one
+ * armor-mitigated hit. Java-like: at least 1, otherwise round(incoming / 4).
+ */
+export function armorDurabilityLoss(incomingDamage: number): number {
+  if (!Number.isFinite(incomingDamage) || incomingDamage <= 0) return 0;
+  return Math.max(1, Math.round(incomingDamage / 4));
+}
+
+function wearEquippedArmor(source: ArmorSource | undefined, amount: number): boolean {
+  if (!source || amount <= 0 || !('damageEquippedArmor' in source)) return false;
+  const mutate = source as { damageEquippedArmor?: (value: number) => boolean };
+  return mutate.damageEquippedArmor?.(amount) === true;
 }
 
 export function isSwordBlockable(source: DamageSource, fireContact = false): boolean {
@@ -273,6 +290,9 @@ export class SurvivalSystem {
     const afterArmor = bypassArmor
       ? rawToApply
       : reduceDamageByArmor(rawToApply, options.armor);
+    const armorWorn = bypassArmor
+      ? false
+      : wearEquippedArmor(options.armor, armorDurabilityLoss(rawToApply));
     const absorbed = Math.min(this.absorption, afterArmor);
     this.absorption -= absorbed;
     const dealt = Math.max(0, afterArmor - absorbed);
@@ -285,6 +305,7 @@ export class SurvivalSystem {
       this.applyEffect({ id: 'fire_resistance', amplifier: 0, durationTicks: 800 });
       this.applyEffect({ id: 'absorption', amplifier: 1, durationTicks: 100 });
     }
+    this.enforceLifeInvariant();
     const killed = this.health <= 0;
     if (killed) this.dead = true;
     const result: DamageResult = {
@@ -300,6 +321,7 @@ export class SurvivalSystem {
       accepted: true,
       fullHurt: hurt.fullHurt,
       ...(deathProtected ? { deathProtected: true } : {}),
+      ...(armorWorn ? { armorWorn: true } : {}),
     };
     this.lastDamage = result;
     options.onDamage?.(result);
@@ -391,7 +413,12 @@ export class SurvivalSystem {
   }
 
   /** Applies a food item and optionally removes one from the supplied inventory. */
-  consumeFood(itemOrId: string | FoodItemDefinition, inventory?: Pick<Inventory, 'has' | 'remove' | 'addItem'>): boolean {
+  consumeFood(
+    itemOrId: string | FoodItemDefinition,
+    inventory?: Pick<Inventory, 'has' | 'remove' | 'addItem'> & {
+      repairLostDurability?(fraction: number): void;
+    },
+  ): boolean {
     const item = typeof itemOrId === 'string' ? tryGetItemDefinition(itemOrId) : itemOrId;
     if (item?.kind !== 'food' || !this.canConsumeFood(item.id)) return false;
     if (inventory && !inventory.has(item.id, 1)) return false;
@@ -400,6 +427,9 @@ export class SurvivalSystem {
     this.saturation = Math.min(this.hunger, this.saturation + item.food.saturation);
     for (const effect of item.food.effects ?? []) this.applyEffect(effect);
     if (item.food.clearsEffects) this.clearEffects();
+    if (item.food.repairLostDurabilityFraction !== undefined) {
+      inventory?.repairLostDurability?.(item.food.repairLostDurabilityFraction);
+    }
     if (item.food.returnsItem) inventory?.addItem(item.food.returnsItem, 1);
     return true;
   }
@@ -488,6 +518,14 @@ export class SurvivalSystem {
       }
     }
     this.dead = state.dead ?? this.health <= 0;
+    this.enforceLifeInvariant();
+  }
+
+  /** Living players always have health > 0. health === 0 means dead. */
+  private enforceLifeInvariant(): void {
+    if (this.health > 0) return;
+    this.health = 0;
+    this.dead = true;
   }
 
   private tickOnce(context: SurvivalTickContext, events: DamageResult[]): void {

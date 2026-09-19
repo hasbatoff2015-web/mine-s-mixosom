@@ -20,6 +20,8 @@ export const LATERAL_SKY_RADIUS = 14;
 export const ENTITY_SNAP_DISTANCE = 6;
 
 export const CHUNK_SIZE = 16;
+/** Vertical mesh section. Live voxel edits remesh only dirty Y bands, not the full 16×256×16 column. */
+export const MESH_SECTION_HEIGHT = 16;
 /** Natural terrain recipe. Additive save metadata; independent of save schema/protocol. */
 export const WORLDGEN_VERSION = 2;
 /**

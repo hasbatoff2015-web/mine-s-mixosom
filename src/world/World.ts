@@ -104,6 +104,10 @@ export interface BlockMutation {
   readonly block: BlockId;
 }
 
+export const EDIT_LIGHT_BURST_BLOCKS = 8;
+/** Hold edit-region lighting until a voxel burst pauses longer than one 20 Hz tick. */
+export const EDIT_LIGHT_BURST_HOLD_MS = 80;
+
 export interface BlockBatchOptions {
   readonly record?: boolean;
   readonly updateLighting?: boolean;
@@ -232,6 +236,13 @@ export class VoxelWorld {
   }) => void;
   private readonly committedBlockObservers = new Set<(changes: readonly CommittedBlockChange[]) => void>();
   private pendingEmitters: Array<readonly [number, number, number]> = [];
+  /**
+   * Edit-origin region floods abort and restart when a new batch merges bounds.
+   * Hold the flood while a large voxel burst is still arriving (AutoMine 20 Hz
+   * batches). Single-block edits do not use this hold.
+   */
+  private editBurstBlocks = 0;
+  private lastEditMutationAt = 0;
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
   viewChunkX = 0;
@@ -416,7 +427,7 @@ export class VoxelWorld {
     const localX = positiveMod(x, CHUNK_SIZE);
     const localZ = positiveMod(z, CHUNK_SIZE);
     const chunk = this.getChunk(chunkX, chunkZ, false);
-    if (chunk) this.markMeshDirty(chunk);
+    if (chunk) this.markMeshDirty(chunk, y);
     const dirty = new Set<string>();
     for (const [dx, dz] of neighborFluidMeshOffsets(localX, localZ)) {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirty);
@@ -645,6 +656,7 @@ export class VoxelWorld {
     }
 
     if (committed.length > 0) {
+      this.noteEditBurst(committed.length, deferLighting && updateLighting);
       this.onCommittedBlocks?.(committed);
       for (const observer of this.committedBlockObservers) observer(committed);
     }
@@ -735,12 +747,12 @@ export class VoxelWorld {
       }
       delta.set(Chunk.index(localX, y, localZ), block);
     }
-    this.markMeshDirty(chunk);
+    this.markMeshDirty(chunk, y);
     dirtyChunks.add(chunkKey(chunkX, chunkZ));
     const nextDefinition = getBlockDefinition(block);
     const offsets = neighborFluidMeshOffsets(localX, localZ);
     for (const [dx, dz] of offsets) {
-      this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirtyChunks);
+      this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirtyChunks, y);
     }
     const occlusionChanged = previousDefinition.occludesFaces !== nextDefinition.occludesFaces;
     const emissionChanged = previousEmission !== (nextDefinition.emission ?? 0);
@@ -753,10 +765,10 @@ export class VoxelWorld {
     return { previous, occlusionChanged, emissionChanged, skyChanged, lightRadius };
   }
 
-  private dirtyNeighbor(chunkX: number, chunkZ: number, dirtyChunks: Set<string>): void {
+  private dirtyNeighbor(chunkX: number, chunkZ: number, dirtyChunks: Set<string>, y?: number): void {
     const neighbor = this.getChunk(chunkX, chunkZ, false);
     if (!neighbor) return;
-    this.markMeshDirty(neighbor);
+    this.markMeshDirty(neighbor, y);
     dirtyChunks.add(chunkKey(chunkX, chunkZ));
   }
 
@@ -773,9 +785,11 @@ export class VoxelWorld {
     }
   }
 
-  markMeshDirty(chunk: Chunk): void {
+  markMeshDirty(chunk: Chunk, y?: number): void {
     this.meshDirtyMarks += 1;
     chunk.dirty = true;
+    if (y === undefined) chunk.noteMeshDirtyAllY();
+    else chunk.noteMeshDirtyY(y);
     this.pendingMesh.add(chunkKey(chunk.x, chunk.z));
     if (this.trackFluidDirty) this.fluidMeshDirtyKeys.add(chunkKey(chunk.x, chunk.z));
     if (chunk.lightingReady && chunk.readyToMeshAt === 0) chunk.readyToMeshAt = performance.now();
@@ -785,6 +799,19 @@ export class VoxelWorld {
     if (chunk.dirty) return;
     this.pendingMesh.delete(chunkKey(chunk.x, chunk.z));
     chunk.readyToMeshAt = 0;
+    chunk.clearMeshDirtyRange();
+  }
+
+  private noteEditBurst(applied: number, deferredEditLight: boolean): void {
+    if (!deferredEditLight || applied <= 0) return;
+    this.editBurstBlocks += applied;
+    this.lastEditMutationAt = performance.now();
+  }
+
+  private shouldHoldEditLightFlood(): boolean {
+    if (!this.pendingLight || this.pendingLight.origin !== 'edit') return false;
+    if (this.editBurstBlocks < EDIT_LIGHT_BURST_BLOCKS) return false;
+    return performance.now() - this.lastEditMutationAt < EDIT_LIGHT_BURST_HOLD_MS;
   }
 
   queueLight(region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin = 'edit'): void {
@@ -820,6 +847,7 @@ export class VoxelWorld {
     const emitters = this.pendingEmitters;
     this.pendingLight = undefined;
     this.pendingEmitters = [];
+    this.editBurstBlocks = 0;
     const start = performance.now();
     if (emitters.length > 0) addBlockLightEmitters(this, emitters);
 
@@ -863,6 +891,7 @@ export class VoxelWorld {
 
     const unlit = collectUnlitLightJobs(this, originX, originZ, generateRadius, unlock);
     const emitterWork = this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER;
+    const holdEditFlood = this.shouldHoldEditLightFlood();
     lightFrameStats.jobsPending = unlit.length + (this.pendingLight ? 1 : 0) + Number(emitterWork);
     this.lightOriginCounts = {
       stream: unlit.length,
@@ -872,7 +901,7 @@ export class VoxelWorld {
     };
     const liveOwner = lightingFloodOwner(this);
     const resumeSharedFlood = liveOwner === LIGHT_FLOOD_REGION || liveOwner === LIGHT_FLOOD_ADD_EMITTER
-      || (liveOwner === '' && (this.pendingLight !== undefined || this.pendingEmitters.length > 0));
+      || (liveOwner === '' && !holdEditFlood && (this.pendingLight !== undefined || this.pendingEmitters.length > 0));
     if (!resumeSharedFlood) {
       for (const job of unlit) {
         if (performance.now() >= deadline || lightFrameStats.columns >= MAX_LIGHT_COLUMNS_PER_SLICE
@@ -899,10 +928,11 @@ export class VoxelWorld {
       addBlockLightEmitters(this, this.pendingEmitters, deadline);
       this.pendingEmitters = [];
       if (lightingFloodOwner(this) === '') this.commitLightChanges();
-    } else if (performance.now() < deadline && this.pendingLight && (lightingFloodOwner(this) === '' || lightingFloodOwner(this) === LIGHT_FLOOD_REGION)) {
+    } else if (!holdEditFlood && performance.now() < deadline && this.pendingLight && (lightingFloodOwner(this) === '' || lightingFloodOwner(this) === LIGHT_FLOOD_REGION)) {
       const done = continuePendingLight(this, this.pendingLight, deadline);
       if (done) {
         this.pendingLight = undefined;
+        this.editBurstBlocks = 0;
         this.commitLightChanges();
       }
     } else if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner(this) === '') {
@@ -924,6 +954,10 @@ export class VoxelWorld {
   get pendingLightJobs(): number {
     return (this.pendingLight ? 1 : 0) + this.unlitChunkCount
       + (this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER ? 1 : 0);
+  }
+
+  get hasQueuedRegionLight(): boolean {
+    return this.pendingLight !== undefined || lightingFloodOwner(this) === LIGHT_FLOOD_REGION;
   }
 
   /** In-radius dirty/stale keys after `discardObsoletePendingMesh`. Not a historical leak. */

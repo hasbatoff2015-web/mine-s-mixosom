@@ -14,11 +14,12 @@
 | items/potion_bottle_empty.png | item/glass_bottle.png | 32×32 |
 | items/potion_bottle_drinkable.png + items/potion_overlay.png | item/potion_invisibility.png | 32×32 |
 | те же authored layers | item/potion_regeneration.png | 32×32 |
+| те же authored layers | item/potion_repair.png | 32×32 |
 | entity/projectiles/arrow.png (уже точная копия) | entity/arrow.png, без изменения PNG | 64×64 |
 
 Root cause: неверные optional names `items/bucket.png` / `items/potion.png`, отсутствующие potion compositions/entity minecart mapping; сохранённые 16px прямоугольные fallback items и 32px entity placeholder не перезаписывались обычной missing-only генерацией. Correct Water/Lava/Minecart mappings существовали optional, но текущие runtime PNG всё равно были placeholders. Теперь восемь целевых outputs принадлежат required authored pipeline, всегда overwrite; forced fallback их не рисует. Для сохранения остальных curated textures запускать `npm run assets:import -- --items-cleanup`. Полный import также использует эти правила, но может обновить остальные whitelist assets.
 
-Potion composition: tint overlay `[127,131,146]` invisibility / `[205,92,171]` regeneration из data table, authored bottle сверху; сохраняются alpha, cork/glass pixels и pixel grid, без resize/blur/procedural silhouette. PNG byte equality и повторяемость проверены тестами. `GeneratedItemGeometry`, extrusion, GUI/ground/held factory и общий pose не менялись.
+Potion composition: tint overlay `[127,131,146]` invisibility / `[205,92,171]` regeneration / `[18,181,164]` repair из data table, authored bottle сверху; сохраняются alpha, cork/glass pixels и pixel grid, без resize/blur/procedural silhouette. PNG byte equality и повторяемость проверены тестами. `GeneratedItemGeometry`, extrusion, GUI/ground/held factory и общий pose не менялись.
 
 Arrow sheet не является item sprite: top row содержит два mirrored 32×10 профиля, нижняя 20×10 область — cross/end patch, остальное transparent. Новый mesh использует wood/head/feather crops первого профиля, не весь sheet на длинных crossed planes. Minecart exterior использует logical64×32 panel UV, не full sheet на каждой стенке.
 

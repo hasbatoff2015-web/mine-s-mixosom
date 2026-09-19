@@ -75,7 +75,7 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
           minZ: Number(ctx.config.get('rtp', 'minZ', -10_000)),
           maxZ: Number(ctx.config.get('rtp', 'maxZ', 10_000)),
           attemptsPerTick: Number(ctx.config.get('rtp', 'attemptsPerTick', 2)),
-          maxAttempts: Number(ctx.config.get('rtp', 'maxAttempts', 24)),
+          maxAttempts: Number(ctx.config.get('rtp', 'maxAttempts', 80)),
           maxChunkGenerates: Number(ctx.config.get('rtp', 'maxChunkGenerates', 1)),
         }, { reason: 'portal', warmupMs: 0, cooldownMs: 0 });
         if (!started.ok) {

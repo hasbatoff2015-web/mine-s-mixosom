@@ -316,7 +316,7 @@ export class ChunkMesher {
     private readonly resolveState: BlockRenderStateResolver = () => undefined,
   ) {}
 
-  build(chunk: Chunk, world: VoxelWorld): MeshedChunk {
+  build(chunk: Chunk, world: VoxelWorld, range?: { readonly minY?: number; readonly maxY?: number }): MeshedChunk {
     const buildStart = performance.now();
     resetBuffers(this.layers.opaque);
     resetBuffers(this.layers.cutout);
@@ -337,17 +337,20 @@ export class ChunkMesher {
     this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
     let faces = 0;
     const chests: Array<{ x: number; y: number; z: number }> = [];
-    const chunkHeight = Math.min(
-      chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE),
-      chunk.scanMaxY() + 1,
+    const occupiedMaxY = Math.min(
+      chunk.blocks.length / (CHUNK_SIZE * CHUNK_SIZE) - 1,
+      chunk.scanMaxY(),
     );
+    const yStart = Math.max(0, range?.minY ?? 0);
+    const yEnd = Math.min(occupiedMaxY, range?.maxY ?? occupiedMaxY);
     const blocks = chunk.blocks;
     const eastChunk = this.lightEast;
     const westChunk = this.lightWest;
     const southChunk = this.lightSouth;
     const northChunk = this.lightNorth;
-    for (let y = 0; y < chunkHeight; y += 1) {
-      const yOffset = y * CHUNK_SIZE * CHUNK_SIZE;
+    const layerSize = CHUNK_SIZE * CHUNK_SIZE;
+    for (let y = yStart; y <= yEnd; y += 1) {
+      const yOffset = y * layerSize;
       for (let z = 0; z < CHUNK_SIZE; z += 1) {
         const rowOffset = yOffset + z * CHUNK_SIZE;
         for (let x = 0; x < CHUNK_SIZE; x += 1) {
@@ -390,12 +393,12 @@ export class ChunkMesher {
             this.addCubeFace(target, definition, FACES[1]!, world, worldX, y, worldZ);
             faces += 1;
           }
-          const above = y < chunkHeight - 1 ? blocks[blockIndex + CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Air;
+          const above = y < WORLD_HEIGHT - 1 ? blocks[blockIndex + layerSize] as BlockId : BlockId.Air;
           if (this.faceVisible(above, block, worldX, y + 1, worldZ)) {
             this.addCubeFace(target, definition, FACES[2]!, world, worldX, y, worldZ);
             faces += 1;
           }
-          const below = y > 0 ? blocks[blockIndex - CHUNK_SIZE * CHUNK_SIZE] as BlockId : BlockId.Bedrock;
+          const below = y > 0 ? blocks[blockIndex - layerSize] as BlockId : BlockId.Bedrock;
           if (this.faceVisible(below, block, worldX, y - 1, worldZ)) {
             this.addCubeFace(target, definition, FACES[3]!, world, worldX, y, worldZ);
             faces += 1;

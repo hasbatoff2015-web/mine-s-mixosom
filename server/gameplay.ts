@@ -225,13 +225,13 @@ export class ServerGameplay {
       for (const change of changes) {
         this.onBlockReplaced?.(change.x, change.y, change.z);
         this.noteBlockDelta(change.x, change.y, change.z, change.block);
-        this.redstone.notifyBlockChanged(change.x, change.y, change.z);
         if (isFluidBlock(change.block) || isFluidBlock(change.previous)) {
           this.events.emit('fluidUpdate', {
             x: change.x, y: change.y, z: change.z, blockId: change.block,
           });
         }
       }
+      if (changes.length > 0) this.redstone?.notifyBlocksChanged(changes);
     };
     world.onCommittedBlockState = (change) => {
       this.noteBlockDelta(change.x, change.y, change.z, change.block);
@@ -1175,6 +1175,9 @@ export class ServerGameplay {
       const current = player.inventory.getSlot(activeSlot);
       if (current?.itemId === item.id && player.survival.consumeFood(item)) {
         player.inventory.setSlot(activeSlot, current.count <= 1 ? null : { ...current, count: current.count - 1 });
+        if (item.food.repairLostDurabilityFraction !== undefined) {
+          player.inventory.repairLostDurability(item.food.repairLostDurabilityFraction);
+        }
         if (item.food.returnsItem) {
           const overflow = player.inventory.addItem(item.food.returnsItem, 1);
           if (overflow > 0) {

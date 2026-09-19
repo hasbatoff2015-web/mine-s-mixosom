@@ -88,6 +88,38 @@ Manual QA harnesses (`/?qaSpecial=1`, `/?qaChicken=1`, `/?qaSkeleton=1`, `/?qaPl
 
 Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
 
+## 2026-09-18 Third-person axe 180° handle flip
+
+Focused:
+
+```text
+npx vitest run tests/third-person-held-item.test.ts --maxWorkers=2 --silent
+```
+
+Contracts: every `tool === 'axe'` uses tool position/scale plus local 180° handle flip `(1,1,0)`; pickaxe/shovel/hoe stay unflipped tool pose; swords stay sword pose; first-person / block / generated / bow unchanged. Axe IDs: wooden/stone/iron/diamond/ruby/titanium_axe. No `gold_axe`.
+
+## 2026-09-18 Third-person sword vs tool poses
+
+Focused:
+
+```text
+npx vitest run tests/third-person-held-item.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent
+```
+
+Contracts: every `weapon === 'sword'` uses sword pose; every `kind: 'tool'` except axes uses tool pose; wooden/iron/diamond sword+pickaxe, shovel, hoe covered; stick/flint stay historical `handheld`; block/generated/bow unchanged; `FIRST_PERSON_SPRITE_POSE` unchanged. No `gold_sword` / `gold_pickaxe` in registry (golden_hoe is a tool).
+
+## 2026-09-18 Third-person held-item calibrator `/moveitems`
+
+Focused:
+
+```text
+npx vitest run tests/third-person-held-item.test.ts --maxWorkers=2 --silent
+```
+
+Contracts: `/moveitems` path helper; production category defaults unchanged (`block` 0.24, `handheld` 0.55, `generated` 0.40, `bow` 0.46); first-person `FIRST_PERSON_SPRITE_POSE` untouched; per-item live store + RESET; COPY/COPY ALL text; `PlayerVisual.setHeldItem` applies defaults then `applyHeldItemCalibration` overlays without mutating defaults.
+
+DEV URL: `http://localhost:4173/moveitems`. First-person harness `?qaItem=` / `qaView=held` не используется этим маршрутом.
+
 ## 2026-09-18 Merge Utility Items V1 into current main
 
 ```text
@@ -1332,7 +1364,7 @@ Browser QA **не пройден**: браузер ранее отклонил l
 
 После восстановления разрешённого сеанса выполнить:
 
-1. Inventory/hotbar: bucket, water_bucket, lava_bucket, minecart, glass_bottle, potion_invisibility, potion_regeneration; silhouettes и прозрачность.
+1. Inventory/hotbar: bucket, water_bucket, lava_bucket, minecart, glass_bottle, potion_invisibility, potion_regeneration, potion_repair; silhouettes и прозрачность.
 2. `?qaItem=<id>&qaView=held&pose=idle` для каждого; guard items iron_pickaxe/diamond_sword/apple/coal/torch/bow без изменения pose.
 3. `?qaArrow=1&arrowScene=inspect&arrowView=front`: кнопки front/back/side/top/angle; normal/fire.
 4. `?qaArrow=1&arrowScene=ground` и `arrowScene=wall`: tip inside, shaft outside, нет billboard при смене camera angle; затем реальные player и skeleton shots в игре.

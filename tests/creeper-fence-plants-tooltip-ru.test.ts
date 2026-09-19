@@ -457,6 +457,7 @@ describe('Russian item and block display names', () => {
     expect(getItemDefinition(ItemId.DiamondSword).name).toBe('Алмазный меч');
     expect(getItemDefinition(ItemId.WaterBucket).name).toBe('Ведро воды');
     expect(getItemDefinition(ItemId.PotionInvisibility).name).toBe('Зелье невидимости');
+    expect(getItemDefinition(ItemId.PotionRepair).name).toBe('Зелье починки');
     expect(getItemDefinition(ItemId.Minecart).name).toBe('Вагонетка');
     expect(getItemDefinition(ItemId.WoodenPickaxe).name).toBe('Деревянная кирка');
     expect(getItemDefinition(ItemId.WoodenSword).name).toBe('Деревянный меч');

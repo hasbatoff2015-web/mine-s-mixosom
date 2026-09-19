@@ -350,6 +350,12 @@ import { FireworkVisuals } from '../rendering/FireworkVisuals';
 import { TotemParticles } from '../rendering/TotemParticles';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
+import { noteHotbarSelect, resolveHotbarSelection, type PendingHotbarSelect } from '../net/hotbarSelection';
+import {
+  appearanceForRemoteSpawn,
+  bufferPendingAppearance,
+  takePendingAppearance,
+} from '../net/remoteAppearance';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
@@ -416,6 +422,8 @@ export interface OnlineAnarchySession {
   lastSentInputSeq: number;
   lastSentUse: boolean;
   actionSeq: number;
+  pendingHotbar?: PendingHotbarSelect;
+  pendingAppearances: Map<string, PlayerAppearance>;
   localFoodUse?: { itemId: string; selectedSlot: number; commandSeq: number; actionSeq: number };
   prediction: PredictionBuffer;
   urgentMeshKeys: Set<string>;
@@ -1004,6 +1012,7 @@ export class Game {
         lastSentInputSeq: 0,
         lastSentUse: false,
         actionSeq: 0,
+        pendingAppearances: new Map(),
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
@@ -1064,17 +1073,19 @@ export class Game {
 
   private spawnRemotePlayer(session: GameSession, info: RemotePlayerInfo): void {
     if (!session.online || info.id === session.online.playerId) return;
+    const pending = takePendingAppearance(session.online.pendingAppearances, info.id);
+    const appearance = appearanceForRemoteSpawn(info.appearance, pending);
     const existing = session.online.remotes.get(info.id);
     if (existing) {
-      existing.reset(info, performance.now());
+      existing.reset({ ...info, appearance }, performance.now());
       return;
     }
-    const view = new RemotePlayerView(info, {
+    const view = new RemotePlayerView({ ...info, appearance }, {
         visual: new PlayerVisual(
         this.playerSkins,
         this.playerSkinGeometries,
         this.itemVisuals!,
-        createPlayerAppearance(info.appearance ?? DEFAULT_PLAYER_APPEARANCE),
+        appearance,
         {
           armorResources: {
             materials: this.playerArmorMaterials,
@@ -1103,7 +1114,15 @@ export class Game {
       this.setPlayerAppearance(appearance);
       return;
     }
-    session.online?.remotes.get(playerId)?.setAppearance(appearance);
+    const remote = session.online?.remotes.get(playerId);
+    if (remote) {
+      remote.setAppearance(appearance);
+      session.online?.pendingAppearances.delete(playerId);
+      return;
+    }
+    if (session.online) {
+      bufferPendingAppearance(session.online.pendingAppearances, playerId, appearance, false);
+    }
   }
 
   private handleOnlineMessage(message: ServerMessage): void {
@@ -1192,10 +1211,10 @@ export class Game {
           saturation: message.saturation,
           absorption: message.absorption,
           airTicks: message.air,
-          dead: message.dead,
+          dead: message.dead === true || message.health <= 0,
         });
         session.survival.syncNetworkFire(message.fire);
-        if (message.dead) this.handleDeath(session.survival.lastDamage?.source);
+        if (session.survival.dead) this.handleDeath(session.survival.lastDamage?.source);
         if (shouldRestoreGameplayAfterRespawn(previous, {
           health: session.survival.health,
           dead: session.survival.dead,
@@ -1304,7 +1323,16 @@ export class Game {
         } else {
           this.syncLocalCreativeFlight(session, message.gamemode);
         }
-        if (message.selectedSlot !== undefined) session.selectedSlot = message.selectedSlot;
+        if (message.selectedSlot !== undefined) {
+          const resolved = resolveHotbarSelection(
+            session.online.pendingHotbar,
+            message.selectedSlot,
+            session.online.prediction.lastAckedSeq,
+          );
+          session.selectedSlot = resolved.slot;
+          session.online.pendingHotbar = resolved.pending;
+          this.canvas.dataset.hotbar = String(session.selectedSlot);
+        }
         if (session.online.localFoodUse) {
           const use = session.online.localFoodUse;
           if (session.selectedSlot !== use.selectedSlot
@@ -4468,6 +4496,7 @@ export class Game {
       }
     }
     if (session.playTicks % 2 === 0) this.refreshHud();
+    if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
   }
 
   private tick(): void {
@@ -5496,8 +5525,57 @@ export class Game {
     this.session.foodUseTicks = 0;
     this.session.bowUseTicks = 0;
     if (this.session.online) this.session.online.localFoodUse = undefined;
+    this.commitOnlineHotbarSelect(this.session);
     this.session.combat.setHeldItem(this.selectedStack()?.itemId);
     this.refreshHud();
+  }
+
+  /**
+   * Publish 1–9 into the command stream immediately so a same-frame LMB/RMB
+   * interact is sequenced against the new slot, not the previous tick's input.
+   */
+  private commitOnlineHotbarSelect(session: GameSession): void {
+    const online = session.online;
+    if (!online) return;
+    online.pendingHotbar = noteHotbarSelect(online.inputSeq, session.selectedSlot);
+    if (online.ignoreNetworkSend) return;
+    this.flushPendingLocalSnapshot(session);
+    this.syncLocalCreativeFlight(session);
+    const overlayOpen = this.ui.isBlockingOverlay();
+    online.inputSeq += 1;
+    const predicted = predictedMoveFromInput(
+      online.inputSeq,
+      { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
+      { yaw: this.input.yaw, pitch: this.input.pitch },
+      !session.ridingCartId,
+    );
+    const clientSentAt = isDevRuntime() ? performance.now() : undefined;
+    online.client.send({
+      type: 'input',
+      seq: online.inputSeq,
+      clientTick: session.playTicks,
+      forward: 0,
+      right: 0,
+      jump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      yaw: this.input.yaw,
+      pitch: this.input.pitch,
+      selectedSlot: session.selectedSlot,
+      ...(shouldHoldServerMining({
+        buttonDown: this.input.mining,
+        finishKey: online.miningFinishKey,
+        miningLocked: online.miningLocked,
+      }) ? { mining: true } : {}),
+      use: !overlayOpen && this.input.using,
+      ...(clientSentAt !== undefined ? { clientSentAt } : {}),
+    });
+    online.lastSentInputSeq = online.inputSeq;
+    online.lastSentUse = !overlayOpen && this.input.using;
+    motionProbe.noteSend(online.inputSeq);
+    predictLocalMove(session.player, session.world, online.prediction, predicted);
   }
 
   private openChat(prefix = ''): void {
@@ -5879,6 +5957,7 @@ export class Game {
       foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
       invisible: session.survival.invisible,
       hurtFlash: this.hurt.modelIntensity(now),
+      onFire: session.survival.isOnFire,
     });
     applySeatVisualRoot(
       session.playerVisual.root,

@@ -64,6 +64,42 @@
 - [ ] Owner manual: two simultaneous Anarchy clients with skeleton fire and visible health attribution.
 - [ ] Owner manual: continuous minecart ride through break/rebuild/high/curve/save-load scenario.
 
+## 2026-09-18: Third-person axe 180° handle flip
+
+- [x] Axes keep the shared tool position/scale/tilt and add a local 180° roll around sprite handle axis `(1, 1, 0)`.
+- [x] Pickaxes, shovels, hoes, swords, block/generated/bow, first-person unchanged.
+
+## 2026-09-18: Third-person sword vs tool poses
+
+- [x] Production third-person: all swords share one pose; all other `kind: 'tool'` items share the iron_pickaxe pose.
+- [x] Leave block / generated / bow / first-person unchanged.
+
+## 2026-09-18: Third-person held-item calibrator
+
+## 2026-09-18: Repair potion max-durability + armor bar
+
+- [x] Зелье починки: 50% **максимальной** durability (`current + round(max * 0.5)`), clamp, без изменения целых предметов.
+- [x] Та же формула в Anarchy и Singleplayer.
+- [x] Durability bar на armor slots через существующий slot renderer.
+- [x] Equipped armor wear on armor-mitigated hits so the bar can appear and update live.
+
+## 2026-09-18: Repair potion
+
+- [x] Добавить consumable «Зелье починки» на существующем potion drink path: 50% of max remaining durability по всему player inventory, server-authoritative в Anarchy.
+- [x] Тот же bottle mesh/geometry, teal overlay tint, tooltip, no recipe, Buyer example price 500 МК.
+- [x] Regression tests for math, slots, armor/hotbar, consume, no recipe, buyer sell, inventory sync.
+
+## 2026-09-17: Bugfix/performance gameplay pass
+
+- [x] AutoMine incremental top-down reset with deferred lighting (no 2–3s frame freeze from a full-cuboid write).
+- [x] AutoMine reset no longer remeshes the full 16×256×16 column per batch; lighting is time-sliced and held during voxel bursts.
+- [x] Burning-player fire overlay height halved via `scale.y` (width unchanged).
+- [x] Hotbar select + immediate use/click without selected-slot rollback.
+- [x] Remote player fire overlay from authoritative `PlayerSnapshot.onFire`.
+- [x] Selected skin on first remote spawn / resume without requiring reconnect.
+- [x] RTP keeps searching until a valid column or a real attempt budget.
+- [x] Health 0 is always death; HUD matches living HP above 0. Totem still intercepts lethal hits first.
+
 ## 2026-09-18: Merge Utility Items V1 into current main
 
 - [x] Semantic merge feature `codex/utility-items-v1@475acc6` into current main without shifting OakSign off 165 or dropping unknown-block compatibility.
@@ -140,6 +176,7 @@
 - [x] Focused authority tests, typechecks, boundaries, build and archive size check.
 - [ ] Three interactive clients visual QA for WH outline, fireworks, sign and book flows.
 - [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
+
 ## 2026-09-17: Pause heading off + Creative graphite tabs
 
 - [x] Pause overlay is actions-only: Continue / Settings / Save and quit. No «Игра на паузе» / «Пауза» heading.

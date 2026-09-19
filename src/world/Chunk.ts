@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
+import { CHUNK_SIZE, MESH_SECTION_HEIGHT, WORLD_HEIGHT } from '../core/constants';
 
 export class Chunk {
   readonly blocks = new Uint16Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
@@ -41,6 +41,13 @@ export class Chunk {
   lastTouched = performance.now();
   /** Monotonic time when this chunk became ready-to-mesh while still dirty. 0 = unset. */
   readyToMeshAt = 0;
+  /**
+   * Inclusive dirty Y range for partial remesh. When `meshDirtyAllY` is true the
+   * next rebuild covers the occupied column (generation, light rebake, unknown Y).
+   */
+  meshDirtyMinY = 0;
+  meshDirtyMaxY = WORLD_HEIGHT - 1;
+  meshDirtyAllY = true;
 
   constructor(readonly x: number, readonly z: number) {}
 
@@ -92,5 +99,46 @@ export class Chunk {
 
   bumpLightVersion(): void {
     this.lightVersion += 1;
+  }
+
+  noteMeshDirtyY(y: number): void {
+    if (this.meshDirtyAllY) return;
+    const clamped = Math.min(WORLD_HEIGHT - 1, Math.max(0, y | 0));
+    if (this.meshDirtyMaxY < this.meshDirtyMinY) {
+      this.meshDirtyMinY = clamped;
+      this.meshDirtyMaxY = clamped;
+      return;
+    }
+    this.meshDirtyMinY = Math.min(this.meshDirtyMinY, clamped);
+    this.meshDirtyMaxY = Math.max(this.meshDirtyMaxY, clamped);
+  }
+
+  noteMeshDirtyAllY(): void {
+    this.meshDirtyAllY = true;
+    this.meshDirtyMinY = 0;
+    this.meshDirtyMaxY = WORLD_HEIGHT - 1;
+  }
+
+  clearMeshDirtyRange(): void {
+    this.meshDirtyAllY = false;
+    this.meshDirtyMinY = WORLD_HEIGHT;
+    this.meshDirtyMaxY = -1;
+  }
+
+  meshSectionRange(maxY = this.scanMaxY()): { minSection: number; maxSection: number; partial: boolean } {
+    if (this.meshDirtyAllY || this.meshDirtyMaxY < this.meshDirtyMinY) {
+      return {
+        minSection: 0,
+        maxSection: Math.floor(Math.max(0, maxY) / MESH_SECTION_HEIGHT),
+        partial: false,
+      };
+    }
+    const minY = Math.max(0, this.meshDirtyMinY - 1);
+    const maxDirty = Math.min(maxY, this.meshDirtyMaxY + 1);
+    return {
+      minSection: Math.floor(minY / MESH_SECTION_HEIGHT),
+      maxSection: Math.floor(Math.max(minY, maxDirty) / MESH_SECTION_HEIGHT),
+      partial: true,
+    };
   }
 }

@@ -4,6 +4,7 @@ import { Game } from './core/Game';
 import type { MobKind } from './entities/mobDefinitions';
 import type { MobQaView } from './dev/MobQaHarness';
 import type { Biome } from './world/Generator';
+import { isMoveItemsCalibratorPath } from './dev/moveItemsRoute';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas');
 const uiRoot = document.querySelector<HTMLElement>('#ui-root');
@@ -15,6 +16,7 @@ let runningDevHarness = false;
 
 if (import.meta.env.DEV) {
   const search = new URLSearchParams(location.search);
+  const moveItems = isMoveItemsCalibratorPath(location.pathname);
   const qaMob = search.get('qaMob');
   const qaItem = search.get('qaItem');
   const qaPoseCompare = search.get('qaPoseCompare') === '1' || search.get('qaPoseCompare') === 'true';
@@ -37,7 +39,12 @@ if (import.meta.env.DEV) {
   const requestedView = search.get('view');
   const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
-  if (qaSpecial === 'rails') {
+  if (moveItems) {
+    runningDevHarness = true;
+    void import('./dev/MoveItemsHarness').then(async ({ startMoveItemsHarness }) => {
+      disposeApplication = await startMoveItemsHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'rails') {
     runningDevHarness = true;
     void import('./dev/SpecialBlockQaHarness').then(async ({ startRailQaHarness }) => {
       disposeApplication = await startRailQaHarness(canvas, uiRoot, search.get('row'));

@@ -19,6 +19,8 @@ export const BUYER_EXAMPLE_GOLDEN_APPLE_PRICE = 600;
 export const BUYER_EXAMPLE_PUMPKIN_ITEM = 'pumpkin';
 export const BUYER_EXAMPLE_MELON_ITEM = 'melon';
 export const BUYER_EXAMPLE_GOLDEN_APPLE_ITEM = 'golden_apple';
+export const BUYER_EXAMPLE_REPAIR_POTION_ITEM = 'potion_repair';
+export const BUYER_EXAMPLE_REPAIR_POTION_PRICE = 500;
 
 export const BUYER_PRICE_EMPTY_ERROR = 'Укажите цену целым числом.';
 export const BUYER_PRICE_RANGE_ERROR = 'Цена должна быть целым числом от 1 до 999 999 999.';

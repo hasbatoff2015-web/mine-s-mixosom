@@ -13,6 +13,7 @@ export const AUTHORED_ITEM_COPIES = Object.freeze({
 export const POTION_COLORS = Object.freeze({
   potion_invisibility: [127, 131, 146],
   potion_regeneration: [205, 92, 171],
+  potion_repair: [18, 181, 164],
 });
 export const AUTHORED_ITEM_TARGETS = Object.freeze([
   ...Object.values(AUTHORED_ITEM_COPIES), ...Object.keys(POTION_COLORS).map((id) => `item/${id}.png`),
