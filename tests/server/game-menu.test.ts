@@ -8,6 +8,7 @@ import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import { HOME_LIMIT_ERROR, HOME_MAX_DEFAULT, HOME_NAME_TAKEN_ERROR } from '../../shared/homes';
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
+import { CLAN_ALREADY_MEMBER_ERROR } from '../../server/services/clan';
 import { GAME_MENU_BUTTONS } from '../../shared/gameMenu';
 import { createItemStack } from '../../src/inventory';
 
@@ -259,6 +260,7 @@ describe('game menu plugin', () => {
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'clans_list' });
     clan = lastOf<ServerClanMessage>(ada.sink, 'clan');
     expect(clan?.screen).toBe('ranking');
+    expect(clan?.source).toBe('menu');
     const clanId = clan?.clans[0]?.clanId;
     expect(clanId).toBeTruthy();
     world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_ranking_sort', sort: 'kills' });
@@ -303,5 +305,22 @@ describe('game menu plugin', () => {
     clan = lastOf<ServerClanMessage>(ada.sink, 'clan');
     expect(clan?.screen).toBe('card');
     expect(clan?.card?.clanId).toBe(clanId);
+  });
+
+  it('keeps the clans menu open if create is used while already in a clan', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    world.economy.deposit(ada.player.id, 20_000, 'ADMIN_GIVE');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'clans_create' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_name', name: 'AdaClan' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_icon', icon: 'swords' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_create' });
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'close' });
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'clans' });
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'clans_create' });
+    const menu = lastOf<ServerMenuMessage>(ada.sink, 'menu');
+    expect(menu?.screen).toBe('clans');
+    expect(menu?.message).toBe(CLAN_ALREADY_MEMBER_ERROR);
+    expect(lastOf<ServerClanMessage>(ada.sink, 'clan')?.screen).toBe('closed');
   });
 });

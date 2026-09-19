@@ -3595,8 +3595,9 @@ button {
 }
 
 #app.controls-suppressed #hud-corner,
+#app.controls-suppressed #hud-corner button,
 #app.controls-suppressed #pointer-lock-fallback {
-  pointer-events: none;
+  pointer-events: none !important;
 }
 
 #app.controls-suppressed #touch-look-zone,

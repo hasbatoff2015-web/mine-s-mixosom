@@ -1741,11 +1741,18 @@ export class WorldInstance {
       return;
     }
     if (outcome.kind === 'open-clan') {
+      this.clan.markOpenedFromMenu(player.id, outcome.view);
+      const result = this.openClan(player.id, outcome.view);
+      if (!result || result.ok === false) {
+        const clanSession = this.clan.session(player.id);
+        clanSession.openedFromMenu = undefined;
+        clanSession.menuEntry = undefined;
+        session.message = result && 'error' in result ? (result.error ?? 'Не удалось открыть клан.') : 'Не удалось открыть клан.';
+        this.flushMenu(player);
+        return;
+      }
       this.menuReturn.set(player.id, 'clans');
       this.menuSessions.delete(player.id);
-      this.openClan(player.id, outcome.view);
-      this.clan.markOpenedFromMenu(player.id, outcome.view);
-      this.flushClan(player);
       return;
     }
     if (outcome.kind === 'open-auction') {

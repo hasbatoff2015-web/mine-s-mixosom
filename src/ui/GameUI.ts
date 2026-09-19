@@ -3546,11 +3546,16 @@ export class GameUI {
     });
     this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
+      event.preventDefault();
       event.stopPropagation();
       const current = this.clanState;
       const actions = this.clanActions;
       if (!current || !actions) return;
       const target = event.target as HTMLElement;
+      if (target.closest('[data-ui="close"]')) {
+        actions.close();
+        return;
+      }
       const back = target.closest<HTMLElement>('[data-clan-action="back"]');
       if (back) {
         event.preventDefault();
@@ -3906,11 +3911,16 @@ export class GameUI {
     }
     this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
+      event.preventDefault();
       event.stopPropagation();
       const actions = this.menuActions;
       const current = this.menuState;
       if (!actions || !current) return;
       const target = event.target as HTMLElement;
+      if (target.closest('[data-ui="close"]')) {
+        actions.close();
+        return;
+      }
       const open = target.closest<HTMLElement>('[data-menu-open]');
       if (open?.dataset.menuOpen) {
         if (open instanceof HTMLButtonElement && open.disabled) return;

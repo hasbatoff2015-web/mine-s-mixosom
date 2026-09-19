@@ -6,7 +6,7 @@ import { TRADE_EMPTY_NAME_ERROR } from '../../shared/trade';
 import type { HomeService } from './home';
 import type { FriendsService } from './friends';
 import type { TradeService } from './trade';
-import type { ClanService } from './clan';
+import { CLAN_ALREADY_MEMBER_ERROR, type ClanService } from './clan';
 import type { Claim, ClaimStore } from './claims';
 import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
@@ -197,7 +197,14 @@ export function applyGameMenuAction(
     return { kind: 'refresh-players', affected };
   }
   if (action === 'clans_list') return { kind: 'open-clan', view: 'ranking' };
-  if (action === 'clans_create') return { kind: 'open-clan', view: 'create' };
+  if (action === 'clans_create') {
+    if (host.clan.playerClan(player.id)) {
+      session.screen = 'clans';
+      session.message = CLAN_ALREADY_MEMBER_ERROR;
+      return { kind: 'flush' };
+    }
+    return { kind: 'open-clan', view: 'create' };
+  }
   if (action === 'clans_mine') {
     if (!host.clan.playerClan(player.id)) {
       session.screen = 'clans';

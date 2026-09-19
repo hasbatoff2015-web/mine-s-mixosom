@@ -141,11 +141,14 @@ describe('clan overlay CSS contracts', () => {
     expect(css).not.toMatch(/\.mc-ah-btn\.is-on \{[^}]*color: #1a1a1a/);
     expect(css).toContain('.mc-clan-panel .mc-ah-btn.is-on');
     expect(css).toContain('#app.controls-suppressed #hud-corner');
+    expect(css).toContain('#app.controls-suppressed #hud-corner button');
     expect(css).toContain('#e8a8a8');
     expect(gameUi).toContain("action: 'select_clan'");
     expect(gameUi).toContain('.mc-clan-icon-pick[data-clan-icon]');
     expect(gameUi).toContain('isClanActionKind');
+    expect(gameUi).toContain("target.closest('[data-ui=\"close\"]')");
     expect(gameUi.indexOf("action: 'select_clan'")).toBeLessThan(gameUi.indexOf('.mc-clan-icon-pick[data-clan-icon]'));
     expect(gameUi).toContain("event.stopPropagation(), true");
+    expect(gameUi).toContain('event.preventDefault();');
   });
 });

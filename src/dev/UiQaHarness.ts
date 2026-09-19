@@ -238,10 +238,13 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
     const clanActions = {
       send: (action: ClientClanActionMessage) => {
         if (action.action === 'set_ranking_sort' && (action.sort === 'money' || action.sort === 'kills')) {
+          const sorted = [...ranking.clans]
+            .sort((a, b) => (action.sort === 'kills' ? b.totalKills - a.totalKills : b.totalBalance - a.totalBalance))
+            .map((row, index) => ({ ...row, rank: index + 1, sort: action.sort as 'money' | 'kills' }));
           ui.openClan({
             ...ranking,
             rankingSort: action.sort,
-            clans: ranking.clans.map((row) => ({ ...row, sort: action.sort })),
+            clans: sorted,
           }, clanActions);
           return;
         }
